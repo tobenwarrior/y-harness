@@ -6764,6 +6764,208 @@ describe('durable Bot roster', () => {
     }
   })
 
+  it('updates a Bot profile without changing its Session binding', async () => {
+    const h = await harness()
+    try {
+      const created = await h.service.create({
+        name: 'Profile partner', description: 'Source scout', persona: 'Compare sources first.',
+        capabilities: ['chat', 'research'], cwd: '/tmp',
+      })
+      const updated = await h.service.updateProfile({
+        botId: created.bot.id,
+        name: 'Profile partner updated',
+        description: 'Release scout',
+        persona: 'Lead with evidence.',
+        capabilities: ['chat', 'release-review'],
+      })
+
+      expect(updated.bot).toMatchObject({
+        id: created.bot.id,
+        sessionId: created.bot.sessionId,
+        cwd: created.bot.cwd,
+        name: 'Profile partner updated',
+        description: 'Release scout',
+        persona: 'Lead with evidence.',
+        capabilities: ['chat', 'release-review'],
+      })
+      expect(updated.bot.agentPreset).toBe(created.bot.agentPreset)
+      await expect(h.service.updateProfile({
+        botId: created.bot.id,
+        description: null,
+        persona: null,
+        capabilities: null,
+      })).resolves.toMatchObject({
+        bot: {
+          id: created.bot.id,
+          sessionId: created.bot.sessionId,
+          name: 'Profile partner updated',
+        },
+      })
+      await expect(h.service.list({})).resolves.toMatchObject({
+        bots: [{
+          id: created.bot.id,
+          sessionId: created.bot.sessionId,
+          name: 'Profile partner updated',
+        }],
+      })
+      expect((await h.service.list({})).bots[0]).not.toHaveProperty('description')
+      expect((await h.service.list({})).bots[0]).not.toHaveProperty('persona')
+      expect((await h.service.list({})).bots[0]).not.toHaveProperty('capabilities')
+      expect(h.create).toHaveBeenCalledTimes(1)
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('migrates a released v1 profile record into its v2 successor without rewriting v1', async () => {
+    const pool = new MemoryMediaPool()
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const first = await harness(pool, undefined, undefined, [], new Map(), records)
+    const created = await first.service.create({
+      name: 'Released profile',
+      persona: 'Keep this instruction.',
+      capabilities: ['chat'],
+      cwd: '/tmp',
+    })
+    const id = String(created.bot.id)
+    const legacyKey = credentialKey('agent-bots', 'profile-revisions')
+    const currentKey = credentialKey('agent-bots', 'profile-revisions-v2')
+    const legacy: CredentialRecord = {
+      kind: 'grant',
+      payload: {
+        version: 1,
+        revisions: { [id]: created.bot.updatedAt },
+        profiles: {
+          [id]: {
+            name: created.bot.name,
+            persona: 'Migrated snapshot instruction.',
+            capabilities: ['research'],
+            identity: created.bot.identity,
+            accent: created.bot.accent,
+            connectedAppIds: [],
+            pendingMemoryUpdate: null,
+            pinned: false,
+            hidden: false,
+            group: null,
+            updatedAt: created.bot.updatedAt,
+          },
+        },
+      },
+    }
+    records.delete(currentKey)
+    records.set(legacyKey, legacy)
+    await close(first.ctx)
+
+    const second = await harness(pool, undefined, undefined, [], new Map(), records)
+    try {
+      await expect(second.service.list({})).resolves.toMatchObject({
+        bots: [{
+          id: created.bot.id,
+          persona: 'Migrated snapshot instruction.',
+          capabilities: ['research'],
+        }],
+      })
+      expect(records.get(legacyKey)).toEqual(legacy)
+      expect(records.get(currentKey)).toMatchObject({ kind: 'grant', payload: { version: 2 } })
+    } finally {
+      await close(second.ctx)
+    }
+  })
+
+  it('repairs a pending released v1 profile record while migrating its successor', async () => {
+    const pool = new MemoryMediaPool()
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const first = await harness(pool, undefined, undefined, [], new Map(), records)
+    const created = await first.service.create({ name: 'Pending profile', cwd: '/tmp' })
+    const id = String(created.bot.id)
+    const legacyKey = credentialKey('agent-bots', 'profile-revisions')
+    const currentKey = credentialKey('agent-bots', 'profile-revisions-v2')
+    const pendingRecord: BotRecord = {
+      ownerId: 'local-owner',
+      id: created.bot.id,
+      sessionId: created.bot.sessionId,
+      name: 'Recovered pending profile',
+      identity: created.bot.identity,
+      accent: created.bot.accent,
+      cwd: created.bot.cwd,
+      state: created.bot.state,
+      createdAt: created.bot.createdAt,
+      updatedAt: created.bot.updatedAt + 1,
+    }
+    const legacy: CredentialRecord = {
+      kind: 'grant',
+      payload: {
+        version: 1,
+        revisions: { [id]: created.bot.updatedAt },
+        profiles: {
+          [id]: {
+            name: created.bot.name,
+            identity: created.bot.identity,
+            accent: created.bot.accent,
+            updatedAt: created.bot.updatedAt,
+          },
+        },
+        pending: { transactionId: 'pending-v1-profile', record: pendingRecord },
+      },
+    }
+    records.delete(currentKey)
+    records.set(legacyKey, legacy)
+    await close(first.ctx)
+
+    const second = await harness(pool, undefined, undefined, [], new Map(), records)
+    try {
+      await expect(second.service.list({})).resolves.toMatchObject({
+        bots: [{ id: created.bot.id, name: 'Recovered pending profile' }],
+      })
+      expect(records.get(legacyKey)).toEqual(legacy)
+      expect(records.get(currentKey)).toMatchObject({
+        kind: 'grant',
+        payload: { version: 2 },
+      })
+      const migrated = records.get(currentKey)
+      if (migrated?.kind !== 'grant') throw new Error('migrated profile record was not stored')
+      expect(migrated.payload).not.toHaveProperty('pending')
+    } finally {
+      await close(second.ctx)
+    }
+  })
+
+  it('rejects a stale profile edit without overwriting a newer Bot revision', async () => {
+    const h = await harness()
+    try {
+      const created = await h.service.create({
+        name: 'Revision guarded profile',
+        persona: 'Original instruction.',
+        capabilities: ['chat'],
+        cwd: '/tmp',
+      })
+      const revision = created.bot.updatedAt
+      await expect(h.service.updateProfile({
+        botId: created.bot.id,
+        persona: 'New instruction.',
+        capabilities: ['chat', 'research'],
+      })).resolves.toMatchObject({ bot: { updatedAt: expect.any(Number) } })
+
+      await expect(h.service.updateProfile({
+        botId: created.bot.id,
+        expectedUpdatedAt: revision,
+        name: 'Stale overwrite',
+        persona: 'Stale instruction.',
+        capabilities: ['chat', 'stale'],
+      })).rejects.toMatchObject({ code: 'gateway/conflict' })
+      await expect(h.service.list({})).resolves.toMatchObject({
+        bots: [{
+          id: created.bot.id,
+          name: 'Revision guarded profile',
+          persona: 'New instruction.',
+          capabilities: ['chat', 'research'],
+        }],
+      })
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
   it('persists per-Bot connected-app grants and blocks an ungranted MCP tool before dispatch', async () => {
     const pool = new MemoryMediaPool()
     const first = await harness(pool)
@@ -9186,7 +9388,7 @@ describe('durable Bot roster', () => {
   it('keeps an acknowledged Bot row when the profile fence fails after the row write', async () => {
     const records = new Map<CredentialKey, CredentialRecord>()
     const h = await harness(new MemoryMediaPool(), undefined, undefined, [], new Map(), records)
-    const revisionKey = credentialKey('agent-bots', 'profile-revisions')
+    const revisionKey = credentialKey('agent-bots', 'profile-revisions-v2')
     const originalModify = h.credentials.modifyRecord.bind(h.credentials)
     let revisionCalls = 0
     h.credentials.modifyRecord = async (key, mutate) => {
@@ -9262,6 +9464,110 @@ describe('durable Bot roster', () => {
     }
   })
 
+  it('retains newer persona and capability edits when a stale Host renames the Bot', async () => {
+    const pool = new MemoryMediaPool()
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const first = await harness(pool, undefined, undefined, [], new Map(), records)
+    const created = await first.service.create({
+      name: 'Cross-process instructions',
+      persona: 'Use the original instructions.',
+      capabilities: ['chat'],
+      cwd: '/tmp',
+    })
+    const second = await harness(pool, undefined, undefined, [], new Map(), records)
+    try {
+      await expect(first.service.updateProfile({
+        botId: created.bot.id,
+        persona: 'Use the newer instructions.',
+        capabilities: ['chat', 'research'],
+      })).resolves.toMatchObject({
+        bot: {
+          id: created.bot.id,
+          persona: 'Use the newer instructions.',
+          capabilities: ['chat', 'research'],
+        },
+      })
+
+      await expect(second.service.rename({ botId: created.bot.id, name: 'Renamed by stale Host' })).resolves.toMatchObject({
+        bot: {
+          id: created.bot.id,
+          name: 'Renamed by stale Host',
+          persona: 'Use the newer instructions.',
+          capabilities: ['chat', 'research'],
+        },
+      })
+    } finally {
+      await close(second.ctx)
+      await close(first.ctx)
+    }
+  })
+
+  it('applies explicit persona and capability clears when a stale Host renames the Bot', async () => {
+    const pool = new MemoryMediaPool()
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const first = await harness(pool, undefined, undefined, [], new Map(), records)
+    const created = await first.service.create({
+      name: 'Cross-process reset',
+      persona: 'Remove this instruction.',
+      capabilities: ['chat', 'research'],
+      cwd: '/tmp',
+    })
+    const second = await harness(pool, undefined, undefined, [], new Map(), records)
+    try {
+      await expect(first.service.updateProfile({
+        botId: created.bot.id,
+        persona: null,
+        capabilities: null,
+      })).resolves.toMatchObject({ bot: { id: created.bot.id } })
+
+      const renamed = await second.service.rename({ botId: created.bot.id, name: 'Reset by stale Host' })
+      expect(renamed.bot).toMatchObject({ id: created.bot.id, name: 'Reset by stale Host' })
+      expect(renamed.bot).not.toHaveProperty('persona')
+      expect(renamed.bot).not.toHaveProperty('capabilities')
+    } finally {
+      await close(second.ctx)
+      await close(first.ctx)
+    }
+  })
+
+  it('refreshes persona and capability edits in shared prompts and removes them after reset', async () => {
+    const sharedSessionId = SessionId('shared-session-profile-propagation')
+    const h = await harness(undefined, undefined, undefined, [String(sharedSessionId)])
+    try {
+      const created = await h.service.create({
+        name: 'Shared profile owner',
+        description: 'Initial shared role.',
+        persona: 'Use the shared persona.',
+        capabilities: ['chat'],
+        cwd: '/tmp',
+      })
+      const host = productionSharedHost(h.service)
+      await host.createPrivateSession(created.bot, sharedSessionId, 'principal-profile-propagation', new AbortController().signal)
+      const agent = h.agents[0]
+      if (agent === undefined) throw new Error('shared profile Agent was not created')
+      await h.ctx.serial('agent/created', { agent, source: 'resume' })
+
+      await h.service.updateProfile({
+        botId: created.bot.id,
+        description: 'Updated shared role.',
+        persona: 'Use the updated shared persona.',
+        capabilities: ['chat', 'research'],
+      })
+      let prompt = renderPrompt(await h.ctx.systemPrompt.assemble({ scope: agent }))
+      expect(prompt).toContain('Your role is: Updated shared role.')
+      expect(prompt).toContain('Your persona is: Use the updated shared persona.')
+      expect(prompt).toContain('Declared capabilities: chat, research.')
+
+      await h.service.updateProfile({ botId: created.bot.id, description: null, persona: null, capabilities: null })
+      prompt = renderPrompt(await h.ctx.systemPrompt.assemble({ scope: agent }))
+      expect(prompt).not.toContain('Your role is:')
+      expect(prompt).not.toContain('Your persona is:')
+      expect(prompt).not.toContain('Declared capabilities:')
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
   it('does not publish a profile update when the Bot row write fails before touching storage', async () => {
     const pool = new MemoryMediaPool()
     const h = await harness(pool)
@@ -9282,7 +9588,7 @@ describe('durable Bot roster', () => {
     const { pool, rows } = postWriteFailurePool()
     const records = new Map<CredentialKey, CredentialRecord>()
     const h = await harness(pool, undefined, undefined, [], new Map(), records)
-    const revisionKey = credentialKey('agent-bots', 'profile-revisions')
+    const revisionKey = credentialKey('agent-bots', 'profile-revisions-v2')
     let closed = false
     try {
       const created = await h.service.create({ name: 'Ambiguous profile', cwd: '/tmp' })
@@ -9436,7 +9742,7 @@ describe('durable Bot roster', () => {
   it('repairs a Bot row when the profile revision commit fails after the row write', async () => {
     const records = new Map<CredentialKey, CredentialRecord>()
     const h = await harness(new MemoryMediaPool(), undefined, undefined, [], new Map(), records)
-    const revisionKey = credentialKey('agent-bots', 'profile-revisions')
+    const revisionKey = credentialKey('agent-bots', 'profile-revisions-v2')
     try {
       const created = await h.service.create({ name: 'Crash-safe profile', cwd: '/tmp' })
       const originalModify = h.credentials.modifyRecord.bind(h.credentials)

@@ -171,6 +171,68 @@ describe('BotWorkspaceController', () => {
     expect(controller.face().reference()).toBe(selected)
   })
 
+  it('forwards and persists profile fields without changing the selected Session', async () => {
+    const original = bot('bot-profile', 'session-profile', {
+      name: 'Research partner', description: 'Source scout',
+      persona: 'Compare sources first.', capabilities: ['chat', 'research'],
+    })
+    const updated = {
+      ...original,
+      description: 'Source scout updated',
+      persona: 'Lead with evidence.',
+      capabilities: ['chat', 'research', 'release-review'],
+      updatedAt: 2,
+    }
+    const remote = remoteFixture([original])
+    const updateProfile = vi.fn(async () => ({ ok: true as const, value: { bot: updated } }))
+    remote.updateProfile = updateProfile
+    const { sessions } = sessionsFixture()
+    const controller = new BotWorkspaceController(remote, sessions, () => 'unexpected response')
+    await controller.load()
+    const selected = controller.face().reference()
+
+    await controller.face().updateProfile?.(original.id, {
+      expectedUpdatedAt: original.updatedAt,
+      name: original.name,
+      description: updated.description!,
+      persona: updated.persona!,
+      capabilities: updated.capabilities!,
+    })
+
+    expect(updateProfile).toHaveBeenCalledWith({
+      botId: original.id,
+      expectedUpdatedAt: original.updatedAt,
+      name: original.name,
+      description: updated.description,
+      persona: updated.persona,
+      capabilities: updated.capabilities,
+    })
+    expect(controller.source.getSnapshot().bots[0]).toEqual(updated)
+    expect(controller.face().reference()).toBe(selected)
+  })
+
+  it('retains all profile fields in an ambiguous create retry', async () => {
+    const remote = remoteFixture([])
+    remote.create
+      .mockRejectedValueOnce(new Error('connection closed after commit'))
+      .mockImplementationOnce(async (request: { readonly id: string; readonly description?: string }) => ({
+        ok: true,
+        value: { bot: bot(request.id, 'session-profile-retry', { description: request.description }) },
+      }))
+    const { sessions } = sessionsFixture()
+    const controller = new BotWorkspaceController(remote, sessions, () => 'unexpected response')
+    const creation = {
+      name: 'Retry partner', identity: 'agent' as const, accent: 'violet' as const,
+      description: 'Keeps trying.', persona: 'Stay concise.', capabilities: ['chat', 'retry'],
+    }
+
+    await expect(controller.face().create(creation)).rejects.toThrow('connection closed after commit')
+    await controller.face().create({ ...creation, name: 'A different name must not allocate another id' })
+
+    expect(remote.create).toHaveBeenCalledTimes(2)
+    expect(remote.create.mock.calls[1]?.[0]).toEqual(remote.create.mock.calls[0]?.[0])
+  })
+
   it('loads and updates connected-app access for the selected Bot without changing its Session', async () => {
     const original = bot('bot-one', 'session-one')
     const remote = remoteFixture([original])

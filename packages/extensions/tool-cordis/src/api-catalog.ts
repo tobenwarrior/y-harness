@@ -749,6 +749,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'the committed row.',
       },
       {
+        signature: '@Remote(\'updateProfile\') async updateProfile(request: BotProfileUpdateRequest): Promise<BotProfileUpdateValue>',
+        description: 'Update a Bot\'s user-authored profile without changing its Session binding.',
+        parameters: [{ name: 'request', description: 'Bot id and profile fields; null clears optional text or declarations.' }],
+        returns: 'the committed row.',
+      },
+      {
         signature: '@Remote(\'updateOrganization\') async updateOrganization(request: BotOrganizationUpdateRequest): Promise<BotOrganizationUpdateValue>',
         description: 'Update a Bot\'s roster placement without changing its Session mapping.',
         parameters: [{ name: 'request', description: 'Bot id and at least one pin, hidden, or section change.' }],
@@ -5839,6 +5845,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'BotPrincipalId',
     declaration: 'export type BotPrincipalId = Branded<\'BotPrincipalId\'>;',
+  },
+  {
+    name: 'BotProfileUpdateRequest',
+    declaration: 'export interface BotProfileUpdateRequest {\n    readonly botId: BotId;\n    readonly expectedUpdatedAt?: number;\n    readonly name?: string;\n    readonly description?: string | null;\n    readonly persona?: string | null;\n    readonly capabilities?: readonly string[] | null;\n}',
+  },
+  {
+    name: 'BotProfileUpdateValue',
+    declaration: 'export interface BotProfileUpdateValue {\n    readonly bot: BotView;\n}',
   },
   {
     name: 'BotProvisioningState',

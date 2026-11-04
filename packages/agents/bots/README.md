@@ -27,6 +27,8 @@ Mount this Host plugin when a composition needs user-owned Bots that map one-to-
 
 The Bot Remote also exposes `listConnectedApps` and `setConnectedAppAccess`. The Client uses these methods for the selected Bot's Connected apps dialog. The catalog is derived from MCP tool definitions' Host-only source metadata and visible MCP resource servers; public names are not parsed because server and tool names may contain `__`. A grant is checked in the Bot Agent scope before approval, rechecked after approval, and checked again at the last-mile tool-body boundary after async wrappers settle, so hiding a control or revoking during a wait cannot bypass the policy.
 
+The Bot Remote also exposes `updateProfile` for owner-side editing of the name, role description, persona, and declared capabilities. Callers may supply the `expectedUpdatedAt` revision captured when an edit began; a changed Bot returns `gateway/conflict` without applying the stale draft. The mutation uses the same durable profile revision fence as rename and appearance updates, preserves the Bot's one Session, working directory, and preset, and treats capability values as model-facing declarations rather than permission grants. `null` clears an optional description, persona, or declaration list; provider and model switching remain outside this operation.
+
 ### When to choose it
 
 Choose this package when a Web surface needs named agents with durable visual identity, retryable provisioning, and one retained Session per row. Use the ordinary Session list instead when users should browse arbitrary conversations rather than a curated Bot roster.
@@ -53,7 +55,7 @@ The Bot Remote also exposes `listTemplates`, `publishTemplate`, `revokeTemplate`
 
 ### Durable lifecycle
 
-Creation writes a `provisioning` row before it asks the Session controller to activate the explicit Session id. A failed activation leaves the row and both ids available for retry. Repeating a request with the same id and metadata adopts that row; a metadata mismatch is rejected rather than silently changing the Bot.
+Creation writes a `provisioning` row before it asks the Session controller to activate the explicit Session id. A failed activation leaves the row and both ids available for retry. Repeating a request with the same id and metadata adopts that row; a metadata mismatch is rejected rather than silently changing the Bot. Profile edits update only the user-authored fields on the existing row and never allocate or replace its Session.
 
 ### Visual identity and avatars
 

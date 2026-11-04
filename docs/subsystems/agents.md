@@ -243,6 +243,13 @@ collaborationFor(agent: Pick<Agent, 'id'>): Promise<BotCollaborationClient>
 @Remote('rename') async rename(request: BotRenameRequest): Promise<BotRenameValue>
 
 /**
+ * Update a Bot's user-authored profile without changing its Session binding.
+ * @param request - Bot id and profile fields; null clears optional text or declarations.
+ * @returns the committed row.
+ */
+@Remote('updateProfile') async updateProfile(request: BotProfileUpdateRequest): Promise<BotProfileUpdateValue>
+
+/**
  * Update a Bot's roster placement without changing its Session mapping.
  * @param request - Bot id and at least one pin, hidden, or section change.
  * @returns the committed row.

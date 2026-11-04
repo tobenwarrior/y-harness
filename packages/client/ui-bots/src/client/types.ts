@@ -32,10 +32,16 @@ export type BotStatus = 'idle' | 'working' | 'preparing' | 'offline'
 export interface BotSummary {
   /** Stable bot identity, distinct from the linked Session id. */
   readonly id: string
+  /** Latest durable Bot profile revision, when supplied by the owner. */
+  readonly updatedAt?: number
   /** Human-facing name displayed in the roster and conversation header. */
   readonly name: string
   /** Optional description persisted with the Bot record. */
   readonly description?: string
+  /** Optional model-facing persona persisted with the Bot record. */
+  readonly persona?: string
+  /** Safe capability declarations retained with the Bot record. */
+  readonly capabilities?: readonly string[]
   /** Roster section. Empty values are rendered under the default group. */
   readonly group?: string
   /** Whether this Bot is pinned above other Bots in its section. */
@@ -139,6 +145,23 @@ export interface BotCreation {
   readonly name: string
   readonly identity: BotIdentity
   readonly accent: BotAccent
+  /** Optional user-facing role description. */
+  readonly description?: string
+  /** Optional model-facing persona text. */
+  readonly persona?: string
+  /** Safe capability declarations, not granted permissions. */
+  readonly capabilities?: readonly string[]
+}
+
+/** Complete profile submitted by the owner when editing an existing Bot. */
+export interface BotProfileUpdate {
+  /** Row revision captured when the edit dialog opened. */
+  readonly expectedUpdatedAt?: number
+  readonly name: string
+  readonly description: string
+  readonly persona: string
+  /** Safe capability declarations, not granted permissions. */
+  readonly capabilities: readonly string[]
 }
 
 /** Safe reusable Bot configuration shown in the Client workspace. */
@@ -275,6 +298,8 @@ export interface BotWorkspaceProps {
   readonly onSelectGroup?: ((id: string) => void) | undefined
   /** Provision one Bot; rejects while the same request remains retryable. */
   readonly onCreateBot: (creation: BotCreation) => Promise<void>
+  /** Persist a Bot's name and user-authored profile fields without changing its Session. */
+  readonly onUpdateProfile?: ((id: string, profile: BotProfileUpdate) => Promise<void>) | undefined
 
   /** Persist a Bot's pinned, hidden, or section placement. */
   readonly onOrganizeBot?: ((id: string, patch: BotOrganizationPatch) => Promise<void>) | undefined

@@ -121,6 +121,8 @@ import type {
   BotListValue,
   BotOrganizationUpdateRequest,
   BotOrganizationUpdateValue,
+  BotProfileUpdateRequest,
+  BotProfileUpdateValue,
   BotMemoryForgetRemoteRequest,
   BotMemoryForgetValue,
   BotMemoryListRequest,
@@ -572,7 +574,8 @@ interface GroupSessionProjection {
 
 const BOT_ID_PATTERN = /^bot-[A-Za-z0-9][A-Za-z0-9-]*$/
 
-const BOT_PROFILE_REVISION_RECORD_KEY = credentialKey('agent-bots', 'profile-revisions')
+const BOT_PROFILE_REVISION_RECORD_V1_KEY = credentialKey('agent-bots', 'profile-revisions')
+const BOT_PROFILE_REVISION_RECORD_KEY = credentialKey('agent-bots', 'profile-revisions-v2')
 const BOT_MESSAGE_DELIVERY_RECORD_KEY = credentialKey('agent-bots', 'message-deliveries')
 const SHARED_GROUP_MESSAGE_DELIVERY_RECORD_KEY = credentialKey('agent-bots', 'shared-group-message-deliveries')
 const BOT_MESSAGE_DELIVERY_RECORD_VERSION = 1 as const
@@ -613,7 +616,12 @@ const botEventRoutineSnapshotSchema = zod.custom<readonly BotEventRoutine[]>(
     && value.every(candidate => botEventRoutineSchema.safeParse(candidate).success),
   { message: 'Bot event routines are invalid' },
 )
-const botProfileSnapshotSchema = zod.object({
+const BOT_CAPABILITY_PATTERN = /^[a-z][a-z0-9._-]{0,63}$/
+const botCapabilitySnapshotSchema = zod.array(zod.string().regex(BOT_CAPABILITY_PATTERN)).max(32).refine(
+  values => new Set(values).size === values.length,
+  { message: 'Bot capabilities must be unique' },
+).readonly()
+const botProfileSnapshotBaseShape = {
   name: zod.string().min(1).max(80),
   description: zod.string().max(240).optional(),
   identity: zod.enum(BOT_IDENTITIES),
@@ -634,13 +642,32 @@ const botProfileSnapshotSchema = zod.object({
   hidden: zod.boolean().optional(),
   group: zod.string().max(80).refine(value => value.trim() === value).nullable().optional(),
   updatedAt: zod.number().int().nonnegative(),
+} as const
+const botProfileSnapshotV1Schema = zod.object({
+  ...botProfileSnapshotBaseShape,
+  /** Optional fields present in v1 records written after profile editing was added. */
+  persona: zod.string().max(4000).nullable().optional(),
+  capabilities: botCapabilitySnapshotSchema.nullable().optional(),
+}).strict()
+const botProfileSnapshotSchema = zod.object({
+  ...botProfileSnapshotBaseShape,
+  /** Optional for snapshots written before profile editing; null explicitly clears the persona. */
+  persona: zod.string().max(4000).nullable().optional(),
+  /** Optional for snapshots written before profile editing; null explicitly clears the declarations. */
+  capabilities: botCapabilitySnapshotSchema.nullable().optional(),
 }).strict()
 const botProfilePendingSchema = zod.object({
   transactionId: zod.string().min(1),
   record: botRecordSchema,
 }).strict()
-const botProfileRevisionRecordSchema = zod.object({
+const botProfileRevisionRecordV1Schema = zod.object({
   version: zod.literal(1),
+  revisions: zod.record(zod.string(), zod.number().int().nonnegative()),
+  profiles: zod.record(zod.string(), botProfileSnapshotV1Schema).optional(),
+  pending: botProfilePendingSchema.optional(),
+}).strict()
+const botProfileRevisionRecordSchema = zod.object({
+  version: zod.literal(2),
   revisions: zod.record(zod.string(), zod.number().int().nonnegative()),
   profiles: zod.record(zod.string(), botProfileSnapshotSchema).optional(),
   pending: botProfilePendingSchema.optional(),
@@ -691,7 +718,7 @@ const sharedGroupMessageDeliveryRecordSchema = zod.object({
 })
 
 interface BotProfileRevisionState {
-  readonly version: 1
+  readonly version: 2
   readonly revisions: Record<string, number>
   readonly profiles: Record<string, zod.infer<typeof botProfileSnapshotSchema>>
   readonly pending?: zod.infer<typeof botProfilePendingSchema>
@@ -760,7 +787,6 @@ function isSyntheticGroupContext(message: UserMessage): boolean {
   return SYNTHETIC_GROUP_CONTEXT_SOURCES.has(message.source.kind)
 }
 const BOT_TEMPLATE_ID_PATTERN = /^bot-template-[A-Za-z0-9][A-Za-z0-9-]*$/
-const BOT_CAPABILITY_PATTERN = /^[a-z][a-z0-9._-]{0,63}$/
 const BOT_TEMPLATE_IMPORT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
 
 function badRequest(message: string): never {
@@ -1013,13 +1039,29 @@ function matchesMetadata(record: BotRecord, request: NormalizedCreate): boolean 
     && JSON.stringify(record.capabilities ?? []) === JSON.stringify(request.capabilities ?? [])
 }
 
+function emptyProfileRevisionState(): BotProfileRevisionState {
+  return { version: 2, revisions: {}, profiles: {} }
+}
+
+function profileRevisionStateFromLegacy(record: CredentialRecord): BotProfileRevisionState {
+  if (record.kind !== 'grant') throw new Error('Bot profile revision record has an unexpected credential kind')
+  const parsed = botProfileRevisionRecordV1Schema.safeParse(record.payload)
+  if (!parsed.success) throw new Error('Bot profile revision record is invalid')
+  return {
+    version: 2,
+    revisions: { ...parsed.data.revisions },
+    profiles: { ...parsed.data.profiles },
+    ...(parsed.data.pending === undefined ? {} : { pending: parsed.data.pending }),
+  }
+}
+
 function profileRevisionRecordOf(record: CredentialRecord | undefined): BotProfileRevisionState {
-  if (record === undefined) return { version: 1, revisions: {}, profiles: {} }
+  if (record === undefined) return emptyProfileRevisionState()
   if (record.kind !== 'grant') throw new Error('Bot profile revision record has an unexpected credential kind')
   const parsed = botProfileRevisionRecordSchema.safeParse(record.payload)
   if (!parsed.success) throw new Error('Bot profile revision record is invalid')
   return {
-    version: 1,
+    version: 2,
     revisions: { ...parsed.data.revisions },
     profiles: { ...parsed.data.profiles },
     ...(parsed.data.pending === undefined ? {} : { pending: parsed.data.pending }),
@@ -1030,7 +1072,7 @@ function profileRevisionRecordOfState(state: BotProfileRevisionState): Credentia
   return {
     kind: 'grant',
     payload: {
-      version: 1,
+      version: 2,
       revisions: state.revisions,
       ...(Object.keys(state.profiles).length === 0 ? {} : { profiles: state.profiles }),
       ...(state.pending === undefined ? {} : { pending: state.pending }),
@@ -1042,6 +1084,8 @@ function profileSnapshotOf(record: BotStoredRecord): zod.infer<typeof botProfile
   return {
     name: record.name,
     ...(record.description === undefined ? {} : { description: record.description }),
+    persona: record.persona ?? null,
+    capabilities: record.capabilities ?? null,
     identity: record.identity,
     accent: record.accent,
     ...(record.avatar === undefined ? {} : { avatar: record.avatar }),
@@ -1060,17 +1104,27 @@ function applyProfileSnapshot(record: BotStoredRecord, profile: zod.infer<typeof
   if (profile === undefined) return record
   const {
     description: ignoredDescription,
+    persona: currentPersona,
+    capabilities: currentCapabilities,
     avatar: ignoredAvatar,
     group: currentGroup,
     pendingMemoryUpdate: currentPendingMemoryUpdate,
     ...withoutOptionalProfile
   } = record
   void ignoredDescription
+  void currentPersona
+  void currentCapabilities
   void ignoredAvatar
   return {
     ...withoutOptionalProfile,
     name: profile.name,
     ...(profile.description === undefined ? {} : { description: profile.description }),
+    ...(profile.persona === undefined
+      ? currentPersona === undefined ? {} : { persona: currentPersona }
+      : profile.persona === null ? {} : { persona: profile.persona }),
+    ...(profile.capabilities === undefined
+      ? currentCapabilities === undefined ? {} : { capabilities: currentCapabilities }
+      : profile.capabilities === null ? {} : { capabilities: profile.capabilities }),
     identity: profile.identity,
     accent: profile.accent,
     ...(profile.avatar === undefined ? {} : { avatar: profile.avatar }),
@@ -1091,7 +1145,7 @@ function applyProfileSnapshot(record: BotStoredRecord, profile: zod.infer<typeof
 
 function commitProfileState(state: BotProfileRevisionState, record: BotRecord): BotProfileRevisionState {
   return {
-    version: 1,
+    version: 2,
     revisions: { ...state.revisions, [String(record.id)]: record.updatedAt },
     profiles: { ...state.profiles, [String(record.id)]: profileSnapshotOf(record) },
   }
@@ -2650,8 +2704,8 @@ export class BotService extends TypertRemoteService {
    * the write-ahead recovery record. Credential-backed processes observe the
    * durable revision before writing, so an optimistic Bot update cannot
    * overwrite a newer update from another Host process. The durable snapshot
-   * includes organization and event-routine fields because those fields are
-   * also durable Bot edits.
+   * includes user-authored profile fields, organization, and event-routine
+   * fields because those fields are also durable Bot edits.
    * @param botId - Bot row being changed.
    * @param mutation - Build the next row from the row visible to this process.
    * @param expectedUpdatedAt - Optional caller-observed row revision.
@@ -2694,8 +2748,9 @@ export class BotService extends TypertRemoteService {
 
     const transactionId = randomUUID()
     let nextToCommit: BotStoredRecord | undefined
+    const legacyProfileState = await this.readLegacyProfileRevisionState(credentials)
     await credentials.modifyRecord(BOT_PROFILE_REVISION_RECORD_KEY, async (stored) => {
-      let state = profileRevisionRecordOf(stored)
+      let state = stored === undefined ? legacyProfileState ?? emptyProfileRevisionState() : profileRevisionRecordOf(stored)
       if (state.pending !== undefined) {
         await bots.put(state.pending.record.id, state.pending.record)
         this.blockedProfileTransactions.delete(state.pending.transactionId)
@@ -5341,6 +5396,77 @@ export class BotService extends TypertRemoteService {
   }
 
   /**
+   * Update a Bot's user-authored profile without changing its Session binding.
+   * @param request - Bot id and profile fields; null clears optional text or declarations.
+   * @returns the committed row.
+   */
+  @Remote('updateProfile')
+  async updateProfile(request: BotProfileUpdateRequest): Promise<BotProfileUpdateValue> {
+    return this.serialize(async () => {
+      if (request === null || typeof request !== 'object') return badRequest('Bot profile request must be an object')
+      const id = normalizeBotId(request.botId)
+      if (id === undefined) return badRequest('Bot id is required')
+      const expectedUpdatedAt = request.expectedUpdatedAt
+      if (expectedUpdatedAt !== undefined && (!Number.isSafeInteger(expectedUpdatedAt) || expectedUpdatedAt < 0)) {
+        return badRequest('Bot expectedUpdatedAt must be a non-negative integer')
+      }
+      const name = request.name === undefined ? undefined : normalizeName(request.name)
+      const description = request.description === null
+        ? undefined
+        : normalizeOptionalText('Bot description', request.description, 240)
+      const persona = request.persona === null
+        ? undefined
+        : normalizeOptionalText('Bot persona', request.persona, 4000)
+      const capabilities = request.capabilities === null
+        ? undefined
+        : normalizeCapabilities(request.capabilities)
+      if (request.name === undefined && request.description === undefined
+        && request.persona === undefined && request.capabilities === undefined) {
+        return badRequest('Bot profile request must change a field')
+      }
+      const next = await this.commitBotMutation(id, (current) => {
+        let updated: BotStoredRecord = {
+          ...current,
+          updatedAt: Math.max(Date.now(), current.updatedAt + 1),
+        }
+        if (name !== undefined) updated = { ...updated, name }
+        if (request.description !== undefined) {
+          if (description === undefined) {
+            const { description: ignoredDescription, ...withoutDescription } = updated
+            void ignoredDescription
+            updated = withoutDescription
+          } else {
+            updated = { ...updated, description }
+          }
+        }
+        if (request.persona !== undefined) {
+          if (persona === undefined) {
+            const { persona: ignoredPersona, ...withoutPersona } = updated
+            void ignoredPersona
+            updated = withoutPersona
+          } else {
+            updated = { ...updated, persona }
+          }
+        }
+        if (request.capabilities !== undefined) {
+          if (capabilities === undefined) {
+            const { capabilities: ignoredCapabilities, ...withoutCapabilities } = updated
+            void ignoredCapabilities
+            updated = withoutCapabilities
+          } else {
+            updated = { ...updated, capabilities }
+          }
+        }
+        return updated
+      }, expectedUpdatedAt)
+      this.recordsBySession.set(String(next.sessionId), next)
+      this.refreshSharedRecords(next)
+      this.emitChanged()
+      return { bot: this.view(next) }
+    })
+  }
+
+  /**
    * Update a Bot's roster placement without changing its Session mapping.
    * @param request - Bot id and at least one pin, hidden, or section change.
    * @returns the committed row.
@@ -6224,6 +6350,8 @@ export class BotService extends TypertRemoteService {
    * Read the cross-process profile record and repair an unfinished row commit.
    * A row-write rejection observed by this process remains pending until an
    * explicit mutation retries it, so a read does not expose an unacknowledged row.
+   * A released v1 record is read only as the migration source for the v2
+   * successor; the predecessor remains unchanged.
    */
   private async readProfileRevisionState(
     bots: KvTable<BotRecord['id'], BotRecord>,
@@ -6232,17 +6360,26 @@ export class BotService extends TypertRemoteService {
     const credentials = this.credentials ?? this.ctx.get('credentials')
     if (credentials === undefined) {
       await this.reconcileNoCredentialIntents(bots, reconcilePending)
-      return { version: 1, revisions: {}, profiles: {} }
+      return emptyProfileRevisionState()
     }
+    const legacyProfileState = await this.readLegacyProfileRevisionState(credentials)
     const stored = await credentials.modifyRecord(BOT_PROFILE_REVISION_RECORD_KEY, async (record) => {
-      const state = profileRevisionRecordOf(record)
-      if (state.pending === undefined) return undefined
+      const state = record === undefined ? legacyProfileState ?? emptyProfileRevisionState() : profileRevisionRecordOf(record)
+      const migrating = record === undefined && legacyProfileState !== undefined
+      if (state.pending === undefined) return migrating ? profileRevisionRecordOfState(state) : undefined
       if (!reconcilePending && this.blockedProfileTransactions.has(state.pending.transactionId)) return undefined
       await bots.put(state.pending.record.id, state.pending.record)
       this.blockedProfileTransactions.delete(state.pending.transactionId)
       return profileRevisionRecordOfState(finishPendingProfile(state))
     })
     return profileRevisionRecordOf(stored)
+  }
+
+  /** Read the released profile-record generation without mutating or deleting it. */
+  private async readLegacyProfileRevisionState(credentials: CredentialProvider): Promise<BotProfileRevisionState | undefined> {
+    if (await credentials.readRecord(BOT_PROFILE_REVISION_RECORD_KEY) !== undefined) return undefined
+    const record = await credentials.readRecord(BOT_PROFILE_REVISION_RECORD_V1_KEY)
+    return record === undefined ? undefined : profileRevisionStateFromLegacy(record)
   }
 
   private async refreshBotRecord(agent: Pick<Agent, 'id'>): Promise<BotStoredRecord | undefined> {
@@ -7638,7 +7775,24 @@ export class BotService extends TypertRemoteService {
 
   private refreshSharedRecords(bot: BotRecord): void {
     for (const [key, current] of this.sharedRecordsBySession) {
-      if (current.id === bot.id) this.sharedRecordsBySession.set(key, { ...current, ...bot, sessionId: current.sessionId })
+      if (current.id !== bot.id) continue
+      let next: BotRecord = { ...current, ...bot, sessionId: current.sessionId }
+      if (bot.persona === undefined) {
+        const { persona: ignoredPersona, ...withoutPersona } = next
+        void ignoredPersona
+        next = withoutPersona
+      }
+      if (bot.capabilities === undefined) {
+        const { capabilities: ignoredCapabilities, ...withoutCapabilities } = next
+        void ignoredCapabilities
+        next = withoutCapabilities
+      }
+      if (bot.description === undefined) {
+        const { description: ignoredDescription, ...withoutDescription } = next
+        void ignoredDescription
+        next = withoutDescription
+      }
+      this.sharedRecordsBySession.set(key, next)
     }
   }
 
