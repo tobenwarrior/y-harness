@@ -281,13 +281,18 @@ function restorePendingGroupState(value: unknown): BotGroupPendingState {
   return { creations, messages }
 }
 
-function createPendingGroupStore(): BotGroupPendingStore {
+/**
+ * Create a browser-backed retry store for Bot group operations.
+ * @param storageKey Local-storage key reserved for this operation owner.
+ * @returns A store that reports whether retry state can be persisted.
+ */
+export function createPendingGroupStore(storageKey = PENDING_GROUP_STORAGE_KEY): BotGroupPendingStore {
   if (typeof localStorage === 'undefined') {
     return { durable: false, read: () => EMPTY_PENDING_GROUP_STATE, write: () => false }
   }
   let healthy = true
   try {
-    localStorage.getItem(PENDING_GROUP_STORAGE_KEY)
+    localStorage.getItem(storageKey)
   } catch {
     healthy = false
   }
@@ -296,7 +301,7 @@ function createPendingGroupStore(): BotGroupPendingStore {
     read: () => {
       if (!healthy) return EMPTY_PENDING_GROUP_STATE
       try {
-        const raw = localStorage.getItem(PENDING_GROUP_STORAGE_KEY)
+        const raw = localStorage.getItem(storageKey)
         if (raw === null) return EMPTY_PENDING_GROUP_STATE
         const parsed: unknown = JSON.parse(raw)
         return restorePendingGroupState(parsed)
@@ -308,7 +313,7 @@ function createPendingGroupStore(): BotGroupPendingStore {
     write: (state) => {
       if (!healthy) return false
       try {
-        localStorage.setItem(PENDING_GROUP_STORAGE_KEY, JSON.stringify(state))
+        localStorage.setItem(storageKey, JSON.stringify(state))
         return true
       } catch {
         healthy = false

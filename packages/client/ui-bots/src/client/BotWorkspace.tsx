@@ -295,8 +295,8 @@ function NewGroupDialog({ open, onClose, onCreate, bots, error, t }: {
     <Modal
       open={open}
       onClose={onClose}
-      title={t('newGroupTitle')}
-      description={t('newGroupDescription')}
+      title={t('newBotGroupTitle')}
+      description={t('newBotGroupDescription')}
       closeLabel={t('cancel')}
       footer={(
         <>
@@ -477,7 +477,7 @@ function deliveryStatusText(
   }
 }
 
-/** Render a persistent shared group transcript without creating a second Bot Session. */
+/** Render a persistent workspace group transcript without creating a second Bot Session. */
 export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate, onSend, loadAvatar, t }: {
   group: BotGroupDetailData | undefined
   bots?: readonly BotSummary[]
@@ -1290,7 +1290,7 @@ function ConnectedAppsDialog({ bot, open, onClose, onLoad, onSet, t }: {
  */
 export function BotRoster({
   bots, selectedBotId, onSelectBot, onCreateBot, onConnectApps, onOpenAvatarSettings,
-  groups: sharedGroups = [], selectedGroupId = null, onSelectGroup, onCreateGroup, groupError = null,
+  groups: localGroups = [], selectedGroupId = null, onSelectGroup, onCreateGroup, groupError = null,
   onLoadConnectedApps, onSetConnectedAppAccess,
   onOrganizeBot, templates, templateActions, onRetry, loadAvatar, avatarEditor, sharedClient,
   error = null, loading = false, wide = true, expandSidebar, t,
@@ -1322,11 +1322,11 @@ export function BotRoster({
   }, [t, visibleBots])
   const sectionNames = useMemo(() => [...new Set(bots.map(bot => bot.group?.trim()).filter((group): group is string => group !== undefined && group !== ''))], [bots])
 
-  const filteredSharedGroups = useMemo(() => {
-    if (normalizedQuery === '') return sharedGroups
-    return sharedGroups.filter(group => [group.name, ...group.bots.map(bot => bot.name)]
+  const filteredLocalGroups = useMemo(() => {
+    if (normalizedQuery === '') return localGroups
+    return localGroups.filter(group => [group.name, ...group.bots.map(bot => bot.name)]
       .some(value => value.toLocaleLowerCase().includes(normalizedQuery)))
-  }, [sharedGroups, normalizedQuery])
+  }, [localGroups, normalizedQuery])
 
   const selectedBot = bots.find(bot => bot.id === selectedBotId)
   const hasRows = bots.length > 0
@@ -1443,11 +1443,11 @@ export function BotRoster({
 
               )}
               {onCreateGroup !== undefined && (
-                <section className={css.group} aria-labelledby="yharness-bots-shared-groups">
+                <section className={css.group} aria-labelledby="yharness-bots-local-groups">
                   <div className={css.groupHeadingRow}>
-                    <h2 id="yharness-bots-shared-groups" className={css.groupLabel}>{t('sharedGroups')}</h2>
-                    <Tooltip label={t('newGroup')} side="bottom" portal>
-                      <Button variant="ghost" size="sm" aria-label={t('newGroup')} icon={<IconPlusOutlineRegular size={14} />} onClick={openNewGroup} />
+                    <h2 id="yharness-bots-local-groups" className={css.groupLabel}>{t('botGroups')}</h2>
+                    <Tooltip label={t('newBotGroup')} side="bottom" portal>
+                      <Button variant="ghost" size="sm" aria-label={t('newBotGroup')} icon={<IconPlusOutlineRegular size={14} />} onClick={openNewGroup} />
                     </Tooltip>
                   </div>
                   {selectedGroupId === null && groupError !== null && (
@@ -1456,9 +1456,9 @@ export function BotRoster({
                       {onRetry !== undefined && <Button variant="ghost" size="sm" onClick={onRetry}>{t('retry')}</Button>}
                     </div>
                   )}
-                  {!loading && filteredSharedGroups.length > 0 && (
+                  {!loading && filteredLocalGroups.length > 0 && (
                     <div className={css.groupRows}>
-                      {filteredSharedGroups.map(group => (
+                      {filteredLocalGroups.map(group => (
                         <GroupRow
                           key={group.id} group={group} selected={group.id === selectedGroupId}
                           onSelect={() => { onSelectGroup?.(group.id) }} loadAvatar={loadAvatar} t={t}
@@ -1466,7 +1466,7 @@ export function BotRoster({
                       ))}
                     </div>
                   )}
-                  {!loading && sharedGroups.length > 0 && filteredSharedGroups.length === 0 && <div className={css.groupNoResults}>{t('noSearchResults')}</div>}
+                  {!loading && localGroups.length > 0 && filteredLocalGroups.length === 0 && <div className={css.groupNoResults}>{t('noSearchResults')}</div>}
                 </section>
               )}
               {!loading && hasRows && groups.length === 0 && hiddenBots.length === 0 && <div className={css.rosterEmpty}><strong>{t('noSearchResults')}</strong><span>{t('noSearchResultsDescription')}</span></div>}
@@ -1530,10 +1530,10 @@ export function BotRoster({
             })}
             {onCreateGroup !== undefined && (
               <>
-                <Tooltip label={t('newGroup')} side="right" delayMs={500}>
-                  <Button variant="ghost" size="sm" className={css.botRailAction} aria-label={t('newGroup')} icon={<IconPlusOutlineRegular size={18} />} onClick={openNewGroup} />
+                <Tooltip label={t('newBotGroup')} side="right" delayMs={500}>
+                  <Button variant="ghost" size="sm" className={css.botRailAction} aria-label={t('newBotGroup')} icon={<IconPlusOutlineRegular size={18} />} onClick={openNewGroup} />
                 </Tooltip>
-                {sharedGroups.map(group => (
+                {localGroups.map(group => (
                   <Tooltip key={group.id} label={group.name} side="right" delayMs={500}>
                     <button type="button" className={clsx(css.botRailRow, group.id === selectedGroupId && css.botRailRowSelected)} aria-current={group.id === selectedGroupId ? 'page' : undefined} aria-label={group.name} onClick={() => { onSelectGroup?.(group.id) }}>
                       <GroupAvatarStack group={group} loadAvatar={loadAvatar} />

@@ -73,7 +73,7 @@ export interface BotOrganizationPatch {
 }
 
 
-/** One existing Bot shown as a member of a shared group. */
+/** One existing Bot shown as a member of a workspace group. */
 export interface BotGroupSummary {
   /** Durable group identity. */
   readonly id: string
@@ -111,7 +111,7 @@ export interface BotGroupDeliverySummary {
   readonly error?: string
 }
 
-/** Selected shared group plus its durable transcript. */
+/** Selected workspace group plus its durable transcript. */
 export interface BotGroupDetailData extends BotGroupSummary {
   /** Chronological transcript rows. */
   readonly messages: readonly BotGroupMessageSummary[]
@@ -119,7 +119,7 @@ export interface BotGroupDetailData extends BotGroupSummary {
   readonly deliveries?: readonly BotGroupDeliverySummary[]
 }
 
-/** User choice passed to the owner when creating a shared group. */
+/** User choice passed to the owner when creating a workspace group. */
 export interface BotGroupCreation {
   /** Group name. */
   readonly name: string
@@ -284,9 +284,9 @@ export interface BotAvatarEditorActions {
 export interface BotWorkspaceProps {
   /** Available bots in the owner's stable order. */
   readonly bots: readonly BotSummary[]
-  /** Durable shared groups shown below the Bot roster. */
+  /** Durable workspace groups shown below the Bot roster. */
   readonly groups?: readonly BotGroupSummary[]
-  /** Selected shared group id, or null when a direct Bot is selected. */
+  /** Selected workspace group id, or null when a direct Bot is selected. */
   readonly selectedGroupId?: string | null | undefined
   /** Selected group loading or delivery failure, retained beside its transcript. */
   readonly groupError?: string | null | undefined
@@ -294,7 +294,7 @@ export interface BotWorkspaceProps {
   readonly selectedBotId: string | null
   /** Select a bot and let the owner open its persistent Session. */
   readonly onSelectBot: (id: string) => void
-  /** Select a shared group without creating another Bot Session. */
+  /** Select a workspace group without creating another Bot Session. */
   readonly onSelectGroup?: ((id: string) => void) | undefined
   /** Provision one Bot; rejects while the same request remains retryable. */
   readonly onCreateBot: (creation: BotCreation) => Promise<void>
@@ -304,10 +304,10 @@ export interface BotWorkspaceProps {
   /** Persist a Bot's pinned, hidden, or section placement. */
   readonly onOrganizeBot?: ((id: string, patch: BotOrganizationPatch) => Promise<void>) | undefined
 
-  /** Create a shared group from existing Bot identities. */
+  /** Create a workspace group from existing Bot identities. */
   readonly onCreateGroup?: ((creation: BotGroupCreation) => Promise<void>) | undefined
 
-  /** Rename a shared group or replace its members. */
+  /** Rename a workspace group or replace its members. */
   readonly onUpdateGroup?: ((update: BotGroupUpdate) => Promise<void>) | undefined
 
   /** Optional callback for the connections action. */

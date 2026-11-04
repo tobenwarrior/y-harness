@@ -33,6 +33,9 @@ import type {
 import type { ClientConnectionRpc, ConnectionRpcFailure } from '@yharness/client-connection/client'
 
 const SHARED_BOTS_PATH = '/shared-bots' as const
+const SHARED_AUTH_CHANNEL = 'yharness.client-ui-bots.shared-auth' as const
+const SHARED_AUTH_MESSAGE = 'auth-invalidated' as const
+let nextSharedAuthSenderId = 0
 
 const BOT_IDENTITIES = [
   'agent',
@@ -57,6 +60,47 @@ const BOT_ACCENTS = ['blue', 'teal', 'amber', 'violet', 'rose', 'lime'] as const
 export type SharedBotClientResult<T> =
   | { readonly ok: true; readonly value: T }
   | { readonly ok: false; readonly error: ConnectionRpcFailure }
+
+/** Auth change delivered to shared-Bot UI subscribers. */
+export interface SharedBotAuthChange {
+  /** Whether the change originated in this tab or another tab. */
+  readonly source: 'local' | 'remote'
+  /** Whether the current cookie was invalidated or authenticated. */
+  readonly reason: 'invalidated' | 'authenticated'
+}
+
+export type SharedBotAuthListener = (change?: SharedBotAuthChange) => void
+
+interface SharedAuthChannel {
+  readonly addEventListener: (type: 'message', listener: (event: { readonly data: unknown }) => void) => void
+  readonly removeEventListener: (type: 'message', listener: (event: { readonly data: unknown }) => void) => void
+  readonly postMessage: (value: unknown) => void
+  readonly close: () => void
+}
+
+type SharedAuthChannelConstructor = new (name: string) => SharedAuthChannel
+
+function openSharedAuthChannel(listener: (event: { readonly data: unknown }) => void): SharedAuthChannel | undefined {
+  const globals = globalThis as { readonly BroadcastChannel?: SharedAuthChannelConstructor }
+  if (globals.BroadcastChannel === undefined) return undefined
+  const channel = new globals.BroadcastChannel(SHARED_AUTH_CHANNEL)
+  channel.addEventListener('message', listener)
+  return channel
+}
+
+/**
+ * Notify other browser tabs that the shared HttpOnly cookie or ACL may have changed.
+ * @param senderId - Optional client identity used to ignore this tab's own broadcast.
+ */
+export function broadcastSharedAuthChanged(senderId?: string): void {
+  const channel = openSharedAuthChannel(() => {})
+  if (channel === undefined) return
+  try {
+    channel.postMessage({ type: SHARED_AUTH_MESSAGE, ...(senderId === undefined ? {} : { senderId }) })
+  } finally {
+    setTimeout(() => { channel.close() }, 0)
+  }
+}
 
 /** Shared Bot enrollment response after the HttpOnly cookie is stored. */
 export interface SharedBotEnrollmentValue {
@@ -140,6 +184,14 @@ export interface SharedBotGroupRevokeValue {
 export interface SharedBotsClient {
   /** Redeem an owner-issued invite; the response stores an HttpOnly cookie. */
   readonly enroll: (code: string) => Promise<SharedBotClientResult<SharedBotEnrollmentValue>>
+  /** Restore the server-authenticated principal scope after a browser reload. */
+  readonly restoreRetryScope: () => Promise<SharedBotClientResult<SharedBotEnrollmentValue>>
+  /** Server-issued principal scope used to partition durable browser retry state. */
+  readonly retryScope: string | undefined
+  /** Monotonic generation for the authenticated principal and browser session. */
+  readonly authGeneration?: number
+  /** Subscribe to authenticated-principal or cross-tab ACL changes in this client instance. */
+  readonly subscribeAuth?: (listener: SharedBotAuthListener) => () => void
   /** Discover Bots visible to the authenticated collaborator. */
   readonly list: () => Promise<SharedBotClientResult<{ readonly bots: readonly BotShareRosterEntry[] }>>
   /** Read one safe shared Bot profile. */
@@ -178,18 +230,73 @@ export interface SharedBotsClient {
  * @returns shared-Bot operations using the dedicated channel only.
  */
 export function createSharedBotsClient(rpc: ClientConnectionRpc): SharedBotsClient {
+  let retryScope: string | undefined
+  let retryScopeRequestGeneration = 0
+  let authGeneration = 0
+  const authSenderId = `shared-client-${nextSharedAuthSenderId += 1}`
+  let authTransitionVersion = 0
+  let authTransitionTail: Promise<void> = Promise.resolve()
+  let authChannel: SharedAuthChannel | undefined
+  const authListeners = new Set<SharedBotAuthListener>()
+  const notifyAuth = (change: SharedBotAuthChange): void => {
+    for (const listener of [...authListeners]) listener(change)
+  }
+  const setRetryScope = (
+    next: string | undefined,
+    source: SharedBotAuthChange['source'] = 'local',
+    broadcast = false,
+    force = false,
+  ): void => {
+    if (retryScope === next && !force) return
+    retryScope = next
+    authGeneration += 1
+    notifyAuth({ source, reason: next === undefined ? 'invalidated' : 'authenticated' })
+    if (broadcast) broadcastSharedAuthChanged(authSenderId)
+  }
+  const receiveCrossTabAuthChange = (event: { readonly data: unknown }): void => {
+    if (!isRecord(event.data) || event.data.type !== SHARED_AUTH_MESSAGE || event.data.senderId === authSenderId) return
+    const observedTransitionVersion = authTransitionVersion
+    void enqueueAuthTransition(() => {
+      if (authTransitionVersion !== observedTransitionVersion) return Promise.resolve()
+      authTransitionVersion += 1
+      retryScopeRequestGeneration += 1
+      setRetryScope(undefined, 'remote', false, true)
+      return Promise.resolve()
+    })
+  }
+  const enqueueAuthTransition = async <T>(work: () => Promise<T>): Promise<T> => {
+    const previous = authTransitionTail
+    let release!: () => void
+    authTransitionTail = new Promise<void>((resolve) => { release = resolve })
+    await previous
+    try {
+      return await work()
+    } finally {
+      release()
+    }
+  }
   const call = async <T>(
     endpoint: string,
     payload: unknown,
     parse: (value: unknown) => T | undefined,
+    broadcastUnauthorized = true,
   ): Promise<SharedBotClientResult<T>> => {
+    const requestGeneration = retryScopeRequestGeneration
+    const requestScope = retryScope
     let result
     try {
       result = await rpc.call(SHARED_BOTS_PATH, endpoint, payload)
     } catch (error: unknown) {
       return { ok: false, error: { code: 'gateway/transport', message: error instanceof Error ? error.message : 'Shared Bot transport failed', details: {} } }
     }
-    if (!result.ok) return result
+    if (!result.ok) {
+      if (broadcastUnauthorized && result.error.code === 'gateway/unauthorized' && requestGeneration === retryScopeRequestGeneration
+        && requestScope === retryScope) {
+        retryScopeRequestGeneration += 1
+        setRetryScope(undefined, 'local', true, true)
+      }
+      return result
+    }
     const value = parse(result.value)
     if (value === undefined) {
       return { ok: false, error: { code: 'gateway/invalid-response', message: 'Shared Bot returned an invalid response', details: {} } }
@@ -197,8 +304,48 @@ export function createSharedBotsClient(rpc: ClientConnectionRpc): SharedBotsClie
     return { ok: true, value }
   }
 
+  const enroll = (code: string): Promise<SharedBotClientResult<SharedBotEnrollmentValue>> => enqueueAuthTransition(async () => {
+    authTransitionVersion += 1
+    const requestGeneration = retryScopeRequestGeneration + 1
+    retryScopeRequestGeneration = requestGeneration
+    setRetryScope(undefined, 'local', false, true)
+    const result = await call('bots/share/enroll', { code }, parseEnrollment, false)
+    if (requestGeneration === retryScopeRequestGeneration && result.ok) {
+      setRetryScope(result.value.principalId, 'local', true, true)
+      authTransitionVersion += 1
+    }
+    return result
+  })
+  const restoreRetryScope = (): Promise<SharedBotClientResult<SharedBotEnrollmentValue>> => enqueueAuthTransition(async () => {
+    authTransitionVersion += 1
+    const requestGeneration = retryScopeRequestGeneration + 1
+    retryScopeRequestGeneration = requestGeneration
+    setRetryScope(undefined)
+    const result = await call('bots/share/session', {}, parseEnrollment)
+    if (requestGeneration === retryScopeRequestGeneration && result.ok) {
+      setRetryScope(result.value.principalId, 'local', false, true)
+      authTransitionVersion += 1
+    }
+    return result
+  })
+
   return {
-    enroll: code => call('bots/share/enroll', { code }, parseEnrollment),
+    get retryScope(): string | undefined { return retryScope },
+    get authGeneration(): number { return authGeneration },
+    subscribeAuth: (listener) => {
+      authListeners.add(listener)
+      if (authChannel === undefined) authChannel = openSharedAuthChannel(receiveCrossTabAuthChange)
+      return () => {
+        authListeners.delete(listener)
+        if (authListeners.size === 0 && authChannel !== undefined) {
+          authChannel.removeEventListener('message', receiveCrossTabAuthChange)
+          authChannel.close()
+          authChannel = undefined
+        }
+      }
+    },
+    enroll,
+    restoreRetryScope,
     list: () => call('bots/share/list', {}, parseRoster),
     readProfile: botId => call('bots/share/read-profile', { botId }, parseProfileValue),
     readPrivateChat: botId => call('bots/share/read-private-chat', { botId }, parsePrivateChat),
@@ -218,7 +365,7 @@ export function createSharedBotsClient(rpc: ClientConnectionRpc): SharedBotsClie
 }
 
 function parseEnrollment(value: unknown): SharedBotEnrollmentValue | undefined {
-  if (!isRecord(value) || typeof value.principalId !== 'string' || !isSafeInteger(value.expiresAt)) return undefined
+  if (!isRecord(value) || typeof value.principalId !== 'string' || !/^principal-[A-Za-z0-9-]+$/.test(value.principalId) || !isSafeInteger(value.expiresAt)) return undefined
   if (value.groupId !== undefined && (typeof value.groupId !== 'string' || !/^bot-group-[A-Za-z0-9][A-Za-z0-9-]*$/.test(value.groupId))) return undefined
   return {
     principalId: value.principalId,
