@@ -329,14 +329,17 @@ function workspaceLinkedManifest(name: string, manifests: Map<string, Manifest>)
 /** Resolve one exact workspace declaration when the virtual store has historical copies. */
 function exactWorkspaceDependencyVersion(name: string, manifests: Map<string, Manifest>): string | undefined {
   const versions = new Set<string>()
+  let hasUnresolvedDeclaration = false
   for (const manifest of manifests.values()) {
     for (const kind of ALL_KINDS) {
       const spec = manifest[kind]?.[name]
-      const version = spec === undefined ? null : valid(spec)
-      if (version !== null) versions.add(version)
+      if (spec === undefined) continue
+      const version = valid(spec)
+      if (version === null) hasUnresolvedDeclaration = true
+      else versions.add(version)
     }
   }
-  return versions.size === 1 ? [...versions][0] : undefined
+  return !hasUnresolvedDeclaration && versions.size === 1 ? [...versions][0] : undefined
 }
 
 /** Resolve one installed external package manifest from either pnpm store. */
