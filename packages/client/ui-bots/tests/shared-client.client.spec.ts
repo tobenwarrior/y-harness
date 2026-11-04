@@ -55,4 +55,20 @@ describe('shared Bot client capabilities', () => {
     })
     expect(client.retryScope).toBeUndefined()
   })
+
+  it('restores the authenticated principal scope after the browser reloads', async () => {
+    const rpc: ClientConnectionRpc = {
+      call: vi.fn(async (_channel, endpoint) => endpoint === 'bots/share/session'
+        ? { ok: true as const, value: { principalId: 'principal-restored', expiresAt: 3_000 } }
+        : { ok: false as const, error: { code: 'gateway/not-found', message: 'not found', details: {} } }),
+    }
+    const client = createSharedBotsClient(rpc)
+    expect(client.retryScope).toBeUndefined()
+    if (client.restoreRetryScope === undefined) throw new Error('retry scope restoration is unavailable')
+    await expect(client.restoreRetryScope()).resolves.toMatchObject({
+      ok: true,
+      value: { principalId: 'principal-restored' },
+    })
+    expect(client.retryScope).toBe('principal-restored')
+  })
 })

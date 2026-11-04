@@ -505,6 +505,7 @@ describe('Bot roster and detail', () => {
     const sharedClient: SharedBotsClient = {
       retryScope: undefined,
       enroll: vi.fn<SharedBotsClient['enroll']>().mockRejectedValue(new Error('unused test operation')),
+      restoreRetryScope: vi.fn<SharedBotsClient['restoreRetryScope']>().mockRejectedValue(new Error('unused test operation')),
       list: vi.fn<SharedBotsClient['list']>().mockResolvedValue({ ok: true, value: { bots: [] } }),
       readProfile: vi.fn<SharedBotsClient['readProfile']>().mockRejectedValue(new Error('unused test operation')),
       readPrivateChat: vi.fn<SharedBotsClient['readPrivateChat']>().mockRejectedValue(new Error('unused test operation')),

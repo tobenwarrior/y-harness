@@ -140,6 +140,8 @@ export interface SharedBotGroupRevokeValue {
 export interface SharedBotsClient {
   /** Redeem an owner-issued invite; the response stores an HttpOnly cookie. */
   readonly enroll: (code: string) => Promise<SharedBotClientResult<SharedBotEnrollmentValue>>
+  /** Restore the server-authenticated principal scope after a browser reload. */
+  readonly restoreRetryScope: () => Promise<SharedBotClientResult<SharedBotEnrollmentValue>>
   /** Server-issued principal scope used to partition durable browser retry state. */
   readonly retryScope: string | undefined
   /** Discover Bots visible to the authenticated collaborator. */
@@ -205,10 +207,16 @@ export function createSharedBotsClient(rpc: ClientConnectionRpc): SharedBotsClie
     if (result.ok) retryScope = result.value.principalId
     return result
   }
+  const restoreRetryScope = async (): Promise<SharedBotClientResult<SharedBotEnrollmentValue>> => {
+    const result = await call('bots/share/session', {}, parseEnrollment)
+    if (result.ok) retryScope = result.value.principalId
+    return result
+  }
 
   return {
     get retryScope(): string | undefined { return retryScope },
     enroll,
+    restoreRetryScope,
     list: () => call('bots/share/list', {}, parseRoster),
     readProfile: botId => call('bots/share/read-profile', { botId }, parseProfileValue),
     readPrivateChat: botId => call('bots/share/read-private-chat', { botId }, parsePrivateChat),

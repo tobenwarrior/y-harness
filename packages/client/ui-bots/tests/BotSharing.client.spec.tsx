@@ -7,6 +7,7 @@ import type { BotGroupId, BotGroupMessageId, BotGroupMessageView, BotGroupView }
 import { makeTranslate } from '@yharness/client-test-runtime'
 import { BotShareDialog, SharedBotsDialog } from '../src/client/BotSharing.tsx'
 import { en } from '../src/client/locales.ts'
+import { createSharedGroupPendingQueue } from '../src/client/pending-group-queue.ts'
 import type { BotShareActions } from '../src/client/controller.ts'
 import type { SharedBotsClient } from '../src/client/shared-client.ts'
 import type { BotSummary } from '../src/client/types.ts'
@@ -75,6 +76,7 @@ function sharedClient(overrides: Partial<SharedBotsClient> = {}): SharedBotsClie
   return {
     retryScope: 'principal-member',
     enroll: vi.fn().mockResolvedValue({ ok: true, value: { principalId: 'principal-member', expiresAt: 2_000 } }),
+    restoreRetryScope: vi.fn().mockResolvedValue({ ok: true, value: { principalId: 'principal-member', expiresAt: 2_000 } }),
     list: vi.fn().mockResolvedValue({ ok: true, value: { bots: [{ ...bot, role: 'collaborator' }] } }),
     readProfile: vi.fn().mockResolvedValue({ ok: true, value: { bot } }),
     readPrivateChat: vi.fn().mockResolvedValue({ ok: true, value: { botId: bot.id, recent: [{ role: 'assistant', text: 'Private answer' }] } }),
@@ -550,7 +552,7 @@ describe('shared Bot collaboration surfaces', () => {
         existingMessage.current = {
           id: request.messageId!,
           groupId: group.id,
-          sender: { kind: 'user' as const },
+          sender: { kind: 'user' as const, principalId: BotPrincipalId('principal-member') },
           text: request.text,
           createdAt: 2,
         }
@@ -674,6 +676,9 @@ describe('shared Bot collaboration surfaces', () => {
     expect(within(reopenedDialog).getByText(/Created after cancel/)).toBeTruthy()
     expect(screen.queryByRole('button', { name: /Created after cancel/ })).toBeNull()
     fireEvent.click(within(reopenedDialog).getByRole('button', { name: 'Discard' }))
+    const discardDialog = screen.getByRole('dialog', { name: 'Discard this retry record?' })
+    fireEvent.click(within(discardDialog).getByRole('checkbox'))
+    fireEvent.click(within(discardDialog).getByRole('button', { name: 'Discard retry record' }))
     await waitFor(() => { expect(within(reopenedDialog).queryByText(/Created after cancel/)).toBeNull() })
   })
 
@@ -810,14 +815,15 @@ describe('shared Bot collaboration surfaces', () => {
     existingMessage.current = {
       id: firstId,
       groupId: group.id,
-      sender: { kind: 'user' as const },
+      sender: { kind: 'user' as const, principalId: BotPrincipalId('principal-member') },
       text: 'Persist this update',
       createdAt: 2,
     }
     render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
     await waitFor(() => { expect(screen.getByPlaceholderText('Message Persisted message room')).toBeTruthy() })
-    fireEvent.change(screen.getByPlaceholderText('Message Persisted message room'), { target: { value: 'Persist this update' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Send to group' }))
+    await waitFor(() => { expect(screen.getByText('Pending group messages')).toBeTruthy() })
+    expect(screen.getByText('Persist this update')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Recover' }))
     await waitFor(() => { expect(sendGroupMessage).toHaveBeenCalledTimes(2) })
     expect(sendGroupMessage.mock.calls[1]?.[0].messageId).toBe(firstId)
   })
@@ -867,6 +873,53 @@ describe('shared Bot collaboration surfaces', () => {
     await waitFor(() => {
       expect(sendGroupMessage).toHaveBeenCalledWith(expect.objectContaining({ groupId: group.id, text: 'Coordinate launch' }))
     })
+  })
+
+  it('refuses to resend a recovered message owned by another principal', async () => {
+    const group = {
+      id: brandString<BotGroupId>('bot-group-message-owner-check'),
+      name: 'Owner check room',
+      botIds: [BotId(bot.id), BotId(analystBot.id)],
+      bots: [
+        { id: BotId(bot.id), name: bot.name, identity: bot.identity, accent: bot.accent, state: 'active' as const, availability: 'idle' as const },
+        { id: BotId(analystBot.id), name: analystBot.name, identity: analystBot.identity, accent: analystBot.accent, state: 'active' as const, availability: 'idle' as const },
+      ],
+      createdAt: 1,
+      updatedAt: 1,
+    } satisfies BotGroupView
+    const pendingText = 'Do not replay this message'
+    const queue = createSharedGroupPendingQueue('principal-member')
+    const pending = await queue.reserveMessage(`${group.id}\u0000${pendingText}`, String(group.id), pendingText)
+    const sendGroupMessage = vi.fn()
+    const client = sharedClient({
+      listGroups: vi.fn().mockResolvedValue({ ok: true, value: { groups: [group] } }),
+      inspectGroup: vi.fn().mockResolvedValue({
+        ok: true,
+        value: {
+          group,
+          messages: [{
+            id: brandString<BotGroupMessageId>(pending.id),
+            groupId: group.id,
+            sender: { kind: 'user' as const, principalId: BotPrincipalId('principal-other') },
+            text: pendingText,
+            createdAt: 2,
+          }],
+        },
+      }),
+      sendGroupMessage,
+    })
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+
+    await waitFor(() => { expect(screen.getByText('Pending group messages')).toBeTruthy() })
+    fireEvent.click(screen.getByRole('button', { name: 'Recover' }))
+    await waitFor(() => { expect(screen.getByRole('alert').textContent).toContain('does not match the current room details') })
+    expect(sendGroupMessage).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Discard' }))
+    const discardDialog = screen.getByRole('dialog', { name: 'Discard this retry record?' })
+    fireEvent.click(within(discardDialog).getByRole('checkbox'))
+    fireEvent.click(within(discardDialog).getByRole('button', { name: 'Discard retry record' }))
+    await waitFor(() => { expect(screen.queryByText('Pending group messages')).toBeNull() })
+    await expect(queue.listMessages()).resolves.toEqual([])
   })
 
   it('keeps a newer group send busy when an older group send resolves', async () => {
@@ -1529,6 +1582,17 @@ describe('shared Bot collaboration surfaces', () => {
     expect(screen.queryByText('Chief answer')).toBeNull()
     expect(screen.getByText('Analyst decision')).toBeTruthy()
     expect(screen.queryByText('Chief decision')).toBeNull()
+  })
+
+  it('restores the server-issued retry scope before refreshing a reloaded roster', async () => {
+    const restoreRetryScope = vi.fn().mockResolvedValue({ ok: true, value: { principalId: 'principal-restored', expiresAt: 2_000 } })
+    const list = vi.fn().mockResolvedValue({ ok: true, value: { bots: [] } })
+    const client = sharedClient({ retryScope: undefined, restoreRetryScope, list })
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+
+    await waitFor(() => { expect(restoreRetryScope).toHaveBeenCalledOnce() })
+    await waitFor(() => { expect(list).toHaveBeenCalledOnce() })
+    expect(restoreRetryScope.mock.invocationCallOrder[0]).toBeLessThan(list.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY)
   })
 
   it('ignores a stale refresh after closing and reopening the dialog', async () => {

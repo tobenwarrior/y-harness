@@ -21,6 +21,7 @@ interface LockManagerLike {
 interface PendingCreationRecord {
   readonly version: 1
   readonly kind: 'creation'
+  readonly status: 'pending' | 'expired'
   readonly id: string
   readonly operationHash: string
   readonly name: string
@@ -32,10 +33,11 @@ interface PendingCreationRecord {
 interface PendingMessageRecord {
   readonly version: 1
   readonly kind: 'message'
+  readonly status: 'pending' | 'expired'
   readonly id: string
   readonly operationHash: string
   readonly groupId: string
-  readonly text: string
+  readonly text?: string
   readonly createdAt: number
   readonly expiresAt: number
 }
@@ -50,6 +52,19 @@ export interface SharedPendingGroupCreation {
   readonly botIds: readonly string[]
   readonly createdAt: number
   readonly expiresAt: number
+  readonly expired: boolean
+}
+
+/** Durable shared-group message retry metadata visible to the current principal. */
+export interface SharedPendingGroupMessage {
+  readonly operationHash: string
+  readonly id: string
+  readonly groupId: string
+  /** Present until the record expires; expired tombstones never retain message text. */
+  readonly text?: string
+  readonly createdAt: number
+  readonly expiresAt: number
+  readonly expired: boolean
 }
 
 /** Stable operation reservation returned by the browser retry queue. */
@@ -57,22 +72,25 @@ export interface SharedPendingGroupReservation {
   readonly operationHash: string
   readonly id: string
   readonly recovered: boolean
+  readonly expired: boolean
 }
 
 /** Per-operation browser persistence for shared-group retries. */
 export interface SharedGroupPendingQueue {
   /** Whether this browser can safely persist and coordinate retry records. */
   readonly durable: boolean
-  /** List unexpired interrupted group creations for this principal. */
+  /** List interrupted group creations and explicit expiry tombstones for this principal. */
   listCreations(): Promise<readonly SharedPendingGroupCreation[]>
+  /** List pending group messages and text-free expired tombstones for this principal. */
+  listMessages(): Promise<readonly SharedPendingGroupMessage[]>
   /** Reserve or recover one stable group id for a creation operation. */
   reserveCreation(operationKey: string, name: string, botIds: readonly string[]): Promise<SharedPendingGroupReservation>
   /** Remove one creation record only when its id still matches. */
   removeCreation(operationHash: string, id: string): Promise<void>
   /** Reserve or recover one stable message id for a group message operation. */
   reserveMessage(operationKey: string, groupId: string, text: string): Promise<SharedPendingGroupReservation>
-  /** Remove one message record only when its id still matches. */
-  removeMessage(operationKey: string, id: string): Promise<void>
+  /** Remove one message record only when its operation hash and id still match. */
+  removeMessage(operationHash: string, id: string): Promise<void>
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -92,6 +110,8 @@ function parseRecord(value: unknown): PendingRecord | undefined {
   if (!isRecord(value) || value.version !== 1 || !isSafeId(value.id)
     || typeof value.operationHash !== 'string' || !/^[0-9a-f-]{8,128}$/.test(value.operationHash)
     || !isSafeTimestamp(value.createdAt) || !isSafeTimestamp(value.expiresAt) || value.expiresAt < value.createdAt) return undefined
+  const status = value.status === undefined ? 'pending' : value.status
+  if (status !== 'pending' && status !== 'expired') return undefined
   if (value.kind === 'creation') {
     if (typeof value.name !== 'string' || value.name.trim() === '' || value.name.length > 256
       || !Array.isArray(value.botIds) || value.botIds.length < 2 || value.botIds.length > 6) return undefined
@@ -103,6 +123,7 @@ function parseRecord(value: unknown): PendingRecord | undefined {
     return {
       version: 1,
       kind: 'creation',
+      status,
       id: value.id,
       operationHash: value.operationHash,
       name: value.name,
@@ -111,15 +132,17 @@ function parseRecord(value: unknown): PendingRecord | undefined {
       expiresAt: value.expiresAt,
     }
   }
-  if (value.kind !== 'message' || typeof value.groupId !== 'string' || !isSafeId(value.groupId)
-    || typeof value.text !== 'string' || value.text.length === 0 || value.text.length > MAX_TEXT_LENGTH) return undefined
+  if (value.kind !== 'message' || typeof value.groupId !== 'string' || !isSafeId(value.groupId)) return undefined
+  if (status === 'pending' && (typeof value.text !== 'string' || value.text.length === 0 || value.text.length > MAX_TEXT_LENGTH)) return undefined
+  if (status === 'expired' && value.text !== undefined) return undefined
   return {
     version: 1,
     kind: 'message',
+    status,
     id: value.id,
     operationHash: value.operationHash,
     groupId: value.groupId,
-    text: value.text,
+    ...(status === 'pending' && typeof value.text === 'string' ? { text: value.text } : {}),
     createdAt: value.createdAt,
     expiresAt: value.expiresAt,
   }
@@ -186,6 +209,19 @@ function creationView(record: PendingCreationRecord): SharedPendingGroupCreation
     botIds: [...record.botIds],
     createdAt: record.createdAt,
     expiresAt: record.expiresAt,
+    expired: record.status === 'expired',
+  }
+}
+
+function messageView(record: PendingMessageRecord): SharedPendingGroupMessage {
+  return {
+    operationHash: record.operationHash,
+    id: record.id,
+    groupId: record.groupId,
+    ...(record.text === undefined ? {} : { text: record.text }),
+    createdAt: record.createdAt,
+    expiresAt: record.expiresAt,
+    expired: record.status === 'expired',
   }
 }
 
@@ -243,7 +279,16 @@ export function createSharedGroupPendingQueue(scope: string): SharedGroupPending
     }
     for (const key of keys) {
       const record = read(key)
-      if (record === undefined || record.expiresAt <= now) remove(key)
+      if (record === undefined) {
+        remove(key)
+      } else if (record.status === 'pending' && record.expiresAt <= now) {
+        if (record.kind === 'creation') {
+          write(key, { ...record, status: 'expired' })
+        } else {
+          const { text: _text, ...tombstone } = record
+          write(key, { ...tombstone, status: 'expired' })
+        }
+      }
     }
   }
 
@@ -252,13 +297,24 @@ export function createSharedGroupPendingQueue(scope: string): SharedGroupPending
     listCreations: () => withLock(catalogLockKey(scope), async () => {
       await prune()
       if (storage === undefined) throw new Error('Shared-group retry storage is unavailable')
-      const now = Date.now()
       const records: SharedPendingGroupCreation[] = []
       for (let index = 0; index < storage.length; index += 1) {
         const key = storage.key(index)
         if (key === null || !key.startsWith(`${scopePrefix(scope)}.creation.`)) continue
         const record = read(key)
-        if (record?.kind === 'creation' && record.expiresAt > now) records.push(creationView(record))
+        if (record?.kind === 'creation') records.push(creationView(record))
+      }
+      return records.sort((left, right) => left.createdAt - right.createdAt)
+    }),
+    listMessages: () => withLock(catalogLockKey(scope), async () => {
+      await prune()
+      if (storage === undefined) throw new Error('Shared-group retry storage is unavailable')
+      const records: SharedPendingGroupMessage[] = []
+      for (let index = 0; index < storage.length; index += 1) {
+        const key = storage.key(index)
+        if (key === null || !key.startsWith(`${scopePrefix(scope)}.message.`)) continue
+        const record = read(key)
+        if (record?.kind === 'message') records.push(messageView(record))
       }
       return records.sort((left, right) => left.createdAt - right.createdAt)
     }),
@@ -270,14 +326,15 @@ export function createSharedGroupPendingQueue(scope: string): SharedGroupPending
         const key = recordKey(scope, 'creation', hash)
         const current = read(key)
         const now = Date.now()
-        if (current?.kind === 'creation' && current.expiresAt > now
+        if (current?.kind === 'creation'
           && current.name === name && current.botIds.length === canonicalBotIds.length
           && current.botIds.every((botId, index) => botId === canonicalBotIds[index])) {
-          return { operationHash: hash, id: current.id, recovered: true }
+          return { operationHash: hash, id: current.id, recovered: true, expired: current.status === 'expired' }
         }
         const record: PendingCreationRecord = {
           version: 1,
           kind: 'creation',
+          status: 'pending',
           id: `bot-group-${randomUUID()}`,
           operationHash: hash,
           name,
@@ -286,7 +343,7 @@ export function createSharedGroupPendingQueue(scope: string): SharedGroupPending
           expiresAt: now + PENDING_TTL_MS,
         }
         write(key, record)
-        return { operationHash: hash, id: record.id, recovered: false }
+        return { operationHash: hash, id: record.id, recovered: false, expired: false }
       })
     },
     removeCreation: (hash, id) => withLock(lockKey(scope, 'creation', hash), async () => {
@@ -301,13 +358,14 @@ export function createSharedGroupPendingQueue(scope: string): SharedGroupPending
         const key = recordKey(scope, 'message', hash)
         const current = read(key)
         const now = Date.now()
-        if (current?.kind === 'message' && current.expiresAt > now
-          && current.groupId === groupId && current.text === text) {
-          return { operationHash: hash, id: current.id, recovered: true }
+        if (current?.kind === 'message' && current.groupId === groupId
+          && (current.status === 'expired' || current.text === text)) {
+          return { operationHash: hash, id: current.id, recovered: true, expired: current.status === 'expired' }
         }
         const record: PendingMessageRecord = {
           version: 1,
           kind: 'message',
+          status: 'pending',
           id: `bot-group-message-${randomUUID()}`,
           operationHash: hash,
           groupId,
@@ -316,16 +374,13 @@ export function createSharedGroupPendingQueue(scope: string): SharedGroupPending
           expiresAt: now + PENDING_TTL_MS,
         }
         write(key, record)
-        return { operationHash: hash, id: record.id, recovered: false }
+        return { operationHash: hash, id: record.id, recovered: false, expired: false }
       })
     },
-    removeMessage: async (operationKey, id) => {
-      const hash = await operationHash(operationKey)
-      await withLock(lockKey(scope, 'message', hash), async () => {
-        const key = recordKey(scope, 'message', hash)
-        const current = read(key)
-        if (current?.kind === 'message' && current.id === id) remove(key)
-      })
-    },
+    removeMessage: (hash, id) => withLock(lockKey(scope, 'message', hash), async () => {
+      const key = recordKey(scope, 'message', hash)
+      const current = read(key)
+      if (current?.kind === 'message' && current.id === id) remove(key)
+    }),
   }
 }

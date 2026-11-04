@@ -73,8 +73,33 @@ describe('shared-group browser retry queue', () => {
     vi.useFakeTimers({ now: Date.now() + 24 * 60 * 60 * 1_000 + 1 })
     try {
       const second = await queue.reserveMessage('message-key', 'bot-group-room', 'private draft')
-      expect(second.recovered).toBe(false)
-      expect(second.id).not.toBe(first.id)
+      expect(second.recovered).toBe(true)
+      expect(second.expired).toBe(true)
+      expect(second.id).toBe(first.id)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('lists pending messages and keeps an expired tombstone id for reconciliation', async () => {
+    const queue = createSharedGroupPendingQueue('principal-message-recovery')
+    const first = await queue.reserveMessage('message-key', 'bot-group-room', 'recover this draft')
+    await expect(queue.listMessages()).resolves.toMatchObject([{
+      id: first.id,
+      groupId: 'bot-group-room',
+      text: 'recover this draft',
+      expired: false,
+    }])
+
+    vi.useFakeTimers({ now: Date.now() + 24 * 60 * 60 * 1_000 + 1 })
+    try {
+      const expired = await queue.listMessages()
+      expect(expired).toMatchObject([{ id: first.id, groupId: 'bot-group-room', expired: true }])
+      expect(expired[0]).not.toHaveProperty('text')
+      const retry = await queue.reserveMessage('message-key', 'bot-group-room', 'recover this draft')
+      expect(retry.id).toBe(first.id)
+      expect(retry.recovered).toBe(true)
+      expect(retry.expired).toBe(true)
     } finally {
       vi.useRealTimers()
     }
