@@ -872,6 +872,39 @@ describe('shared Bot collaboration surfaces', () => {
     expect(sendGroupMessage.mock.calls[1]?.[0].messageId).toBe(firstMessageId)
   })
 
+  it('keeps a new identical group message distinct from an explicit pending recovery', async () => {
+    const group = {
+      id: brandString<BotGroupId>('bot-group-message-distinct-pending'),
+      name: 'Distinct pending room',
+      botIds: [BotId(bot.id), BotId(analystBot.id)],
+      bots: [
+        { id: BotId(bot.id), name: bot.name, identity: bot.identity, accent: bot.accent, state: 'active' as const, availability: 'idle' as const },
+        { id: BotId(analystBot.id), name: analystBot.name, identity: analystBot.identity, accent: analystBot.accent, state: 'active' as const, availability: 'idle' as const },
+      ],
+      createdAt: 1,
+      updatedAt: 1,
+    } satisfies BotGroupView
+    const text = 'Send this identical update'
+    const queue = createSharedGroupPendingQueue('principal-member')
+    const pending = await queue.reserveMessage('other-tab-action', String(group.id), text)
+    const sendGroupMessage = vi.fn().mockResolvedValue({
+      ok: true,
+      value: { messageId: brandString<BotGroupMessageId>('bot-group-message-distinct-new'), status: 'accepted', deliveries: [] },
+    })
+    const client = sharedClient({
+      listGroups: vi.fn().mockResolvedValue({ ok: true, value: { groups: [group] } }),
+      inspectGroup: vi.fn().mockResolvedValue({ ok: true, value: { group, messages: [] } }),
+      sendGroupMessage,
+    })
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+
+    await waitFor(() => { expect(screen.getByPlaceholderText('Message Distinct pending room')).toBeTruthy() })
+    fireEvent.change(screen.getByPlaceholderText('Message Distinct pending room'), { target: { value: text } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send to group' }))
+    await waitFor(() => { expect(sendGroupMessage).toHaveBeenCalledOnce() })
+    expect(sendGroupMessage.mock.calls[0]?.[0].messageId).not.toBe(pending.id)
+  })
+
   it('does not leave a group invite busy after switching groups', async () => {
     const member = { id: BotId(bot.id), name: bot.name, identity: bot.identity, accent: bot.accent, state: 'active' as const, availability: 'idle' as const }
     const groupA = {
