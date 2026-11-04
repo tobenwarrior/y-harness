@@ -10,6 +10,7 @@ import AgentLoop from '@yharness/agent-loop'
 import { createScope } from '@yharness/scope'
 import LlmRuntime, { createAssistantMessage, createSystemMessage, createUserMessage, freezeMessage, MessageId, ToolCallId } from '@yharness/llm'
 import SessionStore, { Session, SessionId, SessionSeq } from '@yharness/session'
+import JsonlSessionPersistence from '@yharness/session-persistence-jsonl'
 import SessionProjectionRegistry from '@yharness/session-projection'
 import type { SessionEvent } from '@yharness/session'
 import type { ContextFormed } from '@yharness/llm'
@@ -260,6 +261,7 @@ interface HarnessOptions {
   readonly inspectSharedSessions?: boolean
   readonly realAgent?: boolean
   readonly realAgentInitialResponse?: 'hang' | 'text'
+  readonly sessionPersistenceRoot?: string
   readonly initializeService?: boolean
 }
 
@@ -351,6 +353,9 @@ async function createHarness({
     await ctx.plugin(SessionStore)
     await ctx.plugin(SessionProjectionRegistry)
     await ctx.plugin(AgentRegistry)
+    if (options.sessionPersistenceRoot !== undefined) {
+      await ctx.plugin(JsonlSessionPersistence, { root: options.sessionPersistenceRoot, compression: 'none' })
+    }
     await ctx.plugin(AgentLoop, { agents: [] })
   }
   const adapter = options.realAgent === true
@@ -444,33 +449,43 @@ async function createHarness({
       inspectFailureCount -= 1
       throw new Error('injected inspection failure')
     }
+    const live = agents.find(agent => agent.id === sessionId)?.session.snapshotEvents()
+    const seeded = persistedSessionSeeds.get(String(sessionId)) ?? persistedSessionEvents.get(String(sessionId))
+    let events = live ?? seeded
+    if (events === undefined && options.sessionPersistenceRoot !== undefined) {
+      const handle = await ctx.sessionPersistence.open(sessionId, 'read')
+      try {
+        events = (await handle.read()).events
+      } finally {
+        await handle.close()
+      }
+    }
     return {
       ...(options.inspectSharedSessions
         ? { meta: { cwd: sharedBotWorkingDirectory(sessionId), agentPreset: SHARED_BOT_AGENT_PRESET } }
         : {}),
-      events: agents.find(agent => agent.id === sessionId)?.session.snapshotEvents()
-        ?? persistedSessionSeeds.get(String(sessionId))
-        ?? persistedSessionEvents.get(String(sessionId))
-        ?? [],
+      events: events ?? [],
     }
   })
   const resolveAgent = vi.fn(async (sessionId: SessionId) => {
     let agent = agents.find(candidate => candidate.id === sessionId)
-    if (agent === undefined && shouldResumeColdSessions
-      && (persistedSessionSeeds.has(String(sessionId))
-        || persistedSessionEvents.has(String(sessionId)))) {
+    if (agent === undefined && shouldResumeColdSessions) {
       if (options.realAgent) {
         const seed = persistedSessionSeeds.get(String(sessionId))
           ?? persistedSessionEvents.get(String(sessionId))
-          ?? []
-        const handle = await ctx.agentLoop.createAgent(ctx, {
-          sessionId,
-          seed,
-          agentOptions: { provider: 'mock', model: 'mock' },
-        })
+        const handle = seed === undefined && options.sessionPersistenceRoot !== undefined
+          ? await ctx.agentLoop.resume(ctx, {
+            resumeSessionId: sessionId,
+            agentOptions: { provider: 'mock', model: 'mock' },
+          })
+          : await ctx.agentLoop.createAgent(ctx, {
+            sessionId,
+            seed: seed ?? [],
+            agentOptions: { provider: 'mock', model: 'mock' },
+          })
         agent = handle.agent
         agents.push(agent)
-      } else {
+      } else if (persistedSessionSeeds.has(String(sessionId)) || persistedSessionEvents.has(String(sessionId))) {
         agent = createAgent(String(sessionId))
         await ctx.serial('agent/created', { agent, source: 'resume' })
       }
@@ -1023,10 +1038,10 @@ describe('durable Bot roster', () => {
               content: [{ type: 'text', text: 'attributed title input' }],
               source: { kind: 'dsh-session-title-llm' },
             })],
-          })) { /* The audited auxiliary envelope is admitted. */ }
+          })) { /* An explicit shared Session without a matching Agent initiator is rejected. */ }
         }
-        await expect(directTitle()).resolves.toBeUndefined()
-        expect(h.adapter.requests).toHaveLength(1)
+        await expect(directTitle()).rejects.toThrow(/shared Bot Session.*LLM/i)
+        expect(h.adapter.requests).toHaveLength(0)
 
         const directAuxTools = async (): Promise<void> => {
           for await (const _chunk of h.ctx.llm.stream({
@@ -1043,7 +1058,7 @@ describe('durable Bot roster', () => {
           })) { /* The guard must reject before the adapter is reached. */ }
         }
         await expect(directAuxTools()).rejects.toThrow(/shared Bot Session.*LLM/i)
-        expect(h.adapter.requests).toHaveLength(1)
+        expect(h.adapter.requests).toHaveLength(0)
 
         const directEmptyAuxTools = async (): Promise<void> => {
           for await (const _chunk of h.ctx.llm.stream({
@@ -1057,10 +1072,10 @@ describe('durable Bot roster', () => {
               source: { kind: 'dsh-session-title-llm' },
             })],
             tools: [],
-          })) { /* Empty tool declarations remain an audited auxiliary envelope. */ }
+          })) { /* Empty tool declarations do not establish a trusted shared caller. */ }
         }
-        await expect(directEmptyAuxTools()).resolves.toBeUndefined()
-        expect(h.adapter.requests).toHaveLength(2)
+        await expect(directEmptyAuxTools()).rejects.toThrow(/shared Bot Session.*LLM/i)
+        expect(h.adapter.requests).toHaveLength(0)
 
         h.adapter.systemPromptUpdate = 'in-history'
         agent.followup(createUserMessage({
@@ -2118,31 +2133,37 @@ describe('durable Bot roster', () => {
   it('cold-restores a persisted shared Session without adding a migration turn', async () => {
     const sharedSessionId = SessionId('shared-session-cold-legacy-prompt')
     const pool = new MemoryMediaPool()
-    const first = await harness(
-      pool,
-      undefined,
-      undefined,
-      [String(sharedSessionId)],
-      new Map(),
-      new Map(),
-      true,
-      'native',
-      false,
-      {
-        connection: {
-          sharedRpc: {
-            enroll: vi.fn(() => async () => {}),
-            handle: vi.fn(() => async () => {}),
-          },
-        },
-      },
-    )
+    const persistenceRoot = await mkdtemp(join(tmpdir(), 'yh-bot-shared-cold-'))
+    let first: Awaited<ReturnType<typeof harness>> | undefined
     let firstClosed = false
     try {
+      first = await harness(
+        pool,
+        undefined,
+        undefined,
+        [String(sharedSessionId)],
+        new Map(),
+        new Map(),
+        true,
+        'native',
+        false,
+        {
+          connection: {
+            sharedRpc: {
+              enroll: vi.fn(() => async () => {}),
+              handle: vi.fn(() => async () => {}),
+            },
+          },
+          inspectSharedSessions: true,
+          realAgent: true,
+          realAgentInitialResponse: 'text',
+          sessionPersistenceRoot: persistenceRoot,
+        },
+      )
       const firstAgent = first.agents[0]
       if (firstAgent === undefined) throw new Error('cold legacy prompt Agent was not created')
       appendClosedLegacySystemMessage(firstAgent.session, 'PRIVATE_COLD_LEGACY_PROMPT')
-      const persisted = new Map<string, readonly SessionEvent[]>([[String(sharedSessionId), firstAgent.session.snapshotEvents()]])
+      expect(await first.ctx.sessions.flush(firstAgent.session)).toBe(true)
       const created = await first.service.create({ name: 'Cold legacy prompt owner', cwd: '/tmp' })
       const authority = await SharedAccessAuthority.create(first.ctx, first.credentials, {
         sessionMaxAgeMs: 60_000,
@@ -2164,7 +2185,7 @@ describe('durable Bot roster', () => {
         [],
         new Map(),
         records,
-        persisted,
+        true,
         'native',
         true,
         {
@@ -2177,9 +2198,7 @@ describe('durable Bot roster', () => {
           inspectSharedSessions: true,
           realAgent: true,
           realAgentInitialResponse: 'text',
-          beforeService: (ctx) => {
-            ctx.on('session/flush', () => true)
-          },
+          sessionPersistenceRoot: persistenceRoot,
         },
       )
       try {
@@ -2211,7 +2230,8 @@ describe('durable Bot roster', () => {
         await close(h.ctx)
       }
     } finally {
-      if (!firstClosed) await close(first.ctx)
+      if (first !== undefined && !firstClosed) await close(first.ctx)
+      await rm(persistenceRoot, { recursive: true, force: true })
     }
   })
 

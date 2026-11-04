@@ -1970,7 +1970,6 @@ export class BotService extends TypertRemoteService {
       if (sharedInitiator && sessionKey !== initiatorKey) throw new Error(SHARED_BOT_LLM_REJECTION)
       if (sessionKey !== undefined
         && this.sharedSessionIds.has(sessionKey)
-        && initiator !== undefined
         && initiatorKey !== sessionKey) {
         throw new Error(SHARED_BOT_LLM_REJECTION)
       }
