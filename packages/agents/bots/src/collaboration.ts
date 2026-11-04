@@ -279,58 +279,131 @@ function transcript(events: readonly SessionEvent[]): BotCollaborationTranscript
   // one message at a time is insufficient: a steering/private message can
   // follow either input in the same turn and the assistant may answer both.
   // Build the affected sets first, including compaction replacements that
-  // cite an earlier private message.
+  // cite an earlier private message. Older logs may omit turn markers, so
+  // retain each markerless segment until its assistant closes the turn and
+  // index every event in a tainted turn for retroactive descendants.
   const groupSourceSeqs = new Set<string>()
-  const groupTurns = new Set<number>()
   const routineSourceSeqs = new Set<string>()
-  const routineTurns = new Set<number>()
+  const taintedTurns = new Set<number>()
+  const taintedEventSeqs = new Set<string>()
+  const eventSeqsByTurn = new Map<number, Set<string>>()
+  const legacyEventSeqs = new Set<string>()
   let currentTurn: number | undefined
-  let groupWithoutTurn = false
-  let routineWithoutTurn = false
+  let lastLegacyAssistantTurn: number | undefined
+  let legacySegmentTainted = false
+
+  const markTaintedEvents = (seqs: Iterable<string>): void => {
+    for (const seq of seqs) taintedEventSeqs.add(seq)
+  }
+
+  const markTurnEvents = (turn: number): void => {
+    markTaintedEvents(eventSeqsByTurn.get(turn) ?? [])
+  }
+
+  const closeLegacySegment = (failClosedForTaintedTurn: boolean): void => {
+    if (legacySegmentTainted
+      || (failClosedForTaintedTurn
+        && lastLegacyAssistantTurn !== undefined
+        && taintedTurns.has(lastLegacyAssistantTurn))) {
+      markTaintedEvents(legacyEventSeqs)
+    }
+    legacyEventSeqs.clear()
+    legacySegmentTainted = false
+  }
   for (const event of events) {
     if (event.type === 'turn/start') {
+      closeLegacySegment(true)
       currentTurn = event.data.turn
+      const turnSeqs = eventSeqsByTurn.get(currentTurn) ?? new Set<string>()
+      turnSeqs.add(String(event.seq))
+      eventSeqsByTurn.set(currentTurn, turnSeqs)
+      lastLegacyAssistantTurn = undefined
       continue
     }
     if (event.type === 'turn/end') {
-      if (currentTurn === event.data.turn) currentTurn = undefined
+      if (currentTurn === event.data.turn) {
+        const turnSeqs = eventSeqsByTurn.get(event.data.turn) ?? new Set<string>()
+        turnSeqs.add(String(event.seq))
+        eventSeqsByTurn.set(event.data.turn, turnSeqs)
+        currentTurn = undefined
+        lastLegacyAssistantTurn = undefined
+        closeLegacySegment(true)
+      } else if (currentTurn === undefined) {
+        legacyEventSeqs.add(String(event.seq))
+        closeLegacySegment(true)
+        lastLegacyAssistantTurn = undefined
+      }
       continue
     }
+    const eventSeq = String(event.seq)
+    if (currentTurn === undefined) legacyEventSeqs.add(eventSeq)
+    else {
+      const turnSeqs = eventSeqsByTurn.get(currentTurn) ?? new Set<string>()
+      turnSeqs.add(eventSeq)
+      eventSeqsByTurn.set(currentTurn, turnSeqs)
+    }
+    if (currentTurn !== undefined && taintedTurns.has(currentTurn)) markTaintedEvents([eventSeq])
+    if (currentTurn === undefined && legacySegmentTainted) markTaintedEvents([eventSeq])
     if (event.type === 'assistant/message') {
-      if (groupWithoutTurn) {
-        groupTurns.add(event.data.turn)
-        groupWithoutTurn = false
+      const sameTaintedLegacyTurn = currentTurn === undefined
+        && lastLegacyAssistantTurn === event.data.turn
+        && taintedTurns.has(event.data.turn)
+      if (currentTurn === undefined && (legacySegmentTainted || sameTaintedLegacyTurn)) {
+        taintedTurns.add(event.data.turn)
+        markTaintedEvents(legacyEventSeqs)
       }
-      if (routineWithoutTurn) {
-        routineTurns.add(event.data.turn)
-        routineWithoutTurn = false
-      }
+      legacyEventSeqs.clear()
+      legacySegmentTainted = false
+      lastLegacyAssistantTurn = currentTurn === undefined ? event.data.turn : undefined
+      if (taintedTurns.has(event.data.turn)) markTaintedEvents([eventSeq])
       continue
     }
     if (event.type !== 'user/message') continue
+    const seq = eventSeq
     const citesGroup = event.data.source.kind === 'bot-group-message'
       || event.sourceEventSeqs?.some(seq => groupSourceSeqs.has(String(seq))) === true
     if (citesGroup) {
-      groupSourceSeqs.add(String(event.seq))
-      if (currentTurn === undefined) groupWithoutTurn = true
-      else groupTurns.add(currentTurn)
+      groupSourceSeqs.add(seq)
+      if (currentTurn === undefined) legacySegmentTainted = true
+      else {
+        taintedTurns.add(currentTurn)
+        markTurnEvents(currentTurn)
+      }
     }
     const citesRoutine = event.data.source.kind === 'bot-event-routine'
       || event.sourceEventSeqs?.some(seq => routineSourceSeqs.has(String(seq))) === true
     if (citesRoutine) {
-      routineSourceSeqs.add(String(event.seq))
-      if (currentTurn === undefined) routineWithoutTurn = true
-      else routineTurns.add(currentTurn)
+      routineSourceSeqs.add(seq)
+      if (currentTurn === undefined) legacySegmentTainted = true
+      else {
+        taintedTurns.add(currentTurn)
+        markTurnEvents(currentTurn)
+      }
     }
+    const citesTainted = event.sourceEventSeqs?.some((sourceSeq) => {
+      const source = String(sourceSeq)
+      return taintedEventSeqs.has(source)
+    }) === true
+    if (citesTainted) {
+      if (currentTurn === undefined) legacySegmentTainted = true
+      else {
+        taintedTurns.add(currentTurn)
+        markTurnEvents(currentTurn)
+      }
+    }
+    if (currentTurn !== undefined && taintedTurns.has(currentTurn)) markTaintedEvents([seq])
+    if (currentTurn === undefined && legacySegmentTainted) markTaintedEvents(legacyEventSeqs)
   }
+  closeLegacySegment(true)
   const entries = events.flatMap((event): BotCollaborationTranscriptEntry[] => {
     if (event.type === 'user/message') {
+      const seq = String(event.seq)
       const text = textFromContent(event.data.content)
-      if (groupSourceSeqs.has(String(event.seq)) || routineSourceSeqs.has(String(event.seq))) return []
+      if (taintedEventSeqs.has(seq)) return []
       return text === '' ? [] : [{ role: 'user', text: text.slice(0, MAX_TRANSCRIPT_TEXT) }]
     }
     if (event.type === 'assistant/message') {
-      if (groupTurns.has(event.data.turn) || routineTurns.has(event.data.turn)) return []
+      if (taintedEventSeqs.has(String(event.seq)) || taintedTurns.has(event.data.turn)) return []
       const text = textFromContent(event.data.message.content)
       return text === '' ? [] : [{ role: 'assistant', text: text.slice(0, MAX_TRANSCRIPT_TEXT) }]
     }
