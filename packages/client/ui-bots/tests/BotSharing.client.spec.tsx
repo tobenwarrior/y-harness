@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { brandString } from '@yharness/brand'
 import { BotId, BotPrincipalId, BotShareMemoryId } from '@yharness/bots/client'
 import type { BotGroupId, BotGroupMessageId, BotGroupMessageView, BotGroupView } from '@yharness/bots/client'
@@ -12,6 +12,26 @@ import type { SharedBotsClient } from '../src/client/shared-client.ts'
 import type { BotSummary } from '../src/client/types.ts'
 
 afterEach(cleanup)
+
+const originalLocksDescriptor = Object.getOwnPropertyDescriptor(navigator, 'locks')
+const lockRequest = <T,>(_name: string, callback: () => Promise<T>): Promise<T> => callback()
+
+beforeAll(() => {
+  Object.defineProperty(navigator, 'locks', {
+    configurable: true,
+    value: { request: lockRequest },
+  })
+})
+beforeEach(() => {
+  for (let index = window.localStorage.length - 1; index >= 0; index -= 1) {
+    const key = window.localStorage.key(index)
+    if (key?.startsWith('yharness.client-ui-bots.shared-group-pending')) window.localStorage.removeItem(key)
+  }
+})
+afterAll(() => {
+  if (originalLocksDescriptor === undefined) Reflect.deleteProperty(navigator, 'locks')
+  else Object.defineProperty(navigator, 'locks', originalLocksDescriptor)
+})
 
 const t = makeTranslate(en)
 type CompleteBotSummary = BotSummary & Required<Pick<BotSummary, 'identity' | 'accent'>>
@@ -53,6 +73,7 @@ function ownerActions(overrides: Partial<BotShareActions> = {}): BotShareActions
 
 function sharedClient(overrides: Partial<SharedBotsClient> = {}): SharedBotsClient {
   return {
+    retryScope: 'principal-member',
     enroll: vi.fn().mockResolvedValue({ ok: true, value: { principalId: 'principal-member', expiresAt: 2_000 } }),
     list: vi.fn().mockResolvedValue({ ok: true, value: { bots: [{ ...bot, role: 'collaborator' }] } }),
     readProfile: vi.fn().mockResolvedValue({ ok: true, value: { bot } }),
@@ -383,7 +404,7 @@ describe('shared Bot collaboration surfaces', () => {
     await waitFor(() => { expect(screen.getByRole('button', { name: 'Create shared group' })).toBeTruthy() })
     fireEvent.click(screen.getByRole('button', { name: 'Create shared group' }))
     const dialog = screen.getByRole('dialog', { name: 'Create a shared group' })
-    expect(within(dialog).getByText('Create or request a Bot invite for each selected Bot, redeem those invites above, then choose two to six Bots. A group invite only grants room access.')).toBeTruthy()
+    expect(within(dialog).getByText('Create or request a Bot invite for each selected Bot, redeem every invite above, then choose two to six Bots. The group owner must be a member of every selected Bot; a group invite only grants room access.')).toBeTruthy()
     fireEvent.change(within(dialog).getByRole('textbox', { name: 'Group name' }), { target: { value: 'Launch room' } })
     fireEvent.click(within(dialog).getByRole('checkbox', { name: bot.name }))
     fireEvent.click(within(dialog).getByRole('checkbox', { name: analystBot.name }))
@@ -466,7 +487,8 @@ describe('shared Bot collaboration surfaces', () => {
     const firstRequest = createGroup.mock.calls[0]?.[0] as { readonly id?: string }
     expect(firstRequest.id).toMatch(/^bot-group-/)
 
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Create shared group' }))
+    await waitFor(() => { expect(within(dialog).getByRole('button', { name: 'Recover' })).toBeTruthy() })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Recover' }))
     await waitFor(() => {
       expect(createGroup).toHaveBeenCalledTimes(2)
       expect(createGroup.mock.calls[1]?.[0].id).toBe(firstRequest.id)
@@ -508,6 +530,53 @@ describe('shared Bot collaboration surfaces', () => {
       expect(sendGroupMessage).toHaveBeenCalledTimes(2)
       expect(sendGroupMessage.mock.calls[1]?.[0].messageId).toBe(firstRequest.messageId)
     })
+  })
+
+  it('resends the same shared message id after a partial delivery', async () => {
+    const group = {
+      id: brandString<BotGroupId>('bot-group-message-partial'),
+      name: 'Partial message room',
+      botIds: [BotId(bot.id), BotId(analystBot.id)],
+      bots: [
+        { id: BotId(bot.id), name: bot.name, identity: bot.identity, accent: bot.accent, state: 'active' as const, availability: 'idle' as const },
+        { id: BotId(analystBot.id), name: analystBot.name, identity: analystBot.identity, accent: analystBot.accent, state: 'active' as const, availability: 'idle' as const },
+      ],
+      createdAt: 1,
+      updatedAt: 1,
+    } satisfies BotGroupView
+    const existingMessage: { current: BotGroupMessageView | undefined } = { current: undefined }
+    const sendGroupMessage = vi.fn()
+      .mockImplementationOnce(async (request) => {
+        existingMessage.current = {
+          id: request.messageId!,
+          groupId: group.id,
+          sender: { kind: 'user' as const },
+          text: request.text,
+          createdAt: 2,
+        }
+        return { ok: true as const, value: { messageId: request.messageId!, status: 'partial' as const, deliveries: [] } }
+      })
+      .mockResolvedValueOnce({ ok: true, value: { messageId: brandString<BotGroupMessageId>('bot-group-message-partial'), status: 'accepted', deliveries: [] } })
+    const client = sharedClient({
+      listGroups: vi.fn().mockResolvedValue({ ok: true, value: { groups: [group] } }),
+      inspectGroup: vi.fn().mockImplementation(async () => ({
+        ok: true as const,
+        value: { group, messages: existingMessage.current === undefined ? [] : [existingMessage.current] },
+      })),
+      sendGroupMessage,
+    })
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+
+    await waitFor(() => { expect(screen.getByPlaceholderText('Message Partial message room')).toBeTruthy() })
+    fireEvent.change(screen.getByPlaceholderText('Message Partial message room'), { target: { value: 'Retry the partial update' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send to group' }))
+    await waitFor(() => { expect(sendGroupMessage).toHaveBeenCalledOnce() })
+    const firstMessageId = sendGroupMessage.mock.calls[0]?.[0].messageId
+    await waitFor(() => { expect(screen.getByRole('alert').textContent).toContain('The group message could not be sent. Try again.') })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Send to group' }))
+    await waitFor(() => { expect(sendGroupMessage).toHaveBeenCalledTimes(2) })
+    expect(sendGroupMessage.mock.calls[1]?.[0].messageId).toBe(firstMessageId)
   })
 
   it('does not leave a group invite busy after switching groups', async () => {
@@ -598,6 +667,14 @@ describe('shared Bot collaboration surfaces', () => {
     })
     expect(screen.queryByRole('button', { name: /Created after cancel/ })).toBeNull()
     expect(screen.getByRole('button', { name: /Existing room/ })).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Create shared group' }))
+    const reopenedDialog = screen.getByRole('dialog', { name: 'Create a shared group' })
+    await waitFor(() => { expect(within(reopenedDialog).getByRole('button', { name: 'Recover' })).toBeTruthy() })
+    expect(within(reopenedDialog).getByText(/Created after cancel/)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /Created after cancel/ })).toBeNull()
+    fireEvent.click(within(reopenedDialog).getByRole('button', { name: 'Discard' }))
+    await waitFor(() => { expect(within(reopenedDialog).queryByText(/Created after cancel/)).toBeNull() })
   })
 
   it('does not let a cancelled create close a newly reopened dialog', async () => {
@@ -683,18 +760,15 @@ describe('shared Bot collaboration surfaces', () => {
     await waitFor(() => { expect(screen.getByRole('button', { name: 'Create shared group' })).toBeTruthy() })
     fireEvent.click(screen.getByRole('button', { name: 'Create shared group' }))
     dialog = screen.getByRole('dialog', { name: 'Create a shared group' })
-    fireEvent.change(within(dialog).getByRole('textbox', { name: 'Group name' }), { target: { value: 'Persisted room' } })
-    fireEvent.click(within(dialog).getByRole('checkbox', { name: bot.name }))
-    fireEvent.click(within(dialog).getByRole('checkbox', { name: analystBot.name }))
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Create shared group' }))
+    await waitFor(() => { expect(within(dialog).getByRole('button', { name: 'Recover' })).toBeTruthy() })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Recover' }))
 
     await waitFor(() => {
       expect(createGroup).toHaveBeenCalledOnce()
       expect(listGroups.mock.calls.length).toBeGreaterThan(1)
       expect(screen.getByRole('button', { name: /Persisted room/ })).toBeTruthy()
     })
-    expect(localStorage.getItem('yharness.client-ui-bots.pending-shared-group-operations')).toBe('{"creations":{},"messages":{}}')
-    localStorage.clear()
+    expect(screen.queryByText('Interrupted group creation')).toBeNull()
   })
 
   it('reconciles a persisted shared-group message after reopening', async () => {
@@ -711,7 +785,9 @@ describe('shared Bot collaboration surfaces', () => {
       updatedAt: 1,
     } satisfies BotGroupView
     const existingMessage: { current: BotGroupMessageView | undefined } = { current: undefined }
-    const sendGroupMessage = vi.fn().mockRejectedValueOnce(new Error('connection closed after commit'))
+    const sendGroupMessage = vi.fn()
+      .mockRejectedValueOnce(new Error('connection closed after commit'))
+      .mockResolvedValue({ ok: true, value: { messageId: brandString<BotGroupMessageId>('bot-group-message-persisted-message'), status: 'accepted', deliveries: [] } })
     const inspectGroup = vi.fn().mockImplementation(async () => ({
       ok: true as const,
       value: { group, messages: existingMessage.current === undefined ? [] : [existingMessage.current] },
@@ -742,10 +818,8 @@ describe('shared Bot collaboration surfaces', () => {
     await waitFor(() => { expect(screen.getByPlaceholderText('Message Persisted message room')).toBeTruthy() })
     fireEvent.change(screen.getByPlaceholderText('Message Persisted message room'), { target: { value: 'Persist this update' } })
     fireEvent.click(screen.getByRole('button', { name: 'Send to group' }))
-    await waitFor(() => { expect(screen.getByText('Persist this update')).toBeTruthy() })
-    expect(sendGroupMessage).toHaveBeenCalledOnce()
-    expect(localStorage.getItem('yharness.client-ui-bots.pending-shared-group-operations')).toBe('{"creations":{},"messages":{}}')
-    localStorage.clear()
+    await waitFor(() => { expect(sendGroupMessage).toHaveBeenCalledTimes(2) })
+    expect(sendGroupMessage.mock.calls[1]?.[0].messageId).toBe(firstId)
   })
 
   it('shows and sends a collaborator group without mixing private transcript data', async () => {

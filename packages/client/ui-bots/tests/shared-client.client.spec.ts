@@ -41,5 +41,18 @@ describe('shared Bot client capabilities', () => {
       ok: true,
       value: { principalId: 'principal-member', groupId: 'bot-group-shared' },
     })
+    expect(client.retryScope).toBe('principal-member')
+  })
+
+  it('rejects an enrollment response without a server-issued principal id', async () => {
+    const rpc: ClientConnectionRpc = {
+      call: vi.fn(async () => ({ ok: true as const, value: { principalId: 'operator', expiresAt: 2_000 } })),
+    }
+    const client = createSharedBotsClient(rpc)
+    await expect(client.enroll('bad-code')).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'gateway/invalid-response' },
+    })
+    expect(client.retryScope).toBeUndefined()
   })
 })

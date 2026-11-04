@@ -503,6 +503,7 @@ describe('Bot roster and detail', () => {
 
   it('keeps the shared-Bot join action reachable in the collapsed rail', async () => {
     const sharedClient: SharedBotsClient = {
+      retryScope: undefined,
       enroll: vi.fn<SharedBotsClient['enroll']>().mockRejectedValue(new Error('unused test operation')),
       list: vi.fn<SharedBotsClient['list']>().mockResolvedValue({ ok: true, value: { bots: [] } }),
       readProfile: vi.fn<SharedBotsClient['readProfile']>().mockRejectedValue(new Error('unused test operation')),

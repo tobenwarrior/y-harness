@@ -140,6 +140,8 @@ export interface SharedBotGroupRevokeValue {
 export interface SharedBotsClient {
   /** Redeem an owner-issued invite; the response stores an HttpOnly cookie. */
   readonly enroll: (code: string) => Promise<SharedBotClientResult<SharedBotEnrollmentValue>>
+  /** Server-issued principal scope used to partition durable browser retry state. */
+  readonly retryScope: string | undefined
   /** Discover Bots visible to the authenticated collaborator. */
   readonly list: () => Promise<SharedBotClientResult<{ readonly bots: readonly BotShareRosterEntry[] }>>
   /** Read one safe shared Bot profile. */
@@ -178,6 +180,7 @@ export interface SharedBotsClient {
  * @returns shared-Bot operations using the dedicated channel only.
  */
 export function createSharedBotsClient(rpc: ClientConnectionRpc): SharedBotsClient {
+  let retryScope: string | undefined
   const call = async <T>(
     endpoint: string,
     payload: unknown,
@@ -197,8 +200,15 @@ export function createSharedBotsClient(rpc: ClientConnectionRpc): SharedBotsClie
     return { ok: true, value }
   }
 
+  const enroll = async (code: string): Promise<SharedBotClientResult<SharedBotEnrollmentValue>> => {
+    const result = await call('bots/share/enroll', { code }, parseEnrollment)
+    if (result.ok) retryScope = result.value.principalId
+    return result
+  }
+
   return {
-    enroll: code => call('bots/share/enroll', { code }, parseEnrollment),
+    get retryScope(): string | undefined { return retryScope },
+    enroll,
     list: () => call('bots/share/list', {}, parseRoster),
     readProfile: botId => call('bots/share/read-profile', { botId }, parseProfileValue),
     readPrivateChat: botId => call('bots/share/read-private-chat', { botId }, parsePrivateChat),
@@ -218,7 +228,7 @@ export function createSharedBotsClient(rpc: ClientConnectionRpc): SharedBotsClie
 }
 
 function parseEnrollment(value: unknown): SharedBotEnrollmentValue | undefined {
-  if (!isRecord(value) || typeof value.principalId !== 'string' || !isSafeInteger(value.expiresAt)) return undefined
+  if (!isRecord(value) || typeof value.principalId !== 'string' || !/^principal-[A-Za-z0-9-]+$/.test(value.principalId) || !isSafeInteger(value.expiresAt)) return undefined
   if (value.groupId !== undefined && (typeof value.groupId !== 'string' || !/^bot-group-[A-Za-z0-9][A-Za-z0-9-]*$/.test(value.groupId))) return undefined
   return {
     principalId: value.principalId,
