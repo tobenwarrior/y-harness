@@ -676,6 +676,11 @@ interface BotProfileRevisionState {
 
 type BotProfileSnapshot = zod.infer<typeof botProfileSnapshotSchema>
 
+const BOT_PROFILE_COMPLETE_FIELDS: readonly (keyof BotProfileSnapshot)[] = [
+  'roster', 'name', 'persona', 'capabilities', 'identity', 'accent',
+  'pendingMemoryUpdate', 'pinned', 'hidden', 'group', 'updatedAt',
+]
+
 function profileValuesEqual(left: unknown, right: unknown): boolean {
   return JSON.stringify(left) === JSON.stringify(right)
 }
@@ -763,9 +768,14 @@ function legacyPendingWasApplied(
   const id = String(pending.record.id)
   const revision = current.revisions[id]
   if (revision === undefined || revision < pending.record.updatedAt) return false
-  if (revision > pending.record.updatedAt) return true
   const profile = current.profiles[id]
   if (profile === undefined) throw new Error('Bot profile revision cannot acknowledge a legacy pending transaction')
+  if (revision > pending.record.updatedAt) {
+    // A newer revision supersedes the pending row only when its required fields are present.
+    const complete = BOT_PROFILE_COMPLETE_FIELDS.every(field => Object.hasOwn(profile, field))
+    if (!complete) throw new Error('Bot profile revision cannot acknowledge a legacy pending transaction')
+    return true
+  }
   const expected = profileSnapshotOf(pending.record)
   const fields: readonly (keyof BotProfileSnapshot)[] = [
     'roster', 'name', 'description', 'persona', 'capabilities', 'identity', 'accent', 'avatar',

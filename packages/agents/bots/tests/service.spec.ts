@@ -4625,6 +4625,74 @@ describe('durable Bot roster', () => {
     }
   })
 
+  it('fails closed when a newer routine-only v2 revision cannot evidence a pending setup write', async () => {
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const h = await harness(new MemoryMediaPool(), undefined, undefined, [], new Map(), records)
+    const created = await h.service.create({ name: 'Newer routine evidence', cwd: '/tmp' })
+    const id = String(created.bot.id)
+    const legacyKey = credentialKey('agent-bots', 'profile-revisions')
+    const currentKey = credentialKey('agent-bots', 'profile-revisions-v2')
+    const pendingRecord: BotRecord = {
+      ownerId: 'local-owner',
+      id: created.bot.id,
+      sessionId: created.bot.sessionId,
+      name: 'Pending setup write',
+      identity: created.bot.identity,
+      accent: created.bot.accent,
+      cwd: created.bot.cwd,
+      state: created.bot.state,
+      createdAt: created.bot.createdAt,
+      updatedAt: created.bot.updatedAt + 1,
+    }
+    const legacy: CredentialRecord = {
+      kind: 'grant',
+      payload: {
+        version: 1,
+        revisions: { [id]: created.bot.updatedAt },
+        profiles: { [id]: {
+          name: created.bot.name,
+          identity: created.bot.identity,
+          accent: created.bot.accent,
+          updatedAt: created.bot.updatedAt,
+        } },
+        pending: { transactionId: 'pending-v1-newer-routine-evidence', record: pendingRecord },
+      },
+    }
+    const current: CredentialRecord = {
+      kind: 'grant',
+      payload: {
+        version: 2,
+        revisions: { [id]: pendingRecord.updatedAt + 1 },
+        profiles: { [id]: {
+          name: created.bot.name,
+          identity: created.bot.identity,
+          accent: created.bot.accent,
+          timedRoutines: [{
+            record: {
+              id: 'schedule-newer-routine-evidence',
+              kind: 'every',
+              title: 'Newer routine',
+              prompt: 'Check the newer routine.',
+              everySeconds: 3_600,
+              scheduledAt: '2099-01-01T00:00:00.000Z',
+            },
+            sessionId: String(created.bot.sessionId),
+            status: 'active',
+          }],
+          timedRoutinesUpdatedAt: pendingRecord.updatedAt + 1,
+          updatedAt: pendingRecord.updatedAt + 1,
+        } },
+      },
+    }
+    records.set(legacyKey, legacy)
+    records.set(currentKey, current)
+    try {
+      await expect(h.service.list({})).rejects.toThrow('cannot acknowledge')
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
   it('fails closed when same-revision v2 evidence restores omitted description or avatar', async () => {
     const records = new Map<CredentialKey, CredentialRecord>()
     const h = await harness(new MemoryMediaPool(), undefined, undefined, [], new Map(), records)
