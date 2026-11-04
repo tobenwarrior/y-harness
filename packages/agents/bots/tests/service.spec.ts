@@ -3957,6 +3957,228 @@ describe('durable Bot roster', () => {
     }
   })
 
+  it('reconciles a durable recipient admission after a new Host observes the flushed Session', async () => {
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const created = await seed.service.create({ name: 'Recipient crash after flush', cwd: '/tmp' })
+    await close(seed.ctx)
+
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const sessionId = SessionId('shared-session-group-recipient-crash-after-flush')
+    const groupId = BotGroupId('bot-group-recipient-crash-after-flush')
+    const messageId = BotGroupMessageId('bot-group-message-recipient-crash-after-flush')
+    const token = 'recipient-crash-after-flush-token'
+    records.set(credentialKey('agent-bots', 'shared-group-message-deliveries'), {
+      kind: 'grant',
+      payload: {
+        version: 1,
+        messages: [{
+          targetSessionId: String(sessionId),
+          messageId: String(messageId),
+          status: 'pending',
+          claimToken: token,
+          claimLeaseUntil: Number.MAX_SAFE_INTEGER,
+          admissionToken: token,
+          admissionStartedAt: 1,
+        }],
+      },
+    })
+    const h = await harness(
+      pool,
+      undefined,
+      undefined,
+      [String(sessionId)],
+      new Map(),
+      records,
+      true,
+      'native',
+      false,
+      { inspectSharedSessions: true },
+    )
+    try {
+      const agent = h.agents[0]
+      if (agent === undefined) throw new Error('crash-after-flush recipient Agent was not created')
+      agent.session.append('user/message', freezeMessage({
+        id: MessageId(String(messageId)),
+        role: 'user',
+        content: [{ type: 'text', text: 'Already flushed before the Host crashed.' }],
+        source: { kind: 'bot-group-message', groupId, messageId },
+      }), { surfaceOp: 'append' })
+      const binding: SharedGroupSessionBinding = {
+        groupId,
+        botId: created.bot.id,
+        sessionId,
+        createdAt: 1,
+        updatedAt: 1,
+      }
+      const host = productionSharedHost(h.service)
+      host.registerSharedGroupSessions?.([binding])
+
+      await expect(host.deliverSharedGroup?.({
+        groupId,
+        groupName: 'Recipient crash after flush',
+        targetBotId: created.bot.id,
+        sessionId,
+        text: 'Already flushed before the Host crashed.',
+        messageId,
+      })).resolves.toBe('duplicate')
+      expect(h.followups[0]).not.toHaveBeenCalled()
+      expect(records.get(credentialKey('agent-bots', 'shared-group-message-deliveries'))).toMatchObject({
+        payload: { messages: [{ status: 'accepted' }] },
+      })
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('keeps a crash-before-flush recipient fence busy when no durable Session receipt exists', async () => {
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const created = await seed.service.create({ name: 'Recipient crash before flush', cwd: '/tmp' })
+    await close(seed.ctx)
+
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const sessionId = SessionId('shared-session-group-recipient-crash-before-flush')
+    const groupId = BotGroupId('bot-group-recipient-crash-before-flush')
+    const messageId = BotGroupMessageId('bot-group-message-recipient-crash-before-flush')
+    const token = 'recipient-crash-before-flush-token'
+    const deliveryKey = credentialKey('agent-bots', 'shared-group-message-deliveries')
+    records.set(deliveryKey, {
+      kind: 'grant',
+      payload: {
+        version: 1,
+        messages: [{
+          targetSessionId: String(sessionId),
+          messageId: String(messageId),
+          status: 'pending',
+          claimToken: token,
+          claimLeaseUntil: Number.MAX_SAFE_INTEGER,
+          admissionToken: token,
+          admissionStartedAt: 1,
+        }],
+      },
+    })
+    const h = await harness(
+      pool,
+      undefined,
+      undefined,
+      [String(sessionId)],
+      new Map(),
+      records,
+      true,
+      'native',
+      false,
+      { inspectSharedSessions: true },
+    )
+    try {
+      const binding: SharedGroupSessionBinding = {
+        groupId,
+        botId: created.bot.id,
+        sessionId,
+        createdAt: 1,
+        updatedAt: 1,
+      }
+      const host = productionSharedHost(h.service)
+      host.registerSharedGroupSessions?.([binding])
+      const before = Date.now()
+      const result = await host.deliverSharedGroup?.({
+        groupId,
+        groupName: 'Recipient crash before flush',
+        targetBotId: created.bot.id,
+        sessionId,
+        text: 'Cannot prove this was flushed.',
+        messageId,
+      })
+      if (result === undefined || typeof result === 'string') throw new Error('missing crash-before-flush busy result')
+      expect(result.kind).toBe('busy')
+      expect(result.retryAt).toBeGreaterThanOrEqual(before)
+      expect(h.followups[0]).not.toHaveBeenCalled()
+      expect(records.get(deliveryKey)).toMatchObject({
+        payload: { messages: [{ status: 'pending', admissionToken: token }] },
+      })
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('retries a transient recipient Session inspection before accepting a later durable receipt', async () => {
+    vi.useFakeTimers()
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const created = await seed.service.create({ name: 'Recipient inspection retry', cwd: '/tmp' })
+    await close(seed.ctx)
+
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const sessionId = SessionId('shared-session-group-recipient-inspection-retry')
+    const groupId = BotGroupId('bot-group-recipient-inspection-retry')
+    const messageId = BotGroupMessageId('bot-group-message-recipient-inspection-retry')
+    const token = 'recipient-inspection-retry-token'
+    records.set(credentialKey('agent-bots', 'shared-group-message-deliveries'), {
+      kind: 'grant',
+      payload: {
+        version: 1,
+        messages: [{
+          targetSessionId: String(sessionId),
+          messageId: String(messageId),
+          status: 'pending',
+          claimToken: token,
+          claimLeaseUntil: Number.MAX_SAFE_INTEGER,
+          admissionToken: token,
+          admissionStartedAt: 1,
+        }],
+      },
+    })
+    const h = await harness(
+      pool,
+      undefined,
+      undefined,
+      [String(sessionId)],
+      new Map(),
+      records,
+      true,
+      'native',
+      false,
+      { inspectSharedSessions: true },
+    )
+    try {
+      const binding: SharedGroupSessionBinding = {
+        groupId,
+        botId: created.bot.id,
+        sessionId,
+        createdAt: 1,
+        updatedAt: 1,
+      }
+      const host = productionSharedHost(h.service)
+      host.registerSharedGroupSessions?.([binding])
+      h.inspect.mockRejectedValueOnce(new Error('temporary Session inspection outage'))
+      const request = {
+        groupId,
+        groupName: 'Recipient inspection retry',
+        targetBotId: created.bot.id,
+        sessionId,
+        text: 'Retry after inspection recovers.',
+        messageId,
+      }
+      await expect(host.deliverSharedGroup?.(request)).resolves.toMatchObject({ kind: 'busy' })
+      const agent = h.agents[0]
+      if (agent === undefined) throw new Error('inspection-retry recipient Agent was not created')
+      agent.session.append('user/message', freezeMessage({
+        id: MessageId(String(messageId)),
+        role: 'user',
+        content: [{ type: 'text', text: request.text }],
+        source: { kind: 'bot-group-message', groupId, messageId },
+      }), { surfaceOp: 'append' })
+      await vi.advanceTimersByTimeAsync(1_000)
+      expect(records.get(credentialKey('agent-bots', 'shared-group-message-deliveries'))).toMatchObject({
+        payload: { messages: [{ status: 'accepted' }] },
+      })
+      expect(h.followups[0]).not.toHaveBeenCalled()
+    } finally {
+      await close(h.ctx)
+      vi.useRealTimers()
+    }
+  })
+
   it('does not enqueue twice when a recipient takeover races a blocked flush', async () => {
     const pool = new MemoryMediaPool()
     const seed = await harness(pool)
@@ -4029,6 +4251,87 @@ describe('durable Bot roster', () => {
     } finally {
       await close(right.ctx)
       await close(left.ctx)
+    }
+  })
+
+  it('does not clear a newer in-memory recipient marker during old admission reconciliation', async () => {
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const created = await seed.service.create({ name: 'Recipient marker identity', cwd: '/tmp' })
+    await close(seed.ctx)
+
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const sessionId = SessionId('shared-session-group-recipient-marker-identity')
+    const groupId = BotGroupId('bot-group-recipient-marker-identity')
+    const oldMessageId = BotGroupMessageId('bot-group-message-recipient-marker-old')
+    const newerMessageId = BotGroupMessageId('bot-group-message-recipient-marker-new')
+    const oldToken = 'recipient-marker-old-token'
+    const newerToken = 'recipient-marker-new-token'
+    const deliveryKey = credentialKey('agent-bots', 'shared-group-message-deliveries')
+    records.set(deliveryKey, {
+      kind: 'grant',
+      payload: {
+        version: 1,
+        messages: [{
+          targetSessionId: String(sessionId),
+          messageId: String(oldMessageId),
+          status: 'pending',
+          claimToken: oldToken,
+          claimLeaseUntil: Number.MAX_SAFE_INTEGER,
+          admissionToken: oldToken,
+          admissionStartedAt: 1,
+        }],
+      },
+    })
+    const h = await harness(
+      pool,
+      undefined,
+      undefined,
+      [String(sessionId)],
+      new Map(),
+      records,
+      true,
+      'native',
+      false,
+      { inspectSharedSessions: true },
+    )
+    try {
+      const agent = h.agents[0]
+      if (agent === undefined) throw new Error('marker identity recipient Agent was not created')
+      const host = productionSharedHost(h.service)
+      host.registerSharedGroupSessions?.([{
+        groupId,
+        botId: created.bot.id,
+        sessionId,
+        createdAt: 1,
+        updatedAt: 1,
+      }])
+      type PendingMarker = {
+        readonly messageId: BotGroupMessageId
+        readonly token: string
+        readonly agent: Pick<Agent, 'id' | 'followup' | 'cancel' | 'whenIdle'>
+      }
+      const pendingMessages = Reflect.get(h.service, 'sharedGroupPendingMessages') as Map<string, PendingMarker>
+      pendingMessages.set(String(sessionId), { messageId: newerMessageId, token: newerToken, agent })
+      const descriptor = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(h.service), 'reconcileSharedGroupDeliveryAdmission')
+      if (descriptor === undefined || typeof descriptor.value !== 'function') {
+        throw new Error('recipient admission reconciliation is not available')
+      }
+      const reconcile = descriptor.value as (this: BotService, request: Parameters<NonNullable<SharedBotHost['deliverSharedGroup']>>[0], token: string, options: { readonly releaseWithoutReceipt: boolean }) => Promise<string>
+      await expect(reconcile.call(h.service, {
+        groupId,
+        groupName: 'Recipient marker identity',
+        targetBotId: created.bot.id,
+        sessionId,
+        text: 'Old admission has no durable receipt.',
+        messageId: oldMessageId,
+      }, oldToken, { releaseWithoutReceipt: true })).resolves.toBe('released')
+      expect(pendingMessages.get(String(sessionId))).toMatchObject({
+        messageId: newerMessageId,
+        token: newerToken,
+      })
+    } finally {
+      await close(h.ctx)
     }
   })
 

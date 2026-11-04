@@ -54,7 +54,7 @@ import type {
   BotMemoryRecord,
   BotMemoryRememberRequest,
 } from './memory.ts'
-import { BotGroupService, botGroupDomain } from './group-chat.ts'
+import { BotGroupMessageId, BotGroupService, botGroupDomain } from './group-chat.ts'
 import type {
   BotGroupCreateRequest,
   BotGroupCreateValue,
@@ -68,7 +68,6 @@ import type {
   BotGroupSendRemoteRequest,
   BotGroupSendValue,
   BotGroupId,
-  BotGroupMessageId,
 } from './group-chat.ts'
 import { createBotNativeToolProvider } from './native-tools.ts'
 import type { BotNativeToolHost } from './native-tools.ts'
@@ -509,6 +508,9 @@ const MAX_BOT_MESSAGE_DELIVERIES = 4_096
 const SHARED_GROUP_MESSAGE_DELIVERY_LEASE_MS = 30_000
 const SHARED_GROUP_MESSAGE_DELIVERY_TIMEOUT_MS = 15_000
 const SHARED_GROUP_MESSAGE_DELIVERY_ADMISSION_FENCE = Number.MAX_SAFE_INTEGER
+const SHARED_GROUP_MESSAGE_DELIVERY_RECONCILIATION_RETRY_MS = 1_000
+const SHARED_GROUP_MESSAGE_DELIVERY_RECONCILIATION_MAX_RETRY_MS = 30_000
+const SHARED_GROUP_MESSAGE_DELIVERY_RECONCILIATION_CONCURRENCY = 8
 /**
  * Version-one write-ahead Bot rows for hosts that do not mount credentials.
  * A pending row is replayed before reads after a restart and before any later
@@ -634,6 +636,8 @@ type SharedGroupRecipientDeliveryResult =
   | 'accepted'
   | 'duplicate'
   | { readonly kind: 'busy'; readonly retryAt: number }
+
+type SharedGroupAdmissionReconciliation = 'accepted' | 'released' | 'missing' | 'transient'
 
 class BotProfileRowWriteError extends Error {
   constructor(readonly writeError: unknown) {
@@ -1239,10 +1243,14 @@ export class BotService extends TypertRemoteService {
   private readonly activeSharedGroupSessionKeys = new Set<string>()
   private readonly sharedGroupPendingMessages = new Map<string, {
     readonly messageId: BotGroupMessageId
+    readonly token: string
     readonly agent: Pick<Agent, 'id' | 'followup' | 'cancel' | 'whenIdle'>
   }>()
   private readonly sharedGroupDeliveryTails = new Map<string, Promise<void>>()
   private readonly sharedGroupDeliveryClaims = new Map<string, string>()
+  private readonly sharedGroupAdmissionRetryTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  private readonly sharedGroupAdmissionRetryAttempts = new Map<string, number>()
+  private readonly sharedGroupAdmissionRetryTokens = new Map<string, string>()
   private readonly promptFibers = new Map<Agent, ReturnType<Context['inject']>>()
   private readonly sharedScopeInstallations = new Map<Agent, Promise<void>>()
   private readonly sharedScopeFences = new WeakMap<Agent, () => void>()
@@ -4174,6 +4182,7 @@ export class BotService extends TypertRemoteService {
         endpoints: SHARED_BOT_ENDPOINTS,
       })
       this.sharedService = service
+      await this.reconcileSharedGroupDeliveryAdmissions()
       await shared.recoverSharedGroupDeliveries()
       // Existing isolated group Sessions may contain a completed turn from
       // before this Host restarted. Rebuild only their shared-group receipts;
@@ -4194,12 +4203,14 @@ export class BotService extends TypertRemoteService {
         this.sharedGroupPendingMessages.clear()
         this.sharedGroupDeliveryTails.clear()
         this.sharedGroupDeliveryClaims.clear()
+        this.clearSharedGroupAdmissionReconciliationRetries()
       }
     } catch (error) {
       await removeShared?.()
       await removeEnrollment?.()
       await service?.dispose()
       await authority.dispose()
+      this.clearSharedGroupAdmissionReconciliationRetries()
       throw error
     }
   }
@@ -4505,6 +4516,7 @@ export class BotService extends TypertRemoteService {
   ): Promise<{ readonly kind: 'busy'; readonly retryAt: number } | undefined> {
     const credentials = this.credentials ?? this.ctx.get('credentials')
     if (credentials === undefined) throw new Error('Shared Bot group delivery requires durable credentials')
+    request.signal?.throwIfAborted()
     const stored = await withSharedGroupDeliveryTimeout(
       credentials.readRecord(SHARED_GROUP_MESSAGE_DELIVERY_RECORD_KEY),
       request.signal,
@@ -4513,19 +4525,20 @@ export class BotService extends TypertRemoteService {
       && entry.messageId === String(request.messageId))
     const now = Date.now()
     if (current?.status === 'pending' && current.admissionToken !== undefined) {
-      try {
-        const inspection = await withSharedGroupDeliveryTimeout(
-          this.inspectSharedGroupSession(
-            request.sessionId,
-            request.signal ?? new AbortController().signal,
-          ),
-          request.signal,
-        )
-        if (sharedGroupMessageWasDelivered(inspection.events, request.groupId, String(request.messageId))) return undefined
-      } catch (error: unknown) {
-        if (request.signal?.aborted) throw error
+      const reconciliation = await this.reconcileSharedGroupDeliveryAdmission(
+        request,
+        current.admissionToken,
+        { releaseWithoutReceipt: false },
+      )
+      request.signal?.throwIfAborted()
+      if (reconciliation === 'accepted') return undefined
+      if (reconciliation === 'transient') {
+        this.scheduleSharedGroupAdmissionReconciliation(request, current.admissionToken)
       }
-      return { kind: 'busy', retryAt: Date.now() + SHARED_GROUP_MESSAGE_DELIVERY_LEASE_MS }
+      return {
+        kind: 'busy',
+        retryAt: Date.now() + SHARED_GROUP_MESSAGE_DELIVERY_RECONCILIATION_RETRY_MS,
+      }
     }
     if (current?.status === 'pending' && current.claimLeaseUntil !== undefined && current.claimLeaseUntil > now) {
       const localToken = this.sharedGroupDeliveryClaims.get(
@@ -4536,6 +4549,98 @@ export class BotService extends TypertRemoteService {
       }
     }
     return undefined
+  }
+
+  private scheduleSharedGroupAdmissionReconciliation(
+    request: Parameters<NonNullable<SharedBotHost['deliverSharedGroup']>>[0],
+    token: string,
+  ): void {
+    const key = sharedGroupDeliveryReceiptKey(String(request.sessionId), String(request.messageId))
+    const retryToken = this.sharedGroupAdmissionRetryTokens.get(key)
+    if (retryToken !== undefined && retryToken !== token) return
+    if (this.sharedGroupAdmissionRetryTimers.has(key) || this.stopping) return
+    this.sharedGroupAdmissionRetryTokens.set(key, token)
+    const attempt = this.sharedGroupAdmissionRetryAttempts.get(key) ?? 0
+    const delay = Math.min(
+      SHARED_GROUP_MESSAGE_DELIVERY_RECONCILIATION_MAX_RETRY_MS,
+      SHARED_GROUP_MESSAGE_DELIVERY_RECONCILIATION_RETRY_MS * 2 ** Math.min(attempt, 5),
+    )
+    this.sharedGroupAdmissionRetryAttempts.set(key, attempt + 1)
+    const { signal: ignoredSignal, ...retryRequest } = request
+    void ignoredSignal
+    const timer = setTimeout(() => {
+      if (this.sharedGroupAdmissionRetryTokens.get(key) !== token) return
+      this.sharedGroupAdmissionRetryTimers.delete(key)
+      void this.reconcileSharedGroupDeliveryAdmission(
+        retryRequest,
+        token,
+        { releaseWithoutReceipt: false },
+      ).then((result) => {
+        if (this.sharedGroupAdmissionRetryTokens.get(key) !== token) return
+        if (result === 'transient') this.scheduleSharedGroupAdmissionReconciliation(retryRequest, token)
+        else if (result === 'accepted' || result === 'released') this.sharedGroupAdmissionRetryAttempts.delete(key)
+      }, () => {
+        if (this.sharedGroupAdmissionRetryTokens.get(key) === token) {
+          this.scheduleSharedGroupAdmissionReconciliation(retryRequest, token)
+        }
+      })
+    }, delay)
+    timer.unref?.()
+    this.sharedGroupAdmissionRetryTimers.set(key, timer)
+  }
+
+  private clearSharedGroupAdmissionReconciliationRetries(): void {
+    for (const timer of this.sharedGroupAdmissionRetryTimers.values()) clearTimeout(timer)
+    this.sharedGroupAdmissionRetryTimers.clear()
+    this.sharedGroupAdmissionRetryAttempts.clear()
+    this.sharedGroupAdmissionRetryTokens.clear()
+  }
+
+  private async reconcileSharedGroupDeliveryAdmissions(): Promise<void> {
+    const credentials = this.credentials ?? this.ctx.get('credentials')
+    if (credentials === undefined) return
+    let stored: CredentialRecord | undefined
+    try {
+      stored = await withSharedGroupDeliveryTimeout(
+        credentials.readRecord(SHARED_GROUP_MESSAGE_DELIVERY_RECORD_KEY),
+      )
+    } catch (error: unknown) {
+      this.ctx.logger.debug(`bots: shared-group recipient admission startup inspection unavailable: ${String(error)}`)
+      return
+    }
+    const state = sharedGroupMessageDeliveryStateOf(stored)
+    const pending = state.messages.flatMap((entry) => {
+      if (entry.status !== 'pending' || entry.admissionToken === undefined) return []
+      const binding = this.sharedGroupSessionsBySession.get(entry.targetSessionId)
+      if (binding === undefined) return []
+      return [{
+        request: {
+          groupId: binding.groupId,
+          groupName: 'shared group',
+          targetBotId: binding.botId,
+          sessionId: SessionId(entry.targetSessionId),
+          text: '',
+          messageId: BotGroupMessageId(entry.messageId),
+        },
+        token: entry.admissionToken,
+      }]
+    })
+    let nextIndex = 0
+    const worker = async (): Promise<void> => {
+      while (true) {
+        const current = pending[nextIndex++]
+        if (current === undefined) return
+        const result = await this.reconcileSharedGroupDeliveryAdmission(
+          current.request,
+          current.token,
+          { releaseWithoutReceipt: false },
+        )
+        if (result === 'transient') this.scheduleSharedGroupAdmissionReconciliation(current.request, current.token)
+      }
+    }
+    await Promise.all(Array.from({
+      length: Math.min(SHARED_GROUP_MESSAGE_DELIVERY_RECONCILIATION_CONCURRENCY, pending.length),
+    }, () => worker()))
   }
 
   private async prepareSharedGroupDelivery(
@@ -4566,7 +4671,8 @@ export class BotService extends TypertRemoteService {
         && String(event.data.source.groupId) === String(request.groupId)
         && String(event.data.source.messageId) === String(request.messageId))
       if (matchingSource) {
-        this.sharedGroupPendingMessages.delete(key)
+        const pending = this.sharedGroupPendingMessages.get(key)
+        if (pending?.messageId === request.messageId) this.sharedGroupPendingMessages.delete(key)
         return { kind: 'duplicate' }
       }
       const matchingPending = inspection.events.some(event => event.type === 'agent/inbox/spliced'
@@ -4607,6 +4713,7 @@ export class BotService extends TypertRemoteService {
     const pending = this.sharedGroupPendingMessages.get(key)
     const pendingMatches = pending !== undefined
       && pending.messageId === request.messageId
+      && pending.token === token
       && pending.agent === prepared.agent
     const message = freezeMessage({
       id: messageId,
@@ -4634,7 +4741,7 @@ export class BotService extends TypertRemoteService {
       })
       if (ownsAdmission !== true) throw new SharedGroupRecipientClaimLostError()
       if (!prepared.hasPendingEvent && !pendingMatches) prepared.agent.followup(message)
-      this.sharedGroupPendingMessages.set(key, { messageId: request.messageId, agent: prepared.agent })
+      this.sharedGroupPendingMessages.set(key, { messageId: request.messageId, token, agent: prepared.agent })
       const durable = await this.flushSharedGroupSession(request.sessionId, admissionSignal)
       if (!durable) throw new Error('shared Bot group Session has no durable persistence listener')
       await credentials.modifyRecord(SHARED_GROUP_MESSAGE_DELIVERY_RECORD_KEY, async (stored) => {
@@ -4664,13 +4771,12 @@ export class BotService extends TypertRemoteService {
     })()
     try {
       const admitted = await withSharedGroupDeliveryTimeout(admission, request.signal, () => { cancelled = true })
-      this.sharedGroupDeliveryClaims.delete(sharedGroupDeliveryReceiptKey(String(request.sessionId), String(request.messageId)))
-      this.sharedGroupPendingMessages.delete(key)
+      this.clearSharedGroupDeliveryLocalState(request, token)
       return admitted
     } catch (error: unknown) {
       void admission
         .then(() => undefined, () => undefined)
-        .then(() => this.reconcileSharedGroupDeliveryAdmission(request, token), () => undefined)
+        .then(() => this.reconcileSharedGroupDeliveryAdmission(request, token, { releaseWithoutReceipt: true }), () => undefined)
         .catch(() => undefined)
       throw error
     }
@@ -4679,9 +4785,10 @@ export class BotService extends TypertRemoteService {
   private async reconcileSharedGroupDeliveryAdmission(
     request: Parameters<NonNullable<SharedBotHost['deliverSharedGroup']>>[0],
     token: string,
-  ): Promise<void> {
+    options: { readonly releaseWithoutReceipt: boolean },
+  ): Promise<SharedGroupAdmissionReconciliation> {
     const credentials = this.credentials ?? this.ctx.get('credentials')
-    if (credentials === undefined) return
+    if (credentials === undefined) return 'transient'
     let delivered: boolean
     try {
       const inspection = await withSharedGroupDeliveryTimeout(
@@ -4689,9 +4796,10 @@ export class BotService extends TypertRemoteService {
       )
       delivered = sharedGroupMessageWasDelivered(inspection.events, request.groupId, String(request.messageId))
     } catch {
-      return
+      return 'transient'
     }
     let cancelled = false
+    let outcome: SharedGroupAdmissionReconciliation | undefined
     try {
       await withSharedGroupDeliveryTimeout(credentials.modifyRecord(SHARED_GROUP_MESSAGE_DELIVERY_RECORD_KEY, async (stored) => {
         await Promise.resolve()
@@ -4699,8 +4807,16 @@ export class BotService extends TypertRemoteService {
         const state = sharedGroupMessageDeliveryStateOf(stored)
         const current = state.messages.find(entry => entry.targetSessionId === String(request.sessionId)
           && entry.messageId === String(request.messageId))
-        if (current === undefined || current.status === 'accepted' || current.admissionToken !== token) return undefined
+        if (current?.status === 'accepted') {
+          // A caller that entered while the admission was still uncertain
+          // must not turn an accepted ledger row into a duplicate unless the
+          // recipient Session also proves the durable receipt.
+          outcome = delivered ? 'accepted' : 'missing'
+          return undefined
+        }
+        if (current === undefined || current.admissionToken !== token) return undefined
         if (delivered) {
+          outcome = 'accepted'
           return sharedGroupMessageDeliveryRecordOf({
             version: state.version,
             messages: state.messages.map(entry => entry === current
@@ -4708,16 +4824,44 @@ export class BotService extends TypertRemoteService {
               : entry),
           })
         }
+        if (!options.releaseWithoutReceipt) {
+          outcome = 'missing'
+          return undefined
+        }
+        outcome = 'released'
         return sharedGroupMessageDeliveryRecordOf({
           version: state.version,
           messages: state.messages.filter(entry => entry !== current),
         })
       }), undefined, () => { cancelled = true })
-      this.sharedGroupDeliveryClaims.delete(sharedGroupDeliveryReceiptKey(String(request.sessionId), String(request.messageId)))
-      this.sharedGroupPendingMessages.delete(String(request.sessionId))
+      const resolvedOutcome = outcome ?? 'transient'
+      if (resolvedOutcome === 'accepted' || resolvedOutcome === 'released') this.clearSharedGroupDeliveryLocalState(request, token)
+      return resolvedOutcome
     } catch {
       // An uncertain admission stays fenced. Retrying without a durable
       // reconciliation would permit a late Session flush to be duplicated.
+      return 'transient'
+    }
+  }
+
+  private clearSharedGroupDeliveryLocalState(
+    request: Parameters<NonNullable<SharedBotHost['deliverSharedGroup']>>[0],
+    token: string,
+  ): void {
+    const receiptKey = sharedGroupDeliveryReceiptKey(String(request.sessionId), String(request.messageId))
+    if (this.sharedGroupDeliveryClaims.get(receiptKey) === token) {
+      this.sharedGroupDeliveryClaims.delete(receiptKey)
+    }
+    const pending = this.sharedGroupPendingMessages.get(String(request.sessionId))
+    if (pending?.messageId === request.messageId && pending.token === token) {
+      this.sharedGroupPendingMessages.delete(String(request.sessionId))
+    }
+    if (this.sharedGroupAdmissionRetryTokens.get(receiptKey) === token) {
+      this.sharedGroupAdmissionRetryAttempts.delete(receiptKey)
+      const timer = this.sharedGroupAdmissionRetryTimers.get(receiptKey)
+      if (timer !== undefined) clearTimeout(timer)
+      this.sharedGroupAdmissionRetryTimers.delete(receiptKey)
+      this.sharedGroupAdmissionRetryTokens.delete(receiptKey)
     }
   }
 
@@ -4777,7 +4921,7 @@ export class BotService extends TypertRemoteService {
     const freshCurrent = freshState.messages.find(entry => entry.targetSessionId === String(request.sessionId)
       && entry.messageId === String(request.messageId))
     const freshNow = Date.now()
-    if (freshCurrent?.status === 'pending' && freshCurrent.admissionToken !== undefined) {
+    if (freshCurrent?.status === 'pending' && freshCurrent.admissionToken !== undefined && !alreadyDelivered) {
       return { kind: 'busy', retryAt: Date.now() + SHARED_GROUP_MESSAGE_DELIVERY_LEASE_MS }
     }
     if (freshCurrent?.status === 'pending' && freshCurrent.claimLeaseUntil !== undefined && freshCurrent.claimLeaseUntil > freshNow
@@ -4866,7 +5010,7 @@ export class BotService extends TypertRemoteService {
         .then(
           () => claimedToken === undefined
             ? undefined
-            : this.reconcileSharedGroupDeliveryAdmission(request, claimedToken),
+            : this.reconcileSharedGroupDeliveryAdmission(request, claimedToken, { releaseWithoutReceipt: true }),
           () => undefined,
         )
         .catch(() => undefined)
