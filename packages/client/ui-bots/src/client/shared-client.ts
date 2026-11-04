@@ -31,11 +31,11 @@ import type {
   BotGroupMessageId as BotGroupMessageIdType,
 } from '@yharness/bots/client'
 import type { ClientConnectionRpc, ConnectionRpcFailure } from '@yharness/client-connection/client'
+import { randomUUID } from '@yharness/util-crypto'
 
 const SHARED_BOTS_PATH = '/shared-bots' as const
 const SHARED_AUTH_CHANNEL = 'yharness.client-ui-bots.shared-auth' as const
 const SHARED_AUTH_MESSAGE = 'auth-invalidated' as const
-let nextSharedAuthSenderId = 0
 
 const BOT_IDENTITIES = [
   'agent',
@@ -233,7 +233,7 @@ export function createSharedBotsClient(rpc: ClientConnectionRpc): SharedBotsClie
   let retryScope: string | undefined
   let retryScopeRequestGeneration = 0
   let authGeneration = 0
-  const authSenderId = `shared-client-${nextSharedAuthSenderId += 1}`
+  const authSenderId = `shared-client-${randomUUID()}`
   let authTransitionVersion = 0
   let authTransitionTail: Promise<void> = Promise.resolve()
   let authChannel: SharedAuthChannel | undefined
@@ -321,7 +321,7 @@ export function createSharedBotsClient(rpc: ClientConnectionRpc): SharedBotsClie
     const requestGeneration = retryScopeRequestGeneration + 1
     retryScopeRequestGeneration = requestGeneration
     setRetryScope(undefined)
-    const result = await call('bots/share/session', {}, parseEnrollment)
+    const result = await call('bots/share/session', {}, parseEnrollment, false)
     if (requestGeneration === retryScopeRequestGeneration && result.ok) {
       setRetryScope(result.value.principalId, 'local', false, true)
       authTransitionVersion += 1

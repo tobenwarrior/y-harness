@@ -2,6 +2,10 @@ import type { ClientConnectionRpc } from '@yharness/client-connection/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { broadcastSharedAuthChanged, createSharedBotsClient } from '../src/client/shared-client.ts'
 
+type SharedClientRealm = {
+  readonly createSharedBotsClient: typeof createSharedBotsClient
+}
+
 type MessageListener = (event: { readonly data: unknown }) => void
 
 class FakeBroadcastChannel {
@@ -353,6 +357,32 @@ describe('shared Bot client capabilities', () => {
       expect(enrollingTab.retryScope).toBe('principal-new')
       stopEnrolling?.()
       stopStale?.()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('keeps sender identities distinct across separately loaded client realms', async () => {
+    const realmA = await (import('../src/client/shared-client.ts?shared-auth-realm-a') as Promise<SharedClientRealm>)
+    const realmB = await (import('../src/client/shared-client.ts?shared-auth-realm-b') as Promise<SharedClientRealm>)
+    const rpcA: ClientConnectionRpc = {
+      call: vi.fn(async () => ({ ok: true as const, value: { principalId: 'principal-realm-a', expiresAt: 3_000 } })),
+    }
+    const rpcB: ClientConnectionRpc = {
+      call: vi.fn(async () => ({ ok: true as const, value: { principalId: 'principal-realm-b', expiresAt: 3_000 } })),
+    }
+    vi.stubGlobal('BroadcastChannel', FakeBroadcastChannel)
+    try {
+      const firstRealmClient = realmA.createSharedBotsClient(rpcA)
+      const secondRealmClient = realmB.createSharedBotsClient(rpcB)
+      const stopFirst = firstRealmClient.subscribeAuth?.(() => {})
+      const stopSecond = secondRealmClient.subscribeAuth?.(() => {})
+      await secondRealmClient.enroll('second-realm-code')
+      await firstRealmClient.enroll('first-realm-code')
+      await new Promise<void>((resolve) => { setTimeout(resolve, 0) })
+      expect(secondRealmClient.retryScope).toBeUndefined()
+      stopFirst?.()
+      stopSecond?.()
     } finally {
       vi.unstubAllGlobals()
     }
