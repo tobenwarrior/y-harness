@@ -185,6 +185,12 @@ export interface SharedBotGroupRevokeValue {
 export interface SharedBotsClient {
   /** Redeem an owner-issued invite; the response stores an HttpOnly cookie. */
   readonly enroll: (code: string) => Promise<SharedBotClientResult<SharedBotEnrollmentValue>>
+  /**
+   * Ask the authenticated local Host to enroll or reuse its durable owner.
+   * The browser supplies no principal identity; the response stores the
+   * Host-issued HttpOnly cookie.
+   */
+  readonly enrollOwner?: () => Promise<SharedBotClientResult<SharedBotEnrollmentValue>>
   /** Restore the server-authenticated principal scope after a browser reload. */
   readonly restoreRetryScope: () => Promise<SharedBotClientResult<SharedBotEnrollmentValue>>
   /** Server-issued principal scope used to partition durable browser retry state. */
@@ -329,6 +335,18 @@ export function createSharedBotsClient(rpc: ClientConnectionRpc): SharedBotsClie
     }
     return result
   })
+  const enrollOwner = (): Promise<SharedBotClientResult<SharedBotEnrollmentValue>> => enqueueAuthTransition(async () => {
+    authTransitionVersion += 1
+    const requestGeneration = retryScopeRequestGeneration + 1
+    retryScopeRequestGeneration = requestGeneration
+    setRetryScope(undefined, 'local', false, true)
+    const result = await call('bots/share/enroll', { owner: true }, parseEnrollment, false)
+    if (requestGeneration === retryScopeRequestGeneration && result.ok) {
+      setRetryScope(result.value.principalId, 'local', true, true)
+      authTransitionVersion += 1
+    }
+    return result
+  })
 
   return {
     get retryScope(): string | undefined { return retryScope },
@@ -346,6 +364,7 @@ export function createSharedBotsClient(rpc: ClientConnectionRpc): SharedBotsClie
       }
     },
     enroll,
+    enrollOwner,
     restoreRetryScope,
     list: () => call('bots/share/list', {}, parseRoster),
     readProfile: botId => call('bots/share/read-profile', { botId }, parseProfileValue),

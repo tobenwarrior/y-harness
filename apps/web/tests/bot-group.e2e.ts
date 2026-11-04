@@ -171,9 +171,6 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
       return bots.filter(bot => bot.id === firstBot.id || bot.id === secondBot.id).every(bot => bot.state === 'active')
     }, { timeout: 30_000 }).toBe(true)
 
-    const ownerChiefInvite = await scaffold.ctx.bots.createShareInvite({ botId: firstBot.id, role: 'owner' })
-    const ownerOrbitInvite = await scaffold.ctx.bots.createShareInvite({ botId: secondBot.id, role: 'owner' })
-
     const openSharedDialog = async (target: Page): Promise<import('playwright').Locator> => {
       await target.getByRole('button', { name: 'Bots', exact: true }).click()
       const join = target.getByRole('button', { name: 'Join a shared bot', exact: true })
@@ -186,6 +183,16 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
       return dialog
     }
 
+    const openOwnerDialog = async (): Promise<import('playwright').Locator> => {
+      await page.getByRole('button', { name: 'Bots', exact: true }).click()
+      await page.getByRole('button', { name: 'Create a shared group', exact: true }).click()
+      const dialog = page.getByRole('dialog', { name: 'Shared with you', exact: true })
+      await dialog.waitFor({ state: 'visible', timeout: 15_000 })
+      await dialog.getByRole('status').waitFor({ state: 'visible', timeout: 30_000 })
+      await expect.poll(() => dialog.getByRole('status').count(), { timeout: 30_000 }).toBe(0)
+      return dialog
+    }
+
     const redeemInvite = async (dialog: import('playwright').Locator, code: string): Promise<void> => {
       const input = dialog.getByRole('textbox', { name: 'Invite code', exact: true })
       const join = dialog.getByRole('button', { name: 'Join bot', exact: true })
@@ -194,10 +201,8 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
       await expect.poll(() => input.inputValue(), { timeout: 30_000 }).toBe('')
     }
 
-    const ownerDialog = await openSharedDialog(page)
-    await redeemInvite(ownerDialog, ownerChiefInvite.code)
+    const ownerDialog = await openOwnerDialog()
     await ownerDialog.getByRole('button', { name: new RegExp(`^${firstBot.name}\\b`) }).waitFor({ state: 'visible', timeout: 30_000 })
-    await redeemInvite(ownerDialog, ownerOrbitInvite.code)
     await ownerDialog.getByRole('button', { name: new RegExp(`^${secondBot.name}\\b`) }).waitFor({ state: 'visible', timeout: 30_000 })
 
     const collaboratorChiefInvite = await scaffold.ctx.bots.createShareInvite({ botId: firstBot.id, role: 'collaborator' })

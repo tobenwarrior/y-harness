@@ -56,6 +56,8 @@ Authenticated shared HTTP requests pass through the `connection/request` waterfa
 
 The shared handler must derive private conversation sessions from the admitted principal and Bot id, not from client-supplied principal or Session ids. One deployment should mount one authority against one credential provider; authorities in the same process share the durable state and close their active Peer scopes when another instance revokes a principal. Other processes observe the revocation on their next admission, but cannot close an already-upgraded socket without a deployment-level coordination channel. The invite flow is local self-hosted enrollment rather than federated account login; deployments that need account recovery or multi-device identity must layer an external identity provider above it. Cookies default to loopback-compatible HTTP attributes; network deployments must provide the same `trustedHosts` authorities to `SharedAccessAuthority`, use TLS, and set `secureCookie: true`; otherwise direct collaborator admission fails closed.
 
+The Bot owner-bootstrap payload uses this same trust-fenced enrollment route but is accepted only after the Bot service calls `ctx.connection.admit(request)`. It binds the browser to one authority-owned durable owner principal; ordinary invite redemption remains available for collaborators and never accepts a browser-supplied principal.
+
 <a id="connection-generation"></a>
 ## Connection generation
 

@@ -92,6 +92,22 @@ function sharedClient(overrides: Partial<SharedBotsClient> = {}): SharedBotsClie
 }
 
 describe('shared Bot collaboration surfaces', () => {
+  it('uses the Host owner bootstrap for explicit shared-group creation', async () => {
+    const enrollOwner = vi.fn().mockResolvedValue({
+      ok: true as const,
+      value: { principalId: 'principal-owner', expiresAt: 2_000 },
+    })
+    const list = vi.fn().mockResolvedValue({ ok: true, value: { bots: [{ ...bot, role: 'owner' }] } })
+    const client = sharedClient({ enrollOwner, list })
+    render(<SharedBotsDialog client={client} ownerMode open onClose={vi.fn()} t={t} />)
+
+    await waitFor(() => { expect(screen.getByText('Private session')).toBeTruthy() })
+    expect(enrollOwner).toHaveBeenCalledTimes(1)
+    expect(client.enroll).not.toHaveBeenCalled()
+    expect(list).toHaveBeenCalled()
+    expect(screen.getAllByText('Chief of staff')).not.toHaveLength(0)
+  })
+
   it('keeps the invite role fixed while an invite is being created', async () => {
     const createInvite = Promise.withResolvers<Awaited<ReturnType<BotShareActions['createInvite']>>>()
     const actions = ownerActions({ createInvite: vi.fn().mockReturnValue(createInvite.promise) })

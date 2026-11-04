@@ -109,6 +109,21 @@ describe('shared Bot client capabilities', () => {
     expect(client.retryScope).toBe('principal-restored')
   })
 
+  it('uses the host-only owner enrollment payload and stores its durable scope', async () => {
+    const rpc: ClientConnectionRpc = {
+      call: vi.fn(async (_channel, endpoint, payload) => {
+        expect(endpoint).toBe('bots/share/enroll')
+        expect(payload).toEqual({ owner: true })
+        return { ok: true as const, value: { principalId: 'principal-owner', expiresAt: 4_000 } }
+      }),
+    }
+    const client = createSharedBotsClient(rpc)
+    const enrollOwner = client.enrollOwner
+    if (enrollOwner === undefined) throw new Error('owner enrollment is unavailable')
+    await expect(enrollOwner()).resolves.toMatchObject({ ok: true, value: { principalId: 'principal-owner' } })
+    expect(client.retryScope).toBe('principal-owner')
+  })
+
   it('clears a stale principal scope when the authenticated session is gone', async () => {
     let sessionCalls = 0
     const rpc: ClientConnectionRpc = {

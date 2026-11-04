@@ -1302,6 +1302,7 @@ export function BotRoster({
   const [avatarEditorOpen, setAvatarEditorOpen] = useState(false)
   const [sectionBot, setSectionBot] = useState<BotSummary | undefined>()
   const [sharedBotsOpen, setSharedBotsOpen] = useState(false)
+  const [sharedOwnerMode, setSharedOwnerMode] = useState(false)
   const [connectedAppsOpen, setConnectedAppsOpen] = useState(false)
   const normalizedQuery = query.trim().toLocaleLowerCase()
   const filteredBots = useMemo(() => {
@@ -1344,7 +1345,17 @@ export function BotRoster({
   }
   const openSharedBots = (): void => {
     if (!wide) expandSidebar?.()
+    setSharedOwnerMode(false)
     setSharedBotsOpen(true)
+  }
+  const openSharedOwner = (): void => {
+    if (!wide) expandSidebar?.()
+    setSharedOwnerMode(true)
+    setSharedBotsOpen(true)
+  }
+  const closeSharedBots = (): void => {
+    setSharedOwnerMode(false)
+    setSharedBotsOpen(false)
   }
   const openConnectedApps = (): void => {
     if (selectedBot === undefined || onLoadConnectedApps === undefined || onSetConnectedAppAccess === undefined) {
@@ -1377,9 +1388,16 @@ export function BotRoster({
                 )}
                 <Button variant="ghost" size="sm" aria-label={t('newBot')} icon={<IconSidebarBotAddOutlineRegular size={16} />} onClick={openNewBot} />
                 {sharedClient !== undefined && (
-                  <Tooltip label={t('joinBot')} side="bottom" portal>
-                    <Button variant="ghost" size="sm" aria-label={t('joinBot')} icon={<IconShareOutlineRegular size={16} />} onClick={openSharedBots} />
-                  </Tooltip>
+                  <>
+                    <Tooltip label={t('joinBot')} side="bottom" portal>
+                      <Button variant="ghost" size="sm" aria-label={t('joinBot')} icon={<IconShareOutlineRegular size={16} />} onClick={openSharedBots} />
+                    </Tooltip>
+                    {sharedClient.enrollOwner !== undefined && (
+                      <Tooltip label={t('createSharedGroup')} side="bottom" portal>
+                        <Button variant="ghost" size="sm" aria-label={t('createSharedGroup')} icon={<IconUsersOutlineRegular size={16} />} onClick={openSharedOwner} />
+                      </Tooltip>
+                    )}
+                  </>
                 )}
               </div>
               <Input
@@ -1491,16 +1509,30 @@ export function BotRoster({
               />
             </Tooltip>
             {sharedClient !== undefined && (
-              <Tooltip label={t('joinBot')} side="right" delayMs={500}>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className={css.botRailAction}
-                  aria-label={t('joinBot')}
-                  icon={<IconShareOutlineRegular size={18} />}
-                  onClick={openSharedBots}
-                />
-              </Tooltip>
+              <>
+                <Tooltip label={t('joinBot')} side="right" delayMs={500}>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className={css.botRailAction}
+                    aria-label={t('joinBot')}
+                    icon={<IconShareOutlineRegular size={18} />}
+                    onClick={openSharedBots}
+                  />
+                </Tooltip>
+                {sharedClient.enrollOwner !== undefined && (
+                  <Tooltip label={t('createSharedGroup')} side="right" delayMs={500}>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className={css.botRailAction}
+                      aria-label={t('createSharedGroup')}
+                      icon={<IconUsersOutlineRegular size={18} />}
+                      onClick={openSharedOwner}
+                    />
+                  </Tooltip>
+                )}
+              </>
             )}
             {templates !== undefined && templateActions !== undefined && (
               <Tooltip label={t('templates')} side="right" delayMs={500}>
@@ -1569,7 +1601,7 @@ export function BotRoster({
         />
       )}
       {sharedClient !== undefined && (
-        <SharedBotsDialog client={sharedClient} open={sharedBotsOpen} onClose={() => { setSharedBotsOpen(false) }} t={t} />
+        <SharedBotsDialog client={sharedClient} open={sharedBotsOpen} ownerMode={sharedOwnerMode} onClose={closeSharedBots} t={t} />
       )}
       {onLoadConnectedApps !== undefined && onSetConnectedAppAccess !== undefined && (
         <ConnectedAppsDialog

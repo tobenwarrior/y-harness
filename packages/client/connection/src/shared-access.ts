@@ -46,6 +46,8 @@ const SHARED_ACCESS_SECRET_BYTES = 32
 const SHARED_ACCESS_CODE_BYTES = 32
 const SHARED_ACCESS_COOKIE_VERSION = 'v1'
 const PRINCIPAL_PATTERN = /^principal-[A-Za-z0-9-]+$/u
+const SHARED_OWNER_EXTENSION_KEY = 'client-connection/shared-owner'
+const SHARED_OWNER_EXTENSION_VERSION = 1 as const
 
 /** Maximum interval before a separate authority observes a durable revocation. */
 const SHARED_ACCESS_PEER_SWEEP_INTERVAL_MS = 1_000
@@ -96,6 +98,11 @@ interface StoredSession {
   issuedAt: number
   expiresAt: number
   revokedAt?: number
+}
+
+interface StoredOwner {
+  readonly version: typeof SHARED_OWNER_EXTENSION_VERSION
+  readonly principalId: SharedPrincipalId
 }
 
 interface MutableState {
@@ -281,6 +288,71 @@ export class SharedAccessAuthority implements SharedAccessAuthenticator {
       })
     })
     return { code: SharedInviteCode(code), expiresAt }
+  }
+
+  /**
+   * Enroll the authenticated local operator as the one durable shared owner.
+   *
+   * This operation is only callable by a Host after its ordinary browser
+   * authentication has passed. The owner mapping and principal are recorded
+   * in the authority transaction; later Hosts issue another session for that
+   * same principal instead of minting a browser-controlled identity. An
+   * existing owner principal may be supplied by a trusted durable membership
+   * migration so older shared-Bot memberships keep their identity.
+   * @param request - trusted request that receives the shared HttpOnly cookie.
+   * @param existingPrincipalId - optional owner principal recovered from durable memberships.
+   * @returns the owner principal and its new or existing shared session cookie.
+   * @throws Error when the request is not trusted or the durable owner mapping is invalid/revoked.
+   */
+  async enrollOwner(
+    request: ConnectionTrustRequest,
+    existingPrincipalId?: SharedPrincipalId,
+  ): Promise<SharedAccessEnrollment> {
+    const authority = trustedRequestAuthority(request, this.options.trustedHosts)
+    if (authority === undefined) throw new Error('shared access: owner enrollment request is not trusted')
+    const now = this.options.now()
+    const enrolled = await this.mutate((state) => {
+      const stored = parseStoredOwner(state.extensions[SHARED_OWNER_EXTENSION_KEY])
+      const candidateId = stored?.principalId ?? existingPrincipalId
+      let principal = candidateId === undefined
+        ? undefined
+        : state.principals.find(value => value.id === candidateId)
+      if (candidateId !== undefined && principal === undefined) {
+        throw new Error('shared access: durable owner principal is missing')
+      }
+      if (principal?.revokedAt !== undefined) {
+        throw new Error('shared access: durable owner principal is revoked')
+      }
+      if (principal === undefined) {
+        const principalId = SharedPrincipalId(`principal-${this.options.randomUUID()}`)
+        principal = { id: principalId, createdAt: now }
+        state.principals.push(principal)
+      }
+      if (stored === undefined) {
+        state.extensions[SHARED_OWNER_EXTENSION_KEY] = {
+          version: SHARED_OWNER_EXTENSION_VERSION,
+          principalId: principal.id,
+        }
+      } else if (stored.principalId !== principal.id) {
+        throw new Error('shared access: durable owner principal changed during enrollment')
+      }
+      const token = cookieValue(header(request.headers, 'cookie') ?? '', SHARED_ACCESS_COOKIE_NAME)
+      const existingSessionId = token === undefined ? undefined : this.verifyCookie(token, state.secret, authority)
+      const existingSession = existingSessionId === undefined ? undefined : state.sessions.find(session =>
+        session.id === existingSessionId && session.principalId === principal.id
+          && session.revokedAt === undefined && now < session.expiresAt)
+      const sessionId = existingSession?.id ?? this.options.randomUUID()
+      const expiresAt = existingSession?.expiresAt ?? expiry(now, this.options.sessionMaxAgeMs)
+      if (existingSession === undefined) {
+        state.sessions.push({ id: sessionId, principalId: principal.id, issuedAt: now, expiresAt })
+      }
+      return { principalId: principal.id, sessionId, expiresAt }
+    })
+    return {
+      principalId: enrolled.principalId,
+      setCookie: this.sessionCookie(enrolled.sessionId, enrolled.expiresAt, authority),
+      expiresAt: enrolled.expiresAt,
+    }
   }
 
   /**
@@ -815,6 +887,15 @@ function parsePrincipal(value: unknown): StoredPrincipal {
     createdAt: value.createdAt,
     ...(value.revokedAt === undefined ? {} : { revokedAt: value.revokedAt }),
   }
+}
+
+function parseStoredOwner(value: unknown): StoredOwner | undefined {
+  if (value === undefined) return undefined
+  if (!isRecord(value) || value.version !== SHARED_OWNER_EXTENSION_VERSION
+    || typeof value.principalId !== 'string' || !PRINCIPAL_PATTERN.test(value.principalId)) {
+    throw new Error('client-connection: shared-access credential record has an invalid durable owner')
+  }
+  return { version: SHARED_OWNER_EXTENSION_VERSION, principalId: SharedPrincipalId(value.principalId) }
 }
 
 function parseSession(value: unknown): StoredSession {
