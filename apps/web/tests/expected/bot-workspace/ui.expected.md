@@ -82,7 +82,7 @@
   - textbox "Specialties":
     - /placeholder: chat, research, release-review
     - text: research, updates
-  - text: Labels for organizing bots; they do not grant app access.
+  - text: Labels only; they do not enable tools or app access.
   - button "Cancel"
   - button "Save profile"
 - dialog "Create a bot":
@@ -143,6 +143,6 @@
   - textbox "Specialties":
     - /placeholder: chat, research, release-review
     - text: review
-  - text: Labels for organizing bots; they do not grant app access.
+  - text: Labels only; they do not enable tools or app access.
   - button "Cancel"
   - button "Create bot"
