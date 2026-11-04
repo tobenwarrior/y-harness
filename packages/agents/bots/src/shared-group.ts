@@ -343,9 +343,9 @@ export interface SharedGroupHost {
   readonly registerSharedGroupSessions?: (bindings: readonly SharedGroupSessionBinding[]) => void
   /**
    * Queue one idempotent message into the exact isolated group Session.
-   * A live admission lease returns a retryable busy result; it is not a
-   * duplicate until the recipient Session log or durable receipt proves the
-   * message was accepted.
+   * A live admission lease or unresolved durable admission fence returns a
+   * retryable busy result; it is not a duplicate until the recipient Session
+   * log or durable receipt proves the message was accepted.
    */
   readonly deliverSharedGroup?: (request: {
     readonly groupId: ReturnType<typeof BotGroupId>
@@ -384,6 +384,9 @@ export class SharedBotGroupService {
   private readonly recoveryDeliveryTasks = new Map<string, Promise<void>>()
   private readonly recoveryTasks = new Set<Promise<void>>()
   private recoverySweepTimer: ReturnType<typeof setTimeout> | undefined
+  private recoverySweepRunning = false
+  private recoverySweepRequested = false
+  private recoverySweepCursor = 0
   private stopped = false
 
   /** @param authority - Shared identity authority providing the durable lock.
@@ -407,6 +410,7 @@ export class SharedBotGroupService {
     this.recoveryAttempts.clear()
     if (this.recoverySweepTimer !== undefined) clearTimeout(this.recoverySweepTimer)
     this.recoverySweepTimer = undefined
+    this.recoverySweepRequested = false
     await Promise.allSettled([...this.recoveryTasks])
     this.recoveryTasks.clear()
     this.recoveryDeliveryTasks.clear()
@@ -423,34 +427,54 @@ export class SharedBotGroupService {
   /** Replay durable pending deliveries after a Host restart or crash. */
   async recoverPendingDeliveries(signal?: AbortSignal): Promise<void> {
     if (this.stopped) return
-    this.requireIsolatedHost()
-    signal?.throwIfAborted()
-    const extension = await withSharedGroupAuthorityTimeout(
-      this.authority.readExtension('agent-bots/shared-memberships'),
-      signal,
-    )
-    const snapshot = parseGroups(parseMembershipExtension(extension.value).sharedGroups)
-    this.host.registerSharedGroupSessions?.(snapshot.sessions.filter(session => session.revokedAt === undefined))
-    const pending = snapshot.deliveries.filter(candidate => candidate.status === 'pending')
-    const batch = pending.slice(0, MAX_SHARED_GROUP_RECOVERY_BATCH)
-    let nextIndex = 0
-    const worker = async (): Promise<void> => {
-      while (true) {
-        signal?.throwIfAborted()
-        const index = nextIndex++
-        const delivery = batch[index]
-        if (delivery === undefined) return
-        try {
-          await this.startPendingRecovery(delivery.id, signal)
-        } catch (error: unknown) {
-          if (signal?.aborted || this.recoveryController.signal.aborted) throw error
-          // A row-level timeout schedules its own bounded retry. Other row
-          // failures stay isolated from the remaining recovery batch.
+    if (this.recoverySweepRunning) {
+      this.recoverySweepRequested = true
+      return
+    }
+    this.recoverySweepRunning = true
+    try {
+      this.requireIsolatedHost()
+      signal?.throwIfAborted()
+      const extension = await withSharedGroupAuthorityTimeout(
+        this.authority.readExtension('agent-bots/shared-memberships'),
+        signal,
+      )
+      const snapshot = parseGroups(parseMembershipExtension(extension.value).sharedGroups)
+      this.host.registerSharedGroupSessions?.(snapshot.sessions.filter(session => session.revokedAt === undefined))
+      const pending = snapshot.deliveries.filter(candidate => candidate.status === 'pending'
+        && !this.recoveryTimers.has(candidate.id)
+        && !this.recoveryDeliveryTasks.has(candidate.id))
+      const offset = pending.length === 0 ? 0 : this.recoverySweepCursor % pending.length
+      const eligible = [...pending.slice(offset), ...pending.slice(0, offset)]
+      const batch = eligible.slice(0, MAX_SHARED_GROUP_RECOVERY_BATCH)
+      this.recoverySweepCursor = pending.length === 0
+        ? 0
+        : (offset + batch.length) % pending.length
+      let nextIndex = 0
+      const worker = async (): Promise<void> => {
+        while (true) {
+          signal?.throwIfAborted()
+          const index = nextIndex++
+          const delivery = batch[index]
+          if (delivery === undefined) return
+          try {
+            await this.startPendingRecovery(delivery.id, signal)
+          } catch (error: unknown) {
+            if (signal?.aborted || this.recoveryController.signal.aborted) throw error
+            // A row-level timeout schedules its own bounded retry. Other row
+            // failures stay isolated from the remaining recovery batch.
+          }
         }
       }
+      await Promise.all(Array.from({ length: Math.min(SHARED_GROUP_RECOVERY_CONCURRENCY, batch.length) }, () => worker()))
+      if (eligible.length > batch.length) this.scheduleRecoverySweep()
+    } finally {
+      this.recoverySweepRunning = false
+      if (this.recoverySweepRequested) {
+        this.recoverySweepRequested = false
+        this.scheduleRecoverySweep()
+      }
     }
-    await Promise.all(Array.from({ length: Math.min(SHARED_GROUP_RECOVERY_CONCURRENCY, batch.length) }, () => worker()))
-    if (pending.length > batch.length) this.scheduleRecoverySweep()
   }
 
   /** Return whether an enrollment code is currently a group invite. */
@@ -1463,7 +1487,12 @@ export class SharedBotGroupService {
   }
 
   private scheduleRecoverySweep(): void {
-    if (this.stopped || this.recoverySweepTimer !== undefined) return
+    if (this.stopped) return
+    if (this.recoverySweepRunning) {
+      this.recoverySweepRequested = true
+      return
+    }
+    if (this.recoverySweepTimer !== undefined) return
     const timer = setTimeout(() => {
       this.recoverySweepTimer = undefined
       const task = this.recoverPendingDeliveries(this.recoveryController.signal)

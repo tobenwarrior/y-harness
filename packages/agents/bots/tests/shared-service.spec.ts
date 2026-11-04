@@ -1181,12 +1181,77 @@ describe('shared Bot service', () => {
       }, new AbortController().signal, owner.peer)).resolves.toMatchObject({ ok: true })
       value.clock.value = 31_001
       await value.service.recoverSharedGroupDeliveries()
-      expect(value.host.deliverSharedGroup).toHaveBeenCalledTimes(2)
+      expect(value.host.deliverSharedGroup).toHaveBeenCalledTimes(1)
       value.clock.value = 62_000
       await vi.advanceTimersByTimeAsync(30_001)
       await Promise.resolve()
       await Promise.resolve()
-      expect(value.host.deliverSharedGroup).toHaveBeenCalledTimes(3)
+      expect(value.host.deliverSharedGroup).toHaveBeenCalledTimes(2)
+    } finally {
+      await value.close()
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not let scheduled early recovery rows starve later pending rows', async () => {
+    vi.useFakeTimers()
+    const value = await fixture(10, true)
+    try {
+      const ownerEnrollment = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-second'), 'owner')).code,
+        request(cookie(ownerEnrollment)),
+      )
+      const owner = await principal(value, ownerEnrollment)
+      const created = await value.service.handle('bots/share/create-group', {
+        name: 'Recovery pagination room',
+        botIds: [BotId('bot-chief'), BotId('bot-second')],
+      }, new AbortController().signal, owner.peer)
+      const groupId = groupIdFromResult(created)
+      const messageIds = Array.from({ length: 65 }, (_, index) => BotGroupMessageId(`bot-group-message-recovery-pagination-${String(index)}`))
+      for (const messageId of messageIds) {
+        await expect(value.service.handle('bots/share/send-group-message', {
+          groupId,
+          targetBotIds: [BotId('bot-chief')],
+          text: `Recovery pagination ${String(messageId)}.`,
+          messageId,
+        }, new AbortController().signal, owner.peer)).resolves.toMatchObject({ ok: true })
+      }
+      await value.authority.mutateExtension('agent-bots/shared-memberships', (current) => {
+        const membership = sharedMembershipSnapshotSchema.parse(current)
+        const groups = sharedGroupSnapshotSchema.parse(membership.sharedGroups)
+        const messageSet = new Set(messageIds.map(String))
+        return {
+          value: undefined,
+          next: {
+            ...membership,
+            sharedGroups: {
+              ...groups,
+              deliveries: groups.deliveries.map(candidate => messageSet.has(String(candidate.messageId))
+                ? {
+                  ...candidate,
+                  status: 'pending' as const,
+                  dispatchToken: `recovery-pagination-${String(candidate.messageId)}`,
+                  dispatchLeaseUntil: 0,
+                }
+                : candidate),
+            },
+          },
+        }
+      })
+      value.host.deliverSharedGroup.mockImplementation(async () => ({
+        kind: 'busy' as const,
+        retryAt: Date.now() + 30_000,
+      }))
+      value.host.deliverSharedGroup.mockClear()
+      await value.service.recoverSharedGroupDeliveries()
+      await vi.advanceTimersByTimeAsync(1)
+      await Promise.resolve()
+      await Promise.resolve()
+      expect(value.host.deliverSharedGroup).toHaveBeenCalledTimes(65)
     } finally {
       await value.close()
       vi.useRealTimers()

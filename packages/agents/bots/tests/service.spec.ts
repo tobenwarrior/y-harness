@@ -3648,6 +3648,8 @@ describe('durable Bot roster', () => {
           status: z.enum(['pending', 'accepted']),
           claimToken: z.string().optional(),
           claimLeaseUntil: z.number().optional(),
+          admissionToken: z.string().optional(),
+          admissionStartedAt: z.number().optional(),
         }).strict()),
       }).strict()
       const originalModifyRecord = h.credentials.modifyRecord.bind(h.credentials)
@@ -3668,7 +3670,12 @@ describe('durable Bot roster', () => {
                 payload: {
                   version: 1,
                   messages: next.data.messages.map(message => message.status === 'pending'
-                    ? { ...message, claimToken: 'foreign-recipient-claim', claimLeaseUntil: Date.now() + 30_000 }
+                    ? {
+                      ...message,
+                      claimToken: 'foreign-recipient-claim',
+                      claimLeaseUntil: Date.now() + 30_000,
+                      admissionToken: 'foreign-recipient-claim',
+                    }
                     : message),
                 },
               }
@@ -3729,8 +3736,12 @@ describe('durable Bot roster', () => {
                 payload: {
                   version: 1,
                   messages: stored.payload.messages.map(message => ({
-                    ...message,
-                    ...(message.status === 'pending' ? { claimLeaseUntil: 0 } : {}),
+                    ...(message.status === 'pending'
+                      ? (() => {
+                        const { admissionToken: _admissionToken, admissionStartedAt: _admissionStartedAt, ...withoutAdmission } = message
+                        return { ...withoutAdmission, claimLeaseUntil: 0 }
+                      })()
+                      : message),
                   })),
                 },
               }
@@ -3809,6 +3820,143 @@ describe('durable Bot roster', () => {
     }
   })
 
+  it('does not commit recipient acceptance when a timed-out flush settles late', async () => {
+    vi.useFakeTimers()
+    const pool = new MemoryMediaPool()
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const sessionId = 'shared-session-group-recipient-late-flush'
+    const h = await harness(
+      pool, undefined, undefined, [sessionId], new Map(), records, true, 'native', false,
+      { inspectSharedSessions: true },
+    )
+    try {
+      const created = await h.service.create({ name: 'Late recipient flush', cwd: '/tmp' })
+      const binding: SharedGroupSessionBinding = {
+        groupId: BotGroupId('bot-group-recipient-late-flush'),
+        botId: created.bot.id,
+        sessionId: SessionId(sessionId),
+        createdAt: 1,
+        updatedAt: 1,
+      }
+      const host = productionSharedHost(h.service)
+      host.registerSharedGroupSessions?.([binding])
+      const entered = Promise.withResolvers<undefined>()
+      const release = Promise.withResolvers<undefined>()
+      h.flush.mockImplementation(async () => {
+        entered.resolve(undefined)
+        await release.promise
+        return true
+      })
+      const pending = host.deliverSharedGroup?.({
+        groupId: binding.groupId,
+        groupName: 'Late recipient flush',
+        targetBotId: binding.botId,
+        sessionId: binding.sessionId,
+        text: 'Do not commit after the flush timeout.',
+        messageId: BotGroupMessageId('bot-group-message-recipient-late-flush'),
+      })
+      await entered.promise
+      const rejected = expect(pending).rejects.toThrow('timed out')
+      await vi.advanceTimersByTimeAsync(15_001)
+      await rejected
+      release.resolve(undefined)
+      for (let index = 0; index < 6; index += 1) await Promise.resolve()
+      await vi.runAllTicks()
+      await vi.advanceTimersByTimeAsync(1)
+      expect(records.get(credentialKey('agent-bots', 'shared-group-message-deliveries'))).toMatchObject({
+        payload: { messages: [] },
+      })
+    } finally {
+      await close(h.ctx)
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not reclaim a recipient admission while a timed-out flush is still unsettled', async () => {
+    vi.useFakeTimers()
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const created = await seed.service.create({ name: 'Recipient admission fence', cwd: '/tmp' })
+    await close(seed.ctx)
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const sessionId = 'shared-session-group-recipient-admission-fence'
+    const left = await harness(
+      pool, undefined, undefined, [sessionId], new Map(), records, true, 'native', false,
+      { inspectSharedSessions: true },
+    )
+    const right = await harness(
+      pool, undefined, undefined, [sessionId], new Map(), records, true, 'native', false,
+      { inspectSharedSessions: true },
+    )
+    try {
+      const binding: SharedGroupSessionBinding = {
+        groupId: BotGroupId('bot-group-recipient-admission-fence'),
+        botId: created.bot.id,
+        sessionId: SessionId(sessionId),
+        createdAt: 1,
+        updatedAt: 1,
+      }
+      const leftHost = productionSharedHost(left.service)
+      const rightHost = productionSharedHost(right.service)
+      leftHost.registerSharedGroupSessions?.([binding])
+      rightHost.registerSharedGroupSessions?.([binding])
+      const deliveryKey = credentialKey('agent-bots', 'shared-group-message-deliveries')
+      const originalLeftModifyRecord = left.credentials.modifyRecord.bind(left.credentials)
+      left.credentials.modifyRecord = (key, mutate) => {
+        if (key !== deliveryKey) return originalLeftModifyRecord(key, mutate)
+        return (async () => {
+          const next = await mutate(records.get(key))
+          if (next !== undefined) records.set(key, next)
+          return records.get(key)
+        })()
+      }
+      const entered = Promise.withResolvers<undefined>()
+      const release = Promise.withResolvers<undefined>()
+      left.flush.mockImplementation(async () => {
+        entered.resolve(undefined)
+        await release.promise
+        return true
+      })
+      const request = {
+        groupId: binding.groupId,
+        groupName: 'Recipient admission fence',
+        targetBotId: binding.botId,
+        sessionId: binding.sessionId,
+        text: 'Admit once while the first flush is uncertain.',
+        messageId: BotGroupMessageId('bot-group-message-recipient-admission-fence'),
+      }
+      const first = leftHost.deliverSharedGroup?.(request)
+      await entered.promise
+      const rejected = expect(first).rejects.toThrow('timed out')
+      await vi.advanceTimersByTimeAsync(15_001)
+      await rejected
+      const current = records.get(deliveryKey)
+      if (current?.kind !== 'grant' || typeof current.payload !== 'object' || current.payload === null
+        || !('messages' in current.payload) || !Array.isArray(current.payload.messages)) {
+        throw new Error('recipient admission fence did not create a durable claim')
+      }
+      records.set(deliveryKey, {
+        kind: 'grant',
+        payload: {
+          version: 1,
+          messages: current.payload.messages.map(message => ({
+            ...message,
+            ...(message.status === 'pending' ? { claimLeaseUntil: 0 } : {}),
+          })),
+        },
+      })
+      const second = rightHost.deliverSharedGroup?.(request)
+      await expect(second).resolves.toMatchObject({ kind: 'busy' })
+      expect(left.followups[0]).toHaveBeenCalledTimes(1)
+      expect(right.followups[0]).not.toHaveBeenCalled()
+      release.resolve(undefined)
+    } finally {
+      await close(right.ctx)
+      await close(left.ctx)
+      vi.useRealTimers()
+    }
+  })
+
   it('does not enqueue twice when a recipient takeover races a blocked flush', async () => {
     const pool = new MemoryMediaPool()
     const seed = await harness(pool)
@@ -3874,7 +4022,8 @@ describe('durable Bot roster', () => {
       await Promise.resolve()
       release.resolve(undefined)
       await expect(first).resolves.toBe('accepted')
-      await expect(second).resolves.toBe('duplicate')
+      await expect(second).resolves.toMatchObject({ kind: 'busy' })
+      await expect(rightHost.deliverSharedGroup?.(request)).resolves.toBe('duplicate')
       expect(left.followups[0]).toHaveBeenCalledTimes(1)
       expect(right.followups[0]).not.toHaveBeenCalled()
     } finally {
