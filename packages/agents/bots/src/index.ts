@@ -46,7 +46,7 @@ import type { UserMessage } from '@yharness/llm'
 import { SessionId } from '@yharness/session'
 import type { SessionEvent } from '@yharness/session'
 import type { TurnEndReason } from '@yharness/session'
-import type { SessionCreateRequest } from '@yharness/api-session-controller'
+import { ApiSessionNotFound, type SessionCreateRequest } from '@yharness/api-session-controller'
 import { defineDomain, domainTable, type Domain, type KvTable } from '@yharness/storage-domain'
 import { credentialKey, type CredentialProvider, type CredentialRecord } from '@yharness/credentials'
 import z from '@yharness/schemastery'
@@ -7823,7 +7823,8 @@ export class BotService extends TypertRemoteService {
 export default BotService
 
 function isMissingSessionForSharedGroup(value: unknown): boolean {
-  return remoteErrorOf(value)?.code === 'session/not-found'
+  return value instanceof ApiSessionNotFound
+    || remoteErrorOf(value)?.code === 'session/not-found'
     || value instanceof Error && value.name === 'ApiSessionNotFound'
 }
 

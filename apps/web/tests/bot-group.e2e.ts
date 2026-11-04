@@ -257,16 +257,21 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
     await ownerComposer.fill(OWNER_SHARED_MESSAGE)
     await ownerDialog.getByRole('button', { name: 'Send to group', exact: true }).click()
     await expect.poll(() => adapter.requests.length, { timeout: 30_000 }).toBe(2)
-    await expect.poll(() => ownerDialog.getByText(OWNER_SHARED_MESSAGE, { exact: true }).count(), { timeout: 30_000 }).toBe(1)
-    await expect.poll(() => ownerDialog.getByText(REPLY, { exact: true }).count(), { timeout: 30_000 }).toBe(2)
+    const ownerTranscriptRows = ownerDialog.locator('section[aria-label="Release room shared"] p')
+    await expect.poll(() => ownerTranscriptRows.filter({ hasText: OWNER_SHARED_MESSAGE }).count(), { timeout: 30_000 }).toBe(1)
+    await expect.poll(() => ownerTranscriptRows.filter({ hasText: REPLY }).count(), { timeout: 30_000 }).toBe(2)
 
     const collaboratorComposer = collaboratorDialog.getByRole('textbox', { name: 'Message Release room shared', exact: true })
     await collaboratorComposer.fill(COLLABORATOR_SHARED_MESSAGE)
     await collaboratorDialog.getByRole('button', { name: 'Send to group', exact: true }).click()
     await expect.poll(() => adapter.requests.length, { timeout: 30_000 }).toBe(4)
-    await expect.poll(() => collaboratorDialog.getByText(COLLABORATOR_SHARED_MESSAGE, { exact: true }).count(), { timeout: 30_000 }).toBe(1)
-    await expect.poll(() => collaboratorDialog.getByText(OWNER_SHARED_MESSAGE, { exact: true }).count(), { timeout: 30_000 }).toBe(1)
-    await expect.poll(() => collaboratorDialog.getByText(REPLY, { exact: true }).count(), { timeout: 30_000 }).toBe(4)
+    const collaboratorTranscriptRows = collaboratorDialog.locator('section[aria-label="Release room shared"] p')
+    await expect.poll(
+      () => collaboratorTranscriptRows.filter({ hasText: COLLABORATOR_SHARED_MESSAGE }).count(),
+      { timeout: 30_000 },
+    ).toBe(1)
+    await expect.poll(() => collaboratorTranscriptRows.filter({ hasText: OWNER_SHARED_MESSAGE }).count(), { timeout: 30_000 }).toBe(1)
+    await expect.poll(() => collaboratorTranscriptRows.filter({ hasText: REPLY }).count(), { timeout: 30_000 }).toBe(4)
 
     const ownerTranscript = await sharedBrowserRpc<SharedGroupInspectValue>(page, 'bots/share/inspect-group', { groupId: created.group.id })
     const collaboratorTranscript = await sharedBrowserRpc<SharedGroupInspectValue>(collaboratorPage, 'bots/share/inspect-group', { groupId: created.group.id })
