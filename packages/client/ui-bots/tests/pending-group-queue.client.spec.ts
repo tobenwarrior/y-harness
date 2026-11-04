@@ -1,6 +1,10 @@
 // @vitest-environment jsdom
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createSharedGroupPendingQueue } from '../src/client/pending-group-queue.ts'
+import {
+  createSharedGroupPendingQueue,
+  SHARED_GROUP_PENDING_QUEUE_MAX_RECORDS,
+  SharedGroupPendingQueueFullError,
+} from '../src/client/pending-group-queue.ts'
 
 type LockCallback<T> = () => Promise<T>
 
@@ -100,6 +104,25 @@ describe('shared-group browser retry queue', () => {
       expect(retry.id).toBe(first.id)
       expect(retry.recovered).toBe(true)
       expect(retry.expired).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('refuses new records at the safe quota without evicting tombstones', async () => {
+    const queue = createSharedGroupPendingQueue('principal-quota')
+    const first = await queue.reserveMessage('message-key-0', 'bot-group-room', 'message 0')
+    vi.useFakeTimers({ now: Date.now() + 24 * 60 * 60 * 1_000 + 1 })
+    try {
+      await queue.listMessages()
+      for (let index = 1; index < SHARED_GROUP_PENDING_QUEUE_MAX_RECORDS; index += 1) {
+        await queue.reserveMessage(`message-key-${index}`, 'bot-group-room', `message ${index}`)
+      }
+
+      await expect(queue.reserveMessage('message-over-quota', 'bot-group-room', 'one more')).rejects.toBeInstanceOf(SharedGroupPendingQueueFullError)
+      const records = await queue.listMessages()
+      expect(records).toHaveLength(SHARED_GROUP_PENDING_QUEUE_MAX_RECORDS)
+      expect(records.find(record => record.id === first.id)?.expired).toBe(true)
     } finally {
       vi.useRealTimers()
     }

@@ -183,6 +183,7 @@ export interface SharedBotsClient {
  */
 export function createSharedBotsClient(rpc: ClientConnectionRpc): SharedBotsClient {
   let retryScope: string | undefined
+  let retryScopeRequestGeneration = 0
   const call = async <T>(
     endpoint: string,
     payload: unknown,
@@ -203,13 +204,19 @@ export function createSharedBotsClient(rpc: ClientConnectionRpc): SharedBotsClie
   }
 
   const enroll = async (code: string): Promise<SharedBotClientResult<SharedBotEnrollmentValue>> => {
+    const requestGeneration = retryScopeRequestGeneration + 1
+    retryScopeRequestGeneration = requestGeneration
+    retryScope = undefined
     const result = await call('bots/share/enroll', { code }, parseEnrollment)
-    if (result.ok) retryScope = result.value.principalId
+    if (requestGeneration === retryScopeRequestGeneration && result.ok) retryScope = result.value.principalId
     return result
   }
   const restoreRetryScope = async (): Promise<SharedBotClientResult<SharedBotEnrollmentValue>> => {
+    const requestGeneration = retryScopeRequestGeneration + 1
+    retryScopeRequestGeneration = requestGeneration
+    retryScope = undefined
     const result = await call('bots/share/session', {}, parseEnrollment)
-    if (result.ok) retryScope = result.value.principalId
+    if (requestGeneration === retryScopeRequestGeneration && result.ok) retryScope = result.value.principalId
     return result
   }
 

@@ -160,6 +160,7 @@ export const en = {
   sharedGroupInviteOwnerOnly: 'Only the group owner can create an invite. Ask the owner to share one.',
   sharedGroupCreateFailed: 'The shared group could not be created. Try again.',
   sharedGroupRetryUnavailable: 'This shared-group action cannot be retried safely because this browser does not provide durable storage and Web Locks, or the group catalog is unavailable.',
+  sharedGroupRetryQuota: 'This browser has reached its safe shared-group retry limit. Recover or discard an existing retry before starting another operation.',
   sharedGroupRetryIdentityUnavailable: 'Sign in to a shared Bot first so this browser can safely recover shared-group operations. A server-issued identity is required; this browser never guesses one.',
   sharedGroupRetryConflict: 'The saved shared-group retry does not match the current room details. Nothing was sent.',
   sharedGroupPendingRecoveryRequired: 'An interrupted shared-group creation is waiting below. Recover or discard it before starting another one.',

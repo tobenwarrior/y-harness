@@ -39,6 +39,7 @@ import css from './BotWorkspace.module.css'
 import type { BotShareActions } from './controller.ts'
 import {
   createSharedGroupPendingQueue,
+  SharedGroupPendingQueueFullError,
 } from './pending-group-queue.ts'
 import type {
   SharedGroupPendingQueue,
@@ -582,21 +583,44 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
   const createGroupGenerationRef = useRef(0)
   const pendingRefreshGenerationRef = useRef(0)
   const recoveryWorkingRef = useRef<string | null>(null)
+  const pendingMessageOperationRef = useRef<{ readonly id: string; readonly token: number } | null>(null)
+  const pendingMessageOperationTokenRef = useRef(0)
   const pendingGroupQueueRef = useRef<{ readonly scope: string; readonly queue: SharedGroupPendingQueue } | null>(null)
+  const beginPendingMessageOperation = (id: string): number => {
+    const token = pendingMessageOperationTokenRef.current + 1
+    pendingMessageOperationTokenRef.current = token
+    pendingMessageOperationRef.current = { id, token }
+    setPendingMessageWorking(id)
+    return token
+  }
+  const clearPendingMessageOperation = (): void => {
+    pendingMessageOperationRef.current = null
+    setPendingMessageWorking(null)
+  }
+  const finishPendingMessageOperation = (id: string, token: number): void => {
+    if (pendingMessageOperationRef.current?.id === id && pendingMessageOperationRef.current.token === token) {
+      pendingMessageOperationRef.current = null
+      setPendingMessageWorking(null)
+    }
+  }
   const clearPendingRetryState = (): void => {
     setPendingCreations([])
     setPendingMessages([])
     recoveryWorkingRef.current = null
     setRecoveryWorking(null)
-    setPendingMessageWorking(null)
+    clearPendingMessageOperation()
     setDiscardTarget(null)
     setDiscardAcknowledged(false)
+  }
+  const invalidatePendingRetryState = (): void => {
+    pendingRefreshGenerationRef.current += 1
+    clearPendingRetryState()
   }
   const resetPendingScopeIfChanged = (scope: string | undefined): void => {
     if (pendingGroupQueueRef.current?.scope === scope) return
     if (pendingGroupQueueRef.current !== null) {
       pendingGroupQueueRef.current = null
-      clearPendingRetryState()
+      invalidatePendingRetryState()
     }
   }
   const getPendingGroupQueue = (): SharedGroupPendingQueue => {
@@ -612,6 +636,11 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
     if (!queue.durable) throw new Error(t('sharedGroupRetryUnavailable'))
     return queue
   }
+  const retryErrorMessage = (cause: unknown, fallback: string): string => (
+    cause instanceof SharedGroupPendingQueueFullError
+      ? t('sharedGroupRetryQuota')
+      : cause instanceof Error ? cause.message : fallback
+  )
   const message = selectedBotId === null ? '' : messageDrafts[selectedBotId] ?? ''
   const memoryDraft = selectedBotId === null ? '' : memoryDrafts[selectedBotId] ?? ''
   const hasPendingChat = chatWorkingBotIds.size > 0
@@ -629,6 +658,17 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
 
   const setSelection = (botId: string | null): void => {
     if (selectedBotIdRef.current !== botId) selectionEpochRef.current += 1
+    if (botId !== null && selectedGroupIdRef.current !== null) {
+      groupOperationGenerationRef.current += 1
+      groupDraftRevisionRef.current += 1
+      groupInviteGenerationRef.current += 1
+      setGroupWorking(null)
+      clearPendingMessageOperation()
+      setGroupInvite(null)
+      setGroupInviteCopied(false)
+      setGroupInviteWorking(false)
+      setGroupInviteUnavailable(false)
+    }
     selectedBotIdRef.current = botId
     setSelectedBotId(botId)
     if (botId !== null) {
@@ -645,6 +685,7 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
       groupInviteGenerationRef.current += 1
       setGroupDraft('')
       setGroupWorking(null)
+      clearPendingMessageOperation()
       setGroupInvite(null)
       setGroupInviteCopied(false)
       setGroupInviteWorking(false)
@@ -684,23 +725,22 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
     const lifecycleGeneration = lifecycleGenerationRef.current
     const refreshGeneration = refreshGenerationRef.current + 1
     refreshGenerationRef.current = refreshGeneration
-    resetPendingScopeIfChanged(client.retryScope)
+    pendingGroupQueueRef.current = null
+    invalidatePendingRetryState()
     setWorking('list')
     setError(null)
     setGroups([])
     setGroupSelection(null)
     setGroupMessages([])
     try {
-      if (client.retryScope === undefined) {
-        try {
-          const restored = await client.restoreRetryScope()
-          if (!isCurrentLifecycle(lifecycleGeneration) || refreshGenerationRef.current !== refreshGeneration) return
-          if (!restored.ok && restored.error.code !== 'gateway/not-found' && restored.error.code !== 'gateway/unauthorized') {
-            setError(restored.error.message || t('sharedGroupRetryIdentityUnavailable'))
-          }
-        } catch {
-          // The roster remains usable when the optional reload-scope endpoint is unavailable.
+      try {
+        const restored = await client.restoreRetryScope()
+        if (!isCurrentLifecycle(lifecycleGeneration) || refreshGenerationRef.current !== refreshGeneration) return
+        if (!restored.ok && restored.error.code !== 'gateway/not-found' && restored.error.code !== 'gateway/unauthorized') {
+          setError(restored.error.message || t('sharedGroupRetryIdentityUnavailable'))
         }
+      } catch {
+        // The roster remains usable when the optional reload-scope endpoint is unavailable.
       }
       const result = await client.list()
       if (!isCurrentLifecycle(lifecycleGeneration) || refreshGenerationRef.current !== refreshGeneration) return
@@ -803,7 +843,7 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
     } catch (cause: unknown) {
       if (isCurrentLifecycle(lifecycleGeneration) && pendingRefreshGenerationRef.current === refreshGeneration
         && client.retryScope === scope && createGroupOpen) {
-        setCreateGroupError(cause instanceof Error ? cause.message : t('sharedGroupRetryUnavailable'))
+        setCreateGroupError(retryErrorMessage(cause, t('sharedGroupRetryUnavailable')))
       }
     }
   }
@@ -884,7 +924,7 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
       setRecoveryWorking(null)
       setPendingCreations([])
       setPendingMessages([])
-      setPendingMessageWorking(null)
+      clearPendingMessageOperation()
       setDiscardTarget(null)
       setDiscardAcknowledged(false)
       return
@@ -1038,8 +1078,7 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
       await readGroup(String(created.id))
     } catch (cause: unknown) {
       if (isCurrentCreate()) {
-        const error = cause instanceof Error ? cause : new Error(t('sharedGroupCreateFailed'))
-        setCreateGroupError(error.message || t('sharedGroupCreateFailed'))
+        setCreateGroupError(retryErrorMessage(cause, t('sharedGroupCreateFailed')))
         void refreshPendingOperations()
       }
       throw cause
@@ -1088,7 +1127,7 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
       await readGroup(String(created.id))
       closeCreateGroup()
     } catch (cause: unknown) {
-      if (isCurrentRecovery()) setCreateGroupError(cause instanceof Error ? cause.message : t('sharedGroupCreateFailed'))
+      if (isCurrentRecovery()) setCreateGroupError(retryErrorMessage(cause, t('sharedGroupCreateFailed')))
     } finally {
       const shouldClear = isCurrentRecovery()
       if (recoveryWorkingRef.current === creation.id) recoveryWorkingRef.current = null
@@ -1114,7 +1153,7 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
         succeeded = true
       }
     } catch (cause: unknown) {
-      if (isCurrentDiscard()) setCreateGroupError(cause instanceof Error ? cause.message : t('sharedGroupRetryUnavailable'))
+      if (isCurrentDiscard()) setCreateGroupError(retryErrorMessage(cause, t('sharedGroupRetryUnavailable')))
     } finally {
       const shouldClear = isCurrentDiscard()
       if (recoveryWorkingRef.current === creation.id) recoveryWorkingRef.current = null
@@ -1135,7 +1174,7 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
     const isCurrentDiscard = (): boolean => (
       isCurrentLifecycle(lifecycleGeneration) && groupOperationGenerationRef.current === groupGeneration
     )
-    setPendingMessageWorking(messageRecord.id)
+    const operationToken = beginPendingMessageOperation(messageRecord.id)
     let succeeded = false
     try {
       const queue = getPendingGroupQueue()
@@ -1145,9 +1184,9 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
         succeeded = true
       }
     } catch (cause: unknown) {
-      if (isCurrentDiscard()) setError(cause instanceof Error ? cause.message : t('sharedGroupRetryUnavailable'))
+      if (isCurrentDiscard()) setError(retryErrorMessage(cause, t('sharedGroupRetryUnavailable')))
     } finally {
-      if (isCurrentDiscard()) setPendingMessageWorking(null)
+      finishPendingMessageOperation(messageRecord.id, operationToken)
     }
     return succeeded
   }
@@ -1230,7 +1269,7 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
       && selectedGroupIdRef.current === pending.groupId
       && groupOperationGenerationRef.current === operationGeneration
     )
-    setPendingMessageWorking(pending.id)
+    const operationToken = beginPendingMessageOperation(pending.id)
     setGroupWorking('send')
     setError(null)
     try {
@@ -1259,10 +1298,10 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
         setError(result.error.message || t('sharedGroupSendFailed'))
       }
     } catch (cause: unknown) {
-      if (isCurrentRecovery()) setError(cause instanceof Error ? cause.message : t('sharedGroupSendFailed'))
+      if (isCurrentRecovery()) setError(retryErrorMessage(cause, t('sharedGroupSendFailed')))
     } finally {
+      finishPendingMessageOperation(pending.id, operationToken)
       if (isCurrentRecovery()) {
-        setPendingMessageWorking(null)
         setGroupWorking(current => current === 'send' ? null : current)
       }
     }
@@ -1318,7 +1357,7 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
       }
     } catch (cause: unknown) {
       if (isCurrentGroupOperation()) {
-        setError(cause instanceof Error ? cause.message : t('sharedGroupSendFailed'))
+        setError(retryErrorMessage(cause, t('sharedGroupSendFailed')))
         void refreshPendingOperations()
       }
     } finally {

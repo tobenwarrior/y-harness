@@ -6,6 +6,17 @@ const PENDING_TTL_MS = 24 * 60 * 60 * 1000
 const MAX_TEXT_LENGTH = 16_384
 const PRINCIPAL_SCOPE_PATTERN = /^principal-[A-Za-z0-9-]+$/
 
+/** Maximum number of pending records retained for one authenticated principal. */
+export const SHARED_GROUP_PENDING_QUEUE_MAX_RECORDS = 128
+
+/** Raised when retaining another retry record could exceed the safe local quota. */
+export class SharedGroupPendingQueueFullError extends Error {
+  constructor() {
+    super('Shared-group retry storage quota reached')
+    this.name = 'SharedGroupPendingQueueFullError'
+  }
+}
+
 interface StorageLike {
   readonly length: number
   key(index: number): string | null
@@ -243,7 +254,7 @@ export function createSharedGroupPendingQueue(scope: string): SharedGroupPending
     try {
       return await locks.request(name, work)
     } catch (cause: unknown) {
-      healthy = false
+      if (!(cause instanceof SharedGroupPendingQueueFullError)) healthy = false
       throw cause
     }
   }
@@ -267,6 +278,18 @@ export function createSharedGroupPendingQueue(scope: string): SharedGroupPending
   const write = (key: string, record: PendingRecord): void => {
     if (storage === undefined) throw new Error('Shared-group retry storage is unavailable')
     storage.setItem(key, JSON.stringify(record))
+  }
+
+  const ensureCapacity = (key: string): void => {
+    if (storage === undefined) throw new Error('Shared-group retry storage is unavailable')
+    let count = 0
+    for (let index = 0; index < storage.length; index += 1) {
+      const candidate = storage.key(index)
+      if (candidate !== null && candidate.startsWith(`${scopePrefix(scope)}.`)) count += 1
+    }
+    if (count >= SHARED_GROUP_PENDING_QUEUE_MAX_RECORDS && storage.getItem(key) === null) {
+      throw new SharedGroupPendingQueueFullError()
+    }
   }
 
   const prune = async (): Promise<void> => {
@@ -331,6 +354,7 @@ export function createSharedGroupPendingQueue(scope: string): SharedGroupPending
           && current.botIds.every((botId, index) => botId === canonicalBotIds[index])) {
           return { operationHash: hash, id: current.id, recovered: true, expired: current.status === 'expired' }
         }
+        ensureCapacity(key)
         const record: PendingCreationRecord = {
           version: 1,
           kind: 'creation',
@@ -362,6 +386,7 @@ export function createSharedGroupPendingQueue(scope: string): SharedGroupPending
           && (current.status === 'expired' || current.text === text)) {
           return { operationHash: hash, id: current.id, recovered: true, expired: current.status === 'expired' }
         }
+        ensureCapacity(key)
         const record: PendingMessageRecord = {
           version: 1,
           kind: 'message',

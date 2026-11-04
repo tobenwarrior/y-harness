@@ -71,4 +71,50 @@ describe('shared Bot client capabilities', () => {
     })
     expect(client.retryScope).toBe('principal-restored')
   })
+
+  it('clears a stale principal scope when the authenticated session is gone', async () => {
+    let sessionCalls = 0
+    const rpc: ClientConnectionRpc = {
+      call: vi.fn(async (_channel, endpoint) => {
+        if (endpoint === 'bots/share/enroll') return { ok: true as const, value: { principalId: 'principal-old', expiresAt: 3_000 } }
+        sessionCalls += 1
+        return sessionCalls === 1
+          ? { ok: true as const, value: { principalId: 'principal-new', expiresAt: 3_000 } }
+          : { ok: false as const, error: { code: 'gateway/unauthorized', message: 'expired', details: {} } }
+      }),
+    }
+    const client = createSharedBotsClient(rpc)
+    await expect(client.enroll('old-code')).resolves.toMatchObject({ ok: true })
+    expect(client.retryScope).toBe('principal-old')
+    await expect(client.restoreRetryScope()).resolves.toMatchObject({ ok: true, value: { principalId: 'principal-new' } })
+    expect(client.retryScope).toBe('principal-new')
+    await expect(client.restoreRetryScope()).resolves.toMatchObject({ ok: false, error: { code: 'gateway/unauthorized' } })
+    expect(client.retryScope).toBeUndefined()
+  })
+
+  it('does not let an older scope refresh overwrite a newer one', async () => {
+    const first = Promise.withResolvers<{
+      readonly ok: true
+      readonly value: { readonly principalId: string; readonly expiresAt: number }
+    }>()
+    const second = Promise.withResolvers<{
+      readonly ok: true
+      readonly value: { readonly principalId: string; readonly expiresAt: number }
+    }>()
+    let calls = 0
+    const rpc: ClientConnectionRpc = {
+      call: vi.fn(async () => {
+        calls += 1
+        return calls === 1 ? first.promise : second.promise
+      }),
+    }
+    const client = createSharedBotsClient(rpc)
+    const older = client.restoreRetryScope()
+    const newer = client.restoreRetryScope()
+    second.resolve({ ok: true, value: { principalId: 'principal-newer', expiresAt: 3_000 } })
+    await expect(newer).resolves.toMatchObject({ ok: true, value: { principalId: 'principal-newer' } })
+    first.resolve({ ok: true, value: { principalId: 'principal-older', expiresAt: 3_000 } })
+    await expect(older).resolves.toMatchObject({ ok: true, value: { principalId: 'principal-older' } })
+    expect(client.retryScope).toBe('principal-newer')
+  })
 })
