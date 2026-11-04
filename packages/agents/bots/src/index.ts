@@ -755,6 +755,28 @@ function mergeProfileSnapshots(
   }
 }
 
+/** Return whether an immutable v1 pending row is already reflected in v2. */
+function legacyPendingWasApplied(
+  current: BotProfileRevisionState,
+  pending: zod.infer<typeof botProfilePendingSchema>,
+): boolean {
+  const id = String(pending.record.id)
+  const revision = current.revisions[id]
+  if (revision === undefined || revision < pending.record.updatedAt) return false
+  if (revision > pending.record.updatedAt) return true
+  const profile = current.profiles[id]
+  if (profile === undefined) throw new Error('Bot profile revision cannot acknowledge a legacy pending transaction')
+  const expected = profileSnapshotOf(pending.record)
+  const fields: readonly (keyof BotProfileSnapshot)[] = [
+    'name', 'description', 'persona', 'capabilities', 'identity', 'accent', 'avatar',
+    'connectedAppIds', 'connectedAppDenyIds', 'eventRoutines', 'pendingMemoryUpdate',
+    'pinned', 'hidden', 'group', 'updatedAt',
+  ]
+  const matches = fields.every(field => profileValuesEqual(profile[field] ?? null, expected[field] ?? null))
+  if (!matches) throw new Error('Bot profile revision cannot acknowledge a conflicting legacy pending transaction')
+  return true
+}
+
 /** Converge the immutable released state into an incomplete v2 record exactly once. */
 function mergeProfileRevisionStates(
   current: BotProfileRevisionState | undefined,
@@ -788,9 +810,14 @@ function mergeProfileRevisionStates(
     if (merged.changed) profiles[id] = merged.snapshot
     changed ||= merged.changed
   }
-  const pending = current.pending
+  let pending = current.pending
   if (pending !== undefined && legacy.pending !== undefined && !profileValuesEqual(pending, legacy.pending)) {
     throw new Error('Bot profile revision records contain conflicting pending transactions')
+  }
+  // The v1 predecessor cannot be cleared, so an applied revision is the v2 acknowledgement.
+  if (pending === undefined && legacy.pending !== undefined && !legacyPendingWasApplied(current, legacy.pending)) {
+    pending = legacy.pending
+    changed = true
   }
   return {
     state: {

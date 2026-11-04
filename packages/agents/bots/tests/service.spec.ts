@@ -4396,6 +4396,152 @@ describe('durable Bot roster', () => {
     }
   })
 
+  it('adopts a pending v1 transaction when an existing v2 record has no pending row', async () => {
+    const pool = new MemoryMediaPool()
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const first = await harness(pool, undefined, undefined, [], new Map(), records)
+    const created = await first.service.create({ name: 'Pending successor', cwd: '/tmp' })
+    const id = String(created.bot.id)
+    const legacyKey = credentialKey('agent-bots', 'profile-revisions')
+    const currentKey = credentialKey('agent-bots', 'profile-revisions-v2')
+    const pendingRecord: BotRecord = {
+      ownerId: 'local-owner',
+      id: created.bot.id,
+      sessionId: created.bot.sessionId,
+      name: 'Recovered through successor',
+      identity: created.bot.identity,
+      accent: created.bot.accent,
+      cwd: created.bot.cwd,
+      state: created.bot.state,
+      createdAt: created.bot.createdAt,
+      updatedAt: created.bot.updatedAt + 1,
+    }
+    const legacy: CredentialRecord = {
+      kind: 'grant',
+      payload: {
+        version: 1,
+        revisions: { [id]: created.bot.updatedAt },
+        profiles: {
+          [id]: {
+            name: created.bot.name,
+            identity: created.bot.identity,
+            accent: created.bot.accent,
+            updatedAt: created.bot.updatedAt,
+          },
+        },
+        pending: { transactionId: 'pending-v1-existing-v2', record: pendingRecord },
+      },
+    }
+    const current: CredentialRecord = {
+      kind: 'grant',
+      payload: {
+        version: 2,
+        revisions: { [id]: created.bot.updatedAt },
+        profiles: {
+          [id]: {
+            name: created.bot.name,
+            identity: created.bot.identity,
+            accent: created.bot.accent,
+            updatedAt: created.bot.updatedAt,
+          },
+        },
+      },
+    }
+    records.set(legacyKey, legacy)
+    records.set(currentKey, current)
+    await close(first.ctx)
+
+    const second = await harness(pool, undefined, undefined, [], new Map(), records)
+    try {
+      await expect(second.service.list({})).resolves.toMatchObject({
+        bots: [{ id: created.bot.id, name: 'Recovered through successor' }],
+      })
+      await expect(second.service.rename({ botId: created.bot.id, name: 'Newer after recovery' }))
+        .resolves.toMatchObject({ bot: { name: 'Newer after recovery' } })
+    } finally {
+      await close(second.ctx)
+    }
+
+    const third = await harness(pool, undefined, undefined, [], new Map(), records)
+    try {
+      await expect(third.service.list({})).resolves.toMatchObject({
+        bots: [{ id: created.bot.id, name: 'Newer after recovery' }],
+      })
+      expect(records.get(legacyKey)).toEqual(legacy)
+      expect(records.get(currentKey)).toMatchObject({
+        kind: 'grant',
+        payload: {
+          version: 2,
+          revisions: { [id]: expect.any(Number) },
+        },
+      })
+    } finally {
+      await close(third.ctx)
+    }
+  })
+
+  it('fails closed when existing v1 and v2 pending profile transactions conflict', async () => {
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const h = await harness(new MemoryMediaPool(), undefined, undefined, [], new Map(), records)
+    const created = await h.service.create({ name: 'Conflicting successor', cwd: '/tmp' })
+    const id = String(created.bot.id)
+    const legacyKey = credentialKey('agent-bots', 'profile-revisions')
+    const currentKey = credentialKey('agent-bots', 'profile-revisions-v2')
+    const pendingRecord = (name: string, updatedAt: number): BotRecord => ({
+      ownerId: 'local-owner',
+      id: created.bot.id,
+      sessionId: created.bot.sessionId,
+      name,
+      identity: created.bot.identity,
+      accent: created.bot.accent,
+      cwd: created.bot.cwd,
+      state: created.bot.state,
+      createdAt: created.bot.createdAt,
+      updatedAt,
+    })
+    const legacy: CredentialRecord = {
+      kind: 'grant',
+      payload: {
+        version: 1,
+        revisions: { [id]: created.bot.updatedAt },
+        profiles: { [id]: {
+          name: created.bot.name,
+          identity: created.bot.identity,
+          accent: created.bot.accent,
+          updatedAt: created.bot.updatedAt,
+        } },
+        pending: {
+          transactionId: 'pending-v1-conflict',
+          record: pendingRecord('Legacy pending', created.bot.updatedAt + 1),
+        },
+      },
+    }
+    const current: CredentialRecord = {
+      kind: 'grant',
+      payload: {
+        version: 2,
+        revisions: { [id]: created.bot.updatedAt },
+        profiles: { [id]: {
+          name: created.bot.name,
+          identity: created.bot.identity,
+          accent: created.bot.accent,
+          updatedAt: created.bot.updatedAt,
+        } },
+        pending: {
+          transactionId: 'pending-v2-conflict',
+          record: pendingRecord('Current pending', created.bot.updatedAt + 2),
+        },
+      },
+    }
+    records.set(legacyKey, legacy)
+    records.set(currentKey, current)
+    try {
+      await expect(h.service.list({})).rejects.toThrow('conflicting pending transactions')
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
   it('converges routine and setup fields into the v2 successor without rewriting v1', async () => {
     const pool = new MemoryMediaPool()
     const records = new Map<CredentialKey, CredentialRecord>()
