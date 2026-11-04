@@ -2016,8 +2016,17 @@ export class BotService extends TypertRemoteService {
     })
     ctx.on('agent/pre-step', async ({ agent, messages, turn, step }, next) => {
       const decision = await next()
+      const sharedSession = this.sharedSessionIds.has(String(agent.id))
+        && !this.recordsBySession.has(String(agent.id))
+      // A shared Session can resume with system/message history written before
+      // its scoped prompt was installed. Force each model request series to
+      // replace that history instead of appending a sanitized prompt after the
+      // retained private text.
+      const admittedDecision = sharedSession && decision.kind === 'enter'
+        ? { ...decision, startsRequestSeries: true as const }
+        : decision
       const record = this.recordsBySession.get(String(agent.id))
-      const admittedMessages = (decision.kind === 'enter' ? decision.messages : messages)
+      const admittedMessages = (admittedDecision.kind === 'enter' ? admittedDecision.messages : messages)
         .filter(message => !isSyntheticGroupContext(message))
       const claims = groupDeliveryClaims(admittedMessages)
       if (record !== undefined) {
@@ -2045,7 +2054,7 @@ export class BotService extends TypertRemoteService {
           )
         }
       }
-      return decision
+      return admittedDecision
     })
     ctx.provide('codexDynamicTools', createBotNativeToolProvider({
       bind: async (sessionId) => {

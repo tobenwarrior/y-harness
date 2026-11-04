@@ -8,7 +8,7 @@ import { AttachmentId, type ImageAttachmentRef, type StoredImageAttachment } fro
 import AgentRegistry, { agentEvents, type Agent } from '@yharness/agent'
 import AgentLoop from '@yharness/agent-loop'
 import { createScope } from '@yharness/scope'
-import LlmRuntime, { createAssistantMessage, createUserMessage, freezeMessage, MessageId, ToolCallId } from '@yharness/llm'
+import LlmRuntime, { createAssistantMessage, createSystemMessage, createUserMessage, freezeMessage, MessageId, ToolCallId } from '@yharness/llm'
 import SessionStore, { Session, SessionId, SessionSeq } from '@yharness/session'
 import SessionProjectionRegistry from '@yharness/session-projection'
 import type { SessionEvent } from '@yharness/session'
@@ -711,6 +711,172 @@ describe('durable Bot roster', () => {
       expect(refreshedPrompt).not.toContain('Declared capabilities: operator.refreshed.')
     } finally {
       await close(h.ctx)
+    }
+  })
+
+  it('replaces legacy private prompt history for a shared-group Session', async () => {
+    const sharedSessionId = SessionId('shared-session-group-legacy-prompt')
+    const groupId = BotGroupId('bot-group-legacy-prompt')
+    const h = await harness(
+      undefined,
+      undefined,
+      undefined,
+      [String(sharedSessionId)],
+      new Map(),
+      new Map(),
+      true,
+      'native',
+      false,
+      {
+        inspectSharedSessions: true,
+        realAgent: true,
+        realAgentInitialResponse: 'text',
+      },
+    )
+    try {
+      const created = await h.service.create({
+        name: 'Legacy group prompt owner',
+        description: 'Public group role',
+        persona: 'PRIVATE_GROUP_PERSONA',
+        capabilities: ['group.private'],
+        cwd: '/tmp',
+      })
+      const agent = h.agents[0]
+      if (agent === undefined || h.adapter === undefined) throw new Error('legacy group prompt Agent was not created')
+      agent.session.append('system/message', {
+        turn: 1,
+        step: 1,
+        message: createSystemMessage('PRIVATE_LEGACY_GROUP_SYSTEM_PROMPT'),
+      }, { surfaceOp: 'append' })
+
+      const resolved = await productionSharedHost(h.service).resolveSharedGroupAgent(
+        sharedSessionId,
+        groupId,
+        created.bot.id,
+        new AbortController().signal,
+      )
+      if (!('agent' in resolved)) throw new Error(`legacy group prompt Agent did not resolve: ${resolved.error.message}`)
+
+      h.adapter.systemPromptUpdate = 'in-history'
+      agent.followup(createUserMessage({
+        content: [{ type: 'text', text: 'continue the shared group conversation' }],
+        source: { kind: 'user' },
+      }))
+      await agent.whenIdle()
+
+      const request = h.adapter.requests.at(-1)
+      if (request === undefined) throw new Error('legacy group prompt request was not sent')
+      const requestText = request.messages.flatMap(message => message.content)
+        .flatMap(block => block.type === 'text' ? [block.text] : [])
+        .join('\n')
+      expect(requestText).not.toContain('PRIVATE_LEGACY_GROUP_SYSTEM_PROMPT')
+      expect(requestText).not.toContain('PRIVATE_GROUP_PERSONA')
+      expect(requestText).toContain('Your Bot name is "Legacy group prompt owner".')
+      expect(requestText).toContain('Your role is: Public group role')
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('sanitizes legacy prompt history while mounting a shared Session at startup', async () => {
+    const sharedSessionId = SessionId('shared-session-legacy-prompt-startup')
+    const pool = new MemoryMediaPool()
+    const first = await harness(
+      pool,
+      undefined,
+      undefined,
+      [],
+      new Map(),
+      new Map(),
+      true,
+      'native',
+      false,
+      {
+        connection: {
+          sharedRpc: {
+            enroll: vi.fn(() => async () => {}),
+            handle: vi.fn(() => async () => {}),
+          },
+        },
+      },
+    )
+    let firstClosed = false
+    try {
+      const created = await first.service.create({
+        name: 'Startup legacy prompt owner',
+        description: 'Public startup role',
+        persona: 'PRIVATE_STARTUP_PERSONA',
+        capabilities: ['startup.private'],
+        cwd: '/tmp',
+      })
+      const authority = await SharedAccessAuthority.create(first.ctx, first.credentials, {
+        sessionMaxAgeMs: 60_000,
+        inviteMaxAgeMs: 60_000,
+      })
+      try {
+        await bindSharedSession(authority, created.bot.id, sharedSessionId, 'principal-startup-legacy-prompt')
+      } finally {
+        await authority.dispose()
+      }
+      const records = first.records
+      await close(first.ctx)
+      firstClosed = true
+
+      const h = await harness(
+        pool,
+        undefined,
+        undefined,
+        [String(sharedSessionId)],
+        new Map(),
+        records,
+        true,
+        'native',
+        false,
+        {
+          connection: {
+            sharedRpc: {
+              enroll: vi.fn(() => async () => {}),
+              handle: vi.fn(() => async () => {}),
+            },
+          },
+          inspectSharedSessions: true,
+          realAgent: true,
+          realAgentInitialResponse: 'text',
+          beforeService: (ctx) => {
+            const agent = ctx.agents.get(sharedSessionId)
+            if (agent === undefined) throw new Error('startup legacy prompt Agent was not created')
+            agent.session.append('system/message', {
+              turn: 1,
+              step: 1,
+              message: createSystemMessage('PRIVATE_LEGACY_STARTUP_SYSTEM_PROMPT'),
+            }, { surfaceOp: 'append' })
+          },
+        },
+      )
+      try {
+        const agent = h.agents[0]
+        if (agent === undefined || h.adapter === undefined) throw new Error('startup legacy prompt Agent was not created')
+        h.adapter.systemPromptUpdate = 'in-history'
+        agent.followup(createUserMessage({
+          content: [{ type: 'text', text: 'continue after startup resume' }],
+          source: { kind: 'user' },
+        }))
+        await agent.whenIdle()
+
+        const request = h.adapter.requests.at(-1)
+        if (request === undefined) throw new Error('startup legacy prompt request was not sent')
+        const requestText = request.messages.flatMap(message => message.content)
+          .flatMap(block => block.type === 'text' ? [block.text] : [])
+          .join('\n')
+        expect(requestText).not.toContain('PRIVATE_LEGACY_STARTUP_SYSTEM_PROMPT')
+        expect(requestText).not.toContain('PRIVATE_STARTUP_PERSONA')
+        expect(requestText).toContain('Your Bot name is "Startup legacy prompt owner".')
+        expect(requestText).toContain('Your role is: Public startup role')
+      } finally {
+        await close(h.ctx)
+      }
+    } finally {
+      if (!firstClosed) await close(first.ctx)
     }
   })
 

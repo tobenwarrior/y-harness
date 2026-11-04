@@ -139,7 +139,7 @@ The roster does not modify request prefixes until the scoped collaboration tools
 
 #### What the model sees
 
-When an owner-local Bot Session is created or resumed, the Host adds a scoped system-prompt section with the Bot's current name, optional role description, persona, and declared capabilities. Collaborator shared Sessions receive only the public name, id, and role description. The section is assembled for every model route, including the native Codex backend, and a rename is reflected on the next request without creating a second Session or rewriting earlier history. The scoped MCP tool runtime exposes `list_connected_apps` so a Bot can explain why an app is unavailable; the native Codex action bridge does not expose that catalog because its actions cannot dispatch MCP app tools.
+When an owner-local Bot Session is created or resumed, the Host adds a scoped system-prompt section with the Bot's current name, optional role description, persona, and declared capabilities. Collaborator shared Sessions receive only the public name, id, and role description. The section is assembled for every model route, including the native Codex backend, and a rename is reflected on the next request without creating a second Session or rewriting earlier history. A shared Session resumed with legacy private system-prompt history starts a fresh request series so the public projection replaces that model-visible prompt surface; append-only history is retained for audit but is not sent to the model. The scoped MCP tool runtime exposes `list_connected_apps` so a Bot can explain why an app is unavailable; the native Codex action bridge does not expose that catalog because its actions cannot dispatch MCP app tools.
 
 #### Token effect
 
