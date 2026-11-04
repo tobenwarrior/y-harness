@@ -2,6 +2,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { makeTranslate } from '@yharness/client-test-runtime'
+import { useState } from 'react'
 import { BotMemoryManager } from '../src/client/BotMemoryManager.tsx'
 import { en } from '../src/client/locales.ts'
 import type { BotMemoryManagerActions, BotSummary } from '../src/client/types.ts'
@@ -86,5 +87,26 @@ describe('BotMemoryManager', () => {
     expect((await screen.findByRole('alert')).textContent).toContain('The memory could not be removed. Try again.')
     expect(screen.getByRole('heading', { name: 'Remove memory?' })).toBeTruthy()
     expect(screen.getByRole('listitem', { name: /memory-one/ })).toBeTruthy()
+  })
+
+  it('closes the manager when its footer Close action is clicked', async () => {
+    const actions: BotMemoryManagerActions = {
+      list: vi.fn(async () => []),
+      update: vi.fn(),
+      remove: vi.fn(),
+    }
+    function Harness() {
+      const [open, setOpen] = useState(true)
+      return <BotMemoryManager bot={bot} actions={actions} open={open} onClose={() => { setOpen(false) }} t={t} />
+    }
+
+    render(<Harness />)
+
+    const dialog = await screen.findByRole('dialog', { name: 'Bot memory' })
+    const closeButtons = within(dialog).getAllByRole('button', { name: /^Close$/ })
+    expect(closeButtons).toHaveLength(2)
+    fireEvent.click(closeButtons.at(-1)!)
+
+    await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Bot memory' })).toBeNull() })
   })
 })

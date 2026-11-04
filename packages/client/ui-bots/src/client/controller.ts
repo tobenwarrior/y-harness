@@ -53,6 +53,14 @@ import type {
   BotMemoryListValue,
   BotMemoryUpdateRequest,
   BotMemoryUpdateValue,
+  BotRoutineHistoryRequest,
+  BotRoutineHistoryValue,
+  BotRoutineLifecycleRequest,
+  BotRoutineListRequest,
+  BotRoutineListValue,
+  BotRoutinePauseValue,
+  BotRoutineResumeValue,
+  BotRoutineDeleteValue,
   BotView,
   BotShareInviteRequest,
   BotShareInviteValue,
@@ -82,7 +90,8 @@ import type { SharedBotsClient } from './shared-client.ts'
 import type {
   BotAccent, BotAvatarEditorActions, BotConnectedAppAccess, BotCreation, BotGroupCreation, BotGroupDetailData,
   BotGroupUpdate, BotProfileUpdate,
-  BotGroupSummary, BotIdentity, BotMemoryManagerActions, BotOrganizationPatch, BotTemplateActions, BotTemplateState, BotTemplateSummary,
+  BotGroupSummary, BotIdentity, BotMemoryManagerActions, BotOrganizationPatch, BotRoutineManagerActions,
+  BotTemplateActions, BotTemplateState, BotTemplateSummary,
 } from './types.ts'
 
 /** Remote methods consumed by the Bot workspace. */
@@ -109,6 +118,11 @@ export interface BotWorkspaceRemote {
   listMemory?: (request: BotMemoryListRequest) => Promise<RemoteResult<BotMemoryListValue>>
   updateMemory?: (request: BotMemoryUpdateRequest) => Promise<RemoteResult<BotMemoryUpdateValue>>
   forgetMemory?: (request: BotMemoryForgetRemoteRequest) => Promise<RemoteResult<BotMemoryForgetValue>>
+  listRoutines?: (request: BotRoutineListRequest) => Promise<RemoteResult<BotRoutineListValue>>
+  pauseRoutine?: (request: BotRoutineLifecycleRequest) => Promise<RemoteResult<BotRoutinePauseValue>>
+  resumeRoutine?: (request: BotRoutineLifecycleRequest) => Promise<RemoteResult<BotRoutineResumeValue>>
+  deleteRoutine?: (request: BotRoutineLifecycleRequest) => Promise<RemoteResult<BotRoutineDeleteValue>>
+  routineHistory?: (request: BotRoutineHistoryRequest) => Promise<RemoteResult<BotRoutineHistoryValue>>
   updateAvatar?: (request: { readonly botId: BotIdType; readonly avatar: BotAvatar | null }) => Promise<RemoteResult<BotAvatarUpdateValue>>
   uploadAvatar?: (request: { readonly botId: BotIdType; readonly data: string; readonly mediaType: 'image/png' }) => Promise<RemoteResult<BotAvatarUpdateValue>>
   updateAppearance?: (request: BotAppearanceUpdateRequest) => Promise<RemoteResult<BotAppearanceUpdateValue>>
@@ -156,6 +170,7 @@ export interface BotWorkspaceState {
   readonly selectedBotId: BotIdType | null
   readonly groups: readonly BotGroupSummary[]
   readonly selectedGroupId: string | null
+  readonly routineRevision: number
   readonly selectedGroup: BotGroupDetailData | null
   readonly groupPhase: 'idle' | 'loading' | 'ready' | 'error'
   readonly groupError: string | null
@@ -209,6 +224,7 @@ export interface BotWorkspaceFace {
   readonly loadAvatar: (botId: string, avatar: BotAvatar) => Promise<string>
   readonly avatarEditor?: BotAvatarEditorActions
   readonly memoryManager?: BotMemoryManagerActions
+  readonly routineManager?: BotRoutineManagerActions
   readonly retry: () => void
   /** Owner controls for sharing the selected Bot, when the Host mounts them. */
   readonly share?: BotShareActions
@@ -229,6 +245,7 @@ const INITIAL_STATE: BotWorkspaceState = {
   selectedBotId: null,
   groups: [],
   selectedGroupId: null,
+  routineRevision: 0,
   selectedGroup: null,
   groupPhase: 'idle',
   groupError: null,
@@ -362,6 +379,7 @@ export class BotWorkspaceController {
   private disposed = false
   private selectionGeneration = 0
   private rosterRevision = 0
+  private routineRevision = 0
   private refreshAfterPending = false
 
   constructor(
@@ -533,12 +551,29 @@ export class BotWorkspaceController {
           ? { memoryManager: this.memoryManager() }
           : {}
       ),
+      ...(
+        this.remote.listRoutines !== undefined
+        && this.remote.pauseRoutine !== undefined
+        && this.remote.resumeRoutine !== undefined
+        && this.remote.deleteRoutine !== undefined
+        && this.remote.routineHistory !== undefined
+          ? { routineManager: this.routineManager() }
+          : {}
+      ),
       retry: () => {
         void this.retry().catch((error: unknown) => {
           this.fail(error instanceof Error ? error.message : String(error))
         })
       },
     }
+  }
+
+  /** Mark the selected Bot's routine catalog stale after a Host notification. */
+  bumpRoutineRevision(): void {
+    if (this.disposed) return
+    this.routineRevision++
+    const current = this.source.getSnapshot()
+    this.source.set({ ...current, routineRevision: this.routineRevision })
   }
 
   /** Load or refresh the durable Bot roster. */
@@ -682,6 +717,7 @@ export class BotWorkspaceController {
       groups,
       selectedBotId: selected,
       selectedGroupId: null,
+      routineRevision: this.routineRevision,
       selectedGroup: null,
       groupPhase: 'idle',
       groupError: groupsResult.error,
@@ -1634,6 +1670,53 @@ export class BotWorkspaceController {
     }
   }
 
+  private routineManager(): BotRoutineManagerActions {
+    const listRoutines = this.remote.listRoutines
+    const pauseRoutine = this.remote.pauseRoutine
+    const resumeRoutine = this.remote.resumeRoutine
+    const deleteRoutine = this.remote.deleteRoutine
+    const routineHistory = this.remote.routineHistory
+    if (listRoutines === undefined || pauseRoutine === undefined || resumeRoutine === undefined
+      || deleteRoutine === undefined || routineHistory === undefined) {
+      throw new Error('Bot routine management is not mounted.')
+    }
+    return {
+      list: async (botId) => {
+        const result = await listRoutines({ botId: brandString<BotIdType>(botId) })
+        if (!result.ok) throw new Error(result.error.message)
+        return result.value.routines
+      },
+      pause: async (botId, routineId) => {
+        const result = await pauseRoutine({ botId: brandString<BotIdType>(botId), routineId })
+        if (!result.ok) throw new Error(result.error.message)
+        if (!('routine' in result.value)) throw new Error(result.value.code)
+        return result.value.routine
+      },
+      resume: async (botId, routineId) => {
+        const result = await resumeRoutine({ botId: brandString<BotIdType>(botId), routineId })
+        if (!result.ok) throw new Error(result.error.message)
+        if (!('routine' in result.value)) throw new Error(result.value.code)
+        return result.value.routine
+      },
+      remove: async (botId, routineId) => {
+        const result = await deleteRoutine({ botId: brandString<BotIdType>(botId), routineId })
+        if (!result.ok) throw new Error(result.error.message)
+        if (!result.value.deleted) throw new Error(result.value.code)
+      },
+      history: async (botId, routineId, before) => {
+        const result = await routineHistory({
+          botId: brandString<BotIdType>(botId),
+          routineId,
+          limit: 50,
+          ...(before === undefined ? {} : { before }),
+        })
+        if (!result.ok) throw new Error(result.error.message)
+        if (!('kind' in result.value)) throw new Error(result.value.code)
+        return result.value
+      },
+    }
+  }
+
   private create(creation: BotCreation): Promise<void> {
     if (this.disposed) return Promise.resolve()
     if (this.pendingCreation !== undefined) return this.retryPendingCreate()
@@ -1729,6 +1812,7 @@ export class BotWorkspaceController {
       groups: current.groups,
       selectedBotId: result.value.bot.id,
       selectedGroupId: null,
+      routineRevision: this.routineRevision,
       selectedGroup: null,
       groupPhase: 'idle',
       groupError: null,
