@@ -27,5 +27,3 @@
                 defaultReasoningEffort: high
     - id: bot-attachment-prereqs
       name: '../../../packages/test-support/session-snapshot/tests/fixtures/bot-attachment-prereqs.ts'
-    - id: bots-snapshot
-      name: '../../../packages/test-support/session-snapshot/tests/fixtures/bot-snapshot.ts'

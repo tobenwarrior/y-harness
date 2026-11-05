@@ -5,17 +5,24 @@ import { AttachmentId } from '@yharness/attachment'
 import { MessageId } from '@yharness/llm'
 import { SessionId } from '@yharness/session'
 import { BotGroupId, BotGroupMessageId } from '../../../../agents/bots/src/group-chat.ts'
-import { apply as applyBotPrerequisites, inject as botPrerequisiteInject } from './bot-prereqs.ts'
+import type {} from '@yharness/session-persistence'
+import { seedBotPrerequisites, inject as botPrerequisiteInject } from './bot-prereqs.ts'
 
 export const name = 'snapshot-bot-attachment-prereqs'
-export const inject = botPrerequisiteInject
+export const inject = [...botPrerequisiteInject, 'sessionPersistence']
 
 /** Seed one queued group message whose existing Session content includes image and file blocks. */
 export async function apply(ctx: Context): Promise<void> {
-  await applyBotPrerequisites(ctx)
+  const handles = await seedBotPrerequisites(ctx)
   const targetSession = ctx.sessions.get(SessionId('bot-session-target'))
   if (targetSession === undefined) throw new Error('snapshot Bot attachment target Session is not live')
-  targetSession.append('agent/inbox/spliced', {
+  const deadline = Date.now() + 5_000
+  while (!targetSession.snapshotEvents().some(event => event.type === 'session/title')) {
+    if (Date.now() >= deadline) throw new Error('snapshot Bot title did not settle')
+    await new Promise<void>((resolve) => { setTimeout(resolve, 10) })
+  }
+  await Promise.all(handles.map(handle => handle.dispose()))
+  const event = targetSession.append('agent/inbox/spliced', {
     target: 'next-turn',
     start: 0,
     inserted: [{
@@ -50,4 +57,11 @@ export async function apply(ctx: Context): Promise<void> {
       ],
     }],
   })
+  const writer = await ctx.sessionPersistence.open(SessionId('bot-session-target'), 'write')
+  try {
+    await writer.append([event])
+    await writer.flush()
+  } finally {
+    await writer.close()
+  }
 }

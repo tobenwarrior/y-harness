@@ -23,6 +23,15 @@ export const inject = ['agentDefaultModel', 'agents', 'sessions', 'storageDomain
  * workspace services into the headless snapshot.
  */
 export async function apply(ctx: Context): Promise<void> {
+  await seedBotPrerequisites(ctx)
+}
+
+/**
+ * Create snapshot Bot Agents and return the setup-owned handles.
+ * @param ctx - Snapshot composition context.
+ * @returns Handles for the seeded Agents.
+ */
+export async function seedBotPrerequisites(ctx: Context): Promise<readonly AgentHandle[]> {
   const cwd = process.cwd()
   // The snapshot exercises the Bot-scoped routine policy without pulling the
   // live Host scheduler into the headless profile. Mount the same model-facing
@@ -174,4 +183,5 @@ export async function apply(ctx: Context): Promise<void> {
     },
     inspect: async (sessionId: SessionId) => ({ events: sessionEvents.get(String(sessionId)) ?? [] }),
   } as never)
+  return handles
 }
