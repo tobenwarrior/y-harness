@@ -608,9 +608,15 @@ importers:
       '@yharness/cordis':
         specifier: workspace:~
         version: link:../../vendor/cordis
+      '@yharness/node-addon-system':
+        specifier: workspace:~
+        version: link:../../native/system/packages/entry
       electron-updater:
         specifier: ^6.8.9
         version: 6.8.9(supports-color@9.4.0)
+      koffi:
+        specifier: 3.1.1
+        version: 3.1.1
       semver:
         specifier: ^7.8.5
         version: 7.8.5
@@ -672,9 +678,6 @@ importers:
       '@yharness/home-paths':
         specifier: workspace:*
         version: link:../../packages/util/home-paths
-      '@yharness/node-addon-system':
-        specifier: workspace:~
-        version: link:../../native/system/packages/entry
       app-builder-lib:
         specifier: 26.15.3
         version: 26.15.3(dmg-builder@26.15.3)(electron-builder-squirrel-windows@26.15.3)(supports-color@9.4.0)
@@ -693,9 +696,6 @@ importers:
       js-yaml:
         specifier: ^4.2.0
         version: 4.3.1
-      koffi:
-        specifier: 3.1.1
-        version: 3.1.1
       pnpm:
         specifier: 11.25.0
         version: 11.25.0
@@ -1164,15 +1164,15 @@ importers:
       '@yharness/api-session-controller':
         specifier: workspace:*
         version: link:../../api/session-controller
+      '@yharness/atomic-write':
+        specifier: workspace:*
+        version: link:../../util/atomic-write
       '@yharness/attachment':
         specifier: workspace:*
         version: link:../../attachment/attachment
       '@yharness/avatar-generation':
         specifier: workspace:*
         version: link:../avatar-generation
-      '@yharness/atomic-write':
-        specifier: workspace:*
-        version: link:../../util/atomic-write
       '@yharness/client-connection':
         specifier: workspace:*
         version: link:../../client/connection
@@ -1191,15 +1191,15 @@ importers:
       '@yharness/mcp-resources':
         specifier: workspace:*
         version: link:../../mcp/mcp-resources
+      '@yharness/schedule':
+        specifier: workspace:*
+        version: link:../../schedule/schedule
       '@yharness/scope':
         specifier: workspace:*
         version: link:../../core/scope
       '@yharness/session':
         specifier: workspace:*
         version: link:../../core/session
-      '@yharness/schedule':
-        specifier: workspace:*
-        version: link:../../schedule/schedule
       '@yharness/skill':
         specifier: workspace:*
         version: link:../../skill/skill
@@ -14430,6 +14430,9 @@ importers:
       '@yharness/session':
         specifier: workspace:*
         version: link:../../core/session
+      '@yharness/session-persistence':
+        specifier: workspace:*
+        version: link:../../session/session-persistence
       '@yharness/subagent':
         specifier: workspace:*
         version: link:../../subagent/subagent
@@ -14557,7 +14560,7 @@ importers:
     dependencies:
       '@yharness/node-addon-system':
         specifier: workspace:~
-        version: link:../../native/system/packages/entry
+        version: link:../../../native/system/packages/entry
       koffi:
         specifier: 3.1.1
         version: 3.1.1

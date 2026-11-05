@@ -10,6 +10,8 @@ import { botInboxMessageState } from './inbox.ts'
 import type { BotMemoryClient } from './memory.ts'
 import { BotGroupMessageId } from './group-chat.ts'
 import type { BotGroupId } from './group-chat.ts'
+import { attachmentView } from './attachment-grants.ts'
+import type { BotInputAttachment, BotInputAttachmentView } from './attachment-grants.ts'
 import type { BotId, BotView } from './types.ts'
 
 /** Stable identity for one durable Bot-to-Bot delivery. */
@@ -159,6 +161,7 @@ export interface BotCollaborationRosterEntry {
 export interface BotCollaborationTranscriptEntry {
   readonly role: 'user' | 'assistant'
   readonly text: string
+  readonly attachments?: readonly BotInputAttachmentView[]
 }
 
 /** Safe Bot inspection result. */
@@ -199,6 +202,8 @@ export interface SendExternalBotMessageRequest {
   readonly senderName?: string
   /** Message text. */
   readonly text: string
+  /** Provider-admitted immutable content references. */
+  readonly attachments?: readonly BotInputAttachment[]
   /** Stable retry identity. */
   readonly messageId: BotMessageId
   /** Transient caller cancellation. */
@@ -272,6 +277,14 @@ function rosterEntry(bot: BotView): BotCollaborationRosterEntry {
 
 function textFromContent(content: readonly ContentBlock[]): string {
   return content.flatMap(block => block.type === 'text' ? [block.text] : []).join('\n').trim()
+}
+
+function attachmentViewsFromContent(content: readonly ContentBlock[]): readonly BotInputAttachmentView[] {
+  return content.flatMap((block): BotInputAttachmentView[] => {
+    if (block.type === 'image') return [attachmentView({ type: 'image', attachment: block.attachment })]
+    if (block.type === 'file') return [attachmentView({ type: 'file', attachment: block.attachment })]
+    return []
+  })
 }
 
 function transcript(events: readonly SessionEvent[]): BotCollaborationTranscriptEntry[] {
@@ -422,12 +435,25 @@ function transcript(events: readonly SessionEvent[]): BotCollaborationTranscript
       const seq = String(event.seq)
       const text = textFromContent(event.data.content)
       if (taintedEventSeqs.has(seq)) return []
-      return text === '' ? [] : [{ role: 'user', text: text.slice(0, MAX_TRANSCRIPT_TEXT) }]
+      const attachments = attachmentViewsFromContent(event.data.content)
+      if (text === '' && attachments.length === 0) return []
+      return [{
+        role: 'user',
+        text: text.slice(0, MAX_TRANSCRIPT_TEXT),
+        ...(attachments.length === 0 ? {} : { attachments }),
+      }]
     }
     if (event.type === 'assistant/message') {
       if (taintedEventSeqs.has(String(event.seq)) || taintedTurns.has(event.data.turn)) return []
-      const text = textFromContent(event.data.message.content)
-      return text === '' ? [] : [{ role: 'assistant', text: text.slice(0, MAX_TRANSCRIPT_TEXT) }]
+      const content = event.data.message.content
+      const text = textFromContent(content)
+      const attachments = attachmentViewsFromContent(content)
+      if (text === '' && attachments.length === 0) return []
+      return [{
+        role: 'assistant',
+        text: text.slice(0, MAX_TRANSCRIPT_TEXT),
+        ...(attachments.length === 0 ? {} : { attachments }),
+      }]
     }
     return []
   })
@@ -563,9 +589,14 @@ export class BotCollaborationService {
       resolved.agent.followup(freezeMessage({
         id: request.messageId,
         role: 'user',
-        content: [{ type: 'text', text: request.senderName === undefined
-          ? `Message from group "${request.groupName}":\n${text}`
-          : `Message from ${request.senderName} in group "${request.groupName}":\n${text}` }],
+        content: [
+          { type: 'text', text: request.senderName === undefined
+            ? `Message from group "${request.groupName}":\n${text}`
+            : `Message from ${request.senderName} in group "${request.groupName}":\n${text}` },
+          ...(request.attachments ?? []).map(attachment => attachment.type === 'image'
+            ? { type: 'image' as const, attachment: attachment.attachment }
+            : { type: 'file' as const, attachment: attachment.attachment }),
+        ],
         source: { kind: 'bot-group-message', groupId: request.groupId, messageId: BotGroupMessageId(String(request.messageId)) },
       }))
       await this.flushTarget(target.sessionId, target.name)

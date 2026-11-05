@@ -8,6 +8,7 @@ import { afterAll, beforeAll, describe, expect, it, onTestFailed } from 'vitest'
 // Type-only: makes the Bot service contribution visible on the assembled Host context.
 import type { BotView } from '@yharness/bots'
 import type {} from '@yharness/bots'
+import type {} from '@yharness/schedule'
 import {
   assertFixtureInventory, captureStableAria, compareOrRefreshGolden,
   launchWebScaffold, watchConsole, webSnapshotMode, type WebScaffold,
@@ -37,6 +38,9 @@ describe('web e2e: Bot workspace retains one Conversation Session per Bot', () =
     secondBot = (await scaffold.ctx.bots.create({
       name: 'Orbit', identity: 'goal', accent: 'amber', cwd: scaffold.workspaceCwd,
     })).bot
+    await scaffold.ctx.schedule.create(firstBot.sessionId, {
+      title: 'Morning check-in', prompt: 'Review the project.', every_seconds: 86400,
+    })
     browser = await chromium.launch()
     page = await newEnglishPage(browser)
     tripwire = watchConsole(page)
@@ -142,6 +146,26 @@ describe('web e2e: Bot workspace retains one Conversation Session per Bot', () =
     await memoryDialog.getByRole('button', { name: 'Close', exact: true }).last().click()
     await memoryDialog.waitFor({ state: 'hidden' })
 
+    await firstDetail.getByRole('button', { name: 'Manage routines', exact: true }).click()
+    const routineDialog = page.getByRole('dialog', { name: 'Bot routines', exact: true })
+    await routineDialog.getByText('Morning check-in', { exact: true }).first().waitFor({ state: 'visible' })
+    const routineDialogSnapshot = await captureStableAria(
+      page, '[role="dialog"][aria-label="Bot routines"]', scaffold.workspaceCwd,
+    )
+    await routineDialog.getByRole('button', { name: 'Close', exact: true }).last().click()
+    await routineDialog.waitFor({ state: 'hidden' })
+
+    await firstDetail.getByRole('button', { name: 'Manage skills', exact: true }).click()
+    const skillsDialog = page.getByRole('dialog', { name: 'Bot skills', exact: true })
+    const selectedSkills = skillsDialog.getByRole('radio', { name: 'Only selected skills', exact: true })
+    await selectedSkills.check()
+    await skillsDialog.getByRole('button', { name: 'Save skills', exact: true }).click()
+    await skillsDialog.waitFor({ state: 'hidden' })
+    await firstDetail.getByRole('button', { name: 'Manage skills', exact: true }).click()
+    await expect.poll(() => selectedSkills.isChecked()).toBe(true)
+    await skillsDialog.getByRole('button', { name: 'Close', exact: true }).last().click()
+    await skillsDialog.waitFor({ state: 'hidden' })
+
     await secondRow.click()
     const secondDetail = page.locator(`section[aria-label="${secondBot.name}"]`)
     await expect.poll(() => secondRow.getAttribute('aria-current')).toBe('page')
@@ -181,6 +205,7 @@ describe('web e2e: Bot workspace retains one Conversation Session per Bot', () =
         memoryDialogSnapshot,
         profileDialogSnapshot,
         createDialogSnapshot,
+        routineDialogSnapshot,
       ].join('\n'),
       MODE,
     )

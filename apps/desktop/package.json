@@ -46,14 +46,15 @@
     "semver": "^7.8.5",
     "ws": "^8.21.0",
     "@yharness/api-gateway": "workspace:*",
-    "@yharness/cordis": "workspace:~"
+    "@yharness/cordis": "workspace:~",
+    "@yharness/node-addon-system": "workspace:~",
+    "koffi": "3.1.1"
   },
   "devDependencies": {
     "@yharness/app-boot": "workspace:*",
     "@yharness/client-ui-settings-general": "workspace:*",
     "@yharness/client-ui-sidebar-browser": "workspace:*",
     "@yharness/home-paths": "workspace:*",
-    "@yharness/node-addon-system": "workspace:~",
     "@electron/get": "^5.1.0",
     "@electron/notarize": "2.5.0",
     "@types/js-yaml": "^4.0.9",
@@ -65,7 +66,6 @@
     "electron-builder": "^26.15.3",
     "extract-zip": "^2.0.1",
     "js-yaml": "^4.2.0",
-    "koffi": "3.1.1",
     "pnpm": "11.25.0",
     "sharp": "^0.35.3",
     "typescript": "^6.0.3",

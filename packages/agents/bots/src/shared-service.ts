@@ -16,6 +16,8 @@ import {
   type SharedAccessStateSnapshot,
 } from '@yharness/client-connection'
 import type { Agent } from '@yharness/agent'
+import type { BotAttachmentDownload, BotAttachmentDownloadTarget } from './attachment-download.ts'
+import type { EncodedImageAttachment, FileAttachmentRef, ImageAttachmentRef } from '@yharness/attachment'
 import { ApiSessionNotFound } from '@yharness/api-session-controller'
 import type { ConnectionRpcHandler, ConnectionRpcHandlerResult, ConnectionTrustRequest } from '@yharness/client-connection'
 import { credentialKey } from '@yharness/credentials'
@@ -33,6 +35,16 @@ import {
   type BotShareOperation,
   type BotShareRole,
 } from './sharing.ts'
+import {
+  BotAttachmentGrantError,
+  BotAttachmentGrantId,
+  BotAttachmentGrantStore,
+  BotPrivateMessageId,
+  attachmentContentBlocks,
+  type BotAttachmentScope,
+  type BotAttachmentGrantValue,
+  type BotInputAttachment,
+} from './attachment-grants.ts'
 import {
   BotId,
   BotShareMemoryId,
@@ -73,6 +85,7 @@ import {
   type SharedGroupHost,
   type SharedGroupSessionBinding,
 } from './shared-group.ts'
+import { BOT_ATTACHMENT_MAX_BYTES, botAttachmentUploadSignal, boundedBotAttachmentStream } from './attachment-routes.ts'
 
 /** Exact endpoint allowlist mounted on the collaborator-only route. */
 export const SHARED_BOT_ENDPOINTS = [
@@ -81,6 +94,8 @@ export const SHARED_BOT_ENDPOINTS = [
   'bots/share/read-profile',
   'bots/share/read-private-chat',
   'bots/share/chat',
+  'bots/share/admit-group-image',
+  'bots/share/admit-private-image',
   'bots/share/manage-members',
   'bots/share/read-memory',
   'bots/share/write-memory',
@@ -166,6 +181,21 @@ export interface SharedBotHost extends SharedGroupHost {
   readonly validatePrivateSession: (sessionId: SessionId, signal?: AbortSignal) => Promise<void>
   /** Wait until a private Session's latest message is durably stored. */
   readonly flushPrivateSession: (sessionId: SessionId, signal?: AbortSignal) => Promise<void>
+  /** Validate and durably admit one encoded image before a grant is stored. */
+  readonly admitEncodedImage?: (
+    input: EncodedImageAttachment,
+    signal?: AbortSignal,
+  ) => Promise<ImageAttachmentRef>
+  /** Stream and durably admit one verbatim file before a grant is stored. */
+  readonly saveFileStream?: (
+    input: {
+      readonly data: AsyncIterable<Uint8Array>
+      readonly name?: string
+      readonly signal?: AbortSignal
+    },
+  ) => Promise<FileAttachmentRef>
+  /** Open one authorized attachment for streaming. */
+  readonly readAttachment?: (attachment: BotInputAttachment, signal: AbortSignal) => Promise<BotAttachmentDownload>
 }
 
 /** Result of one Host operation that requires a still-existing Bot row. */
@@ -204,6 +234,8 @@ interface SharedServiceOptions {
   readonly credentials?: CredentialProvider
   /** Maximum interval before a process notices a membership change in storage. */
   readonly membershipPollIntervalMs?: number
+  /** Durable Bot-message attachment grants shared by local and collaborator paths. */
+  readonly attachmentStore?: BotAttachmentGrantStore
 }
 
 interface PendingBotInvite {
@@ -235,6 +267,10 @@ const botIdPayload = z.object({
 }).strict()
 const chatPayload = botIdPayload.extend({
   text: z.string().min(1).max(16_000).refine(value => value.trim() === value),
+  messageId: z.string().regex(/^bot-private-message-[A-Za-z0-9][A-Za-z0-9-]*$/).max(128).transform(BotPrivateMessageId).optional(),
+  attachmentGrants: z.array(
+    z.string().regex(/^bot-attachment-grant-[A-Za-z0-9][A-Za-z0-9-]*$/).transform(BotAttachmentGrantId),
+  ).min(1).max(8).optional(),
 }).strict()
 const manageMembersPayload = botIdPayload.extend({
   action: z.enum(['create-invite', 'revoke']),
@@ -271,6 +307,26 @@ const groupSendPayload = groupIdPayload.extend({
     botIds => new Set(botIds.map(String)).size === botIds.length,
     'group Bot targets must be unique',
   ).optional(),
+  attachmentGrants: z.array(
+    z.string().regex(/^bot-attachment-grant-[A-Za-z0-9][A-Za-z0-9-]*$/).transform(BotAttachmentGrantId),
+  ).min(1).max(8).optional(),
+}).strict()
+const encodedImagePayload = z.object({
+  mediaType: z.enum(['image/png', 'image/jpeg', 'image/webp', 'image/gif']),
+  data: z.string(),
+  name: z.string().min(1).max(255).optional(),
+}).strict()
+const groupImageAdmissionPayload = groupIdPayload.extend({
+  messageId: z.string().regex(/^bot-group-message-[A-Za-z0-9][A-Za-z0-9-]*$/).transform(BotGroupMessageId),
+  targetBotIds: z.array(botIdPayload.shape.botId).min(1).max(6).refine(
+    botIds => new Set(botIds.map(String)).size === botIds.length,
+    'group Bot targets must be unique',
+  ).optional(),
+  image: encodedImagePayload,
+}).strict()
+const privateImageAdmissionPayload = botIdPayload.extend({
+  messageId: z.string().regex(/^bot-private-message-[A-Za-z0-9][A-Za-z0-9-]*$/).transform(BotPrivateMessageId),
+  image: encodedImagePayload,
 }).strict()
 const manageGroupMembersPayload = groupIdPayload.extend({
   action: z.enum(['create-invite', 'revoke']),
@@ -287,6 +343,19 @@ type GroupUpdatePayload = z.infer<typeof groupUpdatePayload>
 type GroupSendPayload = z.infer<typeof groupSendPayload>
 type ManageGroupMembersPayload = z.infer<typeof manageGroupMembersPayload>
 
+interface PrivateAttachmentAdmission {
+  readonly duplicate: boolean
+  readonly scope: Extract<BotAttachmentScope, { readonly kind: 'shared-private' }>
+  readonly token: string
+  readonly attachments: readonly BotInputAttachment[]
+}
+
+interface PrivateAttachmentLeaseGuard {
+  readonly signal: AbortSignal
+  readonly assertCurrent: () => Promise<void>
+  readonly stop: () => Promise<void>
+}
+
 const SHARED_MEMBERSHIP_RECORD_KEY = credentialKey('agent-bots', 'shared-memberships')
 const SHARED_MEMBERSHIP_EXTENSION_KEY = 'agent-bots/shared-memberships'
 const SHARED_PRIVATE_SESSIONS_EXTENSION_KEY = 'agent-bots/shared-private-sessions'
@@ -299,6 +368,7 @@ const MAX_NODE_TIMER_MS = 2_147_483_647
 const SHARED_AGENT_CANCEL_TIMEOUT_MS = 1_000
 const SHARED_FLUSH_TIMEOUT_MS = 1_000
 const SHARED_DISPOSE_TIMEOUT_MS = SHARED_AGENT_CANCEL_TIMEOUT_MS
+const SHARED_PRIVATE_ATTACHMENT_LEASE_MS = 30_000
 
 const sharedPrivateSessionSnapshotSchema = z.object({
   version: z.literal(SHARED_PRIVATE_SESSIONS_RECORD_VERSION),
@@ -384,12 +454,13 @@ export class SharedBotService {
     membershipSnapshot: readonly SharedMembershipRecord[],
     privateSessionSnapshot: SharedPrivateSessionSnapshot,
     options: SharedServiceOptions,
+    private readonly attachmentStore?: BotAttachmentGrantStore,
   ) {
     this.owner = owner
     this.memberships = domain.table('memberships')
     this.invites = domain.table('invites')
     this.privateSessions = domain.table('private_sessions')
-    this.groups = new SharedBotGroupService(authority, host, options.now ?? Date.now)
+    this.groups = new SharedBotGroupService(authority, host, options.now ?? Date.now, attachmentStore)
     this.membershipSnapshot = membershipSnapshot
     for (const binding of privateSessionSnapshot.bindings) {
       if (binding.revokedAt === undefined) {
@@ -454,7 +525,9 @@ export class SharedBotService {
       await reconcileMembershipMirror(authority, domain.table('memberships'))
       const privateSessionSnapshot = await initializePrivateSessionSnapshot(authority, domain.table('private_sessions'))
       await reconcilePrivateSessionMirror(authority, domain.table('private_sessions'))
-      return new SharedBotService(owner, domain, authority, host, membershipSnapshot, privateSessionSnapshot, options)
+      return new SharedBotService(
+        owner, domain, authority, host, membershipSnapshot, privateSessionSnapshot, options, options.attachmentStore,
+      )
     } catch (error) {
       if (domain !== undefined) await waitForTracked([domain.close()])
       throw error
@@ -477,6 +550,71 @@ export class SharedBotService {
     actor?: ReturnType<typeof BotPrincipalId>,
   ): Promise<{ readonly code: SharedInviteCode; readonly expiresAt: number }> {
     return this.serialize(() => this.createInviteImpl(botId, role, actor))
+  }
+
+  /**
+   * Enroll the authenticated local operator as the shared owner and repair
+   * owner memberships for active local Bots that do not have one.
+   *
+   * The authority mints or reuses one durable principal before this method
+   * updates membership records. Existing owners, members, and Session
+   * bindings are retained; a later Host can safely retry after an interrupted
+   * membership mirror write.
+   * @param request - trusted operator request receiving the shared cookie.
+   * @returns the durable owner enrollment and shared cookie.
+   */
+  async enrollOwner(request: ConnectionTrustRequest): Promise<SharedAccessEnrollment> {
+    return this.serialize(async () => {
+      const candidates = [...new Set(this.membershipSnapshot
+        .filter(member => member.role === 'owner')
+        .map(member => String(member.principalId)))].sort()
+      const enrollment = await this.authority.enrollOwner(
+        request,
+        candidates[0] === undefined ? undefined : SharedPrincipalId(candidates[0]),
+      )
+      const principalId = BotPrincipalId(String(enrollment.principalId))
+      const bots = await this.host.listBots()
+      const activeBots = [...new Map(bots
+        .filter(bot => bot.state === 'active')
+        .map(bot => [String(bot.id), bot])).values()]
+      const now = this.now()
+      const result = await this.authority.mutateExtension(SHARED_MEMBERSHIP_EXTENSION_KEY, async (current) => {
+        const snapshot = parseMembershipSnapshot(current)
+        let memberships = [...snapshot.memberships]
+        for (const bot of activeBots) {
+          const botId = bot.id
+          const botMemberships = memberships.filter(member => member.botId === botId)
+          if (botMemberships.some(member => member.role === 'owner')) continue
+          const existing = botMemberships.find(member => member.principalId === principalId)
+          const membership: SharedMembershipRecord = existing === undefined
+            ? {
+              botId,
+              principalId,
+              role: 'owner',
+              grantedBy: principalId,
+              createdAt: now,
+              updatedAt: now,
+            }
+            : {
+              ...existing,
+              role: 'owner',
+              grantedBy: principalId,
+              updatedAt: Math.max(now, existing.updatedAt),
+            }
+          const key = membershipKey(membership.botId, membership.principalId)
+          await this.memberships.put(key, membership)
+          memberships = existing === undefined
+            ? [...memberships, membership]
+            : memberships.map(candidate => membershipKey(candidate.botId, candidate.principalId) === key ? membership : candidate)
+        }
+        return {
+          value: { memberships },
+          next: { ...snapshot, memberships },
+        }
+      })
+      this.membershipSnapshot = result.memberships
+      return enrollment
+    })
   }
 
   /**
@@ -976,6 +1114,10 @@ export class SharedBotService {
         return this.readPrivateChat(parsePayload(botIdPayload, payload), signal, principalId)
       case 'bots/share/chat':
         return this.chat(parsePayload(chatPayload, payload), signal, principalId)
+      case 'bots/share/admit-group-image':
+        return this.admitGroupImage(parsePayload(groupImageAdmissionPayload, payload), signal, principalId)
+      case 'bots/share/admit-private-image':
+        return this.admitPrivateImage(parsePayload(privateImageAdmissionPayload, payload), signal, principalId)
       case 'bots/share/manage-members':
         return this.manageMembers(parsePayload(manageMembersPayload, payload), signal, principalId)
       case 'bots/share/read-memory':
@@ -1226,6 +1368,50 @@ export class SharedBotService {
     return { ok: true, value: result }
   }
 
+  /**
+   * Resolve one attachment visible to an authenticated shared-group reader.
+   * @param groupId - Group containing the message.
+   * @param messageId - Message containing the attachment.
+   * @param attachmentId - Opaque attachment provider identity.
+   * @param principalId - Authenticated reader.
+   * @param signal - Request cancellation.
+   * @returns The authorized attachment reference.
+   */
+  async resolveSharedGroupAttachment(
+    groupId: ReturnType<typeof BotGroupId>, messageId: ReturnType<typeof BotGroupMessageId>, attachmentId: string,
+    principalId: ReturnType<typeof BotPrincipalId>, signal: AbortSignal,
+  ): Promise<BotInputAttachment> {
+    return this.groups.resolveAttachment(groupId, messageId, attachmentId, principalId, signal)
+  }
+
+  /**
+   * Open a shared-group file and recheck access before returning each chunk.
+   * @param target - Exact message and attachment identities.
+   * @param principalId - Authenticated reader.
+   * @param signal - Request cancellation.
+   * @returns Authorized attachment metadata and streamed bytes.
+   */
+  async openSharedGroupAttachment(
+    target: BotAttachmentDownloadTarget, principalId: ReturnType<typeof BotPrincipalId>, signal: AbortSignal,
+  ): Promise<BotAttachmentDownload> {
+    const attachment = await this.resolveSharedGroupAttachment(target.groupId, target.messageId, target.attachmentId, principalId, signal)
+    if (this.host.readAttachment === undefined) throw new SharedServiceFault('gateway/unavailable', 'Shared Bot attachment reading is unavailable')
+    const opened = await this.host.readAttachment(attachment, signal)
+    const checkAccess = (): Promise<BotInputAttachment> => this.resolveSharedGroupAttachment(
+      target.groupId, target.messageId, target.attachmentId, principalId, signal,
+    )
+    return {
+      name: opened.name,
+      data: (async function* () {
+        for await (const chunk of opened.data) {
+          signal.throwIfAborted()
+          await checkAccess()
+          yield chunk
+        }
+      })(),
+    }
+  }
+
   private async inspectGroup(
     payload: GroupIdPayload,
     signal: AbortSignal,
@@ -1245,9 +1431,161 @@ export class SharedBotService {
       text: payload.text,
       ...(payload.messageId === undefined ? {} : { messageId: payload.messageId }),
       ...(payload.targetBotIds === undefined ? {} : { targetBotIds: payload.targetBotIds }),
+      ...(payload.attachmentGrants === undefined ? {} : { attachmentGrants: payload.attachmentGrants }),
     }
     const result = await this.groups.send(request, principalId, signal)
     return { ok: true, value: result }
+  }
+
+  private async admitGroupImage(
+    payload: z.infer<typeof groupImageAdmissionPayload>,
+    signal: AbortSignal,
+    principalId: ReturnType<typeof BotPrincipalId>,
+  ): Promise<ConnectionRpcHandlerResult> {
+    signal.throwIfAborted()
+    const admitEncodedImage = this.host.admitEncodedImage
+    if (admitEncodedImage === undefined) {
+      throw new SharedServiceFault('gateway/unavailable', 'shared Bot image admission is unavailable on this Host')
+    }
+    await this.groups.checkAttachmentAdmission({
+      groupId: payload.groupId,
+      messageId: payload.messageId,
+      ...(payload.targetBotIds === undefined ? {} : { targetBotIds: payload.targetBotIds }),
+    }, principalId, signal)
+    const image = payload.image
+    const reference = await admitEncodedImage({
+      mediaType: image.mediaType,
+      data: image.data,
+      ...(image.name === undefined ? {} : { name: image.name }),
+    }, signal)
+    const value = await this.groups.admitAttachment({
+      groupId: payload.groupId,
+      messageId: payload.messageId,
+      ...(payload.targetBotIds === undefined ? {} : { targetBotIds: payload.targetBotIds }),
+      attachments: [{ type: 'image' as const, attachment: reference }],
+    }, principalId, signal)
+    return { ok: true, value }
+  }
+
+  private async admitPrivateImage(
+    payload: z.infer<typeof privateImageAdmissionPayload>,
+    signal: AbortSignal,
+    principalId: ReturnType<typeof BotPrincipalId>,
+  ): Promise<ConnectionRpcHandlerResult> {
+    signal.throwIfAborted()
+    const admitEncodedImage = this.host.admitEncodedImage
+    if (admitEncodedImage === undefined) {
+      throw new SharedServiceFault('gateway/unavailable', 'shared Bot image admission is unavailable on this Host')
+    }
+    await this.readPrivateAttachmentScope(payload.botId, payload.messageId, principalId, signal)
+    const image = payload.image
+    const reference = await admitEncodedImage({
+      mediaType: image.mediaType,
+      data: image.data,
+      ...(image.name === undefined ? {} : { name: image.name }),
+    }, signal)
+    const value = await this.admitPrivateAttachment(
+      payload.botId,
+      payload.messageId,
+      { type: 'image' as const, attachment: reference },
+      principalId,
+      signal,
+    )
+    return { ok: true, value }
+  }
+
+  /**
+   * Admit one streamed file after the exact shared route has authenticated its
+   * collaborator. The file is stored before its opaque message grant exists.
+   * @param target - Message scope parsed by the streaming route.
+   * @param data - Backpressured file bytes.
+   * @param name - Optional user-supplied display name.
+   * @param signal - Request cancellation.
+   * @param principalId - Authenticated shared principal.
+   * @returns Opaque grant id and safe metadata.
+   */
+  async admitSharedFileUpload(
+    target: {
+      readonly kind: 'group'
+      readonly groupId: BotGroupId
+      readonly messageId: BotGroupMessageId
+      readonly targetBotIds: readonly BotId[] | undefined
+    } | {
+      readonly kind: 'private'
+      readonly botId: BotId
+      readonly messageId: ReturnType<typeof BotPrivateMessageId>
+    },
+    data: AsyncIterable<Uint8Array>,
+    name: string | undefined,
+    signal: AbortSignal,
+    principalId: ReturnType<typeof BotPrincipalId>,
+  ): Promise<BotAttachmentGrantValue> {
+    signal.throwIfAborted()
+    const saveFileStream = this.host.saveFileStream
+    if (saveFileStream === undefined) {
+      throw new SharedServiceFault('gateway/unavailable', 'shared Bot file admission is unavailable on this Host')
+    }
+    if (target.kind === 'group') {
+      await this.groups.checkAttachmentAdmission({
+        groupId: target.groupId,
+        messageId: target.messageId,
+        ...(target.targetBotIds === undefined ? {} : { targetBotIds: target.targetBotIds }),
+      }, principalId, signal)
+    } else {
+      await this.readPrivateAttachmentScope(target.botId, target.messageId, principalId, signal)
+    }
+    const uploadSignal = botAttachmentUploadSignal(signal)
+    const reference = await saveFileStream({
+      data: boundedBotAttachmentStream(data, BOT_ATTACHMENT_MAX_BYTES, uploadSignal),
+      ...(name === undefined ? {} : { name }),
+      signal: uploadSignal,
+    })
+    if (target.kind === 'group') {
+      return this.groups.admitAttachment({
+        groupId: target.groupId,
+        messageId: target.messageId,
+        ...(target.targetBotIds === undefined ? {} : { targetBotIds: target.targetBotIds }),
+        attachments: [{ type: 'file', attachment: reference }],
+      }, principalId, signal)
+    }
+    return this.admitPrivateAttachment(
+      target.botId,
+      target.messageId,
+      { type: 'file', attachment: reference },
+      principalId,
+      signal,
+    )
+  }
+
+  private async admitPrivateAttachment(
+    botId: BotId,
+    messageId: ReturnType<typeof BotPrivateMessageId>,
+    attachment: BotInputAttachment,
+    principalId: ReturnType<typeof BotPrincipalId>,
+    signal: AbortSignal,
+  ): Promise<BotAttachmentGrantValue> {
+    const store = this.attachmentStore
+    if (store === undefined) throw new SharedServiceFault('gateway/unavailable', 'shared Bot attachment admission is unavailable')
+    signal.throwIfAborted()
+    const result = await this.authority.mutateExtension(SHARED_MEMBERSHIP_EXTENSION_KEY, async (current, authorityState) => {
+      const snapshot = parseMembershipSnapshot(current)
+      const authorityPrincipal = authorityState.principals.find(candidate => String(candidate.id) === String(principalId))
+      if (authorityPrincipal === undefined || authorityPrincipal.revokedAt !== undefined) {
+        throw new SharedServiceFault('gateway/forbidden', 'shared Bot authority is no longer active')
+      }
+      const authorization = this.requireAuthorizationForMemberships(snapshot.memberships, botId, principalId, 'chat')
+      signal.throwIfAborted()
+      await store.refresh()
+      const value = await store.admit({
+        kind: 'shared-private',
+        principalId,
+        botId,
+        messageId,
+        authorizationRevision: authorization.actor.updatedAt,
+      }, [attachment])
+      return { value, next: current }
+    })
+    return result
   }
 
   private async manageGroupMembers(
@@ -1312,6 +1650,21 @@ export class SharedBotService {
     if (resolved === undefined || 'error' in resolved) {
       throw new SharedServiceFault('gateway/internal', 'shared Bot Session is unavailable')
     }
+    const attachmentAdmission = payload.attachmentGrants === undefined
+      ? undefined
+      : await this.preparePrivateAttachmentDelivery(payload, principalId, binding.sessionId, signal)
+    if (attachmentAdmission?.duplicate === true) {
+      const inspection = await this.host.inspectPrivateSession(binding.sessionId, signal)
+      if (!privateMessageWasDelivered(inspection.events, payload.messageId)) {
+        throw new SharedServiceFault('gateway/conflict', 'private attachment delivery has an accepted lease without a durable message')
+      }
+      const currentBot = await this.findBotOrFault(payload.botId, signal)
+      return { ok: true, value: { bot: publicProfile(currentBot), sessionId: binding.sessionId, accepted: true } }
+    }
+    const attachmentLease = attachmentAdmission === undefined
+      ? undefined
+      : this.startPrivateAttachmentLeaseRenewal(attachmentAdmission, signal)
+    const operationSignal = attachmentLease?.signal ?? signal
     const cancelAndWait = (): Promise<boolean> => this.cancelResolvedAgent(resolved.agent, key)
     if (signal.aborted) {
       await cancelAndWait()
@@ -1319,15 +1672,34 @@ export class SharedBotService {
     }
     signal.throwIfAborted()
     let cancelledIdle: Promise<void> | undefined
-    const cancelOnAbort = (): void => { cancelledIdle = cancelAndWait().then(() => undefined) }
+    const cancelAndWaitOnce = (): void => {
+      cancelledIdle ??= cancelAndWait().then(() => undefined)
+    }
+    const cancelOnAbort = (): void => { cancelAndWaitOnce() }
+    const cancelOnOperationAbort = (): void => { cancelAndWaitOnce() }
     signal.addEventListener('abort', cancelOnAbort, { once: true })
+    if (operationSignal !== signal) operationSignal.addEventListener('abort', cancelOnOperationAbort, { once: true })
     try {
-      const operation = await this.host.withBot(payload.botId, signal, async () => {
-        signal.throwIfAborted()
-        resolved.agent.followup(createUserMessage({ content: [{ type: 'text', text: payload.text }], source: { kind: 'user' } }))
-        await this.flushPrivateSession(binding.sessionId, signal)
-        signal.throwIfAborted()
-        await this.touchPrivateSession(binding, signal)
+      const operation = await this.host.withBot(payload.botId, operationSignal, async () => {
+        operationSignal.throwIfAborted()
+        await attachmentLease?.assertCurrent()
+        const source = payload.messageId === undefined
+          ? { kind: 'user' as const }
+          : { kind: 'user' as const, rpcId: String(payload.messageId) }
+        resolved.agent.followup(createUserMessage({
+          content: [
+            { type: 'text', text: payload.text },
+            ...attachmentContentBlocks(attachmentAdmission?.attachments ?? []),
+          ],
+          source,
+        }))
+        await this.flushPrivateSession(binding.sessionId, operationSignal)
+        operationSignal.throwIfAborted()
+        if (attachmentAdmission !== undefined) {
+          await attachmentLease?.assertCurrent()
+          await this.settlePrivateAttachmentDelivery(attachmentAdmission, operationSignal)
+        }
+        await this.touchPrivateSession(binding, operationSignal)
         return true as const
       })
       if (!operation.found) throw new SharedServiceFault('bot/not-found', 'shared Bot was not found')
@@ -1336,13 +1708,251 @@ export class SharedBotService {
       return { ok: true, value: { bot: publicProfile(currentBot), sessionId: binding.sessionId, accepted: true } }
     } catch (error: unknown) {
       if (cancelledIdle === undefined && !signal.aborted) {
-        cancelledIdle = cancelAndWait().then(() => undefined)
+        cancelAndWaitOnce()
       }
       throw error
     } finally {
       signal.removeEventListener('abort', cancelOnAbort)
+      if (operationSignal !== signal) operationSignal.removeEventListener('abort', cancelOnOperationAbort)
+      await attachmentLease?.stop()
       if (cancelledIdle !== undefined) await cancelledIdle
     }
+  }
+
+  private async preparePrivateAttachmentDelivery(
+    payload: ChatPayload,
+    principalId: ReturnType<typeof BotPrincipalId>,
+    sessionId: SessionId,
+    signal: AbortSignal,
+  ): Promise<PrivateAttachmentAdmission | undefined> {
+    signal.throwIfAborted()
+    const grantIds = payload.attachmentGrants
+    if (grantIds === undefined || grantIds.length === 0) return undefined
+    const messageId = payload.messageId
+    if (messageId === undefined) {
+      throw new SharedServiceFault('gateway/bad-request', 'attachment grants require an explicit private message id')
+    }
+    const store = this.attachmentStore
+    if (store === undefined) throw new SharedServiceFault('gateway/unavailable', 'shared Bot attachment admission is unavailable')
+
+    // A process can stop after the Session flush and before the lease settles.
+    // Inspect that durable Session before taking over an existing lease so a
+    // restart repairs the completion instead of sending the message twice.
+    const candidateScope = await this.readPrivateAttachmentScope(payload.botId, messageId, principalId, signal)
+    await store.refresh()
+    const existing = store.readPrivateDelivery(candidateScope)
+    if (existing?.state === 'accepted') {
+      return {
+        duplicate: true,
+        scope: candidateScope,
+        token: existing.token,
+        attachments: store.attachmentsForMessage(candidateScope),
+      }
+    }
+    if (existing?.state === 'pending') {
+      const inspection = await this.host.inspectPrivateSession(sessionId, signal)
+      if (privateMessageWasDelivered(inspection.events, messageId)) {
+        const settled = await this.settleObservedPrivateAttachment(candidateScope, existing.token, principalId, signal)
+        if (settled) {
+          return {
+            duplicate: true,
+            scope: candidateScope,
+            token: existing.token,
+            attachments: store.attachmentsForMessage(candidateScope),
+          }
+        }
+      }
+      if (existing.leaseUntil > this.now()) {
+        throw new SharedServiceFault('gateway/conflict', 'private attachment delivery is already in progress')
+      }
+    }
+    const token = `shared-private-delivery-${randomUUID()}`
+    const result = await this.authority.mutateExtension<PrivateAttachmentAdmission>(
+      SHARED_MEMBERSHIP_EXTENSION_KEY,
+      async (current, authorityState) => {
+        signal.throwIfAborted()
+        const snapshot = parseMembershipSnapshot(current)
+        const authorityPrincipal = authorityState.principals.find(candidate => String(candidate.id) === String(principalId))
+        if (authorityPrincipal === undefined || authorityPrincipal.revokedAt !== undefined) {
+          throw new SharedServiceFault('gateway/forbidden', 'shared Bot authority is no longer active')
+        }
+        const authorization = this.requireAuthorizationForMemberships(snapshot.memberships, payload.botId, principalId, 'chat')
+        const scope: Extract<BotAttachmentScope, { readonly kind: 'shared-private' }> = {
+          kind: 'shared-private',
+          principalId,
+          botId: payload.botId,
+          messageId,
+          authorizationRevision: authorization.actor.updatedAt,
+        }
+        await store.refresh()
+        store.validate(scope, grantIds)
+        const reservation = await store.reservePrivateDelivery(
+          scope,
+          token,
+          this.now(),
+          SHARED_PRIVATE_ATTACHMENT_LEASE_MS,
+        )
+        if (reservation === 'busy') {
+          throw new SharedServiceFault('gateway/conflict', 'private attachment delivery is already in progress')
+        }
+        if (reservation === 'duplicate') {
+          return {
+            value: {
+              duplicate: true as const,
+              scope,
+              token,
+              attachments: store.attachmentsForMessage(scope),
+            },
+            next: current,
+          }
+        }
+        try {
+          await store.consume(scope, grantIds)
+        } catch (error: unknown) {
+          await store.releasePrivateDelivery(scope, token)
+          throw error
+        }
+        return {
+          value: {
+            duplicate: false as const,
+            scope,
+            token,
+            attachments: store.attachmentsForMessage(scope),
+          },
+          next: current,
+        }
+      },
+    )
+    return result
+  }
+
+  /** Settle a private attachment only while its authority and grant scopes remain current. */
+  private async settlePrivateAttachmentDelivery(
+    admission: PrivateAttachmentAdmission,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const store = this.attachmentStore
+    if (store === undefined) throw new SharedServiceFault('gateway/unavailable', 'shared Bot attachment admission is unavailable')
+    signal.throwIfAborted()
+    await this.authority.mutateExtension(SHARED_MEMBERSHIP_EXTENSION_KEY, async (current, authorityState) => {
+      const snapshot = parseMembershipSnapshot(current)
+      const principal = authorityState.principals.find(candidate => String(candidate.id) === String(admission.scope.principalId))
+      if (principal === undefined || principal.revokedAt !== undefined) {
+        throw new SharedServiceFault('gateway/forbidden', 'shared Bot authority is no longer active')
+      }
+      const authorization = this.requireAuthorizationForMemberships(snapshot.memberships, admission.scope.botId, admission.scope.principalId, 'chat')
+      if (authorization.actor.updatedAt !== admission.scope.authorizationRevision) {
+        throw new SharedServiceFault('gateway/conflict', 'shared Bot attachment authorization changed during delivery')
+      }
+      signal.throwIfAborted()
+      await store.refresh()
+      const settled = await store.settlePrivateDelivery(admission.scope, admission.token, 'accepted', this.now())
+      if (!settled) throw new SharedServiceFault('gateway/conflict', 'private attachment delivery lease was lost')
+      return { value: undefined, next: current }
+    })
+  }
+
+  /** Keep a live private attachment operation fenced while its Session flushes. */
+  private startPrivateAttachmentLeaseRenewal(
+    admission: PrivateAttachmentAdmission,
+    signal: AbortSignal,
+  ): PrivateAttachmentLeaseGuard {
+    const store = this.attachmentStore
+    if (store === undefined) throw new SharedServiceFault('gateway/unavailable', 'shared Bot attachment admission is unavailable')
+    const controller = new AbortController()
+    const intervalMs = Math.max(1, Math.floor(SHARED_PRIVATE_ATTACHMENT_LEASE_MS / 3))
+    let stopped = false
+    let renewalTail: Promise<void> = Promise.resolve()
+    const failure = (error: unknown): Error => error instanceof Error
+      ? error
+      : new SharedServiceFault('gateway/conflict', 'private attachment delivery lease could not be renewed')
+    const enqueueRenewal = (): Promise<void> => {
+      renewalTail = renewalTail.then(async () => {
+        if (stopped || controller.signal.aborted) return
+        try {
+          const renewed = await this.authority.mutateExtension<boolean>(SHARED_MEMBERSHIP_EXTENSION_KEY, async (current) => {
+            await store.refresh()
+            const value = await store.renewPrivateDelivery(
+              admission.scope,
+              admission.token,
+              this.now(),
+              SHARED_PRIVATE_ATTACHMENT_LEASE_MS,
+            )
+            return { value, next: current }
+          })
+          if (!renewed) throw new SharedServiceFault('gateway/conflict', 'private attachment delivery lease was lost')
+        } catch (error: unknown) {
+          const reason = failure(error)
+          controller.abort(reason)
+        }
+      })
+      return renewalTail
+    }
+    const timer = setInterval(() => { void enqueueRenewal() }, intervalMs)
+    timer.unref()
+    return {
+      signal: AbortSignal.any([signal, controller.signal]),
+      assertCurrent: async () => {
+        signal.throwIfAborted()
+        await enqueueRenewal()
+        signal.throwIfAborted()
+        if (controller.signal.aborted) throw failure(controller.signal.reason)
+      },
+      stop: async () => {
+        stopped = true
+        clearInterval(timer)
+        await renewalTail
+      },
+    }
+  }
+
+  private async readPrivateAttachmentScope(
+    botId: BotId,
+    messageId: ReturnType<typeof BotPrivateMessageId>,
+    principalId: ReturnType<typeof BotPrincipalId>,
+    signal: AbortSignal,
+  ): Promise<Extract<BotAttachmentScope, { readonly kind: 'shared-private' }>> {
+    const extension = await raceSharedAbort(
+      this.authority.readExtension(SHARED_MEMBERSHIP_EXTENSION_KEY),
+      signal,
+    )
+    const snapshot = parseMembershipSnapshot(extension.value)
+    const authorityPrincipal = extension.state.principals.find(candidate => String(candidate.id) === String(principalId))
+    if (authorityPrincipal === undefined || authorityPrincipal.revokedAt !== undefined) {
+      throw new SharedServiceFault('gateway/forbidden', 'shared Bot authority is no longer active')
+    }
+    const authorization = this.requireAuthorizationForMemberships(snapshot.memberships, botId, principalId, 'chat')
+    return {
+      kind: 'shared-private',
+      principalId,
+      botId,
+      messageId,
+      authorizationRevision: authorization.actor.updatedAt,
+    }
+  }
+
+  private async settleObservedPrivateAttachment(
+    scope: Extract<BotAttachmentScope, { readonly kind: 'shared-private' }>,
+    token: string,
+    principalId: ReturnType<typeof BotPrincipalId>,
+    signal: AbortSignal,
+  ): Promise<boolean> {
+    const store = this.attachmentStore
+    if (store === undefined) return false
+    const result = await this.authority.mutateExtension(SHARED_MEMBERSHIP_EXTENSION_KEY, async (current, authorityState) => {
+      const snapshot = parseMembershipSnapshot(current)
+      const authorityPrincipal = authorityState.principals.find(candidate => String(candidate.id) === String(principalId))
+      if (authorityPrincipal === undefined || authorityPrincipal.revokedAt !== undefined) {
+        throw new SharedServiceFault('gateway/forbidden', 'shared Bot authority is no longer active')
+      }
+      const authorization = this.requireAuthorizationForMemberships(snapshot.memberships, scope.botId, principalId, 'chat')
+      if (authorization.actor.updatedAt !== scope.authorizationRevision) return { value: false, next: current }
+      signal.throwIfAborted()
+      await store.refresh()
+      const settled = await store.settlePrivateDelivery(scope, token, 'accepted', this.now())
+      return { value: settled, next: current }
+    })
+    return result
   }
 
   private async manageMembers(
@@ -2354,6 +2964,26 @@ function isMissingPrivateSessionError(value: unknown): boolean {
   return value instanceof Error && value.name === 'ApiSessionNotFound'
 }
 
+function privateMessageWasDelivered(
+  events: readonly import('@yharness/session').SessionEvent[],
+  messageId: ReturnType<typeof BotPrivateMessageId> | undefined,
+): boolean {
+  if (messageId === undefined) return false
+  return events.some((event) => {
+    if (event.type === 'user/message') {
+      return event.data.source.kind === 'user'
+        && 'rpcId' in event.data.source
+        && event.data.source.rpcId === String(messageId)
+    }
+    if (event.type === 'agent/inbox/spliced') {
+      return event.data.inserted.some(message => message.source.kind === 'user'
+        && 'rpcId' in message.source
+        && message.source.rpcId === String(messageId))
+    }
+    return false
+  })
+}
+
 function failure(code: string, message: string): ConnectionRpcHandlerResult {
   return { ok: false, error: { code, message, details: {} } }
 }
@@ -2361,5 +2991,11 @@ function failure(code: string, message: string): ConnectionRpcHandlerResult {
 function faultResult(error: unknown): ConnectionRpcHandlerResult {
   if (error instanceof SharedServiceFault) return failure(error.code, error.message)
   if (error instanceof SharedGroupError) return failure(error.code, error.message)
+  if (error instanceof BotAttachmentGrantError) {
+    const code = error.code === 'invalid' ? 'gateway/bad-request'
+      : error.code === 'not-found' ? 'gateway/not-found'
+        : error.code === 'forbidden' ? 'gateway/forbidden' : 'gateway/conflict'
+    return failure(code, error.message)
+  }
   return failure('gateway/internal', 'shared Bot request failed')
 }

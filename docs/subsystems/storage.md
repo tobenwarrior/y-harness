@@ -118,10 +118,19 @@ interface Domain<S extends DomainSpec> {
    * @returns resolution after the unit is released.
    */
   close(): Promise<void>
+
+  /**
+   * Reload validated records and the global singleton from the backend.
+   * The reload is serialized with this domain's writes and emits no change
+   * events; callers use it before an authority-serialized cross-Host read or
+   * mutation when the backend may have changed outside this process.
+   * @returns resolution after the in-memory projection matches the loaded snapshot.
+   */
+  refresh(): Promise<void>
 }
 ```
 
-Reads are synchronous from authoritative in-memory state: `KvTable` exposes `get`/`getFresh`/`entries`/`keys`/`size` (snapshot iterators that stay stable while queued writes land), and the global handle's `get()` serves the spec's `initial` until the first `set` materializes the slot on the medium. Fresh records and fenced update inputs/results pass through the declaring table schema, so legacy accepted fields can be transformed before a caller sees or republishes them. Every write — `put`, `delete`, `update`, `insert`, `global.set` — queues on one per-domain chain and reaches backend durability first, then mutates memory, then emits `domain/changed`; a rejected backend write leaves memory untouched, so reads never diverge from the medium. `update(key, fn)` is an atomic read-modify-write at its chain slot and `insert(key, value)` is an atomic absent-key claim when the backend exposes coordination; a missing update rejects `missing-key`, while a duplicate insert resolves `false`. Consumers that require multiple Hosts must check `supportsDurableCoordination` and fail closed when it is false. Returned records are the stored objects themselves, not copies — replace via `put`/`update`, never mutate in place.
+Reads are synchronous from authoritative in-memory state: `KvTable` exposes `get`/`getFresh`/`entries`/`keys`/`size` (snapshot iterators that stay stable while queued writes land), and the global handle's `get()` serves the spec's `initial` until the first `set` materializes the slot on the medium. Fresh records and fenced update inputs/results pass through the declaring table schema, so legacy accepted fields can be transformed before a caller sees or republishes them. Every write — `put`, `delete`, `update`, `insert`, `global.set` — queues on one per-domain chain and reaches backend durability first, then mutates memory, then emits `domain/changed`; a rejected backend write leaves memory untouched, so reads never diverge from the medium. `update(key, fn)` is an atomic read-modify-write at its chain slot and `insert(key, value)` is an atomic absent-key claim when the backend exposes coordination; a missing update rejects `missing-key`, while a duplicate insert resolves `false`. Consumers that require multiple Hosts must check `supportsDurableCoordination` and fail closed when it is false. Returned records are the stored objects themselves, not copies — replace via `put`/`update`, never mutate in place. `refresh()` reloads and validates the backend snapshot at a write-chain slot without emitting an event; use it before an authority-serialized operation when another Host may have written the unit.
 
 ## The domain facility: `ctx.storageDomain`
 

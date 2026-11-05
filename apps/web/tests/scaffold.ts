@@ -445,14 +445,33 @@ export interface LaunchOptions {
   }
   /** Reuse an existing harness home so a second Host can verify user settings across origins. */
   harnessHome?: string
+  /**
+   * Use this already-created test workspace instead of allocating one.
+   * The caller retains ownership and must remove it after the last scaffold closes.
+   */
+  workspaceCwd?: string
+  /**
+   * Use this already-created test session root instead of allocating one.
+   * The caller retains ownership and must remove it after the last scaffold closes.
+   */
+  persistenceRoot?: string
 }
 
-/** Dispose the booted tree and remove both owned temp roots, reporting every independent cleanup failure. */
-async function cleanupScaffoldWorld(ctx: Context, workspaceCwd: string, persistenceRoot: string): Promise<unknown[]> {
+/** Dispose the booted tree and remove only roots allocated by this scaffold. */
+async function cleanupScaffoldWorld(
+  ctx: Context,
+  workspaceCwd: string,
+  persistenceRoot: string,
+  ownership: { workspaceCwd: boolean; persistenceRoot: boolean },
+): Promise<unknown[]> {
   const failures: unknown[] = []
   await Promise.resolve(ctx.fiber.dispose()).catch((error: unknown) => failures.push(error))
-  await rm(workspaceCwd, { recursive: true, force: true }).catch((error: unknown) => failures.push(error))
-  await rm(persistenceRoot, { recursive: true, force: true }).catch((error: unknown) => failures.push(error))
+  if (ownership.workspaceCwd) {
+    await rm(workspaceCwd, { recursive: true, force: true }).catch((error: unknown) => failures.push(error))
+  }
+  if (ownership.persistenceRoot) {
+    await rm(persistenceRoot, { recursive: true, force: true }).catch((error: unknown) => failures.push(error))
+  }
   return failures
 }
 
@@ -508,7 +527,10 @@ export async function launchWebScaffold(options: LaunchOptions = {}): Promise<We
       process.env.DEEPSEEK_API_KEY = originalDeepSeekCredential
     }
   }
-  const workspaceCwd = await realpath(await mkdtemp(join(tmpdir(), 'dsh-web-e2e-ws-')))
+  const ownsWorkspaceCwd = options.workspaceCwd === undefined
+  const workspaceCwd = await realpath(
+    options.workspaceCwd ?? await mkdtemp(join(tmpdir(), 'dsh-web-e2e-ws-')),
+  )
   // Isolated harness home: the settings/credentials rows resolve $DSH_HOME
   // paths at load, and an in-process boot must NEVER touch the developer's
   // real ~/.dsh document or credential file.
@@ -541,12 +563,17 @@ export async function launchWebScaffold(options: LaunchOptions = {}): Promise<We
     }
   }
   Object.assign(process.env, skillRootEnvironment)
+  const ownsPersistenceRoot = options.persistenceRoot === undefined
   let persistenceRoot: string
   try {
-    persistenceRoot = await mkdtemp(join(tmpdir(), 'dsh-web-e2e-sessions-'))
+    persistenceRoot = await realpath(
+      options.persistenceRoot ?? await mkdtemp(join(tmpdir(), 'dsh-web-e2e-sessions-')),
+    )
   } catch (error) {
     const failures: unknown[] = [error]
-    await rm(workspaceCwd, { recursive: true, force: true }).catch((cleanupError: unknown) => failures.push(cleanupError))
+    if (ownsWorkspaceCwd) {
+      await rm(workspaceCwd, { recursive: true, force: true }).catch((cleanupError: unknown) => failures.push(cleanupError))
+    }
     restoreSkillRootEnvironment()
     if (failures.length > 1) throw new AggregateError(failures, 'web scaffold temp-root setup failed')
     throw error
@@ -909,7 +936,10 @@ export async function launchWebScaffold(options: LaunchOptions = {}): Promise<We
     }
   } catch (error) {
     if (process.cwd() !== originalCwd) process.chdir(originalCwd)
-    const cleanupFailures = await cleanupScaffoldWorld(ctx, workspaceCwd, persistenceRoot)
+    const cleanupFailures = await cleanupScaffoldWorld(ctx, workspaceCwd, persistenceRoot, {
+      workspaceCwd: ownsWorkspaceCwd,
+      persistenceRoot: ownsPersistenceRoot,
+    })
     if (publicProxy !== undefined) {
       await publicProxy.close().catch((closeError: unknown) => cleanupFailures.push(closeError))
     }
@@ -985,7 +1015,10 @@ export async function launchWebScaffold(options: LaunchOptions = {}): Promise<We
       }
       try {
         stopObservingSessions()
-        failures.push(...await cleanupScaffoldWorld(ctx, workspaceCwd, persistenceRoot))
+        failures.push(...await cleanupScaffoldWorld(ctx, workspaceCwd, persistenceRoot, {
+          workspaceCwd: ownsWorkspaceCwd,
+          persistenceRoot: ownsPersistenceRoot,
+        }))
         if (publicProxy !== undefined) {
           try {
             await publicProxy.close()
@@ -1560,6 +1593,9 @@ function normalizeAria(snapshot: string, workspaceCwd: string, age: boolean): st
     )
     .replace(/\b\d[\d,]*(?:\.\d+)? ms\b/g, '{{duration}}')
     .replace(
+      // The escaped CJK duration grammar stays together so the replacement
+      // matches the same token in every locale.
+      // oxlint-disable-next-line @stylistic/max-len -- keep the duration grammar as one expression
       /\u7EA6\d+(?:\u5E74(?:\d+\u4E2A\u6708)?|\u4E2A\u6708(?:\d+\u5929)?)|\d+(?:\u5929(?:\d+\u5C0F\u65F6(?:\d+\u5206\d+\u79D2)?)?|\u5C0F\u65F6\d+\u5206\d+\u79D2|\u5206\d+\u79D2|(?:\.\d+)?\u79D2)/g,
       duration => duration.startsWith('\u{7EA6}') ? duration : '{{duration}}',
     )

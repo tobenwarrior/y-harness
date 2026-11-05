@@ -3,6 +3,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { brandString, type Branded } from '@yharness/brand'
 import { MessageId } from '@yharness/llm'
+import type { EncodedImageAttachment } from '@yharness/attachment'
 import type { SessionEvent } from '@yharness/session/types'
 import type { Domain } from '@yharness/storage-domain'
 import { defineDomain, domainTable } from '@yharness/storage-domain'
@@ -12,6 +13,14 @@ import { BotPrincipalId } from './sharing.ts'
 import type { BotPrincipalId as BotPrincipalIdType } from './sharing.ts'
 import { botInboxMessageState } from './inbox.ts'
 import { z } from 'zod'
+import type {
+  BotAttachmentGrantId as BotAttachmentGrantIdType,
+  BotAttachmentGrantStore,
+  BotAttachmentScope,
+  BotInputAttachment,
+  BotInputAttachmentView,
+} from './attachment-grants.ts'
+import { sameAttachmentRefs } from './attachment-grants.ts'
 
 /** Stable identity of one durable Bot group. */
 export type BotGroupId = Branded<'BotGroupId'>
@@ -140,6 +149,8 @@ export interface BotGroupMessageView {
   readonly text: string
   /** Recipients selected by the author, in the original mention order. */
   readonly targetBotIds?: readonly BotId[]
+  /** Safe metadata and immutable ids for attachments admitted to this message. */
+  readonly attachments?: readonly BotInputAttachmentView[]
   /** Creation time in Unix milliseconds. */
   readonly createdAt: number
 }
@@ -226,6 +237,8 @@ export interface BotGroupSendRequest {
   readonly messageId?: BotGroupMessageId
   /** Optional targeted recipients; omitted messages are delivered to every other member. */
   readonly targetBotIds?: readonly BotId[]
+  /** Opaque grants admitted for this exact message and recipient set. */
+  readonly attachmentGrants?: readonly BotAttachmentGrantIdType[]
   /** Cancellation for delivery admission. */
   readonly signal?: AbortSignal
 }
@@ -240,6 +253,8 @@ export interface BotGroupSendRemoteRequest {
   readonly messageId?: BotGroupMessageId
   /** Optional targeted recipients; omitted messages are delivered to every group member. */
   readonly targetBotIds?: readonly BotId[]
+  /** Opaque grants admitted for this exact message and recipient set. */
+  readonly attachmentGrants?: readonly BotAttachmentGrantIdType[]
 }
 
 /** Explicit owner-local recovery request for one isolated shared-group recipient fence. */
@@ -306,6 +321,30 @@ export interface BotGroupSendValue {
   readonly deliveries: readonly BotGroupDeliveryView[]
 }
 
+/** Owner-local request to bind provider-admitted attachments to a message. */
+export interface BotGroupAttachmentAdmissionRequest {
+  /** Group receiving the message. */
+  readonly groupId: BotGroupId
+  /** Message identity selected by the caller before upload. */
+  readonly messageId: BotGroupMessageId
+  /** Optional explicit recipients; omitted means every other group member. */
+  readonly targetBotIds?: readonly BotId[]
+  /** Provider-admitted immutable references. */
+  readonly attachments: readonly BotInputAttachment[]
+}
+
+/** Remote-safe owner request for one encoded image grant. */
+export interface BotGroupImageAdmissionRequest {
+  /** Group receiving the message. */
+  readonly groupId: BotGroupId
+  /** Message identity selected by the caller before upload. */
+  readonly messageId: BotGroupMessageId
+  /** Optional explicit recipients. */
+  readonly targetBotIds?: readonly BotId[]
+  /** Encoded image bytes; the Host validates and stores them before granting. */
+  readonly image: EncodedImageAttachment
+}
+
 /** Host operation used to deliver one message into a real Bot Session. */
 export interface BotGroupDeliveryHost {
   /** Read the current durable Bot roster. */
@@ -322,6 +361,8 @@ export interface BotGroupDeliveryHost {
     /** Display name of the Bot that authored the group message, when applicable. */
     readonly senderName?: string
     readonly text: string
+    /** Provider-admitted immutable content references. */
+    readonly attachments?: readonly BotInputAttachment[]
     readonly messageId: BotGroupMessageId
     readonly signal?: AbortSignal
   }) => Promise<'accepted' | 'duplicate'>
@@ -337,6 +378,8 @@ export interface BotGroupDeliveryHost {
     readonly groupId: BotGroupId
     readonly groupName: string
     readonly text: string
+    /** Provider-admitted immutable content references. */
+    readonly attachments?: readonly BotInputAttachment[]
     readonly messageId: BotGroupMessageId
     readonly signal?: AbortSignal
   }) => Promise<'accepted' | 'duplicate'>
@@ -510,7 +553,34 @@ export class BotGroupService {
   constructor(
     private readonly domain: Domain<typeof botGroupDomain>,
     private readonly host: BotGroupDeliveryHost,
+    private readonly attachments?: BotAttachmentGrantStore,
+    private readonly ownerId = 'local-owner',
   ) {}
+
+  /**
+   * Admit immutable provider references for one owner-local group message.
+   * @param request - Group, message, recipient, and admitted references.
+   * @returns opaque grant id and safe attachment metadata.
+   */
+  async admitAttachment(request: BotGroupAttachmentAdmissionRequest): Promise<import('./attachment-grants.ts').BotAttachmentGrantValue> {
+    const store = this.attachments
+    if (store === undefined) throw new BotGroupError('delivery-failed', 'Bot attachment admission is unavailable')
+    return this.serialize(async () => {
+      const groupId = normalizeGroupId(request.groupId)
+      const messageId = normalizeMessageId(request.messageId)
+      const group = this.domain.table('groups').get(groupId)
+      if (group === undefined) throw new BotGroupError('not-found', `Bot group "${String(groupId)}" was not found`)
+      if (this.domain.table('messages').get(messageId) !== undefined) {
+        throw new BotGroupError('invalid', `Bot group message "${String(messageId)}" already exists`)
+      }
+      const targetBotIds = this.recipientIds(group, { kind: 'user' }, request.targetBotIds)
+      const scope: BotAttachmentScope = {
+        kind: 'local-group', ownerId: this.ownerId, groupId, messageId, targetBotIds,
+        authorizationRevision: group.updatedAt,
+      }
+      return await store.admit(scope, request.attachments)
+    })
+  }
 
   /** List durable groups with current member projections.
    * @param _request - Reserved list request fields.
@@ -616,6 +686,30 @@ export class BotGroupService {
     return this.inspectInternal(request)
   }
 
+  /**
+   * Resolve an attachment belonging to an owner-local group message.
+   * @param groupId - Group containing the message.
+   * @param messageId - Message containing the attachment.
+   * @param attachmentId - Opaque provider identity.
+   * @returns The stored attachment reference.
+   */
+  async resolveAttachment(groupId: BotGroupId, messageId: BotGroupMessageId, attachmentId: string): Promise<BotInputAttachment> {
+    return this.serialize(async () => {
+      const group = this.domain.table('groups').get(groupId)
+      const message = this.domain.table('messages').get(messageId)
+      if (group === undefined || message === undefined || message.groupId !== group.id) {
+        throw new BotGroupError('not-found', 'Bot group attachment was not found')
+      }
+      const attachments = this.attachments?.attachmentsForMessage({
+        kind: 'local-group', ownerId: this.ownerId, groupId, messageId,
+        targetBotIds: message.targetBotIds ?? this.recipientIds(group, message.sender), authorizationRevision: group.updatedAt,
+      }) ?? []
+      const attachment = attachments.find(candidate => String(candidate.attachment.attachmentId) === attachmentId)
+      if (attachment === undefined) throw new BotGroupError('not-found', 'Bot group attachment was not found')
+      return attachment
+    })
+  }
+
   /** Read one durable group transcript while authorizing the live member atomically.
    * @param senderBotId - Authenticated member Bot identity.
    * @param request - Group identity to inspect.
@@ -703,7 +797,7 @@ export class BotGroupService {
       .map(([, message]) => message)
       .filter(message => message.groupId === id)
       .sort((left, right) => left.createdAt - right.createdAt || String(left.id).localeCompare(String(right.id)))
-      .map(message => this.messageView(message, bots))
+      .map(message => this.messageView(message, bots, group))
     const messageIds = new Set(messages.map(message => String(message.id)))
     const deliveries = [...this.domain.table('deliveries').entries()]
       .map(([, delivery]) => delivery)
@@ -761,6 +855,9 @@ export class BotGroupService {
     if (principalId !== undefined && this.host.deliverToSharedGroup === undefined) {
       throw new BotGroupError('delivery-failed', 'Shared Bot group delivery is unavailable without an isolated Session')
     }
+    if (principalId !== undefined && (request.attachmentGrants?.length ?? 0) > 0) {
+      throw new BotGroupError('delivery-failed', 'Shared group attachments require the isolated shared-group service')
+    }
     const createdFlights: Array<{ readonly id: string; readonly flight: BotGroupDeliveryFlight }> = []
     let prepared: PreparedBotGroupSend
     try {
@@ -776,15 +873,48 @@ export class BotGroupService {
         const senderName = sender.kind === 'bot' ? bots.find(bot => bot.id === sender.botId)?.name : undefined
         const targetBotIds = this.recipientIds(group, sender, request.targetBotIds)
         const messageId = normalizeMessageId(request.messageId)
+        if ((request.attachmentGrants?.length ?? 0) > 0 && request.messageId === undefined) {
+          throw new BotGroupError('invalid', 'attachment grants require an explicit message id')
+        }
+        const attachmentScope: BotAttachmentScope = {
+          kind: 'local-group',
+          ownerId: this.ownerId,
+          groupId,
+          messageId,
+          targetBotIds,
+          authorizationRevision: group.updatedAt,
+        }
+        const attachmentStore = this.attachments
         const messages = this.domain.table('messages')
-        let changed = false
         const existing = messages.get(messageId)
+        const existingAttachments = attachmentStore?.attachmentsForMessage(attachmentScope) ?? []
+        if (existing === undefined && existingAttachments.length > 0) {
+          throw new BotGroupError('invalid', 'This attachment send could not be confirmed; start a new message')
+        }
+        if (request.attachmentGrants !== undefined && request.attachmentGrants.length > 0) {
+          if (attachmentStore === undefined) {
+            throw new BotGroupError('delivery-failed', 'Bot attachment admission is unavailable')
+          }
+          if (existing !== undefined && existingAttachments.length === 0) {
+            throw new BotGroupError('invalid', `Bot group message "${String(messageId)}" already exists without attachments`)
+          }
+          const preview = attachmentStore.preview(attachmentScope, request.attachmentGrants)
+          if (existing !== undefined && !sameAttachmentRefs(existingAttachments, preview)) {
+            throw new BotGroupError('invalid', `Bot group message "${String(messageId)}" already exists with different attachments`)
+          }
+        }
+        if (existing === undefined && request.attachmentGrants !== undefined && request.attachmentGrants.length > 0) {
+          await attachmentStore?.consume(attachmentScope, request.attachmentGrants)
+        }
+        const messageAttachments = attachmentStore?.attachmentsForMessage(attachmentScope) ?? []
+        let changed = false
         if (existing !== undefined) {
           if (existing.groupId !== groupId || existing.text !== text || existing.sender.kind !== sender.kind
           || (existing.sender.kind === 'user' && sender.kind === 'user'
             && String(existing.sender.principalId ?? '') !== String(sender.principalId ?? ''))
           || (existing.sender.kind === 'bot' && sender.kind === 'bot' && existing.sender.botId !== sender.botId)
-          || !sameIdSet(existing.targetBotIds ?? this.recipientIds(group, existing.sender), targetBotIds)) {
+          || !sameIdSet(existing.targetBotIds ?? this.recipientIds(group, existing.sender), targetBotIds)
+          ) {
             throw new BotGroupError('invalid', `Bot group message "${String(messageId)}" already exists with different content`)
           }
         } else {
@@ -824,6 +954,7 @@ export class BotGroupService {
           }
           pending.push({
             id, groupId, messageId, botId, generation, groupName: group.name, text,
+            ...(messageAttachments.length === 0 ? {} : { attachments: messageAttachments }),
             flight: nextFlight,
             owner,
             ...(principalId === undefined ? {} : { principalId }),
@@ -837,7 +968,7 @@ export class BotGroupService {
           changed = true
         }
         if (changed) this.host.changed?.()
-        return { groupId, messageId, pending, outcomes, targetBotIds }
+        return { groupId, messageId, pending, outcomes, targetBotIds, attachments: messageAttachments }
       })
     } catch (error: unknown) {
       for (const { id, flight } of createdFlights) {
@@ -1228,9 +1359,23 @@ export class BotGroupService {
     }
   }
 
-  private messageView(message: BotGroupMessageRecord, bots: readonly BotView[]): BotGroupMessageView {
+  private messageView(message: BotGroupMessageRecord, bots: readonly BotView[], group: BotGroupRecord): BotGroupMessageView {
     const sender = message.sender
-    if (sender.kind === 'user') return { ...message, sender }
+    if (sender.kind === 'user') {
+      const attachments = this.attachments?.attachmentsForMessage({
+        kind: 'local-group',
+        ownerId: this.ownerId,
+        groupId: group.id,
+        messageId: message.id,
+        targetBotIds: message.targetBotIds ?? this.recipientIds(group, sender),
+        authorizationRevision: group.updatedAt,
+      }) ?? []
+      return {
+        ...message,
+        sender,
+        ...(attachments.length === 0 ? {} : { attachments: attachments.map(localAttachmentView) }),
+      }
+    }
     const bot = bots.find(candidate => candidate.id === sender.botId)
     return {
       ...message,
@@ -1261,6 +1406,7 @@ export class BotGroupService {
           groupName: delivery.groupName,
           ...(delivery.senderName === undefined ? {} : { senderName: delivery.senderName }),
           text: delivery.text,
+          ...(delivery.attachments === undefined ? {} : { attachments: delivery.attachments }),
           messageId: delivery.messageId,
           ...(delivery.signal === undefined ? {} : { signal: delivery.signal }),
         })
@@ -1275,6 +1421,7 @@ export class BotGroupService {
           groupId: delivery.groupId,
           groupName: delivery.groupName,
           text: delivery.text,
+          ...(delivery.attachments === undefined ? {} : { attachments: delivery.attachments }),
           messageId: delivery.messageId,
           ...(delivery.signal === undefined ? {} : { signal: delivery.signal }),
         })
@@ -1299,6 +1446,7 @@ interface PreparedBotGroupDelivery {
   readonly principalId?: BotPrincipalIdType
   readonly senderName?: string
   readonly text: string
+  readonly attachments?: readonly BotInputAttachment[]
   readonly signal?: AbortSignal
 }
 
@@ -1308,6 +1456,7 @@ interface PreparedBotGroupSend {
   readonly pending: readonly PreparedBotGroupDelivery[]
   readonly outcomes: Map<string, BotGroupDeliveryView>
   readonly targetBotIds: readonly BotId[]
+  readonly attachments: readonly BotInputAttachment[]
 }
 
 interface BotGroupDeliveryAttempt {
@@ -1332,6 +1481,24 @@ function createBotGroupDeliveryFlight(): BotGroupDeliveryFlight {
 
 function deliveryId(messageId: BotGroupMessageId, botId: BotId): string {
   return `delivery-${createHash('sha256').update(`${String(messageId)}:${String(botId)}`).digest('hex')}`
+}
+
+function localAttachmentView(attachment: BotInputAttachment): BotInputAttachmentView {
+  if (attachment.type === 'image') {
+    return {
+      type: 'image',
+      attachmentId: String(attachment.attachment.attachmentId),
+      mediaType: attachment.attachment.mediaType,
+      bytes: attachment.attachment.bytes,
+      width: attachment.attachment.width,
+      height: attachment.attachment.height,
+      ...(attachment.attachment.name === undefined ? {} : { name: attachment.attachment.name }),
+    }
+  }
+  return {
+    type: 'file', attachmentId: String(attachment.attachment.attachmentId),
+    name: attachment.attachment.name, bytes: attachment.attachment.bytes,
+  }
 }
 
 /** Keep the table type visible to BotService without exposing its implementation. */

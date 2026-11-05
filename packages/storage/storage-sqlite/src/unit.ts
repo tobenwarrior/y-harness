@@ -78,7 +78,7 @@ export class SqliteKvUnit implements KvUnit {
       : undefined
   }
 
-  getRecord(table: string, key: string): Promise<unknown | undefined> {
+  getRecord(table: string, key: string): Promise<unknown> {
     return this.settle(() => {
       const statements = this.statementsFor(table)
       const row = statements.selectOne.get(key) as { value: string } | undefined

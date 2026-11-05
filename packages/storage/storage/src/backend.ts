@@ -96,7 +96,7 @@ export interface KvUnit {
    * @param key - Record key.
    * @returns the current record, or `undefined` when absent or foreign.
    */
-  getRecord?(table: string, key: string): Promise<unknown | undefined>
+  getRecord?(table: string, key: string): Promise<unknown>
 
   /**
    * Apply one synchronous transform to the current record while holding the

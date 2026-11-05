@@ -78,6 +78,7 @@ function sharedClient(overrides: Partial<SharedBotsClient> = {}): SharedBotsClie
   return {
     retryScope: 'principal-member',
     enroll: vi.fn().mockResolvedValue({ ok: true, value: { principalId: 'principal-member', expiresAt: 2_000 } }),
+    getOwnerCapability: vi.fn().mockResolvedValue({ ownerBootstrap: true }),
     restoreRetryScope: vi.fn().mockResolvedValue({ ok: true, value: { principalId: 'principal-member', expiresAt: 2_000 } }),
     list: vi.fn().mockResolvedValue({ ok: true, value: { bots: [{ ...bot, role: 'collaborator' }] } }),
     readProfile: vi.fn().mockResolvedValue({ ok: true, value: { bot } }),
@@ -92,6 +93,36 @@ function sharedClient(overrides: Partial<SharedBotsClient> = {}): SharedBotsClie
 }
 
 describe('shared Bot collaboration surfaces', () => {
+  it('uses the Host owner bootstrap for explicit shared-group creation', async () => {
+    const enrollOwner = vi.fn().mockResolvedValue({
+      ok: true as const,
+      value: { principalId: 'principal-owner', expiresAt: 2_000 },
+    })
+    const list = vi.fn().mockResolvedValue({ ok: true, value: { bots: [{ ...bot, role: 'owner' }] } })
+    const client = sharedClient({ enrollOwner, list })
+    render(<SharedBotsDialog client={client} ownerMode open onClose={vi.fn()} t={t} />)
+
+    await waitFor(() => { expect(screen.getByText('Private session')).toBeTruthy() })
+    expect(enrollOwner).toHaveBeenCalledTimes(1)
+    expect(client.enroll).not.toHaveBeenCalled()
+    expect(list).toHaveBeenCalled()
+    expect(screen.getAllByText('Chief of staff')).not.toHaveLength(0)
+  })
+
+  it('does not invoke owner enrollment when the server denies this connection', async () => {
+    const enrollOwner = vi.fn().mockResolvedValue({
+      ok: true as const,
+      value: { principalId: 'principal-owner', expiresAt: 2_000 },
+    })
+    const getOwnerCapability = vi.fn().mockResolvedValue({ ownerBootstrap: false })
+    const client = sharedClient({ enrollOwner, getOwnerCapability })
+    render(<SharedBotsDialog client={client} ownerMode open onClose={vi.fn()} t={t} />)
+
+    await waitFor(() => { expect(getOwnerCapability).toHaveBeenCalledTimes(1) })
+    expect(enrollOwner).not.toHaveBeenCalled()
+    expect(screen.getByText('Shared owner setup is unavailable in this connection.')).toBeTruthy()
+  })
+
   it('keeps the invite role fixed while an invite is being created', async () => {
     const createInvite = Promise.withResolvers<Awaited<ReturnType<BotShareActions['createInvite']>>>()
     const actions = ownerActions({ createInvite: vi.fn().mockReturnValue(createInvite.promise) })
@@ -788,6 +819,41 @@ describe('shared Bot collaboration surfaces', () => {
       expect(createGroupInvite).toHaveBeenCalledWith(group.id)
       expect(screen.getByLabelText('Group invite code').textContent).toContain('group-invite')
     })
+  })
+
+  it('keeps a picked attachment visible when the shared transport is text-only', async () => {
+    const group = {
+      id: brandString<BotGroupId>('bot-group-attachments'),
+      name: 'Attachment room',
+      botIds: [BotId(bot.id), BotId(analystBot.id)],
+      bots: [
+        { id: BotId(bot.id), name: bot.name, identity: bot.identity, accent: bot.accent, state: 'active' as const, availability: 'idle' as const },
+        { id: BotId(analystBot.id), name: analystBot.name, identity: analystBot.identity, accent: analystBot.accent, state: 'active' as const, availability: 'idle' as const },
+      ],
+      createdAt: 1,
+      updatedAt: 1,
+    } satisfies BotGroupView
+    const sendGroupMessage = vi.fn().mockResolvedValue({
+      ok: true,
+      value: { messageId: brandString<BotGroupMessageId>('bot-group-message-attachments'), status: 'accepted', deliveries: [] },
+    })
+    const client = sharedClient({
+      listGroups: vi.fn().mockResolvedValue({ ok: true, value: { groups: [group] } }),
+      inspectGroup: vi.fn().mockResolvedValue({ ok: true, value: { group, messages: [] } }),
+      sendGroupMessage,
+    })
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+
+    await waitFor(() => { expect(screen.getByPlaceholderText('Message Attachment room')).toBeTruthy() })
+    const file = new File(['release notes'], 'release-notes.txt', { type: 'text/plain' })
+    fireEvent.change(screen.getByLabelText('Choose files'), { target: { files: [file] } })
+    expect(screen.getByText('release-notes.txt')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Send to group' }))
+
+    await waitFor(() => { expect(screen.getByRole('alert').textContent).toContain('Attachments are not available') })
+    expect(sendGroupMessage).not.toHaveBeenCalled()
+    expect(screen.getByText('release-notes.txt')).toBeTruthy()
   })
 
   it('explains the owner-only group invite after a collaborator is refused', async () => {

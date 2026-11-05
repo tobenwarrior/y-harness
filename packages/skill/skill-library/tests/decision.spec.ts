@@ -43,6 +43,13 @@ async function fixture(mode: 'api' | 'native' = 'api', bounds = {}) {
   const store: DecisionStore = {
     configuration: { get: () => config, set: async (value) => { config = value } },
     records: {
+      supportsDurableCoordination: false,
+      getFresh: async key => records.get(key),
+      insert: async (key, value) => {
+        if (records.has(key)) return false
+        records.set(key, value)
+        return true
+      },
       get: key => records.get(key), put: async (key, value) => { records.set(key, value) },
       delete: async key => records.delete(key), entries: () => records.entries(), keys: () => records.keys(),
       get size() { return records.size },

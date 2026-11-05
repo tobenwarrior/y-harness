@@ -2,16 +2,22 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AttachmentId } from '@yharness/attachment'
+import { BotId } from '@yharness/bots'
+import { ScheduleId } from '@yharness/schedule'
+import { SessionId } from '@yharness/session'
 import { makeTranslate } from '@yharness/client-test-runtime'
+import type { ClientConnectionRpc } from '@yharness/client-connection/client'
 import type { ReactNode } from 'react'
 import { BotAvatar } from '../src/client/BotAvatar.tsx'
 import { BotSkillsManager } from '../src/client/BotSkillsManager.tsx'
 import { BotDetail, BotGroupDetail, BotRoster } from '../src/client/BotWorkspace.tsx'
+import { BotRoutineManager } from '../src/client/BotRoutineManager.tsx'
 import { BotTemplatesPanel } from '../src/client/BotTemplatesPanel.tsx'
 import { en } from '../src/client/locales.ts'
-import type { SharedBotsClient } from '../src/client/shared-client.ts'
+import { MessageId } from '@yharness/llm/brand'
+import { createSharedBotsClient, type SharedBotsClient } from '../src/client/shared-client.ts'
 import type {
-  BotGroupDetailData, BotGroupSummary, BotMemoryManagerActions, BotMemorySummary, BotSummary,
+  BotGroupDetailData, BotGroupSummary, BotMemoryManagerActions, BotMemorySummary, BotRoutineHistory, BotSummary,
   BotSkillManagerActions, BotSkillPolicy, BotTemplateActions, BotTemplateState, BotWorkspaceProps,
 } from '../src/client/types.ts'
 import { BotSkillPolicyConflictError } from '../src/client/types.ts'
@@ -55,7 +61,7 @@ const groupDetail: BotGroupDetailData = {
   ...sharedGroup,
   messages: [
     { id: 'message-1', sender: { kind: 'user' }, text: 'Plan the release together.', createdAt: 1 },
-    { id: 'message-2', sender: { kind: 'bot', botId: 'research', name: 'Research partner' }, text: 'I found three useful sources.', createdAt: 2 },
+    { id: 'message-2', sender: { kind: 'bot', botId: BotId('research'), name: 'Research partner' }, text: 'I found three useful sources.', createdAt: 2 },
   ],
 }
 
@@ -90,6 +96,24 @@ function renderSplitWorkspace(overrides: Partial<BotWorkspaceProps> = {}, childr
       loading={props.loading ?? false}
     />
   </>)
+}
+
+function ownerCapabilityClient(getOwnerCapability: NonNullable<SharedBotsClient['getOwnerCapability']>): SharedBotsClient {
+  return {
+    retryScope: undefined,
+    enroll: vi.fn<SharedBotsClient['enroll']>().mockRejectedValue(new Error('unused test operation')),
+    enrollOwner: vi.fn<NonNullable<SharedBotsClient['enrollOwner']>>().mockRejectedValue(new Error('unused test operation')),
+    getOwnerCapability,
+    restoreRetryScope: vi.fn<SharedBotsClient['restoreRetryScope']>().mockRejectedValue(new Error('unused test operation')),
+    list: vi.fn<SharedBotsClient['list']>().mockResolvedValue({ ok: true, value: { bots: [] } }),
+    readProfile: vi.fn<SharedBotsClient['readProfile']>().mockRejectedValue(new Error('unused test operation')),
+    readPrivateChat: vi.fn<SharedBotsClient['readPrivateChat']>().mockRejectedValue(new Error('unused test operation')),
+    readMemory: vi.fn<SharedBotsClient['readMemory']>().mockRejectedValue(new Error('unused test operation')),
+    chat: vi.fn<SharedBotsClient['chat']>().mockRejectedValue(new Error('unused test operation')),
+    writeMemory: vi.fn<SharedBotsClient['writeMemory']>().mockRejectedValue(new Error('unused test operation')),
+    createInvite: vi.fn<SharedBotsClient['createInvite']>().mockRejectedValue(new Error('unused test operation')),
+    revokeMember: vi.fn<SharedBotsClient['revokeMember']>().mockRejectedValue(new Error('unused test operation')),
+  }
 }
 
 describe('Bot roster and detail', () => {
@@ -274,6 +298,664 @@ describe('Bot roster and detail', () => {
     expect(screen.queryByRole('alert')).toBeNull()
     expect(screen.getByRole('button', { name: /Save profile|Saving/ })).not.toHaveProperty('disabled', true)
   })
+  it('manages timed and event routines with a delete confirmation and history', async () => {
+    const timed = {
+      kind: 'schedule' as const,
+      scheduleKind: 'every' as const,
+      id: ScheduleId('schedule-release'),
+      title: 'Release check',
+      prompt: 'Check release status',
+      everySeconds: 3600,
+      scheduledAt: '2026-11-04T03:00:00.000Z',
+      state: 'scheduled' as const,
+      deliveryMode: 'host' as const,
+      status: 'active' as const,
+      botId: BotId('research'),
+      sessionId: SessionId('session-research'),
+    }
+    const event = {
+      kind: 'event' as const,
+      id: 'event-review',
+      title: 'Review messages',
+      prompt: 'Review incoming messages',
+      trigger: { type: 'message' as const, source: 'user' as const },
+      status: 'paused' as const,
+      createdAt: 1,
+      updatedAt: 1,
+      state: 'waiting' as const,
+      deliveryMode: 'host' as const,
+      botId: BotId('research'),
+      sessionId: SessionId('session-research'),
+    }
+    const actions = {
+      list: vi.fn(async () => [timed, event]),
+      pause: vi.fn(async () => ({ ...timed, status: 'paused' as const })),
+      resume: vi.fn(async () => ({ ...timed, status: 'active' as const })),
+      remove: vi.fn(async () => {}),
+      history: vi.fn(async () => ({ kind: 'schedule' as const, id: timed.id, records: [], earlierRecordsUnavailable: false, earlierRecordsPruned: false, retention: { days: 30, records: 200 } })),
+    }
+    render(<BotRoutineManager bot={bots[0]!} actions={actions} open onClose={vi.fn()} t={t} />)
+
+    expect(await screen.findByRole('dialog', { name: 'Bot routines' })).toBeTruthy()
+    expect(screen.getAllByText('Release check').length).toBeGreaterThan(0)
+    expect(screen.getByText('Review messages')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Pause Release check' }))
+    await waitFor(() => { expect(actions.pause).toHaveBeenCalledWith('research', 'schedule-release') })
+    fireEvent.click(screen.getByRole('button', { name: 'View results for Release check' }))
+    await waitFor(() => { expect(actions.history).toHaveBeenCalledWith('research', 'schedule-release') })
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Release check' }))
+    expect(screen.getByRole('dialog', { name: 'Delete routine?' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Delete routine' }))
+    await waitFor(() => { expect(actions.remove).toHaveBeenCalledWith('research', 'schedule-release') })
+  })
+
+  it('opens routine management from the selected Bot header', async () => {
+    const actions = {
+      list: vi.fn(async () => []),
+      pause: vi.fn(async () => { throw new Error('not used') }),
+      resume: vi.fn(async () => { throw new Error('not used') }),
+      remove: vi.fn(async () => {}),
+      history: vi.fn(async () => ({ kind: 'event' as const, id: 'event-review', deliveries: [], results: [] })),
+    }
+    render(<BotDetail bot={bots[0]} loading={false} loadAvatar={undefined} t={t} routineManager={actions}><span /></BotDetail>)
+    fireEvent.click(screen.getByRole('button', { name: 'Manage routines' }))
+    expect(await screen.findByRole('dialog', { name: 'Bot routines' })).toBeTruthy()
+  })
+
+  it('shows a retryable routine loading failure', async () => {
+    const list = vi.fn()
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce([])
+    const actions = {
+      list,
+      pause: vi.fn(async () => { throw new Error('not used') }),
+      resume: vi.fn(async () => { throw new Error('not used') }),
+      remove: vi.fn(async () => {}),
+      history: vi.fn(async () => ({ kind: 'event' as const, id: 'event-review', deliveries: [], results: [] })),
+    }
+    render(<BotRoutineManager bot={bots[0]!} actions={actions} open onClose={vi.fn()} t={t} />)
+    expect(await screen.findByText('The bot’s routines could not be loaded. Try again.')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
+    await waitFor(() => { expect(list).toHaveBeenCalledTimes(2) })
+    expect(await screen.findByText('No routines yet')).toBeTruthy()
+  })
+
+  it('keeps history from an older selection out of the current routine', async () => {
+    const first = Promise.withResolvers<BotRoutineHistory>()
+    const second = Promise.withResolvers<BotRoutineHistory>()
+    const routineA = {
+      kind: 'event' as const,
+      id: 'event-a',
+      title: 'Routine A',
+      prompt: 'Prompt A',
+      trigger: { type: 'message' as const, source: 'user' as const },
+      status: 'active' as const,
+      createdAt: 1,
+      updatedAt: 1,
+      state: 'waiting' as const,
+      deliveryMode: 'host' as const,
+      botId: BotId('research'),
+      sessionId: SessionId('session-research'),
+    }
+    const routineB = { ...routineA, id: 'event-b', title: 'Routine B', prompt: 'Prompt B' }
+    const actions = {
+      list: vi.fn(async () => [routineA, routineB]),
+      pause: vi.fn(async () => routineA),
+      resume: vi.fn(async () => routineA),
+      remove: vi.fn(async () => {}),
+      history: vi.fn((_: string, id: string) => id === 'event-a' ? first.promise : second.promise),
+    }
+    render(<BotRoutineManager bot={bots[0]!} actions={actions} open onClose={vi.fn()} t={t} />)
+    await screen.findByRole('button', { name: 'View results for Routine A' })
+
+    fireEvent.click(screen.getByRole('button', { name: 'View results for Routine A' }))
+    fireEvent.click(screen.getByRole('button', { name: 'View results for Routine B' }))
+    second.resolve({ kind: 'event', id: 'event-b', deliveries: [], results: [{ messageId: MessageId('result-b'), status: 'completed', completedAt: '2026-11-04T00:00:00.000Z', output: 'B result' }] })
+    expect(await screen.findByText('B result')).toBeTruthy()
+    first.resolve({ kind: 'event', id: 'event-a', deliveries: [], results: [{ messageId: MessageId('result-a'), status: 'completed', completedAt: '2026-11-04T00:00:00.000Z', output: 'A result' }] })
+    await waitFor(() => { expect(screen.queryByText('A result')).toBeNull() })
+  })
+
+  it('reloads history when a routine revision interrupts the selected history request', async () => {
+    const first = Promise.withResolvers<BotRoutineHistory>()
+    const refreshed = Promise.withResolvers<BotRoutineHistory>()
+    let historyCalls = 0
+    const routine = {
+      kind: 'event' as const,
+      id: 'event-revision-history',
+      title: 'Revision history routine',
+      prompt: 'Revision history prompt',
+      trigger: { type: 'message' as const, source: 'user' as const },
+      status: 'active' as const,
+      createdAt: 1,
+      updatedAt: 1,
+      state: 'waiting' as const,
+      deliveryMode: 'host' as const,
+      botId: BotId('research'),
+      sessionId: SessionId('session-research'),
+    }
+    const actions = {
+      list: vi.fn(async () => [routine]),
+      pause: vi.fn(async () => routine),
+      resume: vi.fn(async () => routine),
+      remove: vi.fn(async () => {}),
+      history: vi.fn(() => {
+        historyCalls++
+        return historyCalls === 1 ? first.promise : refreshed.promise
+      }),
+    }
+    const view = render(<BotRoutineManager bot={bots[0]!} actions={actions} open onClose={vi.fn()} t={t} revision={0} />)
+    await screen.findByRole('button', { name: 'View results for Revision history routine' })
+    fireEvent.click(screen.getByRole('button', { name: 'View results for Revision history routine' }))
+    expect(await screen.findByText('Loading routine history…')).toBeTruthy()
+
+    view.rerender(<BotRoutineManager bot={bots[0]!} actions={actions} open onClose={vi.fn()} t={t} revision={1} />)
+    await waitFor(() => { expect(actions.history).toHaveBeenCalledTimes(2) })
+    first.resolve({ kind: 'event', id: routine.id, deliveries: [], results: [{ messageId: MessageId('stale-result'), status: 'completed', completedAt: '2026-11-04T00:00:00.000Z', output: 'Stale result' }] })
+    refreshed.resolve({ kind: 'event', id: routine.id, deliveries: [], results: [{ messageId: MessageId('refreshed-result'), status: 'completed', completedAt: '2026-11-04T00:00:00.000Z', output: 'Refreshed result' }] })
+
+    expect(await screen.findByText('Refreshed result')).toBeTruthy()
+    expect(screen.queryByText('Stale result')).toBeNull()
+  })
+
+  it.each(['pause', 'resume', 'delete'] as const)('keeps a newer catalog after a stale %s completion', async (action) => {
+    const initialStatus = action === 'resume' ? 'paused' as const : 'active' as const
+    const initial = {
+      kind: 'event' as const,
+      id: `event-stale-${action}`,
+      title: `Stale ${action} routine`,
+      prompt: 'The old catalog must not win.',
+      trigger: { type: 'message' as const, source: 'user' as const },
+      status: initialStatus,
+      createdAt: 1,
+      updatedAt: 1,
+      state: 'waiting' as const,
+      deliveryMode: 'host' as const,
+      botId: BotId('research'),
+      sessionId: SessionId('session-research'),
+    }
+    const fresh = { ...initial, title: `Fresh ${action} catalog`, status: 'active' as const, updatedAt: 2 }
+    const lifecycle = Promise.withResolvers<typeof initial>()
+    const removal = Promise.withResolvers<undefined>()
+    const list = vi.fn()
+      .mockResolvedValueOnce([initial])
+      .mockResolvedValue([fresh])
+    const actions = {
+      list,
+      pause: vi.fn(() => action === 'pause' ? lifecycle.promise : Promise.resolve(fresh)),
+      resume: vi.fn(() => action === 'resume' ? lifecycle.promise : Promise.resolve(fresh)),
+      remove: vi.fn(() => action === 'delete' ? removal.promise : Promise.resolve()),
+      history: vi.fn(async () => ({ kind: 'event' as const, id: initial.id, deliveries: [], results: [] })),
+    }
+    const view = render(<BotRoutineManager bot={bots[0]!} actions={actions} open onClose={vi.fn()} t={t} revision={0} />)
+    await screen.findByRole('button', { name: `View results for ${initial.title}` })
+
+    if (action === 'pause') {
+      fireEvent.click(screen.getByRole('button', { name: `Pause ${initial.title}` }))
+      await waitFor(() => { expect(actions.pause).toHaveBeenCalledWith('research', initial.id) })
+    } else if (action === 'resume') {
+      fireEvent.click(screen.getByRole('button', { name: `Resume ${initial.title}` }))
+      await waitFor(() => { expect(actions.resume).toHaveBeenCalledWith('research', initial.id) })
+    } else {
+      fireEvent.click(screen.getByRole('button', { name: `Delete ${initial.title}` }))
+      fireEvent.click(screen.getByRole('button', { name: 'Delete routine' }))
+      await waitFor(() => { expect(actions.remove).toHaveBeenCalledWith('research', initial.id) })
+    }
+
+    view.rerender(<BotRoutineManager bot={bots[0]!} actions={actions} open onClose={vi.fn()} t={t} revision={1} />)
+    expect(await screen.findAllByText(fresh.title)).not.toHaveLength(0)
+    if (action === 'delete') removal.resolve(undefined)
+    else lifecycle.resolve({ ...initial, status: action === 'pause' ? 'paused' : 'active' })
+    await waitFor(() => { expect(screen.getAllByText(fresh.title)).not.toHaveLength(0) })
+    expect(screen.queryAllByText(initial.title)).toHaveLength(0)
+  })
+
+  it('moves the detail selection into the active filter', async () => {
+    const active = {
+      kind: 'event' as const,
+      id: 'event-active',
+      title: 'Active routine',
+      prompt: 'Active prompt',
+      trigger: { type: 'message' as const, source: 'user' as const },
+      status: 'active' as const,
+      createdAt: 1,
+      updatedAt: 1,
+      state: 'waiting' as const,
+      deliveryMode: 'host' as const,
+      botId: BotId('research'),
+      sessionId: SessionId('session-research'),
+    }
+    const paused = { ...active, id: 'event-paused', title: 'Paused routine', prompt: 'Paused prompt', status: 'paused' as const }
+    const actions = {
+      list: vi.fn(async () => [active, paused]),
+      pause: vi.fn(async () => paused),
+      resume: vi.fn(async () => active),
+      remove: vi.fn(async () => {}),
+      history: vi.fn(async () => ({ kind: 'event' as const, id: paused.id, deliveries: [], results: [] })),
+    }
+    render(<BotRoutineManager bot={bots[0]!} actions={actions} open onClose={vi.fn()} t={t} />)
+    await screen.findByRole('button', { name: 'View results for Active routine' })
+    fireEvent.click(screen.getByRole('tab', { name: 'Paused' }))
+    const detail = screen.getByRole('region', { name: 'Routine details' })
+    expect(within(detail).getByText('Paused prompt')).toBeTruthy()
+  })
+
+  it('clears a selected routine when a status change removes it from the filter', async () => {
+    const active = {
+      kind: 'event' as const,
+      id: 'event-filter-active',
+      title: 'Filter active routine',
+      prompt: 'Filter active prompt',
+      trigger: { type: 'message' as const, source: 'user' as const },
+      status: 'active' as const,
+      createdAt: 1,
+      updatedAt: 1,
+      state: 'waiting' as const,
+      deliveryMode: 'host' as const,
+      botId: BotId('research'),
+      sessionId: SessionId('session-research'),
+    }
+    const actions = {
+      list: vi.fn(async () => [active]),
+      pause: vi.fn(async () => ({ ...active, status: 'paused' as const })),
+      resume: vi.fn(async () => active),
+      remove: vi.fn(async () => {}),
+      history: vi.fn(async () => ({ kind: 'event' as const, id: active.id, deliveries: [], results: [] })),
+    }
+    render(<BotRoutineManager bot={bots[0]!} actions={actions} open onClose={vi.fn()} t={t} />)
+    await screen.findByRole('button', { name: 'View results for Filter active routine' })
+    fireEvent.click(screen.getByRole('tab', { name: 'Enabled' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Pause Filter active routine' }))
+    await waitFor(() => { expect(actions.pause).toHaveBeenCalledWith('research', active.id) })
+    expect(await screen.findByText('No routines match this filter')).toBeTruthy()
+    expect(screen.queryByRole('region', { name: 'Routine details' })).toBeNull()
+  })
+
+  it('shows weekly weekdays in the routine rule', async () => {
+    const weekly = {
+      kind: 'schedule' as const,
+      scheduleKind: 'weekly' as const,
+      id: ScheduleId('schedule-weekly'),
+      title: 'Weekly review',
+      prompt: 'Review the week',
+      time: '09:00:00',
+      timeZone: 'UTC',
+      weekdays: [1, 3],
+      scheduledAt: '2026-11-04T01:00:00.000Z',
+      state: 'scheduled' as const,
+      deliveryMode: 'host' as const,
+      status: 'active' as const,
+      botId: BotId('research'),
+      sessionId: SessionId('session-research'),
+    }
+    const actions = {
+      list: vi.fn(async () => [weekly]),
+      pause: vi.fn(async () => ({ ...weekly, status: 'paused' as const })),
+      resume: vi.fn(async () => weekly),
+      remove: vi.fn(async () => {}),
+      history: vi.fn(async () => ({ kind: 'schedule' as const, id: weekly.id, records: [], earlierRecordsUnavailable: false, earlierRecordsPruned: false, retention: { days: 30, records: 200 } })),
+    }
+    render(<BotRoutineManager bot={bots[0]!} actions={actions} open onClose={vi.fn()} t={t} />)
+    await screen.findByRole('button', { name: 'View results for Weekly review' })
+    expect(screen.getByText('Runs weekly on Monday, Wednesday at 09:00:00 (UTC)')).toBeTruthy()
+  })
+
+  it('renders every routine timing family and status', async () => {
+    const schedule = (scheduleKind: string, title: string, patch: {
+      readonly afterSeconds?: number
+      readonly everySeconds?: number
+      readonly time?: string
+      readonly timeZone?: string
+      readonly weekdays?: readonly number[]
+      readonly expression?: string
+      readonly status?: 'active' | 'paused' | 'inactive'
+    } = {}) => ({
+      kind: 'schedule' as const,
+      scheduleKind: scheduleKind as never,
+      id: ScheduleId(`schedule-${title}`),
+      title,
+      prompt: `${title} prompt`,
+      ...patch,
+      scheduledAt: '2026-11-04T03:00:00.000Z',
+      state: 'scheduled' as const,
+      deliveryMode: 'host' as const,
+      status: patch.status ?? 'active',
+      botId: BotId('research'),
+      sessionId: SessionId('session-research'),
+    })
+    const routines = [
+      schedule('after', 'After rule', { afterSeconds: 15 }),
+      schedule('at', 'At rule'),
+      schedule('every', 'Every rule', { everySeconds: 60 }),
+      schedule('daily', 'Daily rule', { time: '08:00:00', timeZone: 'UTC' }),
+      schedule('weekly', 'Weekly rule', { time: '09:00:00', timeZone: 'UTC', weekdays: [1, 2, 3, 4, 5, 6, 7, 8] }),
+      schedule('cron', 'Cron rule', { expression: '0 9 * * *', timeZone: 'UTC' }),
+      schedule('other', 'Unknown rule'),
+      schedule('every', 'Ended rule', { status: 'inactive' as const }),
+      {
+        kind: 'event' as const,
+        id: 'event-bot-source',
+        title: 'Bot source rule',
+        prompt: 'Bot source prompt',
+        trigger: { type: 'message' as const, source: 'bot' as const },
+        status: 'paused' as const,
+        createdAt: 1,
+        updatedAt: 1,
+        state: 'waiting' as const,
+        deliveryMode: 'host' as const,
+        botId: BotId('research'),
+        sessionId: SessionId('session-research'),
+      },
+    ]
+    const actions = {
+      list: vi.fn(async () => routines),
+      pause: vi.fn(async (_botId: string, routineId: string) => routines.find(routine => String(routine.id) === routineId)!),
+      resume: vi.fn(async (_botId: string, routineId: string) => routines.find(routine => String(routine.id) === routineId)!),
+      remove: vi.fn(async () => {}),
+      history: vi.fn(async () => ({ kind: 'event' as const, id: 'event-bot-source', deliveries: [], results: [] })),
+    }
+    render(<BotRoutineManager bot={bots[0]!} actions={actions} open onClose={vi.fn()} t={t} />)
+    await screen.findByRole('button', { name: 'View results for After rule' })
+    const detail = () => screen.getByRole('region', { name: 'Routine details' })
+    expect(within(detail()).getByText('Runs once in 15 seconds')).toBeTruthy()
+
+    const expectedRules = [
+      ['At rule', /^Runs at /],
+      ['Every rule', 'Repeats every minute'],
+      ['Daily rule', 'Runs daily at 08:00:00 (UTC)'],
+      ['Weekly rule', 'Runs weekly on Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday, 8 at 09:00:00 (UTC)'],
+      ['Cron rule', 'Cron 0 9 * * * (UTC)'],
+      ['Unknown rule', 'Timed routine'],
+      ['Ended rule', 'Repeats every 0 seconds'],
+      ['Bot source rule', 'Runs when a message arrives from another bot'],
+    ] as const
+    for (const [title, rule] of expectedRules) {
+      const list = screen.getByRole('list', { name: 'Bot routines' })
+      fireEvent.click(within(list).getByText(title).closest('button')!)
+      expect(within(detail()).getByText(rule)).toBeTruthy()
+    }
+    expect(screen.getByRole('button', { name: 'Delete Ended rule' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Pause Ended rule' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Resume Ended rule' })).toBeNull()
+  })
+
+  it('formats routine intervals in readable units without losing precision', async () => {
+    const routine = (scheduleKind: 'after' | 'every', title: string, seconds: number) => ({
+      kind: 'schedule' as const,
+      scheduleKind,
+      id: ScheduleId(`schedule-${title}`),
+      title,
+      prompt: `${title} prompt`,
+      ...(scheduleKind === 'after' ? { afterSeconds: seconds } : { everySeconds: seconds }),
+      scheduledAt: '2026-11-04T03:00:00.000Z',
+      state: 'scheduled' as const,
+      deliveryMode: 'host' as const,
+      status: 'active' as const,
+      botId: BotId('research'),
+      sessionId: SessionId('session-research'),
+    })
+    const routines = [
+      routine('every', 'Daily cadence', 86_400),
+      routine('every', 'Hourly cadence', 3_600),
+      routine('every', 'Ninety second cadence', 90),
+      routine('after', 'Half second delay', 0.5),
+    ]
+    const actions = {
+      list: vi.fn(async () => routines),
+      pause: vi.fn(async (_botId: string, routineId: string) => routines.find(candidate => String(candidate.id) === routineId)!),
+      resume: vi.fn(async (_botId: string, routineId: string) => routines.find(candidate => String(candidate.id) === routineId)!),
+      remove: vi.fn(async () => {}),
+      history: vi.fn(async () => ({ kind: 'event' as const, id: 'event-routine', deliveries: [], results: [] })),
+    }
+    render(<BotRoutineManager bot={bots[0]!} actions={actions} open onClose={vi.fn()} t={t} />)
+
+    await screen.findByRole('button', { name: 'View results for Daily cadence' })
+    const detail = () => screen.getByRole('region', { name: 'Routine details' })
+    expect(within(detail()).getByText('Repeats every day')).toBeTruthy()
+
+    const list = screen.getByRole('list', { name: 'Bot routines' })
+    fireEvent.click(within(list).getByText('Hourly cadence').closest('button')!)
+    expect(within(detail()).getByText('Repeats every hour')).toBeTruthy()
+    fireEvent.click(within(list).getByText('Ninety second cadence').closest('button')!)
+    expect(within(detail()).getByText('Repeats every 1 minute 30 seconds')).toBeTruthy()
+    fireEvent.click(within(list).getByText('Half second delay').closest('button')!)
+    expect(within(detail()).getByText('Runs once in 0.5 seconds')).toBeTruthy()
+  })
+
+  it('renders event deliveries and controls older schedule history', async () => {
+    const event = {
+      kind: 'event' as const,
+      id: 'event-delivery',
+      title: 'Incoming review',
+      prompt: 'Review incoming messages',
+      trigger: { type: 'message' as const, source: 'user' as const },
+      status: 'active' as const,
+      createdAt: 1,
+      updatedAt: 1,
+      state: 'waiting' as const,
+      deliveryMode: 'host' as const,
+      botId: BotId('research'),
+      sessionId: SessionId('session-research'),
+    }
+    const schedule = {
+      kind: 'schedule' as const,
+      scheduleKind: 'every' as const,
+      id: ScheduleId('schedule-history'),
+      title: 'History check',
+      prompt: 'Check history',
+      everySeconds: 600,
+      scheduledAt: '2026-11-04T03:00:00.000Z',
+      state: 'scheduled' as const,
+      deliveryMode: 'host' as const,
+      status: 'active' as const,
+      botId: BotId('research'),
+      sessionId: SessionId('session-research'),
+    }
+    const olderCursor = MessageId('older-cursor')
+    const firstPage = {
+      kind: 'schedule' as const,
+      id: schedule.id,
+      records: [
+        { messageId: MessageId('record-new'), scheduledAt: '2026-11-04T00:59:00.000Z', deliveredAt: '2026-11-04T01:00:00.000Z', prompt: 'New run' },
+        { messageId: MessageId('record-legacy'), scheduledAt: '2026-11-03T00:59:00.000Z', deliveredAt: 'not-a-date' },
+      ],
+      earlierRecordsUnavailable: true,
+      earlierRecordsPruned: true,
+      retention: { days: 30, records: 200 },
+      nextBefore: olderCursor,
+    }
+    const { nextBefore: unusedCursor, ...firstPageWithoutCursor } = firstPage
+    void unusedCursor
+    const olderPage = {
+      ...firstPageWithoutCursor,
+      records: [
+        { messageId: MessageId('record-new'), scheduledAt: '2026-11-04T00:59:00.000Z', deliveredAt: '2026-11-04T01:00:00.000Z', prompt: 'New run' },
+        { messageId: MessageId('record-old'), scheduledAt: '2026-11-03T00:59:00.000Z', deliveredAt: '2026-11-03T01:00:00.000Z', prompt: 'Old run' },
+      ],
+      earlierRecordsPruned: false,
+    }
+    const olderFailure = Promise.withResolvers<typeof olderPage>()
+    const olderSuccess = Promise.withResolvers<typeof olderPage>()
+    let olderCalls = 0
+    const history = vi.fn(async (_botId: string, routineId: string, before?: MessageId) => {
+      if (routineId === event.id) return {
+        kind: 'event' as const,
+        id: event.id,
+        deliveries: [
+          { triggerEventSeq: 1, messageId: MessageId('delivery-1'), status: 'pending' as const, createdAt: '2026-11-04T00:00:00.000Z' },
+          { triggerEventSeq: 2, messageId: MessageId('delivery-2'), status: 'delivered' as const, createdAt: 'not-a-date' },
+        ],
+        results: [
+          { messageId: MessageId('result-error'), status: 'error' as const, completedAt: 'not-a-date', error: 'The run failed.' },
+          { messageId: MessageId('result-empty'), status: 'blocked' as const, completedAt: '2026-11-04T00:00:00.000Z' },
+        ],
+      }
+      if (before === undefined) return firstPage
+      olderCalls++
+      return olderCalls === 1 ? olderFailure.promise : olderSuccess.promise
+    })
+    const actions = {
+      list: vi.fn(async () => [event, schedule]),
+      pause: vi.fn(async () => event),
+      resume: vi.fn(async () => event),
+      remove: vi.fn(async () => {}),
+      history,
+    }
+    render(<BotRoutineManager bot={bots[0]!} actions={actions} open onClose={vi.fn()} t={t} />)
+    await screen.findByRole('button', { name: 'View results for Incoming review' })
+    fireEvent.click(screen.getByRole('button', { name: 'View results for Incoming review' }))
+    expect(await screen.findByText('Waiting for delivery')).toBeTruthy()
+    expect(screen.getByText('Delivered')).toBeTruthy()
+    expect(screen.getByText('The run failed.')).toBeTruthy()
+    expect(screen.getByText('No visible output.')).toBeTruthy()
+    expect(screen.getByText('Failed')).toBeTruthy()
+    expect(screen.getByText('Blocked')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'View results for History check' }))
+    expect(await screen.findByText('New run')).toBeTruthy()
+    expect(screen.getByText('Delivery recorded before prompt history was retained.')).toBeTruthy()
+    expect(screen.getByText('Some older runs are unavailable.')).toBeTruthy()
+    expect(screen.getByText('Older runs were pruned by retention.')).toBeTruthy()
+    expect(screen.getByText('History kept for 30 days or 200 runs.')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Load older runs' }))
+    olderFailure.reject(new Error('history page unavailable'))
+    expect(await screen.findByText('Routine history could not be loaded. Try again.')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Load older runs' }))
+    expect(screen.getByRole('button', { name: 'Loading older runs…' })).toHaveProperty('disabled', true)
+    await waitFor(() => { expect(history).toHaveBeenLastCalledWith('research', 'schedule-history', olderCursor) })
+    olderSuccess.resolve(olderPage)
+    expect(await screen.findByText('Old run')).toBeTruthy()
+    expect(screen.getAllByText('New run')).toHaveLength(1)
+    expect(screen.queryByRole('button', { name: 'Load older runs' })).toBeNull()
+  })
+
+  it('keeps routine state visible when lifecycle and history operations fail', async () => {
+    const active = {
+      kind: 'event' as const,
+      id: 'event-failure',
+      title: 'Failure routine',
+      prompt: 'Failure prompt',
+      trigger: { type: 'message' as const, source: 'user' as const },
+      status: 'active' as const,
+      createdAt: 1,
+      updatedAt: 1,
+      state: 'waiting' as const,
+      deliveryMode: 'host' as const,
+      botId: BotId('research'),
+      sessionId: SessionId('session-research'),
+    }
+    const paused = { ...active, id: 'event-paused-failure', title: 'Paused failure', status: 'paused' as const }
+    const history = vi.fn()
+      .mockRejectedValueOnce(new Error('history unavailable'))
+      .mockResolvedValue({ kind: 'event' as const, id: active.id, deliveries: [], results: [] })
+    const actions = {
+      list: vi.fn(async () => [active, paused]),
+      pause: vi.fn(async () => { throw new Error('pause unavailable') }),
+      resume: vi.fn(async () => { throw new Error('resume unavailable') }),
+      remove: vi.fn(async () => { throw new Error('delete unavailable') }),
+      history,
+    }
+    render(<BotRoutineManager bot={bots[0]!} actions={actions} open onClose={vi.fn()} t={t} />)
+    await screen.findByRole('button', { name: 'View results for Failure routine' })
+    fireEvent.click(screen.getByRole('button', { name: 'Pause Failure routine' }))
+    expect((await screen.findByRole('alert')).textContent).toContain('That routine change could not be saved')
+    fireEvent.click(screen.getByRole('button', { name: 'Resume Paused failure' }))
+    expect((await screen.findByRole('alert')).textContent).toContain('That routine change could not be saved')
+    fireEvent.click(screen.getByRole('button', { name: 'View results for Failure routine' }))
+    expect(await screen.findByText('Routine history could not be loaded. Try again.')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
+    expect(await screen.findByText('No deliveries recorded yet.')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Failure routine' }))
+    const confirmation = screen.getByRole('dialog', { name: 'Delete routine?' })
+    fireEvent.click(within(confirmation).getByRole('button', { name: 'Delete routine' }))
+    expect(await within(confirmation).findByRole('alert')).toBeTruthy()
+    expect(screen.getByText('Failure routine')).toBeTruthy()
+  })
+
+  it('ignores a routine list that settles after the manager unmounts', async () => {
+    const list = Promise.withResolvers<readonly []>()
+    const actions = {
+      list: vi.fn(() => list.promise),
+      pause: vi.fn(async () => { throw new Error('not used') }),
+      resume: vi.fn(async () => { throw new Error('not used') }),
+      remove: vi.fn(async () => {}),
+      history: vi.fn(async () => ({ kind: 'event' as const, id: 'event-review', deliveries: [], results: [] })),
+    }
+    const view = render(<BotRoutineManager bot={bots[0]!} actions={actions} open onClose={vi.fn()} t={t} />)
+    view.unmount()
+    list.resolve([])
+    await list.promise
+  })
+
+  it('cancels a pending history request when the manager closes', async () => {
+    const history = Promise.withResolvers<BotRoutineHistory>()
+    const onClose = vi.fn()
+    const routine = {
+      kind: 'event' as const,
+      id: 'event-close',
+      title: 'Close routine',
+      prompt: 'Close prompt',
+      trigger: { type: 'message' as const, source: 'user' as const },
+      status: 'active' as const,
+      createdAt: 1,
+      updatedAt: 1,
+      state: 'waiting' as const,
+      deliveryMode: 'host' as const,
+      botId: BotId('research'),
+      sessionId: SessionId('session-research'),
+    }
+    const actions = {
+      list: vi.fn(async () => [routine]),
+      pause: vi.fn(async () => routine),
+      resume: vi.fn(async () => routine),
+      remove: vi.fn(async () => {}),
+      history: vi.fn(() => history.promise),
+    }
+    render(<BotRoutineManager bot={bots[0]!} actions={actions} open onClose={onClose} t={t} />)
+    await screen.findByRole('button', { name: 'View results for Close routine' })
+    fireEvent.click(screen.getByRole('button', { name: 'View results for Close routine' }))
+    fireEvent.click(screen.getAllByRole('button', { name: 'Close' }).at(-1)!)
+    expect(onClose).toHaveBeenCalledOnce()
+    history.resolve({ kind: 'event', id: routine.id, deliveries: [], results: [{ messageId: MessageId('late-result'), status: 'completed', completedAt: '2026-11-04T00:00:00.000Z', output: 'Late result' }] })
+    await history.promise
+    expect(screen.queryByText('Late result')).toBeNull()
+  })
+
+  it('drops a removed selection after a catalog revision', async () => {
+    const active = {
+      kind: 'event' as const,
+      id: 'event-revision-active',
+      title: 'Revision active',
+      prompt: 'Revision active prompt',
+      trigger: { type: 'message' as const, source: 'user' as const },
+      status: 'active' as const,
+      createdAt: 1,
+      updatedAt: 1,
+      state: 'waiting' as const,
+      deliveryMode: 'host' as const,
+      botId: BotId('research'),
+      sessionId: SessionId('session-research'),
+    }
+    const paused = { ...active, id: 'event-revision-paused', title: 'Revision paused', prompt: 'Revision paused prompt', status: 'paused' as const }
+    const list = vi.fn()
+      .mockResolvedValueOnce([active])
+      .mockResolvedValueOnce([paused])
+    const actions = {
+      list,
+      pause: vi.fn(async () => active),
+      resume: vi.fn(async () => paused),
+      remove: vi.fn(async () => {}),
+      history: vi.fn(async () => ({ kind: 'event' as const, id: paused.id, deliveries: [], results: [] })),
+    }
+    const view = render(<BotRoutineManager bot={bots[0]!} actions={actions} open onClose={vi.fn()} t={t} revision={0} />)
+    await screen.findByRole('button', { name: 'View results for Revision active' })
+    fireEvent.click(screen.getByRole('button', { name: 'View results for Revision active' }))
+    expect(await screen.findByText('No deliveries recorded yet.')).toBeTruthy()
+    view.rerender(<BotRoutineManager bot={bots[0]!} actions={actions} open onClose={vi.fn()} t={t} revision={1} />)
+    expect(await screen.findByRole('button', { name: 'View results for Revision paused' })).toBeTruthy()
+    const detail = screen.getByRole('region', { name: 'Routine details' })
+    expect(within(detail).getByText('Revision paused prompt')).toBeTruthy()
+    expect(within(detail).getByRole('tab', { name: 'Rule' }).getAttribute('aria-selected')).toBe('true')
+  })
 
   it('renames the selected bot from its conversation header', async () => {
     const rename = vi.fn(async () => {})
@@ -346,7 +1028,7 @@ describe('Bot roster and detail', () => {
     expect(screen.getByRole('dialog', { name: 'Bot templates' })).toBeTruthy()
     expect(screen.getByText('Release partner')).toBeTruthy()
     fireEvent.click(screen.getAllByRole('button', { name: 'Share' })[0]!)
-    await waitFor(() => { expect(actions.publishTemplate).toHaveBeenCalledWith({ botId: 'research' }) })
+    await waitFor(() => { expect(actions.publishTemplate).toHaveBeenCalledWith({ botId: BotId('research') }) })
 
     const code = screen.getByRole('textbox', { name: 'Template share code' })
     expect(code.getAttribute('placeholder')).toBe('Paste a yhbot-template-v2.… code')
@@ -535,6 +1217,89 @@ describe('Bot roster and detail', () => {
     expect(await screen.findByRole('dialog', { name: 'Shared with you' })).toBeTruthy()
   })
 
+  it('disables owner setup when the server does not advertise this connection', async () => {
+    const getOwnerCapability = vi.fn<NonNullable<SharedBotsClient['getOwnerCapability']>>()
+      .mockResolvedValueOnce({ ownerBootstrap: false })
+      .mockResolvedValueOnce({ ownerBootstrap: true })
+    const sharedClient = ownerCapabilityClient(getOwnerCapability)
+    render(<BotRoster
+      bots={bots}
+      selectedBotId="research"
+      onSelectBot={vi.fn()}
+      onCreateBot={vi.fn()}
+      sharedClient={sharedClient}
+      t={t}
+    />)
+
+    await waitFor(() => { expect(getOwnerCapability).toHaveBeenCalledOnce() })
+    const ownerButton = screen.getByRole('button', { name: 'Create a shared group' }) as HTMLButtonElement
+    expect(ownerButton.disabled).toBe(true)
+    expect(ownerButton.getAttribute('title')).toBe('Shared owner setup is unavailable in this connection.')
+
+    window.dispatchEvent(new Event('focus'))
+    await waitFor(() => { expect(getOwnerCapability).toHaveBeenCalledTimes(2) })
+    expect((screen.getByRole('button', { name: 'Create a shared group' }) as HTMLButtonElement).disabled).toBe(false)
+    window.dispatchEvent(new Event('focus'))
+    expect(getOwnerCapability).toHaveBeenCalledTimes(2)
+  })
+
+  it('bounds repeated owner capability retries while the connection remains unavailable', async () => {
+    const getOwnerCapability = vi.fn<NonNullable<SharedBotsClient['getOwnerCapability']>>().mockResolvedValue({ ownerBootstrap: false })
+    render(<BotRoster
+      bots={bots}
+      selectedBotId="research"
+      onSelectBot={vi.fn()}
+      onCreateBot={vi.fn()}
+      sharedClient={ownerCapabilityClient(getOwnerCapability)}
+      t={t}
+    />)
+
+    await waitFor(() => { expect(getOwnerCapability).toHaveBeenCalledOnce() })
+    for (let index = 0; index < 6; index += 1) window.dispatchEvent(new Event('focus'))
+    await waitFor(() => { expect(getOwnerCapability).toHaveBeenCalledTimes(4) })
+    window.dispatchEvent(new Event('focus'))
+    expect(getOwnerCapability).toHaveBeenCalledTimes(4)
+  })
+
+  it('rechecks owner capability when Connection readiness changes while the roster stays mounted', async () => {
+    let onGeneration: (() => void) | undefined
+    let capabilityCalls = 0
+    const rpc: ClientConnectionRpc = {
+      call: vi.fn(async (_channel, endpoint, payload) => {
+        expect(endpoint).toBe('bots/share/enroll')
+        expect(payload).toEqual({ capability: true })
+        capabilityCalls += 1
+        return { ok: true as const, value: { ownerBootstrap: capabilityCalls > 1 } }
+      }),
+    }
+    const client = createSharedBotsClient(rpc, {
+      subscribeConnectionGeneration: (listener) => {
+        onGeneration = listener
+        return () => { onGeneration = undefined }
+      },
+    })
+    const view = render(<BotRoster
+      bots={bots}
+      selectedBotId="research"
+      onSelectBot={vi.fn()}
+      onCreateBot={vi.fn()}
+      sharedClient={client}
+      t={t}
+    />)
+
+    await waitFor(() => { expect(capabilityCalls).toBe(1) })
+    expect((screen.getByRole('button', { name: 'Create a shared group' }) as HTMLButtonElement).disabled).toBe(true)
+    if (onGeneration === undefined) throw new Error('Connection generation listener was not registered')
+    await act(async () => { onGeneration?.() })
+    await waitFor(() => {
+      expect(capabilityCalls).toBe(2)
+      expect((screen.getByRole('button', { name: 'Create a shared group' }) as HTMLButtonElement).disabled).toBe(false)
+    })
+    view.unmount()
+    client.dispose?.()
+    expect(onGeneration).toBeUndefined()
+  })
+
   it('renders the selected detail as a standalone main surface', () => {
     render(<BotDetail
       bot={bots[0]}
@@ -570,6 +1335,29 @@ describe('Bot roster and detail', () => {
     expect(await screen.findByRole('dialog', { name: 'Bot memory' })).toBeTruthy()
     expect(actions.list).toHaveBeenCalledWith('research')
     expect(screen.queryByRole('complementary', { name: 'Bot workspace' })).toBeNull()
+  })
+
+  it('closes the selected bot memory manager from the footer action', async () => {
+    const actions: BotMemoryManagerActions = {
+      list: vi.fn(async () => []),
+      update: vi.fn(),
+      remove: vi.fn(),
+    }
+    render(<BotDetail
+      bot={bots[0]}
+      loading={false}
+      loadAvatar={undefined}
+      memoryManager={actions}
+      t={t}
+    >
+      <p>Persistent session surface</p>
+    </BotDetail>)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Manage memories' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Bot memory' })
+    fireEvent.click(within(dialog).getAllByRole('button', { name: /^Close$/ }).at(-1)!)
+
+    await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Bot memory' })).toBeNull() })
   })
 
   it('does not apply a pending edit from the previous Bot after selection changes', async () => {
@@ -779,7 +1567,7 @@ describe('Bot roster and detail', () => {
       update: vi.fn(async () => update.promise),
     }
     const view = render(<BotSkillsManager
-      bot={bots[0]}
+      bot={bots[0]!}
       actions={actions}
       loadAvatar={undefined}
       open
@@ -791,7 +1579,7 @@ describe('Bot roster and detail', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save skills' }))
     await waitFor(() => { expect(actions.update).toHaveBeenCalledWith('research', { mode: 'all', enabled: [], disabled: [] }, 0) })
     view.rerender(<BotSkillsManager
-      bot={bots[1]}
+      bot={bots[1]!}
       actions={actions}
       loadAvatar={undefined}
       open
@@ -1133,13 +1921,68 @@ describe('Bot roster and detail', () => {
     expect(screen.getByRole('alert').textContent).toContain('Some Bots could not receive')
   })
 
+  it('keeps a picked attachment visible when the current local transport is text-only', async () => {
+    const onSend = vi.fn().mockResolvedValue(undefined)
+    render(<BotGroupDetail
+      group={groupDetail}
+      loading={false}
+      error={null}
+      onRetry={vi.fn()}
+      onSend={onSend}
+      loadAvatar={undefined}
+      t={t}
+    />)
+
+    const file = new File(['release notes'], 'release-notes.txt', { type: 'text/plain' })
+    fireEvent.change(screen.getByLabelText('Choose files'), { target: { files: [file] } })
+    expect(screen.getByText('release-notes.txt')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+
+    await waitFor(() => { expect(screen.getByRole('alert').textContent).toContain('Attachments are not available') })
+    expect(onSend).not.toHaveBeenCalled()
+    expect(screen.getByText('release-notes.txt')).toBeTruthy()
+  })
+
+  it('retries an attachment with the same message id and clears it only after success', async () => {
+    const sendWithAttachments = vi.fn()
+      .mockRejectedValueOnce(new Error('attachment upload failed'))
+      .mockResolvedValueOnce(undefined)
+    render(<BotGroupDetail
+      group={groupDetail}
+      loading={false}
+      error={null}
+      onRetry={vi.fn()}
+      onSend={vi.fn()}
+      onSendWithAttachments={sendWithAttachments}
+      loadAvatar={undefined}
+      t={t}
+    />)
+
+    const file = new File(['release notes'], 'release-notes.txt', { type: 'text/plain' })
+    fireEvent.change(screen.getByLabelText('Choose files'), { target: { files: [file] } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() => {
+      expect(sendWithAttachments).toHaveBeenCalledTimes(1)
+      expect(screen.getByRole('alert').textContent).toContain('attachment upload failed')
+    })
+    expect(sendWithAttachments.mock.calls[0]?.[0]).toBe('File')
+
+    const firstMessageId = sendWithAttachments.mock.calls[0]?.[2]
+    expect(firstMessageId).toMatch(/^bot-group-message-/)
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
+    await waitFor(() => { expect(sendWithAttachments).toHaveBeenCalledTimes(2) })
+    expect(sendWithAttachments.mock.calls[1]?.[2]).toBe(firstMessageId)
+    expect(screen.queryByText('release-notes.txt')).toBeNull()
+  })
+
   it('shows persisted per-Bot turn failures and retries only the failed user message', async () => {
     const onSend = vi.fn().mockResolvedValue(undefined)
     render(<BotGroupDetail
       group={{
         ...groupDetail,
         deliveries: [
-          { messageId: 'message-1', botId: 'research', status: 'responded' },
+          { messageId: 'message-1', botId: BotId('research'), status: 'responded' },
           { messageId: 'message-1', botId: 'release', status: 'failed', error: 'Provider credentials are missing.' },
         ],
       }}

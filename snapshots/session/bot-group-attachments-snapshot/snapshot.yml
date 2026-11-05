@@ -1,0 +1,10 @@
+version: 1
+scenario: bot-group-attachments-snapshot
+profile: headless
+composition: bot-group-attachments-snapshot
+recording: authored
+header:
+  class: bot-group-attachments-snapshot
+  pin: true
+  systemPromptSource: bots-snapshot
+  toolSchemasSource: bots-snapshot

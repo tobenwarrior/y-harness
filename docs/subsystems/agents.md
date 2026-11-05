@@ -210,6 +210,22 @@ collaborationFor(agent: Pick<Agent, 'id'>): Promise<BotCollaborationClient>
 @Remote('sendGroupMessage') async sendGroupMessage(request: BotGroupSendRemoteRequest): Promise<BotGroupSendValue>
 
 /**
+ * Read owner-visible recipient fences that require explicit shared-group recovery.
+ * This owner Remote returns only the exact identities needed for a later recovery;
+ * collaborator endpoints do not mount it.
+ * @param request - Recipient Bot to inspect.
+ * @returns Exact group, Bot, Session, and message identities without transcript data.
+ */
+@Remote('inspectSharedGroupDeliveryFences') async inspectSharedGroupDeliveryFences( request: { readonly botId: BotId }, ): Promise<BotSharedGroupDeliveryFenceDiagnosticValue>
+
+/**
+ * Admit one owner-local encoded image for an explicitly identified group message.
+ * @param request - Group, message, recipient, and encoded image.
+ * @returns Opaque grant id and safe image metadata.
+ */
+@Remote('admitGroupImage') async admitGroupImage(request: BotGroupImageAdmissionRequest): Promise<BotAttachmentGrantValue>
+
+/**
  * Reconcile one isolated shared-group recipient fence after an explicit
  * owner confirmation that every Host able to own the Session is quiesced.
  * @param request - Exact group, Bot, Session, and message identities.
@@ -233,6 +249,45 @@ collaborationFor(agent: Pick<Agent, 'id'>): Promise<BotCollaborationClient>
  * @returns The current fence status and, when held, its opaque recovery token.
  */
 @Remote('inspectSharedRosterFence') async inspectSharedRosterFence(): Promise<BotSharedRosterFenceDiagnosticValue>
+
+/**
+ * List timed and message-triggered routines owned by one Bot.
+ *
+ * This lookup never activates the Bot Session. Timed rows are read from the
+ * Host Schedule catalog and event rows from the Bot record, after checking
+ * the configured owner scope.
+ * @param request - Bot identity whose routine catalog should be returned.
+ * @returns The Bot's active, paused, and ended routine rows.
+ */
+@Remote('listRoutines') async listRoutines(request: BotRoutineListRequest): Promise<BotRoutineListValue>
+
+/**
+ * Pause one routine owned by a Bot without waking its Session.
+ * @param request - Bot and routine identity.
+ * @returns The paused routine or a bounded lookup/ended result.
+ */
+@Remote('pauseRoutine') async pauseRoutine(request: BotRoutineLifecycleRequest): Promise<BotRoutinePauseValue>
+
+/**
+ * Resume one paused routine owned by a Bot without waking its Session.
+ * @param request - Bot and routine identity.
+ * @returns The active routine or a bounded lookup/ended result.
+ */
+@Remote('resumeRoutine') async resumeRoutine(request: BotRoutineLifecycleRequest): Promise<BotRoutineResumeValue>
+
+/**
+ * Delete one routine owned by a Bot and its bounded run history.
+ * @param request - Bot and routine identity.
+ * @returns A stable deletion marker or a bounded lookup result.
+ */
+@Remote('deleteRoutine') async deleteRoutine(request: BotRoutineLifecycleRequest): Promise<BotRoutineDeleteValue>
+
+/**
+ * Read one bounded routine history page without activating the Bot Session.
+ * @param request - Bot, routine, page size, and optional timed-delivery cursor.
+ * @returns Newest-first timed receipts or event deliveries/results.
+ */
+@Remote('routineHistory') async routineHistory(request: BotRoutineHistoryRequest): Promise<BotRoutineHistoryValue>
 
 /**
  * List active memories for a Bot without accepting a model-supplied Session id.

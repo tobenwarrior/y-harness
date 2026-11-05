@@ -9,6 +9,10 @@ import type {
   BotTemplateCapability,
   BotTemplateLocalPermissions,
   BotTemplateProfile,
+  BotInputAttachmentView as SharedBotInputAttachmentView,
+  BotRoutineHistoryRequest,
+  BotRoutineHistoryValue,
+  BotRoutineView,
 } from '@yharness/bots/client'
 import type { BotGroupDeliveryStatusView as SharedBotGroupDeliveryStatusView } from '@yharness/bots/client'
 import type {
@@ -91,6 +95,20 @@ export interface BotGroupSummary {
   readonly bots: readonly BotSummary[]
 }
 
+/** Browser-owned attachment draft staged beside a local or shared group message. */
+export interface BotGroupAttachmentDraft {
+  /** Stable draft identity used for removal and retry. */
+  readonly id: string
+  /** Browser file retained until the group operation settles. */
+  readonly file: File
+  /** Object URL used only for an in-memory image preview. */
+  readonly previewUrl?: string
+  /** Local preparation state; failed drafts remain visible for retry. */
+  readonly state: 'ready' | 'error'
+  /** Safe display detail for a failed preparation attempt. */
+  readonly error?: string
+}
+
 /** A group transcript row projected for the Bot workspace. */
 export interface BotGroupMessageSummary {
   /** Durable transcript message identity. */
@@ -103,6 +121,8 @@ export interface BotGroupMessageSummary {
   readonly text: string
   /** Exact Bot ids selected by mentions for this message, when it was targeted. */
   readonly targetBotIds?: readonly string[]
+  /** Safe metadata for attachments admitted to this message. */
+  readonly attachments?: readonly SharedBotInputAttachmentView[]
   /** Unix timestamp used for stable transcript ordering. */
   readonly createdAt: number
 }
@@ -298,6 +318,23 @@ export interface BotSkillManagerActions {
   readonly list: (botId: string) => Promise<BotSkillManagerValue>
   /** Replace the complete Bot policy. */
   readonly update: (botId: string, policy: BotSkillPolicy, expectedRevision: number) => Promise<Pick<BotSkillManagerValue, 'policy'>>
+}
+
+/** Successful history response shown by the selected Bot's routine manager. */
+export type BotRoutineHistory = Exclude<BotRoutineHistoryValue, { readonly code: string }>
+
+/** Bot-scoped routine management actions mounted by the Host. */
+export interface BotRoutineManagerActions {
+  /** Read timed and event routines owned by one Bot. */
+  readonly list: (botId: string) => Promise<readonly BotRoutineView[]>
+  /** Pause one active routine and return its latest view. */
+  readonly pause: (botId: string, routineId: string) => Promise<BotRoutineView>
+  /** Resume one paused routine and return its latest view. */
+  readonly resume: (botId: string, routineId: string) => Promise<BotRoutineView>
+  /** Delete one routine and its bounded history. */
+  readonly remove: (botId: string, routineId: string) => Promise<void>
+  /** Read one bounded routine history page, optionally continuing an older timed page. */
+  readonly history: (botId: string, routineId: string, before?: BotRoutineHistoryRequest['before']) => Promise<BotRoutineHistory>
 }
 
 /** Async avatar capabilities owned by the Client composition. */

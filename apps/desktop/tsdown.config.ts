@@ -38,7 +38,7 @@ const clientVersionDefine = { 'process.env.DSH_CLIENT_VERSION': JSON.stringify(c
 export default defineConfig([
   {
     entry: ['lib/types/command-manager-entry.js'],
-    plugins: [packagedImportsPlugin({ packages: new Set(), nodeBuiltins: true })],
+    plugins: [packagedImportsPlugin({ packages: new Set(['@yharness/node-addon-system', 'koffi']), nodeBuiltins: true })],
     outDir: 'lib',
     format: ['esm'],
     platform: 'node',

@@ -284,7 +284,7 @@ describe('per-record layout', () => {
     await unit.setGlobal('G')
     expect(await readFile(recordPath(root, 'k1'), 'utf8'))
       .toBe(`${JSON.stringify({ version: 2, record: { v: 1 } }, null, 2)}\n`)
-    expect((await readdir(join(root, 'recs', 't'))).sort()).toEqual(['k1.json', 'k2.json'])
+    expect((await readdir(join(root, 'recs', 't'))).sort()).toEqual(['k1.json', 'k1.json.lock', 'k2.json', 'k2.json.lock'])
     expect(JSON.parse(await readFile(join(root, 'recs', 'global.json'), 'utf8')))
       .toEqual({ version: 2, record: 'G' })
     expect(await unit.loadAll()).toEqual({ tables: { t: { k1: { v: 1 }, k2: { v: 2 } } }, global: 'G' })

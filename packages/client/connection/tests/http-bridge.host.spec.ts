@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events'
 import { Readable } from 'node:stream'
-import type { IncomingMessage, ServerResponse } from 'node:http'
+import { ServerResponse, type IncomingMessage } from 'node:http'
 import { describe, expect, it, vi } from 'vitest'
 import { bridge } from '../src/http-bridge.ts'
 
@@ -21,15 +21,14 @@ describe('HTTP bridge abort', () => {
         [Symbol.asyncIterator]: () => ({
           next: () => new Promise<IteratorResult<Buffer>>((resolve) => { resolveBody = resolve }),
         }),
-      } as unknown as IncomingMessage
+      } as IncomingMessage
       let status: number | undefined
       let body: string | undefined
-      const response = Object.assign(new EventEmitter(), {
-        writableEnded: false,
+      const response = Object.assign(new ServerResponse(request), {
         writeHead(code: number) { status = code; return this },
         write() { return true },
-        end(value?: string) { body = value; this.writableEnded = true; return this },
-      }) as unknown as ServerResponse
+        end(value?: string) { body = value; return this },
+      })
       const pending = bridge(request, response, {
         requestBodyMode: () => 'buffered',
         fetch: () => { throw new Error('a timed out request must never reach the handler') },

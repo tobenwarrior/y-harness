@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { SkillCandidate, SkillDefinition, SkillViewOptions } from '@yharness/skill'
 import type { ScopeKey } from '@yharness/scope'
+import type { BotSkillPolicy } from '../src/types.ts'
 import {
   botSkillPolicyAllows,
   createBotSkillPolicyProvider,
   normalizeBotSkillPolicy,
-  type BotSkillPolicy,
 } from '../src/skills.ts'
 
 describe('Bot skill policy', () => {

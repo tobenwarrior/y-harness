@@ -4,6 +4,8 @@ import { brandString } from '@yharness/brand'
 import type {
   BotAppearanceUpdateRequest,
   BotAppearanceUpdateValue,
+  BotAttachmentGrantValue,
+  BotGroupImageAdmissionRequest,
   BotAvatar,
   BotAvatarUpdateValue,
   BotConnectedAppAccessRequest,
@@ -58,6 +60,14 @@ import type {
   BotSkillListValue,
   BotSkillUpdateRequest,
   BotSkillUpdateValue,
+  BotRoutineHistoryRequest,
+  BotRoutineHistoryValue,
+  BotRoutineLifecycleRequest,
+  BotRoutineListRequest,
+  BotRoutineListValue,
+  BotRoutinePauseValue,
+  BotRoutineResumeValue,
+  BotRoutineDeleteValue,
   BotView,
   BotShareInviteRequest,
   BotShareInviteValue,
@@ -86,11 +96,13 @@ import type { HostObservable } from '@yharness/client-ui-slots'
 import type { RemoteResult } from '@yharness/api-remotes/client'
 import { randomUUID } from '@yharness/util-crypto'
 import type { SharedBotsClient } from './shared-client.ts'
+import { admitBotGroupAttachments, isBotGroupImageType, type BotAttachmentFetch } from './attachment-client.ts'
+import type { BotGroupAttachmentDraft } from './types.ts'
 import type {
   BotAccent, BotAvatarEditorActions, BotConnectedAppAccess, BotCreation, BotGroupCreation, BotGroupDetailData,
   BotGroupUpdate, BotProfileUpdate,
-  BotGroupSummary, BotIdentity, BotMemoryManagerActions, BotOrganizationPatch, BotTemplateActions, BotTemplateState, BotTemplateSummary,
-  BotSkillManagerActions, BotSkillPolicy,
+  BotGroupSummary, BotIdentity, BotMemoryManagerActions, BotOrganizationPatch, BotRoutineManagerActions,
+  BotSkillManagerActions, BotSkillPolicy, BotTemplateActions, BotTemplateState, BotTemplateSummary,
 } from './types.ts'
 import { BotSkillPolicyConflictError } from './types.ts'
 
@@ -118,10 +130,16 @@ export interface BotWorkspaceRemote {
     request: { readonly botId: BotIdType },
   ) => Promise<RemoteResult<BotSharedGroupDeliveryFenceDiagnosticValue>>
   recoverSharedGroupDelivery?: (request: BotGroupDeliveryRecoveryRequest) => Promise<RemoteResult<BotGroupDeliveryRecoveryValue>>
+  admitGroupImage?: (request: BotGroupImageAdmissionRequest) => Promise<RemoteResult<BotAttachmentGrantValue>>
 
   listMemory?: (request: BotMemoryListRequest) => Promise<RemoteResult<BotMemoryListValue>>
   updateMemory?: (request: BotMemoryUpdateRequest) => Promise<RemoteResult<BotMemoryUpdateValue>>
   forgetMemory?: (request: BotMemoryForgetRemoteRequest) => Promise<RemoteResult<BotMemoryForgetValue>>
+  listRoutines?: (request: BotRoutineListRequest) => Promise<RemoteResult<BotRoutineListValue>>
+  pauseRoutine?: (request: BotRoutineLifecycleRequest) => Promise<RemoteResult<BotRoutinePauseValue>>
+  resumeRoutine?: (request: BotRoutineLifecycleRequest) => Promise<RemoteResult<BotRoutineResumeValue>>
+  deleteRoutine?: (request: BotRoutineLifecycleRequest) => Promise<RemoteResult<BotRoutineDeleteValue>>
+  routineHistory?: (request: BotRoutineHistoryRequest) => Promise<RemoteResult<BotRoutineHistoryValue>>
   updateAvatar?: (request: { readonly botId: BotIdType; readonly avatar: BotAvatar | null }) => Promise<RemoteResult<BotAvatarUpdateValue>>
   uploadAvatar?: (request: { readonly botId: BotIdType; readonly data: string; readonly mediaType: 'image/png' }) => Promise<RemoteResult<BotAvatarUpdateValue>>
   updateAppearance?: (request: BotAppearanceUpdateRequest) => Promise<RemoteResult<BotAppearanceUpdateValue>>
@@ -175,6 +193,7 @@ export interface BotWorkspaceState {
   readonly selectedBotId: BotIdType | null
   readonly groups: readonly BotGroupSummary[]
   readonly selectedGroupId: string | null
+  readonly routineRevision: number
   readonly selectedGroup: BotGroupDetailData | null
   readonly groupPhase: 'idle' | 'loading' | 'ready' | 'error'
   readonly groupError: string | null
@@ -221,6 +240,13 @@ export interface BotWorkspaceFace {
   readonly createGroup: (creation: BotGroupCreation) => Promise<void>
   readonly updateGroup: (update: BotGroupUpdate) => Promise<void>
   readonly sendGroupMessage: (text: string, messageId?: string, targetBotIds?: readonly string[]) => Promise<void>
+  /** Admit and send local group attachments with the same message identity across retries. */
+  readonly sendGroupMessageWithAttachments: (
+    text: string,
+    attachments: readonly BotGroupAttachmentDraft[],
+    messageId?: string,
+    targetBotIds?: readonly string[],
+  ) => Promise<void>
   readonly templateActions?: BotTemplateActions
   readonly retryGroup: () => void
   readonly loadConnectedApps?: (botId: string) => Promise<readonly BotConnectedAppAccess[]>
@@ -229,6 +255,7 @@ export interface BotWorkspaceFace {
   readonly avatarEditor?: BotAvatarEditorActions
   readonly memoryManager?: BotMemoryManagerActions
   readonly skillManager?: BotSkillManagerActions
+  readonly routineManager?: BotRoutineManagerActions
   readonly retry: () => void
   /** Owner controls for sharing the selected Bot, when the Host mounts them. */
   readonly share?: BotShareActions
@@ -249,6 +276,7 @@ const INITIAL_STATE: BotWorkspaceState = {
   selectedBotId: null,
   groups: [],
   selectedGroupId: null,
+  routineRevision: 0,
   selectedGroup: null,
   groupPhase: 'idle',
   groupError: null,
@@ -382,6 +410,7 @@ export class BotWorkspaceController {
   private disposed = false
   private selectionGeneration = 0
   private rosterRevision = 0
+  private routineRevision = 0
   private refreshAfterPending = false
 
   constructor(
@@ -393,6 +422,7 @@ export class BotWorkspaceController {
     pendingGroupStore?: BotGroupPendingStore,
     private readonly retryStorageMessage: (key: GroupRetryStorageMessage) => string = () => unexpectedResponse(),
     private readonly sharedClient?: SharedBotsClient,
+    private readonly attachmentFetcher: BotAttachmentFetch = (input, init) => globalThis.fetch(input, init),
   ) {
     this.pendingGroupStore = pendingGroupStore ?? createPendingGroupStore()
     const restored = this.pendingGroupStore.read()
@@ -410,6 +440,7 @@ export class BotWorkspaceController {
   /** Stop asynchronous reads and release the selected Session. */
   dispose(): void {
     this.disposed = true
+    this.sharedClient?.dispose?.()
     this.selectionGeneration++
     this.refreshAfterPending = false
     this.selectedReference?.release()
@@ -512,6 +543,9 @@ export class BotWorkspaceController {
       createGroup: creation => this.createGroup(creation),
       updateGroup: update => this.updateGroup(update),
       sendGroupMessage: (text, messageId, targetBotIds) => this.sendGroupMessage(text, messageId, targetBotIds),
+      sendGroupMessageWithAttachments: (text, attachments, messageId, targetBotIds) => this.sendGroupMessageWithAttachments(
+        text, attachments, messageId, targetBotIds,
+      ),
       ...(
         this.remote.listTemplates !== undefined
         || this.remote.publishTemplate !== undefined
@@ -558,12 +592,29 @@ export class BotWorkspaceController {
           ? { skillManager: this.skillManager() }
           : {}
       ),
+      ...(
+        this.remote.listRoutines !== undefined
+        && this.remote.pauseRoutine !== undefined
+        && this.remote.resumeRoutine !== undefined
+        && this.remote.deleteRoutine !== undefined
+        && this.remote.routineHistory !== undefined
+          ? { routineManager: this.routineManager() }
+          : {}
+      ),
       retry: () => {
         void this.retry().catch((error: unknown) => {
           this.fail(error instanceof Error ? error.message : String(error))
         })
       },
     }
+  }
+
+  /** Mark the selected Bot's routine catalog stale after a Host notification. */
+  bumpRoutineRevision(): void {
+    if (this.disposed) return
+    this.routineRevision++
+    const current = this.source.getSnapshot()
+    this.source.set({ ...current, routineRevision: this.routineRevision })
   }
 
   /** Load or refresh the durable Bot roster. */
@@ -707,6 +758,7 @@ export class BotWorkspaceController {
       groups,
       selectedBotId: selected,
       selectedGroupId: null,
+      routineRevision: this.routineRevision,
       selectedGroup: null,
       groupPhase: 'idle',
       groupError: groupsResult.error,
@@ -1338,6 +1390,101 @@ export class BotWorkspaceController {
     await this.refreshGroup(current.selectedGroupId, this.selectionGeneration)
   }
 
+  private async sendGroupMessageWithAttachments(
+    text: string,
+    attachments: readonly BotGroupAttachmentDraft[],
+    explicitMessageId?: string,
+    targetBotIds?: readonly string[],
+  ): Promise<void> {
+    const sendGroupMessage = this.remote.sendGroupMessage
+    const admitGroupImage = this.remote.admitGroupImage
+    const current = this.source.getSnapshot()
+    const operationSelectionGeneration = this.selectionGeneration
+    if (current.selectedGroupId === null || sendGroupMessage === undefined || attachments.length === 0
+      || (admitGroupImage === undefined && attachments.some(attachment => isBotGroupImageType(attachment.file.type)))) {
+      const message = this.unexpectedResponse()
+      this.setGroupError(message, undefined, operationSelectionGeneration)
+      throw new Error(message)
+    }
+    const normalizedText = text.trim()
+    const normalizedTargetIds = targetBotIds?.map(id => id.trim())
+    const messageId = brandString<BotGroupMessageIdType>(
+      explicitMessageId?.trim() || `bot-group-message-${randomUUID()}`,
+    )
+    const effectiveTargetIds = normalizedTargetIds
+      ?? current.selectedGroup?.bots.map(bot => String(bot.id))
+      ?? []
+    let existing: BotGroupMessageView | undefined
+    try {
+      existing = await this.reconcileGroupMessage(current.selectedGroupId, messageId, normalizedText, effectiveTargetIds)
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error)
+      this.setGroupError(message, undefined, operationSelectionGeneration)
+      throw new Error(message)
+    }
+    let result: RemoteResult<BotGroupSendValue>
+    try {
+      if (existing !== undefined) {
+        if (!groupAttachmentMatchesDrafts(existing, attachments)) {
+          throw new Error(`Cannot safely retry Bot message ${String(messageId)} because its attachments differ.`)
+        }
+        result = await sendGroupMessage({
+          groupId: brandString<BotGroupIdType>(current.selectedGroupId),
+          text: normalizedText,
+          messageId,
+          ...(normalizedTargetIds === undefined ? {} : { targetBotIds: normalizedTargetIds.map(id => brandString<BotIdType>(id)) }),
+        })
+      } else {
+        const grants = await admitBotGroupAttachments(
+          {
+            groupId: String(current.selectedGroupId),
+            messageId: String(messageId),
+            ...(normalizedTargetIds === undefined ? {} : { targetBotIds: normalizedTargetIds }),
+          },
+          attachments,
+          async (request) => {
+            if (admitGroupImage === undefined) throw new Error(this.unexpectedResponse())
+            const admitted = await admitGroupImage(request)
+            if (!admitted.ok) throw new Error(admitted.error.message)
+            return admitted.value
+          },
+          this.attachmentFetcher,
+          '/api/bots/group/uploadAttachment',
+        )
+        result = await sendGroupMessage({
+          groupId: brandString<BotGroupIdType>(current.selectedGroupId),
+          text: normalizedText,
+          messageId,
+          ...(normalizedTargetIds === undefined ? {} : { targetBotIds: normalizedTargetIds.map(id => brandString<BotIdType>(id)) }),
+          attachmentGrants: grants,
+        })
+      }
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error)
+      if (!this.disposed && this.selectionGeneration === operationSelectionGeneration
+        && this.source.getSnapshot().selectedGroupId === current.selectedGroupId) {
+        await this.refreshGroup(current.selectedGroupId, operationSelectionGeneration)
+      }
+      this.setGroupError(message, undefined, operationSelectionGeneration)
+      throw new Error(message)
+    }
+    if (!result.ok) {
+      this.setGroupError(result.error.message, undefined, operationSelectionGeneration)
+      throw new Error(result.error.message)
+    }
+    if (result.value.status === 'partial') {
+      const message = this.groupDeliveryFailure()
+      if (!this.disposed && this.selectionGeneration === operationSelectionGeneration
+        && this.source.getSnapshot().selectedGroupId === current.selectedGroupId) {
+        await this.refreshGroup(current.selectedGroupId, operationSelectionGeneration)
+      }
+      this.setGroupError(message, undefined, operationSelectionGeneration)
+      throw new Error(message)
+    }
+    if (this.disposed) return
+    await this.refreshGroup(current.selectedGroupId, this.selectionGeneration)
+  }
+
   private retryGroup(): Promise<void> {
     const current = this.source.getSnapshot()
     if (current.selectedGroupId === null) return this.load()
@@ -1735,6 +1882,53 @@ export class BotWorkspaceController {
     }
   }
 
+  private routineManager(): BotRoutineManagerActions {
+    const listRoutines = this.remote.listRoutines
+    const pauseRoutine = this.remote.pauseRoutine
+    const resumeRoutine = this.remote.resumeRoutine
+    const deleteRoutine = this.remote.deleteRoutine
+    const routineHistory = this.remote.routineHistory
+    if (listRoutines === undefined || pauseRoutine === undefined || resumeRoutine === undefined
+      || deleteRoutine === undefined || routineHistory === undefined) {
+      throw new Error('Bot routine management is not mounted.')
+    }
+    return {
+      list: async (botId) => {
+        const result = await listRoutines({ botId: brandString<BotIdType>(botId) })
+        if (!result.ok) throw new Error(result.error.message)
+        return result.value.routines
+      },
+      pause: async (botId, routineId) => {
+        const result = await pauseRoutine({ botId: brandString<BotIdType>(botId), routineId })
+        if (!result.ok) throw new Error(result.error.message)
+        if (!('routine' in result.value)) throw new Error(result.value.code)
+        return result.value.routine
+      },
+      resume: async (botId, routineId) => {
+        const result = await resumeRoutine({ botId: brandString<BotIdType>(botId), routineId })
+        if (!result.ok) throw new Error(result.error.message)
+        if (!('routine' in result.value)) throw new Error(result.value.code)
+        return result.value.routine
+      },
+      remove: async (botId, routineId) => {
+        const result = await deleteRoutine({ botId: brandString<BotIdType>(botId), routineId })
+        if (!result.ok) throw new Error(result.error.message)
+        if (!result.value.deleted) throw new Error(result.value.code)
+      },
+      history: async (botId, routineId, before) => {
+        const result = await routineHistory({
+          botId: brandString<BotIdType>(botId),
+          routineId,
+          limit: 50,
+          ...(before === undefined ? {} : { before }),
+        })
+        if (!result.ok) throw new Error(result.error.message)
+        if (!('kind' in result.value)) throw new Error(result.value.code)
+        return result.value
+      },
+    }
+  }
+
   private create(creation: BotCreation): Promise<void> {
     if (this.disposed) return Promise.resolve()
     if (this.pendingCreation !== undefined) return this.retryPendingCreate()
@@ -1830,6 +2024,7 @@ export class BotWorkspaceController {
       groups: current.groups,
       selectedBotId: result.value.bot.id,
       selectedGroupId: null,
+      routineRevision: this.routineRevision,
       selectedGroup: null,
       groupPhase: 'idle',
       groupError: null,
@@ -1954,6 +2149,23 @@ function canonicalTargetIds(ids: readonly string[] | undefined): readonly string
   return ids === undefined ? [] : [...new Set(ids)].sort()
 }
 
+function groupAttachmentMatchesDrafts(
+  message: BotGroupMessageView,
+  drafts: readonly BotGroupAttachmentDraft[],
+): boolean {
+  const admitted = message.attachments
+  if (admitted === undefined || admitted.length !== drafts.length || admitted.length === 0) return false
+  return drafts.every((draft, index) => {
+    const current = admitted[index]
+    if (current === undefined || current.bytes !== draft.file.size) return false
+    if (current.type === 'file') return current.name === (draft.file.name || current.name)
+    return current.type === 'image'
+      && isBotGroupImageType(draft.file.type)
+      && current.mediaType === draft.file.type
+      && (draft.file.name === '' || current.name === draft.file.name || current.name === undefined)
+  })
+}
+
 function groupDetail(value: BotGroupInspectValue): BotGroupDetailData {
   const summary = groupSummary(value.group)
   return {
@@ -1965,6 +2177,7 @@ function groupDetail(value: BotGroupInspectValue): BotGroupDetailData {
         : { kind: 'user' as const },
       text: message.text,
       ...(message.targetBotIds === undefined ? {} : { targetBotIds: message.targetBotIds.map(botId => String(botId)) }),
+      ...(message.attachments === undefined ? {} : { attachments: message.attachments }),
       createdAt: message.createdAt,
     })),
     ...(value.deliveries === undefined ? {} : {

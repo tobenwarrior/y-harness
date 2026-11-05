@@ -1,11 +1,12 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { Context, Service } from '@yharness/cordis'
-import { SharedAccessAuthority, sharedPrincipalOf } from '@yharness/client-connection'
+import { SharedAccessAuthority, sharedPrincipalOf, type ConnectionFetchRoute } from '@yharness/client-connection'
+import type { ConnectionIndexRequest, SharedConnectionEnrollmentHandler } from '@yharness/client-connection'
 import { AttachmentId, type ImageAttachmentRef, type StoredImageAttachment } from '@yharness/attachment'
 import AgentRegistry, { agentEvents, type Agent } from '@yharness/agent'
 import AgentLoop from '@yharness/agent-loop'
@@ -73,7 +74,7 @@ import { SessionTitleProviderId } from '../../../session/session-title/src/index
 import { sharedGroupSnapshotSchema, type SharedGroupSessionBinding } from '../src/shared-group.ts'
 import { sharedMembershipSnapshotSchema } from '../src/storage.ts'
 import { BotId } from '../src/types.ts'
-import type { BotListRequest, BotListValue, BotRecord, BotView } from '../src/types.ts'
+import type { BotEventRoutine, BotListRequest, BotListValue, BotRecord, BotView } from '../src/types.ts'
 import { sessionFormatCatalog } from '@yharness/session-format-catalog'
 import z from 'zod'
 
@@ -261,6 +262,28 @@ class SharedProfileCredentials extends CredentialProvider {
     this.state.tail = run.then(() => undefined, () => undefined)
     return run
   }
+}
+
+function pauseFirstProfileRevisionRead(credentials: CredentialProvider, key: CredentialKey): {
+  readonly profileReadStarted: Promise<undefined>
+  readonly releaseProfileRead: PromiseWithResolvers<undefined>
+} {
+  const profileReadStarted = Promise.withResolvers<undefined>()
+  const releaseProfileRead = Promise.withResolvers<undefined>()
+  const originalModifyRecord = credentials.modifyRecord.bind(credentials)
+  let paused = false
+  const wrappedModifyRecord: typeof credentials.modifyRecord = (currentKey, mutate) => {
+    const result = originalModifyRecord(currentKey, mutate)
+    if (paused || currentKey !== key) return result
+    paused = true
+    return result.then(async (value) => {
+      profileReadStarted.resolve(undefined)
+      await releaseProfileRead.promise
+      return value
+    })
+  }
+  credentials.modifyRecord = wrappedModifyRecord
+  return { profileReadStarted: profileReadStarted.promise, releaseProfileRead }
 }
 
 interface HarnessOptions {
@@ -459,6 +482,14 @@ async function createHarness({
     readImage,
     saveImages,
     saveImage,
+    imageLimits: {
+      maxImageBytes: 20 * 1024 * 1024,
+      maxImagesPerMessage: 8,
+      maxMessageImageBytes: 20 * 1024 * 1024,
+      maxImagePixels: 16_000_000,
+      maxImageDimension: 8_000,
+      mediaTypes: ['image/png', 'image/jpeg', 'image/webp', 'image/gif'],
+    },
     validateImage: vi.fn(async () => undefined),
   } as never)
   const credentials = useCredentials && options.credentialPath === undefined
@@ -673,6 +704,11 @@ async function close(ctx: Context): Promise<void> {
   await ctx.fiber.dispose()
 }
 
+/** Namespace shared-group ids so persistent temp lock sidecars cannot cross test runs. */
+function sharedGroupFixtureId(prefix: string): string {
+  return `${prefix}-${randomUUID()}`
+}
+
 function productionSharedHost(service: BotService): SharedBotHost {
   const descriptor = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(service), 'sharedHost')
   if (descriptor === undefined || typeof descriptor.value !== 'function') {
@@ -763,6 +799,109 @@ function provideResolvedTemplatePreset(ctx: Context): void {
 }
 
 describe('durable Bot roster', () => {
+  it('waits for an in-flight local attachment upload before closing its attachment domain', async () => {
+    let route: ConnectionFetchRoute | undefined
+    let enteredResolve: (() => void) | undefined
+    const entered = new Promise<void>((resolve) => { enteredResolve = resolve })
+    let releaseResolve: (() => void) | undefined
+    const release = new Promise<void>((resolve) => { releaseResolve = resolve })
+    const h = await harness(new MemoryMediaPool(), undefined, undefined, [], new Map(), new Map(), true, 'native', false, {
+      connection: {
+        sharedRpc: {
+          enroll: vi.fn(() => async () => {}),
+          handle: vi.fn(() => async () => {}),
+        },
+        fetch: {
+          register: vi.fn((candidate: ConnectionFetchRoute) => {
+            if (candidate.path === '/api/bots/group/uploadAttachment') route = candidate
+            return async () => {}
+          }),
+        },
+      },
+      beforeService: (ctx) => {
+        const attachments = ctx.get('attachments') as {
+          saveFileStream?: (input: { readonly data: AsyncIterable<Uint8Array>; readonly signal?: AbortSignal }) => Promise<unknown>
+        }
+        attachments.saveFileStream = vi.fn(async (input: { readonly data: AsyncIterable<Uint8Array>; readonly signal?: AbortSignal }) => {
+          enteredResolve?.()
+          await release
+          input.signal?.throwIfAborted()
+          return { attachmentId: AttachmentId(`sha256:${'cd'.repeat(32)}`), name: 'upload.bin', bytes: 3 }
+        })
+      },
+    })
+    try {
+      if (route === undefined) throw new Error('local attachment route was not registered')
+      const upload = route.fetch(new Request(
+        'http://dsh.internal/api/bots/group/uploadAttachment?scope=group&groupId=bot-group-upload-drain&messageId=bot-group-message-upload-drain&name=upload.bin',
+        { method: 'POST', headers: { 'content-type': 'application/octet-stream' }, body: Uint8Array.of(1, 2, 3) },
+      ))
+      await entered
+      let closed = false
+      const closing = h.ctx.fiber.dispose().then(() => { closed = true })
+      await new Promise<void>((resolve) => { setTimeout(resolve, 50) })
+      expect(closed).toBe(false)
+      releaseResolve?.()
+      await expect(upload).resolves.toMatchObject({ status: 200 })
+      await closing
+    } finally {
+      releaseResolve?.()
+      if (h.ctx.fiber !== undefined) await h.ctx.fiber.dispose().catch(() => undefined)
+    }
+  })
+
+  it('requires ordinary operator admission before owner bootstrap enrollment', async () => {
+    let enrollmentHandler: SharedConnectionEnrollmentHandler | undefined
+    const admit = vi.fn(() => ({ rejection: 401 as const }))
+    const connection = {
+      admit,
+      sharedRpc: {
+        enroll: vi.fn((_path: string, handler: SharedConnectionEnrollmentHandler) => {
+          enrollmentHandler = handler
+          return async () => {}
+        }),
+        handle: vi.fn(() => async () => {}),
+      },
+    }
+    const h = await harness(undefined, undefined, undefined, [], new Map(), new Map(), true, 'native', false, { connection })
+    try {
+      if (enrollmentHandler === undefined) throw new Error('shared enrollment handler was not mounted')
+      const request: ConnectionIndexRequest = { headers: { host: '127.0.0.1:3080' } }
+      await expect(enrollmentHandler('bots/share/enroll', { capability: true }, new AbortController().signal, request))
+        .resolves.toEqual({ ok: true, value: { ownerBootstrap: false } })
+      await expect(enrollmentHandler('bots/share/enroll', { owner: true }, new AbortController().signal, request))
+        .resolves.toMatchObject({ ok: false, error: { code: 'gateway/unauthorized' } })
+      expect(admit).toHaveBeenCalledTimes(2)
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('advertises owner setup only after ordinary operator admission succeeds', async () => {
+    let enrollmentHandler: SharedConnectionEnrollmentHandler | undefined
+    const admit = vi.fn(() => ({ peer: {} }))
+    const connection = {
+      admit,
+      sharedRpc: {
+        enroll: vi.fn((_path: string, handler: SharedConnectionEnrollmentHandler) => {
+          enrollmentHandler = handler
+          return async () => {}
+        }),
+        handle: vi.fn(() => async () => {}),
+      },
+    }
+    const h = await harness(undefined, undefined, undefined, [], new Map(), new Map(), true, 'native', false, { connection })
+    try {
+      if (enrollmentHandler === undefined) throw new Error('shared enrollment handler was not mounted')
+      const request: ConnectionIndexRequest = { headers: { host: '127.0.0.1:3080' } }
+      await expect(enrollmentHandler('bots/share/enroll', { capability: true }, new AbortController().signal, request))
+        .resolves.toEqual({ ok: true, value: { ownerBootstrap: true } })
+      expect(admit).toHaveBeenCalledTimes(1)
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
   it('does not hold the profile credential queue while shared authority commits', async () => {
     const root = await mkdtemp(join(tmpdir(), 'yh-bot-roster-fence-'))
     const h = await harness(
@@ -830,6 +969,497 @@ describe('durable Bot roster', () => {
     } finally {
       release.resolve(true)
       await operation?.catch(() => undefined)
+      await close(h.ctx)
+    }
+  })
+
+  it('defers shared-group delivery while another Host holds the roster fence', async () => {
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const created = await seed.service.create({ name: 'Shared delivery fence target', cwd: '/tmp' })
+    const records = seed.records
+    await close(seed.ctx)
+
+    const sharedSessionId = SessionId('shared-session-group-roster-fence-recovery')
+    const first = await harness(
+      pool, undefined, undefined, [String(sharedSessionId)], new Map(), records, true, 'native', false,
+      { inspectSharedSessions: true },
+    )
+    const second = await harness(
+      pool, undefined, undefined, [String(sharedSessionId)], new Map(), records, true, 'native', false,
+      { inspectSharedSessions: true },
+    )
+    const started = Promise.withResolvers<true>()
+    const release = Promise.withResolvers<true>()
+    let fence: Promise<{ readonly valid: true; readonly value: undefined } | { readonly valid: false }> | undefined
+    try {
+      const binding: SharedGroupSessionBinding = {
+        groupId: BotGroupId('bot-group-roster-fence-recovery'),
+        botId: created.bot.id,
+        sessionId: sharedSessionId,
+        createdAt: 1,
+        updatedAt: 1,
+      }
+      const firstHost = productionSharedHost(first.service)
+      const secondHost = productionSharedHost(second.service)
+      firstHost.registerSharedGroupSessions?.([binding])
+      secondHost.registerSharedGroupSessions?.([binding])
+      const bots = (await first.service.list({ includeHidden: true })).bots
+      fence = firstHost.withBotRoster?.(bots, undefined, async () => {
+        started.resolve(true)
+        await release.promise
+        return undefined
+      })
+      if (fence === undefined) throw new Error('shared roster fence capability was not mounted')
+      await started.promise
+
+      const request = {
+        groupId: binding.groupId,
+        groupName: 'Roster fence recovery',
+        targetBotId: binding.botId,
+        sessionId: binding.sessionId,
+        text: 'Retry this after the roster fence releases.',
+        messageId: BotGroupMessageId('bot-group-message-roster-fence-recovery'),
+      }
+      await expect(secondHost.deliverSharedGroup?.(request)).resolves.toMatchObject({ kind: 'busy' })
+      release.resolve(true)
+      await expect(fence).resolves.toMatchObject({ valid: true })
+      await expect(secondHost.deliverSharedGroup?.(request)).resolves.toBe('accepted')
+    } finally {
+      release.resolve(true)
+      await fence?.catch(() => undefined)
+      await close(second.ctx)
+      await close(first.ctx)
+    }
+  })
+
+  it('does not reject startup when pending event-routine recovery meets another Host roster fence', async () => {
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const created = await seed.service.create({ name: 'Event routine fence target', cwd: '/tmp' })
+    const domain = seed.ctx.storageDomain.get(botDomain.name) as Domain<typeof botDomain> | undefined
+    if (domain === undefined) throw new Error('event routine fence Bot domain was not mounted')
+    const stored = domain.table('bots').get(created.bot.id)
+    if (stored === undefined) throw new Error('event routine fence Bot row was not found')
+    const routine: BotEventRoutine = {
+      id: 'bot-event-routine-roster-fence-recovery',
+      title: 'Roster fence recovery',
+      prompt: 'Retry this pending event routine.',
+      trigger: { type: 'message', source: 'user' },
+      status: 'active',
+      createdAt: 1,
+      updatedAt: 1,
+      deliveries: [{
+        triggerEventSeq: 1,
+        triggerMessageId: MessageId('event-routine-roster-fence-source'),
+        messageId: MessageId('event-routine-roster-fence-delivery'),
+        status: 'pending',
+        createdAt: new Date(1).toISOString(),
+      }],
+      results: [],
+    }
+    await domain.table('bots').put(created.bot.id, { ...stored, eventRoutines: [routine] })
+    const records = seed.records
+    await close(seed.ctx)
+
+    const first = await harness(pool, undefined, undefined, [], new Map(), records)
+    const started = Promise.withResolvers<true>()
+    const release = Promise.withResolvers<true>()
+    let fence: Promise<{ readonly valid: true; readonly value: undefined } | { readonly valid: false }> | undefined
+    try {
+      const firstHost = productionSharedHost(first.service)
+      const bots = (await first.service.list({ includeHidden: true })).bots
+      fence = firstHost.withBotRoster?.(bots, undefined, async () => {
+        started.resolve(true)
+        await release.promise
+        return undefined
+      })
+      if (fence === undefined) throw new Error('event routine roster fence capability was not mounted')
+      await started.promise
+
+      const releaseTimer = setTimeout(() => release.resolve(true), 2_500)
+      const canceled = await harness(pool, undefined, undefined, [String(created.bot.sessionId)], new Map(), records)
+      const canceledFollowup = canceled.followups[0]
+      if (canceledFollowup === undefined) throw new Error('event routine canceled recovery follow-up was not created')
+      await close(canceled.ctx)
+      const second = await harness(pool, undefined, undefined, [String(created.bot.sessionId)], new Map(), records)
+      try {
+        await expect(fence).resolves.toMatchObject({ valid: true })
+        await vi.waitFor(() => { expect(second.followups[0]).toHaveBeenCalledOnce() }, { timeout: 5_000 })
+        expect(canceledFollowup).not.toHaveBeenCalled()
+      } finally {
+        clearTimeout(releaseTimer)
+        release.resolve(true)
+        await close(second.ctx)
+      }
+    } finally {
+      release.resolve(true)
+      await fence?.catch(() => undefined)
+      await close(first.ctx)
+    }
+  }, 10_000)
+
+  it('keeps live event-routine admission retrying until a long roster fence releases', async () => {
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const created = await seed.service.create({ name: 'Live admission fence target', cwd: '/tmp' })
+    await close(seed.ctx)
+
+    const h = await routineHarness(pool, undefined, undefined, [String(created.bot.sessionId)], true)
+    const fenceHost = await harness(pool, undefined, undefined, [], new Map(), h.records)
+    const started = Promise.withResolvers<true>()
+    const release = Promise.withResolvers<undefined>()
+    let fence: Promise<{ readonly valid: true; readonly value: undefined } | { readonly valid: false }> | undefined
+    try {
+      const provider = h.ctx.get('codexDynamicTools') as BotNativeToolProvider | undefined
+      if (provider === undefined) throw new Error('live admission fence provider was not mounted')
+      const create = (await provider.resolve({ sessionId: created.bot.sessionId })).find(tool => tool.name === 'schedule_create')
+      if (create === undefined) throw new Error('live admission fence schedule_create missing')
+      const result = await create.execute({
+        title: 'Live admission fence monitor', prompt: 'Retry after the live roster fence.',
+        event: { type: 'message', source: 'user' },
+      }, {
+        callId: 'live-admission-fence-create', threadId: 'live-admission-fence-thread', turnId: 'live-admission-fence-turn',
+        sessionId: created.bot.sessionId, signal: new AbortController().signal,
+        approvalPolicy: 'on-request', requestApproval: async () => true,
+      })
+      expect(result.success).toBe(true)
+      const owner = h.agents[0]
+      const followup = h.followups[0]
+      if (owner === undefined || followup === undefined) throw new Error('live admission fence owner was not created')
+      const host = productionSharedHost(fenceHost.service)
+      const bots = (await fenceHost.service.list({ includeHidden: true })).bots
+      fence = host.withBotRoster?.(bots, undefined, async () => {
+        started.resolve(true)
+        await release.promise
+        return undefined
+      })
+      if (fence === undefined) throw new Error('live admission fence capability was not mounted')
+      await started.promise
+      owner.session.append('turn/start', { turn: 1 })
+      owner.session.append('user/message', createUserMessage({
+        content: [{ type: 'text', text: 'Trigger while the roster fence is held.' }], source: { kind: 'user' },
+      }), { surfaceOp: 'append' })
+      const event = owner.session.snapshotEvents().at(-1)
+      if (event?.type !== 'user/message') throw new Error('live admission fence source event was not appended')
+      type EventRoutineTrigger = (sessionId: SessionId, input: {
+        readonly message: UserMessage
+        readonly eventSeq: number
+        readonly eventTime: number
+        readonly source: 'user' | 'bot'
+        readonly relayContext?: { readonly chainId: string; readonly depth: number }
+      }) => Promise<boolean>
+      const trigger = Object.getPrototypeOf(h.service) as { triggerEventRoutines: EventRoutineTrigger }
+      await trigger.triggerEventRoutines.call(h.service, owner.id, {
+        message: event.data, eventSeq: Number(event.seq), eventTime: event.time, source: 'user',
+      })
+      const releaseTimer = setTimeout(() => release.resolve(undefined), 2_000)
+      try {
+        await vi.waitFor(() => { expect(followup).toHaveBeenCalledOnce() }, { timeout: 7_000 })
+      } finally {
+        clearTimeout(releaseTimer)
+      }
+    } finally {
+      release.resolve(undefined)
+      await fence?.catch(() => undefined)
+      await close(fenceHost.ctx)
+      await close(h.ctx)
+    }
+  }, 12_000)
+
+  it('keeps a mid-commit event-routine conflict retrying across a long roster fence', async () => {
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const created = await seed.service.create({ name: 'Mid-commit fence target', cwd: '/tmp' })
+    await close(seed.ctx)
+
+    const h = await routineHarness(pool, undefined, undefined, [String(created.bot.sessionId)], true)
+    const fenceHost = await harness(pool, undefined, undefined, [], new Map(), h.records)
+    const started = Promise.withResolvers<true>()
+    const release = Promise.withResolvers<undefined>()
+    const commitStarted = Promise.withResolvers<true>()
+    const releaseCommit = Promise.withResolvers<undefined>()
+    type EventRoutineCommit = (current: BotRecord, next: BotRecord, signal?: AbortSignal) => Promise<BotRecord>
+    const servicePrototype = Object.getPrototypeOf(h.service) as { commitEventRoutineRecord: EventRoutineCommit }
+    const originalCommit = servicePrototype.commitEventRoutineRecord
+    let fence: Promise<{ readonly valid: true; readonly value: undefined } | { readonly valid: false }> | undefined
+    try {
+      const provider = h.ctx.get('codexDynamicTools') as BotNativeToolProvider | undefined
+      if (provider === undefined) throw new Error('mid-commit fence provider was not mounted')
+      const create = (await provider.resolve({ sessionId: created.bot.sessionId })).find(tool => tool.name === 'schedule_create')
+      if (create === undefined) throw new Error('mid-commit fence schedule_create missing')
+      const result = await create.execute({
+        title: 'Mid-commit fence monitor', prompt: 'Retry after a mid-commit roster fence.',
+        event: { type: 'message', source: 'user' },
+      }, {
+        callId: 'mid-commit-fence-create', threadId: 'mid-commit-fence-thread', turnId: 'mid-commit-fence-turn',
+        sessionId: created.bot.sessionId, signal: new AbortController().signal,
+        approvalPolicy: 'on-request', requestApproval: async () => true,
+      })
+      expect(result.success).toBe(true)
+      servicePrototype.commitEventRoutineRecord = async function (this: BotService, current, next, signal) {
+        commitStarted.resolve(true)
+        await releaseCommit.promise
+        return originalCommit.call(this, current, next, signal)
+      }
+      const owner = h.agents[0]
+      const followup = h.followups[0]
+      if (owner === undefined || followup === undefined) throw new Error('mid-commit fence owner was not created')
+      owner.session.append('turn/start', { turn: 1 })
+      owner.session.append('user/message', createUserMessage({
+        content: [{ type: 'text', text: 'Trigger before the mid-commit fence.' }], source: { kind: 'user' },
+      }), { surfaceOp: 'append' })
+      const event = owner.session.snapshotEvents().at(-1)
+      if (event?.type !== 'user/message') throw new Error('mid-commit fence source event was not appended')
+      type EventRoutineTrigger = (sessionId: SessionId, input: {
+        readonly message: UserMessage
+        readonly eventSeq: number
+        readonly eventTime: number
+        readonly source: 'user' | 'bot'
+        readonly relayContext?: { readonly chainId: string; readonly depth: number }
+      }) => Promise<boolean>
+      const trigger = Object.getPrototypeOf(h.service) as { triggerEventRoutines: EventRoutineTrigger }
+      void trigger.triggerEventRoutines.call(h.service, owner.id, {
+        message: event.data, eventSeq: Number(event.seq), eventTime: event.time, source: 'user',
+      })
+      await commitStarted.promise
+      const host = productionSharedHost(fenceHost.service)
+      const bots = (await fenceHost.service.list({ includeHidden: true })).bots
+      fence = host.withBotRoster?.(bots, undefined, async () => {
+        started.resolve(true)
+        await release.promise
+        return undefined
+      })
+      if (fence === undefined) throw new Error('mid-commit fence capability was not mounted')
+      await started.promise
+      releaseCommit.resolve(undefined)
+      const releaseTimer = setTimeout(() => release.resolve(undefined), 2_000)
+      try {
+        await vi.waitFor(() => { expect(followup).toHaveBeenCalledOnce() }, { timeout: 7_000 })
+      } finally {
+        clearTimeout(releaseTimer)
+      }
+    } finally {
+      servicePrototype.commitEventRoutineRecord = originalCommit
+      releaseCommit.resolve(undefined)
+      release.resolve(undefined)
+      await fence?.catch(() => undefined)
+      await close(fenceHost.ctx)
+      await close(h.ctx)
+    }
+  }, 12_000)
+
+  it('keeps a fence retry alive when the first post-fence write is transiently unavailable', async () => {
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const created = await seed.service.create({ name: 'Busy then transient target', cwd: '/tmp' })
+    await close(seed.ctx)
+
+    const h = await routineHarness(pool, undefined, undefined, [String(created.bot.sessionId)], true)
+    const fenceHost = await harness(pool, undefined, undefined, [], new Map(), h.records)
+    const started = Promise.withResolvers<true>()
+    const release = Promise.withResolvers<undefined>()
+    let fence: Promise<{ readonly valid: true; readonly value: undefined } | { readonly valid: false }> | undefined
+    try {
+      const provider = h.ctx.get('codexDynamicTools') as BotNativeToolProvider | undefined
+      if (provider === undefined) throw new Error('busy then transient provider was not mounted')
+      const create = (await provider.resolve({ sessionId: created.bot.sessionId })).find(tool => tool.name === 'schedule_create')
+      if (create === undefined) throw new Error('busy then transient schedule_create missing')
+      const result = await create.execute({
+        title: 'Busy then transient monitor', prompt: 'Retry after a transient write.',
+        event: { type: 'message', source: 'user' },
+      }, {
+        callId: 'busy-then-transient-create', threadId: 'busy-then-transient-thread', turnId: 'busy-then-transient-turn',
+        sessionId: created.bot.sessionId, signal: new AbortController().signal,
+        approvalPolicy: 'on-request', requestApproval: async () => true,
+      })
+      expect(result.success).toBe(true)
+      const owner = h.agents[0]
+      const followup = h.followups[0]
+      if (owner === undefined || followup === undefined) throw new Error('busy then transient owner was not created')
+      const host = productionSharedHost(fenceHost.service)
+      const bots = (await fenceHost.service.list({ includeHidden: true })).bots
+      fence = host.withBotRoster?.(bots, undefined, async () => {
+        started.resolve(true)
+        await release.promise
+        return undefined
+      })
+      if (fence === undefined) throw new Error('busy then transient fence capability was not mounted')
+      await started.promise
+      owner.session.append('turn/start', { turn: 1 })
+      owner.session.append('user/message', createUserMessage({
+        content: [{ type: 'text', text: 'Trigger before busy then transient retry.' }], source: { kind: 'user' },
+      }), { surfaceOp: 'append' })
+      const event = owner.session.snapshotEvents().at(-1)
+      if (event?.type !== 'user/message') throw new Error('busy then transient source event was not appended')
+      type EventRoutineTrigger = (sessionId: SessionId, input: {
+        readonly message: UserMessage
+        readonly eventSeq: number
+        readonly eventTime: number
+        readonly source: 'user' | 'bot'
+        readonly relayContext?: { readonly chainId: string; readonly depth: number }
+      }) => Promise<boolean>
+      const trigger = Object.getPrototypeOf(h.service) as { triggerEventRoutines: EventRoutineTrigger }
+      void trigger.triggerEventRoutines.call(h.service, owner.id, {
+        message: event.data, eventSeq: Number(event.seq), eventTime: event.time, source: 'user',
+      })
+      const releaseTimer = setTimeout(() => {
+        pool.failNextWrites = 1
+        release.resolve(undefined)
+      }, 2_000)
+      try {
+        await vi.waitFor(() => { expect(followup).toHaveBeenCalledOnce() }, { timeout: 13_000 })
+        expect(h.records.get(credentialKey('agent-bots', 'profile-revisions-v4'))).not.toMatchObject({
+          payload: { pending: expect.anything() },
+        })
+      } finally {
+        clearTimeout(releaseTimer)
+      }
+    } finally {
+      release.resolve(undefined)
+      await fence?.catch(() => undefined)
+      await close(fenceHost.ctx)
+      await close(h.ctx)
+    }
+  }, 15_000)
+
+  it('cancels delayed event-routine recovery when startup initialization fails', async () => {
+    const h = await harness(
+      new MemoryMediaPool(), undefined, undefined, [], new Map(), new Map(), true, 'native', false,
+      { initializeService: false },
+    )
+    type AdmissionRecovery = (sessionId?: SessionId, retryAttempt?: number) => Promise<void>
+    type ScheduleAdmissionRecovery = (sessionId: SessionId, attempt: number, fenceRetry?: boolean) => void
+    const servicePrototype = Object.getPrototypeOf(h.service) as {
+      recoverEventRoutineAdmissions: AdmissionRecovery
+      scheduleEventRoutineAdmissionRecoveryRetry: ScheduleAdmissionRecovery
+    }
+    const originalRecovery = servicePrototype.recoverEventRoutineAdmissions
+    let delayedCalls = 0
+    servicePrototype.recoverEventRoutineAdmissions = async function (this: BotService, _sessionId, retryAttempt = 0) {
+      if (retryAttempt > 0) delayedCalls += 1
+      throw new Error('startup recovery failed')
+    }
+    try {
+      servicePrototype.scheduleEventRoutineAdmissionRecoveryRetry.call(
+        h.service,
+        SessionId('bot-session-startup-recovery-cleanup'),
+        2,
+      )
+      await expect(h.service[Service.init]()).rejects.toThrow('startup recovery failed')
+      await new Promise<void>((resolve) => { setTimeout(resolve, 75) })
+      expect(delayedCalls).toBe(0)
+    } finally {
+      servicePrototype.recoverEventRoutineAdmissions = originalRecovery
+      await close(h.ctx)
+    }
+  })
+
+  it('reports when non-fence event-routine admission retries exhaust their transient budget', async () => {
+    const h = await harness()
+    const report = vi.fn<(message: string) => void>()
+    h.ctx.logger.error = report
+    type EventRoutineInput = {
+      readonly message: UserMessage
+      readonly eventSeq: number
+      readonly eventTime: number
+      readonly source: 'user' | 'bot'
+      readonly relayContext?: { readonly chainId: string; readonly depth: number }
+    }
+    type ScheduleAdmissionRetry = (
+      sessionId: SessionId,
+      input: EventRoutineInput,
+      attempt: number,
+      fenceRetry?: boolean,
+    ) => void
+    const servicePrototype = Object.getPrototypeOf(h.service) as {
+      scheduleEventRoutineAdmissionRetry: ScheduleAdmissionRetry
+    }
+    try {
+      servicePrototype.scheduleEventRoutineAdmissionRetry.call(h.service, SessionId('bot-session-retry-limit'), {
+        message: createUserMessage({
+          content: [{ type: 'text', text: 'Retry limit source.' }],
+          source: { kind: 'user' },
+        }),
+        eventSeq: 1,
+        eventTime: Date.now(),
+        source: 'user',
+      }, 6)
+      expect(report).toHaveBeenCalledWith(expect.stringContaining('reached its transient retry limit'))
+      expect(report).toHaveBeenCalledWith(expect.stringContaining('durable recovery remains pending'))
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('reports a permanent event-routine inspection failure instead of silently deferring it', async () => {
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const created = await seed.service.create({ name: 'Corrupt routine recovery target', cwd: '/tmp' })
+    const domain = seed.ctx.storageDomain.get(botDomain.name) as Domain<typeof botDomain> | undefined
+    if (domain === undefined) throw new Error('corrupt routine recovery Bot domain was not mounted')
+    const stored = domain.table('bots').get(created.bot.id)
+    if (stored === undefined) throw new Error('corrupt routine recovery Bot row was not found')
+    const routine: BotEventRoutine = {
+      id: 'bot-event-routine-corrupt-recovery',
+      title: 'Corrupt recovery',
+      prompt: 'Recover this routine.',
+      trigger: { type: 'message', source: 'user' },
+      status: 'paused',
+      createdAt: 1,
+      updatedAt: 1,
+      deliveries: [{
+        triggerEventSeq: 1,
+        triggerMessageId: MessageId('event-routine-corrupt-source'),
+        messageId: MessageId('event-routine-corrupt-delivery'),
+        status: 'pending',
+        createdAt: new Date(1).toISOString(),
+      }],
+      results: [],
+    }
+    await domain.table('bots').put(created.bot.id, { ...stored, eventRoutines: [routine] })
+    const records = seed.records
+    await close(seed.ctx)
+
+    const h = await harness(
+      pool,
+      undefined,
+      undefined,
+      [String(created.bot.sessionId)],
+      new Map(),
+      records,
+      true,
+      'native',
+      false,
+      { initializeService: false },
+    )
+    const report = vi.fn<(message: unknown) => void>()
+    h.ctx.logger.error = report
+    try {
+      await h.service[Service.init]()
+      const domain = h.ctx.storageDomain.get(botDomain.name) as Domain<typeof botDomain> | undefined
+      if (domain === undefined) throw new Error('corrupt routine recovery reopened domain was not mounted')
+      const current = domain.table('bots').get(created.bot.id)
+      if (current === undefined) throw new Error('corrupt routine recovery reopened Bot row was not found')
+      await domain.table('bots').put(created.bot.id, {
+        ...current,
+        eventRoutines: [{ ...routine, status: 'active' }],
+      })
+      const originalInspect = h.inspect.getMockImplementation()
+      if (originalInspect === undefined) throw new Error('corrupt routine recovery inspect implementation was not available')
+      let failed = false
+      h.inspect.mockImplementation(async (sessionId) => {
+        if (!failed) {
+          failed = true
+          throw new Error('corrupt persisted Session events')
+        }
+        return originalInspect(sessionId)
+      })
+      await h.service[Service.init]()
+      await vi.waitFor(() => {
+        expect(report).toHaveBeenCalledWith(expect.stringContaining('corrupt persisted Session events'))
+      }, { timeout: 3_000 })
+    } finally {
       await close(h.ctx)
     }
   })
@@ -903,7 +1533,7 @@ describe('durable Bot roster', () => {
     const credentialPath = join(root, 'credentials.yaml')
     const started = Promise.withResolvers<true>()
     const release = Promise.withResolvers<true>()
-    const revisionKey = credentialKey('agent-bots', 'profile-revisions-v2')
+    const revisionKey = credentialKey('agent-bots', 'profile-revisions-v4')
     let first: Awaited<ReturnType<typeof harness>> | undefined
     let second: Awaited<ReturnType<typeof harness>> | undefined
     let operation: Promise<{ readonly valid: true; readonly value: string } | { readonly valid: false }> | undefined
@@ -948,7 +1578,7 @@ describe('durable Bot roster', () => {
   it('requires explicit recovery after a shared roster fence release failure', async () => {
     const records = new Map<CredentialKey, CredentialRecord>()
     const h = await harness(new MemoryMediaPool(), undefined, undefined, [], new Map(), records)
-    const revisionKey = credentialKey('agent-bots', 'profile-revisions-v2')
+    const revisionKey = credentialKey('agent-bots', 'profile-revisions-v4')
     const host = productionSharedHost(h.service)
     let failRelease = false
     const originalModify = h.credentials.modifyRecord.bind(h.credentials)
@@ -1007,7 +1637,7 @@ describe('durable Bot roster', () => {
   it('recovers a fence after the shared authority committed before a release failure', async () => {
     const records = new Map<CredentialKey, CredentialRecord>()
     const h = await harness(new MemoryMediaPool(), undefined, undefined, [], new Map(), records)
-    const revisionKey = credentialKey('agent-bots', 'profile-revisions-v2')
+    const revisionKey = credentialKey('agent-bots', 'profile-revisions-v4')
     const authority = await SharedAccessAuthority.create(h.ctx, h.credentials, {
       sessionMaxAgeMs: 60_000,
       inviteMaxAgeMs: 60_000,
@@ -1052,13 +1682,13 @@ describe('durable Bot roster', () => {
     const pool = new MemoryMediaPool()
     const first = await harness(pool, undefined, undefined, [], new Map(), records)
     const second = await harness(pool, undefined, undefined, [], new Map(), records)
-    const revisionKey = credentialKey('agent-bots', 'profile-revisions-v2')
+    const revisionKey = credentialKey('agent-bots', 'profile-revisions-v4')
     const staleToken = 'stale-roster-fence'
     const newerToken = 'newer-roster-fence'
     const fenceRecord = (token: string): CredentialRecord => ({
       kind: 'grant',
       payload: {
-        version: 2,
+        version: 4,
         revisions: {},
         profiles: {},
         sharedRosterFence: { token },
@@ -1085,12 +1715,12 @@ describe('durable Bot roster', () => {
   it('does not infer liveness from a legacy heartbeat field', async () => {
     const records = new Map<CredentialKey, CredentialRecord>()
     const h = await harness(new MemoryMediaPool(), undefined, undefined, [], new Map(), records)
-    const revisionKey = credentialKey('agent-bots', 'profile-revisions-v2')
+    const revisionKey = credentialKey('agent-bots', 'profile-revisions-v4')
     const token = 'legacy-heartbeat-fence'
     records.set(revisionKey, {
       kind: 'grant',
       payload: {
-        version: 2,
+        version: 4,
         revisions: {},
         profiles: {},
         sharedRosterFence: { token, heartbeatAt: Date.now() },
@@ -1152,12 +1782,12 @@ describe('durable Bot roster', () => {
   it('allows an ambiguous recovery write to be retried after the durable clear commits', async () => {
     const records = new Map<CredentialKey, CredentialRecord>()
     const h = await harness(new MemoryMediaPool(), undefined, undefined, [], new Map(), records)
-    const revisionKey = credentialKey('agent-bots', 'profile-revisions-v2')
+    const revisionKey = credentialKey('agent-bots', 'profile-revisions-v4')
     const token = 'ambiguous-recovery-fence'
     records.set(revisionKey, {
       kind: 'grant',
       payload: {
-        version: 2,
+        version: 4,
         revisions: {},
         profiles: {},
         sharedRosterFence: { token },
@@ -5785,10 +6415,11 @@ describe('durable Bot roster', () => {
     await close(seed.ctx)
 
     const records = new Map<CredentialKey, CredentialRecord>()
-    const sessionId = SessionId('shared-session-group-recipient-crash-after-flush')
-    const groupId = BotGroupId('bot-group-recipient-crash-after-flush')
-    const messageId = BotGroupMessageId('bot-group-message-recipient-crash-after-flush')
-    const token = 'recipient-crash-after-flush-token'
+    const fixtureId = sharedGroupFixtureId('recipient-crash-after-flush')
+    const sessionId = SessionId(`shared-session-group-${fixtureId}`)
+    const groupId = BotGroupId(`bot-group-${fixtureId}`)
+    const messageId = BotGroupMessageId(`bot-group-message-${fixtureId}`)
+    const token = `${fixtureId}-token`
     records.set(credentialKey('agent-bots', 'shared-group-message-deliveries'), {
       kind: 'grant',
       payload: {
@@ -5872,10 +6503,11 @@ describe('durable Bot roster', () => {
     await close(seed.ctx)
 
     const records = new Map<CredentialKey, CredentialRecord>()
-    const sessionId = SessionId('shared-session-group-recipient-crash-before-flush')
-    const groupId = BotGroupId('bot-group-recipient-crash-before-flush')
-    const messageId = BotGroupMessageId('bot-group-message-recipient-crash-before-flush')
-    const token = 'recipient-crash-before-flush-token'
+    const fixtureId = sharedGroupFixtureId('recipient-crash-before-flush')
+    const sessionId = SessionId(`shared-session-group-${fixtureId}`)
+    const groupId = BotGroupId(`bot-group-${fixtureId}`)
+    const messageId = BotGroupMessageId(`bot-group-message-${fixtureId}`)
+    const token = `${fixtureId}-token`
     const deliveryKey = credentialKey('agent-bots', 'shared-group-message-deliveries')
     records.set(deliveryKey, {
       kind: 'grant',
@@ -5968,10 +6600,11 @@ describe('durable Bot roster', () => {
     await close(seed.ctx)
 
     const records = new Map<CredentialKey, CredentialRecord>()
-    const sessionId = SessionId('shared-session-group-recipient-dead-owner')
-    const groupId = BotGroupId('bot-group-recipient-dead-owner')
-    const messageId = BotGroupMessageId('bot-group-message-recipient-dead-owner')
-    const token = 'recipient-dead-owner-token'
+    const fixtureId = sharedGroupFixtureId('recipient-dead-owner')
+    const sessionId = SessionId(`shared-session-group-${fixtureId}`)
+    const groupId = BotGroupId(`bot-group-${fixtureId}`)
+    const messageId = BotGroupMessageId(`bot-group-message-${fixtureId}`)
+    const token = `${fixtureId}-token`
     const deliveryKey = credentialKey('agent-bots', 'shared-group-message-deliveries')
     records.set(deliveryKey, {
       kind: 'grant',
@@ -6381,10 +7014,11 @@ describe('durable Bot roster', () => {
     await close(seed.ctx)
 
     const records = new Map<CredentialKey, CredentialRecord>()
-    const sessionId = SessionId('shared-session-group-recipient-inspection-retry')
-    const groupId = BotGroupId('bot-group-recipient-inspection-retry')
-    const messageId = BotGroupMessageId('bot-group-message-recipient-inspection-retry')
-    const token = 'recipient-inspection-retry-token'
+    const fixtureId = sharedGroupFixtureId('recipient-inspection-retry')
+    const sessionId = SessionId(`shared-session-group-${fixtureId}`)
+    const groupId = BotGroupId(`bot-group-${fixtureId}`)
+    const messageId = BotGroupMessageId(`bot-group-message-${fixtureId}`)
+    const token = `${fixtureId}-token`
     records.set(credentialKey('agent-bots', 'shared-group-message-deliveries'), {
       kind: 'grant',
       payload: {
@@ -6576,10 +7210,12 @@ describe('durable Bot roster', () => {
     try {
       const firstBot = await first.service.create({ name: 'Revoked fence first', cwd: '/tmp' })
       const secondBot = await first.service.create({ name: 'Revoked fence second', cwd: '/tmp' })
-      const sessionId = SessionId('shared-session-group-revoked-fence')
-      const groupId = BotGroupId('bot-group-revoked-fence')
-      const messageId = BotGroupMessageId('bot-group-message-revoked-fence')
-      const token = 'recipient-revoked-fence-token'
+      const fixtureId = sharedGroupFixtureId('recipient-revoked-fence')
+      const sessionId = SessionId(`shared-session-group-${fixtureId}`)
+      const groupId = BotGroupId(`bot-group-${fixtureId}`)
+      const messageId = BotGroupMessageId(`bot-group-message-${fixtureId}`)
+      const retryMessageId = BotGroupMessageId(`bot-group-message-${fixtureId}-retry`)
+      const token = `${fixtureId}-token`
       const groupSnapshot = sharedGroupSnapshotSchema.parse({
         version: 1,
         revision: 1,
@@ -6675,7 +7311,7 @@ describe('durable Bot roster', () => {
         targetBotId: firstBot.bot.id,
         sessionId,
         text: 'A revoked binding must not accept new delivery.',
-        messageId: BotGroupMessageId('bot-group-message-revoked-fence-retry'),
+        messageId: retryMessageId,
       })).rejects.toThrow('no longer active')
     } finally {
       if (second !== undefined) await close(second.ctx)
@@ -7562,7 +8198,80 @@ describe('durable Bot roster', () => {
     }
   })
 
-  it('migrates a released v1 profile record into its v2 successor without rewriting v1', async () => {
+  it('recovers an abandoned v3 roster fence into v4 without changing v3', async () => {
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const v3Key = credentialKey('agent-bots', 'profile-revisions-v3')
+    const v4Key = credentialKey('agent-bots', 'profile-revisions-v4')
+    const v3: CredentialRecord = { kind: 'grant', payload: {
+      version: 3, revisions: {}, sharedRosterFence: { token: 'old-fence' },
+    } }
+    records.set(v3Key, v3)
+    const h = await harness(new MemoryMediaPool(), undefined, undefined, [], new Map(), records)
+    try {
+      await expect(h.service.inspectSharedRosterFence()).resolves.toEqual({ status: 'held', token: 'old-fence' })
+      await expect(h.service.recoverSharedRosterFence({ token: 'old-fence', confirmQuiescent: true, acceptRaceRisk: true }))
+        .resolves.toEqual({ status: 'released' })
+      expect(records.get(v3Key)).toEqual(v3)
+      expect(records.get(v4Key)).toMatchObject({ kind: 'grant', payload: { version: 4 } })
+      await expect(h.service.inspectSharedRosterFence()).resolves.toEqual({ status: 'clear' })
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('preserves a released v3 profile when migrating skills into v4', async () => {
+    const pool = new MemoryMediaPool()
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const first = await harness(pool, undefined, undefined, [], new Map(), records)
+    const created = await first.service.create({ name: 'Routine-era bot', cwd: '/tmp' })
+    const id = String(created.bot.id)
+    const v3Key = credentialKey('agent-bots', 'profile-revisions-v3')
+    const v4Key = credentialKey('agent-bots', 'profile-revisions-v4')
+    const v3: CredentialRecord = {
+      kind: 'grant',
+      payload: {
+        version: 3,
+        revisions: { [id]: created.bot.updatedAt },
+        profiles: { [id]: {
+          name: created.bot.name,
+          identity: created.bot.identity,
+          accent: created.bot.accent,
+          timedRoutines: [{
+            record: {
+              id: 'schedule-v3-migration', kind: 'every', title: 'Existing routine', prompt: 'Keep working.',
+              everySeconds: 3_600, scheduledAt: '2099-01-01T00:00:00.000Z',
+            },
+            sessionId: String(created.bot.sessionId), status: 'active',
+          }],
+          timedRoutinesUpdatedAt: created.bot.updatedAt,
+          updatedAt: created.bot.updatedAt,
+        } },
+      },
+    }
+    records.delete(v4Key)
+    records.set(v3Key, v3)
+    await close(first.ctx)
+    const second = await harness(pool, undefined, undefined, [], new Map(), records)
+    try {
+      await expect(second.service.list({})).resolves.toMatchObject({ bots: [{ id: created.bot.id }] })
+      expect(records.get(v3Key)).toEqual(v3)
+      expect(records.get(v4Key)).toMatchObject({ kind: 'grant', payload: {
+        version: 4, profiles: { [id]: { timedRoutines: [{ record: { id: 'schedule-v3-migration' } }] } },
+      } })
+      await second.service.updateSkills({ botId: created.bot.id, expectedRevision: 0, mode: 'selected', enabled: ['research'], disabled: [] })
+      expect(records.get(v4Key)).toMatchObject({ kind: 'grant', payload: {
+        profiles: { [id]: {
+          skillPolicy: { mode: 'selected', enabled: ['research'], disabled: [] },
+          timedRoutines: [{ record: { id: 'schedule-v3-migration' } }],
+        } },
+      } })
+      expect(records.get(v3Key)).toEqual(v3)
+    } finally {
+      await close(second.ctx)
+    }
+  })
+
+  it('migrates a released v1 profile record into its v4 successor without rewriting v1', async () => {
     const pool = new MemoryMediaPool()
     const records = new Map<CredentialKey, CredentialRecord>()
     const first = await harness(pool, undefined, undefined, [], new Map(), records)
@@ -7574,7 +8283,7 @@ describe('durable Bot roster', () => {
     })
     const id = String(created.bot.id)
     const legacyKey = credentialKey('agent-bots', 'profile-revisions')
-    const currentKey = credentialKey('agent-bots', 'profile-revisions-v2')
+    const currentKey = credentialKey('agent-bots', 'profile-revisions-v4')
     const legacy: CredentialRecord = {
       kind: 'grant',
       payload: {
@@ -7611,20 +8320,994 @@ describe('durable Bot roster', () => {
         }],
       })
       expect(records.get(legacyKey)).toEqual(legacy)
-      expect(records.get(currentKey)).toMatchObject({ kind: 'grant', payload: { version: 2 } })
+      expect(records.get(currentKey)).toMatchObject({ kind: 'grant', payload: { version: 4 } })
     } finally {
       await close(second.ctx)
     }
   })
 
-  it('repairs a pending released v1 profile record while migrating its successor', async () => {
+  it('reads the setup-release v2 record and writes the routine v4 successor without changing v2', async () => {
+    const pool = new MemoryMediaPool()
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const first = await harness(pool, undefined, undefined, [], new Map(), records)
+    const created = await first.service.create({
+      name: 'Setup v2 profile',
+      description: 'Preserve setup data.',
+      persona: 'Use the setup profile.',
+      capabilities: ['chat'],
+      cwd: '/tmp',
+    })
+    const id = String(created.bot.id)
+    const v2Key = credentialKey('agent-bots', 'profile-revisions-v2')
+    const v4Key = credentialKey('agent-bots', 'profile-revisions-v4')
+    const v2: CredentialRecord = {
+      kind: 'grant',
+      payload: {
+        version: 2,
+        revisions: { [id]: created.bot.updatedAt },
+        profiles: {
+          [id]: {
+            name: created.bot.name,
+            description: created.bot.description,
+            persona: created.bot.persona,
+            capabilities: created.bot.capabilities,
+            identity: created.bot.identity,
+            accent: created.bot.accent,
+            connectedAppIds: [],
+            pendingMemoryUpdate: null,
+            pinned: false,
+            hidden: false,
+            group: null,
+            updatedAt: created.bot.updatedAt,
+          },
+        },
+      },
+    }
+    records.delete(v4Key)
+    records.set(v2Key, v2)
+    await close(first.ctx)
+
+    const second = await harness(pool, undefined, undefined, [], new Map(), records)
+    try {
+      await expect(second.service.list({})).resolves.toMatchObject({
+        bots: [{ id: created.bot.id, description: 'Preserve setup data.', persona: 'Use the setup profile.' }],
+      })
+      expect(records.get(v2Key)).toEqual(v2)
+      expect(records.get(v4Key)).toMatchObject({ kind: 'grant', payload: { version: 4 } })
+    } finally {
+      await close(second.ctx)
+    }
+  })
+
+  it('reads a routine-extended v2 predecessor without treating it as the strict setup schema', async () => {
+    const pool = new MemoryMediaPool()
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const first = await harness(pool, undefined, undefined, [], new Map(), records)
+    const created = await first.service.create({ name: 'Routine v2 predecessor', cwd: '/tmp' })
+    const id = String(created.bot.id)
+    const v2Key = credentialKey('agent-bots', 'profile-revisions-v2')
+    const v4Key = credentialKey('agent-bots', 'profile-revisions-v4')
+    const v2: CredentialRecord = {
+      kind: 'grant',
+      payload: {
+        version: 2,
+        revisions: { [id]: created.bot.updatedAt },
+        profiles: {
+          [id]: {
+            roster: {
+              id,
+              sessionId: String(created.bot.sessionId),
+              ownerId: 'local-owner',
+              cwd: created.bot.cwd,
+              state: created.bot.state,
+              createdAt: created.bot.createdAt,
+            },
+            name: created.bot.name,
+            identity: created.bot.identity,
+            accent: created.bot.accent,
+            timedRoutines: [{
+              record: {
+                id: 'schedule-v2-predecessor',
+                kind: 'every',
+                title: 'V2 predecessor routine',
+                prompt: 'Keep this routine.',
+                everySeconds: 3_600,
+                scheduledAt: '2099-01-01T00:00:00.000Z',
+              },
+              sessionId: String(created.bot.sessionId),
+              status: 'active',
+            }],
+            timedRoutinesUpdatedAt: created.bot.updatedAt,
+            pendingMemoryUpdate: null,
+            pinned: false,
+            hidden: false,
+            group: null,
+            updatedAt: created.bot.updatedAt,
+          },
+        },
+      },
+    }
+    records.delete(v4Key)
+    records.set(v2Key, v2)
+    await close(first.ctx)
+
+    const second = await harness(pool, undefined, undefined, [], new Map(), records)
+    try {
+      await expect(second.service.list({})).resolves.toMatchObject({
+        bots: [{ id: created.bot.id, name: 'Routine v2 predecessor' }],
+      })
+      expect(records.get(v2Key)).toEqual(v2)
+      expect(records.get(v4Key)).toMatchObject({
+        kind: 'grant',
+        payload: {
+          version: 4,
+          profiles: {
+            [id]: {
+              timedRoutines: [{ record: { id: 'schedule-v2-predecessor' } }],
+              timedRoutinesUpdatedAt: created.bot.updatedAt,
+            },
+          },
+        },
+      })
+    } finally {
+      await close(second.ctx)
+    }
+  })
+
+  it('fails closed when a routine-era v2 roster does not match the durable Bot identity', async () => {
+    const pool = new MemoryMediaPool()
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const first = await harness(pool, undefined, undefined, [], new Map(), records)
+    const created = await first.service.create({ name: 'Foreign v2 roster', cwd: '/tmp' })
+    const id = String(created.bot.id)
+    const v2Key = credentialKey('agent-bots', 'profile-revisions-v2')
+    const v4Key = credentialKey('agent-bots', 'profile-revisions-v4')
+    const v2: CredentialRecord = {
+      kind: 'grant',
+      payload: {
+        version: 2,
+        revisions: { [id]: created.bot.updatedAt },
+        profiles: { [id]: {
+          roster: {
+            id,
+            sessionId: 'bot-session-foreign',
+            ownerId: 'foreign-owner',
+            cwd: '/foreign/cwd',
+            state: created.bot.state,
+            createdAt: created.bot.createdAt,
+          },
+          name: created.bot.name,
+          identity: created.bot.identity,
+          accent: created.bot.accent,
+          updatedAt: created.bot.updatedAt,
+        } },
+      },
+    }
+    records.delete(v4Key)
+    records.set(v2Key, v2)
+    await close(first.ctx)
+
+    await expect(harness(pool, undefined, undefined, [], new Map(), records)).rejects.toThrow('identity')
+    expect(records.get(v2Key)).toEqual(v2)
+    expect(records.get(v4Key)).toBeUndefined()
+  })
+
+  it('fails closed when a same-id v4 roster changes the durable execution binding', async () => {
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool, undefined, undefined, [], new Map(), records)
+    const created = await first.service.create({
+      name: 'Foreign execution binding',
+      cwd: '/tmp',
+      agentPreset: 'fixture-owner',
+      persona: 'Owner persona',
+      capabilities: ['chat'],
+    })
+    const id = String(created.bot.id)
+    const currentKey = credentialKey('agent-bots', 'profile-revisions-v4')
+    const current: CredentialRecord = {
+      kind: 'grant',
+      payload: {
+        version: 4,
+        revisions: { [id]: created.bot.updatedAt },
+        profiles: { [id]: {
+          roster: {
+            id,
+            sessionId: String(created.bot.sessionId),
+            ownerId: 'local-owner',
+            persona: 'Foreign persona',
+            capabilities: ['foreign-capability'],
+            cwd: '/foreign/cwd',
+            agentPreset: 'foreign-preset',
+            state: 'provisioning',
+            createdAt: created.bot.createdAt,
+          },
+          name: created.bot.name,
+          identity: created.bot.identity,
+          accent: created.bot.accent,
+          updatedAt: created.bot.updatedAt,
+        } },
+      },
+    }
+    records.set(currentKey, current)
+    await close(first.ctx)
+
+    const second = await harness(pool, undefined, undefined, [], new Map(), records, true, 'native', false, {
+      initializeService: false,
+    })
+    try {
+      await expect(second.service.list({})).rejects.toThrow('identity')
+      expect(records.get(currentKey)).toEqual(current)
+    } finally {
+      await close(second.ctx)
+    }
+  })
+
+  it('fails closed instead of replaying a same-id pending row with a foreign execution binding', async () => {
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const h = await harness(new MemoryMediaPool(), undefined, undefined, [], new Map(), records)
+    const created = await h.service.create({
+      name: 'Foreign pending execution binding',
+      cwd: '/tmp',
+      agentPreset: 'fixture-owner',
+      persona: 'Owner persona',
+      capabilities: ['chat'],
+    })
+    const id = String(created.bot.id)
+    const currentKey = credentialKey('agent-bots', 'profile-revisions-v4')
+    const pending: BotRecord = {
+      ownerId: 'local-owner',
+      id: created.bot.id,
+      sessionId: created.bot.sessionId,
+      name: 'Foreign pending execution binding',
+      identity: created.bot.identity,
+      accent: created.bot.accent,
+      persona: 'Foreign persona',
+      capabilities: ['foreign-capability'],
+      cwd: '/foreign/cwd',
+      agentPreset: 'foreign-preset',
+      state: 'provisioning',
+      createdAt: created.bot.createdAt,
+      updatedAt: created.bot.updatedAt + 1,
+    }
+    const current: CredentialRecord = {
+      kind: 'grant',
+      payload: {
+        version: 4,
+        revisions: { [id]: created.bot.updatedAt },
+        profiles: { [id]: {
+          name: created.bot.name,
+          identity: created.bot.identity,
+          accent: created.bot.accent,
+          updatedAt: created.bot.updatedAt,
+        } },
+        pending: { transactionId: 'foreign-execution-binding', record: pending },
+      },
+    }
+    records.set(currentKey, current)
+    try {
+      await expect(h.service.list({})).rejects.toThrow('identity changed')
+      expect(records.get(currentKey)).toEqual(current)
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('reconciles a pending activation across a profile edit before and after the Bot row write', async () => {
+    for (const rowWritten of [false, true]) {
+      const pool = new MemoryMediaPool()
+      const records = new Map<CredentialKey, CredentialRecord>()
+      const create = vi.fn(async (_request: { readonly sessionId?: string }) => {
+        throw new Error('model unavailable')
+      })
+      const h = await harness(pool, create, undefined, [], new Map(), records)
+      const id = BotId(`bot-activation-recovery-${rowWritten ? 'after' : 'before'}`)
+      try {
+        await expect(h.service.create({
+          id,
+          name: 'Activation recovery',
+          cwd: '/tmp',
+          persona: 'Original persona',
+          capabilities: ['original'],
+        })).rejects.toMatchObject({ code: 'bot/provisioning-failed' })
+        const domain = h.ctx.storageDomain.get(botDomain.name) as Domain<typeof botDomain> | undefined
+        if (domain === undefined) throw new Error('Bot domain was not opened')
+        const bots = domain.table('bots')
+        const current = bots.get(id)
+        if (current === undefined) throw new Error('activation recovery Bot row was not written')
+        expect(current.state).toBe('provisioning')
+        const pending: BotRecord = {
+          ...current,
+          persona: 'Recovered persona',
+          capabilities: ['recovered'],
+          state: 'active',
+          updatedAt: current.updatedAt + 1,
+        }
+        if (rowWritten) await bots.put(id, pending)
+        const currentProfile = {
+          roster: {
+            id: String(current.id),
+            sessionId: String(current.sessionId),
+            ownerId: current.ownerId,
+            ...(current.persona === undefined ? {} : { persona: current.persona }),
+            ...(current.capabilities === undefined ? {} : { capabilities: current.capabilities }),
+            cwd: current.cwd,
+            ...(current.agentPreset === undefined ? {} : { agentPreset: current.agentPreset }),
+            state: current.state,
+            createdAt: current.createdAt,
+          },
+          name: current.name,
+          persona: current.persona ?? null,
+          capabilities: current.capabilities ?? null,
+          identity: current.identity,
+          accent: current.accent,
+          connectedAppIds: current.connectedAppIds ?? [],
+          pendingMemoryUpdate: null,
+          pinned: current.pinned ?? false,
+          hidden: current.hidden ?? false,
+          group: current.group ?? null,
+          updatedAt: current.updatedAt,
+        }
+        records.set(credentialKey('agent-bots', 'profile-revisions-v4'), {
+          kind: 'grant',
+          payload: {
+            version: 4,
+            revisions: { [String(id)]: current.updatedAt },
+            profiles: { [String(id)]: currentProfile },
+            pending: { transactionId: `activation-recovery-${rowWritten ? 'after' : 'before'}`, record: pending },
+          },
+        })
+
+        await expect(h.service.list({})).resolves.toMatchObject({
+          bots: [{
+            id,
+            state: 'active',
+            persona: 'Recovered persona',
+            capabilities: ['recovered'],
+          }],
+        })
+        expect(bots.get(id)).toMatchObject({
+          state: 'active',
+          persona: 'Recovered persona',
+          capabilities: ['recovered'],
+        })
+      } finally {
+        await close(h.ctx)
+      }
+    }
+  })
+
+  it('fails closed when a v4 roster state differs without a pending transition', async () => {
+    for (const scenario of [
+      { durableState: 'provisioning' as const, rosterState: 'active' as const },
+      { durableState: 'active' as const, rosterState: 'provisioning' as const },
+    ]) {
+      const pool = new MemoryMediaPool()
+      const records = new Map<CredentialKey, CredentialRecord>()
+      const first = await harness(pool, undefined, undefined, [], new Map(), records)
+      const created = await first.service.create({ name: `Roster ${scenario.rosterState}`, cwd: '/tmp' })
+      const domain = first.ctx.storageDomain.get(botDomain.name) as Domain<typeof botDomain> | undefined
+      if (domain === undefined) throw new Error('Bot domain was not opened')
+      const bots = domain.table('bots')
+      const stored = bots.get(created.bot.id)
+      if (stored === undefined) throw new Error('Bot row was not written')
+      await bots.put(created.bot.id, { ...stored, state: scenario.durableState })
+      const id = String(created.bot.id)
+      records.set(credentialKey('agent-bots', 'profile-revisions-v4'), {
+        kind: 'grant',
+        payload: {
+          version: 4,
+          revisions: { [id]: stored.updatedAt },
+          profiles: { [id]: {
+            roster: {
+              id,
+              sessionId: String(stored.sessionId),
+              ownerId: stored.ownerId,
+              cwd: stored.cwd,
+              state: scenario.rosterState,
+              createdAt: stored.createdAt,
+            },
+            name: stored.name,
+            identity: stored.identity,
+            accent: stored.accent,
+            updatedAt: stored.updatedAt,
+          } },
+        },
+      })
+      await close(first.ctx)
+
+      const second = await harness(pool, undefined, undefined, [], new Map(), records, true, 'native', false, {
+        initializeService: false,
+      })
+      try {
+        await expect(second.service.list({})).rejects.toThrow('state')
+      } finally {
+        await close(second.ctx)
+      }
+    }
+  })
+
+  it('serializes a Bot without an agent preset through the local credential provider', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'yh-bot-profile-json-'))
+    const h = await harness(
+      undefined,
+      undefined,
+      undefined,
+      [],
+      new Map(),
+      new Map(),
+      true,
+      'native',
+      false,
+      { credentialPath: join(root, 'credentials.yaml') },
+    )
+    try {
+      await expect(h.service.create({ name: 'JSON-safe profile', cwd: '/tmp' })).resolves.toMatchObject({
+        bot: { name: 'JSON-safe profile', state: 'active' },
+      })
+      await expect(h.service.list({})).resolves.toMatchObject({
+        bots: [{ name: 'JSON-safe profile', state: 'active' }],
+      })
+    } finally {
+      await close(h.ctx)
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('fails closed when equal-revision profile snapshots disagree on nested routine state', async () => {
+    const cases = [
+      {
+        label: 'roster',
+        current: (created: BotView) => ({
+          id: String(created.id),
+          sessionId: String(created.sessionId),
+          ownerId: 'local-owner',
+          cwd: created.cwd,
+          state: created.state,
+          createdAt: created.createdAt,
+        }),
+        legacy: (created: BotView) => ({
+          id: String(created.id),
+          sessionId: String(created.sessionId),
+          ownerId: 'local-owner',
+          cwd: '/different/cwd',
+          state: created.state,
+          createdAt: created.createdAt,
+        }),
+      },
+      {
+        label: 'timedRoutines',
+        current: (created: BotView) => [{
+          record: {
+            id: 'schedule-equal-revision-current',
+            kind: 'every' as const,
+            title: 'Current routine',
+            prompt: 'Current routine prompt.',
+            everySeconds: 3_600,
+            scheduledAt: '2099-01-01T00:00:00.000Z',
+          },
+          sessionId: String(created.sessionId),
+          status: 'active' as const,
+        }],
+        legacy: (created: BotView) => [{
+          record: {
+            id: 'schedule-equal-revision-current',
+            kind: 'every' as const,
+            title: 'Legacy routine',
+            prompt: 'Legacy routine prompt.',
+            everySeconds: 3_600,
+            scheduledAt: '2099-01-01T00:00:00.000Z',
+          },
+          sessionId: String(created.sessionId),
+          status: 'active' as const,
+        }],
+      },
+      {
+        label: 'timedRoutinesUpdatedAt',
+        current: (created: BotView) => created.updatedAt,
+        legacy: (created: BotView) => created.updatedAt + 1,
+      },
+    ] as const
+
+    for (const scenario of cases) {
+      const pool = new MemoryMediaPool()
+      const records = new Map<CredentialKey, CredentialRecord>()
+      const first = await harness(pool, undefined, undefined, [], new Map(), records)
+      const created = await first.service.create({ name: `Equal revision ${scenario.label}`, cwd: '/tmp' })
+      const id = String(created.bot.id)
+      const v2Key = credentialKey('agent-bots', 'profile-revisions-v2')
+      const v4Key = credentialKey('agent-bots', 'profile-revisions-v4')
+      const base = {
+        name: created.bot.name,
+        identity: created.bot.identity,
+        accent: created.bot.accent,
+        updatedAt: created.bot.updatedAt,
+      }
+      const currentProfile = {
+        ...base,
+        ...(scenario.label === 'roster' ? { roster: scenario.current(created.bot) } : {}),
+        ...(scenario.label === 'timedRoutines' ? { timedRoutines: scenario.current(created.bot) } : {}),
+        ...(scenario.label === 'timedRoutinesUpdatedAt' ? {
+          timedRoutines: [{
+            record: {
+              id: 'schedule-equal-revision-timestamp',
+              kind: 'every' as const,
+              title: 'Timestamp routine',
+              prompt: 'Timestamp routine prompt.',
+              everySeconds: 3_600,
+              scheduledAt: '2099-01-01T00:00:00.000Z',
+            },
+            sessionId: String(created.bot.sessionId),
+            status: 'active' as const,
+          }],
+          timedRoutinesUpdatedAt: scenario.current(created.bot),
+        } : {}),
+      }
+      const legacyProfile = {
+        ...base,
+        ...(scenario.label === 'roster' ? { roster: scenario.legacy(created.bot) } : {}),
+        ...(scenario.label === 'timedRoutines' ? { timedRoutines: scenario.legacy(created.bot) } : {}),
+        ...(scenario.label === 'timedRoutinesUpdatedAt' ? {
+          timedRoutines: currentProfile.timedRoutines,
+          timedRoutinesUpdatedAt: scenario.legacy(created.bot),
+        } : {}),
+      }
+      records.set(v2Key, {
+        kind: 'grant',
+        payload: { version: 2, revisions: { [id]: created.bot.updatedAt }, profiles: { [id]: legacyProfile } },
+      })
+      records.set(v4Key, {
+        kind: 'grant',
+        payload: { version: 4, revisions: { [id]: created.bot.updatedAt }, profiles: { [id]: currentProfile } },
+      })
+      await close(first.ctx)
+
+      const second = await harness(pool, undefined, undefined, [], new Map(), records, true, 'native', false, {
+        initializeService: false,
+      })
+      try {
+        await expect(second.service.list({})).rejects.toThrow(`disagree on ${scenario.label}`)
+      } finally {
+        await close(second.ctx)
+      }
+    }
+  })
+
+  it('fails closed when equal-revision snapshots disagree on pending memory state', async () => {
+    const cases = [
+      {
+        label: 'different values',
+        current: { memoryId: 'memory-current', text: 'Current pending memory.' },
+        legacy: { memoryId: 'memory-legacy', text: 'Legacy pending memory.' },
+      },
+      {
+        label: 'current marker versus predecessor clear',
+        current: { memoryId: 'memory-current-marker', text: 'Current pending memory.' },
+        legacy: null,
+      },
+    ] as const
+
+    for (const scenario of cases) {
+      const pool = new MemoryMediaPool()
+      const records = new Map<CredentialKey, CredentialRecord>()
+      const first = await harness(pool, undefined, undefined, [], new Map(), records)
+      const created = await first.service.create({ name: `Pending memory ${scenario.label}`, cwd: '/tmp' })
+      const id = String(created.bot.id)
+      const profile = (pendingMemoryUpdate: typeof scenario.current | typeof scenario.legacy) => ({
+        name: created.bot.name,
+        identity: created.bot.identity,
+        accent: created.bot.accent,
+        pendingMemoryUpdate,
+        updatedAt: created.bot.updatedAt,
+      })
+      records.set(credentialKey('agent-bots', 'profile-revisions-v2'), {
+        kind: 'grant',
+        payload: {
+          version: 2,
+          revisions: { [id]: created.bot.updatedAt },
+          profiles: { [id]: profile(scenario.legacy) },
+        },
+      })
+      records.set(credentialKey('agent-bots', 'profile-revisions-v4'), {
+        kind: 'grant',
+        payload: {
+          version: 4,
+          revisions: { [id]: created.bot.updatedAt },
+          profiles: { [id]: profile(scenario.current) },
+        },
+      })
+      await close(first.ctx)
+
+      const second = await harness(pool, undefined, undefined, [], new Map(), records, true, 'native', false, {
+        initializeService: false,
+      })
+      try {
+        await expect(second.service.list({})).rejects.toThrow('pendingMemoryUpdate')
+      } finally {
+        await close(second.ctx)
+      }
+    }
+  })
+
+  it('preserves a same-revision v4 pending memory clear over a predecessor marker', async () => {
+    const pool = new MemoryMediaPool()
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const first = await harness(pool, undefined, undefined, [], new Map(), records)
+    const created = await first.service.create({ name: 'Pending memory clear', cwd: '/tmp' })
+    const id = String(created.bot.id)
+    const v2Key = credentialKey('agent-bots', 'profile-revisions-v2')
+    const v4Key = credentialKey('agent-bots', 'profile-revisions-v4')
+    const base = {
+      name: created.bot.name,
+      identity: created.bot.identity,
+      accent: created.bot.accent,
+      updatedAt: created.bot.updatedAt,
+    }
+    records.set(v2Key, {
+      kind: 'grant',
+      payload: {
+        version: 2,
+        revisions: { [id]: created.bot.updatedAt },
+        profiles: { [id]: {
+          ...base,
+          pendingMemoryUpdate: { memoryId: 'memory-predecessor-marker', text: 'Must be cleared.' },
+        } },
+      },
+    })
+    records.set(v4Key, {
+      kind: 'grant',
+      payload: {
+        version: 4,
+        revisions: { [id]: created.bot.updatedAt },
+        profiles: { [id]: { ...base, pendingMemoryUpdate: null } },
+      },
+    })
+    await close(first.ctx)
+
+    const second = await harness(pool, undefined, undefined, [], new Map(), records, true, 'native', false, {
+      initializeService: false,
+    })
+    try {
+      await expect(second.service.list({})).resolves.toMatchObject({ bots: [{ id: created.bot.id }] })
+      expect(records.get(v4Key)).toMatchObject({
+        kind: 'grant',
+        payload: { version: 4, profiles: { [id]: { pendingMemoryUpdate: null } } },
+      })
+    } finally {
+      await close(second.ctx)
+    }
+  })
+
+  it('preserves a same-revision v4 group clear over a predecessor section', async () => {
+    const pool = new MemoryMediaPool()
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const first = await harness(pool, undefined, undefined, [], new Map(), records)
+    const created = await first.service.create({ name: 'Group clear', cwd: '/tmp' })
+    const id = String(created.bot.id)
+    const v2Key = credentialKey('agent-bots', 'profile-revisions-v2')
+    const v4Key = credentialKey('agent-bots', 'profile-revisions-v4')
+    const base = {
+      name: created.bot.name,
+      identity: created.bot.identity,
+      accent: created.bot.accent,
+      updatedAt: created.bot.updatedAt,
+    }
+    records.set(v2Key, {
+      kind: 'grant',
+      payload: {
+        version: 2,
+        revisions: { [id]: created.bot.updatedAt },
+        profiles: { [id]: { ...base, group: 'Legacy section' } },
+      },
+    })
+    records.set(v4Key, {
+      kind: 'grant',
+      payload: {
+        version: 4,
+        revisions: { [id]: created.bot.updatedAt },
+        profiles: { [id]: { ...base, group: null } },
+      },
+    })
+    await close(first.ctx)
+
+    const second = await harness(pool, undefined, undefined, [], new Map(), records, true, 'native', false, {
+      initializeService: false,
+    })
+    try {
+      await expect(second.service.list({})).resolves.toMatchObject({ bots: [{ id: created.bot.id }] })
+      expect(records.get(v4Key)).toMatchObject({
+        kind: 'grant',
+        payload: { version: 4, profiles: { [id]: { group: null } } },
+      })
+    } finally {
+      await close(second.ctx)
+    }
+  })
+
+  it('preserves timed routines when a partial v4 profile merges a routine-era predecessor', async () => {
+    const pool = new MemoryMediaPool()
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const first = await harness(pool, undefined, undefined, [], new Map(), records)
+    const created = await first.service.create({ name: 'Partial v4 routine merge', cwd: '/tmp' })
+    const id = String(created.bot.id)
+    const v2Key = credentialKey('agent-bots', 'profile-revisions-v2')
+    const v4Key = credentialKey('agent-bots', 'profile-revisions-v4')
+    const routineProjection = {
+      record: {
+        id: 'schedule-partial-v4-merge',
+        kind: 'every',
+        title: 'Partial merge routine',
+        prompt: 'Keep this routine.',
+        everySeconds: 3_600,
+        scheduledAt: '2099-01-01T00:00:00.000Z',
+      },
+      sessionId: String(created.bot.sessionId),
+      status: 'active',
+    }
+    const v2: CredentialRecord = {
+      kind: 'grant',
+      payload: {
+        version: 2,
+        revisions: { [id]: created.bot.updatedAt },
+        profiles: { [id]: {
+          name: created.bot.name,
+          description: 'Stale V2 description',
+          identity: created.bot.identity,
+          accent: created.bot.accent,
+          timedRoutines: [routineProjection],
+          timedRoutinesUpdatedAt: created.bot.updatedAt,
+          updatedAt: created.bot.updatedAt,
+        } },
+      },
+    }
+    const v4: CredentialRecord = {
+      kind: 'grant',
+      payload: {
+        version: 4,
+        revisions: { [id]: created.bot.updatedAt },
+        profiles: { [id]: {
+          roster: {
+            id,
+            sessionId: String(created.bot.sessionId),
+            ownerId: 'local-owner',
+            cwd: created.bot.cwd,
+            state: created.bot.state,
+            createdAt: created.bot.createdAt,
+          },
+          name: created.bot.name,
+          identity: created.bot.identity,
+          accent: created.bot.accent,
+          updatedAt: created.bot.updatedAt,
+        } },
+      },
+    }
+    records.set(v2Key, v2)
+    records.set(v4Key, v4)
+    await close(first.ctx)
+
+    const second = await harness(pool, undefined, undefined, [], new Map(), records)
+    try {
+      const listed = await second.service.list({})
+      expect(listed).toMatchObject({
+        bots: [{ id: created.bot.id, name: created.bot.name }],
+      })
+      expect(listed.bots[0]).not.toHaveProperty('description')
+      expect(records.get(v4Key)).toMatchObject({
+        kind: 'grant',
+        payload: {
+          version: 4,
+          profiles: {
+            [id]: {
+              timedRoutines: [routineProjection],
+              timedRoutinesUpdatedAt: created.bot.updatedAt,
+            },
+          },
+        },
+      })
+    } finally {
+      await close(second.ctx)
+    }
+  })
+
+  it('does not revive V1 description or avatar when setup V2 omitted those fields', async () => {
+    const pool = new MemoryMediaPool()
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const first = await harness(pool, undefined, undefined, [], new Map(), records)
+    const created = await first.service.create({ name: 'V2 omission is clear', cwd: '/tmp' })
+    const id = String(created.bot.id)
+    const v1Key = credentialKey('agent-bots', 'profile-revisions')
+    const v2Key = credentialKey('agent-bots', 'profile-revisions-v2')
+    const v4Key = credentialKey('agent-bots', 'profile-revisions-v4')
+    const v1: CredentialRecord = {
+      kind: 'grant',
+      payload: {
+        version: 1,
+        revisions: { [id]: created.bot.updatedAt },
+        profiles: {
+          [id]: {
+            name: created.bot.name,
+            description: 'Stale V1 description',
+            avatar: {
+              attachmentId: AttachmentId(`sha256:${'aa'.repeat(32)}`),
+              mediaType: 'image/png',
+              bytes: 3,
+              width: 1,
+              height: 1,
+            },
+            identity: created.bot.identity,
+            accent: created.bot.accent,
+            updatedAt: created.bot.updatedAt,
+          },
+        },
+      },
+    }
+    const v2: CredentialRecord = {
+      kind: 'grant',
+      payload: {
+        version: 2,
+        revisions: { [id]: created.bot.updatedAt },
+        profiles: {
+          [id]: {
+            name: created.bot.name,
+            identity: created.bot.identity,
+            accent: created.bot.accent,
+            updatedAt: created.bot.updatedAt,
+          },
+        },
+      },
+    }
+    records.delete(v4Key)
+    records.set(v1Key, v1)
+    records.set(v2Key, v2)
+    await close(first.ctx)
+
+    const second = await harness(pool, undefined, undefined, [], new Map(), records)
+    try {
+      const listed = await second.service.list({})
+      expect(listed.bots[0]).not.toHaveProperty('description')
+      expect(listed.bots[0]).not.toHaveProperty('avatar')
+      expect(records.get(v1Key)).toEqual(v1)
+      expect(records.get(v2Key)).toEqual(v2)
+    } finally {
+      await close(second.ctx)
+    }
+  })
+
+  it('fails closed instead of replaying a setup v2 pending row onto another Bot Session', async () => {
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const h = await harness(new MemoryMediaPool(), undefined, undefined, [], new Map(), records)
+    const created = await h.service.create({ name: 'V2 pending identity', cwd: '/tmp' })
+    const id = String(created.bot.id)
+    const v2Key = credentialKey('agent-bots', 'profile-revisions-v2')
+    const v4Key = credentialKey('agent-bots', 'profile-revisions-v4')
+    const pendingRecord: BotRecord = {
+      ownerId: 'local-owner',
+      id: created.bot.id,
+      sessionId: SessionId('bot-session-replaced'),
+      name: 'Must not replace the live Bot',
+      identity: created.bot.identity,
+      accent: created.bot.accent,
+      cwd: created.bot.cwd,
+      state: created.bot.state,
+      createdAt: created.bot.createdAt,
+      updatedAt: created.bot.updatedAt + 1,
+    }
+    const v2: CredentialRecord = {
+      kind: 'grant',
+      payload: {
+        version: 2,
+        revisions: { [id]: created.bot.updatedAt },
+        profiles: {
+          [id]: {
+            name: created.bot.name,
+            identity: created.bot.identity,
+            accent: created.bot.accent,
+            updatedAt: created.bot.updatedAt,
+          },
+        },
+        pending: { transactionId: 'pending-v2-replaced-session', record: pendingRecord },
+      },
+    }
+    records.delete(v4Key)
+    records.set(v2Key, v2)
+    try {
+      await expect(h.service.list({})).rejects.toThrow('cannot replay')
+      expect(records.get(v2Key)).toEqual(v2)
+      expect(records.get(v4Key)).toBeUndefined()
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('recovers a predecessor create pending row when the Bot row was never written', async () => {
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const h = await harness(new MemoryMediaPool(), undefined, undefined, [], new Map(), records)
+    const created = await h.service.create({ name: 'Pending create row', cwd: '/tmp' })
+    const id = String(created.bot.id)
+    const v1Key = credentialKey('agent-bots', 'profile-revisions')
+    const v4Key = credentialKey('agent-bots', 'profile-revisions-v4')
+    const pendingRecord: BotRecord = {
+      ownerId: 'local-owner',
+      id: created.bot.id,
+      sessionId: created.bot.sessionId,
+      name: 'Recovered create row',
+      identity: created.bot.identity,
+      accent: created.bot.accent,
+      cwd: created.bot.cwd,
+      state: created.bot.state,
+      createdAt: created.bot.createdAt,
+      updatedAt: created.bot.updatedAt + 1,
+    }
+    const v1: CredentialRecord = {
+      kind: 'grant',
+      payload: {
+        version: 1,
+        revisions: {},
+        pending: { transactionId: 'pending-v1-create-before-row', record: pendingRecord },
+      },
+    }
+    const bots = h.ctx.storageDomain.get('agent_bots')
+    if (bots === undefined || !await bots.table('bots').delete(id)) {
+      throw new Error('pending-create fixture did not remove the Bot row')
+    }
+    records.delete(v4Key)
+    records.set(v1Key, v1)
+    try {
+      await expect(h.service.list({})).resolves.toMatchObject({
+        bots: [{ id: created.bot.id, name: 'Recovered create row' }],
+      })
+      expect(records.get(v4Key)).toMatchObject({ kind: 'grant', payload: { version: 4 } })
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('does not overwrite a newer same-identity Bot row with a stale predecessor pending row', async () => {
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const h = await harness(new MemoryMediaPool(), undefined, undefined, [], new Map(), records)
+    const created = await h.service.create({ name: 'Newer durable row', cwd: '/tmp' })
+    const v1Key = credentialKey('agent-bots', 'profile-revisions')
+    const v4Key = credentialKey('agent-bots', 'profile-revisions-v4')
+    const pendingRecord: BotRecord = {
+      ownerId: 'local-owner',
+      id: created.bot.id,
+      sessionId: created.bot.sessionId,
+      name: 'Stale predecessor row',
+      identity: created.bot.identity,
+      accent: created.bot.accent,
+      cwd: created.bot.cwd,
+      state: created.bot.state,
+      createdAt: created.bot.createdAt,
+      updatedAt: created.bot.updatedAt - 1,
+    }
+    const v1: CredentialRecord = {
+      kind: 'grant',
+      payload: {
+        version: 1,
+        revisions: {},
+        pending: { transactionId: 'pending-v1-stale-row', record: pendingRecord },
+      },
+    }
+    records.delete(v4Key)
+    records.set(v1Key, v1)
+    try {
+      await expect(h.service.list({})).resolves.toMatchObject({
+        bots: [{ id: created.bot.id, name: 'Newer durable row' }],
+      })
+      expect(records.get(v1Key)).toEqual(v1)
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('repairs a pending released v1 profile record while migrating its v4 successor', async () => {
     const pool = new MemoryMediaPool()
     const records = new Map<CredentialKey, CredentialRecord>()
     const first = await harness(pool, undefined, undefined, [], new Map(), records)
     const created = await first.service.create({ name: 'Pending profile', cwd: '/tmp' })
     const id = String(created.bot.id)
     const legacyKey = credentialKey('agent-bots', 'profile-revisions')
-    const currentKey = credentialKey('agent-bots', 'profile-revisions-v2')
+    const currentKey = credentialKey('agent-bots', 'profile-revisions-v4')
     const pendingRecord: BotRecord = {
       ownerId: 'local-owner',
       id: created.bot.id,
@@ -7665,11 +9348,976 @@ describe('durable Bot roster', () => {
       expect(records.get(legacyKey)).toEqual(legacy)
       expect(records.get(currentKey)).toMatchObject({
         kind: 'grant',
-        payload: { version: 2 },
+        payload: { version: 4 },
       })
       const migrated = records.get(currentKey)
       if (migrated?.kind !== 'grant') throw new Error('migrated profile record was not stored')
       expect(migrated.payload).not.toHaveProperty('pending')
+    } finally {
+      await close(second.ctx)
+    }
+  })
+
+  it('adopts a pending v1 transaction when an existing v4 record has no pending row', async () => {
+    const pool = new MemoryMediaPool()
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const first = await harness(pool, undefined, undefined, [], new Map(), records)
+    const created = await first.service.create({ name: 'Pending successor', cwd: '/tmp' })
+    const id = String(created.bot.id)
+    const legacyKey = credentialKey('agent-bots', 'profile-revisions')
+    const currentKey = credentialKey('agent-bots', 'profile-revisions-v4')
+    const pendingRecord: BotRecord = {
+      ownerId: 'local-owner',
+      id: created.bot.id,
+      sessionId: created.bot.sessionId,
+      name: 'Recovered through successor',
+      identity: created.bot.identity,
+      accent: created.bot.accent,
+      cwd: created.bot.cwd,
+      state: created.bot.state,
+      createdAt: created.bot.createdAt,
+      updatedAt: created.bot.updatedAt + 1,
+    }
+    const legacy: CredentialRecord = {
+      kind: 'grant',
+      payload: {
+        version: 1,
+        revisions: { [id]: created.bot.updatedAt },
+        profiles: {
+          [id]: {
+            name: created.bot.name,
+            identity: created.bot.identity,
+            accent: created.bot.accent,
+            updatedAt: created.bot.updatedAt,
+          },
+        },
+        pending: { transactionId: 'pending-v1-existing-v2', record: pendingRecord },
+      },
+    }
+    const current: CredentialRecord = {
+      kind: 'grant',
+      payload: {
+        version: 4,
+        revisions: { [id]: created.bot.updatedAt },
+        profiles: {
+          [id]: {
+            name: created.bot.name,
+            identity: created.bot.identity,
+            accent: created.bot.accent,
+            updatedAt: created.bot.updatedAt,
+          },
+        },
+      },
+    }
+    records.set(legacyKey, legacy)
+    records.set(currentKey, current)
+    await close(first.ctx)
+
+    const second = await harness(pool, undefined, undefined, [], new Map(), records)
+    try {
+      await expect(second.service.list({})).resolves.toMatchObject({
+        bots: [{ id: created.bot.id, name: 'Recovered through successor' }],
+      })
+      await expect(second.service.rename({ botId: created.bot.id, name: 'Newer after recovery' }))
+        .resolves.toMatchObject({ bot: { name: 'Newer after recovery' } })
+    } finally {
+      await close(second.ctx)
+    }
+
+    const third = await harness(pool, undefined, undefined, [], new Map(), records)
+    try {
+      await expect(third.service.list({})).resolves.toMatchObject({
+        bots: [{ id: created.bot.id, name: 'Newer after recovery' }],
+      })
+      expect(records.get(legacyKey)).toEqual(legacy)
+      expect(records.get(currentKey)).toMatchObject({
+        kind: 'grant',
+        payload: {
+          version: 4,
+          revisions: { [id]: expect.any(Number) },
+        },
+      })
+    } finally {
+      await close(third.ctx)
+    }
+  })
+
+  it('fails closed when a same-revision v4 snapshot omits an explicit pending clear', async () => {
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const h = await harness(new MemoryMediaPool(), undefined, undefined, [], new Map(), records)
+    const created = await h.service.create({
+      name: 'Pending clear evidence',
+      persona: 'Keep the predecessor value hidden.',
+      cwd: '/tmp',
+    })
+    const id = String(created.bot.id)
+    const legacyKey = credentialKey('agent-bots', 'profile-revisions')
+    const currentKey = credentialKey('agent-bots', 'profile-revisions-v4')
+    const pendingRecord: BotRecord = {
+      ownerId: 'local-owner',
+      id: created.bot.id,
+      sessionId: created.bot.sessionId,
+      name: created.bot.name,
+      identity: created.bot.identity,
+      accent: created.bot.accent,
+      cwd: created.bot.cwd,
+      state: created.bot.state,
+      createdAt: created.bot.createdAt,
+      updatedAt: created.bot.updatedAt + 1,
+    }
+    const legacy: CredentialRecord = {
+      kind: 'grant',
+      payload: {
+        version: 1,
+        revisions: { [id]: created.bot.updatedAt },
+        profiles: {
+          [id]: {
+            name: created.bot.name,
+            persona: 'Legacy persona must not revive.',
+            identity: created.bot.identity,
+            accent: created.bot.accent,
+            updatedAt: created.bot.updatedAt,
+          },
+        },
+        pending: { transactionId: 'pending-v1-clear-evidence', record: pendingRecord },
+      },
+    }
+    const current: CredentialRecord = {
+      kind: 'grant',
+      payload: {
+        version: 4,
+        revisions: { [id]: pendingRecord.updatedAt },
+        profiles: {
+          [id]: {
+            roster: {
+              id,
+              sessionId: String(pendingRecord.sessionId),
+              ownerId: pendingRecord.ownerId,
+              cwd: pendingRecord.cwd,
+              state: pendingRecord.state,
+              createdAt: pendingRecord.createdAt,
+            },
+            name: pendingRecord.name,
+            identity: pendingRecord.identity,
+            accent: pendingRecord.accent,
+            pendingMemoryUpdate: null,
+            pinned: false,
+            hidden: false,
+            group: null,
+            updatedAt: pendingRecord.updatedAt,
+          },
+        },
+      },
+    }
+    records.set(legacyKey, legacy)
+    records.set(currentKey, current)
+    try {
+      await expect(h.service.list({})).rejects.toThrow('cannot acknowledge')
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('fails closed when same-revision v4 pending evidence has a different roster', async () => {
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const h = await harness(new MemoryMediaPool(), undefined, undefined, [], new Map(), records)
+    const created = await h.service.create({ name: 'Pending roster evidence', cwd: '/tmp' })
+    const id = String(created.bot.id)
+    const legacyKey = credentialKey('agent-bots', 'profile-revisions')
+    const currentKey = credentialKey('agent-bots', 'profile-revisions-v4')
+    const pendingRecord: BotRecord = {
+      ownerId: 'local-owner',
+      id: created.bot.id,
+      sessionId: created.bot.sessionId,
+      name: created.bot.name,
+      identity: created.bot.identity,
+      accent: created.bot.accent,
+      cwd: created.bot.cwd,
+      state: created.bot.state,
+      createdAt: created.bot.createdAt,
+      updatedAt: created.bot.updatedAt + 1,
+    }
+    const legacy: CredentialRecord = {
+      kind: 'grant',
+      payload: {
+        version: 1,
+        revisions: { [id]: created.bot.updatedAt },
+        profiles: { [id]: {
+          name: created.bot.name,
+          identity: created.bot.identity,
+          accent: created.bot.accent,
+          updatedAt: created.bot.updatedAt,
+        } },
+        pending: { transactionId: 'pending-v1-roster-evidence', record: pendingRecord },
+      },
+    }
+    const current: CredentialRecord = {
+      kind: 'grant',
+      payload: {
+        version: 4,
+        revisions: { [id]: pendingRecord.updatedAt },
+        profiles: { [id]: {
+          roster: {
+            id,
+            sessionId: String(pendingRecord.sessionId),
+            ownerId: pendingRecord.ownerId,
+            cwd: '/different-working-directory',
+            state: pendingRecord.state,
+            createdAt: pendingRecord.createdAt,
+          },
+          name: pendingRecord.name,
+          persona: null,
+          capabilities: null,
+          identity: pendingRecord.identity,
+          accent: pendingRecord.accent,
+          pendingMemoryUpdate: null,
+          pinned: false,
+          hidden: false,
+          group: null,
+          updatedAt: pendingRecord.updatedAt,
+        } },
+      },
+    }
+    records.set(legacyKey, legacy)
+    records.set(currentKey, current)
+    try {
+      await expect(h.service.list({})).rejects.toThrow('cannot acknowledge')
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('fails closed when a newer routine-only v4 revision cannot evidence a pending setup write', async () => {
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const h = await harness(new MemoryMediaPool(), undefined, undefined, [], new Map(), records)
+    const created = await h.service.create({ name: 'Newer routine evidence', cwd: '/tmp' })
+    const id = String(created.bot.id)
+    const legacyKey = credentialKey('agent-bots', 'profile-revisions')
+    const currentKey = credentialKey('agent-bots', 'profile-revisions-v4')
+    const pendingRecord: BotRecord = {
+      ownerId: 'local-owner',
+      id: created.bot.id,
+      sessionId: created.bot.sessionId,
+      name: 'Pending setup write',
+      identity: created.bot.identity,
+      accent: created.bot.accent,
+      cwd: created.bot.cwd,
+      state: created.bot.state,
+      createdAt: created.bot.createdAt,
+      updatedAt: created.bot.updatedAt + 1,
+    }
+    const legacy: CredentialRecord = {
+      kind: 'grant',
+      payload: {
+        version: 1,
+        revisions: { [id]: created.bot.updatedAt },
+        profiles: { [id]: {
+          name: created.bot.name,
+          identity: created.bot.identity,
+          accent: created.bot.accent,
+          updatedAt: created.bot.updatedAt,
+        } },
+        pending: { transactionId: 'pending-v1-newer-routine-evidence', record: pendingRecord },
+      },
+    }
+    const current: CredentialRecord = {
+      kind: 'grant',
+      payload: {
+        version: 4,
+        revisions: { [id]: pendingRecord.updatedAt + 1 },
+        profiles: { [id]: {
+          name: created.bot.name,
+          identity: created.bot.identity,
+          accent: created.bot.accent,
+          timedRoutines: [{
+            record: {
+              id: 'schedule-newer-routine-evidence',
+              kind: 'every',
+              title: 'Newer routine',
+              prompt: 'Check the newer routine.',
+              everySeconds: 3_600,
+              scheduledAt: '2099-01-01T00:00:00.000Z',
+            },
+            sessionId: String(created.bot.sessionId),
+            status: 'active',
+          }],
+          timedRoutinesUpdatedAt: pendingRecord.updatedAt + 1,
+          updatedAt: pendingRecord.updatedAt + 1,
+        } },
+      },
+    }
+    records.set(legacyKey, legacy)
+    records.set(currentKey, current)
+    try {
+      await expect(h.service.list({})).rejects.toThrow('cannot acknowledge')
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('accepts a complete newer v4 revision that adds optional fields', async () => {
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const h = await harness(new MemoryMediaPool(), undefined, undefined, [], new Map(), records)
+    const created = await h.service.create({ name: 'Newer optional evidence', cwd: '/tmp' })
+    const id = String(created.bot.id)
+    const legacyKey = credentialKey('agent-bots', 'profile-revisions')
+    const currentKey = credentialKey('agent-bots', 'profile-revisions-v4')
+    const pendingRecord: BotRecord = {
+      ownerId: 'local-owner',
+      id: created.bot.id,
+      sessionId: created.bot.sessionId,
+      name: created.bot.name,
+      identity: created.bot.identity,
+      accent: created.bot.accent,
+      cwd: created.bot.cwd,
+      state: created.bot.state,
+      createdAt: created.bot.createdAt,
+      updatedAt: created.bot.updatedAt + 1,
+    }
+    const legacy: CredentialRecord = {
+      kind: 'grant',
+      payload: {
+        version: 1,
+        revisions: { [id]: created.bot.updatedAt },
+        profiles: { [id]: {
+          name: created.bot.name,
+          identity: created.bot.identity,
+          accent: created.bot.accent,
+          updatedAt: created.bot.updatedAt,
+        } },
+        pending: { transactionId: 'pending-v1-newer-optional-evidence', record: pendingRecord },
+      },
+    }
+    const current: CredentialRecord = {
+      kind: 'grant',
+      payload: {
+        version: 4,
+        revisions: { [id]: pendingRecord.updatedAt + 1 },
+        profiles: { [id]: {
+          roster: {
+            id,
+            sessionId: String(pendingRecord.sessionId),
+            ownerId: pendingRecord.ownerId,
+            cwd: pendingRecord.cwd,
+            state: pendingRecord.state,
+            createdAt: pendingRecord.createdAt,
+          },
+          name: pendingRecord.name,
+          description: 'Newer description',
+          avatar: {
+            attachmentId: `sha256:${'ef'.repeat(32)}`,
+            mediaType: 'image/png',
+            bytes: 3,
+            width: 1,
+            height: 1,
+          },
+          eventRoutines: [],
+          connectedAppIds: [],
+          connectedAppDenyIds: [],
+          persona: null,
+          capabilities: null,
+          identity: pendingRecord.identity,
+          accent: pendingRecord.accent,
+          pendingMemoryUpdate: null,
+          pinned: false,
+          hidden: false,
+          group: null,
+          updatedAt: pendingRecord.updatedAt + 1,
+        } },
+      },
+    }
+    records.set(legacyKey, legacy)
+    records.set(currentKey, current)
+    try {
+      await expect(h.service.list({})).resolves.toMatchObject({
+        bots: [{
+          id: created.bot.id,
+          description: 'Newer description',
+          avatar: { mediaType: 'image/png' },
+          connectedAppIds: [],
+        }],
+      })
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('fails closed when newer v4 evidence omits a field claimed by the pending row', async () => {
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const h = await harness(new MemoryMediaPool(), undefined, undefined, [], new Map(), records)
+    const created = await h.service.create({ name: 'Newer omitted claim', cwd: '/tmp' })
+    const id = String(created.bot.id)
+    const legacyKey = credentialKey('agent-bots', 'profile-revisions')
+    const currentKey = credentialKey('agent-bots', 'profile-revisions-v4')
+    const pendingRecord: BotRecord = {
+      ownerId: 'local-owner',
+      id: created.bot.id,
+      sessionId: created.bot.sessionId,
+      name: created.bot.name,
+      description: 'Claimed pending description',
+      avatar: {
+        attachmentId: AttachmentId(`sha256:${'ef'.repeat(32)}`),
+        mediaType: 'image/png',
+        bytes: 3,
+        width: 1,
+        height: 1,
+      },
+      identity: created.bot.identity,
+      accent: created.bot.accent,
+      cwd: created.bot.cwd,
+      state: created.bot.state,
+      createdAt: created.bot.createdAt,
+      updatedAt: created.bot.updatedAt + 1,
+    }
+    records.set(legacyKey, {
+      kind: 'grant',
+      payload: {
+        version: 1,
+        revisions: { [id]: created.bot.updatedAt },
+        profiles: { [id]: {
+          name: created.bot.name,
+          identity: created.bot.identity,
+          accent: created.bot.accent,
+          updatedAt: created.bot.updatedAt,
+        } },
+        pending: { transactionId: 'pending-v1-newer-omitted-claim', record: pendingRecord },
+      },
+    })
+    records.set(currentKey, {
+      kind: 'grant',
+      payload: {
+        version: 4,
+        revisions: { [id]: pendingRecord.updatedAt + 1 },
+        profiles: { [id]: {
+          roster: {
+            id,
+            sessionId: String(pendingRecord.sessionId),
+            ownerId: pendingRecord.ownerId,
+            cwd: pendingRecord.cwd,
+            state: pendingRecord.state,
+            createdAt: pendingRecord.createdAt,
+          },
+          name: pendingRecord.name,
+          persona: null,
+          capabilities: null,
+          identity: pendingRecord.identity,
+          accent: pendingRecord.accent,
+          pendingMemoryUpdate: null,
+          pinned: false,
+          hidden: false,
+          group: null,
+          updatedAt: pendingRecord.updatedAt + 1,
+        } },
+      },
+    })
+    try {
+      await expect(h.service.list({})).rejects.toThrow('cannot acknowledge')
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('fails closed when newer v4 evidence has an inconsistent timestamp or roster identity', async () => {
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const h = await harness(new MemoryMediaPool(), undefined, undefined, [], new Map(), records)
+    const created = await h.service.create({ name: 'Newer identity evidence', cwd: '/tmp' })
+    const id = String(created.bot.id)
+    const legacyKey = credentialKey('agent-bots', 'profile-revisions')
+    const currentKey = credentialKey('agent-bots', 'profile-revisions-v4')
+    const pendingRecord: BotRecord = {
+      ownerId: 'local-owner',
+      id: created.bot.id,
+      sessionId: created.bot.sessionId,
+      name: created.bot.name,
+      identity: created.bot.identity,
+      accent: created.bot.accent,
+      cwd: created.bot.cwd,
+      state: created.bot.state,
+      createdAt: created.bot.createdAt,
+      updatedAt: created.bot.updatedAt + 1,
+    }
+    records.set(legacyKey, {
+      kind: 'grant',
+      payload: {
+        version: 1,
+        revisions: { [id]: created.bot.updatedAt },
+        profiles: { [id]: {
+          name: created.bot.name,
+          identity: created.bot.identity,
+          accent: created.bot.accent,
+          updatedAt: created.bot.updatedAt,
+        } },
+        pending: { transactionId: 'pending-v1-newer-identity-evidence', record: pendingRecord },
+      },
+    })
+    const revision = pendingRecord.updatedAt + 1
+    const completeProfile = {
+      roster: {
+        id,
+        sessionId: String(pendingRecord.sessionId),
+        ownerId: pendingRecord.ownerId,
+        cwd: pendingRecord.cwd,
+        state: pendingRecord.state,
+        createdAt: pendingRecord.createdAt,
+      },
+      name: pendingRecord.name,
+      persona: null,
+      capabilities: null,
+      identity: pendingRecord.identity,
+      accent: pendingRecord.accent,
+      pendingMemoryUpdate: null,
+      pinned: false,
+      hidden: false,
+      group: null,
+      updatedAt: revision,
+    }
+    try {
+      for (const profile of [
+        { ...completeProfile, updatedAt: revision - 1 },
+        { ...completeProfile, roster: { ...completeProfile.roster, id: 'bot-other' } },
+      ]) {
+        records.set(currentKey, {
+          kind: 'grant',
+          payload: { version: 4, revisions: { [id]: revision }, profiles: { [id]: profile } },
+        })
+        await expect(h.service.list({})).rejects.toThrow('cannot acknowledge')
+      }
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('fails closed when an existing newer v4 profile has no revision evidence', async () => {
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const h = await harness(new MemoryMediaPool(), undefined, undefined, [], new Map(), records)
+    const created = await h.service.create({ name: 'Missing revision evidence', cwd: '/tmp' })
+    const id = String(created.bot.id)
+    const legacyKey = credentialKey('agent-bots', 'profile-revisions')
+    const currentKey = credentialKey('agent-bots', 'profile-revisions-v4')
+    const pendingRecord: BotRecord = {
+      ownerId: 'local-owner',
+      id: created.bot.id,
+      sessionId: created.bot.sessionId,
+      name: 'Stale pending profile',
+      identity: created.bot.identity,
+      accent: created.bot.accent,
+      cwd: created.bot.cwd,
+      state: created.bot.state,
+      createdAt: created.bot.createdAt,
+      updatedAt: created.bot.updatedAt + 1,
+    }
+    records.set(legacyKey, {
+      kind: 'grant',
+      payload: {
+        version: 1,
+        revisions: { [id]: created.bot.updatedAt },
+        profiles: { [id]: {
+          name: created.bot.name,
+          identity: created.bot.identity,
+          accent: created.bot.accent,
+          updatedAt: created.bot.updatedAt,
+        } },
+        pending: { transactionId: 'pending-v1-missing-revision-evidence', record: pendingRecord },
+      },
+    })
+    records.set(currentKey, {
+      kind: 'grant',
+      payload: {
+        version: 4,
+        revisions: {},
+        profiles: { [id]: {
+          roster: {
+            id,
+            sessionId: String(pendingRecord.sessionId),
+            ownerId: pendingRecord.ownerId,
+            cwd: pendingRecord.cwd,
+            state: pendingRecord.state,
+            createdAt: pendingRecord.createdAt,
+          },
+          name: 'Newer durable profile',
+          persona: null,
+          capabilities: null,
+          identity: pendingRecord.identity,
+          accent: pendingRecord.accent,
+          pendingMemoryUpdate: null,
+          pinned: false,
+          hidden: false,
+          group: null,
+          updatedAt: pendingRecord.updatedAt + 1,
+        } },
+      },
+    })
+    try {
+      await expect(h.service.list({})).rejects.toThrow('cannot acknowledge')
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('fails closed instead of replaying a legacy pending row onto another Bot Session', async () => {
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const h = await harness(new MemoryMediaPool(), undefined, undefined, [], new Map(), records)
+    const created = await h.service.create({ name: 'Stable identity evidence', cwd: '/tmp' })
+    const id = String(created.bot.id)
+    const legacyKey = credentialKey('agent-bots', 'profile-revisions')
+    const currentKey = credentialKey('agent-bots', 'profile-revisions-v4')
+    const pendingRecord: BotRecord = {
+      ownerId: 'local-owner',
+      id: created.bot.id,
+      sessionId: SessionId('bot-session-replaced'),
+      name: 'Stale session pending row',
+      identity: created.bot.identity,
+      accent: created.bot.accent,
+      cwd: created.bot.cwd,
+      state: created.bot.state,
+      createdAt: created.bot.createdAt,
+      updatedAt: created.bot.updatedAt + 1,
+    }
+    records.set(legacyKey, {
+      kind: 'grant',
+      payload: {
+        version: 1,
+        revisions: { [id]: created.bot.updatedAt },
+        profiles: { [id]: {
+          name: created.bot.name,
+          identity: created.bot.identity,
+          accent: created.bot.accent,
+          updatedAt: created.bot.updatedAt,
+        } },
+        pending: { transactionId: 'pending-v1-stable-identity-evidence', record: pendingRecord },
+      },
+    })
+    records.set(currentKey, {
+      kind: 'grant',
+      payload: {
+        version: 4,
+        revisions: { [id]: created.bot.updatedAt },
+        profiles: { [id]: {
+          name: created.bot.name,
+          identity: created.bot.identity,
+          accent: created.bot.accent,
+          updatedAt: created.bot.updatedAt,
+        } },
+      },
+    })
+    try {
+      await expect(h.service.list({})).rejects.toThrow('cannot replay')
+      await expect(h.service.rename({ botId: created.bot.id, name: 'Must not rebind' }))
+        .rejects.toThrow('identity changed during legacy profile recovery')
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('fails closed when same-revision v4 evidence restores omitted description or avatar', async () => {
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const h = await harness(new MemoryMediaPool(), undefined, undefined, [], new Map(), records)
+    const created = await h.service.create({ name: 'Pending optional evidence', cwd: '/tmp' })
+    const id = String(created.bot.id)
+    const legacyKey = credentialKey('agent-bots', 'profile-revisions')
+    const currentKey = credentialKey('agent-bots', 'profile-revisions-v4')
+    const pendingRecord: BotRecord = {
+      ownerId: 'local-owner',
+      id: created.bot.id,
+      sessionId: created.bot.sessionId,
+      name: created.bot.name,
+      identity: created.bot.identity,
+      accent: created.bot.accent,
+      cwd: created.bot.cwd,
+      state: created.bot.state,
+      createdAt: created.bot.createdAt,
+      updatedAt: created.bot.updatedAt + 1,
+    }
+    const legacy: CredentialRecord = {
+      kind: 'grant',
+      payload: {
+        version: 1,
+        revisions: { [id]: created.bot.updatedAt },
+        profiles: { [id]: {
+          name: created.bot.name,
+          identity: created.bot.identity,
+          accent: created.bot.accent,
+          updatedAt: created.bot.updatedAt,
+        } },
+        pending: { transactionId: 'pending-v1-optional-evidence', record: pendingRecord },
+      },
+    }
+    const current: CredentialRecord = {
+      kind: 'grant',
+      payload: {
+        version: 4,
+        revisions: { [id]: pendingRecord.updatedAt },
+        profiles: { [id]: {
+          roster: {
+            id,
+            sessionId: String(pendingRecord.sessionId),
+            ownerId: pendingRecord.ownerId,
+            cwd: pendingRecord.cwd,
+            state: pendingRecord.state,
+            createdAt: pendingRecord.createdAt,
+          },
+          name: pendingRecord.name,
+          description: 'Stale description from an unrelated generation',
+          avatar: {
+            attachmentId: `sha256:${'cd'.repeat(32)}`,
+            mediaType: 'image/png',
+            bytes: 3,
+            width: 1,
+            height: 1,
+          },
+          persona: null,
+          capabilities: null,
+          identity: pendingRecord.identity,
+          accent: pendingRecord.accent,
+          pendingMemoryUpdate: null,
+          pinned: false,
+          hidden: false,
+          group: null,
+          updatedAt: pendingRecord.updatedAt,
+        } },
+      },
+    }
+    records.set(legacyKey, legacy)
+    records.set(currentKey, current)
+    try {
+      await expect(h.service.list({})).rejects.toThrow('cannot acknowledge')
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('fails closed when existing v1 and v4 pending profile transactions conflict', async () => {
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const h = await harness(new MemoryMediaPool(), undefined, undefined, [], new Map(), records)
+    const created = await h.service.create({ name: 'Conflicting successor', cwd: '/tmp' })
+    const id = String(created.bot.id)
+    const legacyKey = credentialKey('agent-bots', 'profile-revisions')
+    const currentKey = credentialKey('agent-bots', 'profile-revisions-v4')
+    const pendingRecord = (name: string, updatedAt: number): BotRecord => ({
+      ownerId: 'local-owner',
+      id: created.bot.id,
+      sessionId: created.bot.sessionId,
+      name,
+      identity: created.bot.identity,
+      accent: created.bot.accent,
+      cwd: created.bot.cwd,
+      state: created.bot.state,
+      createdAt: created.bot.createdAt,
+      updatedAt,
+    })
+    const legacy: CredentialRecord = {
+      kind: 'grant',
+      payload: {
+        version: 1,
+        revisions: { [id]: created.bot.updatedAt },
+        profiles: { [id]: {
+          name: created.bot.name,
+          identity: created.bot.identity,
+          accent: created.bot.accent,
+          updatedAt: created.bot.updatedAt,
+        } },
+        pending: {
+          transactionId: 'pending-v1-conflict',
+          record: pendingRecord('Legacy pending', created.bot.updatedAt + 1),
+        },
+      },
+    }
+    const current: CredentialRecord = {
+      kind: 'grant',
+      payload: {
+        version: 4,
+        revisions: { [id]: created.bot.updatedAt },
+        profiles: { [id]: {
+          name: created.bot.name,
+          identity: created.bot.identity,
+          accent: created.bot.accent,
+          updatedAt: created.bot.updatedAt,
+        } },
+        pending: {
+          transactionId: 'pending-v2-conflict',
+          record: pendingRecord('Current pending', created.bot.updatedAt + 2),
+        },
+      },
+    }
+    records.set(legacyKey, legacy)
+    records.set(currentKey, current)
+    try {
+      await expect(h.service.list({})).rejects.toThrow('conflicting pending transactions')
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('converges routine and setup fields into the v4 successor without rewriting v1', async () => {
+    const pool = new MemoryMediaPool()
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const first = await harness(pool, undefined, undefined, [], new Map(), records)
+    const created = await first.service.create({ name: 'Routine migration', cwd: '/tmp' })
+    const id = String(created.bot.id)
+    const legacyKey = credentialKey('agent-bots', 'profile-revisions')
+    const currentKey = credentialKey('agent-bots', 'profile-revisions-v4')
+    const legacy: CredentialRecord = {
+      kind: 'grant',
+      payload: {
+        version: 1,
+        revisions: { [id]: created.bot.updatedAt },
+        profiles: {
+          [id]: {
+            name: created.bot.name,
+            persona: 'Keep the setup persona.',
+            capabilities: ['research'],
+            identity: created.bot.identity,
+            accent: created.bot.accent,
+            connectedAppIds: [],
+            pendingMemoryUpdate: null,
+            pinned: false,
+            hidden: false,
+            group: null,
+            updatedAt: created.bot.updatedAt,
+          },
+        },
+      },
+    }
+    const routineProjection = {
+      record: {
+        id: 'schedule-migration',
+        kind: 'every',
+        title: 'Migration routine',
+        prompt: 'Check the migration.',
+        everySeconds: 3_600,
+        scheduledAt: '2099-01-01T00:00:00.000Z',
+      },
+      sessionId: String(created.bot.sessionId),
+      status: 'active',
+    }
+    const current: CredentialRecord = {
+      kind: 'grant',
+      payload: {
+        version: 4,
+        revisions: { [id]: created.bot.updatedAt },
+        profiles: {
+          [id]: {
+            name: created.bot.name,
+            identity: created.bot.identity,
+            accent: created.bot.accent,
+            connectedAppIds: [],
+            timedRoutines: [routineProjection],
+            timedRoutinesUpdatedAt: created.bot.updatedAt,
+            pendingMemoryUpdate: null,
+            pinned: false,
+            hidden: false,
+            group: null,
+            updatedAt: created.bot.updatedAt,
+          },
+        },
+      },
+    }
+    records.set(legacyKey, legacy)
+    records.set(currentKey, current)
+    await close(first.ctx)
+
+    const second = await harness(pool, undefined, undefined, [], new Map(), records)
+    try {
+      await expect(second.service.list({})).resolves.toMatchObject({
+        bots: [{
+          id: created.bot.id,
+          persona: 'Keep the setup persona.',
+          capabilities: ['research'],
+        }],
+      })
+      await expect(second.service.rename({ botId: created.bot.id, name: 'Routine migration renamed' }))
+        .resolves.toMatchObject({ bot: { name: 'Routine migration renamed' } })
+      expect(records.get(legacyKey)).toEqual(legacy)
+      expect(records.get(currentKey)).toMatchObject({
+        kind: 'grant',
+        payload: {
+          version: 4,
+          profiles: {
+            [id]: {
+              persona: 'Keep the setup persona.',
+              capabilities: ['research'],
+              timedRoutines: [routineProjection],
+              timedRoutinesUpdatedAt: created.bot.updatedAt,
+            },
+          },
+        },
+      })
+    } finally {
+      await close(second.ctx)
+    }
+  })
+
+  it('keeps explicit v2 clears ahead of legacy and roster fallbacks', async () => {
+    const pool = new MemoryMediaPool()
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const first = await harness(pool, undefined, undefined, [], new Map(), records)
+    const created = await first.service.create({
+      name: 'Explicit clear migration',
+      persona: 'Remove this setup persona.',
+      capabilities: ['chat'],
+      cwd: '/tmp',
+    })
+    const id = String(created.bot.id)
+    const legacyKey = credentialKey('agent-bots', 'profile-revisions')
+    const currentKey = credentialKey('agent-bots', 'profile-revisions-v4')
+    const legacy: CredentialRecord = {
+      kind: 'grant',
+      payload: {
+        version: 1,
+        revisions: { [id]: created.bot.updatedAt },
+        profiles: {
+          [id]: {
+            name: created.bot.name,
+            persona: 'Legacy setup persona.',
+            capabilities: ['research'],
+            identity: created.bot.identity,
+            accent: created.bot.accent,
+            updatedAt: created.bot.updatedAt,
+          },
+        },
+      },
+    }
+    const current: CredentialRecord = {
+      kind: 'grant',
+      payload: {
+        version: 4,
+        revisions: { [id]: created.bot.updatedAt },
+        profiles: {
+          [id]: {
+            name: created.bot.name,
+            persona: null,
+            capabilities: null,
+            identity: created.bot.identity,
+            accent: created.bot.accent,
+            roster: {
+              id,
+              sessionId: String(created.bot.sessionId),
+              ownerId: 'local-owner',
+              persona: 'Roster fallback persona.',
+              capabilities: ['chat', 'research'],
+              cwd: created.bot.cwd,
+              state: created.bot.state,
+              createdAt: created.bot.createdAt,
+            },
+            updatedAt: created.bot.updatedAt,
+          },
+        },
+      },
+    }
+    records.set(legacyKey, legacy)
+    records.set(currentKey, current)
+    await close(first.ctx)
+
+    const second = await harness(pool, undefined, undefined, [], new Map(), records)
+    try {
+      const listed = await second.service.list({})
+      expect(listed.bots[0]).not.toHaveProperty('persona')
+      expect(listed.bots[0]).not.toHaveProperty('capabilities')
+      expect(records.get(legacyKey)).toEqual(legacy)
+      expect(records.get(currentKey)).toMatchObject({
+        kind: 'grant',
+        payload: { version: 4, profiles: { [id]: { persona: null, capabilities: null } } },
+      })
     } finally {
       await close(second.ctx)
     }
@@ -8378,6 +11026,196 @@ describe('durable Bot roster', () => {
     }
   })
 
+  it('lists and manages owner-scoped timed routines through the Bot Remote', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const created = await first.service.create({ name: 'Remote routine owner', cwd: '/tmp' })
+    await close(first.ctx)
+
+    const h = await routineHarness(pool, undefined, undefined, [String(created.bot.sessionId)], true)
+    const other = await routineHarness(pool, undefined, undefined, [String(created.bot.sessionId)], true, [], new Map(), new Map(), new Map(), { ownerId: 'other-owner' })
+    try {
+      const schedule = h.ctx.get('schedule')
+      if (schedule === undefined) throw new Error('Schedule service was not mounted')
+      const task = await schedule.create(created.bot.sessionId, {
+        title: 'Remote status check', prompt: 'Check status', every_seconds: 300,
+      })
+      const listed = await h.service.listRoutines({ botId: created.bot.id })
+      expect(listed.routines).toEqual([expect.objectContaining({
+        kind: 'schedule', botId: created.bot.id, sessionId: created.bot.sessionId,
+        id: task.id, title: 'Remote status check', status: 'active',
+      })])
+
+      const paused = await h.service.pauseRoutine({ botId: created.bot.id, routineId: String(task.id) })
+      expect(paused).toMatchObject({ paused: true, routine: { id: task.id, kind: 'schedule', status: 'paused' } })
+      const resumed = await h.service.resumeRoutine({ botId: created.bot.id, routineId: String(task.id) })
+      expect(resumed).toMatchObject({ resumed: true, routine: { id: task.id, kind: 'schedule', status: 'active' } })
+      const history = await h.service.routineHistory({ botId: created.bot.id, routineId: String(task.id), limit: 10 })
+      expect(history).toMatchObject({ kind: 'schedule', id: task.id, records: [] })
+
+      await expect(other.service.listRoutines({ botId: created.bot.id })).rejects.toMatchObject({ code: 'bot/not-found' })
+      const removed = await h.service.deleteRoutine({ botId: created.bot.id, routineId: String(task.id) })
+      expect(removed).toEqual({ id: task.id, deleted: true })
+      await expect(h.service.listRoutines({ botId: created.bot.id })).resolves.toEqual({ routines: [] })
+    } finally {
+      await close(other.ctx)
+      await close(h.ctx)
+    }
+  })
+
+  it('fails closed for every routine Remote when the V4 roster identity is foreign', async () => {
+    const pool = new MemoryMediaPool()
+    const h = await routineHarness(pool, undefined, undefined, [], true)
+    try {
+      const created = await h.service.create({ name: 'Foreign routine roster', cwd: '/tmp' })
+      const schedule = h.ctx.get('schedule')
+      if (schedule === undefined) throw new Error('Schedule service was not mounted')
+      const task = await schedule.create(created.bot.sessionId, {
+        title: 'Foreign roster routine', prompt: 'This must not be exposed.', every_seconds: 300,
+      })
+      const id = String(created.bot.id)
+      h.records.set(credentialKey('agent-bots', 'profile-revisions-v4'), {
+        kind: 'grant',
+        payload: {
+          version: 4,
+          revisions: { [id]: created.bot.updatedAt },
+          profiles: {
+            [id]: {
+              roster: {
+                id,
+                sessionId: 'bot-session-foreign-routine',
+                ownerId: 'foreign-routine-owner',
+                cwd: created.bot.cwd,
+                state: created.bot.state,
+                createdAt: created.bot.createdAt,
+              },
+              name: created.bot.name,
+              identity: created.bot.identity,
+              accent: created.bot.accent,
+              updatedAt: created.bot.updatedAt,
+            },
+          },
+        },
+      })
+
+      const operations = [
+        () => h.service.listRoutines({ botId: created.bot.id }),
+        () => h.service.pauseRoutine({ botId: created.bot.id, routineId: String(task.id) }),
+        () => h.service.resumeRoutine({ botId: created.bot.id, routineId: String(task.id) }),
+        () => h.service.deleteRoutine({ botId: created.bot.id, routineId: String(task.id) }),
+        () => h.service.routineHistory({ botId: created.bot.id, routineId: String(task.id), limit: 10 }),
+      ]
+      for (const operation of operations) {
+        await expect(operation()).rejects.toMatchObject({ code: 'gateway/conflict' })
+      }
+      await expect(schedule.list({ sessionId: created.bot.sessionId })).resolves.toHaveLength(1)
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('does not combine a pre-write profile snapshot or regress a newer routine cache', async () => {
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const created = await seed.service.create({ name: 'Routine read race', cwd: '/tmp' })
+    await close(seed.ctx)
+
+    const h = await routineHarness(pool, undefined, undefined, [String(created.bot.sessionId)], true)
+    const profileKey = credentialKey('agent-bots', 'profile-revisions-v4')
+    let releaseProfileRead: PromiseWithResolvers<undefined> | undefined
+    try {
+      const provider = h.ctx.get('codexDynamicTools') as BotNativeToolProvider | undefined
+      if (provider === undefined) throw new Error('native Bot provider was not mounted')
+      const tools = await provider.resolve({ sessionId: created.bot.sessionId })
+      const createRoutine = tools.find(tool => tool.name === 'schedule_create')
+      if (createRoutine === undefined) throw new Error('routine create tool was not mounted')
+      const barrier = pauseFirstProfileRevisionRead(h.credentials, profileKey)
+      releaseProfileRead = barrier.releaseProfileRead
+
+      const listing = h.service.listRoutines({ botId: created.bot.id })
+      await barrier.profileReadStarted
+      const createdRoutine = await createRoutine.execute({
+        title: 'Concurrent event routine',
+        prompt: 'Run after the read barrier.',
+        event: { type: 'message', source: 'user' },
+      }, {
+        callId: 'routine-read-race-create', threadId: 'routine-read-race-thread', turnId: 'routine-read-race-turn',
+        sessionId: created.bot.sessionId, signal: new AbortController().signal,
+        approvalPolicy: 'on-request' as const, requestApproval: async () => true,
+      })
+      expect(createdRoutine.success).toBe(true)
+      releaseProfileRead.resolve(undefined)
+
+      await expect(listing).resolves.toEqual({ routines: [] })
+      const owner = h.agents[0]
+      const followup = h.followups[0]
+      if (owner === undefined || followup === undefined) throw new Error('routine read race Agent was not created')
+      owner.session.append('turn/start', { turn: 1 })
+      h.ctx.emit('session/event', owner.session, owner.session.snapshotEvents().at(-1)!)
+      owner.session.append('user/message', createUserMessage({
+        content: [{ type: 'text', text: 'Trigger the routine after the stale read.' }],
+        source: { kind: 'user' },
+      }), { surfaceOp: 'append' })
+      h.ctx.emit('session/event', owner.session, owner.session.snapshotEvents().at(-1)!)
+      await vi.waitFor(() => { expect(followup).toHaveBeenCalledOnce() })
+    } finally {
+      releaseProfileRead?.resolve(undefined)
+      await close(h.ctx)
+    }
+  })
+
+  it('does not regress a newer event-routine cache after native schedule refresh', async () => {
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const created = await seed.service.create({ name: 'Native routine read race', cwd: '/tmp' })
+    await close(seed.ctx)
+
+    const h = await routineHarness(pool, undefined, undefined, [String(created.bot.sessionId)], true)
+    const profileKey = credentialKey('agent-bots', 'profile-revisions-v4')
+    let releaseProfileRead: PromiseWithResolvers<undefined> | undefined
+    try {
+      const provider = h.ctx.get('codexDynamicTools') as BotNativeToolProvider | undefined
+      if (provider === undefined) throw new Error('native Bot provider was not mounted')
+      const tools = await provider.resolve({ sessionId: created.bot.sessionId })
+      const listRoutines = tools.find(tool => tool.name === 'schedule_list')
+      const createRoutine = tools.find(tool => tool.name === 'schedule_create')
+      if (listRoutines === undefined || createRoutine === undefined) throw new Error('native routine tools were not mounted')
+      const barrier = pauseFirstProfileRevisionRead(h.credentials, profileKey)
+      releaseProfileRead = barrier.releaseProfileRead
+
+      const context = {
+        callId: 'native-refresh-race-list', threadId: 'native-refresh-race-thread', turnId: 'native-refresh-race-list-turn',
+        sessionId: created.bot.sessionId, signal: new AbortController().signal,
+        approvalPolicy: 'on-request' as const, requestApproval: async () => true,
+      }
+      const listing = listRoutines.execute({}, context)
+      await barrier.profileReadStarted
+      const createdRoutine = await createRoutine.execute({
+        title: 'Native refresh event routine',
+        prompt: 'Run after the native refresh barrier.',
+        event: { type: 'message', source: 'user' },
+      }, { ...context, callId: 'native-refresh-race-create', turnId: 'native-refresh-race-create-turn' })
+      expect(createdRoutine.success).toBe(true)
+      releaseProfileRead.resolve(undefined)
+
+      await expect(listing).resolves.toMatchObject({ success: true })
+      const owner = h.agents[0]
+      const followup = h.followups[0]
+      if (owner === undefined || followup === undefined) throw new Error('native routine read race Agent was not created')
+      owner.session.append('turn/start', { turn: 1 })
+      h.ctx.emit('session/event', owner.session, owner.session.snapshotEvents().at(-1)!)
+      owner.session.append('user/message', createUserMessage({
+        content: [{ type: 'text', text: 'Trigger after native schedule_list refresh.' }],
+        source: { kind: 'user' },
+      }), { surfaceOp: 'append' })
+      h.ctx.emit('session/event', owner.session, owner.session.snapshotEvents().at(-1)!)
+      await vi.waitFor(() => { expect(followup).toHaveBeenCalledOnce() })
+    } finally {
+      releaseProfileRead?.resolve(undefined)
+      await close(h.ctx)
+    }
+  })
+
   it('creates a Bot message-triggered routine and records its model result', async () => {
     const pool = new MemoryMediaPool()
     const first = await harness(pool)
@@ -8414,6 +11252,15 @@ describe('durable Bot roster', () => {
       expect(routine).not.toHaveProperty('deliveries')
       expect(routine).not.toHaveProperty('results')
       expect((await h.service.list({})).bots.find(bot => bot.id === created.bot.id)).not.toHaveProperty('eventRoutines')
+      await expect(h.service.listRoutines({ botId: created.bot.id })).resolves.toEqual({
+        routines: [expect.objectContaining({ kind: 'event', id: routine.id, status: 'active', botId: created.bot.id })],
+      })
+      await expect(h.service.pauseRoutine({ botId: created.bot.id, routineId: routine.id })).resolves.toMatchObject({
+        paused: true, routine: { kind: 'event', id: routine.id, status: 'paused' },
+      })
+      await expect(h.service.resumeRoutine({ botId: created.bot.id, routineId: routine.id })).resolves.toMatchObject({
+        resumed: true, routine: { kind: 'event', id: routine.id, status: 'active' },
+      })
       expect(await update.execute({ id: routine.id, title: 'Review peer messages' }, { ...context, callId: 'event-update' })).toMatchObject({ success: true })
       expect(await pause.execute({ id: routine.id }, { ...context, callId: 'event-pause' })).toMatchObject({ success: true })
       expect(await resume.execute({ id: routine.id }, { ...context, callId: 'event-resume' })).toMatchObject({ success: true })
@@ -8477,6 +11324,12 @@ describe('durable Bot roster', () => {
         expect(execution).toMatchObject({ success: true })
         const value = JSON.parse(execution.contentItems[0]!.text) as { results: readonly { status: string; output?: string }[] }
         expect(value.results).toEqual(expect.arrayContaining([expect.objectContaining({ status: 'completed', output: 'Peer message reviewed.' })]))
+      })
+      await vi.waitFor(async () => {
+        const execution = await h.service.routineHistory({ botId: created.bot.id, routineId: routine.id, limit: 10 })
+        expect(execution).toMatchObject({ kind: 'event', id: routine.id })
+        if (!('kind' in execution) || execution.kind !== 'event') throw new Error('event routine history kind missing')
+        expect(execution.results).toEqual(expect.arrayContaining([expect.objectContaining({ status: 'completed', output: 'Peer message reviewed.' })]))
       })
       expect(await remove.execute({ id: routine.id }, { ...context, callId: 'event-delete' })).toMatchObject({ success: true })
     } finally {
@@ -10133,7 +12986,7 @@ describe('durable Bot roster', () => {
   it('keeps an acknowledged Bot row when the profile fence fails after the row write', async () => {
     const records = new Map<CredentialKey, CredentialRecord>()
     const h = await harness(new MemoryMediaPool(), undefined, undefined, [], new Map(), records)
-    const revisionKey = credentialKey('agent-bots', 'profile-revisions-v2')
+    const revisionKey = credentialKey('agent-bots', 'profile-revisions-v4')
     const originalModify = h.credentials.modifyRecord.bind(h.credentials)
     let revisionCalls = 0
     h.credentials.modifyRecord = async (key, mutate) => {
@@ -10340,7 +13193,7 @@ describe('durable Bot roster', () => {
     const { pool, rows } = postWriteFailurePool()
     const records = new Map<CredentialKey, CredentialRecord>()
     const h = await harness(pool, undefined, undefined, [], new Map(), records)
-    const revisionKey = credentialKey('agent-bots', 'profile-revisions-v2')
+    const revisionKey = credentialKey('agent-bots', 'profile-revisions-v4')
     let closed = false
     try {
       const created = await h.service.create({ name: 'Ambiguous profile', cwd: '/tmp' })
@@ -10494,7 +13347,7 @@ describe('durable Bot roster', () => {
   it('repairs a Bot row when the profile revision commit fails after the row write', async () => {
     const records = new Map<CredentialKey, CredentialRecord>()
     const h = await harness(new MemoryMediaPool(), undefined, undefined, [], new Map(), records)
-    const revisionKey = credentialKey('agent-bots', 'profile-revisions-v2')
+    const revisionKey = credentialKey('agent-bots', 'profile-revisions-v4')
     try {
       const created = await h.service.create({ name: 'Crash-safe profile', cwd: '/tmp' })
       const originalModify = h.credentials.modifyRecord.bind(h.credentials)

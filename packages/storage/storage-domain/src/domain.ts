@@ -137,6 +137,15 @@ export interface Domain<S extends DomainSpec> {
    * @returns resolution after the unit is released.
    */
   close(): Promise<void>
+
+  /**
+   * Reload validated records and the global singleton from the backend.
+   * The reload is serialized with this domain's writes and emits no change
+   * events; callers use it before an authority-serialized cross-Host read or
+   * mutation when the backend may have changed outside this process.
+   * @returns resolution after the in-memory projection matches the loaded snapshot.
+   */
+  refresh(): Promise<void>
 }
 
 /** Internal boundary handing table handles their domain-owned write machinery. */
@@ -190,7 +199,7 @@ export class DomainImpl {
    */
   constructor(
     private readonly ctx: Context,
-    spec: DomainSpec,
+    private readonly spec: DomainSpec,
     private readonly unit: KvUnit,
     records: Map<string, Map<string, unknown>>,
     globalValue: unknown,
@@ -263,6 +272,38 @@ export class DomainImpl {
     return this.disposal
   }
 
+  /** Reload the backend snapshot at a write-chain slot. */
+  refresh(): Promise<void> {
+    return this.enqueue(async () => {
+      const snapshot = await this.unit.loadAll()
+      const nextTables = new Map<string, Map<string, unknown>>()
+      for (const [tableName, tableSpec] of Object.entries(this.spec.tables)) {
+        const records = new Map<string, unknown>()
+        for (const [key, raw] of Object.entries(snapshot.tables[tableName] ?? {})) {
+          try {
+            records.set(key, parseRecord(this.spec.name, tableName, key, () => tableSpec.valueSchema.parse(raw)))
+          } catch (error) {
+            if (this.spec.invalidRecords !== 'backup-and-skip' || this.unit.backupRecord === undefined) throw error
+            const moved = await this.unit.backupRecord(tableName, key)
+            this.ctx.logger.error(
+              `domain '${this.spec.name}': stored record '${key}' in table '${tableName}' failed schema validation; `
+              + `moved to '${moved}' and treated as absent. Cause: ${String((error as DomainError).cause)}`,
+            )
+          }
+        }
+        nextTables.set(tableName, records)
+      }
+      const globalSpec = this.spec.global
+      const nextGlobal = globalSpec === undefined
+        ? undefined
+        : snapshot.global === null
+          ? globalSpec.initial
+          : parseRecord(this.spec.name, '', '', () => globalSpec.schema.parse(snapshot.global))
+      for (const [tableName, records] of nextTables) this.tables.get(tableName)?.replace(records)
+      if (this.spec.global !== undefined) this.globalValue = nextGlobal
+    })
+  }
+
   private async runClose(): Promise<void> {
     this.disposing = true
     // Chain links never reject (each is settled via then(noop, noop)), so
@@ -320,16 +361,20 @@ class KvTableImpl<K extends string, V> implements KvTable<K, V> {
       && typeof this.host.unit.insertRecord === 'function'
   }
 
+  replace(records: Map<string, unknown>): void {
+    this.records.clear()
+    for (const [key, value] of records) this.records.set(key, value)
+  }
+
   get(key: K): V | undefined {
     this.host.assertReadable()
     return this.records.get(key) as V | undefined
   }
 
   getFresh(key: K): Promise<V | undefined> {
-    const getRecord = this.host.unit.getRecord
-    return getRecord === undefined
+    return this.host.unit.getRecord === undefined
       ? Promise.resolve(this.get(key))
-      : getRecord.call(this.host.unit, this.tableName, key).then(value => value === undefined
+      : this.host.unit.getRecord(this.tableName, key).then(value => value === undefined
         ? undefined
         : this.host.parseRecord(this.tableName, key, value) as V)
   }
@@ -376,8 +421,7 @@ class KvTableImpl<K extends string, V> implements KvTable<K, V> {
 
   update(key: K, fn: (current: V) => V): Promise<V> {
     return this.host.enqueue(async () => {
-      const updateRecord = this.host.unit.updateRecord
-      if (updateRecord === undefined) {
+      if (this.host.unit.updateRecord === undefined) {
         if (!this.records.has(key)) {
           throw new DomainError(
             'missing-key',
@@ -390,7 +434,7 @@ class KvTableImpl<K extends string, V> implements KvTable<K, V> {
         this.emitPut(key, next)
         return next
       }
-      const result = await updateRecord.call(this.host.unit, this.tableName, key, (current) => {
+      const result = await this.host.unit.updateRecord(this.tableName, key, (current) => {
         const parsedCurrent = this.host.parseRecord(this.tableName, key, current) as V
         return this.host.parseRecord(this.tableName, key, fn(parsedCurrent))
       })
@@ -409,15 +453,14 @@ class KvTableImpl<K extends string, V> implements KvTable<K, V> {
 
   insert(key: K, value: V): Promise<boolean> {
     return this.host.enqueue(async () => {
-      const insertRecord = this.host.unit.insertRecord
-      if (insertRecord === undefined) {
+      if (this.host.unit.insertRecord === undefined) {
         if (this.records.has(key)) return false
         await this.host.unit.putRecord(this.tableName, key, value)
         this.records.set(key, value)
         this.emitPut(key, value)
         return true
       }
-      const inserted = await insertRecord.call(this.host.unit, this.tableName, key, value)
+      const inserted = await this.host.unit.insertRecord(this.tableName, key, value)
       if (!inserted) return false
       this.records.set(key, value)
       this.emitPut(key, value)
@@ -436,14 +479,20 @@ class KvTableImpl<K extends string, V> implements KvTable<K, V> {
   }
 }
 
-/** Parse one fresh or atomically updated table record with its durable location. */
+/** Parse a durable table record with its location. */
 function parseTableRecord<T>(domain: string, table: string, key: string, parse: () => T): T {
+  return parseRecord(domain, table, key, parse)
+}
+
+/** Parse a refreshed record with its durable location. */
+function parseRecord<T>(domain: string, table: string, key: string, parse: () => T): T {
   try {
     return parse()
   } catch (error) {
+    const slot = table === '' ? 'global' : `record '${key}' in table '${table}'`
     throw new DomainError(
       'invalid-record',
-      `domain '${domain}': stored record '${key}' in table '${table}' does not match its schema`,
+      `domain '${domain}': stored ${slot} does not match its schema`,
       { detail: { table, key }, cause: error },
     )
   }

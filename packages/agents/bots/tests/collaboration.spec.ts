@@ -1,4 +1,5 @@
 import { createUserMessage, freezeMessage, MessageId, type UserMessage } from '@yharness/llm'
+import { AttachmentId } from '@yharness/attachment'
 import { SessionId, SessionSeq, type SessionEvent } from '@yharness/session'
 import { describe, expect, it, vi } from 'vitest'
 import {
@@ -73,6 +74,30 @@ describe('Bot collaboration seam', () => {
     expect(inspected.recent[0]?.text).toContain('Untrusted Bot transcript')
     expect(inspected.recent[0]?.text).toContain('hello')
     expect(inspected.recent[0]?.text).toContain('End untrusted Bot transcript')
+  })
+
+  it('preserves safe attachment metadata when a private transcript is reloaded', async () => {
+    const h = harness()
+    h.events.get('bot-session-beta')!.push(userEvent(createUserMessage({
+      content: [
+        { type: 'text', text: 'Please inspect this.' },
+        {
+          type: 'image',
+          attachment: {
+            attachmentId: AttachmentId(`sha256:${'1'.repeat(64)}`),
+            mediaType: 'image/png', bytes: 4, width: 1, height: 1, name: 'diagram.png',
+          },
+        },
+      ],
+      source: { kind: 'user' },
+    }), 1))
+    const inspected = await (await h.client).inspect(BotId('bot-beta'))
+    expect(inspected.recent[0]).toMatchObject({
+      role: 'user',
+      attachments: [{
+        type: 'image', attachmentId: `sha256:${'1'.repeat(64)}`, mediaType: 'image/png', name: 'diagram.png',
+      }],
+    })
   })
 
   it('does not leak group requests or their assistant replies through generic peer inspection', async () => {

@@ -72,7 +72,7 @@ class SingleJsonUnit implements KvUnit {
     return { tables, global: this.state.global }
   }
 
-  async getRecord(table: string, key: string): Promise<unknown | undefined> {
+  async getRecord(table: string, key: string): Promise<unknown> {
     this.assertOpen()
     this.records(table)
     return (await this.readState()).tables.get(table)?.get(key)

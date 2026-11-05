@@ -926,6 +926,237 @@
   opacity: 0.7;
 }
 
+.routineFilters,
+.routineDetailTabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+
+.routineFilter,
+.routineFilterSelected,
+.routineTab,
+.routineTabSelected {
+  padding: 5px 9px;
+  border: 0;
+  border-radius: var(--yh-radius-md);
+  background: transparent;
+  color: var(--yh-alias-label-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  line-height: 17px;
+}
+
+.routineFilter:hover,
+.routineTab:hover {
+  background: var(--yh-alias-interactive-bg-hover);
+  color: var(--yh-alias-label-primary);
+}
+
+.routineFilterSelected,
+.routineTabSelected {
+  background: var(--yh-alias-interactive-bg-active);
+  color: var(--yh-alias-label-primary);
+  font-weight: 500;
+}
+
+.routineLayout {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+  gap: 12px;
+}
+
+.routineList,
+.routineHistoryList {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.routineRow,
+.routineRowSelected {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 5px;
+  padding: 8px;
+  border: 0.5px solid var(--yh-alias-border-l2);
+  border-radius: var(--yh-radius-lg);
+  background: var(--yh-alias-bg-layer-2);
+}
+
+.routineRowSelected {
+  border-color: var(--yh-alias-state-business-primary);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--yh-alias-state-business-primary) 30%, transparent);
+}
+
+.routineRowSelect {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--yh-alias-label-primary);
+  cursor: pointer;
+  text-align: left;
+}
+
+.routineRowIcon {
+  display: inline-flex;
+  flex: none;
+  color: var(--yh-alias-label-secondary);
+}
+
+.routineRowCopy {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.routineRowCopy strong,
+.routineRowCopy span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.routineRowCopy strong {
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 17px;
+}
+
+.routineRowCopy span {
+  color: var(--yh-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 15px;
+}
+
+.routineRowActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+}
+
+.routineDetail {
+  min-width: 0;
+  padding: 10px;
+  border: 0.5px solid var(--yh-alias-border-l2);
+  border-radius: var(--yh-radius-lg);
+  background: var(--yh-alias-bg-layer-2);
+}
+
+.routineDetailTabs {
+  margin-bottom: 10px;
+  border-bottom: 0.5px solid var(--yh-alias-border-l2);
+}
+
+.routineRule {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.routineRule strong {
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.routineRule p {
+  margin: 0;
+  color: var(--yh-alias-label-secondary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.routineRule span {
+  color: var(--yh-alias-label-tertiary);
+}
+
+.routineHistoryList {
+  gap: 8px;
+}
+
+.routineHistoryContent,
+.routineHistorySection,
+.routineHistoryMeta {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.routineHistorySection + .routineHistorySection {
+  margin-top: 14px;
+}
+
+.routineHistorySectionTitle {
+  color: var(--yh-alias-label-primary);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 17px;
+}
+
+.routineHistoryMeta {
+  color: var(--yh-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.routineHistoryMeta button {
+  align-self: flex-start;
+}
+
+.routineHistoryRow {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+  padding-bottom: 8px;
+  border-bottom: 0.5px solid var(--yh-alias-border-l2);
+  color: var(--yh-alias-label-secondary);
+  font-size: 12px;
+  line-height: 17px;
+}
+
+.routineHistoryRow strong {
+  color: var(--yh-alias-label-primary);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.routineHistoryRow span {
+  overflow-wrap: anywhere;
+}
+
+.routineHistoryEmpty {
+  margin: 20px 0;
+  color: var(--yh-alias-label-tertiary);
+  font-size: 12px;
+  text-align: center;
+}
+
+@media (max-width: 720px) {
+  .routineLayout {
+    grid-template-columns: 1fr;
+  }
+}
+
 .memoryEditorActions {
   justify-content: flex-end;
   gap: 6px;
@@ -1061,6 +1292,7 @@
 .groupComposerWrap {
   position: relative;
   display: flex;
+  flex-wrap: wrap;
   flex: none;
   align-items: flex-end;
   gap: 8px;
@@ -1096,6 +1328,194 @@
 .groupComposerWrap:focus-within {
   border-color: var(--yh-alias-state-business-primary);
   box-shadow: 0 0 0 1px var(--yh-alias-state-business-primary);
+}
+
+.groupAttachments {
+  display: flex;
+  width: 100%;
+  flex: 0 0 100%;
+  order: -2;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  padding-top: 2px;
+}
+
+.groupAttachmentNotice {
+  display: flex;
+  width: 100%;
+  flex: 0 0 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  order: -1;
+  padding: 3px 4px 1px;
+  color: var(--yh-alias-state-error-primary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.groupAttachmentNotice > span {
+  min-width: 0;
+}
+
+.groupAttachmentInput {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.groupAttachmentRail {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 2px 0;
+  scrollbar-width: thin;
+}
+
+.groupAttachmentCard {
+  position: relative;
+  display: flex;
+  width: min(220px, 42vw);
+  min-width: 164px;
+  height: 48px;
+  flex: none;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 6px;
+  border: 0.5px solid var(--yh-alias-border-l2);
+  border-radius: var(--yh-radius-md);
+  background: var(--yh-alias-bg-layer-1);
+}
+
+.groupSentAttachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.groupSentAttachments a {
+  text-decoration: none;
+}
+
+.groupSentAttachments a:hover {
+  background: var(--yh-alias-interactive-bg-hover);
+}
+
+.groupSentAttachments a:focus-visible {
+  outline: 1px solid var(--yh-focus-ring-color, var(--yh-alias-state-business-primary));
+  outline-offset: 1px;
+}
+
+.groupAttachmentCard[data-state='error'] {
+  border-color: var(--yh-alias-state-error-primary);
+}
+
+.groupAttachmentPreview,
+.groupAttachmentIcon {
+  display: inline-flex;
+  width: 38px;
+  height: 38px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: var(--yh-radius-sm);
+  background: var(--yh-alias-bg-layer-2);
+}
+
+.groupAttachmentPreview {
+  padding: 0;
+  border: 0;
+  cursor: pointer;
+}
+
+.groupAttachmentPreview:focus-visible,
+.groupAttachmentAction:focus-visible {
+  outline: 1px solid var(--yh-focus-ring-color, var(--yh-alias-state-business-primary));
+  outline-offset: 1px;
+}
+
+.groupAttachmentPreview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.groupAttachmentCopy {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.groupAttachmentName,
+.groupAttachmentMeta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.groupAttachmentName {
+  color: var(--yh-alias-label-primary);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 17px;
+}
+
+.groupAttachmentMeta {
+  color: var(--yh-alias-label-tertiary);
+  font-size: 10px;
+  line-height: 14px;
+}
+
+.groupAttachmentCard[data-state='error'] .groupAttachmentMeta {
+  color: var(--yh-alias-state-error-primary);
+}
+
+.groupAttachmentAction {
+  display: inline-flex;
+  width: 22px;
+  height: 22px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  corner-shape: round;
+  background: transparent;
+  color: var(--yh-alias-label-tertiary);
+  cursor: pointer;
+}
+
+.groupAttachmentAction:hover:not(:disabled) {
+  background: var(--yh-alias-interactive-bg-hover);
+  color: var(--yh-alias-label-primary);
+}
+
+.groupAttachmentAction:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+@media (max-width: 720px) {
+  .groupAttachments {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .groupAttachmentRail {
+    width: 100%;
+  }
 }
 
 .mentionMenu {
@@ -1632,14 +2052,27 @@
 
 .sharedComposer {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   padding: 7px;
   border-top: 0.5px solid var(--yh-alias-border-l2);
 }
 
-.sharedComposer > :first-child {
+.sharedComposerTextRow {
+  display: flex;
   min-width: 0;
   flex: 1;
+  gap: 6px;
+}
+
+.sharedComposerTextRow > :first-child {
+  min-width: 0;
+  flex: 1;
+}
+
+.sharedComposer > .groupAttachments,
+.sharedComposer > .groupAttachmentNotice {
+  flex: 0 0 100%;
 }
 .connectedAppCopy > span {
   overflow: hidden;

@@ -738,6 +738,18 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'Per-recipient delivery outcomes.',
       },
       {
+        signature: '@Remote(\'inspectSharedGroupDeliveryFences\') async inspectSharedGroupDeliveryFences( request: { readonly botId: BotId }, ): Promise<BotSharedGroupDeliveryFenceDiagnosticValue>',
+        description: 'Read owner-visible recipient fences that require explicit shared-group recovery. This owner Remote returns only the exact identities needed for a later recovery; collaborator endpoints do not mount it.',
+        parameters: [{ name: 'request', description: 'Recipient Bot to inspect.' }],
+        returns: 'Exact group, Bot, Session, and message identities without transcript data.',
+      },
+      {
+        signature: '@Remote(\'admitGroupImage\') async admitGroupImage(request: BotGroupImageAdmissionRequest): Promise<BotAttachmentGrantValue>',
+        description: 'Admit one owner-local encoded image for an explicitly identified group message.',
+        parameters: [{ name: 'request', description: 'Group, message, recipient, and encoded image.' }],
+        returns: 'Opaque grant id and safe image metadata.',
+      },
+      {
         signature: '@Remote(\'recoverSharedGroupDelivery\') async recoverSharedGroupDelivery(request: BotGroupDeliveryRecoveryRequest): Promise<BotGroupDeliveryRecoveryValue>',
         description: 'Reconcile one isolated shared-group recipient fence after an explicit owner confirmation that every Host able to own the Session is quiesced.',
         parameters: [{ name: 'request', description: 'Exact group, Bot, Session, and message identities.' }],
@@ -754,6 +766,36 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'Read the owner-local shared-roster fence needed for explicit recovery. This method is not part of the collaborator endpoint allowlist.',
         parameters: [],
         returns: 'The current fence status and, when held, its opaque recovery token.',
+      },
+      {
+        signature: '@Remote(\'listRoutines\') async listRoutines(request: BotRoutineListRequest): Promise<BotRoutineListValue>',
+        description: 'List timed and message-triggered routines owned by one Bot.\n\nThis lookup never activates the Bot Session. Timed rows are read from the Host Schedule catalog and event rows from the Bot record, after checking the configured owner scope.',
+        parameters: [{ name: 'request', description: 'Bot identity whose routine catalog should be returned.' }],
+        returns: 'The Bot\'s active, paused, and ended routine rows.',
+      },
+      {
+        signature: '@Remote(\'pauseRoutine\') async pauseRoutine(request: BotRoutineLifecycleRequest): Promise<BotRoutinePauseValue>',
+        description: 'Pause one routine owned by a Bot without waking its Session.',
+        parameters: [{ name: 'request', description: 'Bot and routine identity.' }],
+        returns: 'The paused routine or a bounded lookup/ended result.',
+      },
+      {
+        signature: '@Remote(\'resumeRoutine\') async resumeRoutine(request: BotRoutineLifecycleRequest): Promise<BotRoutineResumeValue>',
+        description: 'Resume one paused routine owned by a Bot without waking its Session.',
+        parameters: [{ name: 'request', description: 'Bot and routine identity.' }],
+        returns: 'The active routine or a bounded lookup/ended result.',
+      },
+      {
+        signature: '@Remote(\'deleteRoutine\') async deleteRoutine(request: BotRoutineLifecycleRequest): Promise<BotRoutineDeleteValue>',
+        description: 'Delete one routine owned by a Bot and its bounded run history.',
+        parameters: [{ name: 'request', description: 'Bot and routine identity.' }],
+        returns: 'A stable deletion marker or a bounded lookup result.',
+      },
+      {
+        signature: '@Remote(\'routineHistory\') async routineHistory(request: BotRoutineHistoryRequest): Promise<BotRoutineHistoryValue>',
+        description: 'Read one bounded routine history page without activating the Bot Session.',
+        parameters: [{ name: 'request', description: 'Bot, routine, page size, and optional timed-delivery cursor.' }],
+        returns: 'Newest-first timed receipts or event deliveries/results.',
       },
       {
         signature: '@Remote(\'listMemory\') async listMemory(request: BotMemoryListRequest): Promise<BotMemoryListValue>',
@@ -5628,6 +5670,18 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface BotAppearanceUpdateValue {\n    readonly bot: BotView;\n}',
   },
   {
+    name: 'BotAttachmentGrantId',
+    declaration: 'export type BotAttachmentGrantId = Branded<\'BotAttachmentGrantId\'>;',
+  },
+  {
+    name: 'BotAttachmentGrantValue',
+    declaration: 'export interface BotAttachmentGrantValue {\n    readonly grantId: BotAttachmentGrantId;\n    readonly attachments: readonly BotAttachmentMetadata[];\n}',
+  },
+  {
+    name: 'BotAttachmentMetadata',
+    declaration: 'export type BotAttachmentMetadata = {\n    readonly type: \'image\';\n    readonly mediaType: ImageAttachmentRef[\'mediaType\'];\n    readonly bytes: number;\n    readonly width: number;\n    readonly height: number;\n    readonly name?: string;\n} | {\n    readonly type: \'file\';\n    readonly name: string;\n    readonly bytes: number;\n};',
+  },
+  {
     name: 'BotAvailability',
     declaration: 'export type BotAvailability = \'running\' | \'idle\' | \'offline\';',
   },
@@ -5669,7 +5723,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'BotCollaborationTranscriptEntry',
-    declaration: 'export interface BotCollaborationTranscriptEntry {\n    readonly role: \'user\' | \'assistant\';\n    readonly text: string;\n}',
+    declaration: 'export interface BotCollaborationTranscriptEntry {\n    readonly role: \'user\' | \'assistant\';\n    readonly text: string;\n    readonly attachments?: readonly BotInputAttachmentView[];\n}',
   },
   {
     name: 'BotConnectedAppAccessRequest',
@@ -5704,12 +5758,24 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface BotEventRoutineAdmissionTombstone {\n    readonly triggerEventSeq: number;\n    readonly triggerMessageId?: MessageId | undefined;\n}',
   },
   {
+    name: 'BotEventRoutineCatalogView',
+    declaration: 'export type BotEventRoutineCatalogView = BotEventRoutineView & {\n    readonly botId: BotId;\n    readonly sessionId: SessionId;\n};',
+  },
+  {
     name: 'BotEventRoutineDelivery',
     declaration: 'export interface BotEventRoutineDelivery {\n    readonly triggerEventSeq: number;\n    readonly triggerMessageId?: MessageId | undefined;\n    readonly messageId: MessageId;\n    readonly chainId?: string | undefined;\n    readonly depth?: number | undefined;\n    readonly status: \'pending\' | \'delivered\';\n    readonly dispatchStartedAt?: string | undefined;\n    readonly createdAt: string;\n    readonly deliveredAt?: string | undefined;\n}',
   },
   {
+    name: 'BotEventRoutineHistory',
+    declaration: 'export interface BotEventRoutineHistory {\n    readonly kind: \'event\';\n    readonly id: string;\n    readonly deliveries: readonly BotEventRoutineDelivery[];\n    readonly results: readonly BotEventRoutineResult[];\n}',
+  },
+  {
     name: 'BotEventRoutineResult',
     declaration: 'export interface BotEventRoutineResult {\n    readonly messageId: MessageId;\n    readonly status: \'completed\' | \'error\' | \'aborted\' | \'blocked\' | \'max-tokens\' | \'interrupted\' | \'forked\' | \'other\';\n    readonly completedAt: string;\n    readonly output?: string | undefined;\n    readonly error?: string | undefined;\n}',
+  },
+  {
+    name: 'BotEventRoutineView',
+    declaration: 'export type BotEventRoutineView = Omit<BotEventRoutine, \'deliveries\' | \'results\'> & {\n    readonly kind: \'event\';\n    readonly state: \'waiting\';\n    readonly deliveryMode: \'host\';\n};',
   },
   {
     name: 'BotEventSource',
@@ -5756,6 +5822,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type BotGroupId = Branded<\'BotGroupId\'>;',
   },
   {
+    name: 'BotGroupImageAdmissionRequest',
+    declaration: 'export interface BotGroupImageAdmissionRequest {\n    readonly groupId: BotGroupId;\n    readonly messageId: BotGroupMessageId;\n    readonly targetBotIds?: readonly BotId[];\n    readonly image: EncodedImageAttachment;\n}',
+  },
+  {
     name: 'BotGroupInspectRequest',
     declaration: 'export interface BotGroupInspectRequest {\n    readonly groupId: BotGroupId;\n}',
   },
@@ -5785,7 +5855,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'BotGroupMessageView',
-    declaration: 'export interface BotGroupMessageView {\n    readonly id: BotGroupMessageId;\n    readonly groupId: BotGroupId;\n    readonly sender: BotGroupMessageSenderView;\n    readonly text: string;\n    readonly targetBotIds?: readonly BotId[];\n    readonly createdAt: number;\n}',
+    declaration: 'export interface BotGroupMessageView {\n    readonly id: BotGroupMessageId;\n    readonly groupId: BotGroupId;\n    readonly sender: BotGroupMessageSenderView;\n    readonly text: string;\n    readonly targetBotIds?: readonly BotId[];\n    readonly attachments?: readonly BotInputAttachmentView[];\n    readonly createdAt: number;\n}',
   },
   {
     name: 'BotGroupRecord',
@@ -5793,7 +5863,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'BotGroupSendRemoteRequest',
-    declaration: 'export interface BotGroupSendRemoteRequest {\n    readonly groupId: BotGroupId;\n    readonly text: string;\n    readonly messageId?: BotGroupMessageId;\n    readonly targetBotIds?: readonly BotId[];\n}',
+    declaration: 'export interface BotGroupSendRemoteRequest {\n    readonly groupId: BotGroupId;\n    readonly text: string;\n    readonly messageId?: BotGroupMessageId;\n    readonly targetBotIds?: readonly BotId[];\n    readonly attachmentGrants?: readonly BotAttachmentGrantIdType[];\n}',
   },
   {
     name: 'BotGroupSendValue',
@@ -5814,6 +5884,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'BotId',
     declaration: 'export type BotId = Branded<\'BotId\'>;',
+  },
+  {
+    name: 'BotInputAttachmentView',
+    declaration: 'export type BotInputAttachmentView = BotAttachmentMetadata & {\n    readonly attachmentId: string;\n};',
   },
   {
     name: 'BotListRequest',
@@ -5910,6 +5984,62 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'BotRenameValue',
     declaration: 'export interface BotRenameValue {\n    readonly bot: BotView;\n}',
+  },
+  {
+    name: 'BotRoutineDeleteValue',
+    declaration: 'export type BotRoutineDeleteValue = {\n    readonly id: string;\n    readonly deleted: true;\n} | {\n    readonly id: string;\n    readonly deleted: false;\n    readonly code: \'routine_not_found\';\n};',
+  },
+  {
+    name: 'BotRoutineHistoryRequest',
+    declaration: 'export interface BotRoutineHistoryRequest {\n    readonly botId: BotId;\n    readonly routineId: string;\n    readonly limit: number;\n    readonly before?: MessageId;\n}',
+  },
+  {
+    name: 'BotRoutineHistoryValue',
+    declaration: 'export type BotRoutineHistoryValue = BotScheduleRoutineHistory | BotEventRoutineHistory | BotRoutineLookupFailure;',
+  },
+  {
+    name: 'BotRoutineLifecycleRequest',
+    declaration: 'export interface BotRoutineLifecycleRequest {\n    readonly botId: BotId;\n    readonly routineId: string;\n}',
+  },
+  {
+    name: 'BotRoutineListRequest',
+    declaration: 'export interface BotRoutineListRequest {\n    readonly botId: BotId;\n}',
+  },
+  {
+    name: 'BotRoutineListValue',
+    declaration: 'export interface BotRoutineListValue {\n    readonly routines: readonly BotRoutineView[];\n}',
+  },
+  {
+    name: 'BotRoutineLookupFailure',
+    declaration: 'export type BotRoutineLookupFailure = {\n    readonly id: string;\n    readonly code: \'routine_not_found\' | \'routine_ended\' | \'delivery_cursor_not_found\';\n};',
+  },
+  {
+    name: 'BotRoutinePauseValue',
+    declaration: 'export type BotRoutinePauseValue = {\n    readonly routine: BotRoutineView;\n    readonly paused: true;\n} | {\n    readonly id: string;\n    readonly paused: false;\n    readonly code: \'routine_not_found\' | \'routine_ended\';\n};',
+  },
+  {
+    name: 'BotRoutineResumeValue',
+    declaration: 'export type BotRoutineResumeValue = {\n    readonly routine: BotRoutineView;\n    readonly resumed: true;\n} | {\n    readonly id: string;\n    readonly resumed: false;\n    readonly code: \'routine_not_found\' | \'routine_ended\';\n};',
+  },
+  {
+    name: 'BotRoutineView',
+    declaration: 'export type BotRoutineView = BotScheduleRoutineView | BotEventRoutineCatalogView;',
+  },
+  {
+    name: 'BotScheduleRoutineHistory',
+    declaration: 'export interface BotScheduleRoutineHistory {\n    readonly kind: \'schedule\';\n    readonly id: ScheduleId;\n    readonly records: readonly ScheduleDeliveryRecord[];\n    readonly earlierRecordsUnavailable: boolean;\n    readonly earlierRecordsPruned: boolean;\n    readonly retention: {\n        readonly days: number;\n        readonly records: number;\n    };\n    readonly nextBefore?: MessageId;\n}',
+  },
+  {
+    name: 'BotScheduleRoutineView',
+    declaration: 'export type BotScheduleRoutineView = Omit<ScheduleView, \'kind\'> & {\n    readonly kind: \'schedule\';\n    readonly botId: BotId;\n    readonly sessionId: SessionId;\n    readonly status: ScheduleCatalogEntry[\'status\'];\n    readonly lastDelivery?: ScheduleCatalogEntry[\'lastDelivery\'];\n    readonly scheduleKind: ScheduleView[\'kind\'];\n    readonly afterSeconds?: number;\n    readonly everySeconds?: number;\n    readonly time?: string;\n    readonly timeZone?: string;\n    readonly expression?: string;\n};',
+  },
+  {
+    name: 'BotSharedGroupDeliveryFenceDiagnosticValue',
+    declaration: 'export interface BotSharedGroupDeliveryFenceDiagnosticValue {\n    readonly fences: readonly BotSharedGroupDeliveryFenceView[];\n}',
+  },
+  {
+    name: 'BotSharedGroupDeliveryFenceView',
+    declaration: 'export interface BotSharedGroupDeliveryFenceView {\n    readonly groupId: BotGroupId;\n    readonly botId: BotId;\n    readonly sessionId: string;\n    readonly messageId: BotGroupMessageId;\n}',
   },
   {
     name: 'BotSharedRosterFenceDiagnosticValue',
@@ -6701,7 +6831,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'Domain',
-    declaration: 'export interface Domain<S extends DomainSpec> {\n    readonly name: string;\n    readonly global: DomainGlobalHandleOf<S>;\n    table<N extends keyof S[\'tables\'] & string>(name: N): KvTable<TableKeyOf<S, N>, TableValueOf<S, N>>;\n    close(): Promise<void>;\n}',
+    declaration: 'export interface Domain<S extends DomainSpec> {\n    readonly name: string;\n    readonly global: DomainGlobalHandleOf<S>;\n    table<N extends keyof S[\'tables\'] & string>(name: N): KvTable<TableKeyOf<S, N>, TableValueOf<S, N>>;\n    close(): Promise<void>;\n    refresh(): Promise<void>;\n}',
   },
   {
     name: 'DomainChanged',
@@ -6733,7 +6863,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'DomainImpl',
-    declaration: 'export class DomainImpl {\n    readonly name: string;\n    constructor(private readonly ctx: Context, spec: DomainSpec, private readonly unit: KvUnit, records: Map<string, Map<string, unknown>>, globalValue: unknown, private readonly onClosed: () => void);\n    get global(): DomainGlobal<unknown>;\n    table(name: string): KvTable<string, unknown>;\n    close(): Promise<void>;\n}',
+    declaration: 'export class DomainImpl {\n    readonly name: string;\n    constructor(private readonly ctx: Context, private readonly spec: DomainSpec, private readonly unit: KvUnit, records: Map<string, Map<string, unknown>>, globalValue: unknown, private readonly onClosed: () => void);\n    get global(): DomainGlobal<unknown>;\n    table(name: string): KvTable<string, unknown>;\n    close(): Promise<void>;\n    refresh(): Promise<void>;\n}',
   },
   {
     name: 'DomainSpec',

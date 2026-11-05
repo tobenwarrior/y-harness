@@ -215,7 +215,7 @@ export class PerRecordJsonUnit implements KvUnit {
     return { tables, global: state.global }
   }
 
-  async getRecord(table: string, key: string): Promise<unknown | undefined> {
+  async getRecord(table: string, key: string): Promise<unknown> {
     this.assertOpen()
     assertSafeKey(this.descriptor.name, key)
     return readRecord(join(this.tableDir(table), `${key}.json`), acceptedStamps(this.descriptor))

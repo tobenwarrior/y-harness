@@ -6,6 +6,7 @@ import type { SessionId } from '@yharness/session/types'
 import { RemoteError } from '@yharness/typert-protocol'
 import {
   BotId,
+  type BotAttachmentGrantId,
   type BotGroupId,
   type BotGroupInspectValue,
   type BotGroupMessageId,
@@ -18,6 +19,7 @@ import {
   type BotView,
 } from '@yharness/bots/client'
 import { brandString } from '@yharness/brand'
+import { MessageId } from '@yharness/llm/brand'
 import type { RemoteResult } from '@yharness/api-remotes/client'
 import { BotWorkspaceController, type BotAvatarGenerationRemote, type BotGroupPendingState, type BotGroupPendingStore, type BotWorkspaceRemote } from '../src/client/controller.ts'
 
@@ -271,8 +273,8 @@ describe('BotWorkspaceController', () => {
     const updateSkills = vi.fn(async () => ({
       ok: true as const,
       value: {
-        bot: { ...original, skillPolicy: { mode: 'selected', enabled: ['code-review'], disabled: [] }, updatedAt: 2 },
-        policy: { mode: 'selected', enabled: ['code-review'], disabled: [] },
+        bot: { ...original, skillPolicy: { mode: 'selected' as const, enabled: ['code-review'], disabled: [] }, updatedAt: 2 },
+        policy: { mode: 'selected' as const, enabled: ['code-review'], disabled: [] },
         revision: 1,
         skills: [{ name: 'code-review', description: 'Review code', enabled: true, available: true }],
       },
@@ -285,13 +287,13 @@ describe('BotWorkspaceController', () => {
     const manager = controller.face().skillManager
     expect(manager).toBeDefined()
     await expect(manager?.list(original.id)).resolves.toMatchObject({ policy })
-    await manager?.update(original.id, { mode: 'selected', enabled: ['code-review'], disabled: [] }, 0)
+    await manager?.update(original.id, { mode: 'selected' as const, enabled: ['code-review'], disabled: [] }, 0)
     expect(listSkills).toHaveBeenCalledWith({ botId: original.id })
     expect(updateSkills).toHaveBeenCalledWith({
-      botId: original.id, expectedRevision: 0, mode: 'selected', enabled: ['code-review'], disabled: [],
+      botId: original.id, expectedRevision: 0, mode: 'selected' as const, enabled: ['code-review'], disabled: [],
     })
     expect(controller.source.getSnapshot().bots[0]?.skillPolicy).toEqual({
-      mode: 'selected', enabled: ['code-review'], disabled: [],
+      mode: 'selected' as const, enabled: ['code-review'], disabled: [],
     })
     controller.dispose()
   })
@@ -1028,6 +1030,57 @@ describe('BotWorkspaceController', () => {
     expect(retain).toHaveBeenCalledOnce()
   })
 
+  it('admits an owner-local image before sending its scoped grant', async () => {
+    const first = bot('bot-attachment-local-first', 'session-attachment-local-first')
+    const second = bot('bot-attachment-local-second', 'session-attachment-local-second')
+    const group = groupView('bot-group-attachment-local', 'Attachment room', [first, second])
+    const remote = remoteFixture([first, second])
+    remote.listGroups = vi.fn(async () => ({ ok: true as const, value: { groups: [group] } }))
+    remote.inspectGroup = vi.fn(async () => ({ ok: true as const, value: { group, messages: [] } }))
+    remote.admitGroupImage = vi.fn(async request => ({
+      ok: true as const,
+      value: {
+        grantId: brandString<BotAttachmentGrantId>('bot-attachment-grant-local-image'),
+        attachments: [{ type: 'image' as const, mediaType: request.image.mediaType, bytes: 3, width: 1, height: 1, name: request.image.name }],
+      },
+    }))
+    remote.sendGroupMessage = vi.fn(async request => ({
+      ok: true as const,
+      value: { messageId: request.messageId!, status: 'accepted' as const, deliveries: [] },
+    }))
+    const fetcher = vi.fn<typeof fetch>()
+    const controller = new BotWorkspaceController(
+      remote,
+      sessionsFixture().sessions,
+      () => 'unexpected response',
+      undefined,
+      undefined,
+      pendingStoreFixture(),
+      undefined,
+      undefined,
+      fetcher,
+    )
+    await controller.load()
+    controller.face().selectGroup(String(group.id))
+    await vi.waitFor(() => { expect(controller.source.getSnapshot().selectedGroup).not.toBeNull() })
+
+    await controller.face().sendGroupMessageWithAttachments(
+      'Review this image',
+      [{ id: 'draft-local-image', file: new File([new Uint8Array([1, 2, 3])], 'image.png', { type: 'image/png' }), state: 'ready' }],
+      'bot-group-message-local-image',
+    )
+
+    expect(remote.admitGroupImage).toHaveBeenCalledWith(expect.objectContaining({
+      groupId: group.id, messageId: 'bot-group-message-local-image',
+      image: expect.objectContaining({ data: 'AQID', name: 'image.png' }),
+    }))
+    expect(remote.sendGroupMessage).toHaveBeenCalledWith(expect.objectContaining({
+      messageId: 'bot-group-message-local-image', attachmentGrants: ['bot-attachment-grant-local-image'],
+    }))
+    expect(fetcher).not.toHaveBeenCalled()
+    controller.dispose()
+  })
+
   it('keeps a newer Bot selection when group creation completes later', async () => {
     const first = bot('bot-create-selection-first', 'session-create-selection-first')
     const second = bot('bot-create-selection-second', 'session-create-selection-second')
@@ -1648,5 +1701,51 @@ describe('BotWorkspaceController', () => {
     expect(listMemory).toHaveBeenCalledWith({ botId: persisted.id })
     expect(updateMemory).toHaveBeenCalledWith({ botId: persisted.id, memoryId: 'memory-one', text: 'Keep the review short.' })
     expect(forgetMemory).toHaveBeenCalledWith({ botId: persisted.id, memoryId: 'memory-one' })
+  })
+
+  it('mounts owner-scoped routine callbacks and preserves routine ids', async () => {
+    const persisted = bot('bot-routine-owner', 'bot-session-routine-owner')
+    const routine = {
+      kind: 'event' as const,
+      id: 'routine-one',
+      title: 'Review messages',
+      prompt: 'Review incoming messages.',
+      trigger: { type: 'message' as const, source: 'user' as const },
+      status: 'active' as const,
+      createdAt: 1,
+      updatedAt: 1,
+      state: 'waiting' as const,
+      deliveryMode: 'host' as const,
+      botId: persisted.id,
+      sessionId: persisted.sessionId,
+    }
+    const remote = remoteFixture([persisted])
+    const listRoutines = vi.fn(async () => ({ ok: true as const, value: { routines: [routine] } }))
+    const pauseRoutine = vi.fn(async () => ({ ok: true as const, value: { routine: { ...routine, status: 'paused' as const }, paused: true as const } }))
+    const resumeRoutine = vi.fn(async () => ({ ok: true as const, value: { routine, resumed: true as const } }))
+    const deleteRoutine = vi.fn(async () => ({ ok: true as const, value: { id: 'routine-one', deleted: true as const } }))
+    const routineHistory = vi.fn(async () => ({ ok: true as const, value: { kind: 'event' as const, id: 'routine-one', deliveries: [], results: [] } }))
+    remote.listRoutines = listRoutines
+    remote.pauseRoutine = pauseRoutine
+    remote.resumeRoutine = resumeRoutine
+    remote.deleteRoutine = deleteRoutine
+    remote.routineHistory = routineHistory
+    const controller = new BotWorkspaceController(remote, sessionsFixture().sessions, () => 'unexpected response')
+
+    const manager = controller.face().routineManager
+    if (manager === undefined) throw new Error('routine manager was not mounted')
+    await expect(manager.list(String(persisted.id))).resolves.toEqual([routine])
+    await expect(manager.pause(String(persisted.id), 'routine-one')).resolves.toMatchObject({ id: 'routine-one', status: 'paused' })
+    await expect(manager.resume(String(persisted.id), 'routine-one')).resolves.toEqual(routine)
+    await expect(manager.history(String(persisted.id), 'routine-one')).resolves.toMatchObject({ kind: 'event', id: 'routine-one' })
+    await expect(manager.history(String(persisted.id), 'routine-one', MessageId('older-routine-result'))).resolves.toMatchObject({ kind: 'event', id: 'routine-one' })
+    await expect(manager.remove(String(persisted.id), 'routine-one')).resolves.toBeUndefined()
+
+    expect(listRoutines).toHaveBeenCalledWith({ botId: persisted.id })
+    expect(pauseRoutine).toHaveBeenCalledWith({ botId: persisted.id, routineId: 'routine-one' })
+    expect(resumeRoutine).toHaveBeenCalledWith({ botId: persisted.id, routineId: 'routine-one' })
+    expect(routineHistory).toHaveBeenCalledWith({ botId: persisted.id, routineId: 'routine-one', limit: 50 })
+    expect(routineHistory).toHaveBeenCalledWith({ botId: persisted.id, routineId: 'routine-one', limit: 50, before: MessageId('older-routine-result') })
+    expect(deleteRoutine).toHaveBeenCalledWith({ botId: persisted.id, routineId: 'routine-one' })
   })
 })

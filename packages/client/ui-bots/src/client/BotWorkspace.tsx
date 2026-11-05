@@ -4,12 +4,13 @@ import clsx from 'clsx'
 import {
   Button, IconArchiveOffOutlineRegular, IconCheckOutlineRegular, IconEditOutlineRegular, IconEllipsisOutlineRegular,
   IconFolderOpenOutlineRegular, IconLinkOutlineRegular, IconPaperPlaneOutlineRegular, IconPlusOutlineRegular,
-  IconPinFillRegular, IconPinOutlineRegular, IconShareOutlineRegular, IconContextInjectionOutlineRegular,
+  IconPinFillRegular, IconPinOutlineRegular, IconShareOutlineRegular, IconContextInjectionOutlineRegular, IconClockOutlineRegular,
   IconSidebarBotAddOutlineRegular, IconSidebarBotsOutlineRegular, IconSidebarSearchOutlineRegular,
   IconSidebarSkillsOutlineRegular,
   IconUnarchiveOutlineRegular, IconUsersOutlineRegular, Input, Menu, MenuSurface, Modal, StateDot, Tag, Tooltip, connectedAppGlyph,
 } from '@yharness/client-ui-primitives'
 import type { PropsLocale } from '@yharness/client-ui-slots'
+import { randomUUID } from '@yharness/util-crypto'
 import { BotAvatar } from './BotAvatar.tsx'
 import { BotAvatarEditor } from './BotAvatarEditor.tsx'
 import { BotAppearancePicker } from './BotAppearancePicker.tsx'
@@ -17,12 +18,20 @@ import { BotShareDialog, SharedBotsDialog } from './BotSharing.tsx'
 import type { BotShareActions } from './controller.ts'
 import type { SharedBotsClient } from './shared-client.ts'
 import { BotTemplatesPanel } from './BotTemplatesPanel.tsx'
+import {
+  BotGroupAttachments,
+  BotGroupSentAttachments,
+  createBotGroupAttachmentDraft,
+  releaseBotGroupAttachment,
+} from './BotGroupAttachments.tsx'
 import { BotMemoryManager } from './BotMemoryManager.tsx'
 import { BotSkillsManager } from './BotSkillsManager.tsx'
+import { BotRoutineManager } from './BotRoutineManager.tsx'
 import css from './BotWorkspace.module.css'
 import type {
-  BotAccent, BotConnectedAppAccess, BotGroupCreation, BotGroupDeliverySummary, BotGroupDetailData, BotGroupMessageSummary, BotGroupSummary,
-  BotIdentity, BotMemoryManagerActions, BotOrganizationPatch, BotProfileUpdate, BotSkillManagerActions,
+  BotAccent, BotConnectedAppAccess, BotGroupAttachmentDraft, BotGroupCreation, BotGroupDeliverySummary,
+  BotGroupDetailData, BotGroupMessageSummary, BotGroupSummary,
+  BotIdentity, BotMemoryManagerActions, BotOrganizationPatch, BotProfileUpdate, BotSkillManagerActions, BotRoutineManagerActions,
   BotStatus, BotSummary, BotWorkspaceProps,
 } from './types.ts'
 
@@ -31,6 +40,8 @@ type BotWorkspaceViewProps = BotWorkspaceProps & PropsLocale<'bots'> & {
   share?: BotShareActions
   sharedClient?: SharedBotsClient
 }
+
+const MAX_SHARED_OWNER_CAPABILITY_FOCUS_RETRIES = 3
 
 function connectedAppName(app: BotConnectedAppAccess, t: BotWorkspaceViewProps['t']): string {
   const name = app.name.trim()
@@ -481,7 +492,7 @@ function deliveryStatusText(
 }
 
 /** Render a persistent workspace group transcript without creating a second Bot Session. */
-export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate, onSend, loadAvatar, t }: {
+export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate, onSend, onSendWithAttachments, loadAvatar, t }: {
   group: BotGroupDetailData | undefined
   bots?: readonly BotSummary[]
   loading: boolean
@@ -489,11 +500,19 @@ export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate,
   onRetry: () => void
   onUpdate?: BotWorkspaceProps['onUpdateGroup']
   onSend: (text: string, messageId?: string, targetBotIds?: readonly string[]) => Promise<void>
+  onSendWithAttachments?: (
+    text: string,
+    attachments: readonly BotGroupAttachmentDraft[],
+    messageId?: string,
+    targetBotIds?: readonly string[],
+  ) => Promise<void>
   loadAvatar: BotWorkspaceProps['loadAvatar']
   t: BotWorkspaceViewProps['t']
 }): ReactNode {
   const availableBots = bots ?? []
   const [draft, setDraft] = useState('')
+  const [attachments, setAttachments] = useState<readonly BotGroupAttachmentDraft[]>([])
+  const [attachmentError, setAttachmentError] = useState<string | null>(null)
   const [sending, setSending] = useState(false)
   const [mentionQuery, setMentionQuery] = useState<string | null>(null)
   const [mentionIndex, setMentionIndex] = useState(0)
@@ -511,6 +530,10 @@ export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate,
   const transcriptRef = useRef<HTMLDivElement | null>(null)
   const composerRef = useRef<HTMLDivElement | null>(null)
   const composerInputRef = useRef<HTMLTextAreaElement | null>(null)
+  const attachmentsRef = useRef<readonly BotGroupAttachmentDraft[]>([])
+  const attachmentMessageIdRef = useRef<string | null>(null)
+  const attachmentDraftTextRef = useRef<string | null>(null)
+  attachmentsRef.current = attachments
   const mentionOptions = useMemo(() => {
     if (group === undefined || mentionQuery === null) return []
     const query = mentionQuery.toLocaleLowerCase()
@@ -521,10 +544,40 @@ export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate,
     if (node !== null) node.scrollTop = node.scrollHeight
   }, [transcript.length, transcriptRef])
   useEffect(() => {
+    for (const attachment of attachmentsRef.current) releaseBotGroupAttachment(attachment)
+    attachmentsRef.current = []
+    attachmentMessageIdRef.current = null
+    attachmentDraftTextRef.current = null
+    setAttachments([])
+    setAttachmentError(null)
     setDraft('')
     setMentionQuery(null)
     setMentionIndex(0)
   }, [group?.id])
+  useEffect(() => () => {
+    for (const attachment of attachmentsRef.current) releaseBotGroupAttachment(attachment)
+  }, [])
+  const clearAttachments = (): void => {
+    for (const attachment of attachmentsRef.current) releaseBotGroupAttachment(attachment)
+    attachmentsRef.current = []
+    attachmentMessageIdRef.current = null
+    attachmentDraftTextRef.current = null
+    setAttachments([])
+  }
+  const addAttachments = (files: readonly File[]): void => {
+    setAttachmentError(null)
+    attachmentMessageIdRef.current = null
+    attachmentDraftTextRef.current = null
+    setAttachments(current => [...current, ...files.map(createBotGroupAttachmentDraft)])
+  }
+  const removeAttachment = (id: string): void => {
+    const removed = attachmentsRef.current.find(attachment => attachment.id === id)
+    if (removed !== undefined) releaseBotGroupAttachment(removed)
+    setAttachmentError(null)
+    attachmentMessageIdRef.current = null
+    attachmentDraftTextRef.current = null
+    setAttachments(current => current.filter(attachment => attachment.id !== id))
+  }
   const selectMention = (bot: BotSummary): void => {
     const input = composerInputRef.current
     const cursor = input?.selectionStart ?? draft.length
@@ -544,16 +597,27 @@ export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate,
   }
   const submit = async (): Promise<void> => {
     const text = draft.trim()
-    if (text === '' || sending) return
+    if ((text === '' && attachments.length === 0) || sending) return
     const targets = group === undefined ? [] : mentionTargets(text, group.bots)
     setSending(true)
+    setAttachmentError(null)
     try {
-      if (targets.length === 0) await onSend(text)
+      if (attachments.length > 0) {
+        if (onSendWithAttachments === undefined) throw new Error(t('groupAttachmentsUnavailable'))
+        const messageId = attachmentMessageIdRef.current ?? `bot-group-message-${randomUUID()}`
+        attachmentMessageIdRef.current = messageId
+        attachmentDraftTextRef.current = text
+        const attachmentText = text || t('groupAttachmentFile')
+        if (targets.length === 0) await onSendWithAttachments(attachmentText, attachments, messageId)
+        else await onSendWithAttachments(attachmentText, attachments, messageId, targets)
+        clearAttachments()
+      } else if (targets.length === 0) await onSend(text)
       else await onSend(text, undefined, targets)
       setDraft('')
       setMentionQuery(null)
-    } catch {
-      // Keep the draft visible while the owner exposes a retryable failure.
+    } catch (cause: unknown) {
+      if (attachments.length > 0) setAttachmentError(cause instanceof Error ? cause.message : t('groupDeliveryFailure'))
+      // Keep the draft and attachments visible so the owner can retry safely.
     } finally {
       setSending(false)
     }
@@ -612,6 +676,14 @@ export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate,
                 <div className={css.groupMessageBody}>
                   <span className={css.groupMessageSender}>{message.sender.kind === 'user' ? t('you') : message.sender.name}</span>
                   <p>{message.text}</p>
+                  <BotGroupSentAttachments
+                    attachments={message.attachments}
+                    fallbackName={t('groupAttachmentFile')}
+                    downloadLabel={name => t('groupDownloadAttachment', { name })}
+                    downloadUrl={attachmentId => `/api/bots/group/downloadAttachment?${new URLSearchParams({
+                      groupId: String(group.id), messageId: String(message.id), attachmentId,
+                    })}`}
+                  />
                   {deliveryStatuses.length > 0 && (
                     <div className={css.groupDeliveryStatuses} aria-label={t('groupDeliveryStatus')}>
                       {deliveryStatuses.map((delivery) => {
@@ -649,6 +721,32 @@ export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate,
           if (!composerRef.current?.contains(event.relatedTarget as Node | null)) setMentionQuery(null)
         }}
       >
+        <BotGroupAttachments
+          attachments={attachments}
+          disabled={sending}
+          labels={{
+            picker: t('groupAttachFiles'),
+            input: t('groupChooseFiles'),
+            attachments: t('groupAttachments'),
+            file: t('groupAttachmentFile'),
+            preview: name => t('groupPreviewAttachment', { name }),
+            remove: name => t('groupRemoveAttachment', { name }),
+            retry: name => t('groupRetryAttachment', { name }),
+            failed: t('groupAttachmentFailed'),
+            uploading: t('groupAttachmentPreparing'),
+            lightbox: { dialog: t('groupAttachmentPreview'), close: t('groupAttachmentClosePreview') },
+          }}
+          onAddFiles={addAttachments}
+          onRemove={removeAttachment}
+        />
+        {attachmentError !== null && (
+          <div className={css.groupAttachmentNotice} role="alert">
+            <span>{attachmentError}</span>
+            {onSendWithAttachments !== undefined && (
+              <Button variant="ghost" size="sm" disabled={sending} onClick={() => { void submit() }}>{t('retry')}</Button>
+            )}
+          </div>
+        )}
         {mentionQuery !== null && mentionOptions.length > 0 && (
           <MenuSurface className={css.mentionMenu} role="listbox" aria-label={t('mentionBots')}>
             {mentionOptions.map((bot, index) => (
@@ -679,6 +777,11 @@ export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate,
           disabled={sending}
           onChange={(event) => {
             const value = event.currentTarget.value
+            if (attachmentMessageIdRef.current !== null && attachmentDraftTextRef.current !== null
+              && value.trim() !== attachmentDraftTextRef.current) {
+              attachmentMessageIdRef.current = null
+              attachmentDraftTextRef.current = null
+            }
             setDraft(value)
             setMentionQuery(mentionQueryAt(value, event.currentTarget.selectionStart))
             setMentionIndex(0)
@@ -708,7 +811,7 @@ export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate,
             }
           }}
         />
-        <Button variant="primary" size="sm" aria-label={t('groupSend')} icon={<IconPaperPlaneOutlineRegular size={15} />} disabled={draft.trim() === '' || sending} onClick={() => { void submit() }} />
+        <Button variant="primary" size="sm" aria-label={t('groupSend')} icon={<IconPaperPlaneOutlineRegular size={15} />} disabled={(draft.trim() === '' && attachments.length === 0) || sending} onClick={() => { void submit() }} />
       </div>
       <EditGroupDialog
         open={editOpen}
@@ -881,7 +984,8 @@ function NewBotDialog({ open, onClose, onCreate, error, t }: {
 }
 
 export function BotDetail({
-  bot, children, t, loadAvatar, onEditAvatar, onRename, onUpdateProfile, share, memoryManager, skillManager, loading,
+  bot, children, t, loadAvatar, onEditAvatar, onRename, onUpdateProfile, share, memoryManager, routineManager,
+  skillManager, routineRevision = 0, loading,
 }: {
   bot: BotSummary | undefined
   children: ReactNode
@@ -893,6 +997,8 @@ export function BotDetail({
   share?: BotShareActions | undefined
   memoryManager?: BotMemoryManagerActions | undefined
   skillManager?: BotSkillManagerActions | undefined
+  routineManager?: BotRoutineManagerActions | undefined
+  routineRevision?: number
   loading: boolean
 }) {
   const [renameTarget, setRenameTarget] = useState<string | null>(null)
@@ -927,6 +1033,7 @@ export function BotDetail({
   useEffect(() => {
     setSkillsOpen(false)
   }, [bot?.id])
+  const [routineOpen, setRoutineOpen] = useState(false)
   if (bot === undefined) {
     if (loading) {
       return (
@@ -986,6 +1093,11 @@ export function BotDetail({
           {skillManager !== undefined && (
             <Tooltip label={t('manageSkills')} side="bottom" portal>
               <Button variant="ghost" size="sm" aria-label={t('manageSkills')} icon={<IconSidebarSkillsOutlineRegular size={14} />} onClick={() => { setSkillsOpen(true) }} />
+            </Tooltip>
+          )}
+          {routineManager !== undefined && (
+            <Tooltip label={t('manageRoutines')} side="bottom" portal>
+              <Button variant="ghost" size="sm" aria-label={t('manageRoutines')} icon={<IconClockOutlineRegular size={14} />} onClick={() => { setRoutineOpen(true) }} />
             </Tooltip>
           )}
           {onEditAvatar !== undefined && (
@@ -1090,7 +1202,7 @@ export function BotDetail({
       </Modal>}
       {memoryManager !== undefined && (
         <BotMemoryManager
-          key={bot.id}
+          key={`memory-${bot.id}`}
           bot={bot}
           actions={memoryManager}
           loadAvatar={loadAvatar}
@@ -1107,6 +1219,18 @@ export function BotDetail({
           loadAvatar={loadAvatar}
           open={skillsOpen}
           onClose={() => { setSkillsOpen(false) }}
+          t={t}
+        />
+      )}
+      {routineManager !== undefined && (
+        <BotRoutineManager
+          key={`routine-${bot.id}`}
+          bot={bot}
+          actions={routineManager}
+          revision={routineRevision}
+          loadAvatar={loadAvatar}
+          open={routineOpen}
+          onClose={() => { setRoutineOpen(false) }}
           t={t}
         />
       )}
@@ -1328,7 +1452,58 @@ export function BotRoster({
   const [avatarEditorOpen, setAvatarEditorOpen] = useState(false)
   const [sectionBot, setSectionBot] = useState<BotSummary | undefined>()
   const [sharedBotsOpen, setSharedBotsOpen] = useState(false)
+  const [sharedOwnerMode, setSharedOwnerMode] = useState(false)
+  const [sharedOwnerCapability, setSharedOwnerCapability] = useState<'unknown' | 'available' | 'unavailable'>('unknown')
   const [connectedAppsOpen, setConnectedAppsOpen] = useState(false)
+  const ownerCapabilityProbe = sharedClient?.getOwnerCapability
+  const ownerEnrollment = sharedClient?.enrollOwner
+  const ownerCapabilitySubscription = sharedClient?.subscribeOwnerCapability
+  useEffect(() => {
+    let active = true
+    let retryOnFocus = true
+    let focusRetryCount = 0
+    let probeGeneration = 0
+    if (sharedClient === undefined || ownerCapabilityProbe === undefined || ownerEnrollment === undefined) {
+      setSharedOwnerCapability('unknown')
+      return () => { active = false }
+    }
+    setSharedOwnerCapability('unknown')
+    const probe = (): void => {
+      const requestGeneration = probeGeneration
+      void Promise.resolve().then(ownerCapabilityProbe).then((capability) => {
+        if (!active || requestGeneration !== probeGeneration) return
+        retryOnFocus = !capability.ownerBootstrap
+        setSharedOwnerCapability(capability.ownerBootstrap ? 'available' : 'unavailable')
+      }).catch(() => {
+        if (!active || requestGeneration !== probeGeneration) return
+        retryOnFocus = true
+        setSharedOwnerCapability('unavailable')
+      })
+    }
+    const onCapabilityInvalidated = (): void => {
+      if (!active) return
+      probeGeneration += 1
+      retryOnFocus = true
+      focusRetryCount = 0
+      setSharedOwnerCapability('unknown')
+      probe()
+    }
+    const onFocus = (): void => {
+      if (!active || !retryOnFocus || focusRetryCount >= MAX_SHARED_OWNER_CAPABILITY_FOCUS_RETRIES) return
+      focusRetryCount += 1
+      probe()
+    }
+    const stopCapabilitySubscription = ownerCapabilitySubscription?.(onCapabilityInvalidated)
+    probe()
+    window.addEventListener('focus', onFocus)
+    return () => {
+      active = false
+      stopCapabilitySubscription?.()
+      window.removeEventListener('focus', onFocus)
+    }
+  }, [ownerCapabilityProbe, ownerCapabilitySubscription, ownerEnrollment, sharedClient])
+  const sharedOwnerAvailable = ownerEnrollment !== undefined && ownerCapabilityProbe !== undefined && sharedOwnerCapability === 'available'
+  const sharedOwnerUnsupported = ownerEnrollment !== undefined && ownerCapabilityProbe !== undefined && sharedOwnerCapability === 'unavailable'
   const normalizedQuery = query.trim().toLocaleLowerCase()
   const filteredBots = useMemo(() => {
     if (normalizedQuery === '') return bots
@@ -1370,7 +1545,17 @@ export function BotRoster({
   }
   const openSharedBots = (): void => {
     if (!wide) expandSidebar?.()
+    setSharedOwnerMode(false)
     setSharedBotsOpen(true)
+  }
+  const openSharedOwner = (): void => {
+    if (!wide) expandSidebar?.()
+    setSharedOwnerMode(true)
+    setSharedBotsOpen(true)
+  }
+  const closeSharedBots = (): void => {
+    setSharedOwnerMode(false)
+    setSharedBotsOpen(false)
   }
   const openConnectedApps = (): void => {
     if (selectedBot === undefined || onLoadConnectedApps === undefined || onSetConnectedAppAccess === undefined) {
@@ -1403,9 +1588,23 @@ export function BotRoster({
                 )}
                 <Button variant="ghost" size="sm" aria-label={t('newBot')} icon={<IconSidebarBotAddOutlineRegular size={16} />} onClick={openNewBot} />
                 {sharedClient !== undefined && (
-                  <Tooltip label={t('joinBot')} side="bottom" portal>
-                    <Button variant="ghost" size="sm" aria-label={t('joinBot')} icon={<IconShareOutlineRegular size={16} />} onClick={openSharedBots} />
-                  </Tooltip>
+                  <>
+                    <Tooltip label={t('joinBot')} side="bottom" portal>
+                      <Button variant="ghost" size="sm" aria-label={t('joinBot')} icon={<IconShareOutlineRegular size={16} />} onClick={openSharedBots} />
+                    </Tooltip>
+                    {sharedOwnerAvailable && (
+                      <Tooltip label={t('createSharedGroup')} side="bottom" portal>
+                        <Button variant="ghost" size="sm" aria-label={t('createSharedGroup')} icon={<IconUsersOutlineRegular size={16} />} onClick={openSharedOwner} />
+                      </Tooltip>
+                    )}
+                    {sharedOwnerUnsupported && (
+                      <Tooltip label={t('sharedOwnerSetupUnavailable')} side="bottom" portal>
+                        <span>
+                          <Button variant="ghost" size="sm" aria-label={t('createSharedGroup')} title={t('sharedOwnerSetupUnavailable')} icon={<IconUsersOutlineRegular size={16} />} disabled />
+                        </span>
+                      </Tooltip>
+                    )}
+                  </>
                 )}
               </div>
               <Input
@@ -1517,16 +1716,45 @@ export function BotRoster({
               />
             </Tooltip>
             {sharedClient !== undefined && (
-              <Tooltip label={t('joinBot')} side="right" delayMs={500}>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className={css.botRailAction}
-                  aria-label={t('joinBot')}
-                  icon={<IconShareOutlineRegular size={18} />}
-                  onClick={openSharedBots}
-                />
-              </Tooltip>
+              <>
+                <Tooltip label={t('joinBot')} side="right" delayMs={500}>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className={css.botRailAction}
+                    aria-label={t('joinBot')}
+                    icon={<IconShareOutlineRegular size={18} />}
+                    onClick={openSharedBots}
+                  />
+                </Tooltip>
+                {sharedOwnerAvailable && (
+                  <Tooltip label={t('createSharedGroup')} side="right" delayMs={500}>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className={css.botRailAction}
+                      aria-label={t('createSharedGroup')}
+                      icon={<IconUsersOutlineRegular size={18} />}
+                      onClick={openSharedOwner}
+                    />
+                  </Tooltip>
+                )}
+                {sharedOwnerUnsupported && (
+                  <Tooltip label={t('sharedOwnerSetupUnavailable')} side="right" delayMs={500}>
+                    <span>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className={css.botRailAction}
+                        aria-label={t('createSharedGroup')}
+                        title={t('sharedOwnerSetupUnavailable')}
+                        icon={<IconUsersOutlineRegular size={18} />}
+                        disabled
+                      />
+                    </span>
+                  </Tooltip>
+                )}
+              </>
             )}
             {templates !== undefined && templateActions !== undefined && (
               <Tooltip label={t('templates')} side="right" delayMs={500}>
@@ -1595,7 +1823,7 @@ export function BotRoster({
         />
       )}
       {sharedClient !== undefined && (
-        <SharedBotsDialog client={sharedClient} open={sharedBotsOpen} onClose={() => { setSharedBotsOpen(false) }} t={t} />
+        <SharedBotsDialog client={sharedClient} open={sharedBotsOpen} ownerMode={sharedOwnerMode} onClose={closeSharedBots} t={t} />
       )}
       {onLoadConnectedApps !== undefined && onSetConnectedAppAccess !== undefined && (
         <ConnectedAppsDialog

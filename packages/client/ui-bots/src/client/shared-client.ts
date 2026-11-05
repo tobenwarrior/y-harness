@@ -26,12 +26,23 @@ import type {
   BotGroupView,
   BotGroupMessageView,
   BotGroupMessageSenderView,
+  BotInputAttachmentView,
   BotGroupMemberView,
   BotGroupId as BotGroupIdType,
   BotGroupMessageId as BotGroupMessageIdType,
 } from '@yharness/bots/client'
 import type { ClientConnectionRpc, ConnectionRpcFailure } from '@yharness/client-connection/client'
 import { randomUUID } from '@yharness/util-crypto'
+import {
+  admitBotGroupAttachments,
+  BotAttachmentClientError,
+  isBotGroupImageType,
+  parseBotAttachmentGrantValue,
+  type BotAttachmentFetch,
+} from './attachment-client.ts'
+import type { BotGroupAttachmentDraft } from './types.ts'
+
+type BotImageMediaType = Extract<BotInputAttachmentView, { readonly type: 'image' }>['mediaType']
 
 const SHARED_BOTS_PATH = '/shared-bots' as const
 const SHARED_AUTH_CHANNEL = 'yharness.client-ui-bots.shared-auth' as const
@@ -112,6 +123,20 @@ export interface SharedBotEnrollmentValue {
   /** Shared group admitted by a group-only invitation, when applicable. */
   readonly groupId?: string
 }
+
+/** Server-advertised owner-bootstrap capability for the active connection. */
+export interface SharedBotOwnerCapability {
+  /** Whether this connection can authenticate the local operator for owner setup. */
+  readonly ownerBootstrap: boolean
+}
+
+/** Lifecycle inputs used to invalidate connection-scoped capability probes. */
+export interface SharedBotsClientOptions {
+  /** Subscribe to active Connection generation establishment, replacement, and loss. */
+  readonly subscribeConnectionGeneration?: (listener: () => void) => () => void
+  /** Transport used to upload shared files. */
+  readonly attachmentFetcher?: BotAttachmentFetch
+}
 /** Private transcript response for one Bot and the current collaborator. */
 export interface SharedBotPrivateChatValue {
   /** Bot whose private conversation was read. */
@@ -185,6 +210,22 @@ export interface SharedBotGroupRevokeValue {
 export interface SharedBotsClient {
   /** Redeem an owner-issued invite; the response stores an HttpOnly cookie. */
   readonly enroll: (code: string) => Promise<SharedBotClientResult<SharedBotEnrollmentValue>>
+  /**
+   * Ask the authenticated local Host to enroll or reuse its durable owner.
+   * The browser supplies no principal identity; the response stores the
+   * Host-issued HttpOnly cookie.
+   */
+  readonly enrollOwner?: () => Promise<SharedBotClientResult<SharedBotEnrollmentValue>>
+  /**
+   * Discover whether the server can admit owner setup on this connection.
+   * Transport, authentication, and malformed-response failures resolve to an
+   * unavailable capability so the UI never offers a request that cannot work.
+   */
+  readonly getOwnerCapability?: () => Promise<SharedBotOwnerCapability>
+  /** Re-run owner capability discovery when the active Connection generation changes. */
+  readonly subscribeOwnerCapability?: (listener: () => void) => () => void
+  /** Release the Connection-generation listener owned by this client. */
+  readonly dispose?: () => void
   /** Restore the server-authenticated principal scope after a browser reload. */
   readonly restoreRetryScope: () => Promise<SharedBotClientResult<SharedBotEnrollmentValue>>
   /** Server-issued principal scope used to partition durable browser retry state. */
@@ -219,6 +260,10 @@ export interface SharedBotsClient {
   readonly inspectGroup?: (groupId: string) => Promise<SharedBotClientResult<SharedBotGroupInspectValue>>
   /** Send an idempotent shared group message attributed by the server. */
   readonly sendGroupMessage?: (request: BotGroupSendRemoteRequest) => Promise<SharedBotClientResult<SharedBotGroupSendValue>>
+  /** Optional attachment-aware group transport supplied by a Host with attachment admission. */
+  readonly sendGroupMessageWithAttachments?: (
+    request: BotGroupSendRemoteRequest & { readonly attachments: readonly BotGroupAttachmentDraft[] },
+  ) => Promise<SharedBotClientResult<SharedBotGroupSendValue>>
   /** Create one explicit ACL invite for a shared group. */
   readonly createGroupInvite?: (groupId: string) => Promise<SharedBotClientResult<SharedBotGroupInviteValue>>
   /** Revoke one explicit shared-group ACL member. */
@@ -228,9 +273,11 @@ export interface SharedBotsClient {
 /**
  * Build a typed caller for the collaborator-only route.
  * @param rpc - Connection RPC carrier from the active Client generation.
+ * @param options - Optional Connection-generation lifecycle subscription.
  * @returns shared-Bot operations using the dedicated channel only.
  */
-export function createSharedBotsClient(rpc: ClientConnectionRpc): SharedBotsClient {
+export function createSharedBotsClient(rpc: ClientConnectionRpc, options: SharedBotsClientOptions = {}): SharedBotsClient {
+  const attachmentFetcher: BotAttachmentFetch = options.attachmentFetcher ?? ((input, init) => globalThis.fetch(input, init))
   let retryScope: string | undefined
   let retryScopeRequestGeneration = 0
   let authGeneration = 0
@@ -239,6 +286,14 @@ export function createSharedBotsClient(rpc: ClientConnectionRpc): SharedBotsClie
   let authTransitionTail: Promise<void> = Promise.resolve()
   let authChannel: SharedAuthChannel | undefined
   const authListeners = new Set<SharedBotAuthListener>()
+  const ownerCapabilityListeners = new Set<() => void>()
+  let ownerCapabilityRequest: Promise<SharedBotOwnerCapability> | undefined
+  let disposed = false
+  const invalidateOwnerCapability = (): void => {
+    ownerCapabilityRequest = undefined
+    for (const listener of [...ownerCapabilityListeners]) listener()
+  }
+  let stopConnectionGeneration = options.subscribeConnectionGeneration?.(invalidateOwnerCapability)
   const notifyAuth = (change: SharedBotAuthChange): void => {
     for (const listener of [...authListeners]) listener(change)
   }
@@ -329,6 +384,99 @@ export function createSharedBotsClient(rpc: ClientConnectionRpc): SharedBotsClie
     }
     return result
   })
+  const sendGroupMessageWithAttachments = async (
+    request: BotGroupSendRemoteRequest & { readonly attachments: readonly BotGroupAttachmentDraft[] },
+  ): Promise<SharedBotClientResult<SharedBotGroupSendValue>> => {
+    if (request.attachments.length === 0 || request.messageId === undefined) {
+      return { ok: false, error: { code: 'gateway/bad-request', message: 'attachments require an explicit message id', details: {} } }
+    }
+    const inspect = await call('bots/share/inspect-group', { groupId: request.groupId }, parseGroupInspect)
+    if (!inspect.ok) return inspect
+    const existing = inspect.value.messages.find(message => message.id === request.messageId)
+    if (existing !== undefined) {
+      if (!groupAttachmentMatchesDrafts(existing, request.attachments)) {
+        return { ok: false, error: { code: 'gateway/conflict', message: 'shared Bot message attachments differ from the retry', details: {} } }
+      }
+      return call('bots/share/send-group-message', {
+        groupId: request.groupId,
+        text: request.text,
+        messageId: request.messageId,
+        ...(request.targetBotIds === undefined ? {} : { targetBotIds: request.targetBotIds }),
+      }, parseGroupSend)
+    }
+    try {
+      const grants = await admitBotGroupAttachments(
+        {
+          groupId: String(request.groupId),
+          messageId: String(request.messageId),
+          ...(request.targetBotIds === undefined ? {} : { targetBotIds: request.targetBotIds.map(String) }),
+        },
+        request.attachments,
+        async (imageRequest) => {
+          const result = await call('bots/share/admit-group-image', imageRequest, parseBotAttachmentGrantValue)
+          if (!result.ok) throw new BotAttachmentClientError(result.error.code, result.error.message)
+          return result.value
+        },
+        attachmentFetcher,
+        '/shared-bots/bots/share/uploadAttachment',
+      )
+      return call('bots/share/send-group-message', {
+        groupId: request.groupId,
+        text: request.text,
+        messageId: request.messageId,
+        ...(request.targetBotIds === undefined ? {} : { targetBotIds: request.targetBotIds }),
+        attachmentGrants: grants,
+      }, parseGroupSend)
+    } catch (error: unknown) {
+      return {
+        ok: false,
+        error: {
+          code: error instanceof BotAttachmentClientError ? error.code : 'gateway/transport',
+          message: error instanceof Error ? error.message : 'Shared Bot attachment admission failed',
+          details: {},
+        },
+      }
+    }
+  }
+  const enrollOwner = (): Promise<SharedBotClientResult<SharedBotEnrollmentValue>> => enqueueAuthTransition(async () => {
+    authTransitionVersion += 1
+    const requestGeneration = retryScopeRequestGeneration + 1
+    retryScopeRequestGeneration = requestGeneration
+    setRetryScope(undefined, 'local', false, true)
+    const result = await call('bots/share/enroll', { owner: true }, parseEnrollment, false)
+    if (requestGeneration === retryScopeRequestGeneration && result.ok) {
+      setRetryScope(result.value.principalId, 'local', true, true)
+      authTransitionVersion += 1
+    }
+    return result
+  })
+  const getOwnerCapability = (): Promise<SharedBotOwnerCapability> => {
+    if (disposed) return Promise.resolve({ ownerBootstrap: false })
+    if (ownerCapabilityRequest !== undefined) return ownerCapabilityRequest
+    const request = (async () => {
+      const result = await call('bots/share/enroll', { capability: true }, parseOwnerCapability, false)
+      return result.ok ? result.value : { ownerBootstrap: false }
+    })()
+    ownerCapabilityRequest = request
+    void request.then(
+      () => { if (ownerCapabilityRequest === request) ownerCapabilityRequest = undefined },
+      () => { if (ownerCapabilityRequest === request) ownerCapabilityRequest = undefined },
+    )
+    return request
+  }
+  const subscribeOwnerCapability = (listener: () => void): (() => void) => {
+    if (disposed) return () => {}
+    ownerCapabilityListeners.add(listener)
+    return () => { ownerCapabilityListeners.delete(listener) }
+  }
+  const dispose = (): void => {
+    if (disposed) return
+    disposed = true
+    stopConnectionGeneration?.()
+    stopConnectionGeneration = undefined
+    ownerCapabilityRequest = undefined
+    ownerCapabilityListeners.clear()
+  }
 
   return {
     get retryScope(): string | undefined { return retryScope },
@@ -346,6 +494,10 @@ export function createSharedBotsClient(rpc: ClientConnectionRpc): SharedBotsClie
       }
     },
     enroll,
+    enrollOwner,
+    getOwnerCapability,
+    subscribeOwnerCapability,
+    dispose,
     restoreRetryScope,
     list: () => call('bots/share/list', {}, parseRoster),
     readProfile: botId => call('bots/share/read-profile', { botId }, parseProfileValue),
@@ -360,6 +512,7 @@ export function createSharedBotsClient(rpc: ClientConnectionRpc): SharedBotsClie
     updateGroup: request => call('bots/share/update-group', request, parseGroupResult),
     inspectGroup: groupId => call('bots/share/inspect-group', { groupId }, parseGroupInspect),
     sendGroupMessage: request => call('bots/share/send-group-message', request, parseGroupSend),
+    sendGroupMessageWithAttachments,
     createGroupInvite: groupId => call('bots/share/manage-group-members', { groupId, action: 'create-invite' }, parseGroupInvite),
     revokeGroupMember: (groupId, principalId) => call('bots/share/manage-group-members', { groupId, action: 'revoke', principalId }, parseGroupRevoke),
   }
@@ -373,6 +526,11 @@ function parseEnrollment(value: unknown): SharedBotEnrollmentValue | undefined {
     expiresAt: value.expiresAt,
     ...(value.groupId === undefined ? {} : { groupId: value.groupId }),
   }
+}
+
+function parseOwnerCapability(value: unknown): SharedBotOwnerCapability | undefined {
+  if (!isRecord(value) || typeof value.ownerBootstrap !== 'boolean') return undefined
+  return { ownerBootstrap: value.ownerBootstrap }
 }
 
 function parseRoster(value: unknown): { readonly bots: readonly BotShareRosterEntry[] } | undefined {
@@ -602,6 +760,10 @@ function parseGroupMessage(value: unknown): BotGroupMessageView | undefined {
     typeof item === 'string' && /^bot-[A-Za-z0-9][A-Za-z0-9-]*$/.test(item) ? brandString<BotIdType>(item) : undefined
   ))
   if (targetBotIds?.some(botId => botId === undefined)) return undefined
+  const attachmentValue = value.attachments
+  if (attachmentValue !== undefined && !Array.isArray(attachmentValue)) return undefined
+  const attachments = attachmentValue === undefined ? undefined : attachmentValue.map(parseAttachmentView)
+  if (attachments?.some(attachment => attachment === undefined)) return undefined
   return {
     id: brandString<BotGroupMessageIdType>(value.id),
     groupId: brandString<BotGroupIdType>(value.groupId),
@@ -609,7 +771,32 @@ function parseGroupMessage(value: unknown): BotGroupMessageView | undefined {
     text: value.text,
     createdAt: value.createdAt,
     ...(targetBotIds === undefined ? {} : { targetBotIds: targetBotIds as readonly BotIdType[] }),
+    ...(attachments === undefined ? {} : { attachments: attachments as readonly BotInputAttachmentView[] }),
   }
+}
+
+function parseAttachmentView(value: unknown): BotInputAttachmentView | undefined {
+  if (!isRecord(value) || typeof value.attachmentId !== 'string' || !isOpaqueAttachmentId(value.attachmentId)
+    || typeof value.type !== 'string' || typeof value.bytes !== 'number' || !isSafeInteger(value.bytes) || value.bytes < 0) return undefined
+  if (value.type === 'file') {
+    return typeof value.name === 'string' && value.name.length > 0 && value.name.length <= 255
+      ? { type: 'file', attachmentId: value.attachmentId, name: value.name, bytes: value.bytes }
+      : undefined
+  }
+  if (value.type !== 'image' || typeof value.mediaType !== 'string'
+    || !['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(value.mediaType)
+    || typeof value.width !== 'number' || !isSafeInteger(value.width) || value.width < 1
+    || typeof value.height !== 'number' || !isSafeInteger(value.height) || value.height < 1
+    || (value.name !== undefined && (typeof value.name !== 'string' || value.name.length < 1 || value.name.length > 255))) return undefined
+  return {
+    type: 'image', attachmentId: value.attachmentId, mediaType: value.mediaType as BotImageMediaType,
+    bytes: value.bytes, width: value.width, height: value.height,
+    ...(value.name === undefined ? {} : { name: value.name }),
+  }
+}
+
+function isOpaqueAttachmentId(value: string): boolean {
+  return value.length >= 1 && value.length <= 512 && value.trim() === value && !/[\u0000-\u001f\u007f]/.test(value)
 }
 
 function parseGroupMessageSender(value: Record<string, unknown>): BotGroupMessageSenderView | undefined {
@@ -622,6 +809,23 @@ function parseGroupMessageSender(value: Record<string, unknown>): BotGroupMessag
   if (value.kind !== 'bot' || typeof value.botId !== 'string'
     || !/^bot-[A-Za-z0-9][A-Za-z0-9-]*$/.test(value.botId) || typeof value.name !== 'string') return undefined
   return { kind: 'bot', botId: brandString<BotIdType>(value.botId), name: value.name }
+}
+
+function groupAttachmentMatchesDrafts(
+  message: BotGroupMessageView,
+  drafts: readonly BotGroupAttachmentDraft[],
+): boolean {
+  const admitted = message.attachments
+  if (admitted === undefined || admitted.length !== drafts.length || admitted.length === 0) return false
+  return drafts.every((draft, index) => {
+    const current = admitted[index]
+    if (current === undefined || current.bytes !== draft.file.size) return false
+    if (current.type === 'file') return current.name === (draft.file.name || current.name)
+    return current.type === 'image'
+      && isBotGroupImageType(draft.file.type)
+      && current.mediaType === draft.file.type
+      && (draft.file.name === '' || current.name === draft.file.name || current.name === undefined)
+  })
 }
 
 function enumValue<T extends string>(value: unknown, choices: readonly T[]): T | undefined {

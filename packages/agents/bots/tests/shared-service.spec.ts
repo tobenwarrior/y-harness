@@ -4,11 +4,12 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { Context } from '@yharness/cordis'
 import type { Agent } from '@yharness/agent'
+import { AttachmentId, type EncodedImageAttachment, type FileAttachmentRef, type ImageAttachmentRef } from '@yharness/attachment'
 import { ApiSessionNotFound } from '@yharness/api-session-controller'
 import { BotPrincipalId } from '../src/sharing.ts'
 import { SharedAccessAuthority, SharedInviteCode, sharedInviteDigest, sharedPrincipalOf, type SharedAccessEnrollment } from '@yharness/client-connection'
 import type { UserMessage } from '@yharness/llm'
-import { SessionId } from '@yharness/session'
+import { SessionId, SessionSeq, type SessionEvent } from '@yharness/session'
 import Storage from '@yharness/storage'
 import { credentialKey, CredentialProvider } from '@yharness/credentials'
 import type {
@@ -29,6 +30,13 @@ import { describe, expect, it, vi } from 'vitest'
 import z from 'zod'
 import { MemoryMediaPool, MemoryStorageBackend } from '../../../storage/storage-domain/tests/helpers/memory-backend.ts'
 import { BotId, type BotView } from '../src/types.ts'
+import {
+  BotAttachmentGrantId,
+  BotAttachmentGrantStore,
+  BotPrivateMessageId,
+  botAttachmentDomain,
+  type BotInputAttachment,
+} from '../src/attachment-grants.ts'
 import {
   BotGroupId,
   BotGroupMessageId,
@@ -112,13 +120,16 @@ interface Fixture {
   readonly authority: SharedAccessAuthority
   readonly service: SharedBotService
   readonly host: SharedBotHostFixture
+  readonly attachmentStore?: BotAttachmentGrantStore | undefined
   readonly clock: { value: number }
   readonly close: () => Promise<void>
 }
 
 class SharedBotHostFixture implements SharedBotHost {
+  readAttachment?: NonNullable<SharedBotHost['readAttachment']>
   readonly sessions = new Map<string, { readonly botId: string; readonly principalId: string }>()
   readonly sharedGroupMessages = new Set<string>()
+  readonly sharedGroupAttachments = new Map<string, readonly BotInputAttachment[]>()
   readonly sharedGroupBindings: SharedGroupSessionBinding[][] = []
   readonly messages = new Map<string, UserMessage[]>()
   readonly followups = vi.fn<(sessionId: SessionId, message: UserMessage) => void>((sessionId, message) => {
@@ -176,6 +187,32 @@ class SharedBotHostFixture implements SharedBotHost {
   }
 
   listBots = async (_signal?: AbortSignal): Promise<readonly BotView[]> => [...this.bots]
+
+  admitEncodedImage = async (input: EncodedImageAttachment, _signal?: AbortSignal): Promise<ImageAttachmentRef> => ({
+    attachmentId: AttachmentId(`sha256:${'a'.repeat(64)}`),
+    mediaType: input.mediaType,
+    bytes: input.data.length,
+    width: 1,
+    height: 1,
+    ...(input.name === undefined ? {} : { name: input.name }),
+  })
+
+  saveFileStream = async (input: {
+    readonly data: AsyncIterable<Uint8Array>
+    readonly name?: string
+    readonly signal?: AbortSignal
+  }): Promise<FileAttachmentRef> => {
+    let bytes = 0
+    for await (const chunk of input.data) {
+      input.signal?.throwIfAborted()
+      bytes += chunk.byteLength
+    }
+    return {
+      attachmentId: AttachmentId(`sha256:${'b'.repeat(64)}`),
+      name: input.name ?? 'upload.bin',
+      bytes,
+    }
+  }
 
   withBotRoster = async <T>(
     expected: readonly BotView[],
@@ -262,8 +299,14 @@ class SharedBotHostFixture implements SharedBotHost {
     }
   }
 
-  inspectPrivateSession = async (_sessionId: SessionId, _signal: AbortSignal): Promise<{ events: readonly never[] }> => ({
-    events: [],
+  inspectPrivateSession = async (sessionId: SessionId, _signal: AbortSignal): Promise<{ events: readonly SessionEvent[] }> => ({
+    events: (this.messages.get(String(sessionId)) ?? []).map((message, index): SessionEvent<'user/message'> => ({
+      type: 'user/message',
+      seq: SessionSeq(index + 1),
+      time: index + 1,
+      data: message,
+      surfaceOp: 'append',
+    })),
   })
 
   validatePrivateSession = async (_sessionId: SessionId, _signal?: AbortSignal): Promise<void> => {}
@@ -281,6 +324,7 @@ class SharedBotHostFixture implements SharedBotHost {
     if (!registered) throw new Error('shared group Session binding was not registered')
     const key = `${String(request.messageId)}:${String(request.targetBotId)}`
     if (this.sharedGroupMessages.has(key)) return 'duplicate'
+    if (request.attachments !== undefined) this.sharedGroupAttachments.set(key, request.attachments)
     this.sharedGroupMessages.add(key)
     return 'accepted'
   })
@@ -346,6 +390,7 @@ async function fixture(
   includeSecondBot = false,
   includeThirdBot = false,
   clock: { value: number } = { value: 1_000 },
+  withAttachments = false,
 ): Promise<Fixture> {
   const ctx = new Context()
   await ctx.plugin(Storage)
@@ -366,12 +411,15 @@ async function fixture(
     now: () => clock.value,
   })
   const host = new SharedBotHostFixture(includeSecondBot, includeThirdBot)
+  const attachmentDomain = withAttachments ? await facility.open(botAttachmentDomain) : undefined
+  const attachmentStore = attachmentDomain === undefined ? undefined : new BotAttachmentGrantStore(attachmentDomain)
   const service = await SharedBotService.create(ctx, facility, authority, host, {
     now: () => clock.value,
     membershipPollIntervalMs,
+    ...(attachmentStore === undefined ? {} : { attachmentStore }),
   })
   return {
-    ctx, facility, pool, records, credentials, authority, service, host, clock,
+    ctx, facility, pool, records, credentials, authority, service, host, clock, attachmentStore,
     close: async () => { await service.dispose(); await authority.dispose(); await ctx.fiber.dispose() },
   }
 }
@@ -463,6 +511,7 @@ interface SecondaryFixture {
   readonly authority: SharedAccessAuthority
   readonly service: SharedBotService
   readonly host: SharedBotHostFixture
+  readonly attachmentStore?: BotAttachmentGrantStore | undefined
   readonly close: () => Promise<void>
 }
 
@@ -499,7 +548,12 @@ async function secondaryDiskFixture(value: DiskFixture): Promise<SecondaryFixtur
   }
 }
 
-async function secondaryFixture(value: Fixture, includeSecondBot = false, includeThirdBot = false): Promise<SecondaryFixture> {
+async function secondaryFixture(
+  value: Fixture,
+  includeSecondBot = false,
+  includeThirdBot = false,
+  withAttachments = false,
+): Promise<SecondaryFixture> {
   const ctx = new Context()
   await ctx.plugin(Storage)
   const backend = new MemoryStorageBackend(value.pool)
@@ -517,12 +571,15 @@ async function secondaryFixture(value: Fixture, includeSecondBot = false, includ
     now: () => value.clock.value,
   })
   const host = new SharedBotHostFixture(includeSecondBot, includeThirdBot)
+  const attachmentDomain = withAttachments ? await facility.open(botAttachmentDomain) : undefined
+  const attachmentStore = attachmentDomain === undefined ? undefined : new BotAttachmentGrantStore(attachmentDomain)
   const service = await SharedBotService.create(ctx, facility, authority, host, {
     now: () => value.clock.value,
     membershipPollIntervalMs: 10,
+    ...(attachmentStore === undefined ? {} : { attachmentStore }),
   })
   return {
-    ctx, facility, authority, service, host,
+    ctx, facility, authority, service, host, attachmentStore,
     close: async () => { await service.dispose(); await authority.dispose(); await ctx.fiber.dispose() },
   }
 }
@@ -778,6 +835,71 @@ describe('shared Bot service', () => {
         value: { principalId: enrollment.principalId, expiresAt: 61_000 },
       })
     } finally {
+      await value.close()
+    }
+  })
+
+  it('enrolls one durable owner across Hosts without duplicating memberships', async () => {
+    const value = await fixture(10, true)
+    let secondary: SecondaryFixture | undefined
+    try {
+      // Seed an older owner membership. Owner onboarding must reuse this
+      // authority identity instead of minting a second owner principal.
+      const existing = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      if (!('botId' in existing)) throw new Error('expected Bot enrollment')
+      const existingBindings = value.service.privateSessionBindings()
+      secondary = await secondaryFixture(value, true)
+      const [first, second] = await Promise.all([
+        value.service.enrollOwner(enrollmentRequest()),
+        secondary.service.enrollOwner(enrollmentRequest()),
+      ])
+      expect(first.principalId).toBe(existing.principalId)
+      expect(second.principalId).toBe(existing.principalId)
+
+      const chief = await value.service.listMembers(BotId('bot-chief'))
+      const secondBot = await value.service.listMembers(BotId('bot-second'))
+      expect(chief.filter(member => member.role === 'owner')).toHaveLength(1)
+      expect(secondBot.filter(member => member.role === 'owner')).toHaveLength(1)
+      expect(secondBot[0]?.principalId).toBe(existing.principalId)
+      expect(value.service.privateSessionBindings()).toEqual(existingBindings)
+
+      await value.service.enrollOwner(enrollmentRequest())
+      expect(await value.service.listMembers(BotId('bot-second'))).toHaveLength(1)
+    } finally {
+      await secondary?.close()
+      await value.close()
+    }
+  })
+
+  it('repairs owner memberships after a mirror failure without minting another principal', async () => {
+    const value = await fixture(10, true)
+    try {
+      const domain = value.facility.get('agent_bot_shares')
+      if (domain === undefined) throw new Error('shared Bot domain is not open')
+      const memberships = domain.table('memberships')
+      const originalPut = memberships.put.bind(memberships)
+      let failed = false
+      vi.spyOn(memberships, 'put').mockImplementation(async (key, record) => {
+        if (!failed) {
+          failed = true
+          throw new Error('injected owner membership failure')
+        }
+        return originalPut(key, record)
+      })
+
+      await expect(value.service.enrollOwner(enrollmentRequest())).rejects.toThrow('injected owner membership failure')
+      vi.restoreAllMocks()
+      const retry = await value.service.enrollOwner(enrollmentRequest())
+      const ownerExtension = await value.authority.readExtension('client-connection/shared-owner')
+      expect(ownerExtension.value).toEqual({ version: 1, principalId: retry.principalId })
+      expect(ownerExtension.state.principals.filter(principal => principal.id === retry.principalId)).toHaveLength(1)
+      expect((await value.service.listMembers(BotId('bot-chief'))).filter(member => member.role === 'owner')).toHaveLength(1)
+      expect((await value.service.listMembers(BotId('bot-second'))).filter(member => member.role === 'owner')).toHaveLength(1)
+    } finally {
+      vi.restoreAllMocks()
       await value.close()
     }
   })
@@ -1479,6 +1601,457 @@ describe('shared Bot service', () => {
         value: { messages: [{ id: requestValue.messageId, text: 'Shared request.' }] },
       })
       void secondOwner
+    } finally {
+      await value.close()
+    }
+  })
+
+  it('rejects a shared message when an earlier failed write left a consumed grant', async () => {
+    const value = await fixture(10, true, false, { value: 1_000 }, true)
+    try {
+      const enrollment = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code, enrollmentRequest(),
+      )
+      await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-second'), 'owner')).code, request(cookie(enrollment)),
+      )
+      const owner = await principal(value, enrollment)
+      const created = await value.service.handle('bots/share/create-group', {
+        name: 'Uncertain shared send', botIds: [BotId('bot-chief'), BotId('bot-second')],
+      }, new AbortController().signal, owner.peer)
+      const groupId = groupIdFromResult(created)
+      const messageId = BotGroupMessageId('bot-group-message-shared-orphan')
+      const admitted = await value.service.handle('bots/share/admit-group-image', {
+        groupId, messageId, image: { mediaType: 'image/png', data: 'iVBORw0KGgo=', name: 'orphan.png' },
+      }, new AbortController().signal, owner.peer)
+      if (!admitted.ok || admitted.value === null || typeof admitted.value !== 'object'
+        || !('grantId' in admitted.value) || typeof admitted.value.grantId !== 'string') throw new Error('grant missing')
+      if (value.attachmentStore === undefined) throw new Error('attachment store missing')
+      const membership = sharedMembershipSnapshotSchema.parse((await value.authority.readExtension('agent-bots/shared-memberships')).value)
+      const group = sharedGroupSnapshotSchema.parse(membership.sharedGroups).groups.find(candidate => candidate.id === groupId)
+      if (group === undefined) throw new Error('group missing')
+      await value.attachmentStore.consume({
+        kind: 'shared-group', principalId: owner.botPrincipalId, groupId, messageId,
+        targetBotIds: [BotId('bot-chief'), BotId('bot-second')], authorizationRevision: group.revision,
+      }, [BotAttachmentGrantId(admitted.value.grantId)])
+      await expect(value.service.handle('bots/share/send-group-message', {
+        groupId, messageId, text: 'Different message',
+      }, new AbortController().signal, owner.peer)).resolves.toMatchObject({ ok: false, error: { code: 'gateway/conflict' } })
+      expect(value.host.deliverSharedGroup).not.toHaveBeenCalled()
+    } finally {
+      await value.close()
+    }
+  })
+
+  it('binds shared-group image grants to the message, ACL, and isolated delivery', async () => {
+    const value = await fixture(10, true, false, { value: 1_000 }, true)
+    try {
+      const chiefOwner = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-second'), 'owner')).code,
+        request(cookie(chiefOwner)),
+      )
+      const owner = await principal(value, chiefOwner)
+      const created = await value.service.handle('bots/share/create-group', {
+        id: BotGroupId('bot-group-attachment-shared'),
+        name: 'Shared attachment room',
+        botIds: [BotId('bot-chief'), BotId('bot-second')],
+      }, new AbortController().signal, owner.peer)
+      const groupId = groupIdFromResult(created)
+      const messageId = BotGroupMessageId('bot-group-message-shared-attachment')
+      const admitted = await value.service.handle('bots/share/admit-group-image', {
+        groupId,
+        messageId,
+        image: { mediaType: 'image/png', data: 'iVBORw0KGgo=', name: 'diagram.png' },
+      }, new AbortController().signal, owner.peer)
+      expect(admitted).toMatchObject({
+        ok: true,
+        value: { attachments: [{ type: 'image', mediaType: 'image/png', name: 'diagram.png' }] },
+      })
+      if (!admitted.ok || admitted.value === null || typeof admitted.value !== 'object'
+        || !('grantId' in admitted.value) || typeof admitted.value.grantId !== 'string') {
+        throw new Error('shared-group image admission did not return an opaque grant')
+      }
+      const send = await value.service.handle('bots/share/send-group-message', {
+        groupId,
+        messageId,
+        text: 'Inspect this diagram.',
+        attachmentGrants: [admitted.value.grantId],
+      }, new AbortController().signal, owner.peer)
+      expect(send).toMatchObject({ ok: true, value: { status: 'accepted' } })
+      await expect(value.service.resolveSharedGroupAttachment(
+        groupId, messageId, `sha256:${'a'.repeat(64)}`, owner.botPrincipalId, new AbortController().signal,
+      )).resolves.toMatchObject({ type: 'image', attachment: { name: 'diagram.png' } })
+      expect(value.host.sharedGroupAttachments.size).toBe(2)
+      expect([...value.host.sharedGroupAttachments.values()].every(attachments => attachments.length === 1
+        && attachments[0]?.type === 'image')).toBe(true)
+      await expect(value.service.handle('bots/share/send-group-message', {
+        groupId,
+        messageId,
+        text: 'Inspect this diagram.',
+        attachmentGrants: [admitted.value.grantId],
+      }, new AbortController().signal, owner.peer)).resolves.toMatchObject({
+        ok: true,
+        value: { status: 'duplicate' },
+      })
+      await expect(value.service.handle('bots/share/inspect-group', { groupId }, new AbortController().signal, owner.peer)).resolves.toMatchObject({
+        ok: true,
+        value: { messages: [{ id: messageId, attachments: [{ type: 'image', attachmentId: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' }] }] },
+      })
+      const memberChief = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'collaborator')).code,
+        enrollmentRequest(),
+      )
+      const memberSecond = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-second'), 'collaborator')).code,
+        request(cookie(memberChief)),
+      )
+      const groupInvite = await value.service.handle('bots/share/manage-group-members', {
+        groupId,
+        action: 'create-invite',
+      }, new AbortController().signal, owner.peer)
+      const memberGroup = await value.service.enroll(
+        groupInviteCodeFromResult(groupInvite),
+        request(cookie(memberSecond)),
+      )
+      const member = await principal(value, memberGroup)
+      value.host.readAttachment = vi.fn(async () => ({
+        name: 'diagram.png', data: (async function* () { yield Uint8Array.of(1) })(),
+      }))
+      const opened = await value.service.openSharedGroupAttachment({
+        groupId, messageId, attachmentId: `sha256:${'a'.repeat(64)}`,
+      }, member.botPrincipalId, new AbortController().signal)
+      await expect(value.service.resolveSharedGroupAttachment(
+        groupId, messageId, `sha256:${'a'.repeat(64)}`, member.botPrincipalId, new AbortController().signal,
+      )).resolves.toMatchObject({ type: 'image' })
+      await expect(value.service.resolveSharedGroupAttachment(
+        groupId, messageId, 'not-in-message', member.botPrincipalId, new AbortController().signal,
+      )).rejects.toMatchObject({ code: 'gateway/not-found' })
+      await expect(value.service.handle('bots/share/inspect-group', { groupId }, new AbortController().signal, member.peer)).resolves.toMatchObject({
+        ok: true,
+        value: { messages: [{ id: messageId, attachments: [{ type: 'image', attachmentId: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' }] }] },
+      })
+      await expect(value.service.handle('bots/share/manage-group-members', {
+        groupId, action: 'revoke', principalId: member.botPrincipalId,
+      }, new AbortController().signal, owner.peer)).resolves.toMatchObject({ ok: true })
+      await expect(value.service.resolveSharedGroupAttachment(
+        groupId, messageId, `sha256:${'a'.repeat(64)}`, member.botPrincipalId, new AbortController().signal,
+      )).rejects.toMatchObject({ code: 'gateway/forbidden' })
+      await expect((async () => {
+        for await (const _chunk of opened.data) { /* consume */ }
+      })()).rejects.toMatchObject({ code: 'gateway/forbidden' })
+    } finally {
+      await value.close()
+    }
+  })
+
+  it('refreshes attachment grants across Hosts before shared delivery', async () => {
+    const value = await fixture(10, true, false, { value: 1_000 }, true)
+    let secondary: SecondaryFixture | undefined
+    try {
+      const ownerEnrollment = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-second'), 'owner')).code,
+        request(cookie(ownerEnrollment)),
+      )
+      const owner = await principal(value, ownerEnrollment)
+      const created = await value.service.handle('bots/share/create-group', {
+        id: BotGroupId('bot-group-attachment-cross-host'),
+        name: 'Cross-host attachment room',
+        botIds: [BotId('bot-chief'), BotId('bot-second')],
+      }, new AbortController().signal, owner.peer)
+      const groupId = groupIdFromResult(created)
+      secondary = await secondaryFixture(value, true, false, true)
+      const admitted = await value.service.handle('bots/share/admit-group-image', {
+        groupId,
+        messageId: BotGroupMessageId('bot-group-message-attachment-cross-host'),
+        image: { mediaType: 'image/png', data: 'iVBORw0KGgo=', name: 'cross-host.png' },
+      }, new AbortController().signal, owner.peer)
+      if (!admitted.ok || admitted.value === null || typeof admitted.value !== 'object'
+        || !('grantId' in admitted.value) || typeof admitted.value.grantId !== 'string') {
+        throw new Error('cross-host attachment admission did not return an opaque grant')
+      }
+      const secondaryOwner = await principal({ authority: secondary.authority }, ownerEnrollment)
+      await expect(secondary.service.handle('bots/share/send-group-message', {
+        groupId,
+        messageId: BotGroupMessageId('bot-group-message-attachment-cross-host'),
+        text: 'Deliver from the peer Host.',
+        attachmentGrants: [admitted.value.grantId],
+      }, new AbortController().signal, secondaryOwner.peer)).resolves.toMatchObject({
+        ok: true,
+        value: { status: 'accepted' },
+      })
+      expect(secondary.host.sharedGroupAttachments.size).toBe(2)
+      expect([...secondary.host.sharedGroupAttachments.values()].every(attachments => attachments.length === 1
+        && attachments[0]?.type === 'image')).toBe(true)
+    } finally {
+      await secondary?.close()
+      await value.close()
+    }
+  })
+
+  it('admits a shared streamed file through ACL checks before isolated delivery', async () => {
+    const value = await fixture(10, true, false, { value: 1_000 }, true)
+    try {
+      const ownerEnrollment = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-second'), 'owner')).code,
+        request(cookie(ownerEnrollment)),
+      )
+      const owner = await principal(value, ownerEnrollment)
+      const created = await value.service.handle('bots/share/create-group', {
+        id: BotGroupId('bot-group-streamed-file'),
+        name: 'Streamed file room',
+        botIds: [BotId('bot-chief'), BotId('bot-second')],
+      }, new AbortController().signal, owner.peer)
+      const groupId = groupIdFromResult(created)
+      const messageId = BotGroupMessageId('bot-group-message-streamed-file')
+      const grant = await value.service.admitSharedFileUpload(
+        { kind: 'group', groupId, messageId, targetBotIds: undefined },
+        (async function* () {
+          yield Uint8Array.of(1, 2)
+          yield Uint8Array.of(3, 4, 5)
+        })(),
+        'brief.txt',
+        new AbortController().signal,
+        owner.botPrincipalId,
+      )
+      expect(grant.attachments).toEqual([{ type: 'file', name: 'brief.txt', bytes: 5 }])
+      await expect(value.service.handle('bots/share/send-group-message', {
+        groupId,
+        messageId,
+        text: 'Read this brief.',
+        attachmentGrants: [grant.grantId],
+      }, new AbortController().signal, owner.peer)).resolves.toMatchObject({
+        ok: true,
+        value: { status: 'accepted' },
+      })
+      expect([...value.host.sharedGroupAttachments.values()].every(attachments => attachments.length === 1
+        && attachments[0]?.type === 'file')).toBe(true)
+    } finally {
+      await value.close()
+    }
+  })
+
+  it('rechecks shared-group ACL before consuming an admitted attachment grant', async () => {
+    const value = await fixture(10, true, false, { value: 1_000 }, true)
+    try {
+      const ownerEnrollment = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-second'), 'owner')).code,
+        request(cookie(ownerEnrollment)),
+      )
+      const owner = await principal(value, ownerEnrollment)
+      const created = await value.service.handle('bots/share/create-group', {
+        id: BotGroupId('bot-group-attachment-revocation'),
+        name: 'Revoked attachment room',
+        botIds: [BotId('bot-chief'), BotId('bot-second')],
+      }, new AbortController().signal, owner.peer)
+      const groupId = groupIdFromResult(created)
+      const chiefMember = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'collaborator')).code,
+        enrollmentRequest(),
+      )
+      const secondMember = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-second'), 'collaborator')).code,
+        request(cookie(chiefMember)),
+      )
+      const collaborator = await principal(value, secondMember)
+      const groupInvite = await value.service.handle('bots/share/manage-group-members', {
+        groupId,
+        action: 'create-invite',
+      }, new AbortController().signal, owner.peer)
+      const groupEnrollment = await value.service.enroll(
+        groupInviteCodeFromResult(groupInvite),
+        request(cookie(secondMember)),
+      )
+      const groupMember = await principal(value, groupEnrollment)
+      const messageId = BotGroupMessageId('bot-group-message-revoked-attachment')
+      const admitted = await value.service.handle('bots/share/admit-group-image', {
+        groupId,
+        messageId,
+        image: { mediaType: 'image/png', data: 'iVBORw0KGgo=' },
+      }, new AbortController().signal, groupMember.peer)
+      if (!admitted.ok || admitted.value === null || typeof admitted.value !== 'object'
+        || !('grantId' in admitted.value) || typeof admitted.value.grantId !== 'string') {
+        throw new Error('revocation fixture did not return an opaque grant')
+      }
+      await expect(value.service.handle('bots/share/manage-group-members', {
+        groupId,
+        action: 'revoke',
+        principalId: collaborator.botPrincipalId,
+      }, new AbortController().signal, owner.peer)).resolves.toMatchObject({ ok: true, value: { revoked: true } })
+      await expect(value.service.handle('bots/share/send-group-message', {
+        groupId,
+        messageId,
+        text: 'This must not be delivered.',
+        attachmentGrants: [admitted.value.grantId],
+      }, new AbortController().signal, groupMember.peer)).resolves.toMatchObject({ ok: false })
+      expect(value.host.sharedGroupMessages).toHaveLength(0)
+    } finally {
+      await value.close()
+    }
+  })
+
+  it('does not consume a second shared-group grant when a retry has different text', async () => {
+    const value = await fixture(10, true, false, { value: 1_000 }, true)
+    try {
+      const ownerEnrollment = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-second'), 'owner')).code,
+        request(cookie(ownerEnrollment)),
+      )
+      const owner = await principal(value, ownerEnrollment)
+      const created = await value.service.handle('bots/share/create-group', {
+        id: BotGroupId('bot-group-attachment-retry-validation'),
+        name: 'Retry validation room',
+        botIds: [BotId('bot-chief'), BotId('bot-second')],
+      }, new AbortController().signal, owner.peer)
+      const groupId = groupIdFromResult(created)
+      const messageId = BotGroupMessageId('bot-group-message-shared-retry-validation')
+      const first = await value.service.handle('bots/share/admit-group-image', {
+        groupId,
+        messageId,
+        image: { mediaType: 'image/png', data: 'iVBORw0KGgo=', name: 'first.png' },
+      }, new AbortController().signal, owner.peer)
+      if (!first.ok || first.value === null || typeof first.value !== 'object'
+        || !('grantId' in first.value) || typeof first.value.grantId !== 'string'
+      ) {
+        throw new Error('shared retry validation admission did not return an opaque grant')
+      }
+      await expect(value.service.handle('bots/share/send-group-message', {
+        groupId,
+        messageId,
+        text: 'Original shared text',
+        attachmentGrants: [first.value.grantId],
+      }, new AbortController().signal, owner.peer)).resolves.toMatchObject({ ok: true, value: { status: 'accepted' } })
+      if (value.attachmentStore === undefined) throw new Error('attachment store was not mounted')
+      const membership = sharedMembershipSnapshotSchema.parse(
+        (await value.authority.readExtension('agent-bots/shared-memberships')).value,
+      )
+      const groups = sharedGroupSnapshotSchema.parse(membership.sharedGroups)
+      const group = groups.groups.find(candidate => candidate.id === groupId)
+      if (group === undefined) throw new Error('shared retry validation group disappeared')
+      const second = await value.attachmentStore.admit({
+        kind: 'shared-group',
+        principalId: owner.botPrincipalId,
+        groupId,
+        messageId,
+        targetBotIds: [BotId('bot-chief'), BotId('bot-second')],
+        authorizationRevision: group.revision,
+      }, [{
+        type: 'image',
+        attachment: {
+          attachmentId: AttachmentId(`sha256:${'c'.repeat(64)}`),
+          mediaType: 'image/png',
+          bytes: 4,
+          width: 1,
+          height: 1,
+          name: 'second.png',
+        },
+      }])
+      await expect(value.service.handle('bots/share/send-group-message', {
+        groupId,
+        messageId,
+        text: 'Changed shared text',
+        attachmentGrants: [second.grantId],
+      }, new AbortController().signal, owner.peer)).resolves.toMatchObject({ ok: false })
+      await expect(value.attachmentStore.consume({
+        kind: 'shared-group',
+        principalId: owner.botPrincipalId,
+        groupId,
+        messageId,
+        targetBotIds: [BotId('bot-chief'), BotId('bot-second')],
+        authorizationRevision: group.revision,
+      }, [second.grantId])).resolves.toMatchObject({ status: 'accepted' })
+    } finally {
+      await value.close()
+    }
+  })
+
+  it('delivers shared-private image grants once and keeps revoked grants unusable', async () => {
+    const value = await fixture(10, false, false, { value: 1_000 }, true)
+    try {
+      const ownerEnrollment = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      const owner = await principal(value, ownerEnrollment)
+      const messageId = BotPrivateMessageId('bot-private-message-image-once')
+      const admitted = await value.service.handle('bots/share/admit-private-image', {
+        botId: BotId('bot-chief'),
+        messageId,
+        image: { mediaType: 'image/png', data: 'iVBORw0KGgo=', name: 'private.png' },
+      }, new AbortController().signal, owner.peer)
+      if (!admitted.ok || admitted.value === null || typeof admitted.value !== 'object'
+        || !('grantId' in admitted.value) || typeof admitted.value.grantId !== 'string') {
+        throw new Error('private image admission did not return an opaque grant')
+      }
+      const chat = {
+        botId: BotId('bot-chief'),
+        messageId,
+        text: 'Summarize this private image.',
+        attachmentGrants: [admitted.value.grantId],
+      }
+      let failFlush = true
+      value.host.flushPrivateSession = async () => {
+        if (failFlush) {
+          failFlush = false
+          throw new Error('injected private attachment flush failure')
+        }
+      }
+      await expect(value.service.handle('bots/share/chat', chat, new AbortController().signal, owner.peer)).resolves.toMatchObject({ ok: false })
+      const firstFollowup = value.host.followups.mock.calls.at(-1)
+      if (firstFollowup === undefined) throw new Error('private attachment follow-up was not queued')
+      expect(firstFollowup[1]).toMatchObject({
+        source: { kind: 'user', rpcId: String(messageId) },
+        content: [{ type: 'text', text: 'Summarize this private image.' }, { type: 'image' }],
+      })
+      const followupCount = value.host.followups.mock.calls.length
+      await expect(value.service.handle('bots/share/chat', chat, new AbortController().signal, owner.peer)).resolves.toMatchObject({ ok: true, value: { accepted: true } })
+      expect(value.host.followups.mock.calls).toHaveLength(followupCount)
+
+      const collaboratorEnrollment = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'collaborator')).code,
+        enrollmentRequest(),
+      )
+      const collaborator = await principal(value, collaboratorEnrollment)
+      const revokedMessageId = BotPrivateMessageId('bot-private-message-revoked-image')
+      const revokedGrant = await value.service.handle('bots/share/admit-private-image', {
+        botId: BotId('bot-chief'),
+        messageId: revokedMessageId,
+        image: { mediaType: 'image/png', data: 'iVBORw0KGgo=' },
+      }, new AbortController().signal, collaborator.peer)
+      if (!revokedGrant.ok || revokedGrant.value === null || typeof revokedGrant.value !== 'object'
+        || !('grantId' in revokedGrant.value) || typeof revokedGrant.value.grantId !== 'string') {
+        throw new Error('revoked private image admission did not return an opaque grant')
+      }
+      await expect(value.service.handle('bots/share/manage-members', {
+        botId: BotId('bot-chief'),
+        action: 'revoke',
+        principalId: collaborator.botPrincipalId,
+      }, new AbortController().signal, owner.peer)).resolves.toMatchObject({ ok: true, value: { revoked: true } })
+      await expect(value.service.handle('bots/share/chat', {
+        botId: BotId('bot-chief'),
+        messageId: revokedMessageId,
+        text: 'Must be rejected after revocation.',
+        attachmentGrants: [revokedGrant.value.grantId],
+      }, new AbortController().signal, collaborator.peer)).resolves.toMatchObject({ ok: false })
     } finally {
       await value.close()
     }
@@ -2556,7 +3129,7 @@ describe('shared Bot service', () => {
   })
 
   it('rejects a group send before delivery when the durable transcript has no response capacity', async () => {
-    const value = await fixture(10, true)
+    const value = await fixture(10, true, false, { value: 1_000 }, true)
     try {
       const ownerEnrollment = await value.service.enroll(
         (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
@@ -2572,6 +3145,17 @@ describe('shared Bot service', () => {
         botIds: [BotId('bot-chief'), BotId('bot-second')],
       }, new AbortController().signal, owner.peer)
       const groupId = groupIdFromResult(created)
+      const messageId = BotGroupMessageId('bot-group-message-capacity-new')
+      const admitted = await value.service.handle('bots/share/admit-group-image', {
+        groupId, messageId,
+        image: { mediaType: 'image/png', data: 'iVBORw0KGgo=', name: 'capacity.png' },
+      }, new AbortController().signal, owner.peer)
+      if (!admitted.ok || admitted.value === null || typeof admitted.value !== 'object'
+        || !('grantId' in admitted.value) || typeof admitted.value.grantId !== 'string') {
+        throw new Error('capacity attachment admission did not return a grant')
+      }
+      if (value.attachmentStore === undefined) throw new Error('attachment store was not mounted')
+      const consume = vi.spyOn(value.attachmentStore, 'consume')
       await value.authority.mutateExtension('agent-bots/shared-memberships', (current) => {
         const membership = sharedMembershipSnapshotSchema.parse(current)
         const groups = sharedGroupSnapshotSchema.parse(membership.sharedGroups)
@@ -2591,10 +3175,12 @@ describe('shared Bot service', () => {
       const result = await value.service.handle('bots/share/send-group-message', {
         groupId,
         text: 'This must not reach a Session.',
-        messageId: BotGroupMessageId('bot-group-message-capacity-new'),
+        messageId,
+        attachmentGrants: [admitted.value.grantId],
       }, new AbortController().signal, owner.peer)
       expect(result).toMatchObject({ ok: false, error: { code: 'gateway/unavailable' } })
       expect(value.host.deliverSharedGroup).not.toHaveBeenCalled()
+      expect(consume).not.toHaveBeenCalled()
     } finally {
       await value.close()
     }

@@ -22,6 +22,11 @@ import {
   BotGroupMessageId,
 } from './group-chat.ts'
 import type {
+  BotAttachmentGrantStore,
+  BotInputAttachment,
+} from './attachment-grants.ts'
+import { attachmentView, sameAttachmentRefs } from './attachment-grants.ts'
+import type {
   BotGroupCreateRequest,
   BotGroupCreateValue,
   BotGroupDeliveryClaim,
@@ -390,6 +395,8 @@ export interface SharedGroupHost {
     readonly targetBotId: BotId
     readonly sessionId: SessionId
     readonly text: string
+    /** Provider-admitted immutable content references. */
+    readonly attachments?: readonly BotInputAttachment[]
     readonly messageId: ReturnType<typeof BotGroupMessageId>
     readonly signal?: AbortSignal
   }) => Promise<'accepted' | 'duplicate' | {
@@ -424,6 +431,12 @@ export class SharedGroupError extends Error {
   }
 }
 
+const BOT_ROSTER_FENCE_BUSY_ERROR_NAME = 'BotRosterFenceBusyError'
+
+function isBotRosterFenceBusyError(error: unknown): boolean {
+  return error instanceof Error && error.name === BOT_ROSTER_FENCE_BUSY_ERROR_NAME
+}
+
 interface SharedGroupMutationResult<T> {
   readonly snapshot: SharedGroupSnapshot
   readonly value: T
@@ -451,8 +464,75 @@ export class SharedBotGroupService {
     private readonly authority: SharedAccessAuthority,
     private readonly host: SharedGroupHost,
     now: () => number = Date.now,
+    private readonly attachments?: BotAttachmentGrantStore,
   ) {
     this.now = now
+  }
+
+  /**
+   * Admit one shared-group file or image reference under the current ACL and revision.
+   * @param request - Group, message, targets, and provider-admitted references.
+   * @param principalId - Authenticated shared principal.
+   * @param signal - Cancellation for the authority lock.
+   * @returns Opaque grant id and safe metadata.
+   */
+  async admitAttachment(
+    request: {
+      readonly groupId: ReturnType<typeof BotGroupId>
+      readonly messageId: ReturnType<typeof BotGroupMessageId>
+      readonly targetBotIds?: readonly BotId[]
+      readonly attachments: readonly BotInputAttachment[]
+    },
+    principalId: ReturnType<typeof BotPrincipalId>,
+    signal: AbortSignal,
+  ): Promise<import('./attachment-grants.ts').BotAttachmentGrantValue> {
+    this.requireIsolatedHost()
+    const groupId = normalizeGroupId(request.groupId)
+    const messageId = normalizeMessageId(request.messageId)
+    return (await this.locked(principalId, 'write-group', signal, async (snapshot, memberships) => {
+      const group = findGroup(snapshot, groupId)
+      requireGroupAccess(group, memberships, principalId, 'write-group')
+      if (snapshot.messages.some(message => message.id === messageId)) {
+        throw new SharedGroupError('gateway/conflict', `shared Bot group message "${String(messageId)}" already exists`)
+      }
+      const targets = requestedRecipients(group, request.targetBotIds)
+      if (this.attachments === undefined) throw new SharedGroupError('gateway/unavailable', 'shared Bot attachment admission is unavailable')
+      const value = await this.attachments.admit({
+        kind: 'shared-group', principalId, groupId, messageId, targetBotIds: targets,
+        authorizationRevision: group.revision,
+      }, request.attachments)
+      return { snapshot, value }
+    })).value
+  }
+
+  /**
+   * Check the current shared-group ACL before a streaming provider starts.
+   * @param request - Group, message, and requested recipient scope.
+   * @param principalId - Authenticated shared principal.
+   * @param signal - Cancellation for the authority lock.
+   * @returns Completion after the current group and recipients are authorized.
+   */
+  async checkAttachmentAdmission(
+    request: {
+      readonly groupId: ReturnType<typeof BotGroupId>
+      readonly messageId: ReturnType<typeof BotGroupMessageId>
+      readonly targetBotIds?: readonly BotId[]
+    },
+    principalId: ReturnType<typeof BotPrincipalId>,
+    signal: AbortSignal,
+  ): Promise<void> {
+    this.requireIsolatedHost()
+    const groupId = normalizeGroupId(request.groupId)
+    const messageId = normalizeMessageId(request.messageId)
+    await this.locked(principalId, 'write-group', signal, async (snapshot, memberships) => {
+      const group = findGroup(snapshot, groupId)
+      requireGroupAccess(group, memberships, principalId, 'write-group')
+      if (snapshot.messages.some(message => message.id === messageId)) {
+        throw new SharedGroupError('gateway/conflict', `shared Bot group message "${String(messageId)}" already exists`)
+      }
+      requestedRecipients(group, request.targetBotIds)
+      return { snapshot, value: undefined }
+    })
   }
 
   /** Stop delayed shared-group recovery work before the authority is closed. */
@@ -841,7 +921,19 @@ export class SharedBotGroupService {
       const messages = snapshot.messages
         .filter(message => message.groupId === group.id)
         .sort((left, right) => left.createdAt - right.createdAt || String(left.id).localeCompare(String(right.id)))
-        .map(message => messageView(message, bots))
+        .map((message) => {
+          const principalId = message.sender.kind === 'user' ? message.sender.principalId : undefined
+          const attachments = principalId === undefined
+            ? []
+            : this.attachments?.attachmentsForSharedGroupMessage({
+              principalId,
+              groupId: group.id,
+              messageId: message.id,
+              targetBotIds: message.targetBotIds ?? group.botIds,
+              authorizationRevision: group.revision,
+            }) ?? []
+          return messageView(message, bots, attachments)
+        })
       const messageIds = new Set(messages.map(message => String(message.id)))
       const deliveries: BotGroupDeliveryStatusView[] = snapshot.deliveries
         .filter(delivery => delivery.groupId === group.id && messageIds.has(String(delivery.messageId)))
@@ -856,6 +948,39 @@ export class SharedBotGroupService {
           ...(delivery.error === undefined ? {} : { error: delivery.error }),
         }))
       return { snapshot, value: { group: groupView(group, bots), messages, deliveries } }
+    }))
+    return result.value
+  }
+
+  /**
+   * Resolve one stored attachment after checking the reader's current group access.
+   * @param groupId - Group containing the message.
+   * @param messageId - Message containing the attachment.
+   * @param attachmentId - Opaque attachment provider identity.
+   * @param principalId - Authenticated reader.
+   * @param signal - Request cancellation.
+   * @returns The exact stored attachment reference.
+   */
+  async resolveAttachment(
+    groupId: ReturnType<typeof BotGroupId>, messageId: ReturnType<typeof BotGroupMessageId>, attachmentId: string,
+    principalId: ReturnType<typeof BotPrincipalId>, signal: AbortSignal,
+  ): Promise<BotInputAttachment> {
+    this.requireIsolatedHost()
+    const availableBots = await this.stableBotRoster(signal)
+    const result = await this.withRosterFence(availableBots, signal, () => this.locked(principalId, 'read-group', signal, (snapshot, memberships) => {
+      const group = findGroup(snapshot, groupId)
+      requireGroupAccess(group, memberships, principalId, 'read-group')
+      this.activeBotsFromList(group.botIds, availableBots)
+      const message = snapshot.messages.find(candidate => candidate.groupId === group.id && candidate.id === messageId)
+      if (message === undefined || message.sender.kind !== 'user' || message.sender.principalId === undefined) {
+        throw new SharedGroupError('gateway/not-found', 'Shared Bot attachment was not found')
+      }
+      const attachment = this.attachments?.attachmentsForSharedGroupMessage({
+        principalId: message.sender.principalId, groupId: group.id, messageId: message.id,
+        targetBotIds: message.targetBotIds ?? group.botIds, authorizationRevision: group.revision,
+      }).find(candidate => String(candidate.attachment.attachmentId) === attachmentId)
+      if (attachment === undefined) throw new SharedGroupError('gateway/not-found', 'Shared Bot attachment was not found')
+      return { snapshot, value: attachment }
     }))
     return result.value
   }
@@ -882,11 +1007,43 @@ export class SharedBotGroupService {
       const group = findGroup(snapshot, groupId)
       requireGroupAccess(group, memberships, principalId, 'write-group')
       const targetBotIds = requestedRecipients(group, request.targetBotIds)
+      if ((request.attachmentGrants?.length ?? 0) > 0 && request.messageId === undefined) {
+        throw new SharedGroupError('gateway/bad-request', 'attachment grants require an explicit message id')
+      }
+      const attachmentStore = this.attachments
+      if (request.attachmentGrants !== undefined && request.attachmentGrants.length > 0 && attachmentStore === undefined) {
+        throw new SharedGroupError('gateway/unavailable', 'shared Bot attachment admission is unavailable')
+      }
+      const attachmentScope = {
+        kind: 'shared-group' as const,
+        principalId,
+        groupId,
+        messageId,
+        targetBotIds,
+        authorizationRevision: group.revision,
+      }
       const existing = snapshot.messages.find(message => message.id === messageId)
+      const existingAttachments = attachmentStore?.attachmentsForMessage(attachmentScope) ?? []
+      if (existing === undefined && existingAttachments.length > 0) {
+        throw new SharedGroupError('gateway/conflict', 'This attachment send could not be confirmed; start a new message')
+      }
+      if (request.attachmentGrants !== undefined && request.attachmentGrants.length > 0) {
+        if (attachmentStore === undefined) {
+          throw new SharedGroupError('gateway/unavailable', 'shared Bot attachment admission is unavailable')
+        }
+        if (existing !== undefined && existingAttachments.length === 0) {
+          throw new SharedGroupError('gateway/conflict', `shared Bot group message "${String(messageId)}" already exists without attachments`)
+        }
+        const preview = attachmentStore.preview(attachmentScope, request.attachmentGrants)
+        if (existing !== undefined && !sameAttachmentRefs(existingAttachments, preview)) {
+          throw new SharedGroupError('gateway/conflict', `shared Bot group message "${String(messageId)}" already exists with different attachments`)
+        }
+      }
       if (existing !== undefined) {
         if (existing.groupId !== group.id || existing.text !== text
           || existing.sender.kind !== 'user' || String(existing.sender.principalId ?? '') !== String(principalId)
-          || !sameIdSet(existing.targetBotIds ?? group.botIds, targetBotIds)) {
+          || !sameIdSet(existing.targetBotIds ?? group.botIds, targetBotIds)
+        ) {
           throw new SharedGroupError('gateway/conflict', `shared Bot group message "${String(messageId)}" already exists with different content`)
         }
       }
@@ -947,6 +1104,13 @@ export class SharedBotGroupService {
         + snapshot.responseReservations.length + newResponseReservationCount > MAX_SHARED_GROUP_MESSAGES) {
         throw new SharedGroupError('gateway/unavailable', 'shared Bot group response capacity is exhausted')
       }
+      if (existing === undefined && request.attachmentGrants !== undefined && request.attachmentGrants.length > 0) {
+        if (attachmentStore === undefined) {
+          throw new SharedGroupError('gateway/unavailable', 'shared Bot attachment admission is unavailable')
+        }
+        await attachmentStore.consume(attachmentScope, request.attachmentGrants)
+      }
+      const messageAttachments = attachmentStore?.attachmentsForMessage(attachmentScope) ?? []
       if (existing === undefined) {
         const message: BotGroupMessageRecord = {
           id: messageId,
@@ -1014,6 +1178,7 @@ export class SharedBotGroupService {
             groupId: group.id,
             groupName: group.name,
             text,
+            attachments: messageAttachments,
             messageId,
             targetBotIds,
             attempts,
@@ -1440,6 +1605,7 @@ export class SharedBotGroupService {
         targetBotId: attempt.botId,
         sessionId: binding.sessionId,
         text: plan.text,
+        ...(plan.attachments.length === 0 ? {} : { attachments: plan.attachments }),
         messageId: plan.messageId,
         signal: dispatchSignal,
       })
@@ -1465,6 +1631,13 @@ export class SharedBotGroupService {
       await this.recordDeliveryOutcome(attempt.deliveryId, claim.token, 'accepted', undefined, dispatchSignal)
       return { kind: 'accepted', result: deliveryResult }
     } catch (error: unknown) {
+      if (isBotRosterFenceBusyError(error)) {
+        return {
+          kind: 'busy',
+          error: 'Shared Bot group delivery is waiting for the Bot roster fence',
+          leaseUntil: this.now() + SHARED_GROUP_DELIVERY_LEASE_MS,
+        }
+      }
       if (deliveredResult !== undefined) {
         if (dispatchSignal.aborted || error instanceof SharedGroupClaimLostError) {
           return {
@@ -1914,10 +2087,19 @@ export class SharedBotGroupService {
       this.clearPendingRecovery(deliveryId)
       return
     }
+    await this.attachments?.refresh()
     const plan: SharedGroupSendPlan = {
       groupId: group.id,
       groupName: group.name,
       text: message.text,
+      attachments: this.attachments?.attachmentsForMessage({
+        kind: 'shared-group',
+        principalId: delivery.senderPrincipalId,
+        groupId: group.id,
+        messageId: message.id,
+        targetBotIds: message.targetBotIds ?? group.botIds,
+        authorizationRevision: delivery.authorizationRevision,
+      }) ?? [],
       messageId: message.id,
       targetBotIds: [delivery.botId],
       attempts: [{ botId: delivery.botId, sessionId: binding.sessionId, deliveryId: delivery.id }],
@@ -1960,6 +2142,7 @@ export class SharedBotGroupService {
       const membershipSnapshot = parseMembershipExtension(current)
       const groups = parseGroups(membershipSnapshot.sharedGroups)
       requireActivePrincipal(authorityState, principalId)
+      await this.attachments?.refresh()
       const result = await work(groups, membershipSnapshot.memberships)
       return {
         value: result,
@@ -2246,6 +2429,7 @@ interface SharedGroupSendPlan {
   readonly groupId: BotGroupId
   readonly groupName: string
   readonly text: string
+  readonly attachments: readonly BotInputAttachment[]
   readonly messageId: BotGroupMessageId
   readonly targetBotIds: readonly BotId[]
   readonly attempts: readonly SharedGroupDeliveryPlan[]
@@ -2340,9 +2524,17 @@ function safeGroupView(record: SharedGroupRecord, bots: readonly BotView[]): Bot
   }
 }
 
-function messageView(message: BotGroupMessageRecord, bots: readonly BotView[]): BotGroupMessageView {
+function messageView(
+  message: BotGroupMessageRecord,
+  bots: readonly BotView[],
+  attachments: readonly BotInputAttachment[] = [],
+): BotGroupMessageView {
   const sender = message.sender
-  if (sender.kind === 'user') return { ...message, sender }
+  if (sender.kind === 'user') return {
+    ...message,
+    sender,
+    ...(attachments.length === 0 ? {} : { attachments: attachments.map(attachmentView) }),
+  }
   const bot = bots.find(candidate => candidate.id === sender.botId)
   return {
     ...message,
