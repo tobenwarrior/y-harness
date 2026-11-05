@@ -941,6 +941,7 @@ describe('durable Bot roster', () => {
       fence = firstHost.withBotRoster?.(bots, undefined, async () => {
         started.resolve(true)
         await release.promise
+        return undefined
       })
       if (fence === undefined) throw new Error('shared roster fence capability was not mounted')
       await started.promise
@@ -1004,6 +1005,7 @@ describe('durable Bot roster', () => {
       fence = firstHost.withBotRoster?.(bots, undefined, async () => {
         started.resolve(true)
         await release.promise
+        return undefined
       })
       if (fence === undefined) throw new Error('event routine roster fence capability was not mounted')
       await started.promise
