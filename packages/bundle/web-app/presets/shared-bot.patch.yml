@@ -1,6 +1,6 @@
 # Agent preset shared-bot: the collaborator-only Bot chat composition.
-# It deliberately mounts identity only; operator coding, filesystem, shell,
-# web, scheduling, and Bot-management tools are not available in this scope.
+# Operator coding, filesystem, shell, scheduling, and Bot-management tools
+# are not available in this scope.
 - insert:
     - id: preset-shared-bot
       name: '@yharness/agent-preset'
@@ -14,3 +14,9 @@
             config:
               prefix: You are a shared Y Harness Bot. Answer the collaborator in this private Bot session.
               includeRuntimeContext: false
+          - id: tool-web-search
+            name: '@yharness/tool-web'
+            config:
+              search: true
+              fetch: false
+              searchTimeoutMs: 60000

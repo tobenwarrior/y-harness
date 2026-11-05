@@ -54,7 +54,7 @@ Saved model selections override the composition default. The settings card accep
 | `publicUrl` | Unset | Advertised HTTP(S) application root; otherwise announce the listener's loopback URL |
 | `trustedHosts` | `[]` | Extra hosts allowed to reach the GUI from the network |
 
-The generated [configuration catalog](../../../docs/config-catalog.md#yharnessweb-app) lists this runtime plugin's accepted fields and their JSDoc. The shipped composition inserts the `schedule` service row and the `ui-schedule` task page row, while the clock reading and the four reminder tools belong to the `standard`, `cordis`, and `ptc` presets. The `tool-subagent` and `tool-subagent-fork` rows in those presets deny the four tools, so a delegated child's scope never lists them. The `shared-bot` preset is a separate least-privilege composition for collaborator sessions: it mounts only the shared-session persona and no shell, filesystem, web, scheduling, delegation, or Bot-management tools.
+The generated [configuration catalog](../../../docs/config-catalog.md#yharnessweb-app) lists this runtime plugin's accepted fields and their JSDoc. The shipped composition inserts the `schedule` service row and the `ui-schedule` task page row, while the clock reading and the four reminder tools belong to the `standard`, `cordis`, and `ptc` presets. The `tool-subagent` and `tool-subagent-fork` rows in those presets deny the four tools, so a delegated child's scope never lists them. The `shared-bot` preset provides scoped web search using the configured search provider, with no page fetch, shell, filesystem, scheduling, delegation, or Bot-management tools.
 
 <a id="public-deployments"></a>
 ### Listening, trust, and public deployments

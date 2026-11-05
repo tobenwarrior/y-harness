@@ -5,9 +5,9 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import type { Browser, BrowserContext, Page } from 'playwright'
 import { chromium } from 'playwright'
-import { afterAll, beforeAll, describe, expect, it, onTestFailed } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, onTestFailed, vi } from 'vitest'
 import type { GenerateOptions, StreamChunk } from '@yharness/llm'
-import { LlmAdapter } from '@yharness/llm'
+import { LlmAdapter, ToolCallId } from '@yharness/llm'
 // Type-only: makes the Bot service contribution visible on the assembled Host context.
 import type { BotView } from '@yharness/bots'
 import type {} from '@yharness/bots'
@@ -35,6 +35,7 @@ const SHARED_ATTACHMENT_BODY = 'shared attachment payload\n'
 /** Deterministic model response for the two shared-group recipients. */
 class GroupReplyAdapter extends LlmAdapter {
   readonly requests: GenerateOptions[] = []
+  searchNext = false
 
   override async listModels(provider: string) {
     return [{ provider, id: MODEL, name: `${provider}/${MODEL}` }]
@@ -42,6 +43,16 @@ class GroupReplyAdapter extends LlmAdapter {
 
   override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     this.requests.push(options)
+    if (this.searchNext) {
+      this.searchNext = false
+      const id = ToolCallId('shared-group-web-search')
+      const args = JSON.stringify({ queries: ['release checklist'] })
+      yield { type: 'block-start', index: 0, blockType: 'tool-call' }
+      yield { type: 'tool-call-delta', index: 0, id, name: 'web_search', argumentsDelta: args }
+      yield { type: 'block-end', index: 0, block: { type: 'tool-call', id, name: 'web_search', arguments: args } }
+      yield { type: 'finish', reason: { kind: 'tool-calls' } }
+      return
+    }
     yield { type: 'block-start', index: 0, blockType: 'text' }
     yield { type: 'block-end', index: 0, block: { type: 'text', text: REPLY } }
     yield { type: 'finish', reason: { kind: 'stop' } }
@@ -319,9 +330,20 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
     })).toBe(true)
     await collaboratorGroupSection.getByRole('option', { name: /Scout/ }).click()
     await collaboratorComposer.fill('@Scout Please check the release.')
+    const search = vi.spyOn(scaffold.ctx.web, 'search').mockResolvedValue({
+      sources: [{ url: 'https://example.com/checklist', title: 'Release checklist' }], truncated: false,
+    })
+    adapter.searchNext = true
     await collaboratorDialog.getByRole('button', { name: 'Send to group', exact: true }).click()
-    await expect.poll(() => adapter.requests.length, { timeout: 30_000 }).toBe(5)
+    await expect.poll(() => adapter.requests.length, { timeout: 30_000 }).toBe(6)
     expect(JSON.stringify(adapter.requests[4])).toContain(String.raw`Your Bot name is \"Scout\"`)
+    const sharedToolNames = adapter.requests[4]?.tools?.map(tool => tool.name) ?? []
+    expect(sharedToolNames).toContain('web_search')
+    expect(sharedToolNames).not.toContain('web_fetch')
+    expect(sharedToolNames).not.toContain('bash')
+    expect(search).toHaveBeenCalledOnce()
+    expect(JSON.stringify(adapter.requests[5])).toContain('https://example.com/checklist')
+    search.mockRestore()
     await expect.poll(() => collaboratorTranscriptRows.filter({ hasText: '@Scout Please check the release.' }).count(), { timeout: 30_000 }).toBe(1)
 
     const attachmentInput = ownerGroupSection.locator('input[type="file"]')
@@ -333,7 +355,7 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
     await expect.poll(() => ownerGroupSection.getByTitle(SHARED_ATTACHMENT_NAME, { exact: true }).count()).toBe(1)
     await ownerComposer.fill(OWNER_ATTACHMENT_MESSAGE)
     await ownerDialog.getByRole('button', { name: 'Send to group', exact: true }).click()
-    await expect.poll(() => adapter.requests.length, { timeout: 30_000 }).toBe(7)
+    await expect.poll(() => adapter.requests.length, { timeout: 30_000 }).toBe(8)
     await expect.poll(() => ownerTranscriptRows.filter({ hasText: OWNER_ATTACHMENT_MESSAGE }).count(), { timeout: 30_000 }).toBe(1)
     await expect.poll(() => ownerGroupSection.getByTitle(SHARED_ATTACHMENT_NAME, { exact: true }).count(), { timeout: 30_000 }).toBe(0)
 
@@ -361,7 +383,7 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
       name: 'standalone.txt', mimeType: 'text/plain', buffer: Buffer.from('file without a typed message'),
     })
     await ownerDialog.getByRole('button', { name: 'Send to group', exact: true }).click()
-    await expect.poll(() => adapter.requests.length, { timeout: 30_000 }).toBe(9)
+    await expect.poll(() => adapter.requests.length, { timeout: 30_000 }).toBe(10)
     await expect.poll(() => ownerTranscriptRows.filter({ hasText: 'standalone.txt' }).count(), { timeout: 30_000 }).toBe(1)
 
     await ownerGroupRow.click()
