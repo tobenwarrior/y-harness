@@ -1003,6 +1003,11 @@
     },
     {
       "doc": "docs/subsystems/tools.md",
+      "symbol": "ToolDispatchAdmission",
+      "source": "packages/core/tools/src/index.ts"
+    },
+    {
+      "doc": "docs/subsystems/tools.md",
       "symbol": "ToolExecutionMode",
       "source": "packages/core/tools/src/index.ts"
     },

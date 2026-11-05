@@ -648,6 +648,18 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'The Bot view and stable connected-app access rows.',
       },
       {
+        signature: '@Remote(\'listSharedAppAccess\') async listSharedAppAccess(request: BotSharedAppAccessRequest): Promise<BotSharedAppAccessValue>',
+        description: 'Read the independent connected-app grants used by shared Bot Sessions.',
+        parameters: [{ name: 'request', description: 'Bot id whose shared-session policy should be projected.' }],
+        returns: 'Connected-app metadata and the authority revision for the policy.',
+      },
+      {
+        signature: '@Remote(\'setSharedAppAccess\') async setSharedAppAccess(request: BotSharedAppAccessUpdateRequest): Promise<BotSharedAppAccessValue>',
+        description: 'Change one independent shared-session connected-app grant.',
+        parameters: [{ name: 'request', description: 'Bot, app, desired grant, and expected policy revision.' }],
+        returns: 'The refreshed shared-app catalog and committed revision.',
+      },
+      {
         signature: '@Remote(\'setConnectedAppAccess\') async setConnectedAppAccess(request: BotConnectedAppAccessRequest): Promise<BotConnectedAppAccessValue>',
         description: 'Persist one Bot\'s grant or revoke for a connected app.',
         parameters: [{ name: 'request', description: 'Bot id, connected-app id, and desired access state.' }],
@@ -4158,6 +4170,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'the exact disposer that unregisters the guard.',
       },
       {
+        signature: 'beforeDispatchAdmission(admission: ToolDispatchAdmission): () => void',
+        description: 'Register a body-admission wrapper after the last-mile guard. This seam lets a policy invoke the body while its short authorization transaction is still committing, then release that transaction before the body settles. Each scope has one admission owner; a later registration in that scope throws so another wrapper cannot await before the authorized body starts.',
+        parameters: [{ name: 'admission', description: 'wrapper that invokes `start()` to admit the body.' }],
+        returns: 'the exact disposer that unregisters the wrapper. The wrapper must invoke `start()` exactly once and return its result.',
+      },
+      {
         signature: 'get(name: string, scope?: ScopeKey): ToolDefinition | undefined',
         description: 'Look up a tool as one scope sees it (scoped shadows global; a restricted-away global reads as absent). Presenters pass the calling agent so the rendered card matches the definition that actually executed.',
         parameters: [{ name: 'name', description: 'the tool name as registered.' }, { name: 'scope', description: 'the viewing scope (the agent); omitted = the global view.' }],
@@ -6032,6 +6050,18 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'BotScheduleRoutineView',
     declaration: 'export type BotScheduleRoutineView = Omit<ScheduleView, \'kind\'> & {\n    readonly kind: \'schedule\';\n    readonly botId: BotId;\n    readonly sessionId: SessionId;\n    readonly status: ScheduleCatalogEntry[\'status\'];\n    readonly lastDelivery?: ScheduleCatalogEntry[\'lastDelivery\'];\n    readonly scheduleKind: ScheduleView[\'kind\'];\n    readonly afterSeconds?: number;\n    readonly everySeconds?: number;\n    readonly time?: string;\n    readonly timeZone?: string;\n    readonly expression?: string;\n};',
+  },
+  {
+    name: 'BotSharedAppAccessRequest',
+    declaration: 'export interface BotSharedAppAccessRequest {\n    readonly botId: BotId;\n}',
+  },
+  {
+    name: 'BotSharedAppAccessUpdateRequest',
+    declaration: 'export interface BotSharedAppAccessUpdateRequest {\n    readonly botId: BotId;\n    readonly appId: string;\n    readonly allowed: boolean;\n    readonly expectedRevision: number;\n}',
+  },
+  {
+    name: 'BotSharedAppAccessValue',
+    declaration: 'export interface BotSharedAppAccessValue {\n    readonly botId: BotId;\n    readonly revision: number;\n    readonly apps: readonly BotConnectedAppAccess[];\n}',
   },
   {
     name: 'BotSharedGroupDeliveryFenceDiagnosticValue',
@@ -9946,6 +9976,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface ToolDefinition extends ToolSchema {\n    readonly source?: ToolSource | McpResourceToolSource;\n    readonly output: ToolOutputDefinition;\n    execute(args: unknown, exec: ToolRunContext): Promise<unknown>;\n    projectContent?(exec: Readonly<ToolExecution>, result: Readonly<ToolExecutionResult>): ContentBlock[] | undefined;\n    finalizeContent?(exec: Readonly<ToolExecution>, result: Readonly<ToolExecutionResult>): ContentBlock[] | undefined;\n    timeoutMs?: number;\n    isConcurrencySafe?(args: unknown): boolean;\n    presentCall?(args: unknown): ToolCallView | undefined;\n    presentResult?(args: unknown, result: ToolResult): ToolResultView | undefined;\n}',
   },
   {
+    name: 'ToolDispatchAdmission',
+    declaration: 'export type ToolDispatchAdmission = (execution: Readonly<ToolDispatchExecution>, start: () => Promise<ToolExecutionResult>) => Promise<ToolExecutionResult>;',
+  },
+  {
     name: 'ToolDispatchDecision',
     declaration: 'export type ToolDispatchDecision = {\n    readonly kind: \'allow\';\n} | {\n    readonly kind: \'deny\';\n    readonly reason: string;\n    readonly info?: ToolErrorInfo;\n};',
   },
@@ -10047,7 +10081,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ToolRuntime',
-    declaration: 'export class ToolRuntime extends Service {\n    static inject;\n    static Config: z<Config>;\n    readonly [TOOL_RUNTIME_SCHEDULER]: ToolRuntimeScheduler;\n    constructor(ctx: Context, config: Config = {});\n    presentAs(mode: ToolPresentationMode): () => void;\n    register(definition: ToolDefinition): () => void;\n    restrict(filter: ToolRestriction): () => void;\n    guard(guard: ToolGuard): () => void;\n    beforeDispatch(guard: ToolDispatchGuard): () => void;\n    get(name: string, scope?: ScopeKey): ToolDefinition | undefined;\n    schemas(scope?: ScopeKey): ToolSchema[];\n    executionMode(exec: ToolExecutionInput): ToolExecutionMode;\n    async execute(exec: ToolExecutionInput): Promise<ToolExecutionResult>;\n}',
+    declaration: 'export class ToolRuntime extends Service {\n    static inject;\n    static Config: z<Config>;\n    readonly [TOOL_RUNTIME_SCHEDULER]: ToolRuntimeScheduler;\n    constructor(ctx: Context, config: Config = {});\n    presentAs(mode: ToolPresentationMode): () => void;\n    register(definition: ToolDefinition): () => void;\n    restrict(filter: ToolRestriction): () => void;\n    guard(guard: ToolGuard): () => void;\n    beforeDispatch(guard: ToolDispatchGuard): () => void;\n    beforeDispatchAdmission(admission: ToolDispatchAdmission): () => void;\n    get(name: string, scope?: ScopeKey): ToolDefinition | undefined;\n    schemas(scope?: ScopeKey): ToolSchema[];\n    executionMode(exec: ToolExecutionInput): ToolExecutionMode;\n    async execute(exec: ToolExecutionInput): Promise<ToolExecutionResult>;\n}',
   },
   {
     name: 'ToolRuntimeScheduler',

@@ -59,6 +59,53 @@ async function run(ctx: Context, name: string, agent?: Agent): Promise<string> {
 }
 
 describe('scoped tool registration', () => {
+  it('runs a delayed ancestor admission before the exact scope and rejects a later owner', async () => {
+    const ctx = await mount()
+    const presetKey = { id: 'preset' as SessionId } as Agent
+    const agentKey = { id: 'agent' as SessionId } as Agent
+    let preset!: Scope
+    let agent!: Scope
+    await ctx.plugin(Object.assign((inner: Context) => {
+      preset = createScope(inner, presetKey)
+      agent = createScope(inner, agentKey, { parent: presetKey })
+    }, { inject: ['tools', 'systemPrompt'] }))
+    try {
+      ctx.tools.register(tool('admission-order'))
+      const order: string[] = []
+      preset.ctx.tools.beforeDispatchAdmission(async (_exec, next) => {
+        order.push('ancestor-before')
+        await Promise.resolve()
+        order.push('ancestor-after-await')
+        const result = await next()
+        order.push('ancestor-after-body')
+        return result
+      })
+      agent.ctx.tools.beforeDispatchAdmission(async (_exec, next) => {
+        order.push('agent')
+        return next()
+      })
+
+      expect(() => agent.ctx.tools.beforeDispatchAdmission(async (_exec, next) => next())).toThrow(
+        'tools.beforeDispatchAdmission() already has an admission owner in this scope',
+      )
+      expect(() => preset.ctx.tools.beforeDispatchAdmission(async (_exec, next) => next())).toThrow(
+        'tools.beforeDispatchAdmission() already has an admission owner in this scope',
+      )
+
+      await expect(run(ctx, 'admission-order', agentKey)).resolves.toBe('ran:admission-order')
+      expect(order).toEqual([
+        'ancestor-before',
+        'ancestor-after-await',
+        'agent',
+        'ancestor-after-body',
+      ])
+    } finally {
+      await agent.dispose()
+      await preset.dispose()
+      await ctx.fiber.dispose()
+    }
+  })
+
   it('keeps final-result observers synchronous', () => {
     type ToolResultListener = Events['tools/result']
     type AsyncToolResultListener = () => Promise<void>

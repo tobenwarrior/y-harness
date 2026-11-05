@@ -9,7 +9,7 @@ import { makeTranslate } from '@yharness/client-test-runtime'
 import { BotShareDialog, SharedBotsDialog } from '../src/client/BotSharing.tsx'
 import { en } from '../src/client/locales.ts'
 import { createSharedGroupPendingQueue } from '../src/client/pending-group-queue.ts'
-import type { BotShareActions } from '../src/client/controller.ts'
+import type { BotShareActions, SharedBotAppAccessValue } from '../src/client/controller.ts'
 import { createSharedBotsClient } from '../src/client/shared-client.ts'
 import type { SharedBotAuthChange, SharedBotsClient } from '../src/client/shared-client.ts'
 import type { BotSummary } from '../src/client/types.ts'
@@ -121,6 +121,104 @@ describe('shared Bot collaboration surfaces', () => {
     await waitFor(() => { expect(getOwnerCapability).toHaveBeenCalledTimes(1) })
     expect(enrollOwner).not.toHaveBeenCalled()
     expect(screen.getByText('Shared owner setup is unavailable in this connection.')).toBeTruthy()
+  })
+
+  it('lets the owner grant a connected app specifically to shared bot sessions', async () => {
+    const listSharedAppAccess = vi.fn().mockResolvedValue({
+      botId: BotId(bot.id), revision: 0, apps: [{ id: 'github', name: 'GitHub', allowed: false }],
+    })
+    const setSharedAppAccess = vi.fn().mockResolvedValue({
+      botId: BotId(bot.id), revision: 1, apps: [{ id: 'github', name: 'GitHub', allowed: true }],
+    })
+    const actions = ownerActions({ listSharedAppAccess, setSharedAppAccess })
+    render(<BotShareDialog bot={bot} actions={actions} open onClose={vi.fn()} t={t} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Allow GitHub in shared sessions' }))
+    await waitFor(() => { expect(setSharedAppAccess).toHaveBeenCalledWith(bot.id, 'github', true, 0) })
+    expect((await screen.findByRole('button', { name: 'Block GitHub in shared sessions' })).getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('keeps shared app access visible if a grant fails', async () => {
+    const listSharedAppAccess = vi.fn().mockResolvedValue({
+      botId: BotId(bot.id), revision: 4, apps: [{ id: 'github', name: 'GitHub', allowed: false }],
+    })
+    const setSharedAppAccess = vi.fn().mockRejectedValue(new Error('offline'))
+    render(<BotShareDialog bot={bot} actions={ownerActions({ listSharedAppAccess, setSharedAppAccess })} open onClose={vi.fn()} t={t} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Allow GitHub in shared sessions' }))
+    expect(await screen.findByText('Could not update shared app access. Try again.')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Allow GitHub in shared sessions' }).getAttribute('aria-pressed')).toBe('false')
+  })
+
+  it('asks the owner to reload a changed shared app policy', async () => {
+    const listSharedAppAccess = vi.fn().mockResolvedValue({
+      botId: bot.id, revision: 1, apps: [{ id: 'github', name: 'GitHub', allowed: false }],
+    })
+    const conflict = new Error('changed')
+    conflict.name = 'SharedBotAppsConflictError'
+    const setSharedAppAccess = vi.fn().mockRejectedValue(conflict)
+    render(<BotShareDialog bot={bot} actions={ownerActions({ listSharedAppAccess, setSharedAppAccess })} open onClose={vi.fn()} t={t} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Allow GitHub in shared sessions' }))
+    expect(await screen.findByText('Shared app access changed elsewhere. Reload before trying again.')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
+    await waitFor(() => { expect(listSharedAppAccess).toHaveBeenCalledTimes(2) })
+  })
+
+  it('does not send a shared app grant twice while the first request is pending', async () => {
+    const listSharedAppAccess = vi.fn().mockResolvedValue({
+      botId: bot.id, revision: 0, apps: [{ id: 'github', name: 'GitHub', allowed: false }],
+    })
+    const pending = Promise.withResolvers<SharedBotAppAccessValue>()
+    const setSharedAppAccess = vi.fn().mockReturnValue(pending.promise)
+    render(<BotShareDialog bot={bot} actions={ownerActions({ listSharedAppAccess, setSharedAppAccess })} open onClose={vi.fn()} t={t} />)
+
+    const grant = await screen.findByRole('button', { name: 'Allow GitHub in shared sessions' })
+    act(() => { grant.click(); grant.click() })
+    expect(setSharedAppAccess).toHaveBeenCalledTimes(1)
+    await act(async () => { pending.resolve({ botId: bot.id, revision: 1, apps: [{ id: 'github', name: 'GitHub', allowed: true }] }) })
+  })
+
+  it('ignores a shared app catalog that arrives after switching bots', async () => {
+    const first = Promise.withResolvers<SharedBotAppAccessValue>()
+    const listSharedAppAccess = vi.fn((botId: string) => botId === bot.id ? first.promise : Promise.resolve({
+      botId, revision: 0, apps: [{ id: 'calendar', name: 'Calendar', allowed: false }],
+    }))
+    const setSharedAppAccess = vi.fn()
+    const actions = ownerActions({ listSharedAppAccess, setSharedAppAccess })
+    const view = render(<BotShareDialog bot={bot} actions={actions} open onClose={vi.fn()} t={t} />)
+    await waitFor(() => { expect(listSharedAppAccess).toHaveBeenCalledWith(bot.id) })
+    view.rerender(<BotShareDialog bot={analystBot} actions={actions} open onClose={vi.fn()} t={t} />)
+    expect(await screen.findByRole('button', { name: 'Allow Calendar in shared sessions' })).toBeTruthy()
+    await act(async () => { first.resolve({ botId: bot.id, revision: 0, apps: [{ id: 'github', name: 'GitHub', allowed: false }] }) })
+    expect(screen.queryByRole('button', { name: 'Allow GitHub in shared sessions' })).toBeNull()
+  })
+
+  it('ignores a shared app grant that finishes after switching bots', async () => {
+    const pending = Promise.withResolvers<SharedBotAppAccessValue>()
+    const listSharedAppAccess = vi.fn((botId: string) => Promise.resolve({
+      botId, revision: 0,
+      apps: [{ id: botId === bot.id ? 'github' : 'calendar', name: botId === bot.id ? 'GitHub' : 'Calendar', allowed: false }],
+    }))
+    const actions = ownerActions({ listSharedAppAccess, setSharedAppAccess: vi.fn().mockReturnValue(pending.promise) })
+    const view = render(<BotShareDialog bot={bot} actions={actions} open onClose={vi.fn()} t={t} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Allow GitHub in shared sessions' }))
+    view.rerender(<BotShareDialog bot={analystBot} actions={actions} open onClose={vi.fn()} t={t} />)
+    expect(await screen.findByRole('button', { name: 'Allow Calendar in shared sessions' })).toBeTruthy()
+    await act(async () => { pending.resolve({ botId: bot.id, revision: 1, apps: [{ id: 'github', name: 'GitHub', allowed: true }] }) })
+    expect(screen.queryByRole('button', { name: 'Block GitHub in shared sessions' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Allow Calendar in shared sessions' })).toBeTruthy()
+  })
+
+  it('rejects a shared app catalog returned for a different bot', async () => {
+    const listSharedAppAccess = vi.fn().mockResolvedValue({
+      botId: analystBot.id, revision: 0, apps: [{ id: 'github', name: 'GitHub', allowed: true }],
+    })
+    render(<BotShareDialog bot={bot} actions={ownerActions({ listSharedAppAccess, setSharedAppAccess: vi.fn() })}
+      open onClose={vi.fn()} t={t} />)
+
+    expect(await screen.findByText('Could not load shared app access. Try again.')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Block GitHub in shared sessions' })).toBeNull()
   })
 
   it('keeps the invite role fixed while an invite is being created', async () => {

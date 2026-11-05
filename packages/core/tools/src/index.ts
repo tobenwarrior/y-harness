@@ -453,6 +453,22 @@ export type ToolDispatchGuard = (
 ) => ToolDispatchDecision
 
 /**
+ * Body-admission wrapper invoked after dispatch guards and immediately before
+ * the registered tool body. A wrapper may perform a short-lived atomic
+ * authorization/body-start handoff by invoking `start()` before returning;
+ * it must not retain an external lock while the returned body promise runs.
+ * @param execution - the caller identity and immutable arguments at dispatch.
+ * @param start - invokes the next admission wrapper or the registered body.
+ * @returns the settled tool result. The wrapper must invoke `start()` exactly
+ * once and return its result; repeated calls reuse the first admission, while
+ * returning without starting is rejected.
+ */
+export type ToolDispatchAdmission = (
+  execution: Readonly<ToolDispatchExecution>,
+  start: () => Promise<ToolExecutionResult>,
+) => Promise<ToolExecutionResult>
+
+/**
  * Runtime context handed to a tool implementation after the registry has
  * accepted a {@link ToolExecution}. {@link deferContext} attaches context to
  * this execution's own result — a composite tool ferries nested-dispatch
@@ -781,6 +797,7 @@ class ToolLayer implements ScopeLayer {
   readonly restrictions = new AnonymousEntries<CompiledToolRestriction>()
   readonly guards = new AnonymousEntries<ToolGuard>()
   readonly dispatchGuards = new AnonymousEntries<ToolDispatchGuard>()
+  dispatchAdmission: ToolDispatchAdmission | undefined
   /**
    * Presentation this scope's agent declared for itself, shadowing the
    * deployment default. One cell rather than an entry table: two answers to
@@ -798,6 +815,7 @@ class ToolLayer implements ScopeLayer {
   isEmpty(): boolean {
     return this.tools.isEmpty() && this.restrictions.isEmpty() && this.guards.isEmpty()
       && this.dispatchGuards.isEmpty()
+      && this.dispatchAdmission === undefined
       && this.mode === undefined
   }
 
@@ -828,6 +846,7 @@ class ToolLayer implements ScopeLayer {
     }
     return { kind: 'allow' }
   }
+
 }
 
 /** Approval decision plus whether the approval channel reported cancellation. */
@@ -1217,6 +1236,32 @@ export class ToolRuntime extends Service {
     )
   }
 
+  /**
+   * Register a body-admission wrapper after the last-mile guard. This seam
+   * lets a policy invoke the body while its short authorization transaction is
+   * still committing, then release that transaction before the body settles.
+   * Each scope has one admission owner; a later registration in that scope
+   * throws so another wrapper cannot await before the authorized body starts.
+   * @param admission - wrapper that invokes `start()` to admit the body.
+   * @returns the exact disposer that unregisters the wrapper. The wrapper must
+   * invoke `start()` exactly once and return its result.
+   */
+  beforeDispatchAdmission(admission: ToolDispatchAdmission): () => void {
+    return this.layers.effect(
+      this.ctx,
+      (layer) => {
+        if (layer.dispatchAdmission !== undefined) {
+          throw new Error('tools.beforeDispatchAdmission() already has an admission owner in this scope')
+        }
+        layer.dispatchAdmission = admission
+        return () => {
+          if (layer.dispatchAdmission === admission) layer.dispatchAdmission = undefined
+        }
+      },
+      { label: 'tools.beforeDispatchAdmission()', notify: false },
+    )
+  }
+
   /** First monotonic denial from the global then the scope chain's guard layers, farthest first. */
   private guardFailure(exec: ToolExecution): ToolFailure | undefined {
     const globalFailure = this.layers.global.guardFailure(exec)
@@ -1241,6 +1286,64 @@ export class ToolRuntime extends Service {
       if (decision.kind === 'deny') return decision
     }
     return { kind: 'allow' }
+  }
+
+  /** Run body-admission wrappers from the global layer into the agent scope. */
+  private dispatchAdmission(
+    exec: Readonly<ToolDispatchExecution>,
+    start: () => Promise<ToolExecutionResult>,
+  ): Promise<ToolExecutionResult> {
+    const admissions: ToolDispatchAdmission[] = []
+    if (this.layers.global.dispatchAdmission !== undefined) {
+      admissions.push(this.layers.global.dispatchAdmission)
+    }
+    if (exec.agent !== undefined) {
+      for (const layer of this.layers.chainLayers(exec.agent)) {
+        if (layer.dispatchAdmission !== undefined) admissions.push(layer.dispatchAdmission)
+      }
+    }
+    let next = start
+    for (let index = admissions.length - 1; index >= 0; index -= 1) {
+      const admission = admissions[index]
+      if (admission === undefined) continue
+      const downstream = next
+      next = () => {
+        let started: Promise<ToolExecutionResult> | undefined
+        const startOnce = (): Promise<ToolExecutionResult> => {
+          if (started !== undefined) return started
+          try {
+            started = Promise.resolve(downstream())
+          } catch (error: unknown) {
+            // Preserve a synchronous plugin failure without changing its value.
+            // oxlint-disable-next-line typescript/prefer-promise-reject-errors
+            started = Promise.reject(error)
+          }
+          // The wrapper may reject before its caller observes the returned
+          // promise. Keep the admitted body observed on every failure path.
+          void started.catch(() => undefined)
+          return started
+        }
+        return (async (): Promise<ToolExecutionResult> => {
+          try {
+            const result = await admission(exec, startOnce)
+            if (started === undefined) {
+              throw new Error('tools.beforeDispatchAdmission() did not invoke start()')
+            }
+            await started
+            // JavaScript plugins can return a value outside the declared type.
+            // oxlint-disable-next-line typescript/no-unnecessary-condition
+            if (result === undefined) {
+              throw new Error('tools.beforeDispatchAdmission() returned without the admitted tool result')
+            }
+            return result
+          } catch (error: unknown) {
+            if (started !== undefined) await started.catch(() => undefined)
+            throw error
+          }
+        })()
+      }
+    }
+    return next()
   }
 
   /**
@@ -1683,12 +1786,16 @@ export class ToolRuntime extends Service {
         })
       }
       if (isAborted(signal)) return toolAbortedBeforeDispatchResult()
-      state.bodyInvoked = true
-      const returned = await tool.execute(exec.arguments, exec)
-      const result = this.createSuccessResult(exec, tool, returned)
-      return isAborted(signal)
-        ? toolAbortedResult(result)
-        : result
+      const startBody = async (): Promise<ToolExecutionResult> => {
+        if (isAborted(signal)) return toolAbortedBeforeDispatchResult()
+        state.bodyInvoked = true
+        const returned = await tool.execute(exec.arguments, exec)
+        const result = this.createSuccessResult(exec, tool, returned)
+        return isAborted(signal)
+          ? toolAbortedResult(result)
+          : result
+      }
+      return await this.dispatchAdmission(exec, startBody)
     } catch (error: unknown) {
       return toolErrorResult(error)
     } finally {

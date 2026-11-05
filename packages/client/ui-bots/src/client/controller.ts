@@ -149,12 +149,34 @@ export interface BotWorkspaceRemote {
   revokeShareMember?: (request: BotShareMemberRevokeRequest) => Promise<RemoteResult<BotShareMemberRevokeValue>>
   getShareMemoryPolicy?: (request: BotShareMembersRequest) => Promise<RemoteResult<BotShareMemoryPolicyValue>>
   setShareMemoryPolicy?: (request: BotShareMemoryPolicyRequest) => Promise<RemoteResult<BotShareMemoryPolicyValue>>
+  listSharedAppAccess?: (request: { readonly botId: BotIdType }) => Promise<RemoteResult<SharedBotAppAccessValue>>
+  setSharedAppAccess?: (request: {
+    readonly botId: BotIdType
+    readonly appId: string
+    readonly allowed: boolean
+    readonly expectedRevision: number
+  }) => Promise<RemoteResult<SharedBotAppAccessValue>>
   inspectSharedRosterFence?: () => Promise<RemoteResult<BotSharedRosterFenceDiagnosticValue>>
   recoverSharedRosterFence?: (request: BotSharedRosterFenceRecoveryRequest) => Promise<RemoteResult<BotSharedRosterFenceRecoveryValue>>
   listConnectedApps?: (request: { readonly botId: BotIdType }) => Promise<RemoteResult<BotConnectedAppsValue>>
   setConnectedAppAccess?: (request: BotConnectedAppAccessRequest) => Promise<RemoteResult<BotConnectedAppAccessValue>>
   listSkills?: (request: { readonly botId: BotIdType }) => Promise<RemoteResult<BotSkillListValue>>
   updateSkills?: (request: BotSkillUpdateRequest) => Promise<RemoteResult<BotSkillUpdateValue>>
+}
+
+/** One connected app's access to a Bot's shared sessions. */
+export interface SharedBotAppAccess {
+  readonly id: string
+  readonly name?: string | undefined
+  readonly description?: string | undefined
+  readonly allowed: boolean
+}
+
+/** Current shared-app catalog and its concurrency revision. */
+export interface SharedBotAppAccessValue {
+  readonly botId: string
+  readonly revision: number
+  readonly apps: readonly SharedBotAppAccess[]
 }
 
 /** Owner-facing shared-Bot roster and invite actions. */
@@ -169,6 +191,12 @@ export interface BotShareActions {
   readonly getMemoryPolicy?: (botId: string) => Promise<BotShareMemoryPolicyValue>
   /** Change the explicit shared-context policy for one owned Bot. */
   readonly setMemoryPolicy?: (botId: string, enabled: boolean) => Promise<BotShareMemoryPolicyValue>
+  /** List apps and their shared-session access for this Bot. */
+  readonly listSharedAppAccess?: (botId: string) => Promise<SharedBotAppAccessValue>
+  /** Change one app's shared-session grant against a known revision. */
+  readonly setSharedAppAccess?: (
+    botId: string, appId: string, allowed: boolean, expectedRevision: number,
+  ) => Promise<SharedBotAppAccessValue>
   /** Inspect the owner-only shared-roster recovery fence. */
   readonly inspectRosterFence?: () => Promise<BotSharedRosterFenceDiagnosticValue>
   /** Recover one abandoned shared-roster fence after explicit quiescence confirmation. */
@@ -1696,6 +1724,8 @@ export class BotWorkspaceController {
     const revokeMember = this.remote.revokeShareMember
     const getMemoryPolicy = this.remote.getShareMemoryPolicy
     const setMemoryPolicy = this.remote.setShareMemoryPolicy
+    const listSharedAppAccess = this.remote.listSharedAppAccess
+    const setSharedAppAccess = this.remote.setSharedAppAccess
     const inspectRosterFence = this.remote.inspectSharedRosterFence
     const recoverRosterFence = this.remote.recoverSharedRosterFence
     const inspectDeliveryFences = this.remote.inspectSharedGroupDeliveryFences
@@ -1731,6 +1761,24 @@ export class BotWorkspaceController {
         setMemoryPolicy: async (botId: string, enabled: boolean) => {
           const result = await setMemoryPolicy({ botId: brandString<BotIdType>(botId), enabled })
           if (!result.ok) throw new Error(result.error.message)
+          return result.value
+        },
+      }),
+      ...(listSharedAppAccess === undefined || setSharedAppAccess === undefined ? {} : {
+        listSharedAppAccess: async (botId: string) => {
+          const result = await listSharedAppAccess({ botId: brandString<BotIdType>(botId) })
+          if (!result.ok) throw new Error(result.error.message)
+          if (result.value.botId !== botId) throw new Error(this.unexpectedResponse())
+          return result.value
+        },
+        setSharedAppAccess: async (botId: string, appId: string, allowed: boolean, expectedRevision: number) => {
+          const result = await setSharedAppAccess({ botId: brandString<BotIdType>(botId), appId, allowed, expectedRevision })
+          if (!result.ok) {
+            const error = new Error(result.error.message)
+            if (result.error.code === 'gateway/conflict') error.name = 'SharedBotAppsConflictError'
+            throw error
+          }
+          if (result.value.botId !== botId) throw new Error(this.unexpectedResponse())
           return result.value
         },
       }),

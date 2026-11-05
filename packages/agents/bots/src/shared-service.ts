@@ -25,7 +25,7 @@ import type { CredentialProvider, CredentialRecord } from '@yharness/credentials
 import { createUserMessage } from '@yharness/llm'
 import { SessionId } from '@yharness/session'
 import type { Domain, DomainFacility, KvTable } from '@yharness/storage-domain'
-import { remoteErrorOf } from '@yharness/typert-protocol'
+import { RemoteError, remoteErrorOf } from '@yharness/typert-protocol'
 import z from 'zod'
 import {
   authorizeBotShare,
@@ -82,6 +82,8 @@ import { projectBotTranscript, type BotCollaborationInspection } from './collabo
 import {
   SharedBotGroupService,
   SharedGroupError,
+  resolveSharedGroupInitiatorFromSnapshot,
+  type SharedGroupInitiatorRequest,
   type SharedGroupHost,
   type SharedGroupSessionBinding,
 } from './shared-group.ts'
@@ -228,6 +230,50 @@ export interface SharedPrivateSessionValue extends BotPrivateConversationBinding
   readonly updatedAt: number
 }
 
+/** Exact private Session coordinate used for host-only attribution. */
+export interface SharedPrivateSessionInitiatorRequest {
+  /** Shared Bot backing the private Session. */
+  readonly botId: BotId
+  /** Exact durable private Session binding. */
+  readonly sessionId: SessionId
+}
+
+/** Exact shared Session and connected-app source used at a tool boundary. */
+export type SharedConnectedAppAuthorizationRequest =
+  | {
+    readonly kind: 'private'
+    /** Shared Bot backing the private Session. */
+    readonly botId: BotId
+    /** Exact durable private Session binding. */
+    readonly sessionId: SessionId
+    /** Exact MCP server namespace from source metadata or resource arguments. */
+    readonly appId: string
+  }
+
+  | {
+    readonly kind: 'group'
+    /** Shared group containing the isolated delivery. */
+    readonly groupId: BotGroupId
+    /** Shared Bot backing the isolated Session. */
+    readonly botId: BotId
+    /** Exact isolated shared-group Session binding. */
+    readonly sessionId: SessionId
+    /** Model turn containing the claimed input. */
+    readonly turn: number
+    /** Current model step, at or after the isolated claim step. */
+    readonly step: number
+    /** Exact MCP server namespace from source metadata or resource arguments. */
+    readonly appId: string
+  }
+
+/** Durable shared-session connected-app grant projected to the owner API. */
+export interface SharedConnectedAppAccessValue {
+  /** Monotonic revision for this Bot's shared-app policy. */
+  readonly revision: number
+  /** MCP server namespaces explicitly granted to shared Sessions. */
+  readonly allowedAppIds: readonly string[]
+}
+
 interface SharedServiceOptions {
   readonly now?: () => number
   /** Durable provider used to refresh membership state across processes. */
@@ -359,9 +405,11 @@ interface PrivateAttachmentLeaseGuard {
 const SHARED_MEMBERSHIP_RECORD_KEY = credentialKey('agent-bots', 'shared-memberships')
 const SHARED_MEMBERSHIP_EXTENSION_KEY = 'agent-bots/shared-memberships'
 const SHARED_PRIVATE_SESSIONS_EXTENSION_KEY = 'agent-bots/shared-private-sessions'
+const SHARED_CONNECTED_APP_ACCESS_EXTENSION_KEY = 'agent-bots/shared-connected-app-access'
 const SHARED_PAIR_KEY_MIGRATION_EXTENSION_KEY = 'agent-bots/shared-pair-key-migration'
 const SHARED_MEMBERSHIP_RECORD_VERSION = 1 as const
 const SHARED_PRIVATE_SESSIONS_RECORD_VERSION = 1 as const
+const SHARED_CONNECTED_APP_ACCESS_VERSION = 1 as const
 const SHARED_PAIR_KEY_MIGRATION_VERSION = 3 as const
 const DEFAULT_SHARED_MEMBERSHIP_POLL_INTERVAL_MS = 1_000
 const MAX_NODE_TIMER_MS = 2_147_483_647
@@ -376,6 +424,29 @@ const sharedPrivateSessionSnapshotSchema = z.object({
 }).strict()
 
 type SharedPrivateSessionSnapshot = z.infer<typeof sharedPrivateSessionSnapshotSchema>
+
+const sharedConnectedAppPolicySchema = z.object({
+  botId: z.string().regex(/^bot-[A-Za-z0-9][A-Za-z0-9-]*$/).transform(BotId),
+  revision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  allowedAppIds: z.array(z.string()).max(128).refine(
+    values => new Set(values).size === values.length,
+    { message: 'shared connected-app ids must be unique' },
+  ),
+}).strict()
+
+const sharedConnectedAppAccessSnapshotSchema = z.object({
+  version: z.literal(SHARED_CONNECTED_APP_ACCESS_VERSION),
+  policies: z.array(sharedConnectedAppPolicySchema).max(256),
+}).strict().superRefine((snapshot, context) => {
+  const botIds = new Set<string>()
+  for (const policy of snapshot.policies) {
+    const key = String(policy.botId)
+    if (botIds.has(key)) context.addIssue({ code: 'custom', message: 'shared connected-app Bot policies must be unique', path: ['policies'] })
+    botIds.add(key)
+  }
+})
+
+type SharedConnectedAppAccessSnapshot = z.infer<typeof sharedConnectedAppAccessSnapshotSchema>
 
 /** Await one storage read unless the caller or service stops waiting. */
 async function raceSharedAbort<T>(operation: Promise<T>, signal?: AbortSignal): Promise<T> {
@@ -799,6 +870,251 @@ export class SharedBotService {
   }
 
   /**
+   * Resolve a private Session's collaborator from current durable authority.
+   *
+   * The lookup is Host-only. It reads the durable Session binding and current
+   * membership extension together under the authority lock, then rechecks the
+   * authority principal. A missing, revoked, stale, or ambiguous binding never
+   * grants attribution.
+   * @param request - Exact Bot and private Session identities.
+   * @returns The currently authorized collaborator, or undefined when the binding is not provable.
+   */
+  async resolvePrivateSessionInitiator(
+    request: SharedPrivateSessionInitiatorRequest,
+  ): Promise<ReturnType<typeof BotPrincipalId> | undefined> {
+    const result = await this.authority.mutateExtensions<{
+      readonly memberships: readonly SharedMembershipRecord[]
+      readonly value: ReturnType<typeof BotPrincipalId> | undefined
+    }>([SHARED_MEMBERSHIP_EXTENSION_KEY, SHARED_PRIVATE_SESSIONS_EXTENSION_KEY], (extensions, authorityState) => {
+      const membershipSnapshot = parseMembershipSnapshot(extensions[SHARED_MEMBERSHIP_EXTENSION_KEY])
+      const privateSessionSnapshot = parsePrivateSessionSnapshot(extensions[SHARED_PRIVATE_SESSIONS_EXTENSION_KEY])
+      const candidates = privateSessionSnapshot.bindings.filter(binding =>
+        binding.botId === request.botId
+        && binding.sessionId === request.sessionId
+        && binding.revokedAt === undefined)
+      const binding = candidates.length === 1 ? candidates[0] : undefined
+      if (binding === undefined) {
+        return {
+          value: { memberships: membershipSnapshot.memberships, value: undefined },
+          next: extensions,
+        }
+      }
+      const principal = authorityState.principals.find(candidate =>
+        String(candidate.id) === String(binding.principalId) && candidate.revokedAt === undefined)
+      if (principal === undefined) {
+        return {
+          value: { memberships: membershipSnapshot.memberships, value: undefined },
+          next: extensions,
+        }
+      }
+      const botMemberships = membershipSnapshot.memberships.filter(member => member.botId === request.botId)
+      const decision = authorizeBotShare(
+        { botId: request.botId, memberships: botMemberships },
+        { actor: binding.principalId, operation: 'chat' },
+      )
+      return {
+        value: {
+          memberships: membershipSnapshot.memberships,
+          value: decision.allowed ? binding.principalId : undefined,
+        },
+        next: extensions,
+      }
+    })
+    this.membershipSnapshot = result.memberships
+    return result.value
+  }
+
+  /**
+   * Read the authority-backed shared connected-app policy for one Bot.
+   * @param botId - Bot whose shared-session grants should be returned.
+   * @returns The current revision and explicitly allowed app ids.
+   */
+  async readSharedConnectedAppAccess(botId: BotId): Promise<SharedConnectedAppAccessValue> {
+    const operation = await this.host.withBot(botId, undefined, async () => {
+      const extension = await this.authority.readExtension(SHARED_CONNECTED_APP_ACCESS_EXTENSION_KEY)
+      return sharedConnectedAppAccessValue(parseSharedConnectedAppAccessSnapshot(extension.value), botId)
+    })
+    if (!operation.found) throw new RemoteError('bot/not-found', 'shared Bot was not found', { botId })
+    return operation.value
+  }
+
+  /**
+   * Atomically change one Bot's shared connected-app grant.
+   * @param botId - Bot whose shared-session policy should change.
+   * @param appId - MCP server namespace to grant or revoke.
+   * @param allowed - Whether shared Sessions may use the app.
+   * @param expectedRevision - Revision read by the owner before editing.
+   * @returns The committed revision and allowed app ids.
+   */
+  async setSharedConnectedAppAccess(
+    botId: BotId,
+    appId: string,
+    allowed: boolean,
+    expectedRevision: number,
+  ): Promise<SharedConnectedAppAccessValue> {
+    if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) {
+      throw new RemoteError('gateway/bad-request', 'shared connected-app revision is invalid', {})
+    }
+    const operation = await this.host.withBot(botId, undefined, async () => this.authority.mutateExtension(
+      SHARED_CONNECTED_APP_ACCESS_EXTENSION_KEY,
+      (current) => {
+        const snapshot = parseSharedConnectedAppAccessSnapshot(current)
+        const existing = snapshot.policies.find(policy => policy.botId === botId)
+        const currentAccess = existing === undefined
+          ? { revision: 0, allowedAppIds: [] }
+          : { revision: existing.revision, allowedAppIds: [...existing.allowedAppIds] }
+        if (currentAccess.revision !== expectedRevision) {
+          throw new RemoteError(
+            'gateway/conflict',
+            `shared Bot connected-app policy changed from revision ${String(expectedRevision)}`,
+            { botId },
+          )
+        }
+        const nextAllowedAppIds = allowed
+          ? [...new Set([...currentAccess.allowedAppIds, appId])]
+          : currentAccess.allowedAppIds.filter(candidate => candidate !== appId)
+        if (isDeepStrictEqual(nextAllowedAppIds, currentAccess.allowedAppIds)) {
+          return { value: currentAccess, next: snapshot }
+        }
+        if (nextAllowedAppIds.length > 128) {
+          throw new RemoteError('gateway/internal', 'shared connected-app grant limit reached', {})
+        }
+        if (currentAccess.revision === Number.MAX_SAFE_INTEGER) {
+          throw new RemoteError('gateway/bad-request', 'shared connected-app revision limit reached', {})
+        }
+        if (existing === undefined && snapshot.policies.length >= 256) {
+          throw new RemoteError('gateway/internal', 'shared connected-app policy limit reached', {})
+        }
+        const policy = {
+          botId,
+          revision: currentAccess.revision + 1,
+          allowedAppIds: nextAllowedAppIds,
+        }
+        return {
+          value: { revision: policy.revision, allowedAppIds: [...policy.allowedAppIds] },
+          next: {
+            version: SHARED_CONNECTED_APP_ACCESS_VERSION,
+            policies: [...snapshot.policies.filter(candidate => candidate.botId !== botId), policy],
+          },
+        }
+      },
+    ))
+    if (!operation.found) throw new RemoteError('bot/not-found', 'shared Bot was not found', { botId })
+    return operation.value
+  }
+
+  /**
+   * Authorize one connected app for one isolated shared Session.
+   *
+   * The Bot-row lifecycle fence serializes this read with owner grant/revoke
+   * mutations. The authority transaction reads the independent shared
+   * allowlist together with current membership and Session attribution; an
+   * absent allowlist never inherits the owner-only Bot policy.
+   * @param request - Exact shared Session, app, and optional group-step identities.
+   * @param signal - Optional cancellation for the Host lifecycle operation.
+   * @returns `true` only when the app grant and current collaborator attribution both hold.
+   */
+  async authorizeSharedConnectedApp(
+    request: SharedConnectedAppAuthorizationRequest,
+    signal?: AbortSignal,
+  ): Promise<boolean> {
+    return this.authorizeSharedConnectedAppWithHook(request, signal)
+  }
+
+  /**
+   * Authorize one connected app and invoke the next body-admission stage while
+   * the authority transaction still holds its short write lock. The returned
+   * body promise is not part of that transaction, so the lock is released
+   * immediately after body invocation rather than after external app work.
+   * @param request - Exact shared Session, app, and optional group-step identities.
+   * @param start - Body-admission callback invoked only after authorization.
+   * @param signal - Optional cancellation for the Host lifecycle operation.
+   * @returns The body result when admitted, or undefined when authorization fails.
+   */
+  async authorizeSharedConnectedAppAndStart<T>(
+    request: SharedConnectedAppAuthorizationRequest,
+    start: () => Promise<T>,
+    signal?: AbortSignal,
+  ): Promise<T | undefined> {
+    let started: Promise<T> | undefined
+    try {
+      const authorized = await this.authorizeSharedConnectedAppWithHook(request, signal, () => {
+        try {
+          const running = start()
+          started = running
+          void started.catch(() => undefined)
+        } catch (error: unknown) {
+          // Preserve the original failure, including non-Error rejections from external tools.
+          // oxlint-disable-next-line typescript/prefer-promise-reject-errors
+          started = Promise.reject(error)
+          void started.catch(() => undefined)
+          throw error
+        }
+      })
+      if (!authorized) return undefined
+      if (started === undefined) throw new Error('shared connected-app body admission did not start a body')
+      return await started
+    } catch (error: unknown) {
+      if (started !== undefined) await started.catch(() => undefined)
+      throw error
+    }
+  }
+
+  private async authorizeSharedConnectedAppWithHook(
+    request: SharedConnectedAppAuthorizationRequest,
+    signal: AbortSignal | undefined,
+    onAuthorized?: () => void,
+  ): Promise<boolean> {
+    const operation = await this.host.withBot(request.botId, signal, async (bot) => {
+      void bot
+      const keys = request.kind === 'private'
+        ? [
+          SHARED_CONNECTED_APP_ACCESS_EXTENSION_KEY,
+          SHARED_MEMBERSHIP_EXTENSION_KEY,
+          SHARED_PRIVATE_SESSIONS_EXTENSION_KEY,
+        ]
+        : [SHARED_CONNECTED_APP_ACCESS_EXTENSION_KEY, SHARED_MEMBERSHIP_EXTENSION_KEY]
+      const result = await this.authority.mutateExtensions<{
+        readonly memberships: readonly SharedMembershipRecord[]
+        readonly value: boolean
+      }>(keys, (extensions, authorityState) => {
+        const access = sharedConnectedAppAccessValue(
+          parseSharedConnectedAppAccessSnapshot(extensions[SHARED_CONNECTED_APP_ACCESS_EXTENSION_KEY]),
+          request.botId,
+        )
+        if (!access.allowedAppIds.includes(request.appId)) {
+          return {
+            value: { memberships: this.membershipSnapshot, value: false },
+            next: extensions,
+          }
+        }
+        const membershipSnapshot = parseMembershipSnapshot(extensions[SHARED_MEMBERSHIP_EXTENSION_KEY])
+        const principal = request.kind === 'private'
+          ? resolvePrivateSessionInitiatorFromSnapshot(
+            membershipSnapshot,
+            extensions[SHARED_PRIVATE_SESSIONS_EXTENSION_KEY],
+            authorityState,
+            { botId: request.botId, sessionId: request.sessionId },
+          )
+          : resolveSharedGroupInitiatorFromSnapshot(
+            extensions[SHARED_MEMBERSHIP_EXTENSION_KEY],
+            authorityState,
+            request,
+          )
+        const allowed = principal !== undefined
+        if (allowed) onAuthorized?.()
+        return {
+          value: { memberships: membershipSnapshot.memberships, value: allowed },
+          next: extensions,
+        }
+      })
+      this.membershipSnapshot = result.memberships
+      return result.value
+    })
+    return operation.found && operation.value
+  }
+
+  /**
    * Return durable private-session bindings so the Host can restore Bot
    * identity context after a process restart.
    * @returns all persisted Bot/principal session bindings.
@@ -871,6 +1187,18 @@ export class SharedBotService {
     competingInput: boolean,
   ): Promise<void> {
     await this.groups.recordBotMessageClaims(groupId, botId, claims, turn, step, isolated, competingInput)
+  }
+
+  /**
+   * Resolve a collaborator only when one current isolated group delivery
+   * proves its attribution under the durable authority lock.
+   * @param request - Exact group, Bot, Session, turn, and step identities.
+   * @returns The authorized collaborator, or undefined when attribution is not provable.
+   */
+  async resolveSharedGroupInitiator(
+    request: SharedGroupInitiatorRequest,
+  ): Promise<ReturnType<typeof BotPrincipalId> | undefined> {
+    return this.groups.resolveSharedGroupInitiator(request)
   }
 
   /**
@@ -2801,6 +3129,47 @@ function parsePrivateSessionSnapshot(value: unknown): SharedPrivateSessionSnapsh
     keys.add(key)
   }
   return parsed.data
+}
+
+function parseSharedConnectedAppAccessSnapshot(value: unknown): SharedConnectedAppAccessSnapshot {
+  if (value === undefined) return { version: SHARED_CONNECTED_APP_ACCESS_VERSION, policies: [] }
+  const parsed = sharedConnectedAppAccessSnapshotSchema.safeParse(value)
+  if (!parsed.success) throw new Error('shared Bot connected-app access snapshot is invalid')
+  return parsed.data
+}
+
+function resolvePrivateSessionInitiatorFromSnapshot(
+  membershipSnapshot: SharedMembershipSnapshot,
+  privateSessionValue: unknown,
+  authorityState: SharedAccessStateSnapshot,
+  request: SharedPrivateSessionInitiatorRequest,
+): ReturnType<typeof BotPrincipalId> | undefined {
+  const privateSessionSnapshot = parsePrivateSessionSnapshot(privateSessionValue)
+  const candidates = privateSessionSnapshot.bindings.filter(binding =>
+    binding.botId === request.botId
+    && binding.sessionId === request.sessionId
+    && binding.revokedAt === undefined)
+  const binding = candidates.length === 1 ? candidates[0] : undefined
+  if (binding === undefined) return undefined
+  const principal = authorityState.principals.find(candidate =>
+    String(candidate.id) === String(binding.principalId) && candidate.revokedAt === undefined)
+  if (principal === undefined) return undefined
+  const botMemberships = membershipSnapshot.memberships.filter(member => member.botId === request.botId)
+  const decision = authorizeBotShare(
+    { botId: request.botId, memberships: botMemberships },
+    { actor: binding.principalId, operation: 'chat' },
+  )
+  return decision.allowed ? binding.principalId : undefined
+}
+
+function sharedConnectedAppAccessValue(
+  snapshot: SharedConnectedAppAccessSnapshot,
+  botId: BotId,
+): SharedConnectedAppAccessValue {
+  const policy = snapshot.policies.find(candidate => candidate.botId === botId)
+  return policy === undefined
+    ? { revision: 0, allowedAppIds: [] }
+    : { revision: policy.revision, allowedAppIds: [...policy.allowedAppIds] }
 }
 
 function emptySharedMemorySnapshot(): SharedMemorySnapshot {

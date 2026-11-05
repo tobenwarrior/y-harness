@@ -43,6 +43,7 @@
   "devDependencies": {
     "@yharness/api-session-controller": "workspace:*",
     "@yharness/bots": "workspace:*",
+    "@yharness/client-connection": "workspace:*",
     "@yharness/cordis": "workspace:~",
     "@yharness/agent": "workspace:*",
     "@yharness/agent-loop": "workspace:*",
@@ -58,6 +59,7 @@
     "@yharness/web": "workspace:*",
     "@yharness/user-questions": "workspace:*",
     "@types/js-yaml": "^4.0.9",
-    "@yharness/http-proxy": "workspace:*"
+    "@yharness/http-proxy": "workspace:*",
+    "zod": "^4.4.3"
   }
 }

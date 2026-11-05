@@ -39,6 +39,7 @@
     "@yharness/client-ui-dockkit": "workspace:*",
     "@yharness/client-ui-primitives": "workspace:*",
     "@yharness/client-ui-slots": "workspace:*",
+    "@yharness/tools": "workspace:*",
     "@yharness/client-web": "workspace:*",
     "@yharness/cmdline": "workspace:*",
     "@yharness/pwsh-local": "workspace:*",

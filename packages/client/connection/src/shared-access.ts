@@ -153,6 +153,17 @@ type SharedAccessExtensionMutationResult<T> =
   | SharedAccessExtensionMutation<T>
   | Promise<SharedAccessExtensionMutation<T>>
 
+/** Result of one atomic mutation over selected authority extensions. */
+export interface SharedAccessExtensionsMutation<T> {
+  readonly value: T
+  /** Next values for selected keys; an omitted or `undefined` value deletes that key. */
+  readonly next: Readonly<Record<string, unknown>>
+}
+
+type SharedAccessExtensionsMutationResult<T> =
+  | SharedAccessExtensionsMutation<T>
+  | Promise<SharedAccessExtensionsMutation<T>>
+
 /** Authorities sharing one credential provider observe revocations together. */
 const authorityInstances = new WeakMap<CredentialProvider, Set<SharedAccessAuthority>>()
 
@@ -441,6 +452,46 @@ export class SharedAccessAuthority implements SharedAccessAuthenticator {
     return this.mutate(async (state) => {
       const next = await mutation(state.extensions[key], snapshotState(state))
       state.extensions[key] = next.next
+      return next.value
+    })
+  }
+
+  /**
+   * Read and mutate selected extensions in one exclusive authority record
+   * transaction. The callback sees only the requested extension keys and the
+   * current principal snapshot; another authority cannot commit a revocation
+   * or extension update until the callback and this transaction finish.
+   * @param keys - Distinct durable extension keys read and replaced atomically.
+   * @param mutation - Read-modify-write callback; omit or set a selected next value to `undefined` to delete it.
+   * @returns the callback result after the authority record commits.
+   */
+  async mutateExtensions<T>(
+    keys: readonly string[],
+    mutation: (
+      current: Readonly<Record<string, unknown>>,
+      state: SharedAccessStateSnapshot,
+    ) => SharedAccessExtensionsMutationResult<T>,
+  ): Promise<T> {
+    const selectedKeys = validateExtensionKeys(keys)
+    const selected = new Set(selectedKeys)
+    return this.mutate(async (state) => {
+      const current: Record<string, unknown> = {}
+      for (const key of selectedKeys) {
+        if (Object.prototype.hasOwnProperty.call(state.extensions, key)) {
+          current[key] = state.extensions[key]
+        }
+      }
+      const next = await mutation(current, snapshotState(state))
+      for (const key of Object.keys(next.next)) {
+        if (!selected.has(key)) throw new Error('client-connection: extension mutation returned an unselected key')
+      }
+      for (const key of selectedKeys) {
+        const value = next.next[key]
+        if (value === undefined) {
+          if (!Reflect.deleteProperty(state.extensions, key)) throw new Error('client-connection: extension removal failed')
+        }
+        else state.extensions[key] = value
+      }
       return next.value
     })
   }
@@ -838,6 +889,14 @@ function parseExtensions(value: unknown): Record<string, unknown> {
     extensions[key] = extension
   }
   return extensions
+}
+
+function validateExtensionKeys(keys: readonly string[]): readonly string[] {
+  const selected = [...keys]
+  if (new Set(selected).size !== selected.length || selected.some(key => key.length === 0 || key.length > 128)) {
+    throw new RangeError('client-connection: extension keys must be distinct and bounded')
+  }
+  return selected
 }
 
 function stateFromRecord(record: CredentialRecord | undefined): MutableState {

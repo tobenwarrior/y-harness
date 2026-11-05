@@ -373,6 +373,24 @@ type ToolDispatchGuard = (
 ) => ToolDispatchDecision
 ```
 
+```ts type-equiv
+/**
+ * Body-admission wrapper invoked after dispatch guards and immediately before
+ * the registered tool body. A wrapper may perform a short-lived atomic
+ * authorization/body-start handoff by invoking `start()` before returning;
+ * it must not retain an external lock while the returned body promise runs.
+ * @param execution - the caller identity and immutable arguments at dispatch.
+ * @param start - invokes the next admission wrapper or the registered body.
+ * @returns the settled tool result. The wrapper must invoke `start()` exactly
+ * once and return its result; repeated calls reuse the first admission, while
+ * returning without starting is rejected.
+ */
+type ToolDispatchAdmission = (
+  execution: Readonly<ToolDispatchExecution>,
+  start: () => Promise<ToolExecutionResult>,
+) => Promise<ToolExecutionResult>
+```
+
 `ToolExecutionToken` is an opaque runtime `Symbol` used only for identity comparison. Before policy, `execute()` materializes and freezes arguments, rejects non-JSON input, and assigns the token. Identity fields, the required caller signal, and the optional parent token remain readonly. A `ToolDispatchExecution` wrapper may replace but not remove the signal; the registry re-fuses the caller signal before invoking the body. Final observers receive the frozen execution identity.
 
 A `ToolGuard` is scope-aware final pre-dispatch policy. Its return type deliberately has no allow result: `undefined` preserves the waterfall decision, while a returned reason or `ToolFailure` can only reduce permission, so a later listener cannot undo it. Structured failure details retain `ToolErrorInfo` in the result.
@@ -617,6 +635,18 @@ guard(guard: ToolGuard): () => void
  * @returns the exact disposer that unregisters the guard.
  */
 beforeDispatch(guard: ToolDispatchGuard): () => void
+
+/**
+ * Register a body-admission wrapper after the last-mile guard. This seam
+ * lets a policy invoke the body while its short authorization transaction is
+ * still committing, then release that transaction before the body settles.
+ * Each scope has one admission owner; a later registration in that scope
+ * throws so another wrapper cannot await before the authorized body starts.
+ * @param admission - wrapper that invokes `start()` to admit the body.
+ * @returns the exact disposer that unregisters the wrapper. The wrapper must
+ * invoke `start()` exactly once and return its result.
+ */
+beforeDispatchAdmission(admission: ToolDispatchAdmission): () => void
 
 /**
  * Look up a tool as one scope sees it (scoped

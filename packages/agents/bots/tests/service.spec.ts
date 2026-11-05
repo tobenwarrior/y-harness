@@ -10,7 +10,7 @@ import type { ConnectionIndexRequest, SharedConnectionEnrollmentHandler } from '
 import { AttachmentId, type ImageAttachmentRef, type StoredImageAttachment } from '@yharness/attachment'
 import AgentRegistry, { agentEvents, type Agent } from '@yharness/agent'
 import AgentLoop from '@yharness/agent-loop'
-import { createScope, scopeOf } from '@yharness/scope'
+import { bindScopeParent, createScope, scopeOf } from '@yharness/scope'
 import LlmRuntime, { createAssistantMessage, createSystemMessage, createUserMessage, freezeMessage, markAgentLoopRequest, MessageId, ToolCallId } from '@yharness/llm'
 import SessionStore, { Session, SessionId, SessionSeq } from '@yharness/session'
 import JsonlSessionPersistence from '@yharness/session-persistence-jsonl'
@@ -39,7 +39,7 @@ import type {
 import SystemPrompt, { renderPrompt } from '@yharness/system-prompt'
 import ToolRuntime from '@yharness/tools'
 import { defineTool } from '@yharness/tools'
-import type { ToolDefinition, ToolExecutionToken, ToolRunContext } from '@yharness/tools'
+import type { ToolDefinition, ToolExecution, ToolExecutionToken, ToolRunContext } from '@yharness/tools'
 import SkillRegistry, { type SkillCandidate, type SkillDefinition } from '@yharness/skill'
 import McpResources from '@yharness/mcp-resources'
 import { describe, expect, it, vi } from 'vitest'
@@ -2525,6 +2525,56 @@ describe('durable Bot roster', () => {
     }
   })
 
+  it('keeps an approved preset web search after shared deny-all restriction refreshes', async () => {
+    const sharedSessionId = SessionId('shared-session-preset-web-search')
+    const search = vi.fn(async () => 'preset search result')
+    const h = await harness(undefined, undefined, undefined, [String(sharedSessionId)])
+    let presetScope: ReturnType<typeof createScope> | undefined
+    try {
+      const created = await h.service.create({ name: 'Shared preset researcher', cwd: '/tmp' })
+      await productionSharedHost(h.service).createPrivateSession(
+        created.bot,
+        sharedSessionId,
+        'principal-preset-web',
+        new AbortController().signal,
+      )
+      const agent = h.agents[0]
+      if (agent === undefined) throw new Error('shared preset search test Agent was not created')
+      const presetKey = {}
+      await h.ctx.plugin(Object.assign((inner: Context) => {
+        presetScope = createScope(inner, presetKey)
+      }, { inject: ['tools', 'systemPrompt'] }))
+      bindScopeParent(agent, presetKey)
+      if (presetScope === undefined) throw new Error('shared preset search scope was not created')
+      presetScope.ctx.tools.register(plainFixtureTool('web_search', search))
+      await h.ctx.serial('agent/created', { agent, source: 'resume' })
+
+      const firstPrompt = await h.ctx.systemPrompt.assemble({ scope: agent })
+      expect(firstPrompt.tools.map(tool => tool.name)).toContain('web_search')
+      const refreshedPrompt = await h.ctx.systemPrompt.assemble({ scope: agent })
+      expect(refreshedPrompt.tools.map(tool => tool.name)).toContain('web_search')
+      await expect(h.ctx.tools.execute({
+        callId: ToolCallId('shared-preset-web-search'), name: 'web_search', arguments: {},
+        signal: new AbortController().signal, agent,
+      })).resolves.toMatchObject({ isError: false })
+      expect(search).toHaveBeenCalledOnce()
+      const replacement = vi.fn(async () => 'shadowed search result')
+      await agent.ctx.inject(['tools'], (scope) => {
+        scope.tools.register(plainFixtureTool('web_search', replacement))
+      })
+      const shadowedPrompt = await h.ctx.systemPrompt.assemble({ scope: agent })
+      expect(shadowedPrompt.tools.map(tool => tool.name)).not.toContain('web_search')
+      await expect(h.ctx.tools.execute({
+        callId: ToolCallId('shared-preset-web-search-shadow'), name: 'web_search', arguments: {},
+        signal: new AbortController().signal, agent,
+      })).resolves.toMatchObject({ isError: true })
+      expect(replacement).not.toHaveBeenCalled()
+    } finally {
+      await presetScope?.dispose()
+      await close(h.ctx)
+    }
+  })
+
   it('does not allow a root web search implementation into a shared Session', async () => {
     const sharedSessionId = SessionId('shared-session-root-search')
     const search = vi.fn(async () => 'private host result')
@@ -2630,6 +2680,221 @@ describe('durable Bot roster', () => {
       expect(resourceCalls).not.toHaveBeenCalled()
     } finally {
       await close(h.ctx)
+    }
+  })
+
+  it('requires an owner grant and current private shared binding for MCP app execution', async () => {
+    const pool = new MemoryMediaPool()
+    const sharedSessionId = SessionId('shared-session-connected-app-private')
+    const first = await harness(pool, undefined, undefined, [], new Map(), new Map(), true, 'native', false, {
+      connection: {
+        sharedRpc: {
+          enroll: vi.fn(() => async () => {}),
+          handle: vi.fn(() => async () => {}),
+        },
+      },
+    })
+    let firstClosed = false
+    try {
+      const created = await first.service.create({ name: 'Shared connected app owner', cwd: '/tmp' })
+      const authority = await SharedAccessAuthority.create(first.ctx, first.credentials, {
+        sessionMaxAgeMs: 60_000,
+        inviteMaxAgeMs: 60_000,
+      })
+      try {
+        const owner = await authority.enrollOwner({ headers: { host: '127.0.0.1:3080' } })
+        await bindSharedSession(authority, created.bot.id, sharedSessionId, String(owner.principalId))
+        await authority.mutateExtension('agent-bots/shared-memberships', (current) => {
+          const membership = sharedMembershipSnapshotSchema.parse(current)
+          return {
+            value: undefined,
+            next: {
+              ...membership,
+              memberships: [...membership.memberships, {
+                botId: created.bot.id,
+                principalId: BotPrincipalId(String(owner.principalId)),
+                role: 'owner' as const,
+                grantedBy: BotPrincipalId(String(owner.principalId)),
+                createdAt: 1,
+                updatedAt: 1,
+              }],
+            },
+          }
+        })
+      } finally {
+        await authority.dispose()
+      }
+      const records = first.records
+      await close(first.ctx)
+      firstClosed = true
+
+      const calls = vi.fn(async () => 'shared app result')
+      const h = await harness(pool, undefined, undefined, [String(sharedSessionId)], new Map(), records, true, 'native', false, {
+        connection: {
+          sharedRpc: {
+            enroll: vi.fn(() => async () => {}),
+            handle: vi.fn(() => async () => {}),
+          },
+        },
+        inspectSharedSessions: true,
+        initializeService: false,
+      })
+      try {
+        const agent = h.agents[0]
+        if (agent === undefined) throw new Error('shared connected-app Agent was not created')
+        h.ctx.tools.register(mcpFixtureTool('mcp__github__list_issues', 'github', calls))
+        await h.service[Service.init]()
+        agent.ctx.inject(['tools'], (scope) => {
+          expect(() => scope.tools.beforeDispatchAdmission(async (_exec, next) => next())).toThrow(
+            'tools.beforeDispatchAdmission() already has an admission owner in this scope',
+          )
+        })
+        await expect(h.ctx.tools.execute({
+          callId: ToolCallId('shared-app-default-deny'), name: 'mcp__github__list_issues', arguments: {},
+          signal: new AbortController().signal, agent,
+        })).resolves.toMatchObject({ isError: true, error: { info: { code: 'SHARED_BOT_APP_ACCESS_REQUIRED' } } })
+        expect(calls).not.toHaveBeenCalled()
+
+        // The owner-local Bot policy is independent from shared-session grants.
+        await h.service.setConnectedAppAccess({ botId: created.bot.id, appId: 'github', allowed: true })
+        await expect(h.ctx.tools.execute({
+          callId: ToolCallId('shared-app-owner-only'), name: 'mcp__github__list_issues', arguments: {},
+          signal: new AbortController().signal, agent,
+        })).resolves.toMatchObject({ isError: true, error: { info: { code: 'SHARED_BOT_APP_ACCESS_REQUIRED' } } })
+
+        await expect(h.service.setSharedAppAccess({
+          botId: created.bot.id,
+          appId: 'github',
+          allowed: true,
+          expectedRevision: 0,
+        })).resolves.toMatchObject({ botId: created.bot.id, revision: 1, apps: [{ id: 'github', allowed: true }] })
+        await expect(h.service.listSharedAppAccess({ botId: created.bot.id })).resolves.toMatchObject({
+          botId: created.bot.id,
+          revision: 1,
+          apps: [{ id: 'github', allowed: true }],
+        })
+        await expect(h.service.setSharedAppAccess({
+          botId: created.bot.id,
+          appId: 'github',
+          allowed: false,
+          expectedRevision: 0,
+        })).rejects.toMatchObject({ code: 'gateway/conflict' })
+        const approvalRequested = vi.fn()
+        h.ctx.provide('approval', {
+          request: approvalRequested,
+        } as never)
+        const removeApprovalAsk = agent.ctx.on('tools/pre-execute', (_exec, _next) => Promise.resolve({
+          kind: 'ask' as const,
+          reason: 'Shared connected-app approval race test',
+        }))
+        const approvalRace = h.ctx.tools.execute({
+          callId: ToolCallId('shared-app-approval-race'), name: 'mcp__github__list_issues', arguments: {},
+          signal: new AbortController().signal, agent,
+        })
+        await expect(approvalRace).resolves.toMatchObject({
+          isError: true,
+          error: { info: { code: 'SHARED_BOT_APP_APPROVAL_REQUIRED' } },
+        })
+        expect(approvalRequested).not.toHaveBeenCalled()
+        await expect(h.service.setSharedAppAccess({
+          botId: created.bot.id,
+          appId: 'github',
+          allowed: false,
+          expectedRevision: 1,
+        })).resolves.toMatchObject({ botId: created.bot.id, revision: 2, apps: [{ id: 'github', allowed: false }] })
+        removeApprovalAsk()
+
+        await expect(h.service.setSharedAppAccess({
+          botId: created.bot.id,
+          appId: 'github',
+          allowed: true,
+          expectedRevision: 2,
+        })).resolves.toMatchObject({ botId: created.bot.id, revision: 3, apps: [{ id: 'github', allowed: true }] })
+        const dynamicCalls = vi.fn(async () => 'shared app dynamically connected')
+        h.ctx.tools.register(mcpFixtureTool('mcp__github__dynamic_tool', 'github', dynamicCalls))
+        expect(h.ctx.tools.schemas().map(schema => schema.name)).toContain('mcp__github__dynamic_tool')
+        const dynamicPrompt = await h.ctx.systemPrompt.assemble({ scope: agent })
+        expect(dynamicPrompt.tools.map(schema => schema.name)).toContain('mcp__github__dynamic_tool')
+        await expect(h.ctx.tools.execute({
+          callId: ToolCallId('shared-app-dynamic-tool'), name: 'mcp__github__dynamic_tool', arguments: {},
+          signal: new AbortController().signal, agent,
+        })).resolves.toMatchObject({ isError: false })
+        expect(dynamicCalls).toHaveBeenCalledOnce()
+        const shadowCalls = vi.fn(async () => 'non-MCP shadow')
+        await agent.ctx.inject(['tools'], (scope) => {
+          scope.tools.register(plainFixtureTool('mcp__github__dynamic_tool', shadowCalls))
+        })
+        const shadowedDynamicPrompt = await h.ctx.systemPrompt.assemble({ scope: agent })
+        expect(shadowedDynamicPrompt.tools.map(schema => schema.name)).not.toContain('mcp__github__dynamic_tool')
+        await expect(h.ctx.tools.execute({
+          callId: ToolCallId('shared-app-dynamic-tool-shadow'), name: 'mcp__github__dynamic_tool', arguments: {},
+          signal: new AbortController().signal, agent,
+        })).resolves.toMatchObject({ isError: true })
+        expect(shadowCalls).not.toHaveBeenCalled()
+        await expect(h.ctx.tools.execute({
+          callId: ToolCallId('shared-app-granted'), name: 'mcp__github__list_issues', arguments: {},
+          signal: new AbortController().signal, agent,
+        })).resolves.toMatchObject({ isError: false })
+        expect(calls).toHaveBeenCalledOnce()
+
+        await expect(h.service.setSharedAppAccess({
+          botId: created.bot.id,
+          appId: 'github',
+          allowed: false,
+          expectedRevision: 3,
+        })).resolves.toMatchObject({ botId: created.bot.id, revision: 4, apps: [{ id: 'github', allowed: false }] })
+        await expect(h.ctx.tools.execute({
+          callId: ToolCallId('shared-app-revoked'), name: 'mcp__github__list_issues', arguments: {},
+          signal: new AbortController().signal, agent,
+        })).resolves.toMatchObject({ isError: true, error: { info: { code: 'SHARED_BOT_APP_ACCESS_REQUIRED' } } })
+        expect(calls).toHaveBeenCalledOnce()
+
+        await expect(h.service.setSharedAppAccess({
+          botId: created.bot.id,
+          appId: 'github',
+          allowed: true,
+          expectedRevision: 4,
+        })).resolves.toMatchObject({ botId: created.bot.id, revision: 5, apps: [{ id: 'github', allowed: true }] })
+        const downstreamEntered = Promise.withResolvers<undefined>()
+        const releaseDownstream = Promise.withResolvers<undefined>()
+        let downstreamToken: ToolExecution['token'] | undefined
+        let removeDownstream: (() => void) | undefined
+        const removeInstall = agent.ctx.on('tools/pre-execute', (preExec, next) => {
+          if (preExec.name === 'mcp__github__list_issues' && downstreamToken === undefined) {
+            downstreamToken = preExec.token
+            removeDownstream = agent.ctx.on('tools/execute', async (dispatchExec, dispatchNext) => {
+              if (dispatchExec.token !== downstreamToken) return dispatchNext()
+              downstreamEntered.resolve(undefined)
+              await releaseDownstream.promise
+              return dispatchNext()
+            })
+          }
+          return next()
+        })
+        const downstreamRace = h.ctx.tools.execute({
+          callId: ToolCallId('shared-app-dispatch-race'), name: 'mcp__github__list_issues', arguments: {},
+          signal: new AbortController().signal, agent,
+        })
+        await downstreamEntered.promise
+        await expect(h.service.setSharedAppAccess({
+          botId: created.bot.id,
+          appId: 'github',
+          allowed: false,
+          expectedRevision: 5,
+        })).resolves.toMatchObject({ botId: created.bot.id, revision: 6, apps: [{ id: 'github', allowed: false }] })
+        releaseDownstream.resolve(undefined)
+        await expect(downstreamRace).resolves.toMatchObject({
+          isError: true,
+          error: { info: { code: 'SHARED_BOT_APP_ACCESS_REQUIRED' } },
+        })
+        expect(calls).toHaveBeenCalledOnce()
+        removeDownstream?.()
+        removeInstall()
+      } finally {
+        await close(h.ctx)
+      }
+    } finally {
+      if (!firstClosed) await close(first.ctx)
     }
   })
 

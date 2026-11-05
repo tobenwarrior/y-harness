@@ -1829,6 +1829,77 @@ describe('ToolRuntime', () => {
     await ctx.fiber.dispose()
   })
 
+  it('keeps one exclusive body-admission owner per scope', async () => {
+    const ctx = await setup()
+    const remove = ctx.tools.beforeDispatchAdmission(async (_exec, next) => next())
+    expect(() => ctx.tools.beforeDispatchAdmission(async (_exec, next) => next())).toThrow(
+      'tools.beforeDispatchAdmission() already has an admission owner in this scope',
+    )
+    remove()
+    expect(() => ctx.tools.beforeDispatchAdmission(async (_exec, next) => next())).not.toThrow()
+    await ctx.fiber.dispose()
+  })
+
+  it('admits a body at most once and rejects an admission that never starts it', async () => {
+    const ctx = await setup()
+    const body = vi.fn(async () => 'called')
+    ctx.tools.register({ ...echoTool, name: 'admission-once', execute: body })
+    ctx.tools.beforeDispatchAdmission(async (_exec, start) => {
+      const first = start()
+      const second = start()
+      expect(second).toBe(first)
+      return first
+    })
+
+    await expect(ctx.tools.execute({
+      signal: testToolSignal, callId: ToolCallId('admission-once'), name: 'admission-once', arguments: {},
+    })).resolves.toMatchObject({ isError: false })
+    expect(body).toHaveBeenCalledOnce()
+
+    await ctx.fiber.dispose()
+
+    const denied = await setup()
+    const deniedBody = vi.fn(async () => 'must not run')
+    denied.tools.register({ ...echoTool, name: 'admission-missing', execute: deniedBody })
+    denied.tools.beforeDispatchAdmission(async () => undefined as never)
+    await expect(denied.tools.execute({
+      signal: testToolSignal, callId: ToolCallId('admission-missing'), name: 'admission-missing', arguments: {},
+    })).resolves.toMatchObject({
+      isError: true,
+      error: { message: 'tools.beforeDispatchAdmission() did not invoke start()' },
+    })
+    expect(deniedBody).not.toHaveBeenCalled()
+    await denied.fiber.dispose()
+  })
+
+  it('waits for started body work when an admission wrapper returns early', async () => {
+    const ctx = await setup()
+    const body = Promise.withResolvers<string>()
+    const execute = vi.fn(async () => body.promise)
+    ctx.tools.register({ ...echoTool, name: 'admission-early', execute })
+    ctx.tools.beforeDispatchAdmission(async (_exec, start) => {
+      void start()
+      return {
+        isError: false,
+        value: 'early result',
+        content: [{ type: 'text', text: 'early result' }],
+      }
+    })
+
+    let settled = false
+    const running = ctx.tools.execute({
+      signal: testToolSignal, callId: ToolCallId('admission-early'), name: 'admission-early', arguments: {},
+    })
+    void running.then(() => { settled = true }, () => { settled = true })
+    await vi.waitFor(() => { expect(execute).toHaveBeenCalledOnce() })
+    await Promise.resolve()
+    expect(settled).toBe(false)
+
+    body.resolve('body result')
+    await expect(running).resolves.toMatchObject({ isError: false, value: 'early result' })
+    await ctx.fiber.dispose()
+  })
+
   it('a thrown tool is normalized to an isError result BEFORE a tools/execute listener sees next()', async () => {
     const ctx = await setup()
     ctx.tools.register({

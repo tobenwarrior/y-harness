@@ -19,6 +19,7 @@ import {
   Switch,
   Tag,
   Tooltip,
+  connectedAppGlyph,
   writeClipboard,
 } from '@yharness/client-ui-primitives'
 import type {
@@ -47,7 +48,7 @@ import {
   releaseBotGroupAttachment,
 } from './BotGroupAttachments.tsx'
 import css from './BotWorkspace.module.css'
-import type { BotShareActions } from './controller.ts'
+import type { BotShareActions, SharedBotAppAccessValue } from './controller.ts'
 import {
   createSharedGroupPendingQueue,
   SharedGroupPendingQueueFullError,
@@ -105,6 +106,93 @@ function updatePendingBotIds(current: ReadonlySet<string>, botId: string, pendin
   const next = new Set(current)
   next.delete(botId)
   return next
+}
+
+function SharedAppsCard({ botId, list, set, t }: {
+  readonly botId: string
+  readonly list: NonNullable<BotShareActions['listSharedAppAccess']>
+  readonly set: NonNullable<BotShareActions['setSharedAppAccess']>
+  readonly t: Translate
+}) {
+  const [catalog, setCatalog] = useState<SharedBotAppAccessValue | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [pending, setPending] = useState<string | null>(null)
+  const [reload, setReload] = useState(0)
+  const generation = useRef(0)
+  const pendingRef = useRef(false)
+  useEffect(() => {
+    const current = ++generation.current
+    setCatalog(null)
+    setError(null)
+    setPending(null)
+    pendingRef.current = false
+    void list(botId).then((value) => {
+      if (generation.current !== current) return
+      if (value.botId !== botId) setError(t('sharedAppsLoadFailed'))
+      else setCatalog(value)
+    }).catch(() => {
+      if (generation.current === current) setError(t('sharedAppsLoadFailed'))
+    })
+    return () => { generation.current += 1 }
+  }, [botId, list, reload, t])
+
+  const toggle = async (appId: string, allowed: boolean): Promise<void> => {
+    if (catalog === null || pendingRef.current) return
+    const current = generation.current
+    pendingRef.current = true
+    setPending(appId)
+    setError(null)
+    try {
+      const result = await set(botId, appId, allowed, catalog.revision)
+      if (generation.current === current) {
+        if (result.botId === botId) setCatalog(result)
+        else setError(t('sharedAppsSaveFailed'))
+      }
+    } catch (cause: unknown) {
+      if (generation.current === current) {
+        setError(t(cause instanceof Error && cause.name === 'SharedBotAppsConflictError' ? 'sharedAppsConflict' : 'sharedAppsSaveFailed'))
+      }
+    } finally {
+      if (generation.current === current) {
+        pendingRef.current = false
+        setPending(null)
+      }
+    }
+  }
+
+  return (
+    <section className={css.sharedMemoryCard} aria-label={t('sharedAppsLabel')} aria-busy={(catalog === null && error === null) || pending !== null}>
+      <div className={css.sharedMemoryHeader}>
+        <span className={css.sharedMemoryIcon} aria-hidden="true"><IconLinkOutlineRegular size={16} /></span>
+        <div>
+          <div className={css.shareSectionHeading}>{t('sharedAppsLabel')}</div>
+          <p className={css.sharedMemoryDescription}>{t('sharedAppsDescription')}</p>
+        </div>
+      </div>
+      {error !== null && <div className={css.dialogNotice} role="alert">{error} <Button variant="ghost" size="sm" onClick={() => { setReload(value => value + 1) }}>{t('retry')}</Button></div>}
+      {catalog === null && error === null && <div className={css.connectedAppsLoading} role="status">{t('sharedAppsLoading')}</div>}
+      {catalog !== null && catalog.apps.length === 0 && <div className={css.connectedAppsEmpty}>{t('sharedAppsEmpty')}</div>}
+      {catalog !== null && catalog.apps.length > 0 && <div className={css.connectedAppsList} role="list" aria-label={t('sharedAppsLabel')}>
+        {catalog.apps.map((app) => {
+          const label = app.name?.trim() ?? ''
+          const name = label !== '' && label !== '-' ? label : t('connectedAppFallbackName', { id: app.id })
+          return <div className={css.connectedAppRow} role="listitem" key={app.id}>
+            <span className={css.connectedAppIcon} aria-hidden="true">{connectedAppGlyph({ appId: app.id, size: 16 }) ?? name.slice(0, 2)}</span>
+            <span className={css.connectedAppCopy}>
+              <strong>{name}</strong>
+              {app.description !== undefined && <span>{app.description}</span>}
+              <span className={app.allowed ? css.connectedAppAllowed : css.connectedAppBlocked}>{t(app.allowed ? 'sharedAppsAllowed' : 'sharedAppsBlocked')}</span>
+            </span>
+            <Button variant={app.allowed ? 'ghost' : 'outline'} size="sm" disabled={pending !== null}
+              aria-pressed={app.allowed} aria-label={t(app.allowed ? 'sharedAppsRevoke' : 'sharedAppsGrant', { name })}
+              onClick={() => { void toggle(app.id, !app.allowed) }}>
+              {t(app.allowed ? 'sharedAppsBlockAction' : 'sharedAppsAllowAction')}
+            </Button>
+          </div>
+        })}
+      </div>}
+    </section>
+  )
 }
 
 /** Owner-facing invite and membership controls for one Bot. */
@@ -505,6 +593,9 @@ export function BotShareDialog({ bot, actions, open, onClose, t }: {
               />
             </div>
           </section>
+        )}
+        {stateMatchesBot && actions.listSharedAppAccess !== undefined && actions.setSharedAppAccess !== undefined && (
+          <SharedAppsCard botId={bot.id} list={actions.listSharedAppAccess} set={actions.setSharedAppAccess} t={t} />
         )}
         {stateMatchesBot && actions.inspectRosterFence !== undefined && (
           <section className={css.sharedMemoryCard} aria-labelledby="yharness-shared-roster-fence-heading">

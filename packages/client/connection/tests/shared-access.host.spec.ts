@@ -33,6 +33,10 @@ class KeyedCredentials extends CredentialProvider {
   failReads = false
   constructor(ctx: Context, private readonly records = new Map<CredentialKey, CredentialRecord>()) { super(ctx) }
   private tail = Promise.resolve()
+  private mutationGate: {
+    readonly entered: () => void
+    readonly wait: Promise<void>
+  } | undefined
 
   resolve(_ref: CredentialRef): Promise<ResolvedCredential | undefined> { return Promise.resolve(undefined) }
 
@@ -63,14 +67,28 @@ class KeyedCredentials extends CredentialProvider {
     key: CredentialKey,
     mutate: (current: CredentialRecord | undefined) => Promise<CredentialRecord | undefined>,
   ): Promise<CredentialRecord | undefined> {
+    const gate = this.mutationGate
+    this.mutationGate = undefined
     if (this.failReads) return Promise.reject(new Error('credential store unavailable'))
     const run = this.tail.then(async () => {
+      gate?.entered()
+      if (gate !== undefined) await gate.wait
       const next = await mutate(this.records.get(key))
       if (next !== undefined) this.records.set(key, next)
       return this.records.get(key)
     })
     this.tail = run.then(() => undefined, () => undefined)
     return run
+  }
+
+  pauseNextMutation(): MutationGate {
+    if (this.mutationGate !== undefined) throw new Error('credential mutation is already gated')
+    let markEntered: () => void = () => {}
+    let release: () => void = () => {}
+    const entered = new Promise<void>((resolve) => { markEntered = resolve })
+    const wait = new Promise<void>((resolve) => { release = resolve })
+    this.mutationGate = { entered: markEntered, wait }
+    return { entered, release }
   }
 
   deleteRecord(key: CredentialKey): Promise<void> {
@@ -184,6 +202,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+interface MutationGate {
+  readonly entered: Promise<void>
+  readonly release: () => void
+}
+
 describe('self-hosted shared-bot access', () => {
   it('redeems a one-time invite into a principal-bound cookie and revokes it', async () => {
     const { ctx, connection, dispose } = await mounted()
@@ -212,6 +235,84 @@ describe('self-hosted shared-bot access', () => {
         cookie: cookieFromSetCookie(enrollment.setCookie),
       }), authority)).toEqual({ rejection: 401 })
     } finally {
+      await authority.dispose()
+      await dispose()
+    }
+  })
+
+  it('atomically reads and updates a selected set of durable extensions', async () => {
+    const { ctx, dispose } = await mounted()
+    const authority = await SharedAccessAuthority.create(ctx, ctx.credentials, {
+      sessionMaxAgeMs: 60_000,
+      inviteMaxAgeMs: 60_000,
+      now: () => 1_000,
+    })
+    try {
+      await expect(authority.mutateExtensions(
+        ['test/left', 'test/right'],
+        current => ({
+          value: [current['test/left'], current['test/right']],
+          next: {
+            ...current,
+            'test/left': { version: 1, value: 'left' },
+            'test/right': { version: 1, value: 'right' },
+          },
+        }),
+      )).resolves.toEqual([undefined, undefined])
+      await expect(authority.readExtension('test/left')).resolves.toMatchObject({
+        value: { version: 1, value: 'left' },
+      })
+      await expect(authority.readExtension('test/right')).resolves.toMatchObject({
+        value: { version: 1, value: 'right' },
+      })
+    } finally {
+      await authority.dispose()
+      await dispose()
+    }
+  })
+
+  it('serializes a selected-extension read behind a concurrent binding revocation', async () => {
+    const { ctx, credentials, dispose } = await mounted()
+    const keyed = credentials as KeyedCredentials
+    const authority = await SharedAccessAuthority.create(ctx, keyed, {
+      sessionMaxAgeMs: 60_000,
+      inviteMaxAgeMs: 60_000,
+      now: () => 1_000,
+    })
+    let gate: MutationGate | undefined
+    try {
+      await authority.mutateExtensions(['test/membership', 'test/binding'], current => ({
+        value: undefined,
+        next: {
+          ...current,
+          'test/membership': { active: true },
+          'test/binding': { active: true },
+        },
+      }))
+      gate = keyed.pauseNextMutation()
+      const revoke = authority.mutateExtension('test/binding', (current) => {
+        const binding = current as { readonly active: boolean }
+        return { value: undefined, next: { ...binding, active: false } }
+      })
+      await gate.entered
+
+      let resolved = false
+      const read = authority.mutateExtensions(['test/membership', 'test/binding'], (current) => {
+        const membership = current['test/membership'] as { readonly active: boolean }
+        const binding = current['test/binding'] as { readonly active: boolean }
+        return { value: membership.active && binding.active, next: current }
+      }).then((value) => {
+        resolved = true
+        return value
+      })
+      await Promise.resolve()
+      expect(resolved).toBe(false)
+
+      gate.release()
+      await revoke
+      await expect(read).resolves.toBe(false)
+    } finally {
+      gate?.release()
       await authority.dispose()
       await dispose()
     }

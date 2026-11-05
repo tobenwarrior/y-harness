@@ -1,0 +1,11 @@
+version: 1
+scenario: shared-bot-connected-app
+profile: headless
+composition: shared-bot-connected-app
+recording: authored
+platform: posix
+header:
+  class: shared-bot-connected-app
+  pin: true
+  childSystemPrompts: [1]
+  childToolSchemas: [1]

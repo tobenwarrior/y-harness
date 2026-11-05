@@ -862,6 +862,9 @@ importers:
       '@yharness/subprocess-local':
         specifier: workspace:*
         version: link:../../packages/subprocess/subprocess-local
+      '@yharness/tools':
+        specifier: workspace:*
+        version: link:../../packages/core/tools
       '@yharness/util-values':
         specifier: workspace:*
         version: link:../../packages/util/values
@@ -14415,6 +14418,9 @@ importers:
       '@yharness/bots':
         specifier: workspace:*
         version: link:../../agents/bots
+      '@yharness/client-connection':
+        specifier: workspace:*
+        version: link:../../client/connection
       '@yharness/compaction':
         specifier: workspace:*
         version: link:../../compaction/compaction
@@ -14454,6 +14460,9 @@ importers:
       '@yharness/web':
         specifier: workspace:*
         version: link:../../web/web
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
 
   packages/todo/tool-todo:
     dependencies:

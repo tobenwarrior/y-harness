@@ -104,6 +104,20 @@ collaborationFor(agent: Pick<Agent, 'id'>): Promise<BotCollaborationClient>
 @Remote('listConnectedApps') async listConnectedApps(request: BotConnectedAppsRequest): Promise<BotConnectedAppsValue>
 
 /**
+ * Read the independent connected-app grants used by shared Bot Sessions.
+ * @param request - Bot id whose shared-session policy should be projected.
+ * @returns Connected-app metadata and the authority revision for the policy.
+ */
+@Remote('listSharedAppAccess') async listSharedAppAccess(request: BotSharedAppAccessRequest): Promise<BotSharedAppAccessValue>
+
+/**
+ * Change one independent shared-session connected-app grant.
+ * @param request - Bot, app, desired grant, and expected policy revision.
+ * @returns The refreshed shared-app catalog and committed revision.
+ */
+@Remote('setSharedAppAccess') async setSharedAppAccess(request: BotSharedAppAccessUpdateRequest): Promise<BotSharedAppAccessValue>
+
+/**
  * Persist one Bot's grant or revoke for a connected app.
  * @param request - Bot id, connected-app id, and desired access state.
  * @returns The updated Bot view and connected-app access row.

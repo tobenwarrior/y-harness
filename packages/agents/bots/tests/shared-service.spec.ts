@@ -153,6 +153,7 @@ class SharedBotHostFixture implements SharedBotHost {
       availability: 'idle',
       pinned: false,
       hidden: false,
+      connectedAppIds: [],
       createdAt: 1,
       updatedAt: 1,
     }, ...(includeSecondBot ? [{
@@ -167,6 +168,7 @@ class SharedBotHostFixture implements SharedBotHost {
       availability: 'idle' as const,
       pinned: false,
       hidden: false,
+      connectedAppIds: [],
       createdAt: 2,
       updatedAt: 2,
     }] : []), ...(includeThirdBot ? [{
@@ -181,6 +183,7 @@ class SharedBotHostFixture implements SharedBotHost {
       availability: 'idle' as const,
       pinned: false,
       hidden: false,
+      connectedAppIds: [],
       createdAt: 3,
       updatedAt: 3,
     }] : [])]
@@ -382,6 +385,13 @@ class SharedBotHostFixture implements SharedBotHost {
 
   addBot(bot: BotView): void {
     this.bots.push(bot)
+  }
+
+  setConnectedAppIds(botId: BotId, connectedAppIds: readonly string[]): void {
+    const index = this.bots.findIndex(bot => bot.id === botId)
+    const current = this.bots[index]
+    if (current === undefined) throw new Error('missing bot')
+    this.bots[index] = { ...current, connectedAppIds: [...connectedAppIds], updatedAt: current.updatedAt + 1 }
   }
 }
 
@@ -3123,6 +3133,613 @@ describe('shared Bot service', () => {
       const delivery = groups.deliveries.find(candidate => candidate.messageId === messageId && candidate.botId === BotId('bot-chief'))
       expect(delivery).toMatchObject({ status: 'accepted' })
       expect(delivery === undefined ? false : groups.responseReservations.includes(delivery.id)).toBe(true)
+    } finally {
+      await value.close()
+    }
+  })
+
+  it('resolves the authorized collaborator for one isolated shared-group delivery', async () => {
+    const value = await fixture(10, true)
+    try {
+      const ownerEnrollment = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-second'), 'owner')).code,
+        request(cookie(ownerEnrollment)),
+      )
+      const owner = await principal(value, ownerEnrollment)
+      const created = await value.service.handle('bots/share/create-group', {
+        name: 'Tool authorization room',
+        botIds: [BotId('bot-chief'), BotId('bot-second')],
+      }, new AbortController().signal, owner.peer)
+      const groupId = groupIdFromResult(created)
+      const messageId = BotGroupMessageId('bot-group-message-tool-authorization')
+      await expect(value.service.handle('bots/share/send-group-message', {
+        groupId,
+        targetBotIds: [BotId('bot-chief')],
+        text: 'Authorize this isolated step.',
+        messageId,
+      }, new AbortController().signal, owner.peer)).resolves.toMatchObject({
+        ok: true,
+        value: { status: 'accepted' },
+      })
+      const binding = (await value.service.sharedGroupSessionBindings()).find(session =>
+        session.groupId === groupId && session.botId === BotId('bot-chief') && session.revokedAt === undefined)
+      if (binding === undefined) throw new Error('shared group Session binding was not persisted')
+      await value.service.recordSharedGroupMessageClaims(
+        groupId,
+        BotId('bot-chief'),
+        [{ groupId, messageId }],
+        7,
+        3,
+        true,
+        false,
+      )
+
+      await expect(value.service.resolveSharedGroupInitiator({
+        groupId,
+        botId: BotId('bot-chief'),
+        sessionId: binding.sessionId,
+        turn: 7,
+        step: 5,
+      })).resolves.toBe(owner.botPrincipalId)
+    } finally {
+      await value.close()
+    }
+  })
+
+  it('fails closed for missing, wrong, competing, and stale shared-group claims', async () => {
+    const value = await fixture(10, true)
+    try {
+      const ownerEnrollment = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-second'), 'owner')).code,
+        request(cookie(ownerEnrollment)),
+      )
+      const owner = await principal(value, ownerEnrollment)
+      const created = await value.service.handle('bots/share/create-group', {
+        name: 'Fail-closed tool authorization room',
+        botIds: [BotId('bot-chief'), BotId('bot-second')],
+      }, new AbortController().signal, owner.peer)
+      const groupId = groupIdFromResult(created)
+      const firstMessageId = BotGroupMessageId('bot-group-message-tool-authorization-first')
+      await expect(value.service.handle('bots/share/send-group-message', {
+        groupId,
+        targetBotIds: [BotId('bot-chief')],
+        text: 'First isolated source.',
+        messageId: firstMessageId,
+      }, new AbortController().signal, owner.peer)).resolves.toMatchObject({ ok: true })
+      const binding = (await value.service.sharedGroupSessionBindings()).find(session =>
+        session.groupId === groupId && session.botId === BotId('bot-chief') && session.revokedAt === undefined)
+      if (binding === undefined) throw new Error('shared group Session binding was not persisted')
+      const requestFor = (step: number, sessionId = binding.sessionId) => ({
+        groupId,
+        botId: BotId('bot-chief'),
+        sessionId,
+        turn: 8,
+        step,
+      })
+
+      await expect(value.service.resolveSharedGroupInitiator(requestFor(1))).resolves.toBeUndefined()
+
+      await value.service.recordSharedGroupMessageClaims(
+        groupId,
+        BotId('bot-chief'),
+        [{ groupId, messageId: firstMessageId }],
+        8,
+        1,
+        true,
+        false,
+      )
+      await expect(value.service.resolveSharedGroupInitiator(requestFor(1, SessionId('shared-session-group-wrong'))))
+        .resolves.toBeUndefined()
+
+      await value.service.recordSharedGroupMessageClaims(
+        groupId,
+        BotId('bot-chief'),
+        [{ groupId, messageId: firstMessageId }],
+        8,
+        1,
+        false,
+        false,
+      )
+      await expect(value.service.resolveSharedGroupInitiator(requestFor(1))).resolves.toBeUndefined()
+
+      await value.service.recordSharedGroupMessageClaims(
+        groupId,
+        BotId('bot-chief'),
+        [{ groupId, messageId: firstMessageId }],
+        8,
+        1,
+        true,
+        false,
+      )
+      const secondMessageId = BotGroupMessageId('bot-group-message-tool-authorization-second')
+      await expect(value.service.handle('bots/share/send-group-message', {
+        groupId,
+        targetBotIds: [BotId('bot-chief')],
+        text: 'Competing isolated source.',
+        messageId: secondMessageId,
+      }, new AbortController().signal, owner.peer)).resolves.toMatchObject({ ok: true })
+      await value.service.recordSharedGroupMessageClaims(
+        groupId,
+        BotId('bot-chief'),
+        [{ groupId, messageId: firstMessageId }, { groupId, messageId: secondMessageId }],
+        8,
+        1,
+        true,
+        false,
+      )
+      await expect(value.service.resolveSharedGroupInitiator(requestFor(1))).resolves.toBeUndefined()
+
+      const staleMessageId = BotGroupMessageId('bot-group-message-tool-authorization-stale')
+      await expect(value.service.handle('bots/share/send-group-message', {
+        groupId,
+        targetBotIds: [BotId('bot-chief')],
+        text: 'Stale source.',
+        messageId: staleMessageId,
+      }, new AbortController().signal, owner.peer)).resolves.toMatchObject({ ok: true })
+      await value.service.recordSharedGroupMessageClaims(
+        groupId,
+        BotId('bot-chief'),
+        [{ groupId, messageId: staleMessageId }],
+        9,
+        1,
+        true,
+        false,
+      )
+      await value.service.recordSharedGroupResponse(
+        groupId,
+        BotId('bot-chief'),
+        9,
+        1,
+        'The source is no longer active.',
+        'tool-authorization-stale-response',
+      )
+      await expect(value.service.resolveSharedGroupInitiator({ ...requestFor(1), turn: 9 }))
+        .resolves.toBeUndefined()
+    } finally {
+      await value.close()
+    }
+  })
+
+  it('rechecks current group membership and principal revocation for group attribution', async () => {
+    const value = await fixture(10, true)
+    try {
+      const ownerEnrollment = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-second'), 'owner')).code,
+        request(cookie(ownerEnrollment)),
+      )
+      const owner = await principal(value, ownerEnrollment)
+      const created = await value.service.handle('bots/share/create-group', {
+        name: 'Current authorization room',
+        botIds: [BotId('bot-chief'), BotId('bot-second')],
+      }, new AbortController().signal, owner.peer)
+      const groupId = groupIdFromResult(created)
+      const messageId = BotGroupMessageId('bot-group-message-tool-authorization-current')
+      await expect(value.service.handle('bots/share/send-group-message', {
+        groupId,
+        targetBotIds: [BotId('bot-chief')],
+        text: 'Current membership source.',
+        messageId,
+      }, new AbortController().signal, owner.peer)).resolves.toMatchObject({ ok: true })
+      const binding = (await value.service.sharedGroupSessionBindings()).find(session =>
+        session.groupId === groupId && session.botId === BotId('bot-chief') && session.revokedAt === undefined)
+      if (binding === undefined) throw new Error('shared group Session binding was not persisted')
+      await value.service.recordSharedGroupMessageClaims(
+        groupId,
+        BotId('bot-chief'),
+        [{ groupId, messageId }],
+        10,
+        1,
+        true,
+        false,
+      )
+      const requestFor = () => ({
+        groupId,
+        botId: BotId('bot-chief'),
+        sessionId: binding.sessionId,
+        turn: 10,
+        step: 1,
+      })
+      await expect(value.service.resolveSharedGroupInitiator(requestFor())).resolves.toBe(owner.botPrincipalId)
+
+      await value.authority.mutateExtension('agent-bots/shared-memberships', (current) => {
+        const membership = sharedMembershipSnapshotSchema.parse(current)
+        return {
+          value: undefined,
+          next: {
+            ...membership,
+            memberships: membership.memberships.filter(member =>
+              !(member.botId === BotId('bot-second') && member.principalId === owner.botPrincipalId)),
+          },
+        }
+      })
+      await expect(value.service.resolveSharedGroupInitiator(requestFor())).resolves.toBeUndefined()
+
+      await value.authority.mutateExtension('agent-bots/shared-memberships', (current) => {
+        const membership = sharedMembershipSnapshotSchema.parse(current)
+        return {
+          value: undefined,
+          next: {
+            ...membership,
+            memberships: [...membership.memberships, {
+              botId: BotId('bot-second'),
+              principalId: owner.botPrincipalId,
+              role: 'owner' as const,
+              grantedBy: owner.botPrincipalId,
+              createdAt: 1_000,
+              updatedAt: 1_000,
+            }],
+          },
+        }
+      })
+      await value.authority.revokePrincipal(ownerEnrollment.principalId)
+      await expect(value.service.resolveSharedGroupInitiator(requestFor())).resolves.toBeUndefined()
+    } finally {
+      await value.close()
+    }
+  })
+
+  it('resolves private attribution only from the exact current binding and membership', async () => {
+    const value = await fixture()
+    try {
+      const ownerEnrollment = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      const owner = await principal(value, ownerEnrollment)
+      await expect(value.service.handle('bots/share/chat', {
+        botId: 'bot-chief',
+        text: 'Create the private binding.',
+      }, new AbortController().signal, owner.peer)).resolves.toMatchObject({ ok: true })
+      const binding = value.service.sessionFor(BotId('bot-chief'), owner.botPrincipalId)
+      if (binding === undefined) throw new Error('private Session binding was not persisted')
+      const requestFor = (sessionId = binding.sessionId) => ({
+        botId: BotId('bot-chief'),
+        sessionId,
+      })
+
+      await expect(value.service.resolvePrivateSessionInitiator(requestFor())).resolves.toBe(owner.botPrincipalId)
+      await expect(value.service.resolvePrivateSessionInitiator(
+        requestFor(SessionId('shared-session-private-wrong')),
+      )).resolves.toBeUndefined()
+
+      await value.authority.mutateExtension('agent-bots/shared-memberships', (current) => {
+        const membership = sharedMembershipSnapshotSchema.parse(current)
+        return {
+          value: undefined,
+          next: {
+            ...membership,
+            memberships: membership.memberships.filter(member =>
+              !(member.botId === BotId('bot-chief') && member.principalId === owner.botPrincipalId)),
+          },
+        }
+      })
+      await expect(value.service.resolvePrivateSessionInitiator(requestFor())).resolves.toBeUndefined()
+
+      await value.authority.mutateExtension('agent-bots/shared-memberships', (current) => {
+        const membership = sharedMembershipSnapshotSchema.parse(current)
+        return {
+          value: undefined,
+          next: {
+            ...membership,
+            memberships: [...membership.memberships, {
+              botId: BotId('bot-chief'),
+              principalId: owner.botPrincipalId,
+              role: 'owner' as const,
+              grantedBy: owner.botPrincipalId,
+              createdAt: 1_000,
+              updatedAt: 1_000,
+            }],
+          },
+        }
+      })
+      await value.authority.revokePrincipal(ownerEnrollment.principalId)
+      await expect(value.service.resolvePrivateSessionInitiator(requestFor())).resolves.toBeUndefined()
+    } finally {
+      await value.close()
+    }
+  })
+
+  it('authorizes a connected app only for a granted shared private Session', async () => {
+    const value = await fixture()
+    try {
+      const enrollment = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      const owner = await principal(value, enrollment)
+      await expect(value.service.handle('bots/share/chat', {
+        botId: 'bot-chief',
+        text: 'Create the app authorization binding.',
+      }, new AbortController().signal, owner.peer)).resolves.toMatchObject({ ok: true })
+      const binding = value.service.sessionFor(BotId('bot-chief'), owner.botPrincipalId)
+      if (binding === undefined) throw new Error('private Session binding was not persisted')
+
+      await expect(value.service.authorizeSharedConnectedApp({
+        kind: 'private',
+        botId: BotId('bot-chief'),
+        sessionId: binding.sessionId,
+        appId: 'github',
+      })).resolves.toBe(false)
+
+      const granted = await value.service.setSharedConnectedAppAccess(
+        BotId('bot-chief'),
+        'github',
+        true,
+        0,
+      )
+      await expect(value.service.authorizeSharedConnectedApp({
+        kind: 'private',
+        botId: BotId('bot-chief'),
+        sessionId: binding.sessionId,
+        appId: 'github',
+      })).resolves.toBe(true)
+      await expect(value.service.authorizeSharedConnectedApp({
+        kind: 'private',
+        botId: BotId('bot-chief'),
+        sessionId: SessionId('unrelated-shared-session'),
+        appId: 'github',
+      })).resolves.toBe(false)
+
+      await value.service.setSharedConnectedAppAccess(
+        BotId('bot-chief'),
+        'github',
+        false,
+        granted.revision,
+      )
+      await expect(value.service.authorizeSharedConnectedApp({
+        kind: 'private',
+        botId: BotId('bot-chief'),
+        sessionId: binding.sessionId,
+        appId: 'github',
+      })).resolves.toBe(false)
+    } finally {
+      await value.close()
+    }
+  })
+
+  it('drains a started shared-app body when the authority commit fails', async () => {
+    const value = await fixture()
+    const originalModifyRecord = value.credentials.modifyRecord.bind(value.credentials)
+    try {
+      const enrollment = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      const owner = await principal(value, enrollment)
+      await expect(value.service.handle('bots/share/chat', {
+        botId: 'bot-chief',
+        text: 'Create the body-admission binding.',
+      }, new AbortController().signal, owner.peer)).resolves.toMatchObject({ ok: true })
+      const binding = value.service.sessionFor(BotId('bot-chief'), owner.botPrincipalId)
+      if (binding === undefined) throw new Error('private Session binding was not persisted')
+      await value.service.setSharedConnectedAppAccess(BotId('bot-chief'), 'github', true, 0)
+
+      let failCommit = true
+      value.credentials.modifyRecord = (key, mutate) => originalModifyRecord(key, async (current) => {
+        const next = await mutate(current)
+        if (failCommit) {
+          failCommit = false
+          throw new Error('injected connected-app commit failure')
+        }
+        return next
+      })
+      const body = Promise.withResolvers<string>()
+      let started = false
+      const request = {
+        kind: 'private' as const,
+        botId: BotId('bot-chief'),
+        sessionId: binding.sessionId,
+        appId: 'github',
+      }
+      const pending = value.service.authorizeSharedConnectedAppAndStart(request, async () => {
+        started = true
+        return body.promise
+      })
+      await vi.waitFor(() => { expect(started).toBe(true) })
+      let settled = false
+      void pending.then(() => { settled = true }, () => { settled = true })
+      await Promise.resolve()
+      expect(settled).toBe(false)
+      body.resolve('body settled')
+      await expect(pending).rejects.toThrow('injected connected-app commit failure')
+    } finally {
+      value.credentials.modifyRecord = originalModifyRecord
+      await value.close()
+    }
+  })
+
+  it('observes an immediately rejected body before a later authority commit failure', async () => {
+    const value = await fixture()
+    const originalModifyRecord = value.credentials.modifyRecord.bind(value.credentials)
+    try {
+      const enrollment = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      const owner = await principal(value, enrollment)
+      await expect(value.service.handle('bots/share/chat', {
+        botId: 'bot-chief',
+        text: 'Create the early rejection binding.',
+      }, new AbortController().signal, owner.peer)).resolves.toMatchObject({ ok: true })
+      const binding = value.service.sessionFor(BotId('bot-chief'), owner.botPrincipalId)
+      if (binding === undefined) throw new Error('private Session binding was not persisted')
+      await value.service.setSharedConnectedAppAccess(BotId('bot-chief'), 'github', true, 0)
+
+      let failCommit = true
+      value.credentials.modifyRecord = (key, mutate) => originalModifyRecord(key, async (current) => {
+        const next = await mutate(current)
+        if (failCommit) {
+          failCommit = false
+          await Promise.resolve()
+          throw new Error('injected early-rejection commit failure')
+        }
+        return next
+      })
+      const bodyError = new Error('body rejected before authority commit')
+      const start = vi.fn(async () => { throw bodyError })
+      await expect(value.service.authorizeSharedConnectedAppAndStart({
+        kind: 'private',
+        botId: BotId('bot-chief'),
+        sessionId: binding.sessionId,
+        appId: 'github',
+      }, start)).rejects.toThrow('injected early-rejection commit failure')
+      expect(start).toHaveBeenCalledTimes(1)
+    } finally {
+      value.credentials.modifyRecord = originalModifyRecord
+      await value.close()
+    }
+  })
+
+  it('does not start a shared-app body after admission cancellation', async () => {
+    const value = await fixture()
+    try {
+      const enrollment = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      const owner = await principal(value, enrollment)
+      await expect(value.service.handle('bots/share/chat', {
+        botId: 'bot-chief',
+        text: 'Create the cancellation binding.',
+      }, new AbortController().signal, owner.peer)).resolves.toMatchObject({ ok: true })
+      const binding = value.service.sessionFor(BotId('bot-chief'), owner.botPrincipalId)
+      if (binding === undefined) throw new Error('private Session binding was not persisted')
+      await value.service.setSharedConnectedAppAccess(BotId('bot-chief'), 'github', true, 0)
+
+      const controller = new AbortController()
+      controller.abort(new Error('admission canceled'))
+      const start = vi.fn(async () => 'must not start')
+      await expect(value.service.authorizeSharedConnectedAppAndStart({
+        kind: 'private',
+        botId: BotId('bot-chief'),
+        sessionId: binding.sessionId,
+        appId: 'github',
+      }, start, controller.signal)).rejects.toThrow('admission canceled')
+      expect(start).not.toHaveBeenCalled()
+    } finally {
+      await value.close()
+    }
+  })
+
+  it('keeps shared connected-app grants separate and rejects stale revisions', async () => {
+    const value = await fixture()
+    try {
+      await expect(value.service.readSharedConnectedAppAccess(BotId('bot-chief'))).resolves.toEqual({
+        revision: 0,
+        allowedAppIds: [],
+      })
+      value.host.setConnectedAppIds(BotId('bot-chief'), ['github'])
+      await expect(value.service.readSharedConnectedAppAccess(BotId('bot-chief'))).resolves.toEqual({
+        revision: 0,
+        allowedAppIds: [],
+      })
+      const granted = await value.service.setSharedConnectedAppAccess(BotId('bot-chief'), 'github', true, 0)
+      expect(granted).toEqual({ revision: 1, allowedAppIds: ['github'] })
+      await expect(value.service.setSharedConnectedAppAccess(BotId('bot-chief'), 'github', false, 0))
+        .rejects.toMatchObject({ code: 'gateway/conflict' })
+      const revoked = await value.service.setSharedConnectedAppAccess(BotId('bot-chief'), 'github', false, 1)
+      expect(revoked).toEqual({ revision: 2, allowedAppIds: [] })
+    } finally {
+      await value.close()
+    }
+  })
+
+  it('preserves empty and long opaque ids in shared connected-app grants', async () => {
+    const value = await fixture()
+    try {
+      const ids = ['', 'x'.repeat(65)]
+      let revision = 0
+      for (const id of ids) {
+        const granted = await value.service.setSharedConnectedAppAccess(
+          BotId('bot-chief'),
+          id,
+          true,
+          revision,
+        )
+        revision = granted.revision
+      }
+      await expect(value.service.readSharedConnectedAppAccess(BotId('bot-chief'))).resolves.toEqual({
+        revision: ids.length,
+        allowedAppIds: ids,
+      })
+    } finally {
+      await value.close()
+    }
+  })
+
+  it('requires one current isolated group delivery before authorizing a connected app', async () => {
+    const value = await fixture(10, true)
+    try {
+      const ownerEnrollment = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-second'), 'owner')).code,
+        request(cookie(ownerEnrollment)),
+      )
+      const owner = await principal(value, ownerEnrollment)
+      const created = await value.service.handle('bots/share/create-group', {
+        name: 'Connected app group authorization',
+        botIds: [BotId('bot-chief'), BotId('bot-second')],
+      }, new AbortController().signal, owner.peer)
+      const groupId = groupIdFromResult(created)
+      const messageId = BotGroupMessageId('bot-group-message-connected-app')
+      await expect(value.service.handle('bots/share/send-group-message', {
+        groupId,
+        targetBotIds: [BotId('bot-chief')],
+        text: 'Authorize this group tool step.',
+        messageId,
+      }, new AbortController().signal, owner.peer)).resolves.toMatchObject({ ok: true })
+      const binding = (await value.service.sharedGroupSessionBindings()).find(session =>
+        session.groupId === groupId && session.botId === BotId('bot-chief') && session.revokedAt === undefined)
+      if (binding === undefined) throw new Error('shared group Session binding was not persisted')
+      await value.service.setSharedConnectedAppAccess(BotId('bot-chief'), 'github', true, 0)
+
+      const requestFor = (step: number) => ({
+        kind: 'group' as const,
+        groupId,
+        botId: BotId('bot-chief'),
+        sessionId: binding.sessionId,
+        turn: 12,
+        step,
+        appId: 'github',
+      })
+      await expect(value.service.authorizeSharedConnectedApp(requestFor(1))).resolves.toBe(false)
+
+      await value.service.recordSharedGroupMessageClaims(
+        groupId,
+        BotId('bot-chief'),
+        [{ groupId, messageId }],
+        12,
+        1,
+        true,
+        false,
+      )
+      await expect(value.service.authorizeSharedConnectedApp(requestFor(1))).resolves.toBe(true)
+
+      await value.service.recordSharedGroupMessageClaims(
+        groupId,
+        BotId('bot-chief'),
+        [{ groupId, messageId }],
+        12,
+        1,
+        false,
+        false,
+      )
+      await expect(value.service.authorizeSharedConnectedApp(requestFor(2))).resolves.toBe(false)
     } finally {
       await value.close()
     }

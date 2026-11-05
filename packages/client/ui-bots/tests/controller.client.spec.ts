@@ -143,6 +143,29 @@ function templateView(id: string, shareCode: string, patch: Partial<BotTemplateV
 const localPermissions = { status: 'resolved' as const, preset: 'research-preset', tools: ['chat', 'read_file'] }
 
 describe('BotWorkspaceController', () => {
+  it('routes shared app grants through the owner remote with the current revision', async () => {
+    const existing = bot('bot-shared-apps', 'session-shared-apps')
+    const access = { botId: existing.id, revision: 3, apps: [{ id: 'github', name: 'GitHub', allowed: false }] }
+    const listSharedAppAccess = vi.fn().mockResolvedValue({ ok: true, value: access })
+    const setSharedAppAccess = vi.fn().mockResolvedValue({ ok: true, value: { ...access, revision: 4 } })
+    const remote = {
+      ...remoteFixture([existing]),
+      listShareMembers: vi.fn(), createShareInvite: vi.fn(), revokeShareMember: vi.fn(),
+      listSharedAppAccess, setSharedAppAccess,
+    }
+    const controller = new BotWorkspaceController(remote, sessionsFixture().sessions, () => 'unexpected response')
+    const share = controller.face().share
+    if (share?.listSharedAppAccess === undefined || share.setSharedAppAccess === undefined) throw new Error('shared app actions are unavailable')
+    await expect(share.listSharedAppAccess(existing.id)).resolves.toEqual(access)
+    await share.setSharedAppAccess(existing.id, 'github', true, 3)
+    expect(listSharedAppAccess).toHaveBeenCalledWith({ botId: existing.id })
+    expect(setSharedAppAccess).toHaveBeenCalledWith({ botId: existing.id, appId: 'github', allowed: true, expectedRevision: 3 })
+    setSharedAppAccess.mockResolvedValueOnce({ ok: false, error: new RemoteError('gateway/conflict', 'changed', { botId: existing.id }) })
+    await expect(share.setSharedAppAccess(existing.id, 'github', true, 3)).rejects.toMatchObject({ name: 'SharedBotAppsConflictError' })
+    listSharedAppAccess.mockResolvedValueOnce({ ok: true, value: { ...access, botId: BotId('another-bot') } })
+    await expect(share.listSharedAppAccess(existing.id)).rejects.toThrow('unexpected response')
+    controller.dispose()
+  })
   it('exposes avatar uploads without an image generation service', async () => {
     const original = bot('bot-one', 'session-one')
     const remote = remoteFixture([original])

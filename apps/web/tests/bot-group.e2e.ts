@@ -8,6 +8,7 @@ import { chromium } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it, onTestFailed, onTestFinished, vi } from 'vitest'
 import type { GenerateOptions, StreamChunk } from '@yharness/llm'
 import { LlmAdapter, ToolCallId } from '@yharness/llm'
+import { defineTool } from '@yharness/tools'
 // Type-only: makes the Bot service contribution visible on the assembled Host context.
 import type { BotView } from '@yharness/bots'
 import type {} from '@yharness/bots'
@@ -36,6 +37,7 @@ const SHARED_ATTACHMENT_BODY = 'shared attachment payload\n'
 class GroupReplyAdapter extends LlmAdapter {
   readonly requests: GenerateOptions[] = []
   searchNext = false
+  appNext = false
 
   override async listModels(provider: string) {
     return [{ provider, id: MODEL, name: `${provider}/${MODEL}` }]
@@ -43,6 +45,16 @@ class GroupReplyAdapter extends LlmAdapter {
 
   override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     this.requests.push(options)
+    if (this.appNext) {
+      this.appNext = false
+      const id = ToolCallId('shared-group-connected-app')
+      const args = '{}'
+      yield { type: 'block-start', index: 0, blockType: 'tool-call' }
+      yield { type: 'tool-call-delta', index: 0, id, name: 'mcp__fixture__lookup', argumentsDelta: args }
+      yield { type: 'block-end', index: 0, block: { type: 'tool-call', id, name: 'mcp__fixture__lookup', arguments: args } }
+      yield { type: 'finish', reason: { kind: 'tool-calls' } }
+      return
+    }
     if (this.searchNext) {
       this.searchNext = false
       const id = ToolCallId('shared-group-web-search')
@@ -336,6 +348,8 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
     onTestFinished(() => { search.mockRestore() })
     adapter.searchNext = true
     await collaboratorDialog.getByRole('button', { name: 'Send to group', exact: true }).click()
+    await expect.poll(() => adapter.requests.length, { timeout: 30_000 }).toBeGreaterThanOrEqual(5)
+    expect(adapter.requests[4]?.tools?.map(tool => tool.name)).toContain('web_search')
     await expect.poll(() => adapter.requests.length, { timeout: 30_000 }).toBe(6)
     expect(JSON.stringify(adapter.requests[4])).toContain(String.raw`Your Bot name is \"Scout\"`)
     const sharedToolNames = adapter.requests[4]?.tools?.map(tool => tool.name) ?? []
@@ -400,6 +414,29 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
     expect(requestText).not.toContain(PRIVATE_ORBIT_PERSONA)
     expect(requestText).not.toContain('private.scout')
     expect(requestText).not.toContain('private.orbit')
+
+    const appCall = vi.fn(async () => 'Shared app result')
+    scaffold.ctx.effect(() => scaffold.ctx.tools.register({
+      ...defineTool({
+        name: 'mcp__fixture__lookup', description: 'Look up a shared fixture', parameters: {},
+        output: { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: value }] },
+        execute: appCall,
+      }),
+      source: { kind: 'mcp', serverName: 'fixture' },
+    }), 'shared app browser fixture')
+    const beforeGrant = await scaffold.ctx.bots.listSharedAppAccess({ botId: firstBot.id })
+    expect(beforeGrant.apps.find(app => app.id === 'fixture')?.allowed).toBe(false)
+    await scaffold.ctx.bots.setSharedAppAccess({
+      botId: firstBot.id, appId: 'fixture', allowed: true, expectedRevision: beforeGrant.revision,
+    })
+    const previousRequests = adapter.requests.length
+    adapter.appNext = true
+    await collaboratorComposer.fill('@Scout Look up the shared fixture.')
+    await collaboratorDialog.getByRole('button', { name: 'Send to group', exact: true }).click()
+    await expect.poll(() => adapter.requests.length, { timeout: 30_000 }).toBe(previousRequests + 2)
+    expect(adapter.requests[previousRequests]?.tools?.map(tool => tool.name)).toContain('mcp__fixture__lookup')
+    expect(appCall).toHaveBeenCalledOnce()
+    expect(JSON.stringify(adapter.requests[previousRequests + 1])).toContain('Shared app result')
 
     const ownerMembersBeforeRestart = await scaffold.ctx.bots.listShareMembers({ botId: firstBot.id })
     const ownerMembershipsBeforeRestart = ownerMembersBeforeRestart.members.filter(member => member.role === 'owner')

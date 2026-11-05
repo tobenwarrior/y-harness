@@ -1119,15 +1119,20 @@ describe('headless recorded-session snapshots', () => {
       const spillRoot = await mkdtemp(join(tmpdir(), 'acp-snap-spill-'))
       const locatorRoot = snapshotSpillRoot(join(scenario.dir, fixtureFiles[0] as string))
       const mcpDemo = scenario.name === 'plugin-manager-mcp' ? await startHttpMcpFixture() : undefined
-      const sharedTempRoot = scenario.name === 'shared-bot-web-search' ? await realpath(tmpdir()) : undefined
-      // The shared Session's encoded id names this workspace; escaping the colon keeps cwd and id normalization distinct.
+      const sharedTempRoot = scenario.name === 'shared-bot-web-search'
+        || scenario.name === 'shared-bot-connected-app'
+        ? await realpath(tmpdir())
+        : undefined
+      // Shared-session fixtures derive a valid shared-session id from the encoded workspace basename.
       const sharedWorkspaceParent = sharedTempRoot === undefined ? undefined : join(sharedTempRoot, 'y-harness-shared-bots')
       if (sharedWorkspaceParent !== undefined) await mkdir(sharedWorkspaceParent, { recursive: true })
       let result: Awaited<ReturnType<typeof runLoaderSmoke>>
       try {
         result = await runLoaderSmoke({
           label: `${scenario.name} headless snapshot`,
-          tempDirPrefix: sharedWorkspaceParent === undefined ? 'dsh-log-snap-' : 'dsh-log-snap-%3A',
+          tempDirPrefix: scenario.name === 'shared-bot-connected-app'
+            ? 'shared-session-%2D'
+            : sharedWorkspaceParent === undefined ? 'dsh-log-snap-' : 'dsh-log-snap-%3A',
           ...(sharedWorkspaceParent !== undefined
             ? { tempDirParent: sharedWorkspaceParent }
             : scenario.manifest.workspace?.parent === 'outside-temp' ? { tempDirParent: outsideTempWorkspaceParent() } : {}),
@@ -1232,6 +1237,15 @@ describe('headless recorded-session snapshots', () => {
       if (stderrLog === undefined) throw new Error(`${scenario.name}: stderr projection has no primary session`)
       const expectedStderr = stderrFromSession(stderrLog)
       const actualContext = contextOf(actualLogs.map(log => log.content))
+      if (scenario.name === 'shared-bot-connected-app') {
+        const childCwd = actualLogs[1]?.header.cwd
+        if (typeof childCwd !== 'string') {
+          throw new Error('shared-bot-connected-app: child Session header has no cwd')
+        }
+        // Identity redaction runs before cwd normalization, so the child workspace is
+        // represented by its parent plus the stable child-session token here.
+        actualContext.cwdAliases = [join(dirname(childCwd), '{{session:2}}')]
+      }
 
       if (writesCurrentSessionFixtures(scenario.manifest, mode)) {
         fixtures = await writeSessionFixtures(

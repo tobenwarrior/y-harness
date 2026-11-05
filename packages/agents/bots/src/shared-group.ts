@@ -331,6 +331,79 @@ export type SharedGroupSnapshot = z.infer<typeof sharedGroupSnapshotSchema>
 /** Durable shared-group Session binding projected to the Host. */
 export type SharedGroupSessionBinding = z.infer<typeof sharedGroupSessionSchema>
 
+/** Exact shared-group Session coordinate used for host-only attribution. */
+export interface SharedGroupInitiatorRequest {
+  /** Shared group containing the delivery. */
+  readonly groupId: ReturnType<typeof BotGroupId>
+  /** Recipient Bot whose isolated Session claimed the delivery. */
+  readonly botId: BotId
+  /** Exact durable isolated Session binding. */
+  readonly sessionId: SessionId
+  /** Model turn containing the isolated claim. */
+  readonly turn: number
+  /** Model step at which the Host is attributing the isolated claim. */
+  readonly step: number
+}
+
+/**
+ * Resolve a shared-group initiator from one already-selected membership
+ * extension value and authority principal snapshot.
+ *
+ * The caller owns the authority transaction that supplied both values. This
+ * keeps group attribution composable with another extension, such as a
+ * shared connected-app grant, without weakening the exact delivery checks.
+ * @param value - Durable membership extension value.
+ * @param authorityState - Current principal revocation snapshot.
+ * @param request - Exact group, Bot, Session, turn, and step identities.
+ * @returns The current initiator, or undefined when attribution is not provable.
+ */
+export function resolveSharedGroupInitiatorFromSnapshot(
+  value: unknown,
+  authorityState: SharedAccessStateSnapshot,
+  request: SharedGroupInitiatorRequest,
+): ReturnType<typeof BotPrincipalId> | undefined {
+  if (!Number.isSafeInteger(request.turn) || request.turn < 0
+    || !Number.isSafeInteger(request.step) || request.step < 0) return undefined
+  const membershipSnapshot = parseMembershipExtension(value)
+  const snapshot = parseGroups(membershipSnapshot.sharedGroups)
+  const group = snapshot.groups.find(candidate => candidate.id === request.groupId)
+  if (group === undefined || !group.botIds.includes(request.botId)) return undefined
+  const binding = snapshot.sessions.find(candidate => candidate.groupId === request.groupId
+    && candidate.botId === request.botId
+    && candidate.sessionId === request.sessionId
+    && candidate.revokedAt === undefined)
+  if (binding === undefined) return undefined
+  const sameTurn = snapshot.deliveries.filter(delivery => delivery.groupId === request.groupId
+    && delivery.botId === request.botId
+    && delivery.claim?.turn === request.turn)
+  if (sameTurn.length !== 1 || sameTurn.some(delivery => delivery.claim?.isolated !== true)) return undefined
+  const candidates = snapshot.deliveries.filter(delivery => delivery.groupId === request.groupId
+    && delivery.botId === request.botId
+    && delivery.targetSessionId === request.sessionId
+    && (delivery.status === 'pending' || delivery.status === 'accepted')
+    && delivery.claim?.turn === request.turn
+    && delivery.claim.step <= request.step
+    && delivery.claim.isolated)
+  if (candidates.length !== 1) return undefined
+  const delivery = candidates[0]
+  if (delivery === undefined) return undefined
+  const source = snapshot.messages.find(message => message.id === delivery.messageId
+    && message.groupId === request.groupId)
+  if (source === undefined || source.sender.kind !== 'user'
+    || source.sender.principalId === undefined
+    || source.sender.principalId !== delivery.senderPrincipalId) return undefined
+  const targetBotIds = source.targetBotIds ?? group.botIds
+  if (!targetBotIds.includes(request.botId)
+    || !group.memberPrincipalIds.some(member => member === delivery.senderPrincipalId)
+    || !hasActiveSharedPrincipal(
+      authorityState,
+      membershipSnapshot.memberships,
+      group,
+      delivery.senderPrincipalId,
+    )) return undefined
+  return delivery.senderPrincipalId
+}
+
 /** Result returned by the isolated Host's explicit recipient-fence recovery. */
 export type SharedGroupDeliveryRecoveryResult =
   | 'accepted'
@@ -1467,6 +1540,31 @@ export class SharedBotGroupService {
       }
       return changed ? { ...snapshot, deliveries, revision: snapshot.revision + 1 } : snapshot
     })
+  }
+
+  /**
+   * Resolve the sole collaborator behind one current isolated group delivery.
+   *
+   * This is a Host-only attribution lookup. It reads the durable group claim,
+   * delivery, source message, and Session binding while the authority write
+   * lock is held, then rechecks the current group ACL, Bot memberships, and
+   * principal revocation state. Missing, stale, ambiguous, or competing rows
+   * return no principal instead of granting a caller access.
+   * @param request - Exact group, Bot, Session, turn, and step identities.
+   * @returns The currently authorized collaborator, or undefined when attribution is not provable.
+   */
+  async resolveSharedGroupInitiator(
+    request: SharedGroupInitiatorRequest,
+  ): Promise<ReturnType<typeof BotPrincipalId> | undefined> {
+    return this.authority.mutateExtension<ReturnType<typeof BotPrincipalId> | undefined>(
+      'agent-bots/shared-memberships',
+      (current, authorityState) => {
+        return {
+          value: resolveSharedGroupInitiatorFromSnapshot(current, authorityState, request),
+          next: current,
+        }
+      },
+    )
   }
 
   /**

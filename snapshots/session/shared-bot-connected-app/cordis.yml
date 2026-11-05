@@ -1,0 +1,24 @@
+# Live composition for the shared Bot connected-app snapshot owner.
+
+- id: web
+
+- insert:
+    - id: connection
+      name: '@yharness/client-connection'
+
+- id: headless-runner
+  config:
+    task: !!js ctx.headlessStartup.task
+    sessionId: bot-session-sender
+    json: !!js ctx.headlessStartup.json
+
+- insert:
+    - id: agent-bots
+      name: '@yharness/bots'
+
+- insert:
+    - id: shared-bot-connected-app-prereqs
+      name: '../../../packages/test-support/session-snapshot/tests/fixtures/shared-bot-connected-app-prereqs.ts'
+
+    - id: bots-snapshot
+      name: '../../../packages/test-support/session-snapshot/tests/fixtures/bot-snapshot.ts'

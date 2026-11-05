@@ -744,6 +744,34 @@ export interface BotConnectedAppAccessValue {
   readonly app: BotConnectedAppAccess
 }
 
+/** Request the independent connected-app grants used by shared Bot Sessions. */
+export interface BotSharedAppAccessRequest {
+  /** Bot whose shared-session policy should be returned. */
+  readonly botId: BotId
+}
+
+/** Shared-session connected-app catalog and its optimistic-concurrency revision. */
+export interface BotSharedAppAccessValue {
+  /** Bot whose shared-session policy is returned. */
+  readonly botId: BotId
+  /** Monotonic policy revision used to reject stale owner writes. */
+  readonly revision: number
+  /** Available connected apps and their independent shared-session grants. */
+  readonly apps: readonly BotConnectedAppAccess[]
+}
+
+/** Change one connected app's independent shared-session grant. */
+export interface BotSharedAppAccessUpdateRequest {
+  /** Bot whose shared-session policy should change. */
+  readonly botId: BotId
+  /** Stable MCP server namespace. */
+  readonly appId: string
+  /** Whether shared Sessions may call this app. */
+  readonly allowed: boolean
+  /** Revision read by the owner before editing. */
+  readonly expectedRevision: number
+}
+
 /** One host-local skill visible to a Bot and its current grant decision. */
 export interface BotSkillAccess {
   /** Stable kebab-case skill name. */
