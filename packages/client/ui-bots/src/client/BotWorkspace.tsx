@@ -605,8 +605,9 @@ export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate,
         const messageId = attachmentMessageIdRef.current ?? `bot-group-message-${randomUUID()}`
         attachmentMessageIdRef.current = messageId
         attachmentDraftTextRef.current = text
-        if (targets.length === 0) await onSendWithAttachments(text, attachments, messageId)
-        else await onSendWithAttachments(text, attachments, messageId, targets)
+        const attachmentText = text || t('groupAttachmentFile')
+        if (targets.length === 0) await onSendWithAttachments(attachmentText, attachments, messageId)
+        else await onSendWithAttachments(attachmentText, attachments, messageId, targets)
         clearAttachments()
       } else if (targets.length === 0) await onSend(text)
       else await onSend(text, undefined, targets)

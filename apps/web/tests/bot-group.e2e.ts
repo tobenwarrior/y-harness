@@ -313,6 +313,13 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
       { timeout: 30_000 },
     ).toBe(1)
 
+    await attachmentInput.setInputFiles({
+      name: 'standalone.txt', mimeType: 'text/plain', buffer: Buffer.from('file without a typed message'),
+    })
+    await ownerDialog.getByRole('button', { name: 'Send to group', exact: true }).click()
+    await expect.poll(() => adapter.requests.length, { timeout: 30_000 }).toBe(8)
+    await expect.poll(() => ownerTranscriptRows.filter({ hasText: 'standalone.txt' }).count(), { timeout: 30_000 }).toBe(1)
+
     await ownerGroupRow.click()
     await expect.poll(() => ownerTranscriptRows.filter({ hasText: COLLABORATOR_SHARED_MESSAGE }).count(), { timeout: 30_000 }).toBe(1)
 

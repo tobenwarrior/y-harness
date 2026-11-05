@@ -944,13 +944,6 @@ export class SharedBotGroupService {
           throw new SharedGroupError('gateway/conflict', `shared Bot group message "${String(messageId)}" already exists with different attachments`)
         }
       }
-      if (existing === undefined && request.attachmentGrants !== undefined && request.attachmentGrants.length > 0) {
-        if (attachmentStore === undefined) {
-          throw new SharedGroupError('gateway/unavailable', 'shared Bot attachment admission is unavailable')
-        }
-        await attachmentStore.consume(attachmentScope, request.attachmentGrants)
-      }
-      const messageAttachments = attachmentStore?.attachmentsForMessage(attachmentScope) ?? []
       if (existing !== undefined) {
         if (existing.groupId !== group.id || existing.text !== text
           || existing.sender.kind !== 'user' || String(existing.sender.principalId ?? '') !== String(principalId)
@@ -1016,6 +1009,13 @@ export class SharedBotGroupService {
         + snapshot.responseReservations.length + newResponseReservationCount > MAX_SHARED_GROUP_MESSAGES) {
         throw new SharedGroupError('gateway/unavailable', 'shared Bot group response capacity is exhausted')
       }
+      if (existing === undefined && request.attachmentGrants !== undefined && request.attachmentGrants.length > 0) {
+        if (attachmentStore === undefined) {
+          throw new SharedGroupError('gateway/unavailable', 'shared Bot attachment admission is unavailable')
+        }
+        await attachmentStore.consume(attachmentScope, request.attachmentGrants)
+      }
+      const messageAttachments = attachmentStore?.attachmentsForMessage(attachmentScope) ?? []
       if (existing === undefined) {
         const message: BotGroupMessageRecord = {
           id: messageId,

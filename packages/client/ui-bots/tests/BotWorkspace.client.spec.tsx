@@ -1771,6 +1771,7 @@ describe('Bot roster and detail', () => {
       expect(sendWithAttachments).toHaveBeenCalledTimes(1)
       expect(screen.getByRole('alert').textContent).toContain('attachment upload failed')
     })
+    expect(sendWithAttachments.mock.calls[0]?.[0]).toBe('File')
 
     const firstMessageId = sendWithAttachments.mock.calls[0]?.[2]
     expect(firstMessageId).toMatch(/^bot-group-message-/)

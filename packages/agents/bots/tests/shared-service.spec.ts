@@ -3066,7 +3066,7 @@ describe('shared Bot service', () => {
   })
 
   it('rejects a group send before delivery when the durable transcript has no response capacity', async () => {
-    const value = await fixture(10, true)
+    const value = await fixture(10, true, false, { value: 1_000 }, true)
     try {
       const ownerEnrollment = await value.service.enroll(
         (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
@@ -3082,6 +3082,17 @@ describe('shared Bot service', () => {
         botIds: [BotId('bot-chief'), BotId('bot-second')],
       }, new AbortController().signal, owner.peer)
       const groupId = groupIdFromResult(created)
+      const messageId = BotGroupMessageId('bot-group-message-capacity-new')
+      const admitted = await value.service.handle('bots/share/admit-group-image', {
+        groupId, messageId,
+        image: { mediaType: 'image/png', data: 'iVBORw0KGgo=', name: 'capacity.png' },
+      }, new AbortController().signal, owner.peer)
+      if (!admitted.ok || admitted.value === null || typeof admitted.value !== 'object'
+        || !('grantId' in admitted.value) || typeof admitted.value.grantId !== 'string') {
+        throw new Error('capacity attachment admission did not return a grant')
+      }
+      if (value.attachmentStore === undefined) throw new Error('attachment store was not mounted')
+      const consume = vi.spyOn(value.attachmentStore, 'consume')
       await value.authority.mutateExtension('agent-bots/shared-memberships', (current) => {
         const membership = sharedMembershipSnapshotSchema.parse(current)
         const groups = sharedGroupSnapshotSchema.parse(membership.sharedGroups)
@@ -3101,10 +3112,12 @@ describe('shared Bot service', () => {
       const result = await value.service.handle('bots/share/send-group-message', {
         groupId,
         text: 'This must not reach a Session.',
-        messageId: BotGroupMessageId('bot-group-message-capacity-new'),
+        messageId,
+        attachmentGrants: [admitted.value.grantId],
       }, new AbortController().signal, owner.peer)
       expect(result).toMatchObject({ ok: false, error: { code: 'gateway/unavailable' } })
       expect(value.host.deliverSharedGroup).not.toHaveBeenCalled()
+      expect(consume).not.toHaveBeenCalled()
     } finally {
       await value.close()
     }

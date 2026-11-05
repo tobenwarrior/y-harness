@@ -1875,7 +1875,7 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
       if (attachments.length > 0) {
         if (sendWithAttachments === undefined) throw new Error(t('sharedGroupAttachmentsUnavailable'))
         result = await sendWithAttachments({
-          groupId: brandString<BotGroupIdType>(groupId), text: draft, messageId, attachments,
+          groupId: brandString<BotGroupIdType>(groupId), text: draft || t('groupAttachmentFile'), messageId, attachments,
         })
       } else {
         if (send === undefined) throw new Error(t('sharedGroupSendFailed'))
