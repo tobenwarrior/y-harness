@@ -75,6 +75,7 @@ import type {
 } from './memory.ts'
 import { BotGroupId, BotGroupMessageId, BotGroupService, botGroupDomain } from './group-chat.ts'
 import { attachmentContentBlocks, BotAttachmentGrantStore, botAttachmentDomain } from './attachment-grants.ts'
+import { handleBotAttachmentDownload, SHARED_BOT_ATTACHMENT_DOWNLOAD_PATH } from './attachment-download.ts'
 import {
   BOT_GROUP_ATTACHMENT_UPLOAD_PATH,
   BOT_ATTACHMENT_MAX_BYTES,
@@ -7886,6 +7887,28 @@ export class BotService extends TypertRemoteService {
             ))
           }),
         }), 'bots: shared attachment route')
+        webCtx.effect(() => webServer.register({
+          kind: 'exact',
+          path: SHARED_BOT_ATTACHMENT_DOWNLOAD_PATH,
+          handler: (request: IncomingMessage, response: ServerResponse) => this.trackAttachmentUpload(async () => {
+            const admission = await connection.admitShared(request, authority)
+            if ('rejection' in admission) {
+              response.writeHead(admission.rejection)
+              response.end(admission.rejection === 401 ? 'unauthorized' : 'forbidden')
+              return
+            }
+            const principal = sharedPrincipalOf(admission.peer)
+            if (principal === undefined) {
+              response.writeHead(403)
+              response.end('forbidden')
+              return
+            }
+            await bridgeBotAttachmentRequest(request, response, fetchRequest => handleBotAttachmentDownload(
+              fetchRequest,
+              (target, signal) => shared.openSharedGroupAttachment(target, BotPrincipalId(String(principal)), signal),
+            ))
+          }),
+        }), 'bots: shared attachment download route')
       })
       this.sharedService = service
       await this.reconcileSharedGroupDeliveryAdmissions()
@@ -8108,6 +8131,13 @@ export class BotService extends TypertRemoteService {
         return reference
       },
       saveFileStream: input => this.ctx.attachments.saveFileStream(input),
+      readAttachment: async (attachment, signal) => {
+        if (attachment.type === 'file') {
+          return { name: attachment.attachment.name, data: this.ctx.attachments.readFileStream(attachment.attachment, signal) }
+        }
+        const image = await this.ctx.attachments.readImage(attachment.attachment, signal)
+        return { name: image.ref.name ?? 'image', data: (async function* () { yield image.data })() }
+      },
       createSharedGroupSession: (bot, sessionId, groupId, signal) => this.createSharedGroupSession(bot, sessionId, groupId, signal),
       resolveSharedGroupAgent: (sessionId, groupId, botId, signal) => this.resolveSharedGroupAgent(sessionId, groupId, botId, signal),
       inspectSharedGroupSession: (sessionId, signal) => this.inspectSharedGroupSession(sessionId, signal),

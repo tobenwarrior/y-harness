@@ -2141,7 +2141,14 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
                       : messageRow.sender.principalId === undefined
                         ? t('you')
                         : t('sharedGroupAuthor', { id: String(messageRow.sender.principalId) })
-                    return <p className={messageRow.sender.kind === 'user' ? css.sharedUserMessage : css.sharedBotMessage} key={String(messageRow.id)}><strong>{sender}</strong> {messageRow.text}<BotGroupSentAttachments attachments={messageRow.attachments} fallbackName={t('groupAttachmentFile')} /></p>
+                    return <p className={messageRow.sender.kind === 'user' ? css.sharedUserMessage : css.sharedBotMessage} key={String(messageRow.id)}><strong>{sender}</strong> {messageRow.text}<BotGroupSentAttachments
+                      attachments={messageRow.attachments}
+                      fallbackName={t('groupAttachmentFile')}
+                      downloadLabel={name => t('groupDownloadAttachment', { name })}
+                      downloadUrl={attachmentId => `/shared-bots/bots/share/downloadAttachment?${new URLSearchParams({
+                        groupId: String(selectedGroup.id), messageId: String(messageRow.id), attachmentId,
+                      })}`}
+                    /></p>
                   })}
                 </div>
                 <form className={css.sharedComposer} onSubmit={(event) => { event.preventDefault(); void sendGroup() }}>

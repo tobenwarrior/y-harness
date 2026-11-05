@@ -16,6 +16,7 @@ import {
   type SharedAccessStateSnapshot,
 } from '@yharness/client-connection'
 import type { Agent } from '@yharness/agent'
+import type { BotAttachmentDownload, BotAttachmentDownloadTarget } from './attachment-download.ts'
 import type { EncodedImageAttachment, FileAttachmentRef, ImageAttachmentRef } from '@yharness/attachment'
 import { ApiSessionNotFound } from '@yharness/api-session-controller'
 import type { ConnectionRpcHandler, ConnectionRpcHandlerResult, ConnectionTrustRequest } from '@yharness/client-connection'
@@ -192,6 +193,8 @@ export interface SharedBotHost extends SharedGroupHost {
       readonly signal?: AbortSignal
     },
   ) => Promise<FileAttachmentRef>
+  /** Open one authorized attachment for streaming. */
+  readonly readAttachment?: (attachment: BotInputAttachment, signal: AbortSignal) => Promise<BotAttachmentDownload>
 }
 
 /** Result of one Host operation that requires a still-existing Bot row. */
@@ -1366,6 +1369,34 @@ export class SharedBotService {
     principalId: ReturnType<typeof BotPrincipalId>, signal: AbortSignal,
   ): Promise<BotInputAttachment> {
     return this.groups.resolveAttachment(groupId, messageId, attachmentId, principalId, signal)
+  }
+
+  /**
+   * Open a shared-group file and recheck access before returning each chunk.
+   * @param target - Exact message and attachment identities.
+   * @param principalId - Authenticated reader.
+   * @param signal - Request cancellation.
+   * @returns Authorized attachment metadata and streamed bytes.
+   */
+  async openSharedGroupAttachment(
+    target: BotAttachmentDownloadTarget, principalId: ReturnType<typeof BotPrincipalId>, signal: AbortSignal,
+  ): Promise<BotAttachmentDownload> {
+    const attachment = await this.resolveSharedGroupAttachment(target.groupId, target.messageId, target.attachmentId, principalId, signal)
+    if (this.host.readAttachment === undefined) throw new SharedServiceFault('gateway/unavailable', 'Shared Bot attachment reading is unavailable')
+    const opened = await this.host.readAttachment(attachment, signal)
+    const checkAccess = (): Promise<BotInputAttachment> => this.resolveSharedGroupAttachment(
+      target.groupId, target.messageId, target.attachmentId, principalId, signal,
+    )
+    return {
+      name: opened.name,
+      data: (async function* () {
+        for await (const chunk of opened.data) {
+          signal.throwIfAborted()
+          await checkAccess()
+          yield chunk
+        }
+      })(),
+    }
   }
 
   private async inspectGroup(

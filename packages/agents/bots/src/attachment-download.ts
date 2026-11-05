@@ -3,6 +3,9 @@
 import { BotGroupId, BotGroupMessageId } from './group-chat.ts'
 import { remoteErrorOf } from '@yharness/typert-protocol'
 
+/** Authenticated shared-group attachment download endpoint. */
+export const SHARED_BOT_ATTACHMENT_DOWNLOAD_PATH = '/shared-bots/bots/share/downloadAttachment' as const
+
 /** Exact message and opaque provider identity requested by a download. */
 export interface BotAttachmentDownloadTarget {
   readonly groupId: ReturnType<typeof BotGroupId>

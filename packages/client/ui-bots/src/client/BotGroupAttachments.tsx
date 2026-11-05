@@ -18,20 +18,26 @@ import css from './BotWorkspace.module.css'
  * @param props - Saved attachments and the localized fallback name.
  * @returns Attachment cards, or null when the message has none.
  */
-export function BotGroupSentAttachments({ attachments, fallbackName }: {
-  readonly attachments: readonly { readonly name?: string; readonly bytes: number }[] | undefined
+export function BotGroupSentAttachments({ attachments, fallbackName, downloadUrl, downloadLabel }: {
+  readonly attachments: readonly { readonly attachmentId: string; readonly name?: string; readonly bytes: number }[] | undefined
   readonly fallbackName: string
+  readonly downloadUrl?: (attachmentId: string) => string
+  readonly downloadLabel?: (name: string) => string
 }): ReactNode {
   if (attachments === undefined || attachments.length === 0) return null
   return <span className={css.groupSentAttachments}>{attachments.map((attachment, index) => {
     const name = attachment.name ?? fallbackName
-    return <span className={css.groupAttachmentCard} key={`${name}-${index}`}>
+    const contents = <>
       <span className={css.groupAttachmentIcon} aria-hidden="true"><FileTypeIcon path={name} /></span>
       <span className={css.groupAttachmentCopy}>
         <span className={css.groupAttachmentName}>{name}</span>
         <span className={css.groupAttachmentMeta}>{fileSizeText(attachment.bytes)}</span>
       </span>
-    </span>
+    </>
+    return downloadUrl === undefined || downloadLabel === undefined
+      ? <span className={css.groupAttachmentCard} key={`${name}-${index}`}>{contents}</span>
+      : <a className={css.groupAttachmentCard} href={downloadUrl(attachment.attachmentId)}
+        aria-label={downloadLabel(name)} download key={`${name}-${index}`}>{contents}</a>
   })}</span>
 }
 

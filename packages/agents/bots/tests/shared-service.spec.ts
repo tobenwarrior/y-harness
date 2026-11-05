@@ -126,6 +126,7 @@ interface Fixture {
 }
 
 class SharedBotHostFixture implements SharedBotHost {
+  readAttachment?: SharedBotHost['readAttachment']
   readonly sessions = new Map<string, { readonly botId: string; readonly principalId: string }>()
   readonly sharedGroupMessages = new Set<string>()
   readonly sharedGroupAttachments = new Map<string, readonly BotInputAttachment[]>()
@@ -1717,6 +1718,12 @@ describe('shared Bot service', () => {
         request(cookie(memberSecond)),
       )
       const member = await principal(value, memberGroup)
+      value.host.readAttachment = vi.fn(async () => ({
+        name: 'diagram.png', data: (async function* () { yield Uint8Array.of(1) })(),
+      }))
+      const opened = await value.service.openSharedGroupAttachment({
+        groupId, messageId, attachmentId: `sha256:${'a'.repeat(64)}`,
+      }, member.botPrincipalId, new AbortController().signal)
       await expect(value.service.resolveSharedGroupAttachment(
         groupId, messageId, `sha256:${'a'.repeat(64)}`, member.botPrincipalId, new AbortController().signal,
       )).resolves.toMatchObject({ type: 'image' })
@@ -1733,6 +1740,9 @@ describe('shared Bot service', () => {
       await expect(value.service.resolveSharedGroupAttachment(
         groupId, messageId, `sha256:${'a'.repeat(64)}`, member.botPrincipalId, new AbortController().signal,
       )).rejects.toMatchObject({ code: 'gateway/forbidden' })
+      await expect((async () => {
+        for await (const _chunk of opened.data) { /* consume */ }
+      })()).rejects.toMatchObject({ code: 'gateway/forbidden' })
     } finally {
       await value.close()
     }

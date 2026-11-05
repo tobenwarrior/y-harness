@@ -393,6 +393,7 @@ export const en = {
   groupChooseFiles: 'Choose files',
   groupAttachments: 'Selected attachments',
   groupAttachmentFile: 'File',
+  groupDownloadAttachment: 'Download {name}',
   groupPreviewAttachment: 'Preview {name}',
   groupRemoveAttachment: 'Remove {name}',
   groupRetryAttachment: 'Retry {name}',

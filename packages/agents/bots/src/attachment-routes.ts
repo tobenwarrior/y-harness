@@ -178,10 +178,11 @@ export async function bridgeBotAttachmentRequest(
   const headers = Object.fromEntries(
     Object.entries(req.headers).filter(([, value]) => typeof value === 'string') as [string, string][],
   )
+  const method = req.method ?? 'GET'
   const request = new Request(url, {
-    method: req.method ?? 'GET',
+    method,
     headers,
-    body: Readable.toWeb(req) as ReadableStream<Uint8Array>,
+    ...(method === 'GET' || method === 'HEAD' ? {} : { body: Readable.toWeb(req) as ReadableStream<Uint8Array> }),
     signal: abort.signal,
     duplex: 'half',
   } as RequestInit & { duplex: 'half' })
