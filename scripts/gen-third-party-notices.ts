@@ -282,18 +282,20 @@ export function virtualManifest(
   expectedVersion?: string,
 ): VirtualManifest | undefined {
   const candidates = virtualCandidates(virtual, name, expectedVersion, readdirSync(virtual))
-  candidates.sort((left, right) => {
-    const leftVersion = left.manifest.version === undefined ? null : valid(left.manifest.version)
-    const rightVersion = right.manifest.version === undefined ? null : valid(right.manifest.version)
-    if (leftVersion !== null && rightVersion === null) return -1
-    if (leftVersion === null && rightVersion !== null) return 1
-    if (leftVersion !== null && rightVersion !== null) {
-      const versionOrder = compare(rightVersion, leftVersion)
-      if (versionOrder !== 0) return versionOrder
-    }
-    return left.path.localeCompare(right.path)
-  })
+  candidates.sort(compareInstalledCandidates)
   return candidates[0]?.manifest
+}
+
+function compareInstalledCandidates(left: InstalledCandidate, right: InstalledCandidate): number {
+  const leftVersion = left.manifest.version === undefined ? null : valid(left.manifest.version)
+  const rightVersion = right.manifest.version === undefined ? null : valid(right.manifest.version)
+  if (leftVersion !== null && rightVersion === null) return -1
+  if (leftVersion === null && rightVersion !== null) return 1
+  if (leftVersion !== null && rightVersion !== null) {
+    const versionOrder = compare(rightVersion, leftVersion)
+    if (versionOrder !== 0) return versionOrder
+  }
+  return left.path.localeCompare(right.path)
 }
 
 /** Read every matching package manifest from a pnpm virtual store. */
@@ -373,8 +375,15 @@ function exactWorkspaceDependencyVersion(name: string, manifests: Map<string, Ma
   return !hasUnresolvedDeclaration && versions.size === 1 ? [...versions][0] : undefined
 }
 
-/** Resolve one installed external package manifest from either pnpm store. */
-function installedManifest(
+/**
+ * Resolve one installed external package manifest from either pnpm store.
+ * @param name - exact npm package identity.
+ * @param manifests - workspace manifests keyed by repository-relative path.
+ * @param expectedVersion - exact installed version required by a parent manifest.
+ * @param workspaceRoot - repository root containing the link farms and stores.
+ * @returns the selected installed manifest, or `undefined` when no candidate exists.
+ */
+export function installedManifest(
   name: string,
   manifests: Map<string, Manifest>,
   expectedVersion?: string,
@@ -400,7 +409,8 @@ function installedCandidates(
   expectedVersion: string | undefined,
   workspaceRoot: string,
 ): InstalledCandidate[] {
-  const candidates: InstalledCandidate[] = []
+  const directCandidates: InstalledCandidate[] = []
+  const virtualCandidatesFound: InstalledCandidate[] = []
   const seen = new Set<string>()
   // Workspace-local link farms can expose a dependency that is not linked at
   // the repository root; both are backed by the root workspace's lockfile.
@@ -410,7 +420,7 @@ function installedCandidates(
       seen.add(direct)
       const manifest = JSON.parse(readFileSync(direct, 'utf8')) as VirtualManifest
       if (expectedVersion === undefined || manifest.version === expectedVersion) {
-        candidates.push({ path: direct, manifest })
+        directCandidates.push({ path: direct, manifest })
       }
     }
     const virtual = resolve(workspaceRoot, store, '.pnpm')
@@ -418,10 +428,13 @@ function installedCandidates(
     for (const candidate of virtualCandidates(virtual, name, expectedVersion, readdirSync(virtual))) {
       if (seen.has(candidate.path)) continue
       seen.add(candidate.path)
-      candidates.push(candidate)
+      virtualCandidatesFound.push(candidate)
     }
   }
-  return candidates
+  return [
+    ...directCandidates.sort(compareInstalledCandidates),
+    ...virtualCandidatesFound.sort(compareInstalledCandidates),
+  ]
 }
 
 /** Reject installed candidates whose effective metadata cannot be reconciled. */

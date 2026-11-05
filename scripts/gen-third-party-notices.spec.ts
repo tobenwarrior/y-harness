@@ -18,6 +18,7 @@ import {
   render,
   tierExternalDeps,
   installedMetadata,
+  installedManifest,
   virtualManifest,
   workspaceLinkedManifests,
 } from './gen-third-party-notices.ts'
@@ -306,6 +307,69 @@ describe('workspace-linked package metadata', () => {
       expect(() => installedMetadata(packageName, manifests, root)).toThrow(
         'eligible installed candidates for @fixture/virtual-package have divergent license/repository metadata (1.0.0, 2.0.0)',
       )
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('selects the newest installed virtual candidate when no direct link is active', () => {
+    const packageName = '@fixture/ordered-package'
+    const root = mkdtempSync(join(tmpdir(), 'dsh-notices-installed-order-'))
+    const manifests = new Map<string, Manifest>([
+      ['packages/consumer/package.json', { name: '@fixture/consumer', dependencies: { [packageName]: '*' } }],
+    ])
+    try {
+      const store = join(root, 'node_modules', '.pnpm')
+      for (const version of ['1.0.0', '2.0.0']) {
+        const manifestPath = join(store, `${packageName.replace('/', '+')}@${version}`, 'node_modules', packageName, 'package.json')
+        mkdirSync(resolve(manifestPath, '..'), { recursive: true })
+        writeFileSync(manifestPath, JSON.stringify({
+          name: packageName,
+          version,
+          license: 'MIT',
+          repository: 'https://example.com/ordered-package',
+        }))
+      }
+
+      expect(installedManifest(packageName, manifests, undefined, root)).toMatchObject({ version: '2.0.0' })
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('preserves direct-link precedence over a newer virtual candidate', () => {
+    const packageName = '@fixture/direct-package'
+    const root = mkdtempSync(join(tmpdir(), 'dsh-notices-direct-order-'))
+    const manifests = new Map<string, Manifest>([
+      ['packages/consumer/package.json', { name: '@fixture/consumer', dependencies: { [packageName]: '*' } }],
+    ])
+    try {
+      const directManifest = join(root, 'node_modules', packageName, 'package.json')
+      mkdirSync(resolve(directManifest, '..'), { recursive: true })
+      writeFileSync(directManifest, JSON.stringify({
+        name: packageName,
+        version: '1.0.0',
+        license: 'MIT',
+        repository: 'https://example.com/direct-package',
+      }))
+      const virtualManifestPath = join(
+        root,
+        'node_modules',
+        '.pnpm',
+        `${packageName.replace('/', '+')}@2.0.0`,
+        'node_modules',
+        packageName,
+        'package.json',
+      )
+      mkdirSync(resolve(virtualManifestPath, '..'), { recursive: true })
+      writeFileSync(virtualManifestPath, JSON.stringify({
+        name: packageName,
+        version: '2.0.0',
+        license: 'MIT',
+        repository: 'https://example.com/direct-package',
+      }))
+
+      expect(installedManifest(packageName, manifests, undefined, root)).toMatchObject({ version: '1.0.0' })
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
