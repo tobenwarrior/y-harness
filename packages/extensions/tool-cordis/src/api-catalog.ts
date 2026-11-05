@@ -5675,7 +5675,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'BotCollaborationTranscriptEntry',
-    declaration: 'export interface BotCollaborationTranscriptEntry {\n    readonly role: \'user\' | \'assistant\';\n    readonly text: string;\n}',
+    declaration: 'export interface BotCollaborationTranscriptEntry {\n    readonly role: \'user\' | \'assistant\';\n    readonly text: string;\n    readonly attachments?: readonly BotInputAttachmentView[];\n}',
   },
   {
     name: 'BotConnectedAppAccessRequest',

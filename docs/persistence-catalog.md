@@ -337,7 +337,7 @@ Source: [`packages/core/session/src/types.ts:341`](../packages/core/session/src/
 'bot/collaboration': BotCollaborationDeliveryEvent
 ```
 
-Source: [`packages/agents/bots/src/collaboration.ts:145`](../packages/agents/bots/src/collaboration.ts)
+Source: [`packages/agents/bots/src/collaboration.ts:147`](../packages/agents/bots/src/collaboration.ts)
 
 <a id="botdynamic-tool--log-only"></a>
 
@@ -348,7 +348,7 @@ Source: [`packages/agents/bots/src/collaboration.ts:145`](../packages/agents/bot
 'bot/dynamic-tool': BotDynamicToolEvent
 ```
 
-Source: [`packages/agents/bots/src/collaboration.ts:143`](../packages/agents/bots/src/collaboration.ts)
+Source: [`packages/agents/bots/src/collaboration.ts:145`](../packages/agents/bots/src/collaboration.ts)
 
 <a id="botmemory--log-only"></a>
 
@@ -3547,7 +3547,7 @@ Sources: [`packages/context/agent-instructions/src/state.ts:37`](../packages/con
 
 SHA-256: `86f5c266f245199fde44d5b1a257cf2fbed15b6950053c644879d1e0a49eba5a`
 
-Sources: [`packages/agents/bots/src/collaboration.ts:49`](../packages/agents/bots/src/collaboration.ts) · [`packages/subagent/subagent/src/continuation-messages.ts:15`](../packages/subagent/subagent/src/continuation-messages.ts)
+Sources: [`packages/agents/bots/src/collaboration.ts:51`](../packages/agents/bots/src/collaboration.ts) · [`packages/subagent/subagent/src/continuation-messages.ts:15`](../packages/subagent/subagent/src/continuation-messages.ts)
 
 | Property | Presence | Type |
 |---|---|---|
@@ -3648,7 +3648,7 @@ Array of [`AssistantStreamRecord`](#persistence-type-sha256-33341aac09312300de5a
 
 SHA-256: `099ece90f3311a4dc332e1a0b3bcbd4d795c6773edbd3ca91485c91de258e93a`
 
-Sources: [`packages/agents/bots/src/collaboration.ts:31`](../packages/agents/bots/src/collaboration.ts)
+Sources: [`packages/agents/bots/src/collaboration.ts:33`](../packages/agents/bots/src/collaboration.ts)
 
 | Property | Presence | Type |
 |---|---|---|
@@ -3666,7 +3666,7 @@ Sources: [`packages/agents/bots/src/collaboration.ts:31`](../packages/agents/bot
 
 SHA-256: `157b4a66b95eebe0d753769d491a195f95e712cffe123431ca4ede91804c0d2d`
 
-Sources: [`packages/agents/bots/src/collaboration.ts:129`](../packages/agents/bots/src/collaboration.ts)
+Sources: [`packages/agents/bots/src/collaboration.ts:131`](../packages/agents/bots/src/collaboration.ts)
 
 | Property | Presence | Type |
 |---|---|---|
@@ -3689,7 +3689,7 @@ Sources: [`packages/agents/bots/src/collaboration.ts:129`](../packages/agents/bo
 
 SHA-256: `92c45085dec3dab097833109751939f1bfe5f9b639dac5df2b946b0ac27e679e`
 
-Sources: [`packages/agents/bots/src/collaboration.ts:119`](../packages/agents/bots/src/collaboration.ts)
+Sources: [`packages/agents/bots/src/collaboration.ts:121`](../packages/agents/bots/src/collaboration.ts)
 
 | Property | Presence | Type |
 |---|---|---|
@@ -3706,7 +3706,7 @@ Sources: [`packages/agents/bots/src/collaboration.ts:119`](../packages/agents/bo
 
 SHA-256: `864b10d596242f598b204bee86d9cbf523f8d1fa8ed9d6f07d48350dc8a5522d`
 
-Sources: [`packages/agents/bots/src/collaboration.ts:41`](../packages/agents/bots/src/collaboration.ts)
+Sources: [`packages/agents/bots/src/collaboration.ts:43`](../packages/agents/bots/src/collaboration.ts)
 
 | Property | Presence | Type |
 |---|---|---|
@@ -3723,7 +3723,7 @@ Sources: [`packages/agents/bots/src/collaboration.ts:41`](../packages/agents/bot
 
 SHA-256: `eae05a06e6bde1e2f256286d3bd3e85d7096c7153d4eb2b9ab3b5ebfccab7c8a`
 
-Sources: [`packages/agents/bots/src/collaboration.ts:76`](../packages/agents/bots/src/collaboration.ts)
+Sources: [`packages/agents/bots/src/collaboration.ts:78`](../packages/agents/bots/src/collaboration.ts)
 
 | Property | Presence | Type |
 |---|---|---|
@@ -6314,7 +6314,7 @@ Array of `number`.
 
 SHA-256: `4cd48f3e5108bd6ebedf7301c3638839b8b2b9db8dbd493974177fbdeb91a01b`
 
-Sources: [`packages/agents/bots/src/collaboration.ts:16`](../packages/agents/bots/src/collaboration.ts) · [`packages/agents/bots/src/group-chat.ts:17`](../packages/agents/bots/src/group-chat.ts) · [`packages/agents/bots/src/group-chat.ts:28`](../packages/agents/bots/src/group-chat.ts) · [`packages/agents/bots/src/memory.ts:8`](../packages/agents/bots/src/memory.ts) · [`packages/agents/bots/src/types.ts:10`](../packages/agents/bots/src/types.ts) · [`packages/api/session-controller/src/types.ts:413`](../packages/api/session-controller/src/types.ts) · [`packages/attachment/attachment/src/brand.ts:6`](../packages/attachment/attachment/src/brand.ts) · [`packages/compaction/compaction/src/brand.ts:4`](../packages/compaction/compaction/src/brand.ts) · [`packages/core/session/src/types.ts:20`](../packages/core/session/src/types.ts) · [`packages/experimental/agent-team/src/types.ts:20`](../packages/experimental/agent-team/src/types.ts) · [`packages/experimental/agent-team/src/types.ts:32`](../packages/experimental/agent-team/src/types.ts) · [`packages/experimental/agent-team/src/types.ts:8`](../packages/experimental/agent-team/src/types.ts) · [`packages/feedback/message-feedback/src/types.ts:14`](../packages/feedback/message-feedback/src/types.ts) · [`packages/goal/goal/src/types.ts:17`](../packages/goal/goal/src/types.ts) · [`packages/interaction/commands/src/brand.ts:31`](../packages/interaction/commands/src/brand.ts) · [`packages/interaction/user-approval/src/types.ts:17`](../packages/interaction/user-approval/src/types.ts) · [`packages/llm/llm-retry/src/brand.ts:4`](../packages/llm/llm-retry/src/brand.ts) · [`packages/llm/llm/src/brand.ts:16`](../packages/llm/llm/src/brand.ts) · [`packages/llm/llm/src/brand.ts:31`](../packages/llm/llm/src/brand.ts) · [`packages/llm/llm/src/brand.ts:43`](../packages/llm/llm/src/brand.ts) · [`packages/llm/llm/src/brand.ts:67`](../packages/llm/llm/src/brand.ts) · [`packages/llm/llm/src/brand.ts:79`](../packages/llm/llm/src/brand.ts) · [`packages/schedule/schedule/src/types.ts:14`](../packages/schedule/schedule/src/types.ts) · [`packages/session/coding-session/src/linked-import-types.ts:8`](../packages/session/coding-session/src/linked-import-types.ts) · [`packages/session/coding-session/src/types.ts:10`](../packages/session/coding-session/src/types.ts) · [`packages/session/coding-session/src/types.ts:12`](../packages/session/coding-session/src/types.ts) · [`packages/session/coding-session/src/types.ts:14`](../packages/session/coding-session/src/types.ts) · [`packages/session/session-title/src/index.ts:42`](../packages/session/session-title/src/index.ts) · [`packages/session/session-title/src/types.ts:17`](../packages/session/session-title/src/types.ts) · [`packages/skill/skill-library/src/learning-types.ts:26`](../packages/skill/skill-library/src/learning-types.ts) · [`packages/skill/skill-library/src/learning-types.ts:28`](../packages/skill/skill-library/src/learning-types.ts) · [`packages/skill/skill-library/src/learning-types.ts:30`](../packages/skill/skill-library/src/learning-types.ts) · [`packages/skill/skill-library/src/learning-types.ts:32`](../packages/skill/skill-library/src/learning-types.ts) · [`packages/skill/skill-library/src/learning-types.ts:34`](../packages/skill/skill-library/src/learning-types.ts) · [`packages/skill/skill-library/src/learning-types.ts:36`](../packages/skill/skill-library/src/learning-types.ts) · [`packages/skill/skill-library/src/learning-types.ts:38`](../packages/skill/skill-library/src/learning-types.ts) · [`packages/skill/skill-library/src/learning-types.ts:40`](../packages/skill/skill-library/src/learning-types.ts) · [`packages/skill/skill-library/src/learning-types.ts:92`](../packages/skill/skill-library/src/learning-types.ts) · [`packages/skill/skill-library/src/types.ts:5`](../packages/skill/skill-library/src/types.ts) · [`packages/webhook/webhook/src/brand.ts:12`](../packages/webhook/webhook/src/brand.ts) · [`packages/webhook/webhook/src/brand.ts:6`](../packages/webhook/webhook/src/brand.ts) · [`packages/webhook/webhook/src/brand.ts:9`](../packages/webhook/webhook/src/brand.ts) · [`packages/workflow/workflow/src/types.ts:13`](../packages/workflow/workflow/src/types.ts)
+Sources: [`packages/agents/bots/src/collaboration.ts:18`](../packages/agents/bots/src/collaboration.ts) · [`packages/agents/bots/src/group-chat.ts:26`](../packages/agents/bots/src/group-chat.ts) · [`packages/agents/bots/src/group-chat.ts:37`](../packages/agents/bots/src/group-chat.ts) · [`packages/agents/bots/src/memory.ts:8`](../packages/agents/bots/src/memory.ts) · [`packages/agents/bots/src/types.ts:15`](../packages/agents/bots/src/types.ts) · [`packages/api/session-controller/src/types.ts:413`](../packages/api/session-controller/src/types.ts) · [`packages/attachment/attachment/src/brand.ts:6`](../packages/attachment/attachment/src/brand.ts) · [`packages/compaction/compaction/src/brand.ts:4`](../packages/compaction/compaction/src/brand.ts) · [`packages/core/session/src/types.ts:20`](../packages/core/session/src/types.ts) · [`packages/experimental/agent-team/src/types.ts:20`](../packages/experimental/agent-team/src/types.ts) · [`packages/experimental/agent-team/src/types.ts:32`](../packages/experimental/agent-team/src/types.ts) · [`packages/experimental/agent-team/src/types.ts:8`](../packages/experimental/agent-team/src/types.ts) · [`packages/feedback/message-feedback/src/types.ts:14`](../packages/feedback/message-feedback/src/types.ts) · [`packages/goal/goal/src/types.ts:17`](../packages/goal/goal/src/types.ts) · [`packages/interaction/commands/src/brand.ts:31`](../packages/interaction/commands/src/brand.ts) · [`packages/interaction/user-approval/src/types.ts:17`](../packages/interaction/user-approval/src/types.ts) · [`packages/llm/llm-retry/src/brand.ts:4`](../packages/llm/llm-retry/src/brand.ts) · [`packages/llm/llm/src/brand.ts:16`](../packages/llm/llm/src/brand.ts) · [`packages/llm/llm/src/brand.ts:31`](../packages/llm/llm/src/brand.ts) · [`packages/llm/llm/src/brand.ts:43`](../packages/llm/llm/src/brand.ts) · [`packages/llm/llm/src/brand.ts:67`](../packages/llm/llm/src/brand.ts) · [`packages/llm/llm/src/brand.ts:79`](../packages/llm/llm/src/brand.ts) · [`packages/schedule/schedule/src/types.ts:14`](../packages/schedule/schedule/src/types.ts) · [`packages/session/coding-session/src/linked-import-types.ts:8`](../packages/session/coding-session/src/linked-import-types.ts) · [`packages/session/coding-session/src/types.ts:10`](../packages/session/coding-session/src/types.ts) · [`packages/session/coding-session/src/types.ts:12`](../packages/session/coding-session/src/types.ts) · [`packages/session/coding-session/src/types.ts:14`](../packages/session/coding-session/src/types.ts) · [`packages/session/session-title/src/index.ts:42`](../packages/session/session-title/src/index.ts) · [`packages/session/session-title/src/types.ts:17`](../packages/session/session-title/src/types.ts) · [`packages/skill/skill-library/src/learning-types.ts:26`](../packages/skill/skill-library/src/learning-types.ts) · [`packages/skill/skill-library/src/learning-types.ts:28`](../packages/skill/skill-library/src/learning-types.ts) · [`packages/skill/skill-library/src/learning-types.ts:30`](../packages/skill/skill-library/src/learning-types.ts) · [`packages/skill/skill-library/src/learning-types.ts:32`](../packages/skill/skill-library/src/learning-types.ts) · [`packages/skill/skill-library/src/learning-types.ts:34`](../packages/skill/skill-library/src/learning-types.ts) · [`packages/skill/skill-library/src/learning-types.ts:36`](../packages/skill/skill-library/src/learning-types.ts) · [`packages/skill/skill-library/src/learning-types.ts:38`](../packages/skill/skill-library/src/learning-types.ts) · [`packages/skill/skill-library/src/learning-types.ts:40`](../packages/skill/skill-library/src/learning-types.ts) · [`packages/skill/skill-library/src/learning-types.ts:92`](../packages/skill/skill-library/src/learning-types.ts) · [`packages/skill/skill-library/src/types.ts:5`](../packages/skill/skill-library/src/types.ts) · [`packages/webhook/webhook/src/brand.ts:12`](../packages/webhook/webhook/src/brand.ts) · [`packages/webhook/webhook/src/brand.ts:6`](../packages/webhook/webhook/src/brand.ts) · [`packages/webhook/webhook/src/brand.ts:9`](../packages/webhook/webhook/src/brand.ts) · [`packages/workflow/workflow/src/types.ts:13`](../packages/workflow/workflow/src/types.ts)
 
 `string`
 
@@ -7418,7 +7418,7 @@ Sources: [`packages/core/session/src/types.ts:206`](../packages/core/session/src
 
 SHA-256: `838ee520d8e15fed42575c847fdb6ad38defd9b2b149135a9a62a1e2a60c0cbb`
 
-Sources: [`packages/agents/bots/src/collaboration.ts:62`](../packages/agents/bots/src/collaboration.ts)
+Sources: [`packages/agents/bots/src/collaboration.ts:64`](../packages/agents/bots/src/collaboration.ts)
 
 | Property | Presence | Type |
 |---|---|---|
@@ -9555,7 +9555,7 @@ SHA-256: `b222069eea2d768065161c1147b1f2c78c1b54328c84b3586ae5c8f91b8ed35e`
 
 SHA-256: `11c7e946f76f16eda6dd66de89593719d5916b92305b33a18ffc444bd96394cd`
 
-Sources: [`packages/agents/bots/src/collaboration.ts:121`](../packages/agents/bots/src/collaboration.ts)
+Sources: [`packages/agents/bots/src/collaboration.ts:123`](../packages/agents/bots/src/collaboration.ts)
 
 | Property | Presence | Type |
 |---|---|---|
