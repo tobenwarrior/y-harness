@@ -17,7 +17,9 @@ import {
   parseVendoredRows,
   render,
   tierExternalDeps,
+  installedMetadata,
   virtualManifest,
+  workspaceLinkedManifests,
 } from './gen-third-party-notices.ts'
 
 const root = resolve(import.meta.dirname, '..')
@@ -221,6 +223,63 @@ describe('virtualManifest', () => {
       writeFileSync(join(other, 'package.json'), JSON.stringify({ name: 'other-pkg', version: '1.0.0' }))
 
       expect(virtualManifest(store, '@scope/missing')).toBeUndefined()
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('workspace-linked package metadata', () => {
+  function linkedWorkspace(
+    packageName: string,
+    entries: readonly { workspace: string; version: string; license: string; repository: string }[],
+  ): { root: string; manifests: Map<string, Manifest> } {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-notices-workspace-links-'))
+    const manifests = new Map<string, Manifest>()
+    for (const entry of entries) {
+      const manifestPath = join(root, entry.workspace, 'node_modules', packageName, 'package.json')
+      mkdirSync(resolve(manifestPath, '..'), { recursive: true })
+      writeFileSync(manifestPath, JSON.stringify({
+        name: packageName,
+        version: entry.version,
+        license: entry.license,
+        repository: entry.repository,
+      }))
+      manifests.set(join(entry.workspace, 'package.json'), {
+        name: `@fixture/${entry.workspace.replaceAll('/', '-')}`,
+        dependencies: { [packageName]: `^${entry.version}` },
+      })
+    }
+    return { root, manifests }
+  }
+
+  it('collects all active links and rejects divergent license or repository metadata', () => {
+    const packageName = '@fixture/linked-package'
+    const { root, manifests } = linkedWorkspace(packageName, [
+      { workspace: 'packages/first', version: '1.0.0', license: 'MIT', repository: 'https://example.com/first' },
+      { workspace: 'packages/second', version: '2.0.0', license: 'Apache-2.0', repository: 'https://example.com/second' },
+    ])
+    try {
+      expect(workspaceLinkedManifests(packageName, manifests, root).map(manifest => manifest.version)).toEqual(['1.0.0', '2.0.0'])
+      expect(() => installedMetadata(packageName, manifests, root)).toThrow(
+        'active workspace links for @fixture/linked-package have divergent license/repository metadata (1.0.0, 2.0.0)',
+      )
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('accepts multiple active versions when their effective metadata agrees', () => {
+    const packageName = '@fixture/linked-package'
+    const { root, manifests } = linkedWorkspace(packageName, [
+      { workspace: 'packages/first', version: '1.0.0', license: 'MIT', repository: 'git+https://github.com/example/linked-package.git' },
+      { workspace: 'packages/second', version: '2.0.0', license: 'MIT', repository: 'https://github.com/example/linked-package' },
+    ])
+    try {
+      expect(installedMetadata(packageName, manifests, root)).toEqual({
+        license: 'MIT',
+        repo: 'https://github.com/example/linked-package',
+      })
     } finally {
       rmSync(root, { recursive: true, force: true })
     }

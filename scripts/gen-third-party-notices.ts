@@ -188,7 +188,7 @@ function loadWorkspaceManifests(): { manifests: Map<string, Manifest>; names: Se
   return { manifests, names }
 }
 
-type VirtualManifest = Manifest & {
+export type VirtualManifest = Manifest & {
   claudeCodeVersion?: string
   license?: string
   repository?: string | { url?: string }
@@ -302,28 +302,44 @@ export function virtualManifest(
   return candidates[0]?.manifest
 }
 
-const workspaceLinkedManifestCache = new Map<string, VirtualManifest | undefined>()
+const workspaceLinkedManifestCache = new WeakMap<Map<string, Manifest>, Map<string, readonly VirtualManifest[]>>()
 
 /**
- * Resolve the package version selected for a declaring workspace instead of an
+ * Resolve every package version selected by a declaring workspace instead of an
  * unrelated historical version that still occupies the shared virtual store.
  * @param name - external package identity.
  * @param manifests - workspace manifests already loaded by the caller, so one
  *   load serves every dependency instead of a full re-read per name.
- * @returns the first current workspace link for that package, when installed.
+ * @param workspaceRoot - repository root containing the workspace link farms.
+ * @returns all installed workspace links for that package, in path order.
  */
-function workspaceLinkedManifest(name: string, manifests: Map<string, Manifest>): VirtualManifest | undefined {
-  if (workspaceLinkedManifestCache.has(name)) return workspaceLinkedManifestCache.get(name)
+export function workspaceLinkedManifests(
+  name: string,
+  manifests: Map<string, Manifest>,
+  workspaceRoot: string = root,
+): readonly VirtualManifest[] {
+  const cacheKey = `${workspaceRoot}\0${name}`
+  const cachedForManifests = workspaceLinkedManifestCache.get(manifests)
+  const cached = cachedForManifests?.get(cacheKey)
+  if (cached !== undefined) return cached
+  const candidates: { path: string; manifest: VirtualManifest }[] = []
+  const seen = new Set<string>()
   for (const [path, manifest] of manifests) {
     if (!ALL_KINDS.some(kind => name in (manifest[kind] ?? {}))) continue
-    const linked = resolve(root, dirname(path), 'node_modules', name, 'package.json')
-    if (!existsSync(linked)) continue
-    const found = JSON.parse(readFileSync(linked, 'utf8')) as VirtualManifest
-    workspaceLinkedManifestCache.set(name, found)
-    return found
+    const linked = resolve(workspaceRoot, dirname(path), 'node_modules', name, 'package.json')
+    if (!existsSync(linked) || seen.has(linked)) continue
+    seen.add(linked)
+    candidates.push({
+      path: linked,
+      manifest: JSON.parse(readFileSync(linked, 'utf8')) as VirtualManifest,
+    })
   }
-  workspaceLinkedManifestCache.set(name, undefined)
-  return undefined
+  candidates.sort((left, right) => left.path.localeCompare(right.path))
+  const found = candidates.map(candidate => candidate.manifest)
+  const cache = cachedForManifests ?? new Map<string, readonly VirtualManifest[]>()
+  cache.set(cacheKey, found)
+  if (cachedForManifests === undefined) workspaceLinkedManifestCache.set(manifests, cache)
+  return found
 }
 
 /** Resolve one exact workspace declaration when the virtual store has historical copies. */
@@ -343,15 +359,23 @@ function exactWorkspaceDependencyVersion(name: string, manifests: Map<string, Ma
 }
 
 /** Resolve one installed external package manifest from either pnpm store. */
-function installedManifest(name: string, manifests: Map<string, Manifest>, expectedVersion?: string): VirtualManifest | undefined {
+function installedManifest(
+  name: string,
+  manifests: Map<string, Manifest>,
+  expectedVersion?: string,
+  workspaceRoot: string = root,
+): VirtualManifest | undefined {
   const resolvedExpectedVersion = expectedVersion ?? exactWorkspaceDependencyVersion(name, manifests)
-  const linked = workspaceLinkedManifest(name, manifests)
-  if (linked !== undefined && (resolvedExpectedVersion === undefined || linked.version === resolvedExpectedVersion)) return linked
+  const linked = workspaceLinkedManifests(name, manifests, workspaceRoot)
+  const linkedMatch = resolvedExpectedVersion === undefined
+    ? linked[0]
+    : linked.find(candidate => candidate.version === resolvedExpectedVersion)
+  if (linkedMatch !== undefined) return linkedMatch
   let manifest: (Manifest & { license?: string; repository?: string | { url?: string }; homepage?: string }) | undefined
   // Workspace-local link farms can expose a dependency that is not linked at
   // the repository root; both are backed by the root workspace's lockfile.
   for (const store of ['node_modules', 'native/system/node_modules']) {
-    const direct = resolve(root, store, name, 'package.json')
+    const direct = resolve(workspaceRoot, store, name, 'package.json')
     if (existsSync(direct)) {
       const candidate = JSON.parse(readFileSync(direct, 'utf8')) as typeof manifest
       if (resolvedExpectedVersion === undefined || candidate?.version === resolvedExpectedVersion) {
@@ -359,7 +383,7 @@ function installedManifest(name: string, manifests: Map<string, Manifest>, expec
         break
       }
     }
-    const virtual = resolve(root, store, '.pnpm')
+    const virtual = resolve(workspaceRoot, store, '.pnpm')
     if (!existsSync(virtual)) continue
     manifest = virtualManifest(virtual, name, resolvedExpectedVersion)
     if (manifest !== undefined) break
@@ -367,10 +391,40 @@ function installedManifest(name: string, manifests: Map<string, Manifest>, expec
   return manifest
 }
 
-/** License and repository URL for an installed external package, from the pnpm store. */
-function installedMetadata(name: string, manifests: Map<string, Manifest>): { license: string; repo: string } {
+/**
+ * Resolve the effective license and repository metadata for one package.
+ *
+ * Every active workspace link is checked before one manifest is selected. A
+ * generator run cannot guess which linked version's metadata should be
+ * published when those records disagree.
+ * @param name - exact npm package identity.
+ * @param manifests - workspace manifests keyed by repository-relative path.
+ * @param workspaceRoot - repository root containing the workspace link farms.
+ * @returns the effective license and repository URL.
+ */
+export function installedMetadata(
+  name: string,
+  manifests: Map<string, Manifest>,
+  workspaceRoot: string = root,
+): { license: string; repo: string } {
   const override = OVERRIDES[name]
-  const manifest = installedManifest(name, manifests)
+  const linked = workspaceLinkedManifests(name, manifests, workspaceRoot)
+  const metadata = linked.map(manifest => ({
+    version: manifest.version ?? '<unknown>',
+    license: override?.license ?? manifest.license,
+    repo: override?.repo ?? normalizeRepo(
+      typeof manifest.repository === 'string' ? manifest.repository : manifest.repository?.url ?? manifest.homepage,
+    ),
+  }))
+  const signatures = new Set(metadata.map(entry => JSON.stringify([entry.license, entry.repo])))
+  if (signatures.size > 1) {
+    const versions = [...new Set(metadata.map(entry => entry.version))].sort((left, right) => left.localeCompare(right))
+    throw new Error(
+      `gen-third-party-notices: active workspace links for ${name} have divergent license/repository metadata (${versions.join(', ')}).`,
+    )
+  }
+
+  const manifest = installedManifest(name, manifests, undefined, workspaceRoot)
   const license = override?.license ?? manifest?.license
   const rawRepo = typeof manifest?.repository === 'string' ? manifest.repository : manifest?.repository?.url ?? manifest?.homepage
   const repo = override?.repo ?? normalizeRepo(rawRepo)
@@ -380,6 +434,7 @@ function installedMetadata(name: string, manifests: Map<string, Manifest>): { li
   return { license, repo }
 }
 
+/** Collect the official Claude distribution and verify installed payloads. */
 function collectClaudeDistribution(manifests: Map<string, Manifest>): ClaudeDistribution {
   const manifest = installedManifest(CLAUDE_AGENT_SDK_PACKAGE, manifests)
   if (manifest === undefined) {
@@ -775,9 +830,6 @@ export async function render(): Promise<string> {
   const browser = await browserBundledExternals(root)
   // The Inspector's Host build hook compiles this standalone frontend outside the Client bundle graph.
   browser.add('chrome-devtools-frontend')
-  // The linked-manifest cache is keyed by name only, so it must not outlive
-  // the manifests map it was resolved from; render() owns that single load.
-  workspaceLinkedManifestCache.clear()
   const { manifests, names } = loadWorkspaceManifests()
   const npm = collectNpmDeps(manifests, names, browser)
   const runtimeDeps = npm.filter(dep => dep.runtime)
