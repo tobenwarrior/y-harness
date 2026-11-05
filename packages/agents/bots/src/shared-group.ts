@@ -932,6 +932,9 @@ export class SharedBotGroupService {
       }
       const existing = snapshot.messages.find(message => message.id === messageId)
       const existingAttachments = attachmentStore?.attachmentsForMessage(attachmentScope) ?? []
+      if (existing === undefined && existingAttachments.length > 0) {
+        throw new SharedGroupError('gateway/conflict', 'This attachment send could not be confirmed; start a new message')
+      }
       if (request.attachmentGrants !== undefined && request.attachmentGrants.length > 0) {
         if (attachmentStore === undefined) {
           throw new SharedGroupError('gateway/unavailable', 'shared Bot attachment admission is unavailable')

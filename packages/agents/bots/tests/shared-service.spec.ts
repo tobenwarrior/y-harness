@@ -31,6 +31,7 @@ import z from 'zod'
 import { MemoryMediaPool, MemoryStorageBackend } from '../../../storage/storage-domain/tests/helpers/memory-backend.ts'
 import { BotId, type BotView } from '../src/types.ts'
 import {
+  BotAttachmentGrantId,
   BotAttachmentGrantStore,
   BotPrivateMessageId,
   botAttachmentDomain,
@@ -1599,6 +1600,43 @@ describe('shared Bot service', () => {
         value: { messages: [{ id: requestValue.messageId, text: 'Shared request.' }] },
       })
       void secondOwner
+    } finally {
+      await value.close()
+    }
+  })
+
+  it('rejects a shared message when an earlier failed write left a consumed grant', async () => {
+    const value = await fixture(10, true, false, { value: 1_000 }, true)
+    try {
+      const enrollment = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code, enrollmentRequest(),
+      )
+      await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-second'), 'owner')).code, request(cookie(enrollment)),
+      )
+      const owner = await principal(value, enrollment)
+      const created = await value.service.handle('bots/share/create-group', {
+        name: 'Uncertain shared send', botIds: [BotId('bot-chief'), BotId('bot-second')],
+      }, new AbortController().signal, owner.peer)
+      const groupId = groupIdFromResult(created)
+      const messageId = BotGroupMessageId('bot-group-message-shared-orphan')
+      const admitted = await value.service.handle('bots/share/admit-group-image', {
+        groupId, messageId, image: { mediaType: 'image/png', data: 'iVBORw0KGgo=', name: 'orphan.png' },
+      }, new AbortController().signal, owner.peer)
+      if (!admitted.ok || admitted.value === null || typeof admitted.value !== 'object'
+        || !('grantId' in admitted.value) || typeof admitted.value.grantId !== 'string') throw new Error('grant missing')
+      if (value.attachmentStore === undefined) throw new Error('attachment store missing')
+      const membership = sharedMembershipSnapshotSchema.parse((await value.authority.readExtension('agent-bots/shared-memberships')).value)
+      const group = sharedGroupSnapshotSchema.parse(membership.sharedGroups).groups.find(candidate => candidate.id === groupId)
+      if (group === undefined) throw new Error('group missing')
+      await value.attachmentStore.consume({
+        kind: 'shared-group', principalId: owner.botPrincipalId, groupId, messageId,
+        targetBotIds: [BotId('bot-chief'), BotId('bot-second')], authorizationRevision: group.revision,
+      }, [BotAttachmentGrantId(admitted.value.grantId)])
+      await expect(value.service.handle('bots/share/send-group-message', {
+        groupId, messageId, text: 'Different message',
+      }, new AbortController().signal, owner.peer)).resolves.toMatchObject({ ok: false, error: { code: 'gateway/conflict' } })
+      expect(value.host.deliverSharedGroup).not.toHaveBeenCalled()
     } finally {
       await value.close()
     }

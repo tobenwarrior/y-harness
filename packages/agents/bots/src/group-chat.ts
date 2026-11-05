@@ -846,6 +846,9 @@ export class BotGroupService {
         const messages = this.domain.table('messages')
         const existing = messages.get(messageId)
         const existingAttachments = attachmentStore?.attachmentsForMessage(attachmentScope) ?? []
+        if (existing === undefined && existingAttachments.length > 0) {
+          throw new BotGroupError('invalid', 'This attachment send could not be confirmed; start a new message')
+        }
         if (request.attachmentGrants !== undefined && request.attachmentGrants.length > 0) {
           if (attachmentStore === undefined) {
             throw new BotGroupError('delivery-failed', 'Bot attachment admission is unavailable')

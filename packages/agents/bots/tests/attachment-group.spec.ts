@@ -5,7 +5,7 @@ import Storage from '@yharness/storage'
 import type { StorageBackend } from '@yharness/storage'
 import { DomainFacility } from '@yharness/storage-domain'
 import type { Domain } from '@yharness/storage-domain'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { MemoryMediaPool, MemoryStorageBackend } from '../../../storage/storage-domain/tests/helpers/memory-backend.ts'
 import { BotAttachmentGrantStore, botAttachmentDomain } from '../src/attachment-grants.ts'
 import {
@@ -73,6 +73,32 @@ const file: FileAttachmentRef = {
 }
 
 describe('owner-local Bot group attachments', () => {
+  it('rejects a new message when an earlier failed write left a consumed grant', async () => {
+    const opened = await fixture()
+    const alpha = bot(BotId('bot-alpha'))
+    const beta = bot(BotId('bot-beta'))
+    const deliver = vi.fn(async () => 'accepted' as const)
+    try {
+      const store = new BotAttachmentGrantStore(opened.attachments)
+      const service = new BotGroupService(opened.group, { listBots: async () => [alpha, beta], deliverToBot: deliver }, store)
+      const created = await service.create({ name: 'Uncertain send', botIds: [alpha.id, beta.id] })
+      const messageId = BotGroupMessageId('bot-group-message-orphan-grant')
+      const grant = await service.admitAttachment({
+        groupId: created.group.id, messageId, targetBotIds: [beta.id], attachments: [{ type: 'file', attachment: file }],
+      })
+      const group = opened.group.table('groups').get(created.group.id)
+      if (group === undefined) throw new Error('group was not persisted')
+      await store.consume({
+        kind: 'local-group', ownerId: 'local-owner', groupId: created.group.id, messageId,
+        targetBotIds: [beta.id], authorizationRevision: group.updatedAt,
+      }, [grant.grantId])
+      await expect(service.send({ groupId: created.group.id, messageId, text: 'Different message', targetBotIds: [beta.id] }))
+        .rejects.toMatchObject({ code: 'invalid' })
+      expect(deliver).not.toHaveBeenCalled()
+    } finally {
+      await opened.ctx.fiber.dispose()
+    }
+  })
   it('binds admitted image/file grants to the exact message and delivers model blocks once', async () => {
     const opened = await fixture()
     const alpha = bot(BotId('bot-alpha'))
