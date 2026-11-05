@@ -1084,7 +1084,7 @@ describe('durable Bot roster', () => {
       }) => Promise<boolean>
       const trigger = Object.getPrototypeOf(h.service) as { triggerEventRoutines: EventRoutineTrigger }
       await trigger.triggerEventRoutines.call(h.service, owner.id, {
-        message: event.data, eventSeq: Number(event.seq), eventTime: event.time, source: 'user', relayContext: undefined,
+        message: event.data, eventSeq: Number(event.seq), eventTime: event.time, source: 'user',
       })
       const releaseTimer = setTimeout(() => release.resolve(undefined), 2_000)
       try {
@@ -1153,7 +1153,7 @@ describe('durable Bot roster', () => {
       }) => Promise<boolean>
       const trigger = Object.getPrototypeOf(h.service) as { triggerEventRoutines: EventRoutineTrigger }
       void trigger.triggerEventRoutines.call(h.service, owner.id, {
-        message: event.data, eventSeq: Number(event.seq), eventTime: event.time, source: 'user', relayContext: undefined,
+        message: event.data, eventSeq: Number(event.seq), eventTime: event.time, source: 'user',
       })
       await commitStarted.promise
       const host = productionSharedHost(fenceHost.service)
@@ -1234,7 +1234,7 @@ describe('durable Bot roster', () => {
       }) => Promise<boolean>
       const trigger = Object.getPrototypeOf(h.service) as { triggerEventRoutines: EventRoutineTrigger }
       void trigger.triggerEventRoutines.call(h.service, owner.id, {
-        message: event.data, eventSeq: Number(event.seq), eventTime: event.time, source: 'user', relayContext: undefined,
+        message: event.data, eventSeq: Number(event.seq), eventTime: event.time, source: 'user',
       })
       const releaseTimer = setTimeout(() => {
         pool.failNextWrites = 1
@@ -1269,7 +1269,7 @@ describe('durable Bot roster', () => {
     }
     const originalRecovery = servicePrototype.recoverEventRoutineAdmissions
     let delayedCalls = 0
-    servicePrototype.recoverEventRoutineAdmissions = async function (this: BotService, sessionId, retryAttempt = 0) {
+    servicePrototype.recoverEventRoutineAdmissions = async function (this: BotService, _sessionId, retryAttempt = 0) {
       if (retryAttempt > 0) delayedCalls += 1
       throw new Error('startup recovery failed')
     }
@@ -1317,7 +1317,6 @@ describe('durable Bot roster', () => {
         eventSeq: 1,
         eventTime: Date.now(),
         source: 'user',
-        relayContext: undefined,
       }, 6)
       expect(report).toHaveBeenCalledWith(expect.stringContaining('reached its transient retry limit'))
       expect(report).toHaveBeenCalledWith(expect.stringContaining('durable recovery remains pending'))
