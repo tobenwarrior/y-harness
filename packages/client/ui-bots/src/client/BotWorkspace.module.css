@@ -1341,6 +1341,7 @@
   padding: 0;
   border: 0;
   border-radius: 50%;
+  corner-shape: round;
   background: transparent;
   color: var(--yh-alias-label-tertiary);
   cursor: pointer;
