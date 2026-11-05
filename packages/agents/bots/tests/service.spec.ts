@@ -1032,6 +1032,300 @@ describe('durable Bot roster', () => {
     }
   }, 10_000)
 
+  it('keeps live event-routine admission retrying until a long roster fence releases', async () => {
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const created = await seed.service.create({ name: 'Live admission fence target', cwd: '/tmp' })
+    await close(seed.ctx)
+
+    const h = await routineHarness(pool, undefined, undefined, [String(created.bot.sessionId)], true)
+    const fenceHost = await harness(pool, undefined, undefined, [], new Map(), h.records)
+    const started = Promise.withResolvers<true>()
+    const release = Promise.withResolvers<undefined>()
+    let fence: Promise<{ readonly valid: true; readonly value: undefined } | { readonly valid: false }> | undefined
+    try {
+      const provider = h.ctx.get('codexDynamicTools') as BotNativeToolProvider | undefined
+      if (provider === undefined) throw new Error('live admission fence provider was not mounted')
+      const create = (await provider.resolve({ sessionId: created.bot.sessionId })).find(tool => tool.name === 'schedule_create')
+      if (create === undefined) throw new Error('live admission fence schedule_create missing')
+      const result = await create.execute({
+        title: 'Live admission fence monitor', prompt: 'Retry after the live roster fence.',
+        event: { type: 'message', source: 'user' },
+      }, {
+        callId: 'live-admission-fence-create', threadId: 'live-admission-fence-thread', turnId: 'live-admission-fence-turn',
+        sessionId: created.bot.sessionId, signal: new AbortController().signal,
+        approvalPolicy: 'on-request', requestApproval: async () => true,
+      })
+      expect(result.success).toBe(true)
+      const owner = h.agents[0]
+      const followup = h.followups[0]
+      if (owner === undefined || followup === undefined) throw new Error('live admission fence owner was not created')
+      const host = productionSharedHost(fenceHost.service)
+      const bots = (await fenceHost.service.list({ includeHidden: true })).bots
+      fence = host.withBotRoster?.(bots, undefined, async () => {
+        started.resolve(true)
+        await release.promise
+        return undefined
+      })
+      if (fence === undefined) throw new Error('live admission fence capability was not mounted')
+      await started.promise
+      owner.session.append('turn/start', { turn: 1 })
+      owner.session.append('user/message', createUserMessage({
+        content: [{ type: 'text', text: 'Trigger while the roster fence is held.' }], source: { kind: 'user' },
+      }), { surfaceOp: 'append' })
+      const event = owner.session.snapshotEvents().at(-1)
+      if (event?.type !== 'user/message') throw new Error('live admission fence source event was not appended')
+      type EventRoutineTrigger = (sessionId: SessionId, input: {
+        readonly message: UserMessage
+        readonly eventSeq: number
+        readonly eventTime: number
+        readonly source: 'user' | 'bot'
+        readonly relayContext?: { readonly chainId: string; readonly depth: number }
+      }) => Promise<boolean>
+      const trigger = Object.getPrototypeOf(h.service) as { triggerEventRoutines: EventRoutineTrigger }
+      await trigger.triggerEventRoutines.call(h.service, owner.id, {
+        message: event.data, eventSeq: Number(event.seq), eventTime: event.time, source: 'user', relayContext: undefined,
+      })
+      const releaseTimer = setTimeout(() => release.resolve(undefined), 2_000)
+      try {
+        await vi.waitFor(() => { expect(followup).toHaveBeenCalledOnce() }, { timeout: 7_000 })
+      } finally {
+        clearTimeout(releaseTimer)
+      }
+    } finally {
+      release.resolve(undefined)
+      await fence?.catch(() => undefined)
+      await close(fenceHost.ctx)
+      await close(h.ctx)
+    }
+  }, 12_000)
+
+  it('keeps a mid-commit event-routine conflict retrying across a long roster fence', async () => {
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const created = await seed.service.create({ name: 'Mid-commit fence target', cwd: '/tmp' })
+    await close(seed.ctx)
+
+    const h = await routineHarness(pool, undefined, undefined, [String(created.bot.sessionId)], true)
+    const fenceHost = await harness(pool, undefined, undefined, [], new Map(), h.records)
+    const started = Promise.withResolvers<true>()
+    const release = Promise.withResolvers<undefined>()
+    const commitStarted = Promise.withResolvers<true>()
+    const releaseCommit = Promise.withResolvers<undefined>()
+    type EventRoutineCommit = (current: BotRecord, next: BotRecord, signal?: AbortSignal) => Promise<BotRecord>
+    const servicePrototype = Object.getPrototypeOf(h.service) as { commitEventRoutineRecord: EventRoutineCommit }
+    const originalCommit = servicePrototype.commitEventRoutineRecord
+    let fence: Promise<{ readonly valid: true; readonly value: undefined } | { readonly valid: false }> | undefined
+    try {
+      const provider = h.ctx.get('codexDynamicTools') as BotNativeToolProvider | undefined
+      if (provider === undefined) throw new Error('mid-commit fence provider was not mounted')
+      const create = (await provider.resolve({ sessionId: created.bot.sessionId })).find(tool => tool.name === 'schedule_create')
+      if (create === undefined) throw new Error('mid-commit fence schedule_create missing')
+      const result = await create.execute({
+        title: 'Mid-commit fence monitor', prompt: 'Retry after a mid-commit roster fence.',
+        event: { type: 'message', source: 'user' },
+      }, {
+        callId: 'mid-commit-fence-create', threadId: 'mid-commit-fence-thread', turnId: 'mid-commit-fence-turn',
+        sessionId: created.bot.sessionId, signal: new AbortController().signal,
+        approvalPolicy: 'on-request', requestApproval: async () => true,
+      })
+      expect(result.success).toBe(true)
+      servicePrototype.commitEventRoutineRecord = async function (this: BotService, current, next, signal) {
+        commitStarted.resolve(true)
+        await releaseCommit.promise
+        return originalCommit.call(this, current, next, signal)
+      }
+      const owner = h.agents[0]
+      const followup = h.followups[0]
+      if (owner === undefined || followup === undefined) throw new Error('mid-commit fence owner was not created')
+      owner.session.append('turn/start', { turn: 1 })
+      owner.session.append('user/message', createUserMessage({
+        content: [{ type: 'text', text: 'Trigger before the mid-commit fence.' }], source: { kind: 'user' },
+      }), { surfaceOp: 'append' })
+      const event = owner.session.snapshotEvents().at(-1)
+      if (event?.type !== 'user/message') throw new Error('mid-commit fence source event was not appended')
+      type EventRoutineTrigger = (sessionId: SessionId, input: {
+        readonly message: UserMessage
+        readonly eventSeq: number
+        readonly eventTime: number
+        readonly source: 'user' | 'bot'
+        readonly relayContext?: { readonly chainId: string; readonly depth: number }
+      }) => Promise<boolean>
+      const trigger = Object.getPrototypeOf(h.service) as { triggerEventRoutines: EventRoutineTrigger }
+      void trigger.triggerEventRoutines.call(h.service, owner.id, {
+        message: event.data, eventSeq: Number(event.seq), eventTime: event.time, source: 'user', relayContext: undefined,
+      })
+      await commitStarted.promise
+      const host = productionSharedHost(fenceHost.service)
+      const bots = (await fenceHost.service.list({ includeHidden: true })).bots
+      fence = host.withBotRoster?.(bots, undefined, async () => {
+        started.resolve(true)
+        await release.promise
+        return undefined
+      })
+      if (fence === undefined) throw new Error('mid-commit fence capability was not mounted')
+      await started.promise
+      releaseCommit.resolve(undefined)
+      const releaseTimer = setTimeout(() => release.resolve(undefined), 2_000)
+      try {
+        await vi.waitFor(() => { expect(followup).toHaveBeenCalledOnce() }, { timeout: 7_000 })
+      } finally {
+        clearTimeout(releaseTimer)
+      }
+    } finally {
+      servicePrototype.commitEventRoutineRecord = originalCommit
+      releaseCommit.resolve(undefined)
+      release.resolve(undefined)
+      await fence?.catch(() => undefined)
+      await close(fenceHost.ctx)
+      await close(h.ctx)
+    }
+  }, 12_000)
+
+  it('keeps a fence retry alive when the first post-fence write is transiently unavailable', async () => {
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const created = await seed.service.create({ name: 'Busy then transient target', cwd: '/tmp' })
+    await close(seed.ctx)
+
+    const h = await routineHarness(pool, undefined, undefined, [String(created.bot.sessionId)], true)
+    const fenceHost = await harness(pool, undefined, undefined, [], new Map(), h.records)
+    const started = Promise.withResolvers<true>()
+    const release = Promise.withResolvers<undefined>()
+    let fence: Promise<{ readonly valid: true; readonly value: undefined } | { readonly valid: false }> | undefined
+    try {
+      const provider = h.ctx.get('codexDynamicTools') as BotNativeToolProvider | undefined
+      if (provider === undefined) throw new Error('busy then transient provider was not mounted')
+      const create = (await provider.resolve({ sessionId: created.bot.sessionId })).find(tool => tool.name === 'schedule_create')
+      if (create === undefined) throw new Error('busy then transient schedule_create missing')
+      const result = await create.execute({
+        title: 'Busy then transient monitor', prompt: 'Retry after a transient write.',
+        event: { type: 'message', source: 'user' },
+      }, {
+        callId: 'busy-then-transient-create', threadId: 'busy-then-transient-thread', turnId: 'busy-then-transient-turn',
+        sessionId: created.bot.sessionId, signal: new AbortController().signal,
+        approvalPolicy: 'on-request', requestApproval: async () => true,
+      })
+      expect(result.success).toBe(true)
+      const owner = h.agents[0]
+      const followup = h.followups[0]
+      if (owner === undefined || followup === undefined) throw new Error('busy then transient owner was not created')
+      const host = productionSharedHost(fenceHost.service)
+      const bots = (await fenceHost.service.list({ includeHidden: true })).bots
+      fence = host.withBotRoster?.(bots, undefined, async () => {
+        started.resolve(true)
+        await release.promise
+        return undefined
+      })
+      if (fence === undefined) throw new Error('busy then transient fence capability was not mounted')
+      await started.promise
+      owner.session.append('turn/start', { turn: 1 })
+      owner.session.append('user/message', createUserMessage({
+        content: [{ type: 'text', text: 'Trigger before busy then transient retry.' }], source: { kind: 'user' },
+      }), { surfaceOp: 'append' })
+      const event = owner.session.snapshotEvents().at(-1)
+      if (event?.type !== 'user/message') throw new Error('busy then transient source event was not appended')
+      type EventRoutineTrigger = (sessionId: SessionId, input: {
+        readonly message: UserMessage
+        readonly eventSeq: number
+        readonly eventTime: number
+        readonly source: 'user' | 'bot'
+        readonly relayContext?: { readonly chainId: string; readonly depth: number }
+      }) => Promise<boolean>
+      const trigger = Object.getPrototypeOf(h.service) as { triggerEventRoutines: EventRoutineTrigger }
+      void trigger.triggerEventRoutines.call(h.service, owner.id, {
+        message: event.data, eventSeq: Number(event.seq), eventTime: event.time, source: 'user', relayContext: undefined,
+      })
+      const releaseTimer = setTimeout(() => {
+        pool.failNextWrites = 1
+        release.resolve(undefined)
+      }, 2_000)
+      try {
+        await vi.waitFor(() => { expect(followup).toHaveBeenCalledOnce() }, { timeout: 13_000 })
+        expect(h.records.get(credentialKey('agent-bots', 'profile-revisions-v3'))).not.toMatchObject({
+          payload: { pending: expect.anything() },
+        })
+      } finally {
+        clearTimeout(releaseTimer)
+      }
+    } finally {
+      release.resolve(undefined)
+      await fence?.catch(() => undefined)
+      await close(fenceHost.ctx)
+      await close(h.ctx)
+    }
+  }, 15_000)
+
+  it('cancels delayed event-routine recovery when startup initialization fails', async () => {
+    const h = await harness(
+      new MemoryMediaPool(), undefined, undefined, [], new Map(), new Map(), true, 'native', false,
+      { initializeService: false },
+    )
+    type AdmissionRecovery = (sessionId?: SessionId, retryAttempt?: number) => Promise<void>
+    type ScheduleAdmissionRecovery = (sessionId: SessionId, attempt: number, fenceRetry?: boolean) => void
+    const servicePrototype = Object.getPrototypeOf(h.service) as {
+      recoverEventRoutineAdmissions: AdmissionRecovery
+      scheduleEventRoutineAdmissionRecoveryRetry: ScheduleAdmissionRecovery
+    }
+    const originalRecovery = servicePrototype.recoverEventRoutineAdmissions
+    let delayedCalls = 0
+    servicePrototype.recoverEventRoutineAdmissions = async function (this: BotService, sessionId, retryAttempt = 0) {
+      if (retryAttempt > 0) delayedCalls += 1
+      throw new Error('startup recovery failed')
+    }
+    try {
+      servicePrototype.scheduleEventRoutineAdmissionRecoveryRetry.call(
+        h.service,
+        SessionId('bot-session-startup-recovery-cleanup'),
+        2,
+      )
+      await expect(h.service[Service.init]()).rejects.toThrow('startup recovery failed')
+      await new Promise<void>((resolve) => { setTimeout(resolve, 75) })
+      expect(delayedCalls).toBe(0)
+    } finally {
+      servicePrototype.recoverEventRoutineAdmissions = originalRecovery
+      await close(h.ctx)
+    }
+  })
+
+  it('reports when non-fence event-routine admission retries exhaust their transient budget', async () => {
+    const h = await harness()
+    const report = vi.fn<(message: string) => void>()
+    h.ctx.logger.error = report
+    type EventRoutineInput = {
+      readonly message: UserMessage
+      readonly eventSeq: number
+      readonly eventTime: number
+      readonly source: 'user' | 'bot'
+      readonly relayContext?: { readonly chainId: string; readonly depth: number }
+    }
+    type ScheduleAdmissionRetry = (
+      sessionId: SessionId,
+      input: EventRoutineInput,
+      attempt: number,
+      fenceRetry?: boolean,
+    ) => void
+    const servicePrototype = Object.getPrototypeOf(h.service) as {
+      scheduleEventRoutineAdmissionRetry: ScheduleAdmissionRetry
+    }
+    try {
+      servicePrototype.scheduleEventRoutineAdmissionRetry.call(h.service, SessionId('bot-session-retry-limit'), {
+        message: createUserMessage({
+          content: [{ type: 'text', text: 'Retry limit source.' }],
+          source: { kind: 'user' },
+        }),
+        eventSeq: 1,
+        eventTime: Date.now(),
+        source: 'user',
+        relayContext: undefined,
+      }, 6)
+      expect(report).toHaveBeenCalledWith(expect.stringContaining('reached its transient retry limit'))
+      expect(report).toHaveBeenCalledWith(expect.stringContaining('durable recovery remains pending'))
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
   it('reports a permanent event-routine inspection failure instead of silently deferring it', async () => {
     const pool = new MemoryMediaPool()
     const seed = await harness(pool)

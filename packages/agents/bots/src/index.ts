@@ -621,7 +621,10 @@ const SHARED_GROUP_DELIVERY_LOCK_PREFIX = '.delivery-'
 const activeSharedRosterFenceTokens = new WeakMap<CredentialProvider, string>()
 
 function isBotRosterFenceBusyError(error: unknown): boolean {
-  return error instanceof Error && error.name === BOT_ROSTER_FENCE_BUSY_ERROR_NAME
+  if (error instanceof Error && error.name === BOT_ROSTER_FENCE_BUSY_ERROR_NAME) return true
+  const remote = remoteErrorOf(error)
+  return remote?.code === 'gateway/conflict'
+    && /Bot (?:profile|roster) changed while a shared group admission is committing/.test(remote.message)
 }
 
 /**
@@ -2392,11 +2395,16 @@ export class BotService extends TypertRemoteService {
   private readonly promptDisposals = new Set<Promise<void>>()
   private readonly eventRoutineTurns = new Map<string, EventRoutineTurn>()
   private readonly eventRoutineRetryKeys = new Set<string>()
+  private readonly eventRoutineRetryFenceKeys = new Set<string>()
   private readonly eventRoutineAdmissionRetryKeys = new Set<string>()
+  private readonly eventRoutineAdmissionRetryFenceKeys = new Set<string>()
   private readonly eventRoutineAdmissionRecoveryRetryKeys = new Set<string>()
+  private readonly eventRoutineAdmissionRecoveryRetryFenceKeys = new Set<string>()
   private readonly eventRoutineRepairRetryKeys = new Set<string>()
+  private readonly eventRoutineRepairRetryFenceKeys = new Set<string>()
   private readonly eventRoutineResultRetryKeys = new Set<string>()
   private readonly eventRoutineResultRecoveryRetryKeys = new Set<string>()
+  private readonly eventRoutineResultRecoveryRetryFenceKeys = new Set<string>()
   private readonly collaborationRepairRetryKeys = new Set<string>()
   private readonly groupRepairRetryKeys = new Set<string>()
   private readonly groupSessionRepairRetryKeys = new Set<string>()
@@ -2936,28 +2944,34 @@ export class BotService extends TypertRemoteService {
   }
 
   async [Service.init](): Promise<void> {
-    await this.initialized
-    await Promise.all(this.ctx.agents.list().map(agent => this.installPrompt(agent)))
-    await this.reconcileCanceledDeliveriesOnStartup()
-    await this.recoverEventRoutineAdmissions()
-    await this.recoverPendingEventRoutines()
-    await this.recoverEventRoutineResults()
-    const domain = await this.ready
+    let domain: Domain<typeof botDomain> | undefined
+    let memoryRecoveryStarted = false
     try {
+      await this.initialized
+      await Promise.all(this.ctx.agents.list().map(agent => this.installPrompt(agent)))
+      await this.reconcileCanceledDeliveriesOnStartup()
+      await this.recoverEventRoutineAdmissions()
+      await this.recoverPendingEventRoutines()
+      await this.recoverEventRoutineResults()
+      domain = await this.ready
+      memoryRecoveryStarted = true
       await this.recoverPendingMemoryUpdates(domain.table('bots'))
+      await Promise.all(this.ctx.agents.list().map(async (agent) => {
+        await this.installPrompt(agent)
+        await this.reconcileGroupSession(agent)
+      }))
     } catch (error: unknown) {
       this.stopping = true
-      try {
-        await domain.close()
-      } catch (closeError: unknown) {
-        this.ctx.logger.warn(`bots: closing after startup memory recovery failed: ${String(closeError)}`)
+      this.cancelRecoveryRetryTimers()
+      if (memoryRecoveryStarted && domain !== undefined) {
+        try {
+          await domain.close()
+        } catch (closeError: unknown) {
+          this.ctx.logger.warn(`bots: closing after startup memory recovery failed: ${String(closeError)}`)
+        }
       }
       throw error
     }
-    await Promise.all(this.ctx.agents.list().map(async (agent) => {
-      await this.installPrompt(agent)
-      await this.reconcileGroupSession(agent)
-    }))
   }
 
   /**
@@ -4154,13 +4168,14 @@ export class BotService extends TypertRemoteService {
   private async refreshBotRecordFromProfile(
     domain: Domain<typeof botDomain>,
     sessionId: SessionId,
+    reconcilePending = false,
   ): Promise<BotRecord | undefined> {
     const mapped = this.recordsBySession.get(String(sessionId))
     if (mapped === undefined) return undefined
     const bots = domain.table('bots')
     const stored = bots.get(mapped.id)
     if (stored === undefined) return undefined
-    const profileState = await this.readProfileRevisionState(bots)
+    const profileState = await this.readProfileRevisionState(bots, reconcilePending)
     const current = applyProfileSnapshot(stored, profileState.profiles[String(mapped.id)])
     if (current.updatedAt >= mapped.updatedAt) {
       return this.cacheBotRecord(current)
@@ -4595,10 +4610,11 @@ export class BotService extends TypertRemoteService {
   ): Promise<boolean> {
     let admissionWriteFailed = false
     let deliveryFailed = false
+    let fenceRetry = false
     try {
       await this.serialize(async () => {
         const domain = await this.getDomain()
-        const current = await this.refreshBotRecordFromProfile(domain, sessionId)
+        const current = await this.refreshBotRecordFromProfile(domain, sessionId, retryAttempt > 0)
           ?? this.currentBotRecord(domain, sessionId)
         if (current === undefined || current.sessionId !== sessionId) return
         let next = current
@@ -4631,6 +4647,7 @@ export class BotService extends TypertRemoteService {
               next = await this.commitEventRoutineRecord(base, candidate)
             } catch (error: unknown) {
               admissionWriteFailed = true
+              fenceRetry = isBotRosterFenceBusyError(error)
               throw error
             }
           }
@@ -4644,16 +4661,22 @@ export class BotService extends TypertRemoteService {
           } catch (error: unknown) {
             this.ctx.logger.warn(`bots: event routine ${routine.id} delivery failed: ${String(error)}`)
             deliveryFailed = true
+            fenceRetry = fenceRetry || isBotRosterFenceBusyError(error)
           }
         }
       })
     } catch (error: unknown) {
-      this.ctx.logger.warn(`bots: event routine dispatch failed: ${String(error)}`)
-      if (admissionWriteFailed || deliveryFailed) this.scheduleEventRoutineAdmissionRetry(sessionId, input, retryAttempt + 1)
+      this.reportEventRoutineRecoveryError('bots: event routine dispatch failed', error)
+      this.scheduleEventRoutineAdmissionRetry(
+        sessionId,
+        input,
+        retryAttempt + 1,
+        fenceRetry || isBotRosterFenceBusyError(error),
+      )
       return false
     }
     if (admissionWriteFailed || deliveryFailed) {
-      this.scheduleEventRoutineAdmissionRetry(sessionId, input, retryAttempt + 1)
+      this.scheduleEventRoutineAdmissionRetry(sessionId, input, retryAttempt + 1, fenceRetry)
       return false
     }
     return true
@@ -4876,13 +4899,35 @@ export class BotService extends TypertRemoteService {
       this.ctx.logger.warn(`${prefix} deferred while the Bot roster fence is held: ${String(error)}`)
       return
     }
-    this.ctx.logger.error(`${prefix} failed outside the Bot roster fence; retrying with bounded backoff: ${String(error)}`)
+    this.ctx.logger.error(`${prefix} failed outside the Bot roster fence: ${String(error)}`)
+  }
+
+  /** Report a bounded recovery that remains durable but needs a later restart or operator action. */
+  private reportEventRoutineRetryTerminal(prefix: string, attempt: number): void {
+    this.ctx.logger.error(`${prefix} reached its transient retry limit at attempt ${String(attempt)}; durable recovery remains pending`)
   }
 
   /** Cancel recovery timers before closing the Bot service domains. */
   private cancelRecoveryRetryTimers(): void {
     for (const timer of this.recoveryRetryTimers) clearTimeout(timer)
     this.recoveryRetryTimers.clear()
+    this.eventRoutineRetryKeys.clear()
+    this.eventRoutineAdmissionRetryKeys.clear()
+    this.eventRoutineAdmissionRecoveryRetryKeys.clear()
+    this.eventRoutineRepairRetryKeys.clear()
+    this.eventRoutineResultRetryKeys.clear()
+    this.eventRoutineResultRecoveryRetryKeys.clear()
+    this.eventRoutineRetryAttempts.clear()
+    this.eventRoutineAdmissionRetryAttempts.clear()
+    this.eventRoutineAdmissionRecoveryRetryAttempts.clear()
+    this.eventRoutineRepairRetryAttempts.clear()
+    this.eventRoutineResultRetryAttempts.clear()
+    this.eventRoutineResultRecoveryRetryAttempts.clear()
+    this.eventRoutineRetryFenceKeys.clear()
+    this.eventRoutineAdmissionRetryFenceKeys.clear()
+    this.eventRoutineAdmissionRecoveryRetryFenceKeys.clear()
+    this.eventRoutineRepairRetryFenceKeys.clear()
+    this.eventRoutineResultRecoveryRetryFenceKeys.clear()
   }
 
   /** Retry a failed peer-delivery repair with bounded backoff. */
@@ -4922,10 +4967,16 @@ export class BotService extends TypertRemoteService {
     fenceRetry = false,
   ): void {
     const key = String(sessionId)
-    const delay = fenceRetry ? botRosterFenceRetryDelay(attempt) : botRecoveryRetryDelay(attempt)
+    const lifecycleRetry = fenceRetry || this.eventRoutineAdmissionRecoveryRetryFenceKeys.has(key)
+    if (lifecycleRetry) this.eventRoutineAdmissionRecoveryRetryFenceKeys.add(key)
+    const delay = lifecycleRetry ? botRosterFenceRetryDelay(attempt) : botRecoveryRetryDelay(attempt)
     if (delay === undefined || this.stopping) {
+      if (!this.stopping && !lifecycleRetry) {
+        this.reportEventRoutineRetryTerminal(`bots: event routine admission recovery for ${sessionId}`, attempt)
+      }
       this.eventRoutineAdmissionRecoveryRetryAttempts.delete(key)
       this.eventRoutineAdmissionRecoveryRetryKeys.delete(key)
+      this.eventRoutineAdmissionRecoveryRetryFenceKeys.delete(key)
       return
     }
     const prior = this.eventRoutineAdmissionRecoveryRetryAttempts.get(key)
@@ -4936,6 +4987,7 @@ export class BotService extends TypertRemoteService {
       if (this.stopping) {
         this.eventRoutineAdmissionRecoveryRetryAttempts.delete(key)
         this.eventRoutineAdmissionRecoveryRetryKeys.delete(key)
+        this.eventRoutineAdmissionRecoveryRetryFenceKeys.delete(key)
         return
       }
       void this.recoverEventRoutineAdmissions(sessionId, attempt)
@@ -4943,6 +4995,7 @@ export class BotService extends TypertRemoteService {
           if (this.eventRoutineAdmissionRecoveryRetryAttempts.get(key) === attempt) {
             this.eventRoutineAdmissionRecoveryRetryAttempts.delete(key)
             this.eventRoutineAdmissionRecoveryRetryKeys.delete(key)
+            this.eventRoutineAdmissionRecoveryRetryFenceKeys.delete(key)
           }
         })
     }
@@ -4954,12 +5007,19 @@ export class BotService extends TypertRemoteService {
     sessionId: SessionId,
     input: EventRoutineTriggerInput,
     attempt: number,
+    fenceRetry = false,
   ): void {
     const key = `${String(sessionId)}:${String(input.message.id)}`
-    const delay = botRecoveryRetryDelay(attempt)
+    const lifecycleRetry = fenceRetry || this.eventRoutineAdmissionRetryFenceKeys.has(key)
+    if (lifecycleRetry) this.eventRoutineAdmissionRetryFenceKeys.add(key)
+    const delay = lifecycleRetry ? botRosterFenceRetryDelay(attempt) : botRecoveryRetryDelay(attempt)
     if (delay === undefined || this.stopping) {
+      if (!this.stopping && !lifecycleRetry) {
+        this.reportEventRoutineRetryTerminal(`bots: event routine admission for ${String(input.message.id)}`, attempt)
+      }
       this.eventRoutineAdmissionRetryAttempts.delete(key)
       this.eventRoutineAdmissionRetryKeys.delete(key)
+      this.eventRoutineAdmissionRetryFenceKeys.delete(key)
       return
     }
     const prior = this.eventRoutineAdmissionRetryAttempts.get(key)
@@ -4970,9 +5030,13 @@ export class BotService extends TypertRemoteService {
       if (this.stopping) {
         this.eventRoutineAdmissionRetryAttempts.delete(key)
         this.eventRoutineAdmissionRetryKeys.delete(key)
+        this.eventRoutineAdmissionRetryFenceKeys.delete(key)
         return
       }
       void this.triggerEventRoutines(sessionId, input, attempt)
+        .then((succeeded) => {
+          if (succeeded) this.eventRoutineAdmissionRetryFenceKeys.delete(key)
+        })
         .finally(() => {
           if (this.eventRoutineAdmissionRetryAttempts.get(key) === attempt) {
             this.eventRoutineAdmissionRetryAttempts.delete(key)
@@ -4990,10 +5054,16 @@ export class BotService extends TypertRemoteService {
     fenceRetry = false,
   ): void {
     const key = String(sessionId)
-    const delay = fenceRetry ? botRosterFenceRetryDelay(attempt) : botRecoveryRetryDelay(attempt)
+    const lifecycleRetry = fenceRetry || this.eventRoutineRepairRetryFenceKeys.has(key)
+    if (lifecycleRetry) this.eventRoutineRepairRetryFenceKeys.add(key)
+    const delay = lifecycleRetry ? botRosterFenceRetryDelay(attempt) : botRecoveryRetryDelay(attempt)
     if (delay === undefined || this.stopping) {
+      if (!this.stopping && !lifecycleRetry) {
+        this.reportEventRoutineRetryTerminal(`bots: canceled event routine repair for ${sessionId}`, attempt)
+      }
       this.eventRoutineRepairRetryAttempts.delete(key)
       this.eventRoutineRepairRetryKeys.delete(key)
+      this.eventRoutineRepairRetryFenceKeys.delete(key)
       return
     }
     const prior = this.eventRoutineRepairRetryAttempts.get(key)
@@ -5004,6 +5074,7 @@ export class BotService extends TypertRemoteService {
       if (this.stopping) {
         this.eventRoutineRepairRetryAttempts.delete(key)
         this.eventRoutineRepairRetryKeys.delete(key)
+        this.eventRoutineRepairRetryFenceKeys.delete(key)
         return
       }
       void this.reconcileCanceledEventRoutines(sessionId, attempt)
@@ -5011,6 +5082,7 @@ export class BotService extends TypertRemoteService {
           if (this.eventRoutineRepairRetryAttempts.get(key) === attempt) {
             this.eventRoutineRepairRetryAttempts.delete(key)
             this.eventRoutineRepairRetryKeys.delete(key)
+            this.eventRoutineRepairRetryFenceKeys.delete(key)
           }
         })
     }
@@ -5086,10 +5158,16 @@ export class BotService extends TypertRemoteService {
     fenceRetry = false,
   ): void {
     const key = `${String(sessionId)}:${routineId}:${String(messageId)}`
-    const delay = fenceRetry ? botRosterFenceRetryDelay(attempt) : botRecoveryRetryDelay(attempt)
+    const lifecycleRetry = fenceRetry || this.eventRoutineRetryFenceKeys.has(key)
+    if (lifecycleRetry) this.eventRoutineRetryFenceKeys.add(key)
+    const delay = lifecycleRetry ? botRosterFenceRetryDelay(attempt) : botRecoveryRetryDelay(attempt)
     if (delay === undefined || this.stopping) {
+      if (!this.stopping && !lifecycleRetry) {
+        this.reportEventRoutineRetryTerminal(`bots: pending event routine ${routineId}`, attempt)
+      }
       this.eventRoutineRetryAttempts.delete(key)
       this.eventRoutineRetryKeys.delete(key)
+      this.eventRoutineRetryFenceKeys.delete(key)
       return
     }
     const prior = this.eventRoutineRetryAttempts.get(key)
@@ -5100,6 +5178,7 @@ export class BotService extends TypertRemoteService {
       if (this.stopping) {
         this.eventRoutineRetryAttempts.delete(key)
         this.eventRoutineRetryKeys.delete(key)
+        this.eventRoutineRetryFenceKeys.delete(key)
         return
       }
       void this.retryPendingEventRoutines(sessionId, routineId, false, attempt)
@@ -5117,6 +5196,7 @@ export class BotService extends TypertRemoteService {
           if (this.eventRoutineRetryAttempts.get(key) === attempt) {
             this.eventRoutineRetryAttempts.delete(key)
             this.eventRoutineRetryKeys.delete(key)
+            this.eventRoutineRetryFenceKeys.delete(key)
           }
         })
     }
@@ -5130,10 +5210,16 @@ export class BotService extends TypertRemoteService {
     fenceRetry = false,
   ): void {
     const key = String(sessionId)
-    const delay = fenceRetry ? botRosterFenceRetryDelay(attempt) : botRecoveryRetryDelay(attempt)
+    const lifecycleRetry = fenceRetry || this.eventRoutineResultRecoveryRetryFenceKeys.has(key)
+    if (lifecycleRetry) this.eventRoutineResultRecoveryRetryFenceKeys.add(key)
+    const delay = lifecycleRetry ? botRosterFenceRetryDelay(attempt) : botRecoveryRetryDelay(attempt)
     if (delay === undefined || this.stopping) {
+      if (!this.stopping && !lifecycleRetry) {
+        this.reportEventRoutineRetryTerminal(`bots: event routine result recovery for ${sessionId}`, attempt)
+      }
       this.eventRoutineResultRecoveryRetryAttempts.delete(key)
       this.eventRoutineResultRecoveryRetryKeys.delete(key)
+      this.eventRoutineResultRecoveryRetryFenceKeys.delete(key)
       return
     }
     const prior = this.eventRoutineResultRecoveryRetryAttempts.get(key)
@@ -5144,6 +5230,7 @@ export class BotService extends TypertRemoteService {
       if (this.stopping) {
         this.eventRoutineResultRecoveryRetryAttempts.delete(key)
         this.eventRoutineResultRecoveryRetryKeys.delete(key)
+        this.eventRoutineResultRecoveryRetryFenceKeys.delete(key)
         return
       }
       void this.recoverEventRoutineResults(sessionId, attempt)
@@ -5159,6 +5246,7 @@ export class BotService extends TypertRemoteService {
           if (this.eventRoutineResultRecoveryRetryAttempts.get(key) === attempt) {
             this.eventRoutineResultRecoveryRetryAttempts.delete(key)
             this.eventRoutineResultRecoveryRetryKeys.delete(key)
+            this.eventRoutineResultRecoveryRetryFenceKeys.delete(key)
           }
         })
     }
