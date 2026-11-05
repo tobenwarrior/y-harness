@@ -726,6 +726,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'Per-recipient delivery outcomes.',
       },
       {
+        signature: '@Remote(\'admitGroupImage\') async admitGroupImage(request: BotGroupImageAdmissionRequest): Promise<BotAttachmentGrantValue>',
+        description: 'Admit one owner-local encoded image for an explicitly identified group message.',
+        parameters: [{ name: 'request', description: 'Group, message, recipient, and encoded image.' }],
+        returns: 'Opaque grant id and safe image metadata.',
+      },
+      {
         signature: '@Remote(\'recoverSharedGroupDelivery\') async recoverSharedGroupDelivery(request: BotGroupDeliveryRecoveryRequest): Promise<BotGroupDeliveryRecoveryValue>',
         description: 'Reconcile one isolated shared-group recipient fence after an explicit owner confirmation that every Host able to own the Session is quiesced.',
         parameters: [{ name: 'request', description: 'Exact group, Bot, Session, and message identities.' }],
@@ -5616,6 +5622,18 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface BotAppearanceUpdateValue {\n    readonly bot: BotView;\n}',
   },
   {
+    name: 'BotAttachmentGrantId',
+    declaration: 'export type BotAttachmentGrantId = Branded<\'BotAttachmentGrantId\'>;',
+  },
+  {
+    name: 'BotAttachmentGrantValue',
+    declaration: 'export interface BotAttachmentGrantValue {\n    readonly grantId: BotAttachmentGrantId;\n    readonly attachments: readonly BotAttachmentMetadata[];\n}',
+  },
+  {
+    name: 'BotAttachmentMetadata',
+    declaration: 'export type BotAttachmentMetadata = {\n    readonly type: \'image\';\n    readonly mediaType: ImageAttachmentRef[\'mediaType\'];\n    readonly bytes: number;\n    readonly width: number;\n    readonly height: number;\n    readonly name?: string;\n} | {\n    readonly type: \'file\';\n    readonly name: string;\n    readonly bytes: number;\n};',
+  },
+  {
     name: 'BotAvailability',
     declaration: 'export type BotAvailability = \'running\' | \'idle\' | \'offline\';',
   },
@@ -5744,6 +5762,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type BotGroupId = Branded<\'BotGroupId\'>;',
   },
   {
+    name: 'BotGroupImageAdmissionRequest',
+    declaration: 'export interface BotGroupImageAdmissionRequest {\n    readonly groupId: BotGroupId;\n    readonly messageId: BotGroupMessageId;\n    readonly targetBotIds?: readonly BotId[];\n    readonly image: EncodedImageAttachment;\n}',
+  },
+  {
     name: 'BotGroupInspectRequest',
     declaration: 'export interface BotGroupInspectRequest {\n    readonly groupId: BotGroupId;\n}',
   },
@@ -5773,7 +5795,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'BotGroupMessageView',
-    declaration: 'export interface BotGroupMessageView {\n    readonly id: BotGroupMessageId;\n    readonly groupId: BotGroupId;\n    readonly sender: BotGroupMessageSenderView;\n    readonly text: string;\n    readonly targetBotIds?: readonly BotId[];\n    readonly createdAt: number;\n}',
+    declaration: 'export interface BotGroupMessageView {\n    readonly id: BotGroupMessageId;\n    readonly groupId: BotGroupId;\n    readonly sender: BotGroupMessageSenderView;\n    readonly text: string;\n    readonly targetBotIds?: readonly BotId[];\n    readonly attachments?: readonly BotInputAttachmentView[];\n    readonly createdAt: number;\n}',
   },
   {
     name: 'BotGroupRecord',
@@ -5781,7 +5803,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'BotGroupSendRemoteRequest',
-    declaration: 'export interface BotGroupSendRemoteRequest {\n    readonly groupId: BotGroupId;\n    readonly text: string;\n    readonly messageId?: BotGroupMessageId;\n    readonly targetBotIds?: readonly BotId[];\n}',
+    declaration: 'export interface BotGroupSendRemoteRequest {\n    readonly groupId: BotGroupId;\n    readonly text: string;\n    readonly messageId?: BotGroupMessageId;\n    readonly targetBotIds?: readonly BotId[];\n    readonly attachmentGrants?: readonly BotAttachmentGrantIdType[];\n}',
   },
   {
     name: 'BotGroupSendValue',
@@ -5802,6 +5824,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'BotId',
     declaration: 'export type BotId = Branded<\'BotId\'>;',
+  },
+  {
+    name: 'BotInputAttachmentView',
+    declaration: 'export type BotInputAttachmentView = BotAttachmentMetadata & {\n    readonly attachmentId: string;\n};',
   },
   {
     name: 'BotListRequest',

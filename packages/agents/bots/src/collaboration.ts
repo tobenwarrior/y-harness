@@ -10,6 +10,7 @@ import { botInboxMessageState } from './inbox.ts'
 import type { BotMemoryClient } from './memory.ts'
 import { BotGroupMessageId } from './group-chat.ts'
 import type { BotGroupId } from './group-chat.ts'
+import type { BotInputAttachment } from './attachment-grants.ts'
 import type { BotId, BotView } from './types.ts'
 
 /** Stable identity for one durable Bot-to-Bot delivery. */
@@ -199,6 +200,8 @@ export interface SendExternalBotMessageRequest {
   readonly senderName?: string
   /** Message text. */
   readonly text: string
+  /** Provider-admitted immutable content references. */
+  readonly attachments?: readonly BotInputAttachment[]
   /** Stable retry identity. */
   readonly messageId: BotMessageId
   /** Transient caller cancellation. */
@@ -563,9 +566,14 @@ export class BotCollaborationService {
       resolved.agent.followup(freezeMessage({
         id: request.messageId,
         role: 'user',
-        content: [{ type: 'text', text: request.senderName === undefined
-          ? `Message from group "${request.groupName}":\n${text}`
-          : `Message from ${request.senderName} in group "${request.groupName}":\n${text}` }],
+        content: [
+          { type: 'text', text: request.senderName === undefined
+            ? `Message from group "${request.groupName}":\n${text}`
+            : `Message from ${request.senderName} in group "${request.groupName}":\n${text}` },
+          ...(request.attachments ?? []).map(attachment => attachment.type === 'image'
+            ? { type: 'image' as const, attachment: attachment.attachment }
+            : { type: 'file' as const, attachment: attachment.attachment }),
+        ],
         source: { kind: 'bot-group-message', groupId: request.groupId, messageId: BotGroupMessageId(String(request.messageId)) },
       }))
       await this.flushTarget(target.sessionId, target.name)

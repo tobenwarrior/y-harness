@@ -195,6 +195,13 @@ collaborationFor(agent: Pick<Agent, 'id'>): Promise<BotCollaborationClient>
 @Remote('sendGroupMessage') async sendGroupMessage(request: BotGroupSendRemoteRequest): Promise<BotGroupSendValue>
 
 /**
+ * Admit one owner-local encoded image for an explicitly identified group message.
+ * @param request - Group, message, recipient, and encoded image.
+ * @returns Opaque grant id and safe image metadata.
+ */
+@Remote('admitGroupImage') async admitGroupImage(request: BotGroupImageAdmissionRequest): Promise<BotAttachmentGrantValue>
+
+/**
  * Reconcile one isolated shared-group recipient fence after an explicit
  * owner confirmation that every Host able to own the Session is quiesced.
  * @param request - Exact group, Bot, Session, and message identities.

@@ -11,6 +11,7 @@ import {
   SHARED_BOTS_PATH,
   SharedAccessAuthority,
   SharedInviteCode,
+  sharedPrincipalOf,
   type HostConnectionHandle,
 } from '@yharness/client-connection'
 import { MessageId } from '@yharness/llm/brand'
@@ -71,8 +72,16 @@ import type {
   BotMemoryRememberRequest,
 } from './memory.ts'
 import { BotGroupId, BotGroupMessageId, BotGroupService, botGroupDomain } from './group-chat.ts'
+import { attachmentContentBlocks, BotAttachmentGrantStore, botAttachmentDomain } from './attachment-grants.ts'
+import {
+  BOT_GROUP_ATTACHMENT_UPLOAD_PATH,
+  SHARED_BOT_ATTACHMENT_UPLOAD_PATH,
+  bridgeBotAttachmentRequest,
+  handleBotAttachmentUpload,
+} from './attachment-routes.ts'
 import type {
   BotGroupCreateRequest,
+  BotGroupImageAdmissionRequest,
   BotGroupCreateValue,
   BotGroupDeliveryClaimInput,
   BotGroupDeliveryRecoveryRequest,
@@ -86,6 +95,7 @@ import type {
   BotGroupSendRemoteRequest,
   BotGroupSendValue,
 } from './group-chat.ts'
+import type { BotAttachmentGrantValue } from './attachment-grants.ts'
 import { createBotNativeToolProvider } from './native-tools.ts'
 import type { BotNativeToolHost, BotRoutineCreateResolution, BotRoutineCreateReservation } from './native-tools.ts'
 import { installBotCollaborationTools } from './scoped-tools.ts'
@@ -258,6 +268,32 @@ export type {
 } from './memory.ts'
 export { botDomain, botRecordSchema } from './storage.ts'
 export {
+  BotAttachmentGrantError,
+  BotAttachmentGrantId,
+  BotAttachmentGrantStore,
+  BotPrivateMessageId,
+  attachmentContentBlocks,
+  attachmentMetadata,
+  attachmentView,
+  botAttachmentDomain,
+  botAttachmentGrantSchema,
+  normalizeScope,
+  sameAttachmentRefs,
+} from './attachment-grants.ts'
+export type {
+  BotAttachmentDomain,
+  BotAttachmentGrantId as BotAttachmentGrantIdType,
+  BotAttachmentGrantRecord,
+  BotAttachmentGrantState,
+  BotAttachmentGrantValue,
+  BotAttachmentMetadata,
+  BotAttachmentScope,
+  BotInputAttachment,
+  BotInputAttachmentView,
+  BotPrivateDeliveryRecord,
+  BotPrivateMessageId as BotPrivateMessageIdType,
+} from './attachment-grants.ts'
+export {
   sharedBotDomain,
   sharedInviteSchema,
   sharedMembershipSchema,
@@ -335,6 +371,8 @@ export type {
   BotGroupDeliveryClaim,
   BotGroupDeliveryClaimInput,
   BotGroupDeliveryHost,
+  BotGroupAttachmentAdmissionRequest,
+  BotGroupImageAdmissionRequest,
   BotGroupDeliveryRecord,
   BotGroupDeliveryStatusView,
   BotGroupDeliveryView,
@@ -358,6 +396,7 @@ export type {
   BotGroupSendValue,
   BotGroupView,
 } from './group-chat.ts'
+export { BOT_GROUP_ATTACHMENT_UPLOAD_PATH, SHARED_BOT_ATTACHMENT_UPLOAD_PATH } from './attachment-routes.ts'
 export { imageAttachmentRefSchema } from './storage.ts'
 export { installBotCollaborationTools } from './scoped-tools.ts'
 export {
@@ -445,6 +484,16 @@ const sharedRosterFenceRecoveryRequestSchema = zod.object({
 }).strict()
 const sharedEnrollmentPayloadSchema = zod.object({
   code: zod.string().min(1).max(512),
+}).strict()
+const botGroupImageAdmissionSchema = zod.object({
+  groupId: zod.string().regex(/^bot-group-[A-Za-z0-9][A-Za-z0-9-]*$/),
+  messageId: zod.string().regex(/^bot-group-message-[A-Za-z0-9][A-Za-z0-9-]*$/),
+  targetBotIds: zod.array(zod.string().regex(/^bot-[A-Za-z0-9][A-Za-z0-9-]*$/)).min(1).max(6).optional(),
+  image: zod.object({
+    mediaType: zod.enum(['image/png', 'image/jpeg', 'image/webp', 'image/gif']),
+    data: zod.string(),
+    name: zod.string().min(1).max(255).optional(),
+  }).strict(),
 }).strict()
 
 interface ResolvedBotSharedConfig {
@@ -1882,6 +1931,7 @@ export class BotService extends TypertRemoteService {
   private readonly ready: Promise<Domain<typeof botDomain>>
   private readonly groupDomain: Promise<Domain<typeof botGroupDomain>>
   private readonly groupService: Promise<BotGroupService>
+  private readonly attachmentDomain: Promise<Domain<typeof botAttachmentDomain>>
   private readonly templateDomain: Promise<Domain<typeof botTemplateDomain>>
   private readonly templateSigningKey: Promise<KeyObject>
   private readonly templateApprovalPreviews = new Map<string, TemplateApprovalPreview>()
@@ -2032,23 +2082,30 @@ export class BotService extends TypertRemoteService {
       })
     }, { global: true })
     this.groupDomain = ctx.storageDomain.open(botGroupDomain)
-    this.groupService = this.groupDomain.then(domain => new BotGroupService(domain, {
-      listBots: async () => (await this.list({ includeHidden: true })).bots,
-      inspectSession: async (sessionId) => {
-        const inspection = await ctx.sessionController.inspect(sessionId)
-        return { events: inspection.events }
+    this.attachmentDomain = ctx.storageDomain.open(botAttachmentDomain)
+    this.groupService = Promise.all([this.groupDomain, this.attachmentDomain]).then(([domain, attachmentDomain]) => new BotGroupService(
+      domain,
+      {
+        listBots: async () => (await this.list({ includeHidden: true })).bots,
+        inspectSession: async (sessionId) => {
+          const inspection = await ctx.sessionController.inspect(sessionId)
+          return { events: inspection.events }
+        },
+        deliverToBot: async request => this.collaboration.sendExternal({
+          targetBotId: request.targetBotId,
+          groupId: request.groupId,
+          groupName: request.groupName,
+          ...(request.senderName === undefined ? {} : { senderName: request.senderName }),
+          text: request.text,
+          ...(request.attachments === undefined ? {} : { attachments: request.attachments }),
+          messageId: BotMessageId(String(request.messageId)),
+          ...(request.signal === undefined ? {} : { signal: request.signal }),
+        }),
+        changed: () => this.emitChanged(),
       },
-      deliverToBot: async request => this.collaboration.sendExternal({
-        targetBotId: request.targetBotId,
-        groupId: request.groupId,
-        groupName: request.groupName,
-        ...(request.senderName === undefined ? {} : { senderName: request.senderName }),
-        text: request.text,
-        messageId: BotMessageId(String(request.messageId)),
-        ...(request.signal === undefined ? {} : { signal: request.signal }),
-      }),
-      changed: () => this.emitChanged(),
-    }))
+      new BotAttachmentGrantStore(attachmentDomain),
+      this.ownerId,
+    ))
     ctx.on('agent/pre-step', async ({ agent }, next) => {
       if (this.sharedScopeFences.has(agent)) return { kind: 'reject' as const }
       const decision = await next()
@@ -2422,19 +2479,24 @@ export class BotService extends TypertRemoteService {
       let domain: Domain<typeof botDomain> | undefined
       let noCredentialIntent: Domain<typeof botMutationIntentDomain> | undefined
       let groupDomain: Domain<typeof botGroupDomain> | undefined
+      let attachmentDomain: Domain<typeof botAttachmentDomain> | undefined
       let templateDomain: Domain<typeof botTemplateDomain> | undefined
       let sharedCleanup: () => Promise<void> = async () => {}
+      let attachmentCleanup: () => Promise<void> = async () => {}
       let cleanup: () => Promise<void>
       try {
         domain = await this.ready
         noCredentialIntent = await this.noCredentialIntentReady
         groupDomain = await this.groupDomain
+        attachmentDomain = await this.attachmentDomain
         templateDomain = await this.templateDomain
         await this.templateSigningKey
         const openedDomain = domain
         const openedNoCredentialIntent = noCredentialIntent
         const openedGroupDomain = groupDomain
+        const openedAttachmentDomain = attachmentDomain
         const openedTemplateDomain = templateDomain
+        attachmentCleanup = await this.mountAttachmentRoutes()
         sharedCleanup = await this.mountSharedAccess(openedDomain)
         cleanup = ctx.effect(() => async () => {
           this.stopping = true
@@ -2444,11 +2506,13 @@ export class BotService extends TypertRemoteService {
           const promptFibers = [...this.promptFibers.values()]
           this.promptFibers.clear()
           await this.groupService.then(service => service.whenIdle())
+          await attachmentCleanup()
           await Promise.all([
             ...promptFibers.map(fiber => fiber.dispose()),
             ...this.promptDisposals,
             openedDomain.close(),
             openedGroupDomain.close(),
+            openedAttachmentDomain.close(),
             openedTemplateDomain.close(),
             openedNoCredentialIntent?.close() ?? Promise.resolve(),
           ])
@@ -2456,10 +2520,12 @@ export class BotService extends TypertRemoteService {
         })
       } catch (error) {
         this.stopping = true
+        await attachmentCleanup()
         await sharedCleanup()
         await Promise.all([
           ...(domain === undefined ? [] : [domain.close()]),
           ...(groupDomain === undefined ? [] : [groupDomain.close()]),
+          ...(attachmentDomain === undefined ? [] : [attachmentDomain.close()]),
           ...(templateDomain === undefined ? [] : [templateDomain.close()]),
           noCredentialIntent?.close() ?? Promise.resolve(),
         ])
@@ -5237,6 +5303,25 @@ export class BotService extends TypertRemoteService {
   }
 
   /**
+   * Admit one owner-local encoded image for an explicitly identified group message.
+   * @param request - Group, message, recipient, and encoded image.
+   * @returns Opaque grant id and safe image metadata.
+   */
+  @Remote('admitGroupImage')
+  async admitGroupImage(request: BotGroupImageAdmissionRequest): Promise<BotAttachmentGrantValue> {
+    const parsed = botGroupImageAdmissionSchema.safeParse(request)
+    if (!parsed.success) throw new RemoteError('gateway/bad-request', 'Invalid Bot group image admission request', {})
+    const refs = await admitEncodedImages(this.ctx.attachments, [parsed.data.image])
+    const service = await this.getGroupService()
+    return service.admitAttachment({
+      groupId: BotGroupId(parsed.data.groupId),
+      messageId: BotGroupMessageId(parsed.data.messageId),
+      ...(parsed.data.targetBotIds === undefined ? {} : { targetBotIds: parsed.data.targetBotIds.map(BotId) }),
+      attachments: refs.map(attachment => ({ type: 'image' as const, attachment })),
+    })
+  }
+
+  /**
    * Reconcile one isolated shared-group recipient fence after an explicit
    * owner confirmation that every Host able to own the Session is quiesced.
    * @param request - Exact group, Bot, Session, and message identities.
@@ -6664,10 +6749,12 @@ export class BotService extends TypertRemoteService {
     let service: SharedBotService | undefined
     let removeEnrollment: (() => Promise<void>) | undefined
     let removeShared: (() => Promise<void>) | undefined
+    let removeSharedAttachmentRoute: (() => void) | undefined
     try {
       const host = this.sharedHost()
       service = await SharedBotService.create(this.ctx, this.ctx.storageDomain, authority, host, {
         membershipPollIntervalMs: this.sharedConfig.membershipPollIntervalMs,
+        attachmentStore: new BotAttachmentGrantStore(await this.attachmentDomain),
       })
       const shared = service
       // The shared mount runs from the initialized effect. Reading through
@@ -6760,6 +6847,37 @@ export class BotService extends TypertRemoteService {
       removeShared = connection.sharedRpc.handle(SHARED_BOTS_PATH, authority, shared.handle.bind(shared), {
         endpoints: SHARED_BOT_ENDPOINTS,
       })
+      const webServer = this.ctx.get('webServer')
+      if (webServer !== undefined) {
+        removeSharedAttachmentRoute = webServer.register({
+          kind: 'exact',
+          path: SHARED_BOT_ATTACHMENT_UPLOAD_PATH,
+          handler: async (request, response) => {
+            const admission = await connection.admitShared(request, authority)
+            if ('rejection' in admission) {
+              response.writeHead(admission.rejection)
+              response.end(admission.rejection === 401 ? 'unauthorized' : 'forbidden')
+              return
+            }
+            const principal = sharedPrincipalOf(admission.peer)
+            if (principal === undefined) {
+              response.writeHead(403)
+              response.end('forbidden')
+              return
+            }
+            await bridgeBotAttachmentRequest(request, response, fetchRequest => handleBotAttachmentUpload(
+              fetchRequest,
+              (target, data, name, signal) => shared.admitSharedFileUpload(
+                target,
+                data,
+                name,
+                signal,
+                BotPrincipalId(String(principal)),
+              ),
+            ))
+          },
+        })
+      }
       this.sharedService = service
       await this.reconcileSharedGroupDeliveryAdmissions()
       await shared.recoverSharedGroupDeliveries()
@@ -6770,6 +6888,7 @@ export class BotService extends TypertRemoteService {
         .filter(binding => binding.revokedAt === undefined)
         .map(binding => this.reconcileGroupSessionId(binding.sessionId)))
       return async () => {
+        removeSharedAttachmentRoute?.()
         await removeShared?.()
         await removeEnrollment?.()
         await service?.dispose()
@@ -6786,6 +6905,7 @@ export class BotService extends TypertRemoteService {
         this.clearSharedGroupAdmissionReconciliationRetries()
       }
     } catch (error) {
+      removeSharedAttachmentRoute?.()
       await removeShared?.()
       await removeEnrollment?.()
       await service?.dispose()
@@ -6793,6 +6913,33 @@ export class BotService extends TypertRemoteService {
       this.clearSharedGroupAdmissionReconciliationRetries()
       throw error
     }
+  }
+
+  /** Register the owner-authenticated streaming group attachment route. */
+  private async mountAttachmentRoutes(): Promise<() => Promise<void>> {
+    const connection: HostConnectionHandle | undefined = this.ctx.get('connection')
+    if (connection === undefined) return async () => {}
+    const groups = await this.groupService
+    const remove = await connection.fetch.register({
+      path: BOT_GROUP_ATTACHMENT_UPLOAD_PATH,
+      methods: ['POST'],
+      requestBody: 'streaming',
+      fetch: request => handleBotAttachmentUpload(request, async (target, data, name, signal) => {
+        if (target.kind !== 'group') throw new RemoteError('gateway/bad-request', 'private attachment uploads require the shared route', {})
+        const file = await this.ctx.attachments.saveFileStream({
+          data,
+          ...(name === undefined ? {} : { name }),
+          signal,
+        })
+        return groups.admitAttachment({
+          groupId: target.groupId,
+          messageId: target.messageId,
+          ...(target.targetBotIds === undefined ? {} : { targetBotIds: target.targetBotIds }),
+          attachments: [{ type: 'file', attachment: file }],
+        })
+      }),
+    })
+    return async () => { await remove() }
   }
 
   private sharedHost(): SharedBotHost {
@@ -6925,6 +7072,14 @@ export class BotService extends TypertRemoteService {
         await this.ctx.sessions.flush(session)
         signal?.throwIfAborted()
       },
+      admitEncodedImage: async (input, signal) => {
+        signal?.throwIfAborted()
+        const [reference] = await admitEncodedImages(this.ctx.attachments, [input])
+        signal?.throwIfAborted()
+        if (reference === undefined) throw new Error('shared Bot image admission returned no reference')
+        return reference
+      },
+      saveFileStream: input => this.ctx.attachments.saveFileStream(input),
       createSharedGroupSession: (bot, sessionId, groupId, signal) => this.createSharedGroupSession(bot, sessionId, groupId, signal),
       resolveSharedGroupAgent: (sessionId, groupId, botId, signal) => this.resolveSharedGroupAgent(sessionId, groupId, botId, signal),
       inspectSharedGroupSession: (sessionId, signal) => this.inspectSharedGroupSession(sessionId, signal),
@@ -7585,7 +7740,10 @@ export class BotService extends TypertRemoteService {
     const message = freezeMessage({
       id: messageId,
       role: 'user',
-      content: [{ type: 'text', text: `Message from shared group "${request.groupName}":\n${request.text}` }],
+      content: [
+        { type: 'text', text: `Message from shared group "${request.groupName}":\n${request.text}` },
+        ...attachmentContentBlocks(request.attachments ?? []),
+      ],
       source: { kind: 'bot-group-message', groupId: request.groupId, messageId: request.messageId },
     })
     let result: 'accepted' | 'duplicate' | undefined
