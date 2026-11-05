@@ -15,7 +15,11 @@ import { BotId } from './types.ts'
 /** Stable opaque identity for one admitted Bot-message attachment grant. */
 export type BotAttachmentGrantId = Branded<'BotAttachmentGrantId'>
 
-/** Apply the grant identity brand to a validated value. */
+/**
+ * Apply the grant identity brand to a validated value.
+ * @param value - Validated grant identity.
+ * @returns Branded grant identity.
+ */
 export function BotAttachmentGrantId(value: string): BotAttachmentGrantId {
   return brandString<BotAttachmentGrantId>(value)
 }
@@ -23,7 +27,11 @@ export function BotAttachmentGrantId(value: string): BotAttachmentGrantId {
 /** Stable identity for one shared-private message. */
 export type BotPrivateMessageId = Branded<'BotPrivateMessageId'>
 
-/** Apply the private-message identity brand to a validated value. */
+/**
+ * Apply the private-message identity brand to a validated value.
+ * @param value - Validated message identity.
+ * @returns Branded private-message identity.
+ */
 export function BotPrivateMessageId(value: string): BotPrivateMessageId {
   return brandString<BotPrivateMessageId>(value)
 }

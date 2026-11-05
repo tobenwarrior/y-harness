@@ -243,6 +243,7 @@ export interface SharedBotsClient {
 /**
  * Build a typed caller for the collaborator-only route.
  * @param rpc - Connection RPC carrier from the active Client generation.
+ * @param attachmentFetcher - Transport used to upload shared files.
  * @returns shared-Bot operations using the dedicated channel only.
  */
 export function createSharedBotsClient(

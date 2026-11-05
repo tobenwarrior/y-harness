@@ -47,7 +47,11 @@ const BOT_ID_PATTERN = /^bot-[A-Za-z0-9][A-Za-z0-9-]*$/
 const GROUP_ID_PATTERN = /^bot-group-[A-Za-z0-9][A-Za-z0-9-]*$/
 const MESSAGE_ID_PATTERN = /^bot-group-message-[A-Za-z0-9][A-Za-z0-9-]*$/
 
-/** Whether a browser file uses the bounded image-admission path. */
+/**
+ * Check whether a browser file uses the bounded image-admission path.
+ * @param value - Browser file media type.
+ * @returns Whether the image admission route supports the media type.
+ */
 export function isBotGroupImageType(value: string): value is BotGroupImageAdmissionRequest['image']['mediaType'] {
   return SUPPORTED_IMAGE_TYPES.has(value as BotGroupImageAdmissionRequest['image']['mediaType'])
 }
@@ -155,7 +159,11 @@ function validateGrantValue(value: BotAttachmentGrantValue): void {
   if (parseBotAttachmentGrantValue(value) === undefined) throw new BotAttachmentClientError('gateway/invalid-response', 'invalid attachment grant response')
 }
 
-/** Parse and validate a Host-issued opaque attachment grant response. */
+/**
+ * Parse and validate a Host-issued opaque attachment grant response.
+ * @param value - Untrusted grant response.
+ * @returns The validated grant, or undefined when invalid.
+ */
 export function parseBotAttachmentGrantValue(value: unknown): BotAttachmentGrantValue | undefined {
   if (!isRecord(value) || typeof value.grantId !== 'string' || !GRANT_ID_PATTERN.test(value.grantId)
     || !Array.isArray(value.attachments) || value.attachments.length < 1 || value.attachments.length > 8) return undefined

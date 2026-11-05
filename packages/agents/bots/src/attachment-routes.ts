@@ -19,7 +19,13 @@ export const BOT_ATTACHMENT_MAX_BYTES = 20 * 1024 * 1024
 /** Wall-clock limit for one streamed Bot attachment upload. */
 export const BOT_ATTACHMENT_UPLOAD_TIMEOUT_MS = 60_000
 
-/** Bound one backpressured attachment stream before it reaches a provider. */
+/**
+ * Bound one backpressured attachment stream before it reaches a provider.
+ * @param data - Incoming file chunks.
+ * @param maxBytes - Maximum total bytes.
+ * @param signal - Optional cancellation for the stream.
+ * @returns Bounded file chunks.
+ */
 export async function* boundedBotAttachmentStream(
   data: AsyncIterable<Uint8Array>,
   maxBytes = BOT_ATTACHMENT_MAX_BYTES,
@@ -58,7 +64,12 @@ export async function* boundedBotAttachmentStream(
   }
 }
 
-/** Combine the authenticated request cancellation with the upload deadline. */
+/**
+ * Combine the authenticated request cancellation with the upload deadline.
+ * @param signal - Request cancellation.
+ * @param timeoutMs - Maximum upload duration.
+ * @returns Signal that aborts on cancellation or timeout.
+ */
 export function botAttachmentUploadSignal(signal: AbortSignal, timeoutMs = BOT_ATTACHMENT_UPLOAD_TIMEOUT_MS): AbortSignal {
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1) {
     throw new BotAttachmentGrantError('invalid', 'attachment upload timeout is invalid')
