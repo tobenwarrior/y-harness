@@ -128,7 +128,10 @@ const privateMessageIdSchema = z.string()
   .max(MAX_PRIVATE_MESSAGE_ID)
   .transform(BotPrivateMessageId)
 const principalIdSchema = z.string().regex(/^principal-[A-Za-z0-9-]+$/).transform(BotPrincipalId)
-const attachmentIdSchema = z.string().regex(/^sha256:[0-9a-f]{64}$/).transform(AttachmentId)
+const attachmentIdSchema = z.string().min(1).max(512).refine(
+  value => value.trim() === value && !/[\u0000-\u001f\u007f]/.test(value),
+  'attachment provider id is invalid',
+).transform(AttachmentId)
 const fileAttachmentSchema = z.object({
   attachmentId: attachmentIdSchema,
   name: z.string().min(1).max(255),
@@ -183,7 +186,7 @@ const sharedGroupScopeSchema = z.object({
   targetBotIds: targetBotIdsSchema,
   authorizationRevision: revisionSchema,
 }).strict()
-const sharedGroupProjectionScopeSchema = sharedGroupScopeSchema.omit({ principalId: true })
+const sharedGroupProjectionScopeSchema = sharedGroupScopeSchema
 const sharedPrivateScopeSchema = z.object({
   kind: z.literal('shared-private'),
   principalId: principalIdSchema,
@@ -250,9 +253,14 @@ export class BotAttachmentGrantStore {
   private readonly privateDeliveries
 
   /** @param domain - Open additive attachment domain. */
-  constructor(domain: Domain<typeof botAttachmentDomain>) {
+  constructor(private readonly domain: Domain<typeof botAttachmentDomain>) {
     this.grants = domain.table('grants')
     this.privateDeliveries = domain.table('private_deliveries')
+  }
+
+  /** Reload grant and delivery projections before a shared authority operation. */
+  async refresh(): Promise<void> {
+    await this.domain.refresh()
   }
 
   /**
@@ -319,6 +327,17 @@ export class BotAttachmentGrantStore {
   }
 
   /**
+   * Preview the immutable references for a grant set without consuming it.
+   * @param scope - Current authorization and message scope.
+   * @param ids - Opaque grant ids supplied by the caller.
+   * @returns references in grant order, suitable for retry-content validation.
+   */
+  preview(scope: BotAttachmentScope, ids: readonly BotAttachmentGrantId[]): readonly BotInputAttachment[] {
+    if (ids.length === 0) return []
+    return this.readGrantRecords(normalizeScope(scope), ids).flatMap(record => record.attachments)
+  }
+
+  /**
    * Read consumed attachment content for an exact message scope.
    * @param scope - Current authorization scope.
    * @returns references in durable admission order.
@@ -334,23 +353,23 @@ export class BotAttachmentGrantStore {
 
   /**
    * Read shared-group attachments for an already ACL-authorized transcript.
-   * The sender principal is intentionally omitted from this projection scope;
-   * the caller must authenticate group membership before requesting it, while
-   * grant consumption remains bound to the sending principal.
+   * The sender principal remains part of the projection scope so a reused
+   * message id cannot expose another principal's consumed grant.
    * @param scope - Group message and recipient projection scope.
    * @returns references in durable admission order.
    */
   attachmentsForSharedGroupMessage(
-    scope: Pick<Extract<BotAttachmentScope, { readonly kind: 'shared-group' }>, 'groupId' | 'messageId' | 'targetBotIds' | 'authorizationRevision'>,
+    scope: Pick<Extract<BotAttachmentScope, { readonly kind: 'shared-group' }>, 'principalId' | 'groupId' | 'messageId' | 'targetBotIds' | 'authorizationRevision'>,
   ): readonly BotInputAttachment[] {
     const parsed = sharedGroupProjectionScopeSchema.safeParse({ kind: 'shared-group', ...scope })
     if (!parsed.success) throw new BotAttachmentGrantError('invalid', 'shared-group attachment projection scope is invalid')
-    const { groupId, messageId, targetBotIds } = parsed.data
+    const { principalId, groupId, messageId, targetBotIds } = parsed.data
     const normalizedTargets = sortIds(targetBotIds)
     return [...this.grants.entries()]
       .map(([, record]) => record)
       .filter(record => record.state === 'consumed'
         && record.scope.kind === 'shared-group'
+        && record.scope.principalId === principalId
         && record.scope.groupId === groupId
         && record.scope.messageId === messageId
         && isDeepStrictEqual(record.scope.targetBotIds, normalizedTargets))
@@ -396,6 +415,39 @@ export class BotAttachmentGrantStore {
   }
 
   /**
+   * Extend a live private delivery lease without changing its owner token.
+   * @param scope - Exact principal, Bot, message, and membership revision.
+   * @param token - Lease token returned by reservation.
+   * @param now - Current durable time.
+   * @param leaseMs - Positive bounded lease duration.
+   * @returns whether this token still owns a pending lease.
+   */
+  async renewPrivateDelivery(
+    scope: Extract<BotAttachmentScope, { readonly kind: 'shared-private' }>,
+    token: string,
+    now: number,
+    leaseMs: number,
+  ): Promise<boolean> {
+    if (token.length < 1 || token.length > MAX_LEASE_TOKEN) {
+      throw new BotAttachmentGrantError('invalid', 'private delivery lease token is invalid')
+    }
+    if (!Number.isSafeInteger(leaseMs) || leaseMs < 1 || leaseMs > 300_000) {
+      throw new BotAttachmentGrantError('invalid', 'private delivery lease duration is invalid')
+    }
+    const normalizedScope = normalizePrivateScope(scope)
+    const id = privateDeliveryKey(normalizedScope)
+    const current = this.privateDeliveries.get(id)
+    if (current === undefined || current.state !== 'pending' || current.token !== token) return false
+    const timestamp = safeTimestamp(now, 'private delivery renewal time')
+    await this.privateDeliveries.put(id, {
+      ...current,
+      leaseUntil: timestamp + leaseMs,
+      updatedAt: timestamp,
+    })
+    return true
+  }
+
+  /**
    * Read the durable private-message lease for one exact authorization scope.
    * @param scope - Principal, Bot, message, and membership revision.
    * @returns the current lease, when one exists.
@@ -413,23 +465,25 @@ export class BotAttachmentGrantStore {
    * @param token - Lease token returned by reservation.
    * @param state - Durable completion state.
    * @param now - Completion timestamp.
+   * @returns whether this token still owned the pending lease.
    */
   async settlePrivateDelivery(
     scope: Extract<BotAttachmentScope, { readonly kind: 'shared-private' }>,
     token: string,
     state: 'accepted',
     now = Date.now(),
-  ): Promise<void> {
+  ): Promise<boolean> {
     const normalizedScope = normalizePrivateScope(scope)
     const id = privateDeliveryKey(normalizedScope)
     const current = this.privateDeliveries.get(id)
-    if (current === undefined || current.token !== token || current.state !== 'pending') return
+    if (current === undefined || current.token !== token || current.state !== 'pending') return false
     await this.privateDeliveries.put(id, {
       ...current,
       state,
       leaseUntil: safeTimestamp(now, 'private delivery settlement time'),
       updatedAt: safeTimestamp(now, 'private delivery settlement time'),
     })
+    return true
   }
 
   /**

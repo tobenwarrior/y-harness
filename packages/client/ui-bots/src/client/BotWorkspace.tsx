@@ -525,6 +525,7 @@ export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate,
   const composerInputRef = useRef<HTMLTextAreaElement | null>(null)
   const attachmentsRef = useRef<readonly BotGroupAttachmentDraft[]>([])
   const attachmentMessageIdRef = useRef<string | null>(null)
+  const attachmentDraftTextRef = useRef<string | null>(null)
   attachmentsRef.current = attachments
   const mentionOptions = useMemo(() => {
     if (group === undefined || mentionQuery === null) return []
@@ -539,6 +540,7 @@ export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate,
     for (const attachment of attachmentsRef.current) releaseBotGroupAttachment(attachment)
     attachmentsRef.current = []
     attachmentMessageIdRef.current = null
+    attachmentDraftTextRef.current = null
     setAttachments([])
     setAttachmentError(null)
     setDraft('')
@@ -552,11 +554,13 @@ export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate,
     for (const attachment of attachmentsRef.current) releaseBotGroupAttachment(attachment)
     attachmentsRef.current = []
     attachmentMessageIdRef.current = null
+    attachmentDraftTextRef.current = null
     setAttachments([])
   }
   const addAttachments = (files: readonly File[]): void => {
     setAttachmentError(null)
     attachmentMessageIdRef.current = null
+    attachmentDraftTextRef.current = null
     setAttachments(current => [...current, ...files.map(createBotGroupAttachmentDraft)])
   }
   const removeAttachment = (id: string): void => {
@@ -564,6 +568,7 @@ export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate,
     if (removed !== undefined) releaseBotGroupAttachment(removed)
     setAttachmentError(null)
     attachmentMessageIdRef.current = null
+    attachmentDraftTextRef.current = null
     setAttachments(current => current.filter(attachment => attachment.id !== id))
   }
   const selectMention = (bot: BotSummary): void => {
@@ -594,6 +599,7 @@ export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate,
         if (onSendWithAttachments === undefined) throw new Error(t('groupAttachmentsUnavailable'))
         const messageId = attachmentMessageIdRef.current ?? `bot-group-message-${randomUUID()}`
         attachmentMessageIdRef.current = messageId
+        attachmentDraftTextRef.current = text
         if (targets.length === 0) await onSendWithAttachments(text, attachments, messageId)
         else await onSendWithAttachments(text, attachments, messageId, targets)
         clearAttachments()
@@ -755,6 +761,11 @@ export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate,
           disabled={sending}
           onChange={(event) => {
             const value = event.currentTarget.value
+            if (attachmentMessageIdRef.current !== null && attachmentDraftTextRef.current !== null
+              && value.trim() !== attachmentDraftTextRef.current) {
+              attachmentMessageIdRef.current = null
+              attachmentDraftTextRef.current = null
+            }
             setDraft(value)
             setMentionQuery(mentionQueryAt(value, event.currentTarget.selectionStart))
             setMentionIndex(0)

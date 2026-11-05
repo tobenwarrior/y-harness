@@ -25,6 +25,8 @@ export type {
   BotGroupSendValue,
   BotGroupView,
 } from '../group-chat.ts'
+export type { BotGroupImageAdmissionRequest } from '../group-chat.ts'
+export type { BotInputAttachmentView } from '../attachment-grants.ts'
 /** Backward-compatible Client alias for the remote memory-removal request. */
 export type { BotMemoryForgetRemoteRequest as BotMemoryForgetRequest } from '../types.ts'
 export { BOT_ACCENTS, BOT_IDENTITIES, BotId, BotShareMemoryId } from '../types.ts'

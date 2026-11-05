@@ -983,6 +983,57 @@ describe('BotWorkspaceController', () => {
     expect(retain).toHaveBeenCalledOnce()
   })
 
+  it('admits an owner-local image before sending its scoped grant', async () => {
+    const first = bot('bot-attachment-local-first', 'session-attachment-local-first')
+    const second = bot('bot-attachment-local-second', 'session-attachment-local-second')
+    const group = groupView('bot-group-attachment-local', 'Attachment room', [first, second])
+    const remote = remoteFixture([first, second])
+    remote.listGroups = vi.fn(async () => ({ ok: true as const, value: { groups: [group] } }))
+    remote.inspectGroup = vi.fn(async () => ({ ok: true as const, value: { group, messages: [] } }))
+    remote.admitGroupImage = vi.fn(async request => ({
+      ok: true as const,
+      value: {
+        grantId: brandString<'BotAttachmentGrantId'>('bot-attachment-grant-local-image'),
+        attachments: [{ type: 'image' as const, mediaType: request.image.mediaType, bytes: 3, width: 1, height: 1, name: request.image.name }],
+      },
+    }))
+    remote.sendGroupMessage = vi.fn(async request => ({
+      ok: true as const,
+      value: { messageId: request.messageId!, status: 'accepted' as const, deliveries: [] },
+    }))
+    const fetcher = vi.fn<typeof fetch>()
+    const controller = new BotWorkspaceController(
+      remote,
+      sessionsFixture().sessions,
+      () => 'unexpected response',
+      undefined,
+      undefined,
+      pendingStoreFixture(),
+      undefined,
+      undefined,
+      fetcher,
+    )
+    await controller.load()
+    controller.face().selectGroup(String(group.id))
+    await vi.waitFor(() => { expect(controller.source.getSnapshot().selectedGroup).not.toBeNull() })
+
+    await controller.face().sendGroupMessageWithAttachments(
+      'Review this image',
+      [{ id: 'draft-local-image', file: new File([new Uint8Array([1, 2, 3])], 'image.png', { type: 'image/png' }), state: 'ready' }],
+      'bot-group-message-local-image',
+    )
+
+    expect(remote.admitGroupImage).toHaveBeenCalledWith(expect.objectContaining({
+      groupId: group.id, messageId: 'bot-group-message-local-image',
+      image: expect.objectContaining({ data: 'AQID', name: 'image.png' }),
+    }))
+    expect(remote.sendGroupMessage).toHaveBeenCalledWith(expect.objectContaining({
+      messageId: 'bot-group-message-local-image', attachmentGrants: ['bot-attachment-grant-local-image'],
+    }))
+    expect(fetcher).not.toHaveBeenCalled()
+    controller.dispose()
+  })
+
   it('keeps a newer Bot selection when group creation completes later', async () => {
     const first = bot('bot-create-selection-first', 'session-create-selection-first')
     const second = bot('bot-create-selection-second', 'session-create-selection-second')

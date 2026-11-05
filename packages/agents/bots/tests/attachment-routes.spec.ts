@@ -1,9 +1,49 @@
 import { describe, expect, it } from 'vitest'
 import { BotAttachmentGrantError, BotAttachmentGrantId } from '../src/attachment-grants.ts'
 import { BotGroupError } from '../src/group-chat.ts'
-import { handleBotAttachmentUpload } from '../src/attachment-routes.ts'
+import {
+  botAttachmentUploadSignal,
+  boundedBotAttachmentStream,
+  handleBotAttachmentUpload,
+} from '../src/attachment-routes.ts'
 
 describe('Bot attachment upload route', () => {
+  it('bounds streamed bytes before the provider can persist an oversized upload', async () => {
+    const consume = async (): Promise<void> => {
+      for await (const _chunk of boundedBotAttachmentStream((async function* () {
+        yield Uint8Array.of(1, 2)
+        yield Uint8Array.of(3, 4)
+      })(), 3)) { /* consume */ }
+    }
+    await expect(consume()).rejects.toMatchObject({ code: 'invalid' })
+  })
+
+  it('stops waiting for a stalled source when the upload is cancelled', async () => {
+    let returned = false
+    const source: AsyncIterable<Uint8Array> = {
+      [Symbol.asyncIterator]: () => ({
+        next: () => new Promise<IteratorResult<Uint8Array>>(() => {}),
+        return: async () => {
+          returned = true
+          return { done: true, value: undefined }
+        },
+      }),
+    }
+    const controller = new AbortController()
+    const next = boundedBotAttachmentStream(source, 3, controller.signal)[Symbol.asyncIterator]().next()
+    controller.abort()
+    await expect(next).rejects.toMatchObject({ name: 'AbortError' })
+    expect(returned).toBe(true)
+  })
+
+  it('combines request cancellation with a bounded upload deadline', () => {
+    const controller = new AbortController()
+    const signal = botAttachmentUploadSignal(controller.signal, 1)
+    expect(signal.aborted).toBe(false)
+    controller.abort()
+    expect(signal.aborted).toBe(true)
+  })
+
   it('rejects non-streaming or malformed scopes before the provider is called', async () => {
     const admit = async (): Promise<never> => { throw new Error('provider must not run') }
     await expect(handleBotAttachmentUpload(new Request(

@@ -23,10 +23,10 @@ interface Fixture {
   readonly domain: Domain<typeof botAttachmentDomain>
 }
 
-async function fixture(): Promise<Fixture> {
+async function fixture(pool = new MemoryMediaPool()): Promise<Fixture> {
   const ctx = new Context()
   await ctx.plugin(Storage)
-  const backend: StorageBackend = new MemoryStorageBackend(new MemoryMediaPool())
+  const backend: StorageBackend = new MemoryStorageBackend(pool)
   ctx.effect(() => ctx.storage.backend.register('fixture', backend))
   ctx.effect(() => async () => { await backend.close() })
   const facility = new DomainFacility(ctx, { backend: 'fixture' })
@@ -50,7 +50,7 @@ const image: ImageAttachmentRef = {
 }
 
 const file: FileAttachmentRef = {
-  attachmentId: AttachmentId(`sha256:${'2'.repeat(64)}`),
+  attachmentId: AttachmentId('provider:file-1'),
   name: 'notes.txt',
   bytes: 5,
 }
@@ -120,6 +120,20 @@ describe('BotAttachmentGrantStore', () => {
       }
       const sharedGrant = await store.admit(sharedScope, [{ type: 'file', attachment: file }], 10)
       await expect(store.consume(sharedScope, [sharedGrant.grantId], 11)).resolves.toMatchObject({ status: 'accepted' })
+      expect(store.attachmentsForSharedGroupMessage({
+        principalId: BotPrincipalId('principal-one'),
+        groupId: sharedScope.groupId,
+        messageId: sharedScope.messageId,
+        targetBotIds: sharedScope.targetBotIds,
+        authorizationRevision: sharedScope.authorizationRevision,
+      })).toHaveLength(1)
+      expect(store.attachmentsForSharedGroupMessage({
+        principalId: BotPrincipalId('principal-two'),
+        groupId: sharedScope.groupId,
+        messageId: sharedScope.messageId,
+        targetBotIds: sharedScope.targetBotIds,
+        authorizationRevision: sharedScope.authorizationRevision,
+      })).toHaveLength(0)
       await expect(store.consume({ ...sharedScope, principalId: BotPrincipalId('principal-two') }, [sharedGrant.grantId], 12))
         .rejects.toMatchObject({ code: 'forbidden' })
     } finally {
@@ -141,11 +155,87 @@ describe('BotAttachmentGrantStore', () => {
       await expect(store.reservePrivateDelivery(scope, 'lease-one', 100, 20)).resolves.toBe('reserved')
       await expect(store.reservePrivateDelivery(scope, 'lease-two', 105, 20)).resolves.toBe('busy')
       await expect(store.reservePrivateDelivery(scope, 'lease-two', 121, 20)).resolves.toBe('reserved')
-      await expect(store.settlePrivateDelivery(scope, 'lease-two', 'accepted', 122)).resolves.toBeUndefined()
+      await expect(store.settlePrivateDelivery(scope, 'lease-two', 'accepted', 122)).resolves.toBe(true)
       await expect(store.reservePrivateDelivery(scope, 'lease-three', 123, 20)).resolves.toBe('duplicate')
       await expect(store.reservePrivateDelivery({ ...scope, authorizationRevision: 4 }, 'lease-four', 124, 20)).resolves.toBe('duplicate')
     } finally {
       await opened.ctx.fiber.dispose()
+    }
+  })
+
+  it('renews a live shared-private lease so another Host cannot take it over', async () => {
+    const opened = await fixture()
+    try {
+      const store = new BotAttachmentGrantStore(opened.domain)
+      const peerStore = new BotAttachmentGrantStore(opened.domain)
+      const scope: BotAttachmentScope = {
+        kind: 'shared-private',
+        botId: BotId('bot-alpha'),
+        principalId: BotPrincipalId('principal-one'),
+        messageId: BotPrivateMessageId('bot-private-message-renewal'),
+        authorizationRevision: 3,
+      }
+      await expect(store.reservePrivateDelivery(scope, 'live-lease', 100, 20)).resolves.toBe('reserved')
+      await expect(store.renewPrivateDelivery(scope, 'live-lease', 115, 20)).resolves.toBe(true)
+      await expect(peerStore.reservePrivateDelivery(scope, 'takeover', 125, 20)).resolves.toBe('busy')
+      await expect(store.renewPrivateDelivery(scope, 'stale-lease', 126, 20)).resolves.toBe(false)
+      await expect(store.settlePrivateDelivery(scope, 'live-lease', 'accepted', 127)).resolves.toBe(true)
+      await expect(store.renewPrivateDelivery(scope, 'live-lease', 128, 20)).resolves.toBe(false)
+    } finally {
+      await opened.ctx.fiber.dispose()
+    }
+  })
+
+  it('rejects a stale private lease settlement after another Host takes over', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await fixture(pool)
+    const second = await fixture(pool)
+    try {
+      const writer = new BotAttachmentGrantStore(first.domain)
+      const peer = new BotAttachmentGrantStore(second.domain)
+      const scope: BotAttachmentScope = {
+        kind: 'shared-private',
+        botId: BotId('bot-alpha'),
+        principalId: BotPrincipalId('principal-one'),
+        messageId: BotPrivateMessageId('bot-private-message-lease-fence'),
+        authorizationRevision: 3,
+      }
+      await expect(writer.reservePrivateDelivery(scope, 'old-owner', 100, 20)).resolves.toBe('reserved')
+      await peer.refresh()
+      await expect(peer.reservePrivateDelivery(scope, 'new-owner', 121, 20)).resolves.toBe('reserved')
+      await writer.refresh()
+      await expect(writer.settlePrivateDelivery(scope, 'old-owner', 'accepted', 122)).resolves.toBe(false)
+      expect(peer.readPrivateDelivery(scope)).toMatchObject({ token: 'new-owner', state: 'pending' })
+    } finally {
+      await Promise.all([first.ctx.fiber.dispose(), second.ctx.fiber.dispose()])
+    }
+  })
+
+  it('refreshes a peer Host projection before reading grants and delivery leases', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await fixture(pool)
+    const second = await fixture(pool)
+    try {
+      const writer = new BotAttachmentGrantStore(first.domain)
+      const peer = new BotAttachmentGrantStore(second.domain)
+      const scope: BotAttachmentScope = {
+        kind: 'shared-private',
+        botId: BotId('bot-alpha'),
+        principalId: BotPrincipalId('principal-one'),
+        messageId: BotPrivateMessageId('bot-private-message-peer-refresh'),
+        authorizationRevision: 3,
+      }
+      const grant = await writer.admit(scope, [{ type: 'file', attachment: file }], 100)
+      expect(() => peer.preview(scope, [grant.grantId])).toThrow(/not found/)
+      await peer.refresh()
+      expect(peer.preview(scope, [grant.grantId])).toEqual([{ type: 'file', attachment: file }])
+      await writer.reservePrivateDelivery(scope, 'peer-live-lease', 110, 20)
+      expect(peer.readPrivateDelivery(scope)).toBeUndefined()
+      await peer.refresh()
+      expect(peer.readPrivateDelivery(scope)?.token).toBe('peer-live-lease')
+      await expect(peer.reservePrivateDelivery(scope, 'peer-takeover', 115, 20)).resolves.toBe('busy')
+    } finally {
+      await Promise.all([first.ctx.fiber.dispose(), second.ctx.fiber.dispose()])
     }
   })
 
@@ -156,7 +246,7 @@ describe('BotAttachmentGrantStore', () => {
         id: BotAttachmentGrantId('bot-attachment-grant-bad'),
         scope: localScope(),
         state: 'reserved',
-        attachments: [{ type: 'file', attachment: { attachmentId: 'not-an-attachment', name: 'x', bytes: 1 } }],
+        attachments: [{ type: 'file', attachment: { attachmentId: '', name: 'x', bytes: 1 } }],
         createdAt: 1,
       } as never)
       await opened.domain.close()

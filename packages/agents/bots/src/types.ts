@@ -9,7 +9,7 @@ import type { BotPrincipalId, BotShareRole } from './sharing.ts'
 // Remote request/result types are re-exported from this public type subpath so
 // generated client contracts do not depend on the package's implementation root.
 export type { BotGroupImageAdmissionRequest } from './group-chat.ts'
-export type { BotAttachmentGrantValue } from './attachment-grants.ts'
+export type { BotAttachmentGrantId, BotAttachmentGrantValue } from './attachment-grants.ts'
 
 /** Stable user-owned identity for one roster entry. */
 export type BotId = Branded<'BotId'>

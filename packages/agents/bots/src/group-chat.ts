@@ -846,14 +846,20 @@ export class BotGroupService {
         const messages = this.domain.table('messages')
         const existing = messages.get(messageId)
         const existingAttachments = attachmentStore?.attachmentsForMessage(attachmentScope) ?? []
-        if (request.attachmentGrants !== undefined && request.attachmentGrants.length > 0 && attachmentStore === undefined) {
-          throw new BotGroupError('delivery-failed', 'Bot attachment admission is unavailable')
-        }
         if (request.attachmentGrants !== undefined && request.attachmentGrants.length > 0) {
+          if (attachmentStore === undefined) {
+            throw new BotGroupError('delivery-failed', 'Bot attachment admission is unavailable')
+          }
           if (existing !== undefined && existingAttachments.length === 0) {
             throw new BotGroupError('invalid', `Bot group message "${String(messageId)}" already exists without attachments`)
           }
-          await attachmentStore.consume(attachmentScope, request.attachmentGrants)
+          const preview = attachmentStore.preview(attachmentScope, request.attachmentGrants)
+          if (existing !== undefined && !sameAttachmentRefs(existingAttachments, preview)) {
+            throw new BotGroupError('invalid', `Bot group message "${String(messageId)}" already exists with different attachments`)
+          }
+        }
+        if (existing === undefined && request.attachmentGrants !== undefined && request.attachmentGrants.length > 0) {
+          await attachmentStore?.consume(attachmentScope, request.attachmentGrants)
         }
         const messageAttachments = attachmentStore?.attachmentsForMessage(attachmentScope) ?? []
         let changed = false
@@ -863,8 +869,7 @@ export class BotGroupService {
             && String(existing.sender.principalId ?? '') !== String(sender.principalId ?? ''))
           || (existing.sender.kind === 'bot' && sender.kind === 'bot' && existing.sender.botId !== sender.botId)
           || !sameIdSet(existing.targetBotIds ?? this.recipientIds(group, existing.sender), targetBotIds)
-          || (request.attachmentGrants !== undefined && request.attachmentGrants.length > 0
-            && !sameAttachmentRefs(existingAttachments, messageAttachments))) {
+          ) {
             throw new BotGroupError('invalid', `Bot group message "${String(messageId)}" already exists with different content`)
           }
         } else {

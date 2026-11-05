@@ -26,13 +26,23 @@ import type {
   BotGroupView,
   BotGroupMessageView,
   BotGroupMessageSenderView,
+  BotInputAttachmentView,
   BotGroupMemberView,
   BotGroupId as BotGroupIdType,
   BotGroupMessageId as BotGroupMessageIdType,
 } from '@yharness/bots/client'
 import type { ClientConnectionRpc, ConnectionRpcFailure } from '@yharness/client-connection/client'
 import { randomUUID } from '@yharness/util-crypto'
+import {
+  admitBotGroupAttachments,
+  BotAttachmentClientError,
+  isBotGroupImageType,
+  parseBotAttachmentGrantValue,
+  type BotAttachmentFetch,
+} from './attachment-client.ts'
 import type { BotGroupAttachmentDraft } from './types.ts'
+
+type BotImageMediaType = Extract<BotInputAttachmentView, { readonly type: 'image' }>['mediaType']
 
 const SHARED_BOTS_PATH = '/shared-bots' as const
 const SHARED_AUTH_CHANNEL = 'yharness.client-ui-bots.shared-auth' as const
@@ -235,7 +245,10 @@ export interface SharedBotsClient {
  * @param rpc - Connection RPC carrier from the active Client generation.
  * @returns shared-Bot operations using the dedicated channel only.
  */
-export function createSharedBotsClient(rpc: ClientConnectionRpc): SharedBotsClient {
+export function createSharedBotsClient(
+  rpc: ClientConnectionRpc,
+  attachmentFetcher: BotAttachmentFetch = (input, init) => globalThis.fetch(input, init),
+): SharedBotsClient {
   let retryScope: string | undefined
   let retryScopeRequestGeneration = 0
   let authGeneration = 0
@@ -334,6 +347,60 @@ export function createSharedBotsClient(rpc: ClientConnectionRpc): SharedBotsClie
     }
     return result
   })
+  const sendGroupMessageWithAttachments = async (
+    request: BotGroupSendRemoteRequest & { readonly attachments: readonly BotGroupAttachmentDraft[] },
+  ): Promise<SharedBotClientResult<SharedBotGroupSendValue>> => {
+    if (request.attachments.length === 0 || request.messageId === undefined) {
+      return { ok: false, error: { code: 'gateway/bad-request', message: 'attachments require an explicit message id', details: {} } }
+    }
+    const inspect = await call('bots/share/inspect-group', { groupId: request.groupId }, parseGroupInspect)
+    if (!inspect.ok) return inspect
+    const existing = inspect.value.messages.find(message => message.id === request.messageId)
+    if (existing !== undefined) {
+      if (!groupAttachmentMatchesDrafts(existing, request.attachments)) {
+        return { ok: false, error: { code: 'gateway/conflict', message: 'shared Bot message attachments differ from the retry', details: {} } }
+      }
+      return call('bots/share/send-group-message', {
+        groupId: request.groupId,
+        text: request.text,
+        messageId: request.messageId,
+        ...(request.targetBotIds === undefined ? {} : { targetBotIds: request.targetBotIds }),
+      }, parseGroupSend)
+    }
+    try {
+      const grants = await admitBotGroupAttachments(
+        {
+          groupId: String(request.groupId),
+          messageId: String(request.messageId),
+          ...(request.targetBotIds === undefined ? {} : { targetBotIds: request.targetBotIds.map(String) }),
+        },
+        request.attachments,
+        async (imageRequest) => {
+          const result = await call('bots/share/admit-group-image', imageRequest, parseBotAttachmentGrantValue)
+          if (!result.ok) throw new BotAttachmentClientError(result.error.code, result.error.message)
+          return result.value
+        },
+        attachmentFetcher,
+        '/shared-bots/bots/share/uploadAttachment',
+      )
+      return call('bots/share/send-group-message', {
+        groupId: request.groupId,
+        text: request.text,
+        messageId: request.messageId,
+        ...(request.targetBotIds === undefined ? {} : { targetBotIds: request.targetBotIds }),
+        attachmentGrants: grants,
+      }, parseGroupSend)
+    } catch (error: unknown) {
+      return {
+        ok: false,
+        error: {
+          code: error instanceof BotAttachmentClientError ? error.code : 'gateway/transport',
+          message: error instanceof Error ? error.message : 'Shared Bot attachment admission failed',
+          details: {},
+        },
+      }
+    }
+  }
 
   return {
     get retryScope(): string | undefined { return retryScope },
@@ -365,6 +432,7 @@ export function createSharedBotsClient(rpc: ClientConnectionRpc): SharedBotsClie
     updateGroup: request => call('bots/share/update-group', request, parseGroupResult),
     inspectGroup: groupId => call('bots/share/inspect-group', { groupId }, parseGroupInspect),
     sendGroupMessage: request => call('bots/share/send-group-message', request, parseGroupSend),
+    sendGroupMessageWithAttachments,
     createGroupInvite: groupId => call('bots/share/manage-group-members', { groupId, action: 'create-invite' }, parseGroupInvite),
     revokeGroupMember: (groupId, principalId) => call('bots/share/manage-group-members', { groupId, action: 'revoke', principalId }, parseGroupRevoke),
   }
@@ -607,6 +675,10 @@ function parseGroupMessage(value: unknown): BotGroupMessageView | undefined {
     typeof item === 'string' && /^bot-[A-Za-z0-9][A-Za-z0-9-]*$/.test(item) ? brandString<BotIdType>(item) : undefined
   ))
   if (targetBotIds?.some(botId => botId === undefined)) return undefined
+  const attachmentValue = value.attachments
+  if (attachmentValue !== undefined && !Array.isArray(attachmentValue)) return undefined
+  const attachments = attachmentValue === undefined ? undefined : attachmentValue.map(parseAttachmentView)
+  if (attachments?.some(attachment => attachment === undefined)) return undefined
   return {
     id: brandString<BotGroupMessageIdType>(value.id),
     groupId: brandString<BotGroupIdType>(value.groupId),
@@ -614,7 +686,32 @@ function parseGroupMessage(value: unknown): BotGroupMessageView | undefined {
     text: value.text,
     createdAt: value.createdAt,
     ...(targetBotIds === undefined ? {} : { targetBotIds: targetBotIds as readonly BotIdType[] }),
+    ...(attachments === undefined ? {} : { attachments: attachments as readonly BotInputAttachmentView[] }),
   }
+}
+
+function parseAttachmentView(value: unknown): BotInputAttachmentView | undefined {
+  if (!isRecord(value) || typeof value.attachmentId !== 'string' || !isOpaqueAttachmentId(value.attachmentId)
+    || typeof value.type !== 'string' || typeof value.bytes !== 'number' || !isSafeInteger(value.bytes) || value.bytes < 0) return undefined
+  if (value.type === 'file') {
+    return typeof value.name === 'string' && value.name.length > 0 && value.name.length <= 255
+      ? { type: 'file', attachmentId: value.attachmentId, name: value.name, bytes: value.bytes }
+      : undefined
+  }
+  if (value.type !== 'image' || typeof value.mediaType !== 'string'
+    || !['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(value.mediaType)
+    || typeof value.width !== 'number' || !isSafeInteger(value.width) || value.width < 1
+    || typeof value.height !== 'number' || !isSafeInteger(value.height) || value.height < 1
+    || (value.name !== undefined && (typeof value.name !== 'string' || value.name.length < 1 || value.name.length > 255))) return undefined
+  return {
+    type: 'image', attachmentId: value.attachmentId, mediaType: value.mediaType as BotImageMediaType,
+    bytes: value.bytes, width: value.width, height: value.height,
+    ...(value.name === undefined ? {} : { name: value.name }),
+  }
+}
+
+function isOpaqueAttachmentId(value: string): boolean {
+  return value.length >= 1 && value.length <= 512 && value.trim() === value && !/[\u0000-\u001f\u007f]/.test(value)
 }
 
 function parseGroupMessageSender(value: Record<string, unknown>): BotGroupMessageSenderView | undefined {
@@ -627,6 +724,23 @@ function parseGroupMessageSender(value: Record<string, unknown>): BotGroupMessag
   if (value.kind !== 'bot' || typeof value.botId !== 'string'
     || !/^bot-[A-Za-z0-9][A-Za-z0-9-]*$/.test(value.botId) || typeof value.name !== 'string') return undefined
   return { kind: 'bot', botId: brandString<BotIdType>(value.botId), name: value.name }
+}
+
+function groupAttachmentMatchesDrafts(
+  message: BotGroupMessageView,
+  drafts: readonly BotGroupAttachmentDraft[],
+): boolean {
+  const admitted = message.attachments
+  if (admitted === undefined || admitted.length !== drafts.length || admitted.length === 0) return false
+  return drafts.every((draft, index) => {
+    const current = admitted[index]
+    if (current === undefined || current.bytes !== draft.file.size) return false
+    if (current.type === 'file') return current.name === (draft.file.name || current.name)
+    return current.type === 'image'
+      && isBotGroupImageType(draft.file.type)
+      && current.mediaType === draft.file.type
+      && (draft.file.name === '' || current.name === draft.file.name || current.name === undefined)
+  })
 }
 
 function enumValue<T extends string>(value: unknown, choices: readonly T[]): T | undefined {

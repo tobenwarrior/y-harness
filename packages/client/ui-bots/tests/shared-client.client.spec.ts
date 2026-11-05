@@ -51,7 +51,82 @@ describe('shared Bot client capabilities', () => {
     expect(client.updateGroup).toEqual(expect.any(Function))
     expect(client.inspectGroup).toEqual(expect.any(Function))
     expect(client.sendGroupMessage).toEqual(expect.any(Function))
+    expect(client.sendGroupMessageWithAttachments).toEqual(expect.any(Function))
     expect(rpc.call).not.toHaveBeenCalled()
+  })
+
+  it('admits shared image attachments before sending their opaque grants', async () => {
+    const rpc: ClientConnectionRpc = {
+      call: vi.fn(async (_channel, endpoint) => {
+        if (endpoint === 'bots/share/inspect-group') return {
+          ok: true as const,
+          value: {
+            group: {
+              id: 'bot-group-one', name: 'One', botIds: ['bot-two'],
+              bots: [{ id: 'bot-two', name: 'Two', identity: 'agent', accent: 'blue', state: 'active', availability: 'idle' }],
+              createdAt: 1, updatedAt: 1,
+            },
+            messages: [],
+          },
+        }
+        if (endpoint === 'bots/share/admit-group-image') return {
+          ok: true as const,
+          value: { grantId: 'bot-attachment-grant-image', attachments: [{ type: 'image', mediaType: 'image/png', bytes: 3, width: 1, height: 1 }] },
+        }
+        return {
+          ok: true as const,
+          value: { messageId: 'bot-group-message-one', status: 'accepted', deliveries: [] },
+        }
+      }),
+    }
+    const fetcher = vi.fn<typeof fetch>()
+    const client = createSharedBotsClient(rpc, fetcher)
+    if (client.sendGroupMessageWithAttachments === undefined) throw new Error('attachment transport unavailable')
+    const result = await client.sendGroupMessageWithAttachments({
+      groupId: 'bot-group-one' as never,
+      messageId: 'bot-group-message-one' as never,
+      text: 'Look at this',
+      attachments: [{ id: 'draft-image', file: new File([new Uint8Array([1, 2, 3])], 'image.png', { type: 'image/png' }), state: 'ready' }],
+    })
+    expect(result).toMatchObject({ ok: true, value: { messageId: 'bot-group-message-one' } })
+    expect(rpc.call).toHaveBeenCalledWith('/shared-bots', 'bots/share/admit-group-image', expect.objectContaining({ messageId: 'bot-group-message-one' }))
+    expect(rpc.call).toHaveBeenCalledWith('/shared-bots', 'bots/share/send-group-message', expect.objectContaining({
+      messageId: 'bot-group-message-one', attachmentGrants: ['bot-attachment-grant-image'],
+    }))
+    expect(fetcher).not.toHaveBeenCalled()
+  })
+
+  it('retries an already persisted shared attachment message without re-uploading', async () => {
+    const send = vi.fn(async () => ({ ok: true as const, value: { messageId: 'bot-group-message-one', status: 'duplicate', deliveries: [] } }))
+    const rpc: ClientConnectionRpc = {
+      call: vi.fn(async (_channel, endpoint) => {
+        if (endpoint === 'bots/share/inspect-group') return {
+          ok: true as const,
+          value: {
+            group: {
+              id: 'bot-group-one', name: 'One', botIds: ['bot-two'],
+              bots: [{ id: 'bot-two', name: 'Two', identity: 'agent', accent: 'blue', state: 'active', availability: 'idle' }],
+              createdAt: 1, updatedAt: 1,
+            },
+            messages: [{
+              id: 'bot-group-message-one', groupId: 'bot-group-one', sender: { kind: 'user' }, text: 'Look at this',
+              createdAt: 2, attachments: [{ attachmentId: 'provider:image-1', type: 'image', mediaType: 'image/png', bytes: 3, width: 1, height: 1, name: 'image.png' }],
+            }],
+          },
+        }
+        if (endpoint === 'bots/share/send-group-message') return send()
+        return { ok: true as const, value: {} }
+      }),
+    }
+    const client = createSharedBotsClient(rpc)
+    if (client.sendGroupMessageWithAttachments === undefined) throw new Error('attachment transport unavailable')
+    await expect(client.sendGroupMessageWithAttachments({
+      groupId: 'bot-group-one' as never,
+      messageId: 'bot-group-message-one' as never,
+      text: 'Look at this',
+      attachments: [{ id: 'draft-image', file: new File([new Uint8Array([1, 2, 3])], 'image.png', { type: 'image/png' }), state: 'ready' }],
+    })).resolves.toMatchObject({ ok: true, value: { status: 'duplicate' } })
+    expect(rpc.call).toHaveBeenCalledWith('/shared-bots', 'bots/share/send-group-message', expect.not.objectContaining({ attachmentGrants: expect.anything() }))
   })
 
   it('fails closed on malformed shared-group catalog data', async () => {

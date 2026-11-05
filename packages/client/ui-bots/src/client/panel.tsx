@@ -108,7 +108,8 @@ export function BotsRoster({
 
 /** Render the selected Bot's one persistent Conversation in the main panel. */
 export function BotsPanel({
-  useWorkspace, useSessionStatus, reference, retryGroup, updateGroup, sendGroupMessage, groupsAvailable, loadAvatar,
+  useWorkspace, useSessionStatus, reference, retryGroup, updateGroup, sendGroupMessage,
+  sendGroupMessageWithAttachments, groupsAvailable, loadAvatar,
   rename, updateProfile, memoryManager,
   SessionProvider, renderSlot, t, share,
 }: BotsPanelProps): ReactNode {
@@ -132,6 +133,7 @@ export function BotsPanel({
         onRetry={retryGroup}
         onUpdate={updateGroup}
         onSend={sendGroupMessage}
+        onSendWithAttachments={sendGroupMessageWithAttachments}
         loadAvatar={loadAvatar}
         bots={bots}
         t={t}

@@ -118,10 +118,19 @@ interface Domain<S extends DomainSpec> {
    * @returns resolution after the unit is released.
    */
   close(): Promise<void>
+
+  /**
+   * Reload validated records and the global singleton from the backend.
+   * The reload is serialized with this domain's writes and emits no change
+   * events; callers use it before an authority-serialized cross-Host read or
+   * mutation when the backend may have changed outside this process.
+   * @returns resolution after the in-memory projection matches the loaded snapshot.
+   */
+  refresh(): Promise<void>
 }
 ```
 
-Reads are synchronous from authoritative in-memory state: `KvTable` exposes `get`/`entries`/`keys`/`size` (snapshot iterators that stay stable while queued writes land), and the global handle's `get()` serves the spec's `initial` until the first `set` materializes the slot on the medium. Every write — `put`, `delete`, `update`, `global.set` — queues on one per-domain chain and reaches backend durability first, then mutates memory, then emits `domain/changed`; a rejected backend write leaves memory untouched, so reads never diverge from the medium. `update(key, fn)` is an atomic read-modify-write at its chain slot (a missing key rejects `missing-key`); `delete` of an absent key resolves `false` with no write and no event. Returned records are the stored objects themselves, not copies — replace via `put`/`update`, never mutate in place.
+Reads are synchronous from authoritative in-memory state: `KvTable` exposes `get`/`entries`/`keys`/`size` (snapshot iterators that stay stable while queued writes land), and the global handle's `get()` serves the spec's `initial` until the first `set` materializes the slot on the medium. Every write — `put`, `delete`, `update`, `global.set` — queues on one per-domain chain and reaches backend durability first, then mutates memory, then emits `domain/changed`; a rejected backend write leaves memory untouched, so reads never diverge from the medium. `refresh()` reloads and validates the backend snapshot at a write-chain slot, replaces the in-memory projection, and emits no event; use it before an authority-serialized operation when another Host may have written the unit. `update(key, fn)` is an atomic read-modify-write at its chain slot (a missing key rejects `missing-key`); `delete` of an absent key resolves `false` with no write and no event. Returned records are the stored objects themselves, not copies — replace via `put`/`update`, never mutate in place.
 
 ## The domain facility: `ctx.storageDomain`
 

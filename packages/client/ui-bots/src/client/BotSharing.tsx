@@ -718,6 +718,7 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
   const groupInviteGenerationRef = useRef(0)
   const groupAttachmentsRef = useRef<readonly BotGroupAttachmentDraft[]>([])
   const groupAttachmentMessageIdRef = useRef<string | null>(null)
+  const groupAttachmentDraftTextRef = useRef<string | null>(null)
   const createGroupGenerationRef = useRef(0)
   const pendingRefreshGenerationRef = useRef(0)
   const recoveryWorkingRef = useRef<string | null>(null)
@@ -814,6 +815,7 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
     for (const attachment of groupAttachmentsRef.current) releaseBotGroupAttachment(attachment)
     groupAttachmentsRef.current = []
     groupAttachmentMessageIdRef.current = null
+    groupAttachmentDraftTextRef.current = null
     setGroupAttachments([])
     setGroupAttachmentError(null)
   }
@@ -821,6 +823,7 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
   const addGroupAttachments = (files: readonly File[]): void => {
     setGroupAttachmentError(null)
     groupAttachmentMessageIdRef.current = null
+    groupAttachmentDraftTextRef.current = null
     setGroupAttachments(current => [...current, ...files.map(createBotGroupAttachmentDraft)])
   }
 
@@ -829,6 +832,7 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
     if (removed !== undefined) releaseBotGroupAttachment(removed)
     setGroupAttachmentError(null)
     groupAttachmentMessageIdRef.current = null
+    groupAttachmentDraftTextRef.current = null
     setGroupAttachments(current => current.filter(attachment => attachment.id !== id))
   }
 
@@ -1828,6 +1832,7 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
       if (attachments.length > 0) {
         const stableId = groupAttachmentMessageIdRef.current ?? `bot-group-message-${randomUUID()}`
         groupAttachmentMessageIdRef.current = stableId
+        groupAttachmentDraftTextRef.current = draft
         messageId = brandString<BotGroupMessageIdType>(stableId)
       } else {
         queue = getPendingGroupQueue(auth)
@@ -2142,6 +2147,11 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
                       aria-label={t('sharedGroupMessagePlaceholder', { name: selectedGroup.name })}
                       onChange={(event) => {
                         groupDraftRevisionRef.current += 1
+                        if (groupAttachmentMessageIdRef.current !== null && groupAttachmentDraftTextRef.current !== null
+                          && event.currentTarget.value.trim() !== groupAttachmentDraftTextRef.current) {
+                          groupAttachmentMessageIdRef.current = null
+                          groupAttachmentDraftTextRef.current = null
+                        }
                         setGroupAttachmentError(null)
                         setGroupDraft(event.currentTarget.value)
                       }}

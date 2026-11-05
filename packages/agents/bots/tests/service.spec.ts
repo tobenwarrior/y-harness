@@ -5,7 +5,7 @@ import { once } from 'node:events'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { Context, Service } from '@yharness/cordis'
-import { SharedAccessAuthority, sharedPrincipalOf } from '@yharness/client-connection'
+import { SharedAccessAuthority, sharedPrincipalOf, type ConnectionFetchRoute } from '@yharness/client-connection'
 import { AttachmentId, type ImageAttachmentRef, type StoredImageAttachment } from '@yharness/attachment'
 import AgentRegistry, { agentEvents, type Agent } from '@yharness/agent'
 import AgentLoop from '@yharness/agent-loop'
@@ -456,6 +456,14 @@ async function createHarness({
     readImage,
     saveImages,
     saveImage,
+    imageLimits: {
+      maxImageBytes: 20 * 1024 * 1024,
+      maxImagesPerMessage: 8,
+      maxMessageImageBytes: 20 * 1024 * 1024,
+      maxImagePixels: 16_000_000,
+      maxImageDimension: 8_000,
+      mediaTypes: ['image/png', 'image/jpeg', 'image/webp', 'image/gif'],
+    },
     validateImage: vi.fn(async () => undefined),
   } as never)
   const credentials = useCredentials && options.credentialPath === undefined
@@ -760,6 +768,57 @@ function provideResolvedTemplatePreset(ctx: Context): void {
 }
 
 describe('durable Bot roster', () => {
+  it('waits for an in-flight local attachment upload before closing its attachment domain', async () => {
+    let route: ConnectionFetchRoute | undefined
+    let enteredResolve: (() => void) | undefined
+    const entered = new Promise<void>((resolve) => { enteredResolve = resolve })
+    let releaseResolve: (() => void) | undefined
+    const release = new Promise<void>((resolve) => { releaseResolve = resolve })
+    const h = await harness(new MemoryMediaPool(), undefined, undefined, [], new Map(), new Map(), true, 'native', false, {
+      connection: {
+        sharedRpc: {
+          enroll: vi.fn(() => async () => {}),
+          handle: vi.fn(() => async () => {}),
+        },
+        fetch: {
+          register: vi.fn((candidate: ConnectionFetchRoute) => {
+            if (candidate.path === '/api/bots/group/uploadAttachment') route = candidate
+            return async () => {}
+          }),
+        },
+      },
+      beforeService: (ctx) => {
+        const attachments = ctx.get('attachments') as {
+          saveFileStream?: (input: { readonly data: AsyncIterable<Uint8Array>; readonly signal?: AbortSignal }) => Promise<unknown>
+        }
+        attachments.saveFileStream = vi.fn(async (input: { readonly data: AsyncIterable<Uint8Array>; readonly signal?: AbortSignal }) => {
+          enteredResolve?.()
+          await release
+          input.signal?.throwIfAborted()
+          return { attachmentId: AttachmentId(`sha256:${'cd'.repeat(32)}`), name: 'upload.bin', bytes: 3 }
+        })
+      },
+    })
+    try {
+      if (route === undefined) throw new Error('local attachment route was not registered')
+      const upload = route.fetch(new Request(
+        'http://dsh.internal/api/bots/group/uploadAttachment?scope=group&groupId=bot-group-upload-drain&messageId=bot-group-message-upload-drain&name=upload.bin',
+        { method: 'POST', headers: { 'content-type': 'application/octet-stream' }, body: Uint8Array.of(1, 2, 3) },
+      ))
+      await entered
+      let closed = false
+      const closing = h.ctx.fiber.dispose().then(() => { closed = true })
+      await new Promise<void>((resolve) => { setTimeout(resolve, 50) })
+      expect(closed).toBe(false)
+      releaseResolve?.()
+      await expect(upload).resolves.toMatchObject({ status: 200 })
+      await closing
+    } finally {
+      releaseResolve?.()
+      if (h.ctx.fiber !== undefined) await h.ctx.fiber.dispose().catch(() => undefined)
+    }
+  })
+
   it('does not hold the profile credential queue while shared authority commits', async () => {
     const root = await mkdtemp(join(tmpdir(), 'yh-bot-roster-fence-'))
     const h = await harness(

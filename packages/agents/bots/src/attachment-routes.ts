@@ -14,6 +14,58 @@ export const BOT_GROUP_ATTACHMENT_UPLOAD_PATH = '/api/bots/group/uploadAttachmen
 /** Exact collaborator route for shared private/group file uploads. */
 export const SHARED_BOT_ATTACHMENT_UPLOAD_PATH = '/shared-bots/bots/share/uploadAttachment' as const
 
+/** Maximum bytes admitted by one streamed Bot attachment upload. */
+export const BOT_ATTACHMENT_MAX_BYTES = 20 * 1024 * 1024
+/** Wall-clock limit for one streamed Bot attachment upload. */
+export const BOT_ATTACHMENT_UPLOAD_TIMEOUT_MS = 60_000
+
+/** Bound one backpressured attachment stream before it reaches a provider. */
+export async function* boundedBotAttachmentStream(
+  data: AsyncIterable<Uint8Array>,
+  maxBytes = BOT_ATTACHMENT_MAX_BYTES,
+  signal?: AbortSignal,
+): AsyncIterable<Uint8Array> {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) {
+    throw new BotAttachmentGrantError('invalid', 'attachment upload byte limit is invalid')
+  }
+  const iterator = data[Symbol.asyncIterator]()
+  let bytes = 0
+  let completed = false
+  try {
+    while (true) {
+      const result = signal === undefined
+        ? await iterator.next()
+        : await nextAttachmentChunk(iterator, signal)
+      if (result.done) {
+        completed = true
+        return
+      }
+      const chunk = result.value
+      signal?.throwIfAborted()
+      if (!(chunk instanceof Uint8Array)) {
+        throw new BotAttachmentGrantError('invalid', 'attachment upload data is invalid')
+      }
+      bytes += chunk.byteLength
+      if (bytes > maxBytes) {
+        throw new BotAttachmentGrantError('invalid', 'attachment upload exceeds the byte limit')
+      }
+      yield chunk
+    }
+  } finally {
+    if (!completed && iterator.return !== undefined) {
+      void Promise.resolve(iterator.return()).catch(() => undefined)
+    }
+  }
+}
+
+/** Combine the authenticated request cancellation with the upload deadline. */
+export function botAttachmentUploadSignal(signal: AbortSignal, timeoutMs = BOT_ATTACHMENT_UPLOAD_TIMEOUT_MS): AbortSignal {
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1) {
+    throw new BotAttachmentGrantError('invalid', 'attachment upload timeout is invalid')
+  }
+  return AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)])
+}
+
 /** Parsed file-upload target before the caller-specific ACL provider runs. */
 export type BotAttachmentUploadTarget =
   | {
@@ -59,7 +111,8 @@ export async function handleBotAttachmentUpload(
   }
   const name = new URL(request.url).searchParams.get('name') ?? undefined
   try {
-    const value = await admit(target, requestBodyChunks(request.body), name, request.signal)
+    const uploadSignal = botAttachmentUploadSignal(request.signal)
+    const value = await admit(target, requestBodyChunks(request.body, uploadSignal), name, uploadSignal)
     return jsonResponse({ ok: true, value })
   } catch (error: unknown) {
     const failure = uploadFailure(error)
@@ -175,18 +228,43 @@ function parseUploadTarget(url: URL): BotAttachmentUploadTarget {
   throw new Error('scope must be group or private')
 }
 
-async function* requestBodyChunks(body: ReadableStream<Uint8Array> | null): AsyncIterable<Uint8Array> {
+async function* requestBodyChunks(body: ReadableStream<Uint8Array> | null, signal?: AbortSignal): AsyncIterable<Uint8Array> {
   if (body === null) return
   const reader = body.getReader()
+  const cancel = (): void => { void reader.cancel(signal?.reason).catch(() => undefined) }
+  signal?.addEventListener('abort', cancel, { once: true })
   try {
     while (true) {
+      signal?.throwIfAborted()
       const chunk = await reader.read()
+      signal?.throwIfAborted()
       if (chunk.done) return
       yield chunk.value
     }
   } finally {
+    signal?.removeEventListener('abort', cancel)
     reader.releaseLock()
   }
+}
+
+/** Race one provider/body iterator read with request cancellation. */
+function nextAttachmentChunk(
+  iterator: AsyncIterator<Uint8Array>,
+  signal: AbortSignal,
+): Promise<IteratorResult<Uint8Array>> {
+  signal.throwIfAborted()
+  return new Promise((resolve, reject) => {
+    const cleanup = (): void => { signal.removeEventListener('abort', onAbort) }
+    const onAbort = (): void => {
+      cleanup()
+      reject(signal.reason)
+    }
+    signal.addEventListener('abort', onAbort, { once: true })
+    void iterator.next().then(
+      (result) => { cleanup(); resolve(result) },
+      (error) => { cleanup(); reject(error) },
+    )
+  })
 }
 
 function jsonResponse(value: unknown): Response {

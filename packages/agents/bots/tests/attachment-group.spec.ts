@@ -149,4 +149,50 @@ describe('owner-local Bot group attachments', () => {
       await opened.ctx.fiber.dispose()
     }
   })
+
+  it('does not consume a second grant when an idempotent retry has different text', async () => {
+    const opened = await fixture()
+    const alpha = bot(BotId('bot-alpha'))
+    const beta = bot(BotId('bot-beta'))
+    try {
+      const store = new BotAttachmentGrantStore(opened.attachments)
+      const service = new BotGroupService(opened.group, {
+        listBots: async () => [alpha, beta],
+        deliverToBot: async () => 'accepted',
+      }, store)
+      const created = await service.create({
+        id: BotGroupId('bot-group-retry-validation'), name: 'Retry validation', botIds: [alpha.id, beta.id],
+      })
+      const messageId = BotGroupMessageId('bot-group-message-retry-validation')
+      const first = await service.admitAttachment({
+        groupId: created.group.id, messageId, targetBotIds: [beta.id],
+        attachments: [{ type: 'image', attachment: image }],
+      })
+      await service.send({
+        groupId: created.group.id, messageId, text: 'Original', targetBotIds: [beta.id],
+        attachmentGrants: [first.grantId],
+      })
+      const currentGroup = opened.group.table('groups').get(created.group.id)
+      if (currentGroup === undefined) throw new Error('retry validation group disappeared')
+      const second = await store.admit({
+        kind: 'local-group', ownerId: 'local-owner', groupId: created.group.id, messageId,
+        targetBotIds: [beta.id], authorizationRevision: currentGroup.updatedAt,
+      }, [{ type: 'file', attachment: file }])
+      await expect(service.send({
+        groupId: created.group.id, messageId, text: 'Changed', targetBotIds: [beta.id],
+        attachmentGrants: [second.grantId],
+      })).rejects.toMatchObject({ code: 'invalid' })
+      const scope = {
+        kind: 'local-group' as const,
+        ownerId: 'local-owner',
+        groupId: created.group.id,
+        messageId,
+        targetBotIds: [beta.id],
+        authorizationRevision: currentGroup.updatedAt,
+      }
+      await expect(store.consume(scope, [second.grantId])).resolves.toMatchObject({ status: 'accepted' })
+    } finally {
+      await opened.ctx.fiber.dispose()
+    }
+  })
 })

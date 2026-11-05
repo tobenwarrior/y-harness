@@ -3,6 +3,7 @@
 import { mkdir, rm } from 'node:fs/promises'
 import { createHash, randomUUID, type KeyObject } from 'node:crypto'
 import { AsyncLocalStorage } from 'node:async_hooks'
+import type { IncomingMessage, ServerResponse } from 'node:http'
 import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { Context, Service } from '@yharness/cordis'
@@ -75,6 +76,9 @@ import { BotGroupId, BotGroupMessageId, BotGroupService, botGroupDomain } from '
 import { attachmentContentBlocks, BotAttachmentGrantStore, botAttachmentDomain } from './attachment-grants.ts'
 import {
   BOT_GROUP_ATTACHMENT_UPLOAD_PATH,
+  BOT_ATTACHMENT_MAX_BYTES,
+  botAttachmentUploadSignal,
+  boundedBotAttachmentStream,
   SHARED_BOT_ATTACHMENT_UPLOAD_PATH,
   bridgeBotAttachmentRequest,
   handleBotAttachmentUpload,
@@ -1967,6 +1971,7 @@ export class BotService extends TypertRemoteService {
   private readonly sharedGroupAdmissionRetryTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private readonly sharedGroupAdmissionRetryAttempts = new Map<string, number>()
   private readonly sharedGroupAdmissionRetryTokens = new Map<string, string>()
+  private readonly activeAttachmentUploads = new Set<Promise<void>>()
   /** Admissions whose durable receipt is absent and now require operator action. */
   private readonly sharedGroupAdmissionOperatorRequired = new Set<string>()
   private readonly promptFibers = new Map<Agent, ReturnType<Context['inject']>>()
@@ -2507,6 +2512,8 @@ export class BotService extends TypertRemoteService {
           this.promptFibers.clear()
           await this.groupService.then(service => service.whenIdle())
           await attachmentCleanup()
+          await sharedCleanup()
+          await this.waitForAttachmentUploads()
           await Promise.all([
             ...promptFibers.map(fiber => fiber.dispose()),
             ...this.promptDisposals,
@@ -2516,12 +2523,12 @@ export class BotService extends TypertRemoteService {
             openedTemplateDomain.close(),
             openedNoCredentialIntent?.close() ?? Promise.resolve(),
           ])
-          await sharedCleanup()
         })
       } catch (error) {
         this.stopping = true
         await attachmentCleanup()
         await sharedCleanup()
+        await this.waitForAttachmentUploads()
         await Promise.all([
           ...(domain === undefined ? [] : [domain.close()]),
           ...(groupDomain === undefined ? [] : [groupDomain.close()]),
@@ -5311,7 +5318,12 @@ export class BotService extends TypertRemoteService {
   async admitGroupImage(request: BotGroupImageAdmissionRequest): Promise<BotAttachmentGrantValue> {
     const parsed = botGroupImageAdmissionSchema.safeParse(request)
     if (!parsed.success) throw new RemoteError('gateway/bad-request', 'Invalid Bot group image admission request', {})
-    const refs = await admitEncodedImages(this.ctx.attachments, [parsed.data.image])
+    const image = parsed.data.image
+    const refs = await admitEncodedImages(this.ctx.attachments, [{
+      mediaType: image.mediaType,
+      data: image.data,
+      ...(image.name === undefined ? {} : { name: image.name }),
+    }])
     const service = await this.getGroupService()
     return service.admitAttachment({
       groupId: BotGroupId(parsed.data.groupId),
@@ -6749,7 +6761,7 @@ export class BotService extends TypertRemoteService {
     let service: SharedBotService | undefined
     let removeEnrollment: (() => Promise<void>) | undefined
     let removeShared: (() => Promise<void>) | undefined
-    let removeSharedAttachmentRoute: (() => void) | undefined
+    let sharedAttachmentRouteFiber: ReturnType<Context['inject']> | undefined
     try {
       const host = this.sharedHost()
       service = await SharedBotService.create(this.ctx, this.ctx.storageDomain, authority, host, {
@@ -6847,12 +6859,13 @@ export class BotService extends TypertRemoteService {
       removeShared = connection.sharedRpc.handle(SHARED_BOTS_PATH, authority, shared.handle.bind(shared), {
         endpoints: SHARED_BOT_ENDPOINTS,
       })
-      const webServer = this.ctx.get('webServer')
-      if (webServer !== undefined) {
-        removeSharedAttachmentRoute = webServer.register({
+      sharedAttachmentRouteFiber = this.ctx.inject(['webServer'], (webCtx) => {
+        const webServer = webCtx.get('webServer')
+        if (webServer === undefined) return
+        webCtx.effect(() => webServer.register({
           kind: 'exact',
           path: SHARED_BOT_ATTACHMENT_UPLOAD_PATH,
-          handler: async (request, response) => {
+          handler: (request: IncomingMessage, response: ServerResponse) => this.trackAttachmentUpload(async () => {
             const admission = await connection.admitShared(request, authority)
             if ('rejection' in admission) {
               response.writeHead(admission.rejection)
@@ -6875,9 +6888,9 @@ export class BotService extends TypertRemoteService {
                 BotPrincipalId(String(principal)),
               ),
             ))
-          },
-        })
-      }
+          }),
+        }), 'bots: shared attachment route')
+      })
       this.sharedService = service
       await this.reconcileSharedGroupDeliveryAdmissions()
       await shared.recoverSharedGroupDeliveries()
@@ -6888,9 +6901,10 @@ export class BotService extends TypertRemoteService {
         .filter(binding => binding.revokedAt === undefined)
         .map(binding => this.reconcileGroupSessionId(binding.sessionId)))
       return async () => {
-        removeSharedAttachmentRoute?.()
+        await sharedAttachmentRouteFiber?.dispose()
         await removeShared?.()
         await removeEnrollment?.()
+        await this.waitForAttachmentUploads()
         await service?.dispose()
         await authority.dispose()
         this.sharedService = undefined
@@ -6905,9 +6919,10 @@ export class BotService extends TypertRemoteService {
         this.clearSharedGroupAdmissionReconciliationRetries()
       }
     } catch (error) {
-      removeSharedAttachmentRoute?.()
+      await sharedAttachmentRouteFiber?.dispose()
       await removeShared?.()
       await removeEnrollment?.()
+      await this.waitForAttachmentUploads()
       await service?.dispose()
       await authority.dispose()
       this.clearSharedGroupAdmissionReconciliationRetries()
@@ -6918,18 +6933,19 @@ export class BotService extends TypertRemoteService {
   /** Register the owner-authenticated streaming group attachment route. */
   private async mountAttachmentRoutes(): Promise<() => Promise<void>> {
     const connection: HostConnectionHandle | undefined = this.ctx.get('connection')
-    if (connection === undefined) return async () => {}
+    if (connection === undefined || connection.fetch === undefined) return async () => {}
     const groups = await this.groupService
     const remove = await connection.fetch.register({
       path: BOT_GROUP_ATTACHMENT_UPLOAD_PATH,
       methods: ['POST'],
       requestBody: 'streaming',
-      fetch: request => handleBotAttachmentUpload(request, async (target, data, name, signal) => {
+      fetch: request => this.trackAttachmentUpload(() => handleBotAttachmentUpload(request, async (target, data, name, signal) => {
         if (target.kind !== 'group') throw new RemoteError('gateway/bad-request', 'private attachment uploads require the shared route', {})
+        const uploadSignal = botAttachmentUploadSignal(signal)
         const file = await this.ctx.attachments.saveFileStream({
-          data,
+          data: boundedBotAttachmentStream(data, BOT_ATTACHMENT_MAX_BYTES, uploadSignal),
           ...(name === undefined ? {} : { name }),
-          signal,
+          signal: uploadSignal,
         })
         return groups.admitAttachment({
           groupId: target.groupId,
@@ -6937,9 +6953,25 @@ export class BotService extends TypertRemoteService {
           ...(target.targetBotIds === undefined ? {} : { targetBotIds: target.targetBotIds }),
           attachments: [{ type: 'file', attachment: file }],
         })
-      }),
+      })),
     })
     return async () => { await remove() }
+  }
+
+  /** Track a raw attachment request until its provider stream and admission settle. */
+  private trackAttachmentUpload<T>(operation: () => Promise<T>): Promise<T> {
+    const completion = Promise.resolve().then(operation)
+    const settled = completion.then(() => undefined, () => undefined)
+    this.activeAttachmentUploads.add(settled)
+    void settled.then(() => { this.activeAttachmentUploads.delete(settled) })
+    return completion
+  }
+
+  /** Drain attachment requests after routes are removed and before their domain closes. */
+  private async waitForAttachmentUploads(): Promise<void> {
+    while (this.activeAttachmentUploads.size > 0) {
+      await Promise.all([...this.activeAttachmentUploads])
+    }
   }
 
   private sharedHost(): SharedBotHost {

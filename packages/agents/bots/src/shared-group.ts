@@ -857,14 +857,16 @@ export class SharedBotGroupService {
         .filter(message => message.groupId === group.id)
         .sort((left, right) => left.createdAt - right.createdAt || String(left.id).localeCompare(String(right.id)))
         .map((message) => {
-          const attachments = message.sender.kind === 'user'
-            ? this.attachments?.attachmentsForSharedGroupMessage({
+          const principalId = message.sender.kind === 'user' ? message.sender.principalId : undefined
+          const attachments = principalId === undefined
+            ? []
+            : this.attachments?.attachmentsForSharedGroupMessage({
+              principalId,
               groupId: group.id,
               messageId: message.id,
               targetBotIds: message.targetBotIds ?? group.botIds,
               authorizationRevision: group.revision,
             }) ?? []
-            : []
           return messageView(message, bots, attachments)
         })
       const messageIds = new Set(messages.map(message => String(message.id)))
@@ -925,8 +927,20 @@ export class SharedBotGroupService {
       const existing = snapshot.messages.find(message => message.id === messageId)
       const existingAttachments = attachmentStore?.attachmentsForMessage(attachmentScope) ?? []
       if (request.attachmentGrants !== undefined && request.attachmentGrants.length > 0) {
+        if (attachmentStore === undefined) {
+          throw new SharedGroupError('gateway/unavailable', 'shared Bot attachment admission is unavailable')
+        }
         if (existing !== undefined && existingAttachments.length === 0) {
           throw new SharedGroupError('gateway/conflict', `shared Bot group message "${String(messageId)}" already exists without attachments`)
+        }
+        const preview = attachmentStore.preview(attachmentScope, request.attachmentGrants)
+        if (existing !== undefined && !sameAttachmentRefs(existingAttachments, preview)) {
+          throw new SharedGroupError('gateway/conflict', `shared Bot group message "${String(messageId)}" already exists with different attachments`)
+        }
+      }
+      if (existing === undefined && request.attachmentGrants !== undefined && request.attachmentGrants.length > 0) {
+        if (attachmentStore === undefined) {
+          throw new SharedGroupError('gateway/unavailable', 'shared Bot attachment admission is unavailable')
         }
         await attachmentStore.consume(attachmentScope, request.attachmentGrants)
       }
@@ -935,8 +949,7 @@ export class SharedBotGroupService {
         if (existing.groupId !== group.id || existing.text !== text
           || existing.sender.kind !== 'user' || String(existing.sender.principalId ?? '') !== String(principalId)
           || !sameIdSet(existing.targetBotIds ?? group.botIds, targetBotIds)
-          || (request.attachmentGrants !== undefined && request.attachmentGrants.length > 0
-            && !sameAttachmentRefs(existingAttachments, messageAttachments))) {
+        ) {
           throw new SharedGroupError('gateway/conflict', `shared Bot group message "${String(messageId)}" already exists with different content`)
         }
       }
@@ -1870,6 +1883,7 @@ export class SharedBotGroupService {
       this.clearPendingRecovery(deliveryId)
       return
     }
+    await this.attachments?.refresh()
     const plan: SharedGroupSendPlan = {
       groupId: group.id,
       groupName: group.name,
@@ -1924,6 +1938,7 @@ export class SharedBotGroupService {
       const membershipSnapshot = parseMembershipExtension(current)
       const groups = parseGroups(membershipSnapshot.sharedGroups)
       requireActivePrincipal(authorityState, principalId)
+      await this.attachments?.refresh()
       const result = await work(groups, membershipSnapshot.memberships)
       return {
         value: result,

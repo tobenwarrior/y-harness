@@ -35,7 +35,7 @@ async function harness(options?: { pool?: MemoryMediaPool; config?: Partial<Conf
   ctx.storage.mount('domain', facility)
   const changes: DomainChanged[] = []
   ctx.on('domain/changed', (change) => { changes.push(change) })
-  return { ctx, backend, facility, changes }
+  return { ctx, backend, facility, changes, pool: options?.pool }
 }
 
 describe('defineDomain', () => {
@@ -94,6 +94,19 @@ describe('DomainFacility.open', () => {
     await domain.table('items').put('a', { label: 'first', count: 1 })
     await expect(facility.open(spec)).rejects.toMatchObject({ name: 'DomainError', code: 'already-open' })
     expect(domain.table('items').get('a')).toEqual({ label: 'first', count: 1 })
+  })
+
+  it('refreshes the in-memory projection after another Host changes the backend', async () => {
+    const pool = new MemoryMediaPool()
+    const { facility, changes } = await harness({ pool })
+    const domain = await facility.open(spec)
+    await domain.table('items').put('a', { label: 'first', count: 1 })
+    const changeCount = changes.length
+    pool.media.get('demo')?.tables.get('items')?.set('a', { label: 'from-peer', count: 2 })
+    expect(domain.table('items').get('a')).toEqual({ label: 'first', count: 1 })
+    await domain.refresh()
+    expect(domain.table('items').get('a')).toEqual({ label: 'from-peer', count: 2 })
+    expect(changes).toHaveLength(changeCount)
   })
 
   it('routes per domain name and fails loud on an unregistered route target', async () => {

@@ -7,6 +7,7 @@ import type {
   BotTemplateCapability,
   BotTemplateLocalPermissions,
   BotTemplateProfile,
+  BotInputAttachmentView as SharedBotInputAttachmentView,
 } from '@yharness/bots/client'
 import type { BotGroupDeliveryStatusView as SharedBotGroupDeliveryStatusView } from '@yharness/bots/client'
 import type {
@@ -109,6 +110,8 @@ export interface BotGroupMessageSummary {
   readonly text: string
   /** Exact Bot ids selected by mentions for this message, when it was targeted. */
   readonly targetBotIds?: readonly string[]
+  /** Safe metadata for attachments admitted to this message. */
+  readonly attachments?: readonly SharedBotInputAttachmentView[]
   /** Unix timestamp used for stable transcript ordering. */
   readonly createdAt: number
 }

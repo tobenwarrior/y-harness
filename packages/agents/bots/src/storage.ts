@@ -22,7 +22,10 @@ export type BotStoredRecord = BotRecord & {
 
 /** Durable image reference admitted by the attachment store. */
 export const imageAttachmentRefSchema = z.object({
-  attachmentId: z.string().regex(/^sha256:[0-9a-f]{64}$/).transform(value => brandString<AttachmentId>(value)),
+  attachmentId: z.string().min(1).max(512).refine(
+    value => value.trim() === value && !/[\u0000-\u001f\u007f]/.test(value),
+    'attachment provider id is invalid',
+  ).transform(value => brandString<AttachmentId>(value)),
   mediaType: z.enum(['image/png', 'image/jpeg', 'image/webp', 'image/gif']),
   bytes: z.number().safe().int().nonnegative(),
   width: z.number().safe().int().positive(),
