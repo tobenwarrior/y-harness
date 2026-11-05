@@ -246,6 +246,45 @@ describe('self-hosted shared-bot access', () => {
     }
   })
 
+  it('reuses one durable owner principal across concurrent Hosts and restart', async () => {
+    const { ctx, credentials, dispose } = await mounted()
+    const options = { sessionMaxAgeMs: 60_000, inviteMaxAgeMs: 60_000, now: () => 1_000 }
+    const first = await SharedAccessAuthority.create(ctx, credentials, options)
+    const second = await SharedAccessAuthority.create(ctx, credentials, options)
+    let reloaded: SharedAccessAuthority | undefined
+    try {
+      const [one, two] = await Promise.all([
+        first.enrollOwner(fakeRequest({ host: '127.0.0.1:3080' })),
+        second.enrollOwner(fakeRequest({ host: '127.0.0.1:3080' })),
+      ])
+      expect(one.principalId).toBe(two.principalId)
+      const record = await credentials.readRecord(credentialKey('client-connection', 'shared-access'))
+      expect(record).toMatchObject({
+        payload: {
+          principals: [{ id: one.principalId }],
+          extensions: {
+            'client-connection/shared-owner': { version: 1, principalId: one.principalId },
+          },
+        },
+      })
+
+      await first.dispose()
+      await second.dispose()
+      reloaded = await SharedAccessAuthority.create(ctx, credentials, options)
+      const afterRestart = await reloaded.enrollOwner(fakeRequest({ host: '127.0.0.1:3080' }))
+      expect(afterRestart.principalId).toBe(one.principalId)
+      expect(await reloaded.admit(fakeRequest({
+        host: '127.0.0.1:3080',
+        cookie: cookieFromSetCookie(afterRestart.setCookie),
+      }))).toHaveProperty('peer')
+    } finally {
+      await reloaded?.dispose()
+      await second.dispose()
+      await first.dispose()
+      await dispose()
+    }
+  })
+
   it('extends an active collaborator principal when redeeming a second invite', async () => {
     const { ctx, dispose } = await mounted()
     const authority = await SharedAccessAuthority.create(ctx, ctx.credentials, {

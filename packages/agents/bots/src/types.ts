@@ -5,6 +5,12 @@ import type { ImageAttachmentRef } from '@yharness/attachment'
 import type { MessageId } from '@yharness/llm/brand'
 import type { SessionId } from '@yharness/session/types'
 import type { BotPrincipalId, BotShareRole } from './sharing.ts'
+import type {
+  ScheduleCatalogEntry,
+  ScheduleDeliveryRecord,
+  ScheduleId,
+  ScheduleView,
+} from '@yharness/schedule/client'
 
 // Remote request/result types are re-exported from this public type subpath so
 // generated client contracts do not depend on the package's implementation root.
@@ -343,6 +349,132 @@ export type BotEventRoutineView = Omit<BotEventRoutine, 'deliveries' | 'results'
   /** Delivery remains in the Bot's original Session. */
   readonly deliveryMode: 'host'
 }
+
+/** Browser-facing view of one Bot-owned timed Schedule routine. */
+export type BotScheduleRoutineView = Omit<ScheduleView, 'kind'> & {
+  /** Common routine discriminator used alongside event-trigger routines. */
+  readonly kind: 'schedule'
+  /** Bot that owns the Session receiving this routine. */
+  readonly botId: BotId
+  /** Original Session binding retained by the Host Schedule service. */
+  readonly sessionId: SessionId
+  /** Current lifecycle state of the retained Schedule row. */
+  readonly status: ScheduleCatalogEntry['status']
+  /** Most recent durable inbox acknowledgment, when one exists. */
+  readonly lastDelivery?: ScheduleCatalogEntry['lastDelivery']
+  /** Original Schedule rule family, such as `every` or `cron`. */
+  readonly scheduleKind: ScheduleView['kind']
+  /** Fixed-rate or delayed selector, when applicable. */
+  readonly afterSeconds?: number
+  /** Fixed-rate selector, when applicable. */
+  readonly everySeconds?: number
+  /** Wall-clock selector, when applicable. */
+  readonly time?: string
+  /** Wall-clock or cron zone, when applicable. */
+  readonly timeZone?: string
+  /** Cron selector, when applicable. */
+  readonly expression?: string
+}
+
+/** Browser-facing view of one event-trigger routine with its Bot binding. */
+export type BotEventRoutineCatalogView = BotEventRoutineView & {
+  /** Bot that owns this event routine. */
+  readonly botId: BotId
+  /** Session that receives the event-trigger follow-up. */
+  readonly sessionId: SessionId
+}
+
+/** Common Bot-scoped routine view returned by the management API. */
+export type BotRoutineView = BotScheduleRoutineView | BotEventRoutineCatalogView
+
+/** Request the routines owned by one Bot. */
+export interface BotRoutineListRequest {
+  /** Bot whose routines should be returned. */
+  readonly botId: BotId
+}
+
+/** Bot routine catalog response. */
+export interface BotRoutineListValue {
+  /** Timed and event-trigger routines in stable Host order. */
+  readonly routines: readonly BotRoutineView[]
+}
+
+/** Request one lifecycle transition for a Bot routine. */
+export interface BotRoutineLifecycleRequest {
+  /** Bot that owns the routine. */
+  readonly botId: BotId
+  /** Routine identity returned by the catalog. */
+  readonly routineId: string
+}
+
+/** Successful pause result or a bounded lookup/ended result. */
+export type BotRoutinePauseValue =
+  | { readonly routine: BotRoutineView; readonly paused: true }
+  | { readonly id: string; readonly paused: false; readonly code: 'routine_not_found' | 'routine_ended' }
+
+/** Successful resume result or a bounded lookup/ended result. */
+export type BotRoutineResumeValue =
+  | { readonly routine: BotRoutineView; readonly resumed: true }
+  | { readonly id: string; readonly resumed: false; readonly code: 'routine_not_found' | 'routine_ended' }
+
+/** Successful removal or a bounded lookup result. */
+export type BotRoutineDeleteValue =
+  | { readonly id: string; readonly deleted: true }
+  | { readonly id: string; readonly deleted: false; readonly code: 'routine_not_found' }
+
+/** Request one bounded routine-history page. */
+export interface BotRoutineHistoryRequest {
+  /** Bot that owns the routine. */
+  readonly botId: BotId
+  /** Routine identity returned by the catalog. */
+  readonly routineId: string
+  /** Number of newest records to return, from 1 through 100. */
+  readonly limit: number
+  /** Exclusive cursor for timed delivery history. */
+  readonly before?: MessageId
+}
+
+/** Timed routine history returned by the Bot-scoped API. */
+export interface BotScheduleRoutineHistory {
+  /** Routine family discriminator. */
+  readonly kind: 'schedule'
+  /** Stable timed routine identity. */
+  readonly id: ScheduleId
+  /** Newest-first acknowledged deliveries. */
+  readonly records: readonly ScheduleDeliveryRecord[]
+  /** Whether older records may be unavailable. */
+  readonly earlierRecordsUnavailable: boolean
+  /** Whether retention pruning removed an older record. */
+  readonly earlierRecordsPruned: boolean
+  /** Current Host retention limits. */
+  readonly retention: {
+    readonly days: number
+    readonly records: number
+  }
+  /** Cursor for an older page, when retained records remain. */
+  readonly nextBefore?: MessageId
+}
+
+/** Event routine history returned by the Bot-scoped API. */
+export interface BotEventRoutineHistory {
+  /** Routine family discriminator. */
+  readonly kind: 'event'
+  /** Stable event routine identity. */
+  readonly id: string
+  /** Newest-first delivery reservations. */
+  readonly deliveries: readonly BotEventRoutineDelivery[]
+  /** Newest-first completed model results. */
+  readonly results: readonly BotEventRoutineResult[]
+}
+
+/** Bounded lookup result shared by routine history and lifecycle calls. */
+export type BotRoutineLookupFailure = {
+  readonly id: string
+  readonly code: 'routine_not_found' | 'routine_ended' | 'delivery_cursor_not_found'
+}
+
+/** Bot routine history response. */
+export type BotRoutineHistoryValue = BotScheduleRoutineHistory | BotEventRoutineHistory | BotRoutineLookupFailure
 
 /** Authoritative durable row: one Bot maps to exactly one ordinary Session. */
 export interface BotRecord {

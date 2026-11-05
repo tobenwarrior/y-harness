@@ -656,10 +656,12 @@ function SharedGroupCreateDialog({
   )
 }
 
-export function SharedBotsDialog({ client, open, onClose, t }: {
+export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }: {
   readonly client: SharedBotsClient
   readonly open: boolean
   readonly onClose: () => void
+  /** Start the Host-authenticated owner bootstrap before loading the shared workspace. */
+  readonly ownerMode?: boolean
   readonly t: Translate
 }) {
   const [code, setCode] = useState('')
@@ -696,7 +698,7 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
   const [groupInviteWorking, setGroupInviteWorking] = useState(false)
   const [groupInviteCopied, setGroupInviteCopied] = useState(false)
   const [groupInviteUnavailable, setGroupInviteUnavailable] = useState(false)
-  const [working, setWorking] = useState<'list' | 'enroll' | null>(null)
+  const [working, setWorking] = useState<'list' | 'enroll' | 'owner' | null>(null)
   const [chatWorkingBotIds, setChatWorkingBotIds] = useState<ReadonlySet<string>>(new Set())
   const [memoryWorkingBotIds, setMemoryWorkingBotIds] = useState<ReadonlySet<string>>(new Set())
   const [error, setError] = useState<string | null>(null)
@@ -1021,12 +1023,35 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
     let refreshCompleted = false
     pendingGroupQueueRef.current = null
     invalidatePendingRetryState()
-    setWorking('list')
+    setWorking(ownerMode ? 'owner' : 'list')
     setError(null)
     setGroups([])
     setGroupSelection(null)
     setGroupMessages([])
     try {
+      if (ownerMode) {
+        const enrollOwner = client.enrollOwner
+        const getOwnerCapability = client.getOwnerCapability
+        if (enrollOwner === undefined || getOwnerCapability === undefined) {
+          setError(t('sharedOwnerSetupUnavailable'))
+          return
+        }
+        const capability = await getOwnerCapability()
+        if (!isCurrentClient(clientContext) || !isCurrentLifecycle(lifecycleGeneration)
+          || refreshGenerationRef.current !== refreshGeneration) return
+        if (!capability.ownerBootstrap) {
+          setError(t('sharedOwnerSetupUnavailable'))
+          return
+        }
+        const owner = await enrollOwner()
+        if (!isCurrentClient(clientContext) || !isCurrentLifecycle(lifecycleGeneration)
+          || refreshGenerationRef.current !== refreshGeneration) return
+        if (!owner.ok) {
+          setError(owner.error.message || t('sharedOwnerSetupFailed'))
+          return
+        }
+        setWorking('list')
+      }
       try {
         if (!isCurrentClient(clientContext)) return
         const restored = await client.restoreRetryScope()
@@ -1119,7 +1144,7 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
       }
       if (isCurrentClient(clientContext) && (refreshAuth === undefined || isCurrentAuth(refreshAuth))
         && isCurrentLifecycle(lifecycleGeneration) && refreshGenerationRef.current === refreshGeneration) {
-        setWorking(current => current === 'list' ? null : current)
+        setWorking(current => current === 'list' || current === 'owner' ? null : current)
       }
     }
   }
@@ -1297,7 +1322,7 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
     }
     setError(null)
     void refresh()
-  }, [open, client])
+  }, [open, client, ownerMode])
 
   useEffect(() => () => {
     for (const attachment of groupAttachmentsRef.current) releaseBotGroupAttachment(attachment)
@@ -1908,18 +1933,23 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
         open={open}
         onClose={onClose}
         title={t('sharedBotsTitle')}
-        description={t('sharedBotsDescription')}
+        description={ownerMode ? t('sharedOwnerDescription') : t('sharedBotsDescription')}
         closeLabel={t('cancel')}
         className={css.shareDialog as string}
         contentClassName={css.shareDialogContent as string}
         footer={<Button variant="ghost" onClick={onClose}>{t('cancel')}</Button>}
       >
         {error !== null && <div className={css.dialogNotice} role="alert">{error}</div>}
-        <div className={css.shareInviteRow}>
-          <Input value={code} placeholder={t('inviteCodePlaceholder')} aria-label={t('inviteCodeLabel')} onChange={(event) => { codeRevisionRef.current += 1; setCode(event.currentTarget.value) }} />
-          <Button variant="primary" onClick={() => { void enroll() }} disabled={working !== null || groupWorking !== null || hasPendingChat || hasPendingMemory || enrollmentInFlightRef.current || code.trim() === ''}>{working === 'enroll' ? t('joining') : t('join')}</Button>
-        </div>
-        <p className={css.sharedMemoryDescription}>{t('sharedInviteCodeHelp')}</p>
+        {!ownerMode && (
+          <>
+            <div className={css.shareInviteRow}>
+              <Input value={code} placeholder={t('inviteCodePlaceholder')} aria-label={t('inviteCodeLabel')} onChange={(event) => { codeRevisionRef.current += 1; setCode(event.currentTarget.value) }} />
+              <Button variant="primary" onClick={() => { void enroll() }} disabled={working !== null || groupWorking !== null || hasPendingChat || hasPendingMemory || enrollmentInFlightRef.current || code.trim() === ''}>{working === 'enroll' ? t('joining') : t('join')}</Button>
+            </div>
+            <p className={css.sharedMemoryDescription}>{t('sharedInviteCodeHelp')}</p>
+          </>
+        )}
+        {working === 'owner' && <div className={css.shareLoading} role="status">{t('sharedOwnerSettingUp')} <StateDot state="ongoing" size={12} /></div>}
         {working === 'list' && <div className={css.shareLoading} role="status"><StateDot state="ongoing" size={12} /></div>}
         {working !== 'list' && bots.length === 0 && <div className={css.shareEmpty}>{t('noSharedBots')}</div>}
         {working !== 'list' && bots.length > 0 && (

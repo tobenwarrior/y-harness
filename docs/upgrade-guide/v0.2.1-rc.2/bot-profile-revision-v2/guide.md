@@ -1,16 +1,16 @@
 ---
 kind: upgrade-guide
-description: "Bot profile revision records move to a v2 credential successor when persona or specialty data is persisted."
+description: "Bot profile revision records keep the setup-release v2 generation immutable."
 ---
 
-# Bot profile revisions use a v2 successor
+# Bot profile revisions keep setup-release v2 immutable
 
 ## Change
 
-The Bot service now stores profile-revision snapshots containing persona and specialty declarations under `agent-bots/profile-revisions-v2`. A new Host migrates the released `agent-bots/profile-revisions` record on first read and keeps the v1 record unchanged. Released Hosts cannot interpret the v2 snapshot or the new Bot profile fields, so mixed-version access to one Bot store is unsupported after the v2 writer starts.
+The setup release stores profile-revision snapshots under `agent-bots/profile-revisions-v2`. That record is frozen with the setup release's fields and remains readable as a predecessor. Routine-era fields such as the durable roster and bounded timed-routine projection belong to the separate `agent-bots/profile-revisions-v3` successor; they must not be added to the strict v2 schema. The v1 predecessor is also retained unchanged.
 
 ## Migration
 
-1. Stop every Host using the Bot store before deploying the profile-editing build.
-2. Start the upgraded Host once and confirm that its Bot roster loads; this creates the v2 successor without deleting the v1 record.
-3. Keep upgraded Hosts together for future Bot edits. Do not roll back to a released Host after the v2 successor is created, even before v2-only fields are written; restore a backup taken before migration before using the released Host.
+1. Keep the setup-release v2 record and its predecessor in place; do not rewrite either record to add routine fields.
+2. Deploy a routine-capable Host that reads v2 and writes the v3 successor. See the v3 guide for the mixed-version deployment rule.
+3. Do not roll back a Bot store after a v3 writer has committed routine-era state; restore a backup taken before the v3 migration before using a Host that only understands v2.

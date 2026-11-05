@@ -17,7 +17,10 @@ import {
   parseVendoredRows,
   render,
   tierExternalDeps,
+  installedMetadata,
+  installedManifest,
   virtualManifest,
+  workspaceLinkedManifests,
 } from './gen-third-party-notices.ts'
 
 const root = resolve(import.meta.dirname, '..')
@@ -195,6 +198,23 @@ describe('virtualManifest', () => {
     }
   })
 
+  it('selects the newest version deterministically when no exact version is requested', () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-notices-deterministic-'))
+    try {
+      const name = '@scope/pkg'
+      const store = join(root, 'store')
+      for (const version of ['2.6.9', '4.4.3']) {
+        const manifestDir = join(store, `${name.replace('/', '+')}@${version}`, 'node_modules', name)
+        mkdirSync(manifestDir, { recursive: true })
+        writeFileSync(join(manifestDir, 'package.json'), JSON.stringify({ name, version, license: 'MIT' }))
+      }
+
+      expect(virtualManifest(store, name)).toMatchObject({ name, version: '4.4.3' })
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   it('returns undefined when neither the prefix nor the content scan finds the package', () => {
     const root = mkdtempSync(join(tmpdir(), 'dsh-notices-miss-'))
     try {
@@ -204,6 +224,152 @@ describe('virtualManifest', () => {
       writeFileSync(join(other, 'package.json'), JSON.stringify({ name: 'other-pkg', version: '1.0.0' }))
 
       expect(virtualManifest(store, '@scope/missing')).toBeUndefined()
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('workspace-linked package metadata', () => {
+  function linkedWorkspace(
+    packageName: string,
+    entries: readonly { workspace: string; version: string; license: string; repository: string }[],
+  ): { root: string; manifests: Map<string, Manifest> } {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-notices-workspace-links-'))
+    const manifests = new Map<string, Manifest>()
+    for (const entry of entries) {
+      const manifestPath = join(root, entry.workspace, 'node_modules', packageName, 'package.json')
+      mkdirSync(resolve(manifestPath, '..'), { recursive: true })
+      writeFileSync(manifestPath, JSON.stringify({
+        name: packageName,
+        version: entry.version,
+        license: entry.license,
+        repository: entry.repository,
+      }))
+      manifests.set(join(entry.workspace, 'package.json'), {
+        name: `@fixture/${entry.workspace.replaceAll('/', '-')}`,
+        dependencies: { [packageName]: `^${entry.version}` },
+      })
+    }
+    return { root, manifests }
+  }
+
+  it('collects all active links and rejects divergent license or repository metadata', () => {
+    const packageName = '@fixture/linked-package'
+    const { root, manifests } = linkedWorkspace(packageName, [
+      { workspace: 'packages/first', version: '1.0.0', license: 'MIT', repository: 'https://example.com/first' },
+      { workspace: 'packages/second', version: '2.0.0', license: 'Apache-2.0', repository: 'https://example.com/second' },
+    ])
+    try {
+      expect(workspaceLinkedManifests(packageName, manifests, root).map(manifest => manifest.version)).toEqual(['1.0.0', '2.0.0'])
+      expect(() => installedMetadata(packageName, manifests, root)).toThrow(
+        'active workspace links for @fixture/linked-package have divergent license/repository metadata (1.0.0, 2.0.0)',
+      )
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('accepts multiple active versions when their effective metadata agrees', () => {
+    const packageName = '@fixture/linked-package'
+    const { root, manifests } = linkedWorkspace(packageName, [
+      { workspace: 'packages/first', version: '1.0.0', license: 'MIT', repository: 'git+https://github.com/example/linked-package.git' },
+      { workspace: 'packages/second', version: '2.0.0', license: 'MIT', repository: 'https://github.com/example/linked-package' },
+    ])
+    try {
+      expect(installedMetadata(packageName, manifests, root)).toEqual({
+        license: 'MIT',
+        repo: 'https://github.com/example/linked-package',
+      })
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects divergent virtual-store candidates when no workspace link is active', () => {
+    const packageName = '@fixture/virtual-package'
+    const root = mkdtempSync(join(tmpdir(), 'dsh-notices-virtual-candidates-'))
+    const manifests = new Map<string, Manifest>([
+      ['packages/consumer/package.json', { name: '@fixture/consumer', dependencies: { [packageName]: '^1.0.0' } }],
+    ])
+    try {
+      const store = join(root, 'node_modules', '.pnpm')
+      for (const entry of [
+        { version: '1.0.0', license: 'MIT', repository: 'https://example.com/one' },
+        { version: '2.0.0', license: 'Apache-2.0', repository: 'https://example.com/two' },
+      ]) {
+        const manifestPath = join(store, `${packageName.replace('/', '+')}@${entry.version}`, 'node_modules', packageName, 'package.json')
+        mkdirSync(resolve(manifestPath, '..'), { recursive: true })
+        writeFileSync(manifestPath, JSON.stringify({ name: packageName, ...entry }))
+      }
+
+      expect(workspaceLinkedManifests(packageName, manifests, root)).toEqual([])
+      expect(() => installedMetadata(packageName, manifests, root)).toThrow(
+        'eligible installed candidates for @fixture/virtual-package have divergent license/repository metadata (1.0.0, 2.0.0)',
+      )
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('selects the newest installed virtual candidate when no direct link is active', () => {
+    const packageName = '@fixture/ordered-package'
+    const root = mkdtempSync(join(tmpdir(), 'dsh-notices-installed-order-'))
+    const manifests = new Map<string, Manifest>([
+      ['packages/consumer/package.json', { name: '@fixture/consumer', dependencies: { [packageName]: '*' } }],
+    ])
+    try {
+      const store = join(root, 'node_modules', '.pnpm')
+      for (const version of ['1.0.0', '2.0.0']) {
+        const manifestPath = join(store, `${packageName.replace('/', '+')}@${version}`, 'node_modules', packageName, 'package.json')
+        mkdirSync(resolve(manifestPath, '..'), { recursive: true })
+        writeFileSync(manifestPath, JSON.stringify({
+          name: packageName,
+          version,
+          license: 'MIT',
+          repository: 'https://example.com/ordered-package',
+        }))
+      }
+
+      expect(installedManifest(packageName, manifests, undefined, root)).toMatchObject({ version: '2.0.0' })
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('preserves direct-link precedence over a newer virtual candidate', () => {
+    const packageName = '@fixture/direct-package'
+    const root = mkdtempSync(join(tmpdir(), 'dsh-notices-direct-order-'))
+    const manifests = new Map<string, Manifest>([
+      ['packages/consumer/package.json', { name: '@fixture/consumer', dependencies: { [packageName]: '*' } }],
+    ])
+    try {
+      const directManifest = join(root, 'node_modules', packageName, 'package.json')
+      mkdirSync(resolve(directManifest, '..'), { recursive: true })
+      writeFileSync(directManifest, JSON.stringify({
+        name: packageName,
+        version: '1.0.0',
+        license: 'MIT',
+        repository: 'https://example.com/direct-package',
+      }))
+      const virtualManifestPath = join(
+        root,
+        'node_modules',
+        '.pnpm',
+        `${packageName.replace('/', '+')}@2.0.0`,
+        'node_modules',
+        packageName,
+        'package.json',
+      )
+      mkdirSync(resolve(virtualManifestPath, '..'), { recursive: true })
+      writeFileSync(virtualManifestPath, JSON.stringify({
+        name: packageName,
+        version: '2.0.0',
+        license: 'MIT',
+        repository: 'https://example.com/direct-package',
+      }))
+
+      expect(installedManifest(packageName, manifests, undefined, root)).toMatchObject({ version: '1.0.0' })
     } finally {
       rmSync(root, { recursive: true, force: true })
     }

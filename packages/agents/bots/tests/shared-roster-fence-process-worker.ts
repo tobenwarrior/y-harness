@@ -10,10 +10,10 @@ const ctx = new Context()
 await ctx.plugin(LocalCredentialProvider, { path: credentialsPath, watch: false })
 const credentials = ctx.get('credentials')
 if (credentials === undefined) throw new Error('roster-fence worker credentials were not mounted')
-await credentials.modifyRecord(credentialKey('agent-bots', 'profile-revisions-v2'), async () => ({
+await credentials.modifyRecord(credentialKey('agent-bots', 'profile-revisions-v3'), async () => ({
   kind: 'grant' as const,
   payload: {
-    version: 2 as const,
+    version: 3 as const,
     revisions: {},
     profiles: {},
     sharedRosterFence: { token },

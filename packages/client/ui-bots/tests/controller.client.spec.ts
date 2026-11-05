@@ -18,6 +18,7 @@ import {
   type BotView,
 } from '@yharness/bots/client'
 import { brandString } from '@yharness/brand'
+import { MessageId } from '@yharness/llm/brand'
 import type { RemoteResult } from '@yharness/api-remotes/client'
 import { BotWorkspaceController, type BotAvatarGenerationRemote, type BotGroupPendingState, type BotGroupPendingStore, type BotWorkspaceRemote } from '../src/client/controller.ts'
 
@@ -1655,5 +1656,51 @@ describe('BotWorkspaceController', () => {
     expect(listMemory).toHaveBeenCalledWith({ botId: persisted.id })
     expect(updateMemory).toHaveBeenCalledWith({ botId: persisted.id, memoryId: 'memory-one', text: 'Keep the review short.' })
     expect(forgetMemory).toHaveBeenCalledWith({ botId: persisted.id, memoryId: 'memory-one' })
+  })
+
+  it('mounts owner-scoped routine callbacks and preserves routine ids', async () => {
+    const persisted = bot('bot-routine-owner', 'bot-session-routine-owner')
+    const routine = {
+      kind: 'event' as const,
+      id: 'routine-one',
+      title: 'Review messages',
+      prompt: 'Review incoming messages.',
+      trigger: { type: 'message' as const, source: 'user' as const },
+      status: 'active' as const,
+      createdAt: 1,
+      updatedAt: 1,
+      state: 'waiting' as const,
+      deliveryMode: 'host' as const,
+      botId: persisted.id,
+      sessionId: persisted.sessionId,
+    }
+    const remote = remoteFixture([persisted])
+    const listRoutines = vi.fn(async () => ({ ok: true as const, value: { routines: [routine] } }))
+    const pauseRoutine = vi.fn(async () => ({ ok: true as const, value: { routine: { ...routine, status: 'paused' as const }, paused: true as const } }))
+    const resumeRoutine = vi.fn(async () => ({ ok: true as const, value: { routine, resumed: true as const } }))
+    const deleteRoutine = vi.fn(async () => ({ ok: true as const, value: { id: 'routine-one', deleted: true as const } }))
+    const routineHistory = vi.fn(async () => ({ ok: true as const, value: { kind: 'event' as const, id: 'routine-one', deliveries: [], results: [] } }))
+    remote.listRoutines = listRoutines
+    remote.pauseRoutine = pauseRoutine
+    remote.resumeRoutine = resumeRoutine
+    remote.deleteRoutine = deleteRoutine
+    remote.routineHistory = routineHistory
+    const controller = new BotWorkspaceController(remote, sessionsFixture().sessions, () => 'unexpected response')
+
+    const manager = controller.face().routineManager
+    if (manager === undefined) throw new Error('routine manager was not mounted')
+    await expect(manager.list(String(persisted.id))).resolves.toEqual([routine])
+    await expect(manager.pause(String(persisted.id), 'routine-one')).resolves.toMatchObject({ id: 'routine-one', status: 'paused' })
+    await expect(manager.resume(String(persisted.id), 'routine-one')).resolves.toEqual(routine)
+    await expect(manager.history(String(persisted.id), 'routine-one')).resolves.toMatchObject({ kind: 'event', id: 'routine-one' })
+    await expect(manager.history(String(persisted.id), 'routine-one', MessageId('older-routine-result'))).resolves.toMatchObject({ kind: 'event', id: 'routine-one' })
+    await expect(manager.remove(String(persisted.id), 'routine-one')).resolves.toBeUndefined()
+
+    expect(listRoutines).toHaveBeenCalledWith({ botId: persisted.id })
+    expect(pauseRoutine).toHaveBeenCalledWith({ botId: persisted.id, routineId: 'routine-one' })
+    expect(resumeRoutine).toHaveBeenCalledWith({ botId: persisted.id, routineId: 'routine-one' })
+    expect(routineHistory).toHaveBeenCalledWith({ botId: persisted.id, routineId: 'routine-one', limit: 50 })
+    expect(routineHistory).toHaveBeenCalledWith({ botId: persisted.id, routineId: 'routine-one', limit: 50, before: MessageId('older-routine-result') })
+    expect(deleteRoutine).toHaveBeenCalledWith({ botId: persisted.id, routineId: 'routine-one' })
   })
 })

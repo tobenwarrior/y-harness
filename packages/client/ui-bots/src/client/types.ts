@@ -8,6 +8,9 @@ import type {
   BotTemplateLocalPermissions,
   BotTemplateProfile,
   BotInputAttachmentView as SharedBotInputAttachmentView,
+  BotRoutineHistoryRequest,
+  BotRoutineHistoryValue,
+  BotRoutineView,
 } from '@yharness/bots/client'
 import type { BotGroupDeliveryStatusView as SharedBotGroupDeliveryStatusView } from '@yharness/bots/client'
 import type {
@@ -275,6 +278,23 @@ export interface BotMemoryManagerActions {
   readonly update: (botId: string, memoryId: string, text: string) => Promise<BotMemorySummary>
   /** Logically remove one memory from future Bot prompts. */
   readonly remove: (botId: string, memoryId: string) => Promise<void>
+}
+
+/** Successful history response shown by the selected Bot's routine manager. */
+export type BotRoutineHistory = Exclude<BotRoutineHistoryValue, { readonly code: string }>
+
+/** Bot-scoped routine management actions mounted by the Host. */
+export interface BotRoutineManagerActions {
+  /** Read timed and event routines owned by one Bot. */
+  readonly list: (botId: string) => Promise<readonly BotRoutineView[]>
+  /** Pause one active routine and return its latest view. */
+  readonly pause: (botId: string, routineId: string) => Promise<BotRoutineView>
+  /** Resume one paused routine and return its latest view. */
+  readonly resume: (botId: string, routineId: string) => Promise<BotRoutineView>
+  /** Delete one routine and its bounded history. */
+  readonly remove: (botId: string, routineId: string) => Promise<void>
+  /** Read one bounded routine history page, optionally continuing an older timed page. */
+  readonly history: (botId: string, routineId: string, before?: BotRoutineHistoryRequest['before']) => Promise<BotRoutineHistory>
 }
 
 /** Async avatar capabilities owned by the Client composition. */

@@ -28,7 +28,7 @@ import type {
 } from '@yharness/tools'
 import { PERSONA_PREFIX_SECTION, renderPrompt } from '@yharness/system-prompt'
 import type {} from '@yharness/avatar-generation'
-import { ScheduleId, ScheduleInputError, scheduleTitle, scheduleView } from '@yharness/schedule'
+import { ScheduleId, ScheduleInputError, decodeScheduleRecord, scheduleTitle, scheduleView } from '@yharness/schedule'
 import { snapshotJsonValue, type JsonValue } from '@yharness/util-values'
 import type {
   AtInput,
@@ -36,6 +36,7 @@ import type {
   DailyInput,
   ScheduleCatalogEntry,
   ScheduleCreateRequest,
+  ScheduleLifecycleView,
   ScheduleRecord,
   ScheduleTimingChange,
   WeeklyInput,
@@ -114,6 +115,7 @@ import type {
   BotEventRoutineDelivery,
   BotEventRoutineResult,
   BotEventRoutineView,
+  BotEventRoutineCatalogView,
   BotEventSource,
   BotEventTrigger,
   BotConnectedAppAccess,
@@ -144,6 +146,16 @@ import type {
   BotMemoryUpdateRequest,
   BotMemoryUpdateValue,
   BotMemoryView,
+  BotRoutineDeleteValue,
+  BotRoutineHistoryRequest,
+  BotRoutineHistoryValue,
+  BotRoutineLifecycleRequest,
+  BotRoutineListRequest,
+  BotRoutineListValue,
+  BotRoutinePauseValue,
+  BotRoutineResumeValue,
+  BotRoutineView,
+  BotScheduleRoutineView,
   BotRecord,
   BotRenameRequest,
   BotRenameValue,
@@ -486,9 +498,11 @@ const sharedRosterFenceRecoveryRequestSchema = zod.object({
   confirmQuiescent: zod.literal(true),
   acceptRaceRisk: zod.literal(true),
 }).strict()
-const sharedEnrollmentPayloadSchema = zod.object({
-  code: zod.string().min(1).max(512),
-}).strict()
+const sharedEnrollmentPayloadSchema = zod.union([
+  zod.object({ code: zod.string().min(1).max(512) }).strict(),
+  zod.object({ owner: zod.literal(true) }).strict(),
+  zod.object({ capability: zod.literal(true) }).strict(),
+])
 const botGroupImageAdmissionSchema = zod.object({
   groupId: zod.string().regex(/^bot-group-[A-Za-z0-9][A-Za-z0-9-]*$/),
   messageId: zod.string().regex(/^bot-group-message-[A-Za-z0-9][A-Za-z0-9-]*$/),
@@ -637,7 +651,12 @@ interface GroupSessionProjection {
 const BOT_ID_PATTERN = /^bot-[A-Za-z0-9][A-Za-z0-9-]*$/
 
 const BOT_PROFILE_REVISION_RECORD_V1_KEY = credentialKey('agent-bots', 'profile-revisions')
-const BOT_PROFILE_REVISION_RECORD_KEY = credentialKey('agent-bots', 'profile-revisions-v2')
+/** Frozen setup-release record. Routine writers use the v3 successor below. */
+const BOT_PROFILE_REVISION_RECORD_V2_KEY = credentialKey('agent-bots', 'profile-revisions-v2')
+const BOT_PROFILE_REVISION_RECORD_V3_KEY = credentialKey('agent-bots', 'profile-revisions-v3')
+const BOT_PROFILE_REVISION_RECORD_KEY = BOT_PROFILE_REVISION_RECORD_V3_KEY
+const BOT_PROFILE_REVISION_RECORD_VERSION = 3 as const
+const MAX_BOT_TIMED_ROUTINES = 256
 const BOT_MESSAGE_DELIVERY_RECORD_KEY = credentialKey('agent-bots', 'message-deliveries')
 const SHARED_GROUP_MESSAGE_DELIVERY_RECORD_KEY = credentialKey('agent-bots', 'shared-group-message-deliveries')
 const BOT_MESSAGE_DELIVERY_RECORD_VERSION = 1 as const
@@ -647,11 +666,20 @@ const SHARED_GROUP_MESSAGE_DELIVERY_LEASE_MS = 30_000
 const SHARED_GROUP_MESSAGE_DELIVERY_TIMEOUT_MS = 15_000
 const SHARED_GROUP_MESSAGE_DELIVERY_ADMISSION_FENCE = Number.MAX_SAFE_INTEGER
 const SHARED_GROUP_MESSAGE_DELIVERY_RECONCILIATION_RETRY_MS = 1_000
+const BOT_ROSTER_FENCE_BUSY_ERROR_NAME = 'BotRosterFenceBusyError'
 const SHARED_GROUP_MESSAGE_DELIVERY_RECONCILIATION_MAX_RETRY_MS = 30_000
 const SHARED_GROUP_MESSAGE_DELIVERY_RECONCILIATION_MAX_ATTEMPTS = 8
 const SHARED_GROUP_MESSAGE_DELIVERY_RECONCILIATION_CONCURRENCY = 8
 const SHARED_GROUP_DELIVERY_LOCK_PREFIX = '.delivery-'
 const activeSharedRosterFenceTokens = new WeakMap<CredentialProvider, string>()
+
+function isBotRosterFenceBusyError(error: unknown): boolean {
+  if (error instanceof Error && error.name === BOT_ROSTER_FENCE_BUSY_ERROR_NAME) return true
+  const remote = remoteErrorOf(error)
+  return remote?.code === 'gateway/conflict'
+    && /Bot (?:profile|roster) changed while a shared group admission is committing/.test(remote.message)
+}
+
 /**
  * Version-one write-ahead Bot rows for hosts that do not mount credentials.
  * A pending row is replayed before reads after a restart and before any later
@@ -680,6 +708,39 @@ const botEventRoutineSnapshotSchema = zod.custom<readonly BotEventRoutine[]>(
   { message: 'Bot event routines are invalid' },
 )
 const BOT_CAPABILITY_PATTERN = /^[a-z][a-z0-9._-]{0,63}$/
+const botProfileRosterSchema = zod.object({
+  id: zod.string().regex(/^bot-[A-Za-z0-9][A-Za-z0-9-]*$/),
+  sessionId: zod.string().regex(/^bot-session-[A-Za-z0-9][A-Za-z0-9-]*$/),
+  ownerId: zod.string().min(1).max(128).refine(value => value.trim() === value),
+  persona: zod.string().max(4000).refine(value => value.trim() === value).optional(),
+  capabilities: zod.array(zod.string().regex(BOT_CAPABILITY_PATTERN)).max(32).readonly().optional(),
+  cwd: zod.string().min(1).refine(value => value.trim() === value),
+  agentPreset: zod.string().min(1).refine(value => value.trim() === value).optional(),
+  state: zod.enum(['provisioning', 'active']),
+  createdAt: zod.number().int().nonnegative(),
+}).strict()
+const botScheduleRecordSnapshotSchema = zod.custom<ScheduleRecord>(
+  (value) => {
+    try {
+      decodeScheduleRecord(value)
+      return true
+    } catch {
+      return false
+    }
+  },
+  { message: 'Timed routine record is invalid' },
+)
+const botScheduleDeliverySnapshotSchema = zod.object({
+  scheduledAt: zod.string().min(1),
+  deliveredAt: zod.string().min(1),
+  messageId: zod.string().min(1).transform(MessageId),
+}).strict()
+const botTimedRoutineSnapshotSchema = zod.object({
+  record: botScheduleRecordSnapshotSchema,
+  sessionId: zod.string().min(1),
+  status: zod.enum(['active', 'paused', 'inactive']),
+  lastDelivery: botScheduleDeliverySnapshotSchema.optional(),
+}).strict()
 const botCapabilitySnapshotSchema = zod.array(zod.string().regex(BOT_CAPABILITY_PATTERN)).max(32).refine(
   values => new Set(values).size === values.length,
   { message: 'Bot capabilities must be unique' },
@@ -712,12 +773,24 @@ const botProfileSnapshotV1Schema = zod.object({
   persona: zod.string().max(4000).nullable().optional(),
   capabilities: botCapabilitySnapshotSchema.nullable().optional(),
 }).strict()
-const botProfileSnapshotSchema = zod.object({
+/** The setup release's v2 snapshot is immutable; do not add routine fields here. */
+const botProfileSnapshotV2Schema = zod.object({
   ...botProfileSnapshotBaseShape,
   /** Optional for snapshots written before profile editing; null explicitly clears the persona. */
   persona: zod.string().max(4000).nullable().optional(),
   /** Optional for snapshots written before profile editing; null explicitly clears the declarations. */
   capabilities: botCapabilitySnapshotSchema.nullable().optional(),
+}).strict()
+const botProfileSnapshotSchema = zod.object({
+  ...botProfileSnapshotBaseShape,
+  roster: botProfileRosterSchema.optional(),
+  /** Optional for snapshots written before profile editing; null explicitly clears the persona. */
+  persona: zod.string().max(4000).nullable().optional(),
+  /** Optional for snapshots written before profile editing; null explicitly clears the declarations. */
+  capabilities: botCapabilitySnapshotSchema.nullable().optional(),
+  timedRoutines: zod.array(botTimedRoutineSnapshotSchema).max(MAX_BOT_TIMED_ROUTINES).readonly().optional(),
+  /** Monotonic fence for passive Schedule catalog reconciliation. */
+  timedRoutinesUpdatedAt: zod.number().int().nonnegative().optional(),
 }).strict()
 const botProfilePendingSchema = zod.object({
   transactionId: zod.string().min(1),
@@ -734,8 +807,21 @@ const botProfileRevisionRecordV1Schema = zod.object({
   profiles: zod.record(zod.string(), botProfileSnapshotV1Schema).optional(),
   pending: botProfilePendingSchema.optional(),
 }).strict()
-const botProfileRevisionRecordSchema = zod.object({
+const botProfileRevisionRecordV2Schema = zod.object({
   version: zod.literal(2),
+  revisions: zod.record(zod.string(), zod.number().int().nonnegative()),
+  profiles: zod.record(zod.string(), botProfileSnapshotV2Schema).optional(),
+  pending: botProfilePendingSchema.optional(),
+}).strict()
+/** Historical v2 routine records written before setup shipped its strict schema. */
+const botProfileRevisionRecordV2RoutineCompatSchema = zod.object({
+  version: zod.literal(2),
+  revisions: zod.record(zod.string(), zod.number().int().nonnegative()),
+  profiles: zod.record(zod.string(), botProfileSnapshotSchema).optional(),
+  pending: botProfilePendingSchema.optional(),
+}).strict()
+const botProfileRevisionRecordSchema = zod.object({
+  version: zod.literal(BOT_PROFILE_REVISION_RECORD_VERSION),
   revisions: zod.record(zod.string(), zod.number().int().nonnegative()),
   profiles: zod.record(zod.string(), botProfileSnapshotSchema).optional(),
   pending: botProfilePendingSchema.optional(),
@@ -787,11 +873,286 @@ const sharedGroupMessageDeliveryRecordSchema = zod.object({
 })
 
 interface BotProfileRevisionState {
-  readonly version: 2
+  readonly version: typeof BOT_PROFILE_REVISION_RECORD_VERSION
   readonly revisions: Record<string, number>
   readonly profiles: Record<string, zod.infer<typeof botProfileSnapshotSchema>>
   readonly pending?: zod.infer<typeof botProfilePendingSchema>
   readonly sharedRosterFence?: zod.infer<typeof botProfileRosterFenceSchema>
+}
+
+type BotProfileSnapshot = zod.infer<typeof botProfileSnapshotSchema>
+
+const BOT_PROFILE_OPTIONAL_FIELDS: readonly (keyof BotProfileSnapshot)[] = [
+  'description', 'avatar', 'connectedAppIds', 'connectedAppDenyIds', 'eventRoutines',
+]
+const BOT_PROFILE_V2_AUTHORITATIVE_OPTIONAL_FIELDS: readonly (keyof BotProfileSnapshot)[] = [
+  'description', 'avatar',
+]
+
+function profileValuesEqual(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right)
+}
+
+function stableBotIdentityMatches(
+  current: { readonly id: string; readonly sessionId: string; readonly ownerId: string; readonly createdAt: number },
+  expected: { readonly id: string; readonly sessionId: string; readonly ownerId: string; readonly createdAt: number },
+): boolean {
+  return String(current.id) === String(expected.id)
+    && String(current.sessionId) === String(expected.sessionId)
+    && current.ownerId === expected.ownerId
+    && current.createdAt === expected.createdAt
+}
+
+interface ImmutableBotBinding {
+  readonly id: string
+  readonly sessionId: string
+  readonly ownerId: string
+  readonly cwd: string
+  readonly agentPreset?: string | undefined
+  readonly createdAt: number
+}
+
+function immutableBotBindingMatches(current: ImmutableBotBinding, expected: ImmutableBotBinding): boolean {
+  return stableBotIdentityMatches(current, expected)
+    && current.cwd === expected.cwd
+    && current.agentPreset === expected.agentPreset
+}
+
+/** Reject a persisted profile roster that would rebind or misstate an existing Bot row. */
+function assertProfileRosterMatchesDurableBots(
+  state: BotProfileRevisionState,
+  bots: KvTable<BotRecord['id'], BotStoredRecord>,
+  allowPendingStateTransition = true,
+): void {
+  for (const [id, profile] of Object.entries(state.profiles)) {
+    const roster = profile.roster
+    if (roster === undefined) continue
+    const current = bots.get(BotId(id))
+    if (current === undefined) continue
+    if (!immutableBotBindingMatches(current, roster)) {
+      throw new RemoteError(
+        'gateway/conflict',
+        'Bot profile roster identity does not match the authoritative Bot row',
+        { botId: BotId(id) },
+      )
+    }
+    if (current.state !== roster.state) {
+      const pending = allowPendingStateTransition ? state.pending : undefined
+      const pendingStateMatches = pending !== undefined
+        && String(pending.record.id) === id
+        && roster.state === 'provisioning'
+        && pending.record.state === 'active'
+        && current.state === pending.record.state
+        && current.updatedAt === pending.record.updatedAt
+        && immutableBotBindingMatches(roster, pending.record)
+      if (!pendingStateMatches) {
+        throw new RemoteError(
+          'gateway/conflict',
+          'Bot profile roster state does not match the authoritative Bot row',
+          { botId: BotId(id) },
+        )
+      }
+    }
+  }
+}
+
+/** Reject two same-generation profile snapshots that make different claims. */
+function assertCompatibleProfileSnapshots(current: BotProfileSnapshot, legacy: BotProfileSnapshot): void {
+  const fields: readonly (keyof BotProfileSnapshot)[] = [
+    'roster', 'name', 'description', 'identity', 'accent', 'avatar', 'connectedAppIds',
+    'connectedAppDenyIds', 'eventRoutines', 'pendingMemoryUpdate', 'timedRoutines', 'timedRoutinesUpdatedAt',
+    'pinned', 'hidden', 'group', 'updatedAt',
+  ]
+  for (const field of fields) {
+    const currentValue = current[field]
+    const legacyValue = legacy[field]
+    if (currentValue !== undefined && legacyValue !== undefined
+      && !((field === 'pendingMemoryUpdate' || field === 'group') && currentValue === null)
+      && !profileValuesEqual(currentValue, legacyValue)) {
+      throw new Error(`Bot profile snapshots disagree on ${String(field)}`)
+    }
+  }
+  if (current.persona !== undefined && legacy.persona !== undefined
+    && current.persona !== null && legacy.persona !== null && current.persona !== legacy.persona) {
+    throw new Error('Bot profile snapshots disagree on persona')
+  }
+  if (current.capabilities !== undefined && legacy.capabilities !== undefined
+    && current.capabilities !== null && legacy.capabilities !== null
+    && !profileValuesEqual(current.capabilities, legacy.capabilities)) {
+    throw new Error('Bot profile snapshots disagree on capabilities')
+  }
+}
+
+/** Merge an incomplete routine-era snapshot without allowing the predecessor to undo clears. */
+function mergeProfileSnapshots(
+  current: BotProfileSnapshot,
+  legacy: BotProfileSnapshot,
+  rejectConflicts: boolean,
+  preserveLegacyOmissions: readonly (keyof BotProfileSnapshot)[] = [],
+): { readonly snapshot: BotProfileSnapshot; readonly changed: boolean } {
+  if (rejectConflicts) assertCompatibleProfileSnapshots(current, legacy)
+  const canUseLegacySetupFields = current.roster === undefined
+  const canUseLegacyField = (field: keyof BotProfileSnapshot): boolean =>
+    canUseLegacySetupFields && !preserveLegacyOmissions.includes(field)
+  const canUseLegacyRoutineField = (field: keyof BotProfileSnapshot): boolean =>
+    !preserveLegacyOmissions.includes(field)
+  const changed = (current.description === undefined && canUseLegacyField('description') && legacy.description !== undefined)
+    || (current.persona === undefined && canUseLegacyField('persona') && legacy.persona !== undefined)
+    || (current.capabilities === undefined && canUseLegacyField('capabilities') && legacy.capabilities !== undefined)
+    || (current.avatar === undefined && canUseLegacyField('avatar') && legacy.avatar !== undefined)
+    || (current.connectedAppIds === undefined && canUseLegacyField('connectedAppIds') && legacy.connectedAppIds !== undefined)
+    || (current.connectedAppDenyIds === undefined && canUseLegacyField('connectedAppDenyIds') && legacy.connectedAppDenyIds !== undefined)
+    || (current.eventRoutines === undefined && canUseLegacyField('eventRoutines') && legacy.eventRoutines !== undefined)
+    || (current.pendingMemoryUpdate === undefined && canUseLegacyField('pendingMemoryUpdate') && legacy.pendingMemoryUpdate !== undefined)
+    || (current.pinned === undefined && canUseLegacyField('pinned') && legacy.pinned !== undefined)
+    || (current.hidden === undefined && canUseLegacyField('hidden') && legacy.hidden !== undefined)
+    || (current.group === undefined && canUseLegacyField('group') && legacy.group !== undefined)
+    || (current.roster === undefined && canUseLegacyRoutineField('roster') && legacy.roster !== undefined)
+    || (current.timedRoutines === undefined && canUseLegacyRoutineField('timedRoutines') && legacy.timedRoutines !== undefined)
+    || (current.timedRoutinesUpdatedAt === undefined
+      && canUseLegacyRoutineField('timedRoutinesUpdatedAt') && legacy.timedRoutinesUpdatedAt !== undefined)
+  return {
+    snapshot: {
+      ...current,
+      ...(current.description === undefined && canUseLegacyField('description') && legacy.description !== undefined
+        ? { description: legacy.description } : {}),
+      ...(current.persona === undefined && canUseLegacyField('persona') && legacy.persona !== undefined ? { persona: legacy.persona } : {}),
+      ...(current.capabilities === undefined && canUseLegacyField('capabilities') && legacy.capabilities !== undefined
+        ? { capabilities: legacy.capabilities } : {}),
+      ...(current.avatar === undefined && canUseLegacyField('avatar') && legacy.avatar !== undefined
+        ? { avatar: legacy.avatar } : {}),
+      ...(current.connectedAppIds === undefined && canUseLegacyField('connectedAppIds') && legacy.connectedAppIds !== undefined
+        ? { connectedAppIds: legacy.connectedAppIds } : {}),
+      ...(current.connectedAppDenyIds === undefined && canUseLegacyField('connectedAppDenyIds') && legacy.connectedAppDenyIds !== undefined
+        ? { connectedAppDenyIds: legacy.connectedAppDenyIds } : {}),
+      ...(current.eventRoutines === undefined && canUseLegacyField('eventRoutines') && legacy.eventRoutines !== undefined
+        ? { eventRoutines: legacy.eventRoutines } : {}),
+      ...(current.pendingMemoryUpdate === undefined && canUseLegacyField('pendingMemoryUpdate') && legacy.pendingMemoryUpdate !== undefined
+        ? { pendingMemoryUpdate: legacy.pendingMemoryUpdate } : {}),
+      ...(current.pinned === undefined && canUseLegacyField('pinned') && legacy.pinned !== undefined
+        ? { pinned: legacy.pinned } : {}),
+      ...(current.hidden === undefined && canUseLegacyField('hidden') && legacy.hidden !== undefined
+        ? { hidden: legacy.hidden } : {}),
+      ...(current.group === undefined && canUseLegacyField('group') && legacy.group !== undefined
+        ? { group: legacy.group } : {}),
+      ...(current.roster === undefined && canUseLegacyRoutineField('roster') && legacy.roster !== undefined
+        ? { roster: legacy.roster } : {}),
+      ...(current.timedRoutines === undefined && canUseLegacyRoutineField('timedRoutines') && legacy.timedRoutines !== undefined
+        ? { timedRoutines: legacy.timedRoutines } : {}),
+      ...(current.timedRoutinesUpdatedAt === undefined
+        && canUseLegacyRoutineField('timedRoutinesUpdatedAt') && legacy.timedRoutinesUpdatedAt !== undefined
+        ? { timedRoutinesUpdatedAt: legacy.timedRoutinesUpdatedAt } : {}),
+    },
+    changed,
+  }
+}
+
+/** Return whether an immutable predecessor pending row is already reflected in v3. */
+function legacyPendingWasApplied(
+  current: BotProfileRevisionState,
+  pending: zod.infer<typeof botProfilePendingSchema>,
+): boolean {
+  const id = String(pending.record.id)
+  const revision = current.revisions[id]
+  if (revision === undefined) {
+    if (current.profiles[id] !== undefined) {
+      throw new Error('Bot profile revision cannot acknowledge a legacy pending transaction')
+    }
+    return false
+  }
+  const profile = current.profiles[id]
+  if (profile === undefined) throw new Error('Bot profile revision cannot acknowledge a legacy pending transaction')
+  if (profile.updatedAt !== revision) throw new Error('Bot profile revision cannot acknowledge a legacy pending transaction')
+  if (revision < pending.record.updatedAt) {
+    if (profile.roster !== undefined && !immutableBotBindingMatches(profile.roster, pending.record)) {
+      throw new Error('Bot profile revision cannot acknowledge a legacy pending transaction')
+    }
+    return false
+  }
+  const expected = profileSnapshotOf(pending.record)
+  const fields: readonly (keyof BotProfileSnapshot)[] = [
+    'roster', 'name', 'description', 'persona', 'capabilities', 'identity', 'accent', 'avatar',
+    'connectedAppIds', 'connectedAppDenyIds', 'eventRoutines', 'pendingMemoryUpdate',
+    'pinned', 'hidden', 'group', 'updatedAt',
+  ]
+  const newer = revision > pending.record.updatedAt
+  const matches = fields.every((field) => {
+    const expectedHasField = Object.hasOwn(expected, field)
+    const profileHasField = Object.hasOwn(profile, field)
+    if (expectedHasField !== profileHasField) {
+      // A newer snapshot may add an optional field, but it cannot omit a
+      // field claimed by the pending row without explicit evidence.
+      return newer && !expectedHasField && BOT_PROFILE_OPTIONAL_FIELDS.includes(field)
+    }
+    if (!expectedHasField) return true
+    if (!newer) return profileValuesEqual(profile[field], expected[field])
+    if (field === 'updatedAt') return profile.updatedAt === revision
+    if (field === 'roster') {
+      const expectedRoster = expected.roster
+      const profileRoster = profile.roster
+      return expectedRoster !== undefined && profileRoster !== undefined
+        && immutableBotBindingMatches(profileRoster, expectedRoster)
+    }
+    return true
+  })
+  if (!matches) throw new Error('Bot profile revision cannot acknowledge a conflicting legacy pending transaction')
+  return true
+}
+
+/** Converge immutable predecessor state into an incomplete v3 record exactly once. */
+function mergeProfileRevisionStates(
+  current: BotProfileRevisionState | undefined,
+  legacy: BotProfileRevisionState | undefined,
+  preserveLegacyOmissions: readonly (keyof BotProfileSnapshot)[] = [],
+): { readonly state: BotProfileRevisionState; readonly changed: boolean } {
+  if (current === undefined) {
+    return { state: legacy ?? emptyProfileRevisionState(), changed: legacy !== undefined }
+  }
+  if (legacy === undefined) return { state: current, changed: false }
+  let changed = false
+  const revisions = { ...current.revisions }
+  for (const [id, revision] of Object.entries(legacy.revisions)) {
+    if (revisions[id] === undefined) {
+      revisions[id] = revision
+      changed = true
+    }
+  }
+  const profiles = { ...current.profiles }
+  for (const [id, legacyProfile] of Object.entries(legacy.profiles)) {
+    const currentProfile = profiles[id]
+    if (currentProfile === undefined) {
+      profiles[id] = legacyProfile
+      changed = true
+      continue
+    }
+    const merged = mergeProfileSnapshots(
+      currentProfile,
+      legacyProfile,
+      current.revisions[id] !== undefined && current.revisions[id] === legacy.revisions[id],
+      preserveLegacyOmissions,
+    )
+    if (merged.changed) profiles[id] = merged.snapshot
+    changed ||= merged.changed
+  }
+  let pending = current.pending
+  if (pending !== undefined && legacy.pending !== undefined && !profileValuesEqual(pending, legacy.pending)) {
+    throw new Error('Bot profile revision records contain conflicting pending transactions')
+  }
+  // Immutable predecessors cannot be cleared, so an applied revision is the v3 acknowledgement.
+  if (pending === undefined && legacy.pending !== undefined && !legacyPendingWasApplied(current, legacy.pending)) {
+    pending = legacy.pending
+    changed = true
+  }
+  return {
+    state: {
+      version: BOT_PROFILE_REVISION_RECORD_VERSION,
+      revisions,
+      profiles,
+      ...(pending === undefined ? {} : { pending }),
+      ...(current.sharedRosterFence === undefined ? {} : { sharedRosterFence: current.sharedRosterFence }),
+    },
+    changed,
+  }
 }
 
 interface BotMessageDeliveryState {
@@ -1110,7 +1471,7 @@ function matchesMetadata(record: BotRecord, request: NormalizedCreate): boolean 
 }
 
 function emptyProfileRevisionState(): BotProfileRevisionState {
-  return { version: 2, revisions: {}, profiles: {} }
+  return { version: BOT_PROFILE_REVISION_RECORD_VERSION, revisions: {}, profiles: {} }
 }
 
 function profileRevisionStateFromLegacy(record: CredentialRecord): BotProfileRevisionState {
@@ -1118,10 +1479,31 @@ function profileRevisionStateFromLegacy(record: CredentialRecord): BotProfileRev
   const parsed = botProfileRevisionRecordV1Schema.safeParse(record.payload)
   if (!parsed.success) throw new Error('Bot profile revision record is invalid')
   return {
-    version: 2,
+    version: BOT_PROFILE_REVISION_RECORD_VERSION,
     revisions: { ...parsed.data.revisions },
     profiles: { ...parsed.data.profiles },
     ...(parsed.data.pending === undefined ? {} : { pending: parsed.data.pending }),
+  }
+}
+
+function profileRevisionStateFromV2(record: CredentialRecord): BotProfileRevisionState {
+  if (record.kind !== 'grant') throw new Error('Bot profile revision record has an unexpected credential kind')
+  const parsed = botProfileRevisionRecordV2Schema.safeParse(record.payload)
+  if (parsed.success) {
+    return {
+      version: BOT_PROFILE_REVISION_RECORD_VERSION,
+      revisions: { ...parsed.data.revisions },
+      profiles: { ...parsed.data.profiles },
+      ...(parsed.data.pending === undefined ? {} : { pending: parsed.data.pending }),
+    }
+  }
+  const routineCompat = botProfileRevisionRecordV2RoutineCompatSchema.safeParse(record.payload)
+  if (!routineCompat.success) throw new Error('Bot profile revision v2 record is invalid')
+  return {
+    version: BOT_PROFILE_REVISION_RECORD_VERSION,
+    revisions: { ...routineCompat.data.revisions },
+    profiles: { ...routineCompat.data.profiles },
+    ...(routineCompat.data.pending === undefined ? {} : { pending: routineCompat.data.pending }),
   }
 }
 
@@ -1131,7 +1513,7 @@ function profileRevisionRecordOf(record: CredentialRecord | undefined): BotProfi
   const parsed = botProfileRevisionRecordSchema.safeParse(record.payload)
   if (!parsed.success) throw new Error('Bot profile revision record is invalid')
   return {
-    version: 2,
+    version: BOT_PROFILE_REVISION_RECORD_VERSION,
     revisions: { ...parsed.data.revisions },
     profiles: { ...parsed.data.profiles },
     ...(parsed.data.pending === undefined ? {} : { pending: parsed.data.pending }),
@@ -1143,7 +1525,7 @@ function profileRevisionRecordOfState(state: BotProfileRevisionState): Credentia
   return {
     kind: 'grant',
     payload: {
-      version: 2,
+      version: BOT_PROFILE_REVISION_RECORD_VERSION,
       revisions: state.revisions,
       ...(Object.keys(state.profiles).length === 0 ? {} : { profiles: state.profiles }),
       ...(state.pending === undefined ? {} : { pending: state.pending }),
@@ -1154,6 +1536,17 @@ function profileRevisionRecordOfState(state: BotProfileRevisionState): Credentia
 
 function profileSnapshotOf(record: BotStoredRecord): zod.infer<typeof botProfileSnapshotSchema> {
   return {
+    roster: {
+      id: String(record.id),
+      sessionId: String(record.sessionId),
+      ownerId: record.ownerId,
+      ...(record.persona === undefined ? {} : { persona: record.persona }),
+      ...(record.capabilities === undefined ? {} : { capabilities: record.capabilities }),
+      cwd: record.cwd,
+      ...(record.agentPreset === undefined ? {} : { agentPreset: record.agentPreset }),
+      state: record.state,
+      createdAt: record.createdAt,
+    },
     name: record.name,
     ...(record.description === undefined ? {} : { description: record.description }),
     persona: record.persona ?? null,
@@ -1200,16 +1593,25 @@ function applyProfileSnapshot(record: BotStoredRecord, profile: zod.infer<typeof
   void currentPersona
   void currentCapabilities
   void ignoredAvatar
+  const profilePersona = profile.persona === undefined
+    ? profile.roster === undefined ? currentPersona : profile.roster.persona
+    : profile.persona
+  const profileCapabilities = profile.capabilities === undefined
+    ? profile.roster === undefined ? currentCapabilities : profile.roster.capabilities
+    : profile.capabilities
   return {
     ...withoutOptionalProfile,
+    ...(profile.roster === undefined ? {} : {
+      ownerId: profile.roster.ownerId,
+      cwd: profile.roster.cwd,
+      ...(profile.roster.agentPreset === undefined ? {} : { agentPreset: profile.roster.agentPreset }),
+      state: profile.roster.state,
+      createdAt: profile.roster.createdAt,
+    }),
     name: profile.name,
     ...(profile.description === undefined ? {} : { description: profile.description }),
-    ...(profile.persona === undefined
-      ? currentPersona === undefined ? {} : { persona: currentPersona }
-      : profile.persona === null ? {} : { persona: profile.persona }),
-    ...(profile.capabilities === undefined
-      ? currentCapabilities === undefined ? {} : { capabilities: currentCapabilities }
-      : profile.capabilities === null ? {} : { capabilities: profile.capabilities }),
+    ...(profilePersona === undefined || profilePersona === null ? {} : { persona: profilePersona }),
+    ...(profileCapabilities === undefined || profileCapabilities === null ? {} : { capabilities: profileCapabilities }),
     identity: profile.identity,
     accent: profile.accent,
     ...(profile.avatar === undefined ? {} : { avatar: profile.avatar }),
@@ -1229,19 +1631,29 @@ function applyProfileSnapshot(record: BotStoredRecord, profile: zod.infer<typeof
 }
 
 function commitProfileState(state: BotProfileRevisionState, record: BotRecord): BotProfileRevisionState {
+  const previous = state.profiles[String(record.id)]
+  const snapshot = profileSnapshotOf(record)
   return {
-    version: 2,
+    version: BOT_PROFILE_REVISION_RECORD_VERSION,
     revisions: { ...state.revisions, [String(record.id)]: record.updatedAt },
-    profiles: { ...state.profiles, [String(record.id)]: profileSnapshotOf(record) },
+    profiles: {
+      ...state.profiles,
+      [String(record.id)]: {
+        ...snapshot,
+        ...(previous?.timedRoutines === undefined ? {} : { timedRoutines: previous.timedRoutines }),
+        ...(previous?.timedRoutinesUpdatedAt === undefined
+          ? {} : { timedRoutinesUpdatedAt: previous.timedRoutinesUpdatedAt }),
+      },
+    },
   }
 }
 
-function finishPendingProfile(state: BotProfileRevisionState): BotProfileRevisionState {
+function finishPendingProfile(state: BotProfileRevisionState, committedRecord?: BotRecord): BotProfileRevisionState {
   const pending = state.pending
   if (pending === undefined) return state
   const { pending: ignoredPending, ...withoutPending } = state
   void ignoredPending
-  return commitProfileState(withoutPending, pending.record)
+  return commitProfileState(withoutPending, committedRecord ?? pending.record)
 }
 
 function botMessageDeliveryStateOf(record: CredentialRecord | undefined): BotMessageDeliveryState {
@@ -1492,6 +1904,54 @@ function eventRoutineView(routine: BotEventRoutine): BotEventRoutineView {
   void admissionWatermark
   void admissionTombstones
   return { ...view, kind: 'event', state: 'waiting', deliveryMode: 'host' }
+}
+
+/** Project one retained timed routine into the Bot-scoped catalog view. */
+function scheduleRoutineView(
+  entry: ScheduleCatalogEntry,
+  botId: BotRecord['id'],
+): BotScheduleRoutineView {
+  const view = scheduleView(routineCatalogRecord(entry), Date.now())
+  return {
+    ...view,
+    kind: 'schedule',
+    scheduleKind: view.kind,
+    botId,
+    sessionId: entry.sessionId,
+    status: entry.status,
+    ...(entry.lastDelivery === undefined ? {} : { lastDelivery: entry.lastDelivery }),
+  }
+}
+
+/** Project one successful timed lifecycle response into the Bot-scoped view. */
+function scheduleLifecycleRoutineView(
+  view: ScheduleLifecycleView,
+  bot: Pick<BotRecord, 'id' | 'sessionId'>,
+): BotScheduleRoutineView {
+  return {
+    ...view,
+    kind: 'schedule',
+    scheduleKind: view.kind,
+    botId: bot.id,
+    sessionId: bot.sessionId,
+    status: view.status,
+  }
+}
+
+/** Project one event routine into the Bot-scoped catalog view. */
+function botEventRoutineView(
+  routine: BotEventRoutine,
+  bot: Pick<BotRecord, 'id' | 'sessionId'>,
+): BotEventRoutineCatalogView {
+  return { ...eventRoutineView(routine), botId: bot.id, sessionId: bot.sessionId }
+}
+
+/** Admit one routine identity at the Bot Remote boundary. */
+function normalizeRoutineId(value: string): string {
+  if (typeof value !== 'string' || value.trim() !== value || value.length === 0 || value.length > 256) {
+    return badRequest('Routine id must be non-empty, trimmed, and at most 256 characters')
+  }
+  return value
 }
 
 /** Clear an uncertain follow-up marker for an explicit or cancellation-driven retry. */
@@ -1898,9 +2358,16 @@ const MAX_ROUTINE_RESULTS = 200
 const MAX_ROUTINE_ADMISSION_TOMBSTONES = 200
 /** Fixed retry delays for transient Bot admission and repair failures. */
 const BOT_RECOVERY_RETRY_DELAYS_MS = [0, 25, 100, 400, 1_000] as const
+/** Capped lifecycle retry delays while a cross-Host Bot roster fence is held. */
+const BOT_ROSTER_FENCE_RETRY_DELAYS_MS = [0, 25, 100, 400, 1_000, 2_500, 5_000, 10_000, 30_000] as const
 
 function botRecoveryRetryDelay(attempt: number): number | undefined {
   return BOT_RECOVERY_RETRY_DELAYS_MS[attempt - 1]
+}
+
+function botRosterFenceRetryDelay(attempt: number): number {
+  const index = Math.min(Math.max(attempt, 1) - 1, BOT_ROSTER_FENCE_RETRY_DELAYS_MS.length - 1)
+  return BOT_ROSTER_FENCE_RETRY_DELAYS_MS[index] ?? 30_000
 }
 
 /** Return a capped delay for result persistence retries that remain live-bound. */
@@ -1983,10 +2450,16 @@ export class BotService extends TypertRemoteService {
   private readonly promptDisposals = new Set<Promise<void>>()
   private readonly eventRoutineTurns = new Map<string, EventRoutineTurn>()
   private readonly eventRoutineRetryKeys = new Set<string>()
+  private readonly eventRoutineRetryFenceKeys = new Set<string>()
   private readonly eventRoutineAdmissionRetryKeys = new Set<string>()
+  private readonly eventRoutineAdmissionRetryFenceKeys = new Set<string>()
   private readonly eventRoutineAdmissionRecoveryRetryKeys = new Set<string>()
+  private readonly eventRoutineAdmissionRecoveryRetryFenceKeys = new Set<string>()
   private readonly eventRoutineRepairRetryKeys = new Set<string>()
+  private readonly eventRoutineRepairRetryFenceKeys = new Set<string>()
   private readonly eventRoutineResultRetryKeys = new Set<string>()
+  private readonly eventRoutineResultRecoveryRetryKeys = new Set<string>()
+  private readonly eventRoutineResultRecoveryRetryFenceKeys = new Set<string>()
   private readonly collaborationRepairRetryKeys = new Set<string>()
   private readonly groupRepairRetryKeys = new Set<string>()
   private readonly groupSessionRepairRetryKeys = new Set<string>()
@@ -1995,6 +2468,7 @@ export class BotService extends TypertRemoteService {
   private readonly eventRoutineAdmissionRecoveryRetryAttempts = new Map<string, number>()
   private readonly eventRoutineRepairRetryAttempts = new Map<string, number>()
   private readonly eventRoutineResultRetryAttempts = new Map<string, number>()
+  private readonly eventRoutineResultRecoveryRetryAttempts = new Map<string, number>()
   private readonly groupRepairRetryAttempts = new Map<string, number>()
   private readonly collaborationRepairRetryAttempts = new Map<string, number>()
   private readonly groupSessionRepairRetryAttempts = new Map<string, number>()
@@ -2543,28 +3017,34 @@ export class BotService extends TypertRemoteService {
   }
 
   async [Service.init](): Promise<void> {
-    await this.initialized
-    await Promise.all(this.ctx.agents.list().map(agent => this.installPrompt(agent)))
-    await this.reconcileCanceledDeliveriesOnStartup()
-    await this.recoverEventRoutineAdmissions()
-    await this.recoverPendingEventRoutines()
-    await this.recoverEventRoutineResults()
-    const domain = await this.ready
+    let domain: Domain<typeof botDomain> | undefined
+    let memoryRecoveryStarted = false
     try {
+      await this.initialized
+      await Promise.all(this.ctx.agents.list().map(agent => this.installPrompt(agent)))
+      await this.reconcileCanceledDeliveriesOnStartup()
+      await this.recoverEventRoutineAdmissions()
+      await this.recoverPendingEventRoutines()
+      await this.recoverEventRoutineResults()
+      domain = await this.ready
+      memoryRecoveryStarted = true
       await this.recoverPendingMemoryUpdates(domain.table('bots'))
+      await Promise.all(this.ctx.agents.list().map(async (agent) => {
+        await this.installPrompt(agent)
+        await this.reconcileGroupSession(agent)
+      }))
     } catch (error: unknown) {
       this.stopping = true
-      try {
-        await domain.close()
-      } catch (closeError: unknown) {
-        this.ctx.logger.warn(`bots: closing after startup memory recovery failed: ${String(closeError)}`)
+      this.cancelRecoveryRetryTimers()
+      if (memoryRecoveryStarted && domain !== undefined) {
+        try {
+          await domain.close()
+        } catch (closeError: unknown) {
+          this.ctx.logger.warn(`bots: closing after startup memory recovery failed: ${String(closeError)}`)
+        }
       }
       throw error
     }
-    await Promise.all(this.ctx.agents.list().map(async (agent) => {
-      await this.installPrompt(agent)
-      await this.reconcileGroupSession(agent)
-    }))
   }
 
   /**
@@ -2802,6 +3282,43 @@ export class BotService extends TypertRemoteService {
   }
 
   /**
+   * Recover one durable Bot profile pending row without regressing a newer row.
+   * @param state - V3 state containing the pending row.
+   * @param bots - Durable Bot table used for identity and revision checks.
+   * @returns V3 state with the pending row acknowledged.
+   */
+  private async recoverPendingProfile(
+    state: BotProfileRevisionState,
+    bots: KvTable<BotRecord['id'], BotStoredRecord>,
+  ): Promise<BotProfileRevisionState> {
+    const pending = state.pending
+    if (pending === undefined) return state
+    const id = pending.record.id
+    const current = bots.get(id)
+    if (current === undefined) {
+      if (state.revisions[String(id)] !== undefined || state.profiles[String(id)] !== undefined) {
+        throw new RemoteError(
+          'gateway/conflict',
+          'Bot profile revision cannot replay a pending transaction without an authoritative Bot row',
+          { botId: id },
+        )
+      }
+      await bots.put(id, pending.record)
+      return finishPendingProfile(state)
+    }
+    if (!immutableBotBindingMatches(current, pending.record)) {
+      throw new RemoteError(
+        'gateway/conflict',
+        'Bot profile revision cannot replay a pending transaction because Bot identity changed during legacy profile recovery',
+        { botId: id },
+      )
+    }
+    if (current.updatedAt > pending.record.updatedAt) return finishPendingProfile(state, current)
+    await bots.put(id, pending.record)
+    return finishPendingProfile(state)
+  }
+
+  /**
    * Commit one Bot row while holding a durable per-roster revision fence.
    *
    * The credential record is used only as a cross-process lock and revision
@@ -2855,14 +3372,20 @@ export class BotService extends TypertRemoteService {
     let nextToCommit: BotStoredRecord | undefined
     const legacyProfileState = await this.readLegacyProfileRevisionState(credentials)
     await credentials.modifyRecord(BOT_PROFILE_REVISION_RECORD_KEY, async (stored) => {
-      let state = stored === undefined ? legacyProfileState ?? emptyProfileRevisionState() : profileRevisionRecordOf(stored)
+      const currentState = stored === undefined ? undefined : profileRevisionRecordOf(stored)
+      const merged = mergeProfileRevisionStates(
+        currentState,
+        legacyProfileState,
+      )
+      let state = merged.state
+      assertProfileRosterMatchesDurableBots(state, bots)
       if (state.sharedRosterFence !== undefined) {
         throw new RemoteError('gateway/conflict', 'Bot profile changed while a shared group admission was committing', { botId })
       }
       if (state.pending !== undefined) {
-        await bots.put(state.pending.record.id, state.pending.record)
-        this.blockedProfileTransactions.delete(state.pending.transactionId)
-        state = finishPendingProfile(state)
+        const pendingTransactionId = state.pending.transactionId
+        state = await this.recoverPendingProfile(state, bots)
+        this.blockedProfileTransactions.delete(pendingTransactionId)
       }
       const storedCurrent = bots.get(botId)
       if (storedCurrent === undefined) {
@@ -2982,15 +3505,18 @@ export class BotService extends TypertRemoteService {
     }
 
     const transactionId = randomUUID()
+    const legacyProfileState = await this.readLegacyProfileRevisionState(credentials)
     await credentials.modifyRecord(BOT_PROFILE_REVISION_RECORD_KEY, async (stored) => {
-      let state = profileRevisionRecordOf(stored)
+      const currentState = profileRevisionRecordOf(stored)
+      let state = mergeProfileRevisionStates(currentState, legacyProfileState).state
+      assertProfileRosterMatchesDurableBots(state, bots)
       if (state.sharedRosterFence !== undefined) {
         throw new RemoteError('gateway/conflict', 'Bot roster changed while a shared group admission was committing', { botId: record.id })
       }
       if (state.pending !== undefined) {
-        await bots.put(state.pending.record.id, state.pending.record)
-        this.blockedProfileTransactions.delete(state.pending.transactionId)
-        state = finishPendingProfile(state)
+        const pendingTransactionId = state.pending.transactionId
+        state = await this.recoverPendingProfile(state, bots)
+        this.blockedProfileTransactions.delete(pendingTransactionId)
       }
       if (bots.get(record.id) !== undefined || state.revisions[String(record.id)] !== undefined) {
         throw new RemoteError('bot/id-conflict', `Bot "${record.id}" already exists`, { botId: record.id })
@@ -3175,10 +3701,14 @@ export class BotService extends TypertRemoteService {
 
   /** Recover all Bot edits that were interrupted after their intent was saved. */
   private async recoverPendingMemoryUpdates(bots: KvTable<BotRecord['id'], BotStoredRecord>): Promise<void> {
-    const profileState = await this.readProfileRevisionState(bots, true)
+    const profileState = await this.readProfileRevisionState(bots, true, true)
+    // A crashed Host may leave the shared-roster fence in the profile record.
+    // Startup can inspect that state so the owner can recover it, but must not
+    // replay or clear Bot edits while another Host's profile mutation is unresolved.
+    if (profileState.sharedRosterFence !== undefined) return
     for (const [, stored] of bots.entries()) {
       const record = applyProfileSnapshot(stored, profileState.profiles[String(stored.id)])
-      this.recordsBySession.set(String(record.sessionId), record)
+      this.cacheBotRecord(record)
       if (record.pendingMemoryUpdate !== undefined) await this.recoverPendingMemoryUpdate(record, bots)
     }
   }
@@ -3450,8 +3980,7 @@ export class BotService extends TypertRemoteService {
       ? undefined
       : applyProfileSnapshot(storedCurrent, profileState.profiles[String(id)])
     if (current === undefined) throw new RemoteError('bot/not-found', `Bot "${id}" was not found`, { botId: id })
-    this.recordsBySession.set(String(current.sessionId), current)
-    this.refreshSharedRecords(current)
+    this.cacheBotRecord(current)
     return { bot: this.view(current), apps: this.connectedAppsFor(current) }
   }
 
@@ -3712,18 +4241,17 @@ export class BotService extends TypertRemoteService {
   private async refreshBotRecordFromProfile(
     domain: Domain<typeof botDomain>,
     sessionId: SessionId,
+    reconcilePending = false,
   ): Promise<BotRecord | undefined> {
     const mapped = this.recordsBySession.get(String(sessionId))
     if (mapped === undefined) return undefined
     const bots = domain.table('bots')
     const stored = bots.get(mapped.id)
     if (stored === undefined) return undefined
-    const profileState = await this.readProfileRevisionState(bots)
+    const profileState = await this.readProfileRevisionState(bots, reconcilePending)
     const current = applyProfileSnapshot(stored, profileState.profiles[String(mapped.id)])
     if (current.updatedAt >= mapped.updatedAt) {
-      this.recordsBySession.set(String(current.sessionId), current)
-      this.refreshSharedRecords(current)
-      return current
+      return this.cacheBotRecord(current)
     }
     return mapped
   }
@@ -4001,8 +4529,12 @@ export class BotService extends TypertRemoteService {
           this.emitChanged()
         })
       } catch (error: unknown) {
-        this.ctx.logger.warn(`bots: event routine admission recovery failed for ${record.id}: ${String(error)}`)
-        this.scheduleEventRoutineAdmissionRecoveryRetry(sessionId, retryAttempt + 1)
+        this.reportEventRoutineRecoveryError(`bots: event routine admission recovery failed for ${record.id}`, error)
+        this.scheduleEventRoutineAdmissionRecoveryRetry(
+          sessionId,
+          retryAttempt + 1,
+          isBotRosterFenceBusyError(error),
+        )
       }
     }
   }
@@ -4137,8 +4669,9 @@ export class BotService extends TypertRemoteService {
         this.emitChanged()
       })
     } catch (error: unknown) {
-      this.ctx.logger.warn(`bots: event routine delivery claim persistence failed: ${String(error)}`)
-      this.scheduleCanceledEventRoutineRetry(sessionId, routineId, messageId, retryAttempt + 1)
+      const fenceRetry = isBotRosterFenceBusyError(error)
+      this.reportEventRoutineRecoveryError('bots: event routine delivery claim persistence failed', error)
+      this.scheduleCanceledEventRoutineRetry(sessionId, routineId, messageId, retryAttempt + 1, fenceRetry)
     }
   }
 
@@ -4150,10 +4683,11 @@ export class BotService extends TypertRemoteService {
   ): Promise<boolean> {
     let admissionWriteFailed = false
     let deliveryFailed = false
+    let fenceRetry = false
     try {
       await this.serialize(async () => {
         const domain = await this.getDomain()
-        const current = await this.refreshBotRecordFromProfile(domain, sessionId)
+        const current = await this.refreshBotRecordFromProfile(domain, sessionId, retryAttempt > 0)
           ?? this.currentBotRecord(domain, sessionId)
         if (current === undefined || current.sessionId !== sessionId) return
         let next = current
@@ -4186,6 +4720,7 @@ export class BotService extends TypertRemoteService {
               next = await this.commitEventRoutineRecord(base, candidate)
             } catch (error: unknown) {
               admissionWriteFailed = true
+              fenceRetry = isBotRosterFenceBusyError(error)
               throw error
             }
           }
@@ -4199,16 +4734,22 @@ export class BotService extends TypertRemoteService {
           } catch (error: unknown) {
             this.ctx.logger.warn(`bots: event routine ${routine.id} delivery failed: ${String(error)}`)
             deliveryFailed = true
+            fenceRetry = fenceRetry || isBotRosterFenceBusyError(error)
           }
         }
       })
     } catch (error: unknown) {
-      this.ctx.logger.warn(`bots: event routine dispatch failed: ${String(error)}`)
-      if (admissionWriteFailed || deliveryFailed) this.scheduleEventRoutineAdmissionRetry(sessionId, input, retryAttempt + 1)
+      this.reportEventRoutineRecoveryError('bots: event routine dispatch failed', error)
+      this.scheduleEventRoutineAdmissionRetry(
+        sessionId,
+        input,
+        retryAttempt + 1,
+        fenceRetry || isBotRosterFenceBusyError(error),
+      )
       return false
     }
     if (admissionWriteFailed || deliveryFailed) {
-      this.scheduleEventRoutineAdmissionRetry(sessionId, input, retryAttempt + 1)
+      this.scheduleEventRoutineAdmissionRetry(sessionId, input, retryAttempt + 1, fenceRetry)
       return false
     }
     return true
@@ -4374,8 +4915,12 @@ export class BotService extends TypertRemoteService {
         }
       })
     } catch (error: unknown) {
-      this.ctx.logger.warn(`bots: canceled event routine repair failed: ${String(error)}`)
-      this.scheduleCanceledEventRoutineRepairRetry(sessionId, retryAttempt + 1)
+      this.reportEventRoutineRecoveryError('bots: canceled event routine repair failed', error)
+      this.scheduleCanceledEventRoutineRepairRetry(
+        sessionId,
+        retryAttempt + 1,
+        isBotRosterFenceBusyError(error),
+      )
     }
   }
 
@@ -4421,10 +4966,41 @@ export class BotService extends TypertRemoteService {
     this.recoveryRetryTimers.add(timer)
   }
 
+  /** Report a recovery error while distinguishing a live cross-Host fence from corruption. */
+  private reportEventRoutineRecoveryError(prefix: string, error: unknown): void {
+    if (isBotRosterFenceBusyError(error)) {
+      this.ctx.logger.warn(`${prefix} deferred while the Bot roster fence is held: ${String(error)}`)
+      return
+    }
+    this.ctx.logger.error(`${prefix} failed outside the Bot roster fence: ${String(error)}`)
+  }
+
+  /** Report a bounded recovery that remains durable but needs a later restart or operator action. */
+  private reportEventRoutineRetryTerminal(prefix: string, attempt: number): void {
+    this.ctx.logger.error(`${prefix} reached its transient retry limit at attempt ${String(attempt)}; durable recovery remains pending`)
+  }
+
   /** Cancel recovery timers before closing the Bot service domains. */
   private cancelRecoveryRetryTimers(): void {
     for (const timer of this.recoveryRetryTimers) clearTimeout(timer)
     this.recoveryRetryTimers.clear()
+    this.eventRoutineRetryKeys.clear()
+    this.eventRoutineAdmissionRetryKeys.clear()
+    this.eventRoutineAdmissionRecoveryRetryKeys.clear()
+    this.eventRoutineRepairRetryKeys.clear()
+    this.eventRoutineResultRetryKeys.clear()
+    this.eventRoutineResultRecoveryRetryKeys.clear()
+    this.eventRoutineRetryAttempts.clear()
+    this.eventRoutineAdmissionRetryAttempts.clear()
+    this.eventRoutineAdmissionRecoveryRetryAttempts.clear()
+    this.eventRoutineRepairRetryAttempts.clear()
+    this.eventRoutineResultRetryAttempts.clear()
+    this.eventRoutineResultRecoveryRetryAttempts.clear()
+    this.eventRoutineRetryFenceKeys.clear()
+    this.eventRoutineAdmissionRetryFenceKeys.clear()
+    this.eventRoutineAdmissionRecoveryRetryFenceKeys.clear()
+    this.eventRoutineRepairRetryFenceKeys.clear()
+    this.eventRoutineResultRecoveryRetryFenceKeys.clear()
   }
 
   /** Retry a failed peer-delivery repair with bounded backoff. */
@@ -4458,12 +5034,22 @@ export class BotService extends TypertRemoteService {
   }
 
   /** Retry a startup admission scan after a transient Session inspection or write failure. */
-  private scheduleEventRoutineAdmissionRecoveryRetry(sessionId: SessionId, attempt: number): void {
+  private scheduleEventRoutineAdmissionRecoveryRetry(
+    sessionId: SessionId,
+    attempt: number,
+    fenceRetry = false,
+  ): void {
     const key = String(sessionId)
-    const delay = botRecoveryRetryDelay(attempt)
+    const lifecycleRetry = fenceRetry || this.eventRoutineAdmissionRecoveryRetryFenceKeys.has(key)
+    if (lifecycleRetry) this.eventRoutineAdmissionRecoveryRetryFenceKeys.add(key)
+    const delay = lifecycleRetry ? botRosterFenceRetryDelay(attempt) : botRecoveryRetryDelay(attempt)
     if (delay === undefined || this.stopping) {
+      if (!this.stopping && !lifecycleRetry) {
+        this.reportEventRoutineRetryTerminal(`bots: event routine admission recovery for ${sessionId}`, attempt)
+      }
       this.eventRoutineAdmissionRecoveryRetryAttempts.delete(key)
       this.eventRoutineAdmissionRecoveryRetryKeys.delete(key)
+      this.eventRoutineAdmissionRecoveryRetryFenceKeys.delete(key)
       return
     }
     const prior = this.eventRoutineAdmissionRecoveryRetryAttempts.get(key)
@@ -4474,6 +5060,7 @@ export class BotService extends TypertRemoteService {
       if (this.stopping) {
         this.eventRoutineAdmissionRecoveryRetryAttempts.delete(key)
         this.eventRoutineAdmissionRecoveryRetryKeys.delete(key)
+        this.eventRoutineAdmissionRecoveryRetryFenceKeys.delete(key)
         return
       }
       void this.recoverEventRoutineAdmissions(sessionId, attempt)
@@ -4481,6 +5068,7 @@ export class BotService extends TypertRemoteService {
           if (this.eventRoutineAdmissionRecoveryRetryAttempts.get(key) === attempt) {
             this.eventRoutineAdmissionRecoveryRetryAttempts.delete(key)
             this.eventRoutineAdmissionRecoveryRetryKeys.delete(key)
+            this.eventRoutineAdmissionRecoveryRetryFenceKeys.delete(key)
           }
         })
     }
@@ -4492,12 +5080,19 @@ export class BotService extends TypertRemoteService {
     sessionId: SessionId,
     input: EventRoutineTriggerInput,
     attempt: number,
+    fenceRetry = false,
   ): void {
     const key = `${String(sessionId)}:${String(input.message.id)}`
-    const delay = botRecoveryRetryDelay(attempt)
+    const lifecycleRetry = fenceRetry || this.eventRoutineAdmissionRetryFenceKeys.has(key)
+    if (lifecycleRetry) this.eventRoutineAdmissionRetryFenceKeys.add(key)
+    const delay = lifecycleRetry ? botRosterFenceRetryDelay(attempt) : botRecoveryRetryDelay(attempt)
     if (delay === undefined || this.stopping) {
+      if (!this.stopping && !lifecycleRetry) {
+        this.reportEventRoutineRetryTerminal(`bots: event routine admission for ${String(input.message.id)}`, attempt)
+      }
       this.eventRoutineAdmissionRetryAttempts.delete(key)
       this.eventRoutineAdmissionRetryKeys.delete(key)
+      this.eventRoutineAdmissionRetryFenceKeys.delete(key)
       return
     }
     const prior = this.eventRoutineAdmissionRetryAttempts.get(key)
@@ -4508,9 +5103,13 @@ export class BotService extends TypertRemoteService {
       if (this.stopping) {
         this.eventRoutineAdmissionRetryAttempts.delete(key)
         this.eventRoutineAdmissionRetryKeys.delete(key)
+        this.eventRoutineAdmissionRetryFenceKeys.delete(key)
         return
       }
       void this.triggerEventRoutines(sessionId, input, attempt)
+        .then((succeeded) => {
+          if (succeeded) this.eventRoutineAdmissionRetryFenceKeys.delete(key)
+        })
         .finally(() => {
           if (this.eventRoutineAdmissionRetryAttempts.get(key) === attempt) {
             this.eventRoutineAdmissionRetryAttempts.delete(key)
@@ -4522,12 +5121,22 @@ export class BotService extends TypertRemoteService {
   }
 
   /** Retry one failed event-routine cancellation repair without waiting for a restart. */
-  private scheduleCanceledEventRoutineRepairRetry(sessionId: SessionId, attempt: number): void {
+  private scheduleCanceledEventRoutineRepairRetry(
+    sessionId: SessionId,
+    attempt: number,
+    fenceRetry = false,
+  ): void {
     const key = String(sessionId)
-    const delay = botRecoveryRetryDelay(attempt)
+    const lifecycleRetry = fenceRetry || this.eventRoutineRepairRetryFenceKeys.has(key)
+    if (lifecycleRetry) this.eventRoutineRepairRetryFenceKeys.add(key)
+    const delay = lifecycleRetry ? botRosterFenceRetryDelay(attempt) : botRecoveryRetryDelay(attempt)
     if (delay === undefined || this.stopping) {
+      if (!this.stopping && !lifecycleRetry) {
+        this.reportEventRoutineRetryTerminal(`bots: canceled event routine repair for ${sessionId}`, attempt)
+      }
       this.eventRoutineRepairRetryAttempts.delete(key)
       this.eventRoutineRepairRetryKeys.delete(key)
+      this.eventRoutineRepairRetryFenceKeys.delete(key)
       return
     }
     const prior = this.eventRoutineRepairRetryAttempts.get(key)
@@ -4538,6 +5147,7 @@ export class BotService extends TypertRemoteService {
       if (this.stopping) {
         this.eventRoutineRepairRetryAttempts.delete(key)
         this.eventRoutineRepairRetryKeys.delete(key)
+        this.eventRoutineRepairRetryFenceKeys.delete(key)
         return
       }
       void this.reconcileCanceledEventRoutines(sessionId, attempt)
@@ -4545,6 +5155,7 @@ export class BotService extends TypertRemoteService {
           if (this.eventRoutineRepairRetryAttempts.get(key) === attempt) {
             this.eventRoutineRepairRetryAttempts.delete(key)
             this.eventRoutineRepairRetryKeys.delete(key)
+            this.eventRoutineRepairRetryFenceKeys.delete(key)
           }
         })
     }
@@ -4611,18 +5222,25 @@ export class BotService extends TypertRemoteService {
     this.scheduleRecoveryRetry(run, delay)
   }
 
-  /** Retry one canceled delivery with bounded backoff while its durable row stays pending. */
+  /** Retry one canceled delivery with capped lifecycle backoff while its durable row stays pending. */
   private scheduleCanceledEventRoutineRetry(
     sessionId: SessionId,
     routineId: string,
     messageId: MessageId,
     attempt = 1,
+    fenceRetry = false,
   ): void {
     const key = `${String(sessionId)}:${routineId}:${String(messageId)}`
-    const delay = botRecoveryRetryDelay(attempt)
+    const lifecycleRetry = fenceRetry || this.eventRoutineRetryFenceKeys.has(key)
+    if (lifecycleRetry) this.eventRoutineRetryFenceKeys.add(key)
+    const delay = lifecycleRetry ? botRosterFenceRetryDelay(attempt) : botRecoveryRetryDelay(attempt)
     if (delay === undefined || this.stopping) {
+      if (!this.stopping && !lifecycleRetry) {
+        this.reportEventRoutineRetryTerminal(`bots: pending event routine ${routineId}`, attempt)
+      }
       this.eventRoutineRetryAttempts.delete(key)
       this.eventRoutineRetryKeys.delete(key)
+      this.eventRoutineRetryFenceKeys.delete(key)
       return
     }
     const prior = this.eventRoutineRetryAttempts.get(key)
@@ -4633,13 +5251,75 @@ export class BotService extends TypertRemoteService {
       if (this.stopping) {
         this.eventRoutineRetryAttempts.delete(key)
         this.eventRoutineRetryKeys.delete(key)
+        this.eventRoutineRetryFenceKeys.delete(key)
         return
       }
       void this.retryPendingEventRoutines(sessionId, routineId, false, attempt)
+        .catch((error: unknown) => {
+          this.reportEventRoutineRecoveryError(`bots: pending event routine ${routineId} retry failed`, error)
+          this.scheduleCanceledEventRoutineRetry(
+            sessionId,
+            routineId,
+            messageId,
+            attempt + 1,
+            isBotRosterFenceBusyError(error),
+          )
+        })
         .finally(() => {
           if (this.eventRoutineRetryAttempts.get(key) === attempt) {
             this.eventRoutineRetryAttempts.delete(key)
             this.eventRoutineRetryKeys.delete(key)
+            this.eventRoutineRetryFenceKeys.delete(key)
+          }
+        })
+    }
+    this.scheduleRecoveryRetry(run, delay)
+  }
+
+  /** Retry result discovery after a startup profile read was deferred. */
+  private scheduleEventRoutineResultRecoveryRetry(
+    sessionId: SessionId,
+    attempt: number,
+    fenceRetry = false,
+  ): void {
+    const key = String(sessionId)
+    const lifecycleRetry = fenceRetry || this.eventRoutineResultRecoveryRetryFenceKeys.has(key)
+    if (lifecycleRetry) this.eventRoutineResultRecoveryRetryFenceKeys.add(key)
+    const delay = lifecycleRetry ? botRosterFenceRetryDelay(attempt) : botRecoveryRetryDelay(attempt)
+    if (delay === undefined || this.stopping) {
+      if (!this.stopping && !lifecycleRetry) {
+        this.reportEventRoutineRetryTerminal(`bots: event routine result recovery for ${sessionId}`, attempt)
+      }
+      this.eventRoutineResultRecoveryRetryAttempts.delete(key)
+      this.eventRoutineResultRecoveryRetryKeys.delete(key)
+      this.eventRoutineResultRecoveryRetryFenceKeys.delete(key)
+      return
+    }
+    const prior = this.eventRoutineResultRecoveryRetryAttempts.get(key)
+    if (prior !== undefined && prior >= attempt) return
+    this.eventRoutineResultRecoveryRetryAttempts.set(key, attempt)
+    this.eventRoutineResultRecoveryRetryKeys.add(key)
+    const run = () => {
+      if (this.stopping) {
+        this.eventRoutineResultRecoveryRetryAttempts.delete(key)
+        this.eventRoutineResultRecoveryRetryKeys.delete(key)
+        this.eventRoutineResultRecoveryRetryFenceKeys.delete(key)
+        return
+      }
+      void this.recoverEventRoutineResults(sessionId, attempt)
+        .catch((error: unknown) => {
+          this.reportEventRoutineRecoveryError(`bots: event routine result recovery retry failed for ${sessionId}`, error)
+          this.scheduleEventRoutineResultRecoveryRetry(
+            sessionId,
+            attempt + 1,
+            isBotRosterFenceBusyError(error),
+          )
+        })
+        .finally(() => {
+          if (this.eventRoutineResultRecoveryRetryAttempts.get(key) === attempt) {
+            this.eventRoutineResultRecoveryRetryAttempts.delete(key)
+            this.eventRoutineResultRecoveryRetryKeys.delete(key)
+            this.eventRoutineResultRecoveryRetryFenceKeys.delete(key)
           }
         })
     }
@@ -4730,17 +5410,43 @@ export class BotService extends TypertRemoteService {
         this.emitChanged()
       })
     } catch (error: unknown) {
-      this.ctx.logger.warn(`bots: event routine result persistence failed: ${String(error)}`)
+      this.reportEventRoutineRecoveryError('bots: event routine result persistence failed', error)
       this.scheduleEventRoutineResultRetry(sessionId, turn, event, persistedTurn, retryAttempt + 1)
     }
   }
 
   /** Retry deliveries reserved before a Host restart. */
-  private async recoverPendingEventRoutines(): Promise<void> {
+  private async recoverPendingEventRoutines(
+    retrySessionId?: SessionId,
+    retryAttempt = 0,
+  ): Promise<void> {
     await this.serialize(async () => {
       const domain = await this.getDomain()
-      for (const [sessionKey] of [...this.recordsBySession]) {
-        const record = await this.refreshBotRecordFromProfile(domain, SessionId(sessionKey))
+      const records = retrySessionId === undefined
+        ? [...this.recordsBySession.entries()]
+        : [[String(retrySessionId), this.recordsBySession.get(String(retrySessionId))] as const]
+      for (const [sessionKey, mapped] of records) {
+        const sessionId = SessionId(sessionKey)
+        let record: BotRecord | undefined
+        try {
+          record = await this.refreshBotRecordFromProfile(domain, sessionId)
+        } catch (error: unknown) {
+          const fenceRetry = isBotRosterFenceBusyError(error)
+          this.reportEventRoutineRecoveryError(`bots: pending event routine startup recovery failed for ${sessionId}`, error)
+          for (const routine of mapped?.eventRoutines ?? []) {
+            if (routine.status !== 'active') continue
+            for (const delivery of routine.deliveries.filter(candidate => candidate.status === 'pending')) {
+              this.scheduleCanceledEventRoutineRetry(
+                sessionId,
+                routine.id,
+                delivery.messageId,
+                retryAttempt + 1,
+                fenceRetry,
+              )
+            }
+          }
+          continue
+        }
         if (record === undefined) continue
         let current = record
         for (const routine of record.eventRoutines ?? []) {
@@ -4753,8 +5459,15 @@ export class BotService extends TypertRemoteService {
               if (retry === undefined || retry.status !== 'pending') continue
               current = await this.deliverEventRoutine(current, latest, retry)
             } catch (error: unknown) {
-              this.ctx.logger.warn(`bots: pending event routine ${routine.id} recovery failed: ${String(error)}`)
-              this.scheduleCanceledEventRoutineRetry(record.sessionId, routine.id, delivery.messageId)
+              const fenceRetry = isBotRosterFenceBusyError(error)
+              this.reportEventRoutineRecoveryError(`bots: pending event routine ${routine.id} recovery failed`, error)
+              this.scheduleCanceledEventRoutineRetry(
+                record.sessionId,
+                routine.id,
+                delivery.messageId,
+                retryAttempt + 1,
+                fenceRetry,
+              )
             }
           }
         }
@@ -4799,21 +5512,35 @@ export class BotService extends TypertRemoteService {
           if (retry === undefined || retry.status !== 'pending') continue
           current = await this.deliverEventRoutine(current, latest, retry)
         } catch (error: unknown) {
-          this.ctx.logger.warn(`bots: pending event routine ${routineId} retry failed: ${String(error)}`)
-          this.scheduleCanceledEventRoutineRetry(sessionId, routineId, delivery.messageId, retryAttempt + 1)
+          const fenceRetry = isBotRosterFenceBusyError(error)
+          this.reportEventRoutineRecoveryError(`bots: pending event routine ${routineId} retry failed`, error)
+          this.scheduleCanceledEventRoutineRetry(
+            sessionId,
+            routineId,
+            delivery.messageId,
+            retryAttempt + 1,
+            fenceRetry,
+          )
         }
       }
     })
   }
 
   /** Recover completed routine turns whose result write was interrupted by a restart. */
-  private async recoverEventRoutineResults(): Promise<void> {
+  private async recoverEventRoutineResults(
+    retrySessionId?: SessionId,
+    retryAttempt = 0,
+  ): Promise<void> {
     const domain = await this.getDomain()
-    for (const [sessionKey] of [...this.recordsBySession]) {
-      const record = await this.refreshBotRecordFromProfile(domain, SessionId(sessionKey))
-      if (record === undefined) continue
-      if ((record.eventRoutines ?? []).length === 0) continue
+    const records = retrySessionId === undefined
+      ? [...this.recordsBySession.keys()]
+      : [String(retrySessionId)]
+    for (const sessionKey of records) {
+      const sessionId = SessionId(sessionKey)
       try {
+        const record = await this.refreshBotRecordFromProfile(domain, sessionId)
+        if (record === undefined) continue
+        if ((record.eventRoutines ?? []).length === 0) continue
         const inspection = await this.ctx.sessionController.inspect(record.sessionId)
         const turns = routineTurnsFromEvents(inspection.events)
         for (const event of inspection.events) {
@@ -4823,7 +5550,9 @@ export class BotService extends TypertRemoteService {
           await this.recordEventRoutineResults(record.sessionId, turn, event, turn)
         }
       } catch (error: unknown) {
-        this.ctx.logger.warn(`bots: event routine result recovery failed for ${record.id}: ${String(error)}`)
+        const fenceRetry = isBotRosterFenceBusyError(error)
+        this.reportEventRoutineRecoveryError(`bots: event routine result recovery failed for ${sessionId}`, error)
+        this.scheduleEventRoutineResultRecoveryRetry(sessionId, retryAttempt + 1, fenceRetry)
       }
     }
   }
@@ -4879,14 +5608,17 @@ export class BotService extends TypertRemoteService {
     return this.listFromDomain(request, await this.getDomain())
   }
 
-  private async listFromDomain(request: BotListRequest, domain: Domain<typeof botDomain>): Promise<BotListValue> {
+  private async listFromDomain(
+    request: BotListRequest,
+    domain: Domain<typeof botDomain>,
+    allowSharedRosterFence = false,
+  ): Promise<BotListValue> {
     const bots = domain.table('bots')
     const includeHidden = request.includeHidden === true
-    const profileState = await this.readProfileRevisionState(bots)
+    const profileState = await this.readProfileRevisionState(bots, false, allowSharedRosterFence)
     const rows = [...bots.entries()].map(([, record]) => {
       const current = applyProfileSnapshot(record, profileState.profiles[String(record.id)])
-      this.recordsBySession.set(String(current.sessionId), current)
-      this.refreshSharedRecords(current)
+      this.cacheBotRecord(current)
       return this.view(current)
     })
     const activeBotIds = new Set(rows.map(bot => String(bot.id)))
@@ -5377,6 +6109,155 @@ export class BotService extends TypertRemoteService {
   @Remote('inspectSharedRosterFence')
   async inspectSharedRosterFence(): Promise<BotSharedRosterFenceDiagnosticValue> {
     return this.inspectSharedRosterFenceImpl()
+  }
+
+  /**
+   * List timed and message-triggered routines owned by one Bot.
+   *
+   * This lookup never activates the Bot Session. Timed rows are read from the
+   * Host Schedule catalog and event rows from the Bot record, after checking
+   * the configured owner scope.
+   * @param request - Bot identity whose routine catalog should be returned.
+   * @returns The Bot's active, paused, and ended routine rows.
+   */
+  @Remote('listRoutines')
+  async listRoutines(request: BotRoutineListRequest): Promise<BotRoutineListValue> {
+    const botId = normalizeBotId(request.botId)
+    if (botId === undefined) return badRequest('Bot id is required')
+    const bot = await this.readOwnedBot(botId)
+    const routines: BotRoutineView[] = []
+    const schedule = this.ctx.get('schedule')
+    if (schedule !== undefined) {
+      for (const entry of await schedule.catalog()) {
+        if (entry.sessionId !== bot.sessionId) continue
+        routines.push(scheduleRoutineView(entry, bot.id))
+      }
+    }
+    for (const routine of bot.eventRoutines ?? []) routines.push(botEventRoutineView(routine, bot))
+    return { routines }
+  }
+
+  /**
+   * Pause one routine owned by a Bot without waking its Session.
+   * @param request - Bot and routine identity.
+   * @returns The paused routine or a bounded lookup/ended result.
+   */
+  @Remote('pauseRoutine')
+  async pauseRoutine(request: BotRoutineLifecycleRequest): Promise<BotRoutinePauseValue> {
+    const botId = normalizeBotId(request.botId)
+    if (botId === undefined) return badRequest('Bot id is required')
+    const routineId = normalizeRoutineId(request.routineId)
+    const bot = await this.readOwnedBot(botId)
+    const eventRoutine = bot.eventRoutines?.find(routine => routine.id === routineId)
+    if (eventRoutine !== undefined) {
+      await this.pauseEventRoutine(bot.sessionId, routineId)
+      const latest = await this.findEventRoutine(bot.sessionId, routineId)
+      return latest === undefined
+        ? { id: routineId, paused: false, code: 'routine_not_found' }
+        : { routine: botEventRoutineView(latest, bot), paused: true }
+    }
+    const schedule = this.ctx.get('schedule')
+    if (schedule === undefined) throw new RemoteError('gateway/internal', 'Timed Bot routines are unavailable on this Host.', {})
+    const result = await schedule.pause({ sessionId: bot.sessionId, id: ScheduleId(routineId) })
+    if ('paused' in result) {
+      if (result.paused) return { routine: scheduleLifecycleRoutineView(result, bot), paused: true }
+      return { id: routineId, paused: false, code: result.code === 'schedule_ended' ? 'routine_ended' : 'routine_not_found' }
+    }
+    throw new RemoteError('gateway/internal', result.message, {})
+  }
+
+  /**
+   * Resume one paused routine owned by a Bot without waking its Session.
+   * @param request - Bot and routine identity.
+   * @returns The active routine or a bounded lookup/ended result.
+   */
+  @Remote('resumeRoutine')
+  async resumeRoutine(request: BotRoutineLifecycleRequest): Promise<BotRoutineResumeValue> {
+    const botId = normalizeBotId(request.botId)
+    if (botId === undefined) return badRequest('Bot id is required')
+    const routineId = normalizeRoutineId(request.routineId)
+    const bot = await this.readOwnedBot(botId)
+    const eventRoutine = bot.eventRoutines?.find(routine => routine.id === routineId)
+    if (eventRoutine !== undefined) {
+      await this.resumeEventRoutine(bot.sessionId, routineId)
+      const latest = await this.findEventRoutine(bot.sessionId, routineId)
+      return latest === undefined
+        ? { id: routineId, resumed: false, code: 'routine_not_found' }
+        : { routine: botEventRoutineView(latest, bot), resumed: true }
+    }
+    const schedule = this.ctx.get('schedule')
+    if (schedule === undefined) throw new RemoteError('gateway/internal', 'Timed Bot routines are unavailable on this Host.', {})
+    const result = await schedule.resume({ sessionId: bot.sessionId, id: ScheduleId(routineId) })
+    if ('resumed' in result) {
+      if (result.resumed) return { routine: scheduleLifecycleRoutineView(result, bot), resumed: true }
+      return { id: routineId, resumed: false, code: result.code === 'schedule_ended' ? 'routine_ended' : 'routine_not_found' }
+    }
+    throw new RemoteError('gateway/internal', result.message, {})
+  }
+
+  /**
+   * Delete one routine owned by a Bot and its bounded run history.
+   * @param request - Bot and routine identity.
+   * @returns A stable deletion marker or a bounded lookup result.
+   */
+  @Remote('deleteRoutine')
+  async deleteRoutine(request: BotRoutineLifecycleRequest): Promise<BotRoutineDeleteValue> {
+    const botId = normalizeBotId(request.botId)
+    if (botId === undefined) return badRequest('Bot id is required')
+    const routineId = normalizeRoutineId(request.routineId)
+    const bot = await this.readOwnedBot(botId)
+    if (bot.eventRoutines?.some(routine => routine.id === routineId)) {
+      await this.deleteEventRoutine(bot.sessionId, routineId)
+      const latest = await this.findEventRoutine(bot.sessionId, routineId)
+      return latest === undefined
+        ? { id: routineId, deleted: true }
+        : { id: routineId, deleted: false, code: 'routine_not_found' }
+    }
+    const schedule = this.ctx.get('schedule')
+    if (schedule === undefined) throw new RemoteError('gateway/internal', 'Timed Bot routines are unavailable on this Host.', {})
+    const result = await schedule.delete({ sessionId: bot.sessionId, id: ScheduleId(routineId) })
+    return result.deleted ? { id: routineId, deleted: true } : { id: routineId, deleted: false, code: 'routine_not_found' }
+  }
+
+  /**
+   * Read one bounded routine history page without activating the Bot Session.
+   * @param request - Bot, routine, page size, and optional timed-delivery cursor.
+   * @returns Newest-first timed receipts or event deliveries/results.
+   */
+  @Remote('routineHistory')
+  async routineHistory(request: BotRoutineHistoryRequest): Promise<BotRoutineHistoryValue> {
+    const botId = normalizeBotId(request.botId)
+    if (botId === undefined) return badRequest('Bot id is required')
+    const routineId = normalizeRoutineId(request.routineId)
+    if (!Number.isSafeInteger(request.limit) || request.limit < 1 || request.limit > 100) {
+      return badRequest('Routine history limit must be a safe integer from 1 through 100')
+    }
+    if (request.before !== undefined && typeof request.before !== 'string') {
+      return badRequest('Routine history cursor must be a message id string')
+    }
+    const bot = await this.readOwnedBot(botId)
+    const eventRoutine = bot.eventRoutines?.find(routine => routine.id === routineId)
+    if (eventRoutine !== undefined) {
+      if (request.before !== undefined) return badRequest('Event routine history does not support a cursor')
+      return {
+        kind: 'event',
+        id: routineId,
+        deliveries: eventRoutine.deliveries.slice(-request.limit).reverse(),
+        results: eventRoutine.results.slice(-request.limit).reverse(),
+      }
+    }
+    const schedule = this.ctx.get('schedule')
+    if (schedule === undefined) throw new RemoteError('gateway/internal', 'Timed Bot routines are unavailable on this Host.', {})
+    const result = await schedule.history({
+      sessionId: bot.sessionId,
+      id: ScheduleId(routineId),
+      limit: request.limit,
+      ...(request.before === undefined ? {} : { before: request.before }),
+    })
+    if ('records' in result) return { kind: 'schedule', ...result }
+    if (result.code === 'schedule_not_found') return { id: routineId, code: 'routine_not_found' }
+    if (result.code === 'delivery_cursor_not_found') return { id: routineId, code: 'delivery_cursor_not_found' }
+    return { id: routineId, code: 'routine_not_found' }
   }
 
   /**
@@ -6514,37 +7395,93 @@ export class BotService extends TypertRemoteService {
    * Read the cross-process profile record and repair an unfinished row commit.
    * A row-write rejection observed by this process remains pending until an
    * explicit mutation retries it, so a read does not expose an unacknowledged row.
-   * A released v1 record is read only as the migration source for the v2
-   * successor; the predecessor remains unchanged.
+   * Released v1 and setup-release v2 records are read only as migration sources
+   * for the v3 successor; both predecessors remain unchanged.
+   * Startup discovery may allow a held shared-roster fence only for a
+   * read-only projection so the owner can inspect and recover an abandoned
+   * fence; ordinary reads continue to fail closed while the fence is held.
    */
   private async readProfileRevisionState(
     bots: KvTable<BotRecord['id'], BotRecord>,
     reconcilePending = false,
+    allowSharedRosterFence = false,
   ): Promise<BotProfileRevisionState> {
+    return this.withProfileRevisionState(bots, state => state, reconcilePending, allowSharedRosterFence)
+  }
+
+  /**
+   * Run one profile-backed read while holding the V3 credential-record fence.
+   * The Bot table projection must happen inside this callback: a profile read
+   * followed by a separate row read can otherwise combine two revisions from
+   * a concurrent mutation.
+   * @param bots - Durable Bot table used for identity and revision checks.
+   * @param read - Projection to evaluate against the fenced profile state.
+   * @param reconcilePending - Whether a blocked local pending transaction may retry.
+   * @param allowSharedRosterFence - Startup-only read permission for an existing
+   *   fence; it suppresses profile recovery and record writes while held.
+   * @returns The projection produced from one fenced profile and Bot-table view.
+   */
+  private async withProfileRevisionState<T>(
+    bots: KvTable<BotRecord['id'], BotRecord>,
+    read: (state: BotProfileRevisionState) => T | PromiseLike<T>,
+    reconcilePending = false,
+    allowSharedRosterFence = false,
+  ): Promise<T> {
     const credentials = this.credentials ?? this.ctx.get('credentials')
     if (credentials === undefined) {
       await this.reconcileNoCredentialIntents(bots, reconcilePending)
-      return emptyProfileRevisionState()
+      return read(emptyProfileRevisionState())
     }
     const legacyProfileState = await this.readLegacyProfileRevisionState(credentials)
-    const stored = await credentials.modifyRecord(BOT_PROFILE_REVISION_RECORD_KEY, async (record) => {
-      const state = record === undefined ? legacyProfileState ?? emptyProfileRevisionState() : profileRevisionRecordOf(record)
-      if (state.sharedRosterFence !== undefined) return undefined
-      const migrating = record === undefined && legacyProfileState !== undefined
-      if (state.pending === undefined) return migrating ? profileRevisionRecordOfState(state) : undefined
+    let projection: { readonly value: T } | undefined
+    await credentials.modifyRecord(BOT_PROFILE_REVISION_RECORD_KEY, async (record) => {
+      const currentState = record === undefined ? undefined : profileRevisionRecordOf(record)
+      const merged = mergeProfileRevisionStates(
+        currentState,
+        legacyProfileState,
+      )
+      let state = merged.state
+      let changed = merged.changed
+      const sharedRosterFenceHeld = state.sharedRosterFence !== undefined
+      if (sharedRosterFenceHeld && !allowSharedRosterFence) {
+        const error = new Error('Bot profile is changing during a shared group admission')
+        error.name = BOT_ROSTER_FENCE_BUSY_ERROR_NAME
+        throw error
+      }
+      const allowPendingStateTransition = state.pending === undefined || (
+        !sharedRosterFenceHeld
+        && (reconcilePending || !this.blockedProfileTransactions.has(state.pending.transactionId))
+      )
+      assertProfileRosterMatchesDurableBots(state, bots, allowPendingStateTransition)
+      if (state.pending !== undefined && allowPendingStateTransition) {
+        if (reconcilePending || !this.blockedProfileTransactions.has(state.pending.transactionId)) {
+          const pendingTransactionId = state.pending.transactionId
+          state = await this.recoverPendingProfile(state, bots)
+          this.blockedProfileTransactions.delete(pendingTransactionId)
+          changed = true
+        }
+      }
+      projection = { value: await read(state) }
+      if (sharedRosterFenceHeld) return undefined
+      if (state.pending === undefined) return changed ? profileRevisionRecordOfState(state) : undefined
       if (!reconcilePending && this.blockedProfileTransactions.has(state.pending.transactionId)) return undefined
-      await bots.put(state.pending.record.id, state.pending.record)
-      this.blockedProfileTransactions.delete(state.pending.transactionId)
-      return profileRevisionRecordOfState(finishPendingProfile(state))
+      return profileRevisionRecordOfState(state)
     })
-    return profileRevisionRecordOf(stored)
+    if (projection === undefined) {
+      throw new Error('Bot profile read did not run inside its credential fence')
+    }
+    return projection.value
   }
 
   /** Read the released profile-record generation without mutating or deleting it. */
   private async readLegacyProfileRevisionState(credentials: CredentialProvider): Promise<BotProfileRevisionState | undefined> {
-    if (await credentials.readRecord(BOT_PROFILE_REVISION_RECORD_KEY) !== undefined) return undefined
-    const record = await credentials.readRecord(BOT_PROFILE_REVISION_RECORD_V1_KEY)
-    return record === undefined ? undefined : profileRevisionStateFromLegacy(record)
+    const v2Record = await credentials.readRecord(BOT_PROFILE_REVISION_RECORD_V2_KEY)
+    const v1Record = await credentials.readRecord(BOT_PROFILE_REVISION_RECORD_V1_KEY)
+    const v2 = v2Record === undefined ? undefined : profileRevisionStateFromV2(v2Record)
+    const v1 = v1Record === undefined ? undefined : profileRevisionStateFromLegacy(v1Record)
+    if (v2 === undefined) return v1
+    if (v1 === undefined) return v2
+    return mergeProfileRevisionStates(v2, v1, BOT_PROFILE_V2_AUTHORITATIVE_OPTIONAL_FIELDS).state
   }
 
   private async refreshBotRecord(agent: Pick<Agent, 'id'>): Promise<BotStoredRecord | undefined> {
@@ -6563,11 +7500,11 @@ export class BotService extends TypertRemoteService {
     }
     const current = applyProfileSnapshot(stored, profileState.profiles[String(cached.id)])
     if (this.recordsBySession.has(sessionKey)) {
-      this.recordsBySession.set(sessionKey, current)
-      this.refreshSharedRecords(current)
-      return current
+      return this.cacheBotRecord(current)
     }
     const shared = { ...current, sessionId: cached.sessionId }
+    const currentShared = this.sharedRecordsBySession.get(sessionKey)
+    if (currentShared !== undefined && currentShared.updatedAt > shared.updatedAt) return currentShared
     this.sharedRecordsBySession.set(sessionKey, shared)
     return shared
   }
@@ -6575,6 +7512,38 @@ export class BotService extends TypertRemoteService {
   private async getDomain(): Promise<Domain<typeof botDomain>> {
     await this.initialized
     return this.ready
+  }
+
+  /** Cache a Bot projection without regressing a newer local revision. */
+  private cacheBotRecord(record: BotStoredRecord): BotStoredRecord {
+    const sessionKey = String(record.sessionId)
+    const cached = this.recordsBySession.get(sessionKey)
+    if (cached !== undefined && cached.updatedAt > record.updatedAt) return cached
+    this.recordsBySession.set(sessionKey, record)
+    this.refreshSharedRecords(record)
+    return record
+  }
+
+  /** Read one owner-scoped Bot through the authoritative V3 profile fence. */
+  private async readOwnedBot(botId: BotRecord['id']): Promise<BotStoredRecord> {
+    const bots = (await this.getDomain()).table('bots')
+    const current = await this.withProfileRevisionState(bots, (state) => {
+      const stored = bots.get(botId)
+      if (stored === undefined) {
+        throw new RemoteError('bot/not-found', `Bot "${botId}" was not found`, { botId })
+      }
+      const projected = applyProfileSnapshot(stored, state.profiles[String(botId)])
+      const durableRevision = state.revisions[String(botId)]
+      if (durableRevision !== undefined && durableRevision !== projected.updatedAt) {
+        throw new RemoteError('gateway/conflict', 'Bot profile changed in another process', { botId })
+      }
+      if (projected.ownerId !== this.ownerId) {
+        throw new RemoteError('bot/not-found', `Bot "${botId}" was not found`, { botId })
+      }
+      return projected
+    })
+    this.cacheBotRecord(current)
+    return current
   }
 
   private async activeTemplate(
@@ -6808,7 +7777,7 @@ export class BotService extends TypertRemoteService {
           this.sharedSessionFailures.add(sessionKey)
         }
       }
-      const bots = (await this.listFromDomain({ includeHidden: true }, domain)).bots
+      const bots = (await this.listFromDomain({ includeHidden: true }, domain, true)).bots
       const botsById = new Map(bots.map(bot => [String(bot.id), bot]))
       for (const binding of bindings) {
         if (!validPrivateSessionKeys.has(String(binding.sessionId))) continue
@@ -6849,6 +7818,33 @@ export class BotService extends TypertRemoteService {
         const parsed = sharedEnrollmentPayloadSchema.safeParse(payload)
         if (!parsed.success) {
           return { ok: false, error: { code: 'gateway/bad-request', message: 'Invalid shared Bot enrollment request', details: {} } }
+        }
+        if ('capability' in parsed.data) {
+          try {
+            const admission = connection.admit(request)
+            return { ok: true, value: { ownerBootstrap: !('rejection' in admission) } }
+          } catch (admissionError: unknown) {
+            this.ctx.logger.warn(`bots: owner capability admission failed: ${String(admissionError)}`)
+            return { ok: true, value: { ownerBootstrap: false } }
+          }
+        }
+        if ('owner' in parsed.data) {
+          const admission = connection.admit(request)
+          if ('rejection' in admission) {
+            return {
+              ok: false,
+              error: {
+                code: admission.rejection === 401 ? 'gateway/unauthorized' : 'gateway/forbidden',
+                message: admission.rejection === 401 ? 'operator authentication is required' : 'operator request is not trusted',
+                details: {},
+              },
+            }
+          }
+          try {
+            return { ok: true, value: await shared.enrollOwner(request) }
+          } catch {
+            return { ok: false, error: { code: 'gateway/internal', message: 'Shared Bot owner enrollment failed', details: {} } }
+          }
         }
         try {
           return { ok: true, value: await shared.enroll(SharedInviteCode(parsed.data.code), request) }
@@ -7482,21 +8478,31 @@ export class BotService extends TypertRemoteService {
     const key = String(request.sessionId)
     const prior = this.sharedGroupDeliveryTails.get(key) ?? Promise.resolve()
     const run = prior.then(async () => {
-      const preflightBusy = await this.sharedGroupDeliveryBusy(request)
-      if (preflightBusy !== undefined) return preflightBusy
-      const prepared = await this.prepareSharedGroupDelivery(request)
-      const prunableKeys = await this.findPrunableSharedGroupDeliveryKeys(request)
-      const claim = await this.claimSharedGroupDelivery(request, prepared.kind === 'duplicate', prunableKeys, request.signal)
-      if (claim.kind === 'duplicate') return 'duplicate'
-      if (claim.kind === 'busy') return claim
-      const lease = this.startSharedGroupDeliveryLeaseRenewal(request, claim.token)
-      const dispatchSignal = request.signal === undefined
-        ? lease.signal
-        : AbortSignal.any([request.signal, lease.signal])
-      const dispatchedRequest = { ...request, signal: dispatchSignal }
       try {
-        return await this.enqueuePreparedSharedGroupDelivery(dispatchedRequest, prepared, claim.token)
+        const preflightBusy = await this.sharedGroupDeliveryBusy(request)
+        if (preflightBusy !== undefined) return preflightBusy
+        const prepared = await this.prepareSharedGroupDelivery(request)
+        const prunableKeys = await this.findPrunableSharedGroupDeliveryKeys(request)
+        const claim = await this.claimSharedGroupDelivery(request, prepared.kind === 'duplicate', prunableKeys, request.signal)
+        if (claim.kind === 'duplicate') return 'duplicate'
+        if (claim.kind === 'busy') return claim
+        const lease = this.startSharedGroupDeliveryLeaseRenewal(request, claim.token)
+        const dispatchSignal = request.signal === undefined
+          ? lease.signal
+          : AbortSignal.any([request.signal, lease.signal])
+        const dispatchedRequest = { ...request, signal: dispatchSignal }
+        try {
+          return await this.enqueuePreparedSharedGroupDelivery(dispatchedRequest, prepared, claim.token)
+        } finally {
+          lease.stop()
+        }
       } catch (error: unknown) {
+        if (error instanceof Error && error.name === BOT_ROSTER_FENCE_BUSY_ERROR_NAME) {
+          return {
+            kind: 'busy' as const,
+            retryAt: Date.now() + SHARED_GROUP_MESSAGE_DELIVERY_RECONCILIATION_RETRY_MS,
+          }
+        }
         if (error instanceof SharedGroupRecipientClaimLostError) {
           return { kind: 'busy' as const, retryAt: Date.now() + SHARED_GROUP_MESSAGE_DELIVERY_LEASE_MS }
         }
@@ -7504,8 +8510,6 @@ export class BotService extends TypertRemoteService {
           return { kind: 'busy' as const, retryAt: Date.now() + SHARED_GROUP_MESSAGE_DELIVERY_RECONCILIATION_RETRY_MS }
         }
         throw error
-      } finally {
-        lease.stop()
       }
     })
     const tail = run.then(() => undefined, () => undefined)
@@ -8167,7 +9171,7 @@ export class BotService extends TypertRemoteService {
 
   private refreshSharedRecords(bot: BotRecord): void {
     for (const [key, current] of this.sharedRecordsBySession) {
-      if (current.id !== bot.id) continue
+      if (current.id !== bot.id || current.updatedAt > bot.updatedAt) continue
       let next: BotRecord = { ...current, ...bot, sessionId: current.sessionId }
       if (bot.persona === undefined) {
         const { persona: ignoredPersona, ...withoutPersona } = next

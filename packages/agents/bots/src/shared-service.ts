@@ -549,6 +549,71 @@ export class SharedBotService {
   }
 
   /**
+   * Enroll the authenticated local operator as the shared owner and repair
+   * owner memberships for active local Bots that do not have one.
+   *
+   * The authority mints or reuses one durable principal before this method
+   * updates membership records. Existing owners, members, and Session
+   * bindings are retained; a later Host can safely retry after an interrupted
+   * membership mirror write.
+   * @param request - trusted operator request receiving the shared cookie.
+   * @returns the durable owner enrollment and shared cookie.
+   */
+  async enrollOwner(request: ConnectionTrustRequest): Promise<SharedAccessEnrollment> {
+    return this.serialize(async () => {
+      const candidates = [...new Set(this.membershipSnapshot
+        .filter(member => member.role === 'owner')
+        .map(member => String(member.principalId)))].sort()
+      const enrollment = await this.authority.enrollOwner(
+        request,
+        candidates[0] === undefined ? undefined : SharedPrincipalId(candidates[0]),
+      )
+      const principalId = BotPrincipalId(String(enrollment.principalId))
+      const bots = await this.host.listBots()
+      const activeBots = [...new Map(bots
+        .filter(bot => bot.state === 'active')
+        .map(bot => [String(bot.id), bot])).values()]
+      const now = this.now()
+      const result = await this.authority.mutateExtension(SHARED_MEMBERSHIP_EXTENSION_KEY, async (current) => {
+        const snapshot = parseMembershipSnapshot(current)
+        let memberships = [...snapshot.memberships]
+        for (const bot of activeBots) {
+          const botId = bot.id
+          const botMemberships = memberships.filter(member => member.botId === botId)
+          if (botMemberships.some(member => member.role === 'owner')) continue
+          const existing = botMemberships.find(member => member.principalId === principalId)
+          const membership: SharedMembershipRecord = existing === undefined
+            ? {
+              botId,
+              principalId,
+              role: 'owner',
+              grantedBy: principalId,
+              createdAt: now,
+              updatedAt: now,
+            }
+            : {
+              ...existing,
+              role: 'owner',
+              grantedBy: principalId,
+              updatedAt: Math.max(now, existing.updatedAt),
+            }
+          const key = membershipKey(membership.botId, membership.principalId)
+          await this.memberships.put(key, membership)
+          memberships = existing === undefined
+            ? [...memberships, membership]
+            : memberships.map(candidate => membershipKey(candidate.botId, candidate.principalId) === key ? membership : candidate)
+        }
+        return {
+          value: { memberships },
+          next: { ...snapshot, memberships },
+        }
+      })
+      this.membershipSnapshot = result.memberships
+      return enrollment
+    })
+  }
+
+  /**
    * List the current members of one operator-owned Bot.
    * @param botId - Bot whose shared roster should be returned.
    * @returns durable membership summaries in storage order.
