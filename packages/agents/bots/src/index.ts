@@ -74,8 +74,9 @@ import type {
   BotMemoryRememberRequest,
 } from './memory.ts'
 import { BotGroupId, BotGroupMessageId, BotGroupService, botGroupDomain } from './group-chat.ts'
-import { attachmentContentBlocks, BotAttachmentGrantStore, botAttachmentDomain } from './attachment-grants.ts'
-import { handleBotAttachmentDownload, SHARED_BOT_ATTACHMENT_DOWNLOAD_PATH } from './attachment-download.ts'
+import { attachmentContentBlocks, BotAttachmentGrantStore, botAttachmentDomain, type BotInputAttachment } from './attachment-grants.ts'
+import { BOT_GROUP_ATTACHMENT_DOWNLOAD_PATH, handleBotAttachmentDownload, SHARED_BOT_ATTACHMENT_DOWNLOAD_PATH } from './attachment-download.ts'
+import type { BotAttachmentDownload } from './attachment-download.ts'
 import {
   BOT_GROUP_ATTACHMENT_UPLOAD_PATH,
   BOT_ATTACHMENT_MAX_BYTES,
@@ -7974,7 +7975,31 @@ export class BotService extends TypertRemoteService {
         })
       })),
     })
-    return async () => { await remove() }
+    let removeDownload: () => Promise<void>
+    try {
+      removeDownload = await connection.fetch.register({
+        path: BOT_GROUP_ATTACHMENT_DOWNLOAD_PATH,
+        methods: ['GET'],
+        requestBody: 'buffered',
+        fetch: request => this.trackAttachmentUpload(() => handleBotAttachmentDownload(request, async (target, signal) => {
+          const attachment = await groups.resolveAttachment(target.groupId, target.messageId, target.attachmentId)
+          return this.openAttachment(attachment, signal)
+        })),
+      })
+    } catch (error) {
+      await remove()
+      throw error
+    }
+    return async () => { await removeDownload(); await remove() }
+  }
+
+  /** Open provider-owned bytes for a previously authorized attachment. */
+  private async openAttachment(attachment: BotInputAttachment, signal: AbortSignal): Promise<BotAttachmentDownload> {
+    if (attachment.type === 'file') {
+      return { name: attachment.attachment.name, data: this.ctx.attachments.readFileStream(attachment.attachment, signal) }
+    }
+    const image = await this.ctx.attachments.readImage(attachment.attachment, signal)
+    return { name: image.ref.name ?? 'image', data: (async function* () { yield image.data })() }
   }
 
   /** Track a raw attachment request until its provider stream and admission settle. */
@@ -8131,13 +8156,7 @@ export class BotService extends TypertRemoteService {
         return reference
       },
       saveFileStream: input => this.ctx.attachments.saveFileStream(input),
-      readAttachment: async (attachment, signal) => {
-        if (attachment.type === 'file') {
-          return { name: attachment.attachment.name, data: this.ctx.attachments.readFileStream(attachment.attachment, signal) }
-        }
-        const image = await this.ctx.attachments.readImage(attachment.attachment, signal)
-        return { name: image.ref.name ?? 'image', data: (async function* () { yield image.data })() }
-      },
+      readAttachment: (attachment, signal) => this.openAttachment(attachment, signal),
       createSharedGroupSession: (bot, sessionId, groupId, signal) => this.createSharedGroupSession(bot, sessionId, groupId, signal),
       resolveSharedGroupAgent: (sessionId, groupId, botId, signal) => this.resolveSharedGroupAgent(sessionId, groupId, botId, signal),
       inspectSharedGroupSession: (sessionId, signal) => this.inspectSharedGroupSession(sessionId, signal),

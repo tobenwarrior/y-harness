@@ -674,7 +674,14 @@ export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate,
                 <div className={css.groupMessageBody}>
                   <span className={css.groupMessageSender}>{message.sender.kind === 'user' ? t('you') : message.sender.name}</span>
                   <p>{message.text}</p>
-                  <BotGroupSentAttachments attachments={message.attachments} fallbackName={t('groupAttachmentFile')} />
+                  <BotGroupSentAttachments
+                    attachments={message.attachments}
+                    fallbackName={t('groupAttachmentFile')}
+                    downloadLabel={name => t('groupDownloadAttachment', { name })}
+                    downloadUrl={attachmentId => `/api/bots/group/downloadAttachment?${new URLSearchParams({
+                      groupId: String(group.id), messageId: String(message.id), attachmentId,
+                    })}`}
+                  />
                   {deliveryStatuses.length > 0 && (
                     <div className={css.groupDeliveryStatuses} aria-label={t('groupDeliveryStatus')}>
                       {deliveryStatuses.map((delivery) => {

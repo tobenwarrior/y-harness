@@ -127,6 +127,10 @@ describe('owner-local Bot group attachments', () => {
         attachmentGrants: [grant.grantId],
       })
       expect(sent.status).toBe('accepted')
+      await expect(service.resolveAttachment(created.group.id, messageId, String(file.attachmentId)))
+        .resolves.toMatchObject({ type: 'file', attachment: { name: 'brief.txt' } })
+      await expect(service.resolveAttachment(created.group.id, messageId, 'not-in-message'))
+        .rejects.toMatchObject({ code: 'not-found' })
       expect(delivered).toHaveLength(1)
       expect(delivered[0]).toMatchObject({
         attachments: [{ type: 'image', attachment: image }, { type: 'file', attachment: file }],

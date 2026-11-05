@@ -64,7 +64,7 @@ The Client registration creates one controller for the Bot Remote, Session store
 | [`src/client/apply.ts`](src/client/apply.ts) | Client injections, locale registration, panel slots, sidebar entry, and controller lifecycle. |
 | [`src/client/controller.ts`](src/client/controller.ts) | Bot roster loading, selection, Session binding, avatar loading, and owner-facing callbacks. |
 | [`src/client/BotWorkspace.tsx`](src/client/BotWorkspace.tsx) | `BotRoster` sidebar and `BotDetail` main-panel surfaces with loading, error, empty, and creation states. |
-| [`src/client/BotGroupAttachments.tsx`](src/client/BotGroupAttachments.tsx) | Browser-only group-message picker, image preview, removal, and retry presentation. |
+| [`src/client/BotGroupAttachments.tsx`](src/client/BotGroupAttachments.tsx) | Group-message picker, image preview, retry, and message-scoped download presentation. |
 | [`src/client/BotRoutineManager.tsx`](src/client/BotRoutineManager.tsx) | Selected-Bot routine list, details, bounded history, and lifecycle confirmations. |
 | [`src/client/BotTemplatesPanel.tsx`](src/client/BotTemplatesPanel.tsx) | Safe template publishing, share-code preview/import, copy, and revocation controls. |
 | [`src/client/BotAvatarEditor.tsx`](src/client/BotAvatarEditor.tsx) | Provider availability, description, preview, commit, and assignment flow. |

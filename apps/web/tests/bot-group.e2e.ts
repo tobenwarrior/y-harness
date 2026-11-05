@@ -1,6 +1,6 @@
 // Keyless assembled-Web coverage for shared group creation and isolated delivery.
 import { fileURLToPath } from 'node:url'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import type { Browser, BrowserContext, Page } from 'playwright'
@@ -160,6 +160,28 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
     await expect.poll(() => detail.getByText(firstBot.name, { exact: true }).count()).toBeGreaterThan(0)
     await expect.poll(() => detail.getByText(secondBot.name, { exact: true }).count()).toBeGreaterThan(0)
 
+    const localInput = detail.locator('input[type="file"]')
+    await expect.poll(() => localInput.isEnabled(), { timeout: 30_000 }).toBe(true)
+    await localInput.setInputFiles({
+      name: 'local-notes.txt', mimeType: 'text/plain', buffer: Buffer.from('local file contents'),
+    })
+    await detail.getByRole('button', { name: 'Send message', exact: true }).click()
+    const localDownload = detail.getByRole('link', { name: 'Download local-notes.txt', exact: true })
+    await localDownload.waitFor({ state: 'visible', timeout: 30_000 })
+    const localHref = await localDownload.getAttribute('href')
+    if (localHref === null) throw new Error('local attachment download link is missing')
+    const anonymousContext = await browser.newContext()
+    try {
+      const anonymousDownload = await anonymousContext.request.get(new URL(localHref, page.url()).toString())
+      expect([401, 403, 404]).toContain(anonymousDownload.status())
+    } finally {
+      await anonymousContext.close()
+    }
+    const [download] = await Promise.all([page.waitForEvent('download'), localDownload.click()])
+    const path = await download.path()
+    if (path === null) throw new Error('local attachment download did not finish')
+    expect(await readFile(path, 'utf8')).toBe('local file contents')
+
     const visibleText = await detail.textContent()
     expect(visibleText).not.toContain(PRIVATE_SCOUT_PERSONA)
     expect(visibleText).not.toContain(PRIVATE_ORBIT_PERSONA)
@@ -312,6 +334,13 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
       () => collaboratorTranscriptRows.filter({ hasText: OWNER_ATTACHMENT_MESSAGE }).filter({ hasText: SHARED_ATTACHMENT_NAME }).count(),
       { timeout: 30_000 },
     ).toBe(1)
+    const downloadLink = collaboratorGroupSection.getByRole('link', { name: `Download ${SHARED_ATTACHMENT_NAME}`, exact: true })
+    const downloadHref = await downloadLink.getAttribute('href')
+    if (downloadHref === null) throw new Error('shared attachment download link is missing')
+    const [download] = await Promise.all([collaboratorPage.waitForEvent('download'), downloadLink.click()])
+    const downloadPath = await download.path()
+    if (downloadPath === null) throw new Error('shared attachment download did not finish')
+    expect(await readFile(downloadPath, 'utf8')).toBe(SHARED_ATTACHMENT_BODY)
 
     await attachmentInput.setInputFiles({
       name: 'standalone.txt', mimeType: 'text/plain', buffer: Buffer.from('file without a typed message'),
@@ -357,6 +386,8 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
     const revokedDialog = collaboratorPage.getByRole('dialog', { name: 'Shared with you', exact: true })
     await revokedDialog.waitFor({ state: 'visible', timeout: 15_000 })
     await expect.poll(() => revokedDialog.getByRole('button', { name: new RegExp(`^${SHARED_GROUP_NAME}`) }).count(), { timeout: 30_000 }).toBe(0)
+    const revokedDownload = await collaboratorPage.request.get(new URL(downloadHref, collaboratorPage.url()).toString())
+    expect([401, 403, 404]).toContain(revokedDownload.status())
 
 
     // Close the first Host while retaining its isolated workspace, credentials,

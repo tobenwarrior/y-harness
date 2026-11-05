@@ -5,6 +5,8 @@ import { remoteErrorOf } from '@yharness/typert-protocol'
 
 /** Authenticated shared-group attachment download endpoint. */
 export const SHARED_BOT_ATTACHMENT_DOWNLOAD_PATH = '/shared-bots/bots/share/downloadAttachment' as const
+/** Authenticated owner-local group attachment download endpoint. */
+export const BOT_GROUP_ATTACHMENT_DOWNLOAD_PATH = '/api/bots/group/downloadAttachment' as const
 
 /** Exact message and opaque provider identity requested by a download. */
 export interface BotAttachmentDownloadTarget {
@@ -48,7 +50,7 @@ export async function handleBotAttachmentDownload(
   } catch (error: unknown) {
     const code = remoteErrorOf(error)?.code
       ?? (error !== null && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code : undefined)
-    const missing = code === 'gateway/forbidden' || code === 'gateway/not-found'
+    const missing = code === 'gateway/forbidden' || code === 'gateway/not-found' || code === 'forbidden' || code === 'not-found'
     return new Response('Attachment unavailable', { status: missing ? 404 : 500 })
   }
   const iterator = file.data[Symbol.asyncIterator]()

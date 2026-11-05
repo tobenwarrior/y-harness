@@ -1264,6 +1264,19 @@
   margin-top: 6px;
 }
 
+.groupSentAttachments a {
+  text-decoration: none;
+}
+
+.groupSentAttachments a:hover {
+  background: var(--yh-alias-interactive-bg-hover);
+}
+
+.groupSentAttachments a:focus-visible {
+  outline: 1px solid var(--yh-focus-ring-color, var(--yh-alias-state-business-primary));
+  outline-offset: 1px;
+}
+
 .groupAttachmentCard[data-state='error'] {
   border-color: var(--yh-alias-state-error-primary);
 }

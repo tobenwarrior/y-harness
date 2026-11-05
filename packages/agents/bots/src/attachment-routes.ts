@@ -193,21 +193,25 @@ export async function bridgeBotAttachmentRequest(
     res.end()
     return
   }
-  for await (const chunk of response.body) {
-    if (abort.signal.aborted) continue
-    if (!res.write(chunk) && !res.destroyed) {
-      await new Promise<void>((resolve) => {
-        const done = (): void => {
-          res.off('drain', done)
-          res.off('close', done)
-          resolve()
-        }
-        res.once('drain', done)
-        res.once('close', done)
-      })
+  try {
+    for await (const chunk of response.body) {
+      if (abort.signal.aborted) continue
+      if (!res.write(chunk) && !res.destroyed) {
+        await new Promise<void>((resolve) => {
+          const done = (): void => {
+            res.off('drain', done)
+            res.off('close', done)
+            resolve()
+          }
+          res.once('drain', done)
+          res.once('close', done)
+        })
+      }
     }
+    res.end()
+  } catch (error: unknown) {
+    res.destroy(error instanceof Error ? error : new Error('Attachment stream failed'))
   }
-  res.end()
 }
 
 function parseUploadTarget(url: URL): BotAttachmentUploadTarget {

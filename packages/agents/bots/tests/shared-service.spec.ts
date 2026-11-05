@@ -126,7 +126,7 @@ interface Fixture {
 }
 
 class SharedBotHostFixture implements SharedBotHost {
-  readAttachment?: SharedBotHost['readAttachment']
+  readAttachment?: NonNullable<SharedBotHost['readAttachment']>
   readonly sessions = new Map<string, { readonly botId: string; readonly principalId: string }>()
   readonly sharedGroupMessages = new Set<string>()
   readonly sharedGroupAttachments = new Map<string, readonly BotInputAttachment[]>()

@@ -668,6 +668,30 @@ export class BotGroupService {
     return this.inspectInternal(request)
   }
 
+  /**
+   * Resolve an attachment belonging to an owner-local group message.
+   * @param groupId - Group containing the message.
+   * @param messageId - Message containing the attachment.
+   * @param attachmentId - Opaque provider identity.
+   * @returns The stored attachment reference.
+   */
+  async resolveAttachment(groupId: BotGroupId, messageId: BotGroupMessageId, attachmentId: string): Promise<BotInputAttachment> {
+    return this.serialize(async () => {
+      const group = this.domain.table('groups').get(groupId)
+      const message = this.domain.table('messages').get(messageId)
+      if (group === undefined || message === undefined || message.groupId !== group.id) {
+        throw new BotGroupError('not-found', 'Bot group attachment was not found')
+      }
+      const attachments = this.attachments?.attachmentsForMessage({
+        kind: 'local-group', ownerId: this.ownerId, groupId, messageId,
+        targetBotIds: message.targetBotIds ?? this.recipientIds(group, message.sender), authorizationRevision: group.updatedAt,
+      }) ?? []
+      const attachment = attachments.find(candidate => String(candidate.attachment.attachmentId) === attachmentId)
+      if (attachment === undefined) throw new BotGroupError('not-found', 'Bot group attachment was not found')
+      return attachment
+    })
+  }
+
   /** Read one durable group transcript while authorizing the live member atomically.
    * @param senderBotId - Authenticated member Bot identity.
    * @param request - Group identity to inspect.
