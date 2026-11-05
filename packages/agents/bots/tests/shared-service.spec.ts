@@ -1681,6 +1681,9 @@ describe('shared Bot service', () => {
         attachmentGrants: [admitted.value.grantId],
       }, new AbortController().signal, owner.peer)
       expect(send).toMatchObject({ ok: true, value: { status: 'accepted' } })
+      await expect(value.service.resolveSharedGroupAttachment(
+        groupId, messageId, `sha256:${'a'.repeat(64)}`, owner.botPrincipalId, new AbortController().signal,
+      )).resolves.toMatchObject({ type: 'image', attachment: { name: 'diagram.png' } })
       expect(value.host.sharedGroupAttachments.size).toBe(2)
       expect([...value.host.sharedGroupAttachments.values()].every(attachments => attachments.length === 1
         && attachments[0]?.type === 'image')).toBe(true)
@@ -1714,10 +1717,22 @@ describe('shared Bot service', () => {
         request(cookie(memberSecond)),
       )
       const member = await principal(value, memberGroup)
+      await expect(value.service.resolveSharedGroupAttachment(
+        groupId, messageId, `sha256:${'a'.repeat(64)}`, member.botPrincipalId, new AbortController().signal,
+      )).resolves.toMatchObject({ type: 'image' })
+      await expect(value.service.resolveSharedGroupAttachment(
+        groupId, messageId, 'not-in-message', member.botPrincipalId, new AbortController().signal,
+      )).rejects.toMatchObject({ code: 'gateway/not-found' })
       await expect(value.service.handle('bots/share/inspect-group', { groupId }, new AbortController().signal, member.peer)).resolves.toMatchObject({
         ok: true,
         value: { messages: [{ id: messageId, attachments: [{ type: 'image', attachmentId: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' }] }] },
       })
+      await expect(value.service.handle('bots/share/manage-group-members', {
+        groupId, action: 'revoke', principalId: member.botPrincipalId,
+      }, new AbortController().signal, owner.peer)).resolves.toMatchObject({ ok: true })
+      await expect(value.service.resolveSharedGroupAttachment(
+        groupId, messageId, `sha256:${'a'.repeat(64)}`, member.botPrincipalId, new AbortController().signal,
+      )).rejects.toMatchObject({ code: 'gateway/forbidden' })
     } finally {
       await value.close()
     }

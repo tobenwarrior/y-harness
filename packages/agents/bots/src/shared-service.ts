@@ -1352,6 +1352,22 @@ export class SharedBotService {
     return { ok: true, value: result }
   }
 
+  /**
+   * Resolve one attachment visible to an authenticated shared-group reader.
+   * @param groupId - Group containing the message.
+   * @param messageId - Message containing the attachment.
+   * @param attachmentId - Opaque attachment provider identity.
+   * @param principalId - Authenticated reader.
+   * @param signal - Request cancellation.
+   * @returns The authorized attachment reference.
+   */
+  async resolveSharedGroupAttachment(
+    groupId: ReturnType<typeof BotGroupId>, messageId: ReturnType<typeof BotGroupMessageId>, attachmentId: string,
+    principalId: ReturnType<typeof BotPrincipalId>, signal: AbortSignal,
+  ): Promise<BotInputAttachment> {
+    return this.groups.resolveAttachment(groupId, messageId, attachmentId, principalId, signal)
+  }
+
   private async inspectGroup(
     payload: GroupIdPayload,
     signal: AbortSignal,

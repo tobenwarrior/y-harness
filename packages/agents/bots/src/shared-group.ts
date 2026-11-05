@@ -894,6 +894,39 @@ export class SharedBotGroupService {
   }
 
   /**
+   * Resolve one stored attachment after checking the reader's current group access.
+   * @param groupId - Group containing the message.
+   * @param messageId - Message containing the attachment.
+   * @param attachmentId - Opaque attachment provider identity.
+   * @param principalId - Authenticated reader.
+   * @param signal - Request cancellation.
+   * @returns The exact stored attachment reference.
+   */
+  async resolveAttachment(
+    groupId: ReturnType<typeof BotGroupId>, messageId: ReturnType<typeof BotGroupMessageId>, attachmentId: string,
+    principalId: ReturnType<typeof BotPrincipalId>, signal: AbortSignal,
+  ): Promise<BotInputAttachment> {
+    this.requireIsolatedHost()
+    const availableBots = await this.stableBotRoster(signal)
+    const result = await this.withRosterFence(availableBots, signal, () => this.locked(principalId, 'read-group', signal, (snapshot, memberships) => {
+      const group = findGroup(snapshot, groupId)
+      requireGroupAccess(group, memberships, principalId, 'read-group')
+      this.activeBotsFromList(group.botIds, availableBots)
+      const message = snapshot.messages.find(candidate => candidate.groupId === group.id && candidate.id === messageId)
+      if (message === undefined || message.sender.kind !== 'user' || message.sender.principalId === undefined) {
+        throw new SharedGroupError('gateway/not-found', 'Shared Bot attachment was not found')
+      }
+      const attachment = this.attachments?.attachmentsForSharedGroupMessage({
+        principalId: message.sender.principalId, groupId: group.id, messageId: message.id,
+        targetBotIds: message.targetBotIds ?? group.botIds, authorizationRevision: group.revision,
+      }).find(candidate => String(candidate.attachment.attachmentId) === attachmentId)
+      if (attachment === undefined) throw new SharedGroupError('gateway/not-found', 'Shared Bot attachment was not found')
+      return { snapshot, value: attachment }
+    }))
+    return result.value
+  }
+
+  /**
    * Persist one principal-authored shared-group message, then deliver outside the authority lock.
    * @param request - group message text, recipients, and optional idempotency id.
    * @param principalId - authenticated principal sending the message.
