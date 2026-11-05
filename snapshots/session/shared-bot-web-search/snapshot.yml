@@ -1,0 +1,11 @@
+version: 1
+scenario: shared-bot-web-search
+profile: headless
+composition: shared-bot-web-search
+recording: live
+platform: posix
+header:
+  class: shared-bot-web-search
+  pin: true
+  childSystemPrompts: [1]
+  childToolSchemas: [1]

@@ -1,7 +1,7 @@
 /** Recorded-session replay through the shipped headless `dsh` profile. */
 
 import { startHttpMcpFixture } from '../../packages/mcp/mcp-client/tests/http-fixture.ts'
-import { cp, copyFile, mkdir, mkdtemp, readFile, readdir, rm, symlink, utimes, writeFile } from 'node:fs/promises'
+import { cp, copyFile, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, utimes, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
@@ -1119,12 +1119,18 @@ describe('headless recorded-session snapshots', () => {
       const spillRoot = await mkdtemp(join(tmpdir(), 'acp-snap-spill-'))
       const locatorRoot = snapshotSpillRoot(join(scenario.dir, fixtureFiles[0] as string))
       const mcpDemo = scenario.name === 'plugin-manager-mcp' ? await startHttpMcpFixture() : undefined
+      const sharedTempRoot = scenario.name === 'shared-bot-web-search' ? await realpath(tmpdir()) : undefined
+      // The shared Session's encoded id names this workspace; escaping the colon keeps cwd and id normalization distinct.
+      const sharedWorkspaceParent = sharedTempRoot === undefined ? undefined : join(sharedTempRoot, 'y-harness-shared-bots')
+      if (sharedWorkspaceParent !== undefined) await mkdir(sharedWorkspaceParent, { recursive: true })
       let result: Awaited<ReturnType<typeof runLoaderSmoke>>
       try {
         result = await runLoaderSmoke({
           label: `${scenario.name} headless snapshot`,
-          tempDirPrefix: 'dsh-log-snap-',
-          ...(scenario.manifest.workspace?.parent === 'outside-temp' ? { tempDirParent: outsideTempWorkspaceParent() } : {}),
+          tempDirPrefix: sharedWorkspaceParent === undefined ? 'dsh-log-snap-' : 'dsh-log-snap-%3A',
+          ...(sharedWorkspaceParent !== undefined
+            ? { tempDirParent: sharedWorkspaceParent }
+            : scenario.manifest.workspace?.parent === 'outside-temp' ? { tempDirParent: outsideTempWorkspaceParent() } : {}),
           binScript: dshBin,
           sourceImport: 'tsx/esm',
           configPath: join(baseComposition.dir, 'cordis.yml'),
@@ -1155,6 +1161,7 @@ describe('headless recorded-session snapshots', () => {
               ? {}
               : { DSH_PERMISSION_MODE: scenario.manifest.permission }),
             ...scenario.manifest.environment,
+            ...(sharedTempRoot === undefined ? {} : { TMPDIR: sharedTempRoot }),
             ...(scenario.name === 'mcp-resources' || scenario.name === 'mcp-resources-ptc' ? {
               DSH_MCP_RESOURCES_FIXTURE: join(repoRoot, 'packages/mcp/mcp-client/tests/fixtures/resources-server.ts'),
             } : {}),

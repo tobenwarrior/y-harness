@@ -14409,6 +14409,12 @@ importers:
       '@yharness/agent-loop':
         specifier: workspace:*
         version: link:../../core/agent-loop
+      '@yharness/api-session-controller':
+        specifier: workspace:*
+        version: link:../../api/session-controller
+      '@yharness/bots':
+        specifier: workspace:*
+        version: link:../../agents/bots
       '@yharness/compaction':
         specifier: workspace:*
         version: link:../../compaction/compaction
@@ -14436,12 +14442,18 @@ importers:
       '@yharness/subagent':
         specifier: workspace:*
         version: link:../../subagent/subagent
+      '@yharness/tool-web':
+        specifier: workspace:*
+        version: link:../../web/tool-web
       '@yharness/tools':
         specifier: workspace:*
         version: link:../../core/tools
       '@yharness/user-questions':
         specifier: workspace:*
         version: link:../../interaction/user-questions
+      '@yharness/web':
+        specifier: workspace:*
+        version: link:../../web/web
 
   packages/todo/tool-todo:
     dependencies:

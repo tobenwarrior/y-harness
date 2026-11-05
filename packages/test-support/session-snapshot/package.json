@@ -41,6 +41,8 @@
     "@yharness/http-proxy": "workspace:*"
   },
   "devDependencies": {
+    "@yharness/api-session-controller": "workspace:*",
+    "@yharness/bots": "workspace:*",
     "@yharness/cordis": "workspace:~",
     "@yharness/agent": "workspace:*",
     "@yharness/agent-loop": "workspace:*",
@@ -52,6 +54,8 @@
     "@yharness/session-persistence": "workspace:*",
     "@yharness/subagent": "workspace:*",
     "@yharness/tools": "workspace:*",
+    "@yharness/tool-web": "workspace:*",
+    "@yharness/web": "workspace:*",
     "@yharness/user-questions": "workspace:*",
     "@types/js-yaml": "^4.0.9",
     "@yharness/http-proxy": "workspace:*"

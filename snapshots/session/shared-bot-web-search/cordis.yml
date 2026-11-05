@@ -1,0 +1,23 @@
+# Live composition for the shared Bot web-search snapshot owner.
+
+- id: web
+  config:
+    searchProvider: snapshot-search
+    fetchProvider: http
+
+- id: headless-runner
+  config:
+    task: !!js ctx.headlessStartup.task
+    sessionId: bot-session-sender
+    json: !!js ctx.headlessStartup.json
+
+- insert:
+    - id: agent-bots
+      name: '@yharness/bots'
+
+- insert:
+    - id: shared-bot-web-search-prereqs
+      name: '../../../packages/test-support/session-snapshot/tests/fixtures/shared-bot-web-search-prereqs.ts'
+
+    - id: bots-snapshot
+      name: '../../../packages/test-support/session-snapshot/tests/fixtures/bot-snapshot.ts'

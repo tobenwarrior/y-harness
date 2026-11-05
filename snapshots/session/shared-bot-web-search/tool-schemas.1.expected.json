@@ -1,0 +1,46 @@
+{
+  "initial": [
+    {
+      "name": "web_search",
+      "description": "Search the web for current information. Returns an optional summary answer and a list of source URLs.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "queries": {
+            "type": "array",
+            "description": "1–4 search queries; their results are merged.",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "queries"
+        ]
+      }
+    }
+  ],
+  "changes": [
+    [
+      {
+        "name": "web_search",
+        "description": "Search the web for current information. Returns an optional summary answer and a list of source URLs.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "queries": {
+              "type": "array",
+              "description": "1–4 search queries; their results are merged.",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "queries"
+          ]
+        }
+      }
+    ]
+  ]
+}
