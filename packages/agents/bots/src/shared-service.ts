@@ -49,6 +49,7 @@ import type {
   BotGroupDeliveryRecoveryRequest,
   BotGroupDeliveryRecoveryValue,
   BotGroupSendRemoteRequest,
+  BotSharedGroupDeliveryFenceDiagnosticValue,
 } from './group-chat.ts'
 import {
   sharedBotDomain,
@@ -698,6 +699,18 @@ export class SharedBotService {
    */
   async recoverSharedGroupDelivery(request: BotGroupDeliveryRecoveryRequest): Promise<BotGroupDeliveryRecoveryValue> {
     return this.groups.recoverDelivery(request)
+  }
+
+  /**
+   * Read owner-only shared-group recipient fences from the durable authority.
+   * @param botId - Recipient Bot whose fences should be returned.
+   * @returns Exact identities required for owner recovery, without transcript data.
+   */
+  async inspectSharedGroupDeliveryFences(botId: BotId): Promise<BotSharedGroupDeliveryFenceDiagnosticValue> {
+    return this.serialize(async () => {
+      await this.requireBot(botId)
+      return this.groups.inspectDeliveryFences(botId)
+    })
   }
 
   /**

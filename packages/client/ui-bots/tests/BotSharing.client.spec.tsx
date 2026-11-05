@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { brandString } from '@yharness/brand'
 import { BotId, BotPrincipalId, BotShareMemoryId } from '@yharness/bots/client'
-import type { BotGroupId, BotGroupMessageId, BotGroupMessageView, BotGroupView } from '@yharness/bots/client'
+import type { BotGroupId, BotGroupMessageId, BotGroupMessageView, BotGroupView, BotSharedGroupDeliveryFenceView } from '@yharness/bots/client'
 import type { ClientConnectionRpc } from '@yharness/client-connection/client'
 import { makeTranslate } from '@yharness/client-test-runtime'
 import { BotShareDialog, SharedBotsDialog } from '../src/client/BotSharing.tsx'
@@ -365,6 +365,81 @@ describe('shared Bot collaboration surfaces', () => {
     await waitFor(() => { expect(screen.getByText('new-fence-token')).toBeTruthy() })
     expect(screen.getByRole('alert').textContent).toContain('still active or changed')
     expect((within(screen.getByRole('dialog', { name: 'Recover shared roster?' })).getByRole('button', { name: 'Recover roster' }) as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('shows and recovers only an owner-visible recipient fence after explicit acknowledgement', async () => {
+    const fence: BotSharedGroupDeliveryFenceView = {
+      groupId: brandString<BotGroupId>('bot-group-owner-recovery'),
+      botId: BotId(bot.id),
+      sessionId: 'shared-session-group-owner-recovery',
+      messageId: brandString<BotGroupMessageId>('bot-group-message-owner-recovery'),
+    }
+    const inspectDeliveryFences = vi.fn().mockResolvedValue({ fences: [fence] })
+    const recoverDeliveryFence = vi.fn().mockResolvedValue({ botId: fence.botId, messageId: fence.messageId, status: 'released' as const })
+    const actions = ownerActions({ inspectDeliveryFences, recoverDeliveryFence })
+    render(<BotShareDialog bot={bot} actions={actions} open onClose={vi.fn()} t={t} />)
+
+    await waitFor(() => { expect(screen.getByText(/bot-group-owner-recovery · bot-group-message-owner-recovery/)).toBeTruthy() })
+    expect(inspectDeliveryFences).toHaveBeenCalledWith(bot.id)
+    fireEvent.click(screen.getByRole('button', { name: 'Recover delivery' }))
+    const confirmation = screen.getByRole('dialog', { name: 'Recover shared-group delivery?' })
+    expect(within(confirmation).getByText(/No process can verify a paused Host/)).toBeTruthy()
+    const confirm = within(confirmation).getByRole('button', { name: 'Recover delivery' })
+    expect((confirm as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.click(within(confirmation).getByRole('checkbox', { name: /stopped every Host/i }))
+    fireEvent.click(confirm)
+
+    await waitFor(() => { expect(recoverDeliveryFence).toHaveBeenCalledWith(fence) })
+    await waitFor(() => { expect(screen.getByText('No recipient delivery needs owner recovery.')).toBeTruthy() })
+  })
+
+  it('does not report recipient recovery clear when inspection fails', async () => {
+    const inspectDeliveryFences = vi.fn().mockRejectedValue(new Error('internal fence details'))
+    const actions = ownerActions({ inspectDeliveryFences })
+    render(<BotShareDialog bot={bot} actions={actions} open onClose={vi.fn()} t={t} />)
+
+    await waitFor(() => { expect(screen.getAllByText('Recipient delivery status is unavailable.')).not.toHaveLength(0) })
+    expect(screen.queryByText('No recipient delivery needs owner recovery.')).toBeNull()
+    expect(screen.queryByText('internal fence details')).toBeNull()
+  })
+
+  it('does not apply a late recipient recovery result to a newly selected Bot', async () => {
+    const firstFence: BotSharedGroupDeliveryFenceView = {
+      groupId: brandString<BotGroupId>('bot-group-stale-recovery'),
+      botId: BotId(bot.id),
+      sessionId: 'shared-session-group-stale-recovery',
+      messageId: brandString<BotGroupMessageId>('bot-group-message-stale-recovery'),
+    }
+    const secondFence: BotSharedGroupDeliveryFenceView = {
+      ...firstFence,
+      groupId: brandString<BotGroupId>('bot-group-current-recovery'),
+      botId: BotId(analystBot.id),
+      sessionId: 'shared-session-group-current-recovery',
+      messageId: brandString<BotGroupMessageId>('bot-group-message-current-recovery'),
+    }
+    const recover = Promise.withResolvers<{ readonly botId: typeof firstFence.botId; readonly messageId: typeof firstFence.messageId; readonly status: 'released' }>()
+    const inspectDeliveryFences = vi.fn().mockImplementation((botId: string) => Promise.resolve({
+      fences: [botId === bot.id ? firstFence : secondFence],
+    }))
+    const recoverDeliveryFence = vi.fn().mockReturnValue(recover.promise)
+    const actions = ownerActions({ inspectDeliveryFences, recoverDeliveryFence })
+    const view = render(<BotShareDialog bot={bot} actions={actions} open onClose={vi.fn()} t={t} />)
+
+    await waitFor(() => { expect(screen.getByText(/bot-group-stale-recovery · bot-group-message-stale-recovery/)).toBeTruthy() })
+    fireEvent.click(screen.getByRole('button', { name: 'Recover delivery' }))
+    const confirmation = screen.getByRole('dialog', { name: 'Recover shared-group delivery?' })
+    fireEvent.click(within(confirmation).getByRole('checkbox', { name: /stopped every Host/i }))
+    fireEvent.click(within(confirmation).getByRole('button', { name: 'Recover delivery' }))
+    await waitFor(() => { expect(recoverDeliveryFence).toHaveBeenCalledWith(firstFence) })
+
+    view.rerender(<BotShareDialog bot={analystBot} actions={actions} open onClose={vi.fn()} t={t} />)
+    await waitFor(() => { expect(screen.getByText(/bot-group-current-recovery · bot-group-message-current-recovery/)).toBeTruthy() })
+    await act(async () => {
+      recover.resolve({ botId: firstFence.botId, messageId: firstFence.messageId, status: 'released' })
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(screen.getByText(/bot-group-current-recovery · bot-group-message-current-recovery/)).toBeTruthy()
   })
 
   it('blocks membership operations while a shared-context policy update is pending', async () => {

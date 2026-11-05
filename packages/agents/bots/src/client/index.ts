@@ -9,6 +9,8 @@ export type {
   BotGroupDeliveryView,
   BotGroupDeliveryRecoveryRequest,
   BotGroupDeliveryRecoveryValue,
+  BotSharedGroupDeliveryFenceView,
+  BotSharedGroupDeliveryFenceDiagnosticValue,
   BotGroupId,
   BotGroupInspectRequest,
   BotGroupInspectValue,

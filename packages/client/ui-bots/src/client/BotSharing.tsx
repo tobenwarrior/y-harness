@@ -34,6 +34,7 @@ import type {
   BotShareRole,
   BotShareRosterEntry,
   BotShareTranscriptEntry,
+  BotSharedGroupDeliveryFenceView,
   BotSharedRosterFenceDiagnosticValue,
 } from '@yharness/bots/client'
 import { BotAvatar } from './BotAvatar.tsx'
@@ -118,6 +119,11 @@ export function BotShareDialog({ bot, actions, open, onClose, t }: {
   const [rosterFenceConfirmOpen, setRosterFenceConfirmOpen] = useState(false)
   const [rosterFenceAcknowledged, setRosterFenceAcknowledged] = useState(false)
   const [rosterFenceWorking, setRosterFenceWorking] = useState(false)
+  const [deliveryFences, setDeliveryFences] = useState<readonly BotSharedGroupDeliveryFenceView[]>([])
+  const [deliveryFenceStatus, setDeliveryFenceStatus] = useState<'unknown' | 'ready' | 'error'>('unknown')
+  const [deliveryFenceTarget, setDeliveryFenceTarget] = useState<BotSharedGroupDeliveryFenceView | null>(null)
+  const [deliveryFenceAcknowledged, setDeliveryFenceAcknowledged] = useState(false)
+  const [deliveryFenceWorking, setDeliveryFenceWorking] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
   const [stateBotId, setStateBotId] = useState<string | null>(open ? bot.id : null)
@@ -165,8 +171,24 @@ export function BotShareDialog({ bot, actions, open, onClose, t }: {
         if (!isCurrentLoad()) return
         setRosterFence(fence)
       }
+      if (actions.inspectDeliveryFences !== undefined) {
+        try {
+          const fences = await actions.inspectDeliveryFences(requestedBotId)
+          if (!isCurrentLoad()) return
+          setDeliveryFences(fences.fences)
+          setDeliveryFenceStatus('ready')
+        } catch {
+          if (!isCurrentLoad()) return
+          setDeliveryFences([])
+          setDeliveryFenceStatus('error')
+          setError(t('sharedGroupDeliveryFenceUnavailable'))
+        }
+      }
     } catch (cause: unknown) {
-      if (isCurrentLoad()) setError(cause instanceof Error ? cause.message : t('shareError'))
+      if (isCurrentLoad()) {
+        if (actions.inspectDeliveryFences !== undefined) setDeliveryFenceStatus('error')
+        setError(cause instanceof Error ? cause.message : t('shareError'))
+      }
     } finally {
       if (isCurrentLoad()) setWorking(current => current === 'load' ? null : current)
     }
@@ -189,6 +211,11 @@ export function BotShareDialog({ bot, actions, open, onClose, t }: {
       setRosterFenceConfirmOpen(false)
       setRosterFenceAcknowledged(false)
       setRosterFenceWorking(false)
+      setDeliveryFences([])
+      setDeliveryFenceStatus('unknown')
+      setDeliveryFenceTarget(null)
+      setDeliveryFenceAcknowledged(false)
+      setDeliveryFenceWorking(false)
       return
     }
     setStateBotId(bot.id)
@@ -203,6 +230,11 @@ export function BotShareDialog({ bot, actions, open, onClose, t }: {
     setRosterFenceConfirmOpen(false)
     setRosterFenceAcknowledged(false)
     setRosterFenceWorking(false)
+    setDeliveryFences([])
+    setDeliveryFenceStatus('unknown')
+    setDeliveryFenceTarget(null)
+    setDeliveryFenceAcknowledged(false)
+    setDeliveryFenceWorking(false)
     setError(null)
     void load(bot.id, viewGeneration)
   }, [bot.id, open])
@@ -243,6 +275,70 @@ export function BotShareDialog({ bot, actions, open, onClose, t }: {
       }
     } finally {
       if (isCurrentView(requestedBotId, viewGeneration)) setRosterFenceWorking(false)
+    }
+  }
+
+  const recoverDeliveryFence = async (): Promise<void> => {
+    const target = deliveryFenceTarget
+    if (!stateMatchesBot || target === null || target.botId !== bot.id
+      || actions.recoverDeliveryFence === undefined || deliveryFenceWorking
+      || working !== null || memoryWorking || rosterFenceWorking) return
+    const stillListed = deliveryFences.some(fence => (
+      fence.groupId === target.groupId
+      && fence.botId === target.botId
+      && fence.sessionId === target.sessionId
+      && fence.messageId === target.messageId
+    ))
+    if (!stillListed) {
+      setDeliveryFenceTarget(null)
+      setDeliveryFenceAcknowledged(false)
+      setError(t('sharedGroupDeliveryFenceChanged'))
+      return
+    }
+    const requestedBotId = bot.id
+    const viewGeneration = viewGenerationRef.current
+    setDeliveryFenceWorking(true)
+    setError(null)
+    try {
+      const result = await actions.recoverDeliveryFence(target)
+      if (!isCurrentView(requestedBotId, viewGeneration)) return
+      if (result.status === 'accepted' || result.status === 'released') {
+        setDeliveryFences(current => current.filter(fence => (
+          fence.groupId !== target.groupId
+          || fence.botId !== target.botId
+          || fence.sessionId !== target.sessionId
+          || fence.messageId !== target.messageId
+        )))
+        setDeliveryFenceTarget(null)
+        setDeliveryFenceAcknowledged(false)
+        return
+      }
+      setDeliveryFenceAcknowledged(false)
+      setError(result.status === 'busy'
+        ? t('sharedGroupDeliveryFenceBusy')
+        : t('sharedGroupDeliveryFenceRecoveryFailed'))
+      try {
+        const fences = await actions.inspectDeliveryFences?.(requestedBotId)
+        if (fences !== undefined && isCurrentView(requestedBotId, viewGeneration)) {
+          setDeliveryFences(fences.fences)
+          setDeliveryFenceStatus('ready')
+        }
+      } catch {
+        if (isCurrentView(requestedBotId, viewGeneration)) {
+          setDeliveryFences([])
+          setDeliveryFenceStatus('error')
+          setDeliveryFenceTarget(null)
+          setDeliveryFenceAcknowledged(false)
+          setError(t('sharedGroupDeliveryFenceUnavailable'))
+        }
+      }
+    } catch (cause: unknown) {
+      if (isCurrentView(requestedBotId, viewGeneration)) {
+        setDeliveryFenceAcknowledged(false)
+        setError(cause instanceof Error ? cause.message : t('sharedGroupDeliveryFenceRecoveryFailed'))
+      }
+    } finally {
+      if (isCurrentView(requestedBotId, viewGeneration)) setDeliveryFenceWorking(false)
     }
   }
 
@@ -435,6 +531,43 @@ export function BotShareDialog({ bot, actions, open, onClose, t }: {
             )}
           </section>
         )}
+        {stateMatchesBot && actions.inspectDeliveryFences !== undefined && (
+          <section className={css.sharedMemoryCard} aria-labelledby="yharness-shared-delivery-fence-heading">
+            <div className={css.sharedMemoryHeader}>
+              <span className={css.sharedMemoryIcon} aria-hidden="true"><IconShieldOutlineRegular size={16} /></span>
+              <div>
+                <div className={css.shareSectionHeading} id="yharness-shared-delivery-fence-heading">{t('sharedGroupDeliveryFenceLabel')}</div>
+                <p className={css.sharedMemoryDescription}>
+                  {working === 'load'
+                    ? t('sharedGroupDeliveryFenceLoading')
+                    : deliveryFenceStatus === 'error'
+                      ? t('sharedGroupDeliveryFenceUnavailable')
+                      : deliveryFences.length === 0
+                        ? t('sharedGroupDeliveryFenceClear')
+                        : t('sharedGroupDeliveryFenceHeld', { count: deliveryFences.length })}
+                </p>
+              </div>
+            </div>
+            {deliveryFences.map(fence => (
+              <div className={css.shareInviteRow} key={`${fence.groupId}-${fence.sessionId}-${fence.messageId}`}>
+                <span className={css.inviteCode}>
+                  <code aria-label={t('sharedGroupDeliveryFenceIdLabel')}>{String(fence.groupId)} · {String(fence.messageId)}</code>
+                </span>
+                {actions.recoverDeliveryFence !== undefined && (
+                  <Button
+                    variant="outline"
+                    disabled={working !== null || memoryWorking || rosterFenceWorking || deliveryFenceWorking}
+                    onClick={() => { setDeliveryFenceTarget(fence); setDeliveryFenceAcknowledged(false) }}
+                  >
+                    {deliveryFenceWorking && deliveryFenceTarget?.messageId === fence.messageId
+                      ? t('recoveringSharedGroupDeliveryFence')
+                      : t('recoverSharedGroupDeliveryFence')}
+                  </Button>
+                )}
+              </div>
+            ))}
+          </section>
+        )}
         <div className={css.shareMembers}>
           <div className={css.shareSectionHeading}>{t('membersLabel')}</div>
           {stateMatchesBot && working === 'load' && <div className={css.shareLoading} role="status"><StateDot state="ongoing" size={12} /></div>}
@@ -484,6 +617,23 @@ export function BotShareDialog({ bot, actions, open, onClose, t }: {
         onAcknowledgedChange={setRosterFenceAcknowledged}
         onCancel={() => { setRosterFenceConfirmOpen(false); setRosterFenceAcknowledged(false) }}
         onConfirm={() => { void recoverRosterFence() }}
+      />
+      <RiskConfirmation
+        open={stateMatchesBot && deliveryFenceTarget !== null}
+        title={t('recoverSharedGroupDeliveryFenceTitle')}
+        description={t('recoverSharedGroupDeliveryFenceDescription', {
+          groupId: deliveryFenceTarget === null ? '' : String(deliveryFenceTarget.groupId),
+          messageId: deliveryFenceTarget === null ? '' : String(deliveryFenceTarget.messageId),
+        })}
+        acknowledgeLabel={t('recoverSharedGroupDeliveryFenceAcknowledge')}
+        cancelLabel={t('cancel')}
+        closeLabel={t('cancel')}
+        confirmLabel={t('recoverSharedGroupDeliveryFence')}
+        acknowledged={deliveryFenceAcknowledged}
+        disabled={!stateMatchesBot || deliveryFenceWorking}
+        onAcknowledgedChange={setDeliveryFenceAcknowledged}
+        onCancel={() => { setDeliveryFenceTarget(null); setDeliveryFenceAcknowledged(false) }}
+        onConfirm={() => { void recoverDeliveryFence() }}
       />
     </>
   )

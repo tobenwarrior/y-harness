@@ -37,6 +37,7 @@ import type {
   BotGroupMessageView,
   BotGroupSendRemoteRequest,
   BotGroupSendValue,
+  BotSharedGroupDeliveryFenceDiagnosticValue,
   BotGroupUpdateRequest,
   BotGroupUpdateValue,
   BotGroupView,
@@ -73,6 +74,8 @@ const SHARED_GROUP_RECOVERY_CONCURRENCY = 4
 const SHARED_GROUP_RECOVERY_TIMEOUT_MS = 15_000
 const SHARED_GROUP_AUTHORITY_TIMEOUT_MS = 5_000
 const SHARED_GROUP_RECOVERY_MAX_RETRY_DELAY_MS = 30_000
+const SHARED_GROUP_OPERATOR_RECOVERY_ERROR_PREFIX = 'Shared Bot recipient admission needs owner recovery'
+const SHARED_GROUP_OPERATOR_RECOVERY_RELEASED_ERROR = 'Shared Bot recipient admission was released; retry this message.'
 
 const botIdSchema = z.string().regex(/^bot-[A-Za-z0-9][A-Za-z0-9-]*$/).transform(BotId)
 const groupIdSchema = z.string().regex(/^bot-group-[A-Za-z0-9][A-Za-z0-9-]*$/).transform(BotGroupId)
@@ -113,6 +116,9 @@ const sharedGroupDeliverySchema = z.object({
   groupId: groupIdSchema,
   messageId: z.string().regex(/^bot-group-message-[A-Za-z0-9][A-Za-z0-9-]*$/).transform(BotGroupMessageId),
   botId: botIdSchema,
+  // Older v1 rows did not retain the recipient Session identity. Keep this
+  // optional for migration, but owner recovery must refuse such rows.
+  targetSessionId: sharedGroupSessionIdSchema.optional(),
   status: z.enum(['pending', 'accepted', 'responded', 'failed']),
   responseMessageId: z.string().regex(/^bot-group-message-[A-Za-z0-9][A-Za-z0-9-]*$/).transform(BotGroupMessageId).optional(),
   error: z.string().min(1).max(400).optional(),
@@ -131,6 +137,7 @@ const sharedGroupDeliverySchema = z.object({
   groupId: value.groupId,
   messageId: value.messageId,
   botId: value.botId,
+  ...(value.targetSessionId === undefined ? {} : { targetSessionId: value.targetSessionId }),
   status: value.status,
   ...(value.responseMessageId === undefined ? {} : { responseMessageId: value.responseMessageId }),
   ...(value.error === undefined ? {} : { error: value.error }),
@@ -328,6 +335,7 @@ export type SharedGroupDeliveryRecoveryResult =
 
 /** Shared delivery record with the authorization revision and dispatch lease that admitted it. */
 export type SharedGroupDeliveryRecord = Omit<BotGroupDeliveryRecord, 'updatedAt'> & {
+  readonly targetSessionId?: SessionId
   readonly authorizationRevision: number
   readonly senderPrincipalId: ReturnType<typeof BotPrincipalId>
   readonly dispatchToken?: string
@@ -474,6 +482,37 @@ export class SharedBotGroupService {
   }
 
   /**
+   * Return durable recipient fences already classified as requiring owner recovery.
+   * Only exact identities required by the owner recovery request are projected.
+   * @param botId - Recipient Bot whose fences should be returned.
+   * @returns Exact shared-group, Bot, Session, and message identities.
+   */
+  async inspectDeliveryFences(botId: BotId): Promise<BotSharedGroupDeliveryFenceDiagnosticValue> {
+    this.requireIsolatedHost()
+    const extension = await withSharedGroupAuthorityTimeout(
+      this.authority.readExtension('agent-bots/shared-memberships'),
+    )
+    const snapshot = parseGroups(parseMembershipExtension(extension.value).sharedGroups)
+    return {
+      fences: snapshot.deliveries.flatMap((delivery) => {
+        if (delivery.botId !== botId
+          || delivery.status !== 'failed'
+          || delivery.error?.startsWith(SHARED_GROUP_OPERATOR_RECOVERY_ERROR_PREFIX) !== true
+          || delivery.targetSessionId === undefined) return []
+        const binding = snapshot.sessions.find(session => session.groupId === delivery.groupId
+          && session.botId === delivery.botId && session.sessionId === delivery.targetSessionId)
+        if (binding === undefined) return []
+        return [{
+          groupId: delivery.groupId,
+          botId: delivery.botId,
+          sessionId: String(binding.sessionId),
+          messageId: delivery.messageId,
+        }]
+      }),
+    }
+  }
+
+  /**
    * Reconcile one recipient admission after an owner has quiesced every Host
    * that could own the isolated Session. The exact Session id is required so
    * a retired binding cannot be mistaken for a newer recipient Session.
@@ -505,6 +544,20 @@ export class SharedBotGroupService {
     const binding = snapshot.sessions.find(candidate => candidate.groupId === groupId
       && candidate.botId === botId && candidate.sessionId === sessionId)
     if (binding === undefined) throw new SharedGroupError('gateway/not-found', 'shared Bot group Session binding was not found')
+    const delivery = snapshot.deliveries.find(candidate => candidate.id === deliveryKey(messageId, botId)
+      && candidate.groupId === groupId
+      && candidate.botId === botId
+      && candidate.messageId === messageId)
+    if (delivery !== undefined && delivery.targetSessionId !== sessionId) {
+      return { botId, messageId, status: 'operator-required' }
+    }
+    if (delivery !== undefined
+      && (delivery.status !== 'failed'
+        || delivery.error?.startsWith(SHARED_GROUP_OPERATOR_RECOVERY_ERROR_PREFIX) !== true)) {
+      return { botId, messageId, status: 'operator-required' }
+    }
+    const fenceError = delivery?.error
+    const fenceUpdatedAt = delivery?.updatedAt
     const recover = this.host.recoverSharedGroupDelivery
     if (recover === undefined) throw new SharedGroupError('gateway/unavailable', 'shared Bot delivery recovery is unavailable on this Host')
     signal.throwIfAborted()
@@ -515,8 +568,14 @@ export class SharedBotGroupService {
       messageId,
       signal,
     })
-    if (result === 'accepted') return { botId, messageId, status: 'accepted' }
-    if (result === 'released') return { botId, messageId, status: 'released' }
+    if (result === 'accepted') {
+      const recorded = await this.recordRecoveredDelivery(groupId, botId, sessionId, messageId, fenceError, fenceUpdatedAt, 'accepted', signal)
+      return { botId, messageId, status: recorded ? 'accepted' : 'operator-required' }
+    }
+    if (result === 'released') {
+      const recorded = await this.recordRecoveredDelivery(groupId, botId, sessionId, messageId, fenceError, fenceUpdatedAt, 'released', signal)
+      return { botId, messageId, status: recorded ? 'released' : 'operator-required' }
+    }
     if (result.kind === 'busy') return { botId, messageId, status: 'busy', retryAt: result.retryAt }
     return { botId, messageId, status: 'operator-required' }
   }
@@ -926,10 +985,11 @@ export class SharedBotGroupService {
           groupId: group.id,
           messageId,
           botId,
+          targetSessionId: binding.sessionId,
           status: 'pending',
           authorizationRevision: group.revision,
           senderPrincipalId: principalId,
-          updatedAt: this.now(),
+          updatedAt: Math.max(this.now(), current?.updatedAt === undefined ? 0 : current.updatedAt + 1),
           ...(current?.claim === undefined ? {} : { claim: current.claim }),
           ...(current?.dispatchToken === undefined ? {} : { dispatchToken: current.dispatchToken }),
           ...(current?.dispatchLeaseUntil === undefined ? {} : { dispatchLeaseUntil: current.dispatchLeaseUntil }),
@@ -1385,7 +1445,7 @@ export class SharedBotGroupService {
       })
       if (typeof deliveryResult !== 'string') {
         if (deliveryResult.recovery === 'operator-required') {
-          const error = 'Shared Bot recipient admission needs owner recovery after every Host is quiesced; confirmQuiescent is not verified'
+          const error = `${SHARED_GROUP_OPERATOR_RECOVERY_ERROR_PREFIX} after every Host is quiesced; confirmQuiescent is not verified`
           await this.recordDeliveryOutcome(attempt.deliveryId, claim.token, 'failed', error, dispatchSignal)
           return {
             kind: 'failed',
@@ -1472,7 +1532,7 @@ export class SharedBotGroupService {
         ...current,
         status,
         ...(error === undefined ? {} : { error }),
-        updatedAt: now,
+        updatedAt: Math.max(now, current.updatedAt + 1),
       })
       return {
         ...snapshot,
@@ -1482,6 +1542,101 @@ export class SharedBotGroupService {
           ? { responseReservations: snapshot.responseReservations.filter(id => id !== deliveryId) }
           : {}),
       }
+    }), signal, SHARED_GROUP_AUTHORITY_TIMEOUT_MS, () => { cancelled = true })
+  }
+
+  private async recordRecoveredDelivery(
+    groupId: BotGroupId,
+    botId: BotId,
+    sessionId: SessionId,
+    messageId: BotGroupMessageId,
+    expectedError: string | undefined,
+    expectedUpdatedAt: number | undefined,
+    status: 'accepted' | 'released',
+    signal: AbortSignal,
+  ): Promise<boolean> {
+    let cancelled = false
+    return withSharedGroupAuthorityTimeout(this.authority.mutateExtension<boolean>('agent-bots/shared-memberships', (stored) => {
+      if (cancelled) return { value: false, next: stored }
+      const membershipSnapshot = parseMembershipExtension(stored)
+      const snapshot = parseGroups(membershipSnapshot.sharedGroups)
+      const deliveryId = deliveryKey(messageId, botId)
+      const current = snapshot.deliveries.find(delivery => delivery.id === deliveryId
+        && delivery.groupId === groupId
+        && delivery.botId === botId
+        && delivery.messageId === messageId)
+      const binding = snapshot.sessions.find(candidate => candidate.groupId === groupId
+        && candidate.botId === botId && candidate.sessionId === sessionId)
+      if (binding === undefined || (status === 'accepted' && binding.revokedAt !== undefined)) {
+        return { value: false, next: stored }
+      }
+      if (current === undefined) {
+        if (expectedError !== undefined || expectedUpdatedAt !== undefined) return { value: false, next: stored }
+        const group = snapshot.groups.find(candidate => candidate.id === groupId)
+        const message = snapshot.messages.find(candidate => candidate.id === messageId && candidate.groupId === groupId)
+        const senderPrincipalId = message?.sender.kind === 'user' ? message.sender.principalId : undefined
+        const targets = message?.targetBotIds ?? group?.botIds ?? []
+        if (group === undefined || message === undefined || senderPrincipalId === undefined
+          || !targets.some(candidate => candidate === botId)) return { value: true, next: stored }
+        const now = this.now()
+        const recovered: SharedGroupDeliveryRecord = {
+          id: deliveryId,
+          groupId,
+          messageId,
+          botId,
+          targetSessionId: sessionId,
+          status: status === 'accepted' ? 'accepted' : 'failed',
+          ...(status === 'released' ? { error: SHARED_GROUP_OPERATOR_RECOVERY_RELEASED_ERROR } : {}),
+          authorizationRevision: group.revision,
+          senderPrincipalId,
+          updatedAt: now,
+        }
+        const next = {
+          ...snapshot,
+          revision: snapshot.revision + 1,
+          deliveries: [...snapshot.deliveries, recovered],
+          ...(status === 'accepted'
+            ? { responseReservations: [...snapshot.responseReservations, deliveryId] }
+            : {}),
+        }
+        return { value: true, next: { ...membershipSnapshot, [SHARED_GROUPS_FIELD]: validateSnapshot(next) } }
+      }
+      if (current.status !== 'failed'
+        || current.targetSessionId !== sessionId
+        || expectedError === undefined
+        || expectedUpdatedAt === undefined
+        || current.error !== expectedError
+        || current.updatedAt !== expectedUpdatedAt
+        || current.error?.startsWith(SHARED_GROUP_OPERATOR_RECOVERY_ERROR_PREFIX) !== true) {
+        return { value: false, next: stored }
+      }
+      const now = this.now()
+      const nextDelivery = status === 'accepted'
+        ? (() => {
+          const { error: _error, ...withoutError } = current
+          void _error
+          return withoutDispatchLease({
+            ...withoutError,
+            status: 'accepted',
+            updatedAt: Math.max(now, current.updatedAt + 1),
+          })
+        })()
+        : {
+          ...current,
+          error: SHARED_GROUP_OPERATOR_RECOVERY_RELEASED_ERROR,
+          updatedAt: Math.max(now, current.updatedAt + 1),
+        }
+      const next = {
+        ...snapshot,
+        revision: snapshot.revision + 1,
+        deliveries: putDelivery(snapshot.deliveries, nextDelivery),
+        ...(status === 'accepted' && snapshot.responseReservations.includes(deliveryId)
+          ? {}
+          : status === 'accepted'
+            ? { responseReservations: [...snapshot.responseReservations, deliveryId] }
+            : {}),
+      }
+      return { value: true, next: { ...membershipSnapshot, [SHARED_GROUPS_FIELD]: validateSnapshot(next) } }
     }), signal, SHARED_GROUP_AUTHORITY_TIMEOUT_MS, () => { cancelled = true })
   }
 
@@ -1500,7 +1655,7 @@ export class SharedBotGroupService {
           ...delivery,
           status: 'failed',
           error,
-          updatedAt: this.now(),
+          updatedAt: Math.max(this.now(), delivery.updatedAt + 1),
         })),
         responseReservations: snapshot.responseReservations.filter(id => id !== deliveryId),
       }

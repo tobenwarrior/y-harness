@@ -1,6 +1,6 @@
 /** Durable user-owned Bot roster with one ordinary Session per Bot. */
 
-import { mkdir, rm } from 'node:fs/promises'
+import { mkdir } from 'node:fs/promises'
 import { createHash, randomUUID, type KeyObject } from 'node:crypto'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { join, resolve } from 'node:path'
@@ -78,6 +78,7 @@ import type {
   BotGroupDeliveryClaimInput,
   BotGroupDeliveryRecoveryRequest,
   BotGroupDeliveryRecoveryValue,
+  BotSharedGroupDeliveryFenceDiagnosticValue,
   BotGroupInspectRequest,
   BotGroupInspectValue,
   BotGroupListRequest,
@@ -352,6 +353,8 @@ export type {
   BotGroupDeliveryView,
   BotGroupDeliveryRecoveryRequest,
   BotGroupDeliveryRecoveryValue,
+  BotSharedGroupDeliveryFenceView,
+  BotSharedGroupDeliveryFenceDiagnosticValue,
   BotGroupDomain,
   BotGroupInspectRequest,
   BotGroupInspectValue,
@@ -5413,6 +5416,24 @@ export class BotService extends TypertRemoteService {
   }
 
   /**
+   * Read owner-visible recipient fences that require explicit shared-group recovery.
+   * This owner Remote returns only the exact identities needed for a later recovery;
+   * collaborator endpoints do not mount it.
+   * @param request - Recipient Bot to inspect.
+   * @returns Exact group, Bot, Session, and message identities without transcript data.
+   */
+  @Remote('inspectSharedGroupDeliveryFences')
+  async inspectSharedGroupDeliveryFences(
+    request: { readonly botId: BotId },
+  ): Promise<BotSharedGroupDeliveryFenceDiagnosticValue> {
+    const parsed = sharedMembersRequestSchema.safeParse(request)
+    if (!parsed.success) throw new RemoteError('gateway/bad-request', 'Invalid shared Bot delivery fence request', {})
+    const service = this.sharedService
+    if (service === undefined) return { fences: [] }
+    return service.inspectSharedGroupDeliveryFences(parsed.data.botId)
+  }
+
+  /**
    * Reconcile one isolated shared-group recipient fence after an explicit
    * owner confirmation that every Host able to own the Session is quiesced.
    * @param request - Exact group, Bot, Session, and message identities.
@@ -7497,6 +7518,24 @@ export class BotService extends TypertRemoteService {
   ): Promise<SharedGroupDeliveryRecoveryResult> {
     const credentials = this.credentials ?? this.ctx.get('credentials')
     if (credentials === undefined) return { kind: 'operator-required' }
+    const localBinding = this.sharedGroupSessionsBySession.get(String(request.sessionId))
+    if (localBinding !== undefined
+      && (localBinding.groupId !== request.groupId || localBinding.botId !== request.targetBotId)) return { kind: 'operator-required' }
+    // The local map intentionally contains only active bindings after shared
+    // service recovery. A revoked durable binding still owns a pending fence
+    // that the owner must be able to release, so consult authority only when
+    // the local map cannot identify the exact Session. SharedGroupService has
+    // already performed the same durable check before reaching this Host.
+    if (localBinding === undefined) {
+      let durableBinding: SharedGroupSessionBinding | undefined
+      try {
+        durableBinding = (await this.sharedService?.sharedGroupSessionBindings())?.find(binding => binding.groupId === request.groupId
+          && binding.botId === request.targetBotId && binding.sessionId === request.sessionId)
+      } catch {
+        return { kind: 'operator-required' }
+      }
+      if (durableBinding === undefined) return { kind: 'operator-required' }
+    }
     const receiptKey = sharedGroupDeliveryReceiptKey(String(request.sessionId), String(request.messageId))
     const stored = await withSharedGroupDeliveryTimeout(credentials.readRecord(SHARED_GROUP_MESSAGE_DELIVERY_RECORD_KEY), request.signal)
     const current = sharedGroupMessageDeliveryStateOf(stored).messages.find(entry => entry.targetSessionId === String(request.sessionId)
@@ -7509,9 +7548,6 @@ export class BotService extends TypertRemoteService {
     }
     try {
       await mkdir(sharedBotWorkingDirectory(request.sessionId), { recursive: true, mode: 0o700 })
-      // `confirmQuiescent` is the operator's proof that no Host can still own
-      // this admission. Never infer that proof from the sidecar PID.
-      await rm(`${lockPath}.lock`, { force: true })
     } catch {
       return { kind: 'operator-required' }
     }
@@ -7529,29 +7565,34 @@ export class BotService extends TypertRemoteService {
       messageId: request.messageId,
       ...(request.signal === undefined ? {} : { signal: request.signal }),
     }
+    const reconcile = (): Promise<'accepted' | 'released' | 'missing' | 'transient'> => withFileLock(lockPath, async () => this.reconcileSharedGroupDeliveryAdmission(
+      admissionRequest,
+      admissionToken,
+      { releaseWithoutReceipt: true },
+    ), { waitMs: 0 })
+    let outcome: 'accepted' | 'released' | 'missing' | 'transient'
     try {
-      const outcome = await withFileLock(lockPath, async () => this.reconcileSharedGroupDeliveryAdmission(
-        admissionRequest,
-        admissionToken,
-        { releaseWithoutReceipt: true },
-      ), { waitMs: 0 })
-      if (outcome === 'accepted') {
-        this.clearSharedGroupDeliveryLocalState(admissionRequest, admissionToken)
-        return 'accepted'
-      }
-      if (outcome === 'released') {
-        this.clearSharedGroupDeliveryLocalState(admissionRequest, admissionToken)
-        return 'released'
-      }
-      this.sharedGroupAdmissionOperatorRequired.add(receiptKey)
-      return { kind: 'operator-required' }
+      outcome = await reconcile()
     } catch (error: unknown) {
       if (isSharedGroupAdmissionLockBusy(error)) {
         return { kind: 'busy', retryAt: Date.now(), recovery: 'operator-required' }
       }
+      // A legacy PID sidecar is not safe to unlink here: another Host can
+      // replace the pathname with a live kernel lock between inspection and
+      // cleanup. Leave the pathname and inode untouched for manual migration.
       this.sharedGroupAdmissionOperatorRequired.add(receiptKey)
       return { kind: 'operator-required' }
     }
+    if (outcome === 'accepted') {
+      this.clearSharedGroupDeliveryLocalState(admissionRequest, admissionToken)
+      return 'accepted'
+    }
+    if (outcome === 'released') {
+      this.clearSharedGroupDeliveryLocalState(admissionRequest, admissionToken)
+      return 'released'
+    }
+    this.sharedGroupAdmissionOperatorRequired.add(receiptKey)
+    return { kind: 'operator-required' }
   }
 
   private async deliverSharedGroup(

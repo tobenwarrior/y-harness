@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
@@ -24,6 +24,7 @@ import type { Domain } from '@yharness/storage-domain'
 import type { StorageBackend } from '@yharness/storage'
 import * as StorageJson from '@yharness/storage-json'
 import { credentialKey, CredentialProvider } from '@yharness/credentials'
+import { withFileLock } from '@yharness/atomic-write'
 import { LocalCredentialProvider } from '../../../credentials/credentials-local/src/index.ts'
 import type {
   CredentialInfo,
@@ -5960,7 +5961,7 @@ describe('durable Bot roster', () => {
     }
   })
 
-  it('does not use PID evidence for automatic recovery and supports explicit stale-lock recovery', async () => {
+  it('does not unlink a legacy PID sidecar during explicit stale-lock recovery', async () => {
     const pool = new MemoryMediaPool()
     const seed = await harness(pool)
     const created = await seed.service.create({ name: 'Recipient dead-owner recovery', cwd: '/tmp' })
@@ -6035,6 +6036,15 @@ describe('durable Bot roster', () => {
         targetBotId: created.bot.id,
         sessionId,
         messageId,
+      })).resolves.toMatchObject({ kind: 'operator-required' })
+      expect(await readFile(lockPath, 'utf8')).toBe(`${deadPid}\n`)
+      // The owner must perform legacy lock migration only after all Hosts are stopped.
+      await rm(lockPath)
+      await expect(host.recoverSharedGroupDelivery?.({
+        groupId,
+        targetBotId: created.bot.id,
+        sessionId,
+        messageId,
       })).resolves.toBe('released')
       await expect(host.deliverSharedGroup?.({
         groupId,
@@ -6050,6 +6060,315 @@ describe('durable Bot roster', () => {
       })
     } finally {
       processKill.mockRestore()
+      await close(h.ctx)
+    }
+  })
+
+  it.skipIf(process.platform === 'win32')('does not replace a held kernel lock during shared-group recovery', async () => {
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const created = await seed.service.create({ name: 'Recipient live kernel lock', cwd: '/tmp' })
+    await close(seed.ctx)
+
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const sessionId = SessionId('shared-session-group-recipient-live-kernel-lock')
+    const groupId = BotGroupId('bot-group-recipient-live-kernel-lock')
+    const messageId = BotGroupMessageId('bot-group-message-recipient-live-kernel-lock')
+    const token = 'recipient-live-kernel-lock-token'
+    const deliveryKey = credentialKey('agent-bots', 'shared-group-message-deliveries')
+    records.set(deliveryKey, {
+      kind: 'grant',
+      payload: {
+        version: 1,
+        messages: [{
+          targetSessionId: String(sessionId),
+          messageId: String(messageId),
+          status: 'pending',
+          claimToken: token,
+          claimLeaseUntil: Number.MAX_SAFE_INTEGER,
+          admissionToken: token,
+          admissionStartedAt: 1,
+        }],
+      },
+    })
+    const h = await harness(
+      pool,
+      undefined,
+      undefined,
+      [String(sessionId)],
+      new Map(),
+      records,
+      true,
+      'native',
+      false,
+      { inspectSharedSessions: true },
+    )
+    const release = Promise.withResolvers<undefined>()
+    let held = false
+    const lockPath = join(
+      sharedBotWorkingDirectory(sessionId),
+      `.delivery-${encodeURIComponent(String(messageId))}`,
+    )
+    try {
+      await mkdir(sharedBotWorkingDirectory(sessionId), { recursive: true, mode: 0o700 })
+      const binding: SharedGroupSessionBinding = {
+        groupId,
+        botId: created.bot.id,
+        sessionId,
+        createdAt: 1,
+        updatedAt: 1,
+      }
+      const host = productionSharedHost(h.service)
+      host.registerSharedGroupSessions?.([binding])
+      const holder = withFileLock(lockPath, async () => {
+        held = true
+        await release.promise
+      })
+      await vi.waitFor(() => { expect(held).toBe(true) })
+
+      await expect(host.recoverSharedGroupDelivery?.({
+        groupId,
+        targetBotId: created.bot.id,
+        sessionId,
+        messageId,
+      })).resolves.toMatchObject({ kind: 'busy', recovery: 'operator-required' })
+      expect(await readFile(`${lockPath}.lock`, 'utf8')).toBe('dsh-atomic-write-kernel-lock-v1\n')
+      release.resolve(undefined)
+      await holder
+    } finally {
+      release.resolve(undefined)
+      await close(h.ctx)
+    }
+  })
+
+  it('projects only the current owner-visible recipient fence identities', async () => {
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const created = await seed.service.create({ name: 'Recipient fence diagnostic', cwd: '/tmp' })
+    const other = await seed.service.create({ name: 'Other recipient fence diagnostic', cwd: '/tmp' })
+    await close(seed.ctx)
+
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const sessionId = SessionId('shared-session-group-recipient-fence-diagnostic')
+    const groupId = BotGroupId('bot-group-recipient-fence-diagnostic')
+    const messageId = BotGroupMessageId('bot-group-message-recipient-fence-diagnostic')
+    const token = 'recipient-fence-diagnostic-token'
+    const deliveryKey = credentialKey('agent-bots', 'shared-group-message-deliveries')
+    const principalId = BotPrincipalId('principal-recipient-fence-diagnostic')
+    records.set(deliveryKey, {
+      kind: 'grant',
+      payload: {
+        version: 1,
+        messages: [{
+          targetSessionId: String(sessionId),
+          messageId: String(messageId),
+          status: 'pending',
+          claimToken: token,
+          claimLeaseUntil: Number.MAX_SAFE_INTEGER,
+          admissionToken: token,
+          admissionStartedAt: 1,
+        }],
+      },
+    })
+    const h = await harness(
+      pool,
+      undefined,
+      undefined,
+      [String(sessionId)],
+      new Map(),
+      records,
+      true,
+      'native',
+      false,
+      {
+        connection: {
+          sharedRpc: {
+            enroll: vi.fn(() => async () => {}),
+            handle: vi.fn(() => async () => {}),
+          },
+        },
+        inspectSharedSessions: true,
+      },
+    )
+    let authority: SharedAccessAuthority | undefined
+    try {
+      authority = await SharedAccessAuthority.create(h.ctx, h.credentials, {
+        sessionMaxAgeMs: 60_000,
+        inviteMaxAgeMs: 60_000,
+      })
+      const deliveryId = `delivery-${createHash('sha256').update(`${String(messageId)}:${String(created.bot.id)}`).digest('hex')}`
+      const groups = sharedGroupSnapshotSchema.parse({
+        version: 1,
+        revision: 1,
+        groups: [{
+          id: groupId,
+          name: 'Recipient fence diagnostic',
+          botIds: [created.bot.id, other.bot.id],
+          createdAt: 1,
+          updatedAt: 1,
+          ownerPrincipalId: principalId,
+          memberPrincipalIds: [principalId],
+          revision: 1,
+        }],
+        messages: [{
+          id: messageId,
+          groupId,
+          sender: { kind: 'user', principalId },
+          text: 'Cannot prove this was flushed.',
+          targetBotIds: [created.bot.id],
+          createdAt: 1,
+        }],
+        deliveries: [{
+          id: deliveryId,
+          groupId,
+          messageId,
+          botId: created.bot.id,
+          status: 'failed',
+          error: 'Shared Bot recipient admission needs owner recovery after every Host is quiesced; confirmQuiescent is not verified',
+          targetSessionId: String(sessionId),
+          authorizationRevision: 1,
+          senderPrincipalId: principalId,
+          updatedAt: 1,
+        }],
+        sessions: [{
+          groupId,
+          botId: created.bot.id,
+          sessionId,
+          createdAt: 1,
+          updatedAt: 1,
+        }],
+        invites: [],
+        responseReservations: [],
+      })
+      await authority.mutateExtension('agent-bots/shared-memberships', (current) => {
+        const membership = sharedMembershipSnapshotSchema.parse(current)
+        return { value: undefined, next: { ...membership, sharedGroups: groups } }
+      })
+      const host = productionSharedHost(h.service)
+      host.registerSharedGroupSessions?.([{
+        groupId,
+        botId: created.bot.id,
+        sessionId,
+        createdAt: 1,
+        updatedAt: 1,
+      }])
+      await expect(host.deliverSharedGroup?.({
+        groupId,
+        groupName: 'Recipient fence diagnostic',
+        targetBotId: created.bot.id,
+        sessionId,
+        text: 'Cannot prove this was flushed.',
+        messageId,
+      })).resolves.toMatchObject({ kind: 'busy', recovery: 'operator-required' })
+
+      await expect(h.service.inspectSharedGroupDeliveryFences({ botId: created.bot.id })).resolves.toEqual({
+        fences: [{ groupId, botId: created.bot.id, sessionId: String(sessionId), messageId }],
+      })
+      await expect(h.service.inspectSharedGroupDeliveryFences({ botId: other.bot.id })).resolves.toEqual({ fences: [] })
+      await expect(host.recoverSharedGroupDelivery?.({
+        groupId,
+        targetBotId: other.bot.id,
+        sessionId,
+        messageId,
+      })).resolves.toMatchObject({ kind: 'operator-required' })
+      await expect(h.service.recoverSharedGroupDelivery({
+        groupId,
+        botId: created.bot.id,
+        sessionId: String(sessionId),
+        messageId,
+        confirmQuiescent: true,
+      })).resolves.toMatchObject({ status: 'released' })
+      await expect(h.service.recoverSharedGroupDelivery({
+        groupId,
+        botId: created.bot.id,
+        sessionId: String(sessionId),
+        messageId,
+        confirmQuiescent: true,
+      })).resolves.toMatchObject({ status: 'operator-required' })
+      await expect(h.service.inspectSharedGroupDeliveryFences({ botId: created.bot.id })).resolves.toEqual({ fences: [] })
+
+      await authority.mutateExtension('agent-bots/shared-memberships', (current) => {
+        const membership = sharedMembershipSnapshotSchema.parse(current)
+        const snapshot = sharedGroupSnapshotSchema.parse(membership.sharedGroups)
+        return {
+          value: undefined,
+          next: {
+            ...membership,
+            sharedGroups: {
+              ...snapshot,
+              revision: snapshot.revision + 1,
+              deliveries: snapshot.deliveries.map(delivery => delivery.id === deliveryId
+                ? {
+                  ...delivery,
+                  status: 'failed' as const,
+                  error: 'Shared Bot recipient admission needs owner recovery before a newer attempt',
+                  updatedAt: 2,
+                }
+                : delivery),
+            },
+          },
+        }
+      })
+      records.set(deliveryKey, {
+        kind: 'grant',
+        payload: {
+          version: 1,
+          messages: [{
+            targetSessionId: String(sessionId),
+            messageId: String(messageId),
+            status: 'pending',
+            claimToken: 'recipient-fence-diagnostic-new-token',
+            claimLeaseUntil: Number.MAX_SAFE_INTEGER,
+            admissionToken: 'recipient-fence-diagnostic-new-token',
+            admissionStartedAt: 2,
+          }],
+        },
+      })
+      const inspectionStarted = Promise.withResolvers<undefined>()
+      const inspectionRelease = Promise.withResolvers<undefined>()
+      h.inspect.mockImplementationOnce(async (requestedSessionId) => {
+        inspectionStarted.resolve(undefined)
+        await inspectionRelease.promise
+        return {
+          meta: {
+            cwd: sharedBotWorkingDirectory(requestedSessionId),
+            agentPreset: SHARED_BOT_AGENT_PRESET,
+          },
+          events: [],
+        }
+      })
+      const staleRecovery = h.service.recoverSharedGroupDelivery({
+        groupId,
+        botId: created.bot.id,
+        sessionId: String(sessionId),
+        messageId,
+        confirmQuiescent: true,
+      })
+      await inspectionStarted.promise
+      await authority.mutateExtension('agent-bots/shared-memberships', (current) => {
+        const membership = sharedMembershipSnapshotSchema.parse(current)
+        const snapshot = sharedGroupSnapshotSchema.parse(membership.sharedGroups)
+        const replacementSessionId = SessionId('shared-session-group-recipient-fence-diagnostic-replacement')
+        return {
+          value: undefined,
+          next: {
+            ...membership,
+            sharedGroups: {
+              ...snapshot,
+              revision: snapshot.revision + 1,
+              sessions: snapshot.sessions.map(session => session.sessionId === sessionId
+                ? { ...session, sessionId: replacementSessionId, updatedAt: 3 }
+                : session),
+            },
+          },
+        }
+      })
+      inspectionRelease.resolve(undefined)
+      await expect(staleRecovery).resolves.toMatchObject({ status: 'operator-required' })
+      await expect(h.service.inspectSharedGroupDeliveryFences({ botId: created.bot.id })).resolves.toEqual({ fences: [] })
+      expect(SHARED_BOT_ENDPOINTS).not.toContain('inspectSharedGroupDeliveryFences')
+    } finally {
+      await authority?.dispose()
       await close(h.ctx)
     }
   })
@@ -6254,7 +6573,6 @@ describe('durable Bot roster', () => {
       { connection, inspectSharedSessions: true },
     )
     let second: Awaited<ReturnType<typeof harness>> | undefined
-    let processKill: ReturnType<typeof vi.spyOn> | undefined
     try {
       const firstBot = await first.service.create({ name: 'Revoked fence first', cwd: '/tmp' })
       const secondBot = await first.service.create({ name: 'Revoked fence second', cwd: '/tmp' })
@@ -6316,18 +6634,16 @@ describe('durable Bot roster', () => {
         },
       })
       await close(first.ctx)
-      const deadPid = process.pid + 1_000_001
       await mkdir(sharedBotWorkingDirectory(sessionId), { recursive: true, mode: 0o700 })
       const lockPath = join(
         sharedBotWorkingDirectory(sessionId),
         `.delivery-${encodeURIComponent(String(messageId))}.lock`,
       )
       await rm(lockPath, { force: true })
-      await writeFile(lockPath, `${deadPid}\n`, { mode: 0o600, flag: 'wx' })
-      processKill = vi.spyOn(process, 'kill').mockImplementation((pid) => {
-        if (pid === deadPid) throw Object.assign(new Error('originating process exited'), { code: 'ESRCH' })
-        return true
-      })
+      // An empty kernel-lock marker represents an interrupted acquisition and
+      // is recoverable after the old Host has exited. Legacy PID sidecars are
+      // intentionally covered by the explicit migration test above.
+      await writeFile(lockPath, '', { mode: 0o600, flag: 'wx' })
       second = await harness(
         pool,
         undefined,
@@ -6362,7 +6678,6 @@ describe('durable Bot roster', () => {
         messageId: BotGroupMessageId('bot-group-message-revoked-fence-retry'),
       })).rejects.toThrow('no longer active')
     } finally {
-      processKill?.mockRestore()
       if (second !== undefined) await close(second.ctx)
     }
   })

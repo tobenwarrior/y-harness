@@ -924,6 +924,9 @@ export function BotDetail({
     }
   }, [bot?.id, profileTarget])
   const [skillsOpen, setSkillsOpen] = useState(false)
+  useEffect(() => {
+    setSkillsOpen(false)
+  }, [bot?.id])
   if (bot === undefined) {
     if (loading) {
       return (

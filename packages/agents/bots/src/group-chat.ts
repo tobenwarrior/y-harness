@@ -268,6 +268,24 @@ export interface BotGroupDeliveryRecoveryValue {
   readonly retryAt?: number
 }
 
+/** One owner-visible shared-group recipient fence that requires explicit recovery. */
+export interface BotSharedGroupDeliveryFenceView {
+  /** Shared group containing the isolated recipient Session. */
+  readonly groupId: BotGroupId
+  /** Recipient Bot whose isolated Session owns the fence. */
+  readonly botId: BotId
+  /** Exact isolated Session identity required by recovery. */
+  readonly sessionId: string
+  /** Source group message whose recipient fence is pending. */
+  readonly messageId: BotGroupMessageId
+}
+
+/** Owner-only projection of recipient fences requiring explicit recovery. */
+export interface BotSharedGroupDeliveryFenceDiagnosticValue {
+  /** Exact identities needed to select one recovery operation; no transcript data is included. */
+  readonly fences: readonly BotSharedGroupDeliveryFenceView[]
+}
+
 /** One recipient's group delivery outcome. */
 export interface BotGroupDeliveryView {
   /** Recipient Bot id. */

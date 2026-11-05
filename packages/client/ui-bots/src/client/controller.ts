@@ -20,6 +20,8 @@ import type {
   BotGroupListValue,
   BotGroupMessageId as BotGroupMessageIdType,
   BotGroupMessageView,
+  BotGroupDeliveryRecoveryRequest,
+  BotGroupDeliveryRecoveryValue,
   BotGroupSendRemoteRequest,
   BotGroupSendValue,
   BotGroupUpdateRequest,
@@ -68,6 +70,8 @@ import type {
   BotSharedRosterFenceDiagnosticValue,
   BotSharedRosterFenceRecoveryRequest,
   BotSharedRosterFenceRecoveryValue,
+  BotSharedGroupDeliveryFenceDiagnosticValue,
+  BotSharedGroupDeliveryFenceView,
   BotPrincipalId as BotPrincipalIdType,
 } from '@yharness/bots/client'
 import type {
@@ -110,6 +114,10 @@ export interface BotWorkspaceRemote {
   updateGroup?: (request: BotGroupUpdateRequest) => Promise<RemoteResult<BotGroupUpdateValue>>
   inspectGroup?: (request: BotGroupInspectRequest) => Promise<RemoteResult<BotGroupInspectValue>>
   sendGroupMessage?: (request: BotGroupSendRemoteRequest) => Promise<RemoteResult<BotGroupSendValue>>
+  inspectSharedGroupDeliveryFences?: (
+    request: { readonly botId: BotIdType },
+  ) => Promise<RemoteResult<BotSharedGroupDeliveryFenceDiagnosticValue>>
+  recoverSharedGroupDelivery?: (request: BotGroupDeliveryRecoveryRequest) => Promise<RemoteResult<BotGroupDeliveryRecoveryValue>>
 
   listMemory?: (request: BotMemoryListRequest) => Promise<RemoteResult<BotMemoryListValue>>
   updateMemory?: (request: BotMemoryUpdateRequest) => Promise<RemoteResult<BotMemoryUpdateValue>>
@@ -147,6 +155,10 @@ export interface BotShareActions {
   readonly inspectRosterFence?: () => Promise<BotSharedRosterFenceDiagnosticValue>
   /** Recover one abandoned shared-roster fence after explicit quiescence confirmation. */
   readonly recoverRosterFence?: (token: string) => Promise<BotSharedRosterFenceRecoveryValue>
+  /** Inspect owner-only recipient fences that require explicit recovery. */
+  readonly inspectDeliveryFences?: (botId: string) => Promise<BotSharedGroupDeliveryFenceDiagnosticValue>
+  /** Recover one exact recipient fence after explicit quiescence confirmation. */
+  readonly recoverDeliveryFence?: (fence: BotSharedGroupDeliveryFenceView) => Promise<BotGroupDeliveryRecoveryValue>
 }
 
 /** Avatar generation namespace mounted by the API remotes assembly. */
@@ -1539,6 +1551,8 @@ export class BotWorkspaceController {
     const setMemoryPolicy = this.remote.setShareMemoryPolicy
     const inspectRosterFence = this.remote.inspectSharedRosterFence
     const recoverRosterFence = this.remote.recoverSharedRosterFence
+    const inspectDeliveryFences = this.remote.inspectSharedGroupDeliveryFences
+    const recoverDeliveryFence = this.remote.recoverSharedGroupDelivery
     if (listMembers === undefined || createInvite === undefined || revokeMember === undefined) return undefined
     return {
       listMembers: async (botId) => {
@@ -1584,6 +1598,30 @@ export class BotWorkspaceController {
         recoverRosterFence: async (token: string) => {
           const result = await recoverRosterFence({ token, confirmQuiescent: true, acceptRaceRisk: true })
           if (!result.ok) throw new Error(result.error.message)
+          return result.value
+        },
+      }),
+      ...(inspectDeliveryFences === undefined ? {} : {
+        inspectDeliveryFences: async (botId: string) => {
+          const result = await inspectDeliveryFences({ botId: brandString<BotIdType>(botId) })
+          if (!result.ok) throw new Error(result.error.message)
+          return result.value
+        },
+      }),
+      ...(recoverDeliveryFence === undefined ? {} : {
+        recoverDeliveryFence: async (fence: BotSharedGroupDeliveryFenceView) => {
+          const result = await recoverDeliveryFence({
+            groupId: brandString<BotGroupIdType>(String(fence.groupId)),
+            botId: brandString<BotIdType>(String(fence.botId)),
+            sessionId: fence.sessionId,
+            messageId: brandString<BotGroupMessageIdType>(String(fence.messageId)),
+            confirmQuiescent: true,
+          })
+          if (!result.ok) throw new Error(result.error.message)
+          if (String(result.value.botId) !== String(fence.botId)
+            || String(result.value.messageId) !== String(fence.messageId)) {
+            throw new Error(this.unexpectedResponse())
+          }
           return result.value
         },
       }),

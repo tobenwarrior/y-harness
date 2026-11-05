@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
   Button, IconCheckOutlineRegular, Modal, StateDot,
@@ -75,9 +75,25 @@ export function BotSkillsManager({ bot, actions, loadAvatar, open, onClose, t }:
   const [working, setWorking] = useState(false)
   const [loadAttempt, setLoadAttempt] = useState(0)
   const [error, setError] = useState<'load' | 'save' | 'conflict' | null>(null)
+  const targetBotIdRef = useRef<string | undefined>()
+  const targetGenerationRef = useRef(0)
+  const botIdRef = useRef(bot.id)
+  botIdRef.current = bot.id
+  const openRef = useRef(open)
+  openRef.current = open
+  if (!open) targetBotIdRef.current = undefined
+  else if (targetBotIdRef.current === undefined) {
+    targetBotIdRef.current = bot.id
+    targetGenerationRef.current += 1
+  }
+  const visible = open && targetBotIdRef.current === bot.id
 
   useEffect(() => {
-    if (!open) return
+    if (open && targetBotIdRef.current !== bot.id) onClose()
+  }, [bot.id, onClose, open])
+
+  useEffect(() => {
+    if (!visible) return
     let live = true
     setLoading(true)
     setError(null)
@@ -92,18 +108,25 @@ export function BotSkillsManager({ bot, actions, loadAvatar, open, onClose, t }:
       if (live) setLoading(false)
     })
     return () => { live = false }
-  }, [actions, bot.id, loadAttempt, open])
+  }, [actions, bot.id, loadAttempt, visible])
 
   const save = async (): Promise<void> => {
-    if (working || loading) return
+    if (!visible || working || loading) return
+    const requestedBotId = bot.id
+    const requestedGeneration = targetGenerationRef.current
+    const isCurrentTarget = (): boolean => openRef.current
+      && botIdRef.current === requestedBotId
+      && targetBotIdRef.current === requestedBotId
+      && targetGenerationRef.current === requestedGeneration
     setWorking(true)
     setError(null)
     try {
       const value = await actions.update(bot.id, policy, revision)
+      if (!isCurrentTarget()) return
       setPolicy(value.policy)
       onClose()
     } catch (error: unknown) {
-      setError(error instanceof BotSkillPolicyConflictError ? 'conflict' : 'save')
+      if (isCurrentTarget()) setError(error instanceof BotSkillPolicyConflictError ? 'conflict' : 'save')
     } finally {
       setWorking(false)
     }
@@ -119,7 +142,7 @@ export function BotSkillsManager({ bot, actions, loadAvatar, open, onClose, t }:
 
   return (
     <Modal
-      open={open}
+      open={visible}
       onClose={() => { if (!working) onClose() }}
       title={t('skillsManagerTitle')}
       description={t('skillsManagerDescription')}

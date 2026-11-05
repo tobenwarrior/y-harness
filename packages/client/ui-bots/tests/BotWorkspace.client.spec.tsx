@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AttachmentId } from '@yharness/attachment'
 import { makeTranslate } from '@yharness/client-test-runtime'
 import type { ReactNode } from 'react'
 import { BotAvatar } from '../src/client/BotAvatar.tsx'
+import { BotSkillsManager } from '../src/client/BotSkillsManager.tsx'
 import { BotDetail, BotGroupDetail, BotRoster } from '../src/client/BotWorkspace.tsx'
 import { BotTemplatesPanel } from '../src/client/BotTemplatesPanel.tsx'
 import { en } from '../src/client/locales.ts'
@@ -729,6 +730,82 @@ describe('Bot roster and detail', () => {
       expect(list).toHaveBeenCalledTimes(2)
       expect((within(dialog).getByRole('button', { name: 'Save skills' }) as HTMLButtonElement).disabled).toBe(false)
     })
+  })
+
+  it('closes the skill manager when selection changes', async () => {
+    const actions: BotSkillManagerActions = {
+      list: vi.fn(async () => ({
+        policy: { mode: 'all' as const, enabled: [], disabled: [] },
+        revision: 0,
+        skills: [{ name: 'code-review', description: 'Review code', enabled: true, available: true }],
+      })),
+      update: vi.fn(async (_botId: string, policy: BotSkillPolicy) => ({ policy })),
+    }
+    const view = render(<BotDetail
+      bot={bots[0]}
+      loading={false}
+      loadAvatar={undefined}
+      skillManager={actions}
+      t={t}
+    >
+      <p>Persistent session surface</p>
+    </BotDetail>)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Manage skills' }))
+    expect(await screen.findByRole('dialog', { name: 'Bot skills' })).toBeTruthy()
+    view.rerender(<BotDetail
+      bot={bots[1]}
+      loading={false}
+      loadAvatar={undefined}
+      skillManager={actions}
+      t={t}
+    >
+      <p>Persistent session surface</p>
+    </BotDetail>)
+
+    await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Bot skills' })).toBeNull() })
+    expect(actions.update).not.toHaveBeenCalled()
+  })
+
+  it('does not apply a late skill save to a newly selected Bot', async () => {
+    const update = Promise.withResolvers<{ readonly policy: BotSkillPolicy }>()
+    const onClose = vi.fn()
+    const actions: BotSkillManagerActions = {
+      list: vi.fn(async () => ({
+        policy: { mode: 'all' as const, enabled: [], disabled: [] },
+        revision: 0,
+        skills: [{ name: 'code-review', description: 'Review code', enabled: true, available: true }],
+      })),
+      update: vi.fn(async () => update.promise),
+    }
+    const view = render(<BotSkillsManager
+      bot={bots[0]}
+      actions={actions}
+      loadAvatar={undefined}
+      open
+      onClose={onClose}
+      t={t}
+    />)
+
+    const dialog = await screen.findByRole('dialog', { name: 'Bot skills' })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save skills' }))
+    await waitFor(() => { expect(actions.update).toHaveBeenCalledWith('research', { mode: 'all', enabled: [], disabled: [] }, 0) })
+    view.rerender(<BotSkillsManager
+      bot={bots[1]}
+      actions={actions}
+      loadAvatar={undefined}
+      open
+      onClose={onClose}
+      t={t}
+    />)
+    await waitFor(() => { expect(onClose).toHaveBeenCalledTimes(1) })
+
+    await act(async () => {
+      update.resolve({ policy: { mode: 'all', enabled: [], disabled: [] } })
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(onClose).toHaveBeenCalledTimes(1)
   })
 
   it('renders each persisted identity as an original character silhouette with its chosen color', () => {
