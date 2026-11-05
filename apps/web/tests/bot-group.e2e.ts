@@ -323,21 +323,6 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
     await ownerGroupRow.click()
     await expect.poll(() => ownerTranscriptRows.filter({ hasText: COLLABORATOR_SHARED_MESSAGE }).count(), { timeout: 30_000 }).toBe(1)
 
-    const ownerMembers = await scaffold.ctx.bots.listShareMembers({ botId: firstBot.id })
-    const collaborator = ownerMembers.members.find(member => member.role === 'collaborator')
-    if (collaborator === undefined) throw new Error('collaborator membership did not appear in the owner roster')
-    const collaboratorPrincipalId = collaborator.principalId
-    await scaffold.ctx.bots.revokeShareMember({ botId: firstBot.id, principalId: collaboratorPrincipalId })
-    await scaffold.ctx.bots.revokeShareMember({ botId: secondBot.id, principalId: collaboratorPrincipalId })
-
-    await collaboratorPage.reload({ waitUntil: 'load' })
-    await collaboratorPage.waitForSelector('[class*="frame"]', { timeout: 30_000 })
-    await collaboratorPage.getByRole('button', { name: 'Bots', exact: true }).click()
-    await collaboratorPage.getByRole('button', { name: 'Join a shared bot', exact: true }).click()
-    const revokedDialog = collaboratorPage.getByRole('dialog', { name: 'Shared with you', exact: true })
-    await revokedDialog.waitFor({ state: 'visible', timeout: 15_000 })
-    await expect.poll(() => revokedDialog.getByRole('button', { name: new RegExp(`^${SHARED_GROUP_NAME}`) }).count(), { timeout: 30_000 }).toBe(0)
-
     const visibleText = `${await ownerDialog.textContent()}\n${await collaboratorDialog.textContent()}`
     expect(visibleText).not.toContain(PRIVATE_SCOUT_PERSONA)
     expect(visibleText).not.toContain(PRIVATE_ORBIT_PERSONA)
@@ -357,6 +342,22 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
     const collaboratorMembershipsBeforeRestart = ownerMembersBeforeRestart.members.filter(member => member.role === 'collaborator')
     expect(collaboratorMembershipsBeforeRestart).toHaveLength(1)
     expect(collaboratorMembershipsBeforeRestart[0]?.principalId).not.toBe(ownerPrincipalBeforeRestart)
+
+    const ownerMembers = await scaffold.ctx.bots.listShareMembers({ botId: firstBot.id })
+    const collaborator = ownerMembers.members.find(member => member.role === 'collaborator')
+    if (collaborator === undefined) throw new Error('collaborator membership did not appear in the owner roster')
+    const collaboratorPrincipalId = collaborator.principalId
+    await scaffold.ctx.bots.revokeShareMember({ botId: firstBot.id, principalId: collaboratorPrincipalId })
+    await scaffold.ctx.bots.revokeShareMember({ botId: secondBot.id, principalId: collaboratorPrincipalId })
+
+    await collaboratorPage.reload({ waitUntil: 'load' })
+    await collaboratorPage.waitForSelector('[class*="frame"]', { timeout: 30_000 })
+    await collaboratorPage.getByRole('button', { name: 'Bots', exact: true }).click()
+    await collaboratorPage.getByRole('button', { name: 'Join a shared bot', exact: true }).click()
+    const revokedDialog = collaboratorPage.getByRole('dialog', { name: 'Shared with you', exact: true })
+    await revokedDialog.waitFor({ state: 'visible', timeout: 15_000 })
+    await expect.poll(() => revokedDialog.getByRole('button', { name: new RegExp(`^${SHARED_GROUP_NAME}`) }).count(), { timeout: 30_000 }).toBe(0)
+
 
     // Close the first Host while retaining its isolated workspace, credentials,
     // storage, and Session roots. A new assembled Host and browser must recover
