@@ -34,7 +34,7 @@ describe('uninstalled producer attribution', () => {
     const session = Session.fromRestore(
       SessionId(header.id),
       restored.events as readonly SessionEvent[],
-      { ...restored.header, version: SESSION_FORMAT_VERSION } as unknown as SessionHeader,
+      { ...restored.header, id: SessionId(restored.header.id), version: SESSION_FORMAT_VERSION } as SessionHeader,
       SessionLogOffset(restored.inheritedEventCount), 'detached',
     )
     expect(session.deriveMessages()).toEqual([message])
