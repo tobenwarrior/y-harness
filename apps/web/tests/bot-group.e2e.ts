@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import type { Browser, BrowserContext, Page } from 'playwright'
 import { chromium } from 'playwright'
-import { afterAll, beforeAll, describe, expect, it, onTestFailed, vi } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, onTestFailed, onTestFinished, vi } from 'vitest'
 import type { GenerateOptions, StreamChunk } from '@yharness/llm'
 import { LlmAdapter, ToolCallId } from '@yharness/llm'
 // Type-only: makes the Bot service contribution visible on the assembled Host context.
@@ -333,6 +333,7 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
     const search = vi.spyOn(scaffold.ctx.web, 'search').mockResolvedValue({
       sources: [{ url: 'https://example.com/checklist', title: 'Release checklist' }], truncated: false,
     })
+    onTestFinished(() => search.mockRestore())
     adapter.searchNext = true
     await collaboratorDialog.getByRole('button', { name: 'Send to group', exact: true }).click()
     await expect.poll(() => adapter.requests.length, { timeout: 30_000 }).toBe(6)
