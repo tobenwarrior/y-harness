@@ -333,7 +333,7 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
     const search = vi.spyOn(scaffold.ctx.web, 'search').mockResolvedValue({
       sources: [{ url: 'https://example.com/checklist', title: 'Release checklist' }], truncated: false,
     })
-    onTestFinished(() => search.mockRestore())
+    onTestFinished(() => { search.mockRestore() })
     adapter.searchNext = true
     await collaboratorDialog.getByRole('button', { name: 'Send to group', exact: true }).click()
     await expect.poll(() => adapter.requests.length, { timeout: 30_000 }).toBe(6)
