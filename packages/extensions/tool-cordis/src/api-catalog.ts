@@ -7363,7 +7363,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'KvUnit',
-    declaration: 'export interface KvUnit {\n    loadAll(): Promise<{\n        tables: Record<string, Record<string, unknown>>;\n        global: unknown;\n    }>;\n    getRecord?(table: string, key: string): Promise<unknown | undefined>;\n    updateRecord?(table: string, key: string, update: (current: unknown) => unknown): Promise<{\n        readonly found: false;\n    } | {\n        readonly found: true;\n        readonly value: unknown;\n    }>;\n    insertRecord?(table: string, key: string, value: unknown): Promise<boolean>;\n    putRecord(table: string, key: string, value: unknown): Promise<void>;\n    deleteRecord(table: string, key: string): Promise<void>;\n    backupRecord?(table: string, key: string): Promise<string>;\n    setGlobal(value: unknown): Promise<void>;\n    close(): Promise<void>;\n}',
+    declaration: 'export interface KvUnit {\n    loadAll(): Promise<{\n        tables: Record<string, Record<string, unknown>>;\n        global: unknown;\n    }>;\n    getRecord?(table: string, key: string): Promise<unknown>;\n    updateRecord?(table: string, key: string, update: (current: unknown) => unknown): Promise<{\n        readonly found: false;\n    } | {\n        readonly found: true;\n        readonly value: unknown;\n    }>;\n    insertRecord?(table: string, key: string, value: unknown): Promise<boolean>;\n    putRecord(table: string, key: string, value: unknown): Promise<void>;\n    deleteRecord(table: string, key: string): Promise<void>;\n    backupRecord?(table: string, key: string): Promise<string>;\n    setGlobal(value: unknown): Promise<void>;\n    close(): Promise<void>;\n}',
   },
   {
     name: 'KvUnitDescriptor',
