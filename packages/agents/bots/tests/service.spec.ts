@@ -1,5 +1,5 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { join } from 'node:path'
@@ -691,6 +691,11 @@ async function routineHarness(
 
 async function close(ctx: Context): Promise<void> {
   await ctx.fiber.dispose()
+}
+
+/** Namespace shared-group ids so persistent temp lock sidecars cannot cross test runs. */
+function sharedGroupFixtureId(prefix: string): string {
+  return `${prefix}-${randomUUID()}`
 }
 
 function productionSharedHost(service: BotService): SharedBotHost {
@@ -6348,10 +6353,11 @@ describe('durable Bot roster', () => {
     await close(seed.ctx)
 
     const records = new Map<CredentialKey, CredentialRecord>()
-    const sessionId = SessionId('shared-session-group-recipient-crash-after-flush')
-    const groupId = BotGroupId('bot-group-recipient-crash-after-flush')
-    const messageId = BotGroupMessageId('bot-group-message-recipient-crash-after-flush')
-    const token = 'recipient-crash-after-flush-token'
+    const fixtureId = sharedGroupFixtureId('recipient-crash-after-flush')
+    const sessionId = SessionId(`shared-session-group-${fixtureId}`)
+    const groupId = BotGroupId(`bot-group-${fixtureId}`)
+    const messageId = BotGroupMessageId(`bot-group-message-${fixtureId}`)
+    const token = `${fixtureId}-token`
     records.set(credentialKey('agent-bots', 'shared-group-message-deliveries'), {
       kind: 'grant',
       payload: {
@@ -6435,10 +6441,11 @@ describe('durable Bot roster', () => {
     await close(seed.ctx)
 
     const records = new Map<CredentialKey, CredentialRecord>()
-    const sessionId = SessionId('shared-session-group-recipient-crash-before-flush')
-    const groupId = BotGroupId('bot-group-recipient-crash-before-flush')
-    const messageId = BotGroupMessageId('bot-group-message-recipient-crash-before-flush')
-    const token = 'recipient-crash-before-flush-token'
+    const fixtureId = sharedGroupFixtureId('recipient-crash-before-flush')
+    const sessionId = SessionId(`shared-session-group-${fixtureId}`)
+    const groupId = BotGroupId(`bot-group-${fixtureId}`)
+    const messageId = BotGroupMessageId(`bot-group-message-${fixtureId}`)
+    const token = `${fixtureId}-token`
     const deliveryKey = credentialKey('agent-bots', 'shared-group-message-deliveries')
     records.set(deliveryKey, {
       kind: 'grant',
@@ -6531,10 +6538,11 @@ describe('durable Bot roster', () => {
     await close(seed.ctx)
 
     const records = new Map<CredentialKey, CredentialRecord>()
-    const sessionId = SessionId('shared-session-group-recipient-dead-owner')
-    const groupId = BotGroupId('bot-group-recipient-dead-owner')
-    const messageId = BotGroupMessageId('bot-group-message-recipient-dead-owner')
-    const token = 'recipient-dead-owner-token'
+    const fixtureId = sharedGroupFixtureId('recipient-dead-owner')
+    const sessionId = SessionId(`shared-session-group-${fixtureId}`)
+    const groupId = BotGroupId(`bot-group-${fixtureId}`)
+    const messageId = BotGroupMessageId(`bot-group-message-${fixtureId}`)
+    const token = `${fixtureId}-token`
     const deliveryKey = credentialKey('agent-bots', 'shared-group-message-deliveries')
     records.set(deliveryKey, {
       kind: 'grant',
@@ -6626,10 +6634,11 @@ describe('durable Bot roster', () => {
     await close(seed.ctx)
 
     const records = new Map<CredentialKey, CredentialRecord>()
-    const sessionId = SessionId('shared-session-group-recipient-inspection-retry')
-    const groupId = BotGroupId('bot-group-recipient-inspection-retry')
-    const messageId = BotGroupMessageId('bot-group-message-recipient-inspection-retry')
-    const token = 'recipient-inspection-retry-token'
+    const fixtureId = sharedGroupFixtureId('recipient-inspection-retry')
+    const sessionId = SessionId(`shared-session-group-${fixtureId}`)
+    const groupId = BotGroupId(`bot-group-${fixtureId}`)
+    const messageId = BotGroupMessageId(`bot-group-message-${fixtureId}`)
+    const token = `${fixtureId}-token`
     records.set(credentialKey('agent-bots', 'shared-group-message-deliveries'), {
       kind: 'grant',
       payload: {
@@ -6822,10 +6831,12 @@ describe('durable Bot roster', () => {
     try {
       const firstBot = await first.service.create({ name: 'Revoked fence first', cwd: '/tmp' })
       const secondBot = await first.service.create({ name: 'Revoked fence second', cwd: '/tmp' })
-      const sessionId = SessionId('shared-session-group-revoked-fence')
-      const groupId = BotGroupId('bot-group-revoked-fence')
-      const messageId = BotGroupMessageId('bot-group-message-revoked-fence')
-      const token = 'recipient-revoked-fence-token'
+      const fixtureId = sharedGroupFixtureId('recipient-revoked-fence')
+      const sessionId = SessionId(`shared-session-group-${fixtureId}`)
+      const groupId = BotGroupId(`bot-group-${fixtureId}`)
+      const messageId = BotGroupMessageId(`bot-group-message-${fixtureId}`)
+      const retryMessageId = BotGroupMessageId(`bot-group-message-${fixtureId}-retry`)
+      const token = `${fixtureId}-token`
       const groupSnapshot = sharedGroupSnapshotSchema.parse({
         version: 1,
         revision: 1,
@@ -6923,7 +6934,7 @@ describe('durable Bot roster', () => {
         targetBotId: firstBot.bot.id,
         sessionId,
         text: 'A revoked binding must not accept new delivery.',
-        messageId: BotGroupMessageId('bot-group-message-revoked-fence-retry'),
+        messageId: retryMessageId,
       })).rejects.toThrow('no longer active')
     } finally {
       processKill?.mockRestore()
