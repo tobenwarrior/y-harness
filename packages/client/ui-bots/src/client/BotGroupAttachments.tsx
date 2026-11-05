@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { ChangeEvent, DragEvent } from 'react'
+import type { ChangeEvent, DragEvent, ReactNode } from 'react'
 import {
   Button,
   fileSizeText,
@@ -12,6 +12,28 @@ import {
 import { randomUUID } from '@yharness/util-crypto'
 import type { BotGroupAttachmentDraft } from './types.ts'
 import css from './BotWorkspace.module.css'
+
+/**
+ * Display saved attachment metadata in a group transcript.
+ * @param props - Saved attachments and the localized fallback name.
+ * @returns Attachment cards, or null when the message has none.
+ */
+export function BotGroupSentAttachments({ attachments, fallbackName }: {
+  readonly attachments: readonly { readonly name?: string; readonly bytes: number }[] | undefined
+  readonly fallbackName: string
+}): ReactNode {
+  if (attachments === undefined || attachments.length === 0) return null
+  return <span className={css.groupSentAttachments}>{attachments.map((attachment, index) => {
+    const name = attachment.name ?? fallbackName
+    return <span className={css.groupAttachmentCard} key={`${name}-${index}`}>
+      <span className={css.groupAttachmentIcon} aria-hidden="true"><FileTypeIcon path={name} /></span>
+      <span className={css.groupAttachmentCopy}>
+        <span className={css.groupAttachmentName}>{name}</span>
+        <span className={css.groupAttachmentMeta}>{fileSizeText(attachment.bytes)}</span>
+      </span>
+    </span>
+  })}</span>
+}
 
 /** Localized labels for the Bot-group attachment picker and draft rail. */
 export interface BotGroupAttachmentLabels {

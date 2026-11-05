@@ -39,6 +39,7 @@ import type {
 import { BotAvatar } from './BotAvatar.tsx'
 import {
   BotGroupAttachments,
+  BotGroupSentAttachments,
   createBotGroupAttachmentDraft,
   releaseBotGroupAttachment,
 } from './BotGroupAttachments.tsx'
@@ -2110,7 +2111,7 @@ export function SharedBotsDialog({ client, open, onClose, t }: {
                       : messageRow.sender.principalId === undefined
                         ? t('you')
                         : t('sharedGroupAuthor', { id: String(messageRow.sender.principalId) })
-                    return <p className={messageRow.sender.kind === 'user' ? css.sharedUserMessage : css.sharedBotMessage} key={String(messageRow.id)}><strong>{sender}</strong> {messageRow.text}</p>
+                    return <p className={messageRow.sender.kind === 'user' ? css.sharedUserMessage : css.sharedBotMessage} key={String(messageRow.id)}><strong>{sender}</strong> {messageRow.text}<BotGroupSentAttachments attachments={messageRow.attachments} fallbackName={t('groupAttachmentFile')} /></p>
                   })}
                 </div>
                 <form className={css.sharedComposer} onSubmit={(event) => { event.preventDefault(); void sendGroup() }}>

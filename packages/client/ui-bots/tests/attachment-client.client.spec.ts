@@ -1,4 +1,5 @@
 import { brandString } from '@yharness/brand'
+import type { BotAttachmentGrantId } from '@yharness/bots/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { admitBotGroupAttachments } from '../src/client/attachment-client.ts'
 import type { BotGroupAttachmentDraft } from '../src/client/types.ts'
@@ -18,7 +19,7 @@ afterEach(() => {
 describe('Bot group attachment admission', () => {
   it('uses the owner or shared image admission callback for supported images', async () => {
     const admitImage = vi.fn(async () => ({
-      grantId: brandString<'BotAttachmentGrantId'>('bot-attachment-grant-image'),
+      grantId: brandString<BotAttachmentGrantId>('bot-attachment-grant-image'),
       attachments: [{ type: 'image' as const, mediaType: 'image/png' as const, bytes: 3, width: 1, height: 1 }],
     }))
     const fetcher = vi.fn<typeof fetch>()

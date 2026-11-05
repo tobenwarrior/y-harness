@@ -6,6 +6,7 @@ import type { SessionId } from '@yharness/session/types'
 import { RemoteError } from '@yharness/typert-protocol'
 import {
   BotId,
+  type BotAttachmentGrantId,
   type BotGroupId,
   type BotGroupInspectValue,
   type BotGroupMessageId,
@@ -993,7 +994,7 @@ describe('BotWorkspaceController', () => {
     remote.admitGroupImage = vi.fn(async request => ({
       ok: true as const,
       value: {
-        grantId: brandString<'BotAttachmentGrantId'>('bot-attachment-grant-local-image'),
+        grantId: brandString<BotAttachmentGrantId>('bot-attachment-grant-local-image'),
         attachments: [{ type: 'image' as const, mediaType: request.image.mediaType, bytes: 3, width: 1, height: 1, name: request.image.name }],
       },
     }))

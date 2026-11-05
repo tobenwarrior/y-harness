@@ -1026,6 +1026,13 @@
   background: var(--yh-alias-bg-layer-1);
 }
 
+.groupSentAttachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
 .groupAttachmentCard[data-state='error'] {
   border-color: var(--yh-alias-state-error-primary);
 }

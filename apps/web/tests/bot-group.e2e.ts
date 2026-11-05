@@ -26,6 +26,9 @@ const PRIVATE_ORBIT_PERSONA = 'PRIVATE_ORBIT_PERSONA'
 const SHARED_GROUP_NAME = 'Release room shared'
 const OWNER_SHARED_MESSAGE = 'Owner shared readiness note.'
 const COLLABORATOR_SHARED_MESSAGE = 'Collaborator shared follow-up.'
+const OWNER_ATTACHMENT_MESSAGE = 'Owner shared release attachment.'
+const SHARED_ATTACHMENT_NAME = 'release-notes.txt'
+const SHARED_ATTACHMENT_BODY = 'shared attachment payload\n'
 
 /** Deterministic model response for the two shared-group recipients. */
 class GroupReplyAdapter extends LlmAdapter {
@@ -257,8 +260,49 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
     await expect.poll(() => collaboratorTranscriptRows.filter({ hasText: OWNER_SHARED_MESSAGE }).count(), { timeout: 30_000 }).toBe(1)
     await expect.poll(() => collaboratorTranscriptRows.filter({ hasText: REPLY }).count(), { timeout: 30_000 }).toBe(4)
 
+    const attachmentInput = ownerGroupSection.locator('input[type="file"]')
+    await attachmentInput.setInputFiles({
+      name: SHARED_ATTACHMENT_NAME,
+      mimeType: 'text/plain',
+      buffer: Buffer.from(SHARED_ATTACHMENT_BODY),
+    })
+    await expect.poll(() => ownerGroupSection.getByTitle(SHARED_ATTACHMENT_NAME, { exact: true }).count()).toBe(1)
+    await ownerComposer.fill(OWNER_ATTACHMENT_MESSAGE)
+    await ownerDialog.getByRole('button', { name: 'Send to group', exact: true }).click()
+    await expect.poll(() => adapter.requests.length, { timeout: 30_000 }).toBe(6)
+    await expect.poll(() => ownerTranscriptRows.filter({ hasText: OWNER_ATTACHMENT_MESSAGE }).count(), { timeout: 30_000 }).toBe(1)
+    await expect.poll(() => ownerGroupSection.getByTitle(SHARED_ATTACHMENT_NAME, { exact: true }).count(), { timeout: 30_000 }).toBe(0)
+
+    await expect.poll(
+      () => ownerTranscriptRows.filter({ hasText: OWNER_ATTACHMENT_MESSAGE }).filter({ hasText: SHARED_ATTACHMENT_NAME }).count(),
+      { timeout: 30_000 },
+    ).toBe(1)
+    expect(JSON.stringify(adapter.requests.slice(-2))).toContain(SHARED_ATTACHMENT_NAME)
+
+    await collaboratorGroupRow.click()
+    await expect.poll(() => collaboratorTranscriptRows.filter({ hasText: OWNER_ATTACHMENT_MESSAGE }).count(), { timeout: 30_000 }).toBe(1)
+    await expect.poll(
+      () => collaboratorTranscriptRows.filter({ hasText: OWNER_ATTACHMENT_MESSAGE }).filter({ hasText: SHARED_ATTACHMENT_NAME }).count(),
+      { timeout: 30_000 },
+    ).toBe(1)
+
     await ownerGroupRow.click()
     await expect.poll(() => ownerTranscriptRows.filter({ hasText: COLLABORATOR_SHARED_MESSAGE }).count(), { timeout: 30_000 }).toBe(1)
+
+    const ownerMembers = await scaffold.ctx.bots.listShareMembers({ botId: firstBot.id })
+    const collaborator = ownerMembers.members.find(member => member.role === 'collaborator')
+    if (collaborator === undefined) throw new Error('collaborator membership did not appear in the owner roster')
+    const collaboratorPrincipalId = collaborator.principalId
+    await scaffold.ctx.bots.revokeShareMember({ botId: firstBot.id, principalId: collaboratorPrincipalId })
+    await scaffold.ctx.bots.revokeShareMember({ botId: secondBot.id, principalId: collaboratorPrincipalId })
+
+    await collaboratorPage.reload({ waitUntil: 'load' })
+    await collaboratorPage.waitForSelector('[class*="frame"]', { timeout: 30_000 })
+    await collaboratorPage.getByRole('button', { name: 'Bots', exact: true }).click()
+    await collaboratorPage.getByRole('button', { name: 'Join a shared bot', exact: true }).click()
+    const revokedDialog = collaboratorPage.getByRole('dialog', { name: 'Shared with you', exact: true })
+    await revokedDialog.waitFor({ state: 'visible', timeout: 15_000 })
+    await expect.poll(() => revokedDialog.getByRole('button', { name: new RegExp(`^${SHARED_GROUP_NAME}`) }).count(), { timeout: 30_000 }).toBe(0)
 
     const visibleText = `${await ownerDialog.textContent()}\n${await collaboratorDialog.textContent()}`
     expect(visibleText).not.toContain(PRIVATE_SCOUT_PERSONA)

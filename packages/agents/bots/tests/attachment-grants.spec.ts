@@ -55,7 +55,7 @@ const file: FileAttachmentRef = {
   bytes: 5,
 }
 
-function localScope(targetBotIds: readonly BotId[] = [BotId('bot-beta')]): BotAttachmentScope {
+function localScope(targetBotIds: readonly BotId[] = [BotId('bot-beta')]): Extract<BotAttachmentScope, { kind: 'local-group' }> {
   return {
     kind: 'local-group',
     ownerId: 'local-owner',

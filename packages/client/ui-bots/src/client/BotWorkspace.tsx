@@ -19,6 +19,7 @@ import type { SharedBotsClient } from './shared-client.ts'
 import { BotTemplatesPanel } from './BotTemplatesPanel.tsx'
 import {
   BotGroupAttachments,
+  BotGroupSentAttachments,
   createBotGroupAttachmentDraft,
   releaseBotGroupAttachment,
 } from './BotGroupAttachments.tsx'
@@ -668,6 +669,7 @@ export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate,
                 <div className={css.groupMessageBody}>
                   <span className={css.groupMessageSender}>{message.sender.kind === 'user' ? t('you') : message.sender.name}</span>
                   <p>{message.text}</p>
+                  <BotGroupSentAttachments attachments={message.attachments} fallbackName={t('groupAttachmentFile')} />
                   {deliveryStatuses.length > 0 && (
                     <div className={css.groupDeliveryStatuses} aria-label={t('groupDeliveryStatus')}>
                       {deliveryStatuses.map((delivery) => {

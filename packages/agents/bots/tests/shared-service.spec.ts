@@ -119,7 +119,7 @@ interface Fixture {
   readonly authority: SharedAccessAuthority
   readonly service: SharedBotService
   readonly host: SharedBotHostFixture
-  readonly attachmentStore?: BotAttachmentGrantStore
+  readonly attachmentStore?: BotAttachmentGrantStore | undefined
   readonly clock: { value: number }
   readonly close: () => Promise<void>
 }
@@ -509,7 +509,7 @@ interface SecondaryFixture {
   readonly authority: SharedAccessAuthority
   readonly service: SharedBotService
   readonly host: SharedBotHostFixture
-  readonly attachmentStore?: BotAttachmentGrantStore
+  readonly attachmentStore?: BotAttachmentGrantStore | undefined
   readonly close: () => Promise<void>
 }
 
