@@ -2,7 +2,7 @@ version: 1
 scenario: shared-bot-web-search
 profile: headless
 composition: shared-bot-web-search
-recording: live
+recording: authored
 platform: posix
 header:
   class: shared-bot-web-search
