@@ -955,18 +955,97 @@ describe('durable Bot roster', () => {
       if (fence === undefined) throw new Error('event routine roster fence capability was not mounted')
       await started.promise
 
+      const releaseTimer = setTimeout(() => release.resolve(true), 2_500)
+      const canceled = await harness(pool, undefined, undefined, [String(created.bot.sessionId)], new Map(), records)
+      const canceledFollowup = canceled.followups[0]
+      if (canceledFollowup === undefined) throw new Error('event routine canceled recovery follow-up was not created')
+      await close(canceled.ctx)
       const second = await harness(pool, undefined, undefined, [String(created.bot.sessionId)], new Map(), records)
       try {
-        release.resolve(true)
         await expect(fence).resolves.toMatchObject({ valid: true })
-        await vi.waitFor(() => { expect(second.followups[0]).toHaveBeenCalledOnce() })
+        await vi.waitFor(() => { expect(second.followups[0]).toHaveBeenCalledOnce() }, { timeout: 5_000 })
+        expect(canceledFollowup).not.toHaveBeenCalled()
       } finally {
+        clearTimeout(releaseTimer)
+        release.resolve(true)
         await close(second.ctx)
       }
     } finally {
       release.resolve(true)
       await fence?.catch(() => undefined)
       await close(first.ctx)
+    }
+  }, 10_000)
+
+  it('reports a permanent event-routine inspection failure instead of silently deferring it', async () => {
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const created = await seed.service.create({ name: 'Corrupt routine recovery target', cwd: '/tmp' })
+    const domain = seed.ctx.storageDomain.get(botDomain.name) as Domain<typeof botDomain> | undefined
+    if (domain === undefined) throw new Error('corrupt routine recovery Bot domain was not mounted')
+    const stored = domain.table('bots').get(created.bot.id)
+    if (stored === undefined) throw new Error('corrupt routine recovery Bot row was not found')
+    const routine: BotEventRoutine = {
+      id: 'bot-event-routine-corrupt-recovery',
+      title: 'Corrupt recovery',
+      prompt: 'Recover this routine.',
+      trigger: { type: 'message', source: 'user' },
+      status: 'paused',
+      createdAt: 1,
+      updatedAt: 1,
+      deliveries: [{
+        triggerEventSeq: 1,
+        triggerMessageId: MessageId('event-routine-corrupt-source'),
+        messageId: MessageId('event-routine-corrupt-delivery'),
+        status: 'pending',
+        createdAt: new Date(1).toISOString(),
+      }],
+      results: [],
+    }
+    await domain.table('bots').put(created.bot.id, { ...stored, eventRoutines: [routine] })
+    const records = seed.records
+    await close(seed.ctx)
+
+    const h = await harness(
+      pool,
+      undefined,
+      undefined,
+      [String(created.bot.sessionId)],
+      new Map(),
+      records,
+      true,
+      'native',
+      false,
+      { initializeService: false },
+    )
+    const report = vi.fn<(message: unknown) => void>()
+    h.ctx.logger.error = report
+    try {
+      await h.service[Service.init]()
+      const domain = h.ctx.storageDomain.get(botDomain.name) as Domain<typeof botDomain> | undefined
+      if (domain === undefined) throw new Error('corrupt routine recovery reopened domain was not mounted')
+      const current = domain.table('bots').get(created.bot.id)
+      if (current === undefined) throw new Error('corrupt routine recovery reopened Bot row was not found')
+      await domain.table('bots').put(created.bot.id, {
+        ...current,
+        eventRoutines: [{ ...routine, status: 'active' }],
+      })
+      const originalInspect = h.inspect.getMockImplementation()
+      if (originalInspect === undefined) throw new Error('corrupt routine recovery inspect implementation was not available')
+      let failed = false
+      h.inspect.mockImplementation(async (sessionId) => {
+        if (!failed) {
+          failed = true
+          throw new Error('corrupt persisted Session events')
+        }
+        return originalInspect(sessionId)
+      })
+      await h.service[Service.init]()
+      await vi.waitFor(() => {
+        expect(report).toHaveBeenCalledWith(expect.stringContaining('corrupt persisted Session events'))
+      }, { timeout: 3_000 })
+    } finally {
+      await close(h.ctx)
     }
   })
 
