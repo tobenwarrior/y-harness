@@ -49,6 +49,7 @@
     "@yharness/sandbox": "workspace:*",
     "@yharness/sandbox-policy": "workspace:*",
     "@yharness/session": "workspace:*",
+    "@yharness/session-persistence": "workspace:*",
     "@yharness/subagent": "workspace:*",
     "@yharness/tools": "workspace:*",
     "@yharness/user-questions": "workspace:*",

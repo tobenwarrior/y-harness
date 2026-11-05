@@ -14424,6 +14424,9 @@ importers:
       '@yharness/session':
         specifier: workspace:*
         version: link:../../core/session
+      '@yharness/session-persistence':
+        specifier: workspace:*
+        version: link:../../session/session-persistence
       '@yharness/subagent':
         specifier: workspace:*
         version: link:../../subagent/subagent
