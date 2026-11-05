@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, it, onTestFinished, vi } from 'vitest'
+import { withFileLock } from '@yharness/atomic-write'
 import { getDshRuntimeVersion, initProfile, PROFILE_TEMPLATES, readProfileVersionExemptions } from '@yharness/app-boot'
 import { runPluginCommand, runProfilePnpm } from '@yharness/plugin-manager/operations'
 import { runPlugin } from '../src/plugin.ts'
@@ -148,13 +149,14 @@ it('runs Desktop package operations under the shared writer lock with bundled pn
     expect(context).toEqual({ profile: 'desktop', dir, installAnchor: '/installation/package.json', cwd: process.cwd() })
     expect(args).toEqual(['list'])
     expect(options).toMatchObject({ ...packageManager, execution: 'cli' })
-    expect(existsSync(join(dir, 'package.json.lock'))).toBe(true)
+    await expect(withFileLock(join(dir, 'package.json'), async () => undefined, { waitMs: 0 }))
+      .rejects.toThrow('timed out waiting for the writer lock')
     return { exitCode: 0, output: '', truncated: false, logPath: '/profile/log' }
   })
   expect(await runPlugin('desktop', ['list'], packageManager)).toBe(0)
   expect(runProfilePnpm).toHaveBeenCalledOnce()
   expect(runPluginCommand).not.toHaveBeenCalled()
-  expect(existsSync(join(dir, 'package.json.lock'))).toBe(false)
+  await expect(withFileLock(join(dir, 'package.json'), async () => 'released', { waitMs: 0 })).resolves.toBe('released')
   expect(readFileSync(join(dir, 'package.json'), 'utf8')).toBe(manifest)
   expect(existsSync(join(home, 'profiles', 'test'))).toBe(false)
 })
@@ -171,7 +173,7 @@ it('applies version approvals to the existing Desktop profile without replacing 
   expect(await runPlugin('desktop', ['revoke-version', 'example-plugin@1.2.3', '--dsh-version', runtime])).toBe(0)
   expect(readProfileVersionExemptions(dir)).toEqual({})
   expect(readFileSync(join(dir, 'package.json'), 'utf8')).toBe(manifest)
-  expect(existsSync(join(dir, 'package.json.lock'))).toBe(false)
+  await expect(withFileLock(join(dir, 'package.json'), async () => 'released', { waitMs: 0 })).resolves.toBe('released')
   expect(runPluginCommand).not.toHaveBeenCalled()
   expect(runProfilePnpm).not.toHaveBeenCalled()
 })

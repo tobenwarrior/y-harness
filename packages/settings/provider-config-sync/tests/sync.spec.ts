@@ -294,11 +294,11 @@ it('refuses unsafe POSIX permission metadata on any test host without writing ei
   expect(await readFile(receiptPath, 'utf8')).toBe(receiptBefore)
 })
 
-it('takes the documented Windows permission-policy branch without changing the shared content', async () => {
-  const { client } = await fixture(); const a = client('a', { example: {} }); await a.engine.synchronize()
-  const original = Object.getOwnPropertyDescriptor(process, 'platform') as PropertyDescriptor
-  try { Object.defineProperty(process, 'platform', { ...original, value: 'win32' }); expect(await a.engine.synchronize()).toMatchObject({ state: 'ready' }) }
-  finally { Object.defineProperty(process, 'platform', original) }
+it.skipIf(process.platform !== 'win32')('takes the Windows permission-policy branch without changing the shared content', async () => {
+  const { client, sharedPath } = await fixture(); const a = client('a', { example: {} }); await a.engine.synchronize()
+  const before = await readFile(sharedPath, 'utf8')
+  expect(await a.engine.synchronize()).toMatchObject({ state: 'ready' })
+  expect(await readFile(sharedPath, 'utf8')).toBe(before)
 })
 
 it('does not advance a receipt after a rejected local revision or unconfirmed local apply', async () => {

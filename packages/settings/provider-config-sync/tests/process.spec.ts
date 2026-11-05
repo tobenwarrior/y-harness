@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { z } from 'zod'
+import { withFileLock } from '@yharness/atomic-write'
 import { afterEach, expect, it } from 'vitest'
 import type { LocalNamespace } from '../src/engine.ts'
 import type { WriterCommand, WriterMessage } from './fixtures/sync-writer.ts'
@@ -191,10 +192,10 @@ it('merges different-provider edits from overlapping independent processes and c
   ])
   const mainPass = main.beginSync({ pauseApply: true })
   await main.wait('apply-barrier', mainPass)
-  expect(await readFile(`${sharedPath}.lock`, 'utf8')).toBe(`${String(main.child.pid)}\n`)
+  await expect(withFileLock(sharedPath, async () => undefined, { waitMs: 0 })).rejects.toThrow('timed out waiting for the writer lock')
   const testPass = test.beginSync()
   await test.wait('prelock', testPass)
-  expect(await readFile(`${sharedPath}.lock`, 'utf8')).toBe(`${String(main.child.pid)}\n`)
+  await expect(withFileLock(sharedPath, async () => undefined, { waitMs: 0 })).rejects.toThrow('timed out waiting for the writer lock')
   main.send({ kind: 'release' })
   expect((await main.wait('committed', mainPass)).status).toEqual({ state: 'ready', conflicts: [] })
   expect((await test.wait('committed', testPass)).status).toEqual({ state: 'ready', conflicts: [] })
@@ -251,7 +252,7 @@ it('retains the local loser when concurrent same-baseline update and deletion ra
   await restarted.finish()
 }, waitBudget)
 
-it('recovers a killed importer after shared publication and takes over its exited PID lock before local apply', async () => {
+it('recovers a killed importer after shared publication and releases its lock before local apply', async () => {
   const { sharedPath, start } = await fixture()
   const anchor = { displayName: 'Anchor' }
   const fresh = { displayName: 'Fresh' }
@@ -265,16 +266,15 @@ it('recovers a killed importer after shared publication and takes over its exite
   expect(published.providers.fresh?.value).toEqual(fresh)
   expect((await readLocal(importer.localPath)).providers).toEqual({ fresh })
   await expect(readFile(importer.receiptPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
-  const abandonedLock = `${String(importer.child.pid)}\n`
-  expect(await readFile(`${sharedPath}.lock`, 'utf8')).toBe(abandonedLock)
+  await expect(withFileLock(sharedPath, async () => undefined, { waitMs: 0 })).rejects.toThrow('timed out waiting for the writer lock')
   await importer.crash()
-  expect(await readFile(`${sharedPath}.lock`, 'utf8')).toBe(abandonedLock)
+  await expect(withFileLock(sharedPath, async () => 'released', { waitMs: 0 })).resolves.toBe('released')
   const committedShared = await readFile(sharedPath, 'utf8')
   const restarted = await start('importer')
   expect(restarted.child.pid).not.toBe(importer.child.pid)
   const recoveryPass = restarted.beginSync({ pauseApply: true })
   await restarted.wait('apply-barrier', recoveryPass)
-  expect(await readFile(`${sharedPath}.lock`, 'utf8')).toBe(`${String(restarted.child.pid)}\n`)
+  await expect(withFileLock(sharedPath, async () => undefined, { waitMs: 0 })).rejects.toThrow('timed out waiting for the writer lock')
   expect((await readLocal(restarted.localPath)).providers).toEqual({ fresh })
   await expect(readFile(restarted.receiptPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
   restarted.send({ kind: 'release' })
@@ -287,7 +287,7 @@ it('recovers a killed importer after shared publication and takes over its exite
   expect(recoveredReceipt.providers).toEqual(published.providers)
   expect(await readFile(sharedPath, 'utf8')).toBe(committedShared)
   await restarted.finish()
-  await expect(readFile(`${sharedPath}.lock`, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+  await expect(withFileLock(sharedPath, async () => 'released', { waitMs: 0 })).resolves.toBe('released')
   const committedLocal = await readFile(restarted.localPath, 'utf8')
   const committedReceipt = await readFile(restarted.receiptPath, 'utf8')
   const again = await start('importer')

@@ -1,5 +1,6 @@
 /** Bounded response-only advice over a deterministic admitted candidate set. */
 import { randomUUID } from 'node:crypto'
+import { isDeepStrictEqual } from 'node:util'
 import type { Context } from '@yharness/cordis'
 import type { GenerateOptions } from '@yharness/llm'
 import type { StreamChunk } from '@yharness/llm'
@@ -285,7 +286,7 @@ export class DecisionAdvisory {
     const interrupted = [...this.store.records.entries()].filter(([, row]) => row.outcome === 'pending')
     for (const [key, record] of interrupted) {
       this.lifetime.signal.throwIfAborted()
-      await this.own(this.store.records.update(key, current => current !== record || current.outcome !== 'pending'
+      await this.own(this.store.records.update(key, current => !isDeepStrictEqual(current, record) || current.outcome !== 'pending'
         ? current
         : {
           id: current.id, createdAt: current.createdAt, configurationRevision: current.configurationRevision,

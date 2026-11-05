@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { withFileLock } from '@yharness/atomic-write'
 import { expect, it, onTestFinished, vi } from 'vitest'
 import { fixture } from './loader-fixture.ts'
 
@@ -58,13 +59,15 @@ it('disposes a sync owner inside HMR while its imported write is queued, without
   await b.ctx.hmr.runExclusive(async () => {
     await a.ctx.settings.mutate('llm-pi-ai', [{ op: 'set', path: ['providers', 'example', 'displayName'], value: 'Queued' }])
     await a.ctx.providerConfigSync.synchronize()
-    await vi.waitFor(() =>{  expect(existsSync(`${shared}.lock`)).toBe(true) })
+    await vi.waitFor(async () => {
+      await expect(withFileLock(shared, async () => undefined, { waitMs: 0 })).rejects.toThrow('timed out waiting for the writer lock')
+    })
     const entry = b.ctx.configEditor.entries().find(entry => entry.options.id === 'provider-config-sync')
     await entry?.fiber?.dispose()
   })
   await b.ctx.hmr.runExclusive(async () => {})
   expect(readFileSync(b.profile.patchPath, 'utf8')).toBe(before)
-  expect(existsSync(`${shared}.lock`)).toBe(false)
+  await expect(withFileLock(shared, async () => 'released', { waitMs: 0 })).resolves.toBe('released')
   expect(b.ctx.get('providerConfigSync')).toBeUndefined()
 })
 
@@ -99,19 +102,21 @@ it('cancels its own import when preflight reconciliation observes an externally 
   let disabledPatch = ''
   await b.ctx.hmr.runExclusive(async () => {
     await a.ctx.settings.mutate('llm-pi-ai', [{ op: 'set', path: ['providers', 'example', 'displayName'], value: 'Queued' }]); await a.ctx.providerConfigSync.synchronize()
-    await vi.waitFor(() =>{  expect(existsSync(`${shared}.lock`)).toBe(true) })
+    await vi.waitFor(async () => {
+      await expect(withFileLock(shared, async () => undefined, { waitMs: 0 })).rejects.toThrow('timed out waiting for the writer lock')
+    })
     disabledPatch = readFileSync(b.profile.patchPath, 'utf8') + '\n- id: provider-config-sync\n  disabled: true\n'
     writeFileSync(b.profile.patchPath, disabledPatch)
   })
   await b.ctx.hmr.runExclusive(async () => {})
-  await vi.waitFor(() => {
+  await vi.waitFor(async () => {
     expect(b.ctx.get('providerConfigSync')).toBeUndefined()
-    expect(existsSync(`${shared}.lock`)).toBe(false)
+    await expect(withFileLock(shared, async () => 'released', { waitMs: 0 })).resolves.toBe('released')
   })
   expect(readFileSync(b.profile.patchPath, 'utf8')).toBe(disabledPatch)
   expect(b.values()?.providers?.example).toMatchObject({ displayName: 'Original' })
   expect(b.ctx.get('providerConfigSync')).toBeUndefined()
-  expect(existsSync(`${shared}.lock`)).toBe(false)
+  await expect(withFileLock(shared, async () => 'released', { waitMs: 0 })).resolves.toBe('released')
 })
 
 it('reconciles real profile writes, follows remote changes, and stops synchronization on disposal', async () => {
