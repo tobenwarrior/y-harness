@@ -284,6 +284,32 @@ describe('workspace-linked package metadata', () => {
       rmSync(root, { recursive: true, force: true })
     }
   })
+
+  it('rejects divergent virtual-store candidates when no workspace link is active', () => {
+    const packageName = '@fixture/virtual-package'
+    const root = mkdtempSync(join(tmpdir(), 'dsh-notices-virtual-candidates-'))
+    const manifests = new Map<string, Manifest>([
+      ['packages/consumer/package.json', { name: '@fixture/consumer', dependencies: { [packageName]: '^1.0.0' } }],
+    ])
+    try {
+      const store = join(root, 'node_modules', '.pnpm')
+      for (const entry of [
+        { version: '1.0.0', license: 'MIT', repository: 'https://example.com/one' },
+        { version: '2.0.0', license: 'Apache-2.0', repository: 'https://example.com/two' },
+      ]) {
+        const manifestPath = join(store, `${packageName.replace('/', '+')}@${entry.version}`, 'node_modules', packageName, 'package.json')
+        mkdirSync(resolve(manifestPath, '..'), { recursive: true })
+        writeFileSync(manifestPath, JSON.stringify({ name: packageName, ...entry }))
+      }
+
+      expect(workspaceLinkedManifests(packageName, manifests, root)).toEqual([])
+      expect(() => installedMetadata(packageName, manifests, root)).toThrow(
+        'eligible installed candidates for @fixture/virtual-package have divergent license/repository metadata (1.0.0, 2.0.0)',
+      )
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('parseVendoredRows', () => {

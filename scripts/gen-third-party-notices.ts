@@ -195,6 +195,11 @@ export type VirtualManifest = Manifest & {
   homepage?: string
 }
 
+interface InstalledCandidate {
+  path: string
+  manifest: VirtualManifest
+}
+
 /** One platform payload declared by the official Claude Agent SDK. */
 export interface ClaudePlatformPayload {
   readonly name: string
@@ -276,18 +281,7 @@ export function virtualManifest(
   name: string,
   expectedVersion?: string,
 ): VirtualManifest | undefined {
-  const entries = readdirSync(virtual)
-  const candidates: Array<{ readonly path: string; readonly manifest: VirtualManifest }> = []
-  const seen = new Set<string>()
-  for (const entry of entries) {
-    const candidate = resolve(virtual, entry, 'node_modules', name, 'package.json')
-    if (!existsSync(candidate) || seen.has(candidate)) continue
-    seen.add(candidate)
-    const manifest = JSON.parse(readFileSync(candidate, 'utf8')) as VirtualManifest
-    if (expectedVersion === undefined || manifest.version === expectedVersion) {
-      candidates.push({ path: candidate, manifest })
-    }
-  }
+  const candidates = virtualCandidates(virtual, name, expectedVersion, readdirSync(virtual))
   candidates.sort((left, right) => {
     const leftVersion = left.manifest.version === undefined ? null : valid(left.manifest.version)
     const rightVersion = right.manifest.version === undefined ? null : valid(right.manifest.version)
@@ -300,6 +294,27 @@ export function virtualManifest(
     return left.path.localeCompare(right.path)
   })
   return candidates[0]?.manifest
+}
+
+/** Read every matching package manifest from a pnpm virtual store. */
+function virtualCandidates(
+  virtual: string,
+  name: string,
+  expectedVersion: string | undefined,
+  entries: readonly string[],
+): InstalledCandidate[] {
+  const candidates: InstalledCandidate[] = []
+  const seen = new Set<string>()
+  for (const entry of entries) {
+    const path = resolve(virtual, entry, 'node_modules', name, 'package.json')
+    if (!existsSync(path) || seen.has(path)) continue
+    seen.add(path)
+    const manifest = JSON.parse(readFileSync(path, 'utf8')) as VirtualManifest
+    if (expectedVersion === undefined || manifest.version === expectedVersion) {
+      candidates.push({ path, manifest })
+    }
+  }
+  return candidates
 }
 
 const workspaceLinkedManifestCache = new WeakMap<Map<string, Manifest>, Map<string, readonly VirtualManifest[]>>()
@@ -370,25 +385,65 @@ function installedManifest(
   const linkedMatch = resolvedExpectedVersion === undefined
     ? linked[0]
     : linked.find(candidate => candidate.version === resolvedExpectedVersion)
-  if (linkedMatch !== undefined) return linkedMatch
-  let manifest: (Manifest & { license?: string; repository?: string | { url?: string }; homepage?: string }) | undefined
+  if (linked.length > 0) {
+    assertConsistentMetadata(name, linked, OVERRIDES[name], 'active workspace links')
+    if (linkedMatch !== undefined) return linkedMatch
+  }
+  const candidates = installedCandidates(name, resolvedExpectedVersion, workspaceRoot)
+  assertConsistentMetadata(name, candidates.map(candidate => candidate.manifest), OVERRIDES[name], 'eligible installed candidates')
+  return candidates[0]?.manifest
+}
+
+/** Resolve every direct and virtual-store candidate for one package. */
+function installedCandidates(
+  name: string,
+  expectedVersion: string | undefined,
+  workspaceRoot: string,
+): InstalledCandidate[] {
+  const candidates: InstalledCandidate[] = []
+  const seen = new Set<string>()
   // Workspace-local link farms can expose a dependency that is not linked at
   // the repository root; both are backed by the root workspace's lockfile.
   for (const store of ['node_modules', 'native/system/node_modules']) {
     const direct = resolve(workspaceRoot, store, name, 'package.json')
     if (existsSync(direct)) {
-      const candidate = JSON.parse(readFileSync(direct, 'utf8')) as typeof manifest
-      if (resolvedExpectedVersion === undefined || candidate?.version === resolvedExpectedVersion) {
-        manifest = candidate
-        break
+      seen.add(direct)
+      const manifest = JSON.parse(readFileSync(direct, 'utf8')) as VirtualManifest
+      if (expectedVersion === undefined || manifest.version === expectedVersion) {
+        candidates.push({ path: direct, manifest })
       }
     }
     const virtual = resolve(workspaceRoot, store, '.pnpm')
     if (!existsSync(virtual)) continue
-    manifest = virtualManifest(virtual, name, resolvedExpectedVersion)
-    if (manifest !== undefined) break
+    for (const candidate of virtualCandidates(virtual, name, expectedVersion, readdirSync(virtual))) {
+      if (seen.has(candidate.path)) continue
+      seen.add(candidate.path)
+      candidates.push(candidate)
+    }
   }
-  return manifest
+  return candidates
+}
+
+/** Reject installed candidates whose effective metadata cannot be reconciled. */
+function assertConsistentMetadata(
+  name: string,
+  manifests: readonly VirtualManifest[],
+  override: { license?: string; repo?: string } | undefined,
+  label: string,
+): void {
+  const metadata = manifests.map(manifest => ({
+    version: manifest.version ?? '<unknown>',
+    license: override?.license ?? manifest.license,
+    repo: override?.repo ?? normalizeRepo(
+      typeof manifest.repository === 'string' ? manifest.repository : manifest.repository?.url ?? manifest.homepage,
+    ),
+  }))
+  const signatures = new Set(metadata.map(entry => JSON.stringify([entry.license, entry.repo])))
+  if (signatures.size <= 1) return
+  const versions = [...new Set(metadata.map(entry => entry.version))].sort((left, right) => left.localeCompare(right))
+  throw new Error(
+    `gen-third-party-notices: ${label} for ${name} have divergent license/repository metadata (${versions.join(', ')}).`,
+  )
 }
 
 /**
@@ -408,22 +463,6 @@ export function installedMetadata(
   workspaceRoot: string = root,
 ): { license: string; repo: string } {
   const override = OVERRIDES[name]
-  const linked = workspaceLinkedManifests(name, manifests, workspaceRoot)
-  const metadata = linked.map(manifest => ({
-    version: manifest.version ?? '<unknown>',
-    license: override?.license ?? manifest.license,
-    repo: override?.repo ?? normalizeRepo(
-      typeof manifest.repository === 'string' ? manifest.repository : manifest.repository?.url ?? manifest.homepage,
-    ),
-  }))
-  const signatures = new Set(metadata.map(entry => JSON.stringify([entry.license, entry.repo])))
-  if (signatures.size > 1) {
-    const versions = [...new Set(metadata.map(entry => entry.version))].sort((left, right) => left.localeCompare(right))
-    throw new Error(
-      `gen-third-party-notices: active workspace links for ${name} have divergent license/repository metadata (${versions.join(', ')}).`,
-    )
-  }
-
   const manifest = installedManifest(name, manifests, undefined, workspaceRoot)
   const license = override?.license ?? manifest?.license
   const rawRepo = typeof manifest?.repository === 'string' ? manifest.repository : manifest?.repository?.url ?? manifest?.homepage
