@@ -112,6 +112,18 @@ export interface SharedBotEnrollmentValue {
   /** Shared group admitted by a group-only invitation, when applicable. */
   readonly groupId?: string
 }
+
+/** Server-advertised owner-bootstrap capability for the active connection. */
+export interface SharedBotOwnerCapability {
+  /** Whether this connection can authenticate the local operator for owner setup. */
+  readonly ownerBootstrap: boolean
+}
+
+/** Lifecycle inputs used to invalidate connection-scoped capability probes. */
+export interface SharedBotsClientOptions {
+  /** Subscribe to active Connection generation establishment, replacement, and loss. */
+  readonly subscribeConnectionGeneration?: (listener: () => void) => () => void
+}
 /** Private transcript response for one Bot and the current collaborator. */
 export interface SharedBotPrivateChatValue {
   /** Bot whose private conversation was read. */
@@ -185,6 +197,22 @@ export interface SharedBotGroupRevokeValue {
 export interface SharedBotsClient {
   /** Redeem an owner-issued invite; the response stores an HttpOnly cookie. */
   readonly enroll: (code: string) => Promise<SharedBotClientResult<SharedBotEnrollmentValue>>
+  /**
+   * Ask the authenticated local Host to enroll or reuse its durable owner.
+   * The browser supplies no principal identity; the response stores the
+   * Host-issued HttpOnly cookie.
+   */
+  readonly enrollOwner?: () => Promise<SharedBotClientResult<SharedBotEnrollmentValue>>
+  /**
+   * Discover whether the server can admit owner setup on this connection.
+   * Transport, authentication, and malformed-response failures resolve to an
+   * unavailable capability so the UI never offers a request that cannot work.
+   */
+  readonly getOwnerCapability?: () => Promise<SharedBotOwnerCapability>
+  /** Re-run owner capability discovery when the active Connection generation changes. */
+  readonly subscribeOwnerCapability?: (listener: () => void) => () => void
+  /** Release the Connection-generation listener owned by this client. */
+  readonly dispose?: () => void
   /** Restore the server-authenticated principal scope after a browser reload. */
   readonly restoreRetryScope: () => Promise<SharedBotClientResult<SharedBotEnrollmentValue>>
   /** Server-issued principal scope used to partition durable browser retry state. */
@@ -228,9 +256,10 @@ export interface SharedBotsClient {
 /**
  * Build a typed caller for the collaborator-only route.
  * @param rpc - Connection RPC carrier from the active Client generation.
+ * @param options - Optional Connection-generation lifecycle subscription.
  * @returns shared-Bot operations using the dedicated channel only.
  */
-export function createSharedBotsClient(rpc: ClientConnectionRpc): SharedBotsClient {
+export function createSharedBotsClient(rpc: ClientConnectionRpc, options: SharedBotsClientOptions = {}): SharedBotsClient {
   let retryScope: string | undefined
   let retryScopeRequestGeneration = 0
   let authGeneration = 0
@@ -239,6 +268,14 @@ export function createSharedBotsClient(rpc: ClientConnectionRpc): SharedBotsClie
   let authTransitionTail: Promise<void> = Promise.resolve()
   let authChannel: SharedAuthChannel | undefined
   const authListeners = new Set<SharedBotAuthListener>()
+  const ownerCapabilityListeners = new Set<() => void>()
+  let ownerCapabilityRequest: Promise<SharedBotOwnerCapability> | undefined
+  let disposed = false
+  const invalidateOwnerCapability = (): void => {
+    ownerCapabilityRequest = undefined
+    for (const listener of [...ownerCapabilityListeners]) listener()
+  }
+  let stopConnectionGeneration = options.subscribeConnectionGeneration?.(invalidateOwnerCapability)
   const notifyAuth = (change: SharedBotAuthChange): void => {
     for (const listener of [...authListeners]) listener(change)
   }
@@ -329,6 +366,45 @@ export function createSharedBotsClient(rpc: ClientConnectionRpc): SharedBotsClie
     }
     return result
   })
+  const enrollOwner = (): Promise<SharedBotClientResult<SharedBotEnrollmentValue>> => enqueueAuthTransition(async () => {
+    authTransitionVersion += 1
+    const requestGeneration = retryScopeRequestGeneration + 1
+    retryScopeRequestGeneration = requestGeneration
+    setRetryScope(undefined, 'local', false, true)
+    const result = await call('bots/share/enroll', { owner: true }, parseEnrollment, false)
+    if (requestGeneration === retryScopeRequestGeneration && result.ok) {
+      setRetryScope(result.value.principalId, 'local', true, true)
+      authTransitionVersion += 1
+    }
+    return result
+  })
+  const getOwnerCapability = (): Promise<SharedBotOwnerCapability> => {
+    if (disposed) return Promise.resolve({ ownerBootstrap: false })
+    if (ownerCapabilityRequest !== undefined) return ownerCapabilityRequest
+    const request = (async () => {
+      const result = await call('bots/share/enroll', { capability: true }, parseOwnerCapability, false)
+      return result.ok ? result.value : { ownerBootstrap: false }
+    })()
+    ownerCapabilityRequest = request
+    void request.then(
+      () => { if (ownerCapabilityRequest === request) ownerCapabilityRequest = undefined },
+      () => { if (ownerCapabilityRequest === request) ownerCapabilityRequest = undefined },
+    )
+    return request
+  }
+  const subscribeOwnerCapability = (listener: () => void): (() => void) => {
+    if (disposed) return () => {}
+    ownerCapabilityListeners.add(listener)
+    return () => { ownerCapabilityListeners.delete(listener) }
+  }
+  const dispose = (): void => {
+    if (disposed) return
+    disposed = true
+    stopConnectionGeneration?.()
+    stopConnectionGeneration = undefined
+    ownerCapabilityRequest = undefined
+    ownerCapabilityListeners.clear()
+  }
 
   return {
     get retryScope(): string | undefined { return retryScope },
@@ -346,6 +422,10 @@ export function createSharedBotsClient(rpc: ClientConnectionRpc): SharedBotsClie
       }
     },
     enroll,
+    enrollOwner,
+    getOwnerCapability,
+    subscribeOwnerCapability,
+    dispose,
     restoreRetryScope,
     list: () => call('bots/share/list', {}, parseRoster),
     readProfile: botId => call('bots/share/read-profile', { botId }, parseProfileValue),
@@ -373,6 +453,11 @@ function parseEnrollment(value: unknown): SharedBotEnrollmentValue | undefined {
     expiresAt: value.expiresAt,
     ...(value.groupId === undefined ? {} : { groupId: value.groupId }),
   }
+}
+
+function parseOwnerCapability(value: unknown): SharedBotOwnerCapability | undefined {
+  if (!isRecord(value) || typeof value.ownerBootstrap !== 'boolean') return undefined
+  return { ownerBootstrap: value.ownerBootstrap }
 }
 
 function parseRoster(value: unknown): { readonly bots: readonly BotShareRosterEntry[] } | undefined {

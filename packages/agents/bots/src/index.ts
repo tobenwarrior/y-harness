@@ -455,9 +455,11 @@ const sharedRosterFenceRecoveryRequestSchema = zod.object({
   confirmQuiescent: zod.literal(true),
   acceptRaceRisk: zod.literal(true),
 }).strict()
-const sharedEnrollmentPayloadSchema = zod.object({
-  code: zod.string().min(1).max(512),
-}).strict()
+const sharedEnrollmentPayloadSchema = zod.union([
+  zod.object({ code: zod.string().min(1).max(512) }).strict(),
+  zod.object({ owner: zod.literal(true) }).strict(),
+  zod.object({ capability: zod.literal(true) }).strict(),
+])
 
 interface ResolvedBotSharedConfig {
   readonly enabled: boolean
@@ -7629,6 +7631,33 @@ export class BotService extends TypertRemoteService {
         const parsed = sharedEnrollmentPayloadSchema.safeParse(payload)
         if (!parsed.success) {
           return { ok: false, error: { code: 'gateway/bad-request', message: 'Invalid shared Bot enrollment request', details: {} } }
+        }
+        if ('capability' in parsed.data) {
+          try {
+            const admission = connection.admit(request)
+            return { ok: true, value: { ownerBootstrap: !('rejection' in admission) } }
+          } catch (admissionError: unknown) {
+            this.ctx.logger.warn(`bots: owner capability admission failed: ${String(admissionError)}`)
+            return { ok: true, value: { ownerBootstrap: false } }
+          }
+        }
+        if ('owner' in parsed.data) {
+          const admission = connection.admit(request)
+          if ('rejection' in admission) {
+            return {
+              ok: false,
+              error: {
+                code: admission.rejection === 401 ? 'gateway/unauthorized' : 'gateway/forbidden',
+                message: admission.rejection === 401 ? 'operator authentication is required' : 'operator request is not trusted',
+                details: {},
+              },
+            }
+          }
+          try {
+            return { ok: true, value: await shared.enrollOwner(request) }
+          } catch {
+            return { ok: false, error: { code: 'gateway/internal', message: 'Shared Bot owner enrollment failed', details: {} } }
+          }
         }
         try {
           return { ok: true, value: await shared.enroll(SharedInviteCode(parsed.data.code), request) }

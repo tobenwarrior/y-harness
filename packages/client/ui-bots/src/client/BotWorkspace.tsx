@@ -31,6 +31,8 @@ type BotWorkspaceViewProps = BotWorkspaceProps & PropsLocale<'bots'> & {
   sharedClient?: SharedBotsClient
 }
 
+const MAX_SHARED_OWNER_CAPABILITY_FOCUS_RETRIES = 3
+
 function connectedAppName(app: BotConnectedAppAccess, t: BotWorkspaceViewProps['t']): string {
   const name = app.name.trim()
   return name !== '' && name !== '-' ? name : t('connectedAppFallbackName', { id: app.id })
@@ -1326,7 +1328,58 @@ export function BotRoster({
   const [avatarEditorOpen, setAvatarEditorOpen] = useState(false)
   const [sectionBot, setSectionBot] = useState<BotSummary | undefined>()
   const [sharedBotsOpen, setSharedBotsOpen] = useState(false)
+  const [sharedOwnerMode, setSharedOwnerMode] = useState(false)
+  const [sharedOwnerCapability, setSharedOwnerCapability] = useState<'unknown' | 'available' | 'unavailable'>('unknown')
   const [connectedAppsOpen, setConnectedAppsOpen] = useState(false)
+  const ownerCapabilityProbe = sharedClient?.getOwnerCapability
+  const ownerEnrollment = sharedClient?.enrollOwner
+  const ownerCapabilitySubscription = sharedClient?.subscribeOwnerCapability
+  useEffect(() => {
+    let active = true
+    let retryOnFocus = true
+    let focusRetryCount = 0
+    let probeGeneration = 0
+    if (sharedClient === undefined || ownerCapabilityProbe === undefined || ownerEnrollment === undefined) {
+      setSharedOwnerCapability('unknown')
+      return () => { active = false }
+    }
+    setSharedOwnerCapability('unknown')
+    const probe = (): void => {
+      const requestGeneration = probeGeneration
+      void Promise.resolve().then(ownerCapabilityProbe).then((capability) => {
+        if (!active || requestGeneration !== probeGeneration) return
+        retryOnFocus = !capability.ownerBootstrap
+        setSharedOwnerCapability(capability.ownerBootstrap ? 'available' : 'unavailable')
+      }).catch(() => {
+        if (!active || requestGeneration !== probeGeneration) return
+        retryOnFocus = true
+        setSharedOwnerCapability('unavailable')
+      })
+    }
+    const onCapabilityInvalidated = (): void => {
+      if (!active) return
+      probeGeneration += 1
+      retryOnFocus = true
+      focusRetryCount = 0
+      setSharedOwnerCapability('unknown')
+      probe()
+    }
+    const onFocus = (): void => {
+      if (!active || !retryOnFocus || focusRetryCount >= MAX_SHARED_OWNER_CAPABILITY_FOCUS_RETRIES) return
+      focusRetryCount += 1
+      probe()
+    }
+    const stopCapabilitySubscription = ownerCapabilitySubscription?.(onCapabilityInvalidated)
+    probe()
+    window.addEventListener('focus', onFocus)
+    return () => {
+      active = false
+      stopCapabilitySubscription?.()
+      window.removeEventListener('focus', onFocus)
+    }
+  }, [ownerCapabilityProbe, ownerCapabilitySubscription, ownerEnrollment, sharedClient])
+  const sharedOwnerAvailable = ownerEnrollment !== undefined && ownerCapabilityProbe !== undefined && sharedOwnerCapability === 'available'
+  const sharedOwnerUnsupported = ownerEnrollment !== undefined && ownerCapabilityProbe !== undefined && sharedOwnerCapability === 'unavailable'
   const normalizedQuery = query.trim().toLocaleLowerCase()
   const filteredBots = useMemo(() => {
     if (normalizedQuery === '') return bots
@@ -1368,7 +1421,17 @@ export function BotRoster({
   }
   const openSharedBots = (): void => {
     if (!wide) expandSidebar?.()
+    setSharedOwnerMode(false)
     setSharedBotsOpen(true)
+  }
+  const openSharedOwner = (): void => {
+    if (!wide) expandSidebar?.()
+    setSharedOwnerMode(true)
+    setSharedBotsOpen(true)
+  }
+  const closeSharedBots = (): void => {
+    setSharedOwnerMode(false)
+    setSharedBotsOpen(false)
   }
   const openConnectedApps = (): void => {
     if (selectedBot === undefined || onLoadConnectedApps === undefined || onSetConnectedAppAccess === undefined) {
@@ -1401,9 +1464,23 @@ export function BotRoster({
                 )}
                 <Button variant="ghost" size="sm" aria-label={t('newBot')} icon={<IconSidebarBotAddOutlineRegular size={16} />} onClick={openNewBot} />
                 {sharedClient !== undefined && (
-                  <Tooltip label={t('joinBot')} side="bottom" portal>
-                    <Button variant="ghost" size="sm" aria-label={t('joinBot')} icon={<IconShareOutlineRegular size={16} />} onClick={openSharedBots} />
-                  </Tooltip>
+                  <>
+                    <Tooltip label={t('joinBot')} side="bottom" portal>
+                      <Button variant="ghost" size="sm" aria-label={t('joinBot')} icon={<IconShareOutlineRegular size={16} />} onClick={openSharedBots} />
+                    </Tooltip>
+                    {sharedOwnerAvailable && (
+                      <Tooltip label={t('createSharedGroup')} side="bottom" portal>
+                        <Button variant="ghost" size="sm" aria-label={t('createSharedGroup')} icon={<IconUsersOutlineRegular size={16} />} onClick={openSharedOwner} />
+                      </Tooltip>
+                    )}
+                    {sharedOwnerUnsupported && (
+                      <Tooltip label={t('sharedOwnerSetupUnavailable')} side="bottom" portal>
+                        <span>
+                          <Button variant="ghost" size="sm" aria-label={t('createSharedGroup')} title={t('sharedOwnerSetupUnavailable')} icon={<IconUsersOutlineRegular size={16} />} disabled />
+                        </span>
+                      </Tooltip>
+                    )}
+                  </>
                 )}
               </div>
               <Input
@@ -1515,16 +1592,45 @@ export function BotRoster({
               />
             </Tooltip>
             {sharedClient !== undefined && (
-              <Tooltip label={t('joinBot')} side="right" delayMs={500}>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className={css.botRailAction}
-                  aria-label={t('joinBot')}
-                  icon={<IconShareOutlineRegular size={18} />}
-                  onClick={openSharedBots}
-                />
-              </Tooltip>
+              <>
+                <Tooltip label={t('joinBot')} side="right" delayMs={500}>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className={css.botRailAction}
+                    aria-label={t('joinBot')}
+                    icon={<IconShareOutlineRegular size={18} />}
+                    onClick={openSharedBots}
+                  />
+                </Tooltip>
+                {sharedOwnerAvailable && (
+                  <Tooltip label={t('createSharedGroup')} side="right" delayMs={500}>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className={css.botRailAction}
+                      aria-label={t('createSharedGroup')}
+                      icon={<IconUsersOutlineRegular size={18} />}
+                      onClick={openSharedOwner}
+                    />
+                  </Tooltip>
+                )}
+                {sharedOwnerUnsupported && (
+                  <Tooltip label={t('sharedOwnerSetupUnavailable')} side="right" delayMs={500}>
+                    <span>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className={css.botRailAction}
+                        aria-label={t('createSharedGroup')}
+                        title={t('sharedOwnerSetupUnavailable')}
+                        icon={<IconUsersOutlineRegular size={18} />}
+                        disabled
+                      />
+                    </span>
+                  </Tooltip>
+                )}
+              </>
             )}
             {templates !== undefined && templateActions !== undefined && (
               <Tooltip label={t('templates')} side="right" delayMs={500}>
@@ -1593,7 +1699,7 @@ export function BotRoster({
         />
       )}
       {sharedClient !== undefined && (
-        <SharedBotsDialog client={sharedClient} open={sharedBotsOpen} onClose={() => { setSharedBotsOpen(false) }} t={t} />
+        <SharedBotsDialog client={sharedClient} open={sharedBotsOpen} ownerMode={sharedOwnerMode} onClose={closeSharedBots} t={t} />
       )}
       {onLoadConnectedApps !== undefined && onSetConnectedAppAccess !== undefined && (
         <ConnectedAppsDialog

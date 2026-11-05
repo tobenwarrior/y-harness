@@ -782,6 +782,71 @@ describe('shared Bot service', () => {
     }
   })
 
+  it('enrolls one durable owner across Hosts without duplicating memberships', async () => {
+    const value = await fixture(10, true)
+    let secondary: SecondaryFixture | undefined
+    try {
+      // Seed an older owner membership. Owner onboarding must reuse this
+      // authority identity instead of minting a second owner principal.
+      const existing = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      if (!('botId' in existing)) throw new Error('expected Bot enrollment')
+      const existingBindings = value.service.privateSessionBindings()
+      secondary = await secondaryFixture(value, true)
+      const [first, second] = await Promise.all([
+        value.service.enrollOwner(enrollmentRequest()),
+        secondary.service.enrollOwner(enrollmentRequest()),
+      ])
+      expect(first.principalId).toBe(existing.principalId)
+      expect(second.principalId).toBe(existing.principalId)
+
+      const chief = await value.service.listMembers(BotId('bot-chief'))
+      const secondBot = await value.service.listMembers(BotId('bot-second'))
+      expect(chief.filter(member => member.role === 'owner')).toHaveLength(1)
+      expect(secondBot.filter(member => member.role === 'owner')).toHaveLength(1)
+      expect(secondBot[0]?.principalId).toBe(existing.principalId)
+      expect(value.service.privateSessionBindings()).toEqual(existingBindings)
+
+      await value.service.enrollOwner(enrollmentRequest())
+      expect(await value.service.listMembers(BotId('bot-second'))).toHaveLength(1)
+    } finally {
+      await secondary?.close()
+      await value.close()
+    }
+  })
+
+  it('repairs owner memberships after a mirror failure without minting another principal', async () => {
+    const value = await fixture(10, true)
+    try {
+      const domain = value.facility.get('agent_bot_shares')
+      if (domain === undefined) throw new Error('shared Bot domain is not open')
+      const memberships = domain.table('memberships')
+      const originalPut = memberships.put.bind(memberships)
+      let failed = false
+      vi.spyOn(memberships, 'put').mockImplementation(async (key, record) => {
+        if (!failed) {
+          failed = true
+          throw new Error('injected owner membership failure')
+        }
+        return originalPut(key, record)
+      })
+
+      await expect(value.service.enrollOwner(enrollmentRequest())).rejects.toThrow('injected owner membership failure')
+      vi.restoreAllMocks()
+      const retry = await value.service.enrollOwner(enrollmentRequest())
+      const ownerExtension = await value.authority.readExtension('client-connection/shared-owner')
+      expect(ownerExtension.value).toEqual({ version: 1, principalId: retry.principalId })
+      expect(ownerExtension.state.principals.filter(principal => principal.id === retry.principalId)).toHaveLength(1)
+      expect((await value.service.listMembers(BotId('bot-chief'))).filter(member => member.role === 'owner')).toHaveLength(1)
+      expect((await value.service.listMembers(BotId('bot-second'))).filter(member => member.role === 'owner')).toHaveLength(1)
+    } finally {
+      vi.restoreAllMocks()
+      await value.close()
+    }
+  })
+
   it('enrolls through the JSON backend with path-safe shared keys', async () => {
     const value = await jsonFixture()
     try {

@@ -1,6 +1,8 @@
 // Keyless assembled-Web coverage for shared group creation and isolated delivery.
 import { fileURLToPath } from 'node:url'
+import { mkdtemp, rm } from 'node:fs/promises'
 import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 import type { Browser, BrowserContext, Page } from 'playwright'
 import { chromium } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it, onTestFailed } from 'vitest'
@@ -52,15 +54,21 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
   let tripwire: ReturnType<typeof watchConsole>
   let firstBot!: BotView
   let secondBot!: BotView
+  let retainedWorkspaceCwd: string | undefined
+  let retainedPersistenceRoot: string | undefined
   const adapter = new GroupReplyAdapter()
 
   beforeAll(async () => {
     // The model route is deterministic and local to this scaffold. The fixture
     // supplies only the header/catalog surface; no network model request is made.
+    retainedWorkspaceCwd = await mkdtemp(join(tmpdir(), 'dsh-web-e2e-shared-owner-ws-'))
+    retainedPersistenceRoot = await mkdtemp(join(tmpdir(), 'dsh-web-e2e-shared-owner-sessions-'))
     scaffold = await launchWebScaffold({
       replayFixture: FIXTURE,
       replayProvidersOnly: true,
       profile: { hmr: false, packages: [] },
+      workspaceCwd: retainedWorkspaceCwd,
+      persistenceRoot: retainedPersistenceRoot,
     })
     scaffold.ctx.effect(
       () => scaffold.ctx.llm.registerAdapter([PROVIDER], adapter),
@@ -93,9 +101,23 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
   }, 120_000)
 
   afterAll(async () => {
-    await collaboratorContext?.close()
-    await browser?.close()
-    await scaffold?.close()
+    const failures: unknown[] = []
+    if (collaboratorContext !== undefined) {
+      await collaboratorContext.close().catch((error: unknown) => failures.push(error))
+    }
+    if (browser !== undefined) {
+      await browser.close().catch((error: unknown) => failures.push(error))
+    }
+    if (scaffold !== undefined) {
+      await scaffold.close().catch((error: unknown) => failures.push(error))
+    }
+    if (retainedWorkspaceCwd !== undefined) {
+      await rm(retainedWorkspaceCwd, { recursive: true, force: true }).catch((error: unknown) => failures.push(error))
+    }
+    if (retainedPersistenceRoot !== undefined) {
+      await rm(retainedPersistenceRoot, { recursive: true, force: true }).catch((error: unknown) => failures.push(error))
+    }
+    if (failures.length > 0) throw new AggregateError(failures, 'shared-owner browser test teardown failed')
   })
 
   it('creates an operator-local Bot group and keeps its private profile local to model input', async () => {
@@ -151,8 +173,8 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
     expect(tripwire.warnings).toEqual([])
   }, 120_000)
 
-  it('sends through one isolated shared group for its owner and collaborator without private profile data', async () => {
-    onTestFailed(() => saveFailureShot(page, 'web-e2e-shared-bot-group'))
+  it('sends through one isolated shared group for its owner and collaborator, then reuses the owner after restart', async () => {
+    onTestFailed(() => page.isClosed() ? undefined : saveFailureShot(page, 'web-e2e-shared-bot-group'))
     adapter.requests.splice(0)
 
     // Clone only the operator session before either browser receives a shared
@@ -171,9 +193,6 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
       return bots.filter(bot => bot.id === firstBot.id || bot.id === secondBot.id).every(bot => bot.state === 'active')
     }, { timeout: 30_000 }).toBe(true)
 
-    const ownerChiefInvite = await scaffold.ctx.bots.createShareInvite({ botId: firstBot.id, role: 'owner' })
-    const ownerOrbitInvite = await scaffold.ctx.bots.createShareInvite({ botId: secondBot.id, role: 'owner' })
-
     const openSharedDialog = async (target: Page): Promise<import('playwright').Locator> => {
       await target.getByRole('button', { name: 'Bots', exact: true }).click()
       const join = target.getByRole('button', { name: 'Join a shared bot', exact: true })
@@ -186,6 +205,16 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
       return dialog
     }
 
+    const openOwnerDialog = async (): Promise<import('playwright').Locator> => {
+      await page.getByRole('button', { name: 'Bots', exact: true }).click()
+      await page.getByRole('button', { name: 'Create a shared group', exact: true }).click()
+      const dialog = page.getByRole('dialog', { name: 'Shared with you', exact: true })
+      await dialog.waitFor({ state: 'visible', timeout: 15_000 })
+      await dialog.getByRole('status').waitFor({ state: 'visible', timeout: 30_000 })
+      await expect.poll(() => dialog.getByRole('status').count(), { timeout: 30_000 }).toBe(0)
+      return dialog
+    }
+
     const redeemInvite = async (dialog: import('playwright').Locator, code: string): Promise<void> => {
       const input = dialog.getByRole('textbox', { name: 'Invite code', exact: true })
       const join = dialog.getByRole('button', { name: 'Join bot', exact: true })
@@ -194,10 +223,8 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
       await expect.poll(() => input.inputValue(), { timeout: 30_000 }).toBe('')
     }
 
-    const ownerDialog = await openSharedDialog(page)
-    await redeemInvite(ownerDialog, ownerChiefInvite.code)
+    const ownerDialog = await openOwnerDialog()
     await ownerDialog.getByRole('button', { name: new RegExp(`^${firstBot.name}\\b`) }).waitFor({ state: 'visible', timeout: 30_000 })
-    await redeemInvite(ownerDialog, ownerOrbitInvite.code)
     await ownerDialog.getByRole('button', { name: new RegExp(`^${secondBot.name}\\b`) }).waitFor({ state: 'visible', timeout: 30_000 })
 
     const collaboratorChiefInvite = await scaffold.ctx.bots.createShareInvite({ botId: firstBot.id, role: 'collaborator' })
@@ -270,5 +297,59 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
     expect(requestText).not.toContain(PRIVATE_ORBIT_PERSONA)
     expect(requestText).not.toContain('private.scout')
     expect(requestText).not.toContain('private.orbit')
+
+    const ownerMembersBeforeRestart = await scaffold.ctx.bots.listShareMembers({ botId: firstBot.id })
+    const ownerMembershipsBeforeRestart = ownerMembersBeforeRestart.members.filter(member => member.role === 'owner')
+    expect(ownerMembershipsBeforeRestart).toHaveLength(1)
+    const ownerPrincipalBeforeRestart = ownerMembershipsBeforeRestart[0]?.principalId
+    if (ownerPrincipalBeforeRestart === undefined) throw new Error('shared owner membership was not durable')
+    const collaboratorMembershipsBeforeRestart = ownerMembersBeforeRestart.members.filter(member => member.role === 'collaborator')
+    expect(collaboratorMembershipsBeforeRestart).toHaveLength(1)
+    expect(collaboratorMembershipsBeforeRestart[0]?.principalId).not.toBe(ownerPrincipalBeforeRestart)
+
+    // Close the first Host while retaining its isolated workspace, credentials,
+    // storage, and Session roots. A new assembled Host and browser must recover
+    // the same owner instead of minting a second principal.
+    await collaboratorContext.close()
+    collaboratorContext = undefined
+    await page.close()
+    await scaffold.close()
+    if (retainedWorkspaceCwd === undefined || retainedPersistenceRoot === undefined) {
+      throw new Error('shared-owner browser test did not retain its temporary roots')
+    }
+    scaffold = await launchWebScaffold({
+      replayFixture: FIXTURE,
+      replayProvidersOnly: true,
+      profile: { hmr: false, packages: [] },
+      workspaceCwd: retainedWorkspaceCwd,
+      persistenceRoot: retainedPersistenceRoot,
+      harnessHome: join(retainedWorkspaceCwd, '.dsh-home'),
+    })
+    scaffold.ctx.effect(
+      () => scaffold.ctx.llm.registerAdapter([PROVIDER], adapter),
+      'shared group browser fixture adapter after restart',
+    )
+    await scaffold.ctx.agentDefaultModel.saveSelection({ provider: PROVIDER, model: MODEL })
+
+    const ownerMembersAfterRestart = await scaffold.ctx.bots.listShareMembers({ botId: firstBot.id })
+    const ownerMembershipsAfterRestart = ownerMembersAfterRestart.members.filter(member => member.role === 'owner')
+    expect(ownerMembershipsAfterRestart).toHaveLength(1)
+    expect(ownerMembershipsAfterRestart[0]?.principalId).toBe(ownerPrincipalBeforeRestart)
+
+    page = await newEnglishPage(browser)
+    tripwire = watchConsole(page)
+    await page.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
+    await page.waitForSelector('[class*="frame"]', { timeout: 30_000 })
+    await page.getByRole('button', { name: 'Bots', exact: true }).click()
+    const reopenedOwnerDialog = page.getByRole('button', { name: 'Create a shared group', exact: true })
+    await expect.poll(() => reopenedOwnerDialog.isEnabled(), { timeout: 30_000 }).toBe(true)
+    await reopenedOwnerDialog.click()
+    const restartedDialog = page.getByRole('dialog', { name: 'Shared with you', exact: true })
+    await restartedDialog.waitFor({ state: 'visible', timeout: 15_000 })
+    await expect.poll(() => restartedDialog.getByRole('button', { name: new RegExp(`^${SHARED_GROUP_NAME}`) }).count(), {
+      timeout: 30_000,
+    }).toBe(1)
+    expect(tripwire.pageErrors).toEqual([])
+    expect(tripwire.warnings).toEqual([])
   }, 180_000)
 })

@@ -1,19 +1,20 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AttachmentId } from '@yharness/attachment'
 import { BotId } from '@yharness/bots'
 import { ScheduleId } from '@yharness/schedule'
 import { SessionId } from '@yharness/session'
 import { makeTranslate } from '@yharness/client-test-runtime'
+import type { ClientConnectionRpc } from '@yharness/client-connection/client'
 import type { ReactNode } from 'react'
 import { BotAvatar } from '../src/client/BotAvatar.tsx'
 import { BotDetail, BotGroupDetail, BotRoster } from '../src/client/BotWorkspace.tsx'
 import { BotRoutineManager } from '../src/client/BotRoutineManager.tsx'
 import { BotTemplatesPanel } from '../src/client/BotTemplatesPanel.tsx'
 import { en } from '../src/client/locales.ts'
-import type { SharedBotsClient } from '../src/client/shared-client.ts'
 import { MessageId } from '@yharness/llm/brand'
+import { createSharedBotsClient, type SharedBotsClient } from '../src/client/shared-client.ts'
 import type {
   BotGroupDetailData, BotGroupSummary, BotMemoryManagerActions, BotMemorySummary, BotRoutineHistory, BotSummary,
   BotTemplateActions, BotTemplateState, BotWorkspaceProps,
@@ -93,6 +94,24 @@ function renderSplitWorkspace(overrides: Partial<BotWorkspaceProps> = {}, childr
       loading={props.loading ?? false}
     />
   </>)
+}
+
+function ownerCapabilityClient(getOwnerCapability: NonNullable<SharedBotsClient['getOwnerCapability']>): SharedBotsClient {
+  return {
+    retryScope: undefined,
+    enroll: vi.fn<SharedBotsClient['enroll']>().mockRejectedValue(new Error('unused test operation')),
+    enrollOwner: vi.fn<NonNullable<SharedBotsClient['enrollOwner']>>().mockRejectedValue(new Error('unused test operation')),
+    getOwnerCapability,
+    restoreRetryScope: vi.fn<SharedBotsClient['restoreRetryScope']>().mockRejectedValue(new Error('unused test operation')),
+    list: vi.fn<SharedBotsClient['list']>().mockResolvedValue({ ok: true, value: { bots: [] } }),
+    readProfile: vi.fn<SharedBotsClient['readProfile']>().mockRejectedValue(new Error('unused test operation')),
+    readPrivateChat: vi.fn<SharedBotsClient['readPrivateChat']>().mockRejectedValue(new Error('unused test operation')),
+    readMemory: vi.fn<SharedBotsClient['readMemory']>().mockRejectedValue(new Error('unused test operation')),
+    chat: vi.fn<SharedBotsClient['chat']>().mockRejectedValue(new Error('unused test operation')),
+    writeMemory: vi.fn<SharedBotsClient['writeMemory']>().mockRejectedValue(new Error('unused test operation')),
+    createInvite: vi.fn<SharedBotsClient['createInvite']>().mockRejectedValue(new Error('unused test operation')),
+    revokeMember: vi.fn<SharedBotsClient['revokeMember']>().mockRejectedValue(new Error('unused test operation')),
+  }
 }
 
 describe('Bot roster and detail', () => {
@@ -1194,6 +1213,89 @@ describe('Bot roster and detail', () => {
 
     expect(expandSidebar).toHaveBeenCalledOnce()
     expect(await screen.findByRole('dialog', { name: 'Shared with you' })).toBeTruthy()
+  })
+
+  it('disables owner setup when the server does not advertise this connection', async () => {
+    const getOwnerCapability = vi.fn<NonNullable<SharedBotsClient['getOwnerCapability']>>()
+      .mockResolvedValueOnce({ ownerBootstrap: false })
+      .mockResolvedValueOnce({ ownerBootstrap: true })
+    const sharedClient = ownerCapabilityClient(getOwnerCapability)
+    render(<BotRoster
+      bots={bots}
+      selectedBotId="research"
+      onSelectBot={vi.fn()}
+      onCreateBot={vi.fn()}
+      sharedClient={sharedClient}
+      t={t}
+    />)
+
+    await waitFor(() => { expect(getOwnerCapability).toHaveBeenCalledOnce() })
+    const ownerButton = screen.getByRole('button', { name: 'Create a shared group' }) as HTMLButtonElement
+    expect(ownerButton.disabled).toBe(true)
+    expect(ownerButton.getAttribute('title')).toBe('Shared owner setup is unavailable in this connection.')
+
+    window.dispatchEvent(new Event('focus'))
+    await waitFor(() => { expect(getOwnerCapability).toHaveBeenCalledTimes(2) })
+    expect((screen.getByRole('button', { name: 'Create a shared group' }) as HTMLButtonElement).disabled).toBe(false)
+    window.dispatchEvent(new Event('focus'))
+    expect(getOwnerCapability).toHaveBeenCalledTimes(2)
+  })
+
+  it('bounds repeated owner capability retries while the connection remains unavailable', async () => {
+    const getOwnerCapability = vi.fn<NonNullable<SharedBotsClient['getOwnerCapability']>>().mockResolvedValue({ ownerBootstrap: false })
+    render(<BotRoster
+      bots={bots}
+      selectedBotId="research"
+      onSelectBot={vi.fn()}
+      onCreateBot={vi.fn()}
+      sharedClient={ownerCapabilityClient(getOwnerCapability)}
+      t={t}
+    />)
+
+    await waitFor(() => { expect(getOwnerCapability).toHaveBeenCalledOnce() })
+    for (let index = 0; index < 6; index += 1) window.dispatchEvent(new Event('focus'))
+    await waitFor(() => { expect(getOwnerCapability).toHaveBeenCalledTimes(4) })
+    window.dispatchEvent(new Event('focus'))
+    expect(getOwnerCapability).toHaveBeenCalledTimes(4)
+  })
+
+  it('rechecks owner capability when Connection readiness changes while the roster stays mounted', async () => {
+    let onGeneration: (() => void) | undefined
+    let capabilityCalls = 0
+    const rpc: ClientConnectionRpc = {
+      call: vi.fn(async (_channel, endpoint, payload) => {
+        expect(endpoint).toBe('bots/share/enroll')
+        expect(payload).toEqual({ capability: true })
+        capabilityCalls += 1
+        return { ok: true as const, value: { ownerBootstrap: capabilityCalls > 1 } }
+      }),
+    }
+    const client = createSharedBotsClient(rpc, {
+      subscribeConnectionGeneration: (listener) => {
+        onGeneration = listener
+        return () => { onGeneration = undefined }
+      },
+    })
+    const view = render(<BotRoster
+      bots={bots}
+      selectedBotId="research"
+      onSelectBot={vi.fn()}
+      onCreateBot={vi.fn()}
+      sharedClient={client}
+      t={t}
+    />)
+
+    await waitFor(() => { expect(capabilityCalls).toBe(1) })
+    expect((screen.getByRole('button', { name: 'Create a shared group' }) as HTMLButtonElement).disabled).toBe(true)
+    if (onGeneration === undefined) throw new Error('Connection generation listener was not registered')
+    await act(async () => { onGeneration?.() })
+    await waitFor(() => {
+      expect(capabilityCalls).toBe(2)
+      expect((screen.getByRole('button', { name: 'Create a shared group' }) as HTMLButtonElement).disabled).toBe(false)
+    })
+    view.unmount()
+    client.dispose?.()
+    expect(onGeneration).toBeUndefined()
   })
 
   it('renders the selected detail as a standalone main surface', () => {

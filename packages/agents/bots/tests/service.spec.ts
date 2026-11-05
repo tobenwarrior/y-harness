@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { Context, Service } from '@yharness/cordis'
 import { SharedAccessAuthority, sharedPrincipalOf } from '@yharness/client-connection'
+import type { ConnectionIndexRequest, SharedConnectionEnrollmentHandler } from '@yharness/client-connection'
 import { AttachmentId, type ImageAttachmentRef, type StoredImageAttachment } from '@yharness/attachment'
 import AgentRegistry, { agentEvents, type Agent } from '@yharness/agent'
 import AgentLoop from '@yharness/agent-loop'
@@ -782,6 +783,58 @@ function provideResolvedTemplatePreset(ctx: Context): void {
 }
 
 describe('durable Bot roster', () => {
+  it('requires ordinary operator admission before owner bootstrap enrollment', async () => {
+    let enrollmentHandler: SharedConnectionEnrollmentHandler | undefined
+    const admit = vi.fn(() => ({ rejection: 401 as const }))
+    const connection = {
+      admit,
+      sharedRpc: {
+        enroll: vi.fn((_path: string, handler: SharedConnectionEnrollmentHandler) => {
+          enrollmentHandler = handler
+          return async () => {}
+        }),
+        handle: vi.fn(() => async () => {}),
+      },
+    }
+    const h = await harness(undefined, undefined, undefined, [], new Map(), new Map(), true, 'native', false, { connection })
+    try {
+      if (enrollmentHandler === undefined) throw new Error('shared enrollment handler was not mounted')
+      const request: ConnectionIndexRequest = { headers: { host: '127.0.0.1:3080' } }
+      await expect(enrollmentHandler('bots/share/enroll', { capability: true }, new AbortController().signal, request))
+        .resolves.toEqual({ ok: true, value: { ownerBootstrap: false } })
+      await expect(enrollmentHandler('bots/share/enroll', { owner: true }, new AbortController().signal, request))
+        .resolves.toMatchObject({ ok: false, error: { code: 'gateway/unauthorized' } })
+      expect(admit).toHaveBeenCalledTimes(2)
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('advertises owner setup only after ordinary operator admission succeeds', async () => {
+    let enrollmentHandler: SharedConnectionEnrollmentHandler | undefined
+    const admit = vi.fn(() => ({ peer: {} }))
+    const connection = {
+      admit,
+      sharedRpc: {
+        enroll: vi.fn((_path: string, handler: SharedConnectionEnrollmentHandler) => {
+          enrollmentHandler = handler
+          return async () => {}
+        }),
+        handle: vi.fn(() => async () => {}),
+      },
+    }
+    const h = await harness(undefined, undefined, undefined, [], new Map(), new Map(), true, 'native', false, { connection })
+    try {
+      if (enrollmentHandler === undefined) throw new Error('shared enrollment handler was not mounted')
+      const request: ConnectionIndexRequest = { headers: { host: '127.0.0.1:3080' } }
+      await expect(enrollmentHandler('bots/share/enroll', { capability: true }, new AbortController().signal, request))
+        .resolves.toEqual({ ok: true, value: { ownerBootstrap: true } })
+      expect(admit).toHaveBeenCalledTimes(1)
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
   it('does not hold the profile credential queue while shared authority commits', async () => {
     const root = await mkdtemp(join(tmpdir(), 'yh-bot-roster-fence-'))
     const h = await harness(

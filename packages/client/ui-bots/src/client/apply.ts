@@ -1,7 +1,7 @@
 /** Registers the Bot roster panel and its explicitly bound Conversation. */
 
 import type { Context } from '@yharness/cordis'
-import type { ClientConnectionRpc } from '@yharness/client-connection/client'
+import type { ConnectionHandle } from '@yharness/client-connection/client'
 import type {} from '@yharness/api-remotes/client'
 import type {} from '@yharness/client-ui-renderer/client'
 import type {} from '@yharness/client-ui-sidebar/client'
@@ -24,6 +24,10 @@ export const inject = [
 /** Register the Bot workspace, loading one durable roster and one Session per selection. */
 export function apply(ctx: Context): void {
   ctx.effect(() => ctx.locale.register('bots', { en, zh }), 'ui-bots: dictionaries')
+  const connection = ctx.get('connection') as ConnectionHandle
+  const sharedClient = createSharedBotsClient(connection.rpc, {
+    subscribeConnectionGeneration: listener => connection.generation.subscribe(listener),
+  })
   const controller = new BotWorkspaceController(
     ctx.remote.bots,
     ctx.sessions,
@@ -32,7 +36,7 @@ export function apply(ctx: Context): void {
     () => ctx.locale.bind('bots')('groupDeliveryFailure'),
     undefined,
     key => ctx.locale.bind('bots')(key),
-    createSharedBotsClient((ctx.get('connection') as { readonly rpc: ClientConnectionRpc }).rpc),
+    sharedClient,
   )
 
   ctx.effect(() => {
