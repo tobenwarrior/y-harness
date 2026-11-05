@@ -107,15 +107,16 @@ function installSnapshotSessionController(ctx: Context): () => Promise<void> {
       throw new Error('shared Bot snapshot Session requests must include an id and cwd')
     }
     const selection = ctx.agentDefaultModel.currentSelection()
+    const cwd = request.cwd
     const handle = await ctx.agents.create({
       sessionId: request.sessionId,
       meta: { cwd: request.cwd, ...(request.agentPreset === undefined ? {} : { agentPreset: request.agentPreset }) },
       agentOptions: { provider: selection.provider, model: selection.model },
-      setup: request.agentPreset === SHARED_BOT_AGENT_PRESET
-        ? async (agentCtx) => {
+      ...(request.agentPreset === SHARED_BOT_AGENT_PRESET
+        ? { setup: async (agentCtx: Context) => {
           agentCtx.systemPrompt.variable('provider', () => selection.provider)
           agentCtx.systemPrompt.variable('model', () => selection.model)
-          agentCtx.systemPrompt.variable('cwd', () => request.cwd as string)
+          agentCtx.systemPrompt.variable('cwd', () => cwd)
           await agentCtx.inject(['tools', 'web', 'systemPrompt'], (scope) => {
             scope.systemPrompt.section({
               name: 'deployment:persona-prefix',
@@ -133,8 +134,8 @@ function installSnapshotSessionController(ctx: Context): () => Promise<void> {
               fetchMaxOutputChars: 200_000,
             })
           })
-        }
-        : undefined,
+        } }
+        : {}),
     })
     handles.push(handle)
     return { sessionId: handle.agent.id, agentPreset: request.agentPreset }
@@ -197,7 +198,8 @@ export async function apply(ctx: Context): Promise<void> {
       new AbortController().signal,
     )
     if (created === undefined) throw new Error('snapshot shared Bot Session was not returned')
-    shared = created
+    shared = ctx.agents.get(created.id)
+    if (shared === undefined) throw new Error('snapshot shared Bot Agent is unavailable')
   })
   ctx.on('llm/stream', (options, next) => {
     const stream = next()
@@ -205,14 +207,15 @@ export async function apply(ctx: Context): Promise<void> {
     return (async function* () {
       yield* stream
       if (sharedDriven) return
-      if (shared === undefined) throw new Error('snapshot shared Bot Session was not admitted')
+      const current = shared
+      if (current === undefined) throw new Error('snapshot shared Bot Session was not admitted')
       sharedDriven = true
       await ctx.agents.withoutInitiator(async () => {
-        shared.followup(createUserMessage({
+        current.followup(createUserMessage({
           content: [{ type: 'text', text: 'Search for the release source and summarize it with a citation.' }],
           source: { kind: 'user' },
         }))
-        await shared.whenIdle()
+        await current.whenIdle()
       })
     })()
   })
