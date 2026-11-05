@@ -289,7 +289,7 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
     const collaboratorGroupSection = collaboratorDialog.locator(`section[aria-label="${SHARED_GROUP_NAME}"]`)
     await collaboratorGroupSection.waitFor({ state: 'visible', timeout: 30_000 })
 
-    const ownerComposer = ownerGroupSection.getByRole('textbox', { name: 'Message Release room shared', exact: true })
+    const ownerComposer = ownerGroupSection.getByRole('combobox', { name: 'Message Release room shared', exact: true })
     await ownerComposer.fill(OWNER_SHARED_MESSAGE)
     await ownerDialog.getByRole('button', { name: 'Send to group', exact: true }).click()
     await expect.poll(() => adapter.requests.length, { timeout: 30_000 }).toBe(2)
@@ -297,7 +297,7 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
     await expect.poll(() => ownerTranscriptRows.filter({ hasText: OWNER_SHARED_MESSAGE }).count(), { timeout: 30_000 }).toBe(1)
     await expect.poll(() => ownerTranscriptRows.filter({ hasText: REPLY }).count(), { timeout: 30_000 }).toBe(2)
 
-    const collaboratorComposer = collaboratorGroupSection.getByRole('textbox', { name: 'Message Release room shared', exact: true })
+    const collaboratorComposer = collaboratorGroupSection.getByRole('combobox', { name: 'Message Release room shared', exact: true })
     await collaboratorComposer.fill(COLLABORATOR_SHARED_MESSAGE)
     await collaboratorDialog.getByRole('button', { name: 'Send to group', exact: true }).click()
     await expect.poll(() => adapter.requests.length, { timeout: 30_000 }).toBe(4)
@@ -309,6 +309,21 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
     await expect.poll(() => collaboratorTranscriptRows.filter({ hasText: OWNER_SHARED_MESSAGE }).count(), { timeout: 30_000 }).toBe(1)
     await expect.poll(() => collaboratorTranscriptRows.filter({ hasText: REPLY }).count(), { timeout: 30_000 }).toBe(4)
 
+    await collaboratorComposer.fill('@Sco')
+    await expect.poll(() => collaboratorComposer.evaluate((element) => {
+      const content = element.closest('[class*="shareDialogContent"]')
+      if (content === null) return false
+      const input = element.getBoundingClientRect()
+      const bounds = content.getBoundingClientRect()
+      return input.top >= bounds.top && input.bottom <= bounds.bottom
+    })).toBe(true)
+    await collaboratorGroupSection.getByRole('option', { name: /Scout/ }).click()
+    await collaboratorComposer.fill('@Scout Please check the release.')
+    await collaboratorDialog.getByRole('button', { name: 'Send to group', exact: true }).click()
+    await expect.poll(() => adapter.requests.length, { timeout: 30_000 }).toBe(5)
+    expect(JSON.stringify(adapter.requests[4])).toContain(String.raw`Your Bot name is \"Scout\"`)
+    await expect.poll(() => collaboratorTranscriptRows.filter({ hasText: '@Scout Please check the release.' }).count(), { timeout: 30_000 }).toBe(1)
+
     const attachmentInput = ownerGroupSection.locator('input[type="file"]')
     await attachmentInput.setInputFiles({
       name: SHARED_ATTACHMENT_NAME,
@@ -318,7 +333,7 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
     await expect.poll(() => ownerGroupSection.getByTitle(SHARED_ATTACHMENT_NAME, { exact: true }).count()).toBe(1)
     await ownerComposer.fill(OWNER_ATTACHMENT_MESSAGE)
     await ownerDialog.getByRole('button', { name: 'Send to group', exact: true }).click()
-    await expect.poll(() => adapter.requests.length, { timeout: 30_000 }).toBe(6)
+    await expect.poll(() => adapter.requests.length, { timeout: 30_000 }).toBe(7)
     await expect.poll(() => ownerTranscriptRows.filter({ hasText: OWNER_ATTACHMENT_MESSAGE }).count(), { timeout: 30_000 }).toBe(1)
     await expect.poll(() => ownerGroupSection.getByTitle(SHARED_ATTACHMENT_NAME, { exact: true }).count(), { timeout: 30_000 }).toBe(0)
 
@@ -346,7 +361,7 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
       name: 'standalone.txt', mimeType: 'text/plain', buffer: Buffer.from('file without a typed message'),
     })
     await ownerDialog.getByRole('button', { name: 'Send to group', exact: true }).click()
-    await expect.poll(() => adapter.requests.length, { timeout: 30_000 }).toBe(8)
+    await expect.poll(() => adapter.requests.length, { timeout: 30_000 }).toBe(9)
     await expect.poll(() => ownerTranscriptRows.filter({ hasText: 'standalone.txt' }).count(), { timeout: 30_000 }).toBe(1)
 
     await ownerGroupRow.click()
@@ -430,6 +445,10 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
     const restartedDialog = page.getByRole('dialog', { name: 'Shared with you', exact: true })
     await restartedDialog.waitFor({ state: 'visible', timeout: 15_000 })
     await expect.poll(() => restartedDialog.getByRole('button', { name: new RegExp(`^${SHARED_GROUP_NAME}`) }).count(), {
+      timeout: 30_000,
+    }).toBe(1)
+    await restartedDialog.getByRole('button', { name: new RegExp(`^${SHARED_GROUP_NAME}`) }).click()
+    await expect.poll(() => restartedDialog.locator('p').filter({ hasText: '@Scout Please check the release.' }).count(), {
       timeout: 30_000,
     }).toBe(1)
     expect(tripwire.pageErrors).toEqual([])

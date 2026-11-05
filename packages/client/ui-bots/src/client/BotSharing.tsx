@@ -12,6 +12,7 @@ import {
   IconTrashOutlineRegular,
   Input,
   Modal,
+  MenuSurface,
   RiskConfirmation,
   SegmentedControl,
   StateDot,
@@ -38,6 +39,7 @@ import type {
   BotSharedRosterFenceDiagnosticValue,
 } from '@yharness/bots/client'
 import { BotAvatar } from './BotAvatar.tsx'
+import { mentionQueryAt, resolveMentionTargets } from './bot-mentions.ts'
 import {
   BotGroupAttachments,
   BotGroupSentAttachments,
@@ -827,6 +829,8 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null)
   const [groupMessages, setGroupMessages] = useState<readonly BotGroupMessageView[]>([])
   const [groupDraft, setGroupDraft] = useState('')
+  const [groupMentionQuery, setGroupMentionQuery] = useState<string | null>(null)
+  const [groupMentionIndex, setGroupMentionIndex] = useState(0)
   const [groupAttachments, setGroupAttachments] = useState<readonly BotGroupAttachmentDraft[]>([])
   const [groupAttachmentError, setGroupAttachmentError] = useState<string | null>(null)
   const [groupWorking, setGroupWorking] = useState<'load' | 'create' | 'send' | null>(null)
@@ -868,10 +872,13 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
   const groupReadGenerationRef = useRef(0)
   const groupOperationGenerationRef = useRef(0)
   const groupDraftRevisionRef = useRef(0)
+  const groupInputRef = useRef<HTMLInputElement | null>(null)
+  const groupMentionSelectionsRef = useRef<readonly { readonly id: string; readonly name: string }[]>([])
   const groupInviteGenerationRef = useRef(0)
   const groupAttachmentsRef = useRef<readonly BotGroupAttachmentDraft[]>([])
   const groupAttachmentMessageIdRef = useRef<string | null>(null)
   const groupAttachmentDraftTextRef = useRef<string | null>(null)
+  const groupAttachmentTargetsRef = useRef<readonly string[] | undefined>(undefined)
   const createGroupGenerationRef = useRef(0)
   const pendingRefreshGenerationRef = useRef(0)
   const recoveryWorkingRef = useRef<string | null>(null)
@@ -969,6 +976,7 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
     groupAttachmentsRef.current = []
     groupAttachmentMessageIdRef.current = null
     groupAttachmentDraftTextRef.current = null
+    groupAttachmentTargetsRef.current = undefined
     setGroupAttachments([])
     setGroupAttachmentError(null)
   }
@@ -977,6 +985,7 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
     setGroupAttachmentError(null)
     groupAttachmentMessageIdRef.current = null
     groupAttachmentDraftTextRef.current = null
+    groupAttachmentTargetsRef.current = undefined
     setGroupAttachments(current => [...current, ...files.map(createBotGroupAttachmentDraft)])
   }
 
@@ -986,6 +995,7 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
     setGroupAttachmentError(null)
     groupAttachmentMessageIdRef.current = null
     groupAttachmentDraftTextRef.current = null
+    groupAttachmentTargetsRef.current = undefined
     setGroupAttachments(current => current.filter(attachment => attachment.id !== id))
   }
 
@@ -1017,6 +1027,9 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
       groupDraftRevisionRef.current += 1
       groupInviteGenerationRef.current += 1
       setGroupDraft('')
+      setGroupMentionQuery(null)
+      setGroupMentionIndex(0)
+      groupMentionSelectionsRef.current = []
       setGroupWorking(null)
       setGroupInvite(null)
       setGroupInviteCopied(false)
@@ -1060,6 +1073,9 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
     setMessageDrafts({})
     setMemoryDrafts({})
     setGroupDraft('')
+    setGroupMentionQuery(null)
+    setGroupMentionIndex(0)
+    groupMentionSelectionsRef.current = []
     if (preserveCodeRevision === undefined || codeRevisionRef.current <= preserveCodeRevision) {
       setCode('')
       codeRevisionRef.current += 1
@@ -1435,6 +1451,7 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
     messageId: BotGroupMessageIdType,
     text: string,
     auth: SharedDialogAuthContext,
+    targetBotIds?: readonly string[],
   ): Promise<void> => {
     const inspectGroup = auth.client.inspectGroup
     if (inspectGroup === undefined) throw new Error(t('sharedGroupRetryUnavailable'))
@@ -1450,7 +1467,9 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
     const principalId = auth.scope
     if (principalId === undefined || String(existing.groupId) !== groupId || existing.text !== text
       || existing.sender.kind !== 'user' || existing.sender.principalId === undefined
-      || String(existing.sender.principalId) !== principalId) {
+      || String(existing.sender.principalId) !== principalId
+      || (targetBotIds !== undefined && JSON.stringify([...(existing.targetBotIds ?? [])].map(String).sort())
+        !== JSON.stringify([...targetBotIds].sort()))) {
       throw new Error(t('sharedGroupRetryConflict'))
     }
   }
@@ -1934,13 +1953,14 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
     try {
       if (!isCurrentAuth(auth)) return
       const messageId = brandString<BotGroupMessageIdType>(pending.id)
-      await reconcileGroupMessage(pending.groupId, messageId, pending.text, auth)
+      await reconcileGroupMessage(pending.groupId, messageId, pending.text, auth, pending.targetBotIds)
       if (!isCurrentRecovery()) return
       if (!isCurrentAuth(auth)) return
       const result = await send({
         groupId: brandString<BotGroupIdType>(pending.groupId),
         text: pending.text,
         messageId,
+        ...(pending.targetBotIds === undefined ? {} : { targetBotIds: pending.targetBotIds.map(brandString<BotIdType>) }),
       })
       if (!isCurrentAuth(auth) || !isCurrentRecovery()) return
       if (result.ok) {
@@ -1988,6 +2008,16 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
     }
     const submittedRevision = groupDraftRevisionRef.current
     const submittedGroupId = groupId
+    const group = groups.find(candidate => String(candidate.id) === groupId)
+    if (group === undefined) return
+    const mentioned = resolveMentionTargets(draft, group.bots, groupMentionSelectionsRef.current)
+    if (mentioned === undefined) {
+      setError(t('sharedGroupMentionAmbiguous'))
+      return
+    }
+    const computedTargets = mentioned.length === 0 ? undefined : mentioned
+    const targetBotIds = groupAttachmentMessageIdRef.current === null
+      ? computedTargets : groupAttachmentTargetsRef.current
     const pendingMessageKey = attachments.length === 0 ? sharedGroupMessageKey(randomUUID(), submittedGroupId, draft) : undefined
     const operationGeneration = groupOperationGenerationRef.current + 1
     groupOperationGenerationRef.current = operationGeneration
@@ -2009,14 +2039,15 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
         const stableId = groupAttachmentMessageIdRef.current ?? `bot-group-message-${randomUUID()}`
         groupAttachmentMessageIdRef.current = stableId
         groupAttachmentDraftTextRef.current = draft
+        groupAttachmentTargetsRef.current = targetBotIds
         messageId = brandString<BotGroupMessageIdType>(stableId)
       } else {
         queue = getPendingGroupQueue(auth)
-        reservation = await queue.reserveMessage(pendingMessageKey ?? '', submittedGroupId, draft)
+        reservation = await queue.reserveMessage(pendingMessageKey ?? '', submittedGroupId, draft, targetBotIds)
         if (!isCurrentGroupOperation()) return
         messageId = brandString<BotGroupMessageIdType>(reservation.id)
         if (reservation.recovered) {
-          await reconcileGroupMessage(submittedGroupId, messageId, draft, auth)
+          await reconcileGroupMessage(submittedGroupId, messageId, draft, auth, targetBotIds)
           if (!isCurrentGroupOperation()) return
         }
       }
@@ -2026,10 +2057,12 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
         if (sendWithAttachments === undefined) throw new Error(t('sharedGroupAttachmentsUnavailable'))
         result = await sendWithAttachments({
           groupId: brandString<BotGroupIdType>(groupId), text: draft || t('groupAttachmentFile'), messageId, attachments,
+          ...(targetBotIds === undefined ? {} : { targetBotIds: targetBotIds.map(brandString<BotIdType>) }),
         })
       } else {
         if (send === undefined) throw new Error(t('sharedGroupSendFailed'))
-        result = await send({ groupId: brandString<BotGroupIdType>(groupId), text: draft, messageId })
+        result = await send({ groupId: brandString<BotGroupIdType>(groupId), text: draft, messageId,
+          ...(targetBotIds === undefined ? {} : { targetBotIds: targetBotIds.map(brandString<BotIdType>) }) })
       }
       if (!isCurrentAuth(auth) || selectedGroupIdRef.current !== submittedGroupId) return
       if (!isCurrentGroupOperation()) return
@@ -2050,7 +2083,10 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
         } else {
           clearGroupAttachments()
         }
-        if (groupDraftRevisionRef.current === submittedRevision) setGroupDraft('')
+        if (groupDraftRevisionRef.current === submittedRevision) {
+          setGroupDraft('')
+          groupMentionSelectionsRef.current = []
+        }
         await readGroup(submittedGroupId)
       } else if (result.error.code === 'gateway/forbidden') {
         requestRevalidation(true, result.error.message)
@@ -2077,6 +2113,30 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
 
   const selected = bots.find(bot => String(bot.id) === selectedBotId)
   const selectedGroup = groups.find(group => String(group.id) === selectedGroupId)
+  const mentionOptions = groupMentionQuery === null ? [] : (selectedGroup?.bots ?? [])
+    .filter(candidate => candidate.name.toLocaleLowerCase().includes(groupMentionQuery.toLocaleLowerCase()))
+  const activeMention = mentionOptions[groupMentionIndex]
+  const selectGroupMention = (candidate: BotGroupView['bots'][number]): void => {
+    const cursor = groupInputRef.current?.selectionStart ?? groupDraft.length
+    const match = /(?:^|\s)@([^\s@]*)$/.exec(groupDraft.slice(0, cursor))
+    const start = match === null ? cursor : cursor - (match[1]?.length ?? 0) - 1
+    const next = `${groupDraft.slice(0, start)}@${candidate.name} ${groupDraft.slice(cursor)}`
+    groupDraftRevisionRef.current += 1
+    groupAttachmentMessageIdRef.current = null
+    groupAttachmentDraftTextRef.current = null
+    groupAttachmentTargetsRef.current = undefined
+    groupMentionSelectionsRef.current = [
+      ...groupMentionSelectionsRef.current.filter(item => item.name.toLocaleLowerCase() !== candidate.name.toLocaleLowerCase()),
+      { id: String(candidate.id), name: candidate.name },
+    ]
+    setGroupDraft(next)
+    setGroupMentionQuery(null)
+    setGroupMentionIndex(0)
+    requestAnimationFrame(() => {
+      groupInputRef.current?.focus()
+      groupInputRef.current?.setSelectionRange(start + candidate.name.length + 2, start + candidate.name.length + 2)
+    })
+  }
   return (
     <>
       <Modal
@@ -2328,20 +2388,71 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
                       )}
                     </div>
                   )}
+                  {groupMentionQuery !== null && mentionOptions.length > 0 && (
+                    <MenuSurface className={css.mentionMenu} role="listbox" id={`${selectedGroup.id}-mentions`} aria-label={t('mentionBots')}>
+                      {mentionOptions.map((candidate, index) => (
+                        <button type="button" role="option" key={candidate.id}
+                          id={`${selectedGroup.id}-mention-${candidate.id}`}
+                          aria-selected={index === groupMentionIndex}
+                          className={clsx(css.mentionOption, index === groupMentionIndex && css.mentionOptionSelected)}
+                          onMouseDown={(event) => { event.preventDefault() }}
+                          onClick={() => { selectGroupMention(candidate) }}>
+                          <BotAvatar name={candidate.name} identity={candidate.identity} accent={candidate.accent}
+                            botId={String(candidate.id)} loadAvatar={undefined} size="small" />
+                          <span className={css.mentionOptionCopy}>
+                            <span className={css.mentionOptionName}>{candidate.name}</span>
+                            <span className={css.mentionOptionHint}>{t('mentionBotHint')}</span>
+                          </span>
+                        </button>
+                      ))}
+                    </MenuSurface>
+                  )}
                   <div className={css.sharedComposerTextRow}>
                     <Input
+                      ref={groupInputRef}
+                      role="combobox"
+                      aria-autocomplete="list"
+                      aria-expanded={groupMentionQuery !== null && mentionOptions.length > 0}
+                      aria-controls={groupMentionQuery !== null && mentionOptions.length > 0 ? `${selectedGroup.id}-mentions` : undefined}
+                      aria-activedescendant={groupMentionQuery !== null && activeMention !== undefined
+                        ? `${selectedGroup.id}-mention-${activeMention.id}` : undefined}
                       value={groupDraft}
                       placeholder={t('sharedGroupMessagePlaceholder', { name: selectedGroup.name })}
                       aria-label={t('sharedGroupMessagePlaceholder', { name: selectedGroup.name })}
+                      onFocus={(event) => { event.currentTarget.scrollIntoView?.({ block: 'nearest' }) }}
                       onChange={(event) => {
                         groupDraftRevisionRef.current += 1
                         if (groupAttachmentMessageIdRef.current !== null && groupAttachmentDraftTextRef.current !== null
                           && event.currentTarget.value.trim() !== groupAttachmentDraftTextRef.current) {
                           groupAttachmentMessageIdRef.current = null
                           groupAttachmentDraftTextRef.current = null
+                          groupAttachmentTargetsRef.current = undefined
                         }
                         setGroupAttachmentError(null)
                         setGroupDraft(event.currentTarget.value)
+                        setGroupMentionQuery(mentionQueryAt(
+                          event.currentTarget.value, event.currentTarget.selectionStart ?? event.currentTarget.value.length,
+                        ))
+                        setGroupMentionIndex(0)
+                      }}
+                      onBlur={() => { setGroupMentionQuery(null) }}
+                      onKeyDown={(event) => {
+                        if (event.nativeEvent.isComposing) {
+                          event.preventDefault()
+                          return
+                        }
+                        if (groupMentionQuery !== null && mentionOptions.length > 0 && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
+                          event.preventDefault()
+                          setGroupMentionIndex(current => event.key === 'ArrowDown'
+                            ? (current + 1) % mentionOptions.length : (current - 1 + mentionOptions.length) % mentionOptions.length)
+                        } else if (groupMentionQuery !== null && mentionOptions.length > 0 && (event.key === 'Enter' || event.key === 'Tab')) {
+                          event.preventDefault()
+                          const candidate = mentionOptions[groupMentionIndex]
+                          if (candidate !== undefined) selectGroupMention(candidate)
+                        } else if (event.key === 'Escape' && groupMentionQuery !== null) {
+                          event.preventDefault()
+                          setGroupMentionQuery(null)
+                        }
                       }}
                     />
                     <Button

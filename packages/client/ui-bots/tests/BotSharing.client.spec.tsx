@@ -856,6 +856,35 @@ describe('shared Bot collaboration surfaces', () => {
     expect(screen.getByText('release-notes.txt')).toBeTruthy()
   })
 
+  it('keeps a mentioned Bot and message id when retrying a shared attachment', async () => {
+    const member = { id: BotId(bot.id), name: bot.name, identity: bot.identity, accent: bot.accent, state: 'active' as const, availability: 'idle' as const }
+    const group = {
+      id: brandString<BotGroupId>('bot-group-target-attachment'), name: 'Target attachment',
+      botIds: [BotId(bot.id), BotId(analystBot.id)],
+      bots: [member, { ...member, id: BotId(analystBot.id), name: analystBot.name }], createdAt: 1, updatedAt: 1,
+    } satisfies BotGroupView
+    const send = vi.fn<NonNullable<SharedBotsClient['sendGroupMessageWithAttachments']>>()
+      .mockResolvedValueOnce({ ok: false, error: { code: 'gateway/unavailable', message: 'Try again', details: {} } })
+      .mockResolvedValueOnce({ ok: true, value: { messageId: brandString<BotGroupMessageId>('bot-group-message-target-attachment'), status: 'accepted', deliveries: [] } })
+    const client = sharedClient({
+      listGroups: vi.fn().mockResolvedValue({ ok: true, value: { groups: [group] } }),
+      inspectGroup: vi.fn().mockResolvedValue({ ok: true, value: { group, messages: [] } }),
+      sendGroupMessageWithAttachments: send,
+    })
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+    const input = await screen.findByPlaceholderText('Message Target attachment')
+    fireEvent.change(input, { target: { value: '@Analyst check this' } })
+    fireEvent.change(screen.getByLabelText('Choose files'), { target: { files: [new File(['x'], 'notes.txt', { type: 'text/plain' })] } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send to group' }))
+    await waitFor(() => { expect(screen.getByRole('alert').textContent).toContain('Try again') })
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
+    await waitFor(() => { expect(send).toHaveBeenCalledTimes(2) })
+    expect(send.mock.calls[0]?.[0]).toMatchObject({ targetBotIds: [BotId(analystBot.id)] })
+    expect(send.mock.calls[1]?.[0]).toMatchObject({
+      messageId: send.mock.calls[0]?.[0].messageId, targetBotIds: [BotId(analystBot.id)],
+    })
+  })
+
   it('explains the owner-only group invite after a collaborator is refused', async () => {
     const group = {
       id: brandString<BotGroupId>('bot-group-collaborator'),
@@ -1448,6 +1477,82 @@ describe('shared Bot collaboration surfaces', () => {
     })
   })
 
+  it('lets a collaborator mention one Bot and sends only to that Bot', async () => {
+    const member = { id: BotId(bot.id), name: bot.name, identity: bot.identity, accent: bot.accent, state: 'active' as const, availability: 'idle' as const }
+    const group = {
+      id: brandString<BotGroupId>('bot-group-mentions'), name: 'Mention room',
+      botIds: [BotId(bot.id), BotId(analystBot.id)],
+      bots: [member, { ...member, id: BotId(analystBot.id), name: analystBot.name }], createdAt: 1, updatedAt: 1,
+    } satisfies BotGroupView
+    const sendGroupMessage = vi.fn().mockResolvedValue({
+      ok: true, value: { messageId: brandString<BotGroupMessageId>('bot-group-message-mention'), status: 'accepted', deliveries: [] },
+    })
+    const client = sharedClient({
+      listGroups: vi.fn().mockResolvedValue({ ok: true, value: { groups: [group] } }),
+      inspectGroup: vi.fn().mockResolvedValue({ ok: true, value: { group, messages: [] } }),
+      sendGroupMessage,
+    })
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+    const input = await screen.findByPlaceholderText('Message Mention room')
+    fireEvent.change(input, { target: { value: '@Ana' } })
+    fireEvent.click(await screen.findByRole('option', { name: /Analyst/ }))
+    fireEvent.change(input, { target: { value: '@Analyst please check' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send to group' }))
+    await waitFor(() => {
+      expect(sendGroupMessage).toHaveBeenCalledWith(expect.objectContaining({
+        groupId: group.id, text: '@Analyst please check', targetBotIds: [BotId(analystBot.id)],
+      }))
+    })
+  })
+
+  it('selects a shared-group mention with the keyboard without sending early', async () => {
+    const member = { id: BotId(bot.id), name: bot.name, identity: bot.identity, accent: bot.accent, state: 'active' as const, availability: 'idle' as const }
+    const group = {
+      id: brandString<BotGroupId>('bot-group-keyboard-mention'), name: 'Keyboard room',
+      botIds: [BotId(bot.id), BotId(analystBot.id)],
+      bots: [member, { ...member, id: BotId(analystBot.id), name: analystBot.name }], createdAt: 1, updatedAt: 1,
+    } satisfies BotGroupView
+    const sendGroupMessage = vi.fn()
+    const client = sharedClient({
+      listGroups: vi.fn().mockResolvedValue({ ok: true, value: { groups: [group] } }),
+      inspectGroup: vi.fn().mockResolvedValue({ ok: true, value: { group, messages: [] } }), sendGroupMessage,
+    })
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+    const input = await screen.findByPlaceholderText('Message Keyboard room')
+    fireEvent.change(input, { target: { value: '@Ana' } })
+    const option = await screen.findByRole('option', { name: /Analyst/ })
+    expect(input.getAttribute('role')).toBe('combobox')
+    expect(input.getAttribute('aria-expanded')).toBe('true')
+    expect(input.getAttribute('aria-activedescendant')).toBe(option.id)
+    expect(fireEvent.keyDown(input, { key: 'Enter', isComposing: true })).toBe(false)
+    expect(sendGroupMessage).not.toHaveBeenCalled()
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect((input as HTMLInputElement).value).toBe('@Analyst ')
+    expect(input.getAttribute('aria-expanded')).toBe('false')
+    expect(screen.queryByRole('listbox', { name: 'Mention a Bot' })).toBeNull()
+    expect(sendGroupMessage).not.toHaveBeenCalled()
+  })
+
+  it('does not broadcast an incomplete mention of a Bot in the shared group', async () => {
+    const member = { id: BotId(bot.id), name: bot.name, identity: bot.identity, accent: bot.accent, state: 'active' as const, availability: 'idle' as const }
+    const group = {
+      id: brandString<BotGroupId>('bot-group-partial-mention'), name: 'Partial mention',
+      botIds: [BotId(bot.id), BotId(analystBot.id)],
+      bots: [member, { ...member, id: BotId(analystBot.id), name: analystBot.name }], createdAt: 1, updatedAt: 1,
+    } satisfies BotGroupView
+    const sendGroupMessage = vi.fn()
+    const client = sharedClient({
+      listGroups: vi.fn().mockResolvedValue({ ok: true, value: { groups: [group] } }),
+      inspectGroup: vi.fn().mockResolvedValue({ ok: true, value: { group, messages: [] } }), sendGroupMessage,
+    })
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+    const input = await screen.findByPlaceholderText('Message Partial mention')
+    fireEvent.change(input, { target: { value: '@Ana please check' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send to group' }))
+    await waitFor(() => { expect(screen.getByRole('alert').textContent).toContain('Choose the Bot') })
+    expect(sendGroupMessage).not.toHaveBeenCalled()
+  })
+
   it('assigns a fresh delivery id when the same group text is sent again', async () => {
     const member = { id: BotId(bot.id), name: bot.name, identity: bot.identity, accent: bot.accent, state: 'active' as const, availability: 'idle' as const }
     const group = {
@@ -1562,6 +1667,55 @@ describe('shared Bot collaboration surfaces', () => {
     } finally {
       vi.restoreAllMocks()
     }
+  })
+
+  it('recovers a targeted message to the original Bot after it was renamed', async () => {
+    const member = { id: BotId(bot.id), name: bot.name, identity: bot.identity, accent: bot.accent, state: 'active' as const, availability: 'idle' as const }
+    const group = {
+      id: brandString<BotGroupId>('bot-group-target-recovery'), name: 'Recovery room',
+      botIds: [BotId(bot.id), BotId(analystBot.id)],
+      bots: [member, { ...member, id: BotId(analystBot.id), name: 'Renamed analyst' }], createdAt: 1, updatedAt: 1,
+    } satisfies BotGroupView
+    const queue = createSharedGroupPendingQueue('principal-member')
+    const pending = await queue.reserveMessage('targeted-recovery', String(group.id), '@Analyst please check', [analystBot.id])
+    const sendGroupMessage = vi.fn().mockResolvedValue({
+      ok: true, value: { messageId: brandString<BotGroupMessageId>(pending.id), status: 'accepted', deliveries: [] },
+    })
+    const client = sharedClient({
+      listGroups: vi.fn().mockResolvedValue({ ok: true, value: { groups: [group] } }),
+      inspectGroup: vi.fn().mockResolvedValue({ ok: true, value: { group, messages: [] } }), sendGroupMessage,
+    })
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+    await waitFor(() => { expect(screen.getByText('Pending group messages')).toBeTruthy() })
+    fireEvent.click(screen.getByRole('button', { name: 'Recover' }))
+    await waitFor(() => { expect(sendGroupMessage).toHaveBeenCalledWith(expect.objectContaining({
+      messageId: pending.id, text: '@Analyst please check', targetBotIds: [BotId(analystBot.id)],
+    })) })
+  })
+
+  it('refuses to recover a targeted message whose saved recipients differ on the server', async () => {
+    const member = { id: BotId(bot.id), name: bot.name, identity: bot.identity, accent: bot.accent, state: 'active' as const, availability: 'idle' as const }
+    const group = {
+      id: brandString<BotGroupId>('bot-group-target-mismatch'), name: 'Mismatch room',
+      botIds: [BotId(bot.id), BotId(analystBot.id)],
+      bots: [member, { ...member, id: BotId(analystBot.id), name: analystBot.name }], createdAt: 1, updatedAt: 1,
+    } satisfies BotGroupView
+    const queue = createSharedGroupPendingQueue('principal-member')
+    const pending = await queue.reserveMessage('target-mismatch', String(group.id), '@Analyst check', [analystBot.id])
+    const sendGroupMessage = vi.fn()
+    const client = sharedClient({
+      listGroups: vi.fn().mockResolvedValue({ ok: true, value: { groups: [group] } }),
+      inspectGroup: vi.fn().mockResolvedValue({ ok: true, value: { group, messages: [{
+        id: brandString<BotGroupMessageId>(pending.id), groupId: group.id,
+        sender: { kind: 'user', principalId: BotPrincipalId('principal-member') },
+        text: '@Analyst check', targetBotIds: [BotId(bot.id)], createdAt: 2,
+      }] } }), sendGroupMessage,
+    })
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+    await waitFor(() => { expect(screen.getByText('Pending group messages')).toBeTruthy() })
+    fireEvent.click(screen.getByRole('button', { name: 'Recover' }))
+    await waitFor(() => { expect(screen.getByRole('alert').textContent).toContain('does not match the current room details') })
+    expect(sendGroupMessage).not.toHaveBeenCalled()
   })
 
   it('refuses to resend a recovered message owned by another principal', async () => {

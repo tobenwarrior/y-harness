@@ -438,6 +438,7 @@ export const en = {
   groupAttachmentsUnavailable: 'Attachments are not available in this group yet. Your draft is still here.',
   mentionBots: 'Mention a Bot',
   mentionBotHint: 'Only this Bot will receive the message',
+  sharedGroupMentionAmbiguous: 'Choose the Bot from the mention list before sending.',
   groupReplyWorking: 'Waiting for Bot replies…',
   groupDeliveryFailure: 'Some Bots could not receive this message. Try again.',
   groupRetryUnavailable: 'This group action could not start because retry information is unavailable.',

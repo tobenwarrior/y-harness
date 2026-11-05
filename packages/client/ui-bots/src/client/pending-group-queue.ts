@@ -1,6 +1,7 @@
 import { randomUUID } from '@yharness/util-crypto'
 
 const STORAGE_PREFIX = 'yharness.client-ui-bots.shared-group-pending.v2'
+const TARGETED_STORAGE_PREFIX = 'yharness.client-ui-bots.shared-group-pending.v3'
 const LOCK_PREFIX = 'yharness.client-ui-bots.shared-group-pending-lock'
 const PENDING_TTL_MS = 24 * 60 * 60 * 1000
 const MAX_TEXT_LENGTH = 16_384
@@ -15,6 +16,10 @@ export class SharedGroupPendingQueueFullError extends Error {
     super('Shared-group retry storage quota reached')
     this.name = 'SharedGroupPendingQueueFullError'
   }
+}
+
+class SharedGroupPendingRecipientConflictError extends Error {
+  constructor() { super('Shared-group recipients changed during retry') }
 }
 
 interface StorageLike {
@@ -42,13 +47,14 @@ interface PendingCreationRecord {
 }
 
 interface PendingMessageRecord {
-  readonly version: 1
+  readonly version: 1 | 2
   readonly kind: 'message'
   readonly status: 'pending' | 'expired'
   readonly id: string
   readonly operationHash: string
   readonly groupId: string
   readonly text?: string
+  readonly targetBotIds?: readonly string[]
   readonly createdAt: number
   readonly expiresAt: number
 }
@@ -73,6 +79,8 @@ export interface SharedPendingGroupMessage {
   readonly groupId: string
   /** Present for an interrupted message; completed records are removed. */
   readonly text?: string
+  /** Exact recipients retained for a targeted retry. */
+  readonly targetBotIds?: readonly string[]
   readonly createdAt: number
   readonly expiresAt: number
   readonly expired: boolean
@@ -101,7 +109,9 @@ export interface SharedGroupPendingQueue {
   /** Remove a completed creation record after the server accepts it. */
   completeCreation(operationHash: string, id: string): Promise<void>
   /** Reserve or recover one stable message id for a group message operation. */
-  reserveMessage(operationKey: string, groupId: string, text: string): Promise<SharedPendingGroupReservation>
+  reserveMessage(
+    operationKey: string, groupId: string, text: string, targetBotIds?: readonly string[],
+  ): Promise<SharedPendingGroupReservation>
   /** Remove one message record only when its operation hash and id still match. */
   removeMessage(operationHash: string, id: string): Promise<void>
   /** Remove a completed message record after the server accepts it. */
@@ -122,13 +132,14 @@ function isSafeId(value: unknown): value is string {
 }
 
 function parseRecord(value: unknown): PendingRecord | undefined {
-  if (!isRecord(value) || value.version !== 1 || !isSafeId(value.id)
+  if (!isRecord(value) || (value.version !== 1 && value.version !== 2) || !isSafeId(value.id)
     || typeof value.operationHash !== 'string' || !/^[0-9a-f-]{8,128}$/.test(value.operationHash)
     || !isSafeTimestamp(value.createdAt) || !isSafeTimestamp(value.expiresAt) || value.expiresAt < value.createdAt) return undefined
   const status = value.status === undefined ? 'pending' : value.status
   if (status !== 'pending' && status !== 'expired') return undefined
   if (value.completedAt !== undefined) return undefined
   if (value.kind === 'creation') {
+    if (value.version !== 1) return undefined
     if (typeof value.name !== 'string' || value.name.trim() === '' || value.name.length > 256
       || !Array.isArray(value.botIds) || value.botIds.length < 2 || value.botIds.length > 6) return undefined
     const botIds: string[] = []
@@ -149,17 +160,27 @@ function parseRecord(value: unknown): PendingRecord | undefined {
     }
   }
   if (value.kind !== 'message' || typeof value.groupId !== 'string' || !isSafeId(value.groupId)) return undefined
+  let targetBotIds: string[] | undefined
+  if (value.version === 2) {
+    if (!Array.isArray(value.targetBotIds) || value.targetBotIds.length === 0 || value.targetBotIds.length > 6) return undefined
+    targetBotIds = []
+    for (const id of value.targetBotIds) {
+      if (!isSafeId(id) || targetBotIds.includes(id)) return undefined
+      targetBotIds.push(id)
+    }
+  }
   if (value.text !== undefined && (typeof value.text !== 'string' || value.text.length === 0 || value.text.length > MAX_TEXT_LENGTH)) return undefined
   if (status === 'pending' && value.text === undefined) return undefined
   if (status === 'expired' && value.text !== undefined) return undefined
   return {
-    version: 1,
+    version: value.version,
     kind: 'message',
     status,
     id: value.id,
     operationHash: value.operationHash,
     groupId: value.groupId,
     ...(typeof value.text === 'string' ? { text: value.text } : {}),
+    ...(targetBotIds === undefined ? {} : { targetBotIds }),
     createdAt: value.createdAt,
     expiresAt: value.expiresAt,
   }
@@ -188,12 +209,12 @@ function encodeScope(scope: string): string {
   return encodeURIComponent(scope)
 }
 
-function scopePrefix(scope: string): string {
-  return `${STORAGE_PREFIX}.${encodeScope(scope)}`
+function scopePrefix(scope: string, targeted = false): string {
+  return `${targeted ? TARGETED_STORAGE_PREFIX : STORAGE_PREFIX}.${encodeScope(scope)}`
 }
 
-function recordKey(scope: string, kind: PendingRecord['kind'], operationHash: string): string {
-  return `${scopePrefix(scope)}.${kind}.${operationHash}`
+function recordKey(scope: string, kind: PendingRecord['kind'], operationHash: string, targeted = false): string {
+  return `${scopePrefix(scope, targeted)}.${kind}.${operationHash}`
 }
 
 function operationLockKey(scope: string, kind: PendingRecord['kind'], operationHash: string): string {
@@ -236,6 +257,7 @@ function messageView(record: PendingMessageRecord): SharedPendingGroupMessage {
     id: record.id,
     groupId: record.groupId,
     ...(record.status === 'pending' && record.text !== undefined ? { text: record.text } : {}),
+    ...(record.targetBotIds === undefined ? {} : { targetBotIds: [...record.targetBotIds] }),
     createdAt: record.createdAt,
     expiresAt: record.expiresAt,
     expired: record.status === 'expired',
@@ -260,7 +282,8 @@ export function createSharedGroupPendingQueue(scope: string): SharedGroupPending
     try {
       return await locks.request(name, work)
     } catch (cause: unknown) {
-      if (!(cause instanceof SharedGroupPendingQueueFullError)) healthy = false
+      if (!(cause instanceof SharedGroupPendingQueueFullError)
+        && !(cause instanceof SharedGroupPendingRecipientConflictError)) healthy = false
       throw cause
     }
   }
@@ -278,7 +301,9 @@ export function createSharedGroupPendingQueue(scope: string): SharedGroupPending
     const raw = storage.getItem(key)
     if (raw === null) return undefined
     try {
-      return parseRecord(JSON.parse(raw))
+      const record = parseRecord(JSON.parse(raw))
+      const targeted = key.startsWith(`${scopePrefix(scope, true)}.`)
+      return record !== undefined && (record.version === 2) === targeted ? record : undefined
     } catch {
       return undefined
     }
@@ -295,7 +320,7 @@ export function createSharedGroupPendingQueue(scope: string): SharedGroupPending
   }
 
   const writeRecord = (record: PendingRecord): void => {
-    write(recordKey(scope, record.kind, record.operationHash), record)
+    write(recordKey(scope, record.kind, record.operationHash, record.version === 2), record)
   }
 
   const ensureCapacity = (key: string): void => {
@@ -303,7 +328,7 @@ export function createSharedGroupPendingQueue(scope: string): SharedGroupPending
     let count = 0
     for (let index = 0; index < storage.length; index += 1) {
       const candidate = storage.key(index)
-      if (candidate !== null && candidate.startsWith(`${scopePrefix(scope)}.`)) count += 1
+      if (candidate !== null && (candidate.startsWith(`${scopePrefix(scope)}.`) || candidate.startsWith(`${scopePrefix(scope, true)}.`))) count += 1
     }
     if (count >= SHARED_GROUP_PENDING_QUEUE_MAX_RECORDS && storage.getItem(key) === null) {
       throw new SharedGroupPendingQueueFullError()
@@ -316,12 +341,14 @@ export function createSharedGroupPendingQueue(scope: string): SharedGroupPending
     const keys: string[] = []
     for (let index = 0; index < storage.length; index += 1) {
       const key = storage.key(index)
-      if (key !== null && key.startsWith(`${scopePrefix(scope)}.`)) keys.push(key)
+      if (key !== null && (key.startsWith(`${scopePrefix(scope)}.`) || key.startsWith(`${scopePrefix(scope, true)}.`))) keys.push(key)
     }
     for (const key of keys) {
       const record = read(key)
       if (record === undefined) {
-        if (read(key) === undefined) remove(key)
+        if (read(key) !== undefined) continue
+        if (key.startsWith(`${scopePrefix(scope, true)}.`)) throw new Error('Shared-group targeted retry record is invalid')
+        remove(key)
       } else if (record.status === 'pending' && record.expiresAt <= now) {
         if (JSON.stringify(read(key)) !== JSON.stringify(record)) continue
         if (record.kind === 'creation') {
@@ -355,7 +382,7 @@ export function createSharedGroupPendingQueue(scope: string): SharedGroupPending
       const records: SharedPendingGroupMessage[] = []
       for (let index = 0; index < storage.length; index += 1) {
         const key = storage.key(index)
-        if (key === null || !key.startsWith(`${scopePrefix(scope)}.message.`)) continue
+        if (key === null || !(key.startsWith(`${scopePrefix(scope)}.message.`) || key.startsWith(`${scopePrefix(scope, true)}.message.`))) continue
         const record = read(key)
         if (record?.kind === 'message') records.push(messageView(record))
       }
@@ -402,26 +429,35 @@ export function createSharedGroupPendingQueue(scope: string): SharedGroupPending
       if (current?.kind === 'creation' && current.id === id) remove(key)
       return Promise.resolve()
     }),
-    reserveMessage: async (operationKey, groupId, text) => {
+    reserveMessage: async (operationKey, groupId, text, targetBotIds) => {
+      const targeted = targetBotIds !== undefined && targetBotIds.length > 0
+      const canonicalTargets = targeted ? [...new Set(targetBotIds)].sort() : undefined
+      if (canonicalTargets !== undefined && (canonicalTargets.length !== (targetBotIds?.length ?? 0)
+        || canonicalTargets.length > 6 || !canonicalTargets.every(isSafeId))) throw new Error('Shared-group recipients are invalid')
       const hash = await operationHash(operationKey)
       return withCatalogAndOperationLock('message', hash, async () => {
         await prune()
-        const key = recordKey(scope, 'message', hash)
+        const key = recordKey(scope, 'message', hash, targeted)
         const current = read(key)
+        const other = read(recordKey(scope, 'message', hash, !targeted))
+        if (other !== undefined) throw new SharedGroupPendingRecipientConflictError()
         const now = Date.now()
         if (current?.kind === 'message' && current.groupId === groupId
+          && JSON.stringify(current.targetBotIds) === JSON.stringify(canonicalTargets)
           && (current.status === 'expired' || current.text === text)) {
           return { operationHash: hash, id: current.id, recovered: true, expired: current.status === 'expired' }
         }
+        if (targeted && current !== undefined) throw new SharedGroupPendingRecipientConflictError()
         ensureCapacity(key)
         const record: PendingMessageRecord = {
-          version: 1,
+          version: targeted ? 2 : 1,
           kind: 'message',
           status: 'pending',
           id: `bot-group-message-${randomUUID()}`,
           operationHash: hash,
           groupId,
           text,
+          ...(canonicalTargets === undefined ? {} : { targetBotIds: canonicalTargets }),
           createdAt: now,
           expiresAt: now + PENDING_TTL_MS,
         }
@@ -430,15 +466,19 @@ export function createSharedGroupPendingQueue(scope: string): SharedGroupPending
       })
     },
     removeMessage: (hash, id) => withCatalogAndOperationLock('message', hash, () => {
-      const key = recordKey(scope, 'message', hash)
-      const current = read(key)
-      if (current?.kind === 'message' && current.id === id) remove(key)
+      for (const targeted of [false, true]) {
+        const key = recordKey(scope, 'message', hash, targeted)
+        const current = read(key)
+        if (current?.kind === 'message' && current.id === id) remove(key)
+      }
       return Promise.resolve()
     }),
     completeMessage: (hash, id) => withCatalogAndOperationLock('message', hash, () => {
-      const key = recordKey(scope, 'message', hash)
-      const current = read(key)
-      if (current?.kind === 'message' && current.id === id) remove(key)
+      for (const targeted of [false, true]) {
+        const key = recordKey(scope, 'message', hash, targeted)
+        const current = read(key)
+        if (current?.kind === 'message' && current.id === id) remove(key)
+      }
       return Promise.resolve()
     }),
   }

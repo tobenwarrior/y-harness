@@ -24,6 +24,7 @@ import {
   createBotGroupAttachmentDraft,
   releaseBotGroupAttachment,
 } from './BotGroupAttachments.tsx'
+import { mentionQueryAt, mentionTargets } from './bot-mentions.ts'
 import { BotMemoryManager } from './BotMemoryManager.tsx'
 import { BotSkillsManager } from './BotSkillsManager.tsx'
 import { BotRoutineManager } from './BotRoutineManager.tsx'
@@ -459,22 +460,6 @@ function EditGroupDialog({ open, onClose, onUpdate, group, bots, error, t }: {
       </div>
     </Modal>
   )
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-}
-
-function mentionQueryAt(text: string, cursor: number): string | null {
-  const match = /(?:^|\s)@([^\s@]*)$/.exec(text.slice(0, cursor))
-  return match === null ? null : match[1] ?? ''
-}
-
-function mentionTargets(text: string, bots: readonly BotSummary[]): readonly string[] {
-  return bots.flatMap((bot) => {
-    const pattern = new RegExp(`(?:^|\\s)@${escapeRegExp(bot.name)}(?=$|[\\s.,!?;:])`, 'iu')
-    return pattern.test(text) ? [bot.id] : []
-  })
 }
 
 function deliveryStatusText(

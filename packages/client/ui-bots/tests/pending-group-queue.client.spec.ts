@@ -57,6 +57,50 @@ describe('shared-group browser retry queue', () => {
     expect(records.map(record => record.name).sort()).toEqual(['Launch room', 'Research room', 'Writing room'])
   })
 
+  it('retains exact mentioned Bot recipients when a shared message is retried', async () => {
+    const first = createSharedGroupPendingQueue('principal-mentions')
+    const saved = await first.reserveMessage('mention-action', 'bot-group-room', '@Scout please check', ['bot-scout'])
+    const reloaded = createSharedGroupPendingQueue('principal-mentions')
+    await expect(reloaded.listMessages()).resolves.toMatchObject([{
+      id: saved.id, text: '@Scout please check', targetBotIds: ['bot-scout'],
+    }])
+    const retried = await reloaded.reserveMessage('mention-action', 'bot-group-room', '@Scout please check', ['bot-scout'])
+    expect(retried).toMatchObject({ id: saved.id, recovered: true })
+    const keys = Array.from({ length: localStorage.length }, (_, index) => localStorage.key(index))
+    expect(keys.some(key => key?.includes('shared-group-pending.v3') === true)).toBe(true)
+  })
+
+  it('does not change recipients or downgrade a targeted retry into a broadcast', async () => {
+    const queue = createSharedGroupPendingQueue('principal-target-consistency')
+    const original = await queue.reserveMessage('same-operation', 'bot-group-room', '@Scout', ['bot-scout'])
+    await expect(queue.reserveMessage('same-operation', 'bot-group-room', '@Scout', ['bot-analyst']))
+      .rejects.toThrow('recipients changed')
+    await expect(queue.reserveMessage('same-operation', 'bot-group-room', '@Scout'))
+      .rejects.toThrow('recipients changed')
+    await expect(queue.listMessages()).resolves.toMatchObject([{ id: original.id, targetBotIds: ['bot-scout'] }])
+  })
+
+  it('retains a malformed targeted retry instead of silently dropping its recipients', async () => {
+    const key = 'yharness.client-ui-bots.shared-group-pending.v3.principal-invalid-target.message.deadbeef'
+    const raw = JSON.stringify({ version: 2, kind: 'message', id: 'bot-group-message-one', operationHash: 'deadbeef',
+      groupId: 'bot-group-room', text: '@Scout', targetBotIds: [], createdAt: 1, expiresAt: 2 })
+    localStorage.setItem(key, raw)
+    const queue = createSharedGroupPendingQueue('principal-invalid-target')
+    await expect(queue.listMessages()).rejects.toThrow('targeted retry record is invalid')
+    expect(localStorage.getItem(key)).toBe(raw)
+  })
+
+  it('keeps existing broadcast retries visible alongside targeted retries', async () => {
+    const queue = createSharedGroupPendingQueue('principal-target-compatibility')
+    const broadcast = await queue.reserveMessage('broadcast', 'bot-group-room', 'Hello everyone')
+    const targeted = await queue.reserveMessage('targeted', 'bot-group-room', '@Scout', ['bot-scout'])
+    const pending = await queue.listMessages()
+    expect(pending.find(item => item.id === broadcast.id)).not.toHaveProperty('targetBotIds')
+    expect(pending.find(item => item.id === targeted.id)).toMatchObject({ targetBotIds: ['bot-scout'] })
+    await queue.completeMessage(targeted.operationHash, targeted.id)
+    await expect(queue.listMessages()).resolves.toMatchObject([{ id: broadcast.id }])
+  })
+
   it('keeps intentional same-content actions independent across tabs', async () => {
     const firstTab = createSharedGroupPendingQueue('principal-action-recovery')
     const secondTab = createSharedGroupPendingQueue('principal-action-recovery')
