@@ -210,8 +210,10 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
       await page.getByRole('button', { name: 'Create a shared group', exact: true }).click()
       const dialog = page.getByRole('dialog', { name: 'Shared with you', exact: true })
       await dialog.waitFor({ state: 'visible', timeout: 15_000 })
-      await dialog.getByRole('status').waitFor({ state: 'visible', timeout: 30_000 })
-      await expect.poll(() => dialog.getByRole('status').count(), { timeout: 30_000 }).toBe(0)
+      // The owner bootstrap status is transient. The Bot buttons are the
+      // durable readiness signal needed by the next create/invite actions.
+      await dialog.getByRole('button', { name: new RegExp(`^${firstBot.name}\\b`) }).waitFor({ state: 'visible', timeout: 30_000 })
+      await dialog.getByRole('button', { name: new RegExp(`^${secondBot.name}\\b`) }).waitFor({ state: 'visible', timeout: 30_000 })
       return dialog
     }
 
@@ -224,8 +226,6 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
     }
 
     const ownerDialog = await openOwnerDialog()
-    await ownerDialog.getByRole('button', { name: new RegExp(`^${firstBot.name}\\b`) }).waitFor({ state: 'visible', timeout: 30_000 })
-    await ownerDialog.getByRole('button', { name: new RegExp(`^${secondBot.name}\\b`) }).waitFor({ state: 'visible', timeout: 30_000 })
 
     const collaboratorChiefInvite = await scaffold.ctx.bots.createShareInvite({ botId: firstBot.id, role: 'collaborator' })
     const collaboratorOrbitInvite = await scaffold.ctx.bots.createShareInvite({ botId: secondBot.id, role: 'collaborator' })

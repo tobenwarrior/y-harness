@@ -7,6 +7,7 @@
   - button "Bot templates"
   - button "New bot"
   - button "Join a shared bot"
+  - button "Create a shared group"
   - textbox "Search bots"
   - region "General":
     - heading "General" [level=2]
