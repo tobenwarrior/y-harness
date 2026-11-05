@@ -1780,7 +1780,7 @@ export class SharedBotGroupService {
         || expectedUpdatedAt === undefined
         || current.error !== expectedError
         || current.updatedAt !== expectedUpdatedAt
-        || current.error?.startsWith(SHARED_GROUP_OPERATOR_RECOVERY_ERROR_PREFIX) !== true) {
+        || !current.error.startsWith(SHARED_GROUP_OPERATOR_RECOVERY_ERROR_PREFIX)) {
         return { value: false, next: stored }
       }
       const now = this.now()

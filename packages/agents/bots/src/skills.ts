@@ -52,7 +52,7 @@ function compareNames(left: string, right: string): number {
  * @param value - untrusted durable or remote policy value.
  * @returns a fresh canonical policy; omitted values default to all skills.
  */
-export function normalizeBotSkillPolicy(value: unknown = undefined): BotSkillPolicy {
+export function normalizeBotSkillPolicy(value?: unknown): BotSkillPolicy {
   if (value === undefined) return { ...DEFAULT_BOT_SKILL_POLICY }
   if (!isRecord(value) || (value.mode !== 'all' && value.mode !== 'selected')) {
     throw new Error('Bot skill policy mode is invalid')

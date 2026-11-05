@@ -1512,11 +1512,11 @@ describe('Bot roster and detail', () => {
     const dialog = await screen.findByRole('dialog', { name: 'Bot skills' })
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save skills' }))
     await waitFor(() => { expect(screen.getByRole('alert').textContent).toContain('changed elsewhere') })
-    expect((within(dialog).getByRole('button', { name: 'Save skills' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(within(dialog).getByRole('button', { name: 'Save skills' })).toHaveProperty('disabled', true)
     fireEvent.click(within(dialog).getByRole('button', { name: 'Reload skills' }))
     await waitFor(() => {
       expect(list).toHaveBeenCalledTimes(2)
-      expect((within(dialog).getByRole('button', { name: 'Save skills' }) as HTMLButtonElement).disabled).toBe(false)
+      expect(within(dialog).getByRole('button', { name: 'Save skills' })).toHaveProperty('disabled', false)
     })
   })
 

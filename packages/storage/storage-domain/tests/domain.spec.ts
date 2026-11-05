@@ -281,7 +281,9 @@ describe('KvTable writes', () => {
       table.insert('once', { label: 'second', count: 2 }),
     ])
     expect(inserted.sort()).toEqual([false, true])
-    expect(await table.getFresh('once')).toEqual(expect.objectContaining({ label: expect.stringMatching(/first|second/) }))
+    const fresh = await table.getFresh('once')
+    expect(fresh?.count).toBe(1)
+    expect(['first', 'second']).toContain(fresh?.label)
   })
 
   it('parses fresh and fenced-update records through the table schema transform', async () => {

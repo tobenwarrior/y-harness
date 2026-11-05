@@ -86,7 +86,7 @@ class MemoryKvUnit implements KvUnit {
     return { tables, global: this.medium.global }
   }
 
-  async getRecord(table: string, key: string): Promise<unknown | undefined> {
+  async getRecord(table: string, key: string): Promise<unknown> {
     this.assertOpen()
     return this.medium.tables.get(table)?.get(key)
   }

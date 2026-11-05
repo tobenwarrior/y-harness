@@ -157,7 +157,7 @@ export const botRecordSchema = z.object({
     message: 'Agent presets must not have surrounding whitespace',
   }).optional(),
   skillPolicy: botSkillPolicySchema.optional(),
-  skillPolicyRevision: z.number().safe().int().nonnegative().optional(),
+  skillPolicyRevision: z.number().int().nonnegative().optional(),
   state: z.enum(['provisioning', 'active']),
   createdAt: z.number().safe().int().nonnegative(),
   updatedAt: z.number().safe().int().nonnegative(),

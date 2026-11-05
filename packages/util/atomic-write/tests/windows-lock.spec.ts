@@ -138,7 +138,8 @@ describe('Windows lock handle', () => {
     vi.doMock('koffi', () => ({ default: fakeKoffi }))
     vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
     vi.resetModules()
-    const { withFileLock } = await import(/* @vite-ignore */ String('../src/index.ts?windows-lock-alias')) as typeof import('../src/index.ts')
+    const entryPath: string = '../src/index.ts?windows-lock-alias'
+    const { withFileLock } = await import(/* @vite-ignore */ entryPath) as typeof import('../src/index.ts')
     const dir = await mkdtemp(join(tmpdir(), 'dsh-atomic-write-win32-'))
     scratchDirs.push(dir)
     await mkdir(join(dir, 'alias'))
@@ -163,7 +164,8 @@ describe('Windows lock handle', () => {
     vi.doMock('koffi', () => ({ default: fakeKoffi }))
     vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
     vi.resetModules()
-    const { withFileLock } = await import(/* @vite-ignore */ String('../src/index.ts?windows-lock-symlink')) as typeof import('../src/index.ts')
+    const entryPath: string = '../src/index.ts?windows-lock-symlink'
+    const { withFileLock } = await import(/* @vite-ignore */ entryPath) as typeof import('../src/index.ts')
     const dir = await mkdtemp(join(tmpdir(), 'dsh-atomic-write-win32-'))
     scratchDirs.push(dir)
     const victim = join(dir, 'victim')
@@ -183,7 +185,8 @@ describe('Windows lock handle', () => {
     vi.doMock('koffi', () => ({ default: fakeKoffi }))
     vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
     vi.resetModules()
-    const { withFileLock } = await import(/* @vite-ignore */ String('../src/index.ts?windows-lock-directory')) as typeof import('../src/index.ts')
+    const entryPath: string = '../src/index.ts?windows-lock-directory'
+    const { withFileLock } = await import(/* @vite-ignore */ entryPath) as typeof import('../src/index.ts')
     const dir = await mkdtemp(join(tmpdir(), 'dsh-atomic-write-win32-'))
     scratchDirs.push(dir)
     const target = join(dir, 'document')
@@ -218,7 +221,8 @@ describe('Windows lock handle', () => {
     })
     vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
     vi.resetModules()
-    const { withFileLock } = await import(/* @vite-ignore */ String('../src/index.ts?windows-lock-race')) as typeof import('../src/index.ts')
+    const entryPath: string = '../src/index.ts?windows-lock-race'
+    const { withFileLock } = await import(/* @vite-ignore */ entryPath) as typeof import('../src/index.ts')
     const dir = await mkdtemp(join(tmpdir(), 'dsh-atomic-write-win32-'))
     scratchDirs.push(dir)
     const target = join(dir, 'document')
@@ -236,7 +240,8 @@ describe('Windows lock handle', () => {
     vi.doMock('koffi', () => ({ default: fakeKoffi }))
     vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
     vi.resetModules()
-    const { withFileLock } = await import(/* @vite-ignore */ String('../src/index.ts?windows-lock-native-race')) as typeof import('../src/index.ts')
+    const entryPath: string = '../src/index.ts?windows-lock-native-race'
+    const { withFileLock } = await import(/* @vite-ignore */ entryPath) as typeof import('../src/index.ts')
     const dir = await mkdtemp(join(tmpdir(), 'dsh-atomic-write-win32-'))
     scratchDirs.push(dir)
     const target = join(dir, 'document')
