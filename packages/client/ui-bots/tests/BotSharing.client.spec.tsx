@@ -1231,6 +1231,167 @@ describe('shared Bot collaboration surfaces', () => {
     expect(screen.queryByRole('button', { name: 'Invite people' })).toBeNull()
   })
 
+  it('lets an owner rename a shared room and remove a person from its settings', async () => {
+    const group = {
+      id: brandString<BotGroupId>('bot-group-settings-owner'),
+      name: 'Release room',
+      botIds: [BotId(bot.id), BotId(analystBot.id)],
+      bots: [
+        { id: BotId(bot.id), name: bot.name, identity: bot.identity, accent: bot.accent, state: 'active' as const, availability: 'idle' as const },
+        { id: BotId(analystBot.id), name: analystBot.name, identity: analystBot.identity, accent: analystBot.accent, state: 'active' as const, availability: 'idle' as const },
+      ],
+      createdAt: 1,
+      updatedAt: 4,
+    } satisfies BotGroupView
+    const settings = {
+      groupId: String(group.id),
+      name: 'Release room',
+      updatedAt: 4,
+      canManage: true,
+      members: [{ principalId: 'principal-owner', role: 'owner' as const }, { principalId: 'principal-member', role: 'member' as const }],
+    }
+    const readGroupSettings = vi.fn()
+      .mockResolvedValueOnce({ ok: true, value: settings })
+      .mockResolvedValueOnce({ ok: true, value: { ...settings, updatedAt: 6, members: [{ principalId: 'principal-owner', role: 'owner' as const }] } })
+    const renameGroup = vi.fn().mockImplementation(async (request: { readonly name: string; readonly expectedUpdatedAt: number }) => ({
+      ok: true,
+      value: { ...settings, name: request.name, updatedAt: request.expectedUpdatedAt + 1 },
+    }))
+    const revokeGroupMember = vi.fn().mockResolvedValue({ ok: true, value: { groupId: group.id, principalId: 'principal-member', revoked: true } })
+    const client = sharedClient({
+      retryScope: 'principal-owner',
+      listGroups: vi.fn().mockResolvedValue({ ok: true, value: { groups: [group] } }),
+      inspectGroup: vi.fn().mockResolvedValue({ ok: true, value: { group, messages: [] } }),
+      readGroupSettings,
+      renameGroup,
+      revokeGroupMember,
+    })
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+
+    await waitFor(() => { expect(screen.getByTestId('shared-group-settings-open')).toBeTruthy() })
+    fireEvent.click(screen.getByTestId('shared-group-settings-open'))
+    const dialog = await screen.findByRole('dialog', { name: 'Group settings' })
+    expect(within(dialog).getByText('Chief of staff')).toBeTruthy()
+    expect(within(dialog).getByText('principal-owner', { exact: true })).toBeTruthy()
+    expect(within(dialog).getByText('You', { exact: true })).toBeTruthy()
+    expect(within(dialog).getByText('principal-member')).toBeTruthy()
+    fireEvent.change(within(dialog).getByRole('textbox', { name: 'Group name' }), { target: { value: 'Launch room' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save name' }))
+    await waitFor(() => {
+      expect(renameGroup).toHaveBeenCalledWith({ groupId: String(group.id), name: 'Launch room', expectedUpdatedAt: 4 })
+      expect(screen.getByRole('button', { name: /Launch room/ })).toBeTruthy()
+    })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Remove principal-member from this group' }))
+    const confirmation = await screen.findByRole('dialog', { name: 'Remove this person?' })
+    fireEvent.click(within(confirmation).getByRole('checkbox'))
+    fireEvent.click(within(confirmation).getByRole('button', { name: 'Remove from group' }))
+    await waitFor(() => { expect(revokeGroupMember).toHaveBeenCalledWith(String(group.id), 'principal-member') })
+    await waitFor(() => { expect(readGroupSettings).toHaveBeenCalledTimes(2) })
+    expect(within(dialog).queryByText('principal-member')).toBeNull()
+    fireEvent.change(within(dialog).getByRole('textbox', { name: 'Group name' }), { target: { value: 'Final room' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save name' }))
+    await waitFor(() => { expect(renameGroup).toHaveBeenLastCalledWith({ groupId: String(group.id), name: 'Final room', expectedUpdatedAt: 6 }) })
+  })
+
+  it('uses the authoritative room name when settings load after the modal opens', async () => {
+    const group = {
+      id: brandString<BotGroupId>('bot-group-settings-authoritative'),
+      name: 'Stale room title',
+      botIds: [BotId(bot.id), BotId(analystBot.id)],
+      bots: [
+        { id: BotId(bot.id), name: bot.name, identity: bot.identity, accent: bot.accent, state: 'active' as const, availability: 'idle' as const },
+        { id: BotId(analystBot.id), name: analystBot.name, identity: analystBot.identity, accent: analystBot.accent, state: 'active' as const, availability: 'idle' as const },
+      ],
+      createdAt: 1,
+      updatedAt: 4,
+    } satisfies BotGroupView
+    const settings = Promise.withResolvers<Awaited<ReturnType<NonNullable<SharedBotsClient['readGroupSettings']>>>>()
+    const client = sharedClient({
+      retryScope: 'principal-owner',
+      listGroups: vi.fn().mockResolvedValue({ ok: true, value: { groups: [group] } }),
+      inspectGroup: vi.fn().mockResolvedValue({ ok: true, value: { group, messages: [] } }),
+      readGroupSettings: vi.fn().mockReturnValue(settings.promise),
+    })
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+    await waitFor(() => { expect(screen.getByTestId('shared-group-settings-open')).toBeTruthy() })
+    fireEvent.click(screen.getByTestId('shared-group-settings-open'))
+    const dialog = await screen.findByRole('dialog', { name: 'Group settings' })
+    expect(within(dialog).getByRole('textbox', { name: 'Group name' })).toHaveProperty('value', 'Stale room title')
+    await act(async () => {
+      settings.resolve({ ok: true, value: {
+        groupId: group.id, name: 'Authoritative room title', updatedAt: 5, canManage: true,
+        members: [{ principalId: BotPrincipalId('principal-owner'), role: 'owner' }],
+      } })
+      await settings.promise
+    })
+    await waitFor(() => {
+      expect(within(dialog).getByRole('textbox', { name: 'Group name' })).toHaveProperty('value', 'Authoritative room title')
+    })
+  })
+
+  it('keeps shared-room settings read-only for a collaborator', async () => {
+    const group = {
+      id: brandString<BotGroupId>('bot-group-settings-member'),
+      name: 'Member room',
+      botIds: [BotId(bot.id), BotId(analystBot.id)],
+      bots: [
+        { id: BotId(bot.id), name: bot.name, identity: bot.identity, accent: bot.accent, state: 'active' as const, availability: 'idle' as const },
+        { id: BotId(analystBot.id), name: analystBot.name, identity: analystBot.identity, accent: analystBot.accent, state: 'active' as const, availability: 'idle' as const },
+      ],
+      createdAt: 1,
+      updatedAt: 4,
+    } satisfies BotGroupView
+    const client = sharedClient({
+      listGroups: vi.fn().mockResolvedValue({ ok: true, value: { groups: [group] } }),
+      inspectGroup: vi.fn().mockResolvedValue({ ok: true, value: { group, messages: [] } }),
+      readGroupSettings: vi.fn().mockResolvedValue({ ok: true, value: {
+        groupId: String(group.id), name: group.name, updatedAt: 4, canManage: false,
+        members: [{ principalId: 'principal-owner', role: 'owner' }, { principalId: 'principal-member', role: 'member' }],
+      } }),
+    })
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+    await waitFor(() => { expect(screen.getByTestId('shared-group-settings-open')).toBeTruthy() })
+    fireEvent.click(screen.getByTestId('shared-group-settings-open'))
+    const dialog = await screen.findByRole('dialog', { name: 'Group settings' })
+    expect(within(dialog).getByRole('textbox', { name: 'Group name' })).toHaveProperty('disabled', true)
+    expect(within(dialog).getByRole('button', { name: 'Save name' })).toHaveProperty('disabled', true)
+    expect(within(dialog).queryByRole('button', { name: 'Remove principal-member from this group' })).toBeNull()
+    expect(within(dialog).getByText('Only the room owner can rename the room or remove people.')).toBeTruthy()
+  })
+
+  it('refreshes the saved room revision after a stale rename response', async () => {
+    const group = {
+      id: brandString<BotGroupId>('bot-group-settings-conflict'),
+      name: 'Old room',
+      botIds: [BotId(bot.id), BotId(analystBot.id)],
+      bots: [
+        { id: BotId(bot.id), name: bot.name, identity: bot.identity, accent: bot.accent, state: 'active' as const, availability: 'idle' as const },
+        { id: BotId(analystBot.id), name: analystBot.name, identity: analystBot.identity, accent: analystBot.accent, state: 'active' as const, availability: 'idle' as const },
+      ],
+      createdAt: 1,
+      updatedAt: 4,
+    } satisfies BotGroupView
+    const readGroupSettings = vi.fn()
+      .mockResolvedValueOnce({ ok: true, value: { groupId: String(group.id), name: 'Old room', updatedAt: 4, canManage: true, members: [{ principalId: 'principal-owner', role: 'owner' }] } })
+      .mockResolvedValueOnce({ ok: true, value: { groupId: String(group.id), name: 'Current room', updatedAt: 5, canManage: true, members: [{ principalId: 'principal-owner', role: 'owner' }] } })
+    const client = sharedClient({
+      retryScope: 'principal-owner',
+      listGroups: vi.fn().mockResolvedValue({ ok: true, value: { groups: [group] } }),
+      inspectGroup: vi.fn().mockResolvedValue({ ok: true, value: { group, messages: [] } }),
+      readGroupSettings,
+      renameGroup: vi.fn().mockResolvedValue({ ok: false, error: { code: 'gateway/conflict', message: 'stale', details: {} } }),
+    })
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+    await waitFor(() => { expect(screen.getByTestId('shared-group-settings-open')).toBeTruthy() })
+    fireEvent.click(screen.getByTestId('shared-group-settings-open'))
+    const dialog = await screen.findByRole('dialog', { name: 'Group settings' })
+    fireEvent.change(within(dialog).getByRole('textbox', { name: 'Group name' }), { target: { value: 'Stale draft' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save name' }))
+    await waitFor(() => { expect(screen.getByRole('alert').textContent).toContain('group changed elsewhere') })
+    expect(within(dialog).getByRole('textbox', { name: 'Group name' })).toHaveProperty('value', 'Current room')
+    expect(within(dialog).getByRole('button', { name: 'Save name' })).toHaveProperty('disabled', true)
+  })
+
   it('reuses the shared group id after an uncertain create response', async () => {
     const group = {
       id: brandString<BotGroupId>('bot-group-retry'),

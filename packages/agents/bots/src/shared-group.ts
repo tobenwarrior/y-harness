@@ -40,6 +40,8 @@ import type {
   BotGroupListValue,
   BotGroupMessageRecord,
   BotGroupMessageView,
+  BotGroupSettingsRequest,
+  BotGroupSettingsValue,
   BotGroupSendRemoteRequest,
   BotGroupSendValue,
   BotSharedGroupDeliveryFenceDiagnosticValue,
@@ -970,6 +972,78 @@ export class SharedBotGroupService {
       return { snapshot: next, value: { group: groupView(nextGroup, bots) } }
     }))
     this.host.registerSharedGroupSessions?.(result.snapshot.sessions.filter(session => session.revokedAt === undefined))
+    return result.value
+  }
+
+  /**
+   * Read or rename one shared group's settings under the shared authority lock.
+   *
+   * A settings read projects only active principals that retain membership in
+   * every Bot in the room. A rename changes only group metadata; the roster,
+   * sessions, ACL, transcript, and delivery state remain untouched.
+   * @param request - Group settings action and optional rename precondition.
+   * @param principalId - Authenticated room member requesting the operation.
+   * @param signal - Cancellation for authorization and roster checks.
+   * @returns The current group settings.
+   */
+  async settings(
+    request: BotGroupSettingsRequest,
+    principalId: ReturnType<typeof BotPrincipalId>,
+    signal: AbortSignal,
+  ): Promise<BotGroupSettingsValue> {
+    this.requireIsolatedHost()
+    const groupId = normalizeGroupId(request.groupId)
+    const availableBots = await this.stableBotRoster(signal)
+    if (request.action === 'read') {
+      return this.withRosterFence(availableBots, signal, () => this.readLocked(
+        principalId,
+        signal,
+        (snapshot, memberships, authorityState) => {
+          const group = findGroup(snapshot, groupId)
+          requireGroupAccess(group, memberships, principalId, 'read-group')
+          this.activeBotsFromList(group.botIds, availableBots)
+          return groupSettingsValue(group, authorityState, memberships, principalId)
+        },
+      ))
+    }
+    const result = await this.withRosterFence(availableBots, signal, () => this.locked(
+      principalId,
+      'write-group',
+      signal,
+      (snapshot, memberships, authorityState) => {
+        const group = findGroup(snapshot, groupId)
+        requireGroupAccess(group, memberships, principalId, 'write-group')
+        this.activeBotsFromList(group.botIds, availableBots)
+        if (group.ownerPrincipalId !== principalId) {
+          throw new SharedGroupError('gateway/forbidden', 'only the shared group owner may rename it')
+        }
+        if (request.expectedUpdatedAt !== group.updatedAt) {
+          throw new SharedGroupError('gateway/conflict', 'shared Bot group settings changed; reload before renaming')
+        }
+        const name = normalizeText(request.name, 'Bot group name', MAX_GROUP_NAME)
+        if (name === group.name) {
+          return { snapshot, value: groupSettingsValue(group, authorityState, memberships, principalId) }
+        }
+        const now = Math.max(this.now(), group.updatedAt + 1)
+        const nextGroup: SharedGroupRecord = {
+          ...group,
+          name,
+          updatedAt: now,
+          // Group revision authorizes attachment grants and must not change for
+          // metadata-only renames.
+          revision: group.revision,
+        }
+        const next = {
+          ...snapshot,
+          revision: snapshot.revision + 1,
+          groups: snapshot.groups.map(candidate => candidate.id === group.id ? nextGroup : candidate),
+        }
+        return {
+          snapshot: next,
+          value: groupSettingsValue(nextGroup, authorityState, memberships, principalId),
+        }
+      },
+    ))
     return result.value
   }
 
@@ -2232,6 +2306,7 @@ export class SharedBotGroupService {
     work: (
       snapshot: SharedGroupSnapshot,
       memberships: readonly SharedMembershipRecord[],
+      authorityState: SharedAccessStateSnapshot,
     ) => SharedGroupMutationResult<T> | Promise<SharedGroupMutationResult<T>>,
   ): Promise<SharedGroupMutationResult<T>> {
     signal.throwIfAborted()
@@ -2241,12 +2316,34 @@ export class SharedBotGroupService {
       const groups = parseGroups(membershipSnapshot.sharedGroups)
       requireActivePrincipal(authorityState, principalId)
       await this.attachments?.refresh()
-      const result = await work(groups, membershipSnapshot.memberships)
+      const result = await work(groups, membershipSnapshot.memberships, authorityState)
       return {
         value: result,
         next: { ...membershipSnapshot, [SHARED_GROUPS_FIELD]: validateSnapshot(result.snapshot) },
       }
     })
+  }
+
+  private async readLocked<T>(
+    principalId: ReturnType<typeof BotPrincipalId>,
+    signal: AbortSignal,
+    work: (
+      snapshot: SharedGroupSnapshot,
+      memberships: readonly SharedMembershipRecord[],
+      authorityState: SharedAccessStateSnapshot,
+    ) => T,
+  ): Promise<T> {
+    signal.throwIfAborted()
+    return this.authority.readLockedExtensions(
+      ['agent-bots/shared-memberships'],
+      (current, authorityState) => {
+        signal.throwIfAborted()
+        const membershipSnapshot = parseMembershipExtension(current['agent-bots/shared-memberships'])
+        const groups = parseGroups(membershipSnapshot.sharedGroups)
+        requireActivePrincipal(authorityState, principalId)
+        return work(groups, membershipSnapshot.memberships, authorityState)
+      },
+    )
   }
 
   private async withRosterFence<T>(
@@ -2612,6 +2709,28 @@ function groupView(record: SharedGroupRecord, bots: readonly BotView[]): BotGrou
       availability: bot.availability,
       state: bot.state,
     })),
+  }
+}
+
+function groupSettingsValue(
+  record: SharedGroupRecord,
+  authorityState: SharedAccessStateSnapshot,
+  memberships: readonly SharedMembershipRecord[],
+  principalId: ReturnType<typeof BotPrincipalId>,
+): BotGroupSettingsValue {
+  const members = record.memberPrincipalIds.flatMap((member): BotGroupSettingsValue['members'][number][] => {
+    if (!hasActiveSharedPrincipal(authorityState, memberships, record, member)) return []
+    return [{
+      principalId: member,
+      role: member === record.ownerPrincipalId ? 'owner' : 'member',
+    }]
+  })
+  return {
+    groupId: record.id,
+    name: record.name,
+    updatedAt: record.updatedAt,
+    canManage: record.ownerPrincipalId === principalId,
+    members,
   }
 }
 

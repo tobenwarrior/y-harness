@@ -199,6 +199,47 @@ export interface BotGroupUpdateValue {
   readonly group: BotGroupView
 }
 
+/** One active shared principal visible in a group's settings. */
+export interface BotGroupSettingsMember {
+  /** Stable shared principal identity. */
+  readonly principalId: BotPrincipalIdType
+  /** Whether the principal owns or collaborates in the group. */
+  readonly role: 'owner' | 'member'
+}
+
+/** Group settings request. */
+export type BotGroupSettingsRequest =
+  | {
+    /** Group whose settings are requested. */
+    readonly groupId: BotGroupId
+    /** Read the current settings without changing durable state. */
+    readonly action: 'read'
+  }
+  | {
+    /** Group whose settings are requested. */
+    readonly groupId: BotGroupId
+    /** Rename the group while preserving its roster and transcript. */
+    readonly action: 'rename'
+    /** New non-empty display name. */
+    readonly name: string
+    /** Group updatedAt observed by the caller. */
+    readonly expectedUpdatedAt: number
+  }
+
+/** Group settings response. */
+export interface BotGroupSettingsValue {
+  /** Stable group identity. */
+  readonly groupId: BotGroupId
+  /** Current user-visible group name. */
+  readonly name: string
+  /** Last durable group metadata update time. */
+  readonly updatedAt: number
+  /** Whether the authenticated principal may rename the group. */
+  readonly canManage: boolean
+  /** Active room principals that can access every Bot in the group. */
+  readonly members: readonly BotGroupSettingsMember[]
+}
+
 /** Group transcript request. */
 export interface BotGroupInspectRequest {
   /** Group to inspect. */

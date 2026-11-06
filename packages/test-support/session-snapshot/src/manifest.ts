@@ -23,6 +23,8 @@ export interface SnapshotHeaderManifest {
   childSystemPrompts?: number[]
   /** Child fixture indexes that own distinct tool-schema sidecars. */
   childToolSchemas?: number[]
+  /** Child fixture indexes whose request headers intentionally omit the `tools` field. */
+  childToolSchemasAbsent?: number[]
   /** Legitimate changed-header count after the initial request header. */
   changes?: number
   /** Legitimate later `system/message` count (replacements or in-history appends) after the initial system prompt. */
@@ -251,6 +253,7 @@ export function parseSnapshotManifest(source: string, path = 'snapshot.yml'): Sn
         'toolSchemasSource',
         'childSystemPrompts',
         'childToolSchemas',
+        'childToolSchemasAbsent',
         'changes',
         'promptChanges',
       ], 'manifest.header')
@@ -261,6 +264,17 @@ export function parseSnapshotManifest(source: string, path = 'snapshot.yml'): Sn
         if (value[field] !== undefined && (!Number.isInteger(value[field]) || Number(value[field]) < 0)) {
           throw new Error(`manifest.header.${field} must be a non-negative integer`)
         }
+      }
+      const childToolSchemas = value.childToolSchemas === undefined
+        ? undefined
+        : positiveIndexes(value.childToolSchemas, 'manifest.header.childToolSchemas')
+      const childToolSchemasAbsent = value.childToolSchemasAbsent === undefined
+        ? undefined
+        : positiveIndexes(value.childToolSchemasAbsent, 'manifest.header.childToolSchemasAbsent')
+      if (childToolSchemasAbsent !== undefined
+        && (childToolSchemas === undefined
+          || childToolSchemasAbsent.some(index => !childToolSchemas.includes(index)))) {
+        throw new Error('manifest.header.childToolSchemasAbsent must be included in childToolSchemas')
       }
       header = {
         class: name(value.class, 'manifest.header.class'),
@@ -274,9 +288,12 @@ export function parseSnapshotManifest(source: string, path = 'snapshot.yml'): Sn
         ...(value.childSystemPrompts === undefined
           ? {}
           : { childSystemPrompts: positiveIndexes(value.childSystemPrompts, 'manifest.header.childSystemPrompts') }),
-        ...(value.childToolSchemas === undefined
+        ...(childToolSchemas === undefined
           ? {}
-          : { childToolSchemas: positiveIndexes(value.childToolSchemas, 'manifest.header.childToolSchemas') }),
+          : { childToolSchemas }),
+        ...(childToolSchemasAbsent === undefined
+          ? {}
+          : { childToolSchemasAbsent }),
         ...(value.changes === undefined ? {} : { changes: Number(value.changes) }),
         ...(value.promptChanges === undefined ? {} : { promptChanges: Number(value.promptChanges) }),
       }

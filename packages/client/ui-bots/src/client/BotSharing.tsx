@@ -7,6 +7,7 @@ import {
   Button,
   IconCopyOutlineRegular,
   IconLinkOutlineRegular,
+  IconSettingsOutlineRegular,
   IconShieldOutlineRegular,
   IconShareOutlineRegular,
   IconTrashOutlineRegular,
@@ -64,6 +65,7 @@ import type {
   SharedBotApprovalRequest,
   SharedBotAuthChange,
   SharedBotGroupInviteValue,
+  SharedBotGroupSettingsValue,
   SharedBotsClient,
 } from './shared-client.ts'
 
@@ -1139,6 +1141,144 @@ function SharedGroupCreateDialog({
   )
 }
 
+function SharedGroupSettingsDialog({
+  open,
+  onClose,
+  group,
+  settings,
+  working,
+  error,
+  onRename,
+  onRequestRemove,
+  selfPrincipalId,
+  t,
+}: {
+  readonly open: boolean
+  readonly onClose: () => void
+  readonly group: BotGroupView
+  readonly settings: SharedBotGroupSettingsValue | null
+  readonly working: 'load' | 'rename' | 'remove' | null
+  readonly error: string | null
+  readonly onRename: (name: string) => Promise<SharedBotGroupSettingsValue | undefined>
+  readonly onRequestRemove: (principalId: string) => void
+  readonly selfPrincipalId: string | undefined
+  readonly t: Translate
+}) {
+  const [nameDraft, setNameDraft] = useState<string | null>(null)
+  const initializedGroupRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!open) {
+      initializedGroupRef.current = null
+      setNameDraft(null)
+      return
+    }
+    const groupId = String(group.id)
+    if (initializedGroupRef.current === groupId) return
+    initializedGroupRef.current = groupId
+    setNameDraft(null)
+  }, [group.id, open])
+
+  const canManage = settings?.canManage === true
+  const name = nameDraft ?? settings?.name ?? group.name
+  const trimmedName = name.trim()
+  const saveDisabled = !canManage || working !== null || trimmedName === '' || trimmedName === settings.name
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={t('sharedGroupSettingsTitle')}
+      description={t('sharedGroupSettingsDescription')}
+      closeLabel={t('cancel')}
+      className={css.shareDialog as string}
+      contentClassName={css.shareDialogContent as string}
+      footer={(
+        <>
+          <Button variant="ghost" onClick={onClose} disabled={working !== null}>{t('cancel')}</Button>
+          <Button
+            variant="primary"
+            disabled={saveDisabled}
+            onClick={() => {
+              void onRename(trimmedName).then((updated) => {
+                if (updated !== undefined) setNameDraft(null)
+              })
+            }}
+          >
+            {working === 'rename' ? t('sharedGroupRenaming') : t('sharedGroupSettingsSaveName')}
+          </Button>
+        </>
+      )}
+    >
+      {error !== null && <div className={css.dialogNotice} role="alert">{error}</div>}
+      <div className={css.dialogField} aria-busy={working === 'rename'}>
+        <label className={css.dialogLabel} htmlFor="yharness-shared-group-settings-name">{t('groupName')}</label>
+        <Input
+          id="yharness-shared-group-settings-name"
+          data-testid="shared-group-settings-name"
+          maxLength={80}
+          value={name}
+          disabled={!canManage || working !== null}
+          onChange={(event) => { setNameDraft(event.currentTarget.value) }}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' && !saveDisabled) {
+              event.preventDefault()
+              void onRename(trimmedName).then((updated) => {
+                if (updated !== undefined) setNameDraft(null)
+              })
+            }
+          }}
+        />
+        {!canManage && <span className={css.groupHelper}>{t('sharedGroupSettingsMemberHint')}</span>}
+      </div>
+      <div className={css.shareMembers} aria-busy={working === 'load'}>
+        <div className={css.shareSectionHeading}>{t('sharedGroupSettingsBots')}</div>
+        <div className={css.sharedGroupSettingsList} role="list" aria-label={t('sharedGroupSettingsBots')}>
+          {group.bots.map(bot => (
+            <div className={css.sharedGroupSettingsRow} role="listitem" key={String(bot.id)}>
+              <span className={css.shareMemberIdentity}>
+                <BotAvatar name={bot.name} identity={bot.identity} accent={bot.accent} avatar={bot.avatar} size="small" />
+                <span className={css.shareMemberPrincipal}>{bot.name}</span>
+              </span>
+              <Tag tone="neutral">{t('sharedGroupSettingsBot')}</Tag>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className={css.shareMembers}>
+        <div className={css.shareSectionHeading}>{t('sharedGroupSettingsPeople')}</div>
+        {working === 'load' && <div className={css.shareLoading} role="status"><StateDot state="ongoing" size={12} /></div>}
+        {working !== 'load' && settings?.members.length === 0 && <div className={css.shareEmpty}>{t('sharedGroupSettingsNoPeople')}</div>}
+        {working !== 'load' && <div className={css.sharedGroupSettingsList} role="list" aria-label={t('sharedGroupSettingsPeople')}>
+          {settings?.members.map(member => (
+            <div className={css.sharedGroupSettingsRow} role="listitem" key={member.principalId}>
+              <span className={css.shareMemberIdentity}>
+                <span className={css.shareMemberDot} aria-hidden="true" />
+                <span className={css.shareMemberPrincipal}>{member.principalId}</span>
+                {member.principalId === selfPrincipalId && <span className={css.shareMemberHint}>{t('you')}</span>}
+              </span>
+              <span className={css.sharedGroupSettingsMemberActions}>
+                <Tag tone={member.role === 'owner' ? 'info' : 'neutral'}>
+                  {member.role === 'owner' ? t('sharedGroupSettingsOwner') : t('sharedGroupSettingsMember')}
+                </Tag>
+                {canManage && member.role !== 'owner' && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    data-testid={`shared-group-settings-remove-${member.principalId}`}
+                    aria-label={t('sharedGroupSettingsRemove', { id: member.principalId })}
+                    disabled={working !== null}
+                    icon={<IconTrashOutlineRegular size={14} />}
+                    onClick={() => { onRequestRemove(member.principalId) }}
+                  />
+                )}
+              </span>
+            </div>
+          ))}
+        </div>}
+      </div>
+    </Modal>
+  )
+}
+
 export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }: {
   readonly client: SharedBotsClient
   readonly open: boolean
@@ -1183,6 +1323,12 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
   const [groupInviteWorking, setGroupInviteWorking] = useState(false)
   const [groupInviteCopied, setGroupInviteCopied] = useState(false)
   const [groupInviteUnavailable, setGroupInviteUnavailable] = useState(false)
+  const [groupSettingsOpen, setGroupSettingsOpen] = useState(false)
+  const [groupSettings, setGroupSettings] = useState<SharedBotGroupSettingsValue | null>(null)
+  const [groupSettingsWorking, setGroupSettingsWorking] = useState<'load' | 'rename' | 'remove' | null>(null)
+  const [groupSettingsError, setGroupSettingsError] = useState<string | null>(null)
+  const [groupMemberRemoveTarget, setGroupMemberRemoveTarget] = useState<string | null>(null)
+  const [groupMemberRemoveAcknowledged, setGroupMemberRemoveAcknowledged] = useState(false)
   const [working, setWorking] = useState<'list' | 'enroll' | 'owner' | null>(null)
   const [chatWorkingBotIds, setChatWorkingBotIds] = useState<ReadonlySet<string>>(new Set())
   const [memoryWorkingBotIds, setMemoryWorkingBotIds] = useState<ReadonlySet<string>>(new Set())
@@ -1206,6 +1352,7 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
   const groupInputRef = useRef<HTMLInputElement | null>(null)
   const groupMentionSelectionsRef = useRef<readonly { readonly id: string; readonly name: string }[]>([])
   const groupInviteGenerationRef = useRef(0)
+  const groupSettingsGenerationRef = useRef(0)
   const groupAttachmentsRef = useRef<readonly BotGroupAttachmentDraft[]>([])
   const groupAttachmentMessageIdRef = useRef<string | null>(null)
   const groupAttachmentDraftTextRef = useRef<string | null>(null)
@@ -1341,6 +1488,13 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
       setGroupInviteCopied(false)
       setGroupInviteWorking(false)
       setGroupInviteUnavailable(false)
+      groupSettingsGenerationRef.current += 1
+      setGroupSettingsOpen(false)
+      setGroupSettings(null)
+      setGroupSettingsWorking(null)
+      setGroupSettingsError(null)
+      setGroupMemberRemoveTarget(null)
+      setGroupMemberRemoveAcknowledged(false)
     }
     selectedBotIdRef.current = botId
     setSelectedBotId(botId)
@@ -1366,6 +1520,13 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
       setGroupInviteCopied(false)
       setGroupInviteWorking(false)
       setGroupInviteUnavailable(false)
+      groupSettingsGenerationRef.current += 1
+      setGroupSettingsOpen(false)
+      setGroupSettings(null)
+      setGroupSettingsWorking(null)
+      setGroupSettingsError(null)
+      setGroupMemberRemoveTarget(null)
+      setGroupMemberRemoveAcknowledged(false)
     }
     selectedGroupIdRef.current = groupId
     setSelectedGroupId(groupId)
@@ -1424,6 +1585,13 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
     setGroupInviteCopied(false)
     setGroupInviteWorking(false)
     setGroupInviteUnavailable(false)
+    groupSettingsGenerationRef.current += 1
+    setGroupSettingsOpen(false)
+    setGroupSettings(null)
+    setGroupSettingsWorking(null)
+    setGroupSettingsError(null)
+    setGroupMemberRemoveTarget(null)
+    setGroupMemberRemoveAcknowledged(false)
     setWorking(null)
     setGroupWorking(null)
     setChatWorkingBotIds(new Set())
@@ -1482,6 +1650,51 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
     return current
   }
 
+  const mergeGroupName = (groupId: string, name: string, updatedAt: number): void => {
+    setGroups(current => current.map(group => String(group.id) !== groupId || updatedAt < group.updatedAt
+      ? group
+      : { ...group, name, updatedAt }))
+  }
+
+  const readGroupSettings = async (
+    groupId: string,
+    showError = false,
+    preserveError = false,
+  ): Promise<SharedBotGroupSettingsValue | undefined> => {
+    const auth = syncAuthContext()
+    const read = auth?.client.readGroupSettings
+    if (auth === undefined || read === undefined) return undefined
+    const generation = groupSettingsGenerationRef.current + 1
+    groupSettingsGenerationRef.current = generation
+    if (showError) {
+      setGroupSettingsWorking('load')
+      if (!preserveError) setGroupSettingsError(null)
+    }
+    try {
+      if (!isCurrentAuth(auth)) return undefined
+      const result = await read(groupId)
+      if (!isCurrentAuth(auth) || !openRef.current || generation !== groupSettingsGenerationRef.current
+        || selectedGroupIdRef.current !== groupId) return undefined
+      if (!result.ok) {
+        if (result.error.code === 'gateway/forbidden') requestRevalidation(true, result.error.message)
+        else if (showError) setGroupSettingsError(result.error.message || t('sharedGroupSettingsLoadFailed'))
+        return undefined
+      }
+      setGroupSettings(result.value)
+      mergeGroupName(groupId, result.value.name, result.value.updatedAt)
+      return result.value
+    } catch (cause: unknown) {
+      if (isCurrentAuth(auth) && openRef.current && generation === groupSettingsGenerationRef.current
+        && selectedGroupIdRef.current === groupId && showError) {
+        setGroupSettingsError(cause instanceof Error ? cause.message : t('sharedGroupSettingsLoadFailed'))
+      }
+      return undefined
+    } finally {
+      if (showError && isCurrentAuth(auth) && generation === groupSettingsGenerationRef.current
+        && selectedGroupIdRef.current === groupId) setGroupSettingsWorking(null)
+    }
+  }
+
   const readGroup = async (groupId: string): Promise<void> => {
     const auth = syncAuthContext()
     const inspect = auth?.client.inspectGroup
@@ -1495,7 +1708,10 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
       const result = await inspect(groupId)
       if (!isCurrentAuth(auth) || !openRef.current || generation !== groupReadGenerationRef.current
         || selectedGroupIdRef.current !== groupId) return
-      if (result.ok) setGroupMessages(result.value.messages)
+      if (result.ok) {
+        setGroupMessages(result.value.messages)
+        mergeGroupName(groupId, result.value.group.name, result.value.group.updatedAt)
+      }
       else if (result.error.code === 'gateway/forbidden') requestRevalidation(true, result.error.message)
       else setError(result.error.message || t('sharedGroupLoadFailed'))
     } catch (cause: unknown) {
@@ -1503,6 +1719,89 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
         && selectedGroupIdRef.current === groupId) {
         setError(cause instanceof Error ? cause.message : t('sharedGroupLoadFailed'))
       }
+    }
+  }
+
+  const openGroupSettings = (): void => {
+    const groupId = selectedGroupIdRef.current
+    if (groupId === null || client.readGroupSettings === undefined) return
+    setGroupSettingsOpen(true)
+    void readGroupSettings(groupId, true)
+  }
+
+  const renameSharedGroup = async (name: string): Promise<SharedBotGroupSettingsValue | undefined> => {
+    const auth = syncAuthContext()
+    const rename = auth?.client.renameGroup
+    const groupId = selectedGroupIdRef.current
+    const currentSettings = groupSettings
+    if (auth === undefined || rename === undefined || groupId === null || currentSettings === null || !currentSettings.canManage) {
+      return undefined
+    }
+    const generation = groupSettingsGenerationRef.current + 1
+    groupSettingsGenerationRef.current = generation
+    setGroupSettingsWorking('rename')
+    setGroupSettingsError(null)
+    try {
+      if (!isCurrentAuth(auth)) return undefined
+      const result = await rename({ groupId, name, expectedUpdatedAt: currentSettings.updatedAt })
+      if (!isCurrentAuth(auth) || !openRef.current || generation !== groupSettingsGenerationRef.current
+        || selectedGroupIdRef.current !== groupId) return undefined
+      if (!result.ok) {
+        if (result.error.code === 'gateway/forbidden') requestRevalidation(true, result.error.message)
+        else if (result.error.code === 'gateway/conflict') {
+          setGroupSettingsError(t('sharedGroupSettingsConflict'))
+          return await readGroupSettings(groupId, true, true)
+        } else setGroupSettingsError(result.error.message || t('sharedGroupSettingsSaveFailed'))
+        return undefined
+      }
+      setGroupSettings(result.value)
+      mergeGroupName(groupId, result.value.name, result.value.updatedAt)
+      return result.value
+    } catch (cause: unknown) {
+      if (isCurrentAuth(auth) && openRef.current && generation === groupSettingsGenerationRef.current
+        && selectedGroupIdRef.current === groupId) setGroupSettingsError(cause instanceof Error ? cause.message : t('sharedGroupSettingsSaveFailed'))
+      return undefined
+    } finally {
+      if (isCurrentAuth(auth) && generation === groupSettingsGenerationRef.current
+        && selectedGroupIdRef.current === groupId) setGroupSettingsWorking(null)
+    }
+  }
+
+  const removeSharedGroupMember = async (): Promise<void> => {
+    const auth = syncAuthContext()
+    const revoke = auth?.client.revokeGroupMember
+    const groupId = selectedGroupIdRef.current
+    const principalId = groupMemberRemoveTarget
+    const currentSettings = groupSettings
+    if (auth === undefined || revoke === undefined || groupId === null || principalId === null
+      || currentSettings === null || !currentSettings.canManage) return
+    const generation = groupSettingsGenerationRef.current + 1
+    groupSettingsGenerationRef.current = generation
+    setGroupSettingsWorking('remove')
+    setGroupSettingsError(null)
+    try {
+      if (!isCurrentAuth(auth)) return
+      const result = await revoke(groupId, principalId)
+      if (!isCurrentAuth(auth) || !openRef.current || generation !== groupSettingsGenerationRef.current
+        || selectedGroupIdRef.current !== groupId) return
+      if (!result.ok) {
+        if (result.error.code === 'gateway/forbidden') requestRevalidation(true, result.error.message)
+        else setGroupSettingsError(result.error.message || t('sharedGroupSettingsRemoveFailed'))
+        return
+      }
+      setGroupSettings(current => current === null ? current : {
+        ...current,
+        members: current.members.filter(member => member.principalId !== principalId),
+      })
+      setGroupMemberRemoveTarget(null)
+      setGroupMemberRemoveAcknowledged(false)
+      await readGroupSettings(groupId, true)
+    } catch (cause: unknown) {
+      if (isCurrentAuth(auth) && openRef.current && generation === groupSettingsGenerationRef.current
+        && selectedGroupIdRef.current === groupId) setGroupSettingsError(cause instanceof Error ? cause.message : t('sharedGroupSettingsRemoveFailed'))
+    } finally {
+      if (isCurrentAuth(auth) && generation === groupSettingsGenerationRef.current
+        && selectedGroupIdRef.current === groupId) setGroupSettingsWorking(null)
     }
   }
 
@@ -2657,6 +2956,19 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
                       {groupInviteWorking ? t('sharedGroupInviteCreating') : t('sharedGroupInvite')}
                     </Button>
                   )}
+                  {client.readGroupSettings !== undefined && (
+                    <Tooltip label={t('sharedGroupSettingsOpen')} side="bottom" portal>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        data-testid="shared-group-settings-open"
+                        aria-label={t('sharedGroupSettingsOpen')}
+                        icon={<IconSettingsOutlineRegular size={14} />}
+                        disabled={groupWorking !== null || groupSettingsWorking !== null}
+                        onClick={openGroupSettings}
+                      />
+                    </Tooltip>
+                  )}
                   {groupInviteUnavailable && <span className={css.shareMemberHint}>{t('sharedGroupInviteOwnerOnly')}</span>}
                 </header>
                 {groupInvite !== null && (
@@ -2818,6 +3130,23 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
           </section>
         )}
       </Modal>
+      {selectedGroup !== undefined && client.readGroupSettings !== undefined && (
+        <SharedGroupSettingsDialog
+          open={open && groupSettingsOpen}
+          onClose={() => { if (groupSettingsWorking === null) setGroupSettingsOpen(false) }}
+          group={selectedGroup}
+          settings={groupSettings}
+          working={groupSettingsWorking}
+          error={groupSettingsError}
+          onRename={renameSharedGroup}
+          onRequestRemove={(principalId) => {
+            setGroupMemberRemoveTarget(principalId)
+            setGroupMemberRemoveAcknowledged(false)
+          }}
+          selfPrincipalId={client.retryScope}
+          t={t}
+        />
+      )}
       {client.createGroup !== undefined && (
         <SharedGroupCreateDialog
           open={open && createGroupOpen}
@@ -2860,6 +3189,20 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
         onAcknowledgedChange={setDiscardAcknowledged}
         onCancel={() => { setDiscardTarget(null); setDiscardAcknowledged(false) }}
         onConfirm={() => { void confirmDiscard() }}
+      />
+      <RiskConfirmation
+        open={open && groupMemberRemoveTarget !== null}
+        title={t('sharedGroupSettingsRemoveTitle')}
+        description={t('sharedGroupSettingsRemoveDescription', { id: groupMemberRemoveTarget ?? '' })}
+        acknowledgeLabel={t('sharedGroupSettingsRemoveAcknowledge')}
+        cancelLabel={t('cancel')}
+        closeLabel={t('cancel')}
+        confirmLabel={t('sharedGroupSettingsRemoveConfirm')}
+        acknowledged={groupMemberRemoveAcknowledged}
+        disabled={groupSettingsWorking !== null}
+        onAcknowledgedChange={setGroupMemberRemoveAcknowledged}
+        onCancel={() => { setGroupMemberRemoveTarget(null); setGroupMemberRemoveAcknowledged(false) }}
+        onConfirm={() => { void removeSharedGroupMember() }}
       />
     </>
   )

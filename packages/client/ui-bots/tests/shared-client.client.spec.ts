@@ -52,7 +52,66 @@ describe('shared Bot client capabilities', () => {
     expect(client.inspectGroup).toEqual(expect.any(Function))
     expect(client.sendGroupMessage).toEqual(expect.any(Function))
     expect(client.sendGroupMessageWithAttachments).toEqual(expect.any(Function))
+    expect(client.readGroupSettings).toEqual(expect.any(Function))
+    expect(client.renameGroup).toEqual(expect.any(Function))
     expect(rpc.call).not.toHaveBeenCalled()
+  })
+
+  it('reads and renames shared-group settings with the revision fence', async () => {
+    const rpc: ClientConnectionRpc = {
+      call: vi.fn(async (_channel: string, endpoint: string, payload: unknown) => {
+        const action = typeof payload === 'object' && payload !== null && 'action' in payload
+          && typeof payload.action === 'string' ? payload.action : undefined
+        if (endpoint === 'bots/share/group-settings' && action === 'read') {
+          expect(payload).toEqual({ groupId: 'bot-group-release', action: 'read' })
+          return {
+            ok: true as const,
+            value: {
+              groupId: 'bot-group-release', name: 'Release room', updatedAt: 4, canManage: true,
+              members: [{ principalId: 'principal-owner', role: 'owner' }, { principalId: 'principal-member', role: 'member' }],
+            },
+          }
+        }
+        expect(endpoint).toBe('bots/share/group-settings')
+        expect(payload).toEqual({ groupId: 'bot-group-release', action: 'rename', name: 'Launch room', expectedUpdatedAt: 4 })
+        return {
+          ok: true as const,
+          value: {
+            groupId: 'bot-group-release', name: 'Launch room', updatedAt: 5, canManage: true,
+            members: [{ principalId: 'principal-owner', role: 'owner' }],
+          },
+        }
+      }),
+    }
+    const client = createSharedBotsClient(rpc)
+    if (client.readGroupSettings === undefined || client.renameGroup === undefined) throw new Error('group settings transport unavailable')
+
+    await expect(client.readGroupSettings('bot-group-release')).resolves.toEqual({
+      ok: true,
+      value: {
+        groupId: 'bot-group-release', name: 'Release room', updatedAt: 4, canManage: true,
+        members: [{ principalId: 'principal-owner', role: 'owner' }, { principalId: 'principal-member', role: 'member' }],
+      },
+    })
+    await expect(client.renameGroup({ groupId: 'bot-group-release', name: 'Launch room', expectedUpdatedAt: 4 })).resolves.toMatchObject({
+      ok: true,
+      value: { name: 'Launch room', updatedAt: 5 },
+    })
+  })
+
+  it('rejects a shared-group settings response with an invalid member role', async () => {
+    const rpc: ClientConnectionRpc = {
+      call: vi.fn(async () => ({ ok: true as const, value: {
+        groupId: 'bot-group-release', name: 'Release room', updatedAt: 4, canManage: false,
+        members: [{ principalId: 'principal-member', role: 'manager' }],
+      } })),
+    }
+    const client = createSharedBotsClient(rpc)
+    if (client.readGroupSettings === undefined) throw new Error('group settings transport unavailable')
+    await expect(client.readGroupSettings('bot-group-release')).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'gateway/invalid-response' },
+    })
   })
 
   it('lists scoped connected-app approvals and accepts the server decision result', async () => {

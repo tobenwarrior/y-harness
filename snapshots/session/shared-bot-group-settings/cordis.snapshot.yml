@@ -1,0 +1,38 @@
+# Keyless replay composition for the shared Bot group-settings snapshot owner.
+
+- id: web
+
+- insert:
+    - id: connection
+      name: '@yharness/client-connection'
+
+- id: headless-runner
+  config:
+    task: !!js ctx.headlessStartup.task
+    sessionId: bot-session-sender
+    json: !!js ctx.headlessStartup.json
+
+- insert:
+    - id: agent-bots
+      name: '@yharness/bots'
+
+- id: llm-deepseek
+  disabled: true
+
+- insert:
+    - id: llm-replay
+      name: '@yharness/llm-replay'
+      config:
+        providers:
+          - id: deepseek-official
+            name: DeepSeek
+            models:
+              - id: deepseek-v4-flash
+                defaultMaxTokens: 256000
+                reasoningEfforts: [off, low, high, max]
+                defaultReasoningEffort: high
+    - id: shared-bot-group-settings-prereqs
+      name: '../../../packages/test-support/session-snapshot/tests/fixtures/shared-bot-group-settings-prereqs.ts'
+
+    - id: bots-snapshot
+      name: '../../../packages/test-support/session-snapshot/tests/fixtures/bot-snapshot.ts'

@@ -1,0 +1,23 @@
+# Live composition for the shared Bot group-settings snapshot owner.
+
+- id: web
+
+- insert:
+    - id: connection
+      name: '@yharness/client-connection'
+
+- id: headless-runner
+  config:
+    task: !!js ctx.headlessStartup.task
+    sessionId: bot-session-sender
+    json: !!js ctx.headlessStartup.json
+
+- insert:
+    - id: agent-bots
+      name: '@yharness/bots'
+
+    - id: shared-bot-group-settings-prereqs
+      name: '../../../packages/test-support/session-snapshot/tests/fixtures/shared-bot-group-settings-prereqs.ts'
+
+    - id: bots-snapshot
+      name: '../../../packages/test-support/session-snapshot/tests/fixtures/bot-snapshot.ts'

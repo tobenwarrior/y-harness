@@ -106,6 +106,7 @@ export const SHARED_BOT_ENDPOINTS = [
   'bots/share/create-group',
   'bots/share/update-group',
   'bots/share/inspect-group',
+  'bots/share/group-settings',
   'bots/share/send-group-message',
   'bots/share/manage-group-members',
   'bots/share/list-approvals',
@@ -421,6 +422,16 @@ const groupUpdatePayload = groupIdPayload.extend({
   name: z.string().min(1).max(80).refine(value => value.trim() === value),
   botIds: groupBotIds,
 }).strict()
+const groupSettingsPayload = z.discriminatedUnion('action', [
+  groupIdPayload.extend({
+    action: z.literal('read'),
+  }).strict(),
+  groupIdPayload.extend({
+    action: z.literal('rename'),
+    name: z.string().min(1).max(80).refine(value => value.trim() === value),
+    expectedUpdatedAt: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  }).strict(),
+])
 const groupSendPayload = groupIdPayload.extend({
   text: z.string().min(1).max(16_000).refine(value => value.trim() === value),
   messageId: z.string().regex(/^bot-group-message-[A-Za-z0-9][A-Za-z0-9-]*$/).transform(BotGroupMessageId).optional(),
@@ -469,6 +480,7 @@ type ManageMemoryPayload = z.infer<typeof manageMemoryPayload>
 type GroupIdPayload = z.infer<typeof groupIdPayload>
 type GroupCreatePayload = z.infer<typeof groupCreatePayload>
 type GroupUpdatePayload = z.infer<typeof groupUpdatePayload>
+type GroupSettingsPayload = z.infer<typeof groupSettingsPayload>
 type GroupSendPayload = z.infer<typeof groupSendPayload>
 type ManageGroupMembersPayload = z.infer<typeof manageGroupMembersPayload>
 type SharedApprovalListPayload = z.infer<typeof sharedApprovalListPayload>
@@ -2076,6 +2088,8 @@ export class SharedBotService {
         return this.updateGroup(parsePayload(groupUpdatePayload, payload), signal, principalId)
       case 'bots/share/inspect-group':
         return this.inspectGroup(parsePayload(groupIdPayload, payload), signal, principalId)
+      case 'bots/share/group-settings':
+        return this.groupSettings(parsePayload(groupSettingsPayload, payload), signal, principalId)
       case 'bots/share/send-group-message':
         return this.sendGroupMessage(parsePayload(groupSendPayload, payload), signal, principalId)
       case 'bots/share/manage-group-members':
@@ -2311,6 +2325,15 @@ export class SharedBotService {
     principalId: ReturnType<typeof BotPrincipalId>,
   ): Promise<ConnectionRpcHandlerResult> {
     const result = await this.groups.update(payload, principalId, signal)
+    return { ok: true, value: result }
+  }
+
+  private async groupSettings(
+    payload: GroupSettingsPayload,
+    signal: AbortSignal,
+    principalId: ReturnType<typeof BotPrincipalId>,
+  ): Promise<ConnectionRpcHandlerResult> {
+    const result = await this.groups.settings(payload, principalId, signal)
     return { ok: true, value: result }
   }
 

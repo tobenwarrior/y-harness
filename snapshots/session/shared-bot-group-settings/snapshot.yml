@@ -1,0 +1,12 @@
+version: 1
+scenario: shared-bot-group-settings
+profile: headless
+composition: shared-bot-group-settings
+recording: authored
+platform: posix
+header:
+  class: shared-bot-group-settings
+  pin: true
+  childSystemPrompts: [1]
+  childToolSchemas: [1]
+  childToolSchemasAbsent: [1]

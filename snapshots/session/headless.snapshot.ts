@@ -298,9 +298,14 @@ async function writeHeaderSidecars(
     const child = actualLogs[index]
     if (child === undefined) throw new Error(`${scenario.name}: write-back has no child ${index} schemas`)
     const schemas = normalizedToolSchemas(child.content, ctx)
+    const toolsAbsent = scenario.manifest.header.childToolSchemasAbsent?.includes(index) === true
+    if (toolsAbsent) {
+      expect(schemas, `${scenario.name}: child ${index} declared an absent tools field but emitted a schema set`)
+        .toHaveLength(0)
+    }
     await writeFile(
       join(scenario.dir, `tool-schemas.${index}.expected.json`),
-      formatToolSchemasSnapshot(schemas[0] as unknown[], schemas.slice(1)),
+      formatToolSchemasSnapshot(toolsAbsent ? [] : schemas[0] as unknown[], schemas.slice(1)),
     )
   }
 }
@@ -782,6 +787,7 @@ async function verifyHeaders(scenario: HeadlessScenario, actualLogs: readonly Se
     const child = parseToolSchemasSnapshot(await readFile(join(scenario.dir, `tool-schemas.${index}.expected.json`), 'utf8'))
     childSchemas.set(index, [child.initial, ...child.changes])
   }
+  const childToolSchemasAbsent = new Set(scenario.manifest.header.childToolSchemasAbsent ?? [])
 
   for (const [logIndex, log] of actualLogs.entries()) {
     const headers = normalizedHeaders(log.content, ctx)
@@ -794,7 +800,17 @@ async function verifyHeaders(scenario: HeadlessScenario, actualLogs: readonly Se
     for (const [index, header] of headers.entries()) {
       const selectedSchemas = childSchemas.get(logIndex)?.[index]
       const base = reconstructed[index] ?? reconstructed[0]
-      const expected = selectedSchemas === undefined ? base : { ...base as JsonObject, tools: selectedSchemas }
+      if (childToolSchemasAbsent.has(logIndex)) {
+        expect(selectedSchemas, `${scenario.name}: child ${logIndex} absent-tools policy requires an empty schema sidecar`)
+          .toEqual([])
+      }
+      const expected = selectedSchemas === undefined
+        ? base
+        // Shared Bot group Sessions intentionally expose no tools. The
+        // manifest records this field-absence policy for the child fixture.
+        : childToolSchemasAbsent.has(logIndex)
+          ? Object.fromEntries(Object.entries(base as JsonObject).filter(([key]) => key !== 'tools'))
+          : { ...base as JsonObject, tools: selectedSchemas }
       expect(header, `${scenario.name}: request header ${index + 1}`).toEqual(expected)
     }
     if (prompts.length > 0) {
@@ -1122,6 +1138,7 @@ describe('headless recorded-session snapshots', () => {
       const sharedTempRoot = scenario.name === 'shared-bot-web-search'
         || scenario.name === 'shared-bot-connected-app'
         || scenario.name === 'shared-bot-connected-app-approval'
+        || scenario.name === 'shared-bot-group-settings'
         ? await realpath(tmpdir())
         : undefined
       // Shared-session fixtures derive a valid shared-session id from the encoded workspace basename.
@@ -1133,6 +1150,7 @@ describe('headless recorded-session snapshots', () => {
           label: `${scenario.name} headless snapshot`,
           tempDirPrefix: scenario.name === 'shared-bot-connected-app'
             || scenario.name === 'shared-bot-connected-app-approval'
+            || scenario.name === 'shared-bot-group-settings'
             ? 'shared-session-%2D'
             : sharedWorkspaceParent === undefined ? 'dsh-log-snap-' : 'dsh-log-snap-%3A',
           ...(sharedWorkspaceParent !== undefined
@@ -1240,7 +1258,8 @@ describe('headless recorded-session snapshots', () => {
       const expectedStderr = stderrFromSession(stderrLog)
       const actualContext = contextOf(actualLogs.map(log => log.content))
       if (scenario.name === 'shared-bot-connected-app'
-        || scenario.name === 'shared-bot-connected-app-approval') {
+        || scenario.name === 'shared-bot-connected-app-approval'
+        || scenario.name === 'shared-bot-group-settings') {
         const childCwd = actualLogs[1]?.header.cwd
         if (typeof childCwd !== 'string') {
           throw new Error(`${scenario.name}: child Session header has no cwd`)

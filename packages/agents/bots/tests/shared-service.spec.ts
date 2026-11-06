@@ -2124,6 +2124,191 @@ describe('shared Bot service', () => {
     }
   })
 
+  it('authorizes shared group settings and preserves the room when renaming', async () => {
+    const value = await fixture(10, true, false, { value: 1_000 }, true)
+    try {
+      const ownerEnrollment = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-second'), 'owner')).code,
+        request(cookie(ownerEnrollment)),
+      )
+      const owner = await principal(value, ownerEnrollment)
+
+      const memberChief = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'collaborator')).code,
+        enrollmentRequest(),
+      )
+      const memberSecond = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-second'), 'collaborator')).code,
+        request(cookie(memberChief)),
+      )
+      const member = await principal(value, memberSecond)
+
+      const outsiderChief = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'collaborator')).code,
+        enrollmentRequest(),
+      )
+      const outsiderSecond = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-second'), 'collaborator')).code,
+        request(cookie(outsiderChief)),
+      )
+      const outsider = await principal(value, outsiderSecond)
+
+      const created = await value.service.handle('bots/share/create-group', {
+        id: BotGroupId('bot-group-settings'),
+        name: 'Settings room',
+        botIds: [BotId('bot-chief'), BotId('bot-second')],
+      }, new AbortController().signal, owner.peer)
+      const groupId = groupIdFromResult(created)
+      const groupInvite = await value.service.handle('bots/share/manage-group-members', {
+        groupId,
+        action: 'create-invite',
+      }, new AbortController().signal, owner.peer)
+      const memberGroup = await value.service.enroll(
+        groupInviteCodeFromResult(groupInvite),
+        request(cookie(memberSecond)),
+      )
+      expect(memberGroup.principalId).toBe(member.principalId)
+
+      expect(SHARED_BOT_ENDPOINTS).toContain('bots/share/group-settings')
+      const ownerSettings = await value.service.handle('bots/share/group-settings', {
+        groupId,
+        action: 'read',
+      }, new AbortController().signal, owner.peer)
+      expect(ownerSettings).toMatchObject({
+        ok: true,
+        value: {
+          groupId,
+          name: 'Settings room',
+          canManage: true,
+          members: [
+            { principalId: owner.botPrincipalId, role: 'owner' },
+            { principalId: member.botPrincipalId, role: 'member' },
+          ],
+        },
+      })
+      await expect(value.service.handle('bots/share/group-settings', {
+        groupId,
+        action: 'read',
+      }, new AbortController().signal, member.peer)).resolves.toMatchObject({
+        ok: true,
+        value: { canManage: false, name: 'Settings room' },
+      })
+      await expect(value.service.handle('bots/share/group-settings', {
+        groupId,
+        action: 'read',
+      }, new AbortController().signal, outsider.peer)).resolves.toMatchObject({
+        ok: false,
+        error: { code: 'gateway/forbidden' },
+      })
+
+      const pendingMessageId = BotGroupMessageId('bot-group-message-settings-attachment')
+      const admitted = await value.service.handle('bots/share/admit-group-image', {
+        groupId,
+        messageId: pendingMessageId,
+        image: { mediaType: 'image/png', data: 'iVBORw0KGgo=', name: 'settings.png' },
+      }, new AbortController().signal, owner.peer)
+      if (!admitted.ok || admitted.value === null || typeof admitted.value !== 'object'
+        || !('grantId' in admitted.value) || typeof admitted.value.grantId !== 'string') {
+        throw new Error('settings test attachment admission failed')
+      }
+
+      const before = sharedGroupSnapshotSchema.parse(
+        sharedMembershipSnapshotSchema.parse(
+          (await value.authority.readExtension('agent-bots/shared-memberships')).value,
+        ).sharedGroups,
+      )
+      const beforeGroup = before.groups.find(group => group.id === groupId)
+      if (beforeGroup === undefined) throw new Error('settings test group disappeared before rename')
+      const beforeSessions = before.sessions.filter(session => session.groupId === groupId)
+      const beforeMessages = before.messages.filter(message => message.groupId === groupId)
+      const beforeDeliveries = before.deliveries.filter(delivery => delivery.groupId === groupId)
+
+      await expect(value.service.handle('bots/share/group-settings', {
+        groupId,
+        action: 'rename',
+        name: 'Member cannot rename',
+        expectedUpdatedAt: beforeGroup.updatedAt,
+      }, new AbortController().signal, member.peer)).resolves.toMatchObject({
+        ok: false,
+        error: { code: 'gateway/forbidden' },
+      })
+      await expect(value.service.handle('bots/share/group-settings', {
+        groupId,
+        action: 'rename',
+        name: 'Outsider cannot rename',
+        expectedUpdatedAt: beforeGroup.updatedAt,
+      }, new AbortController().signal, outsider.peer)).resolves.toMatchObject({
+        ok: false,
+        error: { code: 'gateway/forbidden' },
+      })
+
+      value.clock.value = beforeGroup.updatedAt + 10
+      const renamed = await value.service.handle('bots/share/group-settings', {
+        groupId,
+        action: 'rename',
+        name: 'Renamed settings room',
+        expectedUpdatedAt: beforeGroup.updatedAt,
+      }, new AbortController().signal, owner.peer)
+      expect(renamed).toMatchObject({
+        ok: true,
+        value: { groupId, name: 'Renamed settings room', updatedAt: beforeGroup.updatedAt + 10 },
+      })
+      await expect(value.service.handle('bots/share/group-settings', {
+        groupId,
+        action: 'rename',
+        name: 'Stale rename',
+        expectedUpdatedAt: beforeGroup.updatedAt,
+      }, new AbortController().signal, owner.peer)).resolves.toMatchObject({
+        ok: false,
+        error: { code: 'gateway/conflict' },
+      })
+
+      const after = sharedGroupSnapshotSchema.parse(
+        sharedMembershipSnapshotSchema.parse(
+          (await value.authority.readExtension('agent-bots/shared-memberships')).value,
+        ).sharedGroups,
+      )
+      const afterGroup = after.groups.find(group => group.id === groupId)
+      if (afterGroup === undefined) throw new Error('settings test group disappeared after rename')
+      expect(afterGroup).toMatchObject({
+        id: groupId,
+        name: 'Renamed settings room',
+        botIds: beforeGroup.botIds,
+        memberPrincipalIds: beforeGroup.memberPrincipalIds,
+      })
+      expect(after.sessions.filter(session => session.groupId === groupId)).toEqual(beforeSessions)
+      expect(after.messages.filter(message => message.groupId === groupId)).toEqual(beforeMessages)
+      expect(after.deliveries.filter(delivery => delivery.groupId === groupId)).toEqual(beforeDeliveries)
+
+      await expect(value.service.handle('bots/share/send-group-message', {
+        groupId,
+        messageId: pendingMessageId,
+        text: 'The rename preserved this pending attachment grant.',
+        attachmentGrants: [admitted.value.grantId],
+      }, new AbortController().signal, owner.peer)).resolves.toMatchObject({
+        ok: true,
+        value: { status: 'accepted' },
+      })
+
+      await value.service.revokeMember(BotId('bot-second'), member.botPrincipalId, owner.botPrincipalId)
+      await expect(value.service.handle('bots/share/group-settings', {
+        groupId,
+        action: 'read',
+      }, new AbortController().signal, owner.peer)).resolves.toMatchObject({
+        ok: true,
+        value: {
+          members: [{ principalId: owner.botPrincipalId, role: 'owner' }],
+        },
+      })
+    } finally {
+      await value.close()
+    }
+  })
+
   it('does not read the Bot roster while the shared authority record is locked', async () => {
     const value = await fixture(10, true)
     try {

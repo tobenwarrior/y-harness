@@ -26,6 +26,8 @@ import type {
   BotGroupView,
   BotGroupMessageView,
   BotGroupMessageSenderView,
+  BotGroupSettingsMember,
+  BotGroupSettingsValue,
   BotInputAttachmentView,
   BotGroupMemberView,
   BotGroupId as BotGroupIdType,
@@ -206,6 +208,19 @@ export interface SharedBotGroupRevokeValue {
   readonly revoked: true
 }
 
+/** Current shared-room name, revision, permissions, and active people. */
+export type SharedBotGroupSettingsValue = BotGroupSettingsValue
+
+/** Stale-safe shared-room rename request. */
+export interface SharedBotGroupRenameRequest {
+  /** Group whose name should change. */
+  readonly groupId: string
+  /** New non-empty display name. */
+  readonly name: string
+  /** Revision returned by the last settings read. */
+  readonly expectedUpdatedAt: number
+}
+
 /** JSON value shown to a collaborator when a connected-app call is awaiting approval. */
 export type SharedBotApprovalArguments =
   | null
@@ -320,6 +335,10 @@ export interface SharedBotsClient {
   readonly createGroupInvite?: (groupId: string) => Promise<SharedBotClientResult<SharedBotGroupInviteValue>>
   /** Revoke one explicit shared-group ACL member. */
   readonly revokeGroupMember?: (groupId: string, principalId: string) => Promise<SharedBotClientResult<SharedBotGroupRevokeValue>>
+  /** Read the current shared-room name, revision, permissions, and members. */
+  readonly readGroupSettings?: (groupId: string) => Promise<SharedBotClientResult<SharedBotGroupSettingsValue>>
+  /** Rename a shared room using the revision captured by the caller. */
+  readonly renameGroup?: (request: SharedBotGroupRenameRequest) => Promise<SharedBotClientResult<SharedBotGroupSettingsValue>>
   /** List pending connected-app approvals for the current shared principal. */
   readonly listApprovals?: (
     scope?: { readonly botId?: string; readonly groupId?: string },
@@ -573,6 +592,8 @@ export function createSharedBotsClient(rpc: ClientConnectionRpc, options: Shared
     sendGroupMessageWithAttachments,
     createGroupInvite: groupId => call('bots/share/manage-group-members', { groupId, action: 'create-invite' }, parseGroupInvite),
     revokeGroupMember: (groupId, principalId) => call('bots/share/manage-group-members', { groupId, action: 'revoke', principalId }, parseGroupRevoke),
+    readGroupSettings: groupId => call('bots/share/group-settings', { groupId, action: 'read' }, parseGroupSettings),
+    renameGroup: request => call('bots/share/group-settings', { ...request, action: 'rename' }, parseGroupSettings),
     listApprovals: scope => call('bots/share/list-approvals', scope ?? {}, parseApprovalList),
     decideApproval: (id, decision) => call('bots/share/decide-approval', { id, decision }, parseApprovalDecision),
   }
@@ -751,6 +772,29 @@ function parseGroupRevoke(value: unknown): SharedBotGroupRevokeValue | undefined
   if (!isRecord(value) || typeof value.groupId !== 'string' || !/^bot-group-[A-Za-z0-9][A-Za-z0-9-]*$/.test(value.groupId)
     || typeof value.principalId !== 'string' || !/^principal-[A-Za-z0-9-]+$/.test(value.principalId) || value.revoked !== true) return undefined
   return { groupId: value.groupId, principalId: value.principalId, revoked: true }
+}
+
+function parseGroupSettings(value: unknown): SharedBotGroupSettingsValue | undefined {
+  if (!isRecord(value) || typeof value.groupId !== 'string' || !/^bot-group-[A-Za-z0-9][A-Za-z0-9-]*$/.test(value.groupId)
+    || typeof value.name !== 'string' || value.name.length < 1 || value.name.length > 80
+    || value.name.trim() !== value.name || !isSafeInteger(value.updatedAt) || typeof value.canManage !== 'boolean'
+    || !Array.isArray(value.members)) return undefined
+  const members = value.members.map(parseGroupSettingsMember)
+  return members.some(member => member === undefined)
+    ? undefined
+    : {
+      groupId: brandString<BotGroupIdType>(value.groupId),
+      name: value.name,
+      updatedAt: value.updatedAt,
+      canManage: value.canManage,
+      members: members as readonly BotGroupSettingsMember[],
+    }
+}
+
+function parseGroupSettingsMember(value: unknown): BotGroupSettingsMember | undefined {
+  if (!isRecord(value) || typeof value.principalId !== 'string' || !/^principal-[A-Za-z0-9-]+$/.test(value.principalId)
+    || (value.role !== 'owner' && value.role !== 'member')) return undefined
+  return { principalId: brandString<BotPrincipalIdType>(value.principalId), role: value.role }
 }
 
 function parseApprovalList(value: unknown): SharedBotApprovalListValue | undefined {

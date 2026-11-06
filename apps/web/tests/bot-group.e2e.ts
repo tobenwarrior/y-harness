@@ -27,6 +27,7 @@ const REPLY = 'Group reply from the fixture adapter.'
 const PRIVATE_SCOUT_PERSONA = 'PRIVATE_SCOUT_PERSONA'
 const PRIVATE_ORBIT_PERSONA = 'PRIVATE_ORBIT_PERSONA'
 const SHARED_GROUP_NAME = 'Release room shared'
+const RENAMED_SHARED_GROUP_NAME = 'Release room shared renamed'
 const OWNER_SHARED_MESSAGE = 'Owner shared readiness note.'
 const COLLABORATOR_SHARED_MESSAGE = 'Collaborator shared follow-up.'
 const OWNER_ATTACHMENT_MESSAGE = 'Owner shared release attachment.'
@@ -260,7 +261,13 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
       await dialog.waitFor({ state: 'visible', timeout: 15_000 })
       await dialog.getByRole('textbox', { name: 'Invite code', exact: true }).waitFor({ state: 'visible', timeout: 30_000 })
       await expect.poll(() => dialog.getByRole('status').count(), { timeout: 30_000 }).toBe(0)
-      await dialog.getByRole('alert').waitFor({ state: 'visible', timeout: 30_000 })
+      // An empty shared roster reports an alert, while an already-enrolled
+      // collaborator can reopen with Bots visible and no alert at all.
+      await expect.poll(
+        async () => (await dialog.getByRole('alert').count())
+          + await dialog.getByRole('button', { name: new RegExp(`^${firstBot.name}\\b`) }).count(),
+        { timeout: 30_000 },
+      ).toBeGreaterThan(0)
       return dialog
     }
 
@@ -300,10 +307,10 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
     await createSharedGroupDialog.getByRole('button', { name: 'Create shared group', exact: true }).click()
     await createSharedGroupDialog.waitFor({ state: 'hidden' })
 
-    const ownerGroupRow = ownerDialog.getByRole('button', { name: new RegExp(`^${SHARED_GROUP_NAME}`) })
+    let ownerGroupRow = ownerDialog.getByRole('button', { name: new RegExp(`^${SHARED_GROUP_NAME}`) })
     await ownerGroupRow.waitFor({ state: 'visible', timeout: 30_000 })
     await ownerGroupRow.click()
-    const ownerGroupSection = ownerDialog.locator(`section[aria-label="${SHARED_GROUP_NAME}"]`)
+    let ownerGroupSection = ownerDialog.locator(`section[aria-label="${SHARED_GROUP_NAME}"]`)
     await ownerGroupSection.waitFor({ state: 'visible', timeout: 30_000 })
     await ownerGroupSection.getByRole('button', { name: 'Invite people', exact: true }).click()
     const groupInviteCode = ownerGroupSection.locator('code[aria-label="Group invite code"]')
@@ -311,16 +318,16 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
     const groupInvite = await groupInviteCode.textContent()
     if (groupInvite === null || groupInvite.trim() === '') throw new Error('shared group UI did not render an invite code')
 
-    const collaboratorDialog = await openSharedDialog(collaboratorPage)
+    let collaboratorDialog = await openSharedDialog(collaboratorPage)
     await redeemInvite(collaboratorDialog, collaboratorChiefInvite.code)
     await collaboratorDialog.getByRole('button', { name: new RegExp(`^${firstBot.name}\\b`) }).waitFor({ state: 'visible', timeout: 30_000 })
     await redeemInvite(collaboratorDialog, collaboratorOrbitInvite.code)
     await collaboratorDialog.getByRole('button', { name: new RegExp(`^${secondBot.name}\\b`) }).waitFor({ state: 'visible', timeout: 30_000 })
     await redeemInvite(collaboratorDialog, groupInvite)
-    const collaboratorGroupRow = collaboratorDialog.getByRole('button', { name: new RegExp(`^${SHARED_GROUP_NAME}`) })
+    let collaboratorGroupRow = collaboratorDialog.getByRole('button', { name: new RegExp(`^${SHARED_GROUP_NAME}`) })
     await collaboratorGroupRow.waitFor({ state: 'visible', timeout: 30_000 })
     await collaboratorGroupRow.click()
-    const collaboratorGroupSection = collaboratorDialog.locator(`section[aria-label="${SHARED_GROUP_NAME}"]`)
+    let collaboratorGroupSection = collaboratorDialog.locator(`section[aria-label="${SHARED_GROUP_NAME}"]`)
     await collaboratorGroupSection.waitFor({ state: 'visible', timeout: 30_000 })
 
     const ownerComposer = ownerGroupSection.getByRole('combobox', { name: 'Message Release room shared', exact: true })
@@ -547,6 +554,104 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
       { timeout: 30_000 },
     ).toBe(0)
 
+    const ownerMembersBeforeSettings = await scaffold.ctx.bots.listShareMembers({ botId: firstBot.id })
+    const ownerPrincipalBeforeSettings = ownerMembersBeforeSettings.members.find(member => member.role === 'owner')?.principalId
+    const collaboratorPrincipalBeforeSettings = ownerMembersBeforeSettings.members.find(member => member.role === 'collaborator')?.principalId
+    if (ownerPrincipalBeforeSettings === undefined || collaboratorPrincipalBeforeSettings === undefined) {
+      throw new Error('shared group participants were not durable before settings opened')
+    }
+
+    // The owner and collaborator are already in the same room. Read the
+    // settings from both views before changing the room name so the test also
+    // proves that the participant projection is not owner-only.
+    await ownerGroupSection.getByRole('button', { name: /group settings/i }).click()
+    const ownerGroupSettings = page.getByRole('dialog', { name: 'Group settings', exact: true })
+    await ownerGroupSettings.waitFor({ state: 'visible', timeout: 15_000 })
+    await ownerGroupSettings.getByText(firstBot.name, { exact: true }).waitFor({ state: 'visible', timeout: 15_000 })
+    await ownerGroupSettings.getByText(secondBot.name, { exact: true }).waitFor({ state: 'visible', timeout: 15_000 })
+    await ownerGroupSettings.getByText(ownerPrincipalBeforeSettings, { exact: true }).waitFor({ state: 'visible', timeout: 15_000 })
+    await ownerGroupSettings.getByText(collaboratorPrincipalBeforeSettings, { exact: true }).waitFor({ state: 'visible', timeout: 15_000 })
+    const ownerGroupNameInput = ownerGroupSettings.getByRole('textbox', { name: 'Group name', exact: true })
+    expect(await ownerGroupNameInput.isEnabled()).toBe(true)
+    expect(await ownerGroupSettings.getByRole('button', { name: /remove.*member|remove.*principal/i }).count()).toBeGreaterThan(0)
+    await ownerGroupNameInput.fill(RENAMED_SHARED_GROUP_NAME)
+    await ownerGroupSettings.getByRole('button', { name: /save/i }).click()
+    await expect.poll(() => ownerGroupNameInput.inputValue(), { timeout: 30_000 }).toBe(RENAMED_SHARED_GROUP_NAME)
+    if (await ownerGroupSettings.count() > 0) {
+      await ownerGroupSettings.getByRole('button', { name: 'Cancel', exact: true }).last().click()
+    }
+    ownerGroupRow = ownerDialog.getByRole('button', { name: new RegExp(`^${RENAMED_SHARED_GROUP_NAME}`) })
+    ownerGroupSection = ownerDialog.locator(`section[aria-label="${RENAMED_SHARED_GROUP_NAME}"]`)
+    await expect.poll(() => ownerGroupRow.count(), { timeout: 30_000 }).toBe(1)
+    await expect.poll(
+      () => ownerGroupSection.getByText(RENAMED_SHARED_GROUP_NAME, { exact: true }).count(),
+      { timeout: 30_000 },
+    ).toBeGreaterThan(0)
+
+    const collaboratorSettingsDialog = collaboratorPage.getByRole('dialog', { name: 'Group settings', exact: true })
+    if (await collaboratorSettingsDialog.count() > 0) {
+      await collaboratorSettingsDialog.getByRole('button', { name: 'Cancel', exact: true }).last().click()
+    }
+    await collaboratorDialog.getByRole('button', { name: 'Cancel', exact: true }).last().click()
+    collaboratorDialog = await openSharedDialog(collaboratorPage)
+    collaboratorGroupRow = collaboratorDialog.getByRole('button', { name: new RegExp(`^${RENAMED_SHARED_GROUP_NAME}`) })
+    await collaboratorGroupRow.waitFor({ state: 'visible', timeout: 30_000 })
+    await collaboratorGroupRow.click()
+    collaboratorGroupSection = collaboratorDialog.locator(`section[aria-label="${RENAMED_SHARED_GROUP_NAME}"]`)
+    await collaboratorGroupSection.waitFor({ state: 'visible', timeout: 30_000 })
+    await expect.poll(
+      () => collaboratorGroupSection.getByText(RENAMED_SHARED_GROUP_NAME, { exact: true }).count(),
+      { timeout: 30_000 },
+    ).toBeGreaterThan(0)
+    await collaboratorGroupSection.getByRole('button', { name: /group settings/i }).click()
+    const collaboratorGroupSettings = collaboratorPage.getByRole('dialog', { name: 'Group settings', exact: true })
+    await collaboratorGroupSettings.waitFor({ state: 'visible', timeout: 15_000 })
+    await collaboratorGroupSettings.getByText(firstBot.name, { exact: true }).waitFor({ state: 'visible', timeout: 15_000 })
+    await collaboratorGroupSettings.getByText(secondBot.name, { exact: true }).waitFor({ state: 'visible', timeout: 15_000 })
+    await collaboratorGroupSettings.getByText(ownerPrincipalBeforeSettings, { exact: true }).waitFor({ state: 'visible', timeout: 15_000 })
+    await collaboratorGroupSettings.getByText(collaboratorPrincipalBeforeSettings, { exact: true }).waitFor({ state: 'visible', timeout: 15_000 })
+    const collaboratorGroupNameInput = collaboratorGroupSettings.getByRole('textbox', { name: 'Group name', exact: true })
+    expect(await collaboratorGroupNameInput.isDisabled()).toBe(true)
+    expect(await collaboratorGroupSettings.getByRole('button', { name: /save/i }).isDisabled()).toBe(true)
+    expect(await collaboratorGroupSettings.getByRole('button', { name: /remove.*member|remove.*principal/i }).count()).toBe(0)
+    await collaboratorGroupSettings.getByRole('button', { name: 'Cancel', exact: true }).last().click()
+
+    await ownerGroupSection.getByRole('button', { name: /group settings/i }).click()
+    const ownerRemovalSettings = page.getByRole('dialog', { name: 'Group settings', exact: true })
+    await ownerRemovalSettings.waitFor({ state: 'visible', timeout: 15_000 })
+    if (process.env.DSH_WEB_E2E_ARTIFACT_DIR !== undefined && shotDir !== undefined) {
+      await ownerRemovalSettings.screenshot({
+        path: join(shotDir, 'shared-group-settings-owner.png'),
+        animations: 'disabled',
+      })
+    }
+    await ownerRemovalSettings.getByRole('button', {
+      name: `Remove ${collaboratorPrincipalBeforeSettings} from this group`, exact: true,
+    }).click()
+    const removeMemberConfirmation = page.getByRole('dialog', { name: 'Remove this person?', exact: true })
+    await removeMemberConfirmation.getByRole('checkbox', { name: /I understand this removes their room access/i }).check()
+    await removeMemberConfirmation.getByRole('button', { name: 'Remove from group', exact: true }).click()
+    await expect.poll(
+      () => ownerRemovalSettings.getByText(collaboratorPrincipalBeforeSettings, { exact: true }).count(),
+      { timeout: 30_000 },
+    ).toBe(0)
+    await ownerRemovalSettings.getByRole('button', { name: 'Cancel', exact: true }).last().click()
+
+    // Removing the room membership must not revoke the collaborator's Bot
+    // memberships. Reopen the shared workspace before the existing Bot-level
+    // revocation so the room ACL is tested on its own.
+    await collaboratorDialog.getByRole('button', { name: 'Cancel', exact: true }).last().click()
+    collaboratorDialog = await openSharedDialog(collaboratorPage)
+    await collaboratorDialog.getByRole('button', { name: new RegExp(`^${firstBot.name}\\b`) }).waitFor({ state: 'visible', timeout: 30_000 })
+    await collaboratorDialog.getByRole('button', { name: new RegExp(`^${secondBot.name}\\b`) }).waitFor({ state: 'visible', timeout: 30_000 })
+    await expect.poll(
+      () => collaboratorDialog.getByRole('button', { name: new RegExp(`^${RENAMED_SHARED_GROUP_NAME}`) }).count(),
+      { timeout: 30_000 },
+    ).toBe(0)
+    const removedGroupDownload = await collaboratorPage.request.get(new URL(downloadHref, collaboratorPage.url()).toString())
+    expect([401, 403, 404]).toContain(removedGroupDownload.status())
+    await collaboratorDialog.getByRole('button', { name: 'Cancel', exact: true }).last().click()
+
     const ownerMembersBeforeRestart = await scaffold.ctx.bots.listShareMembers({ botId: firstBot.id })
     const ownerMembershipsBeforeRestart = ownerMembersBeforeRestart.members.filter(member => member.role === 'owner')
     expect(ownerMembershipsBeforeRestart).toHaveLength(1)
@@ -569,7 +674,7 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
     await collaboratorPage.getByRole('button', { name: 'Join a shared bot', exact: true }).click()
     const revokedDialog = collaboratorPage.getByRole('dialog', { name: 'Shared with you', exact: true })
     await revokedDialog.waitFor({ state: 'visible', timeout: 15_000 })
-    await expect.poll(() => revokedDialog.getByRole('button', { name: new RegExp(`^${SHARED_GROUP_NAME}`) }).count(), { timeout: 30_000 }).toBe(0)
+    await expect.poll(() => revokedDialog.getByRole('button', { name: new RegExp(`^${RENAMED_SHARED_GROUP_NAME}`) }).count(), { timeout: 30_000 }).toBe(0)
     const revokedDownload = await collaboratorPage.request.get(new URL(downloadHref, collaboratorPage.url()).toString())
     expect([401, 403, 404]).toContain(revokedDownload.status())
 
@@ -613,10 +718,10 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
     await reopenedOwnerDialog.click()
     const restartedDialog = page.getByRole('dialog', { name: 'Shared with you', exact: true })
     await restartedDialog.waitFor({ state: 'visible', timeout: 15_000 })
-    await expect.poll(() => restartedDialog.getByRole('button', { name: new RegExp(`^${SHARED_GROUP_NAME}`) }).count(), {
+    await expect.poll(() => restartedDialog.getByRole('button', { name: new RegExp(`^${RENAMED_SHARED_GROUP_NAME}`) }).count(), {
       timeout: 30_000,
     }).toBe(1)
-    await restartedDialog.getByRole('button', { name: new RegExp(`^${SHARED_GROUP_NAME}`) }).click()
+    await restartedDialog.getByRole('button', { name: new RegExp(`^${RENAMED_SHARED_GROUP_NAME}`) }).click()
     await expect.poll(() => restartedDialog.locator('p').filter({ hasText: '@Scout Please check the release.' }).count(), {
       timeout: 30_000,
     }).toBe(1)
