@@ -242,9 +242,9 @@ function mcpFixtureTool(name: string, execute: () => Promise<string>): ToolDefin
 /** Install the fixture app and admit one shared Agent before the runner's turn. */
 export async function apply(ctx: Context): Promise<void> {
   await seedSharedBotPrerequisites(ctx)
-  let appCalled = false
+  let appCallCount = 0
   ctx.tools.register(mcpFixtureTool('mcp__fixture__lookup', async () => {
-    appCalled = true
+    appCallCount += 1
     return 'Owner-allowed connected app result.'
   }))
   const dispose = installSnapshotSessionController(ctx)
@@ -303,7 +303,17 @@ export async function apply(ctx: Context): Promise<void> {
         }))
         await current.whenIdle()
       })
-      if (!appCalled) throw new Error('snapshot shared Bot did not execute the granted connected app')
+      if (appCallCount === 0) throw new Error('snapshot shared Bot did not execute the granted connected app')
+      if (process.env.DSH_SNAPSHOT_SHARED_APP_ALWAYS_ALLOW === '1') {
+        await ctx.agents.withoutInitiator(async () => {
+          current.followup(createUserMessage({
+            content: [{ type: 'text', text: 'Use the same connected app again without asking me.' }],
+            source: { kind: 'user' },
+          }))
+          await current.whenIdle()
+        })
+        if (appCallCount !== 2) throw new Error('snapshot shared Bot did not execute the remembered connected app')
+      }
     })()
   })
 }

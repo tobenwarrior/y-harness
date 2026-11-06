@@ -25,13 +25,14 @@ import {
   releaseBotGroupAttachment,
 } from './BotGroupAttachments.tsx'
 import { mentionQueryAt, mentionTargets } from './bot-mentions.ts'
+import { compactGroupQuote, GROUP_REACTION_OPTIONS } from './group-interactions.ts'
 import { BotMemoryManager } from './BotMemoryManager.tsx'
 import { BotSkillsManager } from './BotSkillsManager.tsx'
 import { BotRoutineManager } from './BotRoutineManager.tsx'
 import css from './BotWorkspace.module.css'
 import type {
   BotAccent, BotConnectedAppAccess, BotGroupAttachmentDraft, BotGroupCreation, BotGroupDeliverySummary,
-  BotGroupDetailData, BotGroupMessageSummary, BotGroupSummary,
+  BotGroupDetailData, BotGroupMessageSummary, BotGroupReactionSummary, BotGroupSummary,
   BotIdentity, BotMemoryManagerActions, BotOrganizationPatch, BotProfileUpdate, BotSkillManagerActions, BotRoutineManagerActions,
   BotStatus, BotSummary, BotWorkspaceProps,
 } from './types.ts'
@@ -477,20 +478,22 @@ function deliveryStatusText(
 }
 
 /** Render a persistent workspace group transcript without creating a second Bot Session. */
-export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate, onSend, onSendWithAttachments, loadAvatar, t }: {
+export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate, onSend, onSendWithAttachments, onReact, loadAvatar, t }: {
   group: BotGroupDetailData | undefined
   bots?: readonly BotSummary[]
   loading: boolean
   error: string | null
   onRetry: () => void
   onUpdate?: BotWorkspaceProps['onUpdateGroup']
-  onSend: (text: string, messageId?: string, targetBotIds?: readonly string[]) => Promise<void>
+  onSend: (text: string, messageId?: string, targetBotIds?: readonly string[], replyToMessageId?: string) => Promise<void>
   onSendWithAttachments?: (
     text: string,
     attachments: readonly BotGroupAttachmentDraft[],
     messageId?: string,
     targetBotIds?: readonly string[],
+    replyToMessageId?: string,
   ) => Promise<void>
+  onReact?: (messageId: string, emoji: BotGroupReactionSummary['emoji'], action: 'add' | 'remove') => Promise<void>
   loadAvatar: BotWorkspaceProps['loadAvatar']
   t: BotWorkspaceViewProps['t']
 }): ReactNode {
@@ -503,6 +506,9 @@ export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate,
   const [mentionIndex, setMentionIndex] = useState(0)
   const [editOpen, setEditOpen] = useState(false)
   const [retryingMessageId, setRetryingMessageId] = useState<string | null>(null)
+  const [replyingTo, setReplyingTo] = useState<BotGroupMessageSummary | null>(null)
+  const [reactionMenuMessageId, setReactionMenuMessageId] = useState<string | null>(null)
+  const [reactionWorkingMessageId, setReactionWorkingMessageId] = useState<string | null>(null)
   const transcript = useMemo(() => group?.messages ?? [], [group])
   const deliveriesByMessage = useMemo(() => {
     const result = new Map<string, readonly BotGroupDeliverySummary[]>()
@@ -538,6 +544,9 @@ export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate,
     setDraft('')
     setMentionQuery(null)
     setMentionIndex(0)
+    setReplyingTo(null)
+    setReactionMenuMessageId(null)
+    setReactionWorkingMessageId(null)
   }, [group?.id])
   useEffect(() => () => {
     for (const attachment of attachmentsRef.current) releaseBotGroupAttachment(attachment)
@@ -583,6 +592,11 @@ export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate,
   const submit = async (): Promise<void> => {
     const text = draft.trim()
     if ((text === '' && attachments.length === 0) || sending) return
+    if (replyingTo !== null && !transcript.some(message => message.id === replyingTo.id)) {
+      setReplyingTo(null)
+      setAttachmentError(t('groupReplyChanged'))
+      return
+    }
     const targets = group === undefined ? [] : mentionTargets(text, group.bots)
     setSending(true)
     setAttachmentError(null)
@@ -593,13 +607,20 @@ export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate,
         attachmentMessageIdRef.current = messageId
         attachmentDraftTextRef.current = text
         const attachmentText = text || t('groupAttachmentFile')
-        if (targets.length === 0) await onSendWithAttachments(attachmentText, attachments, messageId)
-        else await onSendWithAttachments(attachmentText, attachments, messageId, targets)
+        if (targets.length === 0) {
+          if (replyingTo === null) await onSendWithAttachments(attachmentText, attachments, messageId)
+          else await onSendWithAttachments(attachmentText, attachments, messageId, undefined, replyingTo.id)
+        } else if (replyingTo === null) await onSendWithAttachments(attachmentText, attachments, messageId, targets)
+        else await onSendWithAttachments(attachmentText, attachments, messageId, targets, replyingTo.id)
         clearAttachments()
-      } else if (targets.length === 0) await onSend(text)
-      else await onSend(text, undefined, targets)
+      } else if (targets.length === 0) {
+        if (replyingTo === null) await onSend(text)
+        else await onSend(text, undefined, undefined, replyingTo.id)
+      } else if (replyingTo === null) await onSend(text, undefined, targets)
+      else await onSend(text, undefined, targets, replyingTo.id)
       setDraft('')
       setMentionQuery(null)
+      setReplyingTo(null)
     } catch (cause: unknown) {
       if (attachments.length > 0) setAttachmentError(cause instanceof Error ? cause.message : t('groupDeliveryFailure'))
       // Keep the draft and attachments visible so the owner can retry safely.
@@ -607,11 +628,33 @@ export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate,
       setSending(false)
     }
   }
+  const chooseReaction = async (message: BotGroupMessageSummary, reaction: BotGroupReactionSummary): Promise<void> => {
+    if (onReact === undefined || reactionWorkingMessageId !== null) return
+    setReactionWorkingMessageId(message.id)
+    setReactionMenuMessageId(null)
+    try {
+      await onReact(message.id, reaction.emoji, reaction.viewerReacted === true ? 'remove' : 'add')
+    } finally {
+      setReactionWorkingMessageId(null)
+    }
+  }
+  const setReaction = async (message: BotGroupMessageSummary, emoji: BotGroupReactionSummary['emoji']): Promise<void> => {
+    if (onReact === undefined || reactionWorkingMessageId !== null) return
+    const current = message.reactions?.find(reaction => reaction.emoji === emoji)
+    setReactionWorkingMessageId(message.id)
+    setReactionMenuMessageId(null)
+    try {
+      await onReact(message.id, emoji, current?.viewerReacted === true ? 'remove' : 'add')
+    } finally {
+      setReactionWorkingMessageId(null)
+    }
+  }
   const retryMessage = async (message: BotGroupMessageSummary): Promise<void> => {
     if (message.sender.kind !== 'user' || retryingMessageId !== null) return
     setRetryingMessageId(message.id)
     try {
-      await onSend(message.text, message.id, message.targetBotIds)
+      if (message.replyToMessageId === undefined) await onSend(message.text, message.id, message.targetBotIds)
+      else await onSend(message.text, message.id, message.targetBotIds, message.replyToMessageId)
     } catch {
       // The owner keeps the durable failure beside the transcript.
     } finally {
@@ -655,11 +698,23 @@ export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate,
           : transcript.map((message) => {
             const bot = message.sender.kind === 'bot' ? botsById.get(message.sender.botId) : undefined
             const deliveryStatuses = deliveriesByMessage.get(message.id) ?? []
+            const replyParent = message.replyToMessageId === undefined
+              ? undefined
+              : transcript.find(candidate => candidate.id === message.replyToMessageId)
+            const senderName = message.sender.kind === 'user' ? t('you') : message.sender.name
             return (
-              <article className={clsx(css.groupMessage, message.sender.kind === 'user' && css.groupMessageUser)} key={message.id}>
+              <article id={`yharness-group-message-${message.id}`} className={clsx(css.groupMessage, message.sender.kind === 'user' && css.groupMessageUser)} key={message.id}>
                 {message.sender.kind === 'bot' && <BotAvatar name={message.sender.name} identity={bot?.identity} accent={bot?.accent} avatar={bot?.avatar} botId={bot?.id} loadAvatar={loadAvatar} size="small" status={bot?.status} />}
                 <div className={css.groupMessageBody}>
-                  <span className={css.groupMessageSender}>{message.sender.kind === 'user' ? t('you') : message.sender.name}</span>
+                  <span className={css.groupMessageSender}>{senderName}</span>
+                  {replyParent !== undefined && (
+                    <button type="button" className={css.groupReplyQuote} onClick={() => {
+                      document.getElementById(`yharness-group-message-${replyParent.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+                    }} aria-label={t('groupJumpToReply', { name: replyParent.sender.kind === 'user' ? t('you') : replyParent.sender.name })}>
+                      <span className={css.groupReplyQuoteAuthor}>{replyParent.sender.kind === 'user' ? t('you') : replyParent.sender.name}</span>
+                      <span>{compactGroupQuote(replyParent.text)}</span>
+                    </button>
+                  )}
                   <p>{message.text}</p>
                   <BotGroupSentAttachments
                     attachments={message.attachments}
@@ -669,6 +724,62 @@ export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate,
                       groupId: String(group.id), messageId: String(message.id), attachmentId,
                     })}`}
                   />
+                  <div className={css.groupMessageActions}>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className={css.groupMessageAction}
+                      aria-label={t('groupReplyTo', { name: senderName })}
+                      onClick={() => { setReplyingTo(message); composerInputRef.current?.focus() }}
+                    >
+                      <span aria-hidden="true">↩</span>{t('reply')}
+                    </Button>
+                    {onReact !== undefined && (
+                      <span className={css.groupReactionTools}>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className={css.groupMessageAction}
+                          aria-label={t('groupReactTo', { name: senderName })}
+                          aria-expanded={reactionMenuMessageId === message.id}
+                          onClick={() => { setReactionMenuMessageId(current => current === message.id ? null : message.id) }}
+                        >
+                          <span aria-hidden="true">＋</span>{t('react')}
+                        </Button>
+                        {reactionMenuMessageId === message.id && (
+                          <MenuSurface className={css.groupReactionMenu} role="menu" aria-label={t('groupReactionPicker')}>
+                            {GROUP_REACTION_OPTIONS.map(emoji => (
+                              <button
+                                key={emoji}
+                                type="button"
+                                role="menuitem"
+                                className={css.groupReactionOption}
+                                aria-label={t('groupReactWith', { emoji })}
+                                onClick={() => { void setReaction(message, emoji) }}
+                              >{emoji}</button>
+                            ))}
+                          </MenuSurface>
+                        )}
+                      </span>
+                    )}
+                  </div>
+                  {message.reactions !== undefined && message.reactions.length > 0 && (
+                    <div className={css.groupReactions} aria-label={t('groupReactions')}>
+                      {message.reactions.map(reaction => (
+                        <button
+                          key={reaction.emoji}
+                          type="button"
+                          className={clsx(css.groupReactionChip, reaction.viewerReacted === true && css.groupReactionChipSelected)}
+                          aria-pressed={reaction.viewerReacted === true}
+                          aria-label={t('groupReactWithCount', { emoji: reaction.emoji, count: reaction.count })}
+                          disabled={reactionWorkingMessageId === message.id}
+                          onClick={() => { void chooseReaction(message, reaction) }}
+                        >
+                          <span aria-hidden="true">{reaction.emoji}</span><span>{reaction.count}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
                   {deliveryStatuses.length > 0 && (
                     <div className={css.groupDeliveryStatuses} aria-label={t('groupDeliveryStatus')}>
                       {deliveryStatuses.map((delivery) => {
@@ -706,6 +817,17 @@ export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate,
           if (!composerRef.current?.contains(event.relatedTarget as Node | null)) setMentionQuery(null)
         }}
       >
+        {replyingTo !== null && (
+          <div className={css.groupReplyComposerPreview} role="status">
+            <span className={css.groupReplyComposerCopy}>
+              <strong>{t('groupReplyingTo', { name: replyingTo.sender.kind === 'user' ? t('you') : replyingTo.sender.name })}</strong>
+              <span>{compactGroupQuote(replyingTo.text)}</span>
+            </span>
+            <Button variant="ghost" size="sm" aria-label={t('clearReply')} onClick={() => { setReplyingTo(null) }}>
+              <span aria-hidden="true">×</span>{t('clear')}
+            </Button>
+          </div>
+        )}
         <BotGroupAttachments
           attachments={attachments}
           disabled={sending}

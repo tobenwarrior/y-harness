@@ -24,6 +24,7 @@ import type {
   ToolDispatchDecision,
   ToolDispatchExecution,
   ToolExecution,
+  ToolExecutionToken,
   ToolFailure,
   ToolSource,
   McpResourceToolSource,
@@ -108,6 +109,8 @@ import type {
   BotGroupUpdateValue,
   BotGroupSendRemoteRequest,
   BotGroupSendValue,
+  BotGroupReactionRequest,
+  BotGroupReactionValue,
 } from './group-chat.ts'
 import type { BotAttachmentGrantValue } from './attachment-grants.ts'
 import { createBotNativeToolProvider } from './native-tools.ts'
@@ -409,6 +412,7 @@ export {
   botGroupMessageRecordSchema,
   botGroupDeliveryRecordSchema,
 } from './group-chat.ts'
+export { BOT_GROUP_REACTION_EMOJIS } from './group-reactions.ts'
 export type {
   BotGroupCreateRequest,
   BotGroupCreateValue,
@@ -420,6 +424,9 @@ export type {
   BotGroupDeliveryRecord,
   BotGroupDeliveryStatusView,
   BotGroupDeliveryView,
+  BotGroupReactionRequest,
+  BotGroupReactionValue,
+  BotGroupReactionView,
   BotGroupDeliveryRecoveryRequest,
   BotGroupDeliveryRecoveryValue,
   BotSharedGroupDeliveryFenceView,
@@ -436,6 +443,7 @@ export type {
   BotGroupSettingsValue,
   BotGroupMemberView,
   BotGroupMessageRecord,
+  BotGroupMessageReplyView,
   BotGroupMessageSender,
   BotGroupMessageSenderView,
   BotGroupMessageView,
@@ -4377,11 +4385,15 @@ export class BotService extends TypertRemoteService {
       return Promise.resolve('unavailable')
     }
     return sharedService.requestSharedAppApproval(request, {
-      toolName: approval.toolName,
+      // The registered execution name is the authorization identity. The
+      // approval event's toolName can be a provider-side alias or a bounded
+      // preview and must not create a remembered grant for a different call.
+      toolName: execution.name,
       ...(approval.callId === undefined ? {} : { callId: String(approval.callId) }),
       ...(approval.reason === undefined ? {} : { reason: approval.reason }),
       ...(execution.arguments === undefined ? {} : { arguments: execution.arguments }),
-      action: `Run connected app tool "${approval.toolName}"`,
+      executionKey: execution.token,
+      action: `Run connected app tool "${execution.name}"`,
     }, approval.signal)
   }
 
@@ -4389,12 +4401,13 @@ export class BotService extends TypertRemoteService {
   private async authorizeSharedConnectedAppExecution(
     agent: Pick<Agent, 'id'>,
     exec: Readonly<ToolExecution>,
+    rememberedApproval?: { readonly toolName: string; readonly callId?: string; readonly executionKey?: ToolExecutionToken },
   ): Promise<boolean> {
     const sharedService = this.sharedService
     if (sharedService === undefined) return false
     const request = this.sharedConnectedAppAuthorizationRequest(agent, exec)
     if (request === undefined) return false
-    return sharedService.authorizeSharedConnectedApp(request, exec.signal)
+    return sharedService.authorizeSharedConnectedApp(request, exec.signal, rememberedApproval)
   }
 
   /** Project the authority-backed shared-app policy over the Host app catalog. */
@@ -6652,6 +6665,15 @@ export class BotService extends TypertRemoteService {
     return (await this.getGroupService()).send(request)
   }
 
+  /** Add or remove the owner's fixed reaction on one durable group message.
+   * @param request - Group, message, fixed emoji, and explicit add/remove action.
+   * @returns The aggregate reaction projection after the idempotent mutation.
+   */
+  @Remote('reactGroupMessage')
+  async reactGroupMessage(request: BotGroupReactionRequest): Promise<BotGroupReactionValue> {
+    return (await this.getGroupService()).react(request)
+  }
+
   /**
    * Read owner-visible recipient fences that require explicit shared-group recovery.
    * This owner Remote returns only the exact identities needed for a later recovery;
@@ -7708,19 +7730,21 @@ export class BotService extends TypertRemoteService {
         scope.on('tools/result', (resultExec) => {
           finalSharedAppRevalidationDisposals.get(resultExec.token)?.()
           sharedAppDecisions.delete(resultExec.token)
+          const sharedService = this.sharedService
+          sharedService?.forgetRememberedSharedAppApprovalExecution(resultExec.token)
           const calls = sharedApprovalExecutions.get(String(resultExec.callId))
           calls?.delete(resultExec)
           if (calls?.size === 0) sharedApprovalExecutions.delete(String(resultExec.callId))
         })
         scope.on('approval/request', (approval): Promise<SharedAppApprovalOutcome> => {
-          const source = scope.tools.get(approval.toolName, agent)?.source
           const executions = approval.callId === undefined
             ? undefined
             : sharedApprovalExecutions.get(String(approval.callId))
           const execution = executions?.size === 1 ? [...executions][0] : undefined
-          const isConnectedApp = execution !== undefined && (connectedAppSources.has(approval.toolName)
-            || source?.kind === 'mcp'
-            || source?.kind === 'mcp-resource')
+          const executionSource = execution === undefined ? undefined : scope.tools.get(execution.name, agent)?.source
+          const isConnectedApp = execution !== undefined && (connectedAppSources.has(execution.name)
+            || executionSource?.kind === 'mcp'
+            || executionSource?.kind === 'mcp-resource')
           // Shared sessions never delegate approval requests to the owner
           // answerer. A missing source or execution can occur during scope
           // startup/disposal and must fail closed rather than leak ownership.
@@ -7730,11 +7754,14 @@ export class BotService extends TypertRemoteService {
           const request = this.sharedConnectedAppAuthorizationRequest(agent, execution)
           if (request === undefined) return Promise.resolve('unavailable')
           return sharedService.requestSharedAppApproval(request, {
-            toolName: approval.toolName,
+            // Remembered approvals are keyed by the exact registered
+            // operation, not the provider's approval-event label.
+            toolName: execution.name,
             ...(approval.callId === undefined ? {} : { callId: String(approval.callId) }),
             ...(approval.reason === undefined ? {} : { reason: approval.reason }),
             ...(execution.arguments === undefined ? {} : { arguments: execution.arguments }),
-            action: `Run connected app tool "${approval.toolName}"`,
+            executionKey: execution.token,
+            action: `Run connected app tool "${execution.name}"`,
           }, approval.signal)
         }, { prepend: true })
         scope.on('tools/pre-execute', async (exec, next) => {
@@ -7766,9 +7793,25 @@ export class BotService extends TypertRemoteService {
             registrations.execute = scope.on('tools/execute', async (dispatchExec, dispatchNext) => {
               if (dispatchExec.token !== exec.token) return dispatchNext()
               try {
+                const executionRequest = this.sharedConnectedAppAuthorizationRequest(agent, dispatchExec)
+                const sharedService = this.sharedService
+                const approvalReference = {
+                  toolName: dispatchExec.name,
+                  callId: String(dispatchExec.callId),
+                  executionKey: dispatchExec.token,
+                }
+                const rememberedGrantId = sharedService !== undefined && executionRequest !== undefined
+                  ? sharedService.rememberedSharedAppApprovalGrantId(executionRequest, approvalReference)
+                  : undefined
+                const rememberedApproval = rememberedGrantId === undefined ? undefined : {
+                  toolName: dispatchExec.name,
+                  callId: String(dispatchExec.callId),
+                  executionKey: dispatchExec.token,
+                  grantId: rememberedGrantId,
+                }
                 sharedAppDecisions.set(
                   dispatchExec.token,
-                  await this.authorizeSharedConnectedAppExecution(agent, dispatchExec),
+                  await this.authorizeSharedConnectedAppExecution(agent, dispatchExec, rememberedApproval),
                 )
                 return await dispatchNext()
               } finally {
@@ -7809,10 +7852,20 @@ export class BotService extends TypertRemoteService {
             const denial = connectedAppFailure(exec)
             throw new SharedConnectedAppAccessError(denial.message)
           }
+          const approvalReference = {
+            toolName: exec.name,
+            callId: String(exec.callId),
+            executionKey: exec.token,
+          }
+          const rememberedGrantId = sharedService.rememberedSharedAppApprovalGrantId(request, approvalReference)
+          const rememberedApproval = rememberedGrantId === undefined
+            ? undefined
+            : { ...approvalReference, grantId: rememberedGrantId }
           const result = await sharedService.authorizeSharedConnectedAppAndStart(
             request,
             start,
             exec.signal,
+            rememberedApproval,
           )
           if (result !== undefined) return result
           const denial = connectedAppFailure(exec)

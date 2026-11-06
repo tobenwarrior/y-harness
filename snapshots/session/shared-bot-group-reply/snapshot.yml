@@ -1,0 +1,14 @@
+version: 1
+scenario: shared-bot-group-reply
+profile: headless
+composition: shared-bot-group-reply
+recording: authored
+platform: posix
+environment:
+  DSH_SNAPSHOT_GROUP_REPLY: '1'
+header:
+  class: shared-bot-group-reply
+  pin: true
+  childSystemPrompts: [1]
+  childToolSchemas: [1]
+  childToolSchemasAbsent: [1]

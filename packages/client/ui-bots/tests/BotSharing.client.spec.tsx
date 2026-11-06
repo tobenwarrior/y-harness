@@ -121,6 +121,35 @@ describe('shared Bot collaboration surfaces', () => {
     await waitFor(() => { expect(decideApproval).toHaveBeenCalledWith('approval-1', 'allow') })
   })
 
+  it('shows remembered approvals and removes one after revoke', async () => {
+    const listApprovals = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        value: {
+          approvals: [],
+          grants: [{ id: 'shared-app-approval-grant-one', botId: bot.id, appId: 'GitHub', toolName: 'issues.create', createdAt: 1 }],
+        },
+      })
+      .mockResolvedValue({ ok: true, value: { approvals: [] } })
+    const revokeApprovalGrant = vi.fn().mockResolvedValue({
+      ok: true,
+      value: { revoked: true, id: 'shared-app-approval-grant-one' },
+    })
+    const client = sharedClient({
+      decideApproval: vi.fn().mockResolvedValue({ ok: true, value: { resolved: true } }),
+      listApprovals,
+      revokeApprovalGrant,
+    })
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+
+    await waitFor(() => { expect(listApprovals).toHaveBeenCalled() })
+    expect(await screen.findByRole('list', { name: 'Remembered approvals' })).toBeTruthy()
+    const revoke = await screen.findByRole('button', { name: 'Revoke remembered approval for issues.create' })
+    fireEvent.click(revoke)
+    await waitFor(() => { expect(revokeApprovalGrant).toHaveBeenCalledWith('shared-app-approval-grant-one') })
+    await waitFor(() => { expect(screen.queryByRole('button', { name: 'Revoke remembered approval for issues.create' })).toBeNull() })
+  })
+
   it('explains when the backend omits a shortened argument preview', async () => {
     const client = sharedClient({
       listApprovals: vi.fn().mockResolvedValue({
@@ -1952,6 +1981,59 @@ describe('shared Bot collaboration surfaces', () => {
     await waitFor(() => {
       expect(sendGroupMessage).toHaveBeenCalledWith(expect.objectContaining({ groupId: group.id, text: 'Coordinate launch' }))
     })
+  })
+
+  it('keeps shared replies scoped to the room and toggles shared reactions', async () => {
+    const replyMessageId = brandString<BotGroupMessageId>('bot-group-message-shared-parent')
+    const childMessageId = brandString<BotGroupMessageId>('bot-group-message-shared-child')
+    const group = {
+      id: brandString<BotGroupId>('bot-group-shared-interactions'),
+      name: 'Shared interactions',
+      botIds: [BotId(bot.id), BotId(analystBot.id)],
+      bots: [
+        { id: BotId(bot.id), name: bot.name, identity: bot.identity, accent: bot.accent, state: 'active' as const, availability: 'idle' as const },
+        { id: BotId(analystBot.id), name: analystBot.name, identity: analystBot.identity, accent: analystBot.accent, state: 'active' as const, availability: 'idle' as const },
+      ],
+      createdAt: 1,
+      updatedAt: 1,
+    } satisfies BotGroupView
+    const reactGroupMessage = vi.fn().mockResolvedValue({
+      ok: true,
+      value: { messageId: childMessageId, reactions: [{ emoji: '😂', count: 1, viewerReacted: true }] },
+    })
+    const sendGroupMessage = vi.fn().mockResolvedValue({
+      ok: true,
+      value: { messageId: brandString<BotGroupMessageId>('bot-group-message-shared-reply'), status: 'accepted', deliveries: [] },
+    })
+    const client = sharedClient({
+      listGroups: vi.fn().mockResolvedValue({ ok: true, value: { groups: [group] } }),
+      inspectGroup: vi.fn().mockResolvedValue({
+        ok: true,
+        value: {
+          group,
+          messages: [
+            { id: replyMessageId, groupId: group.id, sender: { kind: 'user', principalId: BotPrincipalId('principal-other') }, text: 'Please review the release.', createdAt: 2, reactions: [] },
+            { id: childMessageId, groupId: group.id, sender: { kind: 'bot', botId: BotId(analystBot.id), name: analystBot.name }, text: 'I am reviewing it.', createdAt: 3, replyToMessageId: replyMessageId, reactions: [{ emoji: '👍', count: 1, viewerReacted: true }] },
+          ],
+        },
+      }),
+      sendGroupMessage,
+      reactGroupMessage,
+    })
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+
+    await screen.findByText('I am reviewing it.')
+    expect(screen.getAllByText('Collaborator').length).toBeGreaterThan(0)
+    fireEvent.click(screen.getByRole('button', { name: 'Reply to Analyst' }))
+    expect(screen.getByRole('status').textContent).toContain('Replying to Analyst')
+    fireEvent.change(screen.getByPlaceholderText('Message Shared interactions'), { target: { value: 'Thanks.' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send to group' }))
+    await waitFor(() => {
+      expect(sendGroupMessage).toHaveBeenCalledWith(expect.objectContaining({ replyToMessageId: childMessageId, text: 'Thanks.' }))
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'React to Analyst’s message' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'React with 😂' }))
+    await waitFor(() => { expect(reactGroupMessage).toHaveBeenCalledWith(expect.objectContaining({ messageId: childMessageId, emoji: '😂' })) })
   })
 
   it('lets a collaborator mention one Bot and sends only to that Bot', async () => {

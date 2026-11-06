@@ -13,7 +13,13 @@ import ToolRuntime from '@yharness/tools'
 import { describe, expect, it, vi } from 'vitest'
 import { MemoryMediaPool, MemoryStorageBackend } from '../../../storage/storage-domain/tests/helpers/memory-backend.ts'
 import { MockAdapter } from '../../../core/agent-loop/tests/mock-adapter.ts'
-import { BotGroupId, BotGroupMessageId, BotGroupService, botGroupDomain } from '../src/group-chat.ts'
+import {
+  BotGroupId,
+  BotGroupMessageId,
+  BotGroupService,
+  botGroupDomain,
+} from '../src/group-chat.ts'
+import { BOT_GROUP_REACTION_EMOJIS } from '../src/group-reactions.ts'
 import { BotPrincipalId } from '../src/sharing.ts'
 import type { BotView } from '../src/types.ts'
 import { BotId } from '../src/types.ts'
@@ -58,6 +64,134 @@ function waitFor<T>(promise: Promise<T>, milliseconds: number): Promise<T> {
 }
 
 describe('Bot group delivery with a running Agent', () => {
+  it('persists bounded replies and idempotent local reactions', async () => {
+    const storage = await openGroupDomain(new MemoryMediaPool())
+    const alpha = botView(BotId('bot-reply-alpha'), SessionId('session-reply-alpha'), 'Reply alpha')
+    const beta = botView(BotId('bot-reply-beta'), SessionId('session-reply-beta'), 'Reply beta')
+    try {
+      const deliveredTexts: string[] = []
+      const service = new BotGroupService(storage.domain, {
+        listBots: async () => [alpha, beta],
+        deliverToBot: async ({ text }) => {
+          deliveredTexts.push(text)
+          return 'accepted'
+        },
+      })
+      const group = await service.create({
+        id: BotGroupId('bot-group-replies-reactions'),
+        name: 'Replies and reactions',
+        botIds: [alpha.id, beta.id],
+      })
+      const parentId = BotGroupMessageId('bot-group-message-reply-parent')
+      await service.send({
+        groupId: group.group.id,
+        text: 'The original message stays unchanged.',
+        targetBotIds: [alpha.id],
+        messageId: parentId,
+      })
+      const replyId = BotGroupMessageId('bot-group-message-reply-child')
+      await service.send({
+        groupId: group.group.id,
+        text: 'A reply that points at the original.',
+        targetBotIds: [beta.id],
+        messageId: replyId,
+        replyToMessageId: parentId,
+      })
+      expect(deliveredTexts.at(-1)).toContain('> The original message stays unchanged.')
+
+      const firstReaction = await service.react({
+        groupId: group.group.id,
+        messageId: parentId,
+        emoji: BOT_GROUP_REACTION_EMOJIS[0],
+        action: 'add',
+      })
+      const duplicateReaction = await service.react({
+        groupId: group.group.id,
+        messageId: parentId,
+        emoji: BOT_GROUP_REACTION_EMOJIS[0],
+        action: 'add',
+      })
+      expect(firstReaction).toEqual(duplicateReaction)
+      expect(firstReaction.reactions).toContainEqual({
+        emoji: BOT_GROUP_REACTION_EMOJIS[0], count: 1, viewerReacted: true,
+      })
+      const secondReaction = await service.react({
+        groupId: group.group.id,
+        messageId: parentId,
+        emoji: BOT_GROUP_REACTION_EMOJIS[1],
+        action: 'add',
+      })
+      expect(secondReaction.reactions).toEqual([
+        { emoji: BOT_GROUP_REACTION_EMOJIS[0], count: 1, viewerReacted: true },
+        { emoji: BOT_GROUP_REACTION_EMOJIS[1], count: 1, viewerReacted: true },
+      ])
+
+      const inspected = await service.inspect({ groupId: group.group.id })
+      const parent = inspected.messages.find(message => message.id === parentId)
+      const reply = inspected.messages.find(message => message.id === replyId)
+      expect(parent).toMatchObject({
+        text: 'The original message stays unchanged.',
+        reactions: [
+          { emoji: BOT_GROUP_REACTION_EMOJIS[0], count: 1, viewerReacted: true },
+          { emoji: BOT_GROUP_REACTION_EMOJIS[1], count: 1, viewerReacted: true },
+        ],
+      })
+      expect(reply).toMatchObject({
+        text: 'A reply that points at the original.',
+        replyTo: { messageId: parentId, text: 'The original message stays unchanged.' },
+      })
+
+      const removed = await service.react({
+        groupId: group.group.id,
+        messageId: parentId,
+        emoji: BOT_GROUP_REACTION_EMOJIS[1],
+        action: 'remove',
+      })
+      const duplicateRemoval = await service.react({
+        groupId: group.group.id,
+        messageId: parentId,
+        emoji: BOT_GROUP_REACTION_EMOJIS[1],
+        action: 'remove',
+      })
+      expect(removed).toEqual(duplicateRemoval)
+      expect(removed.reactions).toEqual([
+        { emoji: BOT_GROUP_REACTION_EMOJIS[0], count: 1, viewerReacted: true },
+      ])
+    } finally {
+      await storage.ctx.fiber.dispose()
+    }
+  })
+
+  it('rejects a reply parent from another local group', async () => {
+    const storage = await openGroupDomain(new MemoryMediaPool())
+    const alpha = botView(BotId('bot-cross-room-alpha'), SessionId('session-cross-room-alpha'), 'Cross-room alpha')
+    const beta = botView(BotId('bot-cross-room-beta'), SessionId('session-cross-room-beta'), 'Cross-room beta')
+    const gamma = botView(BotId('bot-cross-room-gamma'), SessionId('session-cross-room-gamma'), 'Cross-room gamma')
+    try {
+      const service = new BotGroupService(storage.domain, {
+        listBots: async () => [alpha, beta, gamma],
+        deliverToBot: async () => 'accepted',
+      })
+      const first = await service.create({
+        id: BotGroupId('bot-group-cross-room-first'), name: 'First room', botIds: [alpha.id, beta.id],
+      })
+      const second = await service.create({
+        id: BotGroupId('bot-group-cross-room-second'), name: 'Second room', botIds: [alpha.id, gamma.id],
+      })
+      const parentId = BotGroupMessageId('bot-group-message-cross-room-parent')
+      await service.send({ groupId: first.group.id, text: 'Only in the first room.', messageId: parentId })
+      await expect(service.send({
+        groupId: second.group.id,
+        text: 'This must be rejected.',
+        messageId: BotGroupMessageId('bot-group-message-cross-room-child'),
+        replyToMessageId: parentId,
+      })).rejects.toMatchObject({ code: 'invalid' })
+      await expect(service.inspect({ groupId: second.group.id })).resolves.toMatchObject({ messages: [] })
+    } finally {
+      await storage.ctx.fiber.dispose()
+    }
+  })
+
   it('keeps V1 user rows readable and binds shared author identity to idempotency', async () => {
     const storage = await openGroupDomain(new MemoryMediaPool())
     const alpha = botView(BotId('bot-v1-alpha'), SessionId('session-v1-alpha'), 'V1 alpha')
@@ -86,6 +220,43 @@ describe('Bot group delivery with a running Agent', () => {
       await expect(service.inspect({ groupId: group.group.id })).resolves.toMatchObject({
         messages: [{ sender: { kind: 'user' }, text: 'Legacy transcript row' }],
       })
+    } finally {
+      await storage.ctx.fiber.dispose()
+    }
+  })
+
+  it('does not fan out a legacy retry to Bots added after admission', async () => {
+    const storage = await openGroupDomain(new MemoryMediaPool())
+    const alpha = botView(BotId('bot-legacy-retry-alpha'), SessionId('session-legacy-retry-alpha'), 'Legacy alpha')
+    const beta = botView(BotId('bot-legacy-retry-beta'), SessionId('session-legacy-retry-beta'), 'Legacy beta')
+    const gamma = botView(BotId('bot-legacy-retry-gamma'), SessionId('session-legacy-retry-gamma'), 'Legacy gamma')
+    const delivered: BotId[] = []
+    try {
+      const service = new BotGroupService(storage.domain, {
+        listBots: async () => [alpha, beta, gamma],
+        deliverToBot: async ({ targetBotId }) => {
+          delivered.push(targetBotId)
+          return 'accepted'
+        },
+      })
+      const group = await service.create({
+        id: BotGroupId('bot-group-legacy-retry'),
+        name: 'Legacy retry room',
+        botIds: [alpha.id, beta.id],
+      })
+      const messageId = BotGroupMessageId('bot-group-message-legacy-retry')
+      await service.send({ groupId: group.group.id, text: 'Keep the original audience.', messageId })
+      expect(delivered).toEqual([alpha.id, beta.id])
+      const stored = storage.domain.table('messages').get(messageId)
+      if (stored === undefined) throw new Error('legacy retry message missing')
+      const { targetBotIds: _targetBotIds, ...legacy } = stored
+      void _targetBotIds
+      await storage.domain.table('messages').put(messageId, legacy)
+      await service.update({ groupId: group.group.id, name: group.group.name, botIds: [alpha.id, beta.id, gamma.id] })
+      delivered.length = 0
+      await expect(service.send({ groupId: group.group.id, text: 'Keep the original audience.', messageId }))
+        .resolves.toMatchObject({ status: 'duplicate' })
+      expect(delivered).toEqual([])
     } finally {
       await storage.ctx.fiber.dispose()
     }

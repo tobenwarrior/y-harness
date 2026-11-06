@@ -24,6 +24,7 @@ import type {
   BotGroupMessageView,
   BotGroupDeliveryRecoveryRequest,
   BotGroupDeliveryRecoveryValue,
+  BotGroupReactionRequest as BotGroupReactionRequestType,
   BotGroupSendRemoteRequest,
   BotGroupSendValue,
   BotGroupUpdateRequest,
@@ -100,10 +101,11 @@ import { admitBotGroupAttachments, isBotGroupImageType, type BotAttachmentFetch 
 import type { BotGroupAttachmentDraft } from './types.ts'
 import type {
   BotAccent, BotAvatarEditorActions, BotConnectedAppAccess, BotCreation, BotGroupCreation, BotGroupDetailData,
-  BotGroupUpdate, BotProfileUpdate,
+  BotGroupReactionRequest, BotGroupReactionValue, BotGroupUpdate, BotProfileUpdate,
   BotGroupSummary, BotIdentity, BotMemoryManagerActions, BotOrganizationPatch, BotRoutineManagerActions,
   BotSkillManagerActions, BotSkillPolicy, BotTemplateActions, BotTemplateState, BotTemplateSummary,
 } from './types.ts'
+import { readGroupReplyToMessageId } from './group-interactions.ts'
 import { BotSkillPolicyConflictError } from './types.ts'
 
 /** Remote methods consumed by the Bot workspace. */
@@ -126,6 +128,8 @@ export interface BotWorkspaceRemote {
   updateGroup?: (request: BotGroupUpdateRequest) => Promise<RemoteResult<BotGroupUpdateValue>>
   inspectGroup?: (request: BotGroupInspectRequest) => Promise<RemoteResult<BotGroupInspectValue>>
   sendGroupMessage?: (request: BotGroupSendRemoteRequest) => Promise<RemoteResult<BotGroupSendValue>>
+  /** Replace the current viewer's reaction on one group message. */
+  reactGroupMessage?: (request: BotGroupReactionRequestType) => Promise<RemoteResult<BotGroupReactionValue>>
   inspectSharedGroupDeliveryFences?: (
     request: { readonly botId: BotIdType },
   ) => Promise<RemoteResult<BotSharedGroupDeliveryFenceDiagnosticValue>>
@@ -238,6 +242,7 @@ export interface BotGroupPendingState {
     readonly text: string
     readonly messageId: string
     readonly targetBotIds?: readonly string[]
+    readonly replyToMessageId?: string
   }>>
 }
 
@@ -267,14 +272,19 @@ export interface BotWorkspaceFace {
   readonly organize?: (id: string, patch: BotOrganizationPatch) => Promise<void>
   readonly createGroup: (creation: BotGroupCreation) => Promise<void>
   readonly updateGroup: (update: BotGroupUpdate) => Promise<void>
-  readonly sendGroupMessage: (text: string, messageId?: string, targetBotIds?: readonly string[]) => Promise<void>
+  readonly sendGroupMessage: (
+    text: string, messageId?: string, targetBotIds?: readonly string[], replyToMessageId?: string,
+  ) => Promise<void>
   /** Admit and send local group attachments with the same message identity across retries. */
   readonly sendGroupMessageWithAttachments: (
     text: string,
     attachments: readonly BotGroupAttachmentDraft[],
     messageId?: string,
     targetBotIds?: readonly string[],
+    replyToMessageId?: string,
   ) => Promise<void>
+  /** Replace the current viewer's reaction on one group message when supported. */
+  readonly reactGroupMessage?: (messageId: string, emoji: BotGroupReactionRequest['emoji'], action: 'add' | 'remove') => Promise<void>
   readonly templateActions?: BotTemplateActions
   readonly retryGroup: () => void
   readonly loadConnectedApps?: (botId: string) => Promise<readonly BotConnectedAppAccess[]>
@@ -328,7 +338,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function restorePendingGroupState(value: unknown): BotGroupPendingState {
   const creations: Record<string, string> = {}
-  const messages: Record<string, { readonly text: string; readonly messageId: string; readonly targetBotIds?: readonly string[] }> = {}
+  const messages: Record<string, {
+    readonly text: string
+    readonly messageId: string
+    readonly targetBotIds?: readonly string[]
+    readonly replyToMessageId?: string
+  }> = {}
   if (!isRecord(value) || !isRecord(value.creations) || !isRecord(value.messages)) {
     throw new Error('invalid pending Bot group state')
   }
@@ -349,9 +364,16 @@ function restorePendingGroupState(value: unknown): BotGroupPendingState {
       || targetBotIds.length === 0 || targetBotIds.some(id => typeof id !== 'string' || id.trim() === ''))) {
       throw new Error('invalid pending Bot group targets')
     }
+    const replyToMessageId = pending.replyToMessageId
+    if (replyToMessageId !== undefined && (typeof replyToMessageId !== 'string'
+      || readGroupReplyToMessageId({ replyToMessageId }) !== replyToMessageId
+      || replyToMessageId === pending.messageId)) {
+      throw new Error('invalid pending Bot group reply')
+    }
     messages[key] = {
       text: pending.text, messageId: pending.messageId,
       ...(targetBotIds === undefined ? {} : { targetBotIds: targetBotIds.map(id => id.trim()) }),
+      ...(replyToMessageId === undefined ? {} : { replyToMessageId }),
     }
   }
   return { creations, messages }
@@ -432,6 +454,7 @@ export class BotWorkspaceController {
     readonly text: string
     readonly messageId: BotGroupMessageIdType
     readonly targetBotIds?: readonly string[]
+    readonly replyToMessageId?: string
   }>()
   private readonly pendingGroupCreations = new Map<string, BotGroupIdType>()
   private readonly pendingGroupStore: BotGroupPendingStore
@@ -461,6 +484,7 @@ export class BotWorkspaceController {
       this.pendingGroupMessages.set(key, {
         text: pending.text, messageId: brandString<BotGroupMessageIdType>(pending.messageId),
         ...(pending.targetBotIds === undefined ? {} : { targetBotIds: pending.targetBotIds }),
+        ...(pending.replyToMessageId === undefined ? {} : { replyToMessageId: pending.replyToMessageId }),
       })
     }
   }
@@ -487,6 +511,7 @@ export class BotWorkspaceController {
       messages: Object.fromEntries([...this.pendingGroupMessages.entries()].map(([key, pending]) => [key, {
         text: pending.text, messageId: String(pending.messageId),
         ...(pending.targetBotIds === undefined ? {} : { targetBotIds: pending.targetBotIds }),
+        ...(pending.replyToMessageId === undefined ? {} : { replyToMessageId: pending.replyToMessageId }),
       }])),
     })
   }
@@ -522,6 +547,7 @@ export class BotWorkspaceController {
     messageId: BotGroupMessageIdType,
     text: string,
     targetBotIds: readonly string[] | undefined,
+    replyToMessageId?: string,
   ): Promise<BotGroupMessageView | undefined> {
     const inspectGroup = this.remote.inspectGroup
     if (inspectGroup === undefined) throw new Error('Cannot safely retry Bot group messaging because the group transcript is unavailable.')
@@ -530,7 +556,8 @@ export class BotWorkspaceController {
     const existing = result.value.messages.find(message => message.id === messageId)
     if (existing === undefined) return undefined
     if (existing.groupId !== brandString<BotGroupIdType>(groupId) || existing.text !== text || existing.sender.kind !== 'user'
-      || !sameStringIdSet(existing.targetBotIds ?? [], targetBotIds ?? [])) {
+      || !sameStringIdSet(existing.targetBotIds ?? [], targetBotIds ?? [])
+      || readGroupReplyToMessageId(existing) !== replyToMessageId) {
       throw new Error(`Cannot safely retry Bot message ${String(messageId)} because its content differs.`)
     }
     return existing
@@ -570,10 +597,19 @@ export class BotWorkspaceController {
         : { organize: (id: string, patch: BotOrganizationPatch) => this.organize(id, patch) }),
       createGroup: creation => this.createGroup(creation),
       updateGroup: update => this.updateGroup(update),
-      sendGroupMessage: (text, messageId, targetBotIds) => this.sendGroupMessage(text, messageId, targetBotIds),
-      sendGroupMessageWithAttachments: (text, attachments, messageId, targetBotIds) => this.sendGroupMessageWithAttachments(
-        text, attachments, messageId, targetBotIds,
+      sendGroupMessage: (text, messageId, targetBotIds, replyToMessageId) => (
+        this.sendGroupMessage(text, messageId, targetBotIds, replyToMessageId)
       ),
+      sendGroupMessageWithAttachments: (text, attachments, messageId, targetBotIds, replyToMessageId) => (
+        this.sendGroupMessageWithAttachments(text, attachments, messageId, targetBotIds, replyToMessageId)
+      ),
+      ...(this.remote.reactGroupMessage === undefined
+        ? {}
+        : {
+          reactGroupMessage: (
+            messageId: string, emoji: BotGroupReactionRequest['emoji'], action: 'add' | 'remove',
+          ) => this.reactGroupMessage(messageId, emoji, action),
+        }),
       ...(
         this.remote.listTemplates !== undefined
         || this.remote.publishTemplate !== undefined
@@ -1324,7 +1360,12 @@ export class BotWorkspaceController {
     if (current.selectedGroupId === updated.id) await this.refreshGroup(updated.id, this.selectionGeneration)
   }
 
-  private async sendGroupMessage(text: string, explicitMessageId?: string, targetBotIds?: readonly string[]): Promise<void> {
+  private async sendGroupMessage(
+    text: string,
+    explicitMessageId?: string,
+    targetBotIds?: readonly string[],
+    replyToMessageId?: string,
+  ): Promise<void> {
     const sendGroupMessage = this.remote.sendGroupMessage
     const current = this.source.getSnapshot()
     const operationSelectionGeneration = this.selectionGeneration
@@ -1335,14 +1376,26 @@ export class BotWorkspaceController {
     }
     const normalizedText = text.trim()
     const normalizedTargetIds = targetBotIds?.map(id => id.trim())
-    const pendingKey = `${current.selectedGroupId}\u0000${normalizedText}\u0000${canonicalTargetIds(normalizedTargetIds).join('\u0000')}`
+    const normalizedReplyToMessageId = replyToMessageId?.trim() || undefined
+    if (normalizedReplyToMessageId !== undefined
+      && readGroupReplyToMessageId({ replyToMessageId: normalizedReplyToMessageId }) !== normalizedReplyToMessageId) {
+      const message = this.groupDeliveryFailure()
+      this.setGroupError(message, undefined, operationSelectionGeneration)
+      throw new Error(message)
+    }
+    const pendingKeyBase = `${current.selectedGroupId}\u0000${normalizedText}\u0000${canonicalTargetIds(normalizedTargetIds).join('\u0000')}`
+    const pendingKey = normalizedReplyToMessageId === undefined
+      ? pendingKeyBase
+      : `${pendingKeyBase}\u0000${normalizedReplyToMessageId}`
     const normalizedExplicitId = explicitMessageId?.trim()
     const pending = this.pendingGroupMessages.get(pendingKey)
     let messageId: BotGroupMessageIdType
     if (pending !== undefined) {
       try {
         this.requirePendingDurability()
-        await this.reconcileGroupMessage(current.selectedGroupId, pending.messageId, normalizedText, pending.targetBotIds)
+        await this.reconcileGroupMessage(
+          current.selectedGroupId, pending.messageId, normalizedText, pending.targetBotIds, pending.replyToMessageId,
+        )
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error)
         this.setGroupError(message, undefined, operationSelectionGeneration)
@@ -1365,6 +1418,7 @@ export class BotWorkspaceController {
       this.pendingGroupMessages.set(pendingKey, {
         text: normalizedText, messageId,
         ...(normalizedTargetIds === undefined ? {} : { targetBotIds: normalizedTargetIds }),
+        ...(normalizedReplyToMessageId === undefined ? {} : { replyToMessageId: normalizedReplyToMessageId }),
       })
       if (!this.persistPendingGroupOperations()) {
         this.pendingGroupMessages.delete(pendingKey)
@@ -1375,10 +1429,14 @@ export class BotWorkspaceController {
     }
     let result: RemoteResult<BotGroupSendValue>
     try {
-      result = await sendGroupMessage({
+      const request: BotGroupSendRemoteRequest & { readonly replyToMessageId?: BotGroupMessageIdType } = {
         groupId: brandString<BotGroupIdType>(current.selectedGroupId), text: normalizedText, messageId,
         ...(normalizedTargetIds === undefined ? {} : { targetBotIds: normalizedTargetIds.map(id => brandString<BotIdType>(id)) }),
-      })
+        ...(normalizedReplyToMessageId === undefined
+          ? {}
+          : { replyToMessageId: brandString<BotGroupMessageIdType>(normalizedReplyToMessageId) }),
+      }
+      result = await sendGroupMessage(request)
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error)
       if (!this.disposed && this.selectionGeneration === operationSelectionGeneration
@@ -1408,6 +1466,7 @@ export class BotWorkspaceController {
           text: normalizedText,
           messageId,
           ...(normalizedTargetIds === undefined ? {} : { targetBotIds: normalizedTargetIds }),
+          ...(normalizedReplyToMessageId === undefined ? {} : { replyToMessageId: normalizedReplyToMessageId }),
         })
         const message = this.retryStorageMessage('groupSendRetryCleanupFailed')
         this.setGroupError(message, undefined, operationSelectionGeneration)
@@ -1418,11 +1477,40 @@ export class BotWorkspaceController {
     await this.refreshGroup(current.selectedGroupId, this.selectionGeneration)
   }
 
+  private async reactGroupMessage(
+    messageId: string,
+    emoji: BotGroupReactionRequest['emoji'],
+    action: 'add' | 'remove',
+  ): Promise<void> {
+    const react = this.remote.reactGroupMessage
+    const current = this.source.getSnapshot()
+    const operationSelectionGeneration = this.selectionGeneration
+    if (current.selectedGroupId === null || react === undefined) {
+      const message = this.unexpectedResponse()
+      this.setGroupError(message, undefined, operationSelectionGeneration)
+      throw new Error(message)
+    }
+    const result = await react({
+      groupId: brandString<BotGroupIdType>(current.selectedGroupId),
+      messageId: brandString<BotGroupMessageIdType>(messageId),
+      emoji,
+      action,
+    })
+    if (!result.ok) {
+      this.setGroupError(result.error.message, undefined, operationSelectionGeneration)
+      throw new Error(result.error.message)
+    }
+    if (this.disposed || this.selectionGeneration !== operationSelectionGeneration
+      || this.source.getSnapshot().selectedGroupId !== current.selectedGroupId) return
+    await this.refreshGroup(current.selectedGroupId, this.selectionGeneration)
+  }
+
   private async sendGroupMessageWithAttachments(
     text: string,
     attachments: readonly BotGroupAttachmentDraft[],
     explicitMessageId?: string,
     targetBotIds?: readonly string[],
+    replyToMessageId?: string,
   ): Promise<void> {
     const sendGroupMessage = this.remote.sendGroupMessage
     const admitGroupImage = this.remote.admitGroupImage
@@ -1436,6 +1524,13 @@ export class BotWorkspaceController {
     }
     const normalizedText = text.trim()
     const normalizedTargetIds = targetBotIds?.map(id => id.trim())
+    const normalizedReplyToMessageId = replyToMessageId?.trim() || undefined
+    if (normalizedReplyToMessageId !== undefined
+      && readGroupReplyToMessageId({ replyToMessageId: normalizedReplyToMessageId }) !== normalizedReplyToMessageId) {
+      const message = this.groupDeliveryFailure()
+      this.setGroupError(message, undefined, operationSelectionGeneration)
+      throw new Error(message)
+    }
     const messageId = brandString<BotGroupMessageIdType>(
       explicitMessageId?.trim() || `bot-group-message-${randomUUID()}`,
     )
@@ -1444,7 +1539,9 @@ export class BotWorkspaceController {
       ?? []
     let existing: BotGroupMessageView | undefined
     try {
-      existing = await this.reconcileGroupMessage(current.selectedGroupId, messageId, normalizedText, effectiveTargetIds)
+      existing = await this.reconcileGroupMessage(
+        current.selectedGroupId, messageId, normalizedText, effectiveTargetIds, normalizedReplyToMessageId,
+      )
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error)
       this.setGroupError(message, undefined, operationSelectionGeneration)
@@ -1456,12 +1553,16 @@ export class BotWorkspaceController {
         if (!groupAttachmentMatchesDrafts(existing, attachments)) {
           throw new Error(`Cannot safely retry Bot message ${String(messageId)} because its attachments differ.`)
         }
-        result = await sendGroupMessage({
+        const request: BotGroupSendRemoteRequest & { readonly replyToMessageId?: BotGroupMessageIdType } = {
           groupId: brandString<BotGroupIdType>(current.selectedGroupId),
           text: normalizedText,
           messageId,
           ...(normalizedTargetIds === undefined ? {} : { targetBotIds: normalizedTargetIds.map(id => brandString<BotIdType>(id)) }),
-        })
+          ...(normalizedReplyToMessageId === undefined
+            ? {}
+            : { replyToMessageId: brandString<BotGroupMessageIdType>(normalizedReplyToMessageId) }),
+        }
+        result = await sendGroupMessage(request)
       } else {
         const grants = await admitBotGroupAttachments(
           {
@@ -1479,13 +1580,17 @@ export class BotWorkspaceController {
           this.attachmentFetcher,
           '/api/bots/group/uploadAttachment',
         )
-        result = await sendGroupMessage({
+        const request: BotGroupSendRemoteRequest & { readonly replyToMessageId?: BotGroupMessageIdType } = {
           groupId: brandString<BotGroupIdType>(current.selectedGroupId),
           text: normalizedText,
           messageId,
           ...(normalizedTargetIds === undefined ? {} : { targetBotIds: normalizedTargetIds.map(id => brandString<BotIdType>(id)) }),
           attachmentGrants: grants,
-        })
+          ...(normalizedReplyToMessageId === undefined
+            ? {}
+            : { replyToMessageId: brandString<BotGroupMessageIdType>(normalizedReplyToMessageId) }),
+        }
+        result = await sendGroupMessage(request)
       }
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error)
@@ -2225,6 +2330,12 @@ function groupDetail(value: BotGroupInspectValue): BotGroupDetailData {
         : { kind: 'user' as const },
       text: message.text,
       ...(message.targetBotIds === undefined ? {} : { targetBotIds: message.targetBotIds.map(botId => String(botId)) }),
+      ...(readGroupReplyToMessageId(message) === undefined ? {} : { replyToMessageId: readGroupReplyToMessageId(message) as string }),
+      reactions: (message.reactions ?? []).map(reaction => ({
+        emoji: reaction.emoji,
+        count: reaction.count,
+        ...(reaction.viewerReacted === undefined ? {} : { viewerReacted: reaction.viewerReacted }),
+      })),
       ...(message.attachments === undefined ? {} : { attachments: message.attachments }),
       createdAt: message.createdAt,
     })),

@@ -27,6 +27,10 @@ Mount the Client export alongside the Bot Remote, Session UI, conversation UI, l
 
 Open **Group settings** in a shared room to see its Bots and people. Room owners can change the name or remove a member's access to the room.
 
+Use **Reply** on a group message to quote it in the composer and send a reply to that message. Use the reaction picker to add or remove your reaction. The transcript displays the quoted message and counts each reaction.
+
+When a connected app requests approval in a shared conversation, choose **Allow once**, **Always allow**, or **Deny**. A remembered approval applies to the exact tool in that conversation for the person who approved it. That person can remove it from the conversation's approvals.
+
 ### When to choose it
 
 

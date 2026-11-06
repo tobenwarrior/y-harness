@@ -80,6 +80,25 @@ describe('shared-group browser retry queue', () => {
     await expect(queue.listMessages()).resolves.toMatchObject([{ id: original.id, targetBotIds: ['bot-scout'] }])
   })
 
+  it('recovers a reply with its original parent and recipients', async () => {
+    const scope = 'principal-reply-retry'
+    const queue = createSharedGroupPendingQueue(scope)
+    const reply = 'bot-group-message-parent'
+    const original = await queue.reserveMessage('reply-action', 'bot-group-room', 'I agree', ['bot-scout'], reply)
+    const reloaded = createSharedGroupPendingQueue(scope)
+    await expect(reloaded.listMessages()).resolves.toMatchObject([{
+      id: original.id, text: 'I agree', targetBotIds: ['bot-scout'], replyToMessageId: reply,
+    }])
+    await expect(reloaded.reserveMessage('reply-action', 'bot-group-room', 'I agree', ['bot-scout'], reply))
+      .resolves.toMatchObject({ id: original.id, recovered: true })
+    await expect(reloaded.reserveMessage('reply-action', 'bot-group-room', 'I agree', ['bot-scout']))
+      .rejects.toThrow('changed during retry')
+    await expect(reloaded.reserveMessage('reply-action', 'bot-group-room', 'I agree', ['bot-scout'], 'bot-group-message-other'))
+      .rejects.toThrow('changed during retry')
+    await reloaded.completeMessage(original.operationHash, original.id)
+    await expect(reloaded.listMessages()).resolves.toEqual([])
+  })
+
   it('retains a malformed targeted retry instead of silently dropping its recipients', async () => {
     const key = 'yharness.client-ui-bots.shared-group-pending.v3.principal-invalid-target.message.deadbeef'
     const raw = JSON.stringify({ version: 2, kind: 'message', id: 'bot-group-message-one', operationHash: 'deadbeef',

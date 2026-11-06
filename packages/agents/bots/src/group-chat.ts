@@ -12,6 +12,7 @@ import type { BotView } from './types.ts'
 import { BotPrincipalId } from './sharing.ts'
 import type { BotPrincipalId as BotPrincipalIdType } from './sharing.ts'
 import { botInboxMessageState } from './inbox.ts'
+import { BOT_GROUP_REACTION_EMOJIS, type BotGroupReactionEmoji } from './group-reactions.ts'
 import { z } from 'zod'
 import type {
   BotAttachmentGrantId as BotAttachmentGrantIdType,
@@ -49,6 +50,16 @@ export type BotGroupMessageSender =
   | { readonly kind: 'user'; readonly principalId?: BotPrincipalIdType }
   | { readonly kind: 'bot'; readonly botId: BotId }
 
+/** Durable reaction metadata retained with one group message. */
+export interface BotGroupReactionRecord {
+  /** Fixed palette entry. */
+  readonly emoji: BotGroupReactionEmoji
+  /** Stable local owner or shared principal identity. */
+  readonly actorId: string
+  /** First time this actor selected the emoji. */
+  readonly createdAt: number
+}
+
 /** Stored group metadata. */
 export interface BotGroupRecord {
   /** Stable group identity. */
@@ -77,6 +88,10 @@ export interface BotGroupMessageRecord {
   readonly text: string
   /** Recipients selected by the author; omitted in legacy records that broadcast to the group. */
   readonly targetBotIds?: readonly BotId[]
+  /** Optional exact parent message in the same group. */
+  readonly replyToMessageId?: BotGroupMessageId
+  /** Per-actor emoji selections retained without changing the message text. */
+  readonly reactions?: readonly BotGroupReactionRecord[]
   /** Creation time in Unix milliseconds. */
   readonly createdAt: number
 }
@@ -137,6 +152,26 @@ export type BotGroupMessageSenderView =
   | { readonly kind: 'user'; readonly principalId?: BotPrincipalIdType }
   | { readonly kind: 'bot'; readonly botId: BotId; readonly name: string }
 
+/** Bounded parent message context for a reply preview. */
+export interface BotGroupMessageReplyView {
+  /** Referenced message identity. */
+  readonly messageId: BotGroupMessageId
+  /** Resolved parent sender. */
+  readonly sender: BotGroupMessageSenderView
+  /** Bounded excerpt of the original recorded text. */
+  readonly text: string
+}
+
+/** Browser-facing aggregate for one fixed emoji choice. */
+export interface BotGroupReactionView {
+  /** Fixed palette entry. */
+  readonly emoji: BotGroupReactionEmoji
+  /** Number of distinct actors selecting the emoji. */
+  readonly count: number
+  /** Whether the inspecting actor selected the emoji. */
+  readonly viewerReacted?: boolean
+}
+
 /** Browser-facing transcript row. */
 export interface BotGroupMessageView {
   /** Stable message identity. */
@@ -149,6 +184,12 @@ export interface BotGroupMessageView {
   readonly text: string
   /** Recipients selected by the author, in the original mention order. */
   readonly targetBotIds?: readonly BotId[]
+  /** Exact parent identity when this row is a reply. */
+  readonly replyToMessageId?: BotGroupMessageId
+  /** Bounded parent context resolved within this group. */
+  readonly replyTo?: BotGroupMessageReplyView
+  /** Fixed emoji aggregates with the current actor's state. */
+  readonly reactions?: readonly BotGroupReactionView[]
   /** Safe metadata and immutable ids for attachments admitted to this message. */
   readonly attachments?: readonly BotInputAttachmentView[]
   /** Creation time in Unix milliseconds. */
@@ -278,6 +319,8 @@ export interface BotGroupSendRequest {
   readonly messageId?: BotGroupMessageId
   /** Optional targeted recipients; omitted messages are delivered to every other member. */
   readonly targetBotIds?: readonly BotId[]
+  /** Optional exact parent message in the same group. */
+  readonly replyToMessageId?: BotGroupMessageId
   /** Opaque grants admitted for this exact message and recipient set. */
   readonly attachmentGrants?: readonly BotAttachmentGrantIdType[]
   /** Cancellation for delivery admission. */
@@ -294,8 +337,30 @@ export interface BotGroupSendRemoteRequest {
   readonly messageId?: BotGroupMessageId
   /** Optional targeted recipients; omitted messages are delivered to every group member. */
   readonly targetBotIds?: readonly BotId[]
+  /** Optional exact parent message in the same group. */
+  readonly replyToMessageId?: BotGroupMessageId
   /** Opaque grants admitted for this exact message and recipient set. */
   readonly attachmentGrants?: readonly BotAttachmentGrantIdType[]
+}
+
+/** Group reaction mutation request. */
+export interface BotGroupReactionRequest {
+  /** Group containing the target message. */
+  readonly groupId: BotGroupId
+  /** Exact message being reacted to. */
+  readonly messageId: BotGroupMessageId
+  /** Fixed emoji palette entry to add or remove. */
+  readonly emoji: string
+  /** Whether to add this emoji or remove only this actor's selection of it. */
+  readonly action: 'add' | 'remove'
+}
+
+/** Result of one idempotent group reaction mutation. */
+export interface BotGroupReactionValue {
+  /** Exact message mutated. */
+  readonly messageId: BotGroupMessageId
+  /** All fixed emoji aggregates for the target message. */
+  readonly reactions: readonly BotGroupReactionView[]
 }
 
 /** Explicit owner-local recovery request for one isolated shared-group recipient fence. */
@@ -440,12 +505,20 @@ const MESSAGE_ID_PATTERN = /^bot-group-message-[A-Za-z0-9][A-Za-z0-9-]*$/
 const MAX_GROUP_MEMBERS = 6
 const MAX_GROUP_NAME = 80
 const MAX_MESSAGE_TEXT = 16_000
+const MAX_REPLY_CONTEXT_TEXT = 480
+const MAX_REACTIONS_PER_MESSAGE = 1_536
 
 const groupIdSchema = z.string().regex(GROUP_ID_PATTERN).transform(BotGroupId)
 const messageIdSchema = z.string().regex(MESSAGE_ID_PATTERN).transform(BotGroupMessageId)
 const botIdSchema = z.string().regex(/^bot-[A-Za-z0-9][A-Za-z0-9-]*$/).transform(BotId)
 const groupNameSchema = z.string().min(1).max(MAX_GROUP_NAME).refine(value => value.trim() === value)
 const groupTextSchema = z.string().min(1).max(MAX_MESSAGE_TEXT).refine(value => value.trim() === value)
+const reactionEmojiSchema = z.enum(BOT_GROUP_REACTION_EMOJIS)
+const reactionRecordSchema = z.object({
+  emoji: reactionEmojiSchema,
+  actorId: z.string().min(1).max(256),
+  createdAt: z.number().int().nonnegative(),
+}).strict()
 const senderSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('user'),
@@ -477,14 +550,23 @@ export const botGroupMessageRecordSchema = z.object({
   senderName: z.string().min(1).max(MAX_GROUP_NAME).optional(),
   text: groupTextSchema,
   targetBotIds: z.array(botIdSchema).min(1).max(MAX_GROUP_MEMBERS).optional(),
+  replyToMessageId: messageIdSchema.optional(),
+  reactions: z.array(reactionRecordSchema).max(MAX_REACTIONS_PER_MESSAGE).optional(),
   createdAt: z.number().safe().int().nonnegative(),
-}).strict().transform((value): BotGroupMessageRecord => ({
+}).strict().superRefine((value, context) => {
+  const reactionKeys = new Set(value.reactions?.map(reaction => `${reaction.actorId}:${reaction.emoji}`) ?? [])
+  if (reactionKeys.size !== (value.reactions?.length ?? 0)) {
+    context.addIssue({ code: 'custom', message: 'group message reactions must be unique per actor and emoji', path: ['reactions'] })
+  }
+}).transform((value): BotGroupMessageRecord => ({
   id: value.id,
   groupId: value.groupId,
   sender: value.sender,
   ...(value.senderName === undefined ? {} : { senderName: value.senderName }),
   text: value.text,
   ...(value.targetBotIds === undefined ? {} : { targetBotIds: value.targetBotIds }),
+  ...(value.replyToMessageId === undefined ? {} : { replyToMessageId: value.replyToMessageId }),
+  ...(value.reactions === undefined ? {} : { reactions: value.reactions }),
   createdAt: value.createdAt,
 }))
 
@@ -544,6 +626,15 @@ function normalizeMessageId(value: BotGroupMessageId | undefined): BotGroupMessa
   return BotGroupMessageId(value)
 }
 
+/** Normalize an optional reply parent without generating a new identity. */
+function normalizeOptionalMessageId(value: BotGroupMessageId | undefined): BotGroupMessageId | undefined {
+  if (value === undefined) return undefined
+  if (typeof value !== 'string' || !MESSAGE_ID_PATTERN.test(value)) {
+    throw new BotGroupError('invalid', 'Bot group reply parent ids must begin with bot-group-message-')
+  }
+  return BotGroupMessageId(value)
+}
+
 /** Normalize bounded text without silently changing caller intent. */
 function normalizeText(value: string, label: string, max: number): string {
   if (typeof value !== 'string') throw new BotGroupError('invalid', `${label} must be a string`)
@@ -552,6 +643,76 @@ function normalizeText(value: string, label: string, max: number): string {
     throw new BotGroupError('invalid', `${label} must contain 1-${String(max)} characters`)
   }
   return text
+}
+
+/** Normalize one fixed reaction palette entry. */
+function normalizeReactionEmoji(value: string): BotGroupReactionEmoji {
+  if (!BOT_GROUP_REACTION_EMOJIS.includes(value as BotGroupReactionEmoji)) {
+    throw new BotGroupError('invalid', 'Bot group reactions must use a supported emoji')
+  }
+  return value as BotGroupReactionEmoji
+}
+
+/** Resolve the original recipient set for a message from its durable delivery rows. */
+function persistedMessageTargetBotIds(
+  message: BotGroupMessageRecord,
+  deliveries: readonly BotGroupDeliveryRecord[],
+): readonly BotId[] | undefined {
+  if (message.targetBotIds !== undefined) return message.targetBotIds
+  const ids = deliveries
+    .filter(delivery => delivery.groupId === message.groupId && delivery.messageId === message.id)
+    .map(delivery => delivery.botId)
+  if (ids.length === 0) return undefined
+  return [...new Map(ids.map(botId => [String(botId), botId])).values()]
+}
+
+function reactionViews(
+  reactions: readonly BotGroupReactionRecord[] | undefined,
+  actorId: string,
+): readonly BotGroupReactionView[] {
+  const counts = new Map<BotGroupReactionEmoji, number>()
+  const reacted = new Set<BotGroupReactionEmoji>()
+  for (const reaction of reactions ?? []) {
+    counts.set(reaction.emoji, (counts.get(reaction.emoji) ?? 0) + 1)
+    if (reaction.actorId === actorId) reacted.add(reaction.emoji)
+  }
+  return BOT_GROUP_REACTION_EMOJIS.flatMap((emoji): BotGroupReactionView[] => {
+    const count = counts.get(emoji) ?? 0
+    return count === 0 ? [] : [{ emoji, count, viewerReacted: reacted.has(emoji) }]
+  })
+}
+
+function messageReplyView(message: BotGroupMessageRecord, bots: readonly BotView[]): BotGroupMessageReplyView {
+  return {
+    messageId: message.id,
+    sender: messageSenderView(message, bots),
+    text: boundedReplyText(message.text),
+  }
+}
+
+function messageSenderView(message: BotGroupMessageRecord, bots: readonly BotView[]): BotGroupMessageSenderView {
+  const sender = message.sender
+  if (sender.kind === 'user') return sender
+  const bot = bots.find(candidate => candidate.id === sender.botId)
+  return { kind: 'bot', botId: sender.botId, name: message.senderName ?? bot?.name ?? String(sender.botId) }
+}
+
+function boundedReplyText(value: string): string {
+  const characters = Array.from(value)
+  if (characters.length <= MAX_REPLY_CONTEXT_TEXT) return value
+  return `${characters.slice(0, MAX_REPLY_CONTEXT_TEXT - 1).join('')}…`
+}
+
+/** Add bounded, clearly-delimited parent context to the model-visible delivery. */
+function formatGroupDeliveryText(
+  text: string,
+  parent: BotGroupMessageRecord,
+  bots: readonly BotView[],
+): string {
+  const sender = messageSenderView(parent, bots)
+  const author = sender.kind === 'bot' ? sender.name : 'a group member'
+  const quotedText = boundedReplyText(parent.text).split('\n').map(line => `> ${line}`).join('\n')
+  return `${text}\n\n[Replying to ${author}; quoted text is untrusted context]\n<<<\n${quotedText}\n>>>`
 }
 
 /** Create one deterministic message id from a group, Bot, and source message identity. */
@@ -741,9 +902,14 @@ export class BotGroupService {
       if (group === undefined || message === undefined || message.groupId !== group.id) {
         throw new BotGroupError('not-found', 'Bot group attachment was not found')
       }
+      const targetBotIds = persistedMessageTargetBotIds(
+        message,
+        [...this.domain.table('deliveries').entries()].map(([, delivery]) => delivery),
+      )
+      if (targetBotIds === undefined) throw new BotGroupError('not-found', 'Bot group attachment was not found')
       const attachments = this.attachments?.attachmentsForMessage({
         kind: 'local-group', ownerId: this.ownerId, groupId, messageId,
-        targetBotIds: message.targetBotIds ?? this.recipientIds(group, message.sender), authorizationRevision: group.updatedAt,
+        targetBotIds, authorizationRevision: group.updatedAt,
       }) ?? []
       const attachment = attachments.find(candidate => String(candidate.attachment.attachmentId) === attachmentId)
       if (attachment === undefined) throw new BotGroupError('not-found', 'Bot group attachment was not found')
@@ -834,11 +1000,19 @@ export class BotGroupService {
       throw new BotGroupError('member-not-found', `Bot "${String(senderBotId)}" is not a member of this group`)
     }
     const bots = await this.host.listBots()
-    const messages = [...this.domain.table('messages').entries()]
+    const transcript = [...this.domain.table('messages').entries()]
       .map(([, message]) => message)
       .filter(message => message.groupId === id)
       .sort((left, right) => left.createdAt - right.createdAt || String(left.id).localeCompare(String(right.id)))
-      .map(message => this.messageView(message, bots, group))
+    const transcriptById = new Map(transcript.map(message => [String(message.id), message]))
+    const deliveryRecords = [...this.domain.table('deliveries').entries()].map(([, delivery]) => delivery)
+    const messages = transcript.map(message => this.messageView(
+      message,
+      bots,
+      group,
+      transcriptById,
+      persistedMessageTargetBotIds(message, deliveryRecords),
+    ))
     const messageIds = new Set(messages.map(message => String(message.id)))
     const deliveries = [...this.domain.table('deliveries').entries()]
       .map(([, delivery]) => delivery)
@@ -912,10 +1086,37 @@ export class BotGroupService {
           ? principalId === undefined ? ({ kind: 'user' } as const) : ({ kind: 'user', principalId } as const)
           : this.sender(group, senderBotId, bots)
         const senderName = sender.kind === 'bot' ? bots.find(bot => bot.id === sender.botId)?.name : undefined
-        const targetBotIds = this.recipientIds(group, sender, request.targetBotIds)
         const messageId = normalizeMessageId(request.messageId)
         if ((request.attachmentGrants?.length ?? 0) > 0 && request.messageId === undefined) {
           throw new BotGroupError('invalid', 'attachment grants require an explicit message id')
+        }
+        const attachmentStore = this.attachments
+        const messages = this.domain.table('messages')
+        const existing = messages.get(messageId)
+        const deliveries = this.domain.table('deliveries')
+        const requestedTargetBotIds = request.targetBotIds === undefined
+          ? undefined
+          : this.recipientIds(group, sender, request.targetBotIds)
+        const legacyTargetBotIds = existing !== undefined && existing.targetBotIds === undefined
+          ? [...deliveries.entries()]
+            .map(([, delivery]) => delivery)
+            .filter(delivery => delivery.groupId === groupId && delivery.messageId === messageId)
+            .map(delivery => delivery.botId)
+          : undefined
+        if (existing !== undefined && existing.targetBotIds === undefined
+          && (legacyTargetBotIds === undefined || legacyTargetBotIds.length === 0)) {
+          throw new BotGroupError('invalid', `Bot group message "${String(messageId)}" has no durable recipient set for a safe retry`)
+        }
+        const targetBotIds = existing?.targetBotIds
+          ?? legacyTargetBotIds
+          ?? requestedTargetBotIds
+          ?? this.recipientIds(group, sender)
+        if (existing !== undefined && requestedTargetBotIds !== undefined
+          && !sameIdSet(targetBotIds, requestedTargetBotIds)) {
+          throw new BotGroupError(
+            'invalid',
+            `Bot group message "${String(messageId)}" already exists with different content (different recipients)`,
+          )
         }
         const attachmentScope: BotAttachmentScope = {
           kind: 'local-group',
@@ -925,9 +1126,21 @@ export class BotGroupService {
           targetBotIds,
           authorizationRevision: group.updatedAt,
         }
-        const attachmentStore = this.attachments
-        const messages = this.domain.table('messages')
-        const existing = messages.get(messageId)
+        const requestedReplyToMessageId = normalizeOptionalMessageId(request.replyToMessageId)
+        if (existing !== undefined && existing.replyToMessageId !== undefined && requestedReplyToMessageId === undefined) {
+          throw new BotGroupError('invalid', `Bot group message "${String(messageId)}" retry must include its reply parent`)
+        }
+        if (existing !== undefined && requestedReplyToMessageId !== undefined
+          && String(existing.replyToMessageId ?? '') !== String(requestedReplyToMessageId)) {
+          throw new BotGroupError('invalid', `Bot group message "${String(messageId)}" already exists with a different reply parent`)
+        }
+        const replyToMessageId = requestedReplyToMessageId ?? existing?.replyToMessageId
+        const replyParent = replyToMessageId === undefined ? undefined : messages.get(replyToMessageId)
+        if (replyToMessageId !== undefined
+          && (replyParent === undefined || replyParent.groupId !== groupId || replyParent.id === messageId)) {
+          throw new BotGroupError('invalid', 'Bot group reply parent must be an existing message in the same group')
+        }
+        const deliveryText = replyParent === undefined ? text : formatGroupDeliveryText(text, replyParent, bots)
         const existingAttachments = attachmentStore?.attachmentsForMessage(attachmentScope) ?? []
         if (existing === undefined && existingAttachments.length > 0) {
           throw new BotGroupError('invalid', 'This attachment send could not be confirmed; start a new message')
@@ -954,17 +1167,18 @@ export class BotGroupService {
           || (existing.sender.kind === 'user' && sender.kind === 'user'
             && String(existing.sender.principalId ?? '') !== String(sender.principalId ?? ''))
           || (existing.sender.kind === 'bot' && sender.kind === 'bot' && existing.sender.botId !== sender.botId)
-          || !sameIdSet(existing.targetBotIds ?? this.recipientIds(group, existing.sender), targetBotIds)
+          || String(existing.replyToMessageId ?? '') !== String(replyToMessageId ?? '')
           ) {
             throw new BotGroupError('invalid', `Bot group message "${String(messageId)}" already exists with different content`)
           }
         } else {
           await messages.put(messageId, {
-            id: messageId, groupId, sender, text, targetBotIds, createdAt: Date.now(),
+            id: messageId, groupId, sender, text, targetBotIds,
+            createdAt: Math.max(Date.now(), replyParent?.createdAt === undefined ? 0 : replyParent.createdAt + 1),
+            ...(replyToMessageId === undefined ? {} : { replyToMessageId }),
           })
           changed = true
         }
-        const deliveries = this.domain.table('deliveries')
         const outcomes = new Map<string, BotGroupDeliveryView>()
         const pending: PreparedBotGroupDelivery[] = []
         for (const botId of targetBotIds) {
@@ -994,7 +1208,7 @@ export class BotGroupService {
             createdFlights.push({ id, flight: nextFlight })
           }
           pending.push({
-            id, groupId, messageId, botId, generation, groupName: group.name, text,
+            id, groupId, messageId, botId, generation, groupName: group.name, text: deliveryText,
             ...(messageAttachments.length === 0 ? {} : { attachments: messageAttachments }),
             flight: nextFlight,
             owner,
@@ -1114,6 +1328,46 @@ export class BotGroupService {
         ? 'partial'
         : admitted ? 'accepted' : 'duplicate'
       return { messageId: prepared.messageId, status, deliveries: deliveriesInOrder }
+    })
+  }
+
+  /** Add or remove one owner's reaction while keeping the mutation retry-safe.
+   * @param request - Group, message, fixed emoji, and add/remove action.
+   * @returns The current aggregate after the idempotent mutation.
+   */
+  async react(request: BotGroupReactionRequest): Promise<BotGroupReactionValue> {
+    return this.serialize(async () => {
+      const groupId = normalizeGroupId(request.groupId)
+      const messageId = normalizeMessageId(request.messageId)
+      const emoji = normalizeReactionEmoji(request.emoji)
+      const group = this.domain.table('groups').get(groupId)
+      if (group === undefined) throw new BotGroupError('not-found', `Bot group "${String(groupId)}" was not found`)
+      const messages = this.domain.table('messages')
+      const message = messages.get(messageId)
+      if (message === undefined || message.groupId !== groupId) {
+        throw new BotGroupError('not-found', 'Bot group message was not found')
+      }
+      const current = message.reactions ?? []
+      const prior = current.find(reaction => reaction.actorId === this.ownerId && reaction.emoji === emoji)
+      const next = request.action === 'remove'
+        ? prior === undefined ? current : current.filter(reaction => reaction !== prior)
+        : prior === undefined ? [...current, { emoji, actorId: this.ownerId, createdAt: Date.now() }] : current
+      const changed = next.length !== current.length || next.some((reaction, index) => reaction !== current[index])
+      if (changed) {
+        const nextMessage = next.length === 0
+          ? (() => {
+            const { reactions: _reactions, ...withoutReactions } = message
+            void _reactions
+            return withoutReactions
+          })()
+          : { ...message, reactions: next }
+        await messages.put(messageId, nextMessage)
+        this.host.changed?.()
+      }
+      return {
+        messageId,
+        reactions: reactionViews(next, this.ownerId),
+      }
     })
   }
 
@@ -1400,26 +1654,47 @@ export class BotGroupService {
     }
   }
 
-  private messageView(message: BotGroupMessageRecord, bots: readonly BotView[], group: BotGroupRecord): BotGroupMessageView {
+  private messageView(
+    message: BotGroupMessageRecord,
+    bots: readonly BotView[],
+    group: BotGroupRecord,
+    transcriptById: ReadonlyMap<string, BotGroupMessageRecord>,
+    targetBotIds: readonly BotId[] | undefined,
+  ): BotGroupMessageView {
     const sender = message.sender
+    const replyTo = message.replyToMessageId === undefined ? undefined : transcriptById.get(String(message.replyToMessageId))
+    const replyView = replyTo === undefined ? undefined : messageReplyView(replyTo, bots)
+    const reactions = reactionViews(message.reactions, this.ownerId)
+    const base = {
+      id: message.id,
+      groupId: message.groupId,
+      text: message.text,
+      ...(message.targetBotIds === undefined ? {} : { targetBotIds: message.targetBotIds }),
+      ...(message.replyToMessageId === undefined ? {} : { replyToMessageId: message.replyToMessageId }),
+      ...(replyView === undefined ? {} : { replyTo: replyView }),
+      ...(reactions.length === 0 ? {} : { reactions }),
+      createdAt: message.createdAt,
+    }
     if (sender.kind === 'user') {
-      const attachments = this.attachments?.attachmentsForMessage({
-        kind: 'local-group',
-        ownerId: this.ownerId,
-        groupId: group.id,
-        messageId: message.id,
-        targetBotIds: message.targetBotIds ?? this.recipientIds(group, sender),
-        authorizationRevision: group.updatedAt,
-      }) ?? []
+      const attachments = targetBotIds === undefined
+        ? []
+        : this.attachments?.attachmentsForMessage({
+          kind: 'local-group',
+          ownerId: this.ownerId,
+          groupId: group.id,
+          messageId: message.id,
+          targetBotIds,
+          authorizationRevision: group.updatedAt,
+        }) ?? []
       return {
-        ...message,
+        ...base,
         sender,
         ...(attachments.length === 0 ? {} : { attachments: attachments.map(localAttachmentView) }),
       }
     }
     const bot = bots.find(candidate => candidate.id === sender.botId)
     return {
-      ...message,
+      ...base,
       sender: { kind: 'bot', botId: sender.botId, name: message.senderName ?? bot?.name ?? String(sender.botId) },
     }
   }

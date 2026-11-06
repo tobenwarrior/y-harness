@@ -225,6 +225,12 @@ collaborationFor(agent: Pick<Agent, 'id'>): Promise<BotCollaborationClient>
  */
 @Remote('sendGroupMessage') async sendGroupMessage(request: BotGroupSendRemoteRequest): Promise<BotGroupSendValue>
 
+/** Add or remove the owner's fixed reaction on one durable group message.
+ * @param request - Group, message, fixed emoji, and explicit add/remove action.
+ * @returns The aggregate reaction projection after the idempotent mutation.
+ */
+@Remote('reactGroupMessage') async reactGroupMessage(request: BotGroupReactionRequest): Promise<BotGroupReactionValue>
+
 /**
  * Read owner-visible recipient fences that require explicit shared-group recovery.
  * This owner Remote returns only the exact identities needed for a later recovery;

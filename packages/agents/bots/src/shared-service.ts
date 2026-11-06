@@ -16,6 +16,7 @@ import {
   type SharedAccessStateSnapshot,
 } from '@yharness/client-connection'
 import type { Agent } from '@yharness/agent'
+import type { ToolExecutionToken } from '@yharness/tools'
 import type { BotAttachmentDownload, BotAttachmentDownloadTarget } from './attachment-download.ts'
 import type { EncodedImageAttachment, FileAttachmentRef, ImageAttachmentRef } from '@yharness/attachment'
 import { ApiSessionNotFound } from '@yharness/api-session-controller'
@@ -60,6 +61,8 @@ import type {
   BotGroupCreateRequest,
   BotGroupDeliveryRecoveryRequest,
   BotGroupDeliveryRecoveryValue,
+  BotGroupReactionRequest,
+  BotGroupReactionValue,
   BotGroupSendRemoteRequest,
   BotSharedGroupDeliveryFenceDiagnosticValue,
 } from './group-chat.ts'
@@ -83,6 +86,8 @@ import {
   SharedBotGroupService,
   SharedGroupError,
   resolveSharedGroupInitiatorFromSnapshot,
+  SHARED_GROUPS_FIELD,
+  sharedGroupSnapshotSchema,
   type SharedGroupInitiatorRequest,
   type SharedGroupHost,
   type SharedGroupSessionBinding,
@@ -108,9 +113,12 @@ export const SHARED_BOT_ENDPOINTS = [
   'bots/share/inspect-group',
   'bots/share/group-settings',
   'bots/share/send-group-message',
+  'bots/share/react-group-message',
   'bots/share/manage-group-members',
   'bots/share/list-approvals',
   'bots/share/decide-approval',
+  'bots/share/list-approval-grants',
+  'bots/share/revoke-approval-grant',
 ] as const
 
 /** Safe profile projection returned to a collaborator. */
@@ -289,6 +297,19 @@ export interface SharedAppApprovalRequest {
   readonly arguments?: unknown
   /** Action identity presented with the tool and connected-app id. */
   readonly action?: string
+  /** Exact live-tool execution identity used only to bridge approval to body admission. */
+  readonly executionKey?: ToolExecutionToken
+}
+
+interface SharedAppAuthorizationContext {
+  readonly principalId: ReturnType<typeof BotPrincipalId>
+  readonly appRevision: number
+  readonly authorizationFingerprint: string
+}
+
+type SharedAppApprovalExecutionReference = Pick<SharedAppApprovalRequest, 'toolName' | 'callId' | 'executionKey'> & {
+  /** Durable grant that admitted this live execution. */
+  readonly grantId?: string
 }
 
 /** JSON-safe argument values retained in a shared approval preview. */
@@ -330,8 +351,24 @@ export interface SharedAppApprovalView {
   readonly expiresAt: number
 }
 
+/** A remembered connected-app approval owned by the authenticated principal. */
+export interface SharedAppApprovalGrantView {
+  /** Opaque grant id used by the revoke endpoint. */
+  readonly id: string
+  /** Bot whose isolated Session may use the remembered approval. */
+  readonly botId: BotId
+  /** Shared group whose current ACL is bound to the grant, when applicable. */
+  readonly groupId?: BotGroupId
+  /** Connected MCP app namespace. */
+  readonly appId: string
+  /** Exact registered tool name; this is never a bounded preview. */
+  readonly toolName: string
+  /** Creation time in Unix milliseconds. */
+  readonly createdAt: number
+}
+
 /** Shared approval decision accepted by the collaborator endpoint. */
-export type SharedAppApprovalDecision = 'allow' | 'reject'
+export type SharedAppApprovalDecision = 'allow' | 'always-allow' | 'reject'
 
 /** Outcome vocabulary returned by the shared approval answerer. */
 export type SharedAppApprovalOutcome = 'allowed-once' | 'rejected' | 'cancelled' | 'unavailable'
@@ -435,6 +472,7 @@ const groupSettingsPayload = z.discriminatedUnion('action', [
 const groupSendPayload = groupIdPayload.extend({
   text: z.string().min(1).max(16_000).refine(value => value.trim() === value),
   messageId: z.string().regex(/^bot-group-message-[A-Za-z0-9][A-Za-z0-9-]*$/).transform(BotGroupMessageId).optional(),
+  replyToMessageId: z.string().regex(/^bot-group-message-[A-Za-z0-9][A-Za-z0-9-]*$/).transform(BotGroupMessageId).optional(),
   targetBotIds: z.array(botIdPayload.shape.botId).min(1).max(6).refine(
     botIds => new Set(botIds.map(String)).size === botIds.length,
     'group Bot targets must be unique',
@@ -442,6 +480,11 @@ const groupSendPayload = groupIdPayload.extend({
   attachmentGrants: z.array(
     z.string().regex(/^bot-attachment-grant-[A-Za-z0-9][A-Za-z0-9-]*$/).transform(BotAttachmentGrantId),
   ).min(1).max(8).optional(),
+}).strict()
+const groupReactionPayload = groupIdPayload.extend({
+  messageId: z.string().regex(/^bot-group-message-[A-Za-z0-9][A-Za-z0-9-]*$/).transform(BotGroupMessageId),
+  emoji: z.string().max(16),
+  action: z.enum(['add', 'remove']),
 }).strict()
 const encodedImagePayload = z.object({
   mediaType: z.enum(['image/png', 'image/jpeg', 'image/webp', 'image/gif']),
@@ -470,7 +513,10 @@ const sharedApprovalListPayload = z.object({
 }).strict()
 const sharedApprovalDecisionPayload = z.object({
   id: z.string().regex(/^shared-app-approval-[A-Za-z0-9][A-Za-z0-9-]*$/),
-  decision: z.enum(['allow', 'reject']),
+  decision: z.enum(['allow', 'always-allow', 'reject']),
+}).strict()
+const sharedApprovalGrantRevokePayload = z.object({
+  id: z.string().regex(/^shared-app-approval-grant-[A-Za-z0-9][A-Za-z0-9-]*$/),
 }).strict()
 type BotIdPayload = z.infer<typeof botIdPayload>
 type ChatPayload = z.infer<typeof chatPayload>
@@ -482,9 +528,11 @@ type GroupCreatePayload = z.infer<typeof groupCreatePayload>
 type GroupUpdatePayload = z.infer<typeof groupUpdatePayload>
 type GroupSettingsPayload = z.infer<typeof groupSettingsPayload>
 type GroupSendPayload = z.infer<typeof groupSendPayload>
+type GroupReactionPayload = z.infer<typeof groupReactionPayload>
 type ManageGroupMembersPayload = z.infer<typeof manageGroupMembersPayload>
 type SharedApprovalListPayload = z.infer<typeof sharedApprovalListPayload>
 type SharedApprovalDecisionPayload = z.infer<typeof sharedApprovalDecisionPayload>
+type SharedApprovalGrantRevokePayload = z.infer<typeof sharedApprovalGrantRevokePayload>
 
 interface PrivateAttachmentAdmission {
   readonly duplicate: boolean
@@ -504,11 +552,13 @@ const SHARED_MEMBERSHIP_EXTENSION_KEY = 'agent-bots/shared-memberships'
 const SHARED_PRIVATE_SESSIONS_EXTENSION_KEY = 'agent-bots/shared-private-sessions'
 const SHARED_CONNECTED_APP_ACCESS_EXTENSION_KEY = 'agent-bots/shared-connected-app-access'
 const SHARED_APP_APPROVALS_EXTENSION_KEY = 'agent-bots/shared-app-approvals'
+const SHARED_APP_APPROVAL_GRANTS_EXTENSION_KEY = 'agent-bots/shared-app-approval-grants'
 const SHARED_PAIR_KEY_MIGRATION_EXTENSION_KEY = 'agent-bots/shared-pair-key-migration'
 const SHARED_MEMBERSHIP_RECORD_VERSION = 1 as const
 const SHARED_PRIVATE_SESSIONS_RECORD_VERSION = 1 as const
 const SHARED_CONNECTED_APP_ACCESS_VERSION = 1 as const
 const SHARED_APP_APPROVALS_VERSION = 1 as const
+const SHARED_APP_APPROVAL_GRANTS_VERSION = 1 as const
 const SHARED_PAIR_KEY_MIGRATION_VERSION = 3 as const
 const DEFAULT_SHARED_MEMBERSHIP_POLL_INTERVAL_MS = 1_000
 const MAX_NODE_TIMER_MS = 2_147_483_647
@@ -523,7 +573,10 @@ const DEFAULT_SHARED_APP_APPROVAL_LEASE_MS = 60_000
 const MIN_SHARED_APP_APPROVAL_LEASE_MS = 1_000
 const SHARED_APP_APPROVAL_MAX_RECORDS = 128
 const SHARED_APP_APPROVAL_MAX_TEXT_LENGTH = 1_024
+const SHARED_APP_APPROVAL_MAX_EXACT_TOOL_NAME_LENGTH = 4_096
 const SHARED_APP_APPROVAL_MAX_ARGUMENTS_LENGTH = 4_096
+const SHARED_APP_APPROVAL_MAX_GRANTS = 256
+const SHARED_APP_APPROVAL_MAX_LIVE_KEYS = 512
 const DEFAULT_SHARED_APP_APPROVAL_POLL_INTERVAL_MS = 1_000
 const MIN_SHARED_APP_APPROVAL_POLL_INTERVAL_MS = 50
 const MAX_SHARED_APP_APPROVAL_POLL_INTERVAL_MS = 30_000
@@ -576,6 +629,50 @@ const sharedAppApprovalSnapshotSchema = z.object({
 
 type SharedAppApprovalRecord = z.infer<typeof sharedAppApprovalRecordSchema>
 type SharedAppApprovalSnapshot = z.infer<typeof sharedAppApprovalSnapshotSchema>
+
+const sharedAppApprovalGrantSchema = z.object({
+  id: z.string().regex(/^shared-app-approval-grant-[A-Za-z0-9][A-Za-z0-9-]*$/),
+  botId: z.string().regex(/^bot-[A-Za-z0-9][A-Za-z0-9-]*$/).transform(BotId),
+  principalId: z.string().regex(/^principal-[A-Za-z0-9-]+$/).transform(BotPrincipalId),
+  sessionId: z.string().min(1).max(256).transform(SessionId),
+  groupId: z.string().regex(/^bot-group-[A-Za-z0-9][A-Za-z0-9-]*$/).transform(BotGroupId).optional(),
+  appId: z.string(),
+  toolNameExact: z.string().min(1).max(SHARED_APP_APPROVAL_MAX_EXACT_TOOL_NAME_LENGTH),
+  appRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  authorizationFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+  createdAt: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+}).strict()
+
+const sharedAppApprovalPendingMetadataSchema = z.object({
+  approvalId: z.string().regex(/^shared-app-approval-[A-Za-z0-9][A-Za-z0-9-]*$/),
+  botId: z.string().regex(/^bot-[A-Za-z0-9][A-Za-z0-9-]*$/).transform(BotId),
+  principalId: z.string().regex(/^principal-[A-Za-z0-9-]+$/).transform(BotPrincipalId),
+  sessionId: z.string().min(1).max(256).transform(SessionId),
+  groupId: z.string().regex(/^bot-group-[A-Za-z0-9][A-Za-z0-9-]*$/).transform(BotGroupId).optional(),
+  appId: z.string(),
+  toolNameExact: z.string().min(1).max(SHARED_APP_APPROVAL_MAX_EXACT_TOOL_NAME_LENGTH),
+  callId: z.string().min(1).max(256).optional(),
+  appRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  authorizationFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+  remembered: z.literal(true).optional(),
+}).strict()
+
+const sharedAppApprovalTerminalMetadataSchema = z.object({
+  approvalId: z.string().regex(/^shared-app-approval-[A-Za-z0-9][A-Za-z0-9-]*$/),
+  grantId: z.string().regex(/^shared-app-approval-grant-[A-Za-z0-9][A-Za-z0-9-]*$/),
+}).strict()
+
+const sharedAppApprovalAuthoritySchema = z.object({
+  version: z.literal(SHARED_APP_APPROVAL_GRANTS_VERSION),
+  grants: z.array(sharedAppApprovalGrantSchema).max(SHARED_APP_APPROVAL_MAX_GRANTS),
+  pending: z.array(sharedAppApprovalPendingMetadataSchema).max(SHARED_APP_APPROVAL_MAX_RECORDS),
+  terminal: z.array(sharedAppApprovalTerminalMetadataSchema).max(SHARED_APP_APPROVAL_MAX_RECORDS).default([]),
+  roomRevocationEpoch: z.uuid().optional(),
+}).strict()
+
+type SharedAppApprovalPendingMetadata = z.infer<typeof sharedAppApprovalPendingMetadataSchema>
+type SharedAppApprovalTerminalMetadata = z.infer<typeof sharedAppApprovalTerminalMetadataSchema>
+type SharedAppApprovalAuthority = z.infer<typeof sharedAppApprovalAuthoritySchema>
 
 const sharedConnectedAppAccessSnapshotSchema = z.object({
   version: z.literal(SHARED_CONNECTED_APP_ACCESS_VERSION),
@@ -654,6 +751,8 @@ export class SharedBotService {
   private readonly activeAppBodyCompletions = new Set<Promise<void>>()
   /** Approval waiters retained until their mailbox row is consumed or cancelled. */
   private readonly activeApprovalCompletions = new Set<Promise<void>>()
+  /** Remembered decisions currently associated with a live tool call. */
+  private readonly rememberedApprovalKeys = new Map<ToolExecutionToken | string, string>()
   /** Private Sessions whose Agent has been cancelled but has not reached idle. */
   private readonly quarantinedSessions = new Map<string, Promise<void>>()
   /** Bindings whose last quiescence attempt failed and need a fresh retry. */
@@ -750,6 +849,7 @@ export class SharedBotService {
       const privateSessionSnapshot = await initializePrivateSessionSnapshot(authority, domain.table('private_sessions'))
       await reconcilePrivateSessionMirror(authority, domain.table('private_sessions'))
       await initializeSharedAppApprovalSnapshot(authority)
+      await initializeSharedAppApprovalGrantSnapshot(authority)
       return new SharedBotService(
         owner, domain, authority, host, membershipSnapshot, privateSessionSnapshot, options, options.attachmentStore,
       )
@@ -1166,13 +1266,15 @@ export class SharedBotService {
    * absent allowlist never inherits the owner-only Bot policy.
    * @param request - Exact shared Session, app, and optional group-step identities.
    * @param signal - Optional cancellation for the Host lifecycle operation.
+   * @param rememberedApproval - Optional live approval and exact grant identity to revalidate.
    * @returns `true` only when the app grant and current collaborator attribution both hold.
    */
   async authorizeSharedConnectedApp(
     request: SharedConnectedAppAuthorizationRequest,
     signal?: AbortSignal,
+    rememberedApproval?: SharedAppApprovalExecutionReference,
   ): Promise<boolean> {
-    return this.authorizeSharedConnectedAppWithHook(request, signal)
+    return this.authorizeSharedConnectedAppWithHook(request, signal, undefined, rememberedApproval)
   }
 
   /**
@@ -1183,12 +1285,14 @@ export class SharedBotService {
    * @param request - Exact shared Session, app, and optional group-step identities.
    * @param start - Body-admission callback invoked only after authorization.
    * @param signal - Optional cancellation for the Host lifecycle operation.
+   * @param rememberedApproval - Optional live approval and exact grant identity to revalidate.
    * @returns The body result when admitted, or undefined when authorization fails.
    */
   async authorizeSharedConnectedAppAndStart<T>(
     request: SharedConnectedAppAuthorizationRequest,
     start: () => Promise<T>,
     signal?: AbortSignal,
+    rememberedApproval?: SharedAppApprovalExecutionReference,
   ): Promise<T | undefined> {
     let started: Promise<T> | undefined
     try {
@@ -1207,7 +1311,7 @@ export class SharedBotService {
         const bodyCompletion = started.then(() => undefined, () => undefined)
         this.activeAppBodyCompletions.add(bodyCompletion)
         void bodyCompletion.then(() => { this.activeAppBodyCompletions.delete(bodyCompletion) })
-      })
+      }, rememberedApproval)
       if (!authorized) return undefined
       // The callback starts the body synchronously inside the locked reader.
       // A stop can prevent that callback after authorization was observed.
@@ -1244,11 +1348,18 @@ export class SharedBotService {
     const completed = Promise.withResolvers<void>()
     this.activeApprovalCompletions.add(completed.promise)
     try {
-      let principalId: ReturnType<typeof BotPrincipalId> | undefined
+      const toolNameExact = exactApprovalToolName(approval.toolName)
+      let authorization: SharedAppAuthorizationContext | undefined
+      let roomRevocationEpoch: string | undefined
       try {
-        principalId = await this.resolveSharedApprovalPrincipal(request, operationSignal)
-        if (principalId === undefined) return 'unavailable'
-        if (!await this.authorizeSharedConnectedApp(request, operationSignal)) return 'unavailable'
+        const current = await this.readSharedAppAuthorization(request, operationSignal, approval)
+        authorization = current.context
+        roomRevocationEpoch = current.roomRevocationEpoch
+        if (authorization === undefined) return 'unavailable'
+        if (current.rememberedGrantId !== undefined) {
+          if (!this.rememberRememberedApproval(request, approval, current.rememberedGrantId)) return 'unavailable'
+          return 'allowed-once'
+        }
       } catch (error: unknown) {
         if (isStopping()) return 'cancelled'
         throw error
@@ -1259,7 +1370,7 @@ export class SharedBotService {
       const record: SharedAppApprovalRecord = {
         id: `shared-app-approval-${randomUUID()}`,
         botId: request.botId,
-        principalId,
+        principalId: authorization.principalId,
         sessionId: request.sessionId,
         ...(request.kind === 'group' ? {
           groupId: request.groupId,
@@ -1267,7 +1378,7 @@ export class SharedBotService {
           step: request.step,
         } : {}),
         appId: request.appId,
-        toolName: boundedApprovalText(approval.toolName, 'connected app tool'),
+        toolName: boundedApprovalToolName(toolNameExact),
         ...(approval.callId === undefined ? {} : { callId: boundedApprovalText(approval.callId, 'tool call') }),
         action: boundedApprovalText(
           approval.action ?? `Run ${approval.toolName}`,
@@ -1280,13 +1391,41 @@ export class SharedBotService {
         leaseExpiresAt: createdAt + this.sharedApprovalLeaseMs,
         status: 'pending',
       }
+      const callId = approval.callId === undefined ? undefined : boundedApprovalCallId(approval.callId)
+      const metadata: SharedAppApprovalPendingMetadata = {
+        approvalId: record.id,
+        botId: request.botId,
+        principalId: authorization.principalId,
+        sessionId: request.sessionId,
+        ...(request.kind === 'group' ? { groupId: request.groupId } : {}),
+        appId: request.appId,
+        toolNameExact,
+        ...(callId === undefined ? {} : { callId }),
+        appRevision: authorization.appRevision,
+        authorizationFingerprint: authorization.authorizationFingerprint,
+      }
       try {
-        await this.authority.mutateExtension(SHARED_APP_APPROVALS_EXTENSION_KEY, (current) => {
+        await this.authority.mutateExtensions<undefined>([
+          SHARED_APP_APPROVALS_EXTENSION_KEY,
+          SHARED_APP_APPROVAL_GRANTS_EXTENSION_KEY,
+          SHARED_CONNECTED_APP_ACCESS_EXTENSION_KEY,
+          SHARED_MEMBERSHIP_EXTENSION_KEY,
+          SHARED_PRIVATE_SESSIONS_EXTENSION_KEY,
+        ], (current, authorityState) => {
           operationSignal.throwIfAborted()
           if (this.stopping || this.stoppingController.signal.aborted) {
             throw new SharedServiceFault('gateway/unavailable', 'shared Bot approval service is stopping')
           }
-          const snapshot = parseSharedAppApprovalSnapshot(current)
+          const snapshot = parseSharedAppApprovalSnapshot(current[SHARED_APP_APPROVALS_EXTENSION_KEY])
+          const authoritySnapshot = parseSharedAppApprovalAuthority(current[SHARED_APP_APPROVAL_GRANTS_EXTENSION_KEY])
+          const active = sharedAppAuthorizationContext(request, current, authorityState, operationSignal)
+          // Room membership can return to the same set after a remove and rejoin.
+          // Discard an admission that was read before an intervening room removal.
+          if (active === undefined || active.principalId !== metadata.principalId
+            || active.appRevision !== metadata.appRevision || active.authorizationFingerprint !== metadata.authorizationFingerprint
+            || (request.kind === 'group' && roomRevocationEpoch !== authoritySnapshot.roomRevocationEpoch)) {
+            throw new SharedServiceFault('gateway/conflict', 'shared Bot approval access changed before admission')
+          }
           let approvals = snapshot.approvals.filter(candidate => candidate.status !== 'pending'
             || sharedApprovalLeaseExpiry(candidate) > createdAt)
             .filter(candidate => candidate.status === 'pending'
@@ -1300,9 +1439,22 @@ export class SharedBotService {
             throw new SharedServiceFault('gateway/unavailable', 'shared Bot approval mailbox is full')
           }
           approvals = [...approvals, record]
+          const pendingIds = new Set(approvals.filter(candidate => candidate.status === 'pending').map(candidate => candidate.id))
+          const pending = authoritySnapshot.pending.filter(candidate => pendingIds.has(candidate.approvalId))
+          if (pending.length >= SHARED_APP_APPROVAL_MAX_RECORDS) {
+            throw new SharedServiceFault('gateway/unavailable', 'shared Bot approval metadata is full')
+          }
           return {
             value: undefined,
-            next: { version: SHARED_APP_APPROVALS_VERSION, approvals },
+            next: {
+              ...current,
+              [SHARED_APP_APPROVALS_EXTENSION_KEY]: { version: SHARED_APP_APPROVALS_VERSION, approvals },
+              [SHARED_APP_APPROVAL_GRANTS_EXTENSION_KEY]: {
+                ...authoritySnapshot,
+                pending: [...pending, metadata],
+                terminal: authoritySnapshot.terminal.filter(candidate => approvals.some(approval => approval.id === candidate.approvalId)),
+              },
+            },
           }
         })
       } catch (error: unknown) {
@@ -1311,7 +1463,7 @@ export class SharedBotService {
         void error
         return 'unavailable'
       }
-      return await this.waitForSharedAppApproval(record, request, operationSignal)
+      return await this.waitForSharedAppApproval(record, request, approval, operationSignal)
     } finally {
       completed.resolve()
       this.activeApprovalCompletions.delete(completed.promise)
@@ -1336,9 +1488,10 @@ export class SharedBotService {
       SHARED_CONNECTED_APP_ACCESS_EXTENSION_KEY,
       SHARED_MEMBERSHIP_EXTENSION_KEY,
       SHARED_PRIVATE_SESSIONS_EXTENSION_KEY,
+      SHARED_APP_APPROVAL_GRANTS_EXTENSION_KEY,
     ], (extensions, authorityState) => {
       signal.throwIfAborted()
-      return projectSharedApprovalList(
+      const projection = projectSharedApprovalList(
         parseSharedAppApprovalSnapshot(extensions[SHARED_APP_APPROVALS_EXTENSION_KEY]),
         payload,
         principalId,
@@ -1348,15 +1501,19 @@ export class SharedBotService {
         this.sharedApprovalTtlMs,
         signal,
       )
+      const authority = parseSharedAppApprovalAuthority(extensions[SHARED_APP_APPROVAL_GRANTS_EXTENSION_KEY])
+      return {
+        changed: projection.changed,
+        value: sharedApprovalInboxValue(projection.visible, authority, payload, principalId),
+      }
     })
-    if (!initial.changed) {
-      return { ok: true, value: { approvals: initial.visible } }
-    }
-    const approvals = await this.authority.mutateExtensions<readonly SharedAppApprovalView[]>([
+    if (!initial.changed) return { ok: true, value: initial.value }
+    const value = await this.authority.mutateExtensions([
       SHARED_APP_APPROVALS_EXTENSION_KEY,
       SHARED_CONNECTED_APP_ACCESS_EXTENSION_KEY,
       SHARED_MEMBERSHIP_EXTENSION_KEY,
       SHARED_PRIVATE_SESSIONS_EXTENSION_KEY,
+      SHARED_APP_APPROVAL_GRANTS_EXTENSION_KEY,
     ], (current, authorityState) => {
       const projection = projectSharedApprovalList(
         parseSharedAppApprovalSnapshot(current[SHARED_APP_APPROVALS_EXTENSION_KEY]),
@@ -1368,19 +1525,70 @@ export class SharedBotService {
         this.sharedApprovalTtlMs,
         signal,
       )
+      const authority = parseSharedAppApprovalAuthority(current[SHARED_APP_APPROVAL_GRANTS_EXTENSION_KEY])
+      const retainedIds = new Set(projection.approvals.map(approval => approval.id))
       return {
-        value: projection.visible,
+        value: sharedApprovalInboxValue(projection.visible, authority, payload, principalId),
         next: {
           ...current,
           [SHARED_APP_APPROVALS_EXTENSION_KEY]: {
             version: SHARED_APP_APPROVALS_VERSION,
             approvals: projection.approvals,
           },
+          [SHARED_APP_APPROVAL_GRANTS_EXTENSION_KEY]: {
+            ...authority,
+            pending: authority.pending.filter(metadata => retainedIds.has(metadata.approvalId)
+              && projection.approvals.some(approval => approval.id === metadata.approvalId && approval.status === 'pending')),
+            terminal: authority.terminal.filter(metadata => retainedIds.has(metadata.approvalId)),
+          },
         },
       }
     })
     signal.throwIfAborted()
-    return { ok: true, value: { approvals } }
+    return { ok: true, value }
+  }
+
+  /** List remembered approvals owned by the authenticated collaborator. */
+  private async listApprovalGrants(
+    payload: SharedApprovalListPayload,
+    signal: AbortSignal,
+    principalId: ReturnType<typeof BotPrincipalId>,
+  ): Promise<ConnectionRpcHandlerResult> {
+    signal.throwIfAborted()
+    const grants = await this.authority.readLockedExtensions<readonly SharedAppApprovalGrantView[]>([
+      SHARED_APP_APPROVAL_GRANTS_EXTENSION_KEY,
+    ], extensions => projectSharedApprovalGrants(
+      parseSharedAppApprovalAuthority(extensions[SHARED_APP_APPROVAL_GRANTS_EXTENSION_KEY]),
+      payload,
+      principalId,
+    ))
+    signal.throwIfAborted()
+    return { ok: true, value: { grants } }
+  }
+
+  /** Revoke one remembered approval owned by the authenticated collaborator. */
+  private async revokeApprovalGrant(
+    payload: SharedApprovalGrantRevokePayload,
+    principalId: ReturnType<typeof BotPrincipalId>,
+    signal: AbortSignal,
+  ): Promise<ConnectionRpcHandlerResult> {
+    signal.throwIfAborted()
+    await this.authority.mutateExtension(SHARED_APP_APPROVAL_GRANTS_EXTENSION_KEY, (current) => {
+      const snapshot = parseSharedAppApprovalAuthority(current)
+      const grant = snapshot.grants.find(candidate => candidate.id === payload.id)
+      if (grant === undefined || grant.principalId !== principalId) {
+        throw new SharedServiceFault('gateway/not-found', 'shared remembered approval was not found')
+      }
+      return {
+        value: undefined,
+        next: {
+          ...snapshot,
+          grants: snapshot.grants.filter(candidate => candidate.id !== grant.id),
+        },
+      }
+    })
+    signal.throwIfAborted()
+    return { ok: true, value: { revoked: true, id: payload.id } }
   }
 
   /**
@@ -1401,8 +1609,10 @@ export class SharedBotService {
       SHARED_CONNECTED_APP_ACCESS_EXTENSION_KEY,
       SHARED_MEMBERSHIP_EXTENSION_KEY,
       SHARED_PRIVATE_SESSIONS_EXTENSION_KEY,
+      SHARED_APP_APPROVAL_GRANTS_EXTENSION_KEY,
     ], (extensions, authorityState) => {
       const snapshot = parseSharedAppApprovalSnapshot(extensions[SHARED_APP_APPROVALS_EXTENSION_KEY])
+      const authoritySnapshot = parseSharedAppApprovalAuthority(extensions[SHARED_APP_APPROVAL_GRANTS_EXTENSION_KEY])
       const now = this.now()
       const candidate = snapshot.approvals.find(approval => approval.id === payload.id)
       if (candidate === undefined || candidate.principalId !== principalId) {
@@ -1420,6 +1630,11 @@ export class SharedBotService {
           next: {
             ...extensions,
             [SHARED_APP_APPROVALS_EXTENSION_KEY]: { version: SHARED_APP_APPROVALS_VERSION, approvals },
+            [SHARED_APP_APPROVAL_GRANTS_EXTENSION_KEY]: {
+              ...authoritySnapshot,
+              pending: authoritySnapshot.pending.filter(metadata => metadata.approvalId !== candidate.id),
+              terminal: authoritySnapshot.terminal.filter(metadata => metadata.approvalId !== candidate.id),
+            },
           },
         }
       }
@@ -1432,6 +1647,108 @@ export class SharedBotService {
           next: {
             ...extensions,
             [SHARED_APP_APPROVALS_EXTENSION_KEY]: { version: SHARED_APP_APPROVALS_VERSION, approvals },
+            [SHARED_APP_APPROVAL_GRANTS_EXTENSION_KEY]: {
+              ...authoritySnapshot,
+              pending: authoritySnapshot.pending.filter(metadata => metadata.approvalId !== candidate.id),
+              terminal: authoritySnapshot.terminal.filter(metadata => metadata.approvalId !== candidate.id),
+            },
+          },
+        }
+      }
+      const metadata = authoritySnapshot.pending.find(item => item.approvalId === candidate.id)
+      if (payload.decision === 'always-allow') {
+        const authorizationRequest: SharedConnectedAppAuthorizationRequest = candidate.groupId === undefined
+          ? { kind: 'private', botId: candidate.botId, sessionId: candidate.sessionId, appId: candidate.appId }
+          : candidate.turn === undefined || candidate.step === undefined
+            ? (() => { throw new SharedServiceFault('gateway/conflict', 'shared approval coordinates are incomplete') })()
+            : {
+              kind: 'group',
+              groupId: candidate.groupId,
+              botId: candidate.botId,
+              sessionId: candidate.sessionId,
+              turn: candidate.turn,
+              step: candidate.step,
+              appId: candidate.appId,
+            }
+        const context = sharedAppAuthorizationContext(
+          authorizationRequest,
+          extensions,
+          authorityState,
+          signal,
+        )
+        if (metadata === undefined || context === undefined
+          || metadata.principalId !== candidate.principalId
+          || metadata.botId !== candidate.botId
+          || metadata.sessionId !== candidate.sessionId
+          || metadata.groupId !== candidate.groupId
+          || metadata.appId !== candidate.appId
+          || metadata.appRevision !== context.appRevision
+          || metadata.authorizationFingerprint !== context.authorizationFingerprint) {
+          const approvals = snapshot.approvals.map(approval => approval.id === candidate.id
+            ? { ...approval, status: 'cancelled' as const, decidedAt: now }
+            : approval)
+          return {
+            value: { ok: true as const, resolved: false },
+            next: {
+              ...extensions,
+              [SHARED_APP_APPROVALS_EXTENSION_KEY]: { version: SHARED_APP_APPROVALS_VERSION, approvals },
+              [SHARED_APP_APPROVAL_GRANTS_EXTENSION_KEY]: {
+                ...authoritySnapshot,
+                pending: authoritySnapshot.pending.filter(item => item.approvalId !== candidate.id),
+                terminal: authoritySnapshot.terminal.filter(item => item.approvalId !== candidate.id),
+              },
+            },
+          }
+        }
+        const existing = authoritySnapshot.grants.find(grant => grant.principalId === context.principalId
+          && grant.botId === candidate.botId
+          && grant.sessionId === candidate.sessionId
+          && grant.groupId === candidate.groupId
+          && grant.appId === candidate.appId
+          && grant.toolNameExact === metadata.toolNameExact
+          && grant.appRevision === context.appRevision
+          && grant.authorizationFingerprint === context.authorizationFingerprint)
+        const grant = existing ?? {
+          id: `shared-app-approval-grant-${randomUUID()}`,
+          botId: candidate.botId,
+          principalId: candidate.principalId,
+          sessionId: candidate.sessionId,
+          ...(candidate.groupId === undefined ? {} : { groupId: candidate.groupId }),
+          appId: candidate.appId,
+          toolNameExact: metadata.toolNameExact,
+          appRevision: context.appRevision,
+          authorizationFingerprint: context.authorizationFingerprint,
+          createdAt: now,
+        }
+        const grants = existing === undefined
+          ? [...authoritySnapshot.grants, grant]
+          : authoritySnapshot.grants
+        if (grants.length > SHARED_APP_APPROVAL_MAX_GRANTS) {
+          throw new SharedServiceFault('gateway/unavailable', 'shared Bot remembered approval limit reached')
+        }
+        const approvals = snapshot.approvals.map(approval => approval.id === candidate.id
+          ? { ...approval, status: 'allowed' as const, decidedAt: now }
+          : approval)
+        const terminal: readonly SharedAppApprovalTerminalMetadata[] = [
+          ...authoritySnapshot.terminal.filter(item => item.approvalId !== candidate.id),
+          { approvalId: candidate.id, grantId: grant.id },
+        ]
+        if (terminal.length > SHARED_APP_APPROVAL_MAX_RECORDS) {
+          throw new SharedServiceFault('gateway/unavailable', 'shared Bot approval terminal metadata is full')
+        }
+        return {
+          value: { ok: true as const, resolved: true as const },
+          next: {
+            ...extensions,
+            [SHARED_APP_APPROVALS_EXTENSION_KEY]: { version: SHARED_APP_APPROVALS_VERSION, approvals },
+            [SHARED_APP_APPROVAL_GRANTS_EXTENSION_KEY]: {
+              ...authoritySnapshot,
+              grants,
+              pending: authoritySnapshot.pending.map(item => item.approvalId === candidate.id
+                ? { ...item, remembered: true as const }
+                : item),
+              terminal,
+            },
           },
         }
       }
@@ -1444,6 +1761,11 @@ export class SharedBotService {
         next: {
           ...extensions,
           [SHARED_APP_APPROVALS_EXTENSION_KEY]: { version: SHARED_APP_APPROVALS_VERSION, approvals },
+          [SHARED_APP_APPROVAL_GRANTS_EXTENSION_KEY]: {
+            ...authoritySnapshot,
+            pending: authoritySnapshot.pending.filter(metadata => metadata.approvalId !== candidate.id),
+            terminal: authoritySnapshot.terminal.filter(metadata => metadata.approvalId !== candidate.id),
+          },
         },
       }
     })
@@ -1452,39 +1774,10 @@ export class SharedBotService {
     return { ok: true, value: result }
   }
 
-  private async resolveSharedApprovalPrincipal(
-    request: SharedConnectedAppAuthorizationRequest,
-    signal?: AbortSignal,
-  ): Promise<ReturnType<typeof BotPrincipalId> | undefined> {
-    const keys = request.kind === 'private'
-      ? [SHARED_MEMBERSHIP_EXTENSION_KEY, SHARED_PRIVATE_SESSIONS_EXTENSION_KEY]
-      : [SHARED_MEMBERSHIP_EXTENSION_KEY]
-    const result = await this.authority.readLockedExtensions<{ readonly value: ReturnType<typeof BotPrincipalId> | undefined }>(
-      keys,
-      (extensions, authorityState) => {
-        signal?.throwIfAborted()
-        const membershipSnapshot = parseMembershipSnapshot(extensions[SHARED_MEMBERSHIP_EXTENSION_KEY])
-        const value = request.kind === 'private'
-          ? resolvePrivateSessionInitiatorFromSnapshot(
-            membershipSnapshot,
-            extensions[SHARED_PRIVATE_SESSIONS_EXTENSION_KEY],
-            authorityState,
-            { botId: request.botId, sessionId: request.sessionId },
-          )
-          : resolveSharedGroupInitiatorFromSnapshot(
-            extensions[SHARED_MEMBERSHIP_EXTENSION_KEY],
-            authorityState,
-            request,
-          )
-        return { value }
-      },
-    )
-    return result.value
-  }
-
   private async waitForSharedAppApproval(
     record: SharedAppApprovalRecord,
     request: SharedConnectedAppAuthorizationRequest,
+    approval: SharedAppApprovalRequest,
     signal?: AbortSignal,
   ): Promise<SharedAppApprovalOutcome> {
     let timer: ReturnType<typeof setTimeout> | undefined
@@ -1498,12 +1791,19 @@ export class SharedBotService {
           await this.consumeSharedAppApproval(record.id, 'cancelled')
           return 'cancelled'
         }
-        let current: { readonly value: unknown }
+        let mailbox: unknown
         try {
-          current = await raceSharedAbort(
+          // Keep mailbox polling on the released v1 extension. Besides
+          // preserving the restart/disposal read fence, this lets the waiter
+          // observe a cross-Host decision even when the grant sidecar is
+          // unavailable. The sidecar is read only after the mailbox reports
+          // a terminal allowed row, under the same authority lock as the
+          // mailbox recheck.
+          const result = await raceSharedAbort(
             this.authority.readExtension(SHARED_APP_APPROVALS_EXTENSION_KEY),
             signal,
           )
+          mailbox = result.value
         } catch (error: unknown) {
           if (signal?.aborted || this.stopping) {
             await this.cancelSharedAppApproval(record.id)
@@ -1512,12 +1812,46 @@ export class SharedBotService {
           }
           throw error
         }
-        const snapshot = parseSharedAppApprovalSnapshot(current.value)
-        const pending = snapshot.approvals.find(candidate => candidate.id === record.id)
+        let snapshot = parseSharedAppApprovalSnapshot(mailbox)
+        let pending = snapshot.approvals.find(candidate => candidate.id === record.id)
         if (pending === undefined) return 'unavailable'
         if (pending.status === 'allowed') {
-          await this.consumeSharedAppApproval(record.id, 'allowed')
-          return 'allowed-once'
+          // A list sweep can update the released mailbox and the grant
+          // sidecar while this waiter is between polls. Re-read both under
+          // one authority lock before deciding whether this was remembered.
+          const locked = await raceSharedAbort(
+            this.authority.readLockedExtensions([
+              SHARED_APP_APPROVALS_EXTENSION_KEY,
+              SHARED_APP_APPROVAL_GRANTS_EXTENSION_KEY,
+            ], extensions => ({
+              mailbox: extensions[SHARED_APP_APPROVALS_EXTENSION_KEY],
+              authority: extensions[SHARED_APP_APPROVAL_GRANTS_EXTENSION_KEY],
+            })),
+            signal,
+          )
+          snapshot = parseSharedAppApprovalSnapshot(locked.mailbox)
+          const authoritySnapshot = parseSharedAppApprovalAuthority(locked.authority)
+          pending = snapshot.approvals.find(candidate => candidate.id === record.id)
+          if (pending === undefined) return 'unavailable'
+          if (pending.status === 'allowed') {
+            // Terminal metadata is the durable Always allow decision. It must
+            // win even when a cleanup sweep removed the older pending marker.
+            const terminal = authoritySnapshot.terminal.find(candidate => candidate.approvalId === record.id)
+            const metadata = authoritySnapshot.pending.find(candidate => candidate.approvalId === record.id)
+            if (terminal !== undefined) {
+              if (!this.rememberRememberedApproval(request, approval, terminal.grantId)) {
+                await this.consumeSharedAppApproval(record.id, 'allowed')
+                return 'unavailable'
+              }
+            } else if (metadata?.remembered === true) {
+              // A remembered marker without its terminal grant is an invalid
+              // sidecar state. Fail closed instead of treating it as Allow once.
+              await this.consumeSharedAppApproval(record.id, 'allowed')
+              return 'unavailable'
+            }
+            await this.consumeSharedAppApproval(record.id, 'allowed')
+            return 'allowed-once'
+          }
         }
         if (pending.status === 'rejected') {
           await this.consumeSharedAppApproval(record.id, 'rejected')
@@ -1609,15 +1943,27 @@ export class SharedBotService {
     status: Extract<SharedAppApprovalRecord['status'], 'allowed' | 'rejected' | 'cancelled' | 'expired'>,
   ): Promise<void> {
     try {
-      await this.authority.mutateExtension(SHARED_APP_APPROVALS_EXTENSION_KEY, (current) => {
-        const snapshot = parseSharedAppApprovalSnapshot(current)
+      await this.authority.mutateExtensions([
+        SHARED_APP_APPROVALS_EXTENSION_KEY,
+        SHARED_APP_APPROVAL_GRANTS_EXTENSION_KEY,
+      ], (current) => {
+        const snapshot = parseSharedAppApprovalSnapshot(current[SHARED_APP_APPROVALS_EXTENSION_KEY])
+        const authoritySnapshot = parseSharedAppApprovalAuthority(current[SHARED_APP_APPROVAL_GRANTS_EXTENSION_KEY])
         const candidate = snapshot.approvals.find(approval => approval.id === id)
         if (candidate?.status !== status) return { value: undefined, next: current }
         return {
           value: undefined,
           next: {
-            version: SHARED_APP_APPROVALS_VERSION,
-            approvals: snapshot.approvals.filter(approval => approval.id !== id),
+            ...current,
+            [SHARED_APP_APPROVALS_EXTENSION_KEY]: {
+              version: SHARED_APP_APPROVALS_VERSION,
+              approvals: snapshot.approvals.filter(approval => approval.id !== id),
+            },
+            [SHARED_APP_APPROVAL_GRANTS_EXTENSION_KEY]: {
+              ...authoritySnapshot,
+              pending: authoritySnapshot.pending.filter(metadata => metadata.approvalId !== id),
+              terminal: authoritySnapshot.terminal.filter(metadata => metadata.approvalId !== id),
+            },
           },
         }
       })
@@ -1648,15 +1994,29 @@ export class SharedBotService {
     id: string,
     status: Extract<SharedAppApprovalRecord['status'], 'cancelled' | 'expired'>,
   ): Promise<void> {
-    await this.authority.mutateExtension(SHARED_APP_APPROVALS_EXTENSION_KEY, (current) => {
-      const snapshot = parseSharedAppApprovalSnapshot(current)
+    await this.authority.mutateExtensions([
+      SHARED_APP_APPROVALS_EXTENSION_KEY,
+      SHARED_APP_APPROVAL_GRANTS_EXTENSION_KEY,
+    ], (current) => {
+      const snapshot = parseSharedAppApprovalSnapshot(current[SHARED_APP_APPROVALS_EXTENSION_KEY])
+      const authoritySnapshot = parseSharedAppApprovalAuthority(current[SHARED_APP_APPROVAL_GRANTS_EXTENSION_KEY])
       const now = this.now()
-      const approvals = snapshot.approvals.map(approval => approval.id === id && approval.status === 'pending'
+      const candidate = snapshot.approvals.find(approval => approval.id === id)
+      if (candidate === undefined || candidate.status !== 'pending') return { value: undefined, next: current }
+      const approvals = snapshot.approvals.map(approval => approval.id === id
         ? { ...approval, status, decidedAt: now }
         : approval)
       return {
         value: undefined,
-        next: { version: SHARED_APP_APPROVALS_VERSION, approvals },
+        next: {
+          ...current,
+          [SHARED_APP_APPROVALS_EXTENSION_KEY]: { version: SHARED_APP_APPROVALS_VERSION, approvals },
+          [SHARED_APP_APPROVAL_GRANTS_EXTENSION_KEY]: {
+            ...authoritySnapshot,
+            pending: authoritySnapshot.pending.filter(metadata => metadata.approvalId !== id),
+            terminal: authoritySnapshot.terminal.filter(metadata => metadata.approvalId !== id),
+          },
+        },
       }
     })
   }
@@ -1665,6 +2025,7 @@ export class SharedBotService {
     request: SharedConnectedAppAuthorizationRequest,
     signal: AbortSignal | undefined,
     onAuthorized?: () => void,
+    rememberedApproval?: SharedAppApprovalExecutionReference,
   ): Promise<boolean> {
     const operationSignal = signal === undefined
       ? this.stoppingController.signal
@@ -1676,8 +2037,13 @@ export class SharedBotService {
           SHARED_CONNECTED_APP_ACCESS_EXTENSION_KEY,
           SHARED_MEMBERSHIP_EXTENSION_KEY,
           SHARED_PRIVATE_SESSIONS_EXTENSION_KEY,
+          ...(rememberedApproval === undefined ? [] : [SHARED_APP_APPROVAL_GRANTS_EXTENSION_KEY]),
         ]
-        : [SHARED_CONNECTED_APP_ACCESS_EXTENSION_KEY, SHARED_MEMBERSHIP_EXTENSION_KEY]
+        : [
+          SHARED_CONNECTED_APP_ACCESS_EXTENSION_KEY,
+          SHARED_MEMBERSHIP_EXTENSION_KEY,
+          ...(rememberedApproval === undefined ? [] : [SHARED_APP_APPROVAL_GRANTS_EXTENSION_KEY]),
+        ]
       const readLockedExtensions = onAuthorized === undefined
         ? this.authority.readLockedExtensions.bind(this.authority)
         : this.authority.readLockedExtensionsForActionStart.bind(this.authority)
@@ -1685,30 +2051,18 @@ export class SharedBotService {
         readonly memberships: readonly SharedMembershipRecord[]
         readonly value: boolean
       }>(keys, (extensions, authorityState) => {
-        const access = sharedConnectedAppAccessValue(
-          parseSharedConnectedAppAccessSnapshot(extensions[SHARED_CONNECTED_APP_ACCESS_EXTENSION_KEY]),
-          request.botId,
-        )
-        if (!access.allowedAppIds.includes(request.appId)) {
-          return {
-            memberships: this.membershipSnapshot,
-            value: false,
-          }
-        }
         const membershipSnapshot = parseMembershipSnapshot(extensions[SHARED_MEMBERSHIP_EXTENSION_KEY])
-        const principal = request.kind === 'private'
-          ? resolvePrivateSessionInitiatorFromSnapshot(
-            membershipSnapshot,
-            extensions[SHARED_PRIVATE_SESSIONS_EXTENSION_KEY],
-            authorityState,
-            { botId: request.botId, sessionId: request.sessionId },
-          )
-          : resolveSharedGroupInitiatorFromSnapshot(
-            extensions[SHARED_MEMBERSHIP_EXTENSION_KEY],
-            authorityState,
+        const context = sharedAppAuthorizationContext(request, extensions, authorityState, operationSignal)
+        const rememberedGrantId = context !== undefined && rememberedApproval !== undefined
+          ? sharedAppApprovalGrantMatches(
+            parseSharedAppApprovalAuthority(extensions[SHARED_APP_APPROVAL_GRANTS_EXTENSION_KEY]),
             request,
+            rememberedApproval,
+            context,
           )
-        const allowed = principal !== undefined
+          : undefined
+        const remembered = rememberedGrantId !== undefined
+        const allowed = context !== undefined && (rememberedApproval === undefined || remembered)
         if (allowed && onAuthorized !== undefined) {
           operationSignal.throwIfAborted()
           if (this.stopping || this.stoppingController.signal.aborted) {
@@ -1733,6 +2087,108 @@ export class SharedBotService {
     }
     if (onAuthorized === undefined) operationSignal.throwIfAborted()
     return operation.value
+  }
+
+  /** Read one app authorization context and an optional remembered grant under one authority lock. */
+  private async readSharedAppAuthorization(
+    request: SharedConnectedAppAuthorizationRequest,
+    signal: AbortSignal,
+    approval: SharedAppApprovalRequest,
+  ): Promise<{
+    readonly context: SharedAppAuthorizationContext | undefined
+    readonly rememberedGrantId: string | undefined
+    readonly roomRevocationEpoch: string | undefined
+  }> {
+    const operationSignal = AbortSignal.any([signal, this.stoppingController.signal])
+    const operation = await this.host.withBot(request.botId, operationSignal, async () => {
+      const keys = request.kind === 'private'
+        ? [SHARED_CONNECTED_APP_ACCESS_EXTENSION_KEY, SHARED_MEMBERSHIP_EXTENSION_KEY, SHARED_PRIVATE_SESSIONS_EXTENSION_KEY]
+        : [SHARED_CONNECTED_APP_ACCESS_EXTENSION_KEY, SHARED_MEMBERSHIP_EXTENSION_KEY]
+      const selected = [...keys, SHARED_APP_APPROVAL_GRANTS_EXTENSION_KEY]
+      const result = await this.authority.readLockedExtensions(selected, (extensions, authorityState) => {
+        operationSignal.throwIfAborted()
+        const authority = parseSharedAppApprovalAuthority(extensions[SHARED_APP_APPROVAL_GRANTS_EXTENSION_KEY])
+        const context = sharedAppAuthorizationContext(request, extensions, authorityState, operationSignal)
+        return {
+          memberships: parseMembershipSnapshot(extensions[SHARED_MEMBERSHIP_EXTENSION_KEY]).memberships,
+          context,
+          rememberedGrantId: context === undefined ? undefined : sharedAppApprovalGrantMatches(authority, request, approval, context),
+          roomRevocationEpoch: authority.roomRevocationEpoch,
+        }
+      })
+      this.membershipSnapshot = result.memberships
+      return { context: result.context, rememberedGrantId: result.rememberedGrantId, roomRevocationEpoch: result.roomRevocationEpoch }
+    })
+    if (!operation.found) {
+      operationSignal.throwIfAborted()
+      return { context: undefined, rememberedGrantId: undefined, roomRevocationEpoch: undefined }
+    }
+    operationSignal.throwIfAborted()
+    return operation.value
+  }
+
+  /**
+   * Return whether a live tool call was admitted by a remembered approval.
+   * @param request - Exact shared Session and connected-app identity.
+   * @param approval - Exact registered tool and live execution token.
+   * @returns Whether the token has a remembered approval marker.
+   */
+  isRememberedSharedAppApproval(
+    request: SharedConnectedAppAuthorizationRequest,
+    approval: SharedAppApprovalExecutionReference,
+  ): boolean {
+    return this.rememberedSharedAppApprovalGrantId(request, approval) !== undefined
+  }
+
+  /**
+   * Return the durable grant id that admitted a live remembered execution.
+   * @param request - Exact shared Session and connected-app identity.
+   * @param approval - Exact registered tool and live execution token.
+   * @returns The grant id bound to the token, or undefined when it was not remembered.
+   */
+  rememberedSharedAppApprovalGrantId(
+    request: SharedConnectedAppAuthorizationRequest,
+    approval: SharedAppApprovalExecutionReference,
+  ): string | undefined {
+    return this.rememberedApprovalKeys.get(sharedApprovalExecutionKey(request, approval))
+  }
+
+  private rememberRememberedApproval(
+    request: SharedConnectedAppAuthorizationRequest,
+    approval: SharedAppApprovalExecutionReference,
+    grantId: string,
+  ): boolean {
+    const key = sharedApprovalExecutionKey(request, approval)
+    const existing = this.rememberedApprovalKeys.get(key)
+    if (existing !== undefined) return existing === grantId
+    if (this.rememberedApprovalKeys.size >= SHARED_APP_APPROVAL_MAX_LIVE_KEYS
+      && !this.rememberedApprovalKeys.has(key)) {
+      // Never evict a live marker: doing so would let the matching execution
+      // fall back to ordinary app authorization after its grant is revoked.
+      return false
+    }
+    this.rememberedApprovalKeys.set(key, grantId)
+    return true
+  }
+
+  /**
+   * Forget the remembered marker after the corresponding tool call completes.
+   * @param request - Exact shared Session and connected-app identity.
+   * @param approval - Exact registered tool and live execution token.
+   */
+  forgetRememberedSharedAppApproval(
+    request: SharedConnectedAppAuthorizationRequest,
+    approval: SharedAppApprovalExecutionReference,
+  ): void {
+    this.rememberedApprovalKeys.delete(sharedApprovalExecutionKey(request, approval))
+  }
+
+  /**
+   * Forget a live remembered marker without reconstructing mutable request coordinates.
+   * @param token - Exact registry-owned tool execution token.
+   */
+  forgetRememberedSharedAppApprovalExecution(token: ToolExecutionToken): void {
+    this.rememberedApprovalKeys.delete(token)
   }
 
   /**
@@ -2007,6 +2463,7 @@ export class SharedBotService {
       // must remain callable while a shared chat/group operation is waiting on
       // a collaborator answer and therefore never join the local service chain.
       return await (endpoint === 'bots/share/list-approvals' || endpoint === 'bots/share/decide-approval'
+        || endpoint === 'bots/share/list-approval-grants' || endpoint === 'bots/share/revoke-approval-grant'
         ? dispatchRequest()
         : this.serialize(dispatchRequest, requestController.signal))
     } catch (error) {
@@ -2092,12 +2549,18 @@ export class SharedBotService {
         return this.groupSettings(parsePayload(groupSettingsPayload, payload), signal, principalId)
       case 'bots/share/send-group-message':
         return this.sendGroupMessage(parsePayload(groupSendPayload, payload), signal, principalId)
+      case 'bots/share/react-group-message':
+        return this.reactGroupMessage(parsePayload(groupReactionPayload, payload), signal, principalId)
       case 'bots/share/manage-group-members':
         return this.manageGroupMembers(parsePayload(manageGroupMembersPayload, payload), signal, principalId)
       case 'bots/share/list-approvals':
         return this.listApprovals(parsePayload(sharedApprovalListPayload, payload), signal, principalId)
       case 'bots/share/decide-approval':
         return this.decideSharedAppApproval(parsePayload(sharedApprovalDecisionPayload, payload), principalId, signal)
+      case 'bots/share/list-approval-grants':
+        return this.listApprovalGrants(parsePayload(sharedApprovalListPayload, payload), signal, principalId)
+      case 'bots/share/revoke-approval-grant':
+        return this.revokeApprovalGrant(parsePayload(sharedApprovalGrantRevokePayload, payload), principalId, signal)
       default:
         return failure('gateway/forbidden', 'shared Bot endpoint is not allowed')
     }
@@ -2399,10 +2862,26 @@ export class SharedBotService {
       groupId: payload.groupId,
       text: payload.text,
       ...(payload.messageId === undefined ? {} : { messageId: payload.messageId }),
+      ...(payload.replyToMessageId === undefined ? {} : { replyToMessageId: payload.replyToMessageId }),
       ...(payload.targetBotIds === undefined ? {} : { targetBotIds: payload.targetBotIds }),
       ...(payload.attachmentGrants === undefined ? {} : { attachmentGrants: payload.attachmentGrants }),
     }
     const result = await this.groups.send(request, principalId, signal)
+    return { ok: true, value: result }
+  }
+
+  private async reactGroupMessage(
+    payload: GroupReactionPayload,
+    signal: AbortSignal,
+    principalId: ReturnType<typeof BotPrincipalId>,
+  ): Promise<ConnectionRpcHandlerResult> {
+    const request: BotGroupReactionRequest = {
+      groupId: payload.groupId,
+      messageId: payload.messageId,
+      emoji: payload.emoji,
+      action: payload.action,
+    }
+    const result: BotGroupReactionValue = await this.groups.react(request, principalId, signal)
     return { ok: true, value: result }
   }
 
@@ -2567,7 +3046,39 @@ export class SharedBotService {
       return { ok: true, value: { code: invite.code, expiresAt: invite.expiresAt } }
     }
     if (payload.principalId === undefined) throw new SharedServiceFault('gateway/bad-request', 'principalId is required')
-    const result = await this.groups.revokeMember(payload.groupId, payload.principalId, principalId, signal)
+    const removedPrincipal = payload.principalId
+    const belongsToRemovedMember = (record: {
+      readonly principalId: ReturnType<typeof BotPrincipalId>
+      readonly groupId?: ReturnType<typeof BotGroupId> | undefined
+    }): boolean => record.principalId === removedPrincipal && record.groupId === payload.groupId
+    const result = await this.groups.revokeMember(payload.groupId, removedPrincipal, principalId, signal, {
+      keys: [SHARED_APP_APPROVALS_EXTENSION_KEY, SHARED_APP_APPROVAL_GRANTS_EXTENSION_KEY],
+      update: (extensions) => {
+        const mailbox = parseSharedAppApprovalSnapshot(extensions[SHARED_APP_APPROVALS_EXTENSION_KEY])
+        const authority = parseSharedAppApprovalAuthority(extensions[SHARED_APP_APPROVAL_GRANTS_EXTENSION_KEY])
+        const now = this.now()
+        const revokedApprovalIds = new Set(mailbox.approvals
+          .filter(approval => belongsToRemovedMember(approval))
+          .map(approval => approval.id))
+        return {
+          [SHARED_APP_APPROVALS_EXTENSION_KEY]: {
+            ...mailbox,
+            approvals: mailbox.approvals.map(approval => (
+              belongsToRemovedMember(approval) && (approval.status === 'pending' || approval.status === 'allowed')
+                ? { ...approval, status: 'cancelled', decidedAt: now }
+                : approval
+            )),
+          },
+          [SHARED_APP_APPROVAL_GRANTS_EXTENSION_KEY]: {
+            ...authority,
+            roomRevocationEpoch: randomUUID(),
+            grants: authority.grants.filter(grant => !belongsToRemovedMember(grant)),
+            pending: authority.pending.filter(pending => !belongsToRemovedMember(pending)),
+            terminal: authority.terminal.filter(terminal => !revokedApprovalIds.has(terminal.approvalId)),
+          },
+        }
+      },
+    })
     return { ok: true, value: result }
   }
 
@@ -3677,6 +4188,20 @@ async function initializeSharedAppApprovalSnapshot(authority: SharedAccessAuthor
   })
 }
 
+/** Initialize remembered approvals and pending exact-operation metadata. */
+async function initializeSharedAppApprovalGrantSnapshot(authority: SharedAccessAuthority): Promise<void> {
+  await authority.mutateExtension(SHARED_APP_APPROVAL_GRANTS_EXTENSION_KEY, (current) => {
+    if (current !== undefined) {
+      parseSharedAppApprovalAuthority(current)
+      return { value: undefined, next: current }
+    }
+    return {
+      value: undefined,
+      next: { version: SHARED_APP_APPROVAL_GRANTS_VERSION, grants: [], pending: [], terminal: [] },
+    }
+  })
+}
+
 /** Reconcile invite mirror rows against the authority state while its lock is held. */
 async function reconcileInviteMirror(
   table: KvTable<string, SharedInviteRecord>,
@@ -3817,6 +4342,191 @@ function parseSharedAppApprovalSnapshot(value: unknown): SharedAppApprovalSnapsh
   return parsed.data
 }
 
+function parseSharedAppApprovalAuthority(value: unknown): SharedAppApprovalAuthority {
+  if (value === undefined) return { version: SHARED_APP_APPROVAL_GRANTS_VERSION, grants: [], pending: [], terminal: [] }
+  const parsed = sharedAppApprovalAuthoritySchema.safeParse(value)
+  if (!parsed.success) throw new Error('shared Bot approval authority snapshot is invalid')
+  const grantIds = new Set<string>()
+  for (const grant of parsed.data.grants) {
+    if (grantIds.has(grant.id)) throw new Error('shared Bot approval authority has duplicate grant ids')
+    grantIds.add(grant.id)
+  }
+  const pendingIds = new Set<string>()
+  for (const pending of parsed.data.pending) {
+    if (pendingIds.has(pending.approvalId)) throw new Error('shared Bot approval authority has duplicate pending ids')
+    pendingIds.add(pending.approvalId)
+  }
+  const terminalIds = new Set<string>()
+  for (const terminal of parsed.data.terminal) {
+    if (terminalIds.has(terminal.approvalId)) throw new Error('shared Bot approval authority has duplicate terminal ids')
+    terminalIds.add(terminal.approvalId)
+  }
+  return parsed.data
+}
+
+function exactApprovalToolName(value: string): string {
+  if (value.length === 0 || value.length > SHARED_APP_APPROVAL_MAX_EXACT_TOOL_NAME_LENGTH) {
+    throw new SharedServiceFault('gateway/bad-request', 'shared connected-app tool name is outside its supported range')
+  }
+  return value
+}
+
+function boundedApprovalCallId(value: string): string | undefined {
+  return value.length <= 256 ? value : undefined
+}
+
+function sharedAppAuthorizationFingerprint(value: unknown): string {
+  return createHash('sha256').update(JSON.stringify(value)).digest('hex')
+}
+
+function sharedAppAuthorizationContext(
+  request: SharedConnectedAppAuthorizationRequest,
+  extensions: Readonly<Record<string, unknown>>,
+  authorityState: SharedAccessStateSnapshot,
+  signal?: AbortSignal,
+): SharedAppAuthorizationContext | undefined {
+  signal?.throwIfAborted()
+  const access = sharedConnectedAppAccessValue(
+    parseSharedConnectedAppAccessSnapshot(extensions[SHARED_CONNECTED_APP_ACCESS_EXTENSION_KEY]),
+    request.botId,
+  )
+  if (!access.allowedAppIds.includes(request.appId)) return undefined
+  const membershipSnapshot = parseMembershipSnapshot(extensions[SHARED_MEMBERSHIP_EXTENSION_KEY])
+  const principalId = request.kind === 'private'
+    ? resolvePrivateSessionInitiatorFromSnapshot(
+      membershipSnapshot,
+      extensions[SHARED_PRIVATE_SESSIONS_EXTENSION_KEY],
+      authorityState,
+      { botId: request.botId, sessionId: request.sessionId },
+    )
+    : resolveSharedGroupInitiatorFromSnapshot(
+      extensions[SHARED_MEMBERSHIP_EXTENSION_KEY],
+      authorityState,
+      request,
+    )
+  if (principalId === undefined) return undefined
+  if (request.kind === 'private') {
+    const privateSnapshot = parsePrivateSessionSnapshot(extensions[SHARED_PRIVATE_SESSIONS_EXTENSION_KEY])
+    const binding = privateSnapshot.bindings.find(candidate => candidate.botId === request.botId
+      && candidate.sessionId === request.sessionId
+      && candidate.principalId === principalId
+      && candidate.revokedAt === undefined)
+    const membership = membershipSnapshot.memberships.find(candidate => candidate.botId === request.botId
+      && candidate.principalId === principalId)
+    if (binding === undefined || membership === undefined) return undefined
+    return {
+      principalId,
+      appRevision: access.revision,
+      authorizationFingerprint: sharedAppAuthorizationFingerprint({
+        kind: 'private',
+        botId: request.botId,
+        sessionId: request.sessionId,
+        membership,
+        binding: {
+          botId: binding.botId,
+          principalId: binding.principalId,
+          sessionId: binding.sessionId,
+          createdAt: binding.createdAt,
+        },
+      }),
+    }
+  }
+  const parsedGroups = sharedGroupSnapshotSchema.safeParse(membershipSnapshot[SHARED_GROUPS_FIELD])
+  if (!parsedGroups.success) return undefined
+  const group = parsedGroups.data.groups.find(candidate => candidate.id === request.groupId)
+  if (group === undefined) return undefined
+  const memberships = membershipSnapshot.memberships
+    .filter(candidate => group.botIds.includes(candidate.botId))
+    .sort((left, right) => `${String(left.botId)}:${String(left.principalId)}`.localeCompare(`${String(right.botId)}:${String(right.principalId)}`))
+  return {
+    principalId,
+    appRevision: access.revision,
+    authorizationFingerprint: sharedAppAuthorizationFingerprint({
+      kind: 'group',
+      groupId: request.groupId,
+      botId: request.botId,
+      sessionId: request.sessionId,
+      group: {
+        botIds: [...group.botIds].map(String).sort(),
+        memberPrincipalIds: [...group.memberPrincipalIds].map(String).sort(),
+        ownerPrincipalId: String(group.ownerPrincipalId),
+      },
+      memberships,
+    }),
+  }
+}
+
+function sharedAppApprovalGrantMatches(
+  authority: SharedAppApprovalAuthority,
+  request: SharedConnectedAppAuthorizationRequest,
+  approval: SharedAppApprovalExecutionReference,
+  context: SharedAppAuthorizationContext,
+): string | undefined {
+  const toolName = exactApprovalToolName(approval.toolName)
+  return authority.grants.find(grant => grant.principalId === context.principalId
+    && grant.botId === request.botId
+    && grant.sessionId === request.sessionId
+    && (grant.groupId === undefined) === (request.kind === 'private')
+    && (request.kind === 'private' || grant.groupId === request.groupId)
+    && grant.appId === request.appId
+    && grant.toolNameExact === toolName
+    && grant.appRevision === context.appRevision
+    && grant.authorizationFingerprint === context.authorizationFingerprint
+    && (approval.grantId === undefined || grant.id === approval.grantId))?.id
+}
+
+function projectSharedApprovalGrants(
+  authority: SharedAppApprovalAuthority,
+  payload: SharedApprovalListPayload,
+  principalId: ReturnType<typeof BotPrincipalId>,
+): readonly SharedAppApprovalGrantView[] {
+  return authority.grants
+    .filter(grant => grant.principalId === principalId
+      && (payload.botId === undefined || grant.botId === payload.botId)
+      && (payload.groupId === undefined || grant.groupId === payload.groupId))
+    .map(grant => ({
+      id: grant.id,
+      botId: grant.botId,
+      ...(grant.groupId === undefined ? {} : { groupId: grant.groupId }),
+      appId: grant.appId,
+      toolName: grant.toolNameExact,
+      createdAt: grant.createdAt,
+    }))
+}
+
+function sharedApprovalInboxValue(
+  approvals: readonly SharedAppApprovalView[],
+  authority: SharedAppApprovalAuthority,
+  payload: SharedApprovalListPayload,
+  principalId: ReturnType<typeof BotPrincipalId>,
+): { readonly approvals: readonly SharedAppApprovalView[]; readonly grants?: readonly SharedAppApprovalGrantView[] } {
+  const grants = projectSharedApprovalGrants(authority, payload, principalId)
+  return { approvals, ...(grants.length === 0 ? {} : { grants }) }
+}
+
+function sharedApprovalExecutionKey(
+  request: SharedConnectedAppAuthorizationRequest,
+  approval: SharedAppApprovalExecutionReference,
+): ToolExecutionToken | string {
+  if (approval.executionKey !== undefined) return approval.executionKey
+  const callId = approval.callId === undefined
+    ? ''
+    : approval.callId.length <= 256
+      ? approval.callId
+      : createHash('sha256').update(approval.callId).digest('hex')
+  return JSON.stringify([
+    request.kind,
+    String(request.botId),
+    String(request.sessionId),
+    request.kind === 'group' ? String(request.groupId) : '',
+    request.kind === 'group' ? request.turn : '',
+    request.kind === 'group' ? request.step : '',
+    request.appId,
+    approval.toolName,
+    callId,
+  ])
+}
+
 function approvalRecordAuthorized(
   record: SharedAppApprovalRecord,
   extensions: Readonly<Record<string, unknown>>,
@@ -3938,6 +4648,11 @@ function boundedApprovalText(value: string, fallback: string): string {
   return trimmed.length <= SHARED_APP_APPROVAL_MAX_TEXT_LENGTH
     ? trimmed
     : `${trimmed.slice(0, SHARED_APP_APPROVAL_MAX_TEXT_LENGTH - 1)}…`
+}
+
+function boundedApprovalToolName(value: string): string {
+  const trimmed = value.trim()
+  return trimmed.length <= 256 ? trimmed : `${trimmed.slice(0, 255)}…`
 }
 
 function boundedSharedApprovalTtl(value: number | undefined): number {

@@ -7225,6 +7225,7 @@ describe('durable Bot roster', () => {
           groupId,
           messageId,
           botId: first.bot.id,
+          targetSessionId: recipientSessionId,
           status: 'pending',
           authorizationRevision: 1,
           senderPrincipalId: BotPrincipalId(String(principal)),

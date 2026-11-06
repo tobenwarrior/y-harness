@@ -18,6 +18,7 @@ export const inject = ['agentDefaultModel', 'agents', 'credentials', 'sessions',
 const GROUP_ID = BotGroupId('bot-group-settings')
 const TARGET_BOT_ID = BotId('bot-grok')
 const GROUP_MESSAGE_ID = BotGroupMessageId('bot-group-message-settings')
+const GROUP_REPLY_MESSAGE_ID = BotGroupMessageId('bot-group-message-settings-reply')
 const RENAMED_GROUP = 'Renamed planning room'
 
 interface SharedGroupDriver {
@@ -68,6 +69,23 @@ function settingsNameOf(value: unknown): string {
     throw new Error('shared group settings did not preserve the renamed room')
   }
   return value.name
+}
+
+/** Confirm that the reply route retained the parent message identity. */
+function assertPersistedReply(value: unknown): void {
+  if (!isRecord(value) || !Array.isArray(value.messages)) {
+    throw new Error('shared group inspection did not return messages')
+  }
+  let reply: Record<string, unknown> | undefined
+  for (const candidate of value.messages) {
+    if (isRecord(candidate) && candidate.id === GROUP_REPLY_MESSAGE_ID) {
+      reply = candidate
+      break
+    }
+  }
+  if (!isRecord(reply) || reply.replyToMessageId !== GROUP_MESSAGE_ID) {
+    throw new Error('shared group reply did not retain its quoted parent')
+  }
 }
 
 /** Seed the owner Bot and the hidden peer Bot needed by this standalone scenario. */
@@ -258,6 +276,22 @@ export async function apply(ctx: Context): Promise<void> {
       }
       if (recipient === undefined) throw new Error('shared group Agent was not created')
       await recipient.whenIdle()
+      if (process.env.DSH_SNAPSHOT_GROUP_REPLY === '1') {
+        const replyResult = await driver.service.handle('bots/share/send-group-message', {
+          groupId: GROUP_ID,
+          text: 'The room is green; please keep the original request in view.',
+          messageId: GROUP_REPLY_MESSAGE_ID,
+          targetBotIds: [TARGET_BOT_ID],
+          replyToMessageId: GROUP_MESSAGE_ID,
+        }, new AbortController().signal, driver.peer)
+        if (!replyResult.ok) throw new Error(`shared group reply failed: ${replyResult.error.message}`)
+        const inspected = await driver.service.handle('bots/share/inspect-group', {
+          groupId: GROUP_ID,
+        }, new AbortController().signal, driver.peer)
+        if (!inspected.ok) throw new Error(`shared group reply inspection failed: ${inspected.error.message}`)
+        assertPersistedReply(inspected.value)
+        await recipient.whenIdle()
+      }
       sent = true
     })()
   })

@@ -9,6 +9,7 @@ import { ApiSessionNotFound } from '@yharness/api-session-controller'
 import { BotPrincipalId } from '../src/sharing.ts'
 import { SharedAccessAuthority, SharedInviteCode, sharedInviteDigest, sharedPrincipalOf, type SharedAccessEnrollment } from '@yharness/client-connection'
 import type { UserMessage } from '@yharness/llm'
+import type { ToolExecutionToken } from '@yharness/tools'
 import { SessionId, SessionSeq, type SessionEvent } from '@yharness/session'
 import Storage from '@yharness/storage'
 import { credentialKey, CredentialProvider } from '@yharness/credentials'
@@ -952,6 +953,396 @@ describe('shared Bot service', () => {
     }
   })
 
+  it('remembers an exact tool approval, survives a second request, and can be revoked', async () => {
+    const value = await fixture()
+    let secondary: SecondaryFixture | undefined
+    try {
+      const enrollment = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      const participant = await principal(value, enrollment)
+      await value.service.handle(
+        'bots/share/chat', { botId: 'bot-chief', text: 'seed session' }, new AbortController().signal, participant.peer,
+      )
+      await value.service.setSharedConnectedAppAccess(BotId('bot-chief'), 'app-test', true, 0)
+      const binding = value.service.sessionFor(BotId('bot-chief'), participant.botPrincipalId)
+      if (binding === undefined) throw new Error('shared private Session was not created')
+      const request = {
+        kind: 'private' as const,
+        botId: BotId('bot-chief'),
+        sessionId: binding.sessionId,
+        appId: 'app-test',
+      }
+      const first = value.service.requestSharedAppApproval(request, {
+        toolName: 'mcp_test',
+        callId: 'call-remember-first',
+      })
+      const listed = await vi.waitFor(async () => {
+        const result = await value.service.handle('bots/share/list-approvals', {}, new AbortController().signal, participant.peer)
+        if (approvalListFromResult(result).length !== 1) throw new Error('approval is not pending yet')
+        return result
+      })
+      const id = approvalListFromResult(listed)[0]?.id
+      if (id === undefined) throw new Error('approval id is missing')
+      await expect(value.service.handle(
+        'bots/share/decide-approval', { id, decision: 'always-allow' }, new AbortController().signal, participant.peer,
+      )).resolves.toMatchObject({ ok: true, value: { ok: true, resolved: true } })
+      await expect(first).resolves.toBe('allowed-once')
+
+      const grants = await value.service.handle(
+        'bots/share/list-approval-grants', { botId: request.botId }, new AbortController().signal, participant.peer,
+      )
+      expect(grants).toMatchObject({ ok: true, value: { grants: [{ appId: 'app-test', toolName: 'mcp_test' }] } })
+
+      await expect(value.service.requestSharedAppApproval(request, {
+        toolName: 'mcp_test',
+        callId: 'call-remember-second',
+      })).resolves.toBe('allowed-once')
+      await expect(value.service.handle(
+        'bots/share/list-approvals', {}, new AbortController().signal, participant.peer,
+      )).resolves.toMatchObject({ ok: true, value: { approvals: [] } })
+
+      const firstLiveToken = Symbol('same-description') as ToolExecutionToken
+      const secondLiveToken = Symbol('same-description') as ToolExecutionToken
+      await expect(value.service.requestSharedAppApproval(request, {
+        toolName: 'mcp_test',
+        callId: 'call-token-identity',
+        executionKey: firstLiveToken,
+      })).resolves.toBe('allowed-once')
+      expect(value.service.isRememberedSharedAppApproval(request, {
+        toolName: 'mcp_test',
+        callId: 'call-token-identity',
+        executionKey: firstLiveToken,
+      })).toBe(true)
+      expect(value.service.isRememberedSharedAppApproval(request, {
+        toolName: 'mcp_test',
+        callId: 'call-token-identity',
+        executionKey: secondLiveToken,
+      })).toBe(false)
+      value.service.forgetRememberedSharedAppApproval(request, {
+        toolName: 'mcp_test',
+        callId: 'call-token-identity',
+        executionKey: firstLiveToken,
+      })
+
+      const listedGrants = grants.ok && isRecord(grants.value) && Array.isArray(grants.value.grants)
+        ? grants.value.grants
+        : []
+      const grant: unknown = listedGrants[0]
+      if (!isRecord(grant) || typeof grant.id !== 'string') throw new Error('remembered grant id is missing')
+      const rememberedExecutionToken = Symbol('remembered-execution-race') as ToolExecutionToken
+
+      const collaboratorInvite = await value.service.createInvite(
+        BotId('bot-chief'),
+        'collaborator',
+        participant.botPrincipalId,
+      )
+      const collaboratorEnrollment = await value.service.enroll(collaboratorInvite.code, enrollmentRequest())
+      const collaborator = await principal(value, collaboratorEnrollment)
+      await expect(value.service.handle(
+        'bots/share/list-approval-grants', { botId: request.botId }, new AbortController().signal, collaborator.peer,
+      )).resolves.toMatchObject({ ok: true, value: { grants: [] } })
+      await expect(value.service.handle(
+        'bots/share/revoke-approval-grant', { id: grant.id }, new AbortController().signal, collaborator.peer,
+      )).resolves.toMatchObject({ ok: false, error: { code: 'gateway/not-found' } })
+
+      // The remembered scope is authority-backed, so a second Host can use it
+      // without reconstructing the first Host's process-local state.
+      secondary = await secondaryFixture(value)
+      await expect(secondary.service.requestSharedAppApproval(request, {
+        toolName: 'mcp_test',
+        callId: 'call-remember-secondary-host',
+      })).resolves.toBe('allowed-once')
+
+      // A remembered request may be admitted once, then revoked by the
+      // initiator before the provider body starts. The final action-start
+      // authority lock must observe the revocation and never invoke the body.
+      await expect(value.service.requestSharedAppApproval(request, {
+        toolName: 'mcp_test',
+        callId: 'call-remember-race',
+        executionKey: rememberedExecutionToken,
+      })).resolves.toBe('allowed-once')
+      const start = vi.fn(async () => 'started')
+      await expect(value.service.handle(
+        'bots/share/revoke-approval-grant', { id: grant.id }, new AbortController().signal, participant.peer,
+      )).resolves.toMatchObject({ ok: true, value: { revoked: true } })
+      await expect(value.service.authorizeSharedConnectedAppAndStart(
+        request,
+        start,
+        new AbortController().signal,
+        {
+          toolName: 'mcp_test',
+          callId: 'call-remember-race',
+          executionKey: rememberedExecutionToken,
+        },
+      )).resolves.toBeUndefined()
+      expect(start).not.toHaveBeenCalled()
+
+      const afterRevoke = value.service.requestSharedAppApproval(request, {
+        toolName: 'mcp_test',
+        callId: 'call-remember-third',
+      })
+      await vi.waitFor(async () => {
+        const result = await value.service.handle('bots/share/list-approvals', {}, new AbortController().signal, participant.peer)
+        if (approvalListFromResult(result).length !== 1) throw new Error('revoked grant still auto-allowed')
+      })
+      const pendingAfterRevoke = await value.service.handle(
+        'bots/share/list-approvals', {}, new AbortController().signal, participant.peer,
+      )
+      const pendingId = approvalListFromResult(pendingAfterRevoke)[0]?.id
+      if (pendingId === undefined) throw new Error('revoked approval id is missing')
+      await value.service.handle(
+        'bots/share/decide-approval', { id: pendingId, decision: 'reject' }, new AbortController().signal, participant.peer,
+      )
+      await expect(afterRevoke).resolves.toBe('rejected')
+    } finally {
+      if (secondary !== undefined) await secondary.close()
+      await value.close()
+    }
+  })
+
+  it('binds a stalled remembered execution to the grant that admitted it', async () => {
+    const value = await fixture()
+    try {
+      const enrollment = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      const participant = await principal(value, enrollment)
+      await value.service.handle(
+        'bots/share/chat', { botId: 'bot-chief', text: 'seed session' }, new AbortController().signal, participant.peer,
+      )
+      await value.service.setSharedConnectedAppAccess(BotId('bot-chief'), 'app-test', true, 0)
+      const binding = value.service.sessionFor(BotId('bot-chief'), participant.botPrincipalId)
+      if (binding === undefined) throw new Error('shared private Session was not created')
+      const request = {
+        kind: 'private' as const,
+        botId: BotId('bot-chief'),
+        sessionId: binding.sessionId,
+        appId: 'app-test',
+      }
+      const first = value.service.requestSharedAppApproval(request, {
+        toolName: 'mcp_test',
+        callId: 'grant-one',
+      })
+      const firstListed = await vi.waitFor(async () => {
+        const result = await value.service.handle('bots/share/list-approvals', {}, new AbortController().signal, participant.peer)
+        if (approvalListFromResult(result).length !== 1) throw new Error('first approval is not pending')
+        return result
+      })
+      const firstId = approvalListFromResult(firstListed)[0]?.id
+      if (firstId === undefined) throw new Error('first approval id is missing')
+      await expect(value.service.handle(
+        'bots/share/decide-approval', { id: firstId, decision: 'always-allow' }, new AbortController().signal, participant.peer,
+      )).resolves.toMatchObject({ ok: true, value: { resolved: true } })
+      await expect(first).resolves.toBe('allowed-once')
+      const firstGrantResult = await value.service.handle(
+        'bots/share/list-approval-grants', { botId: request.botId }, new AbortController().signal, participant.peer,
+      )
+      const firstGrants = firstGrantResult.ok && isRecord(firstGrantResult.value) && Array.isArray(firstGrantResult.value.grants)
+        ? firstGrantResult.value.grants
+        : []
+      const firstGrant: unknown = firstGrants[0]
+      if (!isRecord(firstGrant) || typeof firstGrant.id !== 'string') throw new Error('first grant id is missing')
+
+      const oldToken = Symbol('stalled-execution') as ToolExecutionToken
+      await expect(value.service.requestSharedAppApproval(request, {
+        toolName: 'mcp_test',
+        callId: 'stalled-call',
+        executionKey: oldToken,
+      })).resolves.toBe('allowed-once')
+      await expect(value.service.handle(
+        'bots/share/revoke-approval-grant', { id: firstGrant.id }, new AbortController().signal, participant.peer,
+      )).resolves.toMatchObject({ ok: true, value: { revoked: true } })
+
+      const replacementToken = Symbol('replacement-execution') as ToolExecutionToken
+      const replacement = value.service.requestSharedAppApproval(request, {
+        toolName: 'mcp_test',
+        callId: 'replacement-call',
+        executionKey: replacementToken,
+      })
+      const replacementListed = await vi.waitFor(async () => {
+        const result = await value.service.handle('bots/share/list-approvals', {}, new AbortController().signal, participant.peer)
+        if (approvalListFromResult(result).length !== 1) throw new Error('replacement approval is not pending')
+        return result
+      })
+      const replacementId = approvalListFromResult(replacementListed)[0]?.id
+      if (replacementId === undefined) throw new Error('replacement approval id is missing')
+      await expect(value.service.handle(
+        'bots/share/decide-approval', { id: replacementId, decision: 'always-allow' }, new AbortController().signal, participant.peer,
+      )).resolves.toMatchObject({ ok: true, value: { resolved: true } })
+      await expect(replacement).resolves.toBe('allowed-once')
+      const replacementGrantResult = await value.service.handle(
+        'bots/share/list-approval-grants', { botId: request.botId }, new AbortController().signal, participant.peer,
+      )
+      const replacementGrants = replacementGrantResult.ok && isRecord(replacementGrantResult.value)
+        && Array.isArray(replacementGrantResult.value.grants)
+        ? replacementGrantResult.value.grants
+        : []
+      const replacementGrant: unknown = replacementGrants[0]
+      if (!isRecord(replacementGrant) || typeof replacementGrant.id !== 'string') throw new Error('replacement grant id is missing')
+      expect(replacementGrant.id).not.toBe(firstGrant.id)
+
+      const staleStart = vi.fn(async () => 'stale-started')
+      await expect(value.service.authorizeSharedConnectedAppAndStart(
+        request,
+        staleStart,
+        new AbortController().signal,
+        { toolName: 'mcp_test', callId: 'stalled-call', executionKey: oldToken, grantId: firstGrant.id },
+      )).resolves.toBeUndefined()
+      expect(staleStart).not.toHaveBeenCalled()
+
+      const replacementStart = vi.fn(async () => 'replacement-started')
+      await expect(value.service.authorizeSharedConnectedAppAndStart(
+        request,
+        replacementStart,
+        new AbortController().signal,
+        { toolName: 'mcp_test', callId: 'replacement-call', executionKey: replacementToken, grantId: replacementGrant.id },
+      )).resolves.toBe('replacement-started')
+      expect(replacementStart).toHaveBeenCalledOnce()
+      value.service.forgetRememberedSharedAppApprovalExecution(oldToken)
+      value.service.forgetRememberedSharedAppApprovalExecution(replacementToken)
+    } finally {
+      await value.close()
+    }
+  })
+
+  it('does not collide remembered approvals when registered tool names share a bounded preview', async () => {
+    const value = await fixture()
+    try {
+      const enrollment = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      const participant = await principal(value, enrollment)
+      await value.service.handle('bots/share/chat', { botId: 'bot-chief', text: 'seed session' }, new AbortController().signal, participant.peer)
+      await value.service.setSharedConnectedAppAccess(BotId('bot-chief'), 'app-test', true, 0)
+      const binding = value.service.sessionFor(BotId('bot-chief'), participant.botPrincipalId)
+      if (binding === undefined) throw new Error('shared private Session was not created')
+      const request = { kind: 'private' as const, botId: BotId('bot-chief'), sessionId: binding.sessionId, appId: 'app-test' }
+      const prefix = 'tool-'.padEnd(300, 'x')
+      const firstName = `${prefix}-one`
+      const secondName = `${prefix}-two`
+      const first = value.service.requestSharedAppApproval(request, { toolName: firstName, callId: 'collision-first' })
+      const firstListed = await vi.waitFor(async () => {
+        const result = await value.service.handle('bots/share/list-approvals', {}, new AbortController().signal, participant.peer)
+        if (approvalListFromResult(result).length !== 1) throw new Error('first approval is not pending')
+        return result
+      })
+      const firstId = approvalListFromResult(firstListed)[0]?.id
+      if (firstId === undefined) throw new Error('first approval id is missing')
+      await value.service.handle('bots/share/decide-approval', { id: firstId, decision: 'always-allow' }, new AbortController().signal, participant.peer)
+      await expect(first).resolves.toBe('allowed-once')
+      const second = value.service.requestSharedAppApproval(request, { toolName: secondName, callId: 'collision-second' })
+      await vi.waitFor(async () => {
+        const result = await value.service.handle('bots/share/list-approvals', {}, new AbortController().signal, participant.peer)
+        if (approvalListFromResult(result).length !== 1) throw new Error('different exact tool was remembered')
+      })
+      const secondListed = await value.service.handle('bots/share/list-approvals', {}, new AbortController().signal, participant.peer)
+      const secondId = approvalListFromResult(secondListed)[0]?.id
+      if (secondId === undefined) throw new Error('second approval id is missing')
+      await value.service.handle('bots/share/decide-approval', { id: secondId, decision: 'reject' }, new AbortController().signal, participant.peer)
+      await expect(second).resolves.toBe('rejected')
+    } finally {
+      await value.close()
+    }
+  })
+
+  it('keeps an Always allow marker when a mailbox sweep runs before the waiter consumes it', async () => {
+    const value = await fixture()
+    const readEntered = Promise.withResolvers<undefined>()
+    const releaseRead = Promise.withResolvers<undefined>()
+    let restoreRead: (() => void) | undefined
+    try {
+      const enrollment = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      const participant = await principal(value, enrollment)
+      await value.service.handle(
+        'bots/share/chat', { botId: 'bot-chief', text: 'seed session' }, new AbortController().signal, participant.peer,
+      )
+      await value.service.setSharedConnectedAppAccess(BotId('bot-chief'), 'app-test', true, 0)
+      const binding = value.service.sessionFor(BotId('bot-chief'), participant.botPrincipalId)
+      if (binding === undefined) throw new Error('shared private Session was not created')
+      const request = {
+        kind: 'private' as const,
+        botId: BotId('bot-chief'),
+        sessionId: binding.sessionId,
+        appId: 'app-test',
+      }
+      const executionKey = Symbol('sweep-race') as ToolExecutionToken
+      const originalRead = value.authority.readExtension.bind(value.authority)
+      let delayed = false
+      const readSpy = vi.spyOn(value.authority, 'readExtension').mockImplementation(async (key) => {
+        if (!delayed && key === 'agent-bots/shared-app-approvals') {
+          delayed = true
+          readEntered.resolve(undefined)
+          await releaseRead.promise
+        }
+        return originalRead(key)
+      })
+      restoreRead = () => { readSpy.mockRestore() }
+
+      const approval = value.service.requestSharedAppApproval(request, {
+        toolName: 'mcp_sweep_race',
+        executionKey,
+      })
+      await readEntered.promise
+      const listed = await value.service.handle(
+        'bots/share/list-approvals', {}, new AbortController().signal, participant.peer,
+      )
+      const id = approvalListFromResult(listed)[0]?.id
+      if (id === undefined) throw new Error('sweep-race approval id is missing')
+      await expect(value.service.handle(
+        'bots/share/decide-approval', { id, decision: 'always-allow' }, new AbortController().signal, participant.peer,
+      )).resolves.toMatchObject({ ok: true, value: { resolved: true } })
+
+      // Force an unrelated expired row so listApprovals takes its cleanup path
+      // while the Always allow waiter is still paused on its mailbox read.
+      await value.authority.mutateExtension('agent-bots/shared-app-approvals', (current) => {
+        const snapshot: readonly unknown[] = isRecord(current) && Array.isArray(current.approvals) ? current.approvals : []
+        return {
+          value: undefined,
+          next: {
+            version: 1,
+            approvals: [...snapshot, {
+              id: 'shared-app-approval-expired-sweep',
+              botId: 'bot-chief',
+              principalId: String(participant.botPrincipalId),
+              sessionId: 'shared-session-unknown-sweep',
+              appId: 'app-test',
+              toolName: 'mcp_expired_sweep',
+              action: 'Run expired sweep fixture',
+              createdAt: value.clock.value,
+              expiresAt: value.clock.value + 900_000,
+              leaseExpiresAt: value.clock.value + 60_000,
+              status: 'pending',
+            }],
+          },
+        }
+      })
+      const swept = await value.service.handle(
+        'bots/share/list-approvals', {}, new AbortController().signal, participant.peer,
+      )
+      if (!swept.ok) throw new Error(`sweep failed: ${JSON.stringify(swept)}`)
+      expect(swept).toMatchObject({ ok: true, value: { approvals: [] } })
+
+      releaseRead.resolve(undefined)
+      await expect(approval).resolves.toBe('allowed-once')
+      expect(value.service.isRememberedSharedAppApproval(request, {
+        toolName: 'mcp_sweep_race',
+        executionKey,
+      })).toBe(true)
+      value.service.forgetRememberedSharedAppApprovalExecution(executionKey)
+    } finally {
+      releaseRead.resolve(undefined)
+      restoreRead?.()
+      await value.close()
+    }
+  })
+
   it('drains an approval waiter before shared service disposal closes its authority domain', async () => {
     const value = await fixture()
     const authorizationEntered = Promise.withResolvers<undefined>()
@@ -1437,6 +1828,109 @@ describe('shared Bot service', () => {
       )).resolves.toMatchObject({ ok: true, value: { ok: true, resolved: true } })
       await expect(approval).resolves.toBe('allowed-once')
     } finally {
+      await value.close()
+    }
+  })
+
+  it('requires a new approval after a room member is removed and rejoins', async () => {
+    const value = await fixture(10, true)
+    const chief = BotId('bot-chief')
+    const second = BotId('bot-second')
+    const signal = new AbortController().signal
+    const resumeAdmission = Promise.withResolvers<undefined>()
+    try {
+      const ownerEnrollment = await value.service.enroll(
+        (await value.service.createInvite(chief, 'owner')).code, enrollmentRequest(),
+      )
+      await value.service.enroll((await value.service.createInvite(second, 'owner')).code, request(cookie(ownerEnrollment)))
+      const owner = await principal(value, ownerEnrollment)
+      const memberEnrollment = await value.service.enroll(
+        (await value.service.createInvite(chief, 'collaborator', owner.botPrincipalId)).code,
+        enrollmentRequest(),
+      )
+      await value.service.enroll(
+        (await value.service.createInvite(second, 'collaborator', owner.botPrincipalId)).code,
+        request(cookie(memberEnrollment)),
+      )
+      const groupId = groupIdFromResult(await value.service.handle('bots/share/create-group', {
+        name: 'Approval room after membership changes', botIds: [chief, second],
+      }, signal, owner.peer))
+      const joinRoom = async () => {
+        const invitation = await value.service.handle('bots/share/manage-group-members', {
+          groupId, action: 'create-invite',
+        }, signal, owner.peer)
+        const code = groupInviteCodeFromResult(invitation)
+        return principal(value, await value.service.enroll(code, request(cookie(memberEnrollment))))
+      }
+      const member = await joinRoom()
+      const binding = (await value.service.sharedGroupSessionBindings()).find(session =>
+        session.groupId === groupId && session.botId === chief)
+      if (binding === undefined) throw new Error('group session binding is missing')
+      await value.service.setSharedConnectedAppAccess(chief, 'app-room', true, 0)
+      const requestApproval = async (peer: typeof member.peer, turn: number, beforeApproval?: () => void) => {
+        const messageId = BotGroupMessageId(`bot-group-message-room-approval-${turn}`)
+        await expect(value.service.handle('bots/share/send-group-message', {
+          groupId, text: 'Run the room app.', targetBotIds: [chief], messageId,
+        }, signal, peer)).resolves.toMatchObject({ ok: true })
+        await value.service.recordSharedGroupMessageClaims(groupId, chief, [{ groupId, messageId }], turn, 1, true, false)
+        beforeApproval?.()
+        const approval = value.service.requestSharedAppApproval({
+          kind: 'group', groupId, botId: chief, sessionId: binding.sessionId, turn, step: 2, appId: 'app-room',
+        }, { toolName: beforeApproval === undefined ? 'mcp_room' : 'mcp_other_room_tool', callId: `room-call-${turn}` })
+        return { approval, messageId }
+      }
+      const pendingApprovalId = async (peer: typeof member.peer): Promise<string> => vi.waitFor(async () => {
+        const result = await value.service.handle('bots/share/list-approvals', { groupId }, signal, peer)
+        const id = approvalListFromResult(result)[0]?.id
+        if (id === undefined) throw new Error('expected a fresh approval in the room')
+        return id
+      })
+
+      const first = await requestApproval(member.peer, 1)
+      await expect(value.service.handle('bots/share/decide-approval', {
+        id: await pendingApprovalId(member.peer), decision: 'always-allow',
+      }, signal, member.peer)).resolves.toMatchObject({ ok: true, value: { resolved: true } })
+      await expect(first.approval).resolves.toBe('allowed-once')
+      const secondCall = await requestApproval(member.peer, 2)
+      await expect(secondCall.approval).resolves.toBe('allowed-once')
+
+      const authorizationRead = Promise.withResolvers<undefined>()
+      let pauseAfterRead = false
+      const withBot = value.host.withBot
+      value.host.withBot = async (botId, operationSignal, operation) => {
+        const pause = pauseAfterRead
+        pauseAfterRead = false
+        const result = await withBot(botId, operationSignal, operation)
+        if (pause) {
+          authorizationRead.resolve(undefined)
+          await resumeAdmission.promise
+        }
+        return result
+      }
+      const raced = await requestApproval(member.peer, 3, () => { pauseAfterRead = true })
+      await authorizationRead.promise
+      await expect(value.service.handle('bots/share/manage-group-members', {
+        groupId, action: 'revoke', principalId: member.botPrincipalId,
+      }, signal, owner.peer)).resolves.toMatchObject({ ok: true, value: { revoked: true } })
+      const rejoined = await joinRoom()
+      expect(rejoined.botPrincipalId).toBe(member.botPrincipalId)
+      await expect(value.service.handle('bots/share/list-approval-grants', {
+        groupId,
+      }, signal, rejoined.peer)).resolves.toMatchObject({ ok: true, value: { grants: [] } })
+      await expect(value.service.handle('bots/share/send-group-message', {
+        groupId, text: 'Run the room app.', targetBotIds: [chief], messageId: raced.messageId,
+      }, signal, rejoined.peer)).resolves.toMatchObject({ ok: true })
+      await value.service.recordSharedGroupMessageClaims(groupId, chief, [{ groupId, messageId: raced.messageId }], 3, 1, true, false)
+      resumeAdmission.resolve(undefined)
+      await expect(raced.approval).resolves.toBe('unavailable')
+
+      const afterRejoin = await requestApproval(rejoined.peer, 4)
+      await value.service.handle('bots/share/decide-approval', {
+        id: await pendingApprovalId(rejoined.peer), decision: 'reject',
+      }, signal, rejoined.peer)
+      await expect(afterRejoin.approval).resolves.toBe('rejected')
+    } finally {
+      resumeAdmission.resolve(undefined)
       await value.close()
     }
   })
@@ -2514,6 +3008,137 @@ describe('shared Bot service', () => {
     }
   })
 
+  it('persists shared replies and reactions with room authorization and retry validation', async () => {
+    const value = await fixture(10, true)
+    try {
+      const ownerEnrollment = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-second'), 'owner')).code,
+        request(cookie(ownerEnrollment)),
+      )
+      const owner = await principal(value, ownerEnrollment)
+      const outsiderChief = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'collaborator')).code,
+        enrollmentRequest(),
+      )
+      const outsiderSecond = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-second'), 'collaborator')).code,
+        request(cookie(outsiderChief)),
+      )
+      const outsider = await principal(value, outsiderSecond)
+      const created = await value.service.handle('bots/share/create-group', {
+        id: BotGroupId('bot-group-replies-reactions'),
+        name: 'Replies and reactions',
+        botIds: [BotId('bot-chief'), BotId('bot-second')],
+      }, new AbortController().signal, owner.peer)
+      const groupId = groupIdFromResult(created)
+      const otherCreated = await value.service.handle('bots/share/create-group', {
+        id: BotGroupId('bot-group-replies-other'),
+        name: 'Other room',
+        botIds: [BotId('bot-chief'), BotId('bot-second')],
+      }, new AbortController().signal, owner.peer)
+      const otherGroupId = groupIdFromResult(otherCreated)
+      const parentId = BotGroupMessageId('bot-group-message-shared-parent')
+      const otherParentId = BotGroupMessageId('bot-group-message-shared-other-parent')
+      await expect(value.service.handle('bots/share/send-group-message', {
+        groupId,
+        messageId: parentId,
+        text: 'Parent shared message.',
+      }, new AbortController().signal, owner.peer)).resolves.toMatchObject({ ok: true, value: { status: 'accepted' } })
+      await expect(value.service.handle('bots/share/send-group-message', {
+        groupId: otherGroupId,
+        messageId: otherParentId,
+        text: 'Parent from another room.',
+      }, new AbortController().signal, owner.peer)).resolves.toMatchObject({ ok: true, value: { status: 'accepted' } })
+      const replyId = BotGroupMessageId('bot-group-message-shared-reply')
+      await expect(value.service.handle('bots/share/send-group-message', {
+        groupId,
+        messageId: replyId,
+        replyToMessageId: parentId,
+        text: 'Reply shared message.',
+      }, new AbortController().signal, owner.peer)).resolves.toMatchObject({ ok: true, value: { status: 'accepted' } })
+      expect(value.host.deliverSharedGroup.mock.calls.at(-1)?.[0].text).toContain('> Parent shared message.')
+      await expect(value.service.handle('bots/share/send-group-message', {
+        groupId,
+        messageId: replyId,
+        text: 'Reply shared message.',
+      }, new AbortController().signal, owner.peer)).resolves.toMatchObject({
+        ok: false,
+        error: { code: 'gateway/bad-request' },
+      })
+      await expect(value.service.handle('bots/share/send-group-message', {
+        groupId,
+        messageId: BotGroupMessageId('bot-group-message-cross-room-parent'),
+        replyToMessageId: otherParentId,
+        text: 'This parent is not in the room.',
+      }, new AbortController().signal, owner.peer)).resolves.toMatchObject({
+        ok: false,
+        error: { code: 'gateway/bad-request' },
+      })
+      const reactionRequest = {
+        groupId,
+        messageId: parentId,
+        emoji: '👍',
+        action: 'add' as const,
+      }
+      await expect(value.service.handle('bots/share/react-group-message', reactionRequest, new AbortController().signal, owner.peer)).resolves.toMatchObject({
+        ok: true,
+        value: { messageId: parentId, reactions: [{ emoji: '👍', count: 1, viewerReacted: true }] },
+      })
+      await expect(value.service.handle('bots/share/react-group-message', reactionRequest, new AbortController().signal, owner.peer)).resolves.toMatchObject({
+        ok: true,
+        value: { messageId: parentId, reactions: [{ emoji: '👍', count: 1, viewerReacted: true }] },
+      })
+      await expect(value.service.handle('bots/share/react-group-message', {
+        ...reactionRequest,
+        emoji: '❤️',
+        action: 'add',
+      }, new AbortController().signal, owner.peer)).resolves.toMatchObject({
+        ok: true,
+        value: {
+          messageId: parentId,
+          reactions: [
+            { emoji: '👍', count: 1, viewerReacted: true },
+            { emoji: '❤️', count: 1, viewerReacted: true },
+          ],
+        },
+      })
+      await expect(value.service.handle('bots/share/react-group-message', {
+        ...reactionRequest,
+        emoji: '❤️',
+        action: 'remove',
+      }, new AbortController().signal, owner.peer)).resolves.toMatchObject({
+        ok: true,
+        value: { messageId: parentId, reactions: [{ emoji: '👍', count: 1, viewerReacted: true }] },
+      })
+      await expect(value.service.handle('bots/share/react-group-message', reactionRequest, new AbortController().signal, outsider.peer)).resolves.toMatchObject({
+        ok: false,
+        error: { code: 'gateway/forbidden' },
+      })
+      await expect(value.service.handle('bots/share/react-group-message', {
+        ...reactionRequest,
+        messageId: otherParentId,
+      }, new AbortController().signal, owner.peer)).resolves.toMatchObject({
+        ok: false,
+        error: { code: 'gateway/not-found' },
+      })
+      await expect(value.service.handle('bots/share/inspect-group', { groupId }, new AbortController().signal, owner.peer)).resolves.toMatchObject({
+        ok: true,
+        value: {
+          messages: [
+            { id: parentId, text: 'Parent shared message.' },
+            { id: replyId, text: 'Reply shared message.', replyToMessageId: parentId, replyTo: { messageId: parentId } },
+          ],
+        },
+      })
+    } finally {
+      await value.close()
+    }
+  })
+
   it('rejects a shared message when an earlier failed write left a consumed grant', async () => {
     const value = await fixture(10, true, false, { value: 1_000 }, true)
     try {
@@ -3507,6 +4132,75 @@ describe('shared Bot service', () => {
     } finally {
       await value.close()
       vi.useRealTimers()
+    }
+  })
+
+  it('fails closed instead of replaying a legacy pending delivery without its Session binding', async () => {
+    const value = await fixture(10, true)
+    let secondary: SecondaryFixture | undefined
+    try {
+      const ownerEnrollment = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-second'), 'owner')).code,
+        request(cookie(ownerEnrollment)),
+      )
+      const owner = await principal(value, ownerEnrollment)
+      const created = await value.service.handle('bots/share/create-group', {
+        name: 'Legacy recovery room',
+        botIds: [BotId('bot-chief'), BotId('bot-second')],
+      }, new AbortController().signal, owner.peer)
+      const groupId = groupIdFromResult(created)
+      const messageId = BotGroupMessageId('bot-group-message-legacy-recovery')
+      await expect(value.service.handle('bots/share/send-group-message', {
+        groupId,
+        targetBotIds: [BotId('bot-chief')],
+        text: 'Do not replay without an exact Session.',
+        messageId,
+      }, new AbortController().signal, owner.peer)).resolves.toMatchObject({ ok: true })
+      await value.authority.mutateExtension('agent-bots/shared-memberships', (current) => {
+        const membership = sharedMembershipSnapshotSchema.parse(current)
+        const groups = sharedGroupSnapshotSchema.parse(membership.sharedGroups)
+        const delivery = groups.deliveries.find(candidate => candidate.messageId === messageId && candidate.botId === BotId('bot-chief'))
+        if (delivery === undefined) throw new Error('missing legacy recovery delivery')
+        const { targetSessionId: _targetSessionId, ...legacyDelivery } = delivery
+        void _targetSessionId
+        return {
+          value: undefined,
+          next: {
+            ...membership,
+            sharedGroups: {
+              ...groups,
+              deliveries: groups.deliveries.map(candidate => candidate.id === delivery.id
+                ? { ...legacyDelivery, status: 'pending' as const, dispatchToken: 'legacy-recovery', dispatchLeaseUntil: 0 }
+                : candidate),
+              responseReservations: groups.responseReservations.includes(delivery.id)
+                ? groups.responseReservations
+                : [...groups.responseReservations, delivery.id],
+            },
+          },
+        }
+      })
+      secondary = await secondaryFixture(value, true)
+      const admitted = await secondary.authority.admit(request(cookie(ownerEnrollment)))
+      if (!('peer' in admitted)) throw new Error('secondary Host rejected an active shared principal')
+      await secondary.service.recoverSharedGroupDeliveries()
+      expect(secondary.host.deliverSharedGroup).not.toHaveBeenCalled()
+      await expect(value.service.handle('bots/share/inspect-group', { groupId }, new AbortController().signal, owner.peer)).resolves.toMatchObject({
+        ok: true,
+        value: {
+          deliveries: [{
+            botId: 'bot-chief',
+            status: 'failed',
+            error: 'Shared Bot group delivery cannot be replayed safely without its original Session binding; send again to admit a new delivery',
+          }],
+        },
+      })
+    } finally {
+      await secondary?.close()
+      await value.close()
     }
   })
 

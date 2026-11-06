@@ -2,6 +2,7 @@ import type {
   BotAccent as SharedBotAccent,
   BotAvatar as SharedBotAvatar,
   BotConnectedAppAccess as SharedBotConnectedAppAccess,
+  BotGroupReactionView as SharedBotGroupReactionView,
   BotIdentity as SharedBotIdentity,
   BotSkillAccess as SharedBotSkillAccess,
   BotSkillPolicy as SharedBotSkillPolicy,
@@ -121,10 +122,37 @@ export interface BotGroupMessageSummary {
   readonly text: string
   /** Exact Bot ids selected by mentions for this message, when it was targeted. */
   readonly targetBotIds?: readonly string[]
+  /** Parent message selected when this message was written as a reply. */
+  readonly replyToMessageId?: string
+  /** Aggregated emoji reactions visible to the current viewer. */
+  readonly reactions?: readonly BotGroupReactionSummary[]
   /** Safe metadata for attachments admitted to this message. */
   readonly attachments?: readonly SharedBotInputAttachmentView[]
   /** Unix timestamp used for stable transcript ordering. */
   readonly createdAt: number
+}
+
+/** One emoji reaction count in a group transcript. */
+export type BotGroupReactionSummary = SharedBotGroupReactionView
+
+/** Group reaction mutation request shared by local and shared rooms. */
+export type BotGroupReactionRequest = {
+  /** Group containing the message. */
+  readonly groupId: string
+  /** Message whose reaction is changing. */
+  readonly messageId: string
+  /** Fixed emoji to select or remove. */
+  readonly emoji: string
+  /** Whether to add this emoji or remove only this viewer's selection of it. */
+  readonly action: 'add' | 'remove'
+}
+
+/** Result returned after a group reaction mutation. */
+export type BotGroupReactionValue = {
+  /** Message whose reactions were changed. */
+  readonly messageId: string
+  /** Current aggregated counts after the mutation. */
+  readonly reactions: readonly BotGroupReactionSummary[]
 }
 
 /** Persisted per-recipient execution state projected into the group transcript. */

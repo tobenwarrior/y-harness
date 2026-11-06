@@ -1897,7 +1897,7 @@ describe('Bot roster and detail', () => {
     />)
 
     expect(screen.getByRole('region', { name: 'Release room' })).toBeTruthy()
-    expect(screen.getByText('Plan the release together.')).toBeTruthy()
+    expect(screen.getAllByText('Plan the release together.').length).toBeGreaterThan(0)
     expect(screen.getByText('I found three useful sources.')).toBeTruthy()
     const composer = screen.getByRole('textbox', { name: 'Message Release room' })
     fireEvent.change(composer, { target: { value: 'What is left?' } })
@@ -1919,6 +1919,49 @@ describe('Bot roster and detail', () => {
     await waitFor(() => { expect(failed).toHaveBeenCalledWith('Retry this') })
     expect((screen.getByRole('textbox', { name: 'Message Release room' }) as HTMLTextAreaElement).value).toBe('Retry this')
     expect(screen.getByRole('alert').textContent).toContain('Some Bots could not receive')
+  })
+
+  it('keeps reply context in the composer and exposes reaction counts with viewer state', async () => {
+    const onSend = vi.fn().mockResolvedValue(undefined)
+    const onReact = vi.fn().mockResolvedValue(undefined)
+    const initial = {
+      ...groupDetail,
+      messages: [
+        ...groupDetail.messages,
+        {
+          id: 'message-3', sender: { kind: 'bot' as const, botId: BotId('release'), name: 'Release captain' },
+          text: 'I will package the notes.', createdAt: 3,
+          replyToMessageId: 'message-1',
+          reactions: [{ emoji: '👍' as const, count: 1, viewerReacted: true }],
+        },
+      ],
+    }
+    render(<BotGroupDetail
+      group={initial}
+      bots={bots}
+      loading={false}
+      error={null}
+      onRetry={vi.fn()}
+      onSend={onSend}
+      onReact={onReact}
+      loadAvatar={undefined}
+      t={t}
+    />)
+
+    expect(screen.getAllByText('Plan the release together.').length).toBeGreaterThan(0)
+    fireEvent.click(screen.getByRole('button', { name: 'Reply to You' }))
+    expect(screen.getByRole('status').textContent).toContain('Replying to You')
+    const composer = screen.getByRole('textbox', { name: 'Message Release room' })
+    fireEvent.change(composer, { target: { value: 'The package is ready.' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() => { expect(onSend).toHaveBeenCalledWith('The package is ready.', undefined, undefined, 'message-1') })
+
+    expect(screen.getByRole('button', { name: '👍, 1 reactions' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'React to Release captain’s message' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'React with 😂' }))
+    await waitFor(() => { expect(onReact).toHaveBeenCalledWith('message-3', '😂', 'add') })
+    fireEvent.click(screen.getByRole('button', { name: '👍, 1 reactions' }))
+    await waitFor(() => { expect(onReact).toHaveBeenCalledWith('message-3', '👍', 'remove') })
   })
 
   it('keeps a picked attachment visible when the current local transport is text-only', async () => {

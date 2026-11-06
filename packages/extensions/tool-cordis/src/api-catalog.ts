@@ -750,6 +750,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'Per-recipient delivery outcomes.',
       },
       {
+        signature: '@Remote(\'reactGroupMessage\') async reactGroupMessage(request: BotGroupReactionRequest): Promise<BotGroupReactionValue>',
+        description: 'Add or remove the owner\'s fixed reaction on one durable group message.',
+        parameters: [{ name: 'request', description: 'Group, message, fixed emoji, and explicit add/remove action.' }],
+        returns: 'The aggregate reaction projection after the idempotent mutation.',
+      },
+      {
         signature: '@Remote(\'inspectSharedGroupDeliveryFences\') async inspectSharedGroupDeliveryFences( request: { readonly botId: BotId }, ): Promise<BotSharedGroupDeliveryFenceDiagnosticValue>',
         description: 'Read owner-visible recipient fences that require explicit shared-group recovery. This owner Remote returns only the exact identities needed for a later recovery; collaborator endpoints do not mount it.',
         parameters: [{ name: 'request', description: 'Recipient Bot to inspect.' }],
@@ -5868,12 +5874,24 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type BotGroupMessageId = Branded<\'BotGroupMessageId\'>;',
   },
   {
+    name: 'BotGroupMessageReplyView',
+    declaration: 'export interface BotGroupMessageReplyView {\n    readonly messageId: BotGroupMessageId;\n    readonly sender: BotGroupMessageSenderView;\n    readonly text: string;\n}',
+  },
+  {
     name: 'BotGroupMessageSenderView',
     declaration: 'export type BotGroupMessageSenderView = {\n    readonly kind: \'user\';\n    readonly principalId?: BotPrincipalIdType;\n} | {\n    readonly kind: \'bot\';\n    readonly botId: BotId;\n    readonly name: string;\n};',
   },
   {
     name: 'BotGroupMessageView',
-    declaration: 'export interface BotGroupMessageView {\n    readonly id: BotGroupMessageId;\n    readonly groupId: BotGroupId;\n    readonly sender: BotGroupMessageSenderView;\n    readonly text: string;\n    readonly targetBotIds?: readonly BotId[];\n    readonly attachments?: readonly BotInputAttachmentView[];\n    readonly createdAt: number;\n}',
+    declaration: 'export interface BotGroupMessageView {\n    readonly id: BotGroupMessageId;\n    readonly groupId: BotGroupId;\n    readonly sender: BotGroupMessageSenderView;\n    readonly text: string;\n    readonly targetBotIds?: readonly BotId[];\n    readonly replyToMessageId?: BotGroupMessageId;\n    readonly replyTo?: BotGroupMessageReplyView;\n    readonly reactions?: readonly BotGroupReactionView[];\n    readonly attachments?: readonly BotInputAttachmentView[];\n    readonly createdAt: number;\n}',
+  },
+  {
+    name: 'BotGroupReactionEmoji',
+    declaration: 'export type BotGroupReactionEmoji = typeof BOT_GROUP_REACTION_EMOJIS[number];',
+  },
+  {
+    name: 'BotGroupReactionView',
+    declaration: 'export interface BotGroupReactionView {\n    readonly emoji: BotGroupReactionEmoji;\n    readonly count: number;\n    readonly viewerReacted?: boolean;\n}',
   },
   {
     name: 'BotGroupRecord',
@@ -5881,7 +5899,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'BotGroupSendRemoteRequest',
-    declaration: 'export interface BotGroupSendRemoteRequest {\n    readonly groupId: BotGroupId;\n    readonly text: string;\n    readonly messageId?: BotGroupMessageId;\n    readonly targetBotIds?: readonly BotId[];\n    readonly attachmentGrants?: readonly BotAttachmentGrantIdType[];\n}',
+    declaration: 'export interface BotGroupSendRemoteRequest {\n    readonly groupId: BotGroupId;\n    readonly text: string;\n    readonly messageId?: BotGroupMessageId;\n    readonly targetBotIds?: readonly BotId[];\n    readonly replyToMessageId?: BotGroupMessageId;\n    readonly attachmentGrants?: readonly BotAttachmentGrantIdType[];\n}',
   },
   {
     name: 'BotGroupSendValue',

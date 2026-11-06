@@ -27,6 +27,7 @@ import type {
   BotId as BotIdType,
   BotGroupCreateRequest,
   BotGroupMessageId as BotGroupMessageIdType,
+  BotGroupMessageSenderView,
   BotGroupMessageView,
   BotGroupView,
   BotGroupId as BotGroupIdType,
@@ -42,6 +43,7 @@ import type {
 } from '@yharness/bots/client'
 import { BotAvatar } from './BotAvatar.tsx'
 import { mentionQueryAt, resolveMentionTargets } from './bot-mentions.ts'
+import { compactGroupQuote, GROUP_REACTION_OPTIONS, readGroupReplyToMessageId } from './group-interactions.ts'
 import {
   BotGroupAttachments,
   BotGroupSentAttachments,
@@ -60,9 +62,11 @@ import type {
   SharedPendingGroupCreation,
 } from './pending-group-queue.ts'
 import type { BotGroupAttachmentDraft, BotSummary } from './types.ts'
+import type { BotGroupReactionSummary } from './types.ts'
 import { broadcastSharedAuthChanged } from './shared-client.ts'
 import type {
   SharedBotApprovalRequest,
+  SharedBotApprovalGrant,
   SharedBotAuthChange,
   SharedBotGroupInviteValue,
   SharedBotGroupSettingsValue,
@@ -89,8 +93,9 @@ function sharedGroupCreationKey(actionId: string, name: string, botIds: readonly
   return `${actionId}\u0000${name}\u0000${[...botIds].sort().join('\u0000')}`
 }
 
-function sharedGroupMessageKey(actionId: string, groupId: string, text: string): string {
-  return `${actionId}\u0000${groupId}\u0000${text}`
+function sharedGroupMessageKey(actionId: string, groupId: string, text: string, replyToMessageId?: string): string {
+  const base = `${actionId}\u0000${groupId}\u0000${text}`
+  return replyToMessageId === undefined ? base : `${base}\u0000${replyToMessageId}`
 }
 
 function approvalArgumentsNotice(approval: SharedBotApprovalRequest, t: Translate): string {
@@ -118,6 +123,12 @@ function shareRoleLabel(role: BotShareRole, t: Translate): string {
     case 'collaborator': return t('shareRoleCollaborator')
     default: return t('sharedRole', { role })
   }
+}
+
+function sharedGroupAuthorLabel(sender: BotGroupMessageSenderView, selfPrincipalId: string | undefined, t: Translate): string {
+  if (sender.kind === 'bot') return t('sharedGroupBotAuthor', { name: sender.name })
+  if (sender.principalId === undefined || String(sender.principalId) === selfPrincipalId) return t('you')
+  return t('shareRoleCollaborator')
 }
 
 function updatePendingBotIds(current: ReadonlySet<string>, botId: string, pending: boolean): ReadonlySet<string> {
@@ -224,7 +235,7 @@ type SharedApprovalScope =
   | { readonly botId: string; readonly groupId?: never }
   | { readonly groupId: string; readonly botId?: never }
 
-type SharedApprovalDecision = 'allow' | 'reject'
+type SharedApprovalDecision = 'allow' | 'always-allow' | 'reject'
 
 /** Show connected-app approvals in the private or group conversation currently open. */
 function SharedApprovalsCard({ client, scope, botName, groupName, resolveBotName, t }: {
@@ -237,10 +248,13 @@ function SharedApprovalsCard({ client, scope, botName, groupName, resolveBotName
 }) {
   const listApprovals = client.listApprovals
   const decideApproval = client.decideApproval
+  const revokeApprovalGrant = client.revokeApprovalGrant
   const [approvals, setApprovals] = useState<readonly SharedBotApprovalRequest[] | null>(null)
+  const [grants, setGrants] = useState<readonly SharedBotApprovalGrant[] | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [working, setWorking] = useState<{ readonly id: string; readonly decision: SharedApprovalDecision } | null>(null)
+  const [grantWorking, setGrantWorking] = useState<string | null>(null)
   const [reload, setReload] = useState(0)
   const generation = useRef(0)
   const requestGeneration = useRef(0)
@@ -260,17 +274,18 @@ function SharedApprovalsCard({ client, scope, botName, groupName, resolveBotName
         const result = await listApprovals(scope)
         if (generation.current !== current || requestGeneration.current !== currentRequest
           || client.authGeneration !== requestAuthGeneration || client.retryScope !== requestScope) return
-        if (result.ok) {
-          const visible = result.value.approvals.filter(approval => (
-            'groupId' in scope
-              ? approval.groupId === scope.groupId
-              : approval.botId === scope.botId && approval.groupId === undefined
-          ))
-          setApprovals(visible)
-          setError(null)
-        } else {
+        if (!result.ok) {
           setError(t('sharedApprovalsLoadFailed'))
+          return
         }
+        const matchesScope = (item: SharedBotApprovalRequest | SharedBotApprovalGrant): boolean => (
+          'groupId' in scope
+            ? item.groupId === scope.groupId
+            : item.botId === scope.botId && item.groupId === undefined
+        )
+        setApprovals(result.value.approvals.filter(matchesScope))
+        setGrants(result.value.grants?.filter(matchesScope) ?? [])
+        setError(null)
       } catch {
         if (generation.current === current && requestGeneration.current === currentRequest
           && client.authGeneration === requestAuthGeneration && client.retryScope === requestScope) {
@@ -291,8 +306,10 @@ function SharedApprovalsCard({ client, scope, botName, groupName, resolveBotName
     setLoading(true)
     setError(null)
     setApprovals(null)
+    setGrants(null)
     workingRef.current = null
     setWorking(null)
+    setGrantWorking(null)
     void load()
     return () => {
       generation.current += 1
@@ -339,8 +356,40 @@ function SharedApprovalsCard({ client, scope, botName, groupName, resolveBotName
     }
   }
 
-  if (listApprovals === undefined || decideApproval === undefined) return null
-  if (!loading && error === null && approvals !== null && approvals.length === 0) return null
+  const revokeGrant = async (grant: SharedBotApprovalGrant): Promise<void> => {
+    if (revokeApprovalGrant === undefined || grantWorking !== null) return
+    const current = generation.current
+    const requestAuthGeneration = client.authGeneration
+    const requestScope = client.retryScope
+    setGrantWorking(grant.id)
+    setError(null)
+    try {
+      const result = await revokeApprovalGrant(grant.id)
+      if (generation.current !== current || client.authGeneration !== requestAuthGeneration || client.retryScope !== requestScope) return
+      if (result.ok) {
+        requestGeneration.current += 1
+        if (timerRef.current !== undefined) {
+          clearTimeout(timerRef.current)
+          timerRef.current = undefined
+        }
+        setGrants(value => value?.filter(item => item.id !== grant.id) ?? value)
+        setReload(value => value + 1)
+      } else {
+        setError(t('sharedApprovalGrantRevokeFailed'))
+      }
+    } catch {
+      if (generation.current === current && client.authGeneration === requestAuthGeneration && client.retryScope === requestScope) {
+        setError(t('sharedApprovalGrantRevokeFailed'))
+      }
+    } finally {
+      if (generation.current === current && client.authGeneration === requestAuthGeneration && client.retryScope === requestScope) {
+        setGrantWorking(null)
+      }
+    }
+  }
+
+  if (listApprovals === undefined || (decideApproval === undefined && revokeApprovalGrant === undefined)) return null
+  if (!loading && error === null && approvals !== null && approvals.length === 0 && grants !== null && grants.length === 0) return null
 
   const targetLabel = (approval: SharedBotApprovalRequest): string => {
     if (groupName !== undefined) {
@@ -363,7 +412,7 @@ function SharedApprovalsCard({ client, scope, botName, groupName, resolveBotName
   }
 
   return (
-    <section className={css.sharedMemoryCard} aria-label={t('sharedApprovalsTitle')} aria-busy={loading || working !== null}>
+    <section className={css.sharedMemoryCard} aria-label={t('sharedApprovalsTitle')} aria-busy={loading || working !== null || grantWorking !== null}>
       <div className={css.sharedMemoryHeader}>
         <span className={css.sharedMemoryIcon} aria-hidden="true"><IconShieldOutlineRegular size={16} /></span>
         <div>
@@ -378,7 +427,7 @@ function SharedApprovalsCard({ client, scope, botName, groupName, resolveBotName
         </div>
       )}
       {loading && approvals === null && <div className={css.connectedAppsLoading} role="status">{t('sharedApprovalsLoading')}</div>}
-      {!loading && approvals !== null && approvals.length === 0 && <div className={css.connectedAppsEmpty}>{t('sharedApprovalsEmpty')}</div>}
+      {!loading && approvals !== null && approvals.length === 0 && (grants === null || grants.length === 0) && <div className={css.connectedAppsEmpty}>{t('sharedApprovalsEmpty')}</div>}
       {approvals !== null && approvals.length > 0 && (
         <div className={css.sharedApprovalsList} role="list" aria-label={t('sharedApprovalsTitle')}>
           {approvals.map((approval) => {
@@ -398,6 +447,7 @@ function SharedApprovalsCard({ client, scope, botName, groupName, resolveBotName
                 </div>
                 <div className={css.sharedApprovalTarget}>{targetLabel(approval)}</div>
                 <div className={css.sharedApprovalAction}>{t('sharedApprovalAction', { action: approval.action })}</div>
+                <p className={css.sharedApprovalReason}>{t('sharedApprovalAlwaysAllowHint')}</p>
                 <p className={css.sharedApprovalReason}>{approval.reason ?? t('sharedApprovalNoReason')}</p>
                 <div className={css.sharedApprovalSafePreview}>
                   {approvalArgumentsNotice(approval, t)}
@@ -427,10 +477,49 @@ function SharedApprovalsCard({ client, scope, botName, groupName, resolveBotName
                   >
                     {pendingDecision === 'allow' ? t('sharedApprovalApproving') : t('sharedApprovalApproveAction')}
                   </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={working !== null}
+                    aria-label={t('sharedApprovalAlwaysAllow', { app, tool: approval.toolName })}
+                    onClick={() => { void decide(approval, 'always-allow') }}
+                  >
+                    {pendingDecision === 'always-allow' ? t('sharedApprovalAlwaysAllowing') : t('sharedApprovalAlwaysAllowAction')}
+                  </Button>
                 </div>
               </div>
             )
           })}
+        </div>
+      )}
+      {grants !== null && grants.length > 0 && (
+        <div className={css.sharedApprovalsList} role="list" aria-label={t('sharedApprovalRememberedTitle')}>
+          <div className={css.shareSectionHeading}>{t('sharedApprovalRememberedTitle')}</div>
+          <p className={css.sharedMemoryDescription}>{t('sharedApprovalRememberedDescription')}</p>
+          {grants.map(grant => (
+            <div className={css.sharedApprovalRow} role="listitem" key={grant.id}>
+              <div className={css.sharedApprovalHeader}>
+                <span className={css.connectedAppIcon} aria-hidden="true">
+                  {connectedAppGlyph({ appId: grant.appId, size: 16 }) ?? grant.appId.slice(0, 2)}
+                </span>
+                <div className={css.sharedApprovalTitle}>
+                  <strong>{grant.appId === '' ? t('connectedAppFallbackName', { id: grant.appId }) : grant.appId}</strong>
+                  <span>{grant.toolName}</span>
+                </div>
+              </div>
+              <div className={css.sharedApprovalActions}>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={grantWorking !== null}
+                  aria-label={t('sharedApprovalRevoke', { tool: grant.toolName })}
+                  onClick={() => { void revokeGrant(grant) }}
+                >
+                  {grantWorking === grant.id ? t('sharedApprovalRevoking') : t('sharedApprovalRevokeAction')}
+                </Button>
+              </div>
+            </div>
+          ))}
         </div>
       )}
     </section>
@@ -1300,6 +1389,9 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null)
   const [groupMessages, setGroupMessages] = useState<readonly BotGroupMessageView[]>([])
   const [groupDraft, setGroupDraft] = useState('')
+  const [groupReplyingTo, setGroupReplyingTo] = useState<BotGroupMessageView | null>(null)
+  const [groupReactionMenuMessageId, setGroupReactionMenuMessageId] = useState<string | null>(null)
+  const [groupReactionWorkingMessageId, setGroupReactionWorkingMessageId] = useState<string | null>(null)
   const [groupMentionQuery, setGroupMentionQuery] = useState<string | null>(null)
   const [groupMentionIndex, setGroupMentionIndex] = useState(0)
   const [groupAttachments, setGroupAttachments] = useState<readonly BotGroupAttachmentDraft[]>([])
@@ -1512,6 +1604,9 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
       groupDraftRevisionRef.current += 1
       groupInviteGenerationRef.current += 1
       setGroupDraft('')
+      setGroupReplyingTo(null)
+      setGroupReactionMenuMessageId(null)
+      setGroupReactionWorkingMessageId(null)
       setGroupMentionQuery(null)
       setGroupMentionIndex(0)
       groupMentionSelectionsRef.current = []
@@ -1565,6 +1660,9 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
     setMessageDrafts({})
     setMemoryDrafts({})
     setGroupDraft('')
+    setGroupReplyingTo(null)
+    setGroupReactionMenuMessageId(null)
+    setGroupReactionWorkingMessageId(null)
     setGroupMentionQuery(null)
     setGroupMentionIndex(0)
     groupMentionSelectionsRef.current = []
@@ -2082,6 +2180,7 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
     text: string,
     auth: SharedDialogAuthContext,
     targetBotIds?: readonly string[],
+    replyToMessageId?: string,
   ): Promise<void> => {
     const inspectGroup = auth.client.inspectGroup
     if (inspectGroup === undefined) throw new Error(t('sharedGroupRetryUnavailable'))
@@ -2099,7 +2198,8 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
       || existing.sender.kind !== 'user' || existing.sender.principalId === undefined
       || String(existing.sender.principalId) !== principalId
       || (targetBotIds !== undefined && JSON.stringify([...(existing.targetBotIds ?? [])].map(String).sort())
-        !== JSON.stringify([...targetBotIds].sort()))) {
+        !== JSON.stringify([...targetBotIds].sort()))
+      || readGroupReplyToMessageId(existing) !== replyToMessageId) {
       throw new Error(t('sharedGroupRetryConflict'))
     }
   }
@@ -2583,7 +2683,7 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
     try {
       if (!isCurrentAuth(auth)) return
       const messageId = brandString<BotGroupMessageIdType>(pending.id)
-      await reconcileGroupMessage(pending.groupId, messageId, pending.text, auth, pending.targetBotIds)
+      await reconcileGroupMessage(pending.groupId, messageId, pending.text, auth, pending.targetBotIds, pending.replyToMessageId)
       if (!isCurrentRecovery()) return
       if (!isCurrentAuth(auth)) return
       const result = await send({
@@ -2591,6 +2691,9 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
         text: pending.text,
         messageId,
         ...(pending.targetBotIds === undefined ? {} : { targetBotIds: pending.targetBotIds.map(brandString<BotIdType>) }),
+        ...(pending.replyToMessageId === undefined
+          ? {}
+          : { replyToMessageId: brandString<BotGroupMessageIdType>(pending.replyToMessageId) }),
       })
       if (!isCurrentAuth(auth) || !isCurrentRecovery()) return
       if (result.ok) {
@@ -2638,8 +2741,14 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
     }
     const submittedRevision = groupDraftRevisionRef.current
     const submittedGroupId = groupId
+    const replyToMessageId = groupReplyingTo === null ? undefined : String(groupReplyingTo.id)
     const group = groups.find(candidate => String(candidate.id) === groupId)
     if (group === undefined) return
+    if (replyToMessageId !== undefined && !groupMessages.some(message => String(message.id) === replyToMessageId)) {
+      setGroupReplyingTo(null)
+      setError(t('sharedGroupReplyChanged'))
+      return
+    }
     const mentioned = resolveMentionTargets(draft, group.bots, groupMentionSelectionsRef.current)
     if (mentioned === undefined) {
       setError(t('sharedGroupMentionAmbiguous'))
@@ -2648,7 +2757,9 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
     const computedTargets = mentioned.length === 0 ? undefined : mentioned
     const targetBotIds = groupAttachmentMessageIdRef.current === null
       ? computedTargets : groupAttachmentTargetsRef.current
-    const pendingMessageKey = attachments.length === 0 ? sharedGroupMessageKey(randomUUID(), submittedGroupId, draft) : undefined
+    const pendingMessageKey = attachments.length === 0
+      ? sharedGroupMessageKey(randomUUID(), submittedGroupId, draft, replyToMessageId)
+      : undefined
     const operationGeneration = groupOperationGenerationRef.current + 1
     groupOperationGenerationRef.current = operationGeneration
     const isCurrentGroupOperation = (): boolean => (
@@ -2673,11 +2784,11 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
         messageId = brandString<BotGroupMessageIdType>(stableId)
       } else {
         queue = getPendingGroupQueue(auth)
-        reservation = await queue.reserveMessage(pendingMessageKey ?? '', submittedGroupId, draft, targetBotIds)
+        reservation = await queue.reserveMessage(pendingMessageKey ?? '', submittedGroupId, draft, targetBotIds, replyToMessageId)
         if (!isCurrentGroupOperation()) return
         messageId = brandString<BotGroupMessageIdType>(reservation.id)
         if (reservation.recovered) {
-          await reconcileGroupMessage(submittedGroupId, messageId, draft, auth, targetBotIds)
+          await reconcileGroupMessage(submittedGroupId, messageId, draft, auth, targetBotIds, replyToMessageId)
           if (!isCurrentGroupOperation()) return
         }
       }
@@ -2688,11 +2799,13 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
         result = await sendWithAttachments({
           groupId: brandString<BotGroupIdType>(groupId), text: draft || t('groupAttachmentFile'), messageId, attachments,
           ...(targetBotIds === undefined ? {} : { targetBotIds: targetBotIds.map(brandString<BotIdType>) }),
+          ...(replyToMessageId === undefined ? {} : { replyToMessageId: brandString<BotGroupMessageIdType>(replyToMessageId) }),
         })
       } else {
         if (send === undefined) throw new Error(t('sharedGroupSendFailed'))
         result = await send({ groupId: brandString<BotGroupIdType>(groupId), text: draft, messageId,
-          ...(targetBotIds === undefined ? {} : { targetBotIds: targetBotIds.map(brandString<BotIdType>) }) })
+          ...(targetBotIds === undefined ? {} : { targetBotIds: targetBotIds.map(brandString<BotIdType>) }),
+          ...(replyToMessageId === undefined ? {} : { replyToMessageId: brandString<BotGroupMessageIdType>(replyToMessageId) }) })
       }
       if (!isCurrentAuth(auth) || selectedGroupIdRef.current !== submittedGroupId) return
       if (!isCurrentGroupOperation()) return
@@ -2715,6 +2828,7 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
         }
         if (groupDraftRevisionRef.current === submittedRevision) {
           setGroupDraft('')
+          setGroupReplyingTo(null)
           groupMentionSelectionsRef.current = []
         }
         await readGroup(submittedGroupId)
@@ -2738,6 +2852,46 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
       }
     } finally {
       if (isCurrentGroupOperation()) setGroupWorking(null)
+    }
+  }
+
+  const reactSharedGroupMessage = async (
+    messageId: string,
+    emoji: BotGroupReactionSummary['emoji'],
+    action: 'add' | 'remove',
+  ): Promise<void> => {
+    const auth = syncAuthContext()
+    const react = auth?.client.reactGroupMessage
+    const groupId = selectedGroupIdRef.current
+    const lifecycleGeneration = lifecycleGenerationRef.current
+    if (auth === undefined || react === undefined || groupId === null || !isCurrentLifecycle(lifecycleGeneration)) return
+    const operationGeneration = groupOperationGenerationRef.current + 1
+    groupOperationGenerationRef.current = operationGeneration
+    setGroupReactionWorkingMessageId(messageId)
+    const isCurrentReaction = (): boolean => (
+      isCurrentLifecycle(lifecycleGeneration)
+      && selectedGroupIdRef.current === groupId
+      && groupOperationGenerationRef.current === operationGeneration
+      && hasCurrentAuth(auth)
+    )
+    try {
+      const result = await react({
+        groupId,
+        messageId,
+        emoji,
+        action,
+      })
+      if (!isCurrentReaction()) return
+      if (!result.ok) {
+        if (result.error.code === 'gateway/forbidden') requestRevalidation(true, result.error.message)
+        else setError(result.error.message || t('sharedGroupReactionFailed'))
+        return
+      }
+      await readGroup(groupId)
+    } catch (cause: unknown) {
+      if (isCurrentReaction()) setError(cause instanceof Error ? cause.message : t('sharedGroupReactionFailed'))
+    } finally {
+      if (isCurrentReaction()) setGroupReactionWorkingMessageId(null)
     }
   }
 
@@ -2808,7 +2962,8 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
                   <BotAvatar name={selected.name} identity={selected.identity} accent={selected.accent} />
                   <div><strong>{selected.name}</strong><small>{selected.description ?? shareRoleLabel(selected.role, t)}</small></div>
                 </header>
-                {client.listApprovals !== undefined && client.decideApproval !== undefined && (
+                {(client.listApprovals !== undefined
+                  && (client.decideApproval !== undefined || client.revokeApprovalGrant !== undefined)) && (
                   <SharedApprovalsCard
                     client={client}
                     scope={{ botId: String(selected.id) }}
@@ -2993,7 +3148,8 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
                     </Tooltip>
                   </div>
                 )}
-                {client.listApprovals !== undefined && client.decideApproval !== undefined && (
+                {(client.listApprovals !== undefined
+                  && (client.decideApproval !== undefined || client.revokeApprovalGrant !== undefined)) && (
                   <SharedApprovalsCard
                     client={client}
                     scope={{ groupId: String(selectedGroup.id) }}
@@ -3006,22 +3162,120 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
                   <div className={css.sharedContextLabel}>{t('sharedGroupsTitle')}</div>
                   {groupMessages.length === 0 && <span className={css.shareEmpty}>{t('sharedGroupTranscriptEmpty')}</span>}
                   {groupMessages.map((messageRow) => {
-                    const sender = messageRow.sender.kind === 'bot'
-                      ? t('sharedGroupBotAuthor', { name: messageRow.sender.name })
-                      : messageRow.sender.principalId === undefined
-                        ? t('you')
-                        : t('sharedGroupAuthor', { id: String(messageRow.sender.principalId) })
-                    return <p className={messageRow.sender.kind === 'user' ? css.sharedUserMessage : css.sharedBotMessage} key={String(messageRow.id)}><strong>{sender}</strong> {messageRow.text}<BotGroupSentAttachments
-                      attachments={messageRow.attachments}
-                      fallbackName={t('groupAttachmentFile')}
-                      downloadLabel={name => t('groupDownloadAttachment', { name })}
-                      downloadUrl={attachmentId => `/shared-bots/bots/share/downloadAttachment?${new URLSearchParams({
-                        groupId: String(selectedGroup.id), messageId: String(messageRow.id), attachmentId,
-                      })}`}
-                    /></p>
+                    const sender = sharedGroupAuthorLabel(messageRow.sender, client.retryScope, t)
+                    const replyToMessageId = readGroupReplyToMessageId(messageRow)
+                    const replyParentFromTranscript = replyToMessageId === undefined
+                      ? undefined
+                      : groupMessages.find(candidate => String(candidate.id) === replyToMessageId)
+                    const replyParent = replyParentFromTranscript ?? messageRow.replyTo
+                    const replyParentId = replyParent === undefined ? undefined
+                      : 'messageId' in replyParent ? String(replyParent.messageId) : String(replyParent.id)
+                    const reactions = messageRow.reactions ?? []
+                    return (
+                      <article
+                        id={`yharness-shared-group-message-${String(messageRow.id)}`}
+                        className={messageRow.sender.kind === 'user' ? css.sharedUserMessage : css.sharedBotMessage}
+                        key={String(messageRow.id)}
+                      >
+                        <strong>{sender}</strong>
+                        {replyParent !== undefined && (
+                          <button type="button" className={css.groupReplyQuote} onClick={() => {
+                            document.getElementById(`yharness-shared-group-message-${replyParentId}`)
+                              ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+                          }} aria-label={t('groupJumpToReply', { name: sharedGroupAuthorLabel(replyParent.sender, client.retryScope, t) })}>
+                            <span className={css.groupReplyQuoteAuthor}>
+                              {sharedGroupAuthorLabel(replyParent.sender, client.retryScope, t)}
+                            </span>
+                            <span>{compactGroupQuote(replyParent.text)}</span>
+                          </button>
+                        )}
+                        <span className={css.sharedMessageText}>{messageRow.text}</span>
+                        <BotGroupSentAttachments
+                          attachments={messageRow.attachments}
+                          fallbackName={t('groupAttachmentFile')}
+                          downloadLabel={name => t('groupDownloadAttachment', { name })}
+                          downloadUrl={attachmentId => `/shared-bots/bots/share/downloadAttachment?${new URLSearchParams({
+                            groupId: String(selectedGroup.id), messageId: String(messageRow.id), attachmentId,
+                          })}`}
+                        />
+                        <div className={css.groupMessageActions}>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className={css.groupMessageAction}
+                            aria-label={t('groupReplyTo', { name: sender })}
+                            onClick={() => { setGroupReplyingTo(messageRow); groupInputRef.current?.focus() }}
+                          >
+                            <span aria-hidden="true">↩</span>{t('reply')}
+                          </Button>
+                          {client.reactGroupMessage !== undefined && (
+                            <span className={css.groupReactionTools}>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className={css.groupMessageAction}
+                                aria-label={t('groupReactTo', { name: sender })}
+                                aria-expanded={groupReactionMenuMessageId === String(messageRow.id)}
+                                onClick={() => {
+                                  setGroupReactionMenuMessageId(current => current === String(messageRow.id) ? null : String(messageRow.id))
+                                }}
+                              >
+                                <span aria-hidden="true">＋</span>{t('react')}
+                              </Button>
+                              {groupReactionMenuMessageId === String(messageRow.id) && (
+                                <MenuSurface className={css.groupReactionMenu} role="menu" aria-label={t('groupReactionPicker')}>
+                                  {GROUP_REACTION_OPTIONS.map(emoji => (
+                                    <button
+                                      key={emoji}
+                                      type="button"
+                                      role="menuitem"
+                                      className={css.groupReactionOption}
+                                      aria-label={t('groupReactWith', { emoji })}
+                                      onClick={() => {
+                                        const current = reactions.find(reaction => reaction.emoji === emoji)
+                                        void reactSharedGroupMessage(String(messageRow.id), emoji, current?.viewerReacted === true ? 'remove' : 'add')
+                                        setGroupReactionMenuMessageId(null)
+                                      }}
+                                    >{emoji}</button>
+                                  ))}
+                                </MenuSurface>
+                              )}
+                            </span>
+                          )}
+                        </div>
+                        {reactions.length > 0 && (
+                          <div className={css.groupReactions} aria-label={t('groupReactions')}>
+                            {reactions.map(reaction => (
+                              <button
+                                key={reaction.emoji}
+                                type="button"
+                                className={clsx(css.groupReactionChip, reaction.viewerReacted === true && css.groupReactionChipSelected)}
+                                aria-pressed={reaction.viewerReacted === true}
+                                aria-label={t('groupReactWithCount', { emoji: reaction.emoji, count: reaction.count })}
+                                disabled={groupReactionWorkingMessageId === String(messageRow.id)}
+                                onClick={() => { void reactSharedGroupMessage(String(messageRow.id), reaction.emoji, reaction.viewerReacted === true ? 'remove' : 'add') }}
+                              >
+                                <span aria-hidden="true">{reaction.emoji}</span><span>{reaction.count}</span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </article>
+                    )
                   })}
                 </div>
                 <form className={css.sharedComposer} onSubmit={(event) => { event.preventDefault(); void sendGroup() }}>
+                  {groupReplyingTo !== null && (
+                    <div className={css.groupReplyComposerPreview} role="status">
+                      <span className={css.groupReplyComposerCopy}>
+                        <strong>{t('groupReplyingTo', { name: sharedGroupAuthorLabel(groupReplyingTo.sender, client.retryScope, t) })}</strong>
+                        <span>{compactGroupQuote(groupReplyingTo.text)}</span>
+                      </span>
+                      <Button variant="ghost" size="sm" aria-label={t('clearReply')} onClick={() => { setGroupReplyingTo(null) }}>
+                        <span aria-hidden="true">×</span>{t('clear')}
+                      </Button>
+                    </div>
+                  )}
                   <BotGroupAttachments
                     attachments={groupAttachments}
                     disabled={groupWorking === 'send'}

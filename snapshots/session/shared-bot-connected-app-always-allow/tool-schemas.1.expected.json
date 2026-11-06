@@ -1,0 +1,44 @@
+{
+  "initial": [
+    {
+      "name": "mcp__fixture__lookup",
+      "description": "Return the deterministic result from the granted fixture MCP app.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  ],
+  "changes": [
+    [
+      {
+        "name": "mcp__fixture__lookup",
+        "description": "Return the deterministic result from the granted fixture MCP app.",
+        "parameters": {
+          "type": "object",
+          "properties": {}
+        }
+      }
+    ],
+    [
+      {
+        "name": "mcp__fixture__lookup",
+        "description": "Return the deterministic result from the granted fixture MCP app.",
+        "parameters": {
+          "type": "object",
+          "properties": {}
+        }
+      }
+    ],
+    [
+      {
+        "name": "mcp__fixture__lookup",
+        "description": "Return the deterministic result from the granted fixture MCP app.",
+        "parameters": {
+          "type": "object",
+          "properties": {}
+        }
+      }
+    ]
+  ]
+}

@@ -49,6 +49,13 @@ function approvalId(value: unknown): string | undefined {
   return pending !== undefined && typeof pending.id === 'string' ? pending.id : undefined
 }
 
+function hasFixtureApprovalGrant(value: unknown): boolean {
+  if (!isRecord(value) || !Array.isArray(value.grants)) return false
+  return value.grants.some(grant => isRecord(grant)
+    && grant.appId === 'fixture'
+    && grant.toolName === FIXTURE_TOOL)
+}
+
 function cookieOf(setCookie: string): string {
   return setCookie.split(';', 1)[0] ?? setCookie
 }
@@ -69,6 +76,8 @@ async function createSharedApprovalDriver(ctx: Context): Promise<SharedApprovalD
 async function waitForApprovalAndAllow(
   driver: SharedApprovalDriver,
   signal: AbortSignal,
+  decision: 'allow' | 'always-allow',
+  onDecision: () => void,
 ): Promise<void> {
   const deadline = Date.now() + POLL_TIMEOUT_MS
   while (true) {
@@ -84,11 +93,23 @@ async function waitForApprovalAndAllow(
     if (id !== undefined) {
       const decided = await driver.service.handle(
         'bots/share/decide-approval',
-        { id, decision: 'allow' },
+        { id, decision },
         signal,
         driver.peer,
       )
       if (!decided.ok) throw new Error(`shared approval decision failed: ${decided.error.message}`)
+      if (decision === 'always-allow') {
+        const grants = await driver.service.handle(
+          'bots/share/list-approval-grants',
+          { botId: SHARED_BOT_ID },
+          signal,
+          driver.peer,
+        )
+        if (!grants.ok || !hasFixtureApprovalGrant(grants.value)) {
+          throw new Error('shared connected-app Always allow did not persist its grant')
+        }
+      }
+      onDecision()
       return
     }
     if (Date.now() >= deadline) throw new Error('shared connected-app approval did not become pending')
@@ -99,12 +120,15 @@ async function waitForApprovalAndAllow(
 /** Add an ask decision, a collaborator endpoint driver, and session policy setup. */
 export async function apply(ctx: Context): Promise<void> {
   const sharedAgentReady = Promise.withResolvers<Agent>()
+  const exerciseAlwaysAllow = process.env.DSH_SNAPSHOT_SHARED_APP_ALWAYS_ALLOW === '1'
+  let rememberedApproval = false
+  let approvalCount = 0
   ctx.on('agent/created', ({ agent }: { readonly agent: Agent }) => {
     if (!String(agent.id).startsWith(SHARED_SESSION_PREFIX)) return
     setApprovalPolicy(agent.session, 'ask')
     agent.ctx.on('tools/pre-execute', async (exec: ToolExecution, next: () => Promise<PreToolDecision>) => {
       const decision = await next()
-      if (exec.name !== FIXTURE_TOOL) return decision
+      if (exec.name !== FIXTURE_TOOL || rememberedApproval) return decision
       return {
         kind: 'ask',
         reason: 'Collaborator approval is required before the shared connected app runs.',
@@ -129,7 +153,18 @@ export async function apply(ctx: Context): Promise<void> {
     const sharedAgent = ctx.agents.get(options.sessionId)
     if (sharedAgent !== undefined) setApprovalPolicy(sharedAgent.session, 'ask')
     approvalStarted = true
-    const pending = driverReady.then(driver => waitForApprovalAndAllow(driver, new AbortController().signal))
+    const pending = driverReady.then(driver => waitForApprovalAndAllow(
+      driver,
+      new AbortController().signal,
+      exerciseAlwaysAllow ? 'always-allow' : 'allow',
+      () => {
+        approvalCount += 1
+        if (exerciseAlwaysAllow && approvalCount !== 1) {
+          throw new Error('snapshot shared Bot Always allow asked for a second approval')
+        }
+        if (exerciseAlwaysAllow) rememberedApproval = true
+      },
+    ))
     drivers.add(pending)
     return next()
   })

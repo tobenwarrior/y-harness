@@ -967,6 +967,8 @@ export const TYPE_LINK_EXEMPTIONS: Readonly<Record<string, string>> = {
   BotGroupInspectValue: 'Bot group inspection result is owned by packages/agents/bots/README.md and src/group-chat.ts',
   BotGroupSendRemoteRequest: 'Bot group message input is owned by packages/agents/bots/README.md and src/group-chat.ts',
   BotGroupSendValue: 'Bot group message result is owned by packages/agents/bots/README.md and src/group-chat.ts',
+  BotGroupReactionRequest: 'Bot group reaction input is owned by packages/agents/bots/README.md and src/group-chat.ts',
+  BotGroupReactionValue: 'Bot group reaction result is owned by packages/agents/bots/README.md and src/group-chat.ts',
   BotGroupDeliveryRecoveryRequest: 'Shared-group recipient recovery input is owned by packages/agents/bots/README.md and src/group-chat.ts',
   BotGroupDeliveryRecoveryValue: 'Shared-group recipient recovery result is owned by packages/agents/bots/README.md and src/group-chat.ts',
   BotGroupImageAdmissionRequest: 'Bot group image admission input is owned by packages/agents/bots/README.md and src/group-chat.ts',

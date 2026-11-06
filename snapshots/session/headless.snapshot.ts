@@ -1138,7 +1138,9 @@ describe('headless recorded-session snapshots', () => {
       const sharedTempRoot = scenario.name === 'shared-bot-web-search'
         || scenario.name === 'shared-bot-connected-app'
         || scenario.name === 'shared-bot-connected-app-approval'
+        || scenario.name === 'shared-bot-connected-app-always-allow'
         || scenario.name === 'shared-bot-group-settings'
+        || scenario.name === 'shared-bot-group-reply'
         ? await realpath(tmpdir())
         : undefined
       // Shared-session fixtures derive a valid shared-session id from the encoded workspace basename.
@@ -1150,7 +1152,9 @@ describe('headless recorded-session snapshots', () => {
           label: `${scenario.name} headless snapshot`,
           tempDirPrefix: scenario.name === 'shared-bot-connected-app'
             || scenario.name === 'shared-bot-connected-app-approval'
+            || scenario.name === 'shared-bot-connected-app-always-allow'
             || scenario.name === 'shared-bot-group-settings'
+            || scenario.name === 'shared-bot-group-reply'
             ? 'shared-session-%2D'
             : sharedWorkspaceParent === undefined ? 'dsh-log-snap-' : 'dsh-log-snap-%3A',
           ...(sharedWorkspaceParent !== undefined
@@ -1259,7 +1263,9 @@ describe('headless recorded-session snapshots', () => {
       const actualContext = contextOf(actualLogs.map(log => log.content))
       if (scenario.name === 'shared-bot-connected-app'
         || scenario.name === 'shared-bot-connected-app-approval'
-        || scenario.name === 'shared-bot-group-settings') {
+        || scenario.name === 'shared-bot-connected-app-always-allow'
+        || scenario.name === 'shared-bot-group-settings'
+        || scenario.name === 'shared-bot-group-reply') {
         const childCwd = actualLogs[1]?.header.cwd
         if (typeof childCwd !== 'string') {
           throw new Error(`${scenario.name}: child Session header has no cwd`)

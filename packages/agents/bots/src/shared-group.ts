@@ -16,6 +16,7 @@ import { BotId } from './types.ts'
 import type { BotView } from './types.ts'
 import { BotPrincipalId } from './sharing.ts'
 import type { BotShareOperation } from './sharing.ts'
+import { BOT_GROUP_REACTION_EMOJIS, type BotGroupReactionEmoji } from './group-reactions.ts'
 import {
   botGroupMessageRecordSchema,
   BotGroupId,
@@ -39,7 +40,12 @@ import type {
   BotGroupInspectValue,
   BotGroupListValue,
   BotGroupMessageRecord,
+  BotGroupMessageReplyView,
   BotGroupMessageView,
+  BotGroupReactionRecord,
+  BotGroupReactionRequest,
+  BotGroupReactionValue,
+  BotGroupReactionView,
   BotGroupSettingsRequest,
   BotGroupSettingsValue,
   BotGroupSendRemoteRequest,
@@ -75,6 +81,7 @@ const MAX_SHARED_GROUP_INVITES = 1_024
 const MAX_GROUP_MEMBERS = 6
 const MAX_GROUP_NAME = 80
 const MAX_MESSAGE_TEXT = 16_000
+const MAX_REPLY_CONTEXT_TEXT = 480
 const SHARED_GROUP_DELIVERY_LEASE_MS = 30_000
 const MAX_SHARED_GROUP_RECOVERY_BATCH = 64
 const SHARED_GROUP_RECOVERY_CONCURRENCY = 4
@@ -248,6 +255,12 @@ export const sharedGroupSnapshotSchema = z.object({
       context.addIssue({ code: 'custom', message: 'shared group message must target an existing group', path: ['messages'] })
       continue
     }
+    if (message.replyToMessageId !== undefined) {
+      const parent = messagesById.get(String(message.replyToMessageId))
+      if (parent === undefined || parent.groupId !== message.groupId || parent.id === message.id) {
+        context.addIssue({ code: 'custom', message: 'shared group reply parent must be an existing message in the same group', path: ['messages'] })
+      }
+    }
     const targets = message.targetBotIds ?? group.botIds
     const targetIds = new Set(message.targetBotIds === undefined
       ? [...targets.map(String), ...(deliveryBotsByMessage.get(String(message.id)) ?? [])]
@@ -394,7 +407,8 @@ export function resolveSharedGroupInitiatorFromSnapshot(
   if (source === undefined || source.sender.kind !== 'user'
     || source.sender.principalId === undefined
     || source.sender.principalId !== delivery.senderPrincipalId) return undefined
-  const targetBotIds = source.targetBotIds ?? group.botIds
+  const targetBotIds = persistedSharedMessageTargetBotIds(source, snapshot.deliveries)
+  if (targetBotIds === undefined) return undefined
   if (!targetBotIds.includes(request.botId)
     || !group.memberPrincipalIds.some(member => member === delivery.senderPrincipalId)
     || !hasActiveSharedPrincipal(
@@ -1065,21 +1079,23 @@ export class SharedBotGroupService {
       const group = findGroup(snapshot, groupId)
       requireGroupAccess(group, memberships, principalId, 'read-group')
       const bots = this.activeBotsFromList(group.botIds, availableBots)
-      const messages = snapshot.messages
+      const transcript = snapshot.messages
         .filter(message => message.groupId === group.id)
         .sort((left, right) => left.createdAt - right.createdAt || String(left.id).localeCompare(String(right.id)))
+      const transcriptById = new Map(transcript.map(message => [String(message.id), message]))
+      const messages = transcript
         .map((message) => {
-          const principalId = message.sender.kind === 'user' ? message.sender.principalId : undefined
-          const attachments = principalId === undefined
+          const senderPrincipalId = message.sender.kind === 'user' ? message.sender.principalId : undefined
+          const attachments = senderPrincipalId === undefined
             ? []
             : this.attachments?.attachmentsForSharedGroupMessage({
-              principalId,
+              principalId: senderPrincipalId,
               groupId: group.id,
               messageId: message.id,
-              targetBotIds: message.targetBotIds ?? group.botIds,
+              targetBotIds: persistedSharedMessageTargetBotIds(message, snapshot.deliveries) ?? [],
               authorizationRevision: group.revision,
             }) ?? []
-          return messageView(message, bots, attachments)
+          return messageView(message, bots, attachments, transcriptById, principalId)
         })
       const messageIds = new Set(messages.map(message => String(message.id)))
       const deliveries: BotGroupDeliveryStatusView[] = snapshot.deliveries
@@ -1096,6 +1112,54 @@ export class SharedBotGroupService {
         }))
       return { snapshot, value: { group: groupView(group, bots), messages, deliveries } }
     }))
+    return result.value
+  }
+
+  /**
+   * Persist one authenticated principal's fixed-palette reaction in the shared
+   * authority record and return the current aggregate for that message.
+   * @param request - Shared group, message, fixed emoji, and explicit add/remove action.
+   * @param principalId - Authenticated shared principal changing the reaction.
+   * @param signal - Cancellation for the authority mutation.
+   * @returns The idempotent reaction projection visible to the principal.
+   */
+  async react(
+    request: BotGroupReactionRequest,
+    principalId: ReturnType<typeof BotPrincipalId>,
+    signal: AbortSignal,
+  ): Promise<BotGroupReactionValue> {
+    const groupId = normalizeGroupId(request.groupId)
+    const messageId = normalizeMessageId(request.messageId)
+    const emoji = normalizeReactionEmoji(request.emoji)
+    const result = await this.locked(principalId, 'write-group', signal, (snapshot, memberships) => {
+      const group = findGroup(snapshot, groupId)
+      requireGroupAccess(group, memberships, principalId, 'write-group')
+      const message = snapshot.messages.find(candidate => candidate.id === messageId && candidate.groupId === group.id)
+      if (message === undefined) throw new SharedGroupError('gateway/not-found', 'shared Bot group message was not found')
+      const actorId = String(principalId)
+      const current = message.reactions ?? []
+      const prior = current.find(reaction => reaction.actorId === actorId && reaction.emoji === emoji)
+      const next = request.action === 'remove'
+        ? prior === undefined ? current : current.filter(reaction => reaction !== prior)
+        : prior === undefined ? [...current, { emoji, actorId, createdAt: this.now() }] : current
+      const changed = next.length !== current.length || next.some((reaction, index) => reaction !== current[index])
+      if (!changed) {
+        return { snapshot, value: { messageId, reactions: sharedReactionViews(current, actorId) } }
+      }
+      const nextMessage = next.length === 0
+        ? (() => {
+          const { reactions: _reactions, ...withoutReactions } = message
+          void _reactions
+          return withoutReactions
+        })()
+        : { ...message, reactions: next }
+      const nextSnapshot: SharedGroupSnapshot = {
+        ...snapshot,
+        revision: snapshot.revision + 1,
+        messages: snapshot.messages.map(candidate => candidate.id === message.id ? nextMessage : candidate),
+      }
+      return { snapshot: nextSnapshot, value: { messageId, reactions: sharedReactionViews(next, actorId) } }
+    })
     return result.value
   }
 
@@ -1122,9 +1186,11 @@ export class SharedBotGroupService {
       if (message === undefined || message.sender.kind !== 'user' || message.sender.principalId === undefined) {
         throw new SharedGroupError('gateway/not-found', 'Shared Bot attachment was not found')
       }
+      const targetBotIds = persistedSharedMessageTargetBotIds(message, snapshot.deliveries)
+      if (targetBotIds === undefined) throw new SharedGroupError('gateway/not-found', 'Shared Bot attachment was not found')
       const attachment = this.attachments?.attachmentsForSharedGroupMessage({
         principalId: message.sender.principalId, groupId: group.id, messageId: message.id,
-        targetBotIds: message.targetBotIds ?? group.botIds, authorizationRevision: group.revision,
+        targetBotIds, authorizationRevision: group.revision,
       }).find(candidate => String(candidate.attachment.attachmentId) === attachmentId)
       if (attachment === undefined) throw new SharedGroupError('gateway/not-found', 'Shared Bot attachment was not found')
       return { snapshot, value: attachment }
@@ -1153,7 +1219,27 @@ export class SharedBotGroupService {
     const result = await this.locked(principalId, 'write-group', signal, async (snapshot, memberships) => {
       const group = findGroup(snapshot, groupId)
       requireGroupAccess(group, memberships, principalId, 'write-group')
-      const targetBotIds = requestedRecipients(group, request.targetBotIds)
+      const existing = snapshot.messages.find(message => message.id === messageId)
+      const requestedTargetBotIds = request.targetBotIds === undefined
+        ? undefined
+        : requestedRecipients(group, request.targetBotIds)
+      const legacyTargetBotIds = existing !== undefined && existing.targetBotIds === undefined
+        ? persistedSharedMessageTargetBotIds(existing, snapshot.deliveries)
+        : undefined
+      if (existing !== undefined && existing.targetBotIds === undefined && legacyTargetBotIds === undefined) {
+        throw new SharedGroupError('gateway/conflict', `shared Bot group message "${String(messageId)}" has no durable recipient set for a safe retry`)
+      }
+      const targetBotIds = existing?.targetBotIds
+        ?? legacyTargetBotIds
+        ?? requestedTargetBotIds
+        ?? requestedRecipients(group, undefined)
+      if (existing !== undefined && requestedTargetBotIds !== undefined
+        && !sameIdSet(targetBotIds, requestedTargetBotIds)) {
+        throw new SharedGroupError(
+          'gateway/conflict',
+          `shared Bot group message "${String(messageId)}" already exists with different content (different recipients)`,
+        )
+      }
       if ((request.attachmentGrants?.length ?? 0) > 0 && request.messageId === undefined) {
         throw new SharedGroupError('gateway/bad-request', 'attachment grants require an explicit message id')
       }
@@ -1169,7 +1255,23 @@ export class SharedBotGroupService {
         targetBotIds,
         authorizationRevision: group.revision,
       }
-      const existing = snapshot.messages.find(message => message.id === messageId)
+      const requestedReplyToMessageId = normalizeOptionalMessageId(request.replyToMessageId)
+      if (existing !== undefined && existing.replyToMessageId !== undefined && requestedReplyToMessageId === undefined) {
+        throw new SharedGroupError('gateway/bad-request', `shared Bot group message "${String(messageId)}" retry must include its reply parent`)
+      }
+      if (existing !== undefined && requestedReplyToMessageId !== undefined
+        && String(existing.replyToMessageId ?? '') !== String(requestedReplyToMessageId)) {
+        throw new SharedGroupError('gateway/bad-request', `shared Bot group message "${String(messageId)}" already exists with a different reply parent`)
+      }
+      const replyToMessageId = requestedReplyToMessageId ?? existing?.replyToMessageId
+      const replyParent = replyToMessageId === undefined
+        ? undefined
+        : snapshot.messages.find(candidate => candidate.id === replyToMessageId)
+      if (replyToMessageId !== undefined
+        && (replyParent === undefined || replyParent.groupId !== group.id || replyParent.id === messageId)) {
+        throw new SharedGroupError('gateway/bad-request', 'shared Bot group reply parent must be an existing message in the same group')
+      }
+      const deliveryText = replyParent === undefined ? text : formatSharedGroupDeliveryText(text, replyParent)
       const existingAttachments = attachmentStore?.attachmentsForMessage(attachmentScope) ?? []
       if (existing === undefined && existingAttachments.length > 0) {
         throw new SharedGroupError('gateway/conflict', 'This attachment send could not be confirmed; start a new message')
@@ -1189,7 +1291,7 @@ export class SharedBotGroupService {
       if (existing !== undefined) {
         if (existing.groupId !== group.id || existing.text !== text
           || existing.sender.kind !== 'user' || String(existing.sender.principalId ?? '') !== String(principalId)
-          || !sameIdSet(existing.targetBotIds ?? group.botIds, targetBotIds)
+          || String(existing.replyToMessageId ?? '') !== String(replyToMessageId ?? '')
         ) {
           throw new SharedGroupError('gateway/conflict', `shared Bot group message "${String(messageId)}" already exists with different content`)
         }
@@ -1265,7 +1367,8 @@ export class SharedBotGroupService {
           sender: { kind: 'user', principalId },
           text,
           targetBotIds,
-          createdAt: this.now(),
+          ...(replyToMessageId === undefined ? {} : { replyToMessageId }),
+          createdAt: Math.max(this.now(), replyParent?.createdAt === undefined ? 0 : replyParent.createdAt + 1),
         }
         messages = [...messages, message]
         changed = true
@@ -1324,7 +1427,7 @@ export class SharedBotGroupService {
           plan: {
             groupId: group.id,
             groupName: group.name,
-            text,
+            text: deliveryText,
             attachments: messageAttachments,
             messageId,
             targetBotIds,
@@ -1513,6 +1616,7 @@ export class SharedBotGroupService {
    * @param principalId - member to remove.
    * @param actor - authenticated group owner performing the removal.
    * @param signal - cancellation for the durable mutation.
+   * @param relatedState - additional authority extensions to update atomically with removal.
    * @returns the removed principal and group identity.
    */
   async revokeMember(
@@ -1520,14 +1624,24 @@ export class SharedBotGroupService {
     principalId: ReturnType<typeof BotPrincipalId>,
     actor: ReturnType<typeof BotPrincipalId>,
     signal: AbortSignal,
+    relatedState?: {
+      readonly keys: readonly string[]
+      readonly update: (extensions: Readonly<Record<string, unknown>>) => Readonly<Record<string, unknown>>
+    },
   ): Promise<{
     readonly groupId: ReturnType<typeof BotGroupId>
     readonly principalId: ReturnType<typeof BotPrincipalId>
     readonly revoked: true
   }> {
-    const result = await this.locked(actor, 'write-group', signal, (snapshot, memberships) => {
+    const membershipKey = 'agent-bots/shared-memberships'
+    signal.throwIfAborted()
+    return this.authority.mutateExtensions([membershipKey, ...(relatedState?.keys ?? [])], (extensions, authorityState) => {
+      signal.throwIfAborted()
+      requireActivePrincipal(authorityState, actor)
+      const membership = parseMembershipExtension(extensions[membershipKey])
+      const snapshot = parseGroups(membership.sharedGroups)
       const group = findGroup(snapshot, groupId)
-      requireGroupAccess(group, memberships, actor, 'write-group')
+      requireGroupAccess(group, membership.memberships, actor, 'write-group')
       if (group.ownerPrincipalId !== actor) throw new SharedGroupError('gateway/forbidden', 'only the shared group owner may revoke members')
       if (principalId === group.ownerPrincipalId) throw new SharedGroupError('gateway/forbidden', 'the shared group owner cannot be revoked')
       if (!group.memberPrincipalIds.some(member => member === principalId)) throw new SharedGroupError('gateway/not-found', 'shared group member was not found')
@@ -1546,17 +1660,23 @@ export class SharedBotGroupService {
         .filter((delivery, index) => delivery !== snapshot.deliveries[index] && delivery.status === 'failed')
         .map(delivery => delivery.id))
       return {
-        snapshot: {
-          ...snapshot,
-          revision: snapshot.revision + 1,
-          groups: snapshot.groups.map(candidate => candidate.id === group.id ? nextGroup : candidate),
-          deliveries,
-          responseReservations: snapshot.responseReservations.filter(id => !failedIds.has(id)),
+        next: {
+          ...extensions,
+          ...relatedState?.update(extensions),
+          [membershipKey]: {
+            ...membership,
+            [SHARED_GROUPS_FIELD]: validateSnapshot({
+              ...snapshot,
+              revision: snapshot.revision + 1,
+              groups: snapshot.groups.map(candidate => candidate.id === group.id ? nextGroup : candidate),
+              deliveries,
+              responseReservations: snapshot.responseReservations.filter(id => !failedIds.has(id)),
+            }),
+          },
         },
         value: { groupId, principalId, revoked: true as const },
       }
     })
-    return result.value
   }
 
   /**
@@ -1668,7 +1788,8 @@ export class SharedBotGroupService {
       const pending = candidates[0]
       if (pending === undefined) return snapshot
       const responseId = responseMessageId(groupId, botId, sourceMessageId)
-      const now = Math.max(this.now(), snapshot.messages.find(message => message.id === pending.messageId)?.createdAt ?? 0)
+      const sourceCreatedAt = snapshot.messages.find(message => message.id === pending.messageId)?.createdAt ?? 0
+      const now = Math.max(this.now(), sourceCreatedAt + 1)
       const hasResponse = snapshot.messages.some(message => message.id === responseId)
       if (!hasResponse && snapshot.messages.length >= MAX_SHARED_GROUP_MESSAGES) {
         return {
@@ -1920,9 +2041,9 @@ export class SharedBotGroupService {
         const group = snapshot.groups.find(candidate => candidate.id === groupId)
         const message = snapshot.messages.find(candidate => candidate.id === messageId && candidate.groupId === groupId)
         const senderPrincipalId = message?.sender.kind === 'user' ? message.sender.principalId : undefined
-        const targets = message?.targetBotIds ?? group?.botIds ?? []
+        const targets = message === undefined ? undefined : persistedSharedMessageTargetBotIds(message, snapshot.deliveries)
         if (group === undefined || message === undefined || senderPrincipalId === undefined
-          || !targets.some(candidate => candidate === botId)) return { value: true, next: stored }
+          || targets === undefined || !targets.some(candidate => candidate === botId)) return { value: true, next: stored }
         const now = this.now()
         const recovered: SharedGroupDeliveryRecord = {
           id: deliveryId,
@@ -2252,10 +2373,29 @@ export class SharedBotGroupService {
     }
     const group = snapshot.groups.find(candidate => candidate.id === delivery.groupId)
     const message = snapshot.messages.find(candidate => candidate.id === delivery.messageId)
+    if (delivery.targetSessionId === undefined) {
+      await this.failPendingDelivery(
+        delivery.id,
+        'Shared Bot group delivery cannot be replayed safely without its original Session binding; send again to admit a new delivery',
+        signal,
+      )
+      this.clearPendingRecovery(deliveryId)
+      return
+    }
     const binding = snapshot.sessions.find(candidate => candidate.groupId === delivery.groupId
-      && candidate.botId === delivery.botId && candidate.revokedAt === undefined)
+      && candidate.botId === delivery.botId
+      && candidate.sessionId === delivery.targetSessionId
+      && candidate.revokedAt === undefined)
     if (group === undefined || message === undefined || binding === undefined || message.sender.kind !== 'user') {
       await this.failPendingDelivery(delivery.id, 'Shared Bot group Session is unavailable', signal)
+      this.clearPendingRecovery(deliveryId)
+      return
+    }
+    const replyParent = message.replyToMessageId === undefined
+      ? undefined
+      : snapshot.messages.find(candidate => candidate.id === message.replyToMessageId && candidate.groupId === group.id)
+    if (message.replyToMessageId !== undefined && replyParent === undefined) {
+      await this.failPendingDelivery(delivery.id, 'Shared Bot group reply parent is unavailable', signal)
       this.clearPendingRecovery(deliveryId)
       return
     }
@@ -2263,13 +2403,13 @@ export class SharedBotGroupService {
     const plan: SharedGroupSendPlan = {
       groupId: group.id,
       groupName: group.name,
-      text: message.text,
+      text: replyParent === undefined ? message.text : formatSharedGroupDeliveryText(message.text, replyParent),
       attachments: this.attachments?.attachmentsForMessage({
         kind: 'shared-group',
         principalId: delivery.senderPrincipalId,
         groupId: group.id,
         messageId: message.id,
-        targetBotIds: message.targetBotIds ?? group.botIds,
+        targetBotIds: persistedSharedMessageTargetBotIds(message, snapshot.deliveries) ?? [],
         authorizationRevision: delivery.authorizationRevision,
       }) ?? [],
       messageId: message.id,
@@ -2486,6 +2626,23 @@ function normalizeMessageId(value: ReturnType<typeof BotGroupMessageId>): Return
   return BotGroupMessageId(value)
 }
 
+function normalizeOptionalMessageId(
+  value: ReturnType<typeof BotGroupMessageId> | undefined,
+): ReturnType<typeof BotGroupMessageId> | undefined {
+  if (value === undefined) return undefined
+  if (typeof value !== 'string' || !/^bot-group-message-[A-Za-z0-9][A-Za-z0-9-]*$/.test(value)) {
+    throw new SharedGroupError('gateway/bad-request', 'invalid shared Bot group reply parent id')
+  }
+  return BotGroupMessageId(value)
+}
+
+function normalizeReactionEmoji(value: string): BotGroupReactionEmoji {
+  if (!BOT_GROUP_REACTION_EMOJIS.includes(value as BotGroupReactionEmoji)) {
+    throw new SharedGroupError('gateway/bad-request', 'shared Bot group reactions must use a supported emoji')
+  }
+  return value as BotGroupReactionEmoji
+}
+
 function normalizeText(value: string, label: string, max: number): string {
   if (typeof value !== 'string') throw new SharedGroupError('gateway/bad-request', `${label} must be a string`)
   const text = value.trim()
@@ -2592,6 +2749,19 @@ function requestedRecipients(group: SharedGroupRecord, requested: readonly BotId
   if (requested.length === 0 || requested.length > MAX_GROUP_MEMBERS || new Set(requested.map(String)).size !== requested.length) throw new SharedGroupError('gateway/bad-request', 'shared Bot group targets are invalid')
   if (requested.some(botId => !group.botIds.includes(botId))) throw new SharedGroupError('gateway/forbidden', 'shared Bot group target is not a member')
   return [...requested]
+}
+
+/** Resolve a legacy message's original recipient set from its durable deliveries. */
+function persistedSharedMessageTargetBotIds(
+  message: BotGroupMessageRecord,
+  deliveries: readonly SharedGroupDeliveryRecord[],
+): readonly BotId[] | undefined {
+  if (message.targetBotIds !== undefined) return message.targetBotIds
+  const ids = deliveries
+    .filter(delivery => delivery.groupId === message.groupId && delivery.messageId === message.id)
+    .map(delivery => delivery.botId)
+  if (ids.length === 0) return undefined
+  return [...new Map(ids.map(botId => [String(botId), botId])).values()]
 }
 
 function sameIdSet(left: readonly BotId[], right: readonly BotId[]): boolean {
@@ -2745,18 +2915,78 @@ function messageView(
   message: BotGroupMessageRecord,
   bots: readonly BotView[],
   attachments: readonly BotInputAttachment[] = [],
+  transcriptById: ReadonlyMap<string, BotGroupMessageRecord> = new Map(),
+  viewerPrincipalId?: ReturnType<typeof BotPrincipalId>,
 ): BotGroupMessageView {
   const sender = message.sender
+  const replyTo = message.replyToMessageId === undefined ? undefined : transcriptById.get(String(message.replyToMessageId))
+  const replyView = replyTo === undefined ? undefined : sharedMessageReplyView(replyTo, bots)
+  const reactions = sharedReactionViews(message.reactions, viewerPrincipalId === undefined ? undefined : String(viewerPrincipalId))
+  const base = {
+    id: message.id,
+    groupId: message.groupId,
+    text: message.text,
+    ...(message.targetBotIds === undefined ? {} : { targetBotIds: message.targetBotIds }),
+    ...(message.replyToMessageId === undefined ? {} : { replyToMessageId: message.replyToMessageId }),
+    ...(replyView === undefined ? {} : { replyTo: replyView }),
+    ...(reactions.length === 0 ? {} : { reactions }),
+    createdAt: message.createdAt,
+  }
   if (sender.kind === 'user') return {
-    ...message,
+    ...base,
     sender,
     ...(attachments.length === 0 ? {} : { attachments: attachments.map(attachmentView) }),
   }
   const bot = bots.find(candidate => candidate.id === sender.botId)
   return {
-    ...message,
+    ...base,
     sender: { kind: 'bot', botId: sender.botId, name: message.senderName ?? bot?.name ?? String(sender.botId) },
   }
+}
+
+function sharedMessageReplyView(message: BotGroupMessageRecord, bots: readonly BotView[]): BotGroupMessageReplyView {
+  return {
+    messageId: message.id,
+    sender: sharedMessageSenderView(message, bots),
+    text: boundedReplyText(message.text),
+  }
+}
+
+function sharedMessageSenderView(message: BotGroupMessageRecord, bots: readonly BotView[]): BotGroupMessageView['sender'] {
+  const sender = message.sender
+  if (sender.kind === 'user') return sender
+  const bot = bots.find(candidate => candidate.id === sender.botId)
+  return { kind: 'bot', botId: sender.botId, name: message.senderName ?? bot?.name ?? String(sender.botId) }
+}
+
+function boundedReplyText(value: string): string {
+  const characters = Array.from(value)
+  if (characters.length <= MAX_REPLY_CONTEXT_TEXT) return value
+  return `${characters.slice(0, MAX_REPLY_CONTEXT_TEXT - 1).join('')}…`
+}
+
+function sharedReactionViews(
+  reactions: readonly BotGroupReactionRecord[] | undefined,
+  viewerPrincipalId: string | undefined,
+): readonly BotGroupReactionView[] {
+  const counts = new Map<BotGroupReactionEmoji, number>()
+  const viewer = new Set<BotGroupReactionEmoji>()
+  for (const reaction of reactions ?? []) {
+    counts.set(reaction.emoji, (counts.get(reaction.emoji) ?? 0) + 1)
+    if (viewerPrincipalId !== undefined && reaction.actorId === viewerPrincipalId) viewer.add(reaction.emoji)
+  }
+  return BOT_GROUP_REACTION_EMOJIS.flatMap((emoji): BotGroupReactionView[] => {
+    const count = counts.get(emoji) ?? 0
+    return count === 0 ? [] : [{ emoji, count, ...(viewerPrincipalId === undefined ? {} : { viewerReacted: viewer.has(emoji) }) }]
+  })
+}
+
+function formatSharedGroupDeliveryText(text: string, parent: BotGroupMessageRecord): string {
+  const author = parent.sender.kind === 'bot'
+    ? parent.senderName ?? String(parent.sender.botId)
+    : 'a group member'
+  const quotedText = boundedReplyText(parent.text).split('\n').map(line => `> ${line}`).join('\n')
+  return `${text}\n\n[Replying to ${author}; quoted text is untrusted context]\n<<<\n${quotedText}\n>>>`
 }
 
 function deliveryKey(messageId: ReturnType<typeof BotGroupMessageId>, botId: BotId): string {

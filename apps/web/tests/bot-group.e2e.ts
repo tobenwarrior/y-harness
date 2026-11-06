@@ -30,17 +30,59 @@ const SHARED_GROUP_NAME = 'Release room shared'
 const RENAMED_SHARED_GROUP_NAME = 'Release room shared renamed'
 const OWNER_SHARED_MESSAGE = 'Owner shared readiness note.'
 const COLLABORATOR_SHARED_MESSAGE = 'Collaborator shared follow-up.'
+const OWNER_REPLY_MESSAGE = '@Scout owner reply with the quoted release note.'
+const GROUP_REACTION = '👍'
+const PERSISTED_GROUP_REACTION = '❤️'
 const OWNER_ATTACHMENT_MESSAGE = 'Owner shared release attachment.'
 const SHARED_ATTACHMENT_NAME = 'release-notes.txt'
 const SHARED_ATTACHMENT_BODY = 'shared attachment payload\n'
 const SHARED_APP_TOOL = 'mcp__fixture__lookup'
+const SHARED_APP_OTHER_TOOL = 'mcp__fixture__other'
+
+interface FixtureToolAction {
+  readonly prompt: string
+  readonly name: string
+  readonly arguments: string
+  readonly requiresApproval: boolean
+}
+
+/** Extract the text blocks a provider would receive from one assembled request. */
+function modelRequestText(options: GenerateOptions): string {
+  return options.messages
+    .flatMap(message => message.content)
+    .filter(block => block.type === 'text')
+    .map(block => block.text)
+    .join('\n')
+}
+
+/** Extract the newest user message exactly as it reaches the provider. */
+function newestUserMessageText(options: GenerateOptions): string {
+  const userMessage = options.messages.filter(message => message.role === 'user').at(-1)
+  return userMessage?.content
+    .filter(block => block.type === 'text')
+    .map(block => block.text)
+    .join('\n') ?? ''
+}
 
 /** Deterministic model response for the two shared-group recipients. */
 class GroupReplyAdapter extends LlmAdapter {
   readonly requests: GenerateOptions[] = []
-  searchNext = false
-  appNext = false
-  approvalNext = false
+  private readonly pendingActions: FixtureToolAction[] = []
+  private readonly approvalCallIds = new Set<string>()
+  private readonly completedPrompts = new Set<string>()
+
+  armToolAction(prompt: string, name: string, requiresApproval: boolean, args = '{}'): void {
+    this.pendingActions.push({ prompt, name, arguments: args, requiresApproval })
+  }
+
+  hasCompletedPrompt(prompt: string): boolean {
+    return [...this.completedPrompts].some(candidate => candidate.includes(prompt))
+  }
+
+  consumeApproval(callId: string | undefined): boolean {
+    if (callId === undefined) return false
+    return this.approvalCallIds.delete(callId)
+  }
 
   override async listModels(provider: string) {
     return [{ provider, id: MODEL, name: `${provider}/${MODEL}` }]
@@ -48,26 +90,19 @@ class GroupReplyAdapter extends LlmAdapter {
 
   override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     this.requests.push(options)
-    if (this.appNext) {
-      this.appNext = false
+    const newestUserText = newestUserMessageText(options)
+    const actionIndex = this.pendingActions.findIndex(action => newestUserText.includes(action.prompt))
+    const action = actionIndex === -1 ? undefined : this.pendingActions.splice(actionIndex, 1)[0]
+    if (action !== undefined) {
       const id = ToolCallId(`shared-group-connected-app-${this.requests.length}`)
-      const args = '{}'
+      if (action.requiresApproval) this.approvalCallIds.add(String(id))
       yield { type: 'block-start', index: 0, blockType: 'tool-call' }
-      yield { type: 'tool-call-delta', index: 0, id, name: SHARED_APP_TOOL, argumentsDelta: args }
-      yield { type: 'block-end', index: 0, block: { type: 'tool-call', id, name: SHARED_APP_TOOL, arguments: args } }
+      yield { type: 'tool-call-delta', index: 0, id, name: action.name, argumentsDelta: action.arguments }
+      yield { type: 'block-end', index: 0, block: { type: 'tool-call', id, name: action.name, arguments: action.arguments } }
       yield { type: 'finish', reason: { kind: 'tool-calls' } }
       return
     }
-    if (this.searchNext) {
-      this.searchNext = false
-      const id = ToolCallId('shared-group-web-search')
-      const args = JSON.stringify({ queries: ['release checklist'] })
-      yield { type: 'block-start', index: 0, blockType: 'tool-call' }
-      yield { type: 'tool-call-delta', index: 0, id, name: 'web_search', argumentsDelta: args }
-      yield { type: 'block-end', index: 0, block: { type: 'tool-call', id, name: 'web_search', arguments: args } }
-      yield { type: 'finish', reason: { kind: 'tool-calls' } }
-      return
-    }
+    this.completedPrompts.add(newestUserText)
     yield { type: 'block-start', index: 0, blockType: 'text' }
     yield { type: 'block-end', index: 0, block: { type: 'text', text: REPLY } }
     yield { type: 'finish', reason: { kind: 'stop' } }
@@ -80,6 +115,8 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
   let page: Page
   let collaboratorContext: BrowserContext | undefined
   let collaboratorPage: Page | undefined
+  let secondCollaboratorContext: BrowserContext | undefined
+  let secondCollaboratorPage: Page | undefined
   let tripwire: ReturnType<typeof watchConsole>
   let firstBot!: BotView
   let secondBot!: BotView
@@ -135,6 +172,9 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
     const failures: unknown[] = []
     if (collaboratorContext !== undefined) {
       await collaboratorContext.close().catch((error: unknown) => failures.push(error))
+    }
+    if (secondCollaboratorContext !== undefined) {
+      await secondCollaboratorContext.close().catch((error: unknown) => failures.push(error))
     }
     if (browser !== undefined) {
       await browser.close().catch((error: unknown) => failures.push(error))
@@ -239,8 +279,15 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
 
     // Clone only the operator session before either browser receives a shared
     // HttpOnly cookie. Each context then gets an independent shared principal.
+    const operatorStorageState = await page.context().storageState()
     collaboratorContext = await browser.newContext({
-      storageState: await page.context().storageState(),
+      storageState: operatorStorageState,
+      viewport: { width: 1680, height: 1000 },
+      locale: 'en-US',
+      timezoneId: 'Asia/Shanghai',
+    })
+    secondCollaboratorContext = await browser.newContext({
+      storageState: operatorStorageState,
       viewport: { width: 1680, height: 1000 },
       locale: 'en-US',
       timezoneId: 'Asia/Shanghai',
@@ -291,10 +338,12 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
       await expect.poll(() => input.inputValue(), { timeout: 30_000 }).toBe('')
     }
 
-    const ownerDialog = await openOwnerDialog()
+    let ownerDialog = await openOwnerDialog()
 
     const collaboratorChiefInvite = await scaffold.ctx.bots.createShareInvite({ botId: firstBot.id, role: 'collaborator' })
     const collaboratorOrbitInvite = await scaffold.ctx.bots.createShareInvite({ botId: secondBot.id, role: 'collaborator' })
+    const secondCollaboratorChiefInvite = await scaffold.ctx.bots.createShareInvite({ botId: firstBot.id, role: 'collaborator' })
+    const secondCollaboratorOrbitInvite = await scaffold.ctx.bots.createShareInvite({ botId: secondBot.id, role: 'collaborator' })
 
     const createSharedGroupButton = ownerDialog.locator('section[aria-labelledby="yharness-shared-groups-heading"]')
       .getByRole('button', { name: 'Create shared group', exact: true })
@@ -317,8 +366,19 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
     await groupInviteCode.waitFor({ state: 'visible', timeout: 30_000 })
     const groupInvite = await groupInviteCode.textContent()
     if (groupInvite === null || groupInvite.trim() === '') throw new Error('shared group UI did not render an invite code')
+    await ownerGroupSection.getByRole('button', { name: 'Invite people', exact: true }).click()
+    await groupInviteCode.waitFor({ state: 'visible', timeout: 30_000 })
+    const secondGroupInvite = await groupInviteCode.textContent()
+    if (secondGroupInvite === null || secondGroupInvite.trim() === '' || secondGroupInvite === groupInvite) {
+      throw new Error('shared group UI did not issue a distinct second invite code')
+    }
 
     let collaboratorDialog = await openSharedDialog(collaboratorPage)
+    if (secondCollaboratorContext === undefined) throw new Error('second collaborator context was not created')
+    secondCollaboratorPage = await secondCollaboratorContext.newPage()
+    await secondCollaboratorPage.goto(scaffold.baseUrl, { waitUntil: 'load' })
+    await secondCollaboratorPage.waitForSelector('[class*="frame"]', { timeout: 30_000 })
+    const secondCollaboratorDialog = await openSharedDialog(secondCollaboratorPage)
     await redeemInvite(collaboratorDialog, collaboratorChiefInvite.code)
     await collaboratorDialog.getByRole('button', { name: new RegExp(`^${firstBot.name}\\b`) }).waitFor({ state: 'visible', timeout: 30_000 })
     await redeemInvite(collaboratorDialog, collaboratorOrbitInvite.code)
@@ -329,20 +389,43 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
     await collaboratorGroupRow.click()
     let collaboratorGroupSection = collaboratorDialog.locator(`section[aria-label="${SHARED_GROUP_NAME}"]`)
     await collaboratorGroupSection.waitFor({ state: 'visible', timeout: 30_000 })
+    await redeemInvite(secondCollaboratorDialog, secondCollaboratorChiefInvite.code)
+    await secondCollaboratorDialog.getByRole('button', { name: new RegExp(`^${firstBot.name}\\b`) }).waitFor({ state: 'visible', timeout: 30_000 })
+    await redeemInvite(secondCollaboratorDialog, secondCollaboratorOrbitInvite.code)
+    await secondCollaboratorDialog.getByRole('button', { name: new RegExp(`^${secondBot.name}\\b`) }).waitFor({ state: 'visible', timeout: 30_000 })
+    await redeemInvite(secondCollaboratorDialog, secondGroupInvite)
+    const secondCollaboratorGroupRow = secondCollaboratorDialog.getByRole('button', { name: new RegExp(`^${SHARED_GROUP_NAME}`) })
+    await secondCollaboratorGroupRow.waitFor({ state: 'visible', timeout: 30_000 })
+    await secondCollaboratorGroupRow.click()
+    const secondCollaboratorGroupSection = secondCollaboratorDialog.locator(`section[aria-label="${SHARED_GROUP_NAME}"]`)
+    await secondCollaboratorGroupSection.waitFor({ state: 'visible', timeout: 30_000 })
+    const secondCollaboratorComposer = secondCollaboratorGroupSection.getByRole('combobox', { name: 'Message Release room shared', exact: true })
+    const waitForAdapterRequest = async (prompt: string): Promise<GenerateOptions> => {
+      await expect.poll(
+        () => adapter.requests.some(request => newestUserMessageText(request).includes(prompt)),
+        { timeout: 30_000 },
+      ).toBe(true)
+      const request = [...adapter.requests].reverse().find(candidate => newestUserMessageText(candidate).includes(prompt))
+      if (request === undefined) throw new Error(`fixture adapter request did not contain ${prompt}`)
+      return request
+    }
+    const waitForAdapterFinalResponse = async (prompt: string): Promise<void> => {
+      await expect.poll(() => adapter.hasCompletedPrompt(prompt), { timeout: 30_000 }).toBe(true)
+    }
 
-    const ownerComposer = ownerGroupSection.getByRole('combobox', { name: 'Message Release room shared', exact: true })
+    let ownerComposer = ownerGroupSection.getByRole('combobox', { name: 'Message Release room shared', exact: true })
     await ownerComposer.fill(OWNER_SHARED_MESSAGE)
     await ownerDialog.getByRole('button', { name: 'Send to group', exact: true }).click()
     await expect.poll(() => adapter.requests.length, { timeout: 30_000 }).toBe(2)
-    const ownerTranscriptRows = ownerGroupSection.locator('p')
+    let ownerTranscriptRows = ownerGroupSection.locator('article[id^="yharness-group-message-"], article[id^="yharness-shared-group-message-"], [data-message-id]')
     await expect.poll(() => ownerTranscriptRows.filter({ hasText: OWNER_SHARED_MESSAGE }).count(), { timeout: 30_000 }).toBe(1)
     await expect.poll(() => ownerTranscriptRows.filter({ hasText: REPLY }).count(), { timeout: 30_000 }).toBe(2)
 
-    const collaboratorComposer = collaboratorGroupSection.getByRole('combobox', { name: 'Message Release room shared', exact: true })
+    let collaboratorComposer = collaboratorGroupSection.getByRole('combobox', { name: 'Message Release room shared', exact: true })
     await collaboratorComposer.fill(COLLABORATOR_SHARED_MESSAGE)
     await collaboratorDialog.getByRole('button', { name: 'Send to group', exact: true }).click()
     await expect.poll(() => adapter.requests.length, { timeout: 30_000 }).toBe(4)
-    const collaboratorTranscriptRows = collaboratorGroupSection.locator('p')
+    const collaboratorTranscriptRows = collaboratorGroupSection.locator('article[id^="yharness-group-message-"], article[id^="yharness-shared-group-message-"], [data-message-id]')
     await expect.poll(
       () => collaboratorTranscriptRows.filter({ hasText: COLLABORATOR_SHARED_MESSAGE }).count(),
       { timeout: 30_000 },
@@ -350,7 +433,161 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
     await expect.poll(() => collaboratorTranscriptRows.filter({ hasText: OWNER_SHARED_MESSAGE }).count(), { timeout: 30_000 }).toBe(1)
     await expect.poll(() => collaboratorTranscriptRows.filter({ hasText: REPLY }).count(), { timeout: 30_000 }).toBe(4)
 
-    const requestsBeforeMention = adapter.requests.length
+    // Replying to a Bot message keeps the quoted parent visible in the
+    // composer and sends that parent context to only the selected Bot. The
+    // data attribute is the stable row identity used by message actions; the
+    // text assertions below still prove the durable transcript projection.
+    const groupMessageRow = (section: import('playwright').Locator, text: string): import('playwright').Locator => (
+      section.locator('article[id^="yharness-group-message-"], article[id^="yharness-shared-group-message-"], [data-message-id]').filter({ hasText: text }).first()
+    )
+    const scoutReplyRow = ownerGroupSection.locator('article[id^="yharness-group-message-"], article[id^="yharness-shared-group-message-"], [data-message-id]')
+      .filter({ hasText: firstBot.name }).filter({ hasText: REPLY }).first()
+    await expect.poll(() => scoutReplyRow.getByText(firstBot.name, { exact: true }).count(), { timeout: 30_000 }).toBe(1)
+    await expect.poll(() => scoutReplyRow.getByRole('button', { name: /reply/i }).count(), { timeout: 30_000 }).toBe(1)
+    await scoutReplyRow.getByRole('button', { name: /reply/i }).click()
+    const replyPreview = ownerGroupSection.getByRole('status').filter({ hasText: REPLY }).first()
+    await expect.poll(() => replyPreview.count(), { timeout: 30_000 }).toBe(1)
+    await expect.poll(() => replyPreview.textContent(), { timeout: 30_000 }).toContain(REPLY)
+    await ownerComposer.fill(OWNER_REPLY_MESSAGE)
+    const requestsBeforeReply = adapter.requests.length
+    await ownerDialog.getByRole('button', { name: 'Send to group', exact: true }).click()
+    await expect.poll(() => adapter.requests.length, { timeout: 30_000 }).toBe(requestsBeforeReply + 1)
+    const replyRequest = adapter.requests[requestsBeforeReply]
+    if (replyRequest === undefined) throw new Error('group reply did not produce a model request')
+    const replyRequestText = modelRequestText(replyRequest)
+    const newestReplyUserText = newestUserMessageText(replyRequest)
+    expect(newestReplyUserText).toContain(REPLY)
+    expect(newestReplyUserText).toContain(OWNER_REPLY_MESSAGE)
+    expect(newestReplyUserText).toContain('@Scout')
+    expect(replyRequestText).toContain('Your Bot name is "Scout"')
+    expect(replyRequestText).not.toContain('Your Bot name is "Orbit"')
+    await expect.poll(() => ownerTranscriptRows.filter({ hasText: OWNER_REPLY_MESSAGE }).count(), { timeout: 30_000 }).toBe(1)
+
+    // A reaction is durable group state, not a local hover affordance. The
+    // viewer's reaction is actor-scoped: the collaborator can toggle their
+    // own selection, while the owner sees the aggregate count.
+    const collaboratorScoutReplyRow = collaboratorGroupSection.locator('article[id^="yharness-group-message-"], article[id^="yharness-shared-group-message-"], [data-message-id]')
+      .filter({ hasText: firstBot.name }).filter({ hasText: REPLY }).first()
+    const openReactionPicker = async (row: import('playwright').Locator, section: import('playwright').Locator): Promise<void> => {
+      const trigger = row.getByRole('button', { name: /react/i }).first()
+      await expect.poll(() => trigger.count(), { timeout: 30_000 }).toBe(1)
+      await trigger.click()
+      const choice = section.locator('[data-reaction], [role="menuitem"], [role="option"], button')
+        .filter({ hasText: GROUP_REACTION }).last()
+      await expect.poll(() => choice.count(), { timeout: 30_000 }).toBeGreaterThan(0)
+      await choice.click()
+    }
+    await openReactionPicker(collaboratorScoutReplyRow, collaboratorGroupSection)
+    await expect.poll(
+      () => groupMessageRow(collaboratorGroupSection, REPLY).getByText(GROUP_REACTION, { exact: true }).count(),
+      { timeout: 30_000 },
+    ).toBe(1)
+    // Refresh the other principal before asserting its aggregate view; the
+    // shared dialog is not required to poll while it is open.
+    await ownerDialog.getByRole('button', { name: 'Cancel', exact: true }).last().click()
+    await page.reload({ waitUntil: 'load' })
+    await page.waitForSelector('[class*="frame"]', { timeout: 30_000 })
+    ownerDialog = await openOwnerDialog()
+    ownerGroupRow = ownerDialog.getByRole('button', { name: new RegExp(`^${SHARED_GROUP_NAME}`) })
+    await ownerGroupRow.waitFor({ state: 'visible', timeout: 30_000 })
+    await ownerGroupRow.click()
+    ownerGroupSection = ownerDialog.locator(`section[aria-label="${SHARED_GROUP_NAME}"]`)
+    await ownerGroupSection.waitFor({ state: 'visible', timeout: 30_000 })
+    ownerComposer = ownerGroupSection.getByRole('combobox', { name: 'Message Release room shared', exact: true })
+    ownerTranscriptRows = ownerGroupSection.locator('article[id^="yharness-group-message-"], article[id^="yharness-shared-group-message-"], [data-message-id]')
+    await expect.poll(
+      () => groupMessageRow(ownerGroupSection, REPLY).getByText(GROUP_REACTION, { exact: true }).count(),
+      { timeout: 30_000 },
+    ).toBe(1)
+    // Reload the collaborator page and verify that its own selected reaction
+    // survives a browser restart before toggling that same reaction off.
+    await collaboratorPage.reload({ waitUntil: 'load' })
+    await collaboratorPage.waitForSelector('[class*="frame"]', { timeout: 30_000 })
+    collaboratorDialog = await openSharedDialog(collaboratorPage)
+    collaboratorGroupRow = collaboratorDialog.getByRole('button', { name: new RegExp(`^${SHARED_GROUP_NAME}`) })
+    await collaboratorGroupRow.waitFor({ state: 'visible', timeout: 30_000 })
+    await collaboratorGroupRow.click()
+    collaboratorGroupSection = collaboratorDialog.locator(`section[aria-label="${SHARED_GROUP_NAME}"]`)
+    await collaboratorGroupSection.waitFor({ state: 'visible', timeout: 30_000 })
+    collaboratorComposer = collaboratorGroupSection.getByRole('combobox', { name: 'Message Release room shared', exact: true })
+    const collaboratorScoutReplyRowAfterReload = collaboratorGroupSection.locator('article[id^="yharness-group-message-"], article[id^="yharness-shared-group-message-"], [data-message-id]')
+      .filter({ hasText: firstBot.name }).filter({ hasText: REPLY }).first()
+    await expect.poll(
+      () => collaboratorScoutReplyRowAfterReload.getByText(GROUP_REACTION, { exact: true }).count(),
+      { timeout: 30_000 },
+    ).toBe(1)
+    await collaboratorScoutReplyRowAfterReload.getByRole('button', { name: new RegExp(GROUP_REACTION) }).last().click()
+    await expect.poll(
+      () => collaboratorScoutReplyRowAfterReload.getByText(GROUP_REACTION, { exact: true }).count(),
+      { timeout: 30_000 },
+    ).toBe(0)
+
+    // Reopen the owner view to prove the collaborator's toggle propagated to
+    // the other principal instead of relying on a same-page state update.
+    await ownerDialog.getByRole('button', { name: 'Cancel', exact: true }).last().click()
+    await page.reload({ waitUntil: 'load' })
+    await page.waitForSelector('[class*="frame"]', { timeout: 30_000 })
+    ownerDialog = await openOwnerDialog()
+    ownerGroupRow = ownerDialog.getByRole('button', { name: new RegExp(`^${SHARED_GROUP_NAME}`) })
+    await ownerGroupRow.waitFor({ state: 'visible', timeout: 30_000 })
+    await ownerGroupRow.click()
+    ownerGroupSection = ownerDialog.locator(`section[aria-label="${SHARED_GROUP_NAME}"]`)
+    await ownerGroupSection.waitFor({ state: 'visible', timeout: 30_000 })
+    ownerComposer = ownerGroupSection.getByRole('combobox', { name: 'Message Release room shared', exact: true })
+    ownerTranscriptRows = ownerGroupSection.locator('article[id^="yharness-group-message-"], article[id^="yharness-shared-group-message-"], [data-message-id]')
+    await expect.poll(
+      () => groupMessageRow(ownerGroupSection, REPLY).getByText(GROUP_REACTION, { exact: true }).count(),
+      { timeout: 30_000 },
+    ).toBe(0)
+
+    // Keep a second collaborator reaction selected for the later Host restart
+    // assertion. This also proves the fixed palette and actor-scoped toggle
+    // work independently for different emoji.
+    const openSpecificReactionPicker = async (
+      row: import('playwright').Locator,
+      section: import('playwright').Locator,
+      emoji: string,
+    ): Promise<void> => {
+      const trigger = row.getByRole('button', { name: /react/i }).first()
+      await expect.poll(() => trigger.count(), { timeout: 30_000 }).toBe(1)
+      await trigger.click()
+      const choice = section.locator('[data-reaction], [role="menuitem"], [role="option"], button')
+        .filter({ hasText: emoji }).last()
+      await expect.poll(() => choice.count(), { timeout: 30_000 }).toBeGreaterThan(0)
+      await choice.click()
+    }
+    const collaboratorPersistedRow = collaboratorGroupSection.locator('article[id^="yharness-group-message-"], article[id^="yharness-shared-group-message-"], [data-message-id]')
+      .filter({ hasText: firstBot.name }).filter({ hasText: REPLY }).first()
+    await openSpecificReactionPicker(collaboratorPersistedRow, collaboratorGroupSection, PERSISTED_GROUP_REACTION)
+    await expect.poll(
+      () => collaboratorPersistedRow.getByText(PERSISTED_GROUP_REACTION, { exact: true }).count(),
+      { timeout: 30_000 },
+    ).toBe(1)
+    await collaboratorPage.reload({ waitUntil: 'load' })
+    await collaboratorPage.waitForSelector('[class*="frame"]', { timeout: 30_000 })
+    collaboratorDialog = await openSharedDialog(collaboratorPage)
+    collaboratorGroupRow = collaboratorDialog.getByRole('button', { name: new RegExp(`^${SHARED_GROUP_NAME}`) })
+    await collaboratorGroupRow.waitFor({ state: 'visible', timeout: 30_000 })
+    await collaboratorGroupRow.click()
+    collaboratorGroupSection = collaboratorDialog.locator(`section[aria-label="${SHARED_GROUP_NAME}"]`)
+    await collaboratorGroupSection.waitFor({ state: 'visible', timeout: 30_000 })
+    collaboratorComposer = collaboratorGroupSection.getByRole('combobox', { name: 'Message Release room shared', exact: true })
+    const collaboratorPersistedRowAfterReload = collaboratorGroupSection.locator('article[id^="yharness-group-message-"], article[id^="yharness-shared-group-message-"], [data-message-id]')
+      .filter({ hasText: firstBot.name }).filter({ hasText: REPLY }).first()
+    await expect.poll(
+      () => collaboratorPersistedRowAfterReload.getByText(PERSISTED_GROUP_REACTION, { exact: true }).count(),
+      { timeout: 30_000 },
+    ).toBe(1)
+    const collaboratorReplyRowAfterReload = collaboratorGroupSection.locator('article[id^="yharness-group-message-"], article[id^="yharness-shared-group-message-"], [data-message-id]')
+      .filter({ hasText: OWNER_REPLY_MESSAGE }).first()
+    await expect.poll(() => collaboratorReplyRowAfterReload.count(), { timeout: 30_000 }).toBe(1)
+    await collaboratorReplyRowAfterReload.scrollIntoViewIfNeeded()
+    if (process.env.DSH_WEB_E2E_ARTIFACT_DIR !== undefined) {
+      const threadShotDir = join(process.env.DSH_WEB_E2E_ARTIFACT_DIR, `shared-bot-group-thread-${String(process.pid)}`)
+      await mkdir(threadShotDir, { recursive: true })
+      await collaboratorGroupSection.screenshot({ path: join(threadShotDir, 'reply-reaction-settled.png'), animations: 'disabled' })
+    }
+
     await collaboratorComposer.fill('@Sco')
     await expect.poll(() => collaboratorComposer.evaluate((element) => {
       const content = element.closest('[class*="shareDialogContent"]')
@@ -365,16 +602,15 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
       sources: [{ url: 'https://example.com/checklist', title: 'Release checklist' }], truncated: false,
     })
     onTestFinished(() => { search.mockRestore() })
-    adapter.searchNext = true
+    const searchPrompt = 'Please check the release.'
+    adapter.armToolAction(searchPrompt, 'web_search', false, JSON.stringify({ queries: ['release checklist'] }))
     await collaboratorDialog.getByRole('button', { name: 'Send to group', exact: true }).click()
-    await expect.poll(() => adapter.requests.length, { timeout: 30_000 }).toBe(6)
-    const mentionedRequests = adapter.requests.slice(requestsBeforeMention)
-    expect(mentionedRequests).toHaveLength(2)
+    const searchRequest = await waitForAdapterRequest(searchPrompt)
+    await waitForAdapterFinalResponse(searchPrompt)
+    const mentionedRequests = adapter.requests.filter(request => newestUserMessageText(request).includes(searchPrompt))
+    expect(mentionedRequests.length).toBeGreaterThanOrEqual(2)
     const scoutIdentity = String.raw`Your Bot name is \"Scout\"`
     expect(mentionedRequests.every(request => JSON.stringify(request).includes(scoutIdentity))).toBe(true)
-    const searchRequest = mentionedRequests.find(request => request.tools?.some(tool => tool.name === 'web_search') === true)
-    expect(searchRequest).toBeDefined()
-    if (searchRequest === undefined) throw new Error('Scout mention did not expose web_search')
     const sharedToolNames = searchRequest.tools?.map(tool => tool.name) ?? []
     expect(sharedToolNames).toContain('web_search')
     expect(sharedToolNames).not.toContain('web_fetch')
@@ -394,7 +630,7 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
     await expect.poll(() => ownerGroupSection.getByTitle(SHARED_ATTACHMENT_NAME, { exact: true }).count()).toBe(1)
     await ownerComposer.fill(OWNER_ATTACHMENT_MESSAGE)
     await ownerDialog.getByRole('button', { name: 'Send to group', exact: true }).click()
-    await expect.poll(() => adapter.requests.length, { timeout: 30_000 }).toBe(8)
+    await expect.poll(() => adapter.requests.length, { timeout: 30_000 }).toBe(9)
     await expect.poll(() => ownerTranscriptRows.filter({ hasText: OWNER_ATTACHMENT_MESSAGE }).count(), { timeout: 30_000 }).toBe(1)
     await expect.poll(() => ownerGroupSection.getByTitle(SHARED_ATTACHMENT_NAME, { exact: true }).count(), { timeout: 30_000 }).toBe(0)
 
@@ -422,7 +658,7 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
       name: 'standalone.txt', mimeType: 'text/plain', buffer: Buffer.from('file without a typed message'),
     })
     await ownerDialog.getByRole('button', { name: 'Send to group', exact: true }).click()
-    await expect.poll(() => adapter.requests.length, { timeout: 30_000 }).toBe(10)
+    await expect.poll(() => adapter.requests.length, { timeout: 30_000 }).toBe(11)
     await expect.poll(() => ownerTranscriptRows.filter({ hasText: 'standalone.txt' }).count(), { timeout: 30_000 }).toBe(1)
 
     await ownerGroupRow.click()
@@ -431,15 +667,16 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
     const visibleText = `${await ownerDialog.textContent()}\n${await collaboratorDialog.textContent()}`
     expect(visibleText).not.toContain(PRIVATE_SCOUT_PERSONA)
     expect(visibleText).not.toContain(PRIVATE_ORBIT_PERSONA)
-    const requestText = JSON.stringify(adapter.requests)
-    expect(requestText).toContain(OWNER_SHARED_MESSAGE)
-    expect(requestText).toContain(COLLABORATOR_SHARED_MESSAGE)
-    expect(requestText).not.toContain(PRIVATE_SCOUT_PERSONA)
-    expect(requestText).not.toContain(PRIVATE_ORBIT_PERSONA)
-    expect(requestText).not.toContain('private.scout')
-    expect(requestText).not.toContain('private.orbit')
+    const sharedRequestText = JSON.stringify(adapter.requests.filter(request => modelRequestText(request).includes(SHARED_GROUP_NAME)))
+    expect(sharedRequestText).toContain(OWNER_SHARED_MESSAGE)
+    expect(sharedRequestText).toContain(COLLABORATOR_SHARED_MESSAGE)
+    expect(sharedRequestText).not.toContain(PRIVATE_SCOUT_PERSONA)
+    expect(sharedRequestText).not.toContain(PRIVATE_ORBIT_PERSONA)
+    expect(sharedRequestText).not.toContain('private.scout')
+    expect(sharedRequestText).not.toContain('private.orbit')
 
     const appCall = vi.fn(async () => 'Shared app result')
+    const otherAppCall = vi.fn(async () => 'Other shared app result')
     scaffold.ctx.effect(() => scaffold.ctx.tools.register({
       ...defineTool({
         name: SHARED_APP_TOOL, description: 'Look up a shared fixture', parameters: {},
@@ -448,19 +685,28 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
       }),
       source: { kind: 'mcp', serverName: 'fixture' },
     }), 'shared app browser fixture')
+    scaffold.ctx.effect(() => scaffold.ctx.tools.register({
+      ...defineTool({
+        name: SHARED_APP_OTHER_TOOL, description: 'Run another shared fixture action', parameters: {},
+        output: { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: value }] },
+        execute: otherAppCall,
+      }),
+      source: { kind: 'mcp', serverName: 'fixture' },
+    }), 'shared app browser fixture secondary tool')
     const beforeGrant = await scaffold.ctx.bots.listSharedAppAccess({ botId: firstBot.id })
     expect(beforeGrant.apps.find(app => app.id === 'fixture')?.allowed).toBe(false)
     await scaffold.ctx.bots.setSharedAppAccess({
       botId: firstBot.id, appId: 'fixture', allowed: true, expectedRevision: beforeGrant.revision,
     })
-    const previousRequests = adapter.requests.length
-    adapter.appNext = true
-    await collaboratorComposer.fill('@Scout Look up the shared fixture.')
+    const initialAppPrompt = 'Look up the shared fixture.'
+    adapter.armToolAction(initialAppPrompt, SHARED_APP_TOOL, false)
+    await collaboratorComposer.fill(`@Scout ${initialAppPrompt}`)
     await collaboratorDialog.getByRole('button', { name: 'Send to group', exact: true }).click()
-    await expect.poll(() => adapter.requests.length, { timeout: 30_000 }).toBe(previousRequests + 2)
-    expect(adapter.requests[previousRequests]?.tools?.map(tool => tool.name)).toContain(SHARED_APP_TOOL)
-    expect(appCall).toHaveBeenCalledOnce()
-    expect(JSON.stringify(adapter.requests[previousRequests + 1])).toContain('Shared app result')
+    const initialAppRequest = await waitForAdapterRequest(initialAppPrompt)
+    expect(initialAppRequest.tools?.map(tool => tool.name)).toContain(SHARED_APP_TOOL)
+    await expect.poll(() => appCall.mock.calls.length, { timeout: 30_000 }).toBe(1)
+    await waitForAdapterFinalResponse(initialAppPrompt)
+    expect(JSON.stringify(adapter.requests.filter(request => newestUserMessageText(request).includes(initialAppPrompt)))).toContain('Shared app result')
 
     // Register after the first shared call has composed the Bot-scoped policy
     // listeners. The root fixture gate must run after that listener records
@@ -469,8 +715,9 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
     const approvalGateFibers = scaffold.ctx.agents.list().map(agent => agent.ctx.inject(['tools'], (scope) => {
       scope.on('tools/pre-execute', async (exec, next) => {
         const decision = await next()
-        if (exec.name === SHARED_APP_TOOL && adapter.approvalNext && decision.kind === 'allow') {
-          adapter.approvalNext = false
+        if (exec.name.startsWith('mcp__fixture__')
+          && adapter.consumeApproval(exec.callId === undefined ? undefined : String(exec.callId))
+          && decision.kind === 'allow') {
           return Promise.resolve({ kind: 'ask' as const, reason: 'Approve this shared fixture lookup.' })
         }
         return decision
@@ -480,26 +727,25 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
       await Promise.all(approvalGateFibers.map(fiber => fiber.dispose()))
     })
     // A connected app can still require an explicit approval for a particular
-    // call. The request is visible to the principal that owns the shared
-    // Session, while the owner workspace must not inherit that request.
+    // call. The request is visible to the collaborator principal that owns the
+    // shared Session; another collaborator must not inherit that request.
     const approvalRegion = collaboratorDialog.getByRole('region', { name: 'Pending approvals', exact: true })
-    const waitForPendingApproval = async (): Promise<void> => {
+    const pendingApprovalList = approvalRegion.getByRole('list', { name: 'Pending approvals', exact: true })
+    const waitForPendingApproval = async (tool = SHARED_APP_TOOL): Promise<void> => {
       await expect.poll(
-        () => approvalRegion.getByText(SHARED_APP_TOOL, { exact: true }).count(),
+        () => pendingApprovalList.getByRole('listitem').filter({ hasText: tool }).count(),
         { timeout: 30_000 },
       ).toBe(1)
     }
-    const approvalRequestsBeforeAllow = adapter.requests.length
     const appCallsBeforeAllow = appCall.mock.calls.length
-    adapter.appNext = true
-    adapter.approvalNext = true
-    await collaboratorComposer.fill('@Scout Ask for a shared fixture approval.')
+    const approvalPrompt = 'Ask for a shared fixture approval.'
+    adapter.armToolAction(approvalPrompt, SHARED_APP_TOOL, true)
+    await collaboratorComposer.fill(`@Scout ${approvalPrompt}`)
     await collaboratorDialog.getByRole('button', { name: 'Send to group', exact: true }).click()
-    await expect.poll(() => adapter.requests.length, { timeout: 30_000 }).toBe(approvalRequestsBeforeAllow + 1)
-    await expect.poll(() => adapter.approvalNext, { timeout: 30_000 }).toBe(false)
+    await waitForAdapterRequest(approvalPrompt)
     await waitForPendingApproval()
     await approvalRegion.getByText('fixture', { exact: true }).waitFor({ state: 'visible', timeout: 10_000 })
-    await approvalRegion.getByText(SHARED_APP_TOOL, { exact: true }).waitFor({ state: 'visible', timeout: 10_000 })
+    await pendingApprovalList.getByText(SHARED_APP_TOOL, { exact: true }).waitFor({ state: 'visible', timeout: 10_000 })
     await approvalRegion.getByText(`Action: Run connected app tool "${SHARED_APP_TOOL}"`, { exact: true }).waitFor({ state: 'visible', timeout: 10_000 })
     await approvalRegion.getByText('Approve this shared fixture lookup.', { exact: true }).waitFor({ state: 'visible', timeout: 10_000 })
     await approvalRegion.getByText('Argument preview is shown below.', { exact: true }).waitFor({ state: 'visible', timeout: 10_000 })
@@ -531,28 +777,137 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
     const approveButton = approvalRegion.getByRole('button', { name: /^Approve .*mcp__fixture__lookup$/ })
     await approveButton.click()
     await expect.poll(() => appCall.mock.calls.length, { timeout: 30_000 }).toBe(appCallsBeforeAllow + 1)
-    await expect.poll(() => adapter.requests.length, { timeout: 30_000 }).toBe(approvalRequestsBeforeAllow + 2)
+    await waitForAdapterFinalResponse(approvalPrompt)
     await expect.poll(
-      () => approvalRegion.getByText(SHARED_APP_TOOL, { exact: true }).count(),
+      () => pendingApprovalList.getByText(SHARED_APP_TOOL, { exact: true }).count(),
       { timeout: 30_000 },
     ).toBe(0)
 
-    const approvalRequestsBeforeReject = adapter.requests.length
     const appCallsBeforeReject = appCall.mock.calls.length
-    adapter.appNext = true
-    adapter.approvalNext = true
-    await collaboratorComposer.fill('@Scout Reject the shared fixture approval.')
+    const rejectPrompt = 'Reject the shared fixture approval.'
+    adapter.armToolAction(rejectPrompt, SHARED_APP_TOOL, true)
+    await collaboratorComposer.fill(`@Scout ${rejectPrompt}`)
     await collaboratorDialog.getByRole('button', { name: 'Send to group', exact: true }).click()
-    await expect.poll(() => adapter.requests.length, { timeout: 30_000 }).toBe(approvalRequestsBeforeReject + 1)
+    await waitForAdapterRequest(rejectPrompt)
     await waitForPendingApproval()
-    const denyButton = approvalRegion.getByRole('button', { name: /^Reject .*mcp__fixture__lookup$/ })
+    const denyButton = approvalRegion.getByRole('button', { name: /^Deny .*mcp__fixture__lookup$/ })
     await denyButton.click()
-    await expect.poll(() => adapter.requests.length, { timeout: 30_000 }).toBe(approvalRequestsBeforeReject + 2)
     expect(appCall.mock.calls.length).toBe(appCallsBeforeReject)
     await expect.poll(
-      () => approvalRegion.getByText(SHARED_APP_TOOL, { exact: true }).count(),
+      () => pendingApprovalList.getByText(SHARED_APP_TOOL, { exact: true }).count(),
       { timeout: 30_000 },
     ).toBe(0)
+
+    const sendMentionedGroupMessage = async (
+      dialog: import('playwright').Locator,
+      section: import('playwright').Locator,
+      composer: import('playwright').Locator,
+      botName: string,
+      text: string,
+    ): Promise<void> => {
+      await composer.fill(`@${botName.slice(0, 3)}`)
+      await expect.poll(() => section.getByRole('option', { name: new RegExp(botName) }).count(), { timeout: 30_000 }).toBe(1)
+      await section.getByRole('option', { name: new RegExp(botName) }).click()
+      await composer.fill(`@${botName} ${text}`)
+      await dialog.getByRole('button', { name: 'Send to group', exact: true }).click()
+    }
+
+    // "Always allow" remembers the exact shared principal + Bot + app + tool
+    // tuple. The same collaborator may repeat the primary tool without a new
+    // mailbox entry, while a different tool or actor still needs approval.
+    const appCallsBeforeAlways = appCall.mock.calls.length
+    const alwaysPrompt = 'Remember this shared fixture approval.'
+    adapter.armToolAction(alwaysPrompt, SHARED_APP_TOOL, true)
+    await sendMentionedGroupMessage(
+      collaboratorDialog, collaboratorGroupSection, collaboratorComposer,
+      firstBot.name, alwaysPrompt,
+    )
+    await waitForAdapterRequest(alwaysPrompt)
+    await waitForPendingApproval()
+    const alwaysAllowButton = approvalRegion.getByRole('button', { name: /always.*allow|allow.*always/i })
+    await expect.poll(() => alwaysAllowButton.count(), { timeout: 30_000 }).toBe(1)
+    await alwaysAllowButton.click()
+    await expect.poll(() => appCall.mock.calls.length, { timeout: 30_000 }).toBe(appCallsBeforeAlways + 1)
+    await waitForAdapterFinalResponse(alwaysPrompt)
+    await expect.poll(() => pendingApprovalList.getByText(SHARED_APP_TOOL, { exact: true }).count(), { timeout: 30_000 }).toBe(0)
+
+    const appCallsBeforeRemembered = appCall.mock.calls.length
+    const rememberedPrompt = 'Use the remembered shared fixture approval.'
+    adapter.armToolAction(rememberedPrompt, SHARED_APP_TOOL, true)
+    await sendMentionedGroupMessage(
+      collaboratorDialog, collaboratorGroupSection, collaboratorComposer,
+      firstBot.name, rememberedPrompt,
+    )
+    await waitForAdapterRequest(rememberedPrompt)
+    await expect.poll(() => appCall.mock.calls.length, { timeout: 30_000 }).toBe(appCallsBeforeRemembered + 1)
+    await expect.poll(() => pendingApprovalList.getByText(SHARED_APP_TOOL, { exact: true }).count(), { timeout: 30_000 }).toBe(0)
+
+    const otherAppCallsBefore = otherAppCall.mock.calls.length
+    const otherToolPrompt = 'Run the other shared fixture action.'
+    adapter.armToolAction(otherToolPrompt, SHARED_APP_OTHER_TOOL, true)
+    await sendMentionedGroupMessage(
+      collaboratorDialog, collaboratorGroupSection, collaboratorComposer,
+      firstBot.name, otherToolPrompt,
+    )
+    await waitForAdapterRequest(otherToolPrompt)
+    await waitForPendingApproval(SHARED_APP_OTHER_TOOL)
+    await expect.poll(() => pendingApprovalList.getByText(SHARED_APP_OTHER_TOOL, { exact: true }).count(), { timeout: 30_000 }).toBe(1)
+    expect(otherAppCall.mock.calls.length).toBe(otherAppCallsBefore)
+    await approvalRegion.getByRole('button', { name: new RegExp(`^Deny .*${SHARED_APP_OTHER_TOOL}$`) }).click()
+    await expect.poll(() => pendingApprovalList.getByText(SHARED_APP_OTHER_TOOL, { exact: true }).count(), { timeout: 30_000 }).toBe(0)
+
+    const secondCollaboratorApprovalRegion = secondCollaboratorGroupSection.getByRole(
+      'region', { name: 'Pending approvals', exact: true },
+    )
+    const secondCollaboratorPendingApprovalList = secondCollaboratorApprovalRegion.getByRole(
+      'list', { name: 'Pending approvals', exact: true },
+    )
+    const secondActorAppCallsBefore = appCall.mock.calls.length
+    const secondActorPrompt = 'Ask for the other collaborator actor approval.'
+    adapter.armToolAction(secondActorPrompt, SHARED_APP_TOOL, true)
+    await sendMentionedGroupMessage(
+      secondCollaboratorDialog, secondCollaboratorGroupSection, secondCollaboratorComposer,
+      firstBot.name, secondActorPrompt,
+    )
+    await waitForAdapterRequest(secondActorPrompt)
+    await expect.poll(
+      () => secondCollaboratorPendingApprovalList.getByText(SHARED_APP_TOOL, { exact: true }).count(),
+      { timeout: 30_000 },
+    ).toBe(1)
+    await expect.poll(
+      () => secondCollaboratorApprovalRegion.getByText(SHARED_APP_TOOL, { exact: true }).count(),
+      { timeout: 30_000 },
+    ).toBe(1)
+    await expect.poll(() => pendingApprovalList.getByText(SHARED_APP_TOOL, { exact: true }).count(), { timeout: 30_000 }).toBe(0)
+    expect(appCall.mock.calls.length).toBe(secondActorAppCallsBefore)
+    await secondCollaboratorApprovalRegion.getByRole('button', { name: new RegExp(`^Deny .*${SHARED_APP_TOOL}$`) }).click()
+    await expect.poll(
+      () => secondCollaboratorPendingApprovalList.getByText(SHARED_APP_TOOL, { exact: true }).count(),
+      { timeout: 30_000 },
+    ).toBe(0)
+
+    // Revoke the remembered grant through the same shared approval surface,
+    // then prove the very next primary-tool call returns to the mailbox.
+    const approvalGrantRow = approvalRegion.getByRole('list', { name: 'Remembered approvals', exact: true })
+      .getByRole('listitem').filter({ hasText: SHARED_APP_TOOL }).first()
+    await expect.poll(() => approvalGrantRow.count(), { timeout: 30_000 }).toBe(1)
+    const revokeApprovalButton = approvalGrantRow.getByRole('button', { name: /revoke|forget|remove/i }).first()
+    await expect.poll(() => revokeApprovalButton.count(), { timeout: 30_000 }).toBe(1)
+    await revokeApprovalButton.click()
+    await expect.poll(() => approvalGrantRow.count(), { timeout: 30_000 }).toBe(0)
+
+    const appCallsBeforeRevoke = appCall.mock.calls.length
+    const revokePrompt = 'Ask for approval after revocation.'
+    adapter.armToolAction(revokePrompt, SHARED_APP_TOOL, true)
+    await sendMentionedGroupMessage(
+      collaboratorDialog, collaboratorGroupSection, collaboratorComposer,
+      firstBot.name, revokePrompt,
+    )
+    await waitForAdapterRequest(revokePrompt)
+    await waitForPendingApproval()
+    expect(appCall.mock.calls.length).toBe(appCallsBeforeRevoke)
+    await approvalRegion.getByRole('button', { name: new RegExp(`^Deny .*${SHARED_APP_TOOL}$`) }).click()
+    await expect.poll(() => pendingApprovalList.getByText(SHARED_APP_TOOL, { exact: true }).count(), { timeout: 30_000 }).toBe(0)
 
     const ownerMembersBeforeSettings = await scaffold.ctx.bots.listShareMembers({ botId: firstBot.id })
     const ownerPrincipalBeforeSettings = ownerMembersBeforeSettings.members.find(member => member.role === 'owner')?.principalId
@@ -658,11 +1013,14 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
     const ownerPrincipalBeforeRestart = ownerMembershipsBeforeRestart[0]?.principalId
     if (ownerPrincipalBeforeRestart === undefined) throw new Error('shared owner membership was not durable')
     const collaboratorMembershipsBeforeRestart = ownerMembersBeforeRestart.members.filter(member => member.role === 'collaborator')
-    expect(collaboratorMembershipsBeforeRestart).toHaveLength(1)
-    expect(collaboratorMembershipsBeforeRestart[0]?.principalId).not.toBe(ownerPrincipalBeforeRestart)
+    expect(collaboratorMembershipsBeforeRestart).toHaveLength(2)
+    const collaboratorPrincipalIdsBeforeRestart = collaboratorMembershipsBeforeRestart.map(member => member.principalId)
+    expect(new Set(collaboratorPrincipalIdsBeforeRestart)).toHaveLength(2)
+    expect(collaboratorPrincipalIdsBeforeRestart).toContain(collaboratorPrincipalBeforeSettings)
+    expect(collaboratorPrincipalIdsBeforeRestart).not.toContain(ownerPrincipalBeforeRestart)
 
     const ownerMembers = await scaffold.ctx.bots.listShareMembers({ botId: firstBot.id })
-    const collaborator = ownerMembers.members.find(member => member.role === 'collaborator')
+    const collaborator = ownerMembers.members.find(member => member.principalId === collaboratorPrincipalBeforeSettings)
     if (collaborator === undefined) throw new Error('collaborator membership did not appear in the owner roster')
     const collaboratorPrincipalId = collaborator.principalId
     await scaffold.ctx.bots.revokeShareMember({ botId: firstBot.id, principalId: collaboratorPrincipalId })
@@ -682,6 +1040,11 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
     // Close the first Host while retaining its isolated workspace, credentials,
     // storage, and Session roots. A new assembled Host and browser must recover
     // the same owner instead of minting a second principal.
+    if (secondCollaboratorContext !== undefined) {
+      await secondCollaboratorContext.close()
+      secondCollaboratorContext = undefined
+      secondCollaboratorPage = undefined
+    }
     await collaboratorContext.close()
     collaboratorContext = undefined
     await page.close()
@@ -722,9 +1085,15 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
       timeout: 30_000,
     }).toBe(1)
     await restartedDialog.getByRole('button', { name: new RegExp(`^${RENAMED_SHARED_GROUP_NAME}`) }).click()
-    await expect.poll(() => restartedDialog.locator('p').filter({ hasText: '@Scout Please check the release.' }).count(), {
+    await expect.poll(() => restartedDialog.locator('article[id^="yharness-group-message-"], article[id^="yharness-shared-group-message-"], [data-message-id]')
+      .filter({ hasText: '@Scout Please check the release.' }).count(), {
       timeout: 30_000,
     }).toBe(1)
+    const restartedGroupSection = restartedDialog.locator(`section[aria-label="${RENAMED_SHARED_GROUP_NAME}"]`)
+    await expect.poll(
+      () => restartedGroupSection.getByText(PERSISTED_GROUP_REACTION, { exact: true }).count(),
+      { timeout: 30_000 },
+    ).toBe(1)
     expect(tripwire.pageErrors).toEqual([])
     expect(tripwire.warnings).toEqual([])
   }, 180_000)

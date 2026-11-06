@@ -145,6 +145,50 @@ describe('shared Bot client capabilities', () => {
     await expect(client.decideApproval('shared-app-approval-one', 'allow')).resolves.toEqual({ ok: true, value: { resolved: true, accepted: true } })
   })
 
+  it('lists exact remembered approvals and sends always-allow and revoke decisions', async () => {
+    const rpc: ClientConnectionRpc = {
+      call: vi.fn(async (_channel, endpoint, payload) => {
+        if (endpoint === 'bots/share/list-approvals') {
+          expect(payload).toEqual({ botId: 'bot-chief' })
+          return {
+            ok: true as const,
+            value: {
+              approvals: [],
+              grants: [{
+                id: 'shared-app-approval-grant-one', botId: 'bot-chief', appId: 'GitHub',
+                toolName: 'issues.create', createdAt: 3_000,
+              }],
+            },
+          }
+        }
+        if (endpoint === 'bots/share/decide-approval') {
+          expect(payload).toEqual({ id: 'shared-app-approval-one', decision: 'always-allow' })
+          return { ok: true as const, value: { resolved: true } }
+        }
+        expect(endpoint).toBe('bots/share/revoke-approval-grant')
+        expect(payload).toEqual({ id: 'shared-app-approval-grant-one' })
+        return { ok: true as const, value: { revoked: true, id: 'shared-app-approval-grant-one' } }
+      }),
+    }
+    const client = createSharedBotsClient(rpc)
+    if (client.listApprovals === undefined || client.decideApproval === undefined || client.revokeApprovalGrant === undefined) {
+      throw new Error('remembered approval transport unavailable')
+    }
+
+    await expect(client.listApprovals({ botId: 'bot-chief' })).resolves.toEqual({
+      ok: true,
+      value: {
+        approvals: [],
+        grants: [{ id: 'shared-app-approval-grant-one', botId: 'bot-chief', appId: 'GitHub', toolName: 'issues.create', createdAt: 3_000 }],
+      },
+    })
+    await expect(client.decideApproval('shared-app-approval-one', 'always-allow')).resolves.toEqual({ ok: true, value: { resolved: true } })
+    await expect(client.revokeApprovalGrant('shared-app-approval-grant-one')).resolves.toEqual({
+      ok: true,
+      value: { revoked: true, id: 'shared-app-approval-grant-one' },
+    })
+  })
+
   it('preserves backend argument preview safety indicators', async () => {
     const rpc: ClientConnectionRpc = {
       call: vi.fn(async () => ({ ok: true as const, value: { approvals: [{

@@ -25,6 +25,7 @@ import type {
   BotGroupUpdateValue,
   BotGroupView,
   BotGroupMessageView,
+  BotGroupMessageReplyView,
   BotGroupMessageSenderView,
   BotGroupSettingsMember,
   BotGroupSettingsValue,
@@ -33,6 +34,7 @@ import type {
   BotGroupId as BotGroupIdType,
   BotGroupMessageId as BotGroupMessageIdType,
 } from '@yharness/bots/client'
+import { GROUP_REACTION_OPTIONS } from './group-interactions.ts'
 import type { ClientConnectionRpc, ConnectionRpcFailure } from '@yharness/client-connection/client'
 import { randomUUID } from '@yharness/util-crypto'
 import {
@@ -42,7 +44,12 @@ import {
   parseBotAttachmentGrantValue,
   type BotAttachmentFetch,
 } from './attachment-client.ts'
-import type { BotGroupAttachmentDraft } from './types.ts'
+import type {
+  BotGroupAttachmentDraft,
+  BotGroupReactionRequest,
+  BotGroupReactionSummary,
+  BotGroupReactionValue,
+} from './types.ts'
 
 type BotImageMediaType = Extract<BotInputAttachmentView, { readonly type: 'image' }>['mediaType']
 
@@ -186,9 +193,20 @@ export interface SharedBotRevokeValue {
 /** Group catalog visible to the authenticated collaborator. */
 export type SharedBotGroupListValue = BotGroupListValue
 /** Group transcript visible to the authenticated collaborator. */
-export type SharedBotGroupInspectValue = BotGroupInspectValue
+export type SharedBotGroupMessageView = BotGroupMessageView & {
+  /** Parent message selected when the row was written as a reply. */
+  readonly replyToMessageId?: BotGroupMessageIdType
+  /** Aggregated emoji reactions visible to the current viewer. */
+  readonly reactions: readonly BotGroupReactionSummary[]
+}
+/** Shared-group inspection result with reply context and aggregate reactions. */
+export type SharedBotGroupInspectValue = Omit<BotGroupInspectValue, 'messages'> & {
+  readonly messages: readonly SharedBotGroupMessageView[]
+}
 /** Group message delivery result. */
 export type SharedBotGroupSendValue = BotGroupSendValue
+/** Shared-group reaction mutation response. */
+export type SharedBotGroupReactionValue = BotGroupReactionValue
 
 /** One-time invite for an explicit shared-group ACL member. */
 export interface SharedBotGroupInviteValue {
@@ -263,6 +281,23 @@ export interface SharedBotApprovalRequest {
 /** Pending connected-app approvals visible to the authenticated collaborator. */
 export interface SharedBotApprovalListValue {
   readonly approvals: readonly SharedBotApprovalRequest[]
+  readonly grants?: readonly SharedBotApprovalGrant[]
+}
+
+/** One remembered connected-app approval visible to its owning collaborator. */
+export interface SharedBotApprovalGrant {
+  readonly id: string
+  readonly botId: string
+  readonly groupId?: string
+  readonly appId: string
+  readonly toolName: string
+  readonly createdAt: number
+}
+
+/** Result after a remembered approval has been revoked. */
+export interface SharedBotApprovalGrantRevokeValue {
+  readonly revoked: true
+  readonly id: string
 }
 
 /** Result after a pending connected-app approval has been decided. */
@@ -326,10 +361,14 @@ export interface SharedBotsClient {
   /** Read a shared group transcript without private Session events. */
   readonly inspectGroup?: (groupId: string) => Promise<SharedBotClientResult<SharedBotGroupInspectValue>>
   /** Send an idempotent shared group message attributed by the server. */
-  readonly sendGroupMessage?: (request: BotGroupSendRemoteRequest) => Promise<SharedBotClientResult<SharedBotGroupSendValue>>
+  readonly sendGroupMessage?: (
+    request: BotGroupSendRemoteRequest & { readonly replyToMessageId?: string },
+  ) => Promise<SharedBotClientResult<SharedBotGroupSendValue>>
+  /** Replace the current viewer's reaction on one shared-group message. */
+  readonly reactGroupMessage?: (request: BotGroupReactionRequest) => Promise<SharedBotClientResult<SharedBotGroupReactionValue>>
   /** Optional attachment-aware group transport supplied by a Host with attachment admission. */
   readonly sendGroupMessageWithAttachments?: (
-    request: BotGroupSendRemoteRequest & { readonly attachments: readonly BotGroupAttachmentDraft[] },
+    request: BotGroupSendRemoteRequest & { readonly attachments: readonly BotGroupAttachmentDraft[]; readonly replyToMessageId?: string },
   ) => Promise<SharedBotClientResult<SharedBotGroupSendValue>>
   /** Create one explicit ACL invite for a shared group. */
   readonly createGroupInvite?: (groupId: string) => Promise<SharedBotClientResult<SharedBotGroupInviteValue>>
@@ -343,8 +382,10 @@ export interface SharedBotsClient {
   readonly listApprovals?: (
     scope?: { readonly botId?: string; readonly groupId?: string },
   ) => Promise<SharedBotClientResult<SharedBotApprovalListValue>>
-  /** Resolve one pending connected-app approval exactly once. */
-  readonly decideApproval?: (id: string, decision: 'allow' | 'reject') => Promise<SharedBotClientResult<SharedBotApprovalDecisionValue>>
+  /** Resolve one pending connected-app approval once or remember the exact tool scope. */
+  readonly decideApproval?: (id: string, decision: 'allow' | 'always-allow' | 'reject') => Promise<SharedBotClientResult<SharedBotApprovalDecisionValue>>
+  /** Revoke one remembered connected-app approval. */
+  readonly revokeApprovalGrant?: (id: string) => Promise<SharedBotClientResult<SharedBotApprovalGrantRevokeValue>>
 }
 
 /**
@@ -462,7 +503,7 @@ export function createSharedBotsClient(rpc: ClientConnectionRpc, options: Shared
     return result
   })
   const sendGroupMessageWithAttachments = async (
-    request: BotGroupSendRemoteRequest & { readonly attachments: readonly BotGroupAttachmentDraft[] },
+    request: BotGroupSendRemoteRequest & { readonly attachments: readonly BotGroupAttachmentDraft[]; readonly replyToMessageId?: string },
   ): Promise<SharedBotClientResult<SharedBotGroupSendValue>> => {
     if (request.attachments.length === 0 || request.messageId === undefined) {
       return { ok: false, error: { code: 'gateway/bad-request', message: 'attachments require an explicit message id', details: {} } }
@@ -479,6 +520,7 @@ export function createSharedBotsClient(rpc: ClientConnectionRpc, options: Shared
         text: request.text,
         messageId: request.messageId,
         ...(request.targetBotIds === undefined ? {} : { targetBotIds: request.targetBotIds }),
+        ...(request.replyToMessageId === undefined ? {} : { replyToMessageId: request.replyToMessageId }),
       }, parseGroupSend)
     }
     try {
@@ -503,6 +545,7 @@ export function createSharedBotsClient(rpc: ClientConnectionRpc, options: Shared
         messageId: request.messageId,
         ...(request.targetBotIds === undefined ? {} : { targetBotIds: request.targetBotIds }),
         attachmentGrants: grants,
+        ...(request.replyToMessageId === undefined ? {} : { replyToMessageId: request.replyToMessageId }),
       }, parseGroupSend)
     } catch (error: unknown) {
       return {
@@ -590,12 +633,14 @@ export function createSharedBotsClient(rpc: ClientConnectionRpc, options: Shared
     inspectGroup: groupId => call('bots/share/inspect-group', { groupId }, parseGroupInspect),
     sendGroupMessage: request => call('bots/share/send-group-message', request, parseGroupSend),
     sendGroupMessageWithAttachments,
+    reactGroupMessage: request => call('bots/share/react-group-message', request, parseGroupReaction),
     createGroupInvite: groupId => call('bots/share/manage-group-members', { groupId, action: 'create-invite' }, parseGroupInvite),
     revokeGroupMember: (groupId, principalId) => call('bots/share/manage-group-members', { groupId, action: 'revoke', principalId }, parseGroupRevoke),
     readGroupSettings: groupId => call('bots/share/group-settings', { groupId, action: 'read' }, parseGroupSettings),
     renameGroup: request => call('bots/share/group-settings', { ...request, action: 'rename' }, parseGroupSettings),
     listApprovals: scope => call('bots/share/list-approvals', scope ?? {}, parseApprovalList),
     decideApproval: (id, decision) => call('bots/share/decide-approval', { id, decision }, parseApprovalDecision),
+    revokeApprovalGrant: id => call('bots/share/revoke-approval-grant', { id }, parseApprovalGrantRevoke),
   }
 }
 
@@ -741,10 +786,10 @@ function parseGroupInspect(value: unknown): SharedBotGroupInspectValue | undefin
   const deliveries = deliveryValue === undefined ? undefined : deliveryValue.map(parseGroupDeliveryStatus)
   if (deliveries?.some(delivery => delivery === undefined)) return undefined
   return deliveries === undefined
-    ? { group, messages: messages as readonly BotGroupMessageView[] }
+    ? { group, messages: messages as readonly SharedBotGroupMessageView[] }
     : {
       group,
-      messages: messages as readonly BotGroupMessageView[],
+      messages: messages as readonly SharedBotGroupMessageView[],
       deliveries: deliveries as readonly BotGroupDeliveryStatusView[],
     }
 }
@@ -761,6 +806,19 @@ function parseGroupSend(value: unknown): SharedBotGroupSendValue | undefined {
     status: value.status as SharedBotGroupSendValue['status'],
     deliveries: deliveries as readonly BotGroupDeliveryView[],
   }
+}
+
+function parseGroupReaction(value: unknown): SharedBotGroupReactionValue | undefined {
+  if (!isRecord(value) || typeof value.messageId !== 'string'
+    || !/^bot-group-message-[A-Za-z0-9][A-Za-z0-9-]*$/.test(value.messageId)
+    || !Array.isArray(value.reactions)) return undefined
+  const reactions = value.reactions.map(parseReactionSummary)
+  return reactions.some(reaction => reaction === undefined)
+    ? undefined
+    : {
+      messageId: brandString<BotGroupMessageIdType>(value.messageId),
+      reactions: reactions as readonly BotGroupReactionSummary[],
+    }
 }
 
 function parseGroupInvite(value: unknown): SharedBotGroupInviteValue | undefined {
@@ -798,11 +856,40 @@ function parseGroupSettingsMember(value: unknown): BotGroupSettingsMember | unde
 }
 
 function parseApprovalList(value: unknown): SharedBotApprovalListValue | undefined {
-  if (!isRecord(value) || !Array.isArray(value.approvals)) return undefined
+  if (!isRecord(value) || !Array.isArray(value.approvals)
+    || (value.grants !== undefined && !Array.isArray(value.grants))) return undefined
   const approvals = value.approvals.map(parseApprovalRequest)
-  return approvals.some(approval => approval === undefined)
-    ? undefined
-    : { approvals: approvals as readonly SharedBotApprovalRequest[] }
+  const grants = value.grants?.map(parseApprovalGrant)
+  if (approvals.some(approval => approval === undefined) || grants?.some(grant => grant === undefined)) return undefined
+  return {
+    approvals: approvals as readonly SharedBotApprovalRequest[],
+    ...(grants === undefined ? {} : { grants: grants as readonly SharedBotApprovalGrant[] }),
+  }
+}
+
+function parseApprovalGrant(value: unknown): SharedBotApprovalGrant | undefined {
+  if (!isRecord(value)
+    || !boundedString(value.id, 256)
+    || !/^shared-app-approval-grant-[A-Za-z0-9][A-Za-z0-9-]*$/.test(value.id)
+    || typeof value.botId !== 'string' || !/^bot-[A-Za-z0-9][A-Za-z0-9-]*$/.test(value.botId)
+    || typeof value.appId !== 'string'
+    || !boundedString(value.toolName, 4_096)
+    || !isSafeInteger(value.createdAt)) return undefined
+  if (value.groupId !== undefined && (typeof value.groupId !== 'string' || !/^bot-group-[A-Za-z0-9][A-Za-z0-9-]*$/.test(value.groupId))) return undefined
+  return {
+    id: value.id,
+    botId: value.botId,
+    ...(value.groupId === undefined ? {} : { groupId: value.groupId }),
+    appId: value.appId,
+    toolName: value.toolName,
+    createdAt: value.createdAt,
+  }
+}
+
+function parseApprovalGrantRevoke(value: unknown): SharedBotApprovalGrantRevokeValue | undefined {
+  if (!isRecord(value) || value.revoked !== true || !boundedString(value.id, 256)
+    || !/^shared-app-approval-grant-[A-Za-z0-9][A-Za-z0-9-]*$/.test(value.id)) return undefined
+  return { revoked: true, id: value.id }
 }
 
 function parseApprovalRequest(value: unknown): SharedBotApprovalRequest | undefined {
@@ -922,7 +1009,7 @@ function parseGroupMember(value: unknown): BotGroupMemberView | undefined {
   return profile === undefined ? undefined : profile
 }
 
-function parseGroupMessage(value: unknown): BotGroupMessageView | undefined {
+function parseGroupMessage(value: unknown): SharedBotGroupMessageView | undefined {
   if (!isRecord(value) || typeof value.id !== 'string'
     || !/^bot-group-message-[A-Za-z0-9][A-Za-z0-9-]*$/.test(value.id)
     || typeof value.groupId !== 'string' || !/^bot-group-[A-Za-z0-9][A-Za-z0-9-]*$/.test(value.groupId)
@@ -940,6 +1027,18 @@ function parseGroupMessage(value: unknown): BotGroupMessageView | undefined {
   if (attachmentValue !== undefined && !Array.isArray(attachmentValue)) return undefined
   const attachments = attachmentValue === undefined ? undefined : attachmentValue.map(parseAttachmentView)
   if (attachments?.some(attachment => attachment === undefined)) return undefined
+  const replyToMessageId = value.replyToMessageId
+  if (replyToMessageId !== undefined && (typeof replyToMessageId !== 'string'
+    || !/^bot-group-message-[A-Za-z0-9][A-Za-z0-9-]*$/.test(replyToMessageId)
+    || replyToMessageId === value.id)) return undefined
+  const replyToValue = value.replyTo
+  if (replyToValue !== undefined && !isRecord(replyToValue)) return undefined
+  const replyTo = replyToValue === undefined ? undefined : parseGroupReply(replyToValue)
+  if (replyToValue !== undefined && replyTo === undefined) return undefined
+  const reactionValue = value.reactions
+  if (reactionValue !== undefined && !Array.isArray(reactionValue)) return undefined
+  const reactions = reactionValue === undefined ? undefined : reactionValue.map(parseReactionSummary)
+  if (reactions?.some(reaction => reaction === undefined)) return undefined
   return {
     id: brandString<BotGroupMessageIdType>(value.id),
     groupId: brandString<BotGroupIdType>(value.groupId),
@@ -948,6 +1047,32 @@ function parseGroupMessage(value: unknown): BotGroupMessageView | undefined {
     createdAt: value.createdAt,
     ...(targetBotIds === undefined ? {} : { targetBotIds: targetBotIds as readonly BotIdType[] }),
     ...(attachments === undefined ? {} : { attachments: attachments as readonly BotInputAttachmentView[] }),
+    ...(replyToMessageId === undefined ? {} : { replyToMessageId: brandString<BotGroupMessageIdType>(replyToMessageId) }),
+    ...(replyTo === undefined ? {} : { replyTo }),
+    reactions: reactions === undefined ? [] : reactions as readonly BotGroupReactionSummary[],
+  }
+}
+
+function parseGroupReply(value: Record<string, unknown>): BotGroupMessageReplyView | undefined {
+  if (typeof value.messageId !== 'string' || !/^bot-group-message-[A-Za-z0-9][A-Za-z0-9-]*$/.test(value.messageId)
+    || typeof value.text !== 'string' || value.text.length === 0 || value.text.length > 480 || !isRecord(value.sender)) return undefined
+  const sender = parseGroupMessageSender(value.sender)
+  return sender === undefined ? undefined : {
+    messageId: brandString<BotGroupMessageIdType>(value.messageId),
+    sender,
+    text: value.text,
+  }
+}
+
+function parseReactionSummary(value: unknown): BotGroupReactionSummary | undefined {
+  if (!isRecord(value) || typeof value.emoji !== 'string' || value.emoji.length === 0 || value.emoji.length > 16
+    || typeof value.count !== 'number' || !Number.isSafeInteger(value.count) || value.count < 1 || value.count > 100_000
+    || !GROUP_REACTION_OPTIONS.includes(value.emoji as BotGroupReactionSummary['emoji'])
+    || (value.viewerReacted !== undefined && typeof value.viewerReacted !== 'boolean')) return undefined
+  return {
+    emoji: value.emoji as BotGroupReactionSummary['emoji'],
+    count: value.count,
+    ...(value.viewerReacted === undefined ? {} : { viewerReacted: value.viewerReacted }),
   }
 }
 
