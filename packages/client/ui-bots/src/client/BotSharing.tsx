@@ -60,7 +60,12 @@ import type {
 } from './pending-group-queue.ts'
 import type { BotGroupAttachmentDraft, BotSummary } from './types.ts'
 import { broadcastSharedAuthChanged } from './shared-client.ts'
-import type { SharedBotAuthChange, SharedBotGroupInviteValue, SharedBotsClient } from './shared-client.ts'
+import type {
+  SharedBotApprovalRequest,
+  SharedBotAuthChange,
+  SharedBotGroupInviteValue,
+  SharedBotsClient,
+} from './shared-client.ts'
 
 type Translate = PropsLocale<'bots'>['t']
 
@@ -84,6 +89,24 @@ function sharedGroupCreationKey(actionId: string, name: string, botIds: readonly
 
 function sharedGroupMessageKey(actionId: string, groupId: string, text: string): string {
   return `${actionId}\u0000${groupId}\u0000${text}`
+}
+
+function approvalArgumentsNotice(approval: SharedBotApprovalRequest, t: Translate): string {
+  const hasArguments = approval.arguments !== undefined
+  const redacted = approval.argumentsRedacted === true
+  const truncated = approval.argumentsTruncated === true
+  if (redacted && truncated) {
+    return t(hasArguments
+      ? 'sharedApprovalArgumentsRedactedAndTruncated'
+      : 'sharedApprovalArgumentsRedactedAndTruncatedUnavailable')
+  }
+  if (redacted) {
+    return t(hasArguments ? 'sharedApprovalArgumentsRedacted' : 'sharedApprovalArgumentsRedactedUnavailable')
+  }
+  if (truncated) {
+    return t(hasArguments ? 'sharedApprovalArgumentsTruncated' : 'sharedApprovalArgumentsTruncatedUnavailable')
+  }
+  return t(hasArguments ? 'sharedApprovalArgumentsAvailable' : 'sharedApprovalArgumentsUnavailable')
 }
 
 function shareRoleLabel(role: BotShareRole, t: Translate): string {
@@ -191,6 +214,223 @@ function SharedAppsCard({ botId, list, set, t }: {
           </div>
         })}
       </div>}
+    </section>
+  )
+}
+
+type SharedApprovalScope =
+  | { readonly botId: string; readonly groupId?: never }
+  | { readonly groupId: string; readonly botId?: never }
+
+type SharedApprovalDecision = 'allow' | 'reject'
+
+/** Show connected-app approvals in the private or group conversation currently open. */
+function SharedApprovalsCard({ client, scope, botName, groupName, resolveBotName, t }: {
+  readonly client: SharedBotsClient
+  readonly scope: SharedApprovalScope
+  readonly botName?: string
+  readonly groupName?: string
+  readonly resolveBotName?: (botId: string) => string | undefined
+  readonly t: Translate
+}) {
+  const listApprovals = client.listApprovals
+  const decideApproval = client.decideApproval
+  const [approvals, setApprovals] = useState<readonly SharedBotApprovalRequest[] | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [working, setWorking] = useState<{ readonly id: string; readonly decision: SharedApprovalDecision } | null>(null)
+  const [reload, setReload] = useState(0)
+  const generation = useRef(0)
+  const requestGeneration = useRef(0)
+  const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>()
+  const workingRef = useRef<{ readonly id: string; readonly decision: SharedApprovalDecision } | null>(null)
+
+  useEffect(() => {
+    if (listApprovals === undefined) return
+    const current = ++generation.current
+    const currentRequest = ++requestGeneration.current
+    const requestAuthGeneration = client.authGeneration
+    const requestScope = client.retryScope
+
+    const load = async (): Promise<void> => {
+      if (generation.current !== current) return
+      try {
+        const result = await listApprovals(scope)
+        if (generation.current !== current || requestGeneration.current !== currentRequest
+          || client.authGeneration !== requestAuthGeneration || client.retryScope !== requestScope) return
+        if (result.ok) {
+          const visible = result.value.approvals.filter(approval => (
+            'groupId' in scope
+              ? approval.groupId === scope.groupId
+              : approval.botId === scope.botId && approval.groupId === undefined
+          ))
+          setApprovals(visible)
+          setError(null)
+        } else {
+          setError(t('sharedApprovalsLoadFailed'))
+        }
+      } catch {
+        if (generation.current === current && requestGeneration.current === currentRequest
+          && client.authGeneration === requestAuthGeneration && client.retryScope === requestScope) {
+          setError(t('sharedApprovalsLoadFailed'))
+        }
+      } finally {
+        if (generation.current === current && requestGeneration.current === currentRequest
+          && client.authGeneration === requestAuthGeneration && client.retryScope === requestScope) {
+          setLoading(false)
+          timerRef.current = setTimeout(() => {
+            timerRef.current = undefined
+            void load()
+          }, 5_000)
+        }
+      }
+    }
+
+    setLoading(true)
+    setError(null)
+    setApprovals(null)
+    workingRef.current = null
+    setWorking(null)
+    void load()
+    return () => {
+      generation.current += 1
+      requestGeneration.current += 1
+      if (timerRef.current !== undefined) {
+        clearTimeout(timerRef.current)
+        timerRef.current = undefined
+      }
+    }
+  }, [client, listApprovals, reload, scope.botId, scope.groupId, t, client.authGeneration, client.retryScope])
+
+  const decide = async (approval: SharedBotApprovalRequest, decision: SharedApprovalDecision): Promise<void> => {
+    if (decideApproval === undefined || workingRef.current !== null) return
+    const current = generation.current
+    const requestAuthGeneration = client.authGeneration
+    const requestScope = client.retryScope
+    const pending = { id: approval.id, decision } as const
+    workingRef.current = pending
+    setWorking(pending)
+    setError(null)
+    try {
+      const result = await decideApproval(approval.id, decision)
+      if (generation.current !== current || client.authGeneration !== requestAuthGeneration || client.retryScope !== requestScope) return
+      if (result.ok && result.value.accepted !== false) {
+        requestGeneration.current += 1
+        if (timerRef.current !== undefined) {
+          clearTimeout(timerRef.current)
+          timerRef.current = undefined
+        }
+        setApprovals(value => value?.filter(item => item.id !== approval.id) ?? value)
+        setReload(value => value + 1)
+      }
+      else if (!result.ok) setError(t('sharedApprovalDecisionFailed'))
+      else setError(t('sharedApprovalDecisionFailed'))
+    } catch {
+      if (generation.current === current && client.authGeneration === requestAuthGeneration && client.retryScope === requestScope) {
+        setError(t('sharedApprovalDecisionFailed'))
+      }
+    } finally {
+      if (generation.current === current && client.authGeneration === requestAuthGeneration && client.retryScope === requestScope) {
+        workingRef.current = null
+        setWorking(null)
+      }
+    }
+  }
+
+  if (listApprovals === undefined || decideApproval === undefined) return null
+  if (!loading && error === null && approvals !== null && approvals.length === 0) return null
+
+  const targetLabel = (approval: SharedBotApprovalRequest): string => {
+    if (groupName !== undefined) {
+      return t('sharedApprovalTarget', {
+        bot: resolveBotName?.(approval.botId) ?? approval.botId,
+        group: groupName,
+      })
+    }
+    return t('sharedApprovalBotTarget', { bot: botName ?? approval.botId })
+  }
+
+  const appLabel = (approval: SharedBotApprovalRequest): string => (
+    approval.appId === '' ? t('connectedAppFallbackName', { id: approval.appId }) : approval.appId
+  )
+
+  const argumentText = (approval: SharedBotApprovalRequest): string | undefined => {
+    if (approval.arguments === undefined) return undefined
+    if (typeof approval.arguments === 'string') return approval.arguments
+    return JSON.stringify(approval.arguments, null, 2)
+  }
+
+  return (
+    <section className={css.sharedMemoryCard} aria-label={t('sharedApprovalsTitle')} aria-busy={loading || working !== null}>
+      <div className={css.sharedMemoryHeader}>
+        <span className={css.sharedMemoryIcon} aria-hidden="true"><IconShieldOutlineRegular size={16} /></span>
+        <div>
+          <div className={css.shareSectionHeading}>{t('sharedApprovalsTitle')}</div>
+          <p className={css.sharedMemoryDescription}>{t('sharedApprovalsDescription')}</p>
+        </div>
+      </div>
+      {error !== null && (
+        <div className={css.dialogNotice} role="alert">
+          <span>{error}</span>
+          <Button variant="ghost" size="sm" onClick={() => { setReload(value => value + 1) }}>{t('sharedApprovalRetry')}</Button>
+        </div>
+      )}
+      {loading && approvals === null && <div className={css.connectedAppsLoading} role="status">{t('sharedApprovalsLoading')}</div>}
+      {!loading && approvals !== null && approvals.length === 0 && <div className={css.connectedAppsEmpty}>{t('sharedApprovalsEmpty')}</div>}
+      {approvals !== null && approvals.length > 0 && (
+        <div className={css.sharedApprovalsList} role="list" aria-label={t('sharedApprovalsTitle')}>
+          {approvals.map((approval) => {
+            const app = appLabel(approval)
+            const details = argumentText(approval)
+            const pendingDecision = working?.id === approval.id ? working.decision : undefined
+            return (
+              <div className={css.sharedApprovalRow} role="listitem" key={approval.id}>
+                <div className={css.sharedApprovalHeader}>
+                  <span className={css.connectedAppIcon} aria-hidden="true">
+                    {connectedAppGlyph({ appId: approval.appId, size: 16 }) ?? app.slice(0, 2)}
+                  </span>
+                  <div className={css.sharedApprovalTitle}>
+                    <strong>{app}</strong>
+                    <span>{approval.toolName}</span>
+                  </div>
+                </div>
+                <div className={css.sharedApprovalTarget}>{targetLabel(approval)}</div>
+                <div className={css.sharedApprovalAction}>{t('sharedApprovalAction', { action: approval.action })}</div>
+                <p className={css.sharedApprovalReason}>{approval.reason ?? t('sharedApprovalNoReason')}</p>
+                <div className={css.sharedApprovalSafePreview}>
+                  {approvalArgumentsNotice(approval, t)}
+                </div>
+                {details !== undefined && (
+                  <details className={css.sharedApprovalDetails}>
+                    <summary>{t('sharedApprovalDetails')}</summary>
+                    <pre className={css.sharedApprovalArguments} aria-label={t('sharedApprovalArguments')}>{details}</pre>
+                  </details>
+                )}
+                <div className={css.sharedApprovalActions}>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={working !== null}
+                    aria-label={t('sharedApprovalDeny', { app, tool: approval.toolName })}
+                    onClick={() => { void decide(approval, 'reject') }}
+                  >
+                    {pendingDecision === 'reject' ? t('sharedApprovalDenying') : t('sharedApprovalDenyAction')}
+                  </Button>
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    disabled={working !== null}
+                    aria-label={t('sharedApprovalApprove', { app, tool: approval.toolName })}
+                    onClick={() => { void decide(approval, 'allow') }}
+                  >
+                    {pendingDecision === 'allow' ? t('sharedApprovalApproving') : t('sharedApprovalApproveAction')}
+                  </Button>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
     </section>
   )
 }
@@ -2269,6 +2509,14 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
                   <BotAvatar name={selected.name} identity={selected.identity} accent={selected.accent} />
                   <div><strong>{selected.name}</strong><small>{selected.description ?? shareRoleLabel(selected.role, t)}</small></div>
                 </header>
+                {client.listApprovals !== undefined && client.decideApproval !== undefined && (
+                  <SharedApprovalsCard
+                    client={client}
+                    scope={{ botId: String(selected.id) }}
+                    botName={selected.name}
+                    t={t}
+                  />
+                )}
                 <div className={css.sharedTranscript}>
                   <div className={css.sharedContextLabel}>{t('privateSessionLabel')}</div>
                   {recent.length === 0 && <span className={css.shareEmpty}>{t('sharedTranscriptEmpty')}</span>}
@@ -2432,6 +2680,15 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
                       />
                     </Tooltip>
                   </div>
+                )}
+                {client.listApprovals !== undefined && client.decideApproval !== undefined && (
+                  <SharedApprovalsCard
+                    client={client}
+                    scope={{ groupId: String(selectedGroup.id) }}
+                    groupName={selectedGroup.name}
+                    resolveBotName={botId => selectedGroup.bots.find(bot => String(bot.id) === botId)?.name}
+                    t={t}
+                  />
                 )}
                 <div className={css.sharedTranscript}>
                   <div className={css.sharedContextLabel}>{t('sharedGroupsTitle')}</div>

@@ -467,7 +467,7 @@ export type Config = LocalConfig
 ## `@yharness/bots`
 
 - `inject`: `agents` · `storageDomain` · `sessionController` · `sessions` · `attachments` · `systemPrompt` · `tools`
-- `source`: [`packages/agents/bots/src/index.ts:501`](../packages/agents/bots/src/index.ts)
+- `source`: [`packages/agents/bots/src/index.ts:511`](../packages/agents/bots/src/index.ts)
 
 ```ts config-catalog
 /** Bot service configuration. */
@@ -492,6 +492,12 @@ export interface BotSharedConfig {
   readonly trustedHosts?: string[]
   /** Maximum interval before a process notices a membership change in storage. */
   readonly membershipPollIntervalMs?: number
+  /** Maximum lifetime of one pending shared connected-app approval. */
+  readonly sharedApprovalTtlMs?: number
+  /** Maximum lease for an active requester before an abandoned approval expires. */
+  readonly sharedApprovalLeaseMs?: number
+  /** Poll interval used while a shared Session waits for its approval mailbox. */
+  readonly sharedApprovalPollIntervalMs?: number
 }
 ```
 <!-- END GENERATED config-catalog:@yharness/bots -->

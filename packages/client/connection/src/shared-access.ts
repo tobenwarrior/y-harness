@@ -436,6 +436,89 @@ export class SharedAccessAuthority implements SharedAccessAuthenticator {
   }
 
   /**
+   * Read selected extensions while holding the credential record lock.
+   * The synchronous reader observes the selected values and the current
+   * authority state after every earlier queued mutation, so an admission
+   * decision cannot race a revocation. The reader's result is returned to the
+   * caller, while `undefined` is always returned to `modifyRecord`; this
+   * method never persists an extension change. Reader and credential failures
+   * propagate, including failures while refreshing state after the read.
+   * @param keys - Distinct durable extension keys to read atomically.
+   * @param reader - Synchronous read or admission callback.
+   * @returns the reader result after the locked read completes.
+   */
+  async readLockedExtensions<T>(
+    keys: readonly string[],
+    reader: (
+      current: Readonly<Record<string, unknown>>,
+      state: SharedAccessStateSnapshot,
+    ) => T,
+  ): Promise<T> {
+    return this.readLockedExtensionsTransaction(keys, reader, false)
+  }
+
+  /**
+   * Read selected extensions for an action that starts from the reader.
+   * Authorization still runs under the credential record lock, but once the
+   * synchronous reader returns, provider and housekeeping failures cannot
+   * turn an already-started external action into a reported rejection.
+   * @param keys - Distinct durable extension keys to read atomically.
+   * @param reader - Synchronous admission callback that may start the action.
+   * @returns the reader result after the locked read completes.
+   */
+  async readLockedExtensionsForActionStart<T>(
+    keys: readonly string[],
+    reader: (
+      current: Readonly<Record<string, unknown>>,
+      state: SharedAccessStateSnapshot,
+    ) => T,
+  ): Promise<T> {
+    return this.readLockedExtensionsTransaction(keys, reader, true)
+  }
+
+  private async readLockedExtensionsTransaction<T>(
+    keys: readonly string[],
+    reader: (
+      current: Readonly<Record<string, unknown>>,
+      state: SharedAccessStateSnapshot,
+    ) => T,
+    preserveResultAfterReader: boolean,
+  ): Promise<T> {
+    this.assertActive()
+    const selectedKeys = validateExtensionKeys(keys)
+    let result: { readonly value: T } | undefined
+    let record: CredentialRecord | undefined
+    try {
+      record = await this.credentials.modifyRecord(SHARED_ACCESS_RECORD_KEY, (current) => {
+        const state = stateFromRecord(current)
+        const selected: Record<string, unknown> = {}
+        for (const key of selectedKeys) {
+          if (Object.prototype.hasOwnProperty.call(state.extensions, key)) {
+            selected[key] = state.extensions[key]
+          }
+        }
+        result = { value: reader(selected, snapshotState(state)) }
+        return Promise.resolve(undefined)
+      })
+    } catch (error) {
+      if (!preserveResultAfterReader || result === undefined) throw error
+      // The reader may have started an external action. Do not report a
+      // later credential-provider failure as if that action was not admitted.
+      void error
+    }
+    if (result === undefined) throw new Error('client-connection: shared-access locked read produced no result')
+    try {
+      this.state = stateFromRecord(record)
+      await this.sweepPeers(this.state)
+    } catch (error) {
+      if (!preserveResultAfterReader) throw error
+      // Refresh is best effort after the synchronous reader has admitted work.
+      void error
+    }
+    return result.value
+  }
+
+  /**
    * Mutate one extension in the same durable record as authority revocation.
    * The callback observes the record while its credential write is exclusive;
    * an extension can therefore reject an actor revoked by a concurrent

@@ -1934,6 +1934,116 @@
   margin-top: 16px;
 }
 
+.sharedApprovalsList {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.sharedApprovalRow {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border: 0.5px solid var(--yh-alias-border-l2);
+  border-radius: var(--yh-radius-md);
+  background: var(--yh-alias-bg-layer-1);
+}
+
+.sharedApprovalHeader {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 9px;
+}
+
+.sharedApprovalTitle {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.sharedApprovalTitle strong {
+  overflow: hidden;
+  color: var(--yh-alias-label-primary);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sharedApprovalTitle span,
+.sharedApprovalTarget,
+.sharedApprovalAction {
+  overflow-wrap: anywhere;
+  color: var(--yh-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.sharedApprovalTarget {
+  color: var(--yh-alias-label-secondary);
+}
+
+.sharedApprovalAction {
+  color: var(--yh-alias-label-primary);
+}
+
+.sharedApprovalReason {
+  margin: 0;
+  color: var(--yh-alias-label-secondary);
+  font-size: 12px;
+  line-height: 17px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.sharedApprovalDetails {
+  color: var(--yh-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.sharedApprovalDetails summary {
+  cursor: pointer;
+  color: var(--yh-alias-label-secondary);
+}
+
+.sharedApprovalSafePreview {
+  margin-top: 5px;
+  color: var(--yh-alias-label-tertiary);
+  font-size: 10px;
+  line-height: 14px;
+}
+
+.sharedApprovalArguments {
+  max-height: 160px;
+  margin: 6px 0 0;
+  padding: 7px 8px;
+  overflow: auto;
+  border-radius: var(--yh-radius-md);
+  background: var(--yh-alias-bg-layer-2);
+  color: var(--yh-alias-label-secondary);
+  font: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.sharedApprovalActions {
+  display: flex;
+  min-width: 0;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+}
+
 .connectedAppRow {
   display: grid;
   grid-template-columns: 32px minmax(0, 1fr) auto;

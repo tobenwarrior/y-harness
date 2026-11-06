@@ -2,6 +2,8 @@
 
 The **agents** subsystem is [`packages/agents`](../../packages/agents/README.md) — durable user-owned Bot records and the Host-side avatar capability used by the Bot workspace. Each Bot keeps one ordinary Session mapping and one semantic visual identity; generated image bytes remain an explicit attachment choice. Package-specific behavior and browser presentation stay with the [Bot roster README](../../packages/agents/bots/README.md), the [avatar-generation README](../../packages/agents/avatar-generation/README.md), and the [Client workspace README](../../packages/client/ui-bots/README.md).
 
+Shared connected-app calls use a separate per-Bot allowlist and the authenticated shared Session identity. When the composed approval policy asks for a decision, the service stores one durable request in the shared authority and pauses the provider call before its body runs; only the initiating collaborator can list or decide that request, and `allow` authorizes that call once. Requests expire after the configured TTL, defaulting to 15 minutes, and membership or app-grant revocation cancels a waiting request or blocks the later body-admission check. Approval previews expose only bounded JSON arguments with sensitive-looking values redacted; oversized or unsafe values may be omitted or marked truncated.
+
 <!-- BEGIN GENERATED cordis-surface (gen-cordis-catalog.ts) — do not edit between markers -->
 
 <a id="cordis-surface"></a>

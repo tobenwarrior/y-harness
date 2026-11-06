@@ -10,7 +10,7 @@ import type { ConnectionIndexRequest, SharedConnectionEnrollmentHandler } from '
 import { AttachmentId, type ImageAttachmentRef, type StoredImageAttachment } from '@yharness/attachment'
 import AgentRegistry, { agentEvents, type Agent } from '@yharness/agent'
 import AgentLoop from '@yharness/agent-loop'
-import { bindScopeParent, createScope, scopeOf } from '@yharness/scope'
+import { bindScopeParent, createScope, scopeOf, scopeTarget } from '@yharness/scope'
 import LlmRuntime, { createAssistantMessage, createSystemMessage, createUserMessage, freezeMessage, markAgentLoopRequest, MessageId, ToolCallId } from '@yharness/llm'
 import SessionStore, { Session, SessionId, SessionSeq } from '@yharness/session'
 import JsonlSessionPersistence from '@yharness/session-persistence-jsonl'
@@ -718,6 +718,18 @@ function productionSharedHost(service: BotService): SharedBotHost {
   return method.call(service)
 }
 
+function internalSet<T>(service: BotService, name: string): Set<T> {
+  const value: unknown = Reflect.get(service, name)
+  if (!(value instanceof Set)) throw new Error(`BotService internal set ${name} is unavailable`)
+  return value as Set<T>
+}
+
+function internalMap<K, V>(service: BotService, name: string): Map<K, V> {
+  const value: unknown = Reflect.get(service, name)
+  if (!(value instanceof Map)) throw new Error(`BotService internal map ${name} is unavailable`)
+  return value as Map<K, V>
+}
+
 async function bindSharedSession(
   authority: SharedAccessAuthority,
   botId: BotId,
@@ -1025,6 +1037,41 @@ describe('durable Bot roster', () => {
       release.resolve(true)
       await expect(fence).resolves.toMatchObject({ valid: true })
       await expect(secondHost.deliverSharedGroup?.(request)).resolves.toBe('accepted')
+    } finally {
+      release.resolve(true)
+      await fence?.catch(() => undefined)
+      await close(second.ctx)
+      await close(first.ctx)
+    }
+  })
+
+  it('allows shared connected-app reads while another Host holds the roster fence', async () => {
+    const pool = new MemoryMediaPool()
+    const records = new Map<CredentialKey, CredentialRecord>()
+    const seed = await harness(pool, undefined, undefined, [], new Map(), records)
+    const created = await seed.service.create({ name: 'Shared app fence read', cwd: '/tmp' })
+    await close(seed.ctx)
+
+    const first = await harness(pool, undefined, undefined, [], new Map(), records)
+    const second = await harness(pool, undefined, undefined, [], new Map(), records)
+    const started = Promise.withResolvers<true>()
+    const release = Promise.withResolvers<true>()
+    let fence: Promise<{ readonly valid: true; readonly value: undefined } | { readonly valid: false }> | undefined
+    try {
+      const firstHost = productionSharedHost(first.service)
+      const secondHost = productionSharedHost(second.service)
+      const bots = (await first.service.list({ includeHidden: true })).bots
+      fence = firstHost.withBotRoster(bots, undefined, async () => {
+        started.resolve(true)
+        await release.promise
+        return undefined
+      })
+      await started.promise
+
+      await expect(secondHost.withBot(created.bot.id, undefined, async bot => bot)).resolves.toMatchObject({
+        found: true,
+        value: { id: created.bot.id, name: 'Shared app fence read' },
+      })
     } finally {
       release.resolve(true)
       await fence?.catch(() => undefined)
@@ -1351,6 +1398,48 @@ describe('durable Bot roster', () => {
       expect(delayedCalls).toBe(0)
     } finally {
       servicePrototype.recoverEventRoutineAdmissions = originalRecovery
+      await close(h.ctx)
+    }
+  })
+
+  it('disposes installed Bot scopes when startup recovery fails after initialization', async () => {
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const created = await seed.service.create({ name: 'Startup scope cleanup', cwd: '/tmp' })
+    const records = seed.records
+    await close(seed.ctx)
+    const h = await harness(
+      pool,
+      undefined,
+      undefined,
+      [String(created.bot.sessionId)],
+      new Map(),
+      records,
+      true,
+      'native',
+      false,
+      { initializeService: false },
+    )
+    const servicePrototype = Object.getPrototypeOf(h.service) as {
+      recoverEventRoutineAdmissions: (this: BotService) => Promise<void>
+      disposePrompt: (this: BotService, agent: Agent) => void
+    }
+    const originalRecovery = servicePrototype.recoverEventRoutineAdmissions
+    const originalDisposePrompt = servicePrototype.disposePrompt
+    const disposedSessionIds: string[] = []
+    servicePrototype.recoverEventRoutineAdmissions = async function () {
+      throw new Error('injected startup recovery failure after scope installation')
+    }
+    servicePrototype.disposePrompt = function (this: BotService, agent: Agent): void {
+      disposedSessionIds.push(String(agent.id))
+      originalDisposePrompt.call(this, agent)
+    }
+    try {
+      await expect(h.service[Service.init]()).rejects.toThrow('injected startup recovery failure after scope installation')
+      expect(disposedSessionIds).toContain(String(created.bot.sessionId))
+    } finally {
+      servicePrototype.recoverEventRoutineAdmissions = originalRecovery
+      servicePrototype.disposePrompt = originalDisposePrompt
       await close(h.ctx)
     }
   })
@@ -2683,6 +2772,112 @@ describe('durable Bot roster', () => {
     }
   })
 
+  it('fails closed before a root approval answerer for an uncorrelated shared request', async () => {
+    const sharedSessionId = SessionId('shared-session-approval-root-guard')
+    const h = await harness(undefined, undefined, undefined, [String(sharedSessionId)])
+    try {
+      const created = await h.service.create({ name: 'Shared approval root guard', cwd: '/tmp' })
+      await productionSharedHost(h.service).createPrivateSession(
+        created.bot,
+        sharedSessionId,
+        'principal-shared-approval-root-guard',
+        new AbortController().signal,
+      )
+      const agent = h.agents[0]
+      if (agent === undefined) throw new Error('shared approval root guard Agent was not created')
+      await h.ctx.serial('agent/created', { agent, source: 'resume' })
+      const rootAnswerer = vi.fn(() => Promise.resolve<'rejected'>('rejected'))
+      h.ctx.on('approval/request', rootAnswerer)
+
+      const outcome = await h.ctx.waterfall(
+        scopeTarget(agent, agent),
+        'approval/request',
+        {
+          agent,
+          toolName: 'mcp__operator__secret',
+          callId: ToolCallId('uncorrelated-shared-approval'),
+        },
+        () => Promise.resolve<'unavailable'>('unavailable'),
+      )
+      expect(outcome).toBe('unavailable')
+      expect(rootAnswerer).not.toHaveBeenCalled()
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('seeds ask policy for a shared Agent without injecting a user message', async () => {
+    const sharedSessionId = SessionId('shared-session-approval-policy')
+    const h = await harness(undefined, undefined, undefined, [String(sharedSessionId)], new Map(), new Map(), true, 'native', false, {
+      beforeService: (ctx) => {
+        ctx.provide('approval', {
+          config: { policy: 'never' },
+          overrideOf: () => undefined,
+        } as never)
+      },
+    })
+    try {
+      const created = await h.service.create({ name: 'Shared approval policy', cwd: '/tmp' })
+      await productionSharedHost(h.service).createPrivateSession(
+        created.bot,
+        sharedSessionId,
+        'principal-shared-approval-policy',
+        new AbortController().signal,
+      )
+      const agent = h.agents[0]
+      if (agent === undefined) throw new Error('shared approval policy Agent was not created')
+      const events = agent.session.snapshotEvents()
+      const policies = events.filter(event => event.type === 'approval/policy')
+      expect(policies.at(-1)).toMatchObject({ data: { policy: 'ask' } })
+      expect(events.some(event => event.type === 'user/message' && event.data.source.kind === 'user-approval')).toBe(false)
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('retains shared Agent identity after durable indexes are withdrawn before an owner answerer', async () => {
+    const sharedSessionId = SessionId('shared-session-approval-retained-agent')
+    const rootAnswerer = vi.fn(() => Promise.resolve<'rejected'>('rejected'))
+    const h = await harness(undefined, undefined, undefined, [String(sharedSessionId)], new Map(), new Map(), true, 'native', false, {
+      beforeService: (ctx) => { ctx.on('approval/request', rootAnswerer) },
+    })
+    try {
+      const created = await h.service.create({ name: 'Retained shared approval', cwd: '/tmp' })
+      const agent = h.agents[0]
+      if (agent === undefined) throw new Error('retained shared approval Agent was not created')
+      await productionSharedHost(h.service).createPrivateSession(
+        created.bot,
+        sharedSessionId,
+        'principal-retained-shared-approval',
+        new AbortController().signal,
+      )
+      await h.ctx.serial('agent/created', { agent, source: 'resume' })
+
+      // Shared mount cleanup withdraws these durable indexes before every live
+      // Agent has necessarily quiesced. The Agent identity itself must remain
+      // fail-closed until its disposal event, even while the owner answerer is
+      // already registered on the root waterfall.
+      internalSet<string>(h.service, 'sharedSessionIds').clear()
+      internalSet<string>(h.service, 'sharedSessionFailures').clear()
+      internalMap<string, BotRecord>(h.service, 'sharedRecordsBySession').clear()
+
+      const outcome = await h.ctx.waterfall(
+        scopeTarget(agent, agent),
+        'approval/request',
+        {
+          agent,
+          toolName: 'mcp__operator__secret',
+          callId: ToolCallId('retained-shared-approval'),
+        },
+        () => Promise.resolve<'unavailable'>('unavailable'),
+      )
+      expect(outcome).toBe('unavailable')
+      expect(rootAnswerer).not.toHaveBeenCalled()
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
   it('requires an owner grant and current private shared binding for MCP app execution', async () => {
     const pool = new MemoryMediaPool()
     const sharedSessionId = SessionId('shared-session-connected-app-private')
@@ -2779,7 +2974,7 @@ describe('durable Bot roster', () => {
           allowed: false,
           expectedRevision: 0,
         })).rejects.toMatchObject({ code: 'gateway/conflict' })
-        const approvalRequested = vi.fn()
+        const approvalRequested = vi.fn(async () => 'unavailable' as const)
         h.ctx.provide('approval', {
           request: approvalRequested,
         } as never)
@@ -2787,14 +2982,13 @@ describe('durable Bot roster', () => {
           kind: 'ask' as const,
           reason: 'Shared connected-app approval race test',
         }))
+        const approvalSignal = new AbortController()
         const approvalRace = h.ctx.tools.execute({
           callId: ToolCallId('shared-app-approval-race'), name: 'mcp__github__list_issues', arguments: {},
-          signal: new AbortController().signal, agent,
+          signal: approvalSignal.signal, agent,
         })
-        await expect(approvalRace).resolves.toMatchObject({
-          isError: true,
-          error: { info: { code: 'SHARED_BOT_APP_APPROVAL_REQUIRED' } },
-        })
+        approvalSignal.abort()
+        await expect(approvalRace).resolves.toMatchObject({ isError: true })
         expect(approvalRequested).not.toHaveBeenCalled()
         await expect(h.service.setSharedAppAccess({
           botId: created.bot.id,
@@ -3519,6 +3713,77 @@ describe('durable Bot roster', () => {
     }
   })
 
+  it('installs a shared scope before a newly created group Agent starts', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const created = await first.service.create({ name: 'Dynamic shared group owner', cwd: '/tmp' })
+    const records = first.records
+    await close(first.ctx)
+
+    let runtimeContext: Context | undefined
+    const create = vi.fn(async (request: { readonly sessionId?: string }) => {
+      if (runtimeContext === undefined || request.sessionId === undefined) {
+        throw new Error('dynamic shared group test context is unavailable')
+      }
+      const sessionId = SessionId(request.sessionId)
+      const handle = await runtimeContext.agents.create({
+        sessionId,
+        meta: { cwd: sharedBotWorkingDirectory(sessionId), agentPreset: SHARED_BOT_AGENT_PRESET },
+        agentOptions: { provider: 'mock', model: 'mock' },
+      })
+      return { sessionId: handle.agent.id }
+    })
+    const h = await harness(
+      pool,
+      create,
+      undefined,
+      [String(created.bot.sessionId)],
+      new Map(),
+      records,
+      true,
+      'native',
+      false,
+      { realAgent: true, realAgentInitialResponse: 'text', beforeService: (ctx) => { runtimeContext = ctx } },
+    )
+    try {
+      const sharedSessionId = SessionId('shared-session-group-created-agent')
+      const groupId = BotGroupId('bot-group-created-agent')
+      const host = productionSharedHost(h.service)
+      if (host.registerSharedGroupSessions === undefined || host.createSharedGroupSession === undefined) {
+        throw new Error('shared group creation host is unavailable')
+      }
+      host.registerSharedGroupSessions([{
+        groupId,
+        botId: created.bot.id,
+        sessionId: sharedSessionId,
+        botName: created.bot.name,
+        createdAt: 1,
+        updatedAt: 1,
+      }])
+
+      await expect(host.createSharedGroupSession(
+        created.bot,
+        sharedSessionId,
+        groupId,
+        new AbortController().signal,
+      )).resolves.toMatchObject({ id: sharedSessionId })
+
+      const agent = h.ctx.agents.get(sharedSessionId)
+      if (agent === undefined) throw new Error('new shared group Agent was not published')
+      expect(renderPrompt(await h.ctx.systemPrompt.assemble({ scope: agent }))).toContain(
+        'Your Bot name is "Dynamic shared group owner".',
+      )
+      agent.followup(createUserMessage({
+        content: [{ type: 'text', text: 'Reply from the newly created group Agent.' }],
+        source: { kind: 'user' },
+      }))
+      await agent.whenIdle()
+      expect(h.adapter?.requests).toHaveLength(1)
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
   it('registers a shared Session before a second Host resumes it after startup', async () => {
     const sharedSessionId = SessionId('shared-session-cross-host-resume')
     const sessionEvents = new Map<string, readonly SessionEvent[]>([[String(sharedSessionId), []]])
@@ -4130,6 +4395,281 @@ describe('durable Bot roster', () => {
       if (!firstClosed) await close(first.ctx)
     }
   })
+
+  it('bounds failed shared mount cleanup when a concurrent scope installation is blocked', async () => {
+    const blockedSessionId = SessionId('shared-session-mount-blocked')
+    const failingSessionId = SessionId('shared-session-mount-failing')
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    let seedClosed = false
+    try {
+      const created = await seed.service.create({ name: 'Blocked mount cleanup owner', cwd: '/tmp' })
+      const sharedDomain = await seed.ctx.storageDomain.open(sharedBotDomain)
+      try {
+        await sharedDomain.table('private_sessions').put(
+          `${encodeURIComponent(String(created.bot.id))}:principal-mount-blocked`,
+          {
+            botId: created.bot.id,
+            principalId: BotPrincipalId('principal-mount-blocked'),
+            sessionId: blockedSessionId,
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        )
+        await sharedDomain.table('private_sessions').put(
+          `${encodeURIComponent(String(created.bot.id))}:principal-mount-failing`,
+          {
+            botId: created.bot.id,
+            principalId: BotPrincipalId('principal-mount-failing'),
+            sessionId: failingSessionId,
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        )
+      } finally {
+        await sharedDomain.close()
+      }
+      const records = seed.records
+      await close(seed.ctx)
+      seedClosed = true
+
+      const installationStarted = Promise.withResolvers<undefined>()
+      const installPromptStarted = Promise.withResolvers<undefined>()
+      const releaseInstallPrompt = Promise.withResolvers<undefined>()
+      const lateInstallPromptCompleted = Promise.withResolvers<undefined>()
+      const lateMaintenanceCompleted = Promise.withResolvers<undefined>()
+      let blockedInstallPromptCalls = 0
+      const h = await harness(
+        pool,
+        undefined,
+        undefined,
+        [String(blockedSessionId), String(failingSessionId)],
+        new Map(),
+        records,
+        true,
+        'native',
+        false,
+        {
+          connection: {
+            sharedRpc: {
+              enroll: vi.fn(() => async () => {}),
+              handle: vi.fn(() => async () => {}),
+            },
+          },
+          initializeService: false,
+          inspectSharedSessions: true,
+          beforeService: (ctx) => {
+            const agents = ctx.get('agents')
+            const blocked = agents?.get(blockedSessionId)
+            const failing = agents?.get(failingSessionId)
+            if (blocked === undefined || failing === undefined) {
+              throw new Error('mount cleanup Agents were not created')
+            }
+            vi.spyOn(blocked, 'runMaintenance').mockImplementation(async (task) => {
+              installationStarted.resolve(undefined)
+              try {
+                await task(new AbortController().signal)
+              } finally {
+                lateMaintenanceCompleted.resolve(undefined)
+              }
+            })
+            vi.spyOn(failing, 'runMaintenance').mockImplementation(async () => {
+              throw new Error('injected concurrent shared scope failure')
+            })
+          },
+        },
+      )
+      const blocked = h.agents.find(agent => agent.id === blockedSessionId)
+      if (blocked === undefined) throw new Error('blocked mount Agent is unavailable after setup')
+      const servicePrototype = Object.getPrototypeOf(h.service) as {
+        installPrompt: (this: BotService, agent: Agent) => Promise<void>
+        disposePrompt: (this: BotService, agent: Agent) => void
+      }
+      const originalInstallPrompt = servicePrototype.installPrompt
+      const originalDisposePrompt = servicePrototype.disposePrompt
+      let disposeCalls = 0
+      servicePrototype.installPrompt = async function (this: BotService, agent: Agent): Promise<void> {
+        if (agent.id === blockedSessionId) {
+          blockedInstallPromptCalls += 1
+          installPromptStarted.resolve(undefined)
+          await releaseInstallPrompt.promise
+        }
+        try {
+          await originalInstallPrompt.call(this, agent)
+          return undefined
+        } finally {
+          if (agent.id === blockedSessionId) lateInstallPromptCompleted.resolve(undefined)
+        }
+      }
+      servicePrototype.disposePrompt = function (this: BotService, agent: Agent): void {
+        disposeCalls += 1
+        originalDisposePrompt.call(this, agent)
+      }
+      try {
+        const initializing = h.service[Service.init]().then(
+          () => 'completed' as const,
+          () => 'rejected' as const,
+        )
+        await installationStarted.promise
+        await installPromptStarted.promise
+        const lateAgentCreated = h.ctx.serial('agent/created', { agent: blocked, source: 'resume' })
+        void lateAgentCreated.catch(() => undefined)
+        await expect(Promise.race([
+          initializing,
+          new Promise<'timed-out'>((resolve) => {
+            setTimeout(() => { resolve('timed-out') }, 2_500).unref()
+          }),
+        ])).resolves.toBe('rejected')
+        const disposeCallsAtRollback = disposeCalls
+        releaseInstallPrompt.resolve(undefined)
+        await lateInstallPromptCompleted.promise
+        await lateMaintenanceCompleted.promise
+        await initializing
+        await expect(lateAgentCreated).resolves.toBeUndefined()
+        expect(blockedInstallPromptCalls).toBe(1)
+        await vi.waitFor(() => { expect(disposeCalls).toBeGreaterThan(disposeCallsAtRollback) }, { timeout: 250 })
+      } finally {
+        releaseInstallPrompt.resolve(undefined)
+        servicePrototype.installPrompt = originalInstallPrompt
+        servicePrototype.disposePrompt = originalDisposePrompt
+        await close(h.ctx)
+      }
+    } finally {
+      if (!seedClosed) await close(seed.ctx)
+    }
+  }, 5_000)
+
+  it('disposes a shared scope that completes after mount begins before a later mount failure', async () => {
+    const blockedSessionId = SessionId('shared-session-mount-late-blocked')
+    const failingSessionId = SessionId('shared-session-mount-late-failing')
+    const lateSessionId = SessionId('shared-session-mount-late-completed')
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    let seedClosed = false
+    try {
+      const created = await seed.service.create({ name: 'Late mount cleanup owner', cwd: '/tmp' })
+      const sharedDomain = await seed.ctx.storageDomain.open(sharedBotDomain)
+      try {
+        await sharedDomain.table('private_sessions').put(
+          `${encodeURIComponent(String(created.bot.id))}:principal-mount-late-blocked`,
+          {
+            botId: created.bot.id,
+            principalId: BotPrincipalId('principal-mount-late-blocked'),
+            sessionId: blockedSessionId,
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        )
+        await sharedDomain.table('private_sessions').put(
+          `${encodeURIComponent(String(created.bot.id))}:principal-mount-late-failing`,
+          {
+            botId: created.bot.id,
+            principalId: BotPrincipalId('principal-mount-late-failing'),
+            sessionId: failingSessionId,
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        )
+      } finally {
+        await sharedDomain.close()
+      }
+      const records = seed.records
+      await close(seed.ctx)
+      seedClosed = true
+
+      const installationStarted = Promise.withResolvers<undefined>()
+      const installPromptStarted = Promise.withResolvers<undefined>()
+      const releaseInstallPrompt = Promise.withResolvers<undefined>()
+      const lateInstallCompleted = Promise.withResolvers<undefined>()
+      const lateMaintenanceCompleted = Promise.withResolvers<undefined>()
+      const h = await harness(
+        pool,
+        undefined,
+        undefined,
+        [String(blockedSessionId), String(failingSessionId)],
+        new Map([[String(lateSessionId), []]]),
+        records,
+        true,
+        'native',
+        true,
+        {
+          connection: {
+            sharedRpc: {
+              enroll: vi.fn(() => async () => {}),
+              handle: vi.fn(() => async () => {}),
+            },
+          },
+          initializeService: false,
+          inspectSharedSessions: true,
+          beforeService: (ctx) => {
+            const agents = ctx.get('agents')
+            const blocked = agents?.get(blockedSessionId)
+            const failing = agents?.get(failingSessionId)
+            if (blocked === undefined || failing === undefined) {
+              throw new Error('late mount cleanup Agents were not created')
+            }
+            vi.spyOn(blocked, 'runMaintenance').mockImplementation(async (task) => {
+              installationStarted.resolve(undefined)
+              try {
+                await task(new AbortController().signal)
+              } finally {
+                lateMaintenanceCompleted.resolve(undefined)
+              }
+            })
+            vi.spyOn(failing, 'runMaintenance').mockImplementation(async () => {
+              await lateInstallCompleted.promise
+              throw new Error('injected late concurrent shared scope failure')
+            })
+          },
+        },
+      )
+      const servicePrototype = Object.getPrototypeOf(h.service) as {
+        installPrompt: (this: BotService, agent: Agent) => Promise<void>
+        disposePrompt: (this: BotService, agent: Agent) => void
+      }
+      const originalInstallPrompt = servicePrototype.installPrompt
+      const originalDisposePrompt = servicePrototype.disposePrompt
+      const disposedSessionIds: string[] = []
+      servicePrototype.installPrompt = async function (this: BotService, agent: Agent): Promise<void> {
+        if (agent.id === blockedSessionId) {
+          installPromptStarted.resolve(undefined)
+          await releaseInstallPrompt.promise
+        }
+        return originalInstallPrompt.call(this, agent)
+      }
+      servicePrototype.disposePrompt = function (this: BotService, agent: Agent): void {
+        disposedSessionIds.push(String(agent.id))
+        originalDisposePrompt.call(this, agent)
+      }
+      try {
+        const initializing = h.service[Service.init]().then(
+          () => 'completed' as const,
+          () => 'rejected' as const,
+        )
+        await installationStarted.promise
+        await installPromptStarted.promise
+        const host = productionSharedHost(h.service)
+        await expect(host.resolvePrivateAgent(
+          lateSessionId,
+          new AbortController().signal,
+          created.bot.id,
+        )).resolves.toHaveProperty('agent')
+        lateInstallCompleted.resolve(undefined)
+        releaseInstallPrompt.resolve(undefined)
+        await expect(initializing).resolves.toBe('rejected')
+        await lateMaintenanceCompleted.promise
+        expect(disposedSessionIds).toContain(String(lateSessionId))
+      } finally {
+        lateInstallCompleted.resolve(undefined)
+        releaseInstallPrompt.resolve(undefined)
+        servicePrototype.installPrompt = originalInstallPrompt
+        servicePrototype.disposePrompt = originalDisposePrompt
+        await close(h.ctx)
+      }
+    } finally {
+      if (!seedClosed) await close(seed.ctx)
+    }
+  }, 5_000)
 
   it('seals a real Agent before a queued follow-up can run during installation', async () => {
     const sharedSessionId = SessionId('shared-session-cross-host-real-race')

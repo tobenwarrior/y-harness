@@ -55,6 +55,87 @@ describe('shared Bot client capabilities', () => {
     expect(rpc.call).not.toHaveBeenCalled()
   })
 
+  it('lists scoped connected-app approvals and accepts the server decision result', async () => {
+    const rpc: ClientConnectionRpc = {
+      call: vi.fn(async (_channel, endpoint, payload) => {
+        if (endpoint === 'bots/share/list-approvals') {
+          expect(payload).toEqual({ groupId: 'bot-group-release' })
+          return {
+            ok: true as const,
+            value: {
+              approvals: [{
+                id: 'shared-app-approval-one', botId: 'bot-chief', groupId: 'bot-group-release', appId: '',
+                toolName: 'issues.create', action: 'Create a release issue', arguments: '{"title":"Release"}',
+                reason: 'The release is ready', callId: 'call-one', createdAt: 1, expiresAt: 2_000,
+              }],
+            },
+          }
+        }
+        expect(endpoint).toBe('bots/share/decide-approval')
+        expect(payload).toEqual({ id: 'shared-app-approval-one', decision: 'allow' })
+        return { ok: true as const, value: { accepted: true } }
+      }),
+    }
+    const client = createSharedBotsClient(rpc)
+    if (client.listApprovals === undefined || client.decideApproval === undefined) throw new Error('approval transport unavailable')
+
+    await expect(client.listApprovals({ groupId: 'bot-group-release' })).resolves.toMatchObject({
+      ok: true,
+      value: { approvals: [{ appId: '', action: 'Create a release issue', expiresAt: 2_000 }] },
+    })
+    await expect(client.decideApproval('shared-app-approval-one', 'allow')).resolves.toEqual({ ok: true, value: { resolved: true, accepted: true } })
+  })
+
+  it('preserves backend argument preview safety indicators', async () => {
+    const rpc: ClientConnectionRpc = {
+      call: vi.fn(async () => ({ ok: true as const, value: { approvals: [{
+        id: 'shared-app-approval-safe', botId: 'bot-chief', appId: 'github', toolName: 'issues.create',
+        action: 'Create an issue', arguments: { title: 'Release' }, argumentsRedacted: true, argumentsTruncated: true,
+      }] } })),
+    }
+    const client = createSharedBotsClient(rpc)
+    if (client.listApprovals === undefined) throw new Error('approval transport unavailable')
+
+    await expect(client.listApprovals({ botId: 'bot-chief' })).resolves.toMatchObject({
+      ok: true,
+      value: { approvals: [{
+        arguments: { title: 'Release' },
+        argumentsRedacted: true,
+        argumentsTruncated: true,
+      }] },
+    })
+  })
+
+  it('rejects non-boolean argument preview safety indicators', async () => {
+    const rpc: ClientConnectionRpc = {
+      call: vi.fn(async () => ({ ok: true as const, value: { approvals: [{
+        id: 'shared-app-approval-invalid-flags', botId: 'bot-chief', appId: 'github', toolName: 'issues.create',
+        action: 'Create an issue', argumentsRedacted: false,
+      }] } })),
+    }
+    const client = createSharedBotsClient(rpc)
+    if (client.listApprovals === undefined) throw new Error('approval transport unavailable')
+
+    await expect(client.listApprovals({ botId: 'bot-chief' })).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'gateway/invalid-response' },
+    })
+  })
+
+  it('fails closed when a shared approval omits its safe action description', async () => {
+    const rpc: ClientConnectionRpc = {
+      call: vi.fn(async () => ({ ok: true as const, value: { approvals: [{
+        id: 'shared-app-approval-bad', botId: 'bot-chief', appId: 'github', toolName: 'issues.create',
+      }] } })),
+    }
+    const client = createSharedBotsClient(rpc)
+    if (client.listApprovals === undefined) throw new Error('approval transport unavailable')
+    await expect(client.listApprovals({ botId: 'bot-chief' })).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'gateway/invalid-response' },
+    })
+  })
+
   it('admits shared image attachments before sending their opaque grants', async () => {
     const rpc: ClientConnectionRpc = {
       call: vi.fn(async (_channel, endpoint) => {

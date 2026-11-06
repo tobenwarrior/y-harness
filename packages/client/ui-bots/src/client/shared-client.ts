@@ -206,6 +206,58 @@ export interface SharedBotGroupRevokeValue {
   readonly revoked: true
 }
 
+/** JSON value shown to a collaborator when a connected-app call is awaiting approval. */
+export type SharedBotApprovalArguments =
+  | null
+  | boolean
+  | number
+  | string
+  | readonly SharedBotApprovalArguments[]
+  | { readonly [key: string]: SharedBotApprovalArguments }
+
+/** One bounded connected-app approval request visible to the authenticated collaborator. */
+export interface SharedBotApprovalRequest {
+  /** Opaque approval identity used for the one-shot decision. */
+  readonly id: string
+  /** Bot whose shared Session is waiting for the decision. */
+  readonly botId: string
+  /** Shared group that initiated the call, when the call came from a group Session. */
+  readonly groupId?: string
+  /** Human-readable connected-app identifier. */
+  readonly appId: string
+  /** Human-readable tool identifier. */
+  readonly toolName: string
+  /** Safe description of the side effect the tool is about to perform. */
+  readonly action: string
+  /** Model-provided explanation for the requested side effect. */
+  readonly reason?: string
+  /** Bounded JSON arguments, when the provider supplies them. */
+  readonly arguments?: SharedBotApprovalArguments
+  /** True when one or more argument values were hidden for safety. */
+  readonly argumentsRedacted?: true
+  /** True when argument data was shortened or omitted to stay bounded. */
+  readonly argumentsTruncated?: true
+  /** Optional call identity supplied for troubleshooting and support. */
+  readonly callId?: string
+  /** Optional creation time in Unix milliseconds. */
+  readonly createdAt?: number
+  /** Absolute expiry time in Unix milliseconds. */
+  readonly expiresAt?: number
+}
+
+/** Pending connected-app approvals visible to the authenticated collaborator. */
+export interface SharedBotApprovalListValue {
+  readonly approvals: readonly SharedBotApprovalRequest[]
+}
+
+/** Result after a pending connected-app approval has been decided. */
+export interface SharedBotApprovalDecisionValue {
+  /** Whether this caller won the pending approval race. */
+  readonly resolved: true
+  /** Legacy outcome field retained while Hosts roll forward their endpoint response. */
+  readonly accepted?: boolean
+}
+
 /** Browser operations exposed by the isolated `/shared-bots` route. */
 export interface SharedBotsClient {
   /** Redeem an owner-issued invite; the response stores an HttpOnly cookie. */
@@ -268,6 +320,12 @@ export interface SharedBotsClient {
   readonly createGroupInvite?: (groupId: string) => Promise<SharedBotClientResult<SharedBotGroupInviteValue>>
   /** Revoke one explicit shared-group ACL member. */
   readonly revokeGroupMember?: (groupId: string, principalId: string) => Promise<SharedBotClientResult<SharedBotGroupRevokeValue>>
+  /** List pending connected-app approvals for the current shared principal. */
+  readonly listApprovals?: (
+    scope?: { readonly botId?: string; readonly groupId?: string },
+  ) => Promise<SharedBotClientResult<SharedBotApprovalListValue>>
+  /** Resolve one pending connected-app approval exactly once. */
+  readonly decideApproval?: (id: string, decision: 'allow' | 'reject') => Promise<SharedBotClientResult<SharedBotApprovalDecisionValue>>
 }
 
 /**
@@ -515,6 +573,8 @@ export function createSharedBotsClient(rpc: ClientConnectionRpc, options: Shared
     sendGroupMessageWithAttachments,
     createGroupInvite: groupId => call('bots/share/manage-group-members', { groupId, action: 'create-invite' }, parseGroupInvite),
     revokeGroupMember: (groupId, principalId) => call('bots/share/manage-group-members', { groupId, action: 'revoke', principalId }, parseGroupRevoke),
+    listApprovals: scope => call('bots/share/list-approvals', scope ?? {}, parseApprovalList),
+    decideApproval: (id, decision) => call('bots/share/decide-approval', { id, decision }, parseApprovalDecision),
   }
 }
 
@@ -691,6 +751,78 @@ function parseGroupRevoke(value: unknown): SharedBotGroupRevokeValue | undefined
   if (!isRecord(value) || typeof value.groupId !== 'string' || !/^bot-group-[A-Za-z0-9][A-Za-z0-9-]*$/.test(value.groupId)
     || typeof value.principalId !== 'string' || !/^principal-[A-Za-z0-9-]+$/.test(value.principalId) || value.revoked !== true) return undefined
   return { groupId: value.groupId, principalId: value.principalId, revoked: true }
+}
+
+function parseApprovalList(value: unknown): SharedBotApprovalListValue | undefined {
+  if (!isRecord(value) || !Array.isArray(value.approvals)) return undefined
+  const approvals = value.approvals.map(parseApprovalRequest)
+  return approvals.some(approval => approval === undefined)
+    ? undefined
+    : { approvals: approvals as readonly SharedBotApprovalRequest[] }
+}
+
+function parseApprovalRequest(value: unknown): SharedBotApprovalRequest | undefined {
+  if (!isRecord(value)
+    || !boundedString(value.id, 256)
+    || typeof value.botId !== 'string' || !/^bot-[A-Za-z0-9][A-Za-z0-9-]*$/.test(value.botId)
+    || typeof value.appId !== 'string'
+    || !boundedString(value.toolName, 256)
+    || !boundedString(value.action, 1_024)) return undefined
+  if (value.groupId !== undefined && (typeof value.groupId !== 'string' || !/^bot-group-[A-Za-z0-9][A-Za-z0-9-]*$/.test(value.groupId))) return undefined
+  if (value.reason !== undefined && !boundedString(value.reason, 4096)) return undefined
+  if (value.argumentsRedacted !== undefined && value.argumentsRedacted !== true) return undefined
+  if (value.argumentsTruncated !== undefined && value.argumentsTruncated !== true) return undefined
+  if (value.callId !== undefined && !boundedString(value.callId, 256)) return undefined
+  if (value.createdAt !== undefined && !isSafeInteger(value.createdAt)) return undefined
+  if (value.expiresAt !== undefined && !isSafeInteger(value.expiresAt)) return undefined
+  let args: SharedBotApprovalArguments | undefined
+  if (value.arguments !== undefined) {
+    args = parseApprovalArguments(value.arguments)
+    if (args === undefined) return undefined
+  }
+  return {
+    id: value.id,
+    botId: value.botId,
+    ...(value.groupId === undefined ? {} : { groupId: value.groupId }),
+    appId: value.appId,
+    toolName: value.toolName,
+    action: value.action,
+    ...(value.reason === undefined ? {} : { reason: value.reason }),
+    ...(args === undefined ? {} : { arguments: args }),
+    ...(value.argumentsRedacted === undefined ? {} : { argumentsRedacted: true as const }),
+    ...(value.argumentsTruncated === undefined ? {} : { argumentsTruncated: true as const }),
+    ...(value.callId === undefined ? {} : { callId: value.callId }),
+    ...(value.createdAt === undefined ? {} : { createdAt: value.createdAt }),
+    ...(value.expiresAt === undefined ? {} : { expiresAt: value.expiresAt }),
+  }
+}
+
+function parseApprovalDecision(value: unknown): SharedBotApprovalDecisionValue | undefined {
+  if (!isRecord(value)) return undefined
+  if (value.resolved === true) return { resolved: true }
+  return typeof value.accepted === 'boolean' ? { resolved: true, accepted: value.accepted } : undefined
+}
+
+function parseApprovalArguments(value: unknown, depth = 0): SharedBotApprovalArguments | undefined {
+  if (depth > 6) return undefined
+  if (value === null || typeof value === 'boolean') return value
+  if (typeof value === 'number') return Number.isFinite(value) ? value : undefined
+  if (typeof value === 'string') return value.length <= 8192 ? value : undefined
+  if (Array.isArray(value)) {
+    const items = value.map(item => parseApprovalArguments(item, depth + 1))
+    return items.some(item => item === undefined) ? undefined : items as readonly SharedBotApprovalArguments[]
+  }
+  if (!isRecord(value) || Object.keys(value).length > 100) return undefined
+  const entries = Object.entries(value).map(([key, item]) => {
+    const parsed = parseApprovalArguments(item, depth + 1)
+    return key.length <= 256 && parsed !== undefined ? [key, parsed] as const : undefined
+  })
+  if (entries.some(entry => entry === undefined)) return undefined
+  return Object.fromEntries(entries as readonly (readonly [string, SharedBotApprovalArguments])[])
+}
+
+function boundedString(value: unknown, maxLength: number): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= maxLength
 }
 
 function parseGroupDelivery(value: unknown): BotGroupDeliveryView | undefined {

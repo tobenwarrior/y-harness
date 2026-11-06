@@ -1230,6 +1230,9 @@ importers:
       '@yharness/tools':
         specifier: workspace:*
         version: link:../../core/tools
+      '@yharness/user-approval':
+        specifier: workspace:*
+        version: link:../../interaction/user-approval
       '@yharness/typert-protocol':
         specifier: workspace:*
         version: link:../../typert/protocol

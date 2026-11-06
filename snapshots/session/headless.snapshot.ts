@@ -1121,6 +1121,7 @@ describe('headless recorded-session snapshots', () => {
       const mcpDemo = scenario.name === 'plugin-manager-mcp' ? await startHttpMcpFixture() : undefined
       const sharedTempRoot = scenario.name === 'shared-bot-web-search'
         || scenario.name === 'shared-bot-connected-app'
+        || scenario.name === 'shared-bot-connected-app-approval'
         ? await realpath(tmpdir())
         : undefined
       // Shared-session fixtures derive a valid shared-session id from the encoded workspace basename.
@@ -1131,6 +1132,7 @@ describe('headless recorded-session snapshots', () => {
         result = await runLoaderSmoke({
           label: `${scenario.name} headless snapshot`,
           tempDirPrefix: scenario.name === 'shared-bot-connected-app'
+            || scenario.name === 'shared-bot-connected-app-approval'
             ? 'shared-session-%2D'
             : sharedWorkspaceParent === undefined ? 'dsh-log-snap-' : 'dsh-log-snap-%3A',
           ...(sharedWorkspaceParent !== undefined
@@ -1237,10 +1239,11 @@ describe('headless recorded-session snapshots', () => {
       if (stderrLog === undefined) throw new Error(`${scenario.name}: stderr projection has no primary session`)
       const expectedStderr = stderrFromSession(stderrLog)
       const actualContext = contextOf(actualLogs.map(log => log.content))
-      if (scenario.name === 'shared-bot-connected-app') {
+      if (scenario.name === 'shared-bot-connected-app'
+        || scenario.name === 'shared-bot-connected-app-approval') {
         const childCwd = actualLogs[1]?.header.cwd
         if (typeof childCwd !== 'string') {
-          throw new Error('shared-bot-connected-app: child Session header has no cwd')
+          throw new Error(`${scenario.name}: child Session header has no cwd`)
         }
         // Identity redaction runs before cwd normalization, so the child workspace is
         // represented by its parent plus the stable child-session token here.

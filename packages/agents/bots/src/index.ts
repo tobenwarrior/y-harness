@@ -17,7 +17,7 @@ import {
 } from '@yharness/client-connection'
 import { MessageId } from '@yharness/llm/brand'
 import { createSystemMessage, freezeMessage, HarnessError, isAgentLoopRequest } from '@yharness/llm'
-import type { AuxiliarySessionAdmission, AuxiliarySessionPurpose, GenerateOptions, StreamChunk } from '@yharness/llm'
+import type { AuxiliarySessionAdmission, AuxiliarySessionPurpose, GenerateOptions, StreamChunk, ToolCallId } from '@yharness/llm'
 import type { Agent } from '@yharness/agent'
 import type {
   PreToolDecision,
@@ -45,6 +45,9 @@ import type {
 } from '@yharness/schedule'
 import type {} from '@yharness/agent-preset-registry'
 import type {} from '@yharness/mcp-resources'
+// Type-only: shared Sessions force the optional approval seam to ask so their
+// collaborator-owned connected-app approvals reach the shared mailbox.
+import { setApprovalPolicy } from '@yharness/user-approval'
 import type { ImageAttachmentRef } from '@yharness/attachment'
 import { admitEncodedImages } from '@yharness/attachment'
 import type { UserMessage } from '@yharness/llm'
@@ -211,6 +214,7 @@ import {
 import type {
   SharedConnectedAppAccessValue,
   SharedConnectedAppAuthorizationRequest,
+  SharedAppApprovalOutcome,
 } from './shared-service.ts'
 import type { SharedGroupDeliveryRecoveryResult, SharedGroupSessionBinding } from './shared-group.ts'
 import { BotPrincipalId } from './sharing.ts'
@@ -495,6 +499,12 @@ export interface BotSharedConfig {
   readonly trustedHosts?: string[]
   /** Maximum interval before a process notices a membership change in storage. */
   readonly membershipPollIntervalMs?: number
+  /** Maximum lifetime of one pending shared connected-app approval. */
+  readonly sharedApprovalTtlMs?: number
+  /** Maximum lease for an active requester before an abandoned approval expires. */
+  readonly sharedApprovalLeaseMs?: number
+  /** Poll interval used while a shared Session waits for its approval mailbox. */
+  readonly sharedApprovalPollIntervalMs?: number
 }
 
 /** Bot service configuration. */
@@ -508,7 +518,26 @@ export interface BotServiceConfig {
 const DEFAULT_SHARED_SESSION_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000
 const DEFAULT_SHARED_INVITE_MAX_AGE_MS = 15 * 60 * 1000
 const DEFAULT_SHARED_MEMBERSHIP_POLL_INTERVAL_MS = 1_000
+const DEFAULT_SHARED_APPROVAL_TTL_MS = 15 * 60 * 1_000
+const DEFAULT_SHARED_APPROVAL_LEASE_MS = 60 * 1_000
+const DEFAULT_SHARED_APPROVAL_POLL_INTERVAL_MS = 1_000
 const MAX_NODE_TIMER_MS = 2_147_483_647
+const SHARED_SCOPE_INSTALLATION_CLEANUP_TIMEOUT_MS = 1_000
+
+/** Bound startup rollback while a live Agent refuses to leave maintenance. */
+async function waitForSharedScopeInstallations(completions: readonly Promise<void>[]): Promise<void> {
+  if (completions.length === 0) return
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const deadline = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, SHARED_SCOPE_INSTALLATION_CLEANUP_TIMEOUT_MS)
+    timer.unref()
+  })
+  try {
+    await Promise.race([Promise.allSettled(completions), deadline])
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
+  }
+}
 const sharedInviteRequestSchema = zod.object({
   botId: zod.string().regex(/^bot-[A-Za-z0-9][A-Za-z0-9-]*$/).transform(BotId),
   role: zod.enum(['owner', 'manager', 'collaborator']),
@@ -562,6 +591,9 @@ interface ResolvedBotSharedConfig {
   readonly secureCookie: boolean
   readonly trustedHosts: readonly string[]
   readonly membershipPollIntervalMs: number
+  readonly sharedApprovalTtlMs: number
+  readonly sharedApprovalLeaseMs: number
+  readonly sharedApprovalPollIntervalMs: number
 }
 
 function resolveSharedConfig(value: BotSharedConfig | undefined): ResolvedBotSharedConfig {
@@ -575,6 +607,18 @@ function resolveSharedConfig(value: BotSharedConfig | undefined): ResolvedBotSha
       value?.membershipPollIntervalMs ?? DEFAULT_SHARED_MEMBERSHIP_POLL_INTERVAL_MS,
       MAX_NODE_TIMER_MS,
     )),
+    sharedApprovalTtlMs: Math.max(1_000, Math.min(
+      value?.sharedApprovalTtlMs ?? DEFAULT_SHARED_APPROVAL_TTL_MS,
+      3_600_000,
+    )),
+    sharedApprovalLeaseMs: Math.max(1_000, Math.min(
+      value?.sharedApprovalLeaseMs ?? DEFAULT_SHARED_APPROVAL_LEASE_MS,
+      value?.sharedApprovalTtlMs ?? DEFAULT_SHARED_APPROVAL_TTL_MS,
+    )),
+    sharedApprovalPollIntervalMs: Math.max(50, Math.min(
+      value?.sharedApprovalPollIntervalMs ?? DEFAULT_SHARED_APPROVAL_POLL_INTERVAL_MS,
+      30_000,
+    )),
   }
 }
 
@@ -587,6 +631,9 @@ export const Config = z.object({
     secureCookie: z.boolean().default(false),
     trustedHosts: z.array(String).default([]),
     membershipPollIntervalMs: z.natural().min(1).max(MAX_NODE_TIMER_MS).default(DEFAULT_SHARED_MEMBERSHIP_POLL_INTERVAL_MS),
+    sharedApprovalTtlMs: z.natural().min(1_000).max(3_600_000).default(DEFAULT_SHARED_APPROVAL_TTL_MS),
+    sharedApprovalLeaseMs: z.natural().min(1_000).max(3_600_000).default(DEFAULT_SHARED_APPROVAL_LEASE_MS),
+    sharedApprovalPollIntervalMs: z.natural().min(50).max(30_000).default(DEFAULT_SHARED_APPROVAL_POLL_INTERVAL_MS),
   }).default({}),
 })
 
@@ -688,6 +735,15 @@ interface GroupSessionProjection {
   ) => Promise<void>
   readonly recordFailure: (turn: number, error: string) => Promise<void>
   readonly recordResponse: (turn: number, step: number, text: string, sourceMessageId: string) => Promise<void>
+}
+
+/** Approval request fields consumed by the shared connected-app router. */
+interface SharedApprovalRequest {
+  readonly agent: Agent
+  readonly toolName: string
+  readonly callId?: ToolCallId
+  readonly reason?: string
+  readonly signal?: AbortSignal
 }
 
 const BOT_ID_PATTERN = /^bot-[A-Za-z0-9][A-Za-z0-9-]*$/
@@ -2380,19 +2436,6 @@ function sharedConnectedAppDenied(exec: { readonly name: string }): ToolFailure 
   }
 }
 
-/** Build a denial when a shared connected-app call requests Host approval. */
-function sharedConnectedAppApprovalDenied(exec: { readonly name: string }): ToolFailure {
-  const reason = `Shared connected-app tool "${exec.name}" requires collaborator approval, which is unavailable on this route.`
-  return {
-    message: reason,
-    info: {
-      name: 'SharedBotConnectedAppApprovalError',
-      code: 'SHARED_BOT_APP_APPROVAL_REQUIRED',
-      reason,
-    },
-  }
-}
-
 /** Error returned when the final shared connected-app body admission fails. */
 class SharedConnectedAppAccessError extends HarnessError {
   constructor(message: string) {
@@ -2585,7 +2628,12 @@ export class BotService extends TypertRemoteService {
   private readonly sharedGroupAdmissionOperatorRequired = new Set<string>()
   private readonly promptFibers = new Map<Agent, ReturnType<Context['inject']>>()
   private readonly sharedScopeInstallations = new Map<Agent, Promise<void>>()
+  private readonly sharedApprovalExecutions = new WeakMap<Agent, Map<string, Set<ToolExecution>>>()
   private readonly sharedScopeFences = new WeakMap<Agent, () => void>()
+  /** Retain shared-Agent identity after durable session indexes are withdrawn. */
+  private readonly sharedApprovalAgents = new WeakSet<Agent>()
+  /** Retain operator Bot identity so a profile transition cannot become shared. */
+  private readonly ownerApprovalAgents = new WeakSet<Agent>()
   private readonly sharedScopeAgents = new WeakSet<Agent>()
   private readonly sharedPromptMigrations = new WeakSet<Agent>()
   private readonly sharedPromptMigrationsPending = new WeakSet<Agent>()
@@ -2620,6 +2668,7 @@ export class BotService extends TypertRemoteService {
   private readonly collaboration: BotCollaborationService
   private sharedService: SharedBotService | undefined
   private chain: Promise<unknown> = Promise.resolve()
+  private readonly sharedScopeShutdownController = new AbortController()
   private stopping = false
   private sharedPolicyReady = false
 
@@ -2698,6 +2747,40 @@ export class BotService extends TypertRemoteService {
         deliverMessage: (target, message, signal) => this.deliverBotMessage(target, message, signal),
       }
     this.collaboration = new BotCollaborationService(collaborationHost)
+    // Mark already-live shared-preset Agents before asynchronous roster
+    // discovery can expose an approval request. Owner records are restored
+    // and the temporary fence is released once the roster is loaded.
+    for (const agent of ctx.agents.list()) {
+      if (agent.session.header.agentPreset !== SHARED_BOT_AGENT_PRESET) continue
+      this.sharedApprovalAgents.add(agent)
+      this.ensureSharedScopeFence(agent)
+    }
+    ctx.on('approval/request', (approval, next) => {
+      if (!this.isSharedApprovalAgent(approval.agent)) return next()
+      // Shared Sessions must never reach the owner UI answerer. The scoped
+      // listener may be ordered after a root Remote Event listener, so route
+      // here before that listener can claim the request. If the root listener
+      // cannot correlate a live call, fail closed instead of forwarding it to
+      // an unrelated approval answerer.
+      return this.routeSharedApprovalRequest(approval).then((outcome) => {
+        return outcome ?? 'unavailable'
+      })
+    }, { global: true, prepend: true })
+    // Capture the execution before any later scoped pre-execute listener can
+    // return an approval request. The approval event carries only the model
+    // call id, so the shared route must retain the exact live execution (and
+    // fail closed when duplicate ids make that identity ambiguous).
+    ctx.on('tools/pre-execute', (exec, next) => {
+      const agent = exec.agent
+      if (agent !== undefined && this.isSharedApprovalAgent(agent)) {
+        const executions = this.sharedApprovalExecutions.get(agent) ?? new Map<string, Set<ToolExecution>>()
+        this.sharedApprovalExecutions.set(agent, executions)
+        const calls = executions.get(String(exec.callId)) ?? new Set<ToolExecution>()
+        calls.add(exec)
+        executions.set(String(exec.callId), calls)
+      }
+      return next()
+    }, { global: true, prepend: true })
     ctx.on('session/event', (session, event) => {
       void this.ready.then(() => {
         if (!this.stopping) this.observeEventRoutineSessionEvent(session.id, event)
@@ -2788,16 +2871,6 @@ export class BotService extends TypertRemoteService {
     ctx.on('tools/pre-execute', (exec, next) => {
       if (exec.agent === undefined || !this.sharedScopeFences.has(exec.agent)) return next()
       return Promise.resolve<PreToolDecision>({ kind: 'deny', reason: SHARED_BOT_CAPABILITY_REASON })
-    }, { prepend: true })
-    ctx.on('tools/pre-execute', async (exec, next) => {
-      const decision = await next()
-      if (decision.kind !== 'ask' || !this.isSharedConnectedAppExecution(exec)) return decision
-      const denial = sharedConnectedAppApprovalDenied(exec)
-      return {
-        kind: 'deny' as const,
-        reason: denial.message,
-        ...(denial.info === undefined ? {} : { info: denial.info }),
-      }
     }, { prepend: true })
     ctx.tools.guard((exec) => {
       if (exec.agent === undefined || !this.sharedScopeFences.has(exec.agent)) return undefined
@@ -3109,22 +3182,53 @@ export class BotService extends TypertRemoteService {
       },
     }))
     ctx.on('agent/created', async ({ agent }) => {
-      if (agent.session.header.agentPreset === SHARED_BOT_AGENT_PRESET) {
-        const sessionKey = String(agent.id)
+      let sharedAgent = false
+      const sessionKey = String(agent.id)
+      const markedShared = this.sharedSessionIds.has(sessionKey)
+        || this.sharedSessionFailures.has(sessionKey)
+        || this.sharedScopeAgents.has(agent)
+        || this.sharedScopeFences.has(agent)
+      if (agent.session.header.agentPreset === SHARED_BOT_AGENT_PRESET || markedShared) {
         if (this.recordsBySession.has(sessionKey)) {
           this.restoreOwnerBotSession(agent)
         } else {
+          sharedAgent = true
+          this.markSharedApprovalAgent(agent)
+          if (this.stopping) {
+            this.ensureSharedScopeFence(agent)
+            try {
+              if (agent.status === 'running') agent.cancel({ kind: 'parent' })
+            } catch (error: unknown) {
+              this.ctx.logger.warn(`bots: late shared Agent cancellation failed: ${String(error)}`)
+            }
+            return
+          }
           this.sharedSessionIds.add(sessionKey)
           if (!this.sharedRecordsBySession.has(sessionKey)) this.sharedSessionFailures.add(sessionKey)
           this.ensureSharedScopeFence(agent)
         }
       }
-      await this.installPrompt(agent)
+      try {
+        if (sharedAgent) {
+          await this.installSharedAgentScope(agent, true)
+        } else {
+          await this.installPrompt(agent)
+        }
+      } catch (error: unknown) {
+        if (this.stopping || this.sharedScopeShutdownController.signal.aborted) {
+          this.disposePrompt(agent)
+          return
+        }
+        throw error
+      }
       void this.reconcileGroupSession(agent).catch((error: unknown) => {
         this.ctx.logger.warn(`bots: group Session reconciliation failed for ${agent.id}: ${String(error)}`)
       })
     })
-    ctx.on('agent/disposed', ({ agent }) => { this.disposePrompt(agent) })
+    ctx.on('agent/disposed', ({ agent }) => {
+      this.sharedApprovalExecutions.delete(agent)
+      this.disposePrompt(agent)
+    })
     this.initialized = ctx.effect(async () => {
       let domain: Domain<typeof botDomain> | undefined
       let noCredentialIntent: Domain<typeof botMutationIntentDomain> | undefined
@@ -3150,6 +3254,7 @@ export class BotService extends TypertRemoteService {
         sharedCleanup = await this.mountSharedAccess(openedDomain)
         cleanup = ctx.effect(() => async () => {
           this.stopping = true
+          this.sharedScopeShutdownController.abort()
           this.cancelRecoveryRetryTimers()
           this.templateApprovalPreviews.clear()
           await this.chain
@@ -3174,6 +3279,7 @@ export class BotService extends TypertRemoteService {
         })
       } catch (error) {
         this.stopping = true
+        this.sharedScopeShutdownController.abort()
         await attachmentCleanup()
         await sharedCleanup()
         await this.waitForAttachmentUploads()
@@ -3190,12 +3296,32 @@ export class BotService extends TypertRemoteService {
     })
   }
 
+  /** Install one live Agent through the tracked shared path after startup. */
+  private async installAgentForStartup(agent: Agent): Promise<void> {
+    const sessionKey = String(agent.id)
+    if (this.recordsBySession.has(sessionKey)) {
+      this.restoreOwnerBotSession(agent)
+      await this.installPrompt(agent)
+      return
+    }
+    const shared = agent.session.header.agentPreset === SHARED_BOT_AGENT_PRESET
+      || this.sharedSessionIds.has(sessionKey)
+      || this.sharedSessionFailures.has(sessionKey)
+      || this.sharedScopeAgents.has(agent)
+      || this.sharedScopeFences.has(agent)
+    if (shared) {
+      await this.installSharedAgentScope(agent)
+      return
+    }
+    await this.installPrompt(agent)
+  }
+
   async [Service.init](): Promise<void> {
     let domain: Domain<typeof botDomain> | undefined
     let memoryRecoveryStarted = false
     try {
       await this.initialized
-      await Promise.all(this.ctx.agents.list().map(agent => this.installPrompt(agent)))
+      await Promise.all(this.ctx.agents.list().map(agent => this.installAgentForStartup(agent)))
       await this.reconcileCanceledDeliveriesOnStartup()
       await this.recoverEventRoutineAdmissions()
       await this.recoverPendingEventRoutines()
@@ -3204,13 +3330,15 @@ export class BotService extends TypertRemoteService {
       memoryRecoveryStarted = true
       await this.recoverPendingMemoryUpdates(domain.table('bots'))
       await Promise.all(this.ctx.agents.list().map(async (agent) => {
-        await this.installPrompt(agent)
+        await this.installAgentForStartup(agent)
         await this.reconcileGroupSession(agent)
       }))
       this.sharedPolicyReady = true
     } catch (error: unknown) {
       this.stopping = true
+      this.sharedScopeShutdownController.abort()
       this.cancelRecoveryRetryTimers()
+      await this.disposeAgentScopesAfterStartupFailure()
       if (memoryRecoveryStarted && domain !== undefined) {
         try {
           await domain.close()
@@ -3220,6 +3348,37 @@ export class BotService extends TypertRemoteService {
       }
       throw error
     }
+  }
+
+  /** Dispose every installed Agent scope after startup recovery fails. */
+  private async disposeAgentScopesAfterStartupFailure(extraAgents: Iterable<Agent> = []): Promise<void> {
+    const pendingScopeInstallations = [...this.sharedScopeInstallations.values()]
+    const agentsToDispose = new Set<Agent>([
+      ...extraAgents,
+      ...this.promptFibers.keys(),
+      ...this.skillPolicyFibers.keys(),
+      ...this.sharedScopeInstallations.keys(),
+      ...this.ctx.agents.list().filter((agent) => {
+        const sessionKey = String(agent.id)
+        return this.sharedSessionIds.has(sessionKey)
+          || this.sharedSessionFailures.has(sessionKey)
+          || this.sharedScopeAgents.has(agent)
+          || this.sharedScopeFences.has(agent)
+      }),
+    ])
+    for (const agent of agentsToDispose) {
+      if (agent.status === 'running') {
+        try {
+          agent.cancel({ kind: 'parent' })
+        } catch (cancelError: unknown) {
+          this.ctx.logger.warn(`bots: startup Agent scope cleanup cancellation failed: ${String(cancelError)}`)
+        }
+      }
+      this.disposePrompt(agent)
+    }
+    this.sharedScopeInstallations.clear()
+    await waitForSharedScopeInstallations(pendingScopeInstallations)
+    await waitForSharedScopeInstallations([...this.promptDisposals])
   }
 
   /**
@@ -4152,17 +4311,6 @@ export class BotService extends TypertRemoteService {
         : undefined
   }
 
-  /** Identify a shared-session MCP call before any Host approval channel runs. */
-  private isSharedConnectedAppExecution(
-    exec: Readonly<ToolExecution>,
-  ): boolean {
-    const agent = exec.agent
-    if (agent === undefined) return false
-    if (!this.sharedSessionIds.has(String(agent.id)) || this.recordsBySession.has(String(agent.id))) return false
-    const source = this.ctx.tools.get(exec.name, agent)?.source
-    return source?.kind === 'mcp' || source?.kind === 'mcp-resource'
-  }
-
   /** Build the exact shared Session identity used by host-only authorization. */
   private sharedConnectedAppAuthorizationRequest(
     agent: Pick<Agent, 'id'>,
@@ -4185,6 +4333,53 @@ export class BotService extends TypertRemoteService {
         step: this.sharedExecutionCoordinatesBySession.get(String(agent.id))?.step ?? -1,
         appId,
       }
+  }
+
+  /** Whether one Agent belongs to a collaborator-only private or group Session. */
+  private isSharedApprovalAgent(agent: Agent): boolean {
+    const key = String(agent.id)
+    return (this.sharedApprovalAgents.has(agent)
+      || this.sharedSessionIds.has(key)
+      || this.sharedSessionFailures.has(key))
+      && !this.ownerApprovalAgents.has(agent)
+      && !this.recordsBySession.has(key)
+  }
+
+  /** Route one shared approval before a root owner answerer can claim it. */
+  private routeSharedApprovalRequest(
+    approval: SharedApprovalRequest,
+  ): Promise<SharedAppApprovalOutcome | undefined> {
+    if (this.stopping) return Promise.resolve('unavailable')
+    const executions = approval.callId === undefined
+      ? undefined
+      : this.sharedApprovalExecutions.get(approval.agent)?.get(String(approval.callId))
+    const execution = executions?.size === 1 ? [...executions][0] : undefined
+    const source = this.ctx.tools.get(approval.toolName, approval.agent)?.source
+    const executionSource = execution === undefined ? undefined : this.ctx.tools.get(execution.name, approval.agent)?.source
+    const isConnectedApp = execution !== undefined && (
+      source?.kind === 'mcp'
+      || source?.kind === 'mcp-resource'
+      || executionSource?.kind === 'mcp'
+      || executionSource?.kind === 'mcp-resource'
+    )
+    if (!isConnectedApp) {
+      return Promise.resolve(this.sharedScopeAgents.has(approval.agent) ? undefined : 'unavailable')
+    }
+    const sharedService = this.sharedService
+    if (sharedService === undefined) {
+      return Promise.resolve('unavailable')
+    }
+    const request = this.sharedConnectedAppAuthorizationRequest(approval.agent, execution)
+    if (request === undefined) {
+      return Promise.resolve('unavailable')
+    }
+    return sharedService.requestSharedAppApproval(request, {
+      toolName: approval.toolName,
+      ...(approval.callId === undefined ? {} : { callId: String(approval.callId) }),
+      ...(approval.reason === undefined ? {} : { reason: approval.reason }),
+      ...(execution.arguments === undefined ? {} : { arguments: execution.arguments }),
+      action: `Run connected app tool "${approval.toolName}"`,
+    }, approval.signal)
   }
 
   /** Recheck one shared MCP call against its exact private or group Session. */
@@ -7450,6 +7645,13 @@ export class BotService extends TypertRemoteService {
         }
         applyConnectedAppRestriction(sharedAppAccess)
         const sharedAppDecisions = new Map<ToolExecution['token'], boolean>()
+        const sharedApprovalExecutions = this.sharedApprovalExecutions.get(agent) ?? new Map<string, Set<ToolExecution>>()
+        this.sharedApprovalExecutions.set(agent, sharedApprovalExecutions)
+        scope.effect(() => () => {
+          if (this.sharedApprovalExecutions.get(agent) === sharedApprovalExecutions) {
+            this.sharedApprovalExecutions.delete(agent)
+          }
+        }, 'bots: shared approval execution correlation')
         const finalSharedAppRevalidationDisposals = new Map<ToolExecution['token'], () => void>()
         const connectedAppFailure = (exec: { readonly name: string }): ToolFailure => sharedConnectedAppDenied(exec)
         const capabilityFailure = (exec: { readonly name: string; readonly token?: ToolExecution['token'] }): ToolFailure | undefined => {
@@ -7503,7 +7705,35 @@ export class BotService extends TypertRemoteService {
         scope.on('tools/result', (resultExec) => {
           finalSharedAppRevalidationDisposals.get(resultExec.token)?.()
           sharedAppDecisions.delete(resultExec.token)
+          const calls = sharedApprovalExecutions.get(String(resultExec.callId))
+          calls?.delete(resultExec)
+          if (calls?.size === 0) sharedApprovalExecutions.delete(String(resultExec.callId))
         })
+        scope.on('approval/request', (approval): Promise<SharedAppApprovalOutcome> => {
+          const source = scope.tools.get(approval.toolName, agent)?.source
+          const executions = approval.callId === undefined
+            ? undefined
+            : sharedApprovalExecutions.get(String(approval.callId))
+          const execution = executions?.size === 1 ? [...executions][0] : undefined
+          const isConnectedApp = execution !== undefined && (connectedAppSources.has(approval.toolName)
+            || source?.kind === 'mcp'
+            || source?.kind === 'mcp-resource')
+          // Shared sessions never delegate approval requests to the owner
+          // answerer. A missing source or execution can occur during scope
+          // startup/disposal and must fail closed rather than leak ownership.
+          if (!isConnectedApp) return Promise.resolve('unavailable')
+          const sharedService = this.sharedService
+          if (sharedService === undefined) return Promise.resolve('unavailable')
+          const request = this.sharedConnectedAppAuthorizationRequest(agent, execution)
+          if (request === undefined) return Promise.resolve('unavailable')
+          return sharedService.requestSharedAppApproval(request, {
+            toolName: approval.toolName,
+            ...(approval.callId === undefined ? {} : { callId: String(approval.callId) }),
+            ...(approval.reason === undefined ? {} : { reason: approval.reason }),
+            ...(execution.arguments === undefined ? {} : { arguments: execution.arguments }),
+            action: `Run connected app tool "${approval.toolName}"`,
+          }, approval.signal)
+        }, { prepend: true })
         scope.on('tools/pre-execute', async (exec, next) => {
           await refreshConnectedAppRestriction()
           if (connectedAppSources.has(exec.name)) {
@@ -7517,6 +7747,9 @@ export class BotService extends TypertRemoteService {
                 ...(denial.info === undefined ? {} : { info: denial.info }),
               }
             }
+            const calls = sharedApprovalExecutions.get(String(exec.callId)) ?? new Set<ToolExecution>()
+            calls.add(exec)
+            sharedApprovalExecutions.set(String(exec.callId), calls)
             let disposed = false
             const registrations: { execute?: () => void; post?: () => void } = {}
             const dispose = (): void => {
@@ -7663,6 +7896,7 @@ export class BotService extends TypertRemoteService {
   private restoreOwnerBotSession(agent: Agent): void {
     const sessionKey = String(agent.id)
     if (!this.recordsBySession.has(sessionKey)) return
+    this.ownerApprovalAgents.add(agent)
     this.sharedRecordsBySession.delete(sessionKey)
     this.sharedSessionIds.delete(sessionKey)
     this.sharedSessionFailures.delete(sessionKey)
@@ -7670,8 +7904,20 @@ export class BotService extends TypertRemoteService {
     this.releaseSharedScopeFence(agent)
   }
 
+  /** Keep shared approval requests dispatchable even when the host default is never. */
+  private markSharedApprovalAgent(agent: Agent): void {
+    this.sharedApprovalAgents.add(agent)
+    const approval = this.ctx.get('approval')
+    if (approval === undefined) return
+    const override = approval.overrideOf(agent.session)
+    if (override === 'never' || (override === undefined && approval.config.policy === 'never')) {
+      setApprovalPolicy(agent.session, 'ask')
+    }
+  }
+
   /** Record installed shared scope and release a fence not owned by a pending installation. */
   private markSharedScopeInstalled(agent: Agent): void {
+    this.markSharedApprovalAgent(agent)
     this.sharedScopeAgents.add(agent)
     if (!this.sharedScopeInstallations.has(agent)) this.releaseSharedScopeFence(agent)
   }
@@ -7680,6 +7926,7 @@ export class BotService extends TypertRemoteService {
   private fenceExistingSharedAgent(sessionId: SessionId): void {
     const agent = this.ctx.agents.get(sessionId)
     if (agent === undefined) return
+    this.markSharedApprovalAgent(agent)
     this.ensureSharedScopeFence(agent)
   }
 
@@ -7692,23 +7939,33 @@ export class BotService extends TypertRemoteService {
         this.restoreOwnerBotSession(agent)
         continue
       }
+      this.markSharedApprovalAgent(agent)
       this.sharedSessionIds.add(sessionKey)
       this.sharedSessionFailures.add(sessionKey)
       this.ensureSharedScopeFence(agent)
     }
   }
 
-  /** Install shared restrictions while an already-live Agent cannot start a turn. */
-  private async installSharedAgentScopeNow(agent: Agent): Promise<void> {
+  /** Install shared restrictions, avoiding maintenance while creation listeners are running. */
+  private async installSharedAgentScopeNow(agent: Agent, duringCreation = false): Promise<void> {
     const quiesce = async (): Promise<void> => {
+      this.sharedScopeShutdownController.signal.throwIfAborted()
       if (agent.status !== 'running') return
       agent.cancel({ kind: 'parent' })
       await agent.whenIdle()
+      this.sharedScopeShutdownController.signal.throwIfAborted()
     }
     const install = async (signal: AbortSignal): Promise<void> => {
       signal.throwIfAborted()
+      this.sharedScopeShutdownController.signal.throwIfAborted()
       await this.installPrompt(agent)
+      if (this.sharedSessionFailures.has(String(agent.id))) return
+      this.sharedScopeShutdownController.signal.throwIfAborted()
       if (!this.sharedScopeAgents.has(agent)) throw new Error('shared Bot Agent scope was not installed')
+    }
+    if (duringCreation) {
+      await install(this.sharedScopeShutdownController.signal)
+      return
     }
     await quiesce()
     try {
@@ -7721,7 +7978,8 @@ export class BotService extends TypertRemoteService {
   }
 
   /** Join one shared-scope installation and keep the Agent sealed until it succeeds. */
-  private installSharedAgentScope(agent: Agent): Promise<void> {
+  private installSharedAgentScope(agent: Agent, duringCreation = false): Promise<void> {
+    this.markSharedApprovalAgent(agent)
     if (this.sharedScopeAgents.has(agent)) {
       this.markSharedScopeInstalled(agent)
       return Promise.resolve()
@@ -7729,9 +7987,17 @@ export class BotService extends TypertRemoteService {
     const existing = this.sharedScopeInstallations.get(agent)
     if (existing !== undefined) return existing
     const releaseFence = this.ensureSharedScopeFence(agent)
-    const installation = this.installSharedAgentScopeNow(agent)
+    const installation = this.installSharedAgentScopeNow(agent, duringCreation)
     const tracked = installation.then(
       () => {
+        if (this.sharedScopeShutdownController.signal.aborted || this.stopping) {
+          this.disposePrompt(agent)
+          return
+        }
+        if (this.sharedSessionFailures.has(String(agent.id)) && !this.sharedScopeAgents.has(agent)) {
+          if (this.sharedScopeInstallations.get(agent) === tracked) this.sharedScopeInstallations.delete(agent)
+          return
+        }
         this.sharedScopeAgents.add(agent)
         if (this.sharedScopeInstallations.get(agent) === tracked) this.sharedScopeInstallations.delete(agent)
         if (this.sharedScopeFences.get(agent) === releaseFence) this.sharedScopeFences.delete(agent)
@@ -7739,6 +8005,7 @@ export class BotService extends TypertRemoteService {
       },
       (error: unknown) => {
         if (this.sharedScopeInstallations.get(agent) === tracked) this.sharedScopeInstallations.delete(agent)
+        if (this.sharedScopeShutdownController.signal.aborted || this.stopping) this.disposePrompt(agent)
         throw error
       },
     )
@@ -8048,9 +8315,9 @@ export class BotService extends TypertRemoteService {
    * explicit mutation retries it, so a read does not expose an unacknowledged row.
    * Released v1 and setup-release v2 records are read only as migration sources
    * for the v4 successor; earlier generations remain unchanged.
-   * Startup discovery may allow a held shared-roster fence only for a
-   * read-only projection so the owner can inspect and recover an abandoned
-   * fence; ordinary reads continue to fail closed while the fence is held.
+   * Read-only projections may inspect a held shared-roster fence without
+   * replaying profile recovery or writing a credential record. Mutations and
+   * ordinary profile reads continue to fail closed while the fence is held.
    */
   private async readProfileRevisionState(
     bots: KvTable<BotRecord['id'], BotRecord>,
@@ -8144,7 +8411,7 @@ export class BotService extends TypertRemoteService {
     const cached = this.recordsBySession.get(sessionKey) ?? this.sharedRecordsBySession.get(sessionKey)
     if (cached === undefined) return undefined
     const bots = (await this.getDomain()).table('bots')
-    const profileState = await this.readProfileRevisionState(bots)
+    const profileState = await this.readProfileRevisionState(bots, false, true)
     const stored = bots.get(cached.id)
     if (stored === undefined) {
       this.recordsBySession.delete(sessionKey)
@@ -8425,6 +8692,14 @@ export class BotService extends TypertRemoteService {
   }
 
   private async mountSharedAccess(domain: Domain<typeof botDomain>): Promise<() => Promise<void>> {
+    const mountedSharedAgents = new Set<Agent>()
+    for (const agent of this.ctx.agents.list()) {
+      if (agent.session.header.agentPreset === SHARED_BOT_AGENT_PRESET
+        && !this.recordsBySession.has(String(agent.id))) {
+        mountedSharedAgents.add(agent)
+        this.markSharedApprovalAgent(agent)
+      }
+    }
     this.fenceKnownSharedPresetAgents()
     if (!this.sharedConfig.enabled) return async () => {}
     const connection: HostConnectionHandle | undefined = this.ctx.get('connection')
@@ -8445,6 +8720,9 @@ export class BotService extends TypertRemoteService {
       const host = this.sharedHost()
       service = await SharedBotService.create(this.ctx, this.ctx.storageDomain, authority, host, {
         membershipPollIntervalMs: this.sharedConfig.membershipPollIntervalMs,
+        sharedApprovalTtlMs: this.sharedConfig.sharedApprovalTtlMs,
+        sharedApprovalLeaseMs: this.sharedConfig.sharedApprovalLeaseMs,
+        sharedApprovalPollIntervalMs: this.sharedConfig.sharedApprovalPollIntervalMs,
         attachmentStore: new BotAttachmentGrantStore(await this.attachmentDomain),
       })
       const shared = service
@@ -8456,6 +8734,8 @@ export class BotService extends TypertRemoteService {
         this.sharedSessionIds.add(String(binding.sessionId))
         const agent = this.ctx.agents.get(binding.sessionId)
         if (agent !== undefined) {
+          mountedSharedAgents.add(agent)
+          this.markSharedApprovalAgent(agent)
           this.ensureSharedScopeFence(agent)
         }
       }
@@ -8478,6 +8758,8 @@ export class BotService extends TypertRemoteService {
         const sessionKey = String(binding.sessionId)
         const existingAgent = this.ctx.agents.get(binding.sessionId)
         if (existingAgent !== undefined) {
+          mountedSharedAgents.add(existingAgent)
+          this.markSharedApprovalAgent(existingAgent)
           this.ensureSharedScopeFence(existingAgent)
           existingGroupAgents.set(sessionKey, existingAgent)
         }
@@ -8648,12 +8930,32 @@ export class BotService extends TypertRemoteService {
         this.clearSharedGroupAdmissionReconciliationRetries()
       }
     } catch (error) {
-      await sharedAttachmentRouteFiber?.dispose()
-      await removeShared?.()
-      await removeEnrollment?.()
+      this.stopping = true
+      this.sharedScopeShutdownController.abort()
+      const agentsToDispose = new Set<Agent>([
+        ...mountedSharedAgents,
+      ])
+      this.sharedService = undefined
+      const routeDisposals: Promise<unknown>[] = []
+      if (sharedAttachmentRouteFiber !== undefined) routeDisposals.push(Promise.resolve().then(() => sharedAttachmentRouteFiber?.dispose()))
+      if (removeShared !== undefined) routeDisposals.push(Promise.resolve().then(() => removeShared?.()))
+      if (removeEnrollment !== undefined) routeDisposals.push(Promise.resolve().then(() => removeEnrollment?.()))
+      await Promise.allSettled(routeDisposals)
       await this.waitForAttachmentUploads()
-      await service?.dispose()
-      await authority.dispose()
+      await this.disposeAgentScopesAfterStartupFailure(agentsToDispose)
+      this.sharedRecordsBySession.clear()
+      this.sharedSessionIds.clear()
+      this.sharedSessionFailures.clear()
+      this.sharedExecutionCoordinatesBySession.clear()
+      this.sharedGroupSessionsBySession.clear()
+      this.activeSharedGroupSessionKeys.clear()
+      this.sharedGroupPendingMessages.clear()
+      this.sharedGroupDeliveryTails.clear()
+      this.sharedGroupDeliveryClaims.clear()
+      await Promise.allSettled([
+        ...(service === undefined ? [] : [service.dispose()]),
+        authority.dispose(),
+      ])
       this.clearSharedGroupAdmissionReconciliationRetries()
       throw error
     }
@@ -8731,20 +9033,23 @@ export class BotService extends TypertRemoteService {
     return {
       listBots: signal => this.serialize(async () => {
         signal?.throwIfAborted()
-        const bots = (await this.list({ includeHidden: true })).bots
+        const domain = await this.getDomain()
+        const bots = (await this.listFromDomain({ includeHidden: true }, domain, true)).bots
         signal?.throwIfAborted()
         return bots
       }, signal),
       withBotRoster: (expected, signal, operation) => this.withSharedBotRoster(expected, signal, operation),
       findBot: (botId, signal) => this.serialize(async () => {
         signal?.throwIfAborted()
-        const bot = (await this.list({ includeHidden: true })).bots.find(candidate => candidate.id === botId)
+        const domain = await this.getDomain()
+        const bot = (await this.listFromDomain({ includeHidden: true }, domain, true)).bots.find(candidate => candidate.id === botId)
         signal?.throwIfAborted()
         return bot
       }, signal),
       withBot: (botId, signal, operation) => this.serialize(async () => {
         signal?.throwIfAborted()
-        const bot = (await this.list({ includeHidden: true })).bots.find(candidate => candidate.id === botId)
+        const domain = await this.getDomain()
+        const bot = (await this.listFromDomain({ includeHidden: true }, domain, true)).bots.find(candidate => candidate.id === botId)
         signal?.throwIfAborted()
         if (bot === undefined) return { found: false as const }
         return { found: true as const, value: await operation(bot) }
@@ -8778,6 +9083,7 @@ export class BotService extends TypertRemoteService {
           await this.ctx.sessionController.create(request, signal ?? new AbortController().signal)
           const created = this.ctx.agents.get(sessionId)
           if (created === undefined) throw new Error(`Shared Bot Session "${String(sessionId)}" was not published.`)
+          this.markSharedApprovalAgent(created)
           return created
         } catch (error) {
           this.sharedRecordsBySession.delete(String(sessionId))

@@ -108,6 +108,8 @@ export const SHARED_BOT_ENDPOINTS = [
   'bots/share/inspect-group',
   'bots/share/send-group-message',
   'bots/share/manage-group-members',
+  'bots/share/list-approvals',
+  'bots/share/decide-approval',
 ] as const
 
 /** Safe profile projection returned to a collaborator. */
@@ -274,12 +276,85 @@ export interface SharedConnectedAppAccessValue {
   readonly allowedAppIds: readonly string[]
 }
 
+/** Input captured when a shared connected-app call reaches the approval seam. */
+export interface SharedAppApprovalRequest {
+  /** Human-readable tool name presented to the collaborator. */
+  readonly toolName: string
+  /** Opaque model call id, when this request came from a logged tool call. */
+  readonly callId?: string
+  /** Why the tool asked for collaborator approval. */
+  readonly reason?: string
+  /** Parsed call arguments; the service stores a bounded projection with every scalar replaced. */
+  readonly arguments?: unknown
+  /** Action identity presented with the tool and connected-app id. */
+  readonly action?: string
+}
+
+/** JSON-safe argument values retained in a shared approval preview. */
+export type SharedAppApprovalArguments =
+  | null
+  | boolean
+  | number
+  | string
+  | readonly SharedAppApprovalArguments[]
+  | { readonly [key: string]: SharedAppApprovalArguments }
+
+/** Safe shared approval projection returned to the authenticated requester. */
+export interface SharedAppApprovalView {
+  /** Opaque approval id used by the decide endpoint. */
+  readonly id: string
+  /** Bot whose isolated Session is waiting. */
+  readonly botId: BotId
+  /** Shared group when this is an isolated group Session. */
+  readonly groupId?: BotGroupId
+  /** Connected MCP app namespace. */
+  readonly appId: string
+  /** Registered tool awaiting approval. */
+  readonly toolName: string
+  /** Opaque tool call id, when available. */
+  readonly callId?: string
+  /** Action description supplied by the tool policy. */
+  readonly action: string
+  /** Human-readable reason, when supplied by the policy. */
+  readonly reason?: string
+  /** Bounded JSON preview whose scalar values have been replaced, when safely available. */
+  readonly arguments?: SharedAppApprovalArguments
+  /** True when one or more argument values were replaced for safety. */
+  readonly argumentsRedacted?: true
+  /** True when argument data was shortened or omitted to stay bounded. */
+  readonly argumentsTruncated?: true
+  /** Creation time in Unix milliseconds. */
+  readonly createdAt: number
+  /** Absolute expiry after which the request cannot be decided. */
+  readonly expiresAt: number
+}
+
+/** Shared approval decision accepted by the collaborator endpoint. */
+export type SharedAppApprovalDecision = 'allow' | 'reject'
+
+/** Outcome vocabulary returned by the shared approval answerer. */
+export type SharedAppApprovalOutcome = 'allowed-once' | 'rejected' | 'cancelled' | 'unavailable'
+
+/** Result of one shared approval decision attempt. */
+export interface SharedAppApprovalDecisionValue {
+  /** Stable success marker consumed by the shared RPC client. */
+  readonly ok: true
+  /** Whether this call won the pending approval race. */
+  readonly resolved: boolean
+}
+
 interface SharedServiceOptions {
   readonly now?: () => number
   /** Durable provider used to refresh membership state across processes. */
   readonly credentials?: CredentialProvider
   /** Maximum interval before a process notices a membership change in storage. */
   readonly membershipPollIntervalMs?: number
+  /** Maximum lifetime of a pending shared connected-app approval. */
+  readonly sharedApprovalTtlMs?: number
+  /** Maximum lease for an active requester before an abandoned approval expires. */
+  readonly sharedApprovalLeaseMs?: number
+  /** Poll interval used by the Host waiting on an authority mailbox decision. */
+  readonly sharedApprovalPollIntervalMs?: number
   /** Durable Bot-message attachment grants shared by local and collaborator paths. */
   readonly attachmentStore?: BotAttachmentGrantStore
 }
@@ -378,6 +453,14 @@ const manageGroupMembersPayload = groupIdPayload.extend({
   action: z.enum(['create-invite', 'revoke']),
   principalId: z.string().regex(/^principal-[A-Za-z0-9-]+$/).transform(BotPrincipalId).optional(),
 }).strict()
+const sharedApprovalListPayload = z.object({
+  botId: botIdPayload.shape.botId.optional(),
+  groupId: groupIdPayload.shape.groupId.optional(),
+}).strict()
+const sharedApprovalDecisionPayload = z.object({
+  id: z.string().regex(/^shared-app-approval-[A-Za-z0-9][A-Za-z0-9-]*$/),
+  decision: z.enum(['allow', 'reject']),
+}).strict()
 type BotIdPayload = z.infer<typeof botIdPayload>
 type ChatPayload = z.infer<typeof chatPayload>
 type ManageMembersPayload = z.infer<typeof manageMembersPayload>
@@ -388,6 +471,8 @@ type GroupCreatePayload = z.infer<typeof groupCreatePayload>
 type GroupUpdatePayload = z.infer<typeof groupUpdatePayload>
 type GroupSendPayload = z.infer<typeof groupSendPayload>
 type ManageGroupMembersPayload = z.infer<typeof manageGroupMembersPayload>
+type SharedApprovalListPayload = z.infer<typeof sharedApprovalListPayload>
+type SharedApprovalDecisionPayload = z.infer<typeof sharedApprovalDecisionPayload>
 
 interface PrivateAttachmentAdmission {
   readonly duplicate: boolean
@@ -406,10 +491,12 @@ const SHARED_MEMBERSHIP_RECORD_KEY = credentialKey('agent-bots', 'shared-members
 const SHARED_MEMBERSHIP_EXTENSION_KEY = 'agent-bots/shared-memberships'
 const SHARED_PRIVATE_SESSIONS_EXTENSION_KEY = 'agent-bots/shared-private-sessions'
 const SHARED_CONNECTED_APP_ACCESS_EXTENSION_KEY = 'agent-bots/shared-connected-app-access'
+const SHARED_APP_APPROVALS_EXTENSION_KEY = 'agent-bots/shared-app-approvals'
 const SHARED_PAIR_KEY_MIGRATION_EXTENSION_KEY = 'agent-bots/shared-pair-key-migration'
 const SHARED_MEMBERSHIP_RECORD_VERSION = 1 as const
 const SHARED_PRIVATE_SESSIONS_RECORD_VERSION = 1 as const
 const SHARED_CONNECTED_APP_ACCESS_VERSION = 1 as const
+const SHARED_APP_APPROVALS_VERSION = 1 as const
 const SHARED_PAIR_KEY_MIGRATION_VERSION = 3 as const
 const DEFAULT_SHARED_MEMBERSHIP_POLL_INTERVAL_MS = 1_000
 const MAX_NODE_TIMER_MS = 2_147_483_647
@@ -417,6 +504,17 @@ const SHARED_AGENT_CANCEL_TIMEOUT_MS = 1_000
 const SHARED_FLUSH_TIMEOUT_MS = 1_000
 const SHARED_DISPOSE_TIMEOUT_MS = SHARED_AGENT_CANCEL_TIMEOUT_MS
 const SHARED_PRIVATE_ATTACHMENT_LEASE_MS = 30_000
+const DEFAULT_SHARED_APP_APPROVAL_TTL_MS = 900_000
+const MIN_SHARED_APP_APPROVAL_TTL_MS = 1_000
+const MAX_SHARED_APP_APPROVAL_TTL_MS = 3_600_000
+const DEFAULT_SHARED_APP_APPROVAL_LEASE_MS = 60_000
+const MIN_SHARED_APP_APPROVAL_LEASE_MS = 1_000
+const SHARED_APP_APPROVAL_MAX_RECORDS = 128
+const SHARED_APP_APPROVAL_MAX_TEXT_LENGTH = 1_024
+const SHARED_APP_APPROVAL_MAX_ARGUMENTS_LENGTH = 4_096
+const DEFAULT_SHARED_APP_APPROVAL_POLL_INTERVAL_MS = 1_000
+const MIN_SHARED_APP_APPROVAL_POLL_INTERVAL_MS = 50
+const MAX_SHARED_APP_APPROVAL_POLL_INTERVAL_MS = 30_000
 
 const sharedPrivateSessionSnapshotSchema = z.object({
   version: z.literal(SHARED_PRIVATE_SESSIONS_RECORD_VERSION),
@@ -433,6 +531,39 @@ const sharedConnectedAppPolicySchema = z.object({
     { message: 'shared connected-app ids must be unique' },
   ),
 }).strict()
+
+const sharedAppApprovalRecordSchema = z.object({
+  id: z.string().regex(/^shared-app-approval-[A-Za-z0-9][A-Za-z0-9-]*$/),
+  botId: z.string().regex(/^bot-[A-Za-z0-9][A-Za-z0-9-]*$/).transform(BotId),
+  principalId: z.string().regex(/^principal-[A-Za-z0-9-]+$/).transform(BotPrincipalId),
+  sessionId: z.string().min(1).max(256).transform(SessionId),
+  groupId: z.string().regex(/^bot-group-[A-Za-z0-9][A-Za-z0-9-]*$/).transform(BotGroupId).optional(),
+  turn: z.number().int().nonnegative().optional(),
+  step: z.number().int().nonnegative().optional(),
+  // Connected-app ids are provider-owned namespaces. Keep this field opaque:
+  // providers may use an empty or arbitrarily long id.
+  appId: z.string(),
+  toolName: z.string().min(1).max(256),
+  callId: z.string().min(1).max(256).optional(),
+  action: z.string().min(1).max(SHARED_APP_APPROVAL_MAX_TEXT_LENGTH),
+  reason: z.string().min(1).max(SHARED_APP_APPROVAL_MAX_TEXT_LENGTH).optional(),
+  arguments: z.string().max(SHARED_APP_APPROVAL_MAX_ARGUMENTS_LENGTH).optional(),
+  argumentsRedacted: z.literal(true).optional(),
+  argumentsTruncated: z.literal(true).optional(),
+  createdAt: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  expiresAt: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  leaseExpiresAt: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
+  status: z.enum(['pending', 'allowed', 'rejected', 'cancelled', 'expired']),
+  decidedAt: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
+}).strict()
+
+const sharedAppApprovalSnapshotSchema = z.object({
+  version: z.literal(SHARED_APP_APPROVALS_VERSION),
+  approvals: z.array(sharedAppApprovalRecordSchema).max(SHARED_APP_APPROVAL_MAX_RECORDS),
+}).strict()
+
+type SharedAppApprovalRecord = z.infer<typeof sharedAppApprovalRecordSchema>
+type SharedAppApprovalSnapshot = z.infer<typeof sharedAppApprovalSnapshotSchema>
 
 const sharedConnectedAppAccessSnapshotSchema = z.object({
   version: z.literal(SHARED_CONNECTED_APP_ACCESS_VERSION),
@@ -499,11 +630,18 @@ export class SharedBotService {
   private readonly owner: Context
   private membershipSnapshot: readonly SharedMembershipRecord[]
   private readonly now: () => number
+  private readonly sharedApprovalTtlMs: number
+  private readonly sharedApprovalLeaseMs: number
+  private readonly sharedApprovalPollIntervalMs: number
   private readonly activeRequests = new Map<string, Set<AbortController>>()
   private readonly activeRequestControllers = new Set<AbortController>()
   private readonly activeRequestCompletions = new Set<Promise<void>>()
   /** Durability operations that may outlive a cancelled shared request. */
   private readonly activeFlushCompletions = new Set<Promise<void>>()
+  /** Connected-app bodies admitted before service disposal is observed. */
+  private readonly activeAppBodyCompletions = new Set<Promise<void>>()
+  /** Approval waiters retained until their mailbox row is consumed or cancelled. */
+  private readonly activeApprovalCompletions = new Set<Promise<void>>()
   /** Private Sessions whose Agent has been cancelled but has not reached idle. */
   private readonly quarantinedSessions = new Map<string, Promise<void>>()
   /** Bindings whose last quiescence attempt failed and need a fresh retry. */
@@ -539,6 +677,9 @@ export class SharedBotService {
       }
     }
     this.now = options.now ?? Date.now
+    this.sharedApprovalTtlMs = boundedSharedApprovalTtl(options.sharedApprovalTtlMs)
+    this.sharedApprovalLeaseMs = boundedSharedApprovalLease(options.sharedApprovalLeaseMs, this.sharedApprovalTtlMs)
+    this.sharedApprovalPollIntervalMs = boundedSharedApprovalPollInterval(options.sharedApprovalPollIntervalMs)
     const membershipPollIntervalMs = Math.max(1, Math.min(
       options.membershipPollIntervalMs ?? DEFAULT_SHARED_MEMBERSHIP_POLL_INTERVAL_MS,
       MAX_NODE_TIMER_MS,
@@ -596,6 +737,7 @@ export class SharedBotService {
       await reconcileMembershipMirror(authority, domain.table('memberships'))
       const privateSessionSnapshot = await initializePrivateSessionSnapshot(authority, domain.table('private_sessions'))
       await reconcilePrivateSessionMirror(authority, domain.table('private_sessions'))
+      await initializeSharedAppApprovalSnapshot(authority)
       return new SharedBotService(
         owner, domain, authority, host, membershipSnapshot, privateSessionSnapshot, options, options.attachmentStore,
       )
@@ -1022,10 +1164,10 @@ export class SharedBotService {
   }
 
   /**
-   * Authorize one connected app and invoke the next body-admission stage while
-   * the authority transaction still holds its short write lock. The returned
-   * body promise is not part of that transaction, so the lock is released
-   * immediately after body invocation rather than after external app work.
+   * Authorize one connected app and synchronously invoke the body-admission
+   * stage from the locked authority reader. The returned body promise is
+   * tracked so service disposal waits for bounded completion; the provider
+   * body itself is not awaited while the authority lock is held.
    * @param request - Exact shared Session, app, and optional group-step identities.
    * @param start - Body-admission callback invoked only after authorization.
    * @param signal - Optional cancellation for the Host lifecycle operation.
@@ -1039,10 +1181,10 @@ export class SharedBotService {
     let started: Promise<T> | undefined
     try {
       const authorized = await this.authorizeSharedConnectedAppWithHook(request, signal, () => {
+        if (this.stopping || this.stoppingController.signal.aborted) return
+        signal?.throwIfAborted()
         try {
-          const running = start()
-          started = running
-          void started.catch(() => undefined)
+          started = start()
         } catch (error: unknown) {
           // Preserve the original failure, including non-Error rejections from external tools.
           // oxlint-disable-next-line typescript/prefer-promise-reject-errors
@@ -1050,9 +1192,14 @@ export class SharedBotService {
           void started.catch(() => undefined)
           throw error
         }
+        const bodyCompletion = started.then(() => undefined, () => undefined)
+        this.activeAppBodyCompletions.add(bodyCompletion)
+        void bodyCompletion.then(() => { this.activeAppBodyCompletions.delete(bodyCompletion) })
       })
       if (!authorized) return undefined
-      if (started === undefined) throw new Error('shared connected-app body admission did not start a body')
+      // The callback starts the body synchronously inside the locked reader.
+      // A stop can prevent that callback after authorization was observed.
+      if (started === undefined) return undefined
       return await started
     } catch (error: unknown) {
       if (started !== undefined) await started.catch(() => undefined)
@@ -1060,12 +1207,457 @@ export class SharedBotService {
     }
   }
 
+  /**
+   * Put one shared connected-app action in the authority-backed approval
+   * mailbox and wait for the initiating collaborator's one-shot answer.
+   *
+   * The pending record is committed before this method waits. The wait polls
+   * the authority extension rather than retaining a process-local resolver,
+   * so a decision sent to another Host still reaches the waiting Agent.
+   * @param request - Exact private or isolated group Session attribution.
+   * @param approval - Tool identity and bounded presentation details.
+   * @param signal - Agent lifetime and revocation cancellation.
+   * @returns The closed approval outcome used by the ordinary tool seam.
+   */
+  async requestSharedAppApproval(
+    request: SharedConnectedAppAuthorizationRequest,
+    approval: SharedAppApprovalRequest,
+    signal?: AbortSignal,
+  ): Promise<SharedAppApprovalOutcome> {
+    const operationSignal = signal === undefined
+      ? this.stoppingController.signal
+      : AbortSignal.any([signal, this.stoppingController.signal])
+    const isStopping = (): boolean => this.stopping || this.stoppingController.signal.aborted
+    if (isStopping()) return 'cancelled'
+    const completed = Promise.withResolvers<void>()
+    this.activeApprovalCompletions.add(completed.promise)
+    try {
+      let principalId: ReturnType<typeof BotPrincipalId> | undefined
+      try {
+        principalId = await this.resolveSharedApprovalPrincipal(request, operationSignal)
+        if (principalId === undefined) return 'unavailable'
+        if (!await this.authorizeSharedConnectedApp(request, operationSignal)) return 'unavailable'
+      } catch (error: unknown) {
+        if (isStopping()) return 'cancelled'
+        throw error
+      }
+      operationSignal.throwIfAborted()
+      if (isStopping()) return 'cancelled'
+      const createdAt = this.now()
+      const record: SharedAppApprovalRecord = {
+        id: `shared-app-approval-${randomUUID()}`,
+        botId: request.botId,
+        principalId,
+        sessionId: request.sessionId,
+        ...(request.kind === 'group' ? {
+          groupId: request.groupId,
+          turn: request.turn,
+          step: request.step,
+        } : {}),
+        appId: request.appId,
+        toolName: boundedApprovalText(approval.toolName, 'connected app tool'),
+        ...(approval.callId === undefined ? {} : { callId: boundedApprovalText(approval.callId, 'tool call') }),
+        action: boundedApprovalText(
+          approval.action ?? `Run ${approval.toolName}`,
+          'Run connected app action',
+        ),
+        ...(approval.reason === undefined ? {} : { reason: boundedApprovalText(approval.reason, 'Approval required') }),
+        ...approvalArgumentsRecord(approval.arguments),
+        createdAt,
+        expiresAt: createdAt + this.sharedApprovalTtlMs,
+        leaseExpiresAt: createdAt + this.sharedApprovalLeaseMs,
+        status: 'pending',
+      }
+      try {
+        await this.authority.mutateExtension(SHARED_APP_APPROVALS_EXTENSION_KEY, (current) => {
+          operationSignal.throwIfAborted()
+          if (this.stopping || this.stoppingController.signal.aborted) {
+            throw new SharedServiceFault('gateway/unavailable', 'shared Bot approval service is stopping')
+          }
+          const snapshot = parseSharedAppApprovalSnapshot(current)
+          let approvals = snapshot.approvals.filter(candidate => candidate.status !== 'pending'
+            || sharedApprovalLeaseExpiry(candidate) > createdAt)
+            .filter(candidate => candidate.status === 'pending'
+              || (candidate.decidedAt ?? candidate.createdAt) + this.sharedApprovalTtlMs > createdAt)
+          // Keep every terminal decision until its waiter can observe it. A
+          // bounded mailbox rejects new asks once unexpired terminal rows fill
+          // it rather than evicting a decision that a waiting Host may not have
+          // read yet. Abandoned terminal rows are cleaned after the same bounded
+          // grace as the pending approval lifetime.
+          if (approvals.length >= SHARED_APP_APPROVAL_MAX_RECORDS) {
+            throw new SharedServiceFault('gateway/unavailable', 'shared Bot approval mailbox is full')
+          }
+          approvals = [...approvals, record]
+          return {
+            value: undefined,
+            next: { version: SHARED_APP_APPROVALS_VERSION, approvals },
+          }
+        })
+      } catch (error: unknown) {
+        if (isStopping()) return 'cancelled'
+        // A mailbox write failure must fail closed without exposing authority storage details.
+        void error
+        return 'unavailable'
+      }
+      return await this.waitForSharedAppApproval(record, request, operationSignal)
+    } finally {
+      completed.resolve()
+      this.activeApprovalCompletions.delete(completed.promise)
+    }
+  }
+
+  /**
+   * List pending approval records for the authenticated collaborator.
+   * @param payload - Optional Bot and group filters.
+   * @param principalId - Authenticated authority principal.
+   * @param signal - Request cancellation.
+   * @returns Redacted pending approval projections owned by that principal.
+   */
+  private async listApprovals(
+    payload: SharedApprovalListPayload,
+    signal: AbortSignal,
+    principalId: ReturnType<typeof BotPrincipalId>,
+  ): Promise<ConnectionRpcHandlerResult> {
+    signal.throwIfAborted()
+    const initial = await this.authority.readLockedExtensions([
+      SHARED_APP_APPROVALS_EXTENSION_KEY,
+      SHARED_CONNECTED_APP_ACCESS_EXTENSION_KEY,
+      SHARED_MEMBERSHIP_EXTENSION_KEY,
+      SHARED_PRIVATE_SESSIONS_EXTENSION_KEY,
+    ], (extensions, authorityState) => {
+      signal.throwIfAborted()
+      return projectSharedApprovalList(
+        parseSharedAppApprovalSnapshot(extensions[SHARED_APP_APPROVALS_EXTENSION_KEY]),
+        payload,
+        principalId,
+        extensions,
+        authorityState,
+        this.now(),
+        this.sharedApprovalTtlMs,
+        signal,
+      )
+    })
+    if (!initial.changed) {
+      return { ok: true, value: { approvals: initial.visible } }
+    }
+    const approvals = await this.authority.mutateExtensions<readonly SharedAppApprovalView[]>([
+      SHARED_APP_APPROVALS_EXTENSION_KEY,
+      SHARED_CONNECTED_APP_ACCESS_EXTENSION_KEY,
+      SHARED_MEMBERSHIP_EXTENSION_KEY,
+      SHARED_PRIVATE_SESSIONS_EXTENSION_KEY,
+    ], (current, authorityState) => {
+      const projection = projectSharedApprovalList(
+        parseSharedAppApprovalSnapshot(current[SHARED_APP_APPROVALS_EXTENSION_KEY]),
+        payload,
+        principalId,
+        current,
+        authorityState,
+        this.now(),
+        this.sharedApprovalTtlMs,
+        signal,
+      )
+      return {
+        value: projection.visible,
+        next: {
+          ...current,
+          [SHARED_APP_APPROVALS_EXTENSION_KEY]: {
+            version: SHARED_APP_APPROVALS_VERSION,
+            approvals: projection.approvals,
+          },
+        },
+      }
+    })
+    signal.throwIfAborted()
+    return { ok: true, value: { approvals } }
+  }
+
+  /**
+   * Resolve one pending approval exactly once for its initiating principal.
+   * @param payload - Approval id and collaborator decision.
+   * @param principalId - Authenticated authority principal.
+   * @param signal - Request cancellation.
+   * @returns Whether this request won the pending decision race.
+   */
+  private async decideSharedAppApproval(
+    payload: SharedApprovalDecisionPayload,
+    principalId: ReturnType<typeof BotPrincipalId>,
+    signal: AbortSignal,
+  ): Promise<ConnectionRpcHandlerResult> {
+    signal.throwIfAborted()
+    const result = await this.authority.mutateExtensions<SharedAppApprovalDecisionValue>([
+      SHARED_APP_APPROVALS_EXTENSION_KEY,
+      SHARED_CONNECTED_APP_ACCESS_EXTENSION_KEY,
+      SHARED_MEMBERSHIP_EXTENSION_KEY,
+      SHARED_PRIVATE_SESSIONS_EXTENSION_KEY,
+    ], (extensions, authorityState) => {
+      const snapshot = parseSharedAppApprovalSnapshot(extensions[SHARED_APP_APPROVALS_EXTENSION_KEY])
+      const now = this.now()
+      const candidate = snapshot.approvals.find(approval => approval.id === payload.id)
+      if (candidate === undefined || candidate.principalId !== principalId) {
+        throw new SharedServiceFault('gateway/not-found', 'shared approval was not found')
+      }
+      if (candidate.status !== 'pending') {
+        throw new SharedServiceFault('gateway/conflict', 'shared approval was already resolved')
+      }
+      if (candidate.expiresAt <= now || sharedApprovalLeaseExpiry(candidate) <= now) {
+        const approvals = snapshot.approvals.map(approval => approval.id === candidate.id
+          ? { ...approval, status: 'expired' as const, decidedAt: now }
+          : approval)
+        return {
+          value: { ok: true as const, resolved: false },
+          next: {
+            ...extensions,
+            [SHARED_APP_APPROVALS_EXTENSION_KEY]: { version: SHARED_APP_APPROVALS_VERSION, approvals },
+          },
+        }
+      }
+      if (!approvalRecordAuthorized(candidate, extensions, authorityState, signal)) {
+        const approvals = snapshot.approvals.map(approval => approval.id === candidate.id
+          ? { ...approval, status: 'cancelled' as const, decidedAt: now }
+          : approval)
+        return {
+          value: { ok: true as const, resolved: false },
+          next: {
+            ...extensions,
+            [SHARED_APP_APPROVALS_EXTENSION_KEY]: { version: SHARED_APP_APPROVALS_VERSION, approvals },
+          },
+        }
+      }
+      const status = payload.decision === 'allow' ? 'allowed' as const : 'rejected' as const
+      const approvals = snapshot.approvals.map(approval => approval.id === candidate.id
+        ? { ...approval, status, decidedAt: now }
+        : approval)
+      return {
+        value: { ok: true as const, resolved: true as const },
+        next: {
+          ...extensions,
+          [SHARED_APP_APPROVALS_EXTENSION_KEY]: { version: SHARED_APP_APPROVALS_VERSION, approvals },
+        },
+      }
+    })
+    signal.throwIfAborted()
+    if (!result.resolved) throw new SharedServiceFault('gateway/conflict', 'shared approval is no longer active')
+    return { ok: true, value: result }
+  }
+
+  private async resolveSharedApprovalPrincipal(
+    request: SharedConnectedAppAuthorizationRequest,
+    signal?: AbortSignal,
+  ): Promise<ReturnType<typeof BotPrincipalId> | undefined> {
+    const keys = request.kind === 'private'
+      ? [SHARED_MEMBERSHIP_EXTENSION_KEY, SHARED_PRIVATE_SESSIONS_EXTENSION_KEY]
+      : [SHARED_MEMBERSHIP_EXTENSION_KEY]
+    const result = await this.authority.readLockedExtensions<{ readonly value: ReturnType<typeof BotPrincipalId> | undefined }>(
+      keys,
+      (extensions, authorityState) => {
+        signal?.throwIfAborted()
+        const membershipSnapshot = parseMembershipSnapshot(extensions[SHARED_MEMBERSHIP_EXTENSION_KEY])
+        const value = request.kind === 'private'
+          ? resolvePrivateSessionInitiatorFromSnapshot(
+            membershipSnapshot,
+            extensions[SHARED_PRIVATE_SESSIONS_EXTENSION_KEY],
+            authorityState,
+            { botId: request.botId, sessionId: request.sessionId },
+          )
+          : resolveSharedGroupInitiatorFromSnapshot(
+            extensions[SHARED_MEMBERSHIP_EXTENSION_KEY],
+            authorityState,
+            request,
+          )
+        return { value }
+      },
+    )
+    return result.value
+  }
+
+  private async waitForSharedAppApproval(
+    record: SharedAppApprovalRecord,
+    request: SharedConnectedAppAuthorizationRequest,
+    signal?: AbortSignal,
+  ): Promise<SharedAppApprovalOutcome> {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const abort = Promise.withResolvers<'cancelled'>()
+    const onAbort = (): void => { abort.resolve('cancelled') }
+    signal?.addEventListener('abort', onAbort, { once: true })
+    try {
+      while (true) {
+        if (signal?.aborted) {
+          await this.cancelSharedAppApproval(record.id)
+          await this.consumeSharedAppApproval(record.id, 'cancelled')
+          return 'cancelled'
+        }
+        let current: { readonly value: unknown }
+        try {
+          current = await raceSharedAbort(
+            this.authority.readExtension(SHARED_APP_APPROVALS_EXTENSION_KEY),
+            signal,
+          )
+        } catch (error: unknown) {
+          if (signal?.aborted || this.stopping) {
+            await this.cancelSharedAppApproval(record.id)
+            await this.consumeSharedAppApproval(record.id, 'cancelled')
+            return 'cancelled'
+          }
+          throw error
+        }
+        const snapshot = parseSharedAppApprovalSnapshot(current.value)
+        const pending = snapshot.approvals.find(candidate => candidate.id === record.id)
+        if (pending === undefined) return 'unavailable'
+        if (pending.status === 'allowed') {
+          await this.consumeSharedAppApproval(record.id, 'allowed')
+          return 'allowed-once'
+        }
+        if (pending.status === 'rejected') {
+          await this.consumeSharedAppApproval(record.id, 'rejected')
+          return 'rejected'
+        }
+        if (pending.status === 'cancelled') {
+          await this.consumeSharedAppApproval(record.id, 'cancelled')
+          return 'cancelled'
+        }
+        const now = this.now()
+        if (pending.status === 'expired'
+          || pending.expiresAt <= now
+          || sharedApprovalLeaseExpiry(pending) <= now) {
+          await this.expireSharedAppApproval(record.id)
+          await this.consumeSharedAppApproval(record.id, 'expired')
+          return 'unavailable'
+        }
+        let authorized: boolean
+        try {
+          authorized = await this.authorizeSharedConnectedApp(request, signal)
+        } catch (error: unknown) {
+          if (!signal?.aborted) throw error
+          await this.cancelSharedAppApproval(record.id)
+          await this.consumeSharedAppApproval(record.id, 'cancelled')
+          return 'cancelled'
+        }
+        if (!authorized) {
+          await this.cancelSharedAppApproval(record.id)
+          await this.consumeSharedAppApproval(record.id, 'cancelled')
+          return 'cancelled'
+        }
+        const leaseRemainingBeforeRenewal = Math.max(0, sharedApprovalLeaseExpiry(pending) - now)
+        if (leaseRemainingBeforeRenewal <= this.sharedApprovalPollIntervalMs * 2) {
+          await this.renewSharedAppApproval(record.id)
+        }
+        const remaining = Math.max(0, pending.expiresAt - now)
+        // The configured polling interval may exceed the lease. Wake within
+        // the renewed lease window so an active waiter can renew it again.
+        const leaseRemaining = Math.min(
+          remaining,
+          Math.max(this.sharedApprovalLeaseMs, leaseRemainingBeforeRenewal),
+        )
+        const renewalWindow = Math.max(1, Math.floor(leaseRemaining / 2))
+        const wait = new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, Math.min(this.sharedApprovalPollIntervalMs, remaining, renewalWindow))
+          timer.unref()
+        })
+        const outcome = await Promise.race([wait.then(() => undefined), abort.promise])
+        if (outcome === 'cancelled') {
+          await this.cancelSharedAppApproval(record.id)
+          await this.consumeSharedAppApproval(record.id, 'cancelled')
+          return 'cancelled'
+        }
+      }
+    } finally {
+      if (timer !== undefined) clearTimeout(timer)
+      signal?.removeEventListener('abort', onAbort)
+    }
+  }
+
+  private async expireSharedAppApproval(id: string): Promise<void> {
+    await this.updateSharedAppApprovalStatus(id, 'expired')
+  }
+
+  private async renewSharedAppApproval(id: string): Promise<void> {
+    try {
+      await this.authority.mutateExtension(SHARED_APP_APPROVALS_EXTENSION_KEY, (current) => {
+        const snapshot = parseSharedAppApprovalSnapshot(current)
+        const now = this.now()
+        const approvals = snapshot.approvals.map(approval => approval.id === id
+          && approval.status === 'pending'
+          && approval.expiresAt > now
+          && sharedApprovalLeaseExpiry(approval) > now
+          ? { ...approval, leaseExpiresAt: Math.min(approval.expiresAt, now + this.sharedApprovalLeaseMs) }
+          : approval)
+        return {
+          value: undefined,
+          next: { version: SHARED_APP_APPROVALS_VERSION, approvals },
+        }
+      })
+    } catch (error: unknown) {
+      // A failed lease renewal leaves the old lease in force and expires safely.
+      void error
+    }
+  }
+
+  private async consumeSharedAppApproval(
+    id: string,
+    status: Extract<SharedAppApprovalRecord['status'], 'allowed' | 'rejected' | 'cancelled' | 'expired'>,
+  ): Promise<void> {
+    try {
+      await this.authority.mutateExtension(SHARED_APP_APPROVALS_EXTENSION_KEY, (current) => {
+        const snapshot = parseSharedAppApprovalSnapshot(current)
+        const candidate = snapshot.approvals.find(approval => approval.id === id)
+        if (candidate?.status !== status) return { value: undefined, next: current }
+        return {
+          value: undefined,
+          next: {
+            version: SHARED_APP_APPROVALS_VERSION,
+            approvals: snapshot.approvals.filter(approval => approval.id !== id),
+          },
+        }
+      })
+    } catch (error: unknown) {
+      // Consumption is best effort; the terminal row remains bounded by the
+      // grace sweep and the waiting outcome must not be lost to cleanup I/O.
+      void error
+    }
+  }
+
+  private async cancelSharedAppApproval(id: string): Promise<void> {
+    let lastError: unknown
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        await this.updateSharedAppApprovalStatus(id, 'cancelled')
+        return
+      } catch (error: unknown) {
+        lastError = error
+        if (attempt === 0) await Promise.resolve()
+      }
+    }
+    // The pending row remains bounded by its original expiry and is swept by
+    // the next list/ask after the authority becomes available again.
+    void lastError
+  }
+
+  private async updateSharedAppApprovalStatus(
+    id: string,
+    status: Extract<SharedAppApprovalRecord['status'], 'cancelled' | 'expired'>,
+  ): Promise<void> {
+    await this.authority.mutateExtension(SHARED_APP_APPROVALS_EXTENSION_KEY, (current) => {
+      const snapshot = parseSharedAppApprovalSnapshot(current)
+      const now = this.now()
+      const approvals = snapshot.approvals.map(approval => approval.id === id && approval.status === 'pending'
+        ? { ...approval, status, decidedAt: now }
+        : approval)
+      return {
+        value: undefined,
+        next: { version: SHARED_APP_APPROVALS_VERSION, approvals },
+      }
+    })
+  }
+
   private async authorizeSharedConnectedAppWithHook(
     request: SharedConnectedAppAuthorizationRequest,
     signal: AbortSignal | undefined,
     onAuthorized?: () => void,
   ): Promise<boolean> {
-    const operation = await this.host.withBot(request.botId, signal, async (bot) => {
+    const operationSignal = signal === undefined
+      ? this.stoppingController.signal
+      : AbortSignal.any([signal, this.stoppingController.signal])
+    const operation = await this.host.withBot(request.botId, operationSignal, async (bot) => {
       void bot
       const keys = request.kind === 'private'
         ? [
@@ -1074,7 +1666,10 @@ export class SharedBotService {
           SHARED_PRIVATE_SESSIONS_EXTENSION_KEY,
         ]
         : [SHARED_CONNECTED_APP_ACCESS_EXTENSION_KEY, SHARED_MEMBERSHIP_EXTENSION_KEY]
-      const result = await this.authority.mutateExtensions<{
+      const readLockedExtensions = onAuthorized === undefined
+        ? this.authority.readLockedExtensions.bind(this.authority)
+        : this.authority.readLockedExtensionsForActionStart.bind(this.authority)
+      const result = await readLockedExtensions<{
         readonly memberships: readonly SharedMembershipRecord[]
         readonly value: boolean
       }>(keys, (extensions, authorityState) => {
@@ -1084,8 +1679,8 @@ export class SharedBotService {
         )
         if (!access.allowedAppIds.includes(request.appId)) {
           return {
-            value: { memberships: this.membershipSnapshot, value: false },
-            next: extensions,
+            memberships: this.membershipSnapshot,
+            value: false,
           }
         }
         const membershipSnapshot = parseMembershipSnapshot(extensions[SHARED_MEMBERSHIP_EXTENSION_KEY])
@@ -1102,16 +1697,30 @@ export class SharedBotService {
             request,
           )
         const allowed = principal !== undefined
-        if (allowed) onAuthorized?.()
+        if (allowed && onAuthorized !== undefined) {
+          operationSignal.throwIfAborted()
+          if (this.stopping || this.stoppingController.signal.aborted) {
+            return {
+              memberships: membershipSnapshot.memberships,
+              value: false,
+            }
+          }
+          onAuthorized()
+        }
         return {
-          value: { memberships: membershipSnapshot.memberships, value: allowed },
-          next: extensions,
+          memberships: membershipSnapshot.memberships,
+          value: allowed,
         }
       })
       this.membershipSnapshot = result.memberships
       return result.value
     })
-    return operation.found && operation.value
+    if (!operation.found) {
+      operationSignal.throwIfAborted()
+      return false
+    }
+    if (onAuthorized === undefined) operationSignal.throwIfAborted()
+    return operation.value
   }
 
   /**
@@ -1381,10 +1990,13 @@ export class SharedBotService {
       }
       await this.prepareRevocation(endpoint, payload, principalId, requestController.signal)
       requestController.signal.throwIfAborted()
-      return await this.serialize(
-        () => this.dispatch(endpoint, payload, requestController.signal, principalId, sessionExpiresAt),
-        requestController.signal,
-      )
+      const dispatchRequest = () => this.dispatch(endpoint, payload, requestController.signal, principalId, sessionExpiresAt)
+      // Approval mailbox operations are authority transactions only. They
+      // must remain callable while a shared chat/group operation is waiting on
+      // a collaborator answer and therefore never join the local service chain.
+      return await (endpoint === 'bots/share/list-approvals' || endpoint === 'bots/share/decide-approval'
+        ? dispatchRequest()
+        : this.serialize(dispatchRequest, requestController.signal))
     } catch (error) {
       return faultResult(error)
     } finally {
@@ -1413,7 +2025,9 @@ export class SharedBotService {
     this.stoppingController.abort()
     clearInterval(this.membershipPollTimer)
     await waitForTracked([...this.activeRequestCompletions])
+    await waitForTracked([...this.activeApprovalCompletions])
     await waitForTracked([...this.activeFlushCompletions])
+    await waitForTracked([...this.activeAppBodyCompletions])
     await waitForTracked([...this.quarantinedSessions.values()])
     await waitForTracked(this.membershipRefresh === undefined ? [] : [this.membershipRefresh])
     await waitForTracked([this.chain])
@@ -1466,6 +2080,10 @@ export class SharedBotService {
         return this.sendGroupMessage(parsePayload(groupSendPayload, payload), signal, principalId)
       case 'bots/share/manage-group-members':
         return this.manageGroupMembers(parsePayload(manageGroupMembersPayload, payload), signal, principalId)
+      case 'bots/share/list-approvals':
+        return this.listApprovals(parsePayload(sharedApprovalListPayload, payload), signal, principalId)
+      case 'bots/share/decide-approval':
+        return this.decideSharedAppApproval(parsePayload(sharedApprovalDecisionPayload, payload), principalId, signal)
       default:
         return failure('gateway/forbidden', 'shared Bot endpoint is not allowed')
     }
@@ -3022,6 +3640,20 @@ async function initializePrivateSessionSnapshot(
   })
 }
 
+/** Initialize the authority-backed approval mailbox without replacing an existing queue. */
+async function initializeSharedAppApprovalSnapshot(authority: SharedAccessAuthority): Promise<void> {
+  await authority.mutateExtension(SHARED_APP_APPROVALS_EXTENSION_KEY, (current) => {
+    if (current !== undefined) {
+      parseSharedAppApprovalSnapshot(current)
+      return { value: undefined, next: current }
+    }
+    return {
+      value: undefined,
+      next: { version: SHARED_APP_APPROVALS_VERSION, approvals: [] },
+    }
+  })
+}
+
 /** Reconcile invite mirror rows against the authority state while its lock is held. */
 async function reconcileInviteMirror(
   table: KvTable<string, SharedInviteRecord>,
@@ -3136,6 +3768,273 @@ function parseSharedConnectedAppAccessSnapshot(value: unknown): SharedConnectedA
   const parsed = sharedConnectedAppAccessSnapshotSchema.safeParse(value)
   if (!parsed.success) throw new Error('shared Bot connected-app access snapshot is invalid')
   return parsed.data
+}
+
+function parseSharedAppApprovalSnapshot(value: unknown): SharedAppApprovalSnapshot {
+  if (value === undefined) return { version: SHARED_APP_APPROVALS_VERSION, approvals: [] }
+  const parsed = sharedAppApprovalSnapshotSchema.safeParse(value)
+  if (!parsed.success) throw new Error('shared Bot approval mailbox snapshot is invalid')
+  const ids = new Set<string>()
+  for (const approval of parsed.data.approvals) {
+    if (ids.has(approval.id)) throw new Error('shared Bot approval mailbox has duplicate ids')
+    ids.add(approval.id)
+    if (approval.status === 'pending') {
+      if (approval.expiresAt <= approval.createdAt) {
+        throw new Error('shared Bot approval mailbox has an already-expired pending record')
+      }
+      if (approval.leaseExpiresAt !== undefined
+        && (approval.leaseExpiresAt <= approval.createdAt || approval.leaseExpiresAt > approval.expiresAt)) {
+        throw new Error('shared Bot approval mailbox has an invalid pending lease')
+      }
+    }
+    if ((approval.groupId === undefined) !== (approval.turn === undefined || approval.step === undefined)) {
+      throw new Error('shared Bot approval mailbox has incomplete group coordinates')
+    }
+  }
+  return parsed.data
+}
+
+function approvalRecordAuthorized(
+  record: SharedAppApprovalRecord,
+  extensions: Readonly<Record<string, unknown>>,
+  authorityState: SharedAccessStateSnapshot,
+  signal?: AbortSignal,
+): boolean {
+  signal?.throwIfAborted()
+  const access = sharedConnectedAppAccessValue(
+    parseSharedConnectedAppAccessSnapshot(extensions[SHARED_CONNECTED_APP_ACCESS_EXTENSION_KEY]),
+    record.botId,
+  )
+  if (!access.allowedAppIds.includes(record.appId)) return false
+  const membershipSnapshot = parseMembershipSnapshot(extensions[SHARED_MEMBERSHIP_EXTENSION_KEY])
+  const principal = authorityState.principals.find(candidate =>
+    String(candidate.id) === String(record.principalId) && candidate.revokedAt === undefined)
+  if (principal === undefined) return false
+  if (record.groupId !== undefined && record.turn !== undefined && record.step !== undefined) {
+    const resolved = resolveSharedGroupInitiatorFromSnapshot(
+      extensions[SHARED_MEMBERSHIP_EXTENSION_KEY],
+      authorityState,
+      {
+        groupId: record.groupId,
+        botId: record.botId,
+        sessionId: record.sessionId,
+        turn: record.turn,
+        step: record.step,
+      },
+    )
+    return resolved === record.principalId
+  }
+  if (record.groupId !== undefined) return false
+  const privatePrincipal = resolvePrivateSessionInitiatorFromSnapshot(
+    membershipSnapshot,
+    extensions[SHARED_PRIVATE_SESSIONS_EXTENSION_KEY],
+    authorityState,
+    { botId: record.botId, sessionId: record.sessionId },
+  )
+  return privatePrincipal === record.principalId
+}
+
+function projectSharedApprovalList(
+  snapshot: SharedAppApprovalSnapshot,
+  payload: SharedApprovalListPayload,
+  principalId: ReturnType<typeof BotPrincipalId>,
+  extensions: Readonly<Record<string, unknown>>,
+  authorityState: SharedAccessStateSnapshot,
+  now: number,
+  terminalGraceMs: number,
+  signal?: AbortSignal,
+): {
+  readonly visible: readonly SharedAppApprovalView[]
+  readonly approvals: readonly SharedAppApprovalRecord[]
+  readonly changed: boolean
+} {
+  const approvals: SharedAppApprovalRecord[] = []
+  const visible: SharedAppApprovalView[] = []
+  let changed = false
+  for (const candidate of snapshot.approvals) {
+    if (candidate.status !== 'pending') {
+      if ((candidate.decidedAt ?? candidate.createdAt) + terminalGraceMs <= now) {
+        changed = true
+        continue
+      }
+      approvals.push(candidate)
+      continue
+    }
+    if (candidate.expiresAt <= now || sharedApprovalLeaseExpiry(candidate) <= now) {
+      approvals.push({ ...candidate, status: 'expired', decidedAt: now })
+      changed = true
+      continue
+    }
+    if (candidate.principalId !== principalId
+      || (payload.botId !== undefined && candidate.botId !== payload.botId)
+      || (payload.groupId !== undefined && candidate.groupId !== payload.groupId)) {
+      approvals.push(candidate)
+      continue
+    }
+    if (!approvalRecordAuthorized(candidate, extensions, authorityState, signal)) {
+      approvals.push({ ...candidate, status: 'cancelled', decidedAt: now })
+      changed = true
+      continue
+    }
+    approvals.push(candidate)
+    visible.push(sharedAppApprovalView(candidate))
+  }
+  return { visible, approvals, changed }
+}
+
+function sharedAppApprovalView(record: SharedAppApprovalRecord): SharedAppApprovalView {
+  let parsedArguments: SharedAppApprovalArguments | undefined
+  if (record.arguments !== undefined) {
+    try {
+      parsedArguments = parseSharedAppApprovalArguments(JSON.parse(record.arguments))
+    } catch (error: unknown) {
+      void error
+      parsedArguments = undefined
+    }
+  }
+  return {
+    id: record.id,
+    botId: record.botId,
+    ...(record.groupId === undefined ? {} : { groupId: record.groupId }),
+    appId: record.appId,
+    toolName: record.toolName,
+    ...(record.callId === undefined ? {} : { callId: record.callId }),
+    action: record.action,
+    ...(record.reason === undefined ? {} : { reason: record.reason }),
+    ...(parsedArguments === undefined ? {} : { arguments: parsedArguments }),
+    ...(record.argumentsRedacted === undefined ? {} : { argumentsRedacted: true as const }),
+    ...(record.argumentsTruncated === undefined ? {} : { argumentsTruncated: true as const }),
+    createdAt: record.createdAt,
+    expiresAt: record.expiresAt,
+  }
+}
+
+function boundedApprovalText(value: string, fallback: string): string {
+  const trimmed = value.trim()
+  if (trimmed.length === 0) return fallback
+  return trimmed.length <= SHARED_APP_APPROVAL_MAX_TEXT_LENGTH
+    ? trimmed
+    : `${trimmed.slice(0, SHARED_APP_APPROVAL_MAX_TEXT_LENGTH - 1)}…`
+}
+
+function boundedSharedApprovalTtl(value: number | undefined): number {
+  if (value === undefined) return DEFAULT_SHARED_APP_APPROVAL_TTL_MS
+  if (!Number.isSafeInteger(value) || value < MIN_SHARED_APP_APPROVAL_TTL_MS || value > MAX_SHARED_APP_APPROVAL_TTL_MS) {
+    throw new Error('shared Bot approval TTL is outside its supported range')
+  }
+  return value
+}
+
+function boundedSharedApprovalLease(value: number | undefined, ttlMs: number): number {
+  if (value === undefined) return Math.min(DEFAULT_SHARED_APP_APPROVAL_LEASE_MS, ttlMs)
+  if (!Number.isSafeInteger(value) || value < MIN_SHARED_APP_APPROVAL_LEASE_MS || value > ttlMs) {
+    throw new Error('shared Bot approval lease is outside its supported range')
+  }
+  return value
+}
+
+function sharedApprovalLeaseExpiry(record: SharedAppApprovalRecord): number {
+  return record.leaseExpiresAt ?? record.expiresAt
+}
+
+function boundedSharedApprovalPollInterval(value: number | undefined): number {
+  if (value === undefined) return DEFAULT_SHARED_APP_APPROVAL_POLL_INTERVAL_MS
+  if (!Number.isSafeInteger(value)
+    || value < MIN_SHARED_APP_APPROVAL_POLL_INTERVAL_MS
+    || value > MAX_SHARED_APP_APPROVAL_POLL_INTERVAL_MS) {
+    throw new Error('shared Bot approval poll interval is outside its supported range')
+  }
+  return value
+}
+
+function approvalArgumentsRecord(value: unknown): {
+  readonly arguments?: string
+  readonly argumentsRedacted?: true
+  readonly argumentsTruncated?: true
+} {
+  const flags = { redacted: false, truncated: false }
+  const projected = projectSharedAppApprovalArguments(value, 0, flags)
+  if (projected === undefined) {
+    return flags.truncated ? { argumentsTruncated: true } : {}
+  }
+  const encoded = JSON.stringify(projected)
+  if (encoded.length > SHARED_APP_APPROVAL_MAX_ARGUMENTS_LENGTH) {
+    return {
+      argumentsTruncated: true,
+      ...(flags.redacted ? { argumentsRedacted: true as const } : {}),
+    }
+  }
+  return {
+    arguments: encoded,
+    ...(flags.redacted ? { argumentsRedacted: true as const } : {}),
+    ...(flags.truncated ? { argumentsTruncated: true as const } : {}),
+  }
+}
+
+function projectSharedAppApprovalArguments(
+  value: unknown,
+  depth = 0,
+  flags: { redacted: boolean; truncated: boolean } = { redacted: false, truncated: false },
+): SharedAppApprovalArguments | undefined {
+  if (depth > 6) {
+    flags.truncated = true
+    return undefined
+  }
+  if (value === null) return value
+  if (typeof value === 'boolean' || typeof value === 'number') {
+    if (typeof value === 'number' && !Number.isFinite(value)) return undefined
+    flags.redacted = true
+    return '[redacted]'
+  }
+  if (typeof value === 'string') {
+    flags.redacted = true
+    return '[redacted]'
+  }
+  if (Array.isArray(value)) {
+    if (value.length > 100) {
+      flags.truncated = true
+      return undefined
+    }
+    const values = value.map(item => projectSharedAppApprovalArguments(item, depth + 1, flags))
+    return values.some(item => item === undefined) ? undefined : values as SharedAppApprovalArguments[]
+  }
+  if (typeof value !== 'object') return undefined
+  const entries = Object.entries(value)
+  if (entries.length > 100) {
+    flags.truncated = true
+    return undefined
+  }
+  const projected: Record<string, SharedAppApprovalArguments> = {}
+  for (const [key, item] of entries) {
+    if (key.length > 256) {
+      flags.truncated = true
+      return undefined
+    }
+    const next = projectSharedAppApprovalArguments(item, depth + 1, flags)
+    if (next === undefined) return undefined
+    projected[key] = next
+  }
+  return projected
+}
+
+function parseSharedAppApprovalArguments(value: unknown, depth = 0): SharedAppApprovalArguments | undefined {
+  if (depth > 6) return undefined
+  if (value === null || typeof value === 'boolean' || typeof value === 'number' || typeof value === 'string') {
+    return typeof value === 'number' && !Number.isFinite(value) ? undefined : value
+  }
+  if (Array.isArray(value)) {
+    const parsed = value.map(item => parseSharedAppApprovalArguments(item, depth + 1))
+    return parsed.some(item => item === undefined) ? undefined : parsed as SharedAppApprovalArguments[]
+  }
+  if (typeof value !== 'object') return undefined
+  const entries = Object.entries(value)
+  const parsed: Record<string, SharedAppApprovalArguments> = {}
+  for (const [key, item] of entries) {
+    const next = parseSharedAppApprovalArguments(item, depth + 1)
+    if (next === undefined) return undefined
+    parsed[key] = next
+  }
+  return parsed
 }
 
 function resolvePrivateSessionInitiatorFromSnapshot(
@@ -3366,5 +4265,9 @@ function faultResult(error: unknown): ConnectionRpcHandlerResult {
         : error.code === 'forbidden' ? 'gateway/forbidden' : 'gateway/conflict'
     return failure(code, error.message)
   }
+  // Do not expose storage, provider, or authority details through the shared
+  // collaborator route. The Host-side diagnostic remains available to its
+  // caller without widening the remote error surface.
+  void error
   return failure('gateway/internal', 'shared Bot request failed')
 }

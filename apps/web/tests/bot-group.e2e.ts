@@ -1,6 +1,6 @@
 // Keyless assembled-Web coverage for shared group creation and isolated delivery.
 import { fileURLToPath } from 'node:url'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import type { Browser, BrowserContext, Page } from 'playwright'
@@ -32,12 +32,14 @@ const COLLABORATOR_SHARED_MESSAGE = 'Collaborator shared follow-up.'
 const OWNER_ATTACHMENT_MESSAGE = 'Owner shared release attachment.'
 const SHARED_ATTACHMENT_NAME = 'release-notes.txt'
 const SHARED_ATTACHMENT_BODY = 'shared attachment payload\n'
+const SHARED_APP_TOOL = 'mcp__fixture__lookup'
 
 /** Deterministic model response for the two shared-group recipients. */
 class GroupReplyAdapter extends LlmAdapter {
   readonly requests: GenerateOptions[] = []
   searchNext = false
   appNext = false
+  approvalNext = false
 
   override async listModels(provider: string) {
     return [{ provider, id: MODEL, name: `${provider}/${MODEL}` }]
@@ -47,11 +49,11 @@ class GroupReplyAdapter extends LlmAdapter {
     this.requests.push(options)
     if (this.appNext) {
       this.appNext = false
-      const id = ToolCallId('shared-group-connected-app')
+      const id = ToolCallId(`shared-group-connected-app-${this.requests.length}`)
       const args = '{}'
       yield { type: 'block-start', index: 0, blockType: 'tool-call' }
-      yield { type: 'tool-call-delta', index: 0, id, name: 'mcp__fixture__lookup', argumentsDelta: args }
-      yield { type: 'block-end', index: 0, block: { type: 'tool-call', id, name: 'mcp__fixture__lookup', arguments: args } }
+      yield { type: 'tool-call-delta', index: 0, id, name: SHARED_APP_TOOL, argumentsDelta: args }
+      yield { type: 'block-end', index: 0, block: { type: 'tool-call', id, name: SHARED_APP_TOOL, arguments: args } }
       yield { type: 'finish', reason: { kind: 'tool-calls' } }
       return
     }
@@ -82,6 +84,8 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
   let secondBot!: BotView
   let retainedWorkspaceCwd: string | undefined
   let retainedPersistenceRoot: string | undefined
+  let approvalShotDir: string | undefined
+  let ownsApprovalShotDir = false
   const adapter = new GroupReplyAdapter()
 
   beforeAll(async () => {
@@ -142,6 +146,9 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
     }
     if (retainedPersistenceRoot !== undefined) {
       await rm(retainedPersistenceRoot, { recursive: true, force: true }).catch((error: unknown) => failures.push(error))
+    }
+    if (ownsApprovalShotDir && approvalShotDir !== undefined) {
+      await rm(approvalShotDir, { recursive: true, force: true }).catch((error: unknown) => failures.push(error))
     }
     if (failures.length > 0) throw new AggregateError(failures, 'shared-owner browser test teardown failed')
   })
@@ -222,7 +229,11 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
   }, 120_000)
 
   it('sends through one isolated shared group for its owner and collaborator, then reuses the owner after restart', async () => {
-    onTestFailed(() => page.isClosed() ? undefined : saveFailureShot(page, 'web-e2e-shared-bot-group'))
+    onTestFailed(async () => {
+      if (!page.isClosed()) await saveFailureShot(page, 'web-e2e-shared-bot-group')
+      if (collaboratorPage === undefined || collaboratorPage.isClosed()) return
+      await saveFailureShot(collaboratorPage, 'web-e2e-shared-bot-group-collaborator')
+    })
     adapter.requests.splice(0)
 
     // Clone only the operator session before either browser receives a shared
@@ -332,6 +343,7 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
     await expect.poll(() => collaboratorTranscriptRows.filter({ hasText: OWNER_SHARED_MESSAGE }).count(), { timeout: 30_000 }).toBe(1)
     await expect.poll(() => collaboratorTranscriptRows.filter({ hasText: REPLY }).count(), { timeout: 30_000 }).toBe(4)
 
+    const requestsBeforeMention = adapter.requests.length
     await collaboratorComposer.fill('@Sco')
     await expect.poll(() => collaboratorComposer.evaluate((element) => {
       const content = element.closest('[class*="shareDialogContent"]')
@@ -348,16 +360,21 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
     onTestFinished(() => { search.mockRestore() })
     adapter.searchNext = true
     await collaboratorDialog.getByRole('button', { name: 'Send to group', exact: true }).click()
-    await expect.poll(() => adapter.requests.length, { timeout: 30_000 }).toBeGreaterThanOrEqual(5)
-    expect(adapter.requests[4]?.tools?.map(tool => tool.name)).toContain('web_search')
     await expect.poll(() => adapter.requests.length, { timeout: 30_000 }).toBe(6)
-    expect(JSON.stringify(adapter.requests[4])).toContain(String.raw`Your Bot name is \"Scout\"`)
-    const sharedToolNames = adapter.requests[4]?.tools?.map(tool => tool.name) ?? []
+    const mentionedRequests = adapter.requests.slice(requestsBeforeMention)
+    expect(mentionedRequests).toHaveLength(2)
+    const scoutIdentity = String.raw`Your Bot name is \"Scout\"`
+    expect(mentionedRequests.every(request => JSON.stringify(request).includes(scoutIdentity))).toBe(true)
+    const searchRequest = mentionedRequests.find(request => request.tools?.some(tool => tool.name === 'web_search') === true)
+    expect(searchRequest).toBeDefined()
+    if (searchRequest === undefined) throw new Error('Scout mention did not expose web_search')
+    const sharedToolNames = searchRequest.tools?.map(tool => tool.name) ?? []
     expect(sharedToolNames).toContain('web_search')
     expect(sharedToolNames).not.toContain('web_fetch')
     expect(sharedToolNames).not.toContain('bash')
     expect(search).toHaveBeenCalledOnce()
-    expect(JSON.stringify(adapter.requests[5])).toContain('https://example.com/checklist')
+    const followupRequest = mentionedRequests.find(request => JSON.stringify(request).includes('https://example.com/checklist'))
+    expect(followupRequest).toBeDefined()
     search.mockRestore()
     await expect.poll(() => collaboratorTranscriptRows.filter({ hasText: '@Scout Please check the release.' }).count(), { timeout: 30_000 }).toBe(1)
 
@@ -418,7 +435,7 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
     const appCall = vi.fn(async () => 'Shared app result')
     scaffold.ctx.effect(() => scaffold.ctx.tools.register({
       ...defineTool({
-        name: 'mcp__fixture__lookup', description: 'Look up a shared fixture', parameters: {},
+        name: SHARED_APP_TOOL, description: 'Look up a shared fixture', parameters: {},
         output: { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: value }] },
         execute: appCall,
       }),
@@ -434,9 +451,101 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
     await collaboratorComposer.fill('@Scout Look up the shared fixture.')
     await collaboratorDialog.getByRole('button', { name: 'Send to group', exact: true }).click()
     await expect.poll(() => adapter.requests.length, { timeout: 30_000 }).toBe(previousRequests + 2)
-    expect(adapter.requests[previousRequests]?.tools?.map(tool => tool.name)).toContain('mcp__fixture__lookup')
+    expect(adapter.requests[previousRequests]?.tools?.map(tool => tool.name)).toContain(SHARED_APP_TOOL)
     expect(appCall).toHaveBeenCalledOnce()
     expect(JSON.stringify(adapter.requests[previousRequests + 1])).toContain('Shared app result')
+
+    // Register after the first shared call has composed the Bot-scoped policy
+    // listeners. The root fixture gate must run after that listener records
+    // the execution, otherwise it would short-circuit the shared approval
+    // handoff instead of producing a pending mailbox record.
+    const approvalGateFibers = scaffold.ctx.agents.list().map(agent => agent.ctx.inject(['tools'], (scope) => {
+      scope.on('tools/pre-execute', async (exec, next) => {
+        const decision = await next()
+        if (exec.name === SHARED_APP_TOOL && adapter.approvalNext && decision.kind === 'allow') {
+          adapter.approvalNext = false
+          return Promise.resolve({ kind: 'ask' as const, reason: 'Approve this shared fixture lookup.' })
+        }
+        return decision
+      })
+    }))
+    onTestFinished(async () => {
+      await Promise.all(approvalGateFibers.map(fiber => fiber.dispose()))
+    })
+    // A connected app can still require an explicit approval for a particular
+    // call. The request is visible to the principal that owns the shared
+    // Session, while the owner workspace must not inherit that request.
+    const approvalRegion = collaboratorDialog.getByRole('region', { name: 'Pending approvals', exact: true })
+    const waitForPendingApproval = async (): Promise<void> => {
+      await expect.poll(
+        () => approvalRegion.getByText(SHARED_APP_TOOL, { exact: true }).count(),
+        { timeout: 30_000 },
+      ).toBe(1)
+    }
+    const approvalRequestsBeforeAllow = adapter.requests.length
+    const appCallsBeforeAllow = appCall.mock.calls.length
+    adapter.appNext = true
+    adapter.approvalNext = true
+    await collaboratorComposer.fill('@Scout Ask for a shared fixture approval.')
+    await collaboratorDialog.getByRole('button', { name: 'Send to group', exact: true }).click()
+    await expect.poll(() => adapter.requests.length, { timeout: 30_000 }).toBe(approvalRequestsBeforeAllow + 1)
+    await expect.poll(() => adapter.approvalNext, { timeout: 30_000 }).toBe(false)
+    await waitForPendingApproval()
+    await approvalRegion.getByText('fixture', { exact: true }).waitFor({ state: 'visible', timeout: 10_000 })
+    await approvalRegion.getByText(SHARED_APP_TOOL, { exact: true }).waitFor({ state: 'visible', timeout: 10_000 })
+    await approvalRegion.getByText(`Action: Run connected app tool "${SHARED_APP_TOOL}"`, { exact: true }).waitFor({ state: 'visible', timeout: 10_000 })
+    await approvalRegion.getByText('Approve this shared fixture lookup.', { exact: true }).waitFor({ state: 'visible', timeout: 10_000 })
+    await approvalRegion.getByText('Argument preview is shown below.', { exact: true }).waitFor({ state: 'visible', timeout: 10_000 })
+    if (approvalShotDir === undefined) {
+      const explicitArtifactRoot = process.env.DSH_WEB_E2E_ARTIFACT_DIR
+      if (explicitArtifactRoot === undefined) {
+        approvalShotDir = await mkdtemp(join(tmpdir(), 'dsh-web-e2e-shared-approval-'))
+        ownsApprovalShotDir = true
+      } else {
+        approvalShotDir = join(explicitArtifactRoot, `shared-bot-connected-app-approval-${String(process.pid)}`)
+        await mkdir(approvalShotDir, { recursive: true })
+      }
+    }
+    const shotDir = approvalShotDir
+    if (shotDir === undefined) throw new Error('shared approval screenshot directory was not created')
+    const approvalPage = collaboratorPage
+    if (approvalPage === undefined || approvalPage.isClosed()) throw new Error('shared approval page was not available')
+    await approvalRegion.screenshot({ path: join(shotDir, 'shared-approval-light.png') })
+    const wasDark = await approvalPage.evaluate(() => document.body.hasAttribute('data-ds-dark-theme'))
+    await approvalPage.evaluate(() => { document.body.setAttribute('data-ds-dark-theme', '') })
+    await expect.poll(() => approvalPage.evaluate(() => document.body.hasAttribute('data-ds-dark-theme'))).toBe(true)
+    await approvalRegion.screenshot({ path: join(shotDir, 'shared-approval-dark.png') })
+    await approvalPage.evaluate((dark) => { document.body.toggleAttribute('data-ds-dark-theme', dark) }, wasDark)
+    await approvalRegion.getByText('View call details', { exact: true }).click()
+    const argumentPreview = approvalRegion.getByLabel('Arguments', { exact: true })
+    await argumentPreview.waitFor({ state: 'visible', timeout: 10_000 })
+    expect(await argumentPreview.textContent()).toBe('{}')
+    expect(await ownerDialog.getByText(SHARED_APP_TOOL, { exact: true }).count()).toBe(0)
+    const approveButton = approvalRegion.getByRole('button', { name: /^Approve .*mcp__fixture__lookup$/ })
+    await approveButton.click()
+    await expect.poll(() => appCall.mock.calls.length, { timeout: 30_000 }).toBe(appCallsBeforeAllow + 1)
+    await expect.poll(() => adapter.requests.length, { timeout: 30_000 }).toBe(approvalRequestsBeforeAllow + 2)
+    await expect.poll(
+      () => approvalRegion.getByText(SHARED_APP_TOOL, { exact: true }).count(),
+      { timeout: 30_000 },
+    ).toBe(0)
+
+    const approvalRequestsBeforeReject = adapter.requests.length
+    const appCallsBeforeReject = appCall.mock.calls.length
+    adapter.appNext = true
+    adapter.approvalNext = true
+    await collaboratorComposer.fill('@Scout Reject the shared fixture approval.')
+    await collaboratorDialog.getByRole('button', { name: 'Send to group', exact: true }).click()
+    await expect.poll(() => adapter.requests.length, { timeout: 30_000 }).toBe(approvalRequestsBeforeReject + 1)
+    await waitForPendingApproval()
+    const denyButton = approvalRegion.getByRole('button', { name: /^Reject .*mcp__fixture__lookup$/ })
+    await denyButton.click()
+    await expect.poll(() => adapter.requests.length, { timeout: 30_000 }).toBe(approvalRequestsBeforeReject + 2)
+    expect(appCall.mock.calls.length).toBe(appCallsBeforeReject)
+    await expect.poll(
+      () => approvalRegion.getByText(SHARED_APP_TOOL, { exact: true }).count(),
+      { timeout: 30_000 },
+    ).toBe(0)
 
     const ownerMembersBeforeRestart = await scaffold.ctx.bots.listShareMembers({ botId: firstBot.id })
     const ownerMembershipsBeforeRestart = ownerMembersBeforeRestart.members.filter(member => member.role === 'owner')

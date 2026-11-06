@@ -11,7 +11,7 @@ import { en } from '../src/client/locales.ts'
 import { createSharedGroupPendingQueue } from '../src/client/pending-group-queue.ts'
 import type { BotShareActions, SharedBotAppAccessValue } from '../src/client/controller.ts'
 import { createSharedBotsClient } from '../src/client/shared-client.ts'
-import type { SharedBotAuthChange, SharedBotsClient } from '../src/client/shared-client.ts'
+import type { SharedBotAuthChange, SharedBotAuthListener, SharedBotsClient } from '../src/client/shared-client.ts'
 import type { BotSummary } from '../src/client/types.ts'
 
 afterEach(cleanup)
@@ -93,6 +93,224 @@ function sharedClient(overrides: Partial<SharedBotsClient> = {}): SharedBotsClie
 }
 
 describe('shared Bot collaboration surfaces', () => {
+  it('shows pending connected-app approvals with expandable call details and sends the decision', async () => {
+    const listApprovals = vi.fn().mockResolvedValue({
+      ok: true,
+      value: {
+        approvals: [{ id: 'approval-1', botId: bot.id, appId: 'GitHub', toolName: 'issues.create', action: 'Create an issue',
+          reason: 'Create the release issue', callId: 'call-1', arguments: { repository: 'yharness', title: 'Release' }, createdAt: 1 }],
+      },
+    })
+    const decideApproval = vi.fn().mockResolvedValue({
+      ok: true,
+      value: { accepted: true },
+    })
+    const client = sharedClient({ listApprovals, decideApproval })
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+
+    expect(await screen.findByRole('region', { name: 'Pending approvals' })).toBeTruthy()
+    expect(await screen.findByText('GitHub')).toBeTruthy()
+    expect(await screen.findByText('issues.create')).toBeTruthy()
+    expect(await screen.findByText('Create the release issue')).toBeTruthy()
+    expect(await screen.findByText('Action: Create an issue')).toBeTruthy()
+    expect(await screen.findByText('Argument preview is shown below.')).toBeTruthy()
+    const details = screen.getByText('View call details').closest('details')
+    expect(details).not.toBeNull()
+    expect(within(details as HTMLElement).getByText(/repository/)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Approve GitHub issues.create' }))
+    await waitFor(() => { expect(decideApproval).toHaveBeenCalledWith('approval-1', 'allow') })
+  })
+
+  it('explains when the backend omits a shortened argument preview', async () => {
+    const client = sharedClient({
+      listApprovals: vi.fn().mockResolvedValue({
+        ok: true,
+        value: { approvals: [{
+          id: 'approval-omitted-preview', botId: bot.id, appId: 'GitHub', toolName: 'issues.create', action: 'Create an issue',
+          argumentsTruncated: true,
+        }] },
+      }),
+      decideApproval: vi.fn().mockResolvedValue({ ok: true, value: { resolved: true } }),
+    })
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+
+    expect(await screen.findByText('The argument preview was shortened or omitted to stay within safe limits. Review the action carefully before allowing it.')).toBeTruthy()
+    expect(screen.queryByText('No argument preview is available; review the action carefully before allowing it.')).toBeNull()
+    expect(screen.queryByText('View call details')).toBeNull()
+  })
+
+  it('distinguishes a redacted preview from a complete preview', async () => {
+    const client = sharedClient({
+      listApprovals: vi.fn().mockResolvedValue({
+        ok: true,
+        value: { approvals: [{
+          id: 'approval-redacted-preview', botId: bot.id, appId: 'GitHub', toolName: 'issues.create', action: 'Create an issue',
+          arguments: { title: 'Release', token: '[redacted]' }, argumentsRedacted: true,
+        }] },
+      }),
+      decideApproval: vi.fn().mockResolvedValue({ ok: true, value: { resolved: true } }),
+    })
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+
+    expect(await screen.findByText('Some argument values are hidden for safety. Review the action carefully before allowing it.')).toBeTruthy()
+    expect(screen.getByText('View call details')).toBeTruthy()
+  })
+
+  it('shows group approvals in the selected shared conversation', async () => {
+    const group = {
+      id: brandString<BotGroupId>('bot-group-release'),
+      name: 'Release room',
+      botIds: [BotId(bot.id), BotId(analystBot.id)],
+      bots: [
+        { id: BotId(bot.id), name: bot.name, identity: bot.identity, accent: bot.accent, state: 'active' as const, availability: 'idle' as const },
+        { id: BotId(analystBot.id), name: analystBot.name, identity: analystBot.identity, accent: analystBot.accent, state: 'active' as const, availability: 'idle' as const },
+      ],
+      createdAt: 1,
+      updatedAt: 1,
+    } satisfies BotGroupView
+    const listApprovals = vi.fn().mockImplementation(async (scope?: { readonly botId?: string; readonly groupId?: string }) => ({
+      ok: true,
+      value: {
+        approvals: scope?.groupId === String(group.id) ? [{
+          id: 'group-approval-1', botId: bot.id, groupId: group.id, appId: 'Slack', toolName: 'messages.send',
+          action: 'Send a release update', reason: 'The user asked for a notification',
+        }] : [],
+      },
+    }))
+    const decideApproval = vi.fn().mockResolvedValue({ ok: true, value: { accepted: true } })
+    const client = sharedClient({
+      listGroups: vi.fn().mockResolvedValue({ ok: true, value: { groups: [group] } }),
+      inspectGroup: vi.fn().mockResolvedValue({ ok: true, value: { group, messages: [] } }),
+      listApprovals,
+      decideApproval,
+    })
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+
+    const approval = await screen.findByRole('button', { name: 'Approve Slack messages.send' })
+    expect(screen.getByText('Requested by Chief of staff in Release room')).toBeTruthy()
+    fireEvent.click(approval)
+    await waitFor(() => { expect(decideApproval).toHaveBeenCalledWith('group-approval-1', 'allow') })
+    expect(listApprovals).toHaveBeenCalledWith({ groupId: String(group.id) })
+  })
+
+  it('keeps an approval visible when another collaborator wins the decision race', async () => {
+    const decideApproval = vi.fn().mockResolvedValue({ ok: true, value: { accepted: false } })
+    const client = sharedClient({
+      listApprovals: vi.fn().mockResolvedValue({ ok: true, value: { approvals: [{
+        id: 'approval-race', botId: bot.id, appId: 'GitHub', toolName: 'issues.create', action: 'Create an issue',
+      }] } }),
+      decideApproval,
+    })
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Approve GitHub issues.create' }))
+    expect(await screen.findByText(/No argument preview is available/)).toBeTruthy()
+    await waitFor(() => { expect(decideApproval).toHaveBeenCalledWith('approval-race', 'allow') })
+    expect(await screen.findByText('That approval changed or could not be resolved. Refresh and try again.')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Approve GitHub issues.create' })).toBeTruthy()
+  })
+
+  it('does not send two decisions for a same-tick double click', async () => {
+    const pending = Promise.withResolvers<{ readonly ok: true; readonly value: { readonly resolved: true } }>()
+    const decideApproval = vi.fn().mockReturnValue(pending.promise)
+    const client = sharedClient({
+      listApprovals: vi.fn().mockResolvedValue({ ok: true, value: { approvals: [{
+        id: 'approval-once', botId: bot.id, appId: 'GitHub', toolName: 'issues.create', action: 'Create an issue',
+      }] } }),
+      decideApproval,
+    })
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+
+    const approve = await screen.findByRole('button', { name: 'Approve GitHub issues.create' })
+    act(() => { approve.click(); approve.click() })
+    expect(decideApproval).toHaveBeenCalledOnce()
+    await act(async () => { pending.resolve({ ok: true, value: { resolved: true } }); await Promise.resolve() })
+  })
+
+  it('does not resurrect an approval from an older poll after the decision removes it', async () => {
+    vi.useFakeTimers()
+    try {
+      const stalePoll = Promise.withResolvers<Awaited<ReturnType<NonNullable<SharedBotsClient['listApprovals']>>>>()
+      const approval = {
+        id: 'approval-poll-race', botId: bot.id, appId: 'GitHub', toolName: 'issues.create', action: 'Create an issue',
+      }
+      const listApprovals = vi.fn()
+        .mockResolvedValueOnce({ ok: true, value: { approvals: [approval] } })
+        .mockReturnValueOnce(stalePoll.promise)
+        .mockResolvedValue({ ok: true, value: { approvals: [] } })
+      const decideApproval = vi.fn().mockResolvedValue({ ok: true, value: { resolved: true } })
+      const client = sharedClient({ listApprovals, decideApproval })
+      render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+      const flush = async (): Promise<void> => {
+        for (let index = 0; index < 10; index += 1) await Promise.resolve()
+      }
+      await act(flush)
+
+      const approve = screen.getByRole('button', { name: 'Approve GitHub issues.create' })
+      await act(async () => {
+        vi.advanceTimersByTime(5_000)
+        await flush()
+      })
+      expect(listApprovals).toHaveBeenCalledTimes(2)
+
+      fireEvent.click(approve)
+      await act(flush)
+      expect(decideApproval).toHaveBeenCalledWith('approval-poll-race', 'allow')
+      await act(async () => {
+        stalePoll.resolve({ ok: true, value: { approvals: [approval] } })
+        await flush()
+      })
+      expect(screen.queryByRole('button', { name: 'Approve GitHub issues.create' })).toBeNull()
+      expect(listApprovals).toHaveBeenCalledTimes(3)
+      await act(async () => {
+        vi.advanceTimersByTime(5_000)
+        await flush()
+      })
+      expect(listApprovals).toHaveBeenCalledTimes(4)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('clears visible approvals when the authenticated generation is invalidated', async () => {
+    const pendingDecision = Promise.withResolvers<Awaited<ReturnType<NonNullable<SharedBotsClient['decideApproval']>>>>()
+    const decideApproval = vi.fn().mockReturnValue(pendingDecision.promise)
+    let authListener: SharedBotAuthListener | undefined
+    const subscribeAuth = vi.fn((listener: SharedBotAuthListener) => {
+      authListener = listener
+      return () => {
+        if (authListener === listener) authListener = undefined
+      }
+    })
+    const client = {
+      ...sharedClient({
+        subscribeAuth,
+        listApprovals: vi.fn().mockResolvedValue({ ok: true, value: { approvals: [{
+          id: 'approval-auth', botId: bot.id, appId: 'GitHub', toolName: 'issues.create', action: 'Create an issue',
+        }] } }),
+        decideApproval,
+      }),
+      authGeneration: 1,
+    }
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Approve GitHub issues.create' }))
+    await waitFor(() => { expect(decideApproval).toHaveBeenCalledOnce() })
+    expect(authListener).toBeDefined()
+    await act(async () => {
+      client.authGeneration = 2
+      authListener?.({ source: 'local', reason: 'invalidated' })
+      await Promise.resolve()
+    })
+    await waitFor(() => { expect(screen.queryByRole('region', { name: 'Pending approvals' })).toBeNull() })
+
+    await act(async () => {
+      pendingDecision.resolve({ ok: true, value: { resolved: true } })
+      await Promise.resolve()
+    })
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
   it('uses the Host owner bootstrap for explicit shared-group creation', async () => {
     const enrollOwner = vi.fn().mockResolvedValue({
       ok: true as const,
