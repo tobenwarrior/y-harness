@@ -1,3 +1,6 @@
+import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Context } from '@yharness/cordis'
 import type { ConnectionFetchRoute } from '@yharness/client-connection'
@@ -5,9 +8,18 @@ import {
   MAP_ASSET_ROUTES, MAP_PROXY_ROUTES, MAP_ROUTE_PREFIX, MapServiceBridge, registerMapRoutes, resolveStateDir,
   rewriteViewerScript, STATE_DIR_VARIABLE, VIEWER_ROUTE,
 } from '../src/map-service.ts'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const assets = fileURLToPath(new URL('../assets/', import.meta.url))
+let emptyStateDir: string
+
+beforeEach(async () => {
+  emptyStateDir = await mkdtemp(join(tmpdir(), 'dsh-map-test-state-'))
+})
+
+afterEach(async () => {
+  await rm(emptyStateDir, { recursive: true, force: true })
+})
 
 /**
  * Build a bridge with injectable edges.
@@ -16,7 +28,7 @@ const assets = fileURLToPath(new URL('../assets/', import.meta.url))
  */
 function bridge(overrides: {
   startService?: () => string
-  forward?: (url: string, request: Request) => Promise<Response>
+  forward?: (url: string, request: Request, headers?: HeadersInit) => Promise<Response>
 } = {}) {
   const starts = vi.fn(overrides.startService ?? (() => 'http://127.0.0.1:43127/?project=abc123'))
   const forwards = vi.fn(overrides.forward ?? (() => Promise.resolve(Response.json({ model: {} }))))
@@ -24,6 +36,7 @@ function bridge(overrides: {
     python: '/usr/bin/python3.11',
     assetRoot: assets,
     workspaceRoot: '/work/repo',
+    stateDir: emptyStateDir,
     startService: starts,
     forward: forwards,
   })
@@ -67,6 +80,88 @@ describe('loopback proxy', () => {
     expect(await response.json()).toEqual({ model: {} })
   })
 
+  it('sends the private runtime bearer only to the loopback target', async () => {
+    const stateDir = await mkdtemp(join(tmpdir(), 'dsh-map-runtime-'))
+    const runtimeDir = join(stateDir, 'code-map')
+    const runtimePath = join(runtimeDir, 'runtime.json')
+    await mkdir(runtimeDir)
+    await writeFile(runtimePath, JSON.stringify({ pid: process.pid, port: 43127, token: 'server-token', build_signature: 'test' }), { mode: 0o600 })
+    const forwards = vi.fn((_url: string, _request: Request, _headers?: HeadersInit) => Promise.resolve(Response.json({ model: {} })))
+    const service = new MapServiceBridge({
+      python: '/usr/bin/python3.11', assetRoot: assets, workspaceRoot: '/work/repo', stateDir,
+      startService: () => 'http://127.0.0.1:43127/?project=abc123', forward: forwards,
+    })
+    try {
+      await service.proxy('map', new Request(`http://localhost${MAP_ROUTE_PREFIX}/map?project=abc123`))
+      expect(forwards.mock.calls[0]?.[2]).toEqual({ accept: 'application/json', Authorization: 'Bearer server-token' })
+    } finally {
+      await rm(stateDir, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps legacy servers unauthenticated when no runtime exists', async () => {
+    const forwards = vi.fn((_url: string, _request: Request, _headers?: HeadersInit) => Promise.resolve(Response.json({ model: {} })))
+    const service = new MapServiceBridge({
+      python: '/usr/bin/python3.11', assetRoot: assets, workspaceRoot: '/work/repo', stateDir: emptyStateDir,
+      startService: () => 'http://127.0.0.1:43127/?project=abc123', forward: forwards,
+    })
+    await service.proxy('map', new Request(`http://localhost${MAP_ROUTE_PREFIX}/map?project=abc123`))
+    expect(forwards.mock.calls[0]?.[2]).toEqual({ accept: 'application/json' })
+  })
+
+  it('fails closed when an existing runtime is not private', async () => {
+    if (process.platform === 'win32') return
+    const stateDir = await mkdtemp(join(tmpdir(), 'dsh-map-runtime-'))
+    const runtimeDir = join(stateDir, 'code-map')
+    const runtimePath = join(runtimeDir, 'runtime.json')
+    await mkdir(runtimeDir)
+    await writeFile(runtimePath, JSON.stringify({ pid: process.pid, port: 43127, token: 'server-token', build_signature: 'test' }), { mode: 0o644 })
+    const forwards = vi.fn((_url: string, _request: Request, _headers?: HeadersInit) => Promise.resolve(Response.json({ model: {} })))
+    const service = new MapServiceBridge({
+      python: '/usr/bin/python3.11', assetRoot: assets, workspaceRoot: '/work/repo', stateDir,
+      startService: () => 'http://127.0.0.1:43127/?project=abc123', forward: forwards,
+    })
+    try {
+      const response = await service.proxy('map', new Request(`http://localhost${MAP_ROUTE_PREFIX}/map?project=abc123`))
+      expect(response.status).toBe(502)
+      expect(await response.text()).not.toContain('server-token')
+      expect(forwards).not.toHaveBeenCalled()
+    } finally {
+      await rm(stateDir, { recursive: true, force: true })
+    }
+  })
+
+  it('refreshes the target before sending a bearer after a daemon restart', async () => {
+    const stateDir = await mkdtemp(join(tmpdir(), 'dsh-map-runtime-'))
+    const runtimeDir = join(stateDir, 'code-map')
+    const runtimePath = join(runtimeDir, 'runtime.json')
+    await mkdir(runtimeDir)
+    await writeFile(runtimePath, JSON.stringify({ pid: process.pid, port: 43127, token: 'old-server-token', build_signature: 'test' }), { mode: 0o600 })
+    let starts = 0
+    const forwards = vi.fn((_url: string, _request: Request, _headers?: HeadersInit) => Promise.resolve(Response.json({ model: {} })))
+    const service = new MapServiceBridge({
+      python: '/usr/bin/python3.11', assetRoot: assets, workspaceRoot: '/work/repo', stateDir,
+      startService: () => {
+        starts += 1
+        return `http://127.0.0.1:${starts === 1 ? 43127 : 43128}/?project=abc123`
+      },
+      forward: forwards,
+    })
+    try {
+      await service.proxy('map', new Request(`http://localhost${MAP_ROUTE_PREFIX}/map?project=abc123`))
+      await writeFile(runtimePath, JSON.stringify({ pid: process.pid + 1, port: 43128, token: 'new-server-token', build_signature: 'test' }), { mode: 0o600 })
+      await chmod(runtimePath, 0o600)
+      await service.proxy('map', new Request(`http://localhost${MAP_ROUTE_PREFIX}/map?project=abc123`))
+      expect(forwards.mock.calls.map(call => [call[0], call[2]])).toEqual([
+        ['http://127.0.0.1:43127/api/map?project=abc123', { accept: 'application/json', Authorization: 'Bearer old-server-token' }],
+        ['http://127.0.0.1:43128/api/map?project=abc123', { accept: 'application/json', Authorization: 'Bearer new-server-token' }],
+      ])
+      expect(starts).toBe(2)
+    } finally {
+      await rm(stateDir, { recursive: true, force: true })
+    }
+  })
+
   it('resolves the service once per process', async () => {
     const { service, starts } = bridge()
     await service.proxy('projects', new Request('http://localhost/x'))
@@ -82,6 +177,7 @@ describe('loopback proxy', () => {
       assetRoot: assets,
       assetRootFor: () => current,
       workspaceRoot: '/work/repo',
+      stateDir: emptyStateDir,
       startService: starts,
       forward: () => Promise.resolve(Response.json({ model: {} })),
     })

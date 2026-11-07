@@ -12,7 +12,7 @@
  */
 
 import { spawnSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { lstatSync, readFileSync, type Stats } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { isAbsolute, join, relative, resolve } from 'node:path'
 import type { Context } from '@yharness/cordis'
@@ -38,6 +38,12 @@ const PROXIED_ENDPOINTS = ['projects', 'map', 'status', 'file'] as const
 /** Absolute API path the vendored viewer builds its requests from. */
 const VIEWER_API_PREFIX = '"/api/'
 
+/** Maximum bytes read from the private daemon runtime descriptor. */
+const MAX_RUNTIME_BYTES = 16 * 1024
+
+/** Runtime descriptor file written beside the vendored service cache. */
+const RUNTIME_FILE = 'runtime.json'
+
 /**
  * Point the viewer's absolute API paths at this bridge's proxy.
  *
@@ -59,8 +65,101 @@ export interface MapTarget {
   readonly project: string
 }
 
+/** Private daemon metadata used only for server-to-server authentication. */
+interface MapRuntime {
+  readonly pid: number
+  readonly port: number
+  readonly token: string
+  readonly buildSignature: string
+}
+
+/** Resolved target plus the private state location and optional bearer. */
+interface ResolvedMapTarget extends MapTarget {
+  readonly stateDir: string
+  readonly token?: string
+}
+
+/** Marks a cached target whose private daemon descriptor changed underneath it. */
+class StaleMapTargetError extends Error {
+  constructor() {
+    super('code-map service target changed while it was in use')
+  }
+}
+
 /** Environment variable the vendored scripts read for their state directory. */
 export const STATE_DIR_VARIABLE = 'COMPOUND_SKILLS_STATE_DIR'
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function isMissingPath(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && 'code' in error
+    && (error.code === 'ENOENT' || error.code === 'ENOTDIR')
+}
+
+function checkRuntimeDirectory(stat: Stats, label: string): void {
+  if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error(`code-map ${label} is unsafe`)
+  if (process.platform === 'win32') return
+  if ((stat.mode & 0o022) !== 0) throw new Error(`code-map ${label} permissions are unsafe`)
+  if (typeof process.getuid === 'function' && stat.uid !== process.getuid()) throw new Error(`code-map ${label} owner is unsafe`)
+}
+
+/**
+ * Read and validate the private descriptor emitted by authenticated map servers.
+ * A missing descriptor means the target is a legacy unauthenticated server;
+ * an unsafe or malformed descriptor fails closed without exposing its contents.
+ * @param stateDir - resolved state directory passed to the map server.
+ * @returns checked runtime metadata, or `undefined` for a legacy server.
+ * @throws when an existing descriptor is unsafe or malformed.
+ */
+function readMapRuntime(stateDir: string): MapRuntime | undefined {
+  let stateStat
+  try {
+    stateStat = lstatSync(stateDir)
+  } catch (error: unknown) {
+    if (isMissingPath(error)) return undefined
+    throw new Error('code-map runtime state directory is unavailable')
+  }
+  checkRuntimeDirectory(stateStat, 'runtime state directory')
+  const directory = join(stateDir, 'code-map')
+  let directoryStat
+  try {
+    directoryStat = lstatSync(directory)
+  } catch (error: unknown) {
+    if (isMissingPath(error)) return undefined
+    throw new Error('code-map runtime directory is unavailable')
+  }
+  checkRuntimeDirectory(directoryStat, 'runtime directory')
+  const path = join(directory, RUNTIME_FILE)
+  let fileStat
+  try {
+    fileStat = lstatSync(path)
+  } catch (error: unknown) {
+    if (isMissingPath(error)) return undefined
+    throw new Error('code-map runtime is unavailable')
+  }
+  if (!fileStat.isFile() || fileStat.isSymbolicLink()) throw new Error('code-map runtime is not a regular file')
+  if (process.platform !== 'win32' && (fileStat.mode & 0o077) !== 0) throw new Error('code-map runtime permissions are unsafe')
+  if (typeof process.getuid === 'function' && fileStat.uid !== process.getuid()) throw new Error('code-map runtime owner is unsafe')
+  if (fileStat.size > MAX_RUNTIME_BYTES) throw new Error('code-map runtime is too large')
+  let value: unknown
+  try {
+    value = JSON.parse(readFileSync(path, 'utf8'))
+  } catch {
+    throw new Error('code-map runtime is invalid')
+  }
+  if (!isRecord(value)) throw new Error('code-map runtime has an invalid shape')
+  const pid = value.pid
+  const port = value.port
+  const token = value.token
+  const buildSignature = value.build_signature ?? value.build
+  if (typeof pid !== 'number' || !Number.isSafeInteger(pid) || pid <= 0) throw new Error('code-map runtime pid is invalid')
+  if (typeof port !== 'number' || !Number.isSafeInteger(port) || port <= 0 || port > 65535) throw new Error('code-map runtime port is invalid')
+  if (typeof token !== 'string' || token.length === 0 || token.length > 4096 || /[\r\n]/u.test(token)) throw new Error('code-map runtime token is invalid')
+  if (typeof buildSignature !== 'string' || buildSignature.length === 0) throw new Error('code-map runtime build is invalid')
+  return { pid, port, token, buildSignature }
+}
 
 /**
  * Whether one path lies inside another.
@@ -112,8 +211,8 @@ export interface MapBridgeOptions {
   readonly stateDir?: string
   /** Starts the service and returns the viewer URL it printed; injectable for tests. */
   readonly startService?: (python: string, script: string, root: string, stateDir: string) => string
-  /** Performs one proxied request; injectable for tests. */
-  readonly forward?: (url: string, request: Request) => Promise<Response>
+  /** Performs one proxied request with the bridge-owned headers; injectable for tests. */
+  readonly forward?: (url: string, request: Request, headers: HeadersInit) => Promise<Response>
 }
 
 /**
@@ -143,19 +242,25 @@ function startMapService(python: string, script: string, root: string, stateDir:
 /**
  * Forward one viewer request to the loopback service.
  *
- * No `Origin` header is sent and the target host is `127.0.0.1`, which is
- * exactly what the service's own origin guard accepts.
+ * No `Origin` header or browser credentials are sent. The target URL must use
+ * the exact loopback host, and `headers` carries the private bearer only when
+ * the checked runtime descriptor supplied one.
  * @param url - absolute loopback URL.
  * @param request - the browser request being served.
+ * @param headers - bridge-owned JSON and optional authorization headers.
  * @returns the service response.
  */
-function forwardToService(url: string, request: Request): Promise<Response> {
-  return fetch(url, { headers: { accept: 'application/json' }, signal: request.signal })
+function forwardToService(url: string, request: Request, headers: HeadersInit): Promise<Response> {
+  const parsed = new URL(url)
+  if (parsed.protocol !== 'http:' || parsed.hostname !== '127.0.0.1' || parsed.username !== '' || parsed.password !== '') {
+    throw new Error('code-map service target is not loopback')
+  }
+  return fetch(url, { headers, redirect: 'error', signal: request.signal })
 }
 
 /** Owns one process's map target and the responses served from it. */
 export class MapServiceBridge {
-  private target: Promise<MapTarget> | undefined
+  private target: Promise<ResolvedMapTarget> | undefined
 
   /** @param options - interpreter, assets, workspace root, and injectable edges. */
   constructor(private readonly options: MapBridgeOptions) {}
@@ -175,23 +280,49 @@ export class MapServiceBridge {
    * @returns the service port and the project id registered for the workspace.
    * @throws when the service cannot be started or printed no usable URL.
    */
-  private resolveTarget(): Promise<MapTarget> {
+  private resolveTarget(): Promise<ResolvedMapTarget> {
     this.target ??= Promise.resolve().then(() => {
+      const stateDir = this.options.stateDir ?? resolveStateDir(this.options.workspaceRoot)
       const url = (this.options.startService ?? startMapService)(
         this.options.python,
         join(this.currentAssetRoot(), 'compound', 'scripts', 'map_server.py'),
         this.options.workspaceRoot,
-        this.options.stateDir ?? resolveStateDir(this.options.workspaceRoot),
+        stateDir,
       )
       const parsed = new URL(url)
+      if (parsed.protocol !== 'http:' || parsed.hostname !== '127.0.0.1' || parsed.username !== '' || parsed.password !== '' || parsed.port === '') {
+        throw new Error('code-map service printed an unsafe viewer URL')
+      }
       const project = parsed.searchParams.get('project')
-      if (project === null || project === '') throw new Error(`code-map service printed no project id: ${url}`)
-      return { port: Number(parsed.port), project }
+      if (project === null || project === '') throw new Error('code-map service printed no project id')
+      const port = Number(parsed.port)
+      if (!Number.isSafeInteger(port) || port <= 0 || port > 65535) throw new Error('code-map service printed an invalid port')
+      const runtime = readMapRuntime(stateDir)
+      if (runtime !== undefined && runtime.port !== port) throw new StaleMapTargetError()
+      return runtime === undefined
+        ? { port, project, stateDir }
+        : { port, project, stateDir, token: runtime.token }
     }).catch((error: unknown) => {
       this.target = undefined
       throw error
     })
     return this.target
+  }
+
+  /**
+   * Refresh private runtime metadata before a request.
+   * @param target - cached service target.
+   * @returns the target with its current bearer, when the descriptor is present.
+   * @throws when an authenticated target loses its descriptor or changes port.
+   */
+  private refreshTarget(target: ResolvedMapTarget): ResolvedMapTarget {
+    const runtime = readMapRuntime(target.stateDir)
+    if (runtime === undefined) {
+      if (target.token !== undefined) throw new StaleMapTargetError()
+      return target
+    }
+    if (runtime.port !== target.port) throw new StaleMapTargetError()
+    return { ...target, token: runtime.token }
   }
 
   /**
@@ -228,16 +359,29 @@ export class MapServiceBridge {
       { error: error instanceof Error ? error.message : String(error) },
       { status: 502, headers: { 'cache-control': 'no-store' } },
     )
-    let target: MapTarget
-    const targetPromise = this.resolveTarget()
-    try {
-      target = await targetPromise
-    } catch (error: unknown) {
-      return failure(error)
+    let target: ResolvedMapTarget | undefined
+    let targetPromise: Promise<ResolvedMapTarget> | undefined
+    for (let attempt = 0; attempt < 2 && target === undefined; attempt += 1) {
+      const candidatePromise = this.resolveTarget()
+      try {
+        target = this.refreshTarget(await candidatePromise)
+        targetPromise = candidatePromise
+      } catch (error: unknown) {
+        if (!(error instanceof StaleMapTargetError)) return failure(error)
+        if (this.target === candidatePromise) this.target = undefined
+      }
     }
+    if (target === undefined || targetPromise === undefined) return failure(new StaleMapTargetError())
     try {
       const query = new URL(request.url).search
-      const response = await (this.options.forward ?? forwardToService)(`http://127.0.0.1:${target.port}/api/${endpoint}${query}`, request)
+      const url = `http://127.0.0.1:${target.port}/api/${endpoint}${query}`
+      const headers: HeadersInit = target.token === undefined
+        ? { accept: 'application/json' }
+        : { accept: 'application/json', Authorization: `Bearer ${target.token}` }
+      const response = await (this.options.forward ?? forwardToService)(url, request, headers)
+      if (target.token !== undefined && (response.status === 401 || response.status === 403) && this.target === targetPromise) {
+        this.target = undefined
+      }
       if (endpoint !== 'projects' || !response.ok) return response
       const payload = await response.json() as Record<string, unknown>
       return Response.json({ ...payload, defaultProject: target.project }, { headers: { 'cache-control': 'no-store' } })
