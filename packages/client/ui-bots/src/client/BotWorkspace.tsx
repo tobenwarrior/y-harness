@@ -119,39 +119,49 @@ function statusLabel(status: BotStatus, t: BotWorkspaceViewProps['t']): string {
   return t(statusKey(status))
 }
 
-function BotActionsMenu({ bot, groups, onOrganize, onSetSection, t }: {
+function BotActionsMenu({ bot, groups, onOrganize, onSetSection, onOpenConnectedApps, t }: {
   bot: BotSummary
   groups: readonly string[]
-  onOrganize: (id: string, patch: BotOrganizationPatch) => Promise<void>
+  onOrganize?: ((id: string, patch: BotOrganizationPatch) => Promise<void>) | undefined
   onSetSection: () => void
+  onOpenConnectedApps?: ((bot: BotSummary) => void) | undefined
   t: BotWorkspaceViewProps['t']
 }) {
   const [open, setOpen] = useState(false)
   const organize = (patch: BotOrganizationPatch): void => {
+    if (onOrganize === undefined) return
     setOpen(false)
     void onOrganize(bot.id, patch).catch(() => {})
   }
-  const sectionChoices = groups.map((group, index) => ({ id: sectionItemId(index), group }))
+  const sectionChoices = onOrganize === undefined
+    ? []
+    : groups.map((group, index) => ({ id: sectionItemId(index), group }))
   const sectionItems = sectionChoices.map(({ id, group }) => ({
     id,
     label: group,
     icon: <IconFolderOpenOutlineRegular size={14} />,
   }))
   const items = [
-    {
-      id: 'pin',
-      label: bot.pinned === true ? t('unpinBot') : t('pinBot'),
-      icon: bot.pinned === true ? <IconPinFillRegular size={14} /> : <IconPinOutlineRegular size={14} />,
-    },
-    {
-      id: bot.hidden === true ? 'restore' : 'hide',
-      label: bot.hidden === true ? t('restoreBot') : t('hideBot'),
-      icon: bot.hidden === true ? <IconUnarchiveOutlineRegular size={14} /> : <IconArchiveOffOutlineRegular size={14} />,
-    },
-    { type: 'separator' as const, id: 'section-separator' },
-    { id: 'section:none', label: t('noSection'), icon: <IconFolderOpenOutlineRegular size={14} /> },
-    ...sectionItems,
-    { id: 'section:custom', label: t('setSection'), icon: <IconFolderOpenOutlineRegular size={14} /> },
+    ...(onOrganize === undefined ? [] : [
+      {
+        id: 'pin',
+        label: bot.pinned === true ? t('unpinBot') : t('pinBot'),
+        icon: bot.pinned === true ? <IconPinFillRegular size={14} /> : <IconPinOutlineRegular size={14} />,
+      },
+      {
+        id: bot.hidden === true ? 'restore' : 'hide',
+        label: bot.hidden === true ? t('restoreBot') : t('hideBot'),
+        icon: bot.hidden === true ? <IconUnarchiveOutlineRegular size={14} /> : <IconArchiveOffOutlineRegular size={14} />,
+      },
+      { type: 'separator' as const, id: 'section-separator' },
+      { id: 'section:none', label: t('noSection'), icon: <IconFolderOpenOutlineRegular size={14} /> },
+      ...sectionItems,
+      { id: 'section:custom', label: t('setSection'), icon: <IconFolderOpenOutlineRegular size={14} /> },
+    ]),
+    ...(onOpenConnectedApps === undefined ? [] : [
+      ...(onOrganize === undefined ? [] : [{ type: 'separator' as const, id: 'connected-apps-separator' }]),
+      { id: 'connected-apps', label: t('connectApps'), icon: <IconLinkOutlineRegular size={14} /> },
+    ]),
   ]
   return (
     <Menu
@@ -165,6 +175,7 @@ function BotActionsMenu({ bot, groups, onOrganize, onSetSection, t }: {
         else if (id === 'restore') organize({ hidden: false })
         else if (id === 'section:none') organize({ group: null })
         else if (id === 'section:custom') { setOpen(false); onSetSection() }
+        else if (id === 'connected-apps') { setOpen(false); onOpenConnectedApps?.(bot) }
         else {
           const section = sectionChoices.find(choice => choice.id === id)
           if (section !== undefined) organize({ group: section.group })
@@ -191,7 +202,7 @@ function BotActionsMenu({ bot, groups, onOrganize, onSetSection, t }: {
   )
 }
 
-function BotRow({ bot, selected, onSelect, t, loadAvatar, groups, onOrganize, onSetSection }: {
+function BotRow({ bot, selected, onSelect, t, loadAvatar, groups, onOrganize, onSetSection, onOpenConnectedApps }: {
   bot: BotSummary
   selected: boolean
   onSelect: () => void
@@ -200,6 +211,7 @@ function BotRow({ bot, selected, onSelect, t, loadAvatar, groups, onOrganize, on
   groups: readonly string[]
   onOrganize?: BotWorkspaceProps['onOrganizeBot']
   onSetSection: () => void
+  onOpenConnectedApps?: ((bot: BotSummary) => void) | undefined
 }) {
   const unread = bot.unread !== undefined && bot.unread > 0
   const unreadCount = bot.unread ?? 0
@@ -232,7 +244,16 @@ function BotRow({ bot, selected, onSelect, t, loadAvatar, groups, onOrganize, on
           </span>}
         </span>
       </button>
-      {onOrganize !== undefined && <BotActionsMenu bot={bot} groups={groups} onOrganize={onOrganize} onSetSection={onSetSection} t={t} />}
+      {(onOrganize !== undefined || onOpenConnectedApps !== undefined) && (
+        <BotActionsMenu
+          bot={bot}
+          groups={groups}
+          onOrganize={onOrganize}
+          onSetSection={onSetSection}
+          onOpenConnectedApps={onOpenConnectedApps}
+          t={t}
+        />
+      )}
     </div>
   )
 }
@@ -1500,11 +1521,24 @@ function ConnectedAppsDialog({ bot, open, onClose, onLoad, onSet, t }: {
       title={t('connectedAppsTitle')}
       description={t('connectedAppsDescription', { name: bot.name })}
       closeLabel={t('cancel')}
+      className={css.connectedAppsDialog as string}
+      contentClassName={css.connectedAppsDialogContent as string}
       footer={<Button variant="ghost" onClick={onClose} disabled={savingAppId !== null}>{t('done')}</Button>}
     >
       {error !== null && <div className={css.dialogNotice} role="alert">{error}</div>}
-      {loadingCurrentCatalog && <div className={css.connectedAppsLoading} role="status">{t('connectedAppsLoading')}</div>}
-      {!loadingCurrentCatalog && error === null && apps.length === 0 && <div className={css.connectedAppsEmpty}>{t('connectedAppsEmpty')}</div>}
+      {loadingCurrentCatalog && (
+        <div className={css.connectedAppsLoading} role="status">
+          <StateDot state="ongoing" size={13} />
+          <span>{t('connectedAppsLoading')}</span>
+        </div>
+      )}
+      {!loadingCurrentCatalog && error === null && apps.length === 0 && (
+        <div className={css.connectedAppsEmpty} role="status">
+          <span className={css.connectedAppsEmptyIcon} aria-hidden="true"><IconLinkOutlineRegular size={18} /></span>
+          <strong>{t('connectedAppsEmptyTitle')}</strong>
+          <span className={css.connectedAppsEmptyDescription}>{t('connectedAppsEmpty')}</span>
+        </div>
+      )}
       {!loadingCurrentCatalog && apps.length > 0 && (
         <div className={css.connectedAppsList} role="list" aria-label={t('connectedAppsTitle')}>
           {apps.map((app) => {
@@ -1563,7 +1597,7 @@ export function BotRoster({
   const [sharedBotsOpen, setSharedBotsOpen] = useState(false)
   const [sharedOwnerMode, setSharedOwnerMode] = useState(false)
   const [sharedOwnerCapability, setSharedOwnerCapability] = useState<'unknown' | 'available' | 'unavailable'>('unknown')
-  const [connectedAppsOpen, setConnectedAppsOpen] = useState(false)
+  const [connectedAppsBotId, setConnectedAppsBotId] = useState<string | null>(null)
   const ownerCapabilityProbe = sharedClient?.getOwnerCapability
   const ownerEnrollment = sharedClient?.enrollOwner
   const ownerCapabilitySubscription = sharedClient?.subscribeOwnerCapability
@@ -1666,14 +1700,22 @@ export function BotRoster({
     setSharedOwnerMode(false)
     setSharedBotsOpen(false)
   }
-  const openConnectedApps = (): void => {
-    if (selectedBot === undefined || onLoadConnectedApps === undefined || onSetConnectedAppAccess === undefined) {
+  const openConnectedApps = (bot: BotSummary): void => {
+    if (onLoadConnectedApps === undefined || onSetConnectedAppAccess === undefined) {
       onConnectApps?.()
       return
     }
     if (!wide) expandSidebar?.()
-    setConnectedAppsOpen(true)
+    setConnectedAppsBotId(bot.id)
   }
+  const connectedAppsBot = connectedAppsBotId === null
+    ? undefined
+    : bots.find(bot => bot.id === connectedAppsBotId)
+  const canOpenConnectedApps = (onLoadConnectedApps !== undefined && onSetConnectedAppAccess !== undefined)
+    || onConnectApps !== undefined
+  const connectedAppsAction = canOpenConnectedApps
+    ? openConnectedApps
+    : undefined
 
   return (
     <aside className={css.roster} aria-label={t('title')}>
@@ -1749,6 +1791,7 @@ export function BotRoster({
                           groups={sectionNames}
                           onOrganize={onOrganizeBot}
                           onSetSection={() => { setSectionBot(bot) }}
+                          onOpenConnectedApps={connectedAppsAction}
                         />
                       ))}
                     </div>
@@ -1770,6 +1813,7 @@ export function BotRoster({
                         groups={sectionNames}
                         onOrganize={onOrganizeBot}
                         onSetSection={() => { setSectionBot(bot) }}
+                        onOpenConnectedApps={connectedAppsAction}
                       />
                     ))}
                   </div>
@@ -1809,7 +1853,6 @@ export function BotRoster({
                 <div className={css.rosterEmpty}><span className={css.emptyMarkSmall} aria-hidden="true"><IconSidebarBotsOutlineRegular size={20} /></span><strong>{t('noBotsTitle')}</strong><span>{t('noBotsDescription')}</span><Button variant="outline" size="sm" onClick={openNewBot} icon={<IconSidebarBotAddOutlineRegular size={14} />}>{t('newBot')}</Button></div>
               )}
             </div>
-            {(onConnectApps !== undefined || (onLoadConnectedApps !== undefined && onSetConnectedAppAccess !== undefined && selectedBot !== undefined)) && <div className={css.rosterFooter}><Button variant="outline" className={css.connectButton} icon={<IconLinkOutlineRegular size={15} />} onClick={openConnectedApps}>{t('connectApps')}</Button></div>}
           </>
         )
         : (
@@ -1936,9 +1979,9 @@ export function BotRoster({
       )}
       {onLoadConnectedApps !== undefined && onSetConnectedAppAccess !== undefined && (
         <ConnectedAppsDialog
-          bot={selectedBot}
-          open={connectedAppsOpen}
-          onClose={() => { setConnectedAppsOpen(false) }}
+          bot={connectedAppsBot}
+          open={connectedAppsBot !== undefined}
+          onClose={() => { setConnectedAppsBotId(null) }}
           onLoad={onLoadConnectedApps}
           onSet={onSetConnectedAppAccess}
           t={t}

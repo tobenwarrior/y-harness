@@ -416,8 +416,7 @@
 .detailHeader,
 .detailIdentity,
 .detailActions,
-.activityBanner,
-.rosterFooter {
+.activityBanner {
   display: flex;
   align-items: center;
 }
@@ -473,15 +472,6 @@
   color: var(--yh-alias-label-primary-foreground);
   font-size: 10px;
   line-height: 16px;
-}
-
-.rosterFooter {
-  flex: none;
-  padding: 10px 14px 14px;
-}
-
-.connectButton {
-  width: 100%;
 }
 
 .loadNotice {
@@ -2064,13 +2054,66 @@
   box-shadow: inset 2px 0 var(--yh-alias-state-business-primary);
 }
 
-.connectedAppsLoading,
-.connectedAppsEmpty {
-  padding: 18px 4px;
+.connectedAppsDialog {
+  width: min(520px, 100%);
+  max-height: 100%;
+  min-height: 0;
+}
+
+.connectedAppsDialogContent {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+
+.connectedAppsLoading {
+  display: flex;
+  min-height: 112px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   color: var(--yh-alias-label-secondary);
   font-size: 13px;
   line-height: 20px;
+}
+
+.connectedAppsEmpty {
+  display: flex;
+  min-height: 150px;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 7px;
+  padding: 12px 8px;
+  color: var(--yh-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
   text-align: center;
+}
+
+.connectedAppsEmptyIcon {
+  display: inline-flex;
+  width: 44px;
+  height: 44px;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 3px;
+  border: 0.5px solid var(--yh-alias-border-l2);
+  border-radius: 50%;
+  corner-shape: round;
+  background: var(--yh-alias-bg-layer-2);
+  color: var(--yh-alias-state-business-primary);
+}
+
+.connectedAppsEmpty strong {
+  color: var(--yh-alias-label-primary);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 19px;
+}
+
+.connectedAppsEmptyDescription {
+  max-width: 280px;
 }
 
 .connectedAppsList {

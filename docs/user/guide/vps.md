@@ -4,7 +4,7 @@ Run the Y Harness Web profile on a Linux VPS you control. Its user service start
 
 ## Prepare the VPS
 
-Use a regular SSH account on a Linux server with systemd user services, Git, Python 3, curl, npm, a C compiler, and a compatible Node.js installation with development headers. Ubuntu 24.04 with Node.js 24 LTS is the initial setup target. On Ubuntu, `build-essential` provides the compiler. Keep port 3080 available on the VPS and on your local computer.
+Use a regular SSH account on a Linux server with systemd user services, Git, Python 3, curl, npm, a C compiler, and a compatible Node.js installation with development headers. Ubuntu 24.04 with Node.js 24 LTS is the initial setup target. On Ubuntu, `build-essential` provides the compiler. Keep port 3080 available on the VPS.
 
 ## Install and start
 
@@ -20,7 +20,9 @@ If setup reports that your user cannot enable lingering, ask the VPS administrat
 
 ## Open Y Harness
 
-On your computer, replace `your-vps` with the SSH destination you normally use and run:
+On macOS, choose **Workspace → Open Cloud Workspace** in Y Harness and enter the SSH host name or alias you use in Terminal. The app needs a verified host key and an SSH key or agent that can sign in without prompting. It remembers your selection and connects automatically. Cloud opens the bots, chats, and providers stored on the server. Use that Cloud workspace on each device to continue the same chats while the VPS runs your jobs and schedules. The **Mac** switch opens your separate local workspace.
+
+To use a browser, keep local port 3080 free. On your computer, replace `your-vps` with the SSH destination you normally use and run:
 
 ```sh
 ssh -o ExitOnForwardFailure=yes -L 127.0.0.1:3080:127.0.0.1:3080 your-vps \

@@ -893,7 +893,7 @@ describe('desktop main startup', () => {
     await edit
   })
 
-  it.each(['darwin', 'linux'] as const)('adds the product File menu and standard window commands only on macOS (%s)', async (platform) => {
+  it.each(['darwin', 'linux'] as const)('adds the product File and Workspace menus and standard window commands only on macOS (%s)', async (platform) => {
     vi.spyOn(process, 'platform', 'get').mockReturnValue(platform)
     await import('../src/main.ts')
     await harness.preparing.promise
@@ -904,8 +904,15 @@ describe('desktop main startup', () => {
       .find(items => items.some(item => item.role === 'editMenu'))
     if (template === undefined) throw new Error('application menu missing')
     expect(template.map(describeItem)).toEqual(platform === 'darwin'
-      ? ['Desktop test', en.fileMenu, 'editMenu', 'windowMenu']
+      ? ['Desktop test', en.fileMenu, 'editMenu', en.cloudWorkspace, 'windowMenu']
       : ['Application', 'editMenu'])
+    if (platform === 'darwin') {
+      const workspace = template.find(item => item.label === en.cloudWorkspace)
+      expect(workspace?.submenu).toEqual([
+        expect.objectContaining({ label: en.cloudOpenMac }),
+        expect.objectContaining({ label: en.cloudOpen }),
+      ])
+    }
     const application = template[0]!.submenu as MenuItemConstructorOptions[]
     expect(application.filter(item => item.visible !== false).map(describeItem)).toEqual(platform === 'darwin'
       ? ['about', 'separator', en.checkUpdatesMenu, en.cliCommandMenu, 'separator', 'hide', 'hideOthers', 'unhide', 'separator', 'quit']

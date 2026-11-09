@@ -54,6 +54,7 @@ import { DesktopMandatoryUpdateWindow } from './mandatory-update-window.ts'
 import { DesktopPolicyTestAuth } from './policy-test-auth.ts'
 import { DesktopUpdateDialog, type UpdateDialogOptions } from './update-dialog.ts'
 import { readDesktopRuntime } from './runtime-tree.ts'
+import { DesktopCloudWorkspace } from './cloud-workspace.ts'
 import { DesktopBrowserGuests } from './browser-guests.ts'
 import { installDesktopShortcuts } from './keyboard.ts'
 import { DesktopUpdateOverlays } from './update-overlay.ts'
@@ -994,6 +995,13 @@ async function main(): Promise<void> {
     return policy
   }
 
+  const cloudWorkspace = process.platform === 'darwin'
+    ? new DesktopCloudWorkspace(join(app.getPath('userData'), 'cloud-workspace.json'),
+      () => currentDesktopLocale().messages, () => {
+        void dialog.showMessageBox({ type: 'warning', message: currentDesktopLocale().messages.cloudPreferenceError })
+      })
+    : undefined
+
   const automaticCheck = (): void => {
     if (!quitting) void mandatoryPolicy?.check('foreground-or-resume').catch((error: unknown) => { console.error(error) })
     if (!quitting) void updateSchedule.check().catch((error: unknown) => { console.error(error) })
@@ -1004,6 +1012,7 @@ async function main(): Promise<void> {
     updateSchedule.dispose()
     powerMonitor.off('resume', automaticCheck)
     updates.dispose()
+    void cloudWorkspace?.dispose()
   })
 
   const applicationIconPath = development ? join(app.getAppPath(), 'resources', 'icon-windows.png')
@@ -1021,7 +1030,13 @@ async function main(): Promise<void> {
   // Keep app.name stable: Electron derives its default userData directory from it.
   const darwin = process.platform === 'darwin'
   const platformMenus = (): MenuItemConstructorOptions[] => darwin
-    ? [shortcuts.fileMenu(currentDesktopLocale().messages), { role: 'editMenu' }, { role: 'windowMenu' }]
+    ? [shortcuts.fileMenu(currentDesktopLocale().messages), { role: 'editMenu' }, {
+      label: currentDesktopLocale().messages.cloudWorkspace,
+      submenu: [
+        { label: currentDesktopLocale().messages.cloudOpenMac, click: () => { cloudWorkspace?.showMac() } },
+        { label: currentDesktopLocale().messages.cloudOpen, click: () => { cloudWorkspace?.showCloud() } },
+      ],
+    }, { role: 'windowMenu' }]
     : [{ role: 'editMenu' }]
   const hideCommands: MenuItemConstructorOptions[] = darwin
     ? [{ role: 'hide', label: currentDesktopLocale().messages.hideApplication },
@@ -1199,6 +1214,7 @@ async function main(): Promise<void> {
     const window = mainWindow ?? createMainWindow()
     await navigateMain(applicationUrl)
     if (isQuitting() || recovery.active || window.isDestroyed()) return
+    cloudWorkspace?.attach(window)
     window.show()
     enteredWorkspace = true
     if (raiseAfterUpdate) {
@@ -1258,6 +1274,7 @@ async function main(): Promise<void> {
     managedStatusWatcher?.close()
     updateJournal?.action('quit-requested')
     quitConfirmation.dispose()
+    const closeCloud = cloudWorkspace?.dispose()
     backgroundNotice?.dispose()
     tray?.dispose()
     stopAccount?.()
@@ -1269,7 +1286,7 @@ async function main(): Promise<void> {
       ? Promise.resolve()
       : requestManagedGithubRestart(restartRequest).catch((error: unknown) => { console.error(error) })
     void writeRestartRequest.then(() => Promise.all([
-      Promise.resolve(mandatoryPolicy?.dispose()).then(() => policyAuth?.dispose()), backend.close(),
+      closeCloud, Promise.resolve(mandatoryPolicy?.dispose()).then(() => policyAuth?.dispose()), backend.close(),
       // A Platform cleanup failure is logged without cutting the remaining Host shutdown short.
       platformView.dispose().catch((error: unknown) => { console.error(error) }),
     ])).catch((error: unknown) => { console.error(error) }).finally(() => { app.quit() })
