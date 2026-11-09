@@ -37,6 +37,23 @@ export function cloudRequestAllowed(origin: string, destination: string): boolea
   return url.origin === origin || (url.protocol === 'ws:' && `http://${url.host}` === origin)
 }
 
+/**
+ * Convert the VPS sign-in response into a host-only Electron session cookie.
+ * @param origin - private loopback origin for this connection.
+ * @param response - response to the one-time sign-in URL without following its redirect.
+ * @returns the isolated browser cookie when sign-in succeeded.
+ */
+export function cloudSignInCookie(origin: string, response: Pick<Response, 'status' | 'headers'>): Electron.CookiesSetDetails | undefined {
+  const location = response.headers.get('location')
+  if (response.status !== 303 || location === null || new URL(location, origin).href !== origin + '/') return undefined
+  const header = response.headers.get('set-cookie')
+  const session = header?.match(/^(dsh-auth-[A-Za-z0-9_-]{43})=(v1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+);/u)
+  const name = session?.[1]
+  const value = session?.[2]
+  if (name === undefined || value === undefined) return undefined
+  return { url: origin, name, value, path: '/', httpOnly: true, sameSite: 'strict' }
+}
+
 const macIcon = '<svg viewBox="0 0 20 20" aria-hidden="true"><rect x="4" y="4" width="12" height="9" rx="1.5"/><path d="M2.5 16h15"/></svg>'
 const cloudIcon = '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M6 14.5a3.5 3.5 0 1 1 .5-7 4.1 4.1 0 0 1 7.9 1.1 3 3 0 0 1-.5 5.9Z"/></svg>'
 const settingsIcon = '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 6h12M4 14h12"/><circle cx="8" cy="6" r="2"/><circle cx="12" cy="14" r="2"/></svg>'

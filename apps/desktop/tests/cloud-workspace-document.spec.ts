@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { cloudAction, cloudDocument, cloudRequestAllowed } from '../src/cloud-workspace-document.ts'
+import { cloudAction, cloudDocument, cloudRequestAllowed, cloudSignInCookie } from '../src/cloud-workspace-document.ts'
 import { en } from '../src/locale.ts'
 
 it('accepts workspace actions only from the private control document', () => {
@@ -28,4 +28,18 @@ it('limits remote traffic to the tunnel and its matching WebSocket port', () => 
   expect(cloudRequestAllowed(origin, 'http://127.0.0.1:1235/')).toBe(false)
   expect(cloudRequestAllowed(origin, 'https://example.invalid/')).toBe(false)
   expect(cloudRequestAllowed(origin, 'http://user@127.0.0.1:1234/')).toBe(false)
+})
+
+it('accepts only a Y Harness login cookie from a redirect to the clean workspace', () => {
+  const origin = 'http://127.0.0.1:1234'
+  const name = 'dsh-auth-' + 'a'.repeat(43)
+  const value = 'v1.fixture.signed'
+  const headers = { location: './', 'set-cookie': name + '=' + value + '; Path=/; HttpOnly; SameSite=Strict' }
+  expect(cloudSignInCookie(origin, new Response(null, { status: 303, headers }))).toEqual({
+    url: origin, name, value, path: '/', httpOnly: true, sameSite: 'strict',
+  })
+  expect(cloudSignInCookie(origin, new Response(null, { status: 401, headers }))).toBeUndefined()
+  expect(cloudSignInCookie(origin, new Response(null, {
+    status: 303, headers: { ...headers, location: 'https://example.invalid/' },
+  }))).toBeUndefined()
 })

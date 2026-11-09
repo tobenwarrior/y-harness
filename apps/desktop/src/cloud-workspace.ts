@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs'
 import { writeFileAtomic } from '@yharness/atomic-write'
 import { WebContentsView, session, type BrowserWindow } from 'electron'
 import { isCloudTarget, openCloudConnection, type CloudConnection } from './cloud-connection.ts'
-import { cloudAction, cloudDocument, cloudRequestAllowed, type CloudWorkspaceStatus } from './cloud-workspace-document.ts'
+import { cloudAction, cloudDocument, cloudRequestAllowed, cloudSignInCookie, type CloudWorkspaceStatus } from './cloud-workspace-document.ts'
 import type { DesktopMessages } from './locale.ts'
 
 const BAR_HEIGHT = 50
@@ -29,7 +29,8 @@ function readPreference(file: string): CloudPreference | undefined {
 }
 
 function closeView(view: WebContentsView | undefined): void {
-  if (view !== undefined && !view.webContents.isDestroyed()) view.webContents.close()
+  const contents = view?.webContents
+  if (contents !== undefined && !contents.isDestroyed()) contents.close()
 }
 
 /** Keeps the Cloud renderer isolated from the desktop-owned renderer and its IPC. */
@@ -228,6 +229,10 @@ export class DesktopCloudWorkspace {
 
       const isolated = session.fromPartition(`cloud-workspace-${randomUUID()}`, { cache: false })
       await isolated.setProxy({ mode: 'direct' })
+      const response = await fetch(connection.loginUrl, { redirect: 'manual', signal: pending.signal })
+      const cookie = cloudSignInCookie(connection.origin, response)
+      if (cookie === undefined) throw new Error('Cloud authentication failed')
+      await isolated.cookies.set(cookie)
       if (!this.isPending(pending)) return
       isolated.setPermissionCheckHandler((_contents, permission) => permission === 'clipboard-sanitized-write')
       isolated.setPermissionRequestHandler((_contents, permission, callback) => {
@@ -246,24 +251,23 @@ export class DesktopCloudWorkspace {
       remote.webContents.on('will-frame-navigate', (event) => {
         if (!cloudRequestAllowed(connection.origin, event.url)) event.preventDefault()
       })
-      remote.webContents.on('will-redirect', (event, url) => {
-        if (!cloudRequestAllowed(connection.origin, url)) event.preventDefault()
+      remote.webContents.on('will-redirect', (event) => {
+        if (!cloudRequestAllowed(connection.origin, event.url)) event.preventDefault()
       })
       remote.webContents.on('render-process-gone', () => { this.disconnected(connection) })
-      let httpStatus = 0
-      remote.webContents.once('did-navigate', (_event, _url, status) => { httpStatus = status })
+      const contents = remote.webContents
+      const responseStatus = new Promise<number>((resolve) => {
+        contents.once('did-navigate', (_event, _url, status) => { resolve(status) })
+      })
       const cancelLoad = (): void => { closeView(remote) }
       pending.signal.addEventListener('abort', cancelLoad, { once: true })
       owner.contentView.addChildView(remote)
       try {
-        await remote.webContents.loadURL(connection.loginUrl)
+        const status = await Promise.race([responseStatus, contents.loadURL(connection.origin + '/').then(() => 0)])
+        if (!this.isPending(pending)) return
+        if (status !== 200) throw new Error('Cloud workspace did not load')
       } finally {
         pending.signal.removeEventListener('abort', cancelLoad)
-      }
-      if (!this.isPending(pending)) return
-      // Browser auth removes the sign-in token before serving the app.
-      if (httpStatus !== 200 || new URL(remote.webContents.getURL()).searchParams.has('token')) {
-        throw new Error('Cloud authentication failed')
       }
       this.status = 'online'
       this.save(target)
