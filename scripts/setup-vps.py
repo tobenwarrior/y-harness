@@ -17,6 +17,25 @@ from pathlib import Path
 REPOSITORY = 'https://github.com/tobenwarrior/y-harness.git'
 SERVICE = 'yharness-vps.service'
 CLI = Path('apps/cli/lib/bin.js')
+NATIVE_PACKAGES = Path('native/system/packages')
+SANDBOX_SCRIPT = 'sandbox-setup.py'
+SANDBOX_PROBE = """
+import { Context } from '@yharness/cordis';
+import { launcherPath } from '@yharness/node-addon-system/landlock-run';
+import { LocalSandboxProvider } from '@yharness/sandbox-local';
+const ctx = new Context();
+await ctx.plugin(LocalSandboxProvider, {});
+let available = true;
+try {
+  await ctx.sandbox.confine(['/bin/true'], { mode: 'read-only', workspaceRoot: '/' });
+} catch (error) {
+  if (error.code !== 'SANDBOX_UNAVAILABLE') throw error;
+  available = false;
+} finally {
+  await ctx.fiber.dispose();
+}
+console.log(JSON.stringify({ available, launcher: launcherPath() }));
+"""
 PORT = 3080
 LAUNCH_LINE = re.compile(rf'^yharness web: (http://127\.0\.0\.1:{PORT}/\?token=[A-Za-z0-9_-]{{43}})(?:\s|$)')
 
@@ -112,12 +131,8 @@ WantedBy=default.target
 """
 
 
-def build_source(root):
-    """Build a public source checkout in isolation and publish it only on success."""
-    for name in ('npm', 'cc'):
-        if shutil.which(name) is None:
-            raise SetupError(f'Setup needs {name}. Install npm and a C compiler, then retry.')
-    # Build tools receive no provider credentials, SSH agent or user Git/npm config.
+def build_environment():
+    """Pass build commands only the environment needed for public source and tools."""
     environment = {key: value for key, value in os.environ.items()
                    if key in ('HOME', 'PATH', 'LANG', 'LC_ALL', 'SSL_CERT_FILE', 'SSL_CERT_DIR')}
     environment.update({
@@ -126,6 +141,93 @@ def build_source(root):
         'GIT_TERMINAL_PROMPT': '0',
         'NPM_CONFIG_USERCONFIG': '/dev/null',
     })
+    return environment
+
+
+def sandbox_probe(source, node, environment):
+    """Query the checkout's sandbox provider under the service's executable search path."""
+    try:
+        result = run(
+            [str(node), '--input-type=module', '-e', SANDBOX_PROBE],
+            cwd=source / 'packages/sandbox/sandbox-local', env=environment, capture_output=True, timeout=20,
+        )
+        status = json.loads(result.stdout)
+        return status['available'] is True, Path(status['launcher'])
+    except (OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
+        raise SetupError('Could not check the Linux sandbox in the Y Harness build.') from error
+
+
+def ensure_sandbox(root, source, node):
+    """Publish a probed local Landlock runner if the checkout has no usable sandbox."""
+    environment = build_environment()
+    environment['PATH'] = f'{node.parent}:/usr/local/bin:/usr/bin:/bin'
+    with os.fdopen(private_file(root / 'sandbox.lock', os.O_RDWR | os.O_CREAT), 'r+') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        ready, launcher = sandbox_probe(source, node, environment)
+        if ready:
+            return
+        native = source.resolve() / NATIVE_PACKAGES
+        allowed = {native / arch / 'bin/landlock-run' for arch in ('linux-x64', 'linux-arm64')}
+        if launcher.parent.resolve() / launcher.name not in allowed or launcher.is_symlink():
+            raise SetupError('The Linux sandbox package is missing. Install a working Bubblewrap or repair the Y Harness build.')
+        c_source = native / 'entry/src/main.c'
+        if not c_source.is_file():
+            raise SetupError('The Landlock source is missing from the Y Harness build.')
+        launcher.parent.mkdir(parents=True, exist_ok=True)
+        with (
+            tempfile.TemporaryDirectory(dir=launcher.parent) as stage,
+            os.fdopen(private_file(root / 'sandbox.log', os.O_WRONLY | os.O_CREAT), 'w') as log,
+        ):
+            log.truncate()
+            candidate = Path(stage) / 'landlock-run'
+            try:
+                run(
+                    ['cc', '-std=c11', '-Os', '-Wall', '-Wextra', '-Werror', '-o', str(candidate), str(c_source)],
+                    cwd=stage, env=environment, stdout=log, stderr=subprocess.STDOUT, timeout=40,
+                )
+                candidate.chmod(0o700)
+                run([str(candidate), '--probe'], env=environment, stdout=log, stderr=subprocess.STDOUT, timeout=10)
+            except (OSError, subprocess.SubprocessError) as error:
+                raise SetupError(
+                    'Could not build or run the Linux sandbox. Check the C compiler and Landlock support '
+                    'or install a working Bubblewrap. See the private sandbox.log.'
+                ) from error
+            os.replace(candidate, launcher)
+        if not sandbox_probe(source, node, environment)[0]:
+            raise SetupError('Y Harness could not use the installed Linux sandbox.')
+
+
+def write_private_copy(path, content):
+    """Replace a managed file atomically, checking ownership when it already exists."""
+    if path.exists() or path.is_symlink():
+        with os.fdopen(private_file(path, os.O_RDONLY), 'rb') as existing:
+            if existing.read() == content:
+                return
+    with tempfile.TemporaryDirectory(dir=path.parent) as stage:
+        pending = Path(stage) / path.name
+        pending.write_bytes(content)
+        pending.chmod(0o600)
+        os.replace(pending, path)
+
+
+def install_sandbox_start_check(root, unit_dir):
+    """Install a private startup check that survives replacement of the source checkout."""
+    python = Path(sys.executable).resolve()
+    if not re.fullmatch(r'/[A-Za-z0-9_./-]+', str(python)):
+        raise SetupError('Install Python in an absolute path without spaces or special characters.')
+    write_private_copy(root / SANDBOX_SCRIPT, Path(__file__).read_bytes())
+    dropin_dir = unit_dir / (SERVICE + '.d')
+    private_directory(dropin_dir)
+    check = f'[Service]\nExecStartPre={python} "%h/.yharness-vps/{SANDBOX_SCRIPT}" sandbox\n'
+    write_private_copy(dropin_dir / 'sandbox.conf', check.encode())
+
+
+def build_source(root, node):
+    """Build and check a staged public checkout before making it the installed source."""
+    for name in ('npm', 'cc'):
+        if shutil.which(name) is None:
+            raise SetupError(f'Setup needs {name}. Install npm and a C compiler, then retry.')
+    environment = build_environment()
     descriptor = private_file(root / 'build.log', os.O_WRONLY | os.O_CREAT)
     with os.fdopen(descriptor, 'w') as log, tempfile.TemporaryDirectory(dir=root) as staging:
         log.truncate()
@@ -145,6 +247,7 @@ def build_source(root):
             raise SetupError('The source build failed. Review ~/.yharness-vps/build.log on the VPS.') from error
         if not (source / CLI).is_file():
             raise SetupError('The build did not produce the Y Harness CLI.')
+        ensure_sandbox(root, source, node)
         source.rename(root / 'source')
 
 
@@ -153,7 +256,8 @@ def setup(root, unit_dir):
     require_linux_user()
     require_outside_git(root)
     require_outside_git(unit_dir)
-    unit = service_unit(node_executable())
+    node = node_executable()
+    unit = service_unit(node)
     try:
         run(['systemctl', '--user', 'show-environment'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         linger = run(['loginctl', 'show-user', str(os.getuid()), '--property=Linger', '--value'], capture_output=True)
@@ -173,7 +277,9 @@ def setup(root, unit_dir):
             raise SetupError('The existing Y Harness installation is incomplete. Check the private installation directory.')
         if not source.exists():
             print('Downloading and building Y Harness. This can take several minutes.', flush=True)
-            build_source(root)
+            build_source(root, node)
+        else:
+            ensure_sandbox(root, source, node)
         unit_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
         unit_path = unit_dir / SERVICE
         if unit_path.exists() or unit_path.is_symlink():
@@ -185,6 +291,7 @@ def setup(root, unit_dir):
                 output.write(unit)
                 output.flush()
                 os.link(output.name, unit_path)
+        install_sandbox_start_check(root, unit_dir)
         try:
             for arguments in (['daemon-reload'], ['enable', '--now', SERVICE]):
                 run(['systemctl', '--user', *arguments], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -206,7 +313,7 @@ def launch_url(path):
 def main():
     """Run the server-side setup, status or explicit private-link command."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', nargs='?', choices=('setup', 'status', 'url'), default='setup')
+    parser.add_argument('action', nargs='?', choices=('setup', 'status', 'url', 'sandbox'), default='setup')
     action = parser.parse_args().action
     os.umask(0o077)
     account_home = Path(pwd.getpwuid(os.getuid()).pw_dir)
@@ -217,6 +324,13 @@ def main():
             if not config_home.is_absolute():
                 raise SetupError('XDG_CONFIG_HOME must be an absolute path.')
             setup(root, config_home / 'systemd/user')
+        elif action == 'sandbox':
+            require_linux_user()
+            private_directory(root)
+            source = root / 'source'
+            if source.is_symlink() or not (source / CLI).is_file():
+                raise SetupError('The Y Harness installation is incomplete. Check the private installation directory.')
+            ensure_sandbox(root, source, node_executable())
         else:
             require_linux_user()
             result = subprocess.run(['systemctl', '--user', 'is-active', SERVICE], capture_output=True, text=True)

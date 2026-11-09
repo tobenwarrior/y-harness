@@ -76,12 +76,23 @@ class SetupVpsTest(unittest.TestCase):
                 cli.parent.mkdir(parents=True)
                 cli.touch()
 
+        sandboxed = []
+
+        def sandbox(root, checkout, node):
+            self.assertEqual(root, self.root)
+            self.assertEqual(node, Path('/opt/node/bin/node'))
+            self.assertFalse((root / 'source').exists())
+            self.assertTrue((checkout / installer.CLI).is_file())
+            sandboxed.append(checkout)
+
         with (
+            patch.object(installer, 'ensure_sandbox', side_effect=sandbox, create=True),
             patch.dict(os.environ, {'DEEPSEEK_API_KEY': 'fixture-private', 'SSH_AUTH_SOCK': 'fixture-private'}),
             patch.object(installer.shutil, 'which', return_value='/usr/bin/fixture'),
             patch.object(installer, 'run', side_effect=fake_command),
         ):
-            installer.build_source(self.root)
+            installer.build_source(self.root, Path('/opt/node/bin/node'))
+        self.assertEqual(len(sandboxed), 1)
         self.assertTrue((self.root / 'source' / installer.CLI).is_file())
         self.assertEqual((self.root / 'build.log').stat().st_mode & 0o777, 0o600)
 
@@ -92,20 +103,85 @@ class SetupVpsTest(unittest.TestCase):
         (source / 'apps/cli/lib/bin.js').touch()
         with (
             patch.object(installer, 'require_linux_user'),
+            patch.object(installer.sys, 'executable', '/usr/bin/python3'),
             patch.object(installer, 'node_executable', return_value=Path('/opt/node/bin/node')),
             patch.object(installer, 'run') as command,
             patch.object(installer, 'build_source') as build,
+            patch.object(installer, 'ensure_sandbox', create=True) as sandbox,
             patch('sys.stdout', new_callable=io.StringIO),
         ):
             command.return_value.stdout = 'yes\n'
             installer.setup(self.root, self.unit_dir)
         build.assert_not_called()
+        sandbox.assert_called_once_with(self.root, source, Path('/opt/node/bin/node'))
+        check = self.unit_dir / (installer.SERVICE + '.d') / 'sandbox.conf'
+        self.assertIn('ExecStartPre=', check.read_text())
+        self.assertIn('%h/.yharness-vps/sandbox-setup.py" sandbox', check.read_text())
+        self.assertEqual((self.root / 'sandbox-setup.py').read_bytes(), Path(installer.__file__).read_bytes())
         self.assertTrue((self.unit_dir / installer.SERVICE).is_file())
         self.assertEqual((self.unit_dir / installer.SERVICE).stat().st_mode & 0o777, 0o600)
         self.assertEqual((self.root / 'state').stat().st_mode & 0o777, 0o700)
         self.assertEqual((self.root / 'host.log').stat().st_mode & 0o777, 0o600)
         self.assertIn(['systemctl', '--user', 'enable', '--now', installer.SERVICE], [call.args[0] for call in command.call_args_list])
         self.assertFalse(any('restart' in call.args[0] for call in command.call_args_list))
+
+    def test_startup_restores_the_missing_runner_in_a_replacement_checkout(self):
+        self.root.mkdir(mode=0o700)
+        source = self.root / 'source'
+        native = source / 'native/system/packages'
+        launcher = native / 'linux-x64/bin/landlock-run'
+        c_source = native / 'entry/src/main.c'
+        c_source.parent.mkdir(parents=True)
+        c_source.write_text('/* fixture */')
+        node = Path('/opt/node/bin/node')
+
+        def probe(checkout, executable, environment):
+            self.assertEqual(checkout, source)
+            self.assertEqual(executable, node)
+            self.assertNotIn('DEEPSEEK_API_KEY', environment)
+            return (launcher.is_file(), launcher)
+
+        def command(args, **options):
+            self.assertNotIn('SSH_AUTH_SOCK', options['env'])
+            if args[-1] == '--probe':
+                self.assertFalse(launcher.exists())
+                return
+            self.assertEqual(args[0], 'cc')
+            self.assertEqual(args[-1], str(c_source.resolve()))
+            Path(args[args.index('-o') + 1]).write_text('compiled runner')
+
+        with (
+            patch.dict(os.environ, {'DEEPSEEK_API_KEY': 'fixture-private', 'SSH_AUTH_SOCK': 'fixture-private'}),
+            patch.object(installer, 'sandbox_probe', side_effect=probe, create=True),
+            patch.object(installer, 'run', side_effect=command) as commands,
+        ):
+            installer.ensure_sandbox(self.root, source, node)
+            self.assertEqual(launcher.read_text(), 'compiled runner')
+            self.assertTrue(launcher.stat().st_mode & 0o100)
+            installer.ensure_sandbox(self.root, source, node)
+            self.assertEqual(commands.call_count, 2)
+
+    def test_does_not_publish_an_unusable_runner(self):
+        self.root.mkdir(mode=0o700)
+        source = self.root / 'source'
+        native = source / 'native/system/packages'
+        launcher = native / 'linux-arm64/bin/landlock-run'
+        c_source = native / 'entry/src/main.c'
+        c_source.parent.mkdir(parents=True)
+        c_source.write_text('/* fixture */')
+
+        def command(args, **_options):
+            if args[-1] == '--probe':
+                raise subprocess.CalledProcessError(125, args)
+            Path(args[args.index('-o') + 1]).write_text('compiled runner')
+
+        with (
+            patch.object(installer, 'sandbox_probe', return_value=(False, launcher)),
+            patch.object(installer, 'run', side_effect=command),
+        ):
+            with self.assertRaisesRegex(installer.SetupError, 'Could not build or run the Linux sandbox'):
+                installer.ensure_sandbox(self.root, source, Path('/opt/node/bin/node'))
+        self.assertFalse(launcher.exists())
 
 
 if __name__ == '__main__':
