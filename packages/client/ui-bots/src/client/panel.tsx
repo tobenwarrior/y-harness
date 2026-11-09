@@ -1,13 +1,18 @@
 /** Global Bot panel and its explicitly Session-bound Conversation child. */
 
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import type { BotView } from '@yharness/bots/client'
-import type { PropsLocale, PropsRenderFactories, PropsRenderSlots, PropsRuntime, InjectFace } from '@yharness/client-ui-slots'
+import type { HostObservable, PropsLocale, PropsRenderFactories, PropsRenderSlots, PropsRuntime, InjectFace } from '@yharness/client-ui-slots'
 import type {} from '@yharness/client-ui-conversation/client'
 import type { SessionStatusSnapshot } from '@yharness/client-ui-session/client'
 import type { BotWorkspaceFace, BotWorkspaceState } from './controller.ts'
 import { BotDetail, BotGroupDetail, BotRoster } from './BotWorkspace.tsx'
 import type { BotStatus, BotSummary } from './types.ts'
+import { ComputerAction } from './ComputerAction.tsx'
+import { ComputerPanel } from './ComputerPanel.tsx'
+import type { AvailabilityState } from './computer-availability.ts'
+import type { ComputerClient } from './computer-client.ts'
+import css from './BotWorkspace.module.css'
 
 /** Main panel child slot that owns the selected Bot's Session binding. */
 declare module '@yharness/client-ui-slots' {
@@ -22,7 +27,10 @@ export type BotsPanelProps =
   PropsRuntime<'main'>
   & PropsRenderSlots<'bots.conversation'>
   & PropsLocale<'bots'>
-  & InjectFace<BotWorkspaceFace>
+  & InjectFace<BotWorkspaceFace & {
+    readonly computer: ComputerClient
+    readonly hooks: { readonly computerAvailability: HostObservable<AvailabilityState> }
+  }>
 
 /** Props for the Session-bound embedded Conversation occurrence. */
 export type BotsConversationProps = PropsRuntime<'bots.conversation'> & PropsRenderFactories
@@ -111,12 +119,16 @@ export function BotsPanel({
   useWorkspace, useSessionStatus, reference, retryGroup, updateGroup, sendGroupMessage,
   sendGroupMessageWithAttachments, reactGroupMessage, groupsAvailable, loadAvatar,
   rename, updateProfile, memoryManager,
-  routineManager, skillManager, SessionProvider, renderSlot, t, share,
+  routineManager, skillManager, SessionProvider, renderSlot, t, share, computer, useComputerAvailability,
 }: BotsPanelProps): ReactNode {
   const state: BotWorkspaceState = useWorkspace(value => value)
   const statuses = useSessionStatus(value => value)
   const bots = state.bots.map(bot => summaryOf(bot, statuses))
+  const availability = useComputerAvailability(value => value)
+  const [computerOpen, setComputerOpen] = useState(false)
   const selectedReference = reference()
+  const canShowComputer = availability === 'available' && selectedReference !== undefined
+  const showComputer = canShowComputer && computerOpen
   const conversation = selectedReference === undefined
     ? undefined
     : (
@@ -142,19 +154,29 @@ export function BotsPanel({
     )
   }
   return (
-    <BotDetail
-      bot={state.selectedBotId === null ? undefined : bots.find(bot => bot.id === state.selectedBotId)}
-      children={conversation}
-      t={t}
-      loadAvatar={loadAvatar}
-      onRename={rename}
-      onUpdateProfile={updateProfile}
-      {...(share === undefined ? {} : { share })}
-      memoryManager={memoryManager}
-      skillManager={skillManager}
-      routineManager={routineManager}
-      routineRevision={state.routineRevision}
-      loading={state.phase === 'loading' && bots.length === 0}
-    />
+    <div className={css.computerLayout}>
+      <BotDetail
+        bot={state.selectedBotId === null ? undefined : bots.find(bot => bot.id === state.selectedBotId)}
+        children={conversation}
+        headerActions={canShowComputer && (
+          <ComputerAction expanded={showComputer} toggle={() => { setComputerOpen(open => !open) }} t={t} />
+        )}
+        t={t}
+        loadAvatar={loadAvatar}
+        onRename={rename}
+        onUpdateProfile={updateProfile}
+        {...(share === undefined ? {} : { share })}
+        memoryManager={memoryManager}
+        skillManager={skillManager}
+        routineManager={routineManager}
+        routineRevision={state.routineRevision}
+        loading={state.phase === 'loading' && bots.length === 0}
+      />
+      {showComputer && (
+        <div className={css.computerSidebar}>
+          <ComputerPanel computer={computer} close={() => { setComputerOpen(false) }} t={t} />
+        </div>
+      )}
+    </div>
   )
 }

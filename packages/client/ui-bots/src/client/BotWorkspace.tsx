@@ -1091,11 +1091,12 @@ function NewBotDialog({ open, onClose, onCreate, error, t }: {
 }
 
 export function BotDetail({
-  bot, children, t, loadAvatar, onEditAvatar, onRename, onUpdateProfile, share, memoryManager, routineManager,
+  bot, children, headerActions, t, loadAvatar, onEditAvatar, onRename, onUpdateProfile, share, memoryManager, routineManager,
   skillManager, routineRevision = 0, loading,
 }: {
   bot: BotSummary | undefined
   children: ReactNode
+  headerActions?: ReactNode
   t: BotWorkspaceViewProps['t']
   loadAvatar: BotWorkspaceViewProps['loadAvatar']
   onEditAvatar?: (() => void) | undefined
@@ -1170,6 +1171,7 @@ export function BotDetail({
           </span>
         </span>
         <span className={css.detailActions}>
+          {headerActions}
           {onUpdateProfile !== undefined && (
             <Tooltip label={t('editBotProfile')} side="bottom" portal>
               <Button variant="ghost" size="sm" aria-label={t('editBotProfile')} icon={<IconEditOutlineRegular size={14} />}

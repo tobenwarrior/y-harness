@@ -29,6 +29,22 @@ ssh -o ExitOnForwardFailure=yes -L 127.0.0.1:3080:127.0.0.1:3080 your-vps \
 
 Open the printed sign-in link in your browser and keep it private. Leave the command running while you use Y Harness. You can close the tunnel and reconnect later while the service continues on the VPS. [Set up your models and workspace](./index.md) in the VPS Web interface.
 
+## Watch and control the Computer
+
+On Ubuntu, you can give your bots a private desktop on the same VPS. Run these commands from your SSH session after installing the Web service. Setup installs the desktop packages through sudo. Activate when your current tasks are idle, since activation restarts the Web service.
+
+```sh
+mkdir -p ~/.local/bin &&
+  curl -fsSL https://raw.githubusercontent.com/tobenwarrior/y-harness/master/scripts/setup-vps-display.py -o ~/.local/bin/yharness-vps-display &&
+  curl -fsSL https://raw.githubusercontent.com/tobenwarrior/y-harness/master/scripts/vps-display-supervisor.py -o ~/.local/bin/vps-display-supervisor.py &&
+  python3 ~/.local/bin/yharness-vps-display &&
+  python3 ~/.local/bin/yharness-vps-display activate
+```
+
+Reconnect using a fresh sign-in link. Open a bot and choose **Computer** to watch the same desktop it uses. Ask the bot to use the Computer to see it work. Choose a model that accepts images so it can read the screen.
+
+Choose **Take control** to use your mouse and keyboard in the panel. Bot input through the Computer tool pauses while you hold control. Choose **Hand back** to let the bot use it again. Closing the panel releases control, and a lost connection releases it automatically after a short timeout. The private desktop stays running when you disconnect.
+
 ## Check the service
 
 On the VPS, run `python3 ~/.local/bin/yharness-vps status`. Setup keeps the source checkout, the working directory, and Y Harness state in separate locations under `~/.yharness-vps`. Provider settings and logs stay in that private directory. Keep the host log private because it contains the sign-in link.

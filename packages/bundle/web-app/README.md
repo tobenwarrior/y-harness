@@ -69,6 +69,12 @@ The printed URL contains a process credential; share it only with intended users
 
 When you launch `yharness --profile web` over SSH, the URL line still prints but the browser is not opened for you: the SSH client or editor owns the local forwarding address. Without an advertised root the printed URL names the remote host's loopback endpoint, which you reach through your forwarding address. With `--public-url` the printed URL is the authenticated advertised root; the browser handoff stays suppressed, because opening a browser on the remote host cannot reach your screen.
 
+### Private Computer
+
+The optional `computer` configuration connects the Web host to a private X11 desktop. The shipped overlay reads `YH_VPS_DISPLAY` and `YH_VPS_XAUTHORITY`. Use the [VPS setup guide](../../../docs/user/guide/vps.md#watch-and-control-the-computer) to install and supervise the desktop.
+
+The owner-authenticated Computer routes and the operator presets' `vps_computer` tool use one controller. The controller serializes input and reserves it for one browser while that browser holds a renewable lease. The shared Bot preset has no desktop access. The lease covers input through this controller. Applications running as the VPS account can still access its X11 session.
+
 ### Per-session agent setup
 
 Each browser session selects a shipped preset (`standard` by default). The Agent presets settings page changes the default and edits preset child plugins; saves persist in `$YH_HOME/profiles/web/cordis.patch.yml`. Existing installations may continue selecting their home with `$DSH_HOME`. Creator's plugin-management tool is enabled only when the Host provides an editable profile.

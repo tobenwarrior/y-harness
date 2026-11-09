@@ -46,6 +46,10 @@ The Client package has no user configuration fields. Mount its browser entry in 
 
 The composition must provide the injected Bot Remote, Session store, locale, layout, sidebar, conversation, renderer, and slot services. The avatar-generation Remote is optional; without it the workspace still supports character editing and image upload when the corresponding Bot Remote methods are available.
 
+### Computer panel
+
+When the Host reports `available: true` from the authenticated `api/computer/status` route, the Bot header exposes a Computer action that opens the desktop beside the selected Bot conversation. The panel polls `api/computer/frame` only while visible, displays the current lease mode, and sends click, drag, scroll, keyboard, and pasted-text input only while the browser owns the control lease. Closing the panel requests lease release; server-side disconnect expiry remains the fallback.
+
 ### Owner callbacks
 
 `BotRoster` accepts the roster, selection, and creation callbacks. The setup dialog collects a name, role, persona, capabilities, character, and color. `BotDetail` renders the selected Bot's persistent Session and can edit its profile using the captured row revision to prevent stale changes. Optional actions support connected apps, organization, avatar editing and generation, sharing, templates, and host-local skill policies. When routine actions are mounted, the detail header opens a manager for timed and message-triggered routines with bounded history and confirmation for changes. Hidden and pinned Bots have dedicated sections.

@@ -12,6 +12,8 @@ import { BotWorkspaceController } from './controller.ts'
 import { BotsConversation, BotsPanel, BotsRoster } from './panel.tsx'
 import { en, zh } from './locales.ts'
 import { createSharedBotsClient } from './shared-client.ts'
+import { createComputerAvailability } from './computer-availability.ts'
+import { createComputerClient } from './computer-client.ts'
 
 /** Stable main-panel identity shared by the sidebar entry and main occupant. */
 export const PANEL_ID = 'bots' as MainPanelId
@@ -38,6 +40,17 @@ export function apply(ctx: Context): void {
     key => ctx.locale.bind('bots')(key),
     sharedClient,
   )
+  const computer = createComputerClient()
+  const computerAvailability = createComputerAvailability(computer)
+
+  ctx.effect(() => {
+    const stopGeneration = connection.generation.subscribe(() => { computerAvailability.refresh() })
+    computerAvailability.refresh()
+    return () => {
+      stopGeneration()
+      computerAvailability.dispose()
+    }
+  }, 'ui-bots: computer availability')
 
   ctx.effect(() => {
     const disposeMain = ctx.slots.inject('main', () => ctx.slots.register({
@@ -45,7 +58,10 @@ export function apply(ctx: Context): void {
       key: PANEL_ID,
       locale: 'bots',
       children: { 'bots.conversation': { kind: 'single', scope: 'session-maybe' } },
-      inject: () => controller.face(),
+      inject: () => {
+        const face = controller.face()
+        return { ...face, computer, hooks: { ...face.hooks, computerAvailability: computerAvailability.source } }
+      },
     }, BotsPanel))
     const disposeConversation = ctx.slots.inject('bots.conversation', () => ctx.slots.register({
       name: 'bots.conversation',

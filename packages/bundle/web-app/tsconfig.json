@@ -21,6 +21,21 @@
       "path": "../../boot/app-boot"
     },
     {
+      "path": "../../preset/agent-preset-registry"
+    },
+    {
+      "path": "../../attachment/attachment"
+    },
+    {
+      "path": "../../util/brand"
+    },
+    {
+      "path": "../../llm/llm"
+    },
+    {
+      "path": "../../core/tools"
+    },
+    {
       "path": "../../boot/cmdline"
     },
     {

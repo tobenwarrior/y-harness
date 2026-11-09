@@ -220,6 +220,10 @@
         publicUrl: !!js ctx.webStartup.publicUrl
         surfaceContext: true
         trustedHosts: !!js ctx.webStartup.trustedHosts
+        computer: !!js >-
+          process.env.YH_VPS_DISPLAY === undefined && process.env.YH_VPS_XAUTHORITY === undefined
+            ? undefined
+            : { display: process.env.YH_VPS_DISPLAY, authorityPath: process.env.YH_VPS_XAUTHORITY }
 
     # The client-plugin reload chain, always mounted: it is idle until a
     # rebuild watcher (pnpm run dev:web) actually rewrites client bundles. It

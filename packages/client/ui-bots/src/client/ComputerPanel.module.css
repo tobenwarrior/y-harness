@@ -1,0 +1,134 @@
+.root {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  background: var(--yh-specific-sidebar-fill);
+  color: var(--yh-alias-label-primary);
+}
+
+.toolbar,
+.footer {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px 10px;
+}
+
+.toolbar {
+  border-bottom: 0.5px solid var(--yh-alias-border-l2);
+}
+
+.footer {
+  border-top: 0.5px solid var(--yh-alias-border-l2);
+  color: var(--yh-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.footer > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.status,
+.controls {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.status {
+  overflow: hidden;
+  color: var(--yh-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.controls {
+  flex: none;
+}
+
+.notice {
+  flex: none;
+  margin: 8px 10px 0;
+  padding: 6px 8px;
+  border: 0.5px solid var(--yh-alias-state-error-primary);
+  border-radius: var(--yh-radius-md);
+  background: var(--yh-alias-bg-layer-2);
+  color: var(--yh-alias-label-secondary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.viewport {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  padding: 10px;
+  overflow: hidden;
+  background: var(--yh-alias-bg-layer-1);
+}
+
+.screen {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 100%;
+  min-width: 0;
+  min-height: 0;
+  aspect-ratio: 8 / 5;
+  object-fit: contain;
+  border-radius: var(--yh-radius-sm);
+  background: var(--yh-alias-bg-layer-3);
+  cursor: default;
+  outline: none;
+  user-select: none;
+}
+
+.screen:focus-visible {
+  outline: 1px solid var(--yh-focus-ring-color, var(--yh-alias-state-business-primary));
+  outline-offset: 2px;
+}
+
+.empty {
+  display: flex;
+  align-items: center;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 240px;
+  padding: 18px;
+  color: var(--yh-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
+  text-align: center;
+}
+
+.empty p {
+  margin: 0;
+}
+
+@media (max-width: 420px) {
+  .toolbar,
+  .footer {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .controls {
+    width: 100%;
+  }
+}

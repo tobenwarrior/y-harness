@@ -1,0 +1,10 @@
+version: 1
+scenario: vps-computer
+profile: headless
+composition: vps-computer
+recording: authored
+header:
+  class: vps-computer
+  pin: true
+replay:
+  override: true

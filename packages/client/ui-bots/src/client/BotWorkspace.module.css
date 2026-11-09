@@ -2832,3 +2832,32 @@
 @media (max-width: 420px) {
   .identityChoices { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
+
+.computerLayout {
+  position: relative;
+  display: grid;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  grid-template-columns: minmax(0, 1fr);
+  container-type: inline-size;
+}
+
+.computerSidebar {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  min-width: 0;
+  min-height: 0;
+  background: var(--yh-alias-bg-layer-1);
+}
+
+@container (min-width: 760px) {
+  .computerSidebar {
+    position: static;
+    grid-column: 2;
+    width: clamp(360px, 47cqw, 860px);
+    border-inline-start: 1px solid var(--yh-alias-border-l2);
+  }
+}

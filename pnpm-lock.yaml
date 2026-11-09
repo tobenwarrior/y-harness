@@ -2614,12 +2614,18 @@ importers:
       '@yharness/app-boot':
         specifier: workspace:*
         version: link:../../boot/app-boot
+      '@yharness/attachment':
+        specifier: workspace:*
+        version: link:../../attachment/attachment
       '@yharness/avatar-generation':
         specifier: workspace:*
         version: link:../../agents/avatar-generation
       '@yharness/bots':
         specifier: workspace:*
         version: link:../../agents/bots
+      '@yharness/brand':
+        specifier: workspace:*
+        version: link:../../util/brand
       '@yharness/client-connection':
         specifier: workspace:*
         version: link:../../client/connection
@@ -2872,6 +2878,9 @@ importers:
       '@yharness/launch-environment':
         specifier: workspace:*
         version: link:../../util/launch-environment
+      '@yharness/llm':
+        specifier: workspace:*
+        version: link:../../llm/llm
       '@yharness/message-feedback':
         specifier: workspace:*
         version: link:../../feedback/message-feedback
@@ -2980,6 +2989,9 @@ importers:
       '@yharness/tool-workflow':
         specifier: workspace:*
         version: link:../../workflow/tool-workflow
+      '@yharness/tools':
+        specifier: workspace:*
+        version: link:../../core/tools
       '@yharness/web-frontend':
         specifier: workspace:*
         version: link:../../../apps/web

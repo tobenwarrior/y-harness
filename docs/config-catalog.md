@@ -4407,7 +4407,7 @@ export interface WebRuntimeConfig {
 ## `@yharness/web-app`
 
 - `inject`: `webServer`
-- `source`: [`packages/bundle/web-app/src/index.ts:46`](../packages/bundle/web-app/src/index.ts)
+- `source`: [`packages/bundle/web-app/src/index.ts:51`](../packages/bundle/web-app/src/index.ts)
 
 ```ts config-catalog
 /** Plugin config: composed deployment settings plus per-invocation command-line values. */
@@ -4433,6 +4433,13 @@ export interface Config {
   publicUrl?: string
   /** Explicit `--trusted-host` authorities from this invocation. */
   trustedHosts: string[]
+  /** Opt in to the private Linux desktop using its X display and owner-only authority file. */
+  computer?: {
+    /** Local X11 display identifier for the private desktop. */
+    display: string
+    /** Absolute path to the file that authenticates the private display. */
+    authorityPath: string
+  } | null
 }
 ```
 <!-- END GENERATED config-catalog:@yharness/web-app -->

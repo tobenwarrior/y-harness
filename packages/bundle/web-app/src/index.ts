@@ -20,6 +20,7 @@ import { fileURLToPath } from 'node:url'
 import type { Context } from '@yharness/cordis'
 import z from '@yharness/schemastery'
 import { addHarnessSourceSection, auditStartupEntries } from '@yharness/app-boot'
+import type {} from '@yharness/agent-preset-registry'
 import type {} from '@yharness/client-connection'
 import * as FrontendStatic from '@yharness/host-frontend-static'
 import { launchedThroughSsh, launchEnvironmentOf } from '@yharness/launch-environment'
@@ -28,6 +29,9 @@ import type {} from '@yharness/cordis-plugin-loader'
 import type {} from '@yharness/host-webserver'
 import type {} from '@yharness/shell-env'
 import { parsePublicUrl } from './public-url.ts'
+import { computerRoutes } from './computer-api.ts'
+import * as ComputerTool from './computer-tool.ts'
+import { VpsComputer } from './computer.ts'
 
 /** Stable Cordis plugin name. */
 export const name = 'web-app'
@@ -38,6 +42,7 @@ const ANNOUNCED_ROOTS = new WeakSet<Context>()
 
 /** Runtime service that releases Web rows after bind-dependent values resolve. */
 const WEB_RUNTIME_SERVICE = 'webRuntime'
+const COMPUTER_PRESETS = /^(?:standard|cordis|ptc)$/u
 
 /** Services required before the web runtime can mount. */
 export const inject = ['webServer']
@@ -65,6 +70,13 @@ export interface Config {
   publicUrl?: string
   /** Explicit `--trusted-host` authorities from this invocation. */
   trustedHosts: string[]
+  /** Opt in to the private Linux desktop using its X display and owner-only authority file. */
+  computer?: {
+    /** Local X11 display identifier for the private desktop. */
+    display: string
+    /** Absolute path to the file that authenticates the private display. */
+    authorityPath: string
+  } | null
 }
 
 export const Config: z<Config> = z.object({
@@ -73,6 +85,13 @@ export const Config: z<Config> = z.object({
   surfaceContext: z.boolean().default(true),
   publicUrl: z.transform(z.string(), value => parsePublicUrl(value).href),
   trustedHosts: z.array(String).default([]),
+  computer: z.union([
+    z.object({
+      display: z.string().required(),
+      authorityPath: z.string().required(),
+    }),
+    z.const(null),
+  ]),
 })
 
 /** Bind-dependent Web values shared by the trust fence and URL display. */
@@ -249,6 +268,29 @@ export function apply(ctx: Context, config: Config): void {
   // Release dependent rows only after bind-dependent trust has been sampled once.
   ctx.provide(WEB_RUNTIME_SERVICE, runtime)
   ctx.plugin(FrontendStatic, { distIndex: internals.resolveDistIndex() })
+  if (config.computer !== undefined && config.computer !== null) {
+    const computer = new VpsComputer(config.computer)
+    ctx.provide('vpsComputer', computer)
+    ctx.effect(() => () => computer.dispose(), 'vps-computer: private desktop')
+    ctx.on('agent/created', ({ agent }) => {
+      const canUseComputer = (): boolean => {
+        const preset = ctx.get('agentPresets')?.composedPreset(agent.ctx)
+        return preset !== undefined && COMPUTER_PRESETS.test(preset)
+      }
+      if (!canUseComputer()) return
+      agent.ctx.inject(ComputerTool.inject, (scope) => {
+        ComputerTool.apply(scope)
+        scope.effect(() => scope.tools.guard(exec => exec.name === 'vps_computer' && !canUseComputer()
+          ? 'This Agent preset cannot access the private Computer.'
+          : undefined))
+      })
+    })
+    ctx.inject(['connection'], (computerCtx) => {
+      for (const route of computerRoutes(computer)) {
+        computerCtx.effect(() => computerCtx.connection.fetch.register(route), 'vps-computer: owner route')
+      }
+    })
+  }
   if (config.surfaceContext) {
     ctx.inject(['systemPrompt'], (promptCtx) => {
       addHarnessSourceSection(promptCtx, SOURCE_ROOT)
