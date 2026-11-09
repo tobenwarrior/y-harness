@@ -5,6 +5,7 @@ import argparse
 import fcntl
 import json
 import os
+import platform
 import pwd
 import re
 import shutil
@@ -19,22 +20,25 @@ SERVICE = 'yharness-vps.service'
 CLI = Path('apps/cli/lib/bin.js')
 NATIVE_PACKAGES = Path('native/system/packages')
 SANDBOX_SCRIPT = 'sandbox-setup.py'
+BUBBLEWRAP_BIN = Path('/usr/bin/bwrap')
+BUBBLEWRAP_PROFILE = Path('/etc/apparmor.d/bwrap-userns-restrict')
+APPARMOR_USERNS = Path('/proc/sys/kernel/apparmor_restrict_unprivileged_userns')
 SANDBOX_PROBE = """
 import { Context } from '@yharness/cordis';
 import { launcherPath } from '@yharness/node-addon-system/landlock-run';
 import { LocalSandboxProvider } from '@yharness/sandbox-local';
 const ctx = new Context();
 await ctx.plugin(LocalSandboxProvider, {});
-let available = true;
+let backend = null;
 try {
-  await ctx.sandbox.confine(['/bin/true'], { mode: 'read-only', workspaceRoot: '/' });
+  const result = await ctx.sandbox.confine(['/bin/true'], { mode: 'read-only', workspaceRoot: '/' });
+  backend = result.argv[0] === 'bwrap' && result.enforcement === 'full' ? 'bubblewrap' : 'other';
 } catch (error) {
   if (error.code !== 'SANDBOX_UNAVAILABLE') throw error;
-  available = false;
 } finally {
   await ctx.fiber.dispose();
 }
-console.log(JSON.stringify({ available, launcher: launcherPath() }));
+console.log(JSON.stringify({ backend, launcher: launcherPath() }));
 """
 PORT = 3080
 LAUNCH_LINE = re.compile(rf'^yharness web: (http://127\.0\.0\.1:{PORT}/\?token=[A-Za-z0-9_-]{{43}})(?:\s|$)')
@@ -144,6 +148,117 @@ def build_environment():
     return environment
 
 
+def ubuntu_2404():
+    """Identify the Ubuntu release whose optional Bubblewrap profile setup supports."""
+    try:
+        release = platform.freedesktop_os_release()
+    except (AttributeError, OSError):
+        return False
+    return release.get('ID') == 'ubuntu' and release.get('VERSION_ID') == '24.04'
+
+
+def bubblewrap_works(environment):
+    """Probe the distro Bubblewrap with the same mounts the sandbox provider uses."""
+    try:
+        run(
+            [str(BUBBLEWRAP_BIN), '--ro-bind', '/', '/', '--dev', '/dev', '--unshare-pid',
+             '--proc', '/proc', '--die-with-parent', '--', '/usr/bin/true'],
+            env=environment, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10,
+        )
+        return True
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def install_bubblewrap_profile(root, environment, log):
+    """Load only Ubuntu's packaged Bubblewrap profile and preserve existing profiles."""
+    profiles = BUBBLEWRAP_PROFILE.parent
+    related = (BUBBLEWRAP_PROFILE, profiles / 'disable' / BUBBLEWRAP_PROFILE.name,
+               profiles / 'force-complain' / BUBBLEWRAP_PROFILE.name)
+    if any(path.exists() or path.is_symlink() for path in related):
+        raise SetupError('An existing Bubblewrap AppArmor configuration needs administrator review.')
+    if APPARMOR_USERNS.read_text().strip() != '1':
+        raise SetupError('Bubblewrap failed for a reason other than the Ubuntu AppArmor namespace restriction.')
+    privileged = ['/usr/bin/sudo', '-n']
+    parser = [*privileged, '/usr/sbin/apparmor_parser']
+
+    def apply(args, timeout=25):
+        return run(args, env=environment, stdout=log, stderr=subprocess.STDOUT, timeout=timeout)
+
+    run(['/usr/bin/systemctl', 'is-enabled', '--quiet', 'apparmor'], env=environment, timeout=10)
+    loaded = run(
+        [*privileged, '/usr/bin/cat', '/sys/kernel/security/apparmor/profiles'],
+        env=environment, capture_output=True, timeout=10,
+    ).stdout
+    if re.search(r'^(?:bwrap|unpriv_bwrap) ', loaded, re.MULTILINE):
+        raise SetupError('A Bubblewrap profile is already loaded. Review it before retrying setup.')
+
+    with tempfile.TemporaryDirectory(dir=root) as stage:
+        run(
+            ['/usr/bin/apt-get', 'download', 'apparmor-profiles'], cwd=stage, env=environment,
+            stdout=log, stderr=subprocess.STDOUT, timeout=120,
+        )
+        packages = list(Path(stage).glob('apparmor-profiles_*.deb'))
+        if len(packages) != 1:
+            raise SetupError('Could not identify Ubuntu’s downloaded AppArmor profile package.')
+        unpacked = Path(stage) / 'extracted'
+        apply(['/usr/bin/dpkg-deb', '--extract', str(packages[0]), str(unpacked)])
+        profile = unpacked / 'usr/share/apparmor/extra-profiles/bwrap-userns-restrict'
+        if not profile.is_file() or profile.is_symlink():
+            raise SetupError('Ubuntu’s AppArmor package is missing the Bubblewrap profile. Update the Ubuntu package lists.')
+
+        pending = Path(run(
+            [*privileged, '/usr/bin/mktemp', str(profiles / '.yharness-bwrap.XXXXXX')],
+            env=environment, capture_output=True, timeout=10,
+        ).stdout.strip())
+        if pending.parent != profiles or not re.fullmatch(r'\.yharness-bwrap\.[A-Za-z0-9]{6}', pending.name):
+            raise SetupError('Could not allocate a temporary system profile.')
+        try:
+            apply([*privileged, '/usr/bin/install', '-o', 'root', '-g', 'root', '-m', '0644', str(profile), str(pending)])
+            apply([*parser, '-Q', '-T', str(pending)])
+            apply([*privileged, '/usr/bin/ln', '-T', '--', str(pending), str(BUBBLEWRAP_PROFILE)])
+            activated = False
+            try:
+                apply([*parser, '-a', '-T', str(BUBBLEWRAP_PROFILE)])
+                activated = True
+                if not bubblewrap_works(environment):
+                    raise SetupError('Ubuntu’s AppArmor profile loaded, but Bubblewrap could not start.')
+            except (SetupError, OSError, subprocess.SubprocessError):
+                if activated:
+                    apply([*parser, '-R', str(BUBBLEWRAP_PROFILE)])
+                apply([*privileged, '/usr/bin/rm', '--', str(BUBBLEWRAP_PROFILE)])
+                raise
+        finally:
+            apply([*privileged, '/usr/bin/rm', '--', str(pending)])
+
+
+def ensure_bubblewrap(root):
+    """Provision full Bubblewrap enforcement on Ubuntu 24.04 only during setup."""
+    environment = build_environment()
+    environment['PATH'] = '/usr/local/bin:/usr/bin:/bin'
+    if bubblewrap_works(environment):
+        return
+    print('Configuring Ubuntu Bubblewrap. Setup may ask for sudo.', flush=True)
+    with os.fdopen(private_file(root / 'bubblewrap.log', os.O_WRONLY | os.O_CREAT), 'w') as log:
+        log.truncate()
+        try:
+            run(['/usr/bin/sudo', '-v'], env=environment, timeout=90)
+            apt = [
+                '/usr/bin/sudo', '-n', '/usr/bin/env', 'DEBIAN_FRONTEND=noninteractive', 'NEEDRESTART_MODE=l',
+                '/usr/bin/apt-get', '-o', 'DPkg::Lock::Timeout=30', '-o', 'Acquire::Retries=1',
+            ]
+            run([*apt, 'update'], env=environment, stdout=log, stderr=subprocess.STDOUT, timeout=180)
+            if not BUBBLEWRAP_BIN.is_file():
+                run(
+                    [*apt, 'install', '--no-install-recommends', '--no-upgrade', '--no-remove', '--yes', 'bubblewrap'],
+                    env=environment, stdout=log, stderr=subprocess.STDOUT, timeout=180,
+                )
+            if not bubblewrap_works(environment):
+                install_bubblewrap_profile(root, environment, log)
+        except (OSError, subprocess.SubprocessError) as error:
+            raise SetupError('Could not configure full Bubblewrap enforcement. Check sudo access and the private bubblewrap.log.') from error
+
+
 def sandbox_probe(source, node, environment):
     """Query the checkout's sandbox provider under the service's executable search path."""
     try:
@@ -152,19 +267,21 @@ def sandbox_probe(source, node, environment):
             cwd=source / 'packages/sandbox/sandbox-local', env=environment, capture_output=True, timeout=20,
         )
         status = json.loads(result.stdout)
-        return status['available'] is True, Path(status['launcher'])
+        return status['backend'], Path(status['launcher'])
     except (OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
         raise SetupError('Could not check the Linux sandbox in the Y Harness build.') from error
 
 
 def ensure_sandbox(root, source, node):
-    """Publish a probed local Landlock runner if the checkout has no usable sandbox."""
+    """Verify Ubuntu Bubblewrap or supply a probed Landlock fallback on other Linux hosts."""
     environment = build_environment()
     environment['PATH'] = f'{node.parent}:/usr/local/bin:/usr/bin:/bin'
     with os.fdopen(private_file(root / 'sandbox.lock', os.O_RDWR | os.O_CREAT), 'r+') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
-        ready, launcher = sandbox_probe(source, node, environment)
-        if ready:
+        backend, launcher = sandbox_probe(source, node, environment)
+        if ubuntu_2404() and backend != 'bubblewrap':
+            raise SetupError('Full Bubblewrap enforcement is unavailable. Run VPS setup to repair it before starting Y Harness.')
+        if backend is not None:
             return
         native = source.resolve() / NATIVE_PACKAGES
         allowed = {native / arch / 'bin/landlock-run' for arch in ('linux-x64', 'linux-arm64')}
@@ -275,18 +392,21 @@ def setup(root, unit_dir):
         source = root / 'source'
         if source.is_symlink() or (source.exists() and not (source / CLI).is_file()):
             raise SetupError('The existing Y Harness installation is incomplete. Check the private installation directory.')
+        unit_path = unit_dir / SERVICE
+        has_unit = unit_path.exists() or unit_path.is_symlink()
+        if has_unit:
+            with os.fdopen(private_file(unit_path, os.O_RDONLY)) as existing:
+                if existing.read() != unit:
+                    raise SetupError('The existing Y Harness service file differs. Review it before running setup again.')
+        if ubuntu_2404():
+            ensure_bubblewrap(root)
         if not source.exists():
             print('Downloading and building Y Harness. This can take several minutes.', flush=True)
             build_source(root, node)
         else:
             ensure_sandbox(root, source, node)
-        unit_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
-        unit_path = unit_dir / SERVICE
-        if unit_path.exists() or unit_path.is_symlink():
-            with os.fdopen(private_file(unit_path, os.O_RDONLY)) as existing:
-                if existing.read() != unit:
-                    raise SetupError('The existing Y Harness service file differs. Review it before running setup again.')
-        else:
+        if not has_unit:
+            unit_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
             with tempfile.NamedTemporaryFile(mode='w', dir=unit_dir) as output:
                 output.write(unit)
                 output.flush()

@@ -3,6 +3,7 @@
 import importlib.util
 import io
 import os
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -22,6 +23,9 @@ class SetupVpsTest(unittest.TestCase):
         self.home = Path(directory.name)
         self.root = self.home / '.yharness-vps'
         self.unit_dir = self.home / '.config' / 'systemd' / 'user'
+        distribution = patch.object(installer, 'ubuntu_2404', return_value=False, create=True)
+        self.addCleanup(distribution.stop)
+        distribution.start()
 
     def test_service_uses_the_private_workspace_and_loopback_web_profile(self):
         unit = installer.service_unit(Path('/opt/node/bin/node'))
@@ -96,6 +100,134 @@ class SetupVpsTest(unittest.TestCase):
         self.assertTrue((self.root / 'source' / installer.CLI).is_file())
         self.assertEqual((self.root / 'build.log').stat().st_mode & 0o777, 0o600)
 
+    def bubblewrap_install_fixture(self, *, can_start=True, existing_profile=False):
+        self.root.mkdir(mode=0o700)
+        binary = self.home / 'bwrap'
+        profile_dir = self.home / 'apparmor.d'
+        profile_dir.mkdir()
+        profile = profile_dir / 'bwrap-userns-restrict'
+        if existing_profile:
+            profile.write_text('administrator profile')
+        setting = self.home / 'userns'
+        setting.write_text('1\n')
+        pending = profile_dir / '.yharness-bwrap.abc123'
+        calls = []
+        loaded = False
+
+        def command(args, **options):
+            nonlocal loaded
+            self.assertNotIn('DEEPSEEK_API_KEY', options['env'])
+            self.assertNotIn('SSH_AUTH_SOCK', options['env'])
+            calls.append(args)
+            actual = args[2:] if args[:2] == ['/usr/bin/sudo', '-n'] else args
+            name = actual[0]
+            if name == str(binary):
+                if not (binary.exists() and loaded and can_start):
+                    raise subprocess.CalledProcessError(1, args)
+            elif actual[-1] == 'bubblewrap':
+                self.assertIn('--no-upgrade', actual)
+                self.assertIn('--no-remove', actual)
+                binary.touch()
+            elif actual == ['/usr/bin/apt-get', 'download', 'apparmor-profiles']:
+                (Path(options['cwd']) / 'apparmor-profiles_fixture.deb').touch()
+            elif name == '/usr/bin/dpkg-deb':
+                package_profile = Path(actual[-1]) / 'usr/share/apparmor/extra-profiles/bwrap-userns-restrict'
+                package_profile.parent.mkdir(parents=True)
+                package_profile.write_text('Ubuntu fixture')
+            elif name == '/usr/bin/mktemp':
+                pending.touch()
+                return subprocess.CompletedProcess(args, 0, str(pending) + '\n')
+            elif name == '/usr/bin/install':
+                shutil.copyfile(actual[-2], actual[-1])
+            elif name == '/usr/bin/ln':
+                os.link(actual[-2], actual[-1])
+            elif name == '/usr/sbin/apparmor_parser' and actual[1] == '-a':
+                self.assertEqual(profile.read_text(), 'Ubuntu fixture')
+                loaded = True
+            elif name == '/usr/sbin/apparmor_parser' and actual[1] == '-R':
+                loaded = False
+            elif name == '/usr/bin/rm':
+                Path(actual[-1]).unlink()
+            return subprocess.CompletedProcess(args, 0, '')
+
+        with (
+            patch.dict(os.environ, {'DEEPSEEK_API_KEY': 'fixture-private', 'SSH_AUTH_SOCK': 'fixture-private'}),
+            patch.object(installer, 'BUBBLEWRAP_BIN', binary),
+            patch.object(installer, 'BUBBLEWRAP_PROFILE', profile),
+            patch.object(installer, 'APPARMOR_USERNS', setting),
+            patch.object(installer, 'run', side_effect=command),
+            patch('sys.stdout', new_callable=io.StringIO),
+        ):
+            if existing_profile:
+                with self.assertRaisesRegex(installer.SetupError, 'administrator review'):
+                    installer.ensure_bubblewrap(self.root)
+                self.assertEqual(profile.read_text(), 'administrator profile')
+            elif can_start:
+                installer.ensure_bubblewrap(self.root)
+                self.assertEqual(profile.read_text(), 'Ubuntu fixture')
+                self.assertTrue(loaded)
+                after_install = len(calls)
+                installer.ensure_bubblewrap(self.root)
+                self.assertEqual(calls[after_install:], [calls[0]])
+            else:
+                with self.assertRaisesRegex(installer.SetupError, 'Bubblewrap could not start'):
+                    installer.ensure_bubblewrap(self.root)
+                self.assertFalse(profile.exists())
+                self.assertFalse(loaded)
+        self.assertFalse(pending.exists())
+        self.assertEqual(setting.read_text(), '1\n')
+        self.assertFalse(any('install' in call and 'apparmor-profiles' in call for call in calls))
+        self.assertEqual((self.root / 'bubblewrap.log').stat().st_mode & 0o777, 0o600)
+
+    def test_fresh_ubuntu_install_loads_the_packaged_profile_and_reuses_it(self):
+        self.bubblewrap_install_fixture()
+
+    def test_ubuntu_install_preserves_an_existing_profile(self):
+        self.bubblewrap_install_fixture(existing_profile=True)
+
+    def test_failed_bubblewrap_probe_removes_only_the_new_profile(self):
+        self.bubblewrap_install_fixture(can_start=False)
+
+    def test_ubuntu_setup_provisions_bubblewrap_before_building(self):
+        events = []
+        with (
+            patch.object(installer, 'ubuntu_2404', return_value=True),
+            patch.object(installer, 'require_linux_user'),
+            patch.object(installer.sys, 'executable', '/usr/bin/python3'),
+            patch.object(installer, 'node_executable', return_value=Path('/opt/node/bin/node')),
+            patch.object(installer, 'run') as command,
+            patch.object(installer, 'ensure_bubblewrap', create=True, side_effect=lambda _root: events.append('sandbox')),
+            patch.object(installer, 'build_source', side_effect=lambda *_args: events.append('build')),
+            patch('sys.stdout', new_callable=io.StringIO),
+        ):
+            command.return_value.stdout = 'yes\n'
+            installer.setup(self.root, self.unit_dir)
+        self.assertEqual(events, ['sandbox', 'build'])
+
+    def test_ubuntu_startup_reuses_full_bubblewrap_without_provisioning(self):
+        self.root.mkdir(mode=0o700)
+        source = self.root / 'replacement-source'
+        with (
+            patch.object(installer, 'ubuntu_2404', return_value=True),
+            patch.object(installer, 'sandbox_probe', return_value=('bubblewrap', self.root / 'unused')),
+            patch.object(installer, 'run') as command,
+            patch.object(installer, 'ensure_bubblewrap', create=True) as provision,
+        ):
+            installer.ensure_sandbox(self.root, source, Path('/opt/node/bin/node'))
+        command.assert_not_called()
+        provision.assert_not_called()
+
+    def test_ubuntu_startup_reports_loss_of_bubblewrap_instead_of_falling_back(self):
+        self.root.mkdir(mode=0o700)
+        with (
+            patch.object(installer, 'ubuntu_2404', return_value=True),
+            patch.object(installer, 'sandbox_probe', return_value=('other', self.root / 'unused')),
+            patch.object(installer, 'run') as command,
+        ):
+            with self.assertRaisesRegex(installer.SetupError, 'Full Bubblewrap'):
+                installer.ensure_sandbox(self.root, self.root / 'source', Path('/opt/node/bin/node'))
+        command.assert_not_called()
+
     def test_setup_enables_service_without_restarting_an_existing_install(self):
         self.root.mkdir(mode=0o700)
         source = self.root / 'source'
@@ -139,7 +271,7 @@ class SetupVpsTest(unittest.TestCase):
             self.assertEqual(checkout, source)
             self.assertEqual(executable, node)
             self.assertNotIn('DEEPSEEK_API_KEY', environment)
-            return (launcher.is_file(), launcher)
+            return ('other' if launcher.is_file() else None, launcher)
 
         def command(args, **options):
             self.assertNotIn('SSH_AUTH_SOCK', options['env'])
@@ -176,7 +308,7 @@ class SetupVpsTest(unittest.TestCase):
             Path(args[args.index('-o') + 1]).write_text('compiled runner')
 
         with (
-            patch.object(installer, 'sandbox_probe', return_value=(False, launcher)),
+            patch.object(installer, 'sandbox_probe', return_value=(None, launcher)),
             patch.object(installer, 'run', side_effect=command),
         ):
             with self.assertRaisesRegex(installer.SetupError, 'Could not build or run the Linux sandbox'):
