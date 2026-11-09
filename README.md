@@ -38,6 +38,10 @@ pnpm yharness web
 
 `pnpm run build` prepares the repository artifacts. `pnpm yharness web` uses those built artifacts without rebuilding. The legacy `dsh` command remains available as a compatibility alias.
 
+### Run on a VPS
+
+[Set up the always-on Web service](docs/user/guide/vps.md) on a Linux server you own.
+
 ## Community and support
 
 - Submit feedback or bug reports through the issue tracker for your Y Harness repository.
