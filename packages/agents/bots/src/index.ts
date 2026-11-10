@@ -120,6 +120,7 @@ import { installBotRoutineTools } from './routine-tools.ts'
 import type { BotEventRoutineToolHost } from './routine-tools.ts'
 import { botInboxMessageState } from './inbox.ts'
 import { parseGrokImport } from './grok-import.ts'
+import { botGrokHistoryDomain, decodeGrokHistory } from './grok-history.ts'
 import { importGrokBotSkills } from './grok-import-skills.ts'
 import type { BotConnectedAppToolHost, BotGroupToolHost } from './scoped-tools.ts'
 import {
@@ -169,6 +170,9 @@ import type {
   BotMemoryListValue,
   BotMemoryUpdateRequest,
   BotMemoryUpdateValue,
+  BotGrokHistoryArchive,
+  BotGrokHistoryImportRequest,
+  BotGrokHistoryRequest,
   BotGrokImportRequest,
   BotGrokImportValue,
   BotMemoryView,
@@ -2599,6 +2603,7 @@ export class BotService extends TypertRemoteService {
   static Config = Config
 
   private readonly ready: Promise<Domain<typeof botDomain>>
+  private readonly grokHistoryDomain: Promise<Domain<typeof botGrokHistoryDomain>>
   private readonly groupDomain: Promise<Domain<typeof botGroupDomain>>
   private readonly groupService: Promise<BotGroupService>
   private readonly attachmentDomain: Promise<Domain<typeof botAttachmentDomain>>
@@ -2803,6 +2808,7 @@ export class BotService extends TypertRemoteService {
         ctx.logger.warn(`bots: event routine observer failed: ${String(error)}`)
       })
     }, { global: true })
+    this.grokHistoryDomain = ctx.storageDomain.open(botGrokHistoryDomain)
     this.groupDomain = ctx.storageDomain.open(botGroupDomain)
     this.attachmentDomain = ctx.storageDomain.open(botAttachmentDomain)
     this.groupService = Promise.all([this.groupDomain, this.attachmentDomain]).then(([domain, attachmentDomain]) => new BotGroupService(
@@ -3247,6 +3253,7 @@ export class BotService extends TypertRemoteService {
     this.initialized = ctx.effect(async () => {
       let domain: Domain<typeof botDomain> | undefined
       let noCredentialIntent: Domain<typeof botMutationIntentDomain> | undefined
+      let grokHistoryDomain: Domain<typeof botGrokHistoryDomain> | undefined
       let groupDomain: Domain<typeof botGroupDomain> | undefined
       let attachmentDomain: Domain<typeof botAttachmentDomain> | undefined
       let templateDomain: Domain<typeof botTemplateDomain> | undefined
@@ -3256,12 +3263,14 @@ export class BotService extends TypertRemoteService {
       try {
         domain = await this.ready
         noCredentialIntent = await this.noCredentialIntentReady
+        grokHistoryDomain = await this.grokHistoryDomain
         groupDomain = await this.groupDomain
         attachmentDomain = await this.attachmentDomain
         templateDomain = await this.templateDomain
         await this.templateSigningKey
         const openedDomain = domain
         const openedNoCredentialIntent = noCredentialIntent
+        const openedGrokHistoryDomain = grokHistoryDomain
         const openedGroupDomain = groupDomain
         const openedAttachmentDomain = attachmentDomain
         const openedTemplateDomain = templateDomain
@@ -3286,6 +3295,7 @@ export class BotService extends TypertRemoteService {
             ...skillPolicyFibers.map(fiber => fiber.dispose()),
             ...this.promptDisposals,
             openedDomain.close(),
+            openedGrokHistoryDomain.close(),
             openedGroupDomain.close(),
             openedAttachmentDomain.close(),
             openedTemplateDomain.close(),
@@ -3300,6 +3310,7 @@ export class BotService extends TypertRemoteService {
         await this.waitForAttachmentUploads()
         await Promise.all([
           ...(domain === undefined ? [] : [domain.close()]),
+          ...(grokHistoryDomain === undefined ? [] : [grokHistoryDomain.close()]),
           ...(groupDomain === undefined ? [] : [groupDomain.close()]),
           ...(attachmentDomain === undefined ? [] : [attachmentDomain.close()]),
           ...(templateDomain === undefined ? [] : [templateDomain.close()]),
@@ -6913,6 +6924,53 @@ export class BotService extends TypertRemoteService {
     if (result.code === 'schedule_not_found') return { id: routineId, code: 'routine_not_found' }
     if (result.code === 'delivery_cursor_not_found') return { id: routineId, code: 'delivery_cursor_not_found' }
     return { id: routineId, code: 'routine_not_found' }
+  }
+
+  /**
+   * Read a private recovered archive without activating the Bot Session.
+   * @param request - Bot identity.
+   * @returns Recovered history or null if the Bot has no archive.
+   */
+  @Remote('readGrokHistory')
+  async readGrokHistory(request: BotGrokHistoryRequest): Promise<BotGrokHistoryArchive | null> {
+    return this.serialize(async () => {
+      const id = normalizeBotId(request?.botId)
+      if (id === undefined) return badRequest('Bot id is required')
+      await this.readOwnedBot(id)
+      return (await this.grokHistoryDomain).table('archives').get(id) ?? null
+    })
+  }
+
+  /**
+   * Store a reviewed transcript without delivering it to the Bot or changing its Session.
+   * @param request - Existing Bot and versioned transcript JSON.
+   * @returns The number of recovered messages.
+   */
+  @Remote('importGrokHistory')
+  async importGrokHistory(request: BotGrokHistoryImportRequest): Promise<{ readonly messages: number }> {
+    return this.serialize(async () => {
+      const id = normalizeBotId(request?.botId)
+      if (id === undefined || typeof request.document !== 'string') return badRequest('Bot id and Grok chat archive are required')
+      const next = decodeGrokHistory(request.document)
+      if (next === undefined) return badRequest('Invalid or oversized Grok chat archive')
+      await this.readOwnedBot(id)
+      const archives = (await this.grokHistoryDomain).table('archives')
+      const current = archives.get(id)
+      if (current !== undefined) {
+        const nextBySequence = new Map(next.messages.map(message => [message.sourceSequence, message]))
+        if (next.firstCachedSequence > current.firstCachedSequence || current.messages.some((message) => {
+          const replacement = nextBySequence.get(message.sourceSequence)
+          return replacement?.role !== message.role || replacement.text !== message.text || replacement.timestampMs !== message.timestampMs
+        })) {
+          throw new RemoteError('gateway/conflict', 'This archive would remove or change recovered messages', { botId: id })
+        }
+        if (next.firstCachedSequence === current.firstCachedSequence && next.messages.length === current.messages.length) {
+          return { messages: current.messages.length }
+        }
+      }
+      await archives.put(id, next)
+      return { messages: next.messages.length }
+    })
   }
 
   /**

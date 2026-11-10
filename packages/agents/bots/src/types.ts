@@ -828,6 +828,35 @@ export interface BotSkillUpdateValue {
   readonly revision: number
 }
 
+/** One settled text message from a Grok Bot conversation. */
+export interface BotGrokHistoryMessage {
+  /** Position in the source conversation. */
+  readonly sourceSequence: number
+  readonly role: 'user' | 'assistant'
+  readonly text: string
+  /** Source message creation time in milliseconds since the Unix epoch. */
+  readonly timestampMs: number
+}
+
+/** Private recovered chat history for display within an existing Bot. */
+export interface BotGrokHistoryArchive {
+  readonly source: 'grok-bot'
+  readonly version: 1
+  /** Earliest position recovered from the source cache. */
+  readonly firstCachedSequence: number
+  readonly messages: readonly BotGrokHistoryMessage[]
+}
+
+/** Owner request to recover chat history for an existing Bot. */
+export interface BotGrokHistoryRequest {
+  readonly botId: BotId
+}
+
+/** Owner import of a version-one Grok transcript export. */
+export interface BotGrokHistoryImportRequest extends BotGrokHistoryRequest {
+  readonly document: string
+}
+
 /** Import data from a Grok Bot export into an existing, operator-owned Bot. */
 export interface BotGrokImportRequest {
   /** Destination Bot with the Session and roster placement to preserve. */

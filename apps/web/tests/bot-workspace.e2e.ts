@@ -38,6 +38,12 @@ describe('web e2e: Bot workspace retains one Conversation Session per Bot', () =
     secondBot = (await scaffold.ctx.bots.create({
       name: 'Orbit', identity: 'goal', accent: 'amber', cwd: scaffold.workspaceCwd,
     })).bot
+    await scaffold.ctx.bots.importGrokHistory({ botId: secondBot.id, document: JSON.stringify({
+      source: 'grok-bot', version: 1, firstCachedSequence: 4, messages: [
+        { sourceSequence: 4, role: 'user', text: 'Recovered question', timestampMs: 1000 },
+        { sourceSequence: 5, role: 'assistant', text: 'Recovered answer', timestampMs: 2000 },
+      ],
+    }) })
     await scaffold.ctx.schedule.create(firstBot.sessionId, {
       title: 'Morning check-in', prompt: 'Review the project.', every_seconds: 86400,
     })
@@ -189,6 +195,19 @@ describe('web e2e: Bot workspace retains one Conversation Session per Bot', () =
     await expect.poll(() => secondDetail.locator('[data-conversation-session]').getAttribute('data-conversation-session'))
       .toBe(secondBot.sessionId)
     await expect.poll(() => secondDetail.locator('[data-composer-placement="bottom"]').count()).toBe(1)
+    await secondDetail.getByRole('button', { name: 'Imported Grok chat', exact: true }).click()
+    const historyDialog = page.getByRole('dialog', { name: 'Imported Grok chat' })
+    await historyDialog.getByText('Recovered question', { exact: true }).waitFor()
+    await historyDialog.getByText('Recovered answer', { exact: true }).waitFor()
+    await historyDialog.getByText('Recovered messages. Earlier messages were unavailable in the source cache.').waitFor()
+    await expect.poll(() => historyDialog.locator('time').count()).toBe(2)
+    const historyDialogSnapshot = await captureStableAria(
+      page, '[role="dialog"][aria-label="Imported Grok chat"]', scaffold.workspaceCwd,
+    )
+    await historyDialog.getByRole('button', { name: 'Close', exact: true }).last().click()
+    await historyDialog.waitFor({ state: 'hidden' })
+    await expect.poll(() => secondDetail.locator('[data-conversation-session]').getAttribute('data-conversation-session'))
+      .toBe(secondBot.sessionId)
 
     // Returning to the first row must reuse its original Session, not create
     // a new Conversation occurrence or move the roster selection elsewhere.
@@ -222,6 +241,7 @@ describe('web e2e: Bot workspace retains one Conversation Session per Bot', () =
         profileDialogSnapshot,
         createDialogSnapshot,
         routineDialogSnapshot,
+        historyDialogSnapshot,
       ].join('\n'),
       MODE,
     )

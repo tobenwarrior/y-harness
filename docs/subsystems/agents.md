@@ -312,6 +312,20 @@ collaborationFor(agent: Pick<Agent, 'id'>): Promise<BotCollaborationClient>
 @Remote('routineHistory') async routineHistory(request: BotRoutineHistoryRequest): Promise<BotRoutineHistoryValue>
 
 /**
+ * Read a private recovered archive without activating the Bot Session.
+ * @param request - Bot identity.
+ * @returns Recovered history or null if the Bot has no archive.
+ */
+@Remote('readGrokHistory') async readGrokHistory(request: BotGrokHistoryRequest): Promise<BotGrokHistoryArchive | null>
+
+/**
+ * Store a reviewed transcript without delivering it to the Bot or changing its Session.
+ * @param request - Existing Bot and versioned transcript JSON.
+ * @returns The number of recovered messages.
+ */
+@Remote('importGrokHistory') async importGrokHistory(request: BotGrokHistoryImportRequest): Promise<{ readonly messages: number }>
+
+/**
  * Import private memories, workspace skills, and paused cron routines into an existing Bot.
  * @param request - Destination Bot, version-one export, and optional preview.
  * @param signal - Cancellation between durable entries. Retrying the same export preserves completed entries.

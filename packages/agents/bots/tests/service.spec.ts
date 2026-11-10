@@ -11911,6 +11911,42 @@ describe('durable Bot roster', () => {
     }
   })
 
+  it('recovers Grok history without delivering old messages to the Bot', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const messages = [
+      { sourceSequence: 4, role: 'user', text: 'Earlier question', timestampMs: 1000 },
+      { sourceSequence: 8, role: 'assistant', text: 'Earlier answer', timestampMs: 2000 },
+    ]
+    const document = JSON.stringify({ source: 'grok-bot', version: 1, firstCachedSequence: 4, messages })
+    let botId!: BotView['id']
+    let sessionId!: BotView['sessionId']
+    try {
+      const { bot } = await first.service.create({ name: 'History Bot', cwd: '/tmp' })
+      botId = bot.id
+      sessionId = bot.sessionId
+      const { events } = await first.ctx.sessionController.inspect(sessionId)
+      const request = { botId, document }
+      await expect(first.service.readGrokHistory({ botId })).resolves.toBeNull()
+      await expect(first.service.importGrokHistory(request)).resolves.toEqual({ messages: 2 })
+      await expect(first.service.importGrokHistory(request)).resolves.toEqual({ messages: 2 })
+      await expect(first.service.importGrokHistory({ botId, document: JSON.stringify({
+        source: 'grok-bot', version: 1, firstCachedSequence: 4, messages: messages.slice(1),
+      }) })).rejects.toThrow('would remove or change')
+      expect((await first.ctx.sessionController.inspect(sessionId)).events).toEqual(events)
+    } finally {
+      await close(first.ctx)
+    }
+
+    const reopened = await harness(pool)
+    try {
+      await expect(reopened.service.readGrokHistory({ botId })).resolves.toEqual(JSON.parse(document))
+      expect((await reopened.service.list({})).bots.find(bot => bot.id === botId)?.sessionId).toBe(sessionId)
+    } finally {
+      await close(reopened.ctx)
+    }
+  })
+
   it('imports Grok memories and paused routines into the existing Bot Session', async () => {
     const pool = new MemoryMediaPool()
     const first = await harness(pool)

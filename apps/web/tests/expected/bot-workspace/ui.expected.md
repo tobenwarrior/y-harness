@@ -176,3 +176,17 @@
     - paragraph: Review the project.
     - text: Repeats every day
   - button "Close"
+- dialog "Imported Grok chat":
+  - heading "Imported Grok chat" [level=2]
+  - button "Close"
+  - paragraph: Recovered messages. Earlier messages were unavailable in the source cache.
+  - list:
+    - listitem:
+      - strong: You
+      - time: Jan 1, 1970, 8:00 AM
+      - paragraph: Recovered question
+    - listitem:
+      - strong: Orbit
+      - time: Jan 1, 1970, 8:00 AM
+      - paragraph: Recovered answer
+  - button "Close"

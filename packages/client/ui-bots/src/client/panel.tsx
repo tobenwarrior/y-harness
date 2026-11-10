@@ -9,6 +9,7 @@ import type { BotWorkspaceFace, BotWorkspaceState } from './controller.ts'
 import { BotDetail, BotGroupDetail, BotRoster } from './BotWorkspace.tsx'
 import type { BotStatus, BotSummary } from './types.ts'
 import { ComputerAction } from './ComputerAction.tsx'
+import { GrokHistoryAction } from './GrokHistoryAction.tsx'
 import { ComputerPanel } from './ComputerPanel.tsx'
 import { MacComputerPanel } from './MacComputerPanel.tsx'
 import type { AvailabilityState } from './computer-availability.ts'
@@ -123,7 +124,7 @@ export function BotsRoster({
 export function BotsPanel({
   useWorkspace, useSessionStatus, reference, retryGroup, updateGroup, sendGroupMessage,
   sendGroupMessageWithAttachments, reactGroupMessage, groupsAvailable, loadAvatar,
-  rename, updateProfile, memoryManager,
+  rename, updateProfile, memoryManager, readGrokHistory,
   routineManager, skillManager, SessionProvider, renderSlot, t, share, computer, useComputerAvailability,
   setComputerTarget, useComputerTarget,
 }: BotsPanelProps): ReactNode {
@@ -132,6 +133,7 @@ export function BotsPanel({
   const bots = state.bots.map(bot => summaryOf(bot, statuses))
   const availability = useComputerAvailability(value => value)
   const computerTarget = useComputerTarget(value => value)
+  const selectedBot = bots.find(bot => bot.id === state.selectedBotId)
   const selectedReference = reference()
   const canShowComputer = (availability === 'available' || availability === 'mac') && selectedReference !== undefined
   const showComputer = canShowComputer && computerTarget === selectedReference.sessionId
@@ -163,12 +165,17 @@ export function BotsPanel({
   return (
     <div className={css.computerLayout}>
       <BotDetail
-        bot={state.selectedBotId === null ? undefined : bots.find(bot => bot.id === state.selectedBotId)}
+        bot={selectedBot}
         children={conversation}
-        headerActions={canShowComputer && (
-          <ComputerAction expanded={showComputer}
-            toggle={() => { setComputerTarget(showComputer ? null : selectedReference.sessionId) }} t={t} />
-        )}
+        headerActions={<>
+          {canShowComputer && (
+            <ComputerAction expanded={showComputer}
+              toggle={() => { setComputerTarget(showComputer ? null : selectedReference.sessionId) }} t={t} />
+          )}
+          {readGrokHistory !== undefined && selectedBot !== undefined && (
+            <GrokHistoryAction key={selectedBot.id} botId={selectedBot.id} botName={selectedBot.name} read={readGrokHistory} t={t} />
+          )}
+        </>}
         t={t}
         loadAvatar={loadAvatar}
         onRename={rename}

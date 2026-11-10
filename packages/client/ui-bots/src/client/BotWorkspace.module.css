@@ -2947,3 +2947,42 @@
     border-inline-start: 1px solid var(--yh-alias-border-l2);
   }
 }
+
+.grokHistoryModal {
+  width: min(640px, calc(100vw - 32px));
+}
+
+.grokHistoryMessages {
+  display: grid;
+  gap: 10px;
+  max-height: 58vh;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+
+.grokHistoryMessage {
+  padding: 10px 12px;
+  border-radius: var(--yh-radius-lg);
+  background: var(--yh-alias-interactive-bg-hover);
+  overflow-wrap: anywhere;
+}
+
+.grokHistoryMessageMeta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 10px;
+  color: var(--yh-alias-label-secondary);
+  font-size: 12px;
+}
+
+.grokHistoryMessageMeta strong {
+  font-weight: 500;
+}
+
+.grokHistoryMessage p {
+  margin: 6px 0 0;
+  white-space: pre-wrap;
+}
