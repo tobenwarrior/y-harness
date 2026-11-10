@@ -56,7 +56,7 @@ The native Mac application reports `kind: 'mac'` and serves its Computer request
 
 Open **App access** from a Bot’s roster menu to manage the apps that Bot can use.
 
-`BotRoster` accepts the roster, selection, and creation callbacks. The setup dialog collects a name, role, persona, capabilities, character, and color. `BotDetail` renders the selected Bot's persistent Session and can edit its profile using the captured row revision to prevent stale changes. Optional actions support connected apps, organization, avatar editing and generation, sharing, templates, and host-local skill policies. When routine actions are mounted, the detail header opens a manager for timed and message-triggered routines with bounded history and confirmation for changes. Hidden and pinned Bots have dedicated sections.
+`BotRoster` accepts the roster, selection, and creation callbacks. The setup dialog collects a name, role, persona, capabilities, character, and color. `BotDetail` renders the selected Bot's persistent Session and can edit its profile using the captured row revision to prevent stale changes. Optional actions support connected apps, organization, avatar editing and generation, sharing, templates, and host-local skill policies. When routine actions are mounted, the detail header opens a manager for timed and message-triggered routines with bounded history and confirmation for changes. Pinned Bots have a dedicated section. The Hidden bots section starts collapsed. Folder headings expand or collapse their rows while the selected chat stays open. Search reveals matching rows and restores the previous folder state when cleared.
 
 ### Visual identity
 

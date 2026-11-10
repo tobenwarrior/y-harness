@@ -149,6 +149,45 @@
   text-transform: uppercase;
 }
 
+.folderHeading {
+  padding: 0;
+}
+
+.folderToggle {
+  display: flex;
+  width: 100%;
+  min-height: 26px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--yh-radius-lg);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-align: left;
+  text-transform: inherit;
+}
+
+.folderToggle:not(:disabled) {
+  cursor: pointer;
+}
+
+.folderToggle:not(:disabled):hover {
+  background: var(--yh-alias-interactive-bg-hover);
+}
+
+.folderToggle:focus-visible {
+  outline: 1px solid var(--yh-focus-ring-color, var(--yh-alias-state-business-primary));
+  outline-offset: -1px;
+}
+
+.folderToggle svg {
+  flex: none;
+}
+
 .groupHeadingRow {
   display: flex;
   align-items: center;
@@ -165,6 +204,10 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+
+.groupRows[hidden] {
+  display: none;
 }
 
 .groupRow {

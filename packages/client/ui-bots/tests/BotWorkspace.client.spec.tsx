@@ -1654,6 +1654,30 @@ describe('Bot roster and detail', () => {
     expect(screen.getByText('Persistent session surface')).toBeTruthy()
   })
 
+  it('collapses a folder without closing its chat and reveals matches during search', () => {
+    renderSplitWorkspace()
+
+    const folder = screen.getByRole('button', { name: 'Research' })
+    const search = screen.getByRole('textbox', { name: 'Search bots' })
+    expect(folder.getAttribute('aria-expanded')).toBe('true')
+    fireEvent.click(folder)
+    expect(folder.getAttribute('aria-expanded')).toBe('false')
+    expect(screen.queryByRole('button', { name: /Research partner, Working/ })).toBeNull()
+    expect(screen.getByRole('button', { name: /Release captain, Idle/ })).toBeTruthy()
+    expect(screen.getByText('Persistent session surface')).toBeTruthy()
+
+    fireEvent.change(search, { target: { value: 'Research partner' } })
+    expect(folder.getAttribute('aria-expanded')).toBe('true')
+    expect(screen.getByRole('button', { name: /Research partner, Working/ })).toBeTruthy()
+    fireEvent.change(search, { target: { value: '' } })
+    expect(folder.getAttribute('aria-expanded')).toBe('false')
+    expect(screen.queryByRole('button', { name: /Research partner, Working/ })).toBeNull()
+
+    fireEvent.click(folder)
+    expect(folder.getAttribute('aria-expanded')).toBe('true')
+    expect(screen.getByRole('button', { name: /Research partner, Working/ }).getAttribute('aria-current')).toBe('page')
+  })
+
   it('keeps pinned bots first and exposes a recoverable hidden section', async () => {
     const onOrganizeBot = vi.fn().mockResolvedValue(undefined)
     render(<BotRoster
@@ -1670,6 +1694,9 @@ describe('Bot roster and detail', () => {
 
     expect(screen.getByRole('heading', { name: 'Pinned' })).toBeTruthy()
     expect(screen.getByRole('heading', { name: 'Hidden bots' })).toBeTruthy()
+    const hidden = screen.getByRole('button', { name: 'Hidden bots' })
+    expect(hidden.getAttribute('aria-expanded')).toBe('false')
+    fireEvent.click(hidden)
     fireEvent.click(screen.getByRole('button', { name: 'Bot actions for Release captain' }))
     fireEvent.click(screen.getByRole('menuitem', { name: 'Restore bot' }))
 
@@ -1688,6 +1715,9 @@ describe('Bot roster and detail', () => {
     />)
 
     expect(screen.getByRole('heading', { name: 'Hidden bots' })).toBeTruthy()
+    const hidden = screen.getByRole('button', { name: 'Hidden bots' })
+    expect(hidden.getAttribute('aria-expanded')).toBe('false')
+    fireEvent.click(hidden)
     expect(screen.queryByText('No bots match that search')).toBeNull()
     expect(screen.getByRole('button', { name: /Research partner, Working/ })).toBeTruthy()
   })

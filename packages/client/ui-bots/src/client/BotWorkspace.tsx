@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import clsx from 'clsx'
 import {
-  Button, IconArchiveOffOutlineRegular, IconCheckOutlineRegular, IconEditOutlineRegular, IconEllipsisOutlineRegular,
+  Button, IconArchiveOffOutlineRegular, IconCheckOutlineRegular, IconChevronDownOutlineRegular, IconChevronRightOutlineRegular,
+  IconEditOutlineRegular, IconEllipsisOutlineRegular,
   IconFolderOpenOutlineRegular, IconLinkOutlineRegular, IconPaperPlaneOutlineRegular, IconPlusOutlineRegular,
   IconPinFillRegular, IconPinOutlineRegular, IconShareOutlineRegular, IconContextInjectionOutlineRegular, IconClockOutlineRegular,
   IconSidebarBotAddOutlineRegular, IconSidebarBotsOutlineRegular, IconSidebarSearchOutlineRegular,
@@ -1576,8 +1577,8 @@ function ConnectedAppsDialog({ bot, open, onClose, onLoad, onSet, t }: {
 /**
  * Render only the bot roster for the shared application sidebar.
  *
- * Search, creation, and avatar actions remain local to this surface. The
- * selected bot's conversation is rendered by the main panel.
+ * Folder disclosure and search are local to the roster. The selected Bot’s
+ * conversation stays in the main panel when its row is hidden.
  * @param props - bot rows, selection callbacks, optional sidebar geometry, and locale.
  * @returns the sidebar roster and its dialogs.
  */
@@ -1589,6 +1590,7 @@ export function BotRoster({
   error = null, loading = false, wide = true, expandSidebar, t,
 }: BotWorkspaceViewProps & BotRosterLayoutProps): ReactNode {
   const [query, setQuery] = useState('')
+  const [collapsedFolders, setCollapsedFolders] = useState<ReadonlySet<string>>(() => new Set(['hidden']))
   const [newBotOpen, setNewBotOpen] = useState(false)
   const [newGroupOpen, setNewGroupOpen] = useState(false)
   const [templatesOpen, setTemplatesOpen] = useState(false)
@@ -1660,10 +1662,11 @@ export function BotRoster({
     const pinned = visibleBots.filter(bot => bot.pinned === true)
     const unpinned = visibleBots.filter(bot => bot.pinned !== true)
     return [
-      ...(pinned.length === 0 ? [] : [[t('pinnedGroup'), pinned] as const]),
-      ...groupBots(unpinned, t('defaultGroup')),
+      ...(pinned.length === 0 ? [] : [{ key: 'pinned', label: t('pinnedGroup'), rows: pinned }]),
+      ...groupBots(unpinned, t('defaultGroup')).map(([label, rows]) => ({ key: `folder:${label}`, label, rows })),
+      ...(hiddenBots.length === 0 ? [] : [{ key: 'hidden', label: t('hiddenGroup'), rows: hiddenBots }]),
     ]
-  }, [t, visibleBots])
+  }, [hiddenBots, t, visibleBots])
   const sectionNames = useMemo(() => [...new Set(bots.map(bot => bot.group?.trim()).filter((group): group is string => group !== undefined && group !== ''))], [bots])
 
   const filteredLocalGroups = useMemo(() => {
@@ -1671,6 +1674,15 @@ export function BotRoster({
     return localGroups.filter(group => [group.name, ...group.bots.map(bot => bot.name)]
       .some(value => value.toLocaleLowerCase().includes(normalizedQuery)))
   }, [localGroups, normalizedQuery])
+
+  const toggleFolder = (key: string): void => {
+    setCollapsedFolders((current) => {
+      const next = new Set(current)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
 
   const selectedBot = bots.find(bot => bot.id === selectedBotId)
   const hasRows = bots.length > 0
@@ -1774,13 +1786,28 @@ export function BotRoster({
                   {[0, 1, 2].map(index => <span key={index} className={css.skeletonRow} />)}
                 </div>
               )}
-              {!loading && groups.length > 0 && groups.map(([group, rows], index) => {
+              {!loading && groups.map(({ key, label, rows }, index) => {
                 const headingId = `yharness-bots-group-${String(index)}`
+                const rowsId = `${headingId}-rows`
+                const searching = normalizedQuery !== ''
+                const expanded = searching || !collapsedFolders.has(key)
                 return (
-                  <section className={css.group} key={`group-${String(index)}`} aria-labelledby={headingId}>
-                    <h2 id={headingId} className={css.groupLabel}>{group}</h2>
-                    <div className={css.groupRows}>
-                      {rows.map(bot => (
+                  <section className={css.group} key={key} aria-labelledby={headingId}>
+                    <h2 id={headingId} className={clsx(css.groupLabel, css.folderHeading)}>
+                      <button
+                        type="button"
+                        className={css.folderToggle}
+                        aria-expanded={expanded}
+                        aria-controls={rowsId}
+                        disabled={searching}
+                        onClick={() => { toggleFolder(key) }}
+                      >
+                        <span>{label}</span>
+                        {expanded ? <IconChevronDownOutlineRegular size={12} /> : <IconChevronRightOutlineRegular size={12} />}
+                      </button>
+                    </h2>
+                    <div id={rowsId} className={css.groupRows} hidden={!expanded}>
+                      {expanded && rows.map(bot => (
                         <BotRow
                           key={bot.id}
                           bot={bot}
@@ -1798,28 +1825,6 @@ export function BotRoster({
                   </section>
                 )
               })}
-              {!loading && hiddenBots.length > 0 && (
-                <section className={css.group} aria-labelledby="yharness-bots-hidden-group">
-                  <h2 id="yharness-bots-hidden-group" className={css.groupLabel}>{t('hiddenGroup')}</h2>
-                  <div className={css.groupRows}>
-                    {hiddenBots.map(bot => (
-                      <BotRow
-                        key={bot.id}
-                        bot={bot}
-                        selected={bot.id === selectedBotId}
-                        onSelect={() => { onSelectBot(bot.id) }}
-                        t={t}
-                        loadAvatar={loadAvatar}
-                        groups={sectionNames}
-                        onOrganize={onOrganizeBot}
-                        onSetSection={() => { setSectionBot(bot) }}
-                        onOpenConnectedApps={connectedAppsAction}
-                      />
-                    ))}
-                  </div>
-                </section>
-
-              )}
               {onCreateGroup !== undefined && (
                 <section className={css.group} aria-labelledby="yharness-bots-local-groups">
                   <div className={css.groupHeadingRow}>

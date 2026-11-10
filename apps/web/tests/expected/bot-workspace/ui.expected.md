@@ -10,7 +10,8 @@
   - button "Create a shared group"
   - textbox "Search bots"
   - region "General":
-    - heading "General" [level=2]
+    - heading "General" [level=2]:
+      - button "General" [expanded]
     - button "Scout, Idle":
       - img "Scout"
       - text: Scout Keeps the team informed Idle
@@ -22,7 +23,6 @@
   - region "Bot groups":
     - heading "Bot groups" [level=2]
     - button "New bot group"
-  - button "App access"
 - region "Scout":
   - img "Scout"
   - text: Scout Keeps the team informed
