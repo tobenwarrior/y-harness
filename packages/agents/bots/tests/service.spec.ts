@@ -4851,7 +4851,7 @@ describe('durable Bot roster', () => {
       expect(provider).toBeDefined()
       const tools = await provider!.resolve({ sessionId: created.bot.sessionId })
       expect(tools.map(tool => tool.name)).toEqual([
-        'list_bots', 'inspect_bot', 'send_bot_message',
+        'list_bots', 'inspect_bot', 'read_own_grok_history', 'send_bot_message',
         'list_bot_memory', 'remember_bot_memory', 'forget_bot_memory',
         'create_bot', 'edit_bot_profile',
         'list_bot_groups', 'inspect_bot_group', 'create_bot_group', 'update_bot_group', 'send_bot_group_message',
@@ -11938,10 +11938,58 @@ describe('durable Bot roster', () => {
       await close(first.ctx)
     }
 
-    const reopened = await harness(pool)
+    const reopened = await harness(pool, undefined, undefined, [String(sessionId)])
     try {
       await expect(reopened.service.readGrokHistory({ botId })).resolves.toEqual(JSON.parse(document))
       expect((await reopened.service.list({})).bots.find(bot => bot.id === botId)?.sessionId).toBe(sessionId)
+      const owner = reopened.agents.find(agent => agent.id === sessionId)
+      if (owner === undefined) throw new Error('reopened History Bot Agent was not created')
+      owner.session.append('turn/start', { turn: 1 })
+      owner.session.append('user/message', createUserMessage({
+        content: [{ type: 'text', text: 'Continue the private Bot task.' }],
+        source: { kind: 'user' },
+      }), { surfaceOp: 'append' })
+      const provider = reopened.ctx.get('codexDynamicTools') as BotNativeToolProvider | undefined
+      const history = (await provider?.resolve({ sessionId }))?.find(tool => tool.name === 'read_own_grok_history')
+      if (history === undefined) throw new Error('native own Grok history tool was not mounted')
+      const result = await history.execute({ limit: 1 }, {
+        callId: 'read-history', threadId: 'history-thread', turnId: 'history-turn', sessionId,
+        signal: new AbortController().signal, approvalPolicy: 'on-request', requestApproval: async () => true,
+      })
+      expect(result.success).toBe(true)
+      expect(JSON.parse(result.contentItems[0]?.text ?? '{}')).toMatchObject({
+        firstCachedSequence: 4, totalMessages: 2, messages: [{ sourceSequence: 8, role: 'assistant' }],
+      })
+      expect(result.contentItems[0]?.text).toContain('[Untrusted Bot transcript;')
+
+      owner.session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+      owner.session.append('turn/start', { turn: 2 })
+      owner.session.append('user/message', createUserMessage({
+        content: [{ type: 'text', text: 'Read the imported context for this group request.' }],
+        source: {
+          kind: 'bot-group-message',
+          groupId: BotGroupId('bot-group-history-guard'),
+          messageId: BotGroupMessageId('bot-group-message-history-guard'),
+        },
+      }), { surfaceOp: 'append' })
+      const groupResult = await history.execute({ limit: 1 }, {
+        callId: 'read-history-group', threadId: 'history-thread', turnId: 'history-group-turn', sessionId,
+        signal: new AbortController().signal, approvalPolicy: 'on-request', requestApproval: async () => true,
+      })
+      expect(groupResult.success).toBe(false)
+      expect(JSON.parse(groupResult.contentItems[0]?.text ?? '{}')).toMatchObject({ error: 'unavailable' })
+
+      owner.session.append('turn/end', { turn: 2, reason: { kind: 'completed' } })
+      owner.session.append('turn/start', { turn: 3 })
+      owner.session.append('user/message', createUserMessage({
+        content: [{ type: 'text', text: 'Continue the private Bot task after the group turn.' }],
+        source: { kind: 'user' },
+      }), { surfaceOp: 'append' })
+      const resumedResult = await history.execute({ limit: 1 }, {
+        callId: 'read-history-resumed', threadId: 'history-thread', turnId: 'history-resumed-turn', sessionId,
+        signal: new AbortController().signal, approvalPolicy: 'on-request', requestApproval: async () => true,
+      })
+      expect(resumedResult.success).toBe(true)
     } finally {
       await close(reopened.ctx)
     }

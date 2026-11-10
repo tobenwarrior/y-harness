@@ -120,9 +120,15 @@ import { installBotRoutineTools } from './routine-tools.ts'
 import type { BotEventRoutineToolHost } from './routine-tools.ts'
 import { botInboxMessageState } from './inbox.ts'
 import { parseGrokImport } from './grok-import.ts'
-import { botGrokHistoryDomain, decodeGrokHistory } from './grok-history.ts'
+import {
+  botGrokHistoryDomain,
+  decodeGrokHistory,
+  readGrokHistoryPage as projectGrokHistoryPage,
+  type BotGrokHistoryPage,
+  type BotGrokHistoryPageResolvedRequest,
+} from './grok-history.ts'
 import { importGrokBotSkills } from './grok-import-skills.ts'
-import type { BotConnectedAppToolHost, BotGroupToolHost } from './scoped-tools.ts'
+import type { BotConnectedAppToolHost, BotGrokHistoryToolHost, BotGroupToolHost } from './scoped-tools.ts'
 import {
   createBotSkillPolicyProvider,
   normalizeBotSkillPolicy,
@@ -2226,6 +2232,34 @@ function openTurnFromEvents(events: readonly SessionEvent[]): number {
   return openTurn
 }
 
+/** Admit owner-only imported context only while a direct user turn is open. */
+function hasDirectUserInputInOpenTurn(events: readonly SessionEvent[]): boolean {
+  let openTurn = -1
+  let hasUserMessage = false
+  let hasNonDirectUserMessage = false
+  for (const event of events) {
+    if (event.type === 'turn/start') {
+      openTurn = event.data.turn
+      hasUserMessage = false
+      hasNonDirectUserMessage = false
+      continue
+    }
+    if (event.type === 'turn/end') {
+      if (event.data.turn === openTurn) {
+        openTurn = -1
+        hasUserMessage = false
+        hasNonDirectUserMessage = false
+      }
+      continue
+    }
+    if (openTurn >= 0 && event.type === 'user/message') {
+      hasUserMessage = true
+      if (event.data.source.kind !== 'user') hasNonDirectUserMessage = true
+    }
+  }
+  return openTurn >= 0 && hasUserMessage && !hasNonDirectUserMessage
+}
+
 /** Reconstruct every routine-triggered turn from one persisted Session scan. */
 function routineTurnsFromEvents(events: readonly SessionEvent[]): Map<number, EventRoutineTurn> {
   const turns = new Map<number, EventRoutineTurn>()
@@ -3044,6 +3078,7 @@ export class BotService extends TypertRemoteService {
           throw error
         }
       },
+      grokHistory: (sessionId, request, signal) => this.readGrokHistoryPageForSession(sessionId, request, signal),
       manage: this.manageBots = async (action, args, context) => {
         const text = (key: string): string | undefined => {
           const value = args[key]
@@ -6942,6 +6977,33 @@ export class BotService extends TypertRemoteService {
   }
 
   /**
+   * Read one page of imported Grok history for a live owner Bot Session.
+   * @param sessionId - Trusted live Session id supplied by the Agent scope.
+   * @param request - Bounded page limit and exclusive source cursor.
+   * @param signal - Optional cancellation from the model-facing tool call.
+   * @returns A bounded page or null when this Bot has no imported archive.
+   */
+  private readGrokHistoryPageForSession(
+    sessionId: SessionId,
+    request: BotGrokHistoryPageResolvedRequest,
+    signal?: AbortSignal,
+  ): Promise<BotGrokHistoryPage | null> {
+    return this.serialize(async () => {
+      const record = this.recordsBySession.get(String(sessionId))
+      if (record === undefined) throw new BotCollaborationError('sender-not-bot', 'The calling Session is not owned by a Bot.')
+      const current = await this.readOwnedBot(record.id)
+      if (current.sessionId !== sessionId) throw new BotCollaborationError('sender-not-bot', 'The calling Session is not owned by a Bot.')
+      const inspection = await this.ctx.sessionController.inspect(sessionId, signal)
+      if (!hasDirectUserInputInOpenTurn(inspection.events)) {
+        throw new BotCollaborationError('target-unavailable', 'Imported Grok history is available only during a direct owner Bot turn.')
+      }
+      signal?.throwIfAborted()
+      const archive = (await this.grokHistoryDomain).table('archives').get(current.id)
+      return archive === undefined ? null : projectGrokHistoryPage(archive, request)
+    }, signal)
+  }
+
+  /**
    * Store a reviewed transcript without delivering it to the Bot or changing its Session.
    * @param request - Existing Bot and versioned transcript JSON.
    * @returns The number of recovered messages.
@@ -7692,12 +7754,16 @@ export class BotService extends TypertRemoteService {
           guard: exec => this.connectedAppGuard(agent, exec),
           beforeDispatch: exec => this.connectedAppBeforeDispatch(agent, exec),
         }
+        const grokHistory: BotGrokHistoryToolHost = {
+          read: (request, signal) => this.readGrokHistoryPageForSession(agent.id, request, signal),
+        }
         installBotCollaborationTools(
           scope,
           () => this.collaborationFor(agent),
           this.manageBots,
           () => this.groupToolsFor(agent),
           connectedApps,
+          grokHistory,
         )
       } else {
         // Shared sessions never need the PTC transport; keeping the scope native

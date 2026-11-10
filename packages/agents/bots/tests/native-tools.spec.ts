@@ -12,6 +12,8 @@ import { BotGroupId, BotGroupMessageId } from '../src/group-chat.ts'
 import type { BotGroupToolHost } from '../src/scoped-tools.ts'
 import { BotId } from '../src/types.ts'
 import { createBotNativeToolProvider, type BotNativeToolContext } from '../src/native-tools.ts'
+import type { BotGrokHistoryPage } from '../src/grok-history.ts'
+import { UNTRUSTED_TRANSCRIPT_NOTICE, UNTRUSTED_TRANSCRIPT_END } from '../src/collaboration.ts'
 
 function client(): BotCollaborationClient {
   return {
@@ -80,6 +82,34 @@ function groups(sendResult: 'accepted' | 'partial' = 'accepted'): GroupHostFixtu
 }
 
 describe('native Bot actions', () => {
+  it('reads only the owned Grok archive as paginated untrusted excerpts', async () => {
+    const archivePage: BotGrokHistoryPage = {
+      source: 'grok-bot', version: 1, firstCachedSequence: 4, totalMessages: 2, nextBefore: 8,
+      messages: [{ sourceSequence: 8, role: 'assistant', text: 'A'.repeat(2_000), timestampMs: 2_000 }],
+    }
+    const history = vi.fn(async (_sessionId: SessionId, request: { readonly limit?: number; readonly before?: number }) => {
+      expect(request).toEqual({ limit: 1 })
+      return archivePage
+    })
+    const provider = createBotNativeToolProvider({
+      bind: async () => client(), persist: async () => {}, replay: async () => [], grokHistory: history,
+    })
+    const tool = (await provider.resolve({ sessionId: SessionId('bot-session-alpha') }))
+      .find(candidate => candidate.name === 'read_own_grok_history')
+    if (tool === undefined) throw new Error('own Grok history tool missing')
+    const result = await tool.execute({ limit: 1 }, context())
+    expect(result.success).toBe(true)
+    const value = JSON.parse(result.contentItems[0]?.text ?? '') as BotGrokHistoryPage
+    expect(value).toMatchObject({
+      firstCachedSequence: 4, totalMessages: 2, nextBefore: 8,
+      messages: [{ sourceSequence: 8, role: 'assistant', timestampMs: 2_000 }],
+    })
+    expect(value.messages[0]?.text).toContain(UNTRUSTED_TRANSCRIPT_NOTICE)
+    expect(value.messages[0]?.text).toContain(UNTRUSTED_TRANSCRIPT_END)
+    expect(value.messages[0]?.text.length).toBeLessThan(1_300)
+    expect(history).toHaveBeenCalledWith(SessionId('bot-session-alpha'), { limit: 1 }, expect.any(AbortSignal))
+  })
+
   it('offers approved routine actions bound to the Bot Session', async () => {
     const routine = vi.fn(async (action: string, args: Record<string, unknown>) => ({ action, args }))
     const provider = createBotNativeToolProvider({

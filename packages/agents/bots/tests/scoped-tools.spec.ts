@@ -17,6 +17,7 @@ import { BotGroupId, BotGroupMessageId } from '../src/group-chat.ts'
 import type { BotGroupToolHost } from '../src/scoped-tools.ts'
 import { BotId } from '../src/types.ts'
 import { installBotCollaborationTools } from '../src/scoped-tools.ts'
+import type { BotGrokHistoryPage } from '../src/grok-history.ts'
 
 function client(): BotCollaborationClient {
   return {
@@ -40,7 +41,7 @@ function client(): BotCollaborationClient {
   }
 }
 
-async function harness(withManagement = false, withApproval = false, withGroups = false) {
+async function harness(withManagement = false, withApproval = false, withGroups = false, withHistory = false) {
   const ctx = new Context()
   await ctx.plugin(SystemPrompt)
   await ctx.plugin(ToolRuntime)
@@ -67,13 +68,22 @@ async function harness(withManagement = false, withApproval = false, withGroups 
     } })),
     send: vi.fn(async request => ({ messageId: request.messageId ?? BotGroupMessageId('bot-group-message-created'), status: 'accepted' as const, deliveries: [] })),
   }
+  const history: BotGrokHistoryPage = {
+    source: 'grok-bot', version: 1, firstCachedSequence: 4, totalMessages: 2, nextBefore: 8,
+    messages: [{ sourceSequence: 8, role: 'assistant', text: 'A'.repeat(2_000), timestampMs: 2_000 }],
+  }
   const dispose = installBotCollaborationTools(
     agent.ctx,
     async () => bound,
     withManagement ? manage : undefined,
     withGroups ? async () => groupTools : undefined,
+    undefined,
+    withHistory ? { read: async (request) => {
+      expect(request).toEqual({ limit: 1 })
+      return history
+    } } : undefined,
   )
-  return { ctx, agent, bound, dispose, manage, groupTools }
+  return { ctx, agent, bound, dispose, manage, groupTools, history }
 }
 
 async function execute(ctx: Context, agent: Agent, name: string, arguments_: unknown, callId = `bot-call-${name}`) {
@@ -88,6 +98,25 @@ function text(result: Awaited<ReturnType<typeof execute>>): string {
 }
 
 describe('scoped Bot collaboration tools', () => {
+  it('reads only the owned Grok archive as a paginated untrusted excerpt', async () => {
+    const h = await harness(false, false, false, true)
+    try {
+      expect(h.ctx.tools.schemas(h.agent).map(tool => tool.name)).toContain('read_own_grok_history')
+      const result = await execute(h.ctx, h.agent, 'read_own_grok_history', { limit: 1 })
+      expect(result.isError).toBe(false)
+      const value = JSON.parse(text(result)) as BotGrokHistoryPage
+      expect(value).toMatchObject({
+        firstCachedSequence: 4, totalMessages: 2, nextBefore: 8,
+        messages: [{ sourceSequence: 8, role: 'assistant', timestampMs: 2_000 }],
+      })
+      expect(value.messages[0]?.text).toContain('[Untrusted Bot transcript;')
+      expect(value.messages[0]?.text.length).toBeLessThan(1_300)
+    } finally {
+      h.dispose()
+      await h.ctx.fiber.dispose()
+    }
+  })
+
   it('exposes management tools and denies changes without approval', async () => {
     const h = await harness(true)
     try {
