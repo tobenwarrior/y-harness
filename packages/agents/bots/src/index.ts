@@ -119,6 +119,8 @@ import { installBotCollaborationTools } from './scoped-tools.ts'
 import { installBotRoutineTools } from './routine-tools.ts'
 import type { BotEventRoutineToolHost } from './routine-tools.ts'
 import { botInboxMessageState } from './inbox.ts'
+import { parseGrokImport } from './grok-import.ts'
+import { importGrokBotSkills } from './grok-import-skills.ts'
 import type { BotConnectedAppToolHost, BotGroupToolHost } from './scoped-tools.ts'
 import {
   createBotSkillPolicyProvider,
@@ -167,6 +169,8 @@ import type {
   BotMemoryListValue,
   BotMemoryUpdateRequest,
   BotMemoryUpdateValue,
+  BotGrokImportRequest,
+  BotGrokImportValue,
   BotMemoryView,
   BotRoutineDeleteValue,
   BotRoutineHistoryRequest,
@@ -6909,6 +6913,60 @@ export class BotService extends TypertRemoteService {
     if (result.code === 'schedule_not_found') return { id: routineId, code: 'routine_not_found' }
     if (result.code === 'delivery_cursor_not_found') return { id: routineId, code: 'delivery_cursor_not_found' }
     return { id: routineId, code: 'routine_not_found' }
+  }
+
+  /**
+   * Import private memories, workspace skills, and paused cron routines into an existing Bot.
+   * @param request - Destination Bot, version-one export, and optional preview.
+   * @param signal - Cancellation between durable entries. Retrying the same export preserves completed entries.
+   * @returns Counts for the selected source Bot and names of missing routine skill definitions.
+   */
+  @Remote('importGrokBot')
+  async importGrokBot(request: BotGrokImportRequest, signal?: AbortSignal): Promise<BotGrokImportValue> {
+    const botId = normalizeBotId(request.botId)
+    if (botId === undefined) return badRequest('Bot id is required')
+    const plan = parseGrokImport(request.document, request.sourceName)
+    return this.serialize(async () => {
+      const bot = await this.readOwnedBot(botId)
+      if (bot.state !== 'active') return badRequest('Wait for the destination Bot to finish setup.')
+      const schedule = this.ctx.get('schedule')
+      if (schedule === undefined && plan.routines.length > 0) return badRequest('Enable the Host Schedule service before importing routines.')
+      const existing = await this.readMemoryForSession(bot.sessionId, signal)
+      const forgotten = this.forgottenMemoryIdsBySession.get(String(bot.sessionId))
+      const knownIds = new Set(existing.map(memory => memory.id))
+      const knownText = new Set(existing.map(memory => memory.text))
+      const additions = plan.memories.flatMap((text) => {
+        const id = BotMemoryId(`memory-grok-${createHash('sha256').update(text).digest('hex')}`)
+        return knownIds.has(id) || forgotten?.has(String(id)) || knownText.has(text) ? [] : [{ id, text }]
+      })
+      if (existing.length + additions.length > BOT_MEMORY_ENTRY_LIMIT) {
+        return badRequest('The destination Bot has insufficient memory capacity for this export.')
+      }
+      const installed = plan.skills.length === 0 ? undefined
+        : await importGrokBotSkills(bot.cwd, plan.skills, { preview: request.preview === true })
+      const skillNames = new Map(Object.entries(installed?.namesBySourceName ?? {}).map(([source, name]) => [source.toLowerCase(), name]))
+      const missingRoutineSkills = [...new Set(plan.routines.flatMap(routine =>
+        routine.skills.filter(name => !skillNames.has(name.toLowerCase()))))]
+      if (request.preview !== true) {
+        for (const memory of additions) {
+          await this.appendMemoryEvent(bot.sessionId, { botId, memoryId: memory.id, operation: 'remember', text: memory.text }, signal)
+        }
+        for (const routine of plan.routines) {
+          const referenced = routine.skills.map(name => skillNames.get(name.toLowerCase()) ?? name)
+          const prompt = referenced.length === 0 ? routine.prompt
+            : `${routine.prompt}\n\nRequired skills from the Grok export: ${referenced.map(name => JSON.stringify(name)).join(', ')}. If a required skill is unavailable, report it and stop.`
+          const key = createHash('sha256').update(JSON.stringify([plan.name.toLowerCase(), routine.title.toLowerCase()])).digest('hex')
+          await schedule?.create(bot.sessionId, { title: routine.title, prompt, cron: routine.cron }, signal, {
+            initialStatus: 'paused', idempotencyKey: `grok-import-${key}`,
+          })
+        }
+      }
+      return {
+        sourceName: plan.name, memories: plan.memories.length, skills: plan.skills.length,
+        skillNames: [...new Set(skillNames.values())],
+        routines: plan.routines.length, missingRoutineSkills,
+      }
+    }, signal)
   }
 
   /**

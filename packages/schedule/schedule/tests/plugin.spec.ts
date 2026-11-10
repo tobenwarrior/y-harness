@@ -51,6 +51,30 @@ describe('shared Schedule management', () => {
     expect(await restarted.service.catalog()).toHaveLength(1)
   })
 
+  it('imports a cron routine paused, then preserves an explicit resume across retries and restart', async () => {
+    const test = await setup()
+    const sessionId = SessionId('imported-routine')
+    const request = {
+      prompt: 'Review the trading queue',
+      title: 'Trading queue review',
+      cron: { expression: '*/5 * * * *', time_zone: 'UTC' },
+    }
+    const options = { idempotencyKey: 'grok-bot-routine-42', initialStatus: 'paused' as const }
+    const first = await test.service.create(sessionId, request, undefined, options)
+    expect(await test.service.catalog()).toEqual([{ ...first, sessionId, status: 'paused' }])
+    await vi.advanceTimersByTimeAsync(15 * 60_000)
+    expect(test.resolve).not.toHaveBeenCalled()
+    expect(await test.service.create(sessionId, request, undefined, options)).toEqual(first)
+    await expect(test.service.resume({ sessionId, id: first.id })).resolves.toMatchObject({ status: 'active' })
+    expect(await test.service.create(sessionId, request, undefined, options)).toEqual(first)
+    expect(await test.service.catalog()).toEqual([{ ...first, sessionId, status: 'active' }])
+    await test.ctx.fiber.dispose()
+
+    const restarted = await setup({ pool: test.pool })
+    expect(await restarted.service.create(sessionId, request, undefined, options)).toEqual(first)
+    expect(await restarted.service.catalog()).toEqual([{ ...first, sessionId, status: 'active' }])
+  })
+
   it('allows identical intentional creates and rejects key/request conflicts', async () => {
     const test = await setup()
     const sessionId = SessionId('idempotent-intent')

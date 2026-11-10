@@ -392,10 +392,12 @@ export interface ScheduleCreateRequest {
   cron?: CronInput
 }
 
-/** Host-only retry identity for a durable reminder creation. */
+/** Host-only options for durable reminder creation. */
 export interface ScheduleCreateOptions {
   /** Stable identity for one operation, reused only when its earlier write outcome is unknown. */
   readonly idempotencyKey?: string
+  /** Initial lifecycle status. Paused tasks do not deliver until resumed. */
+  readonly initialStatus?: 'active' | 'paused'
 }
 
 /** Host-only reservation result for a Bot reminder approval flow. */

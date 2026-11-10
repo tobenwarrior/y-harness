@@ -828,6 +828,34 @@ export interface BotSkillUpdateValue {
   readonly revision: number
 }
 
+/** Import data from a Grok Bot export into an existing, operator-owned Bot. */
+export interface BotGrokImportRequest {
+  /** Destination Bot with the Session and roster placement to preserve. */
+  readonly botId: BotId
+  /** Version-one Grok Bot export JSON. */
+  readonly document: string
+  /** Source name required when the document contains more than one Bot. */
+  readonly sourceName?: string
+  /** Validate the selection and count entries without importing. */
+  readonly preview?: boolean
+}
+
+/** Count of selected Grok Bot entries after validation and memory deduplication. */
+export interface BotGrokImportValue {
+  /** Display name of the selected source Bot. */
+  readonly sourceName: string
+  /** Number of distinct memories and user facts in the import. */
+  readonly memories: number
+  /** Number of skill definitions in the import. */
+  readonly skills: number
+  /** Canonical names for the skill definitions written to the workspace. */
+  readonly skillNames: readonly string[]
+  /** Number of timed routines in the import. New routines start paused. */
+  readonly routines: number
+  /** Skills referenced by routines without a matching definition in this export. */
+  readonly missingRoutineSkills: readonly string[]
+}
+
 /** Browser-safe view of one active memory owned by a Bot. */
 export interface BotMemoryView {
   /** Stable identity used when editing or removing the memory. */

@@ -312,6 +312,14 @@ collaborationFor(agent: Pick<Agent, 'id'>): Promise<BotCollaborationClient>
 @Remote('routineHistory') async routineHistory(request: BotRoutineHistoryRequest): Promise<BotRoutineHistoryValue>
 
 /**
+ * Import private memories, workspace skills, and paused cron routines into an existing Bot.
+ * @param request - Destination Bot, version-one export, and optional preview.
+ * @param signal - Cancellation between durable entries. Retrying the same export preserves completed entries.
+ * @returns Counts for the selected source Bot and names of missing routine skill definitions.
+ */
+@Remote('importGrokBot') async importGrokBot(request: BotGrokImportRequest, signal?: AbortSignal): Promise<BotGrokImportValue>
+
+/**
  * List active memories for a Bot without accepting a model-supplied Session id.
  * @param request - Durable Bot id whose private projection should be read.
  * @returns active memory rows owned by that Bot.

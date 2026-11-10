@@ -816,6 +816,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'Newest-first timed receipts or event deliveries/results.',
       },
       {
+        signature: '@Remote(\'importGrokBot\') async importGrokBot(request: BotGrokImportRequest, signal?: AbortSignal): Promise<BotGrokImportValue>',
+        description: 'Import private memories, workspace skills, and paused cron routines into an existing Bot.',
+        parameters: [{ name: 'request', description: 'Destination Bot, version-one export, and optional preview.' }, { name: 'signal', description: 'Cancellation between durable entries. Retrying the same export preserves completed entries.' }],
+        returns: 'Counts for the selected source Bot and names of missing routine skill definitions.',
+      },
+      {
         signature: '@Remote(\'listMemory\') async listMemory(request: BotMemoryListRequest): Promise<BotMemoryListValue>',
         description: 'List active memories for a Bot without accepting a model-supplied Session id.',
         parameters: [{ name: 'request', description: 'Durable Bot id whose private projection should be read.' }],
@@ -5810,6 +5816,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface BotEventTrigger {\n    readonly type: \'message\';\n    readonly source: BotEventSource;\n}',
   },
   {
+    name: 'BotGrokImportRequest',
+    declaration: 'export interface BotGrokImportRequest {\n    readonly botId: BotId;\n    readonly document: string;\n    readonly sourceName?: string;\n    readonly preview?: boolean;\n}',
+  },
+  {
+    name: 'BotGrokImportValue',
+    declaration: 'export interface BotGrokImportValue {\n    readonly sourceName: string;\n    readonly memories: number;\n    readonly skills: number;\n    readonly skillNames: readonly string[];\n    readonly routines: number;\n    readonly missingRoutineSkills: readonly string[];\n}',
+  },
+  {
     name: 'BotGroupCreateRequest',
     declaration: 'export interface BotGroupCreateRequest {\n    readonly id?: BotGroupId;\n    readonly name: string;\n    readonly botIds: readonly BotId[];\n}',
   },
@@ -8267,7 +8281,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ScheduleCreateOptions',
-    declaration: 'export interface ScheduleCreateOptions {\n    readonly idempotencyKey?: string;\n}',
+    declaration: 'export interface ScheduleCreateOptions {\n    readonly idempotencyKey?: string;\n    readonly initialStatus?: \'active\' | \'paused\';\n}',
   },
   {
     name: 'ScheduleCreateRequest',

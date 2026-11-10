@@ -287,10 +287,12 @@ interface ScheduleCreateRequest {
 ```
 
 ```ts type-equiv
-/** Host-only retry identity for a durable reminder creation. */
+/** Host-only options for durable reminder creation. */
 interface ScheduleCreateOptions {
   /** Stable identity for one operation, reused only when its earlier write outcome is unknown. */
   readonly idempotencyKey?: string
+  /** Initial lifecycle status. Paused tasks do not deliver until resumed. */
+  readonly initialStatus?: 'active' | 'paused'
 }
 ```
 

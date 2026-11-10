@@ -389,6 +389,7 @@ export class ScheduleService extends TypertRemoteService {
     const idempotencyKey = options?.idempotencyKey
     if (idempotencyKey !== undefined) validateIdempotencyKey(idempotencyKey)
     const requestFingerprint = idempotencyKey === undefined ? undefined : scheduleCreateFingerprint(request, title)
+    const initialStatus = options?.initialStatus ?? 'active'
     return this.serialize(async () => {
       const refusal = this.reminderTargetRefusal(sessionId)
       if (refusal !== undefined) throw new ScheduleInputError('subagent_session', refusal.message)
@@ -451,7 +452,7 @@ export class ScheduleService extends TypertRemoteService {
       else if (request.cron !== undefined) record = createCronScheduleRecord(id, request.prompt, request.cron, now, title)
       else throw new ScheduleInputError('invalid_selector', 'Exactly one reminder selector is required.')
       await domain.table('tasks').put(id, {
-        sessionId, record, status: 'active',
+        sessionId, record, status: initialStatus,
         ...(idempotencyKey === undefined ? {} : { idempotencyKey, requestFingerprint }),
         deliveryHistory: { records: [], earlierRecordsUnavailable: false },
       })

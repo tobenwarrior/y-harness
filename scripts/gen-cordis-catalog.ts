@@ -1025,6 +1025,8 @@ export const TYPE_LINK_EXEMPTIONS: Readonly<Record<string, string>> = {
   BotTemplateImportRequest: 'Bot template import input is owned by packages/agents/bots/README.md and src/template-types.ts',
   BotTemplateImportValue: 'Bot template import result is owned by packages/agents/bots/README.md and src/template-types.ts',
   BotMemoryListRequest: 'Bot memory list input is owned by packages/agents/bots/README.md and src/types.ts',
+  BotGrokImportRequest: 'Grok Bot import input is owned by packages/agents/bots/README.md and src/types.ts',
+  BotGrokImportValue: 'Grok Bot import output is owned by packages/agents/bots/README.md and src/types.ts',
   BotMemoryListValue: 'Bot memory list result is owned by packages/agents/bots/README.md and src/types.ts',
   BotMemoryUpdateRequest: 'Bot memory update input is owned by packages/agents/bots/README.md and src/types.ts',
   BotMemoryUpdateValue: 'Bot memory update result is owned by packages/agents/bots/README.md and src/types.ts',
