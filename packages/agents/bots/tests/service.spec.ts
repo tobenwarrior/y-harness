@@ -11949,6 +11949,10 @@ describe('durable Bot roster', () => {
         content: [{ type: 'text', text: 'Continue the private Bot task.' }],
         source: { kind: 'user' },
       }), { surfaceOp: 'append' })
+      owner.session.append('user/message', createUserMessage({
+        content: [{ type: 'text', text: 'Current time.' }],
+        source: { kind: 'time-context', form: 'notice', summary: 'Current time' },
+      }), { surfaceOp: 'append' })
       const provider = reopened.ctx.get('codexDynamicTools') as BotNativeToolProvider | undefined
       const history = (await provider?.resolve({ sessionId }))?.find(tool => tool.name === 'read_own_grok_history')
       if (history === undefined) throw new Error('native own Grok history tool was not mounted')
@@ -11972,12 +11976,16 @@ describe('durable Bot roster', () => {
           messageId: BotGroupMessageId('bot-group-message-history-guard'),
         },
       }), { surfaceOp: 'append' })
+      owner.session.append('user/message', createUserMessage({
+        content: [{ type: 'text', text: 'Current time.' }],
+        source: { kind: 'time-context', form: 'notice', summary: 'Current time' },
+      }), { surfaceOp: 'append' })
       const groupResult = await history.execute({ limit: 1 }, {
         callId: 'read-history-group', threadId: 'history-thread', turnId: 'history-group-turn', sessionId,
         signal: new AbortController().signal, approvalPolicy: 'on-request', requestApproval: async () => true,
       })
       expect(groupResult.success).toBe(false)
-      expect(JSON.parse(groupResult.contentItems[0]?.text ?? '{}')).toMatchObject({ error: 'unavailable' })
+      expect(JSON.parse(groupResult.contentItems[0]?.text ?? '{}')).toMatchObject({ error: 'target-unavailable' })
 
       owner.session.append('turn/end', { turn: 2, reason: { kind: 'completed' } })
       owner.session.append('turn/start', { turn: 3 })

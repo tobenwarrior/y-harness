@@ -2252,7 +2252,7 @@ function hasDirectUserInputInOpenTurn(events: readonly SessionEvent[]): boolean 
       }
       continue
     }
-    if (openTurn >= 0 && event.type === 'user/message') {
+    if (openTurn >= 0 && event.type === 'user/message' && !isSyntheticGroupContext(event.data)) {
       hasUserMessage = true
       if (event.data.source.kind !== 'user') hasNonDirectUserMessage = true
     }
