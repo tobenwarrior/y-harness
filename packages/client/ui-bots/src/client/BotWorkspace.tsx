@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import clsx from 'clsx'
 import {
-  Button, IconArchiveOffOutlineRegular, IconCheckOutlineRegular, IconChevronDownOutlineRegular, IconChevronRightOutlineRegular,
+  Button, IconArchiveOffOutlineRegular, IconCheckOutlineRegular,
   IconEditOutlineRegular, IconEllipsisOutlineRegular,
   IconFolderOpenOutlineRegular, IconLinkOutlineRegular, IconPaperPlaneOutlineRegular, IconPlusOutlineRegular,
   IconPinFillRegular, IconPinOutlineRegular, IconShareOutlineRegular, IconContextInjectionOutlineRegular, IconClockOutlineRegular,
@@ -106,6 +106,36 @@ function groupBots(bots: readonly BotSummary[], fallback: string): readonly [str
     else rows.push(bot)
   }
   return [...groups.entries()]
+}
+
+const FOLDER_STATE_KEY = 'dsh.client-ui-bots.folder-state.v1'
+
+/**
+ * Read the Bot roster's collapsed folders from browser-local state.
+ * @returns collapsed folder keys, with Hidden bots closed on first use.
+ */
+function readCollapsedFolders(): ReadonlySet<string> {
+  try {
+    const raw = globalThis.localStorage?.getItem(FOLDER_STATE_KEY)
+    if (raw === undefined || raw === null) return new Set(['hidden'])
+    const parsed: unknown = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return new Set(['hidden'])
+    return new Set(parsed.filter((value): value is string => typeof value === 'string' && value !== ''))
+  } catch {
+    return new Set(['hidden'])
+  }
+}
+
+/**
+ * Persist the Bot roster's collapsed folders without making storage failures visible.
+ * @param folders - keys currently collapsed in the roster.
+ */
+function persistCollapsedFolders(folders: ReadonlySet<string>): void {
+  try {
+    globalThis.localStorage?.setItem(FOLDER_STATE_KEY, JSON.stringify([...folders].sort()))
+  } catch {
+    // Private or full browser storage must not block roster interaction.
+  }
 }
 
 function orderedBots(bots: readonly BotSummary[]): readonly BotSummary[] {
@@ -1590,7 +1620,7 @@ export function BotRoster({
   error = null, loading = false, wide = true, expandSidebar, t,
 }: BotWorkspaceViewProps & BotRosterLayoutProps): ReactNode {
   const [query, setQuery] = useState('')
-  const [collapsedFolders, setCollapsedFolders] = useState<ReadonlySet<string>>(() => new Set(['hidden']))
+  const [collapsedFolders, setCollapsedFolders] = useState<ReadonlySet<string>>(readCollapsedFolders)
   const [newBotOpen, setNewBotOpen] = useState(false)
   const [newGroupOpen, setNewGroupOpen] = useState(false)
   const [templatesOpen, setTemplatesOpen] = useState(false)
@@ -1683,6 +1713,10 @@ export function BotRoster({
       return next
     })
   }
+
+  useEffect(() => {
+    persistCollapsedFolders(collapsedFolders)
+  }, [collapsedFolders])
 
   const selectedBot = bots.find(bot => bot.id === selectedBotId)
   const hasRows = bots.length > 0
@@ -1803,7 +1837,7 @@ export function BotRoster({
                         onClick={() => { toggleFolder(key) }}
                       >
                         <span>{label}</span>
-                        {expanded ? <IconChevronDownOutlineRegular size={12} /> : <IconChevronRightOutlineRegular size={12} />}
+                        {!expanded && <span className={css.folderCount} aria-hidden="true">{rows.length}</span>}
                       </button>
                     </h2>
                     <div id={rowsId} className={css.groupRows} hidden={!expanded}>

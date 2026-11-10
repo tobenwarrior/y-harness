@@ -23,6 +23,9 @@
   - region "Bot groups":
     - heading "Bot groups" [level=2]
     - button "New bot group"
+- region "General":
+  - heading "General" [level=2]:
+    - button "General"
 - region "Scout":
   - img "Scout"
   - text: Scout Keeps the team informed

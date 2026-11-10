@@ -95,9 +95,17 @@ describe('web e2e: Bot workspace retains one Conversation Session per Bot', () =
     const search = roster.getByRole('textbox', { name: 'Search bots' })
     await folder.click()
     await expect.poll(() => folder.getAttribute('aria-expanded')).toBe('false')
+    await folder.getByText('2', { exact: true }).waitFor({ state: 'visible' })
     await expect.poll(() => firstRow.count()).toBe(0)
     await expect.poll(() => firstDetail.locator('[data-conversation-session]').getAttribute('data-conversation-session'))
       .toBe(firstBot.sessionId)
+    const collapsedFolderSnapshot = await captureStableAria(
+      page, '[data-yh-part="sidebar"] [aria-labelledby="yharness-bots-group-0"]', scaffold.workspaceCwd,
+    )
+    await codeMode.click()
+    await expect.poll(() => roster.count()).toBe(0)
+    await botsMode.click()
+    await expect.poll(() => folder.getAttribute('aria-expanded')).toBe('false')
     await search.fill(firstBot.name)
     await expect.poll(() => folder.getAttribute('aria-expanded')).toBe('true')
     await firstRow.waitFor({ state: 'visible' })
@@ -235,6 +243,7 @@ describe('web e2e: Bot workspace retains one Conversation Session per Bot', () =
       [
         await captureStableAria(page, '[role="group"][aria-label="Workspace mode"]', scaffold.workspaceCwd),
         await captureStableAria(page, '[data-yh-part="sidebar"] aside[aria-label="Bot workspace"]', scaffold.workspaceCwd),
+        collapsedFolderSnapshot,
         await captureStableAria(page, `section[aria-label="${firstBot.name}"]`, scaffold.workspaceCwd),
         templateDialogSnapshot,
         memoryDialogSnapshot,

@@ -22,7 +22,10 @@ import type {
 } from '../src/client/types.ts'
 import { BotSkillPolicyConflictError } from '../src/client/types.ts'
 
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  localStorage.clear()
+})
 
 const t = makeTranslate(en)
 
@@ -1660,8 +1663,12 @@ describe('Bot roster and detail', () => {
     const folder = screen.getByRole('button', { name: 'Research' })
     const search = screen.getByRole('textbox', { name: 'Search bots' })
     expect(folder.getAttribute('aria-expanded')).toBe('true')
+    expect(folder.querySelector('svg')).toBeNull()
+    expect(within(folder).queryByText('1')).toBeNull()
     fireEvent.click(folder)
     expect(folder.getAttribute('aria-expanded')).toBe('false')
+    expect(within(folder).getByText('1')).toBeTruthy()
+    expect(folder.querySelector('svg')).toBeNull()
     expect(screen.queryByRole('button', { name: /Research partner, Working/ })).toBeNull()
     expect(screen.getByRole('button', { name: /Release captain, Idle/ })).toBeTruthy()
     expect(screen.getByText('Persistent session surface')).toBeTruthy()
@@ -1676,6 +1683,19 @@ describe('Bot roster and detail', () => {
     fireEvent.click(folder)
     expect(folder.getAttribute('aria-expanded')).toBe('true')
     expect(screen.getByRole('button', { name: /Research partner, Working/ }).getAttribute('aria-current')).toBe('page')
+  })
+
+  it('restores folder disclosure state after the roster remounts', () => {
+    const first = renderSplitWorkspace()
+    fireEvent.click(screen.getByRole('button', { name: 'Research' }))
+    first.unmount()
+
+    renderSplitWorkspace()
+
+    const folder = screen.getByRole('button', { name: 'Research' })
+    expect(folder.getAttribute('aria-expanded')).toBe('false')
+    expect(within(folder).getByText('1')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /Research partner, Working/ })).toBeNull()
   })
 
   it('keeps pinned bots first and exposes a recoverable hidden section', async () => {
