@@ -53,9 +53,10 @@ export class DesktopCloudWorkspace {
    * @param file - owner-private local preference path.
    * @param messages - current native shell dictionary.
    * @param preferenceError - notification when the choice cannot be saved.
+   * @param onShowCloud - revokes access scoped to the Mac workspace.
    */
   constructor(private readonly file: string, private readonly messages: () => DesktopMessages,
-    private readonly preferenceError: () => void) {}
+    private readonly preferenceError: () => void, private readonly onShowCloud?: () => void) {}
 
   private onClosed = (): void => { void this.dispose() }
 
@@ -70,10 +71,14 @@ export class DesktopCloudWorkspace {
     if (this.saved?.selected === true) this.showCloud()
   }
 
+  /** @returns Whether Cloud is covering the Mac workspace. */
+  isCloudSelected(): boolean { return this.selected }
+
   /** Open Cloud or its first-time setup in the existing window. */
   showCloud(): void {
     if (this.owner === undefined) return
     this.selected = true
+    this.onShowCloud?.()
     if (this.saved !== undefined && !this.saved.selected) this.save(this.saved.target)
     if (this.connection === undefined && this.pending === undefined && this.target !== undefined) {
       void this.connect(this.target)

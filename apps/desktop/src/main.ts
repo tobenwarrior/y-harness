@@ -6,6 +6,7 @@ import { existsSync } from 'node:fs'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { randomUUID } from 'node:crypto'
 import {
   app,
   BrowserWindow,
@@ -55,6 +56,8 @@ import { DesktopPolicyTestAuth } from './policy-test-auth.ts'
 import { DesktopUpdateDialog, type UpdateDialogOptions } from './update-dialog.ts'
 import { readDesktopRuntime } from './runtime-tree.ts'
 import { DesktopCloudWorkspace } from './cloud-workspace.ts'
+import { MacComputer } from './mac-computer.ts'
+import { macDesktop } from './mac-desktop.ts'
 import { DesktopBrowserGuests } from './browser-guests.ts'
 import { installDesktopShortcuts } from './keyboard.ts'
 import { DesktopUpdateOverlays } from './update-overlay.ts'
@@ -368,6 +371,14 @@ async function main(): Promise<void> {
   let startup: Promise<void> | undefined
   let workspaceRecovery: Promise<void> | undefined
   let mainWindow: BrowserWindow | undefined
+  const macComputer = process.platform === 'darwin'
+    ? new MacComputer(macDesktop(() => mainWindow, () => currentDesktopLocale().messages, resolveMacBotName))
+    : undefined
+  if (macComputer !== undefined) {
+    powerMonitor.on('lock-screen', () => { macComputer.revoke() })
+    powerMonitor.on('suspend', () => { macComputer.revoke() })
+    app.on('will-quit', () => { macComputer.revoke() })
+  }
   let enteredWorkspace = false
   // NSIS passes --updated when it launches the application after installation.
   let raiseAfterUpdate = process.platform === 'win32' && process.argv.includes('--updated')
@@ -427,6 +438,30 @@ async function main(): Promise<void> {
   const applicationUrl = `${SCHEME}://app/`
   let hostUrl: string | undefined
   let hostCookie: string | undefined
+  async function resolveMacBotName(sessionId: string, signal: AbortSignal): Promise<string | undefined> {
+    if (hostUrl === undefined || hostCookie === undefined) return undefined
+    const method = 'bots/list'
+    const response = await fetch(new URL('/api/' + method, hostUrl), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie: hostCookie },
+      body: JSON.stringify({ type: 'client-request', rpcId: randomUUID(), method, payload: { args: { request: {} } } }),
+      redirect: 'error',
+      signal: AbortSignal.any([signal, AbortSignal.timeout(3000)]),
+    })
+    if (!response.ok) return undefined
+    const reply: unknown = await response.json()
+    if (typeof reply !== 'object' || reply === null || !('result' in reply)) return undefined
+    const result = reply.result
+    if (typeof result !== 'object' || result === null || !('value' in result)) return undefined
+    const value = result.value
+    if (typeof value !== 'object' || value === null || !('bots' in value) || !Array.isArray(value.bots)) return undefined
+    const bots: readonly unknown[] = value.bots
+    for (const bot of bots) {
+      if (typeof bot === 'object' && bot !== null && 'sessionId' in bot && bot.sessionId === sessionId
+        && 'state' in bot && bot.state === 'active' && 'name' in bot && typeof bot.name === 'string') return bot.name
+    }
+    return undefined
+  }
   const browserGuests = new DesktopBrowserGuests(() => hostUrl)
   let injections: readonly unknown[] = []
   /** Whether one automatic reload may still answer a failed page boot. */
@@ -470,15 +505,18 @@ async function main(): Promise<void> {
   const platformView = new DesktopPlatformView(join(app.getAppPath(), 'lib', 'preload-platform-account.cjs'),
     () => 'en_US', process.platform === 'win32' ? 'win32' : 'darwin')
   const backend = new DesktopBackendController((onFailure) => {
+    macComputer?.revoke()
     const hostInspectPort = developmentHostInspectPort(development)
     const launchEnvironment = {
       ...applyDesktopCodexEnvironment(hostEnvironment, codexEnvironment),
       DSH_CLIENT_VERSION: desktopClientVersion(),
+      YH_MAC_COMPUTER: macComputer === undefined ? undefined : '1',
     }
     const host = new DesktopHostProcess(resources.node, resources.dsh, activeProject,
-      hostInspectPort, launchEnvironment, onFailure,
+      hostInspectPort, launchEnvironment, (error) => { macComputer?.revoke(); onFailure(error) },
       primaryRuntime,
-      resources, (next) => { platformView.setSession(next) })
+      resources, (next) => { platformView.setSession(next) },
+      macComputer === undefined ? undefined : request => macComputer.bot(request))
     return {
       start: async () => {
         const ready = await host.start()
@@ -699,6 +737,29 @@ async function main(): Promise<void> {
       if (url.pathname === '/' || url.pathname === '/index.html' || url.pathname.startsWith('/assets/')
         || ['/favicon.svg', '/manifest.webmanifest'].includes(url.pathname)) {
         return serveWebDocument(request, desktopWebFrontendDirectory(resources.dsh))
+      }
+      if (macComputer !== undefined && request.method === 'POST') {
+        if (url.pathname === '/api/computer/status') return Response.json({ available: true, kind: 'mac' })
+        const operation = /^\/api\/computer\/mac\/([a-z-]+)$/u.exec(url.pathname)?.[1]
+        if (operation !== undefined) {
+          return (async () => {
+            const origin = request.headers.get('origin')
+            if ((origin !== null && origin !== 'dsh-app://app') || request.headers.get('content-type') !== 'application/json'
+              || cloudWorkspace?.isCloudSelected() === true || mainWindow?.isVisible() !== true) {
+              return Response.json({ error: 'mac-workspace-inactive' }, { status: 403 })
+            }
+            try {
+              const body: unknown = await request.json()
+              if (cloudWorkspace?.isCloudSelected() === true || mainWindow?.isVisible() !== true) {
+                return Response.json({ error: 'mac-workspace-inactive' }, { status: 403 })
+              }
+              return Response.json(await macComputer.panel(operation, body), { headers: { 'cache-control': 'no-store' } })
+            } catch (error) {
+              void error
+              return Response.json({ error: 'computer-unavailable' }, { status: 409 })
+            }
+          })()
+        }
       }
       if (backend.host === undefined || hostUrl === undefined || hostCookie === undefined) {
         return Promise.resolve(new Response(null, { status: 503 }))
@@ -999,7 +1060,7 @@ async function main(): Promise<void> {
     ? new DesktopCloudWorkspace(join(app.getPath('userData'), 'cloud-workspace.json'),
       () => currentDesktopLocale().messages, () => {
         void dialog.showMessageBox({ type: 'warning', message: currentDesktopLocale().messages.cloudPreferenceError })
-      })
+      }, () => { macComputer?.revoke() })
     : undefined
 
   const automaticCheck = (): void => {
@@ -1167,6 +1228,15 @@ async function main(): Promise<void> {
     browserGuests.bind(window, (guest, name) => shortcuts.attachGuest(window, guest, name))
     shortcuts.attach(window)
     window.on('focus', automaticCheck)
+    if (macComputer !== undefined) {
+      window.on('close', () => { macComputer.revoke() })
+      window.on('hide', () => { macComputer.revoke() })
+      window.on('minimize', () => { macComputer.revoke() })
+      window.webContents.on('render-process-gone', () => { macComputer.revoke() })
+      window.webContents.on('did-start-navigation', (navigation) => {
+        if (navigation.isMainFrame && !navigation.isSameDocument) macComputer.revoke()
+      })
+    }
     // Closing hides: the page and the Host keep running, and the next show resumes the same document.
     window.on('close', (event) => {
       if (quitting || shellInstallerOwnsQuit || sessionEnding) return

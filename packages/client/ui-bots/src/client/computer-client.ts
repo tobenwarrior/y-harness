@@ -5,6 +5,7 @@ export type ComputerMode = 'watching' | 'controlling' | 'other'
 /** Direct response from the Computer status route. */
 export interface ComputerStatus {
   readonly available: boolean
+  readonly kind?: 'mac'
 }
 
 /** Direct response from a Computer frame request. */
@@ -75,7 +76,7 @@ function modeOf(value: unknown): ComputerMode | undefined {
 
 function statusOf(value: unknown): ComputerStatus | undefined {
   if (!isRecord(value) || typeof value.available !== 'boolean') return undefined
-  return { available: value.available }
+  return value.kind === 'mac' ? { available: value.available, kind: 'mac' } : { available: value.available }
 }
 
 function frameOf(value: unknown): ComputerFrame | undefined {
@@ -134,5 +135,55 @@ export function createComputerClient(): ComputerClient {
     takeControl: (viewerId, signal) => post(TAKE_CONTROL_PATH, { viewerId }, controlOf, requestOptions(signal)),
     releaseControl: (viewerId, options) => post(RELEASE_CONTROL_PATH, { viewerId }, controlOf, options),
     input: (viewerId, action, signal) => post(INPUT_PATH, { viewerId, action }, controlOf, requestOptions(signal)),
+  }
+}
+
+/** The macOS grants and the panel's current sharing state. */
+export interface MacComputerSetup {
+  readonly screenRecording: boolean
+  readonly accessibility: boolean
+  readonly deviceControlLabel: boolean
+  readonly shared: boolean
+}
+
+/** Local Mac setup operation. */
+export type MacComputerOperation = 'setup' | 'start' | 'stop' | 'settings'
+
+/** Local macOS permission opened in System Settings. */
+export type MacComputerPermission = 'screenRecording' | 'accessibility'
+
+function setupOf(value: unknown): MacComputerSetup | undefined {
+  if (!isRecord(value) || typeof value.screenRecording !== 'boolean' || typeof value.accessibility !== 'boolean'
+    || typeof value.shared !== 'boolean') return undefined
+  return { screenRecording: value.screenRecording, accessibility: value.accessibility,
+    deviceControlLabel: value.deviceControlLabel === true, shared: value.shared }
+}
+
+interface MacComputerClient {
+  readonly computer: ComputerClient
+  setup(operation: MacComputerOperation, permission?: MacComputerPermission, signal?: AbortSignal): Promise<MacComputerSetup>
+}
+
+/**
+ * Create the local Computer client for the selected Bot and panel lifetime.
+ * @param sessionId - Session of the selected Bot.
+ * @param viewerId - Unique identity for this mounted Computer panel.
+ * @returns local setup and viewing operations.
+ */
+export function createMacComputerClient(sessionId: string, viewerId: string): MacComputerClient {
+  const owner = { sessionId, viewerId }
+  const path = (operation: string): string => 'api/computer/mac/' + operation
+  const computer: ComputerClient = {
+    status: signal => post(STATUS_PATH, {}, statusOf, requestOptions(signal)),
+    frame: (_viewerId, signal) => post(path('frame'), owner, frameOf, requestOptions(signal)),
+    takeControl: (_viewerId, signal) => post(path('take-control'), owner, controlOf, requestOptions(signal)),
+    releaseControl: (_viewerId, options) => post(path('release-control'), owner, controlOf, options),
+    input: () => Promise.reject(new Error('Use your Mac keyboard and mouse to control the local display.')),
+  }
+  return {
+    computer,
+    setup: (operation: MacComputerOperation, permission?: MacComputerPermission, signal?: AbortSignal) =>
+      post(path(operation), { ...owner, permission }, setupOf,
+        operation === 'stop' ? { keepalive: true } : requestOptions(signal)),
   }
 }

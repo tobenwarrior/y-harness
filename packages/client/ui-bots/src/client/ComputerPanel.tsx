@@ -14,6 +14,7 @@ import css from './ComputerPanel.module.css'
 interface ComputerPanelProps extends PropsLocale<'bots'> {
   readonly computer: ComputerClient
   readonly close: () => void
+  readonly local?: { readonly checkSharing: () => void }
 }
 
 type PanelPhase = 'loading' | 'ready' | 'disconnected' | 'unavailable'
@@ -118,7 +119,7 @@ function imageErrorPhase(error: unknown): PanelPhase {
 }
 
 /** Render the Computer tab's image, lease controls, and bounded input affordances. */
-export function ComputerPanel({ computer, close, t }: ComputerPanelProps): ReactNode {
+export function ComputerPanel({ computer, close, local, t }: ComputerPanelProps): ReactNode {
   const viewerIdRef = useRef<string>()
   if (viewerIdRef.current === undefined) viewerIdRef.current = randomUUID()
   const viewerId = viewerIdRef.current
@@ -188,6 +189,7 @@ export function ComputerPanel({ computer, close, t }: ComputerPanelProps): React
           if (disposed || controller.signal.aborted || isAbortError(error)) return
           if (requestEpoch !== requestEpochRef.current) continue
           setPhase(imageErrorPhase(error))
+          local?.checkSharing()
           return
         }
         if (!await waitForNextFrame(controller.signal)) return
@@ -195,7 +197,7 @@ export function ComputerPanel({ computer, close, t }: ComputerPanelProps): React
     }
     void poll()
     return () => { disposed = true; controller.abort() }
-  }, [computer, retryNonce, viewerId])
+  }, [computer, local, retryNonce, viewerId])
 
   const alive = (operation: number): boolean => !disposedRef.current && operation === operationRef.current
 
@@ -245,7 +247,7 @@ export function ComputerPanel({ computer, close, t }: ComputerPanelProps): React
   }
 
   const sendAction = (action: ComputerInputAction): void => {
-    if (busy !== undefined || modeRef.current !== 'controlling' || phase !== 'ready'
+    if (local !== undefined || busy !== undefined || modeRef.current !== 'controlling' || phase !== 'ready'
       || queuedInputs.current >= MAX_QUEUED_INPUTS) return
     queuedInputs.current++
     inputQueue.current = inputQueue.current.then(async () => {
@@ -365,7 +367,9 @@ export function ComputerPanel({ computer, close, t }: ComputerPanelProps): React
           {mode === 'controlling'
             ? <Button variant="outline" size="sm" disabled={busy !== undefined} icon={<IconStopFillRegular size={14} />} onClick={releaseControl}>{t('computerHandBack')}</Button>
             : <Button variant="primary" size="sm" disabled={busy !== undefined || phase === 'unavailable'} onClick={takeControl}>{t('computerTakeControl')}</Button>}
-          <Button variant="ghost" size="sm" icon={<IconCloseOutlineRegular size={14} />} aria-label={t('computerClose')} onClick={close} />
+          {local !== undefined
+            ? <Button variant="ghost" size="sm" icon={<IconStopFillRegular size={14} />} onClick={close}>{t('macComputerStop')}</Button>
+            : <Button variant="ghost" size="sm" icon={<IconCloseOutlineRegular size={14} />} aria-label={t('computerClose')} onClick={close} />}
         </div>
       </header>
       {feedback !== undefined && <div className={css.notice} role="alert">{t(feedback)}</div>}
@@ -377,13 +381,13 @@ export function ComputerPanel({ computer, close, t }: ComputerPanelProps): React
             src={frameSource}
             alt={t('computerScreenAlt')}
             draggable={false}
-            tabIndex={0}
-            onContextMenu={(event: ReactMouseEvent<HTMLImageElement>) => { if (modeRef.current === 'controlling') event.preventDefault() }}
-            onPointerDown={onPointerDown}
-            onPointerUp={onPointerUp}
-            onKeyDown={onKeyDown}
-            onPaste={onPaste}
-            onWheel={onWheel}
+            tabIndex={local === undefined ? 0 : undefined}
+            onContextMenu={(event: ReactMouseEvent<HTMLImageElement>) => { if (local === undefined && modeRef.current === 'controlling') event.preventDefault() }}
+            onPointerDown={local === undefined ? onPointerDown : undefined}
+            onPointerUp={local === undefined ? onPointerUp : undefined}
+            onKeyDown={local === undefined ? onKeyDown : undefined}
+            onPaste={local === undefined ? onPaste : undefined}
+            onWheel={local === undefined ? onWheel : undefined}
           />
           : <div className={css.empty}>
             <StateDot state={phase === 'loading' ? 'ongoing' : 'error'} size={14} />
@@ -392,10 +396,12 @@ export function ComputerPanel({ computer, close, t }: ComputerPanelProps): React
           </div>}
       </div>
       <footer className={css.footer}>
-        <span>{mode === 'controlling' ? t('computerInputHint') : t('computerWatchHint')}</span>
-        <Tooltip label={t('computerPaste')} side="top" delayMs={500}>
+        <span>{local !== undefined
+          ? t(mode === 'controlling' ? 'macComputerPaused' : 'macComputerShared')
+          : t(mode === 'controlling' ? 'computerInputHint' : 'computerWatchHint')}</span>
+        {local === undefined && <Tooltip label={t('computerPaste')} side="top" delayMs={500}>
           <Button variant="ghost" size="sm" disabled={mode !== 'controlling' || busy !== undefined} onClick={paste}>{t('computerPaste')}</Button>
-        </Tooltip>
+        </Tooltip>}
       </footer>
     </section>
   )

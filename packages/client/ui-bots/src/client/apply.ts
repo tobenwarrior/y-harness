@@ -7,6 +7,8 @@ import type {} from '@yharness/client-ui-renderer/client'
 import type {} from '@yharness/client-ui-sidebar/client'
 import type {} from '@yharness/client-ui-conversation/client'
 import type {} from '@yharness/client-locale/client'
+import type { InputTriggerSource } from '@yharness/client-ui-input-trigger/client'
+import { createSnapshotStore } from '@yharness/client-store'
 import type { MainPanelId } from '@yharness/client-ui-layout/client'
 import { BotWorkspaceController } from './controller.ts'
 import { BotsConversation, BotsPanel, BotsRoster } from './panel.tsx'
@@ -14,6 +16,7 @@ import { en, zh } from './locales.ts'
 import { createSharedBotsClient } from './shared-client.ts'
 import { createComputerAvailability } from './computer-availability.ts'
 import { createComputerClient } from './computer-client.ts'
+import { ComputerGlyph } from './ComputerAction.tsx'
 
 /** Stable main-panel identity shared by the sidebar entry and main occupant. */
 export const PANEL_ID = 'bots' as MainPanelId
@@ -42,6 +45,38 @@ export function apply(ctx: Context): void {
   )
   const computer = createComputerClient()
   const computerAvailability = createComputerAvailability(computer)
+  const computerTarget = createSnapshotStore<string | null>(null)
+  ctx.inject(['inputTriggers'], (scope) => {
+    const availableFor = (sessionId: string): boolean => {
+      const availability = computerAvailability.source.getSnapshot()
+      return (availability === 'available' || availability === 'mac') && controller.face().reference()?.sessionId === sessionId
+    }
+    const source: InputTriggerSource = {
+      trigger: '@',
+      name: 'computer',
+      order: -1,
+      showGroupTitle: false,
+      async candidates({ sessionId }, { query, quoted, drilled }) {
+        if (quoted || drilled || !'computer'.startsWith(query.trim().toLowerCase()) || !availableFor(sessionId)) return []
+        return [{ name: 'Computer', icon: ComputerGlyph, description: scope.locale.bind('bots')('computerMentionDescription') }]
+      },
+      onPick({ session: { sessionId }, candidate }) {
+        if (candidate.name !== 'Computer' || !availableFor(sessionId)) return undefined
+        computerTarget.set(sessionId)
+        return { insert: { source: 'computer', ref: '@Computer', label: scope.locale.bind('bots')('computerLabel'), clipboardText: '@Computer' } }
+      },
+      codec: {
+        clipboardText: ref => ref,
+        serialize: ref => Promise.resolve(ref),
+      },
+      openReference({ sessionId }, { ref }) {
+        if (ref !== '@Computer' || !availableFor(sessionId)) return false
+        computerTarget.set(sessionId)
+        return true
+      },
+    }
+    scope.effect(() => scope.inputTriggers.registerSource(source), 'ui-bots: Computer mention')
+  })
 
   ctx.effect(() => {
     const stopGeneration = connection.generation.subscribe(() => { computerAvailability.refresh() })
@@ -60,7 +95,10 @@ export function apply(ctx: Context): void {
       children: { 'bots.conversation': { kind: 'single', scope: 'session-maybe' } },
       inject: () => {
         const face = controller.face()
-        return { ...face, computer, hooks: { ...face.hooks, computerAvailability: computerAvailability.source } }
+        return {
+          ...face, computer, setComputerTarget: (sessionId: string | null) => { computerTarget.set(sessionId) },
+          hooks: { ...face.hooks, computerAvailability: computerAvailability.source, computerTarget },
+        }
       },
     }, BotsPanel))
     const disposeConversation = ctx.slots.inject('bots.conversation', () => ctx.slots.register({

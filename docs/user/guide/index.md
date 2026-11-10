@@ -20,6 +20,12 @@ Start a session and send:
 
 The agent can read and edit workspace files, run commands, delegate work, and maintain a plan. The Web UI asks before operations that require approval under the active permission policy.
 
+## Let a bot use your Mac
+
+In the Mac workspace, choose **Bots**, open a bot, and select **Computer**. Open the two permission pages from the panel. Enable Y Harness under **Screen & System Audio Recording** for screenshots and **Device Control and Data Access** for mouse and keyboard input. Earlier macOS versions call the second permission **Accessibility**. Reopen Y Harness if macOS asks, then choose **Share this Mac** and confirm.
+
+Type **@Computer** in the bot composer and select **Computer** to open the panel and include it in your request. Use a model that accepts images. While sharing, the bot can observe and control your primary display. The panel shows its activity. Choose **Take control** to pause the bot and use your Mac directly, or **Hand back** to resume bot input. **Stop sharing**, closing the panel, switching to Cloud, or locking the Mac ends access. Screenshots requested by the bot are sent to its model and saved with the chat.
+
 ## Continue
 
 - [Configure models](./providers.md)

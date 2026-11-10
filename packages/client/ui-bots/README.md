@@ -50,6 +50,8 @@ The composition must provide the injected Bot Remote, Session store, locale, lay
 
 When the Host reports `available: true` from the authenticated `api/computer/status` route, the Bot header exposes a Computer action that opens the desktop beside the selected Bot conversation. The panel polls `api/computer/frame` only while visible, displays the current lease mode, and sends click, drag, scroll, keyboard, and pasted-text input only while the browser owns the control lease. Closing the panel requests lease release; server-side disconnect expiry remains the fallback.
 
+The native Mac application reports `kind: 'mac'` and serves its Computer requests through its local application document. The panel shows Screen Recording and Accessibility status before requesting native sharing approval for the selected Bot. The user takes over with the physical keyboard and mouse while the bot is paused.
+
 ### Owner callbacks
 
 Open **App access** from a Bot’s roster menu to manage the apps that Bot can use.

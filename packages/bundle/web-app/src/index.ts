@@ -32,6 +32,7 @@ import { parsePublicUrl } from './public-url.ts'
 import { computerRoutes } from './computer-api.ts'
 import * as ComputerTool from './computer-tool.ts'
 import { VpsComputer } from './computer.ts'
+import { MacComputerBridge } from './mac-computer.ts'
 
 /** Stable Cordis plugin name. */
 export const name = 'web-app'
@@ -268,6 +269,24 @@ export function apply(ctx: Context, config: Config): void {
   // Release dependent rows only after bind-dependent trust has been sampled once.
   ctx.provide(WEB_RUNTIME_SERVICE, runtime)
   ctx.plugin(FrontendStatic, { distIndex: internals.resolveDistIndex() })
+  if (process.platform === 'darwin' && process.connected && process.env.YH_MAC_COMPUTER === '1'
+    && ctx.get('profileContext')?.name === 'desktop') {
+    const computer = new MacComputerBridge()
+    ctx.effect(() => () => computer.dispose(), 'mac-computer: local desktop')
+    ctx.on('agent/created', ({ agent }) => {
+      const canUseComputer = (): boolean => {
+        const preset = ctx.get('agentPresets')?.composedPreset(agent.ctx)
+        return preset !== undefined && COMPUTER_PRESETS.test(preset)
+      }
+      if (!canUseComputer()) return
+      agent.ctx.inject(['tools', 'attachments', 'llm'], (scope) => {
+        ComputerTool.applyMacComputer(scope, computer)
+        scope.effect(() => scope.tools.guard(exec => exec.name === 'mac_computer' && !canUseComputer()
+          ? 'This Agent preset cannot access the Mac Computer.'
+          : undefined))
+      })
+    })
+  }
   if (config.computer !== undefined && config.computer !== null) {
     const computer = new VpsComputer(config.computer)
     ctx.provide('vpsComputer', computer)

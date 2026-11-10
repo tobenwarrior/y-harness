@@ -1,0 +1,10 @@
+version: 1
+scenario: mac-computer
+profile: headless
+composition: mac-computer
+recording: authored
+header:
+  class: mac-computer
+  pin: true
+replay:
+  override: true

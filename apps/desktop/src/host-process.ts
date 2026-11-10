@@ -177,6 +177,7 @@ export class DesktopHostProcess {
    *   `office-skills` resources fail Host startup.
    * @param packageManager - Bundled pnpm entry and Node launcher directory, scoped to package operations.
    * @param onPlatformSession - Private credential updates for embedded Platform views.
+   * @param onMacComputer - Private Mac desktop operations from the local Host.
    */
   constructor(
     private readonly node: string,
@@ -189,6 +190,7 @@ export class DesktopHostProcess {
     private readonly packageManager?: { readonly pnpm: string; readonly nodeBin: string },
 
     private readonly onPlatformSession?: (session: PlatformSession | null) => void,
+    private readonly onMacComputer?: (request: unknown) => Promise<unknown>,
   ) {}
 
   /**
@@ -218,6 +220,19 @@ export class DesktopHostProcess {
     child.stderr?.on('data', (chunk: string) => { this.stderr = (this.stderr + chunk).slice(-MAX_HOST_DIAGNOSTIC_CHARS) })
     child.stdout?.pipe(process.stdout)
     child.on('message', (message: unknown) => {
+      if (typeof message === 'object' && message !== null && 'type' in message && message.type === 'mac-computer-request') {
+        if (this.onMacComputer === undefined || this.stopping || !('id' in message)
+          || typeof message.id !== 'number' || !Number.isSafeInteger(message.id) || !('request' in message)) return
+        const id = message.id
+        const reply = (result: object): void => {
+          if (child.connected && !this.stopping) child.send({ type: 'mac-computer-response', id, ...result }, () => {})
+        }
+        void this.onMacComputer(message.request).then(
+          (value) => { reply({ value }) },
+          (error: unknown) => { reply({ error: error instanceof Error ? error.message : 'Mac Computer is unavailable.' }) },
+        )
+        return
+      }
       if (!isDesktopHostEvent(message)) {
         this.fail(new Error('Y Harness desktop host sent an invalid IPC event'))
         child.kill('SIGTERM')

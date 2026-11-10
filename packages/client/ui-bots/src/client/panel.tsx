@@ -1,6 +1,6 @@
 /** Global Bot panel and its explicitly Session-bound Conversation child. */
 
-import { useState, type ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import type { BotView } from '@yharness/bots/client'
 import type { HostObservable, PropsLocale, PropsRenderFactories, PropsRenderSlots, PropsRuntime, InjectFace } from '@yharness/client-ui-slots'
 import type {} from '@yharness/client-ui-conversation/client'
@@ -10,6 +10,7 @@ import { BotDetail, BotGroupDetail, BotRoster } from './BotWorkspace.tsx'
 import type { BotStatus, BotSummary } from './types.ts'
 import { ComputerAction } from './ComputerAction.tsx'
 import { ComputerPanel } from './ComputerPanel.tsx'
+import { MacComputerPanel } from './MacComputerPanel.tsx'
 import type { AvailabilityState } from './computer-availability.ts'
 import type { ComputerClient } from './computer-client.ts'
 import css from './BotWorkspace.module.css'
@@ -29,7 +30,11 @@ export type BotsPanelProps =
   & PropsLocale<'bots'>
   & InjectFace<BotWorkspaceFace & {
     readonly computer: ComputerClient
-    readonly hooks: { readonly computerAvailability: HostObservable<AvailabilityState> }
+    readonly setComputerTarget: (sessionId: string | null) => void
+    readonly hooks: {
+      readonly computerAvailability: HostObservable<AvailabilityState>
+      readonly computerTarget: HostObservable<string | null>
+    }
   }>
 
 /** Props for the Session-bound embedded Conversation occurrence. */
@@ -120,15 +125,17 @@ export function BotsPanel({
   sendGroupMessageWithAttachments, reactGroupMessage, groupsAvailable, loadAvatar,
   rename, updateProfile, memoryManager,
   routineManager, skillManager, SessionProvider, renderSlot, t, share, computer, useComputerAvailability,
+  setComputerTarget, useComputerTarget,
 }: BotsPanelProps): ReactNode {
   const state: BotWorkspaceState = useWorkspace(value => value)
   const statuses = useSessionStatus(value => value)
   const bots = state.bots.map(bot => summaryOf(bot, statuses))
   const availability = useComputerAvailability(value => value)
-  const [computerOpen, setComputerOpen] = useState(false)
+  const computerTarget = useComputerTarget(value => value)
   const selectedReference = reference()
-  const canShowComputer = availability === 'available' && selectedReference !== undefined
-  const showComputer = canShowComputer && computerOpen
+  const canShowComputer = (availability === 'available' || availability === 'mac') && selectedReference !== undefined
+  const showComputer = canShowComputer && computerTarget === selectedReference.sessionId
+  const closeComputer = (): void => { setComputerTarget(null) }
   const conversation = selectedReference === undefined
     ? undefined
     : (
@@ -159,7 +166,8 @@ export function BotsPanel({
         bot={state.selectedBotId === null ? undefined : bots.find(bot => bot.id === state.selectedBotId)}
         children={conversation}
         headerActions={canShowComputer && (
-          <ComputerAction expanded={showComputer} toggle={() => { setComputerOpen(open => !open) }} t={t} />
+          <ComputerAction expanded={showComputer}
+            toggle={() => { setComputerTarget(showComputer ? null : selectedReference.sessionId) }} t={t} />
         )}
         t={t}
         loadAvatar={loadAvatar}
@@ -174,7 +182,10 @@ export function BotsPanel({
       />
       {showComputer && (
         <div className={css.computerSidebar}>
-          <ComputerPanel computer={computer} close={() => { setComputerOpen(false) }} t={t} />
+          {availability === 'mac' && selectedReference !== undefined
+            ? <MacComputerPanel key={selectedReference.sessionId} sessionId={selectedReference.sessionId}
+              close={closeComputer} t={t} />
+            : <ComputerPanel computer={computer} close={closeComputer} t={t} />}
         </div>
       )}
     </div>

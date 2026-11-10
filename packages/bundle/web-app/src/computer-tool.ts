@@ -3,6 +3,7 @@
 import type { Context } from '@yharness/cordis'
 import { AttachmentId } from '@yharness/attachment'
 import type { ContentBlock } from '@yharness/llm'
+import type { MacComputerBridge } from './mac-computer.ts'
 import { defineTool } from '@yharness/tools'
 
 /** Stable Cordis plugin name. */
@@ -41,10 +42,45 @@ const ATTACHMENT = {
  */
 export function apply(ctx: Context): void {
   const computer = ctx.vpsComputer
-  ctx.effect(() => ctx.tools.register(defineTool({
+  registerComputerTool(ctx, {
     name: 'vps_computer',
     description: 'Observe or operate the private VPS desktop shown in the Computer panel. '
       + 'Observe before targeting visible controls. Input is paused while the user is in control.',
+    keyDescription: 'X11 key or chord, for example Return or ctrl+a.',
+    observe: (_sessionId, signal) => computer.observe(signal),
+    act: (_sessionId, action, signal) => computer.actAsBot(action, signal),
+  })
+}
+
+/**
+ * Expose the Mac Computer to a local operator Agent.
+ * @param ctx - Agent preset scope with tools and attachments.
+ * @param computer - the Desktop Host bridge for the current application.
+ */
+export function applyMacComputer(ctx: Context, computer: MacComputerBridge): void {
+  registerComputerTool(ctx, {
+    name: 'mac_computer',
+    description: 'Observe or operate the primary Mac display shared in this Bot’s Computer panel. '
+      + 'Use this tool when the user mentions @Computer. The user must choose Share this Mac. Observe before sending input and verify its effect with a fresh observation. '
+      + 'Use screenshot coordinates scaled to the reported display dimensions.',
+    keyDescription: 'Mac key or chord, for example Return or cmd+a.',
+    observe: (sessionId, signal) => computer.observe(sessionId, signal),
+    act: async (sessionId, action, signal) => { await computer.request(sessionId, action, signal) },
+  })
+}
+
+interface ComputerToolTarget {
+  readonly name: 'vps_computer' | 'mac_computer'
+  readonly description: string
+  readonly keyDescription: string
+  observe(sessionId: string, signal: AbortSignal): ReturnType<ComputerAgentControls['observe']>
+  act(sessionId: string, action: object, signal: AbortSignal): Promise<unknown>
+}
+
+function registerComputerTool(ctx: Context, target: ComputerToolTarget): void {
+  ctx.effect(() => ctx.tools.register(defineTool({
+    name: target.name,
+    description: target.description,
     parameters: {
       action: {
         type: 'string',
@@ -58,7 +94,7 @@ export function apply(ctx: Context): void {
       toY: { type: 'integer', description: 'Destination vertical pixel for drag.' },
       button: { type: 'integer', enum: [1, 2, 3], description: 'Pointer button for click. 1 is primary.' },
       delta: { type: 'integer', description: 'Scroll steps. Positive is down, negative is up.' },
-      key: { type: 'string', description: 'X11 key or chord, for example Return or ctrl+a.' },
+      key: { type: 'string', description: target.keyDescription },
       text: { type: 'string', description: 'Literal text to type into the focused application.' },
     },
     output: {
@@ -84,8 +120,9 @@ export function apply(ctx: Context): void {
     presentCall: () => ({ card: 'generic', title: 'Computer' }),
     async execute(args, exec) {
       const { action, ...values } = args
+      const sessionId = exec.agent?.session.id ?? ''
       if (action !== 'observe') {
-        await computer.actAsBot({ kind: action, ...values }, exec.signal)
+        await target.act(sessionId, { kind: action, ...values }, exec.signal)
         return { message: 'Computer input sent.' }
       }
       const activeRoute = exec.agent?.session.requestHeader()?.config
@@ -94,7 +131,7 @@ export function apply(ctx: Context): void {
       if (provider === undefined || model === undefined) throw new Error('The current model route could not be resolved.')
       const info = await ctx.llm.resolveModelInfo(provider, model, exec.signal)
       if (info.inputModalities?.includes('image') !== true) throw new Error('Select a model that accepts images to observe the desktop.')
-      const frame = await computer.observe(exec.signal)
+      const frame = await target.observe(sessionId, exec.signal)
       const image = await ctx.attachments.saveImage({ data: Buffer.from(frame.jpeg, 'base64'), mediaType: 'image/jpeg', name: 'Computer.jpg' })
       return {
         message: `Desktop coordinates are ${String(frame.width)}×${String(frame.height)} pixels. `
@@ -104,5 +141,5 @@ export function apply(ctx: Context): void {
         },
       }
     },
-  })), 'vps-computer: operator tool')
+  })), 'computer: operator tool')
 }

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createComputerClient } from '../src/client/computer-client.ts'
+import { createComputerClient, createMacComputerClient } from '../src/client/computer-client.ts'
 
 afterEach(() => { vi.unstubAllGlobals() })
 
@@ -38,6 +38,25 @@ describe('Computer HTTP client', () => {
     expect(fetchMock.mock.calls[1]?.[1]).toEqual(expect.objectContaining({
       body: JSON.stringify({ viewerId: 'viewer-id', action: { kind: 'key', key: 'Ctrl+a' } }),
     }))
+  })
+
+  it('binds native setup and control to the Bot and its mounted panel', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response({ screenRecording: true, accessibility: false, deviceControlLabel: true, shared: false }))
+      .mockResolvedValueOnce(response({ mode: 'controlling' }))
+      .mockResolvedValueOnce(response({ screenRecording: true, accessibility: true, shared: false }))
+    vi.stubGlobal('fetch', fetchMock)
+    const client = createMacComputerClient('bot-session', 'mac-panel')
+    await expect(client.setup('settings', 'accessibility')).resolves.toMatchObject({ deviceControlLabel: true, shared: false })
+    await client.computer.takeControl('unused')
+    await client.setup('stop')
+    expect(fetchMock).toHaveBeenNthCalledWith(1, 'api/computer/mac/settings', expect.objectContaining({
+      body: JSON.stringify({ sessionId: 'bot-session', viewerId: 'mac-panel', permission: 'accessibility' }),
+    }))
+    expect(fetchMock).toHaveBeenNthCalledWith(2, 'api/computer/mac/take-control', expect.objectContaining({
+      body: JSON.stringify({ sessionId: 'bot-session', viewerId: 'mac-panel' }),
+    }))
+    expect(fetchMock).toHaveBeenNthCalledWith(3, 'api/computer/mac/stop', expect.objectContaining({ keepalive: true }))
   })
 
   it('preserves HTTP conflict status for lease feedback', async () => {

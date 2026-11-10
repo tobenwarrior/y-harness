@@ -75,6 +75,8 @@ The optional `computer` configuration connects the Web host to a private X11 des
 
 The owner-authenticated Computer routes and the operator presets' `vps_computer` tool use one controller. The controller serializes input and reserves it for one browser while that browser holds a renewable lease. The shared Bot preset has no desktop access. The lease covers input through this controller. Applications running as the VPS account can still access its X11 session.
 
+The native macOS Desktop Host registers `mac_computer` on operator presets. It relays actions over its private Electron IPC channel with the invoking Session ID. The Electron main process authorizes the currently shared Bot before capturing the primary display or delivering input. Web and Cloud deployments use the VPS configuration above.
+
 ### Per-session agent setup
 
 Each browser session selects a shipped preset (`standard` by default). The Agent presets settings page changes the default and edits preset child plugins; saves persist in `$YH_HOME/profiles/web/cordis.patch.yml`. Existing installations may continue selecting their home with `$DSH_HOME`. Creator's plugin-management tool is enabled only when the Host provides an editable profile.

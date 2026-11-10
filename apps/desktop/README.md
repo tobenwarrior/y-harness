@@ -46,6 +46,10 @@ The tray renderer enlarges the whale by 20% around the tile center while preserv
 
 The macOS **Workspace** menu switches between this Mac and an [existing private VPS workspace](../../docs/user/guide/vps.md#open-y-harness). Cloud loads the server UI in an isolated view with no address bar. The desktop stores the SSH destination and last workspace in its private application data and obtains the sign-in token over SSH for each connection.
 
+### Mac Computer
+
+The [Computer panel](../../docs/user/guide/index.md#let-a-bot-use-your-mac) uses the application’s macOS permissions. The Electron main process owns the permission checks, native confirmation, primary-display capture and input. It accepts panel requests from the local application document and model actions from the Desktop Host IPC channel. A renewable panel lease binds both paths to the selected Bot Session. The main process revokes that lease on workspace switch, main document navigation, window close, lock or suspension.
+
 ## Key technical decisions
 
 The original artwork lives in `resources/icon.png` and `resources/icon.svg`; platform adaptations retain the whale and gradients in `resources/icon-windows.*` and `resources/icon-macos.*`. Export each platform SVG as a transparent 1024×1024 PNG. Electron-builder generates the multi-size ICO for the Windows application, installer, and uninstaller ([Windows icon requirements](https://learn.microsoft.com/en-us/windows/apps/design/iconography/app-icon-construction)). The installation pages use matching artwork in both themes; the uninstaller's welcome and finish pages share `installer/assets/uninstaller-sidebar.png`, converted to a 164×314 BMP during preparation.

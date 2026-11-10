@@ -63,6 +63,7 @@
     "@yharness/client-test-runtime": "workspace:*",
     "@yharness/client-ui-layout": "workspace:*",
     "@yharness/client-ui-conversation": "workspace:*",
+    "@yharness/client-ui-input-trigger": "workspace:*",
     "@yharness/client-ui-primitives": "workspace:*",
     "@yharness/client-ui-renderer": "workspace:*",
     "@yharness/client-ui-session": "workspace:*",

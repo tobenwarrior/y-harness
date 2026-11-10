@@ -4,7 +4,7 @@ import { createSnapshotStore, type SnapshotStore } from '@yharness/client-store'
 import type { ComputerClient } from './computer-client.ts'
 
 /** Availability reported by the authenticated Computer status route. */
-export type AvailabilityState = 'checking' | 'available' | 'unavailable'
+export type AvailabilityState = 'checking' | 'available' | 'mac' | 'unavailable'
 
 /** Shared status source used by session-header Computer actions. */
 export interface ComputerAvailability {
@@ -33,7 +33,7 @@ export function createComputerAvailability(client: ComputerClient): ComputerAvai
     source.set('checking')
     void client.status(controller.signal).then((status) => {
       if (disposed || current !== request) return
-      source.set(status.available ? 'available' : 'unavailable')
+      source.set(status.available ? (status.kind === 'mac' ? 'mac' : 'available') : 'unavailable')
     }).catch((error: unknown) => {
       if (disposed || current !== request || (error instanceof DOMException && error.name === 'AbortError')) return
       source.set('unavailable')

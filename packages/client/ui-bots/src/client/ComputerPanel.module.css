@@ -132,3 +132,66 @@
     width: 100%;
   }
 }
+
+.setup {
+  width: min(100%, 430px);
+  margin: auto;
+  padding: 24px 18px;
+  overflow-y: auto;
+  display: grid;
+  gap: 16px;
+}
+
+.setup h3 {
+  margin: 0 0 6px;
+  font-size: 16px;
+  line-height: 1.4;
+}
+
+.setup p {
+  margin: 0;
+  color: var(--yh-alias-label-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.permissionList {
+  display: grid;
+  border: 1px solid var(--yh-alias-border-l2);
+  border-radius: 12px;
+}
+
+.permission {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px;
+}
+
+.permission + .permission {
+  border-top: 1px solid var(--yh-alias-border-l2);
+}
+
+.permission strong {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.granted {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.setupActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.restart {
+  max-width: 36ch;
+}
