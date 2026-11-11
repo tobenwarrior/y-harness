@@ -16,9 +16,24 @@ for (const name of process.argv.slice(2)) {
 JS
 }
 
+select_ubuntu_archive() {
+  local archive
+  source /etc/os-release
+  for archive in https://archive.ubuntu.com/ubuntu https://mirrors.edge.kernel.org/ubuntu https://mirror.math.princeton.edu/pub/ubuntu; do
+    if curl -fsIL --max-time 8 "$archive/dists/$VERSION_CODENAME/InRelease" >/dev/null \
+      && curl -fsIL --max-time 8 "$archive/dists/$VERSION_CODENAME-security/InRelease" >/dev/null; then
+      printf '%s\n' "$archive"
+      return
+    fi
+  done
+  echo 'No Ubuntu archive mirror was reachable for Playwright dependencies.' >&2
+  return 1
+}
+
 pnpm --filter "$package" exec playwright install "$@"
 if ! probe_browsers "$@"; then
-  sudo bash scripts/prepare-ci-ubuntu-apt.sh /etc/apt
+  archive=$(select_ubuntu_archive)
+  sudo bash scripts/prepare-ci-ubuntu-apt.sh /etc/apt "$archive"
   pnpm --filter "$package" exec playwright install-deps "$@"
   probe_browsers "$@"
 fi

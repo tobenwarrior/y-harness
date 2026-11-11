@@ -7,7 +7,10 @@ const shared = {
   fixedExtension: false,
   dts: false,
   deps: {
-    neverBundle: [/^@deepseek-ai\//],
+    // Source-only format helpers are imported below the benchmark package
+    // boundary, so leave their private migration adapters bundleable while
+    // keeping normal workspace packages on their built `lib` entries.
+    neverBundle: [/^@yharness\/(?!session-format-v\d+-to-v\d+(?:\/|$)|session-persistence(?:\/|$))/],
     onlyBundle: false as const,
   },
 }
