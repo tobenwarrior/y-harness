@@ -321,7 +321,7 @@ collaborationFor(agent: Pick<Agent, 'id'>): Promise<BotCollaborationClient>
 /**
  * Store a reviewed transcript without delivering it to the Bot or changing its Session.
  * @param request - Existing Bot and versioned transcript JSON.
- * @returns The number of recovered messages.
+ * @returns The total number of stored records across the primary and supplemental sources.
  */
 @Remote('importGrokHistory') async importGrokHistory(request: BotGrokHistoryImportRequest): Promise<{ readonly messages: number }>
 

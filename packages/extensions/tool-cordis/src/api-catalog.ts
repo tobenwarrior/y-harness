@@ -825,7 +825,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         signature: '@Remote(\'importGrokHistory\') async importGrokHistory(request: BotGrokHistoryImportRequest): Promise<{ readonly messages: number }>',
         description: 'Store a reviewed transcript without delivering it to the Bot or changing its Session.',
         parameters: [{ name: 'request', description: 'Existing Bot and versioned transcript JSON.' }],
-        returns: 'The number of recovered messages.',
+        returns: 'The total number of stored records across the primary and supplemental sources.',
       },
       {
         signature: '@Remote(\'importGrokBot\') async importGrokBot(request: BotGrokImportRequest, signal?: AbortSignal): Promise<BotGrokImportValue>',
@@ -5829,7 +5829,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'BotGrokHistoryArchive',
-    declaration: 'export interface BotGrokHistoryArchive {\n    readonly source: \'grok-bot\';\n    readonly version: 1;\n    readonly firstCachedSequence: number;\n    readonly messages: readonly BotGrokHistoryMessage[];\n}',
+    declaration: 'export interface BotGrokHistoryArchive {\n    readonly source: \'grok-bot\';\n    readonly version: 1 | 2;\n    readonly firstCachedSequence: number;\n    readonly messages: readonly BotGrokHistoryMessage[];\n    readonly complete?: false;\n    readonly sources?: readonly BotGrokHistorySource[];\n}',
   },
   {
     name: 'BotGrokHistoryImportRequest',
@@ -5837,11 +5837,15 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'BotGrokHistoryMessage',
-    declaration: 'export interface BotGrokHistoryMessage {\n    readonly sourceSequence: number;\n    readonly role: \'user\' | \'assistant\';\n    readonly text: string;\n    readonly timestampMs: number;\n}',
+    declaration: 'export interface BotGrokHistoryMessage {\n    readonly sourceSequence: number;\n    readonly role: string;\n    readonly text: string;\n    readonly timestampMs: number | null;\n    readonly author?: string;\n    readonly fromBot?: string;\n    readonly incomplete?: true;\n}',
   },
   {
     name: 'BotGrokHistoryRequest',
     declaration: 'export interface BotGrokHistoryRequest {\n    readonly botId: BotId;\n}',
+  },
+  {
+    name: 'BotGrokHistorySource',
+    declaration: 'export interface BotGrokHistorySource {\n    readonly id: string;\n    readonly label: string;\n    readonly firstCachedSequence: number;\n    readonly messages: readonly BotGrokHistoryMessage[];\n    readonly complete?: false;\n}',
   },
   {
     name: 'BotGrokImportRequest',
