@@ -101,7 +101,7 @@ async function waitForStartup(
   let settled = false
   const finish = (): void => {
     if (settled || url === undefined) return
-    if (!stderrText.includes('dsh: warning: 6 entries did not activate')) return
+    if (!stderrText.includes('yharness: warning: 6 entries did not activate')) return
     if (!stderrText.includes('web async apply failure')) return
     if (!stderrText.includes('webProbeMissingService')) return
     settled = true
@@ -110,7 +110,7 @@ async function waitForStartup(
   }
   stdout.on('data', (chunk: string) => {
     stdoutText += chunk
-    url ??= /dsh web: (http:\/\/[^\s]+)/u.exec(stdoutText)?.[1]
+    url ??= /yharness web: (http:\/\/[^\s]+)/u.exec(stdoutText)?.[1]
     finish()
   })
   stderr.on('data', (chunk: string) => {
@@ -237,7 +237,7 @@ describe.skipIf(!builtArtifactsExist)('dsh Web profile best-effort startup', () 
       expect(result.timedOut).toBe(false)
       expect(result.signal).toBeUndefined()
       expect(result.exitCode).toBe(1)
-      expect(result.stdout).not.toContain('dsh web: http://')
+      expect(result.stdout).not.toContain('yharness web: http://')
       expect(result.stderr).toContain('startup failed:')
       expect(result.stderr).toContain(`${id} (required)`)
       expect(result.stderr).toContain(diagnostic)
@@ -290,20 +290,20 @@ describe.skipIf(!builtArtifactsExist)('dsh Web profile best-effort startup', () 
       expect(result.timedOut).toBe(false)
       expect(result.signal).toBeUndefined()
       expect(result.exitCode).toBe(1)
-      expect(result.stdout).not.toContain('dsh web: http://')
+      expect(result.stdout).not.toContain('yharness web: http://')
       expect(result.stderr).toContain('startup failed:')
-      expect(result.stderr).toContain('dsh: startup failed: 2 required plugins did not activate')
+      expect(result.stderr).toContain('yharness: startup failed: 2 required plugins did not activate')
       expect(result.stderr).toContain('Failed plugins (1):')
       expect(result.stderr).toContain('  webserver (required)\n    Package: @yharness/host-webserver')
       expect(result.stderr).toContain('Plugins waiting for services (')
       expect(result.stderr).toMatch(/connection \(required\) +webRuntime/u)
       expect(result.stderr).toContain('at Server.setupListenHandle')
-      const summary = result.stderr.split(/\n\n(?:Full diagnostics:|dsh: warning:)/u)[0]!
+      const summary = result.stderr.split(/\n\n(?:Full diagnostics:|yharness: warning:)/u)[0]!
       expect(summary.match(/EADDRINUSE/gu)).toHaveLength(1)
-      expect(summary).not.toMatch(/dsh: warning:|\[cause\]|at boot \(|at runCli \(|Node\.js v/u)
+      expect(summary).not.toMatch(/yharness: warning:|\[cause\]|at boot \(|at runCli \(|Node\.js v/u)
       let report: string
       if (logsBlocked) {
-        expect(result.stderr).toContain('dsh: warning: could not write startup diagnostics:')
+        expect(result.stderr).toContain('yharness: warning: could not write startup diagnostics:')
         expect(result.stderr).not.toMatch(/Full diagnostics: [^\r\n]/u)
         report = result.stderr.split('Full diagnostics:\n')[1]!
         expect(readFileSync(join(home, 'logs'), 'utf8')).toBe('blocked')

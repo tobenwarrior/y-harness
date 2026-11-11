@@ -244,6 +244,8 @@ SNAPSHOT_WORKFLOW_SCRIPT = (
 ADVANCED_SNAPSHOT_DIRECTORY = (
     Path(__file__).resolve().parent / "snapshots" / "python-sdk-single-exe" / "advanced"
 )
+if IS_WINDOWS:
+    ADVANCED_SNAPSHOT_DIRECTORY /= "win-x64"
 ADVANCED_SNAPSHOT_FILENAMES = (
     "result.json", "session.v3.jsonl", "session.1.v3.jsonl", "session.2.v3.jsonl",
 )
@@ -1713,11 +1715,11 @@ def smoke_sdk_profile_plugin(base_url: str) -> None:
             "private": True,
             "type": "module",
             "exports": "./index.js",
-            "peerDependencies": {"@deepseek-ai/cordis": "*"},
+            "peerDependencies": {"@yharness/cordis": "*"},
             "dsh": {"bundle": {"patch": "./cordis.patch.yml"}},
         }, indent=2))
         (plugin / "index.js").write_text(
-            "import { Context } from '@deepseek-ai/cordis'\n"
+            "import { Context } from '@yharness/cordis'\n"
             "export const name = 'python-sdk-blackbox-plugin'\n"
             "export const inject = ['systemPrompt']\n"
             "export function apply(ctx) {\n"
@@ -3165,6 +3167,9 @@ def normalize_snapshot_value(
         normalized = value
         for actual, token in replacements:
             normalized = normalized.replace(actual, token)
+            # sandbox-policy embeds JSON.stringify(path), which escapes Windows separators.
+            if "\\" in actual:
+                normalized = normalized.replace(actual.replace("\\", "\\\\"), token)
         return normalized
     if isinstance(value, list):
         return [normalize_snapshot_value(item, replacements) for item in value]

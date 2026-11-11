@@ -321,7 +321,7 @@ jobs:
           SDK_WHEEL: yharness_sdk-${{ needs.plan.outputs.version }}-py3-none-any.whl
         run: |
           set -euo pipefail
-          venv="$(python -c 'import tempfile; print(tempfile.mkdtemp(prefix="dsh-sdk-smoke-"))')"
+          venv="$(python -c 'import os, tempfile; print(tempfile.mkdtemp(prefix="dsh-sdk-smoke-", dir=os.environ["RUNNER_TEMP"]))')"
           python -m venv "$venv"
           smoke_python="$venv/bin/python"
           "$smoke_python" -m pip install \
@@ -374,27 +374,24 @@ jobs:
       - name: Report skipped installed-wheel real API test (POSIX)
         if: >-
           inputs.ci && runner.os != 'Windows'
-          && github.repository != 'tobenwarrior/y-harness'
           && vars.DSH_REAL_API_TESTS_ENABLED != 'true'
         run: |
-          echo 'Installed-wheel real DeepSeek API validation is skipped in this fork; keyless black-box tests still run.' >> "$GITHUB_STEP_SUMMARY"
-          echo 'Configure DEEPSEEK_API_KEY_EXTERNAL and set DSH_REAL_API_TESTS_ENABLED=true to enable it.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Installed-wheel real DeepSeek API validation is disabled; keyless black-box tests still run.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Set DSH_REAL_API_TESTS_ENABLED=true and configure DEEPSEEK_API_KEY_EXTERNAL to enable it.' >> "$GITHUB_STEP_SUMMARY"
 
       - name: Report skipped installed-wheel real API test (Windows)
         if: >-
           inputs.ci && runner.os == 'Windows'
-          && github.repository != 'tobenwarrior/y-harness'
           && vars.DSH_REAL_API_TESTS_ENABLED != 'true'
         shell: pwsh
         run: |
-          'Installed-wheel real DeepSeek API validation is skipped in this fork; keyless black-box tests still run.' >> $env:GITHUB_STEP_SUMMARY
-          'Configure DEEPSEEK_API_KEY_EXTERNAL and set DSH_REAL_API_TESTS_ENABLED=true to enable it.' >> $env:GITHUB_STEP_SUMMARY
+          'Installed-wheel real DeepSeek API validation is disabled; keyless black-box tests still run.' >> $env:GITHUB_STEP_SUMMARY
+          'Set DSH_REAL_API_TESTS_ENABLED=true and configure DEEPSEEK_API_KEY_EXTERNAL to enable it.' >> $env:GITHUB_STEP_SUMMARY
 
       - name: Preflight installed-wheel real API test (POSIX)
         if: >-
           inputs.ci
-          && (github.repository == 'tobenwarrior/y-harness'
-              || vars.DSH_REAL_API_TESTS_ENABLED == 'true')
+          && vars.DSH_REAL_API_TESTS_ENABLED == 'true'
           && runner.os != 'Windows'
           && (github.event_name != 'pull_request'
               || (github.event.pull_request.head.repo.full_name == github.repository
@@ -411,8 +408,7 @@ jobs:
       - name: Preflight installed-wheel real API test (Windows)
         if: >-
           inputs.ci
-          && (github.repository == 'tobenwarrior/y-harness'
-              || vars.DSH_REAL_API_TESTS_ENABLED == 'true')
+          && vars.DSH_REAL_API_TESTS_ENABLED == 'true'
           && runner.os == 'Windows'
           && (github.event_name != 'pull_request'
               || (github.event.pull_request.head.repo.full_name == github.repository
@@ -428,8 +424,7 @@ jobs:
       - name: Run installed-wheel real API black-box test (POSIX)
         if: >-
           inputs.ci
-          && (github.repository == 'tobenwarrior/y-harness'
-              || vars.DSH_REAL_API_TESTS_ENABLED == 'true')
+          && vars.DSH_REAL_API_TESTS_ENABLED == 'true'
           && runner.os != 'Windows'
           && (github.event_name != 'pull_request'
               || (github.event.pull_request.head.repo.full_name == github.repository
@@ -450,8 +445,7 @@ jobs:
       - name: Run installed-wheel real API black-box test (Windows)
         if: >-
           inputs.ci
-          && (github.repository == 'tobenwarrior/y-harness'
-              || vars.DSH_REAL_API_TESTS_ENABLED == 'true')
+          && vars.DSH_REAL_API_TESTS_ENABLED == 'true'
           && runner.os == 'Windows'
           && (github.event_name != 'pull_request'
               || (github.event.pull_request.head.repo.full_name == github.repository

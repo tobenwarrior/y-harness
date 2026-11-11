@@ -45,6 +45,7 @@
             "maxTokens": true
           },
           "tools": [
+            "apply_patch",
             "create_goal",
             "edit",
             "exit_plan_mode",
@@ -102,6 +103,7 @@
             "maxTokens": true
           },
           "tools": [
+            "apply_patch",
             "create_goal",
             "edit",
             "exit_plan_mode",
@@ -174,6 +176,7 @@
             "maxTokens": true
           },
           "tools": [
+            "apply_patch",
             "create_goal",
             "edit",
             "exit_plan_mode",
