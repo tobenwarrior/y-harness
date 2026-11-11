@@ -61,6 +61,14 @@ python3 ~/.yharness-vps/source/scripts/import-grok-bot.py ./grok-bot-export.json
 
 For a file with several bots, add `--source-name` to choose one. Repeat the command with `--apply` to import into the destination bot's existing chat and folder. The tool adds memories and user facts to the bot's memory, installs exported skill definitions in its working directory, and creates scheduled routines paused. Open the bot's routine manager to review the timing and resume each routine when ready. The preview lists any routine skill references that lack a definition in the export. App connections, chat transcripts, and event-triggered routines require separate setup.
 
+To attach an already normalized and reviewed Grok history archive to the destination bot, use the dedicated history mode with `--apply`:
+
+```sh
+python3 ~/.yharness-vps/source/scripts/import-grok-bot.py ./grok-history.json --bot "Research Bot" --history --apply
+```
+
+Y Harness validates the archive before saving it and preserves recovered records on repeat imports. Open **Imported Grok chat** in the destination bot's conversation header to check the result. The history mode requires `--apply`.
+
 If a routine references Grok's `box-desktop` skill, copy the [VPS Computer compatibility skill](../../../apps/cli/config/examples/skills/box-desktop/SKILL.md) into `.agents/skills/box-desktop/SKILL.md` in the destination bot's working directory. Make a browser available on the VPS desktop and select an image-capable model in that bot's chat. Test a manual desktop observation before resuming the routine.
 
 ## Check the service

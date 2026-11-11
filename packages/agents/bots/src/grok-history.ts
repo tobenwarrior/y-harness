@@ -312,7 +312,7 @@ export function readGrokHistoryPage(
 }
 
 function messageConflict(message: BotGrokHistoryMessage, incoming: BotGrokHistoryMessage): boolean {
-  if (message.sourceSequence !== incoming.sourceSequence || message.role !== incoming.role || message.text !== incoming.text) return true
+  if (message.role !== incoming.role || message.text !== incoming.text) return true
   if (message.timestampMs !== null && message.timestampMs !== incoming.timestampMs) return true
   for (const key of ['author', 'fromBot', 'incomplete'] as const) {
     const value = message[key]
@@ -348,7 +348,6 @@ export function mergeGrokHistoryArchives(
   if (current.complete === false && incoming.complete !== false) throw new Error('Grok history completeness marker was removed')
   const currentSources = current.version === 2 ? current.sources ?? [] : []
   const incomingSources = incoming.version === 2 ? incoming.sources ?? [] : []
-  if (currentSources.length > 0 && incoming.version !== 2) throw new Error('Grok history supplemental sources cannot be removed')
   const incomingById = new Map(incomingSources.map(source => [source.id, source]))
   for (const source of currentSources) {
     const replacement = incomingById.get(source.id)

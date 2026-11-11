@@ -244,6 +244,8 @@ describe('web e2e: Bot workspace retains one Conversation Session per Bot', () =
     await expect.poll(() => firstRow.getAttribute('aria-current')).toBe('page')
     await expect.poll(() => firstDetail.locator('[data-conversation-session]').getAttribute('data-conversation-session'))
       .toBe(firstBot.sessionId)
+    expect(await firstDetail.getByRole('button', { name: 'Imported Grok chat', exact: true }).count()).toBe(0)
+    expect(await historyDialog.count()).toBe(0)
 
     await codeMode.click()
     await expect.poll(() => codeMode.getAttribute('aria-pressed')).toBe('true')

@@ -680,7 +680,9 @@ function ownGrokHistoryTool(host: BotNativeToolHost, sessionId: SessionId): BotN
         if (page === null) return output(null)
         return output(frameGrokHistoryPage(page))
       } catch (error: unknown) {
-        return context.signal.aborted ? failure('cancelled', 'The Bot action was cancelled.') : collaborationFailure(error)
+        if (context.signal.aborted) return failure('cancelled', 'The Bot action was cancelled.')
+        if (error instanceof RangeError) return failure('invalid-request', 'Requested Grok history source was not found.')
+        return collaborationFailure(error)
       }
     },
   }
