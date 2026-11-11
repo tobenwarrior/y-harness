@@ -333,12 +333,10 @@ describe('CI workflow', () => {
     expect(aggregate.needs).toContain('node-24-bench')
     expect(node24Bench.name).toBe('node 24 / benchmarks')
     expect(node24Bench.env).toBeUndefined()
-    if (!Array.isArray(node24Bench.steps)) throw new TypeError('Benchmark job must define steps')
-    const benchmarkBrowser = node24Bench.steps.find((step: unknown): step is Record<string, unknown> => isRecord(step)
-      && step.name === 'Install benchmark browser and hosted dependencies')
-    expect(benchmarkBrowser).toMatchObject({ name: 'Install benchmark browser and hosted dependencies' })
-    expect(benchmarkBrowser?.run).toContain('bash scripts/prepare-ci-ubuntu-apt.sh /etc/apt')
-    expect(benchmarkBrowser?.run).toContain('pnpm --filter @yharness/benchmarks exec playwright install --with-deps chromium')
+    expect(node24Bench.steps).toContainEqual({
+      name: 'Install benchmark browser and hosted dependencies',
+      run: 'bash scripts/prepare-ci-playwright.sh @yharness/benchmarks chromium',
+    })
     expect(JSON.stringify(node24Bench.steps)).not.toContain('DSH_CI_FAILOVER_LINUX')
     expect(node24Bench.steps).toContainEqual({
       name: 'Run performance benchmarks',

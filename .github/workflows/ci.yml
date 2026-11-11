@@ -226,9 +226,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Install benchmark browser and hosted dependencies
-        run: |
-          sudo bash scripts/prepare-ci-ubuntu-apt.sh /etc/apt
-          pnpm --filter @yharness/benchmarks exec playwright install --with-deps chromium
+        run: bash scripts/prepare-ci-playwright.sh @yharness/benchmarks chromium
 
       - name: Run performance benchmarks
         env:
@@ -344,9 +342,7 @@ jobs:
 
       - name: Install Playwright Chromium, WebKit, and hosted dependencies
         if: vars.DSH_CI_FAILOVER_LINUX != 'selfhosted' || github.event.pull_request.user.login == 'dependabot[bot]'
-        run: |
-          sudo bash scripts/prepare-ci-ubuntu-apt.sh /etc/apt
-          pnpm --filter @yharness/web-frontend exec playwright install --with-deps chromium webkit
+        run: bash scripts/prepare-ci-playwright.sh @yharness/web-frontend chromium webkit
 
       # The persistent VM image owns Playwright's Linux system packages; do
       # not mutate the shared host with apt on every failover run.

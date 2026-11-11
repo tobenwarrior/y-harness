@@ -21,6 +21,18 @@ if [[ "$(uname -s)" != 'Linux' || "$(uname -m)" != 'x86_64' ]]; then
   exit 1
 fi
 
+probe_bwrap() {
+  "$1" --ro-bind / / --dev /dev --unshare-pid --proc /proc --die-with-parent -- true
+}
+
+sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 \
+  || echo 'apparmor userns knob absent — the functional probe decides'
+if command -v bwrap >/dev/null && probe_bwrap bwrap; then
+  bwrap --version
+  echo 'runner-provided bubblewrap passed the functional probe'
+  exit 0
+fi
+
 archive="${RUNNER_TEMP}/bubblewrap_${BUBBLEWRAP_VERSION}_amd64.deb"
 root="${RUNNER_TEMP}/dsh-bubblewrap"
 
@@ -41,8 +53,6 @@ mkdir -p "$root"
 dpkg-deb --extract "$archive" "$root"
 printf '%s\n' "$root/usr/bin" >> "$GITHUB_PATH"
 
-sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 \
-  || echo 'apparmor userns knob absent — the functional probe decides'
 "$root/usr/bin/bwrap" --version
-"$root/usr/bin/bwrap" --ro-bind / / --dev /dev --unshare-pid --proc /proc --die-with-parent -- true
+probe_bwrap "$root/usr/bin/bwrap"
 echo 'bubblewrap functional probe passed'
