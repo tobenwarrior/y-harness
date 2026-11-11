@@ -699,7 +699,7 @@
           "content": [
             {
               "type": "text",
-              "text": "Error: Auto review rejected tool \"snapshot_double\"; its body was not executed\nFile sandbox enforcement is partial on this host."
+              "text": "Error: Auto review rejected tool \"snapshot_double\"; its body was not executed"
             }
           ],
           "isError": true,
@@ -937,7 +937,7 @@
           "content": [
             {
               "type": "text",
-              "text": "Auto review rejected tool \"snapshot_double\"; its body was not executed"
+              "text": "Auto review rejected tool \"snapshot_double\"; its body was not executed\nFile sandbox enforcement is partial on this host."
             }
           ],
           "isError": false,
@@ -2506,7 +2506,7 @@
               "content": [
                 {
                   "type": "text",
-                  "text": "Error: Auto review rejected tool \"snapshot_double\"; its body was not executed\nFile sandbox enforcement is partial on this host."
+                  "text": "Error: Auto review rejected tool \"snapshot_double\"; its body was not executed"
                 }
               ],
               "isError": true,
@@ -2792,7 +2792,7 @@
               "content": [
                 {
                   "type": "text",
-                  "text": "Auto review rejected tool \"snapshot_double\"; its body was not executed"
+                  "text": "Auto review rejected tool \"snapshot_double\"; its body was not executed\nFile sandbox enforcement is partial on this host."
                 }
               ],
               "isError": false,
