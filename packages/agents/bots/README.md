@@ -94,7 +94,7 @@ Owner-imported Grok chat archives retain source order, roles, known timestamps, 
 
 Version-one imports accept up to 512 KiB. Version-two imports accept up to 2 MiB and support supplemental sources with independent sequence numbers, unknown timestamps, and incomplete records. The import returns the total record count across the original and supplemental sources.
 
-The scoped and native Codex tool `read_own_grok_history` is available during a direct owner turn in the Bot’s own Session. It accepts `limit` from 1 through 10 and an exclusive `before` source-sequence cursor. A version-two page lists any supplemental sources by id and label. Pass a listed id in `source` to page through that source, or omit it for the original archive. Each page includes the selected source’s `firstCachedSequence`, `totalMessages`, and bounded chronological excerpts. Use `nextBefore` to request an older page. The tool quotes transcript text and attribution as untrusted data.
+The scoped and native Codex tool `read_own_grok_history` is available during a direct owner turn in the Bot’s own Session. It accepts `limit` from 1 through 10 and an exclusive `before` source-sequence cursor. A version-two page lists supplemental sources by id and label. Pass a listed id in `source` to page through that source, or omit it for the original archive. Each page includes the selected source’s `firstCachedSequence`, `totalMessages`, and bounded chronological excerpts. Use `nextBefore` to request an older page. A native result can return fewer excerpts to fit the tool result limit. It may list only source ids on the original archive page or omit the directory on a supplemental page. The tool quotes transcript text and attribution as untrusted data.
 
 ### Shared Bot policy foundation
 
