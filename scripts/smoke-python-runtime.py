@@ -244,6 +244,8 @@ SNAPSHOT_WORKFLOW_SCRIPT = (
 ADVANCED_SNAPSHOT_DIRECTORY = (
     Path(__file__).resolve().parent / "snapshots" / "python-sdk-single-exe" / "advanced"
 )
+if IS_WINDOWS:
+    ADVANCED_SNAPSHOT_DIRECTORY /= "win-x64"
 ADVANCED_SNAPSHOT_FILENAMES = (
     "result.json", "session.v3.jsonl", "session.1.v3.jsonl", "session.2.v3.jsonl",
 )
@@ -3165,6 +3167,9 @@ def normalize_snapshot_value(
         normalized = value
         for actual, token in replacements:
             normalized = normalized.replace(actual, token)
+            # sandbox-policy embeds JSON.stringify(path), which escapes Windows separators.
+            if "\\" in actual:
+                normalized = normalized.replace(actual.replace("\\", "\\\\"), token)
         return normalized
     if isinstance(value, list):
         return [normalize_snapshot_value(item, replacements) for item in value]
