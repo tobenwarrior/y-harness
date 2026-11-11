@@ -225,6 +225,7 @@ export function apply(ctx: Context): void {
             if (scope === undefined) return
             ctx.get('inputTriggers')?.sessionOf(scope).openReference('skill', { ref: `/${name}` })
           },
+          botIcon: () => ctx.get('inputTriggers')?.referenceIcon?.('bot'),
           openExternalLink: (url) => {
             if (linkOpening.getSnapshot() === 'sidebar' && ctx.get('sidebarRightTabs')?.get('browser') !== undefined) {
               ctx.sidebarRight.openTab('browser', { params: { url } })

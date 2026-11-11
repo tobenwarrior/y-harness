@@ -21,14 +21,13 @@ import type {} from '@yharness/client-ui-sidebar-right/client'
 import type { Context as ClientContext } from '@yharness/cordis'
 import type { ISessions } from '@yharness/api-session-controller/client'
 import type { BotView } from '@yharness/api-remotes/client'
-import { IconSidebarBotsOutlineRegular, relativeTime } from '@yharness/client-ui-primitives'
+import { relativeTime } from '@yharness/client-ui-primitives'
 import type {
   ClientSessionContext, InputTriggerCrumb, InputTriggerServiceContract, InputTriggerSource,
 } from '@yharness/client-ui-input-trigger/client'
 import { formatFileMention } from '@yharness/file-reference/grammar'
 import type { FileReferenceCandidate } from '@yharness/file-reference/types'
 import type { SessionReferenceMentionCandidate } from '@yharness/session-reference/types'
-import { formatSessionReferenceMention } from '@yharness/session-reference/uri'
 import { abbreviateHomePath, fileAddressFor } from '@yharness/util-workspace-path'
 import { en, NS, type ReferenceKey } from './locales.ts'
 
@@ -45,12 +44,6 @@ export const inject = [
   'remote.sessionReferenceResolver', 'sidebarRight',
 ]
 
-const BOT_STATUS_KEYS = {
-  running: 'bot.status.running',
-  idle: 'bot.status.idle',
-  offline: 'bot.status.offline',
-} as const satisfies Record<BotView['availability'], ReferenceKey>
-
 /**
  * Register the combined `@file` / `@session` / `@bot` source.
  * @param ctx - client root context.
@@ -59,7 +52,6 @@ export function apply(ctx: ClientContext): void {
   ctx.effect(() => ctx.locale.register(NS, { en }), 'ui-reference: dictionaries')
   const t = ctx.locale.bind(NS)
   const sessions = ctx.get('sessions') as ISessions
-  const botsRemote = ctx.get('remote.bots') as typeof ctx.remote.bots | undefined
   const source: InputTriggerSource = {
     trigger: '@',
     name: 'reference',
@@ -83,6 +75,10 @@ export function apply(ctx: ClientContext): void {
             ? Promise.resolve([] as SessionReferenceMentionCandidate[])
             : ctx.remote.sessionReferenceResolver.candidates(session.sessionId, query, signal)
               .then(result => result.ok ? result.value : [])
+          // The Remote namespace can be attached after this source's plugin
+          // applies. Resolve it at candidate time so the generic Session list
+          // still hides Bot-backed Sessions once the Bot roster is ready.
+          const botsRemote = ctx.get('remote.bots') as typeof ctx.remote.bots | undefined
           const botLookup = quoted === true || botsRemote === undefined
             ? Promise.resolve([] as readonly BotView[])
             : botsRemote.list({ includeHidden: true }).then(result => result.ok ? result.value.bots : [])
@@ -113,13 +109,8 @@ export function apply(ctx: ClientContext): void {
           ),
         }
       })
-      const botRows = botItems
-        .filter(bot => bot.state === 'active' && bot.hidden !== true && bot.sessionId !== session.sessionId)
-        .filter(bot => matchesBotQuery(bot, query))
-        .map(bot => botCandidate(bot, t))
       return [
         ...fileItems.flatMap(candidate => fileCandidate(candidate, quoted === true, withLocation, t)),
-        ...botRows,
         ...sessionRows.filter(item => item.child).map(item => item.row),
         ...sessionRows.filter(item => !item.child).map(item => item.row),
       ]
@@ -181,28 +172,6 @@ type Translate = (key: ReferenceKey, params?: Record<string, unknown>) => string
 type ReferenceCandidateValue =
   | { kind: 'file'; fileKind: FileReferenceCandidate['kind']; label: string; mention: string }
   | { kind: 'session'; label: string; mention: string }
-
-function matchesBotQuery(bot: BotView, query: string): boolean {
-  const needle = query.trim().toLocaleLowerCase()
-  if (needle === '') return true
-  return [bot.name, bot.description, bot.id]
-    .some(value => value?.toLocaleLowerCase().includes(needle) === true)
-}
-
-function botCandidate(bot: BotView, t: Translate) {
-  const status = t(BOT_STATUS_KEYS[bot.availability])
-  return {
-    name: bot.name,
-    description: bot.description === undefined ? status : `${bot.description} · ${status}`,
-    icon: IconSidebarBotsOutlineRegular,
-    section: t('section.bots'),
-    value: JSON.stringify({
-      kind: 'session',
-      label: bot.name,
-      mention: formatSessionReferenceMention({ sessionId: bot.sessionId, label: bot.name }),
-    } satisfies ReferenceCandidateValue),
-  }
-}
 
 /**
  * The breadcrumb of a drilled directory listing, from the workspace root down

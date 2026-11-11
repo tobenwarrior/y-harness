@@ -11,7 +11,7 @@ import { createEmptyHistoryState, registerHistory } from '@lexical/history'
 import { mergeRegister } from '@lexical/utils'
 import type { DraftReference, ReferenceInsert } from '../../contract/draft-editor.ts'
 import { registerReferenceActivation } from './reference-activation.ts'
-import { ReferenceChipNode, $createReferenceChipNode } from './chip-node.tsx'
+import { ReferenceChipNode, $createReferenceChipNode, bindReferenceIcons, type ResolveReferenceIcon } from './chip-node.tsx'
 import { GhostPredictionNode } from './ghost-node.tsx'
 import { refreshClaimDecoration, registerClaimDecoration } from './claim-decor.ts'
 import { registerTextRefDecoration, rescanTextRefs, TextRefNode } from './text-ref.ts'
@@ -26,6 +26,7 @@ type Lexicon = ReadonlyMap<'/' | '@', readonly string[]>
 interface DraftEditorRuntimeDeps {
   readonly onUpdate: () => void
   readonly openReference: (source: string | undefined, reference: Pick<ReferenceInsert, 'ref' | 'appearance'>) => boolean
+  readonly referenceIcon?: ResolveReferenceIcon | undefined
   readonly activeClaimToken: () => string | null
   readonly lexicon: () => Lexicon
   readonly resolveLexicon: () => ObservableSnapshot<Lexicon> | undefined
@@ -61,6 +62,7 @@ export class DraftEditorRuntime {
       nodes: [ReferenceChipNode, TextRefNode, GhostPredictionNode],
       onError: (error) => { throw error },
     })
+    if (deps.referenceIcon !== undefined) bindReferenceIcons(this.editor, deps.referenceIcon)
   }
 
   /**

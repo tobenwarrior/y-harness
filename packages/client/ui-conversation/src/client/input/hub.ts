@@ -24,6 +24,7 @@ import type { ComposerKeyboard } from '../contract/draft-editor.ts'
 import type { InputSubmitMode } from '../contract/composer-submission.ts'
 import type { PopupDismissFace } from './facade.ts'
 import { SessionInputShell } from './facade.ts'
+import type { ResolveReferenceIcon } from './editor/chip-node.tsx'
 import { reportMessageSubmission } from './submission-analytics.ts'
 import { readConversationDraft } from '../stores.ts'
 
@@ -36,6 +37,7 @@ interface CommandFace {
 interface InputTriggerServiceFace {
   /** @param actx - Session scope. @returns that Session's trigger provider. */
   sessionOf(actx: Context): InputTriggerController
+  referenceIcon?: ResolveReferenceIcon
 }
 
 /** Attachment-send face resolved lazily to keep hub/service construction acyclic. */
@@ -117,6 +119,7 @@ export class InputHub implements SessionInputResolver {
       },
       messageSubmitted: (submission) => { reportMessageSubmission(this.rootCtx, submission) },
       inputTriggers: () => this.controller(actx),
+      referenceIcon: source => (this.rootCtx.get('inputTriggers') as InputTriggerServiceFace | undefined)?.referenceIcon?.(source),
       popup: () => this.popup(actx),
       inbox: session.projections.faceOf('inbox') as ObservableSnapshot<InboxState | undefined>,
       defaultSink: (text, attachmentIds, mode, signal) => this.sink(session, text, attachmentIds, mode, signal),

@@ -1,5 +1,5 @@
 ---
-description: "Web @file, @session, and @bot reference source for the composer: candidates, ordering, and atomic inline references."
+description: "Web @file and @session reference source for the composer: candidates, ordering, and atomic inline references."
 kind: "package-reference"
 ---
 
@@ -7,7 +7,7 @@ kind: "package-reference"
 
 ## Summary
 
-Use `dsh-client-ui-reference` to mention files, folders, sessions, or Bots from one `@` completion menu. It lists each domain independently, so one unavailable source does not hide the others. Picks become atomic references with stable clipboard forms; folder rows can drill down without closing completion. File rows omit redundant roots, session rows show only differing workspaces, and Bot rows resolve to their backing Session. Mentions are validated before model context is captured, while browsing candidates has no model effect.
+Use `dsh-client-ui-reference` to mention files, folders, and Sessions from one `@` completion menu. It lists each domain independently, so one unavailable source does not hide the others. Picks become atomic references with stable clipboard forms; folder rows can drill down without closing completion. File rows omit redundant roots, and session rows show only differing workspaces. When the Bot client is mounted, its separate source owns Bot candidates and inline Bot identity; this package only hides Bot-backed Sessions from its generic Session rows. Mentions are validated before model context is captured, while browsing candidates has no model effect.
 
 ## Table of Contents
 
@@ -31,7 +31,7 @@ A file closes completion as an atomic inline reference displayed with a file gly
 
 A session pick inserts an atomic inline reference whose hidden `ref` and clipboard representation is the canonical `@[label](dsh-session:…)` mention returned by the Host; its visible form is a chat-bubble glyph plus the session title. Sending carries the mention through `session.prompt`, and the session-reference service validates it and captures model context at `agent/pre-step`.
 
-A Bot pick inserts the same canonical session mention using the Bot's stable display name and backing Session id. The current Bot receives a bounded, untrusted snapshot when the message is sent; selecting a Bot does not wake it or send a message to it.
+Bot picks are supplied by `client-ui-bots`, which inserts a stable Bot mention and preserves the Bot avatar through the draft and transcript. This package's generic Session path never turns a Bot-backed Session into a raw Session row.
 
 ### Failure behavior
 
@@ -51,9 +51,9 @@ The source keeps candidate encoding internal to the registration effect: the `/c
 
 ### Candidate flow
 
-For an unquoted token, the browser starts the `fileReferences/list`, `sessionReferenceResolver/candidates`, and `bots/list` Remote calls together, then deterministically orders files, Bots, direct subagents of the current Session, and other Sessions. The Bot lookup includes hidden rows to reserve their backing Session ids; hidden rows are not rendered as Bot candidates, so a hidden Bot Session does not leak into the generic Session list. Bot rows filter the Host roster locally by name, description, or stable id, omit the current Bot's own Session, and show availability beside an optional role description. Rows use the resolver's display title, which prefers a subagent's creation label while ordinary Sessions retain their projected title, and render under locale-owned group headings without a redundant raw `reference` source title. A session row is dated from the Host session list's `updatedAt` through the same relative-time bucket that list uses, so one session reads the same age on both surfaces; a session the list does not carry falls back to the candidate's creation time. A drilled query publishes a breadcrumb from the workspace root to the current directory; each crumb carries the drill payload a folder row would, so returning to a step and descending into one are one outcome.
+For an unquoted token, the browser starts the `fileReferences/list` and `sessionReferenceResolver/candidates` Remote calls together. When the Bot Remote is available, a late lookup includes hidden Bot rows only to reserve their backing Session ids; hidden or active Bot Sessions do not leak into the generic Session list. Rows use the resolver's display title, which prefers a subagent's creation label while ordinary Sessions retain their projected title, and render under locale-owned group headings without a redundant raw `reference` source title. A session row is dated from the Host session list's `updatedAt` through the same relative-time bucket that list uses, so one session reads the same age on both surfaces; a session the list does not carry falls back to the candidate's creation time. A drilled query publishes a breadcrumb from the workspace root to the current directory; each crumb carries the drill payload a folder row would, so returning to a step and descending into one are one outcome.
 
-Candidate requests require an existing retained Client Session and share one temporary `referenceCandidates` reference. All three discovery calls wait for that Session's initial history open to succeed; an unretained Session or failed open prevents the lookups. The candidate request's cancellation signal covers the history wait and the calls, and the temporary reference is released when the lookup settles.
+Candidate requests require an existing retained Client Session and share one temporary `referenceCandidates` reference. Every active discovery call waits for that Session's initial history open to succeed; an unretained Session or failed open prevents the lookups. The candidate request's cancellation signal covers the history wait and the calls, and the temporary reference is released when the lookup settles.
 
 ### Serialization
 
@@ -78,7 +78,7 @@ These pages cover the suggestion machinery, the reference seams, and the input p
 <a id="model-experience"></a>
 ## Model Experience
 
-Indirectly, through Host-owned providers, which own the file guidance and session snapshot preparation this package's reference selection delegates to them. A Bot selection is a session snapshot reference; it does not itself send a message, wake the target Bot, or expose private reasoning and tool activity.
+Indirectly, through Host-owned providers, which own the file guidance and session snapshot preparation this package's reference selection delegates to them. Bot identity and Bot-specific tool access remain owned by the Bot source and Host Bot services.
 
 #### KV Cache effect
 

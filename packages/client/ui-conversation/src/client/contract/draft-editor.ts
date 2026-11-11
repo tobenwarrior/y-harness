@@ -1,5 +1,6 @@
 /** Editor-facing ranges, reference projections, and the composer keyboard interface. */
 import type { LexicalEditor } from 'lexical'
+import type { ReferenceIconKind } from '@yharness/client-ui-primitives'
 import type { InputState } from './input.ts'
 import type { InputSubmitMode } from './composer-submission.ts'
 
@@ -15,7 +16,7 @@ export interface ReferenceInsert {
   readonly source: string
   readonly ref: string
   readonly label: string
-  readonly appearance?: 'session' | 'file' | 'folder'
+  readonly appearance?: ReferenceIconKind
   readonly clipboardText: string
 }
 

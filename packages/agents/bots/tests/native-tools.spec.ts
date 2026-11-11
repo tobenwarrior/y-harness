@@ -1024,6 +1024,8 @@ describe('native Bot actions', () => {
       'list_bot_memory', 'remember_bot_memory', 'forget_bot_memory',
       'create_bot', 'edit_bot_profile',
     ])
+    expect(tools.find(tool => tool.name === 'inspect_bot')?.description).toContain('dsh-bot:<bot-id>')
+    expect(tools.find(tool => tool.name === 'send_bot_message')?.description).toContain('never sends a message')
     const send = tools.find(tool => tool.name === 'send_bot_message')
     if (send === undefined) throw new Error('send_bot_message was not registered')
     await expect(send.execute({ targetBotId: 'bot-beta', text: 'hello' }, context())).resolves.toMatchObject({ success: true })

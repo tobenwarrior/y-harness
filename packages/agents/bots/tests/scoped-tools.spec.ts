@@ -134,10 +134,17 @@ describe('scoped Bot collaboration tools', () => {
   it('registers roster tools in one Bot scope and keeps messaging approval-gated', async () => {
     const h = await harness()
     try {
-      expect(h.ctx.tools.schemas(h.agent).map(tool => tool.name)).toEqual([
+      const schemas = h.ctx.tools.schemas(h.agent)
+      expect(schemas.map(tool => tool.name)).toEqual([
         'list_bots', 'inspect_bot', 'send_bot_message',
         'list_bot_memory', 'remember_bot_memory', 'forget_bot_memory',
       ])
+      expect(schemas.find(tool => tool.name === 'inspect_bot')).toMatchObject({
+        description: expect.stringContaining('dsh-bot:<bot-id>'),
+      })
+      expect(schemas.find(tool => tool.name === 'send_bot_message')).toMatchObject({
+        description: expect.stringContaining('never sends a message'),
+      })
       await expect(execute(h.ctx, h.agent, 'list_bots', {})).resolves.toMatchObject({ isError: false })
       expect(JSON.parse(text(await execute(h.ctx, h.agent, 'list_bots', {})))).toEqual([
         { id: 'bot-beta', name: 'Beta', availability: 'idle', state: 'active' },

@@ -7,13 +7,27 @@
  * projection (trigger scanning and TokenSpan coordinates) counts every chip
  * as one U+FFFC instead; see projection.ts.
  */
-import type { JSX } from 'react'
+import type { ComponentType, JSX } from 'react'
 import type {
-  EditorConfig, LexicalNode, NodeKey, SerializedLexicalNode, Spread,
+  EditorConfig, LexicalEditor, LexicalNode, NodeKey, SerializedLexicalNode, Spread,
 } from 'lexical'
 import { DecoratorNode } from 'lexical'
+import type { InlineReferenceIconProps } from '@yharness/client-ui-primitives'
 import type { ReferenceInsert } from '../../contract/draft-editor.ts'
 import { ReferenceChip } from './ReferenceChip.tsx'
+
+/** Look up the inline icon component by its registered source name. */
+export type ResolveReferenceIcon = (source: string) => ComponentType<InlineReferenceIconProps> | undefined
+const editorIcons = new WeakMap<LexicalEditor, ResolveReferenceIcon>()
+
+/**
+ * Bind source-owned icon lookup to this editor and its restored nodes.
+ * @param editor - composer editor.
+ * @param resolve - lookup by reference source.
+ */
+export function bindReferenceIcons(editor: LexicalEditor, resolve: ResolveReferenceIcon): void {
+  editorIcons.set(editor, resolve)
+}
 
 /** JSON form of one chip (Lexical node serialization contract). */
 export type SerializedReferenceChipNode = Spread<{
@@ -183,13 +197,18 @@ export class ReferenceChipNode extends DecoratorNode<JSX.Element> {
     return this.getLatest().__appearance
   }
 
-  /** React face rendered into the host element by the decorator portal. */
-  override decorate(): JSX.Element {
+  /**
+   * @param editor - editor that owns the reference.
+   * @returns the chip rendered into the decorator portal.
+   */
+  override decorate(editor: LexicalEditor): JSX.Element {
+    const Icon = editorIcons.get(editor)?.(this.__source)
     return (
       <ReferenceChip
         label={this.__label}
         appearance={this.__appearance}
         invalid={this.__invalid}
+        icon={Icon === undefined ? undefined : <Icon reference={this.__ref} label={this.__label} />}
       />
     )
   }
