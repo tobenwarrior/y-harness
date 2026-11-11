@@ -44,3 +44,7 @@
      a font-relative amount, so it holds across the font axis. */
   vertical-align: -0.125em;
 }
+
+.refAvatar {
+  display: inline-block;
+}

@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 import type { PendingSubmission } from '@yharness/api-session-controller/client'
 import type { MessageImageSource } from '@yharness/client-ui-conversation/client'
 import { fileExtension, FileTypeIcon, fileSizeText, JsonBlock, projectUserText, StateDot, TextShimmer } from '@yharness/client-ui-primitives'
+import type { UserTextReferences } from '@yharness/client-ui-primitives'
 import type { ChatNodeOwnerProps, ChatNodeViewProps, ChatViewSlotProps } from '../contract/slots.ts'
 import type { ModelRetryNode, TurnErrorNode, UserMessageNode } from '../contract/snapshot.ts'
 import { CompactionItem } from './CompactionItem.tsx'
@@ -177,7 +178,7 @@ function UserStyleBubble({
   skillNames?: readonly string[]
   /** Local submission-echo attachments replacing the content-derived attachment sequence. */
   previewAttachments?: readonly PresentedAttachment[]
-  references?: Pick<ChatNodeOwnerProps, 'openFile' | 'openSkill'>
+  references?: UserTextReferences
   t: ChatViewSlotProps['t']
 }): ReactNode {
   const { text, attachments: contentAttachments, rest } = contentParts(content)
@@ -239,15 +240,17 @@ function UserStyleBubble({
  * @param props - Pending message content and conversation translator.
  * @returns the pending steering bubble.
  */
-export function PendingSteeringBubble({ content, renderMessageImages, t }: {
+export function PendingSteeringBubble({ content, renderMessageImages, botIcon, t }: {
   content: readonly unknown[]
   renderMessageImages: ChatNodeOwnerProps['renderMessageImages']
+  botIcon?: UserTextReferences['botIcon']
   t: ChatViewSlotProps['t']
 }): ReactNode {
   return (
     <UserStyleBubble
       content={content}
       renderMessageImages={renderMessageImages}
+      references={{ botIcon }}
       pending
       t={t}
       actions={text => (
@@ -270,9 +273,10 @@ export function PendingSteeringBubble({ content, renderMessageImages, t }: {
  * @param props - the session snapshot's pending submission and render seats.
  * @returns the echoed user bubble.
  */
-export function PendingSubmissionBubble({ submission, renderMessageImages, t }: {
+export function PendingSubmissionBubble({ submission, renderMessageImages, botIcon, t }: {
   submission: PendingSubmission
   renderMessageImages: ChatNodeOwnerProps['renderMessageImages']
+  botIcon?: UserTextReferences['botIcon']
   t: ChatViewSlotProps['t']
 }): ReactNode {
   const content = useMemo(
@@ -300,6 +304,7 @@ export function PendingSubmissionBubble({ submission, renderMessageImages, t }: 
       content={content}
       previewAttachments={previewAttachments}
       renderMessageImages={renderMessageImages}
+      references={{ botIcon }}
       pending={submission.placement === 'steering'}
       echo
       t={t}
@@ -318,13 +323,13 @@ export function PendingSubmissionBubble({ submission, renderMessageImages, t }: 
 
 /** User and admitted-steering keyed Chat renderer. */
 export const UserMessageNodeView = memo(function UserMessageNodeView({
-  node, renderMessageImages, openFile, openSkill, t,
+  node, renderMessageImages, openFile, openSkill, botIcon, t,
 }: ChatNodeViewProps<'user' | 'steering'>) {
   const data = node.data
   return (
     <UserStyleBubble
       content={data.content}
-      references={{ openFile, openSkill }}
+      references={{ openFile, openSkill, botIcon }}
       renderMessageImages={renderMessageImages}
       {...data.referenceLabels === undefined ? {} : { referenceLabels: data.referenceLabels }}
       {...data.skillNames === undefined ? {} : { skillNames: data.skillNames }}

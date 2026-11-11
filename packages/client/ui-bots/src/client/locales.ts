@@ -601,6 +601,8 @@ export const en = {
   'status.offline': 'Offline',
   unread: '{count} new',
   computerLabel: 'Computer',
+  botMentionSection: 'Bots',
+  botMentionLabel: 'Bot',
   macComputerTitle: 'This Mac',
   macComputerSetupTitle: 'Let this bot use your Mac',
   macComputerSetupDescription: 'Set up two macOS permissions to share your primary display and let this bot click, scroll, and type.',

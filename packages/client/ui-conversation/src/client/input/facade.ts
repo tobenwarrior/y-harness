@@ -26,6 +26,7 @@ import type { InputSubmitMode, MessageSubmission, MessageSubmissionState } from 
 import { SubmitMachine } from './machine.ts'
 import { resolveDraftInput, snapshotDraft } from '../draft.ts'
 import { DraftEditorRuntime } from './editor/runtime.ts'
+import type { ResolveReferenceIcon } from './editor/chip-node.tsx'
 import { GhostPredictionController, NO_FOLLOW_UP_PREDICTION } from './editor/ghost-prediction.ts'
 import type { FollowUpPredictionProvider } from '../../follow-up-contract.ts'
 import type { EditorProjection } from './editor/projection.ts'
@@ -54,6 +55,8 @@ export interface SessionInputDeps {
   messageSubmitted?: (submission: MessageSubmission) => void
   /** Enter adjudication face resolver; absent/undefined answer = every '/' line falls to the default sink. */
   inputTriggers?: (() => InputTriggerController | undefined) | undefined
+  /** Resolve an inline icon from the registered reference source. */
+  referenceIcon?: ResolveReferenceIcon
   /** PopupSelect shell face resolver (dismissal on submit lock / escape). */
   popup?: (() => PopupDismissFace | undefined) | undefined
   /** Agent Inbox projection; its next-turn list is overlaid onto InputState.queue. */
@@ -181,6 +184,7 @@ export class SessionInputShell implements SessionInput {
       onUpdate: () => { this.onEditorUpdate() },
       openReference: (source, reference) =>
         this.deps.inputTriggers?.()?.openReference(source, reference) ?? false,
+      referenceIcon: deps.referenceIcon,
       activeClaimToken: () => this.activeClaimToken(),
       lexicon: () => this.lexicon.getSnapshot(),
       resolveLexicon: () => this.deps.inputTriggers?.()?.lexicon,
