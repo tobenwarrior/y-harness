@@ -348,7 +348,7 @@ describe('CI workflow', () => {
     expect(aggregate.needs).not.toContain('windows-observational')
     expect(aggregate.needs).not.toContain('serial-windows')
 
-    // Linux failover is a separate switch: the three enterprise Linux workers
+    // Linux failover is a separate switch: the three Linux workers
     // and the verdict job resolve their pool through DSH_CI_FAILOVER_LINUX,
     // never the Windows switch.
     for (const [jobName, job] of [['node-24', node24], ['node-24-coverage', node24Coverage], ['node-24-consumers', node24Consumers]] as const) {
@@ -735,8 +735,8 @@ describe('Fork CI configuration', () => {
     const workflow = loadWorkflow('.github/workflows/ci.yml')
     for (const [name, hosted] of [
       ['node-24', 'ubuntu-24.04'],
-      ['node-24-coverage', 'ubuntu-24.04'],
-      ['node-24-consumers', 'ubuntu-24.04'],
+      ['node-24-coverage', 'ubuntu-latest'],
+      ['node-24-consumers', 'ubuntu-latest'],
       ['windows-build', 'windows-2025'],
       ['windows-coverage', 'windows-2025'],
       ['windows-native-tests', 'windows-2025'],
