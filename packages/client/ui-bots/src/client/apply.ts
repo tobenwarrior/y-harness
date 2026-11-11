@@ -8,6 +8,7 @@ import type {} from '@yharness/client-ui-sidebar/client'
 import type {} from '@yharness/client-ui-conversation/client'
 import type {} from '@yharness/client-locale/client'
 import type { InputTriggerSource } from '@yharness/client-ui-input-trigger/client'
+import type { BotAvatar } from '@yharness/bots/client'
 import { createSnapshotStore } from '@yharness/client-store'
 import type { MainPanelId } from '@yharness/client-ui-layout/client'
 import { BotWorkspaceController } from './controller.ts'
@@ -17,6 +18,7 @@ import { createSharedBotsClient } from './shared-client.ts'
 import { createComputerAvailability } from './computer-availability.ts'
 import { createComputerClient } from './computer-client.ts'
 import { ComputerGlyph } from './ComputerAction.tsx'
+import { createBotReferenceSource } from './bot-reference-source.ts'
 
 /** Stable main-panel identity shared by the sidebar entry and main occupant. */
 export const PANEL_ID = 'bots' as MainPanelId
@@ -46,7 +48,20 @@ export function apply(ctx: Context): void {
   const computer = createComputerClient()
   const computerAvailability = createComputerAvailability(computer)
   const computerTarget = createSnapshotStore<string | null>(null)
+  const rosterReady = controller.load()
   ctx.inject(['inputTriggers'], (scope) => {
+    const workspace = controller.face().hooks.workspace
+    const loadAvatar = (botId: string, avatar: BotAvatar): Promise<string> =>
+      controller.face().loadAvatar(botId, avatar)
+    const botSource = createBotReferenceSource({
+      workspace,
+      loadAvatar,
+      section: () => scope.locale.bind('bots')('botMentionSection'),
+      botLabel: () => scope.locale.bind('bots')('botMentionLabel'),
+      ready: rosterReady,
+    })
+    scope.effect(() => scope.inputTriggers.registerSource(botSource), 'ui-bots: Bot mention')
+
     const availableFor = (sessionId: string): boolean => {
       const availability = computerAvailability.source.getSnapshot()
       return (availability === 'available' || availability === 'mac') && controller.face().reference()?.sessionId === sessionId
@@ -54,7 +69,7 @@ export function apply(ctx: Context): void {
     const source: InputTriggerSource = {
       trigger: '@',
       name: 'computer',
-      order: -1,
+      order: -2,
       showGroupTitle: false,
       async candidates({ sessionId }, { query, quoted, drilled }) {
         if (quoted || drilled || !'computer'.startsWith(query.trim().toLowerCase()) || !availableFor(sessionId)) return []
@@ -114,7 +129,7 @@ export function apply(ctx: Context): void {
       void controller.load()
     })
     const disposeScheduleChanged = ctx.remote.$on('schedule/changed', () => { controller.bumpRoutineRevision() })
-    void controller.load()
+    void rosterReady
     return () => {
       disposeChanged()
       disposeScheduleChanged()

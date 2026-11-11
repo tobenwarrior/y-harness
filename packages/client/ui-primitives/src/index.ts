@@ -51,8 +51,9 @@ export {
   PermissionIconReadOnlyMedium, PermissionIconReadOnlyRegular,
   PermissionIconWorkspaceWriteMedium, PermissionIconWorkspaceWriteRegular,
 } from './PermissionIcon.tsx'
-export { ReferenceIconMedium, ReferenceIconRegular } from './ReferenceIcon.tsx'
-export type { ReferenceIconKind, ReferenceIconProps } from './ReferenceIcon.tsx'
+export { bindInlineReferenceIcon, ReferenceIconMedium, ReferenceIconRegular } from './ReferenceIcon.tsx'
+export type { InlineReferenceIconProps, ReferenceIconKind, ReferenceIconProps } from './ReferenceIcon.tsx'
+export { formatBotMention, parseBotMention } from './bot-mention.ts'
 export { LinkIconMedium, LinkIconRegular, classifyLinkPath } from './LinkIcon.tsx'
 export type { LinkIconKind, LinkIconProps } from './LinkIcon.tsx'
 export { connectedAppGlyph } from './SiteGlyph.tsx'

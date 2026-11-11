@@ -5,6 +5,7 @@
 }
 
 .small { width: 34px; height: 34px; }
+.tiny { width: 18px; height: 18px; }
 .large { width: 48px; height: 48px; }
 
 .avatar[data-accent='blue'] { --avatar-accent: var(--yh-alias-state-business-primary); }

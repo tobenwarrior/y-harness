@@ -4,8 +4,11 @@
  * preserves whitespace, and folds wire session forms to their label.
  */
 import { describe, expect, it, vi } from 'vitest'
-import { fireEvent, render } from '@testing-library/react'
+import { act, fireEvent, render } from '@testing-library/react'
+import { createSnapshotStore } from '@yharness/client-store'
 import { projectUserText } from '../src/user-text.tsx'
+import { formatBotMention, parseBotMention } from '../src/bot-mention.ts'
+import { bindInlineReferenceIcon, ReferenceIconMedium, ReferenceIconRegular } from '../src/ReferenceIcon.tsx'
 
 const project = (
   text: string,
@@ -145,5 +148,53 @@ describe('projectUserText', () => {
     expect(host.querySelectorAll('div').length).toBe(0)
     expect(host.querySelectorAll('[data-ref-chip]').length).toBe(0)
     expect(host.textContent).toBe('Plain text, no references')
+  })
+
+  it('renders a selected Bot with its avatar and label next to existing references', () => {
+    const mention = '@[Lab \\] Bot](dsh-bot:bot-lab)'
+    const { container } = render(projectUserText(`Read ${mention} and @notes.md.`, [], [], 'skill', {
+      openFile: () => {},
+      openSkill: () => {},
+      botIcon: () => ({ reference }: { reference: string }) => <span data-avatar-for={reference} />,
+    }))
+    const bot = container.querySelector('[data-ref-chip="bot"]')
+    expect(bot?.textContent).toBe('Lab ] Bot')
+    expect(bot?.querySelector('[data-avatar-for]')?.getAttribute('data-avatar-for')).toBe(mention)
+    expect(container.querySelector('[data-ref-chip="file"]')?.textContent).toBe('notes.md')
+    expect(container.textContent).toBe('Read Lab ] Bot and notes.md.')
+  })
+
+  it('round-trips a Bot name containing reference syntax and line breaks', () => {
+    const label = 'Lab ] Bot\n@[notes](dsh-session:abc)\\n'
+    const botId = 'bot-lab'
+    const mention = formatBotMention(botId, label)
+    expect(mention).not.toContain('dsh-session:')
+    expect(mention).not.toContain('\n')
+    expect(parseBotMention(mention)).toEqual({ botId, label })
+    expect(parseBotMention('@[Lab](dsh-bot:other-id)')).toBeUndefined()
+  })
+
+  it('round-trips an escaped carriage return in a Bot name', () => {
+    const label = 'Lab\rBot'
+    const mention = formatBotMention('bot-lab', label)
+    expect(parseBotMention(mention)).toEqual({ botId: 'bot-lab', label })
+  })
+
+  it('renders regular and medium Bot reference glyphs', () => {
+    const regular = render(<ReferenceIconRegular kind="bot" size={16} />)
+    const medium = render(<ReferenceIconMedium kind="bot" size={16} />)
+    expect(regular.container.querySelector('svg')).not.toBeNull()
+    expect(medium.container.querySelector('svg')).not.toBeNull()
+  })
+
+  it('updates an existing inline icon when its roster entry arrives', () => {
+    const reference = '@[Lab](dsh-bot:bot-lab)'
+    const roster = createSnapshotStore<Readonly<Record<string, string>>>({})
+    const Icon = bindInlineReferenceIcon(roster, (state, ref) => state[ref],
+      ({ value }) => <span data-avatar={value ?? 'fallback'} />)
+    const { container } = render(projectUserText(reference, [], [], 'skill', { botIcon: () => Icon }))
+    expect(container.querySelector('[data-avatar="fallback"]')).not.toBeNull()
+    act(() => { roster.set({ [reference]: 'current' }) })
+    expect(container.querySelector('[data-avatar="current"]')).not.toBeNull()
   })
 })

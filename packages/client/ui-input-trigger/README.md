@@ -31,6 +31,8 @@ The composer surface keeps focus while the menu is open: rows pick on mousedown,
 
 A source may implement `openReference(session, reference)` to open a draft reference without submitting it. Acceptance may precede asynchronous catalog loading. Chips route by source name; editable tokens route through the current source lexicon. Returning `false`, a missing source, or a disposed controller leaves the editor gesture unchanged.
 
+A source may supply a `referenceIcon` for its inline chips. The icon receives the same reference and label as the restored draft.
+
 -----
 
 <a id="understand-the-implementation"></a>
