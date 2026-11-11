@@ -92,6 +92,37 @@ The Host accepts only the exported `BOT_IDENTITIES` and `BOT_ACCENTS` values, so
 
 Owner-imported Grok chat archives retain source order, roles, known timestamps, and available authorship. The owner uses `bots.importGrokHistory` to store an archive on an existing Bot. A repeat import is idempotent. Updates retain every recovered record and its known fields, and can add records or fill previously absent metadata. Imports write only the archive. The conversation header reads it through `bots.readGrokHistory`.
 
+The Web owner can download verified files from **Imported Grok chat** when the Host has a private attachment vault. The Host checks the exact Bot, source, sequence, filename, and timestamp against the stored v2 archive, then verifies the SHA-256 digest when displaying availability and when opening the download. Missing or altered files stay unavailable. Vault metadata and bytes stay outside the archive and model-facing history.
+
+#### Connect a private attachment vault
+
+1. Create a directory outside the public web root and Git checkout. Give the Host process read access. Publish each reviewed file under its lowercase SHA-256 digest as a flat regular file, with a limit of 24 MiB per file. Treat these objects as immutable. Restore a missing object by atomically placing a verified copy at the digest name.
+2. Write `manifest.json` in that directory. It accepts up to 2 MiB and contains one entry per verified archive position. Use `primary` for the primary source or the exact supplemental source id. Copy the archive attachment's filename and timestamp exactly, using JSON `null` for an unknown time. Omit entries whose bytes are unavailable.
+
+   ```json
+   {
+     "version": 1,
+     "entries": [{
+       "botId": "bot-example",
+       "sourceId": "primary",
+       "sourceSequence": 12,
+       "filename": "example.txt",
+       "timestampMs": 1700000000000,
+       "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+     }]
+   }
+   ```
+
+3. Set `DSH_GROK_HISTORY_ATTACHMENT_VAULT` to the absolute directory in the Host process environment. Add the following row to a private Web overlay and pass it with `dsh web --patch`. If the deployment already configures `agent-bots`, add the setting to that row and retain its other settings.
+
+   ```yaml
+   - id: agent-bots
+     config:
+       grokHistoryAttachmentVault: !!js process.env.DSH_GROK_HISTORY_ATTACHMENT_VAULT
+   ```
+
+4. Restart the Host after updating the manifest. An invalid configured manifest prevents the Bot service from starting. Open **Imported Grok chat** in the matching Bot to verify the download. Reopening the Bot view or reloading the page checks the current files again.
+
 Version-one imports accept up to 512 KiB. Version-two imports accept up to 2 MiB and support supplemental sources with independent sequence numbers, unknown timestamps, and incomplete records. The import returns the total record count across the original and supplemental sources.
 
 The scoped and native Codex tool `read_own_grok_history` is available during a direct owner turn in the Bot’s own Session. It accepts `limit` from 1 through 10 and an exclusive `before` source-sequence cursor. A version-two page lists any supplemental sources by id and label. Pass a listed id in `source` to page through that source, or omit it for the original archive. Each page includes the selected source’s `firstCachedSequence`, `totalMessages`, and bounded chronological excerpts. Use `nextBefore` to request an older page. The tool quotes transcript text and attribution as untrusted data.

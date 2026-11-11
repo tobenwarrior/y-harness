@@ -871,6 +871,19 @@ export interface BotGrokHistoryArchive {
   readonly sources?: readonly BotGrokHistorySource[]
 }
 
+/** Position of an attachment in one imported Grok source. */
+export interface BotGrokHistoryAttachmentPosition {
+  /** Supplemental source id or the reserved id `primary`. */
+  readonly sourceId: string
+  readonly sourceSequence: number
+}
+
+/** Owner-only archive view with availability computed from the private file vault. */
+export interface BotGrokHistoryView extends BotGrokHistoryArchive {
+  /** Exact archive positions with verified downloadable bytes. */
+  readonly availableAttachments?: readonly BotGrokHistoryAttachmentPosition[]
+}
+
 /** Owner request to recover chat history for an existing Bot. */
 export interface BotGrokHistoryRequest {
   readonly botId: BotId

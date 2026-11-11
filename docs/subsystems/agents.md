@@ -312,11 +312,12 @@ collaborationFor(agent: Pick<Agent, 'id'>): Promise<BotCollaborationClient>
 @Remote('routineHistory') async routineHistory(request: BotRoutineHistoryRequest): Promise<BotRoutineHistoryValue>
 
 /**
- * Read a private recovered archive without activating the Bot Session.
+ * Read a private recovered archive and its verified attachment positions without activating the Bot Session.
  * @param request - Bot identity.
+ * @param signal - Cancellation for attachment verification.
  * @returns Recovered history or null if the Bot has no archive.
  */
-@Remote('readGrokHistory') async readGrokHistory(request: BotGrokHistoryRequest): Promise<BotGrokHistoryArchive | null>
+@Remote('readGrokHistory') async readGrokHistory(request: BotGrokHistoryRequest, signal?: AbortSignal): Promise<BotGrokHistoryView | null>
 
 /**
  * Store a reviewed transcript without delivering it to the Bot or changing its Session.

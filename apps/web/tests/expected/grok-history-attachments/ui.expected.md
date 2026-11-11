@@ -1,0 +1,24 @@
+- dialog "Imported Grok chat":
+  - heading "Imported Grok chat" [level=2]
+  - button "Close"
+  - paragraph: Read-only messages recovered from Grok Bot.
+  - list:
+    - listitem:
+      - strong: You
+      - text: Unknown time
+      - paragraph: Recovered question
+    - listitem:
+      - strong: Grok
+      - time: Jan 1, 1970, 8:00 AM
+      - paragraph: Recovered answer
+    - listitem:
+      - strong: attachment
+      - time: Jan 1, 1970, 8:00 AM
+      - link "Download research-notes.txt":
+        - /url: /api/bots/grokHistory/downloadAttachment?botId=bot-grok-downloads&sourceId=primary&sourceSequence=2
+      - paragraph: research-notes.txt
+    - listitem:
+      - strong: attachment
+      - time: Jan 1, 1970, 8:00 AM
+      - paragraph: oversized-synthetic.bin
+  - button "Close"
