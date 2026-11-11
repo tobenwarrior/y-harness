@@ -296,6 +296,16 @@ vi.mock('../src/policy-test-auth.ts', () => ({ DesktopPolicyTestAuth: class {
   readonly request: typeof fetch = (input, init) => fetch(input, init)
 } }))
 
+// Keep startup orchestration independent of the macOS-only FFI adapter.
+const nativeDesktop = vi.hoisted(() => ({
+  permissions: vi.fn(() => ({ screenRecording: false, accessibility: false })),
+  openSettings: vi.fn(async () => {}),
+  confirm: vi.fn(async () => false),
+  capture: vi.fn(async () => ({ jpeg: '', width: 1, height: 1 })),
+  input: vi.fn(),
+}))
+vi.mock('../src/mac-desktop.ts', () => ({ macDesktop: () => nativeDesktop }))
+
 vi.mock('electron', () => ({
   app: harness.app,
   BrowserWindow: harness.FakeWindow,

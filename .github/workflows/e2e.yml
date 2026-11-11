@@ -16,8 +16,9 @@ name: E2E (real DeepSeek API)
 # secret would otherwise make the self-skipping suite report a false green). A
 # job skipped by a job-level `if:` reports as a SUCCESSFUL check, so this
 # workflow is safe to use as a required status check if desired.
-# Fork repositories opt in with DSH_REAL_API_TESTS_ENABLED=true after configuring
-# their own key; the upstream repository always requires its credential.
+# Repositories opt in with DSH_REAL_API_TESTS_ENABLED=true after configuring
+# DEEPSEEK_API_KEY_EXTERNAL. The default keeps this credential-bearing lane
+# disabled while the keyless CI remains unconditional.
 #
 # SECURITY — NEVER change this trigger to `pull_request_target`. `pull_request`
 # checks out and runs the PR's HEAD code WITHOUT secrets for forks, which is what
@@ -56,15 +57,14 @@ env:
 jobs:
   configuration:
     if: >-
-      github.repository != 'tobenwarrior/y-harness'
-      && vars.DSH_REAL_API_TESTS_ENABLED != 'true'
+      vars.DSH_REAL_API_TESTS_ENABLED != 'true'
     runs-on: ubuntu-latest
     name: real API tests disabled
     steps:
       - name: Report skipped real API validation
         run: |
-          echo 'Real DeepSeek API validation is skipped in this fork.' >> "$GITHUB_STEP_SUMMARY"
-          echo 'Configure DEEPSEEK_API_KEY_EXTERNAL and set DSH_REAL_API_TESTS_ENABLED=true to enable it.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Real DeepSeek API validation is disabled; keyless CI remains enabled.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Set DSH_REAL_API_TESTS_ENABLED=true and configure DEEPSEEK_API_KEY_EXTERNAL to enable it.' >> "$GITHUB_STEP_SUMMARY"
 
   e2e:
     runs-on: >-
@@ -72,10 +72,11 @@ jobs:
           && 'blacksmith-4vcpu-ubuntu-2404' || 'ubuntu-latest' }}
     name: e2e
     # Enabled repositories validate trusted events. Cross-repo and Dependabot
-    # PRs lack secrets and would otherwise hard-fail the preflight.
+    # PRs lack secrets and would otherwise hard-fail the preflight. The
+    # repository variable is an explicit opt-in because this lane consumes a
+    # real DeepSeek credential.
     if: >-
-      (github.repository == 'tobenwarrior/y-harness'
-       || vars.DSH_REAL_API_TESTS_ENABLED == 'true')
+      vars.DSH_REAL_API_TESTS_ENABLED == 'true'
       && (github.event_name != 'pull_request'
           || (github.event.pull_request.head.repo.full_name == github.repository
               && github.event.pull_request.user.login != 'dependabot[bot]'))

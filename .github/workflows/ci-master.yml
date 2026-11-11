@@ -133,8 +133,7 @@ jobs:
   serial-linux-selfhosted:
     if: >-
       github.event_name == 'push' && github.ref == 'refs/heads/master'
-      && (github.repository == 'tobenwarrior/y-harness'
-          || vars.DSH_CI_STANDBY_LINUX_ENABLED == 'true')
+      && vars.DSH_CI_STANDBY_LINUX_ENABLED == 'true'
     name: serial / linux (self-hosted standby)
     runs-on: [self-hosted, linux, x64, vm-backup]
     steps:
@@ -230,8 +229,7 @@ jobs:
   serial-windows:
     if: >-
       github.event_name == 'push' && github.ref == 'refs/heads/master'
-      && (github.repository == 'tobenwarrior/y-harness'
-          || vars.DSH_CI_STANDBY_WINDOWS_ENABLED == 'true')
+      && vars.DSH_CI_STANDBY_WINDOWS_ENABLED == 'true'
     name: serial / windows (self-hosted standby)
     runs-on: [self-hosted, dsh-win-ci, windows]
     timeout-minutes: 120
@@ -287,8 +285,7 @@ jobs:
   larger-runner-benchmark:
     if: >-
       github.event_name == 'workflow_dispatch' && inputs.suite == 'larger-runner-benchmark'
-      && (github.repository == 'tobenwarrior/y-harness'
-          || vars.DSH_CI_RUNNER_BENCHMARKS_ENABLED == 'true')
+      && vars.DSH_CI_RUNNER_BENCHMARKS_ENABLED == 'true'
     # Default measures the repository's own fleet tiers; under the matching
     # platform's blacksmith failover value the tiers Blacksmith offers (up to
     # 32 vCPU) move onto their Blacksmith equivalents, while the 64/96-core
@@ -401,8 +398,7 @@ jobs:
   consolidated-runner-benchmark:
     if: >-
       github.event_name == 'workflow_dispatch' && inputs.suite == 'consolidated-runner-benchmark'
-      && (github.repository == 'tobenwarrior/y-harness'
-          || vars.DSH_CI_RUNNER_BENCHMARKS_ENABLED == 'true')
+      && vars.DSH_CI_RUNNER_BENCHMARKS_ENABLED == 'true'
     # Default measures the repository's own fleet tiers; under the matching
     # platform's blacksmith failover value the tiers Blacksmith offers (up to
     # 32 vCPU) move onto their Blacksmith equivalents, while the 64/96-core
