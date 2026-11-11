@@ -4,7 +4,7 @@ import type { Context } from '@yharness/cordis'
 import { AttachmentId } from '@yharness/attachment'
 import { MessageId } from '@yharness/llm'
 import { SessionId } from '@yharness/session'
-import { BotGroupId, BotGroupMessageId } from '../../../../agents/bots/src/group-chat.ts'
+import { BotGroupId, BotGroupMessageId } from '@yharness/bots'
 import type {} from '@yharness/session-persistence'
 import { seedBotPrerequisites, inject as botPrerequisiteInject } from './bot-prereqs.ts'
 

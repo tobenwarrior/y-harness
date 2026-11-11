@@ -7,10 +7,8 @@ import type { SessionCreateRequest } from '@yharness/api-session-controller'
 import { createUserMessage } from '@yharness/llm'
 import { SessionId } from '@yharness/session'
 import type { WebSearchProvider } from '@yharness/web'
-import { BotId } from '@yharness/bots/types'
-import { botDomain } from '@yharness/bots/src/storage.ts'
 import { apply as applyWebTools } from '@yharness/tool-web'
-import { BotService, SHARED_BOT_AGENT_PRESET, type SharedBotHost } from '@yharness/bots'
+import { BotId, BotService, SHARED_BOT_AGENT_PRESET, botDomain, type SharedBotHost } from '@yharness/bots'
 
 export const name = 'snapshot-shared-bot-web-search-prereqs'
 export const inject = ['agentDefaultModel', 'agents', 'sessions', 'storageDomain', 'web']
