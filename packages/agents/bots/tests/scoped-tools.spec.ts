@@ -14,7 +14,7 @@ import {
 import { BotMemoryId } from '../src/memory.ts'
 import type { BotMemoryClient } from '../src/memory.ts'
 import { BotGroupId, BotGroupMessageId } from '../src/group-chat.ts'
-import type { BotGroupToolHost } from '../src/scoped-tools.ts'
+import type { BotGrokHistoryToolHost, BotGroupToolHost } from '../src/scoped-tools.ts'
 import { BotId } from '../src/types.ts'
 import { installBotCollaborationTools } from '../src/scoped-tools.ts'
 import type { BotGrokHistoryPage } from '../src/grok-history.ts'
@@ -72,18 +72,16 @@ async function harness(withManagement = false, withApproval = false, withGroups 
     source: 'grok-bot', version: 1, firstCachedSequence: 4, totalMessages: 2, nextBefore: 8,
     messages: [{ sourceSequence: 8, role: 'assistant', text: 'A'.repeat(2_000), timestampMs: 2_000 }],
   }
+  const historyRead = vi.fn<BotGrokHistoryToolHost['read']>(async () => history)
   const dispose = installBotCollaborationTools(
     agent.ctx,
     async () => bound,
     withManagement ? manage : undefined,
     withGroups ? async () => groupTools : undefined,
     undefined,
-    withHistory ? { read: async (request) => {
-      expect(request).toEqual({ limit: 1 })
-      return history
-    } } : undefined,
+    withHistory ? { read: historyRead } : undefined,
   )
-  return { ctx, agent, bound, dispose, manage, groupTools, history }
+  return { ctx, agent, bound, dispose, manage, groupTools, historyRead }
 }
 
 async function execute(ctx: Context, agent: Agent, name: string, arguments_: unknown, callId = `bot-call-${name}`) {
@@ -111,6 +109,11 @@ describe('scoped Bot collaboration tools', () => {
       })
       expect(value.messages[0]?.text).toContain('[Untrusted Bot transcript;')
       expect(value.messages[0]?.text.length).toBeLessThan(1_300)
+      expect(h.historyRead).toHaveBeenCalledWith({ limit: 1 }, expect.any(AbortSignal))
+
+      const selected = await execute(h.ctx, h.agent, 'read_own_grok_history', { limit: 1, source: 'full-export' }, 'bot-history-full')
+      expect(selected.isError).toBe(false)
+      expect(h.historyRead).toHaveBeenLastCalledWith({ limit: 1, source: 'full-export' }, expect.any(AbortSignal))
     } finally {
       h.dispose()
       await h.ctx.fiber.dispose()

@@ -182,14 +182,24 @@
 - dialog "Imported Grok chat":
   - heading "Imported Grok chat" [level=2]
   - button "Close"
-  - paragraph: Recovered messages. Earlier messages were unavailable in the source cache.
+  - paragraph: Some records could not be recovered from this source.
+  - text: History source
+  - combobox "History source":
+    - option "Original recovery" [selected]
+    - option "Recovered supplement"
   - list:
     - listitem:
-      - strong: You
-      - time: Jan 1, 1970, 8:00 AM
+      - strong: Archive owner
+      - text: Unknown time
       - paragraph: Recovered question
     - listitem:
-      - strong: Orbit
+      - strong: Orbit historian
+      - text: Author Original author
       - time: Jan 1, 1970, 8:00 AM
       - paragraph: Recovered answer
+    - listitem:
+      - strong: Archive tool
+      - text: Unknown time
+      - paragraph: Recovered tool record
+      - text: Incomplete source record
   - button "Close"

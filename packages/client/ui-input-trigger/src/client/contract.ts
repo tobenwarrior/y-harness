@@ -16,7 +16,11 @@ export interface InputTriggerServiceContract {
    * @returns effect disposer removing this source.
    */
   registerSource(src: InputTriggerSource): () => void
-  /** @param source - owning trigger source. @returns its inline icon when registered. */
+  /**
+   * Resolve the inline icon for a registered reference source.
+   * @param source - registered source name.
+   * @returns the source's inline icon when available.
+   */
   referenceIcon(source: string): InputTriggerSource['referenceIcon']
   /**
    * Resolve the lazy controller owned by one session scope.

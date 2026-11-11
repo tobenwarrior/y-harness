@@ -11,7 +11,7 @@ import type { BotMemoryClient } from '../src/memory.ts'
 import { BotGroupId, BotGroupMessageId } from '../src/group-chat.ts'
 import type { BotGroupToolHost } from '../src/scoped-tools.ts'
 import { BotId } from '../src/types.ts'
-import { createBotNativeToolProvider, type BotNativeToolContext } from '../src/native-tools.ts'
+import { createBotNativeToolProvider, type BotNativeToolContext, type BotNativeToolHost } from '../src/native-tools.ts'
 import type { BotGrokHistoryPage } from '../src/grok-history.ts'
 import { UNTRUSTED_TRANSCRIPT_NOTICE, UNTRUSTED_TRANSCRIPT_END } from '../src/collaboration.ts'
 
@@ -87,10 +87,7 @@ describe('native Bot actions', () => {
       source: 'grok-bot', version: 1, firstCachedSequence: 4, totalMessages: 2, nextBefore: 8,
       messages: [{ sourceSequence: 8, role: 'assistant', text: 'A'.repeat(2_000), timestampMs: 2_000 }],
     }
-    const history = vi.fn(async (_sessionId: SessionId, request: { readonly limit?: number; readonly before?: number }) => {
-      expect(request).toEqual({ limit: 1 })
-      return archivePage
-    })
+    const history = vi.fn<NonNullable<BotNativeToolHost['grokHistory']>>(async () => archivePage)
     const provider = createBotNativeToolProvider({
       bind: async () => client(), persist: async () => {}, replay: async () => [], grokHistory: history,
     })
@@ -108,6 +105,26 @@ describe('native Bot actions', () => {
     expect(value.messages[0]?.text).toContain(UNTRUSTED_TRANSCRIPT_END)
     expect(value.messages[0]?.text.length).toBeLessThan(1_300)
     expect(history).toHaveBeenCalledWith(SessionId('bot-session-alpha'), { limit: 1 }, expect.any(AbortSignal))
+
+    history.mockResolvedValueOnce({
+      ...archivePage,
+      version: 2,
+      sourceId: 'full-export',
+      sourceLabel: 'Source label',
+      sources: [{ id: 'full-export', label: 'Source label' }],
+      messages: [{ sourceSequence: 8, role: 'assistant', text: 'Recovered text', timestampMs: null, author: 'Source author', fromBot: 'Source bot' }],
+    })
+    const selected = await tool.execute({ limit: 1, source: 'full-export' }, context())
+    expect(selected.success).toBe(true)
+    const recovered = JSON.parse(selected.contentItems[0]?.text ?? '') as BotGrokHistoryPage
+    expect(recovered.sourceId).toBe('full-export')
+    expect(recovered.sourceLabel).toContain(UNTRUSTED_TRANSCRIPT_NOTICE)
+    expect(recovered.sources?.[0]?.label).toContain(UNTRUSTED_TRANSCRIPT_NOTICE)
+    expect(recovered.messages[0]?.author).toContain(UNTRUSTED_TRANSCRIPT_NOTICE)
+    expect(recovered.messages[0]?.fromBot).toContain(UNTRUSTED_TRANSCRIPT_NOTICE)
+    expect(history).toHaveBeenLastCalledWith(SessionId('bot-session-alpha'), { limit: 1, source: 'full-export' }, expect.any(AbortSignal))
+    expect((await tool.execute({ source: 12 }, context())).success).toBe(false)
+    expect(history).toHaveBeenCalledTimes(2)
   })
 
   it('offers approved routine actions bound to the Bot Session', async () => {

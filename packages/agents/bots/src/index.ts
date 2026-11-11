@@ -123,6 +123,8 @@ import { parseGrokImport } from './grok-import.ts'
 import {
   botGrokHistoryDomain,
   decodeGrokHistory,
+  grokHistoryMessageCount,
+  mergeGrokHistoryArchives,
   readGrokHistoryPage as projectGrokHistoryPage,
   type BotGrokHistoryPage,
   type BotGrokHistoryPageResolvedRequest,
@@ -7006,7 +7008,7 @@ export class BotService extends TypertRemoteService {
   /**
    * Store a reviewed transcript without delivering it to the Bot or changing its Session.
    * @param request - Existing Bot and versioned transcript JSON.
-   * @returns The number of recovered messages.
+   * @returns The total number of stored records across the primary and supplemental sources.
    */
   @Remote('importGrokHistory')
   async importGrokHistory(request: BotGrokHistoryImportRequest): Promise<{ readonly messages: number }> {
@@ -7018,20 +7020,19 @@ export class BotService extends TypertRemoteService {
       await this.readOwnedBot(id)
       const archives = (await this.grokHistoryDomain).table('archives')
       const current = archives.get(id)
+      let merged = next
       if (current !== undefined) {
-        const nextBySequence = new Map(next.messages.map(message => [message.sourceSequence, message]))
-        if (next.firstCachedSequence > current.firstCachedSequence || current.messages.some((message) => {
-          const replacement = nextBySequence.get(message.sourceSequence)
-          return replacement?.role !== message.role || replacement.text !== message.text || replacement.timestampMs !== message.timestampMs
-        })) {
-          throw new RemoteError('gateway/conflict', 'This archive would remove or change recovered messages', { botId: id })
-        }
-        if (next.firstCachedSequence === current.firstCachedSequence && next.messages.length === current.messages.length) {
-          return { messages: current.messages.length }
+        try {
+          merged = mergeGrokHistoryArchives(current, next)
+        } catch (error: unknown) {
+          if (error instanceof Error) {
+            throw new RemoteError('gateway/conflict', 'This archive would remove or change recovered messages', { botId: id }, { cause: error })
+          }
+          throw error
         }
       }
-      await archives.put(id, next)
-      return { messages: next.messages.length }
+      if (current === undefined || JSON.stringify(current) !== JSON.stringify(merged)) await archives.put(id, merged)
+      return { messages: grokHistoryMessageCount(merged) }
     })
   }
 

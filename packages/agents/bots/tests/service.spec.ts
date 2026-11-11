@@ -12003,6 +12003,72 @@ describe('durable Bot roster', () => {
     }
   })
 
+  it('retains version-two roles, authors, partial records, and supplemental sources additively', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    let botId!: BotView['id']
+    try {
+      const { bot } = await first.service.create({ name: 'Extended History Bot', cwd: '/tmp' })
+      botId = bot.id
+      await expect(first.service.importGrokHistory({ botId, document: JSON.stringify({
+        source: 'grok-bot', version: 1, firstCachedSequence: 1, messages: [
+          { sourceSequence: 1, role: 'user', text: 'Earlier question', timestampMs: 1000 },
+          { sourceSequence: 2, role: 'assistant', text: 'Earlier answer', timestampMs: 2000 },
+        ],
+      }) })).resolves.toEqual({ messages: 2 })
+
+      const extended = {
+        source: 'grok-bot', version: 2, firstCachedSequence: 0, complete: false,
+        messages: [
+          { sourceSequence: 0, role: 'tool', text: '', timestampMs: null, incomplete: true as const },
+          { sourceSequence: 1, role: 'user', text: 'Earlier question', timestampMs: 1000 },
+          { sourceSequence: 2, role: 'assistant', text: 'Earlier answer', timestampMs: 2000 },
+          { sourceSequence: 3, role: 'agent', text: 'Later answer', timestampMs: null, author: 'Desk Bot' },
+        ],
+        sources: [{
+          id: 'builder', label: 'Bot builder', firstCachedSequence: 0, complete: false,
+          messages: [
+            { sourceSequence: 0, role: 'tool', text: 'Tool output', timestampMs: 3000 },
+            { sourceSequence: 1, role: 'assistant', text: 'Builder answer', timestampMs: null, incomplete: true as const },
+          ],
+        }],
+      }
+      await expect(first.service.importGrokHistory({ botId, document: JSON.stringify(extended) }))
+        .resolves.toEqual({ messages: 6 })
+      await expect(first.service.readGrokHistory({ botId })).resolves.toEqual(extended)
+
+      const enriched = {
+        ...structuredClone(extended),
+        messages: structuredClone(extended.messages).map(message => message.sourceSequence === 1 ? { ...message, author: 'owner' } : message),
+      }
+      await expect(first.service.importGrokHistory({ botId, document: JSON.stringify(enriched) }))
+        .resolves.toEqual({ messages: 6 })
+      const enrichedArchive = await first.service.readGrokHistory({ botId })
+      expect(enrichedArchive?.messages[0]).toMatchObject({ sourceSequence: 0 })
+      expect(enrichedArchive?.messages[1]).toMatchObject({ sourceSequence: 1, author: 'owner' })
+
+      const changedAuthor = {
+        ...structuredClone(enriched),
+        messages: structuredClone(enriched.messages).map(message => message.sourceSequence === 1 ? { ...message, author: 'another owner' } : message),
+      }
+      await expect(first.service.importGrokHistory({ botId, document: JSON.stringify(changedAuthor) }))
+        .rejects.toThrow('would remove or change')
+
+      const sourceRemoved = { ...structuredClone(enriched), sources: undefined }
+      await expect(first.service.importGrokHistory({ botId, document: JSON.stringify(sourceRemoved) }))
+        .rejects.toThrow('would remove or change')
+
+      await expect(first.service.importGrokHistory({ botId, document: JSON.stringify({
+        source: 'grok-bot', version: 1, firstCachedSequence: 1, messages: [
+          { sourceSequence: 1, role: 'user', text: 'Earlier question', timestampMs: 1000 },
+          { sourceSequence: 2, role: 'assistant', text: 'Earlier answer', timestampMs: 2000 },
+        ],
+      }) })).rejects.toThrow('would remove or change')
+    } finally {
+      await close(first.ctx)
+    }
+  })
+
   it('imports Grok memories and paused routines into the existing Bot Session', async () => {
     const pool = new MemoryMediaPool()
     const first = await harness(pool)

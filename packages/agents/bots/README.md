@@ -90,9 +90,11 @@ The Host accepts only the exported `BOT_IDENTITIES` and `BOT_ACCENTS` values, so
 
 ### Imported Grok chat history
 
-Owner-imported Grok chat archives are stored separately from runnable Sessions. Archives retain original message roles, timestamps, and source order. A repeat import is idempotent, and an updated export must preserve every recovered message. The owner uses `bots.importGrokHistory` to attach a version-one archive to an existing Bot. The conversation header reads it through `bots.readGrokHistory`. An archive never starts a turn.
+Owner-imported Grok chat archives retain source order, roles, known timestamps, and available authorship. The owner uses `bots.importGrokHistory` to store an archive on an existing Bot. A repeat import is idempotent. Updates retain every recovered record and its known fields, and can add records or fill previously absent metadata. Imports write only the archive. The conversation header reads it through `bots.readGrokHistory`.
 
-While an owner-local Bot is live, its scoped and native Codex tool surfaces expose `read_own_grok_history` when the Host supports the archive reader. The read-only tool accepts an optional `limit` from 1 through 10 and an exclusive `before` source-sequence cursor, and returns `firstCachedSequence`, `totalMessages`, and bounded chronological excerpts with an optional `nextBefore` cursor. Excerpts are framed as untrusted quoted data. The archive is never injected into a prompt, and peer or shared Sessions cannot select another Bot's archive.
+Version-one imports accept up to 512 KiB. Version-two imports accept up to 2 MiB and support supplemental sources with independent sequence numbers, unknown timestamps, and incomplete records. The import returns the total record count across the original and supplemental sources.
+
+The scoped and native Codex tool `read_own_grok_history` is available during a direct owner turn in the Bot’s own Session. It accepts `limit` from 1 through 10 and an exclusive `before` source-sequence cursor. A version-two page lists any supplemental sources by id and label. Pass a listed id in `source` to page through that source, or omit it for the original archive. Each page includes the selected source’s `firstCachedSequence`, `totalMessages`, and bounded chronological excerpts. Use `nextBefore` to request an older page. The tool quotes transcript text and attribution as untrusted data.
 
 ### Shared Bot policy foundation
 

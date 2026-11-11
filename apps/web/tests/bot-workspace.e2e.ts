@@ -39,10 +39,16 @@ describe('web e2e: Bot workspace retains one Conversation Session per Bot', () =
       name: 'Orbit', identity: 'goal', accent: 'amber', cwd: scaffold.workspaceCwd,
     })).bot
     await scaffold.ctx.bots.importGrokHistory({ botId: secondBot.id, document: JSON.stringify({
-      source: 'grok-bot', version: 1, firstCachedSequence: 4, messages: [
-        { sourceSequence: 4, role: 'user', text: 'Recovered question', timestampMs: 1000 },
-        { sourceSequence: 5, role: 'assistant', text: 'Recovered answer', timestampMs: 2000 },
+      source: 'grok-bot', version: 2, firstCachedSequence: 0, complete: false, messages: [
+        { sourceSequence: 0, role: 'user', author: 'Archive owner', text: 'Recovered question', timestampMs: null },
+        { sourceSequence: 1, role: 'assistant', author: 'Original author', fromBot: 'Orbit historian', text: 'Recovered answer', timestampMs: 2000 },
+        { sourceSequence: 2, role: 'tool', author: 'Archive tool', text: 'Recovered tool record', timestampMs: null, incomplete: true },
       ],
+      sources: [{
+        id: 'supplement', label: 'Recovered supplement', firstCachedSequence: 3, complete: false, messages: [
+          { sourceSequence: 3, role: 'agent', author: 'Recovered collaborator', text: 'Supplemental record', timestampMs: null },
+        ],
+      }],
     }) })
     await scaffold.ctx.schedule.create(firstBot.sessionId, {
       title: 'Morning check-in', prompt: 'Review the project.', every_seconds: 86400,
@@ -205,10 +211,25 @@ describe('web e2e: Bot workspace retains one Conversation Session per Bot', () =
     await expect.poll(() => secondDetail.locator('[data-composer-placement="bottom"]').count()).toBe(1)
     await secondDetail.getByRole('button', { name: 'Imported Grok chat', exact: true }).click()
     const historyDialog = page.getByRole('dialog', { name: 'Imported Grok chat' })
+    const sourceSelect = historyDialog.getByLabel('History source')
+    await expect.poll(() => sourceSelect.inputValue()).toBe('primary')
     await historyDialog.getByText('Recovered question', { exact: true }).waitFor()
     await historyDialog.getByText('Recovered answer', { exact: true }).waitFor()
-    await historyDialog.getByText('Recovered messages. Earlier messages were unavailable in the source cache.').waitFor()
-    await expect.poll(() => historyDialog.locator('time').count()).toBe(2)
+    await historyDialog.getByText('Recovered tool record', { exact: true }).waitFor()
+    await historyDialog.getByText('Archive owner', { exact: true }).waitFor()
+    await historyDialog.getByText('Orbit historian', { exact: true }).waitFor()
+    await historyDialog.getByText('Author Original author', { exact: true }).waitFor()
+    await historyDialog.getByText('Archive tool', { exact: true }).waitFor()
+    await historyDialog.getByText('Some records could not be recovered from this source.').waitFor()
+    await historyDialog.getByText('Unknown time', { exact: true }).first().waitFor()
+    await historyDialog.getByText('Incomplete source record', { exact: true }).waitFor()
+    await expect.poll(() => historyDialog.locator('time').count()).toBe(1)
+    await sourceSelect.selectOption('supplement')
+    await historyDialog.getByText('Supplemental record', { exact: true }).waitFor()
+    await historyDialog.getByText('Recovered collaborator', { exact: true }).waitFor()
+    await historyDialog.getByText('Unknown time', { exact: true }).waitFor()
+    await expect.poll(() => historyDialog.getByText('Recovered question', { exact: true }).count()).toBe(0)
+    await sourceSelect.selectOption('primary')
     const historyDialogSnapshot = await captureStableAria(
       page, '[role="dialog"][aria-label="Imported Grok chat"]', scaffold.workspaceCwd,
     )
