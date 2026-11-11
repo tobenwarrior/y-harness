@@ -56,6 +56,8 @@ export const en = {
   grokHistoryPrimary: 'Original recovery',
   grokHistoryUnknownTimestamp: 'Unknown time',
   grokHistoryIncomplete: 'Incomplete source record',
+  grokHistoryDownloadAttachment: 'Download {name}',
+  grokHistoryDownloadTooltip: 'Download attachment',
   manageSkills: 'Manage skills',
   skillsManagerTitle: 'Bot skills',
   skillsManagerDescription: 'Choose which local skills this bot may discover and load.',

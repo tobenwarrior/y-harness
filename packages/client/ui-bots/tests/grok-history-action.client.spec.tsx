@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { BotGrokHistoryArchive } from '@yharness/bots/client'
+import type { BotGrokHistoryArchive, BotGrokHistoryView } from '@yharness/bots/client'
 import { makeTranslate } from '@yharness/client-test-runtime'
 import { GrokHistoryAction } from '../src/client/GrokHistoryAction.tsx'
 import { en } from '../src/client/locales.ts'
@@ -48,6 +48,27 @@ const versionTwoArchive = {
     },
   ],
 } as const satisfies BotGrokHistoryArchive
+
+const attachmentArchive = {
+  source: 'grok-bot',
+  version: 2,
+  firstCachedSequence: 7,
+  messages: [
+    { sourceSequence: 7, role: 'attachment', text: 'report.txt', timestampMs: 1_700_000_006_000 },
+    { sourceSequence: 8, role: 'assistant', text: 'The report is attached.', timestampMs: 1_700_000_007_000 },
+  ],
+  sources: [{
+    id: 'builder',
+    label: 'Builder source',
+    firstCachedSequence: 12,
+    messages: [{ sourceSequence: 12, role: 'attachment', text: 'builder.log', timestampMs: 1_700_000_008_000 }],
+  }],
+  availableAttachments: [
+    { sourceId: 'primary', sourceSequence: 7 },
+    { sourceId: 'primary', sourceSequence: 8 },
+    { sourceId: 'builder', sourceSequence: 12 },
+  ],
+} as const satisfies BotGrokHistoryView
 
 describe('GrokHistoryAction', () => {
   it('loads and displays a valid version-one archive, then closes and reopens it', async () => {
@@ -117,6 +138,27 @@ describe('GrokHistoryAction', () => {
     expect(screen.getByRole('combobox', { name: en.grokHistorySource })).toHaveProperty('value', 'primary')
     expect(screen.getByText(en.grokHistoryRecovered)).toBeTruthy()
     expect(screen.getByText('Primary question')).toBeTruthy()
+  })
+
+  it('offers verified attachment downloads scoped to the selected Bot, source, and position', async () => {
+    const read = vi.fn<(id: string) => Promise<BotGrokHistoryArchive>>().mockResolvedValue(attachmentArchive)
+    render(<GrokHistoryAction botId="bot-attachment" botName="Grok" read={read} t={t} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: en.grokHistory }))
+    const primaryDownload = screen.getByRole('link', { name: 'Download report.txt' })
+    expect(primaryDownload.getAttribute('href')).toBe(
+      '/api/bots/grokHistory/downloadAttachment?botId=bot-attachment&sourceId=primary&sourceSequence=7',
+    )
+    expect(primaryDownload.hasAttribute('download')).toBe(true)
+    expect(screen.queryByRole('link', { name: 'Download The report is attached.' })).toBeNull()
+
+    const source = screen.getByRole('combobox', { name: en.grokHistorySource })
+    fireEvent.change(source, { target: { value: 'builder' } })
+    const supplementalDownload = screen.getByRole('link', { name: 'Download builder.log' })
+    expect(supplementalDownload.getAttribute('href')).toBe(
+      '/api/bots/grokHistory/downloadAttachment?botId=bot-attachment&sourceId=builder&sourceSequence=12',
+    )
+    expect(screen.queryByRole('link', { name: 'Download report.txt' })).toBeNull()
   })
 
   it('stays unavailable when the archive is absent or the reader fails', async () => {

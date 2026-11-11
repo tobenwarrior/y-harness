@@ -467,13 +467,15 @@ export type Config = LocalConfig
 ## `@yharness/bots`
 
 - `inject`: `agents` · `storageDomain` · `sessionController` · `sessions` · `attachments` · `systemPrompt` · `tools`
-- `source`: [`packages/agents/bots/src/index.ts:538`](../packages/agents/bots/src/index.ts)
+- `source`: [`packages/agents/bots/src/index.ts:546`](../packages/agents/bots/src/index.ts)
 
 ```ts config-catalog
 /** Bot service configuration. */
 export interface BotServiceConfig {
   /** Stable owner key selected by the Host composition. */
   readonly ownerId?: string
+  /** Absolute path to an operator-controlled, read-only Grok attachment vault. */
+  readonly grokHistoryAttachmentVault?: string
   /** Separate self-hosted collaborator access policy. */
   readonly shared?: BotSharedConfig
 }

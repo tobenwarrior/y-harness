@@ -82,8 +82,14 @@ import type {
 } from './memory.ts'
 import { BotGroupId, BotGroupMessageId, BotGroupService, botGroupDomain } from './group-chat.ts'
 import { attachmentContentBlocks, BotAttachmentGrantStore, botAttachmentDomain, type BotInputAttachment } from './attachment-grants.ts'
-import { BOT_GROUP_ATTACHMENT_DOWNLOAD_PATH, handleBotAttachmentDownload, SHARED_BOT_ATTACHMENT_DOWNLOAD_PATH } from './attachment-download.ts'
-import type { BotAttachmentDownload } from './attachment-download.ts'
+import {
+  BOT_GROUP_ATTACHMENT_DOWNLOAD_PATH,
+  BOT_GROK_HISTORY_ATTACHMENT_DOWNLOAD_PATH,
+  handleBotAttachmentDownload,
+  handleBotGrokHistoryAttachmentDownload,
+  SHARED_BOT_ATTACHMENT_DOWNLOAD_PATH,
+  type BotAttachmentDownload,
+} from './attachment-download.ts'
 import {
   BOT_GROUP_ATTACHMENT_UPLOAD_PATH,
   BOT_ATTACHMENT_MAX_BYTES,
@@ -120,6 +126,7 @@ import { installBotRoutineTools } from './routine-tools.ts'
 import type { BotEventRoutineToolHost } from './routine-tools.ts'
 import { botInboxMessageState } from './inbox.ts'
 import { parseGrokImport } from './grok-import.ts'
+import { GrokHistoryAttachmentVault } from './grok-history-attachments.ts'
 import {
   botGrokHistoryDomain,
   decodeGrokHistory,
@@ -181,6 +188,7 @@ import type {
   BotGrokHistoryArchive,
   BotGrokHistoryImportRequest,
   BotGrokHistoryRequest,
+  BotGrokHistoryView,
   BotGrokImportRequest,
   BotGrokImportValue,
   BotMemoryView,
@@ -538,6 +546,8 @@ export interface BotSharedConfig {
 export interface BotServiceConfig {
   /** Stable owner key selected by the Host composition. */
   readonly ownerId?: string
+  /** Absolute path to an operator-controlled, read-only Grok attachment vault. */
+  readonly grokHistoryAttachmentVault?: string
   /** Separate self-hosted collaborator access policy. */
   readonly shared?: BotSharedConfig
 }
@@ -651,6 +661,7 @@ function resolveSharedConfig(value: BotSharedConfig | undefined): ResolvedBotSha
 
 export const Config = z.object({
   ownerId: z.string().min(1).max(128).default('local-owner'),
+  grokHistoryAttachmentVault: z.string().min(1),
   shared: z.object({
     enabled: z.boolean().default(true),
     sessionMaxAgeMs: z.natural().min(1).default(DEFAULT_SHARED_SESSION_MAX_AGE_MS),
@@ -2640,6 +2651,7 @@ export class BotService extends TypertRemoteService {
 
   private readonly ready: Promise<Domain<typeof botDomain>>
   private readonly grokHistoryDomain: Promise<Domain<typeof botGrokHistoryDomain>>
+  private grokHistoryAttachmentVault: GrokHistoryAttachmentVault | undefined
   private readonly groupDomain: Promise<Domain<typeof botGroupDomain>>
   private readonly groupService: Promise<BotGroupService>
   private readonly attachmentDomain: Promise<Domain<typeof botAttachmentDomain>>
@@ -3311,6 +3323,9 @@ export class BotService extends TypertRemoteService {
         const openedGroupDomain = groupDomain
         const openedAttachmentDomain = attachmentDomain
         const openedTemplateDomain = templateDomain
+        if (config.grokHistoryAttachmentVault !== undefined) {
+          this.grokHistoryAttachmentVault = await GrokHistoryAttachmentVault.load(config.grokHistoryAttachmentVault)
+        }
         attachmentCleanup = await this.mountAttachmentRoutes()
         sharedCleanup = await this.mountSharedAccess(openedDomain)
         cleanup = ctx.effect(() => async () => {
@@ -6964,18 +6979,29 @@ export class BotService extends TypertRemoteService {
   }
 
   /**
-   * Read a private recovered archive without activating the Bot Session.
+   * Read a private recovered archive and its verified attachment positions without activating the Bot Session.
    * @param request - Bot identity.
+   * @param signal - Cancellation for attachment verification.
    * @returns Recovered history or null if the Bot has no archive.
    */
   @Remote('readGrokHistory')
-  async readGrokHistory(request: BotGrokHistoryRequest): Promise<BotGrokHistoryArchive | null> {
+  async readGrokHistory(request: BotGrokHistoryRequest, signal?: AbortSignal): Promise<BotGrokHistoryView | null> {
+    const id = normalizeBotId(request?.botId)
+    if (id === undefined) return badRequest('Bot id is required')
+    const archive = await this.readOwnedGrokHistory(id, signal)
+    if (archive === undefined) return null
+    const vault = this.grokHistoryAttachmentVault
+    if (vault === undefined || archive.version !== 2) return archive
+    const availableAttachments = await vault.available(id, archive, signal)
+    return availableAttachments.length === 0 ? archive : { ...archive, availableAttachments }
+  }
+
+  /** Authorize the Bot and read the current durable archive together. */
+  private readOwnedGrokHistory(id: BotId, signal?: AbortSignal): Promise<BotGrokHistoryArchive | undefined> {
     return this.serialize(async () => {
-      const id = normalizeBotId(request?.botId)
-      if (id === undefined) return badRequest('Bot id is required')
       await this.readOwnedBot(id)
-      return (await this.grokHistoryDomain).table('archives').get(id) ?? null
-    })
+      return (await this.grokHistoryDomain).table('archives').get(id)
+    }, signal)
   }
 
   /**
@@ -9200,7 +9226,7 @@ export class BotService extends TypertRemoteService {
     }
   }
 
-  /** Register the owner-authenticated streaming group attachment route. */
+  /** Register owner-authenticated attachment uploads and downloads. */
   private async mountAttachmentRoutes(): Promise<() => Promise<void>> {
     const connection: HostConnectionHandle | undefined = this.ctx.get('connection')
     if (connection === undefined || connection.fetch === undefined) return async () => {}
@@ -9225,9 +9251,12 @@ export class BotService extends TypertRemoteService {
         })
       })),
     })
-    let removeDownload: () => Promise<void>
+    const removals = [remove]
+    const dispose = async (): Promise<void> => {
+      await Promise.all(removals.map(unregister => unregister()))
+    }
     try {
-      removeDownload = await connection.fetch.register({
+      removals.push(await connection.fetch.register({
         path: BOT_GROUP_ATTACHMENT_DOWNLOAD_PATH,
         methods: ['GET'],
         requestBody: 'buffered',
@@ -9235,12 +9264,27 @@ export class BotService extends TypertRemoteService {
           const attachment = await groups.resolveAttachment(target.groupId, target.messageId, target.attachmentId)
           return this.openAttachment(attachment, signal)
         })),
-      })
+      }))
+      const vault = this.grokHistoryAttachmentVault
+      if (vault !== undefined) {
+        removals.push(await connection.fetch.register({
+          path: BOT_GROK_HISTORY_ATTACHMENT_DOWNLOAD_PATH,
+          methods: ['GET'],
+          requestBody: 'buffered',
+          fetch: request => this.trackAttachmentUpload(() => handleBotGrokHistoryAttachmentDownload(request, async (target, signal) => {
+            const downloadSignal = AbortSignal.any([signal, this.sharedScopeShutdownController.signal])
+            const archive = await this.readOwnedGrokHistory(target.botId, downloadSignal)
+            const file = archive === undefined ? undefined : await vault.open(archive, target, downloadSignal)
+            if (file === undefined) throw new RemoteError('bot/not-found', 'Attachment unavailable', { botId: target.botId })
+            return file
+          })),
+        }))
+      }
     } catch (error) {
-      await remove()
+      await dispose()
       throw error
     }
-    return async () => { await removeDownload(); await remove() }
+    return dispose
   }
 
   /** Open provider-owned bytes for a previously authorized attachment. */

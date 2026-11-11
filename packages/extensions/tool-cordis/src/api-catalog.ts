@@ -816,9 +816,9 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'Newest-first timed receipts or event deliveries/results.',
       },
       {
-        signature: '@Remote(\'readGrokHistory\') async readGrokHistory(request: BotGrokHistoryRequest): Promise<BotGrokHistoryArchive | null>',
-        description: 'Read a private recovered archive without activating the Bot Session.',
-        parameters: [{ name: 'request', description: 'Bot identity.' }],
+        signature: '@Remote(\'readGrokHistory\') async readGrokHistory(request: BotGrokHistoryRequest, signal?: AbortSignal): Promise<BotGrokHistoryView | null>',
+        description: 'Read a private recovered archive and its verified attachment positions without activating the Bot Session.',
+        parameters: [{ name: 'request', description: 'Bot identity.' }, { name: 'signal', description: 'Cancellation for attachment verification.' }],
         returns: 'Recovered history or null if the Bot has no archive.',
       },
       {
@@ -5832,6 +5832,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface BotGrokHistoryArchive {\n    readonly source: \'grok-bot\';\n    readonly version: 1 | 2;\n    readonly firstCachedSequence: number;\n    readonly messages: readonly BotGrokHistoryMessage[];\n    readonly complete?: false;\n    readonly sources?: readonly BotGrokHistorySource[];\n}',
   },
   {
+    name: 'BotGrokHistoryAttachmentPosition',
+    declaration: 'export interface BotGrokHistoryAttachmentPosition {\n    readonly sourceId: string;\n    readonly sourceSequence: number;\n}',
+  },
+  {
     name: 'BotGrokHistoryImportRequest',
     declaration: 'export interface BotGrokHistoryImportRequest extends BotGrokHistoryRequest {\n    readonly document: string;\n}',
   },
@@ -5846,6 +5850,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'BotGrokHistorySource',
     declaration: 'export interface BotGrokHistorySource {\n    readonly id: string;\n    readonly label: string;\n    readonly firstCachedSequence: number;\n    readonly messages: readonly BotGrokHistoryMessage[];\n    readonly complete?: false;\n}',
+  },
+  {
+    name: 'BotGrokHistoryView',
+    declaration: 'export interface BotGrokHistoryView extends BotGrokHistoryArchive {\n    readonly availableAttachments?: readonly BotGrokHistoryAttachmentPosition[];\n}',
   },
   {
     name: 'BotGrokImportRequest',
