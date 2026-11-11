@@ -209,28 +209,37 @@ export function resolveGrokHistoryPageRequest(request: BotGrokHistoryPageRequest
   }
 }
 
-function excerpt(text: string): string {
-  if (text.length <= GROK_HISTORY_EXCERPT_MAX_CHARS) return text
-  return `${text.slice(0, GROK_HISTORY_EXCERPT_MAX_CHARS - GROK_HISTORY_EXCERPT_SUFFIX.length)}${GROK_HISTORY_EXCERPT_SUFFIX}`
+function excerpt(text: string, limit: number): string {
+  if (text.length <= limit) return text
+  return `${text.slice(0, limit - GROK_HISTORY_EXCERPT_SUFFIX.length)}${GROK_HISTORY_EXCERPT_SUFFIX}`
 }
 
 /**
  * Frame recovered transcript data before exposing it to a model-facing tool.
  * @param page - Page projected for the current Bot.
+ * @param options - Excerpt and source-label presentation for the tool result.
  * @returns A JSON-safe page with bounded untrusted transcript fields.
  */
-export function frameGrokHistoryPage(page: BotGrokHistoryPage): JsonValue {
+export function frameGrokHistoryPage(
+  page: BotGrokHistoryPage,
+  options: {
+    readonly excerptLimit?: number
+    readonly sourceLabels?: boolean
+  } = {},
+): JsonValue {
   const { source, version, sourceId, sourceLabel, complete, sources, firstCachedSequence, totalMessages, nextBefore, messages } = page
+  const { excerptLimit = GROK_HISTORY_EXCERPT_MAX_CHARS, sourceLabels = true } = options
+  const quote = (text: string) => frameUntrustedTranscript(excerpt(text, excerptLimit))
   return {
     source,
     version,
     ...(sourceId === undefined ? {} : { sourceId }),
-    ...(sourceLabel === undefined ? {} : { sourceLabel: frameUntrustedTranscript(excerpt(sourceLabel)) }),
+    ...(sourceLabel === undefined ? {} : { sourceLabel: quote(sourceLabel) }),
     ...(complete === undefined ? {} : { complete }),
     ...(sources === undefined ? {} : {
       sources: sources.map(candidate => ({
         id: candidate.id,
-        label: frameUntrustedTranscript(excerpt(candidate.label)),
+        ...(sourceLabels ? { label: quote(candidate.label) } : {}),
       })),
     }),
     firstCachedSequence,
@@ -239,9 +248,9 @@ export function frameGrokHistoryPage(page: BotGrokHistoryPage): JsonValue {
     messages: messages.map(message => ({
       sourceSequence: message.sourceSequence,
       role: message.role,
-      text: frameUntrustedTranscript(excerpt(message.text)),
-      ...(message.author === undefined ? {} : { author: frameUntrustedTranscript(excerpt(message.author)) }),
-      ...(message.fromBot === undefined ? {} : { fromBot: frameUntrustedTranscript(excerpt(message.fromBot)) }),
+      text: quote(message.text),
+      ...(message.author === undefined ? {} : { author: quote(message.author) }),
+      ...(message.fromBot === undefined ? {} : { fromBot: quote(message.fromBot) }),
       timestampMs: message.timestampMs,
       ...(message.incomplete === undefined ? {} : { incomplete: message.incomplete }),
     })),

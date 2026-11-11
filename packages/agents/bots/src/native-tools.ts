@@ -641,6 +641,36 @@ function inspectTool(client: BotCollaborationClient): BotNativeTool {
   }
 }
 
+function outputGrokHistoryPage(page: BotGrokHistoryPage): BotNativeToolResult {
+  const full = output(frameGrokHistoryPage(page))
+  if (full.success) return full
+
+  const overflow = { ...page }
+  if (page.sourceId !== undefined) {
+    delete overflow.sources
+    const selected = output(frameGrokHistoryPage(overflow))
+    if (selected.success) return selected
+  }
+
+  for (const [index, oldest] of overflow.messages.slice(1).entries()) {
+    const candidate = output(frameGrokHistoryPage({
+      ...overflow,
+      nextBefore: oldest.sourceSequence,
+      messages: overflow.messages.slice(index + 1),
+    }))
+    if (candidate.success) return candidate
+  }
+
+  const newest = overflow.messages.at(-1)
+  const compact = newest === undefined ? overflow : {
+    ...overflow,
+    ...(overflow.messages.length > 1 ? { nextBefore: newest.sourceSequence } : {}),
+    messages: [newest],
+  }
+  // Keep room for all source ids even when JSON escaping expands them.
+  return output(frameGrokHistoryPage(compact, { excerptLimit: 40, sourceLabels: false }))
+}
+
 function ownGrokHistoryTool(host: BotNativeToolHost, sessionId: SessionId): BotNativeTool {
   return {
     name: 'read_own_grok_history',
@@ -678,7 +708,7 @@ function ownGrokHistoryTool(host: BotNativeToolHost, sessionId: SessionId): BotN
         const page = await host.grokHistory(sessionId, request, context.signal)
         if (context.signal.aborted) return failure('cancelled', 'The Bot action was cancelled.')
         if (page === null) return output(null)
-        return output(frameGrokHistoryPage(page))
+        return outputGrokHistoryPage(page)
       } catch (error: unknown) {
         if (context.signal.aborted) return failure('cancelled', 'The Bot action was cancelled.')
         if (error instanceof RangeError) return failure('invalid-request', 'Requested Grok history source was not found.')
