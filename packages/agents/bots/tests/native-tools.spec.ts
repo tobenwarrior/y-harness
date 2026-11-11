@@ -138,7 +138,7 @@ describe('native Bot actions', () => {
     const sources = Array.from({ length: 16 }, (_, index) => ({
       id: maximalEscaping ? `${String.fromCharCode(0x0e + index)}${'\u0000'.repeat(127)}` : `source-${index}`,
       label: maximalEscaping ? '\u0000'.repeat(256) : 'Supplemental source '.repeat(12),
-      firstCachedSequence: 1, messages: messages.slice(0, 1),
+      firstCachedSequence: 1, messages: index === 0 ? messages : messages.slice(0, 1),
     }))
     const archive: BotGrokHistoryArchive = {
       source: 'grok-bot', version: 2, firstCachedSequence: 1, messages, sources,
@@ -173,13 +173,17 @@ describe('native Bot actions', () => {
     expect(sequences).toEqual(messages.map(message => message.sourceSequence))
 
     if (maximalEscaping) {
-      const sourceId = sources[0]?.id
-      const selected = await tool.execute({ source: sourceId }, context())
-      expect(selected.success).toBe(true)
-      const selectedPage = JSON.parse(selected.contentItems[0]?.text ?? '') as BotGrokHistoryPage
-      expect(selectedPage.sourceId).toBe(sourceId)
-      expect(selectedPage.sourceLabel).toContain(UNTRUSTED_TRANSCRIPT_NOTICE)
-      expect(selectedPage.sources).toBeUndefined()
+      for (const [index, lastSequence] of [10, 1].entries()) {
+        const sourceId = sources[index]?.id
+        const selected = await tool.execute({ source: sourceId, limit: 10 }, context())
+        expect(selected.success).toBe(true)
+        const selectedPage = JSON.parse(selected.contentItems[0]?.text ?? '') as BotGrokHistoryPage
+        expect(selectedPage.sourceId).toBe(sourceId)
+        expect(selectedPage.sourceLabel).toContain(UNTRUSTED_TRANSCRIPT_NOTICE)
+        expect(selectedPage.sources).toBeUndefined()
+        expect(selectedPage.messages.map(message => message.sourceSequence)).toEqual([lastSequence])
+        expect(selectedPage.nextBefore).toBe(index === 0 ? lastSequence : undefined)
+      }
       const empty = await tool.execute({ before: 1 }, context())
       expect(empty.success).toBe(true)
       expect(JSON.parse(empty.contentItems[0]?.text ?? '')).toMatchObject({ messages: [] })
