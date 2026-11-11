@@ -14427,12 +14427,18 @@ importers:
       '@yharness/agent':
         specifier: workspace:*
         version: link:../../core/agent
+      '@yharness/agent-default-model':
+        specifier: workspace:*
+        version: link:../../core/agent-default-model
       '@yharness/agent-loop':
         specifier: workspace:*
         version: link:../../core/agent-loop
       '@yharness/api-session-controller':
         specifier: workspace:*
         version: link:../../api/session-controller
+      '@yharness/attachment':
+        specifier: workspace:*
+        version: link:../../attachment/attachment
       '@yharness/bots':
         specifier: workspace:*
         version: link:../../agents/bots
@@ -14463,15 +14469,27 @@ importers:
       '@yharness/session-persistence':
         specifier: workspace:*
         version: link:../../session/session-persistence
+      '@yharness/storage-domain':
+        specifier: workspace:*
+        version: link:../../storage/storage-domain
       '@yharness/subagent':
         specifier: workspace:*
         version: link:../../subagent/subagent
+      '@yharness/tool-schedule':
+        specifier: workspace:*
+        version: link:../../schedule/tool-schedule
       '@yharness/tool-web':
         specifier: workspace:*
         version: link:../../web/tool-web
       '@yharness/tools':
         specifier: workspace:*
         version: link:../../core/tools
+      '@yharness/typert-protocol':
+        specifier: workspace:*
+        version: link:../../typert/protocol
+      '@yharness/user-approval':
+        specifier: workspace:*
+        version: link:../../interaction/user-approval
       '@yharness/user-questions':
         specifier: workspace:*
         version: link:../../interaction/user-questions
