@@ -54,7 +54,8 @@ export async function handleBotGrokHistoryAttachmentDownload(
   request: Request,
   open: (target: BotGrokHistoryAttachmentDownloadTarget, signal: AbortSignal) => Promise<BotAttachmentDownload>,
 ): Promise<Response> {
-  return handleAttachmentDownload(request, parseBotGrokHistoryAttachmentDownloadTarget, open)
+  // Keep verified archive downloads out of the Web carrier's compression stream.
+  return handleAttachmentDownload(request, parseBotGrokHistoryAttachmentDownloadTarget, open, 'no-store, no-transform')
 }
 
 function parseBotAttachmentDownloadTarget(query: URLSearchParams): BotAttachmentDownloadTarget | undefined {
@@ -91,6 +92,7 @@ async function handleAttachmentDownload<Target>(
   request: Request,
   parse: (query: URLSearchParams) => Target | undefined,
   open: (target: Target, signal: AbortSignal) => Promise<BotAttachmentDownload>,
+  successCacheControl = 'no-store',
 ): Promise<Response> {
   const noStore = { 'cache-control': 'no-store' }
   if (request.method !== 'GET') return new Response(null, { status: 405, headers: { ...noStore, allow: 'GET' } })
@@ -141,6 +143,6 @@ async function handleAttachmentDownload<Target>(
     'content-type': 'application/octet-stream',
     'content-disposition': `attachment; filename="download"; filename*=UTF-8''${safeName}`,
     'x-content-type-options': 'nosniff',
-    ...noStore,
+    'cache-control': successCacheControl,
   } })
 }

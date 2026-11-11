@@ -6,10 +6,10 @@ import { lstat, open, type FileHandle } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
 import { z } from 'zod'
 import type { BotAttachmentDownload, BotGrokHistoryAttachmentDownloadTarget } from './attachment-download.ts'
-import { BOT_ATTACHMENT_MAX_BYTES } from './attachment-routes.ts'
 import { BotId, type BotGrokHistoryArchive, type BotGrokHistoryAttachmentPosition } from './types.ts'
 
 const MAX_MANIFEST_BYTES = 2 * 1024 * 1024
+const MAX_GROK_HISTORY_ATTACHMENT_BYTES = 24 * 1024 * 1024
 const manifestSchema = z.object({
   version: z.literal(1),
   entries: z.array(z.object({
@@ -79,7 +79,7 @@ async function verifiedFile(
     file = await openRegularFile(join(root, entry.sha256))
     if (file === undefined) return undefined
     const initial = await file.stat()
-    if (initial.size > BOT_ATTACHMENT_MAX_BYTES) return undefined
+    if (initial.size > MAX_GROK_HISTORY_ATTACHMENT_BYTES) return undefined
     const hash = createHash('sha256')
     const end = Math.max(0, initial.size - 1)
     for await (const chunk of file.createReadStream({ autoClose: false, start: 0, end, signal })) {

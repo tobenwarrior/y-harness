@@ -88,13 +88,36 @@ describe('Grok history attachment vault', () => {
     await expect(download!.data[Symbol.asyncIterator]().next()).rejects.toMatchObject({ name: 'AbortError' })
   })
 
-  it('rejects oversized files and a file replaced between stat and open', async () => {
+  it.each([
+    { byteLength: 24 * 1024 * 1024, available: true },
+    { byteLength: 24 * 1024 * 1024 + 1, available: false },
+  ])('checks verified file availability at $byteLength bytes', async ({ byteLength, available }) => {
+    const bytes = Buffer.alloc(byteLength, 0x61)
+    const digest = createHash('sha256').update(bytes).digest('hex')
+    await manifest([{ ...entry, sha256: digest }])
+    await writeFile(join(root, digest), bytes)
+    const vault = await GrokHistoryAttachmentVault.load(root)
+    expect(await vault.available(botId, archive)).toEqual(available ? [{ sourceId: 'primary', sourceSequence: 0 }] : [])
+    const download = await vault.open(archive, target)
+    if (!available) {
+      expect(download).toBeUndefined()
+      return
+    }
+    expect(download?.name).toBe(message.text)
+    const streamedHash = createHash('sha256')
+    let streamedBytes = 0
+    for await (const chunk of download!.data) {
+      streamedHash.update(chunk)
+      streamedBytes += chunk.byteLength
+    }
+    expect(streamedBytes).toBe(byteLength)
+    expect(streamedHash.digest('hex')).toBe(digest)
+  })
+
+  it('rejects a file replaced between stat and open', async () => {
     await manifest([entry])
     const vault = await GrokHistoryAttachmentVault.load(root)
     const path = join(root, sha256)
-    await writeFile(path, file)
-    await truncate(path, 20 * 1024 * 1024 + 1)
-    expect(await vault.open(archive, target)).toBeUndefined()
     await writeFile(path, file)
     const replacement = join(root, 'replacement')
     await writeFile(replacement, file)

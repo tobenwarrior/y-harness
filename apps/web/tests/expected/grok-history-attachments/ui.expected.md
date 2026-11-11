@@ -17,4 +17,8 @@
       - link "Download research-notes.txt":
         - /url: /api/bots/grokHistory/downloadAttachment?botId=bot-grok-downloads&sourceId=primary&sourceSequence=2
       - paragraph: research-notes.txt
+    - listitem:
+      - strong: attachment
+      - time: Jan 1, 1970, 8:00 AM
+      - paragraph: oversized-synthetic.bin
   - button "Close"

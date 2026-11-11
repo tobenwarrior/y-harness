@@ -27,6 +27,7 @@ describe('Bot attachment download route', () => {
     ), open)
     expect(response.status).toBe(200)
     expect(response.headers.get('content-type')).toBe('application/octet-stream')
+    expect(response.headers.get('cache-control')).toBe('no-store')
     expect(response.headers.get('x-content-type-options')).toBe('nosniff')
     expect(await response.text()).toBe('hello')
     expect(open).toHaveBeenCalledOnce()
@@ -52,7 +53,7 @@ describe('Bot attachment download route', () => {
       `http://example.test${BOT_GROK_HISTORY_ATTACHMENT_DOWNLOAD_PATH}?botId=bot-history&sourceId=supplemental+source&sourceSequence=0`,
     ), open)
     expect(response.status).toBe(200)
-    expect(response.headers.get('cache-control')).toBe('no-store')
+    expect(response.headers.get('cache-control')).toBe('no-store, no-transform')
     expect(response.headers.get('content-disposition')).toContain("filename*=UTF-8''Owner%27s%20report%20%28final%29.txt")
     expect(await response.text()).toBe('history attachment')
     expect(open).toHaveBeenCalledOnce()

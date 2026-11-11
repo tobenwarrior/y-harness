@@ -1,7 +1,8 @@
 // Keyless assembled-browser coverage for owner-only Grok attachment downloads.
 // The vault and archive are generated inside a temporary scaffold workspace.
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { createReadStream } from 'node:fs'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -29,12 +30,24 @@ const SOURCE_ID = 'primary'
 const SOURCE_SEQUENCE = 2
 const ATTACHMENT_NAME = 'research-notes.txt'
 const ATTACHMENT_TIMESTAMP = 3_000
-const ATTACHMENT_BYTES = Buffer.from('synthetic Grok attachment\n', 'utf8')
+const ATTACHMENT_SIZE_BYTES = 24 * 1024 * 1024
+const ATTACHMENT_BYTES = Buffer.alloc(ATTACHMENT_SIZE_BYTES, 0x53)
+const ATTACHMENT_DIGEST = createHash('sha256').update(ATTACHMENT_BYTES).digest('hex')
+const OVERSIZED_ATTACHMENT_NAME = 'oversized-synthetic.bin'
+const OVERSIZED_ATTACHMENT_TIMESTAMP = 4_000
+const OVERSIZED_ATTACHMENT_SIZE_BYTES = ATTACHMENT_SIZE_BYTES + 1
 
-async function downloadBytes(download: Download): Promise<Buffer> {
+async function summarizeDownload(download: Download): Promise<{ readonly size: number; readonly sha256: string }> {
   const path = await download.path()
   if (path === null) throw new Error('browser did not expose a downloaded file')
-  return readFile(path)
+  const hash = createHash('sha256')
+  let size = 0
+  for await (const chunk of createReadStream(path)) {
+    const bytes = chunk as Buffer
+    size += bytes.byteLength
+    hash.update(bytes)
+  }
+  return { size, sha256: hash.digest('hex') }
 }
 
 describe('web e2e: owner-only Grok history attachments', () => {
@@ -51,9 +64,11 @@ describe('web e2e: owner-only Grok history attachments', () => {
     workspaceRoot = await mkdtemp(join(tmpdir(), 'dsh-web-grok-history-attachments-'))
     vaultRoot = join(workspaceRoot, 'attachment-vault')
     await mkdir(vaultRoot)
-    const digest = createHash('sha256').update(ATTACHMENT_BYTES).digest('hex')
-    filePath = join(vaultRoot, digest)
+    filePath = join(vaultRoot, ATTACHMENT_DIGEST)
     await writeFile(filePath, ATTACHMENT_BYTES)
+    const oversizedBytes = Buffer.alloc(OVERSIZED_ATTACHMENT_SIZE_BYTES, 0x4f)
+    const oversizedDigest = createHash('sha256').update(oversizedBytes).digest('hex')
+    await writeFile(join(vaultRoot, oversizedDigest), oversizedBytes)
     await writeFile(join(vaultRoot, 'manifest.json'), JSON.stringify({
       version: 1,
       entries: [{
@@ -62,7 +77,14 @@ describe('web e2e: owner-only Grok history attachments', () => {
         sourceSequence: SOURCE_SEQUENCE,
         filename: ATTACHMENT_NAME,
         timestampMs: ATTACHMENT_TIMESTAMP,
-        sha256: digest,
+        sha256: ATTACHMENT_DIGEST,
+      }, {
+        botId: 'bot-grok-downloads',
+        sourceId: SOURCE_ID,
+        sourceSequence: SOURCE_SEQUENCE + 1,
+        filename: OVERSIZED_ATTACHMENT_NAME,
+        timestampMs: OVERSIZED_ATTACHMENT_TIMESTAMP,
+        sha256: oversizedDigest,
       }],
     }))
     const overlay = join(workspaceRoot, 'grok-history-attachments.patch.yml')
@@ -89,6 +111,12 @@ describe('web e2e: owner-only Grok history attachments', () => {
         { sourceSequence: 0, role: 'user', text: 'Recovered question', timestampMs: null },
         { sourceSequence: 1, role: 'assistant', text: 'Recovered answer', timestampMs: 2_000 },
         { sourceSequence: SOURCE_SEQUENCE, role: 'attachment', text: ATTACHMENT_NAME, timestampMs: ATTACHMENT_TIMESTAMP },
+        {
+          sourceSequence: SOURCE_SEQUENCE + 1,
+          role: 'attachment',
+          text: OVERSIZED_ATTACHMENT_NAME,
+          timestampMs: OVERSIZED_ATTACHMENT_TIMESTAMP,
+        },
       ],
     })
     for (const bot of [firstBot, secondBot]) await scaffold.ctx.bots.importGrokHistory({ botId: bot.id, document })
@@ -135,7 +163,10 @@ describe('web e2e: owner-only Grok history attachments', () => {
     await link.click()
     const download = await downloadPromise
     expect(download.suggestedFilename()).toBe(ATTACHMENT_NAME)
-    await expect(downloadBytes(download)).resolves.toEqual(ATTACHMENT_BYTES)
+    await expect(summarizeDownload(download)).resolves.toEqual({ size: ATTACHMENT_SIZE_BYTES, sha256: ATTACHMENT_DIGEST })
+
+    await dialog.getByText(OVERSIZED_ATTACHMENT_NAME, { exact: true }).waitFor()
+    expect(await dialog.getByRole('link', { name: `Download ${OVERSIZED_ATTACHMENT_NAME}`, exact: true }).count()).toBe(0)
 
     const unauthenticated = await fetch(downloadUrl)
     expect(unauthenticated.status).toBe(401)
@@ -144,6 +175,7 @@ describe('web e2e: owner-only Grok history attachments', () => {
       `botId=bot-grok-scout&sourceId=${SOURCE_ID}&sourceSequence=${SOURCE_SEQUENCE}`,
       `botId=${secondBot.id}&sourceId=missing&sourceSequence=${SOURCE_SEQUENCE}`,
       `botId=${secondBot.id}&sourceId=${SOURCE_ID}&sourceSequence=99`,
+      `botId=${secondBot.id}&sourceId=${SOURCE_ID}&sourceSequence=${SOURCE_SEQUENCE + 1}`,
     ]) {
       const response = await scaffold.hostFetch(`/api/bots/grokHistory/downloadAttachment?${query}`)
       expect(response.status).toBe(404)
@@ -159,6 +191,8 @@ describe('web e2e: owner-only Grok history attachments', () => {
     const unavailableDialog = await openHistory()
     await unavailableDialog.getByText(ATTACHMENT_NAME, { exact: true }).waitFor()
     expect(await unavailableDialog.getByRole('link', { name: downloadName, exact: true }).count()).toBe(0)
+    await unavailableDialog.getByText(OVERSIZED_ATTACHMENT_NAME, { exact: true }).waitFor()
+    expect(await unavailableDialog.getByRole('link', { name: `Download ${OVERSIZED_ATTACHMENT_NAME}`, exact: true }).count()).toBe(0)
 
     await writeFile(filePath, ATTACHMENT_BYTES)
     await page.reload({ waitUntil: 'load' })
@@ -168,7 +202,7 @@ describe('web e2e: owner-only Grok history attachments', () => {
     await reloadedLink.click()
     const retry = await retryPromise
     expect(retry.suggestedFilename()).toBe(ATTACHMENT_NAME)
-    await expect(downloadBytes(retry)).resolves.toEqual(ATTACHMENT_BYTES)
+    await expect(summarizeDownload(retry)).resolves.toEqual({ size: ATTACHMENT_SIZE_BYTES, sha256: ATTACHMENT_DIGEST })
 
     await compareOrRefreshGolden(
       UI_EXPECTED,

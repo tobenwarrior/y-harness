@@ -96,7 +96,7 @@ The Web owner can download verified files from **Imported Grok chat** when the H
 
 #### Connect a private attachment vault
 
-1. Create a directory outside the public web root and Git checkout. Give the Host process read access. Publish each reviewed file under its lowercase SHA-256 digest as a flat regular file, with a limit of 20 MiB per file. Treat these objects as immutable. Restore a missing object by atomically placing a verified copy at the digest name.
+1. Create a directory outside the public web root and Git checkout. Give the Host process read access. Publish each reviewed file under its lowercase SHA-256 digest as a flat regular file, with a limit of 24 MiB per file. Treat these objects as immutable. Restore a missing object by atomically placing a verified copy at the digest name.
 2. Write `manifest.json` in that directory. It accepts up to 2 MiB and contains one entry per verified archive position. Use `primary` for the primary source or the exact supplemental source id. Copy the archive attachment's filename and timestamp exactly, using JSON `null` for an unknown time. Omit entries whose bytes are unavailable.
 
    ```json
