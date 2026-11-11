@@ -42,6 +42,16 @@ const state = vi.hoisted(() => ({
   nativeTheme: { themeSource: 'system', shouldUseDarkColors: false },
 }))
 
+// Keep startup orchestration independent of the macOS-only FFI adapter.
+const nativeDesktop = vi.hoisted(() => ({
+  permissions: vi.fn(() => ({ screenRecording: false, accessibility: false })),
+  openSettings: vi.fn(async () => {}),
+  confirm: vi.fn(async () => false),
+  capture: vi.fn(async () => ({ jpeg: '', width: 1, height: 1 })),
+  input: vi.fn(),
+}))
+vi.mock('../src/mac-desktop.ts', () => ({ macDesktop: () => nativeDesktop }))
+
 vi.mock('../src/crash-report.ts', async importOriginal => ({
   ...await importOriginal<typeof import('../src/crash-report.ts')>(),
   writeCrashReport: vi.fn(async () => undefined),
