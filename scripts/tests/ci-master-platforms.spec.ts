@@ -49,6 +49,21 @@ function evaluateCondition(expression: string, cancelled: boolean, results: stri
   }, { timeout: 1000 }) as boolean
 }
 
+function evaluateOptInCondition(
+  expression: string,
+  event: string,
+  repository: string,
+  variable: string,
+  value: string,
+  suite: string,
+): boolean {
+  return runInNewContext(expression.trim(), {
+    github: { event_name: event, ref: 'refs/heads/master', repository },
+    inputs: { suite },
+    vars: { [variable]: value },
+  }, { timeout: 1000 }) as boolean
+}
+
 describe('master-only platform scheduling', () => {
   it.each(['success', 'failure', 'skipped', 'cancelled'])(
     'reports %s dependencies in active runs but never starts a cancelled-run verdict', (result) => {
@@ -117,6 +132,27 @@ describe('master-only platform scheduling', () => {
     expect(preflight.if).toContain("vars.DSH_REAL_API_TESTS_ENABLED == 'true'")
     expect(preflight.if).toContain("github.event.pull_request.user.login != 'dependabot[bot]'")
     expect(preflight.run).toContain('exit 1')
+  })
+
+  it('requires explicit variables before scheduling private standby and benchmark jobs', () => {
+    const master = workflow('ci-master.yml')
+    for (const [name, variable, event] of [
+      ['serial-linux-selfhosted', 'DSH_CI_STANDBY_LINUX_ENABLED', 'push'],
+      ['serial-windows', 'DSH_CI_STANDBY_WINDOWS_ENABLED', 'push'],
+      ['larger-runner-benchmark', 'DSH_CI_RUNNER_BENCHMARKS_ENABLED', 'workflow_dispatch'],
+      ['consolidated-runner-benchmark', 'DSH_CI_RUNNER_BENCHMARKS_ENABLED', 'workflow_dispatch'],
+    ] as const) {
+      const job = master.jobs[name]!
+      if (typeof job.if !== 'string') throw new TypeError(`${name} must define a string condition`)
+      expect(job.if).toContain(`vars.${variable} == 'true'`)
+      expect(job.if).not.toContain("github.repository == 'tobenwarrior/y-harness'")
+      for (const repository of ['tobenwarrior/y-harness', 'contributor/harness']) {
+        expect(evaluateOptInCondition(job.if, event, repository, variable, '', name)).toBe(false)
+        expect(evaluateOptInCondition(job.if, event, repository, variable, 'false', name)).toBe(false)
+        expect(evaluateOptInCondition(job.if, event, repository, variable, 'true', name)).toBe(true)
+        expect(evaluateOptInCondition(job.if, 'pull_request', repository, variable, 'true', name)).toBe(false)
+      }
+    }
   })
 
   it('runs Wine once on hosted master CI and seeds its own apt cache', () => {

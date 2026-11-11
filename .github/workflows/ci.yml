@@ -20,13 +20,12 @@ concurrency:
 
 jobs:
 
-  # Three enterprise jobs isolate coverage, static analysis, and the
-  # build-backed consumer tail. The consumer job owns the only Linux build so
-  # all three jobs enter runner allocation independently.
+  # Standard GitHub-hosted runners isolate coverage, static analysis, and the
+  # build-backed consumer jobs. Configured repositories can opt into alternate pools.
   #
-  # FAILOVER (Linux): each Linux enterprise job resolves its pool through the
+  # FAILOVER (Linux): each Linux worker job resolves its pool through the
   # DSH_CI_FAILOVER_LINUX repository variable. Unset (normal), the expressions
-  # pick the hosted enterprise pools below. Setting the variable to
+  # pick the standard GitHub-hosted pool. Setting the variable to
   # 'selfhosted' (repo Settings → Actions → Variables; writer-manageable
   # repository state — not PR-editable, no merge required) retargets all
   # three onto the in-house
@@ -46,7 +45,6 @@ jobs:
           || vars.DSH_CI_FAILOVER_LINUX == 'selfhosted'
           && github.event.pull_request.user.login != 'dependabot[bot]'
           && fromJSON('["self-hosted", "linux", "x64", "vm-backup"]')
-          || github.repository == 'tobenwarrior/y-harness' && 'dsh-ubuntu-24-04-16core'
           || 'ubuntu-24.04' }}
     name: node 24 / static
     env:
@@ -114,7 +112,6 @@ jobs:
           || vars.DSH_CI_FAILOVER_LINUX == 'selfhosted'
           && github.event.pull_request.user.login != 'dependabot[bot]'
           && fromJSON('["self-hosted", "linux", "x64", "vm-backup"]')
-          || github.repository == 'tobenwarrior/y-harness' && 'dsh-ubuntu-24-04-16core'
           || 'ubuntu-24.04' }}
     name: node 24 / coverage
     env:
@@ -229,7 +226,9 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Install benchmark browser and hosted dependencies
-        run: pnpm --filter @yharness/benchmarks exec playwright install --with-deps chromium
+        run: |
+          sudo bash scripts/prepare-ci-ubuntu-apt.sh /etc/apt
+          pnpm --filter @yharness/benchmarks exec playwright install --with-deps chromium
 
       - name: Run performance benchmarks
         env:
@@ -243,7 +242,6 @@ jobs:
           || vars.DSH_CI_FAILOVER_LINUX == 'selfhosted'
           && github.event.pull_request.user.login != 'dependabot[bot]'
           && fromJSON('["self-hosted", "linux", "x64", "vm-backup"]')
-          || github.repository == 'tobenwarrior/y-harness' && 'dsh-ubuntu-24-04-16core'
           || 'ubuntu-24.04' }}
     name: node 24 / snapshots and artifacts
     env:
@@ -346,9 +344,8 @@ jobs:
 
       - name: Install Playwright Chromium, WebKit, and hosted dependencies
         if: vars.DSH_CI_FAILOVER_LINUX != 'selfhosted' || github.event.pull_request.user.login == 'dependabot[bot]'
-        # Ephemeral runner images can carry Ubuntu mirrors whose HTTP endpoints are unreachable.
         run: |
-          sudo find /etc/apt -maxdepth 2 -type f \( -name '*.list' -o -name '*.sources' \) -exec sed -i -E 's@http://([a-z]{2}\.)?archive\.ubuntu\.com/ubuntu@https://archive.ubuntu.com/ubuntu@g; s@http://security\.ubuntu\.com/ubuntu@https://security.ubuntu.com/ubuntu@g' {} +
+          sudo bash scripts/prepare-ci-ubuntu-apt.sh /etc/apt
           pnpm --filter @yharness/web-frontend exec playwright install --with-deps chromium webkit
 
       # The persistent VM image owns Playwright's Linux system packages; do
@@ -507,7 +504,6 @@ jobs:
           || vars.DSH_CI_FAILOVER_WINDOWS == 'selfhosted'
           && github.event.pull_request.user.login != 'dependabot[bot]'
           && fromJSON('["self-hosted", "dsh-win-ci", "windows"]')
-          || github.repository == 'tobenwarrior/y-harness' && 'dsh-windows-2025-16core'
           || 'windows-2025' }}
     name: windows node 24 / build & observational
     timeout-minutes: 60
@@ -570,7 +566,6 @@ jobs:
           || vars.DSH_CI_FAILOVER_WINDOWS == 'selfhosted'
           && github.event.pull_request.user.login != 'dependabot[bot]'
           && fromJSON('["self-hosted", "dsh-win-ci", "windows"]')
-          || github.repository == 'tobenwarrior/y-harness' && 'dsh-windows-2025-16core'
           || 'windows-2025' }}
     name: windows node 24 / coverage
     timeout-minutes: 120
@@ -649,7 +644,6 @@ jobs:
           || vars.DSH_CI_FAILOVER_WINDOWS == 'selfhosted'
           && github.event.pull_request.user.login != 'dependabot[bot]'
           && fromJSON('["self-hosted", "dsh-win-ci", "windows"]')
-          || github.repository == 'tobenwarrior/y-harness' && 'dsh-windows-2025-16core'
           || 'windows-2025' }}
     name: windows node 24 / native tests
     timeout-minutes: 60

@@ -367,6 +367,8 @@ flowchart TD
     pkg_session_format_v1_to_v2["session-format-v1-to-v2"]
     pkg_session_format_v2_to_v3["session-format-v2-to-v3"]
     pkg_session_format_v3_to_v4["session-format-v3-to-v4"]
+    pkg_session_format_v4_to_v5["session-format-v4-to-v5"]
+    pkg_session_format_v5_to_v6["session-format-v5-to-v6"]
     pkg_session_log_deepseek["session-log-deepseek"]
     pkg_session_persistence["session-persistence"]
     pkg_session_persistence_jsonl["session-persistence-jsonl"]
@@ -1316,17 +1318,6 @@ flowchart TD
   pkg_subagent_fork_in_process --> pkg_subagent_in_process_driver
   pkg_subagent_spawn_in_process --> pkg_subagent
   pkg_subagent_spawn_in_process --> pkg_subagent_in_process_driver
-  pkg_bots --> pkg_agent
-  pkg_bots --> pkg_api_session_controller
-  pkg_bots --> pkg_attachment
-  pkg_bots --> pkg_avatar_generation
-  pkg_bots --> pkg_llm
-  pkg_bots --> pkg_session
-  pkg_bots --> pkg_storage_domain
-  pkg_bots --> pkg_subagent
-  pkg_bots --> pkg_system_prompt
-  pkg_bots --> pkg_tools
-  pkg_bots --> pkg_typert_protocol
   pkg_experimental_client_ui_agent_team --> pkg_api_session_controller
   pkg_experimental_client_ui_agent_team --> pkg_client_locale
   pkg_experimental_client_ui_agent_team --> pkg_client_ui_conversation
@@ -1446,6 +1437,27 @@ flowchart TD
   pkg_tool_schedule --> pkg_schedule
   pkg_tool_schedule --> pkg_subagent
   pkg_tool_schedule --> pkg_tools
+  pkg_bots --> pkg_agent
+  pkg_bots --> pkg_agent_preset_registry
+  pkg_bots --> pkg_api_session_controller
+  pkg_bots --> pkg_atomic_write
+  pkg_bots --> pkg_attachment
+  pkg_bots --> pkg_avatar_generation
+  pkg_bots --> pkg_client_connection
+  pkg_bots --> pkg_credentials
+  pkg_bots --> pkg_llm
+  pkg_bots --> pkg_mcp_resources
+  pkg_bots --> pkg_schedule
+  pkg_bots --> pkg_scope
+  pkg_bots --> pkg_session
+  pkg_bots --> pkg_skill
+  pkg_bots --> pkg_storage_domain
+  pkg_bots --> pkg_subagent
+  pkg_bots --> pkg_system_prompt
+  pkg_bots --> pkg_tool_schedule
+  pkg_bots --> pkg_tools
+  pkg_bots --> pkg_typert_protocol
+  pkg_bots --> pkg_user_approval
 ```
 
 <!-- BEGIN GENERATED module-graph:packages -->
@@ -1567,6 +1579,8 @@ flowchart TD
 | [`session-format-v1-to-v2`](../packages/session/session-format-v1-to-v2) | `session` | — |
 | [`session-format-v2-to-v3`](../packages/session/session-format-v2-to-v3) | `session` | — |
 | [`session-format-v3-to-v4`](../packages/session/session-format-v3-to-v4) | `session` | — |
+| [`session-format-v4-to-v5`](../packages/session/session-format-v4-to-v5) | `session` | — |
+| [`session-format-v5-to-v6`](../packages/session/session-format-v5-to-v6) | `session` | — |
 | [`storage`](../packages/storage/storage) | `storage` | — |
 | [`win32-process`](../packages/subprocess/win32-process) | `subprocess` | — |
 | [`llm-mock-server`](../packages/test-support/llm-mock-server) | `test-support` | — |
@@ -1771,7 +1785,6 @@ flowchart TD
 | [`workflow-ptc`](../packages/workflow/workflow-ptc) | `workflow` | [`agent`](../packages/core/agent), [`llm`](../packages/llm/llm), [`ptc-runtime`](../packages/ptc-runtime/ptc-runtime), [`sandbox`](../packages/sandbox/sandbox), [`sandbox-policy`](../packages/sandbox/sandbox-policy), [`session`](../packages/core/session), [`subagent`](../packages/subagent/subagent), [`tools`](../packages/core/tools), [`workflow`](../packages/workflow/workflow) |
 | [`subagent-fork-in-process`](../packages/subagent/subagent-fork-in-process) | `subagent` | [`agent`](../packages/core/agent), [`session`](../packages/core/session), [`subagent`](../packages/subagent/subagent), [`subagent-in-process-driver`](../packages/subagent/subagent-in-process-driver) |
 | [`subagent-spawn-in-process`](../packages/subagent/subagent-spawn-in-process) | `subagent` | [`subagent`](../packages/subagent/subagent), [`subagent-in-process-driver`](../packages/subagent/subagent-in-process-driver) |
-| [`bots`](../packages/agents/bots) | `agents` | [`agent`](../packages/core/agent), [`api-session-controller`](../packages/api/session-controller), [`attachment`](../packages/attachment/attachment), [`avatar-generation`](../packages/agents/avatar-generation), [`llm`](../packages/llm/llm), [`session`](../packages/core/session), [`storage-domain`](../packages/storage/storage-domain), [`subagent`](../packages/subagent/subagent), [`system-prompt`](../packages/core/system-prompt), [`tools`](../packages/core/tools), [`typert-protocol`](../packages/typert/protocol) |
 | [`experimental-client-ui-agent-team`](../packages/experimental/client-ui-agent-team) | `experimental` | [`api-session-controller`](../packages/api/session-controller), [`client-locale`](../packages/client/locale), [`client-ui-conversation`](../packages/client/ui-conversation), [`client-ui-primitives`](../packages/client/ui-primitives), [`client-ui-renderer`](../packages/client/ui-renderer), [`client-ui-session`](../packages/client/ui-session), [`client-ui-slots`](../packages/client/ui-slots), [`client-ui-workspace`](../packages/client/ui-workspace), [`experimental-agent-team`](../packages/experimental/agent-team), [`session`](../packages/core/session) |
 | [`experimental-client-ui-claude-code-mods`](../packages/experimental/client-ui-claude-code-mods) | `experimental` | [`api-remotes`](../packages/api/remotes), [`api-session-controller`](../packages/api/session-controller), [`client-locale`](../packages/client/locale), [`client-ui-conversation`](../packages/client/ui-conversation), [`client-ui-primitives`](../packages/client/ui-primitives), [`client-ui-renderer`](../packages/client/ui-renderer), [`client-ui-session`](../packages/client/ui-session), [`client-ui-slots`](../packages/client/ui-slots), [`experimental-claude-code-mods`](../packages/experimental/claude-code-mods), [`session`](../packages/core/session), [`typert-protocol`](../packages/typert/protocol) |
 | [`experimental-client-ui-voice-input`](../packages/experimental/client-ui-voice-input) | `experimental` | [`api-gateway`](../packages/api/gateway), [`api-remotes`](../packages/api/remotes), [`api-session-controller`](../packages/api/session-controller), [`client-locale`](../packages/client/locale), [`client-store`](../packages/client/store), [`client-ui-conversation`](../packages/client/ui-conversation), [`client-ui-plugin-manager`](../packages/client/ui-plugin-manager), [`client-ui-primitives`](../packages/client/ui-primitives), [`client-ui-renderer`](../packages/client/ui-renderer), [`client-ui-session`](../packages/client/ui-session), [`client-ui-slots`](../packages/client/ui-slots), [`experimental-api-speech-to-text`](../packages/experimental/api-speech-to-text), [`experimental-speech-to-text`](../packages/experimental/speech-to-text), [`session`](../packages/core/session), [`typert-protocol`](../packages/typert/protocol) |
@@ -1784,4 +1797,5 @@ flowchart TD
 | [`llm-pi-ai`](../packages/llm/llm-pi-ai) | `llm` | [`agent`](../packages/core/agent), [`attachment`](../packages/attachment/attachment), [`authorization`](../packages/credentials/authorization), [`coding-session`](../packages/session/coding-session), [`credentials`](../packages/credentials/credentials), [`fs`](../packages/fs/fs), [`launch-environment`](../packages/util/launch-environment), [`llm`](../packages/llm/llm), [`sandbox`](../packages/sandbox/sandbox), [`sandbox-policy`](../packages/sandbox/sandbox-policy), [`skill-library`](../packages/skill/skill-library), [`subprocess`](../packages/subprocess/subprocess), [`timeout`](../packages/util/timeout), [`typert-protocol`](../packages/typert/protocol), [`user-approval`](../packages/interaction/user-approval), [`user-questions`](../packages/interaction/user-questions), [`workspace`](../packages/workspace/workspace) |
 | [`subagent-dsh-sdk`](../packages/subagent/subagent-dsh-sdk) | `subagent` | [`agent`](../packages/core/agent), [`llm`](../packages/llm/llm), [`sdk-client`](../packages/sdk/client), [`session`](../packages/core/session), [`subagent`](../packages/subagent/subagent), [`subprocess`](../packages/subprocess/subprocess) |
 | [`tool-schedule`](../packages/schedule/tool-schedule) | `schedule` | [`llm`](../packages/llm/llm), [`schedule`](../packages/schedule/schedule), [`subagent`](../packages/subagent/subagent), [`tools`](../packages/core/tools) |
+| [`bots`](../packages/agents/bots) | `agents` | [`agent`](../packages/core/agent), [`agent-preset-registry`](../packages/preset/agent-preset-registry), [`api-session-controller`](../packages/api/session-controller), [`atomic-write`](../packages/util/atomic-write), [`attachment`](../packages/attachment/attachment), [`avatar-generation`](../packages/agents/avatar-generation), [`client-connection`](../packages/client/connection), [`credentials`](../packages/credentials/credentials), [`llm`](../packages/llm/llm), [`mcp-resources`](../packages/mcp/mcp-resources), [`schedule`](../packages/schedule/schedule), [`scope`](../packages/core/scope), [`session`](../packages/core/session), [`skill`](../packages/skill/skill), [`storage-domain`](../packages/storage/storage-domain), [`subagent`](../packages/subagent/subagent), [`system-prompt`](../packages/core/system-prompt), [`tool-schedule`](../packages/schedule/tool-schedule), [`tools`](../packages/core/tools), [`typert-protocol`](../packages/typert/protocol), [`user-approval`](../packages/interaction/user-approval) |
 <!-- END GENERATED module-graph:packages -->

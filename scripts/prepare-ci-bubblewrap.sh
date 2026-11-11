@@ -7,8 +7,11 @@ set -euo pipefail
 # This amd64 build needs glibc 2.38+ and Linux 5.10+; Ubuntu 24.04 satisfies both.
 readonly BUBBLEWRAP_VERSION='0.12.0-1'
 readonly BUBBLEWRAP_SHA256='db4d572a7927bfd34cc9b8e24b56983efa8e0483d03da6c810f6caae081dcc36'
-# The recorded build remains addressable after Ubuntu prunes its live package pool.
-readonly BUBBLEWRAP_URL="https://launchpad.net/ubuntu/+source/bubblewrap/${BUBBLEWRAP_VERSION}/+build/33546835/+files/bubblewrap_${BUBBLEWRAP_VERSION}_amd64.deb"
+# Prefer the signed Ubuntu archive endpoint; Launchpad remains a fallback when
+# the archive mirror is temporarily unavailable. Both payloads are accepted
+# only when they match the pinned digest below.
+readonly BUBBLEWRAP_URL="https://archive.ubuntu.com/ubuntu/pool/main/b/bubblewrap/bubblewrap_${BUBBLEWRAP_VERSION}_amd64.deb"
+readonly BUBBLEWRAP_FALLBACK_URL="https://launchpad.net/ubuntu/+source/bubblewrap/${BUBBLEWRAP_VERSION}/+build/33546835/+files/bubblewrap_${BUBBLEWRAP_VERSION}_amd64.deb"
 
 : "${RUNNER_TEMP:?prepare-ci-bubblewrap requires RUNNER_TEMP}"
 : "${GITHUB_PATH:?prepare-ci-bubblewrap requires GITHUB_PATH}"
@@ -21,8 +24,19 @@ fi
 archive="${RUNNER_TEMP}/bubblewrap_${BUBBLEWRAP_VERSION}_amd64.deb"
 root="${RUNNER_TEMP}/dsh-bubblewrap"
 
-curl --fail --silent --show-error --location --retry 3 --retry-all-errors --output "$archive" "$BUBBLEWRAP_URL"
-printf '%s  %s\n' "$BUBBLEWRAP_SHA256" "$archive" | sha256sum --check --status
+archive_verified=0
+for url in "$BUBBLEWRAP_URL" "$BUBBLEWRAP_FALLBACK_URL"; do
+  if curl --fail --silent --show-error --location --retry 3 --retry-all-errors --output "$archive" "$url" \
+    && printf '%s  %s\n' "$BUBBLEWRAP_SHA256" "$archive" | sha256sum --check --status; then
+    archive_verified=1
+    break
+  fi
+  echo "bubblewrap payload unavailable or checksum mismatch: $url" >&2
+done
+if (( archive_verified == 0 )); then
+  echo 'could not download a verified bubblewrap payload' >&2
+  exit 1
+fi
 mkdir -p "$root"
 dpkg-deb --extract "$archive" "$root"
 printf '%s\n' "$root/usr/bin" >> "$GITHUB_PATH"

@@ -194,7 +194,6 @@ describe('CI workflow', () => {
       expect(job['runs-on'], `${jobName} runs-on must not use the Linux failover switch`).not.toContain('DSH_CI_FAILOVER_LINUX')
       expect(job['runs-on']).toContain('self-hosted')
       expect(job['runs-on']).toContain('dsh-win-ci')
-      expect(job['runs-on']).toContain('dsh-windows-2025-16core')
       const cores = jobName === 'windows-native-tests' ? 2 : 16
       expect(evaluateRunsOn(job['runs-on'], { vars: { DSH_CI_FAILOVER_WINDOWS: 'blacksmith' } }))
         .toBe(`blacksmith-${cores}vcpu-windows-2025`)
@@ -334,10 +333,12 @@ describe('CI workflow', () => {
     expect(aggregate.needs).toContain('node-24-bench')
     expect(node24Bench.name).toBe('node 24 / benchmarks')
     expect(node24Bench.env).toBeUndefined()
-    expect(node24Bench.steps).toContainEqual({
-      name: 'Install benchmark browser and hosted dependencies',
-      run: 'pnpm --filter @yharness/benchmarks exec playwright install --with-deps chromium',
-    })
+    if (!Array.isArray(node24Bench.steps)) throw new TypeError('Benchmark job must define steps')
+    const benchmarkBrowser = node24Bench.steps.find((step: unknown): step is Record<string, unknown> => isRecord(step)
+      && step.name === 'Install benchmark browser and hosted dependencies')
+    expect(benchmarkBrowser).toMatchObject({ name: 'Install benchmark browser and hosted dependencies' })
+    expect(benchmarkBrowser?.run).toContain('bash scripts/prepare-ci-ubuntu-apt.sh /etc/apt')
+    expect(benchmarkBrowser?.run).toContain('pnpm --filter @yharness/benchmarks exec playwright install --with-deps chromium')
     expect(JSON.stringify(node24Bench.steps)).not.toContain('DSH_CI_FAILOVER_LINUX')
     expect(node24Bench.steps).toContainEqual({
       name: 'Run performance benchmarks',
@@ -381,9 +382,9 @@ describe('CI workflow', () => {
       })
     }
     for (const [name, selector, variable, pool, hosted] of [
-      ['linux gates', selectors.linux, 'DSH_CI_FAILOVER_LINUX', ['self-hosted', 'linux', 'x64', 'vm-backup'], 'dsh-ubuntu-24-04-16core'],
+      ['linux gates', selectors.linux, 'DSH_CI_FAILOVER_LINUX', ['self-hosted', 'linux', 'x64', 'vm-backup'], 'ubuntu-24.04'],
       ['linux aggregate', selectors.linuxAggregate, 'DSH_CI_FAILOVER_LINUX', ['self-hosted', 'linux', 'x64', 'vm-backup'], 'ubuntu-latest'],
-      ['windows lanes', selectors.windows, 'DSH_CI_FAILOVER_WINDOWS', ['self-hosted', 'dsh-win-ci', 'windows'], 'dsh-windows-2025-16core'],
+      ['windows lanes', selectors.windows, 'DSH_CI_FAILOVER_WINDOWS', ['self-hosted', 'dsh-win-ci', 'windows'], 'windows-2025'],
     ] as const) {
       expect(evaluate(selector, { [variable]: 'blacksmith' }), `${name} blacksmith value`).toMatch(/^blacksmith-/)
       expect(evaluate(selector, { [variable]: 'selfhosted' }), `${name} selfhosted value`).toEqual(pool)
@@ -580,7 +581,7 @@ describe('CI workflow', () => {
       })
       .map(([name]) => name)
       .sort()
-    expect(pushReachable).toEqual(['python-runtime', 'serial-linux-selfhosted', 'serial-windows', 'windows'])
+    expect(pushReachable).toEqual(['python-runtime', 'windows'])
 
     // Manual benchmarks retain their bounded fan-out.
     for (const name of ['larger-runner-benchmark', 'consolidated-runner-benchmark']) {
@@ -717,34 +718,36 @@ describe('Runtime and LLM e2e Blacksmith routing', () => {
 })
 
 describe('bubblewrap preparation script', () => {
-  it('pins bubblewrap to a recorded Launchpad build and excludes Ubuntu pool downloads', () => {
+  it('pins bubblewrap to the official Ubuntu archive with a Launchpad fallback', () => {
     const script = readFileSync(resolve(root, 'scripts/prepare-ci-bubblewrap.sh'), 'utf8')
     const url = /^readonly BUBBLEWRAP_URL="([^"]+)"$/mu.exec(script)?.[1]
 
     expect(url).toMatch(
-      /^https:\/\/launchpad\.net\/ubuntu\/\+source\/bubblewrap\/[^/]+\/\+build\/\d+\/\+files\/bubblewrap_[^/]+_amd64\.deb$/u,
+      /^https:\/\/archive\.ubuntu\.com\/ubuntu\/pool\/main\/b\/bubblewrap\/bubblewrap_[^/]+_amd64\.deb$/u,
     )
-    // Ubuntu removes superseded versions from its live package pool.
-    expect(script).not.toMatch(/https?:\/\/[^/'"\s]+\/ubuntu(?:-ports)?\/pool\//u)
+    expect(script).toMatch(
+      /https:\/\/launchpad\.net\/ubuntu\/\+source\/bubblewrap\/[^/]+\/\+build\/\d+\/\+files\/bubblewrap_[^/]+_amd64\.deb/u,
+    )
+    expect(script).toContain('sha256sum --check --status')
   })
 })
 
 describe('Fork CI configuration', () => {
-  it('uses standard hosted PR runners when a fork has not selected an alternate pool', () => {
+  it('uses standard hosted PR runners for every repository without an alternate pool', () => {
     const workflow = loadWorkflow('.github/workflows/ci.yml')
-    for (const [name, hosted, upstream] of [
-      ['node-24', 'ubuntu-24.04', 'dsh-ubuntu-24-04-16core'],
-      ['node-24-coverage', 'ubuntu-24.04', 'dsh-ubuntu-24-04-16core'],
-      ['node-24-consumers', 'ubuntu-24.04', 'dsh-ubuntu-24-04-16core'],
-      ['windows-build', 'windows-2025', 'dsh-windows-2025-16core'],
-      ['windows-coverage', 'windows-2025', 'dsh-windows-2025-16core'],
-      ['windows-native-tests', 'windows-2025', 'dsh-windows-2025-16core'],
+    for (const [name, hosted] of [
+      ['node-24', 'ubuntu-24.04'],
+      ['node-24-coverage', 'ubuntu-24.04'],
+      ['node-24-consumers', 'ubuntu-24.04'],
+      ['windows-build', 'windows-2025'],
+      ['windows-coverage', 'windows-2025'],
+      ['windows-native-tests', 'windows-2025'],
     ] as const) {
       const job = workflowJob(workflow, name)
-      for (const [repository, expected] of [['contributor/harness', hosted], ['tobenwarrior/y-harness', upstream]]) {
+      for (const repository of ['contributor/harness', 'tobenwarrior/y-harness']) {
         expect(evaluateRunsOn(job['runs-on'], {
           github: { repository }, vars: {}, fromJSON: JSON.parse,
-        }), `${name} in ${repository}`).toBe(expected)
+        }), `${name} in ${repository}`).toBe(hosted)
       }
     }
   })
@@ -759,7 +762,9 @@ describe('Fork CI configuration', () => {
     ] as const) {
       const job = workflowJob(workflow, name)
       for (const [repository, enabled, expected] of [
-        ['tobenwarrior/y-harness', '', true],
+        ['tobenwarrior/y-harness', '', false],
+        ['tobenwarrior/y-harness', 'false', false],
+        ['tobenwarrior/y-harness', 'true', true],
         ['contributor/harness', '', false],
         ['contributor/harness', 'false', false],
         ['contributor/harness', 'true', true],
@@ -776,7 +781,7 @@ describe('Fork CI configuration', () => {
 })
 
 describe('DeepSeek e2e workflow', () => {
-  it('requires fork opt-in and trusted PR authors before exposing API credentials', () => {
+  it('requires explicit opt-in and trusted PR authors before exposing API credentials', () => {
     const workflow = loadWorkflow('.github/workflows/e2e.yml')
     const e2e = workflowJob(workflow, 'e2e')
     const configuration = workflowJob(workflow, 'configuration')
@@ -787,8 +792,9 @@ describe('DeepSeek e2e workflow', () => {
     expect(apiSteps).toHaveLength(4)
 
     for (const [repository, enabled, event, headRepository, author, expected] of [
-      ['tobenwarrior/y-harness', '', 'push', '', 'maintainer', true],
-      ['tobenwarrior/y-harness', 'false', 'push', '', 'maintainer', true],
+      ['tobenwarrior/y-harness', '', 'push', '', 'maintainer', false],
+      ['tobenwarrior/y-harness', 'false', 'push', '', 'maintainer', false],
+      ['tobenwarrior/y-harness', 'true', 'push', '', 'maintainer', true],
       ['contributor/harness', '', 'push', '', 'maintainer', false],
       ['contributor/harness', 'false', 'push', '', 'maintainer', false],
       ['contributor/harness', 'true', 'push', '', 'maintainer', true],
@@ -805,7 +811,7 @@ describe('DeepSeek e2e workflow', () => {
         inputs: { ci: true },
       }
       expect(evaluateCondition(e2e.if, context), `${repository} ${event} ${author} enabled=${enabled}`).toBe(expected)
-      expect(evaluateCondition(configuration.if, context)).toBe(repository !== 'tobenwarrior/y-harness' && enabled !== 'true')
+      expect(evaluateCondition(configuration.if, context)).toBe(enabled !== 'true')
       for (const step of apiSteps) {
         const os = String(step.name).endsWith('(Windows)') ? 'Windows' : 'Linux'
         expect(evaluateCondition(step.if, { ...context, runner: { os } }), String(step.name)).toBe(expected)
@@ -813,15 +819,16 @@ describe('DeepSeek e2e workflow', () => {
       }
     }
 
-    expect(JSON.stringify(configuration.steps)).toContain('validation is skipped')
+    expect(JSON.stringify(configuration.steps)).toContain('validation is disabled')
     const reports = build.steps.filter(isRecord).filter(step => typeof step.name === 'string'
       && step.name.startsWith('Report skipped installed-wheel real API'))
     expect(reports).toHaveLength(2)
     for (const step of reports) {
       expect(JSON.stringify(step)).toContain('keyless black-box tests still run')
       const runner = { os: String(step.name).endsWith('(Windows)') ? 'Windows' : 'Linux' }
-      expect(evaluateCondition(step.if, { inputs: { ci: true }, github: { repository: 'tobenwarrior/y-harness' }, vars: {}, runner })).toBe(false)
+      expect(evaluateCondition(step.if, { inputs: { ci: true }, github: { repository: 'tobenwarrior/y-harness' }, vars: {}, runner })).toBe(true)
       expect(evaluateCondition(step.if, { inputs: { ci: true }, github: { repository: 'contributor/harness' }, vars: {}, runner })).toBe(true)
+      expect(evaluateCondition(step.if, { inputs: { ci: true }, github: { repository: 'tobenwarrior/y-harness' }, vars: { DSH_REAL_API_TESTS_ENABLED: 'true' }, runner })).toBe(false)
     }
   })
 
@@ -1198,6 +1205,31 @@ describe('Weighted approval workflow', () => {
   })
 })
 
+describe('Cloudflare preview workflow', () => {
+  it('requires explicit same-repository opt-in and a trusted human PR', () => {
+    const preview = workflowJob(loadWorkflow('.github/workflows/build-preview-cloudflare.yml'), 'preview')
+    expect(preview['runs-on']).toBe('ubuntu-24.04')
+    for (const [repository, enabled, headRepository, author, expected] of [
+      ['tobenwarrior/y-harness', '', 'tobenwarrior/y-harness', 'maintainer', false],
+      ['tobenwarrior/y-harness', 'false', 'tobenwarrior/y-harness', 'maintainer', false],
+      ['tobenwarrior/y-harness', 'true', 'tobenwarrior/y-harness', 'maintainer', true],
+      ['tobenwarrior/y-harness', 'true', 'contributor/harness', 'maintainer', false],
+      ['tobenwarrior/y-harness', 'true', 'tobenwarrior/y-harness', 'dependabot[bot]', false],
+      ['contributor/harness', 'true', 'contributor/harness', 'maintainer', false],
+    ] as const) {
+      const context = {
+        github: {
+          repository,
+          event: { pull_request: { head: { repo: { full_name: headRepository } }, user: { login: author } } },
+        },
+        vars: { DSH_CLOUDFLARE_PREVIEW_ENABLED: enabled },
+      }
+      expect(evaluateCondition(preview.if, context), `${repository} head=${headRepository} author=${author} enabled=${enabled}`)
+        .toBe(expected)
+    }
+  })
+})
+
 describe('Issue lifecycle workflow', () => {
   it('allocates lifecycle runners only for events that can change the board', () => {
     const lifecycle = loadWorkflow('.github/workflows/issue-lifecycle.yml')
@@ -1207,6 +1239,8 @@ describe('Issue lifecycle workflow', () => {
 
     expect(lifecycle.on).toHaveProperty('pull_request')
     expect(lifecycle.on).toHaveProperty('pull_request_review')
+    expect(lifecycleJob.if).toContain("github.repository == 'tobenwarrior/y-harness'")
+    expect(lifecycleJob.if).toContain("vars.DSH_ISSUE_LIFECYCLE_ENABLED == 'true'")
     expect(lifecycleJob.if).toContain("github.event.review.state == 'changes_requested'")
     expect(lifecycleJob.if).toContain('github.event.changes.body != null')
     // Keep the subscription-type gates: issue-lifecycle does not re-subscribe
@@ -1231,6 +1265,34 @@ describe('Issue lifecycle workflow', () => {
     const handleStep = steps.find(s => s.name === 'Handle repository event')
     expect(tokenStep?.if).toBeUndefined()
     expect(handleStep?.if).toBeUndefined()
+
+    for (const [repository, enabled, event, headRepository, author, reviewState, action, body, expected] of [
+      ['tobenwarrior/y-harness', '', 'issues', '', 'maintainer', '', 'opened', null, false],
+      ['tobenwarrior/y-harness', 'true', 'issues', '', 'maintainer', '', 'opened', null, true],
+      ['contributor/harness', 'true', 'issues', '', 'maintainer', '', 'opened', null, false],
+      ['tobenwarrior/y-harness', 'true', 'pull_request', 'tobenwarrior/y-harness', 'maintainer', '', 'opened', 'body', true],
+      ['tobenwarrior/y-harness', 'true', 'pull_request', 'contributor/harness', 'maintainer', '', 'opened', 'body', false],
+      ['tobenwarrior/y-harness', 'true', 'pull_request', 'tobenwarrior/y-harness', 'dependabot[bot]', '', 'opened', 'body', false],
+      ['tobenwarrior/y-harness', 'true', 'pull_request_review', 'tobenwarrior/y-harness', 'maintainer', 'changes_requested', 'submitted', 'body', true],
+      ['tobenwarrior/y-harness', 'true', 'pull_request_review', 'tobenwarrior/y-harness', 'maintainer', 'approved', 'submitted', 'body', false],
+      ['tobenwarrior/y-harness', 'true', 'pull_request', 'tobenwarrior/y-harness', 'maintainer', '', 'edited', null, false],
+    ] as const) {
+      const context = {
+        github: {
+          repository,
+          event_name: event,
+          event: {
+            action,
+            changes: { body },
+            pull_request: { head: { repo: { full_name: headRepository } }, user: { login: author } },
+            review: { state: reviewState },
+          },
+        },
+        vars: { DSH_ISSUE_LIFECYCLE_ENABLED: enabled },
+      }
+      expect(evaluateCondition(lifecycleJob.if, context), `${repository} ${event} ${author} enabled=${enabled}`)
+        .toBe(expected)
+    }
 
     // issue-policy owns PR validation; it is read-only and a real gate.
     const policyPullRequest = workflowEvent(policy, 'pull_request')
