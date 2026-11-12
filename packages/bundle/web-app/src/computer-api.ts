@@ -98,6 +98,20 @@ async function readPayload(request: Request): Promise<unknown> {
   return JSON.parse(text)
 }
 
+async function readComputerRequest(request: Request, requireManaged: boolean) {
+  let payload: unknown
+  try {
+    payload = await readPayload(request)
+  } catch (error) {
+    // Malformed or interrupted requests never reach a Computer controller.
+    void error
+    return undefined
+  }
+  if (!isRecord(payload)) return undefined
+  const target = sessionTarget(payload, requireManaged)
+  return target === undefined ? undefined : { payload, target }
+}
+
 interface RouteOptions {
   readonly managed: boolean
   /** Permit the old shared route's omitted session id during an allowlisted rollout. */
@@ -110,6 +124,7 @@ function routesFor(
   resolveComputer: (sessionId: string) => Promise<ResolvedComputer | undefined>,
   options: RouteOptions,
 ): readonly ConnectionFetchRoute[] {
+  const requireManaged = options.managed && options.allowMissingSession !== true
   const action = (computer: ComputerRouteController, endpoint: string) => {
     switch (endpoint) {
       case 'frame': return (id: ViewerId, _payload: Record<string, unknown>, signal: AbortSignal): Promise<unknown> => computer.frame(id, signal)
@@ -125,17 +140,9 @@ function routesFor(
       methods: ['POST'],
       requestBody: 'streaming',
       fetch: async (request) => {
-        let payload: unknown
-        try {
-          payload = await readPayload(request)
-        } catch (error) {
-          // Ignore malformed or interrupted probe requests.
-          void error
-          return json({ error: 'invalid-request' }, 400)
-        }
-        if (!isRecord(payload)) return json({ error: 'invalid-request' }, 400)
-        const target = sessionTarget(payload, options.managed && options.allowMissingSession !== true)
-        if (target === undefined) return json({ error: 'invalid-request' }, 400)
+        const parsed = await readComputerRequest(request, requireManaged)
+        if (parsed === undefined) return json({ error: 'invalid-request' }, 400)
+        const { target } = parsed
         if (!options.managed) {
           return options.status(
             options.legacyComputer === undefined ? undefined : { controller: options.legacyComputer },
@@ -156,18 +163,11 @@ function routesFor(
       methods: ['POST'],
       requestBody: 'streaming',
       fetch: async (request) => {
-        let payload: unknown
-        try {
-          payload = await readPayload(request)
-        } catch (error) {
-          // Malformed or interrupted browser uploads never reach the controller.
-          void error
-          return json({ error: 'invalid-request' }, 400)
-        }
-        if (!isRecord(payload)) return json({ error: 'invalid-request' }, 400)
+        const parsed = await readComputerRequest(request, requireManaged)
+        if (parsed === undefined) return json({ error: 'invalid-request' }, 400)
+        const { payload, target } = parsed
         const id = viewerId(payload.viewerId)
-        const target = sessionTarget(payload, options.managed && options.allowMissingSession !== true)
-        if (id === undefined || target === undefined) return json({ error: 'invalid-request' }, 400)
+        if (id === undefined) return json({ error: 'invalid-request' }, 400)
         try {
           const resolved = await resolveComputer(target.id)
           const handle = resolved === undefined ? undefined : action(resolved.controller, endpoint)

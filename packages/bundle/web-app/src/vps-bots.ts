@@ -148,6 +148,14 @@ export function mountVpsBots(
         })
         return
       }
+      const registerVpsTools = (agentCtx: Context): void => {
+        ComputerTool.applyVpsBotComputer(agentCtx, async (sessionId) => {
+          if (sessionId !== bot.sessionId) throw new Error('VPS Computer requires the owning Bot Session.')
+          return computerFor(sessionId)
+        })
+        registerVpsServiceTools(agentCtx, bot.id, services)
+        if (journal !== undefined) registerVpsJournalTool(agentCtx, bot.id, bot.sessionId, journal, agent.ctx)
+      }
       if (!isManagedBot(bot.id)) {
         await agent.ctx.inject(['tools', 'attachments', 'llm', 'systemPrompt'], (agentCtx) => {
           agentCtx.systemPrompt.section({
@@ -156,12 +164,7 @@ export function mountVpsBots(
             text: () => 'Use vps_computer for visual interaction on your private VPS desktop. '
               + 'Bash and file tools use your existing Session workspace and permissions.',
           })
-          ComputerTool.applyVpsBotComputer(agentCtx, async (sessionId) => {
-            if (sessionId !== bot.sessionId) throw new Error('VPS Computer requires the owning Bot Session.')
-            return computerFor(sessionId)
-          })
-          registerVpsServiceTools(agentCtx, bot.id, services)
-          if (journal !== undefined) registerVpsJournalTool(agentCtx, bot.id, bot.sessionId, journal, agent.ctx)
+          registerVpsTools(agentCtx)
         })
         return
       }
@@ -215,12 +218,7 @@ export function mountVpsBots(
             + 'Use Bash, file tools and vps_computer there; do not use the Chat session cwd. '
             + 'Host service access requires a separate grant. Mac permissions do not apply here.',
         })
-        ComputerTool.applyVpsBotComputer(agentCtx, async (sessionId) => {
-          if (sessionId !== bot.sessionId) throw new Error('VPS Computer requires the owning Bot Session.')
-          return computerFor(sessionId)
-        })
-        registerVpsServiceTools(agentCtx, bot.id, services)
-        if (journal !== undefined) registerVpsJournalTool(agentCtx, bot.id, bot.sessionId, journal, agent.ctx)
+        registerVpsTools(agentCtx)
       })
     })
   })
