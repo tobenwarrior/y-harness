@@ -6,7 +6,7 @@
 
 import { memo, useMemo, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { IconDatabaseOutlineRegular, IconGaugeOutlineRegular } from '@yharness/client-ui-primitives'
+import { IconDatabaseOutlineRegular, IconGaugeOutlineRegular, Tooltip } from '@yharness/client-ui-primitives'
 import type { UseProjection } from '@yharness/api-session-controller/client'
 import type { InjectFace, SnapshotSelectorHook } from '@yharness/client-ui-slots'
 // Type-only: merges the sessionStats key into SessionProjectionMap for useProjection.
@@ -125,6 +125,8 @@ type Translate = ChatViewSlotProps['t']
 export interface StatPillProps extends InjectFace<PerformanceUsageInjected> {
   useChat: SnapshotSelectorHook<ChatSnapshot>
   useProjection: UseProjection
+  /** Whether the owning composer is the compact Bots conversation surface. */
+  botChat?: boolean
   /** The owning dock's locale seat. */
   t: Translate
 }
@@ -186,26 +188,30 @@ function PlainPill({ stat, icon, label }: PillContent) {
  * state; useStatDialog closes it on Escape or an outside pointerdown or click,
  * so at most one dialog is open across the dock.
  */
-function DialogPill({ stat, icon, label, ariaLabel, title, titleValue, children }: PillContent & {
+function DialogPill({ stat, icon, label, ariaLabel, title, titleValue, tooltip, children }: PillContent & {
   ariaLabel: string
   title: string
   titleValue?: string
+  tooltip?: string
   children: ReactNode
 }) {
   const { open, setOpen, rootRef, panelRef, pos } = useStatDialog()
+  const trigger = (
+    <button
+      type="button"
+      className={css.pill}
+      aria-haspopup="dialog"
+      aria-expanded={open}
+      aria-label={ariaLabel}
+      onClick={() => { setOpen(!open) }}
+    >
+      {icon}
+      <span className={css.label}>{label}</span>
+    </button>
+  )
   return (
     <span ref={rootRef} className={css.anchor} data-composer-stat={stat}>
-      <button
-        type="button"
-        className={css.pill}
-        aria-haspopup="dialog"
-        aria-expanded={open}
-        aria-label={ariaLabel}
-        onClick={() => { setOpen(!open) }}
-      >
-        {icon}
-        <span className={css.label}>{label}</span>
-      </button>
+      {tooltip === undefined ? trigger : <Tooltip label={tooltip} side="top" disabled={open} portal>{trigger}</Tooltip>}
       {open && createPortal(
         <div
           ref={panelRef}
@@ -234,20 +240,27 @@ function DialogPill({ stat, icon, label, ariaLabel, title, titleValue, children 
  * Turn and step counts with whole-session speed, opening the time and speed
  * dialog; Compact keeps only the speed reading.
  */
-export const ActivityPill = memo(function ActivityPill({ useChat, useProjection, usePerformanceUsage, t }: StatPillProps) {
+export const ActivityPill = memo(function ActivityPill({ useChat, useProjection, usePerformanceUsage, botChat, t }: StatPillProps) {
   const mode = usePerformanceUsage(value => value)
   const stats = useSessionStats(useChat, useProjection)
   const speed = stats.decodeMs > 0 ? decodeSpeed(stats, t) : null
   const icon = <IconGaugeOutlineRegular />
-  if (mode === 'compact') return speed === null ? null : <PlainPill stat="activity" icon={icon} label={speed} />
+  if (mode === 'compact' && botChat !== true) return speed === null ? null : <PlainPill stat="activity" icon={icon} label={speed} />
   if (stats.steps === 0) return null
   const counts = t('stats.counts', { turns: stats.turns, steps: stats.steps })
-  const content: PillContent = { stat: 'activity', icon, label: joined(counts, speed) }
-  // A window without one timed figure has no dialog rows to show, so the pill
-  // stays a plain reading instead of a button opening an empty dialog.
-  if (stats.llmMs <= 0 && stats.toolMs <= 0 && stats.ttftSteps <= 0 && speed === null) return <PlainPill {...content} />
+  const activityLabel = t('message.turnProcess.activity')
+  const content: PillContent = { stat: 'activity', icon, label: botChat === true ? activityLabel : joined(counts, speed) }
+  // Bot dialogs retain the turn and step counts even when timing is absent.
+  if (botChat !== true && stats.llmMs <= 0 && stats.toolMs <= 0 && stats.ttftSteps <= 0 && speed === null) {
+    return <PlainPill {...content} />
+  }
   return (
-    <DialogPill {...content} ariaLabel={speed === null ? counts : `${counts} · ${speed}`} title={t('stats.dialog.title')}>
+    <DialogPill
+      {...content}
+      ariaLabel={botChat === true ? activityLabel : speed === null ? counts : `${counts} · ${speed}`}
+      title={t('stats.dialog.title')}
+      {...botChat === true ? { titleValue: counts, tooltip: t('stats.dialog.title') } : {}}
+    >
       <dl className={dialogCss.details} data-session-stats-details>
         {stats.llmMs > 0 && (
           <>
@@ -279,7 +292,7 @@ export const ActivityPill = memo(function ActivityPill({ useChat, useProjection,
 })
 
 /** Whole-log token total and cache hit; Compact keeps only the cache hit. */
-export const UsagePill = memo(function UsagePill({ useProjection, usePerformanceUsage, t }: StatPillProps) {
+export const UsagePill = memo(function UsagePill({ useProjection, usePerformanceUsage, botChat, t }: StatPillProps) {
   const mode = usePerformanceUsage(value => value)
   const usage = useProjection('tokenUsage')
   // Gated on actual token activity: a session whose steps all settled without
@@ -288,20 +301,22 @@ export const UsagePill = memo(function UsagePill({ useProjection, usePerformance
   const cacheHit = cacheHitPercent(usage)
   const cacheHitText = cacheHit !== null ? t('stats.cacheHit', { percent: cacheHit }) : null
   const icon = <IconDatabaseOutlineRegular />
-  if (mode === 'compact') {
+  if (mode === 'compact' && botChat !== true) {
     return cacheHitText === null ? null : <PlainPill stat="usage" icon={icon} label={cacheHitText} />
   }
   // Same aggregate as the Turn pill's totalTokens: every prompt-side billing bucket plus output.
   const total = billedInputTokens(usage) + usage.outputTokens
   const totalText = t('message.turnUsage.count', { count: formatTokens(total, t) })
+  const usageLabel = t('stats.dialog.usageTitle')
   return (
     <DialogPill
       stat="usage"
       icon={icon}
-      label={joined(totalText, cacheHitText)}
-      ariaLabel={cacheHitText === null ? totalText : `${totalText} · ${cacheHitText}`}
+      label={botChat === true ? usageLabel : joined(totalText, cacheHitText)}
+      ariaLabel={botChat === true ? usageLabel : cacheHitText === null ? totalText : `${totalText} · ${cacheHitText}`}
       title={t('stats.dialog.usageTitle')}
       titleValue={exactCount(total, t)}
+      {...botChat === true ? { tooltip: usageLabel } : {}}
     >
       {/* jscpd:ignore-start -- the session-total bucket rows deliberately mirror
           TurnUsagePanel's per-turn dl: same skin, different data contract (the

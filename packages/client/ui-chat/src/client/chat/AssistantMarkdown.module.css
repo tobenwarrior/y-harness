@@ -76,3 +76,41 @@
   /* Optical align with the 28px action hit targets. */
   margin-left: -6px;
 }
+
+.botReply {
+  position: relative;
+  padding-inline-start: var(--dsh-bot-reply-inset);
+  line-height: calc(22px + var(--dsh-content-font-delta, 0px));
+}
+
+.botSpeaker {
+  margin-block-end: 3px;
+  color: var(--yh-alias-label-secondary);
+  font-size: var(--dsh-content-font-size-secondary, 13px);
+  font-weight: 500;
+  line-height: calc(18px + var(--dsh-content-font-delta-secondary, 0px));
+  overflow-wrap: anywhere;
+}
+
+.botReplyAvatar {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-start: 0;
+}
+
+.botReply .body {
+  min-width: 0;
+  gap: 10px;
+  overflow-wrap: anywhere;
+}
+
+.botReply .body > [data-turn-process-inline][hidden] {
+  margin-bottom: -10px;
+}
+
+.botReply .body :global(.md-table-wide) {
+  width: 100%;
+  max-width: 100%;
+  margin-inline: 0;
+  padding-inline: 0;
+}

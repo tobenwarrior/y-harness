@@ -158,6 +158,8 @@ export interface ChatNodeInjected {
 
 /** Stable owner currency delivered to a keyed Chat renderer. */
 export interface ChatNodeOwnerProps {
+  /** Speaker for a Bot's embedded Conversation occurrence. */
+  bot?: import('@yharness/client-ui-conversation/client').ConversationBot
   /** Renderer-owned Node portion selected by the grouping Definition. */
   groupPart?: string
   cwd?: string | undefined
