@@ -21,7 +21,16 @@
       "path": "../../core/agent"
     },
     {
+      "path": "../../fs/fs"
+    },
+    {
       "path": "../sandbox"
+    },
+    {
+      "path": "../../shell/shell"
+    },
+    {
+      "path": "../../subprocess/subprocess"
     },
     {
       "path": "../../core/session"

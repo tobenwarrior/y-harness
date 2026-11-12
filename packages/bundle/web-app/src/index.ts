@@ -33,6 +33,8 @@ import { computerRoutes } from './computer-api.ts'
 import * as ComputerTool from './computer-tool.ts'
 import { VpsComputer } from './computer.ts'
 import { MacComputerBridge } from './mac-computer.ts'
+import { mountVpsBots } from './vps-bots.ts'
+import type { VpsServiceAccess } from './vps-services.ts'
 
 /** Stable Cordis plugin name. */
 export const name = 'web-app'
@@ -71,6 +73,15 @@ export interface Config {
   publicUrl?: string
   /** Explicit `--trusted-host` authorities from this invocation. */
   trustedHosts: string[]
+  /** Rootless computers assigned to Bots by the private VPS installation. */
+  botComputers?: {
+    /** Owner-only runtime root for the installation. */
+    root: string
+    /** Locally built desktop image. */
+    image: string
+  } | null
+  /** Exact Linux service grants, selected by the VPS owner. */
+  vpsServices?: VpsServiceAccess[]
   /** Opt in to the private Linux desktop using its X display and owner-only authority file. */
   computer?: {
     /** Local X11 display identifier for the private desktop. */
@@ -86,6 +97,16 @@ export const Config: z<Config> = z.object({
   surfaceContext: z.boolean().default(true),
   publicUrl: z.transform(z.string(), value => parsePublicUrl(value).href),
   trustedHosts: z.array(String).default([]),
+  botComputers: z.union([
+    z.object({ root: z.string().required(), image: z.string().required() }),
+    z.const(null),
+  ]),
+  vpsServices: z.array(z.object({
+    unit: z.string().required(),
+    scope: z.union(['system', 'user'] as const).required(),
+    bots: z.array(String).required(),
+    restart: z.boolean(),
+  })),
   computer: z.union([
     z.object({
       display: z.string().required(),
@@ -287,7 +308,10 @@ export function apply(ctx: Context, config: Config): void {
       })
     })
   }
-  if (config.computer !== undefined && config.computer !== null) {
+  if (config.botComputers !== undefined && config.botComputers !== null) {
+    if (process.platform !== 'linux') throw new Error('Managed VPS Bot computers require Linux.')
+    mountVpsBots(ctx, config.botComputers, config.vpsServices ?? [])
+  } else if (config.computer !== undefined && config.computer !== null) {
     const computer = new VpsComputer(config.computer)
     ctx.provide('vpsComputer', computer)
     ctx.effect(() => () => computer.dispose(), 'vps-computer: private desktop')

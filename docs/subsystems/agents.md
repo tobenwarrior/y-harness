@@ -368,6 +368,13 @@ collaborationFor(agent: Pick<Agent, 'id'>): Promise<BotCollaborationClient>
 @Remote('create') async create(request: BotCreateRequest): Promise<BotCreateValue>
 
 /**
+ * Resolve a server-owned Bot by its exact backing Session.
+ * @param sessionId - Session identity from the live Agent or authenticated UI.
+ * @returns The owner Bot, including provisioning state, or undefined for other Sessions.
+ */
+async ownerBotForSession(sessionId: string): Promise<{ readonly id: BotId readonly sessionId: SessionId readonly state: 'active' | 'provisioning' } | undefined>
+
+/**
  * Rename one Bot while preserving its one Session mapping and visual identity.
  * @param request - Bot id and new display name.
  * @returns the committed row.
@@ -419,7 +426,7 @@ collaborationFor(agent: Pick<Agent, 'id'>): Promise<BotCollaborationClient>
 @Remote('readAvatar') async readAvatar(request: BotAvatarReadRequest): Promise<BotAvatarReadValue>
 ```
 
-Types: [Agent](core.md)
+Types: [Agent](core.md) · [SessionId](core.md)
 
 Source: [`packages/agents/bots/src/index.ts`](../../packages/agents/bots/src/index.ts)
 

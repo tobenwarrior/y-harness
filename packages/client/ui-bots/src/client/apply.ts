@@ -48,9 +48,14 @@ export function apply(ctx: Context): void {
   const computer = createComputerClient()
   const computerAvailability = createComputerAvailability(computer)
   const computerTarget = createSnapshotStore<string | null>(null)
+  const workspace = controller.face().hooks.workspace
+  const selectedSessionId = (): string | undefined => {
+    const snapshot = workspace.getSnapshot()
+    const selected = snapshot.bots.find(bot => bot.id === snapshot.selectedBotId)
+    return selected?.sessionId
+  }
   const rosterReady = controller.load()
   ctx.inject(['inputTriggers'], (scope) => {
-    const workspace = controller.face().hooks.workspace
     const loadAvatar = (botId: string, avatar: BotAvatar): Promise<string> =>
       controller.face().loadAvatar(botId, avatar)
     const botSource = createBotReferenceSource({
@@ -94,10 +99,19 @@ export function apply(ctx: Context): void {
   })
 
   ctx.effect(() => {
-    const stopGeneration = connection.generation.subscribe(() => { computerAvailability.refresh() })
-    computerAvailability.refresh()
+    let refreshedSession = selectedSessionId()
+    const refresh = (force = false): void => {
+      const nextSession = selectedSessionId()
+      if (!force && nextSession === refreshedSession) return
+      refreshedSession = nextSession
+      computerAvailability.refresh(nextSession)
+    }
+    const stopGeneration = connection.generation.subscribe(() => { refresh(true) })
+    const stopWorkspace = workspace.subscribe(() => { refresh() })
+    refresh(true)
     return () => {
       stopGeneration()
+      stopWorkspace()
       computerAvailability.dispose()
     }
   }, 'ui-bots: computer availability')
@@ -112,7 +126,12 @@ export function apply(ctx: Context): void {
         const face = controller.face()
         return {
           ...face, computer, setComputerTarget: (sessionId: string | null) => { computerTarget.set(sessionId) },
-          hooks: { ...face.hooks, computerAvailability: computerAvailability.source, computerTarget },
+          hooks: {
+            ...face.hooks,
+            computerAvailability: computerAvailability.source,
+            computerIdentity: computerAvailability.identity,
+            computerTarget,
+          },
         }
       },
     }, BotsPanel))

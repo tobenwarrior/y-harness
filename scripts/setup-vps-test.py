@@ -35,6 +35,92 @@ class SetupVpsTest(unittest.TestCase):
         self.assertIn('StandardOutput=truncate:%h/.yharness-vps/host.log', unit)
         self.assertIn('Restart=on-failure', unit)
         self.assertIn('UMask=0077', unit)
+        self.assertNotIn('YH_VPS_BOT_ROOT', unit)
+
+    def test_bot_dropin_is_owner_only_and_carries_its_private_paths(self):
+        self.unit_dir.mkdir(parents=True)
+        installer.install_bot_dropin(self.root, self.unit_dir)
+        dropin = self.unit_dir / (installer.SERVICE + '.d') / 'vps-bot.conf'
+        self.assertEqual(dropin.read_text(), (
+            '[Service]\n'
+            'Environment="YH_VPS_BOT_ROOT=%h/.yharness-vps/bots"\n'
+            f'Environment="YH_VPS_BOT_IMAGE={installer.BOT_IMAGE}"\n'
+        ))
+        self.assertEqual(dropin.stat().st_mode & 0o777, 0o600)
+
+    def test_old_checkout_without_bot_payload_does_not_get_a_dropin(self):
+        source = self.home / 'source'
+        (source / installer.CLI.parent).mkdir(parents=True)
+        (source / installer.CLI).touch()
+        self.assertFalse(installer.bot_resources(source))
+
+    def test_partial_bot_payload_is_rejected_before_image_setup(self):
+        source = self.home / 'source'
+        containerfile = source / installer.BOT_CONTAINERFILE
+        containerfile.parent.mkdir(parents=True)
+        containerfile.write_text('FROM ubuntu:24.04\n')
+        with self.assertRaisesRegex(installer.SetupError, 'incomplete VPS Bot runtime payload'):
+            installer.bot_resources(source)
+
+    def test_bot_image_build_pulls_base_explicitly_then_uses_offline_build(self):
+        self.root.mkdir(mode=0o700)
+        source = self.home / 'source'
+        containerfile = source / installer.BOT_CONTAINERFILE
+        containerfile.parent.mkdir(parents=True)
+        containerfile.write_text('FROM ubuntu:24.04\n')
+        calls = []
+
+        def command(args, **_options):
+            calls.append(args)
+            if len(args) >= 4 and args[1:3] == ['image', 'exists']:
+                raise subprocess.CalledProcessError(1, args)
+            return subprocess.CompletedProcess(args, 0, '')
+
+        with (
+            patch.object(installer, 'podman_executable', return_value=Path('/usr/bin/podman')),
+            patch.object(installer, 'run', side_effect=command),
+        ):
+            installer.ensure_bot_image(self.root, source)
+        self.assertIn(['/usr/bin/podman', 'pull', '--quiet', 'docker.io/library/ubuntu:24.04'], calls)
+        build = next(call for call in calls if call[:3] == ['/usr/bin/podman', 'build', '--pull=never'])
+        self.assertIn('--network=host', build)
+        self.assertNotIn('--pull=always', build)
+
+    def test_podman_prerequisite_uses_owner_visible_sudo(self):
+        self.root.mkdir(mode=0o700)
+        results = iter((None, '/usr/bin/podman'))
+        calls = []
+
+        def command(args, **_options):
+            calls.append(args)
+            return subprocess.CompletedProcess(args, 0, '')
+
+        with (
+            patch.object(installer.shutil, 'which', side_effect=lambda _name: next(results)),
+            patch.object(installer, 'run', side_effect=command),
+            patch.object(installer, 'ensure_rootless_podman'),
+        ):
+            self.assertEqual(installer.podman_executable(self.root), Path('/usr/bin/podman'))
+        self.assertTrue(any(call[:2] == ['/usr/bin/sudo', '/usr/bin/apt-get'] for call in calls))
+        self.assertTrue(any('uidmap' in call for call in calls))
+        self.assertFalse(any('-n' in call for call in calls))
+
+    def test_rootless_probe_requires_subordinate_id_ranges(self):
+        self.assertFalse(installer.subid_mapping(self.home / 'subuid', 'alice'))
+        (self.home / 'subuid').write_text('alice:100000:65536\n')
+        (self.home / 'subgid').write_text('alice:100000:65536\n')
+        self.assertTrue(installer.subid_mapping(self.home / 'subuid', 'alice'))
+        self.assertTrue(installer.subid_mapping(self.home / 'subgid', 'alice'))
+        calls = []
+
+        def command(args, **_options):
+            calls.append(args)
+            return subprocess.CompletedProcess(args, 0, '')
+
+        with patch.object(installer, 'run', side_effect=command):
+            with patch.object(installer, 'subid_mapping', return_value=True):
+                installer.ensure_rootless_podman(Path('/usr/bin/podman'))
+        self.assertEqual(calls[0][:3], ['/usr/bin/podman', 'unshare', '/usr/bin/true'])
 
     def test_refuses_to_create_private_state_under_a_git_checkout(self):
         subprocess.run(['git', 'init', '-q', str(self.home)], check=True)
@@ -255,6 +341,38 @@ class SetupVpsTest(unittest.TestCase):
         self.assertEqual((self.root / 'state').stat().st_mode & 0o777, 0o700)
         self.assertEqual((self.root / 'host.log').stat().st_mode & 0o777, 0o600)
         self.assertIn(['systemctl', '--user', 'enable', '--now', installer.SERVICE], [call.args[0] for call in command.call_args_list])
+        self.assertFalse(any('restart' in call.args[0] for call in command.call_args_list))
+
+    def test_setup_installs_bot_dropin_only_for_the_complete_payload_without_restart(self):
+        self.root.mkdir(mode=0o700)
+        source = self.root / 'source'
+        (source / 'apps/cli/lib').mkdir(parents=True)
+        (source / 'apps/cli/lib/bin.js').touch()
+        for resource in (
+            source / installer.BOT_CONTAINERFILE,
+            source / installer.BOT_CONTAINERFILE.parent / 'start.sh',
+            source / installer.BOT_CONTAINERFILE.parent / 'capture.sh',
+            source / installer.BOT_CONTAINERFILE.parent / 'files.py',
+            source / 'packages/bundle/web-app/src/vps-runtime.ts',
+        ):
+            resource.parent.mkdir(parents=True, exist_ok=True)
+            resource.write_text('fixture')
+        events = []
+        with (
+            patch.object(installer, 'require_linux_user'),
+            patch.object(installer.sys, 'executable', '/usr/bin/python3'),
+            patch.object(installer, 'node_executable', return_value=Path('/opt/node/bin/node')),
+            patch.object(installer, 'run') as command,
+            patch.object(installer, 'ensure_sandbox', create=True),
+            patch.object(installer, 'ensure_bot_image', side_effect=lambda _root, _source: events.append('image')),
+            patch('sys.stdout', new_callable=io.StringIO),
+        ):
+            command.return_value.stdout = 'yes\n'
+            installer.setup(self.root, self.unit_dir)
+        self.assertEqual(events, ['image'])
+        dropin = self.unit_dir / (installer.SERVICE + '.d') / 'vps-bot.conf'
+        self.assertIn(f'Environment="YH_VPS_BOT_IMAGE={installer.BOT_IMAGE}"', dropin.read_text())
+        self.assertIn('Environment="YH_VPS_BOT_ROOT=%h/.yharness-vps/bots"', dropin.read_text())
         self.assertFalse(any('restart' in call.args[0] for call in command.call_args_list))
 
     def test_startup_restores_the_missing_runner_in_a_replacement_checkout(self):

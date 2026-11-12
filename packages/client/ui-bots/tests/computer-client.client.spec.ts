@@ -23,6 +23,25 @@ describe('Computer HTTP client', () => {
     }))
   })
 
+  it('includes the selected Bot session and keeps its Computer scope metadata', async () => {
+    const fetchMock = vi.fn(async () => response({
+      available: true,
+      kind: 'vps',
+      computer: { id: 'bot-session', location: 'vps', permissionScope: 'bot' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    const client = createComputerClient()
+
+    await expect(client.status(undefined, 'bot-session')).resolves.toEqual({
+      available: true,
+      kind: 'vps',
+      computer: { id: 'bot-session', location: 'vps', permissionScope: 'bot' },
+    })
+    expect(fetchMock).toHaveBeenCalledWith('api/computer/status', expect.objectContaining({
+      body: JSON.stringify({ sessionId: 'bot-session' }),
+    }))
+  })
+
   it('sends the viewer lease and input action to their exact routes', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(response({ mode: 'controlling' }))
@@ -32,9 +51,8 @@ describe('Computer HTTP client', () => {
 
     await expect(client.takeControl('viewer-id')).resolves.toEqual({ mode: 'controlling' })
     await expect(client.input('viewer-id', { kind: 'key', key: 'Ctrl+a' })).resolves.toEqual({ mode: 'controlling' })
-    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
-      'api/computer/take-control', 'api/computer/input',
-    ])
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('api/computer/take-control')
+    expect(fetchMock.mock.calls[1]?.[0]).toBe('api/computer/input')
     expect(fetchMock.mock.calls[1]?.[1]).toEqual(expect.objectContaining({
       body: JSON.stringify({ viewerId: 'viewer-id', action: { kind: 'key', key: 'Ctrl+a' } }),
     }))

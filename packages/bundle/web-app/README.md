@@ -71,11 +71,11 @@ When you launch `yharness --profile web` over SSH, the URL line still prints but
 
 ### Private Computer
 
-The optional `computer` configuration connects the Web host to a private X11 desktop. The shipped overlay reads `YH_VPS_DISPLAY` and `YH_VPS_XAUTHORITY`. Use the [VPS setup guide](../../../docs/user/guide/vps.md#watch-and-control-the-computer) to install and supervise the desktop.
+The VPS installer enables `botComputers` and provisions a separate rootless Podman computer for each owner Bot. The owner-authenticated Computer routes resolve the requested Session against the Bot roster. The model tool uses the calling Session. Each desktop has its own controller and renewable human input lease. An existing Bot receives its computer when first accessed, while its saved Session and roster identity stay in place.
 
-The owner-authenticated Computer routes and the operator presets' `vps_computer` tool use one controller. The controller serializes input and reserves it for one browser while that browser holds a renewable lease. The shared Bot preset has no desktop access. The lease covers input through this controller. Applications running as the VPS account can still access its X11 session.
+The optional `computer` configuration supplies one shared X11 display for a custom Web deployment. It uses `YH_VPS_DISPLAY` and `YH_VPS_XAUTHORITY`. Managed Bot computers take precedence when configured. See [VPS setup and service grants](../../../docs/user/guide/vps.md#give-a-bot-access-to-service-diagnostics).
 
-The native macOS Desktop Host registers `mac_computer` on operator presets. It relays actions over its private Electron IPC channel with the invoking Session ID. The Electron main process authorizes the currently shared Bot before capturing the primary display or delivering input. Web and Cloud deployments use the VPS configuration above.
+The native macOS Desktop Host registers `mac_computer` on operator presets. It relays actions over its private Electron IPC channel with the invoking Session ID. The Electron main process authorizes the currently shared Bot before capturing the primary display or delivering input.
 
 ### Per-session agent setup
 

@@ -29,6 +29,7 @@
   "peerDependencies": {
     "@yharness/fs": "workspace:*",
     "@yharness/home-paths": "workspace:*",
+    "@yharness/sandbox-policy": "workspace:*",
     "@yharness/skill": "workspace:*",
     "@yharness/cordis": "workspace:~"
   },
@@ -40,6 +41,7 @@
   "devDependencies": {
     "@yharness/fs": "workspace:*",
     "@yharness/home-paths": "workspace:*",
+    "@yharness/sandbox-policy": "workspace:*",
     "@yharness/skill": "workspace:*",
     "@yharness/cordis": "workspace:~"
   }

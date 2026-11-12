@@ -2620,6 +2620,9 @@ importers:
       '@yharness/avatar-generation':
         specifier: workspace:*
         version: link:../../agents/avatar-generation
+      '@yharness/bash-local':
+        specifier: workspace:*
+        version: link:../../shell/bash-local
       '@yharness/bots':
         specifier: workspace:*
         version: link:../../agents/bots
@@ -2851,6 +2854,12 @@ importers:
       '@yharness/file-reference-local':
         specifier: workspace:*
         version: link:../../context/file-reference-local
+      '@yharness/fs':
+        specifier: workspace:*
+        version: link:../../fs/fs
+      '@yharness/fs-patch':
+        specifier: workspace:*
+        version: link:../../fs/fs-patch
       '@yharness/host-directory-picker-auto':
         specifier: workspace:*
         version: link:../../host/directory-picker-auto
@@ -2896,6 +2905,12 @@ importers:
       '@yharness/plugin-manager':
         specifier: workspace:*
         version: link:../../boot/plugin-manager
+      '@yharness/sandbox':
+        specifier: workspace:*
+        version: link:../../sandbox/sandbox
+      '@yharness/sandbox-policy':
+        specifier: workspace:*
+        version: link:../../sandbox/sandbox-policy
       '@yharness/schedule':
         specifier: workspace:*
         version: link:../../schedule/schedule
@@ -3010,10 +3025,19 @@ importers:
       open:
         specifier: ^11.0.0
         version: 11.0.4
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
     devDependencies:
       '@deepseek-ai/libreoffice-kit':
         specifier: ^0.1.5
         version: 0.1.5
+      '@yharness/agent':
+        specifier: workspace:*
+        version: link:../../core/agent
+      '@yharness/agent-loop':
+        specifier: workspace:*
+        version: link:../../core/agent-loop
       '@yharness/cordis':
         specifier: workspace:~
         version: link:../../../vendor/cordis
@@ -3023,18 +3047,12 @@ importers:
       '@yharness/cordis-plugin-loader':
         specifier: workspace:~
         version: link:../../../vendor/loader
-      '@yharness/fs':
-        specifier: workspace:*
-        version: link:../../fs/fs
       '@yharness/fs-local':
         specifier: workspace:*
         version: link:../../fs/fs-local
       '@yharness/otel':
         specifier: workspace:*
         version: link:../../telemetry/otel
-      '@yharness/sandbox-policy':
-        specifier: workspace:*
-        version: link:../../sandbox/sandbox-policy
       '@yharness/session':
         specifier: workspace:*
         version: link:../../core/session
@@ -3044,6 +3062,9 @@ importers:
       '@yharness/shell-env':
         specifier: workspace:*
         version: link:../../shell/shell-env
+      '@yharness/subprocess-local':
+        specifier: workspace:*
+        version: link:../../subprocess/subprocess-local
       '@yharness/system-prompt':
         specifier: workspace:*
         version: link:../../core/system-prompt
@@ -7126,6 +7147,9 @@ importers:
       '@yharness/llm-deepseek-api-key':
         specifier: workspace:*
         version: link:../../llm/llm-deepseek-api-key
+      '@yharness/sandbox-policy':
+        specifier: workspace:*
+        version: link:../../sandbox/sandbox-policy
       '@yharness/session':
         specifier: workspace:*
         version: link:../../core/session
@@ -9409,6 +9433,12 @@ importers:
       '@yharness/session-projection':
         specifier: workspace:*
         version: link:../../session/session-projection
+      '@yharness/shell':
+        specifier: workspace:*
+        version: link:../../shell/shell
+      '@yharness/subprocess':
+        specifier: workspace:*
+        version: link:../../subprocess/subprocess
       '@yharness/system-prompt':
         specifier: workspace:*
         version: link:../../core/system-prompt
@@ -9440,6 +9470,9 @@ importers:
       '@yharness/output-retention':
         specifier: workspace:*
         version: link:../../util/output-retention
+      '@yharness/sandbox-policy':
+        specifier: workspace:*
+        version: link:../../sandbox/sandbox-policy
       '@yharness/scope':
         specifier: workspace:*
         version: link:../../core/scope
@@ -11233,6 +11266,9 @@ importers:
       '@yharness/cordis':
         specifier: workspace:~
         version: link:../../../vendor/cordis
+      '@yharness/fs':
+        specifier: workspace:*
+        version: link:../../fs/fs
       '@yharness/sandbox':
         specifier: workspace:*
         version: link:../sandbox
@@ -11242,6 +11278,12 @@ importers:
       '@yharness/session-projection':
         specifier: workspace:*
         version: link:../../session/session-projection
+      '@yharness/shell':
+        specifier: workspace:*
+        version: link:../../shell/shell
+      '@yharness/subprocess':
+        specifier: workspace:*
+        version: link:../../subprocess/subprocess
       '@yharness/system-prompt':
         specifier: workspace:*
         version: link:../../core/system-prompt
@@ -12888,6 +12930,9 @@ importers:
       '@yharness/home-paths':
         specifier: workspace:*
         version: link:../../util/home-paths
+      '@yharness/sandbox-policy':
+        specifier: workspace:*
+        version: link:../../sandbox/sandbox-policy
       '@yharness/skill':
         specifier: workspace:*
         version: link:../skill

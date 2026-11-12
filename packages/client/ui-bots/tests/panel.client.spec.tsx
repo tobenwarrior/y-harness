@@ -15,7 +15,7 @@ import {
   type BotsConversationProps, type BotsPanelProps,
 } from '../src/client/panel.tsx'
 import type { BotWorkspaceState } from '../src/client/controller.ts'
-import type { ComputerClient } from '../src/client/computer-client.ts'
+import type { ComputerClient, ComputerIdentity } from '../src/client/computer-client.ts'
 
 afterEach(cleanup)
 
@@ -216,16 +216,37 @@ describe('Bots conversation slot wiring', () => {
     expect(screen.getByTestId('conversation-slot').textContent).toBe(selected.name)
     expect(calls).toEqual([{ key: 'bots.conversation', props: { bot: { name: selected.name } } }])
   })
+
+  it('shows the VPS Bot scope beside the Computer affordance before opening it', () => {
+    const selected = bot()
+    const state = workspaceState([selected], selected.id)
+    const reference = sessionReference(selected.sessionId)
+    const renderSlot: BotsPanelProps['renderSlot'] = () => <span data-testid="conversation-slot">Conversation</span>
+    const props = panelProps(state, reference, renderSlot, {
+      availability: 'available',
+      identity: { id: selected.sessionId, location: 'vps', permissionScope: 'bot' },
+      target: selected.sessionId,
+    })
+    render(<BotsPanel {...props} />)
+
+    expect(screen.getByText('VPS Bot computer')).toBeTruthy()
+  })
 })
 
 function panelProps(
   state: BotWorkspaceState,
   reference: SessionReference | undefined,
   renderSlot: BotsPanelProps['renderSlot'],
+  options: {
+    readonly availability?: 'checking' | 'available' | 'mac' | 'unavailable'
+    readonly identity?: ComputerIdentity
+    readonly target?: string
+  } = {},
 ): BotsPanelProps {
   const useWorkspace: BotsPanelProps['useWorkspace'] = selector => selector(state)
-  const useComputerAvailability: BotsPanelProps['useComputerAvailability'] = selector => selector('unavailable')
-  const useComputerTarget: BotsPanelProps['useComputerTarget'] = selector => selector(null)
+  const useComputerAvailability: BotsPanelProps['useComputerAvailability'] = selector => selector(options.availability ?? 'unavailable')
+  const useComputerIdentity: BotsPanelProps['useComputerIdentity'] = selector => selector(options.identity)
+  const useComputerTarget: BotsPanelProps['useComputerTarget'] = selector => selector(options.target ?? null)
   const SessionProvider: BotsPanelProps['SessionProvider'] = ({ children }) => <>{children}</>
   return {
     usePanelInfo,
@@ -236,6 +257,7 @@ function panelProps(
     useWorkspaces,
     useWorkspace,
     useComputerAvailability,
+    useComputerIdentity,
     useComputerTarget,
     reference: () => reference,
     select: () => {},

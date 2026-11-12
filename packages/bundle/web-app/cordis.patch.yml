@@ -220,6 +220,10 @@
         publicUrl: !!js ctx.webStartup.publicUrl
         surfaceContext: true
         trustedHosts: !!js ctx.webStartup.trustedHosts
+        botComputers: !!js >-
+          process.env.YH_VPS_BOT_ROOT === undefined && process.env.YH_VPS_BOT_IMAGE === undefined
+            ? undefined
+            : { root: process.env.YH_VPS_BOT_ROOT, image: process.env.YH_VPS_BOT_IMAGE }
         computer: !!js >-
           process.env.YH_VPS_DISPLAY === undefined && process.env.YH_VPS_XAUTHORITY === undefined
             ? undefined

@@ -182,6 +182,7 @@ export const SERVICE_WALK_EXEMPTIONS: Record<string, string> = {
   dshHomePath: 'not a service: boot-provided root accessor function (typeof dshHomePath | undefined) for Loader !!js config expressions — packages/boot/app-boot/README.md owns the boot contract',
   launchEnvironment: 'not a service: launcher-provided root accessor value (LaunchEnvironmentSnapshot | undefined) — packages/util/launch-environment/README.md owns this launcher contract',
   codexDynamicTools: 'not a public service: optional native Codex action provider — packages/llm/llm-pi-ai/README.md owns the provider contract',
+  botWorkspaces: 'private Bot workspace assignment documented in packages/agents/bots/README.md',
   vpsComputer: 'private controller shared by the Computer routes and operator tool — packages/bundle/web-app/README.md documents its behavior',
   pluginPackages: 'profile-boot-owned package resolver service used by optional consumers — packages/boot/app-boot/README.md owns this internal API',
   fileUpload: 'client-side browser upload service — packages/client/file-upload/README.md owns the API',

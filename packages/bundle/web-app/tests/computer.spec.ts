@@ -8,6 +8,7 @@ import {
   ComputerHost,
   ComputerInputError,
   ComputerLeaseError,
+  containerComputer,
   type ComputerAction,
   type ComputerCommandRunner,
 } from '../src/computer.ts'
@@ -84,6 +85,28 @@ describe('private computer Host', () => {
       delete process.env.DEEPSEEK_API_KEY
       delete process.env.COMPUTER_TEST_VISIBLE
     }
+  })
+
+  it('captures container frames through returned bytes and sends input as argv', async () => {
+    const calls: Array<readonly string[]> = []
+    const host = containerComputer(async (argv) => {
+      calls.push(argv)
+      return argv[0] === '/usr/local/bin/yharness-vps-bot-capture' ? Buffer.from([0xff, 0xd8, 0xff, 0xd9]) : Buffer.alloc(0)
+    })
+
+    await expect(host.observe()).resolves.toMatchObject({
+      jpeg: Buffer.from([0xff, 0xd8, 0xff, 0xd9]).toString('base64'),
+      width: COMPUTER_WIDTH,
+      height: COMPUTER_HEIGHT,
+      mode: 'other',
+    })
+    await host.botAction({ kind: 'click', x: 10, y: 20, button: 1 })
+    expect(calls).toEqual([
+      ['/usr/local/bin/yharness-vps-bot-capture'],
+      ['xdotool', 'mousemove', '--sync', '10', '20'],
+      ['xdotool', 'click', '1'],
+    ])
+    await host.dispose()
   })
 
   it('serializes bot and human input, and waits for admitted bot work before taking control', async () => {
