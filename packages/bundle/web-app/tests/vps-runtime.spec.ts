@@ -134,7 +134,12 @@ describe('VpsRuntime', () => {
     expect(mounts[1]).toMatch(new RegExp(`^yharness-bot-volume-[0-9a-f]{16}-botsessionbbbbbbbbbbbb4bbb8bbbbbbbbbbbbbbb:${f.runtime.workspace(sessions.bob)}:rw,nodev,nosuid$`, 'u'))
   })
 
-  it('restarts an existing stopped container without replacing its ownership', async () => {
+  it.each([
+    { report: 'literal ALL', capDrop: ['ALL'], effective: undefined, bounding: undefined, capAdd: [], allowed: true },
+    { report: 'expanded empty capabilities', capDrop: ['CAP_CHOWN'], effective: null, bounding: null, capAdd: [], allowed: true },
+    { report: 'nonempty bounding set', capDrop: ['CAP_CHOWN'], effective: null, bounding: ['CAP_KILL'], capAdd: [], allowed: false },
+    { report: 'explicit additions', capDrop: ['ALL'], effective: null, bounding: null, capAdd: ['CAP_KILL'], allowed: false },
+  ])('checks $report before restarting a stopped container', async ({ capDrop, effective, bounding, capAdd, allowed }) => {
     const f = fixture(async (argv) => {
       if (argv[1] === 'container' && argv[2] === 'exists') return result()
       if (argv[1] === 'inspect') return result(0, JSON.stringify({
@@ -150,17 +155,21 @@ describe('VpsRuntime', () => {
           'io.yharness.vps.volume': `yharness-bot-volume-${(argv.at(-1) ?? '').replace(/^yharness-bot-/u, '')}`,
         } },
         State: { Running: false },
+        EffectiveCaps: effective,
+        BoundingCaps: bounding,
         Mounts: [
           { Type: 'volume', Name: `yharness-bot-volume-${(argv.at(-1) ?? '').replace(/^yharness-bot-/u, '')}`, Destination: f.runtime.workspace(sessions.alice), RW: true, Options: ['nodev', 'nosuid', 'rbind'] },
         ],
         HostConfig: {
-          NetworkMode: 'none', Privileged: false, SecurityOpt: ['no-new-privileges'], CapDrop: ['ALL'], UsernsMode: 'private', Tmpfs: { '/tmp': 'rw,noexec,nosuid,nodev,rprivate,tmpcopyup' },
+          NetworkMode: 'none', Privileged: false, SecurityOpt: ['no-new-privileges'], CapDrop: capDrop, CapAdd: capAdd, UsernsMode: 'private', Tmpfs: { '/tmp': 'rw,noexec,nosuid,nodev,rprivate,tmpcopyup' },
         },
       }))
       return result()
     })
-    await f.runtime.ensure(sessions.alice)
-    expect(f.calls.some(argv => argv[1] === 'start')).toBe(true)
+    const ready = f.runtime.ensure(sessions.alice)
+    if (allowed) await ready
+    else await expect(ready).rejects.toThrow('container privileges are invalid')
+    expect(f.calls.some(argv => argv[1] === 'start')).toBe(allowed)
     expect(f.calls.some(argv => argv[1] === 'run')).toBe(false)
   })
 

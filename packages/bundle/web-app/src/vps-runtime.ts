@@ -376,7 +376,7 @@ function inspectContainer(
   }
   if (!isRecord(hostConfig) || hostConfig.NetworkMode !== 'none' || hostConfig.Privileged === true
     || !stringArray(hostConfig.SecurityOpt, 'no-new-privileges')
-    || !stringArray(hostConfig.CapDrop, 'ALL')
+    || !capabilitiesDropped(value, hostConfig)
     || (typeof hostConfig.UsernsMode !== 'string'
       || (hostConfig.UsernsMode !== 'private' && !hostConfig.UsernsMode.startsWith('keep-id')))) {
     throw new VpsRuntimeError('VPS Bot container privileges are invalid')
@@ -398,6 +398,16 @@ function recordArray(value: unknown): value is Record<string, unknown>[] {
 
 function stringArray(value: unknown, expected: string): boolean {
   return Array.isArray(value) && value.includes(expected)
+}
+
+function capabilitiesDropped(container: Record<string, unknown>, hostConfig: Record<string, unknown>): boolean {
+  const { EffectiveCaps: effective, BoundingCaps: bounding } = container
+  const empty = (value: unknown): boolean => value === null || (Array.isArray(value) && value.length === 0)
+  for (const caps of [hostConfig.CapAdd, effective, bounding]) {
+    if (caps !== undefined && !empty(caps)) return false
+  }
+  // Podman can report the expanded CapDrop list instead of the original flag.
+  return (effective !== undefined && bounding !== undefined) || stringArray(hostConfig.CapDrop, 'ALL')
 }
 
 function mountOptions(mount: Record<string, unknown>): string[] {
