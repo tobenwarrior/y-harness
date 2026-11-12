@@ -240,7 +240,7 @@ describe('private computer Host', () => {
       ['xdotool', 'mousemove', '--sync', '9', '10'],
       ['xdotool', 'click', '--repeat', '2', '4'],
       ['xdotool', 'key', '--clearmodifiers', 'ctrl+shift+Tab'],
-      ['xdotool', 'type', '--clearmodifiers', '--delay', '0', '--', 'hello\nworld'],
+      ['xdotool', 'type', '--clearmodifiers', '--delay', '12', '--', 'hello\nworld'],
     ])
     await f.dispose()
   })

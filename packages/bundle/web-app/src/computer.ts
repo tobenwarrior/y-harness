@@ -12,6 +12,7 @@ import { spawn } from 'node:child_process'
 import { chmod, mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
+import { setTimeout as delay } from 'node:timers/promises'
 import { scrubbedParentEnv } from '@yharness/subprocess'
 
 /** Fixed width exposed by the first private Computer panel. */
@@ -22,6 +23,8 @@ export const COMPUTER_HEIGHT = 800
 const LEASE_DURATION_MS = 8_000
 const COMMAND_TIMEOUT_MS = 2_000
 const MAX_TEXT_BYTES = 8_192
+const XDOTOOL_TEXT_INTERVAL_MS = 12
+const XDOTOOL_TEXT_SETTLE_MS = 350
 const MAX_KEY_LENGTH = 64
 const VIEWER_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu
 
@@ -526,9 +529,15 @@ export class VpsComputer {
       case 'key':
         await this.run('xdotool', ['key', '--clearmodifiers', action.key], env, signal ?? new AbortController().signal)
         return
-      case 'text':
-        await this.run('xdotool', ['type', '--clearmodifiers', '--delay', '0', '--', action.text], env, signal ?? new AbortController().signal)
+      case 'text': {
+        // Firefox needs paced key events. Reserve half the command deadline for X11 and process overhead.
+        const interval = Math.min(XDOTOOL_TEXT_INTERVAL_MS, Math.floor(COMMAND_TIMEOUT_MS / (2 * Math.max(1, action.text.length))))
+        const args = ['type', '--clearmodifiers', '--delay', String(interval), '--', action.text]
+        await this.run('xdotool', args, env, signal ?? new AbortController().signal)
+        // X11 can finish queuing text before Firefox applies it to the address bar.
+        await delay(XDOTOOL_TEXT_SETTLE_MS, undefined, { signal })
         return
+      }
     }
   }
 
