@@ -94,7 +94,7 @@ vpsJournal:
   bots: [bot-worker]
 ```
 
-The selected Bot can call `vps_service_journal` with no arguments. The host connects to the socket and reads one bounded JSON response containing `version`, `generatedAt`, `recovery` and `primaryAudit`. The feed operator controls which entries the two arrays contain. The socket stays on the host, and the tool only reads from it.
+The selected Bot can call `vps_service_journal` with no arguments, including with native Codex. The host connects to the socket and reads one bounded JSON response containing `version`, `generatedAt`, `recovery` and `primaryAudit`. The feed operator controls which entries the two arrays contain. The socket stays on the host, and the tool only reads from it.
 
 ## Import a Grok Bot export
 

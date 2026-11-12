@@ -120,7 +120,7 @@ import type {
 } from './group-chat.ts'
 import type { BotAttachmentGrantValue } from './attachment-grants.ts'
 import { createBotNativeToolProvider } from './native-tools.ts'
-import type { BotNativeToolHost, BotRoutineCreateResolution, BotRoutineCreateReservation } from './native-tools.ts'
+import type { BotNativeToolHost, BotRoutineCreateResolution, BotRoutineCreateReservation, BotVpsJournalReader } from './native-tools.ts'
 import { installBotCollaborationTools } from './scoped-tools.ts'
 import { installBotRoutineTools } from './routine-tools.ts'
 import type { BotEventRoutineToolHost } from './routine-tools.ts'
@@ -522,6 +522,11 @@ interface BotWorkspaces {
   managed?(botId: string): boolean
 }
 
+interface BotVpsJournal {
+  /** Resolve the current owner-configured read grant for one Bot roster id. */
+  forBot(botId: BotId): BotVpsJournalReader | undefined
+}
+
 function botWorkspace(
   workspaces: BotWorkspaces | undefined,
   botId: string,
@@ -535,6 +540,8 @@ declare module '@yharness/cordis' {
   interface Context {
     /** Optional server-owned workspaces for Bots. */
     botWorkspaces: BotWorkspaces
+    /** Optional owner-configured read-only VPS journal feed. */
+    botVpsJournal?: BotVpsJournal
     /** Durable user-owned Bot roster and one-Session provisioning service. */
     bots: BotService
   }
@@ -3113,6 +3120,16 @@ export class BotService extends TypertRemoteService {
         }
       },
       grokHistory: (sessionId, request, signal) => this.readGrokHistoryPageForSession(sessionId, request, signal),
+      vpsJournal: async (sessionId) => {
+        if (ctx.get('botVpsJournal') === undefined) return undefined
+        const agents = ctx.get('agents')
+        const agent = agents?.get(sessionId)
+        if (agent === undefined) return undefined
+        const bot = await this.ownerBotForSession(sessionId)
+        if (bot?.state !== 'active' || agents?.get(sessionId) !== agent
+          || this.sharedScopeAgents.has(agent) || this.sharedScopeFences.has(agent)) return undefined
+        return ctx.get('botVpsJournal')?.forBot(bot.id)
+      },
       manage: this.manageBots = async (action, args, context) => {
         const text = (key: string): string | undefined => {
           const value = args[key]

@@ -65,6 +65,11 @@ export function mountVpsBots(
     throw new Error('VPS journal grants must select Computer Bots.')
   }
   const journal = journalConfig === undefined ? undefined : new VpsJournal(journalConfig)
+  if (journal !== undefined) {
+    ctx.provide('botVpsJournal', {
+      forBot: botId => journal.authorized(botId) ? signal => journal.read(botId, signal) : undefined,
+    })
+  }
   ctx.provide('botWorkspaces', {
     workspace: sessionId => runtime.workspace(sessionId),
     prepare: sessionId => runtime.ensure(sessionId),

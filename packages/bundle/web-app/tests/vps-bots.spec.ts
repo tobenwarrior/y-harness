@@ -1,6 +1,7 @@
 import { Context } from '@yharness/cordis'
 import AgentRegistry from '@yharness/agent'
 import AgentLoop from '@yharness/agent-loop'
+import { BotId } from '@yharness/bots'
 import LlmRuntime, { ToolCallId } from '@yharness/llm'
 import { managedBotExecutionFor, SandboxPolicyService } from '@yharness/sandbox-policy'
 import SessionStore, { SessionId } from '@yharness/session'
@@ -101,6 +102,13 @@ describe('managed VPS Bot composition', () => {
       await expect(ctx.tools.execute({ ...call, name: 'vps_service_journal', callId: ToolCallId('desktop-journal-call'), agent: desktop }))
         .resolves.toMatchObject({ isError: false })
       expect(readJournal).toHaveBeenNthCalledWith(2, 'bot-desktop', call.signal)
+      const journal = ctx.get('botVpsJournal')
+      if (journal === undefined) throw new Error('native Bot journal reader was not mounted')
+      expect(journal.forBot(BotId('bot-legacy'))).toBeUndefined()
+      const readDesktopJournal = journal.forBot(BotId('bot-desktop'))
+      if (readDesktopJournal === undefined) throw new Error('desktop-only Bot journal grant was not mounted')
+      await expect(readDesktopJournal(call.signal)).resolves.toMatchObject({ version: 1 })
+      expect(readJournal).toHaveBeenNthCalledWith(3, 'bot-desktop', call.signal)
       await expect(ctx.tools.execute({ ...call, callId: ToolCallId('bot-call'), agent: bot }))
         .resolves.toMatchObject({ isError: true })
       await expect(ctx.tools.execute({ ...call, callId: ToolCallId('desktop-call'), agent: desktop }))
