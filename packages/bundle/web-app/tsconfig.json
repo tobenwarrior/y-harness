@@ -18,6 +18,9 @@
       "path": "../../../vendor/loader"
     },
     {
+      "path": "../../agents/bots"
+    },
+    {
       "path": "../../boot/app-boot"
     },
     {
@@ -58,6 +61,21 @@
     },
     {
       "path": "../../subprocess/subprocess"
+    },
+    {
+      "path": "../../fs/fs"
+    },
+    {
+      "path": "../../fs/fs-patch"
+    },
+    {
+      "path": "../../sandbox/sandbox"
+    },
+    {
+      "path": "../../sandbox/sandbox-policy"
+    },
+    {
+      "path": "../../shell/bash-local"
     }
   ]
 }

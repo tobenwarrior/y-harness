@@ -1,0 +1,21 @@
+# Audited local desktop image for one rootless Podman Bot container.
+# VPS setup invokes `podman build --pull=never`; the Ubuntu base must already
+# be present on the server rather than being pulled implicitly at launch.
+FROM docker.io/library/ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    DISPLAY=:99 \
+    XAUTHORITY=/tmp/yharness-xauthority \
+    HOME=/tmp/yharness-home
+
+RUN apt-get update \
+    && apt-get install --no-install-recommends --yes \
+      bash ca-certificates coreutils openbox procps python3 ripgrep scrot xauth xdotool xterm xvfb \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY start.sh /usr/local/bin/yharness-vps-bot-start
+COPY capture.sh /usr/local/bin/yharness-vps-bot-capture
+COPY files.py /usr/local/lib/yharness/files.py
+RUN chmod 0755 /usr/local/bin/yharness-vps-bot-start /usr/local/bin/yharness-vps-bot-capture /usr/local/lib/yharness/files.py
+
+ENTRYPOINT ["/usr/local/bin/yharness-vps-bot-start"]

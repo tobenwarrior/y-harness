@@ -467,7 +467,7 @@ export type Config = LocalConfig
 ## `@yharness/bots`
 
 - `inject`: `agents` · `storageDomain` · `sessionController` · `sessions` · `attachments` · `systemPrompt` · `tools`
-- `source`: [`packages/agents/bots/src/index.ts:536`](../packages/agents/bots/src/index.ts)
+- `source`: [`packages/agents/bots/src/index.ts:563`](../packages/agents/bots/src/index.ts)
 
 ```ts config-catalog
 /** Bot service configuration. */
@@ -2616,7 +2616,7 @@ export interface Config {
 
 - `inject`: `sessionProjections`
 - `refs`: [`SandboxMode`](subsystems/sandbox.md)
-- `source`: [`packages/sandbox/sandbox-policy/src/index.ts:71`](../packages/sandbox/sandbox-policy/src/index.ts)
+- `source`: [`packages/sandbox/sandbox-policy/src/index.ts:78`](../packages/sandbox/sandbox-policy/src/index.ts)
 
 ```ts config-catalog
 /**
@@ -3028,7 +3028,7 @@ export interface Config {
 ## `@yharness/skill-filesystem`
 
 - `inject`: `skills`
-- `source`: [`packages/skill/skill-filesystem/src/index.ts:49`](../packages/skill/skill-filesystem/src/index.ts)
+- `source`: [`packages/skill/skill-filesystem/src/index.ts:50`](../packages/skill/skill-filesystem/src/index.ts)
 
 ```ts config-catalog
 /** Local filesystem skill provider configuration. */
@@ -3757,7 +3757,7 @@ export interface Config {
 ## `@yharness/tool-bash`
 
 - `inject`: `tools` · `shell` · `systemPrompt` · `shellEnv`
-- `source`: [`packages/shell/tool-bash/src/index.ts:37`](../packages/shell/tool-bash/src/index.ts)
+- `source`: [`packages/shell/tool-bash/src/index.ts:38`](../packages/shell/tool-bash/src/index.ts)
 
 ```ts config-catalog
 /** Configuration for the bash tool. */
@@ -4407,7 +4407,7 @@ export interface WebRuntimeConfig {
 ## `@yharness/web-app`
 
 - `inject`: `webServer`
-- `source`: [`packages/bundle/web-app/src/index.ts:52`](../packages/bundle/web-app/src/index.ts)
+- `source`: [`packages/bundle/web-app/src/index.ts:55`](../packages/bundle/web-app/src/index.ts)
 
 ```ts config-catalog
 /** Plugin config: composed deployment settings plus per-invocation command-line values. */
@@ -4433,6 +4433,21 @@ export interface Config {
   publicUrl?: string
   /** Explicit `--trusted-host` authorities from this invocation. */
   trustedHosts: string[]
+  /** Rootless computers assigned to Bots by the private VPS installation. */
+  botComputers?: {
+    /** Owner-only runtime root for the installation. */
+    root: string
+    /** Locally built desktop image. */
+    image: string
+    /** Exact Bot ids assigned isolated VPS Computers; absent assigns every Bot. */
+    bots?: string[]
+    /** Exact selected Bot ids that receive only a private Computer, not a VPS workspace. */
+    desktopOnlyBots?: string[]
+  } | null
+  /** Exact Linux service grants, selected by the VPS owner. */
+  vpsServices?: VpsServiceAccess[]
+  /** Private read-only journal socket and its owner Bot allowlist. */
+  vpsJournal?: VpsJournalConfig | null
   /** Opt in to the private Linux desktop using its X display and owner-only authority file. */
   computer?: {
     /** Local X11 display identifier for the private desktop. */
@@ -4440,6 +4455,32 @@ export interface Config {
     /** Absolute path to the file that authenticates the private display. */
     authorityPath: string
   } | null
+}
+
+/** One exact Linux service and the Bots allowed to inspect it. */
+export interface VpsServiceAccess {
+  /** Exact systemd service name. */
+  readonly unit: string
+  /** System manager or the Web service account's user manager. */
+  readonly scope: 'system' | 'user'
+  /** Bot roster IDs with this grant. */
+  readonly bots: string[]
+  /** Allow a single restart after the owner accepts the request. */
+  readonly restart?: boolean
+}
+
+/** Trusted owner configuration for one read-only VPS journal socket. */
+export interface VpsJournalConfig {
+  /** Absolute Unix-domain socket path owned by the VPS journal service. */
+  readonly socketPath: string
+  /** Bot roster ids allowed to read this journal. */
+  readonly bots: string[]
+  /** Maximum wall-clock time for one socket read. Defaults to five seconds. */
+  readonly timeoutMs?: number
+  /** Maximum response frame size in bytes. Defaults to 256 KiB. */
+  readonly maxBytes?: number
+  /** Maximum entries retained in each response array. Defaults to 256. */
+  readonly maxEntries?: number
 }
 ```
 <!-- END GENERATED config-catalog:@yharness/web-app -->

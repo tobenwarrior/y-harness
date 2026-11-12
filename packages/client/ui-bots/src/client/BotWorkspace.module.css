@@ -631,6 +631,22 @@
   gap: 6px;
 }
 
+.computerScope {
+  display: inline-flex;
+  max-width: 18ch;
+  align-items: center;
+  padding: 1px 5px;
+  overflow: hidden;
+  border: 0.5px solid var(--yh-alias-border-l2);
+  border-radius: var(--yh-radius-sm);
+  color: var(--yh-alias-label-tertiary);
+  font-size: 10px;
+  font-weight: 400;
+  line-height: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .detailActions [data-tone] {
   display: inline-flex;
   align-items: center;

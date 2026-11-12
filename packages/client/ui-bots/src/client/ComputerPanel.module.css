@@ -55,6 +55,23 @@
   white-space: nowrap;
 }
 
+.statusCopy {
+  display: inline-flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0;
+  overflow: hidden;
+}
+
+.statusMeta {
+  overflow: hidden;
+  color: var(--yh-alias-label-tertiary);
+  font-size: 10px;
+  line-height: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .controls {
   flex: none;
 }

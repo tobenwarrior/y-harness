@@ -64,6 +64,7 @@
     "@yharness/api-settings-controller": "workspace:*",
     "@yharness/api-terminal-controller": "workspace:*",
     "@yharness/api-workspace-controller": "workspace:*",
+    "@yharness/bash-local": "workspace:*",
     "@yharness/bots": "workspace:*",
     "@yharness/avatar-generation": "workspace:*",
     "@yharness/api-workspace-files": "workspace:*",
@@ -143,6 +144,8 @@
     "@yharness/compaction-tool-result-pruner": "workspace:*",
     "@yharness/cordis-client-runner": "workspace:*",
     "@yharness/cordis-host-runner": "workspace:*",
+    "@yharness/fs": "workspace:*",
+    "@yharness/fs-patch": "workspace:*",
     "@yharness/file-reference": "workspace:*",
     "@yharness/file-reference-local": "workspace:*",
     "@yharness/host-directory-picker-auto": "workspace:*",
@@ -160,6 +163,8 @@
     "@yharness/persona": "workspace:*",
     "@yharness/plan-mode": "workspace:*",
     "@yharness/plugin-manager": "workspace:*",
+    "@yharness/sandbox": "workspace:*",
+    "@yharness/sandbox-policy": "workspace:*",
     "@yharness/schedule": "workspace:*",
     "@yharness/session-log-export": "workspace:*",
     "@yharness/session-reference": "workspace:*",
@@ -197,7 +202,8 @@
     "@yharness/workspace-changes": "workspace:*",
     "@yharness/schemastery": "workspace:~",
     "commander": "^15.0.0",
-    "open": "^11.0.0"
+    "open": "^11.0.0",
+    "zod": "^4.4.3"
   },
   "peerDependencies": {
     "@yharness/cordis": "workspace:~",
@@ -206,12 +212,13 @@
     "@yharness/system-prompt": "workspace:*"
   },
   "devDependencies": {
+    "@yharness/agent": "workspace:*",
+    "@yharness/agent-loop": "workspace:*",
+    "@yharness/subprocess-local": "workspace:*",
     "@yharness/cordis": "workspace:~",
     "@yharness/cordis-plugin-include": "workspace:~",
     "@yharness/cordis-plugin-loader": "workspace:~",
-    "@yharness/fs": "workspace:*",
     "@yharness/fs-local": "workspace:*",
-    "@yharness/sandbox-policy": "workspace:*",
     "@yharness/session": "workspace:*",
     "@yharness/session-projection": "workspace:*",
     "@yharness/shell-env": "workspace:*",

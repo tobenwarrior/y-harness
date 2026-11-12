@@ -7,7 +7,7 @@ import type { Context } from '@yharness/cordis'
 import { FsError } from '@yharness/fs'
 import type { FsInfo, FsTarget } from '@yharness/fs'
 import type { ToolExecution } from '@yharness/tools'
-import { sessionResolveOptions } from './session-cwd.ts'
+import { fileSystemForExecution, sessionResolveOptions } from './session-cwd.ts'
 
 /**
  * Resolve a model-supplied path, observe absence, and require a regular file.
@@ -20,9 +20,10 @@ export async function resolveRegularReadTarget(
   ctx: Context,
   exec: ToolExecution,
   requestedPath: string,
-): Promise<{ target: FsTarget; info: FsInfo }> {
-  const target = await ctx.fs.resolve(requestedPath, sessionResolveOptions(exec))
-  const info = await ctx.fs.stat(target, exec.signal)
+): Promise<{ target: FsTarget; info: FsInfo; fs: ReturnType<typeof fileSystemForExecution> }> {
+  const fs = fileSystemForExecution(ctx, exec)
+  const target = await fs.resolve(requestedPath, sessionResolveOptions(exec))
+  const info = await fs.stat(target, exec.signal)
   if (info === undefined) {
     ctx.emit('fs/observed', target, { kind: 'absent' }, exec)
     throw new FsError(`cannot read "${target.displayPath}": not found`, 'FS_NOT_FOUND')
@@ -30,5 +31,5 @@ export async function resolveRegularReadTarget(
   if (info.type !== 'file') {
     throw new FsError(`cannot read "${target.displayPath}": not a regular file`, 'FS_NOT_REGULAR_FILE')
   }
-  return { target, info }
+  return { target, info, fs }
 }

@@ -8,7 +8,7 @@ Use a regular SSH account on a Linux server with systemd user services, Git, Pyt
 
 ## Install and start
 
-Connect to the VPS over SSH and paste this command. The first setup builds the public source and can take several minutes.
+Connect to the VPS over SSH and paste this command. The first setup builds Y Harness and its Bot desktop image. Setup can ask for sudo to install system packages. Y Harness itself runs under your regular SSH account.
 
 ```sh
 mkdir -p ~/.local/bin &&
@@ -37,19 +37,64 @@ Open the printed sign-in link in your browser and keep it private. Leave the com
 
 ## Watch and control the Computer
 
-On Ubuntu, you can give your bots a private desktop on the same VPS. Run these commands from your SSH session after installing the Web service. Setup installs the desktop packages through sudo. Activate when your current tasks are idle, since activation restarts the Web service.
+Open a Bot in Cloud. Its header identifies the VPS computer it uses and the scope of its permissions. Choose **Computer** to see that Bot’s desktop. Choose an image-capable model so the Bot can read the screen.
 
-```sh
-mkdir -p ~/.local/bin &&
-  curl -fsSL https://raw.githubusercontent.com/tobenwarrior/y-harness/master/scripts/setup-vps-display.py -o ~/.local/bin/yharness-vps-display &&
-  curl -fsSL https://raw.githubusercontent.com/tobenwarrior/y-harness/master/scripts/vps-display-supervisor.py -o ~/.local/bin/vps-display-supervisor.py &&
-  python3 ~/.local/bin/yharness-vps-display &&
-  python3 ~/.local/bin/yharness-vps-display activate
+On a fresh VPS installation, each owner Bot has its own Linux workspace and desktop. The Bot’s shell and file tools operate inside that computer. The Bot computer has no direct network connection or host service access. Provider connections run through Y Harness. Mac sharing and macOS permissions are managed in the **Mac** workspace.
+
+Choose **Take control** to use your mouse and keyboard in the panel. Bot input through the Computer tool pauses while you hold control. Choose **Hand back** to let the Bot use it again. Closing the panel releases control, and a lost connection releases it after a short timeout. The Bot computer stays on the VPS when you disconnect.
+
+### Move existing Bots in stages
+
+For an existing VPS installation, update the installed checkout and rerun setup to prepare the desktop image. Select the Bots that should receive a private computer by setting `botComputers.bots` to their Bot roster IDs in the private Web profile patch at `~/.yharness-vps/state/profiles/web/cordis.patch.yml`. The patch replaces the `web-runtime` configuration as a whole. Keep your existing settings when adding to a patch entry. The example starts from the installer’s defaults.
+
+```yaml
+- id: web-runtime
+  config:
+    openBrowser: !!js ctx.webStartup.openBrowser
+    printUrl: true
+    publicUrl: !!js ctx.webStartup.publicUrl
+    surfaceContext: true
+    trustedHosts: !!js ctx.webStartup.trustedHosts
+    botComputers:
+      root: /home/vps-user/.yharness-vps/bots
+      image: localhost/yharness-vps-bot:24.04
+      bots: [bot-worker]
+    computer: !!js >-
+      process.env.YH_VPS_DISPLAY === undefined && process.env.YH_VPS_XAUTHORITY === undefined
+        ? undefined
+        : { display: process.env.YH_VPS_DISPLAY, authorityPath: process.env.YH_VPS_XAUTHORITY }
 ```
 
-Reconnect using a fresh sign-in link. Open a bot and choose **Computer** to watch the same desktop it uses. Ask the bot to use the Computer to see it work. Choose a model that accepts images so it can read the screen.
+Bots outside the list continue using their existing working directories and shared desktop settings. Follow the [workspace migration steps](../../upgrade-guide/v0.2.1-rc.2/vps-bot-computers/guide.md#migration) to copy working files and review existing routines.
 
-Choose **Take control** to use your mouse and keyboard in the panel. Bot input through the Computer tool pauses while you hold control. Choose **Hand back** to let the bot use it again. Closing the panel releases control, and a lost connection releases it automatically after a short timeout. The private desktop stays running when you disconnect.
+For a selected Bot that uses native Codex, its host working directory, or existing routine tools, add its roster ID to `botComputers.desktopOnlyBots`. Its **Computer** panel and `vps_computer` tool use the private desktop. Its shell and file tools keep their existing permissions and working directory.
+
+## Give a Bot access to service diagnostics
+
+Ask the VPS owner to add `vpsServices` inside the same `web-runtime` configuration. The grant names an exact systemd service and the Bot roster IDs that may inspect it. This example grants read access to a service managed by the same Linux user as Y Harness.
+
+```yaml
+vpsServices:
+  - unit: example-worker.service
+    scope: user
+    bots: [bot-worker]
+```
+
+Restart the Web service when its tasks are idle. The Bot can call `vps_service_status` to read the unit’s state, restart count and last exit details. A `system` grant targets the system manager. The status tool returns selected systemd fields.
+
+To enable a restart request for an exact service, add `restart: true` to its grant. Select **Ask for approval** in that **Cloud** Bot conversation. The owner must accept each restart request, and the Web service account must have Linux permission to restart the unit. Use the VPS administrator’s own login for code changes and other protected maintenance.
+
+### Read a filtered journal feed
+
+If you operate a host-side journal feed, add `vpsJournal` to the same private `web-runtime` configuration. Give the Web service account permission to connect to the socket and list only the managed owner Bots allowed to read its output.
+
+```yaml
+vpsJournal:
+  socketPath: /run/example-journal.sock
+  bots: [bot-worker]
+```
+
+The selected Bot can call `vps_service_journal` with no arguments. Native Codex exposes the same tool in desktop-only mode. The host connects to the socket and reads one bounded JSON response containing `version`, `generatedAt`, `recovery` and `primaryAudit`. The feed operator controls which entries the two arrays contain. The socket stays on the host, and the tool only reads from it.
 
 ## Import a Grok Bot export
 
@@ -61,7 +106,7 @@ python3 ~/.yharness-vps/source/scripts/import-grok-bot.py ./grok-bot-export.json
 
 For a file with several bots, add `--source-name` to choose one. Repeat the command with `--apply` to import into the destination bot's existing chat and folder. The tool adds memories and user facts to the bot's memory, installs exported skill definitions in its working directory, and creates scheduled routines paused. Open the bot's routine manager to review the timing and resume each routine when ready. The preview lists any routine skill references that lack a definition in the export. App connections, chat transcripts, and event-triggered routines require separate setup.
 
-If a routine references Grok's `box-desktop` skill, copy the [VPS Computer compatibility skill](../../../apps/cli/config/examples/skills/box-desktop/SKILL.md) into `.agents/skills/box-desktop/SKILL.md` in the destination bot's working directory. Make a browser available on the VPS desktop and select an image-capable model in that bot's chat. Test a manual desktop observation before resuming the routine.
+If a routine references Grok's `box-desktop` skill, copy the [VPS Computer compatibility skill](../../../apps/cli/config/examples/skills/box-desktop/SKILL.md) into `.agents/skills/box-desktop/SKILL.md` in the Bot’s host-side skill directory at `~/.yharness-vps/bots/<bot-session-id>`. Select an image-capable model in that Bot’s chat. Test a desktop observation and review any routine that needs network access before resuming it.
 
 ## Check the service
 

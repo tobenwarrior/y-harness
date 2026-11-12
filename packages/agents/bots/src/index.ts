@@ -114,7 +114,7 @@ import type {
 } from './group-chat.ts'
 import type { BotAttachmentGrantValue } from './attachment-grants.ts'
 import { createBotNativeToolProvider } from './native-tools.ts'
-import type { BotNativeToolHost, BotRoutineCreateResolution, BotRoutineCreateReservation } from './native-tools.ts'
+import type { BotNativeToolHost, BotRoutineCreateResolution, BotRoutineCreateReservation, BotVpsJournalReader } from './native-tools.ts'
 import { installBotCollaborationTools } from './scoped-tools.ts'
 import { installBotRoutineTools } from './routine-tools.ts'
 import type { BotEventRoutineToolHost } from './routine-tools.ts'
@@ -503,8 +503,35 @@ export {
 export type * from './template-types.ts'
 export { botTemplateDomain, botTemplateRecordSchema } from './template-storage.ts'
 
+interface BotWorkspaces {
+  /** Compute the server-assigned directory for this Bot's Session. */
+  workspace(sessionId: SessionId): string
+  /** Prepare the same computer across retries before publishing a new Session. */
+  prepare(sessionId: SessionId): Promise<void>
+  /** Select only the exact Bot ids assigned to an isolated workspace. */
+  managed?(botId: string): boolean
+}
+
+interface BotVpsJournal {
+  /** Resolve the current owner-configured read grant for one Bot roster id. */
+  forBot(botId: BotId): BotVpsJournalReader | undefined
+}
+
+function botWorkspace(
+  workspaces: BotWorkspaces | undefined,
+  botId: string,
+  sessionId: SessionId,
+): string | undefined {
+  if (workspaces === undefined || workspaces.managed?.(botId) === false) return undefined
+  return workspaces.workspace(sessionId)
+}
+
 declare module '@yharness/cordis' {
   interface Context {
+    /** Optional server-owned workspaces for Bots. */
+    botWorkspaces: BotWorkspaces
+    /** Optional owner-configured read-only VPS journal feed. */
+    botVpsJournal?: BotVpsJournal
     /** Durable user-owned Bot roster and one-Session provisioning service. */
     bots: BotService
   }
@@ -3061,6 +3088,13 @@ export class BotService extends TypertRemoteService {
       bind: async (sessionId) => {
         const agent = ctx.get('agents')?.get(sessionId)
         if (agent === undefined) return undefined
+        const workspaces = ctx.get('botWorkspaces')
+        if (workspaces?.managed !== undefined) {
+          const bot = await this.ownerBotForSession(sessionId)
+          if (bot !== undefined && workspaces.managed(bot.id)) {
+            throw new Error('Native Codex requires desktop-only mode for a VPS Bot.')
+          }
+        }
         try {
           return await this.collaborationFor(agent)
         } catch (error: unknown) {
@@ -3079,6 +3113,16 @@ export class BotService extends TypertRemoteService {
         }
       },
       grokHistory: (sessionId, request, signal) => this.readGrokHistoryPageForSession(sessionId, request, signal),
+      vpsJournal: async (sessionId) => {
+        if (ctx.get('botVpsJournal') === undefined) return undefined
+        const agents = ctx.get('agents')
+        const agent = agents?.get(sessionId)
+        if (agent === undefined) return undefined
+        const bot = await this.ownerBotForSession(sessionId)
+        if (bot?.state !== 'active' || agents?.get(sessionId) !== agent
+          || this.sharedScopeAgents.has(agent) || this.sharedScopeFences.has(agent)) return undefined
+        return ctx.get('botVpsJournal')?.forBot(bot.id)
+      },
       manage: this.manageBots = async (action, args, context) => {
         const text = (key: string): string | undefined => {
           const value = args[key]
@@ -7062,8 +7106,17 @@ export class BotService extends TypertRemoteService {
       if (existing.length + additions.length > BOT_MEMORY_ENTRY_LIMIT) {
         return badRequest('The destination Bot has insufficient memory capacity for this export.')
       }
+      const workspaces = this.ctx.get('botWorkspaces')
+      const workspace = botWorkspace(workspaces, String(bot.id), bot.sessionId)
+      const skillWorkspace = workspace ?? bot.cwd
+      if (workspace !== undefined && plan.skills.length > 0 && request.preview !== true) {
+        await workspaces?.prepare(bot.sessionId)
+      }
       const installed = plan.skills.length === 0 ? undefined
-        : await importGrokBotSkills(bot.cwd, plan.skills, { preview: request.preview === true })
+        : await importGrokBotSkills(skillWorkspace, plan.skills, {
+          preview: request.preview === true,
+          previewMissingDirectory: workspace !== undefined,
+        })
       const skillNames = new Map(Object.entries(installed?.namesBySourceName ?? {}).map(([source, name]) => [source.toLowerCase(), name]))
       const missingRoutineSkills = [...new Set(plan.routines.flatMap(routine =>
         routine.skills.filter(name => !skillNames.has(name.toLowerCase()))))]
@@ -7153,6 +7206,25 @@ export class BotService extends TypertRemoteService {
     return this.createImpl(request)
   }
 
+  /**
+   * Resolve a server-owned Bot by its exact backing Session.
+   * @param sessionId - Session identity from the live Agent or authenticated UI.
+   * @returns The owner Bot, including provisioning state, or undefined for other Sessions.
+   */
+  async ownerBotForSession(sessionId: string): Promise<{
+    readonly id: BotId
+    readonly sessionId: SessionId
+    readonly state: 'active' | 'provisioning'
+  } | undefined> {
+    const domain = await this.ready
+    const mapped = this.recordsBySession.get(sessionId)
+    if (mapped === undefined || this.stopping) return undefined
+    const current = this.currentBotRecord(domain, mapped.sessionId)
+    return current?.ownerId === this.ownerId && current.sessionId === sessionId
+      ? { id: current.id, sessionId: current.sessionId, state: current.state }
+      : undefined
+  }
+
   private async createImpl(request: BotCreateRequest, signal?: AbortSignal): Promise<BotCreateValue> {
     return this.serialize(() => this.createRecord(request, signal))
   }
@@ -7162,7 +7234,8 @@ export class BotService extends TypertRemoteService {
     signal?: AbortSignal,
     avatar?: ImageAttachmentRef,
   ): Promise<BotCreateValue> {
-    const normalized = normalizeCreate(request)
+    let normalized = normalizeCreate(request)
+    const workspaces = this.ctx.get('botWorkspaces')
     const bots = (await this.getDomain()).table('bots')
     signal?.throwIfAborted()
     const id = normalized.id ?? BotId(`bot-${randomUUID()}`)
@@ -7174,6 +7247,10 @@ export class BotService extends TypertRemoteService {
     if (existing !== undefined) {
       if (existing.ownerId !== this.ownerId) {
         throw new RemoteError('bot/id-conflict', `Bot "${id}" already exists`, { botId: id })
+      }
+      const existingWorkspace = botWorkspace(workspaces, String(existing.id), existing.sessionId)
+      if (request.cwd === undefined && existingWorkspace !== undefined && existing.cwd === existingWorkspace) {
+        normalized = { ...normalized, cwd: existing.cwd }
       }
       if (existing.state === 'active' && matchesMetadata(existing, normalized)) {
         if (avatar === undefined || existing.avatar !== undefined) return { bot: this.view(existing) }
@@ -7212,6 +7289,10 @@ export class BotService extends TypertRemoteService {
     // id is user-facing and must never accidentally adopt an unrelated
     // ordinary Session with a matching derived name.
     const sessionId = SessionId(`bot-session-${randomUUID()}`)
+    const workspace = botWorkspace(workspaces, String(id), sessionId)
+    if (workspace !== undefined && request.cwd !== undefined) {
+      return badRequest('This Bot is assigned a private workspace. Omit the working directory to create it.')
+    }
     const record: BotRecord = {
       id,
       sessionId,
@@ -7224,7 +7305,7 @@ export class BotService extends TypertRemoteService {
       connectedAppIds: [],
       pinned: false,
       hidden: false,
-      cwd: normalized.cwd,
+      cwd: workspace ?? normalized.cwd,
       ...(normalized.persona === undefined ? {} : { persona: normalized.persona }),
       ...(normalized.capabilities === undefined ? {} : { capabilities: normalized.capabilities }),
       ...(normalized.agentPreset === undefined ? {} : { agentPreset: normalized.agentPreset }),
@@ -7556,6 +7637,10 @@ export class BotService extends TypertRemoteService {
     signal?: AbortSignal,
   ): Promise<BotRecord> {
     try {
+      const workspaces = this.ctx.get('botWorkspaces')
+      if (botWorkspace(workspaces, String(record.id), record.sessionId) !== undefined) {
+        await workspaces?.prepare(record.sessionId)
+      }
       const created = await this.ctx.sessionController.create(
         sessionRequest(record),
         new AbortController().signal,
