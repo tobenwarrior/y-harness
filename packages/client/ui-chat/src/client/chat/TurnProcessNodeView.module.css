@@ -52,6 +52,12 @@
   font-variant-numeric: tabular-nums;
 }
 
+.stopped {
+  margin-inline-start: var(--dsh-bot-reply-inset);
+  color: var(--yh-alias-label-tertiary);
+  font-size: var(--dsh-content-font-size-secondary, 13px);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .root,
   .chevron {

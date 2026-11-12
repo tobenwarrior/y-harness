@@ -1,0 +1,89 @@
+- text: Summarize the release checklist. {{clock}}
+- button "Copy"
+- status: Waiting for reply
+- textbox "Message or run a task, / commands, @ files or sessions"
+- button "Add files or run commands"
+- 'button "Access mode, current: Approve for me"'
+- button "Select model, current bot-conversation-browser-test/reply": bot-conversation-browser-test/reply
+- button "Stop generating"
+- button "Activity"
+- button "Token usage"
+- text: Summarize the release checklist. {{clock}}
+- button "Copy"
+- text: Scout
+- paragraph: The release checklist is ready for review.
+- button "Copy"
+- button "Good response"
+- button "Bad response"
+- button "Branch into a new conversation"
+- button "Token usage"
+- text: {{clock}}
+- textbox "Message or run a task, / commands, @ files or sessions"
+- button "Add files or run commands"
+- 'button "Access mode, current: Approve for me"'
+- button "Select model, current bot-conversation-browser-test/reply": bot-conversation-browser-test/reply
+- button "Send message" [disabled]
+- button "Activity"
+- button "Token usage"
+- dialog "Session statistics":
+  - text: Session statistics 1 turns 2 steps
+  - term: LLM time
+  - definition: {{duration}}
+  - term: Tool time
+  - definition: {{duration}}
+  - term: Avg time to first token (TTFT)
+  - definition: {{duration}}
+  - term: Tokens per second (TPS)
+  - definition: {{throughput}} tok/s
+- dialog "Token usage":
+  - text: Token usage 900 tok
+  - term: Cache hit
+  - definition: 15%
+  - term: Uncached input
+  - definition: 720 tok
+  - term: Cached input
+  - definition: 128 tok
+  - term: Output
+  - definition: 52 tok
+- dialog "Turn usage":
+  - text: Turn usage 900 tok
+  - term: Provider / model
+  - definition: bot-conversation-browser-test/reply
+  - term: Cache hit
+  - definition: 15.1%
+  - term: Uncached input
+  - definition: 720 tok
+  - term: Cached input
+  - definition: 128 tok
+  - term: Cache write
+  - definition: 0 tok
+  - term: Output
+  - definition: 52 tok
+- text: Summarize the release checklist. {{clock}}
+- button "Copy"
+- text: Scout
+- paragraph: The release checklist is ready for review.
+- button "Copy"
+- button "Good response"
+- button "Bad response"
+- button "Branch into a new conversation"
+- button "Token usage"
+- text: {{clock}}
+- button "Automation task {{clock}}":
+  - text: Automation task
+  - time: {{clock}}
+- text: Scout
+- paragraph: "Scheduled check: the release checklist is still ready."
+- button "Copy"
+- button "Good response"
+- button "Bad response"
+- button "Branch into a new conversation"
+- button "Token usage"
+- text: {{clock}}
+- textbox "Message or run a task, / commands, @ files or sessions"
+- button "Add files or run commands"
+- 'button "Access mode, current: Approve for me"'
+- button "Select model, current bot-conversation-browser-test/reply": bot-conversation-browser-test/reply
+- button "Send message" [disabled]
+- button "Activity"
+- button "Token usage"

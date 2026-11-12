@@ -362,3 +362,18 @@
   font-size: 12px;
   line-height: 15px;
 }
+
+:global([data-conversation-surface='bots']) .userStack {
+  max-width: 86%;
+}
+
+:global([data-conversation-surface='bots']) .bubble {
+  padding: 7px 12px;
+}
+
+:global([data-conversation-surface='bots']) .fileCard {
+  flex-shrink: 1;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 48px;
+}

@@ -56,6 +56,7 @@
     "tests/bot-workspace.e2e.ts",
     "tests/grok-history-attachments.e2e.ts",
     "tests/bot-group.e2e.ts",
+    "tests/bot-conversation.e2e.ts",
     "tests/bot-mentions.e2e.ts",
     "tests/plan-review.e2e.ts",
     "tests/steering.e2e.ts",

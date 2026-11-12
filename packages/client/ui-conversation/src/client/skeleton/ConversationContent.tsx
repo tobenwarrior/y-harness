@@ -6,8 +6,8 @@ import type { ConversationContentProps, ConversationViewsProps, InputZone } from
 import { HeroShell, WorkspaceChip, workspaceLabel } from './EmptyHero.tsx'
 import css from './ConversationRoot.module.css'
 
-function ConversationSessionView({ renderSlot }: ConversationViewsProps) {
-  return renderSlot('conversation.session', {})
+function ConversationSessionView({ renderSlot, bot }: ConversationViewsProps) {
+  return renderSlot('conversation.session', bot === undefined ? {} : { bot })
 }
 
 function NoConversationWidthControls() {
@@ -21,7 +21,7 @@ function NoConversationWidthControls() {
  */
 export function ConversationContent(props: ConversationContentProps) {
   const {
-    sessionId, phase, hero, useSession, useSessions, useSessionStatus,
+    sessionId, phase, hero, bot, useSession, useSessions, useSessionStatus,
     useWorkspaces, useInput, useComposerBlock, renderSlot, renderSlotChain,
     selectWorkspace, t, useFactorySlot,
   } = props
@@ -145,6 +145,7 @@ export function ConversationContent(props: ConversationContentProps) {
   const blocked = !inert && composerBlock !== undefined
   const inputBar = renderSlot('conversation.composer.bar', {
     variant: hero ? 'hero' : 'composer',
+    ...bot === undefined ? {} : { botChat: true },
     ...(inert
       ? {
         disabled: true,
@@ -190,13 +191,14 @@ export function ConversationContent(props: ConversationContentProps) {
       ref={setBody}
       className={clsx(css.body, props.variant === 'embedded' && css.embeddedBody)}
       data-conversation-content=""
+      data-conversation-surface={bot === undefined ? undefined : 'bots'}
       data-conversation-session={sessionId}
       data-conversation-region="chat"
       data-content-phase={phase}
       data-composer-placement={props.variant === 'embedded' && phase === 'active' ? 'bottom' : undefined}
     >
       <div className={css.scrollBody} data-conversation-scroll="">
-        {sessionId === undefined ? null : <Views />}
+        {sessionId === undefined ? null : <Views {...bot === undefined ? {} : { bot }} />}
         {composerSeat}
       </div>
       <WidthControls container={body} phase={phase} />

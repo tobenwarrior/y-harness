@@ -18,7 +18,7 @@ import { ChatGroupSeat } from './ChatGroupSeat.tsx'
 import { chatRenderKey } from './render-entry.ts'
 import { assertNever } from '@yharness/util-values'
 import { TurnNavigator } from './TurnNavigator.tsx'
-import { RunningStatus } from './RunningStatus.tsx'
+import { BotReplyPending, RunningStatus } from './RunningStatus.tsx'
 import { mergeTurnRailItems } from './turn-rail-items.ts'
 import { useChatScroll } from './use-chat-scroll.ts'
 import { fileMediaUrl, resolveWorkspacePath } from '@yharness/util-workspace-path'
@@ -102,7 +102,7 @@ export function ChatView({
   useSession, useChat, useChatNode, useChatNodeProcess, useChatGroup, useConversation, useSessions, useStore, actions, renderSlot,
   sessionId, openFile, openSkill, botIcon, openExternalLink, loadOlder, loadThrough,
   loadImage, inspectCall, chatScroll, forkAt, fileMentions,
-  usePresentation, useProjection, t,
+  bot, usePresentation, useProjection, t,
 }: ChatViewSlotProps) {
   const order = useChat(s => s.order)
   const groupedEntries = useConversation(snapshot => snapshot.views.grouped('chat')?.entries)
@@ -229,7 +229,7 @@ export function ChatView({
 
   return (
     <div className={css.frame}>
-      {scroll.initialized && (
+      {bot === undefined && scroll.initialized && (
         <TurnNavigator
           items={railItems}
           activeTurn={scroll.activeTurn}
@@ -256,6 +256,7 @@ export function ChatView({
             )}
             <MarkdownDelegateProvider openExternalLink={openExternalLink} openFile={requestOpenFile} fileImages={fileImages}>
               <ChatNodeList
+                {...bot === undefined ? {} : { bot }}
                 entries={entries}
                 pendingInputs={pendingInputs}
                 lastInputTurn={lastInputTurn}
@@ -279,7 +280,7 @@ export function ChatView({
                 t={t}
               />
             </MarkdownDelegateProvider>
-            {running && <RunningStatus startTime={runningStartTime} t={t} />}
+            {running && (bot === undefined ? <RunningStatus startTime={runningStartTime} t={t} /> : <BotReplyPending t={t} />)}
             {/* No pending placeholders: questions (ui-user-questions) and approvals
                 (ApprovalPanel) both take over the composer, so a flow card would
                 double-render the same wait. */}

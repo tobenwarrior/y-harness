@@ -12,7 +12,7 @@ import type { BotAvatar } from '@yharness/bots/client'
 import { createSnapshotStore } from '@yharness/client-store'
 import type { MainPanelId } from '@yharness/client-ui-layout/client'
 import { BotWorkspaceController } from './controller.ts'
-import { BotsConversation, BotsPanel, BotsRoster } from './panel.tsx'
+import { BotReplyAvatar, BotsConversation, BotsPanel, BotsRoster, type BotReplyAvatarFace } from './panel.tsx'
 import { en, zh } from './locales.ts'
 import { createSharedBotsClient } from './shared-client.ts'
 import { createComputerAvailability } from './computer-availability.ts'
@@ -119,6 +119,13 @@ export function apply(ctx: Context): void {
     const disposeConversation = ctx.slots.inject('bots.conversation', () => ctx.slots.register({
       name: 'bots.conversation',
     }, BotsConversation))
+    const disposeReplyAvatar = ctx.slots.inject('conversation.bot.reply.avatar', () => ctx.slots.register({
+      name: 'conversation.bot.reply.avatar',
+      inject: (): BotReplyAvatarFace => {
+        const { hooks, loadAvatar } = controller.face()
+        return { hooks, loadAvatar }
+      },
+    }, BotReplyAvatar))
     const disposeSidebar = ctx.slots.inject('sidebar.bots', () => ctx.slots.register({
       name: 'sidebar.bots',
       locale: 'bots',
@@ -134,6 +141,7 @@ export function apply(ctx: Context): void {
       disposeChanged()
       disposeScheduleChanged()
       disposeSidebar()
+      disposeReplyAvatar()
       disposeConversation()
       disposeMain()
       controller.dispose()

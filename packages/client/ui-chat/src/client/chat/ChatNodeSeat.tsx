@@ -4,7 +4,7 @@ import { createSnapshotStore } from '@yharness/client-store'
 import type { ConversationLocationDataStore, ConversationTurnDataMap } from '@yharness/client-ui-conversation/client'
 import type { ChatNodeHookContext, ChatNodeOwnerProps, ChatViewSlotProps, UsePresentation } from '../contract/slots.ts'
 import type { ChatNode } from '../contract/chat-nodes.ts'
-import type { ChatNodeStore } from '../contract/snapshot.ts'
+import type { ChatNodeStore, ChatTurnProcessPresentation } from '../contract/snapshot.ts'
 import { TURN_PROCESS_INDEPENDENT_KINDS, turnProcessAlwaysOpen } from '../contract/turn-process.ts'
 import { storedTurnProcessEntry } from '../stores.ts'
 import { useSearchableHidden } from './searchable-hidden.ts'
@@ -37,13 +37,36 @@ function turnOf(node: ChatNode | undefined): number | undefined {
   return location?.kind === 'turn' || location?.kind === 'step' ? location.turn.turn : undefined
 }
 
+function showBotNode(node: ChatNode, groupPart: string | undefined, process: ChatTurnProcessPresentation | undefined): boolean {
+  if (groupPart === 'reasoning') return false
+  switch (node.kind) {
+    case 'assistant-step':
+      return process?.turnClosed === true && process.spec.answerStep === node.data.step
+    case 'turn-process': {
+      const location = node.location
+      return (location.kind === 'turn' || location.kind === 'step') && location.turn.end?.data.reason.kind === 'aborted'
+    }
+    case 'tool-call':
+    case 'context':
+    case 'system-prompt':
+    case 'compaction':
+    case 'manual-compaction':
+    case 'model-retry':
+    case 'unknown':
+      return false
+    default:
+      // Extension outcomes, such as a user's recorded answer, keep their renderer.
+      return true
+  }
+}
+
 /**
  * Subscribe, apply Turn-process visibility, and dispatch one stable Context key.
  * Policy reads select this seat's own conclusion, so a mode change re-renders
  * only seats whose visibility actually changes.
  */
 export const ChatNodeSeat = memo(function ChatNodeSeat({
-  nodeKey, groupPart, useChatNode, useChatNodeProcess, usePresentation,
+  nodeKey, groupPart, bot, useChatNode, useChatNodeProcess, usePresentation,
   cwd, openFile, openSkill, botIcon, inspectCall, forkAt,
   loadImage, renderMessageImages, fileMentions, useStore, actions, renderSlot, t,
 }: ChatNodeSeatProps) {
@@ -68,7 +91,7 @@ export const ChatNodeSeat = memo(function ChatNodeSeat({
       actions.setTurnProcessOpen(processSpec.turn, processSpec.answerStep ?? 0, open)
     }
   }, [actions, processSpec, alwaysOpen])
-  const foldCompleted = usePresentation(policy => policy.foldCompletedTurns)
+  const foldCompleted = usePresentation(policy => bot === undefined && policy.foldCompletedTurns)
   // A loaded end makes a partial historical Turn eligible without its start.
   const processWindowReady = processSpec !== undefined
     && processPresentation !== undefined
@@ -124,6 +147,7 @@ export const ChatNodeSeat = memo(function ChatNodeSeat({
     ? null
     : {
       ...groupPart === undefined ? {} : { groupPart },
+      ...bot === undefined ? {} : { bot },
       cwd,
       openFile,
       openSkill,
@@ -135,10 +159,11 @@ export const ChatNodeSeat = memo(function ChatNodeSeat({
       fileMentions,
       turnProcess,
     }, [
-    node, groupPart, cwd, openFile, openSkill, botIcon, inspectCall, forkAt,
+    node, groupPart, bot, cwd, openFile, openSkill, botIcon, inspectCall, forkAt,
     loadImage, renderMessageImages, fileMentions, turnProcess,
   ])
-  if (routedNode === undefined || owner === null) return null
+  if (routedNode === undefined || owner === null
+    || (bot !== undefined && !showBotNode(routedNode, groupPart, processPresentation))) return null
   // Runtime dispatch owns the correlation: every Node's discriminant is the
   // keyed-slot entry passed alongside that same Node. TypeScript does not
   // distribute an object containing a union into a union of objects itself.

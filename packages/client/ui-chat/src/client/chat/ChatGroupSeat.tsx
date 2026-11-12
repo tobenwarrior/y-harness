@@ -127,14 +127,14 @@ const ProcessGroupHeader = memo(function ProcessGroupHeader({ groupKey, useChatG
   )
 })
 
-/** Render a process group with local disclosure and the existing outer-Turn visibility. */
-export const ChatGroupSeat = memo(function ChatGroupSeat({ groupKey, useChatGroup, ...props }: ChatGroupSeatProps) {
-  const members = useChatGroup(groupKey, group => group?.members)
+const ProcessGroupSeat = memo(function ProcessGroupSeat({ groupKey, members, useChatGroup, ...props }: ChatGroupSeatProps & {
+  readonly members: readonly NodeReference[]
+}) {
   const turn = useChatGroup(groupKey, group => group?.data.turn)
   const closed = useChatGroup(groupKey, group => group?.data.closed)
   const foldCompleted = props.usePresentation(policy => policy.foldCompletedTurns)
   const { expanded: open, setExpanded: setOpen } = useDisclosure()
-  const firstKey = members?.[0]?.key ?? ''
+  const firstKey = members[0]?.key ?? ''
   const presentation = props.useChatNodeProcess(firstKey)
   const turnLocation = props.useChatNode(firstKey, (node) => {
     const location = node?.location
@@ -167,7 +167,6 @@ export const ChatGroupSeat = memo(function ChatGroupSeat({ groupKey, useChatGrou
     if (!open) initialize(closed === false ? 'bottom' : 'top')
     setOpen(!open)
   }, [closed, initialize, open, setOpen])
-  if (members === undefined) return null
   const classes = [css.body, !grouped ? css.expandedBody : '',
     grouped && edges.canScrollUp ? css.fadeTop : '', grouped && edges.canScrollDown ? css.fadeBottom : '']
   return (
@@ -188,4 +187,12 @@ export const ChatGroupSeat = memo(function ChatGroupSeat({ groupKey, useChatGrou
       </div>
     </div>
   )
+})
+
+/** Render process disclosures in Code and standalone conversation outcomes in Bots. */
+export const ChatGroupSeat = memo(function ChatGroupSeat({ groupKey, useChatGroup, ...props }: ChatGroupSeatProps) {
+  const members = useChatGroup(groupKey, group => group?.members)
+  if (members === undefined) return null
+  if (props.bot !== undefined) return <GroupMembers {...props} members={members} />
+  return <ProcessGroupSeat {...props} groupKey={groupKey} members={members} useChatGroup={useChatGroup} />
 })

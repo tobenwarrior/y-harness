@@ -276,3 +276,58 @@
 .modalAction {
   min-width: 72px;
 }
+
+:global([data-conversation-surface='bots']) .scroll {
+  padding: 16px;
+}
+
+:global([data-conversation-surface='bots']) .column > .flowItem {
+  --dsh-chat-flow-gap: 6px;
+}
+
+:global([data-conversation-surface='bots']) .column > .flowItem:is(
+  [data-chat-flow-kind='user'],
+  [data-chat-flow-kind='steering']
+) {
+  --dsh-chat-flow-gap: 18px;
+}
+
+:global([data-conversation-surface='bots']) .column > .flowItem:has([data-bot-reply-speaker]) {
+  --dsh-chat-flow-gap: 12px;
+}
+
+.botReplyPending {
+  display: flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: 5px;
+  min-height: 30px;
+  margin-block-start: 10px;
+  margin-inline-start: var(--dsh-bot-reply-inset);
+  padding-inline: 11px;
+  border-radius: var(--yh-radius-lg);
+  background: var(--yh-alias-interactive-bg-hover);
+  color: var(--yh-alias-label-secondary);
+}
+
+.botReplyPending > span[aria-hidden] {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.7;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .botReplyPending > span[aria-hidden] {
+    animation: botPendingPulse 1.2s ease-in-out infinite;
+  }
+
+  .botReplyPending > span:nth-child(3) { animation-delay: 120ms; }
+  .botReplyPending > span:nth-child(4) { animation-delay: 240ms; }
+}
+
+@keyframes botPendingPulse {
+  0%, 60%, 100% { opacity: 0.42; }
+  30% { opacity: 0.95; }
+}

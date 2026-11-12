@@ -70,6 +70,11 @@
   46.5% { transform: translateX(0) scaleY(.12); }
 }
 
+:global([data-bot-reply-speaker]) .volume,
+:global([data-bot-reply-speaker]) .eyes {
+  animation: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .volume,
   .eyes { animation: none; }

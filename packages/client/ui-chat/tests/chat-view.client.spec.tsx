@@ -342,7 +342,7 @@ function makeHarness(
       case 'context':
         return <ContextMessageNodeView {...nodeProps} node={nodeOwner.node} />
       case 'assistant-step':
-        return <AssistantNodeView {...nodeProps} node={nodeOwner.node} usePresentation={props.usePresentation} />
+        return <AssistantNodeView {...nodeProps} node={nodeOwner.node} usePresentation={props.usePresentation} renderSlot={() => null} />
       case 'command':
         return (
           <CommandNodeView
@@ -2983,6 +2983,25 @@ describe('ChatView', () => {
       .not.toContain('Completed in 1h 5m 3s')
   })
 
+  it('shows only the final attributed Bot reply even with verbose work details', () => {
+    const h = makeHarness({
+      nodes: [user(1, 'Question'), assistant(2, 'Earlier reply', 1, 1), assistant(4, 'Final reply', 1, 2)],
+      turnTimings: new Map([[1, { startTime: 1_000, endTime: 5_000 }]]),
+      turnEnds: new Map([[1, 5]]),
+      turnUsages: new Map([[1, { uncachedInputTokens: 90, outputTokens: 10, totalTokens: 100 }]]),
+    })
+    h.setTranscriptView('verbose')
+    h.setPerformanceUsage('compact')
+    const view = render(<h.ChatView {...h.props} bot={{ name: 'Atlas' }} />)
+    const answer = view.getByText('Final reply').closest('[data-yh-part="assistant-prose"]')!
+    expect(within(answer as HTMLElement).getByText('Atlas')).toBeTruthy()
+    expect(view.queryByText('Earlier reply')).toBeNull()
+    expect(view.queryByRole('button', { name: 'Activity' })).toBeNull()
+    expect(view.queryByText('Completed in', { exact: false })).toBeNull()
+    fireEvent.click(view.getByRole('button', { name: 'Token usage' }))
+    expect(view.getByRole('dialog', { name: 'Turn usage' }).textContent).toContain('100 tok')
+  })
+
   it('the settled footer shows usage only in Detailed mode', () => {
     const first: AssistantMessageNode = {
       kind: 'assistant', seq: 2, time: 2_000, turn: 1, step: 1, blocks: [{ kind: 'text', text: 'mid' }],
@@ -4142,5 +4161,24 @@ describe('ChatView', () => {
     expect(status?.querySelector('animate')).toBeNull()
     act(() => { h.setSession({ running: false }) })
     expect(column.querySelector('[data-chat-running]')).toBeNull()
+  })
+
+  it('replaces the Bot waiting bubble with the settled answer', () => {
+    const h = makeHarness({
+      nodes: [user(1, 'question'), assistant(2, 'answer', 1, 1)],
+      turnTimings: new Map([[1, { startTime: 1_000, endTime: 5_000 }]]),
+    }, { running: true })
+    h.props.bot = { name: 'Build Bot' }
+    const view = render(<h.ChatView {...h.props} />)
+    expect(view.getByRole('status').textContent).toBe('Waiting for reply')
+    expect(view.queryByText('answer')).toBeNull()
+    act(() => {
+      h.setChat({ turnEnds: new Map([[1, 3]]) })
+      h.setSession({ running: false })
+    })
+    expect(view.queryByRole('status')).toBeNull()
+    expect(view.getByText('answer')).toBeTruthy()
+    expect(turnProcessControl(view.container)).toBeNull()
+    expect(view.queryByText(/Completed in/)).toBeNull()
   })
 })

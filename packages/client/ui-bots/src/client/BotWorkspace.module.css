@@ -1230,34 +1230,44 @@
   min-height: 0;
   flex: 1;
   flex-direction: column;
-  gap: 14px;
+  align-items: center;
+  gap: 16px;
   overflow-y: auto;
-  padding: 24px 28px;
+  padding-block: 24px 28px;
+  padding-inline: max(20px, calc((100% - 760px) / 2));
   scrollbar-gutter: stable;
 }
 
 .groupMessage {
   display: flex;
-  max-width: min(760px, 90%);
+  inline-size: min(100%, 720px);
+  max-inline-size: 720px;
+  flex: none;
   align-items: flex-start;
   gap: 10px;
 }
 
 .groupMessageUser {
-  align-self: flex-end;
-  max-width: min(680px, 82%);
-  flex-direction: row-reverse;
+  align-self: center;
+  justify-content: flex-end;
 }
 
 .groupMessageBody {
-  min-width: 0;
+  inline-size: fit-content;
+  max-inline-size: min(680px, calc(100% - 42px));
+  flex: 0 1 auto;
+  min-inline-size: 0;
+  box-sizing: border-box;
   padding: 10px 13px;
   border: 0.5px solid var(--yh-alias-border-l2);
   border-radius: var(--yh-radius-lg);
   background: var(--yh-alias-bg-layer-2);
+  overflow-wrap: anywhere;
 }
 
 .groupMessageUser .groupMessageBody {
+  max-inline-size: 86%;
+  margin-inline-start: auto;
   border-color: var(--yh-alias-state-business-primary);
   background: color-mix(in srgb, var(--yh-alias-state-business-primary) 12%, var(--yh-alias-bg-layer-2));
 }
@@ -1269,6 +1279,7 @@
   font-size: 11px;
   font-weight: 500;
   line-height: 16px;
+  overflow-wrap: anywhere;
 }
 
 .groupMessageBody p {
@@ -1282,19 +1293,20 @@
 
 .groupReplyQuote {
   display: flex;
-  max-width: 100%;
+  max-inline-size: 100%;
   flex-direction: column;
   gap: 1px;
   margin: 0 0 8px;
   padding: 5px 8px;
   border: 0;
-  border-left: 2px solid var(--yh-alias-state-business-primary);
+  border-inline-start: 2px solid var(--yh-alias-state-business-primary);
   border-radius: 0 var(--yh-radius-sm) var(--yh-radius-sm) 0;
   background: var(--yh-alias-bg-layer-1);
   color: var(--yh-alias-label-tertiary);
   cursor: pointer;
   font-size: 11px;
   line-height: 15px;
+  overflow-wrap: anywhere;
   text-align: left;
 }
 
@@ -1454,7 +1466,11 @@
   flex: none;
   align-items: flex-end;
   gap: 8px;
-  margin: 0 28px 20px;
+  inline-size: min(752px, calc(100% - 40px));
+  max-inline-size: 100%;
+  box-sizing: border-box;
+  margin-block: 0 20px;
+  margin-inline: auto;
   padding: 9px 10px 9px 13px;
   border: 0.5px solid var(--yh-alias-border-l1);
   border-radius: var(--yh-radius-xl);
@@ -1540,9 +1556,11 @@
 .groupAttachmentCard {
   position: relative;
   display: flex;
-  width: min(220px, 42vw);
-  min-width: 164px;
-  height: 48px;
+  inline-size: min(220px, 42vw);
+  min-inline-size: 164px;
+  min-block-size: 48px;
+  block-size: auto;
+  box-sizing: border-box;
   flex: none;
   align-items: center;
   gap: 7px;
@@ -1615,7 +1633,6 @@
   gap: 1px;
 }
 
-.groupAttachmentName,
 .groupAttachmentMeta {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1623,10 +1640,14 @@
 }
 
 .groupAttachmentName {
+  min-inline-size: 0;
   color: var(--yh-alias-label-primary);
   font-size: 12px;
   font-weight: 500;
   line-height: 17px;
+  overflow: visible;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .groupAttachmentMeta {
@@ -1666,6 +1687,21 @@
 }
 
 @media (max-width: 720px) {
+  .groupThread {
+    gap: 12px;
+    padding-block: 18px 24px;
+    padding-inline: 16px;
+  }
+
+  .groupMessage {
+    inline-size: 100%;
+  }
+
+  .groupComposerWrap {
+    inline-size: calc(100% - 32px);
+    margin-block-end: 16px;
+  }
+
   .groupAttachments {
     align-items: flex-start;
     flex-direction: column;
@@ -1719,13 +1755,11 @@
 }
 
 .mentionOptionName {
-  overflow: hidden;
   color: var(--yh-alias-label-primary);
   font-size: 13px;
   font-weight: 500;
   line-height: 18px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .mentionOptionHint {
@@ -2934,6 +2968,24 @@
   min-height: 0;
   grid-template-columns: minmax(0, 1fr);
   container-type: inline-size;
+}
+
+.computerLayout > .detail {
+  container: bot-detail / inline-size;
+  isolation: isolate;
+}
+
+@container bot-detail (max-width: 500px) {
+  .detailHeader {
+    flex-wrap: wrap;
+    gap: 8px 12px;
+    padding: 10px 16px;
+  }
+
+  .detailActions {
+    flex: 0 1 auto;
+    flex-wrap: wrap;
+  }
 }
 
 .computerSidebar {
