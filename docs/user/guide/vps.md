@@ -51,6 +51,22 @@ Reconnect using a fresh sign-in link. Open a bot and choose **Computer** to watc
 
 Choose **Take control** to use your mouse and keyboard in the panel. Bot input through the Computer tool pauses while you hold control. Choose **Hand back** to let the bot use it again. Closing the panel releases control, and a lost connection releases it automatically after a short timeout. The private desktop stays running when you disconnect.
 
+## Save credentials for a dedicated service
+
+The VPS Vault stores encrypted API keys for trusted systemd system services. Set up the service with its own explicit `User=` account, separate from the Linux account that runs Cloud. An explicit `User=` also works with `DynamicUser=yes`. The service receives its keys in systemd's private credential directory.
+
+Use a trusted administrator login on the VPS. Keep the Linux account that runs Cloud and any accounts used by Bot shells unprivileged. Install the command from your trusted administrator checkout. Replace `CLOUD_USER` with the Cloud account and `example-worker.service` with the exact system service name.
+
+```sh
+sudo install -o root -g root -m 0755 scripts/vps-vault.py /usr/local/sbin/yharness-vault
+sudo /usr/local/sbin/yharness-vault --cloud-user CLOUD_USER enable example-worker.service
+sudo /usr/local/sbin/yharness-vault --cloud-user CLOUD_USER set example-worker.service EXAMPLE_API_KEY
+```
+
+Enter the value at the masked terminal prompt. In the service, read `yharness_EXAMPLE_API_KEY` from the directory named by `CREDENTIALS_DIRECTORY`. The Vault lists saved names with `list example-worker.service`. Run `set` again to rotate a key, or `revoke example-worker.service EXAMPLE_API_KEY` to remove it. Save, rotation, and revocation apply the next time you start the target service. If it already used the old key, revoke that key with its issuer to invalidate it there too.
+
+The values are encrypted with the VPS's systemd host key. A replacement VPS needs its own keys entered for the service. [systemd credential documentation](https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html#Credentials)
+
 ## Import a Grok Bot export
 
 Create the destination bot in **Cloud → Bots**. Put its version-one Grok Bot export JSON in a private directory on the VPS. From your SSH session, preview the import with the tool included in the Y Harness checkout:
