@@ -39,7 +39,7 @@ Open the printed sign-in link in your browser and keep it private. Leave the com
 
 Open a Bot in Cloud. Its header identifies the VPS computer it uses and the scope of its permissions. Choose **Computer** to see that Bot’s desktop. Choose an image-capable model so the Bot can read the screen.
 
-Each owner Bot has its own Linux workspace and desktop. The Bot’s shell and file tools operate inside that computer. The Bot computer has no direct network connection or host service access. Provider connections run through Y Harness. Mac sharing and macOS permissions are managed in the **Mac** workspace.
+Each owner Bot has its own Linux workspace and desktop. The Bot’s shell and file tools operate inside that computer. Private desktops start offline. Provider connections run through Y Harness. Mac sharing and macOS permissions are managed in the **Mac** workspace.
 
 Choose **Take control** to use your mouse and keyboard in the panel. Bot input through the Computer tool pauses while you hold control. Choose **Hand back** to let the Bot use it again. Closing the panel releases control, and a lost connection releases it after a short timeout. The Bot computer stays on the VPS when you disconnect.
 
@@ -68,6 +68,27 @@ To select which existing Bots receive a private computer, set `botComputers.bots
 Bots outside the list continue using their existing working directories and shared desktop settings. Follow the [workspace migration steps](../../upgrade-guide/v0.2.1-rc.2/vps-bot-computers/guide.md#migration) to copy working files and review existing routines.
 
 For a selected Bot that still needs its host working directory or existing routine tools, add its roster ID to `botComputers.desktopOnlyBots`. Its **Computer** panel and `vps_computer` tool use the private desktop, including with an image-capable native Codex model. Its shell and file tools keep their existing permissions and working directory.
+
+### Enable Firefox for selected Bots
+
+Run the browser setup from the Y Harness checkout that supplies the Web release. It builds Firefox and prepares outbound networking for the selected desktops.
+
+```sh
+python3 scripts/setup-vps.py browser
+```
+
+Add this block under the existing `botComputers` configuration. Replace the example account path and Bot ID with the VPS installation path and the Bot you want to grant access.
+
+```yaml
+browser:
+  bots: [bot-worker]
+  image: localhost/yharness-vps-bot-browser:24.04-v1
+  seccompProfile: /home/vps-user/.yharness-vps/browser-seccomp.json
+```
+
+If the Bot already has a private desktop, wait until the Bot and Computer panel are idle. On the VPS, find that Bot's container with `podman ps -a --filter label=io.yharness.vps.session=BOT_SESSION_ID`. Stop the identified container and remove it with `podman rm`. Keep the named volumes. Restart Cloud with the updated profile when its tasks are idle. Opening **Computer** starts Firefox and reconnects the existing workspace and browser profile. Right-click the desktop and choose **Open Firefox** to reopen it.
+
+The browser desktop and any shell running inside it can make outbound connections. The VPS loopback remains private. Choose **Take control** to sign in to a site. Browser sign-ins live in the selected Bot's profile volume and survive replacing its container.
 
 ## Give a Bot access to service diagnostics
 

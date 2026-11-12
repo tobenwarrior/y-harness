@@ -80,10 +80,19 @@ export interface Config {
     root: string
     /** Locally built desktop image. */
     image: string
-    /** Exact Bot ids assigned isolated VPS Computers; absent assigns every Bot. */
-    bots?: string[]
+    /** Exact Bot ids assigned isolated VPS Computers. Omit or use null to assign every Bot. */
+    bots?: string[] | null
     /** Exact selected Bot ids that receive only a private Computer, not a VPS workspace. */
     desktopOnlyBots?: string[]
+    /** Firefox and outbound networking for selected private Computer Bots. Omit or use null to leave desktops offline. */
+    browser?: {
+      /** Exact Bot ids allowed to run the browser desktop. */
+      bots: string[]
+      /** Locally built browser desktop image. */
+      image: string
+      /** Absolute path to the prepared owner-only browser policy. */
+      seccompProfile: string
+    } | null
   } | null
   /** Exact Linux service grants, selected by the VPS owner. */
   vpsServices?: VpsServiceAccess[]
@@ -108,8 +117,16 @@ export const Config: z<Config> = z.object({
     z.object({
       root: z.string().required(),
       image: z.string().required(),
-      bots: z.array(String),
+      bots: z.union([z.array(String), z.const(null)]),
       desktopOnlyBots: z.array(String),
+      browser: z.union([
+        z.object({
+          bots: z.array(String).required(),
+          image: z.string().required(),
+          seccompProfile: z.string().required(),
+        }),
+        z.const(null),
+      ]),
     }),
     z.const(null),
   ]),

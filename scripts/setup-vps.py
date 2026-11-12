@@ -21,6 +21,10 @@ CLI = Path('apps/cli/lib/bin.js')
 BOT_IMAGE = 'localhost/yharness-vps-bot:24.04'
 BOT_BASE_IMAGE = 'docker.io/library/ubuntu:24.04'
 BOT_CONTAINERFILE = Path('scripts/vps-bot/Containerfile')
+BOT_BROWSER_CONTAINERFILE = BOT_CONTAINERFILE.with_name('Browser.Containerfile')
+BOT_BROWSER_IMAGE = 'localhost/yharness-vps-bot-browser:24.04-v1'
+BOT_BROWSER_POLICY = 'browser-seccomp.json'
+PODMAN_POLICIES = (Path('/etc/containers/seccomp.json'), Path('/usr/share/containers/seccomp.json'))
 BOT_ROOT = Path('bots')
 NATIVE_PACKAGES = Path('native/system/packages')
 SANDBOX_SCRIPT = 'sandbox-setup.py'
@@ -223,6 +227,80 @@ def ensure_bot_base(root, podman, environment):
                 )
             except (OSError, subprocess.SubprocessError) as error:
                 raise SetupError('The pinned Ubuntu Bot base could not be pulled. Check the private podman-base.log.') from error
+
+
+def firefox_seccomp_policy(source):
+    """Allow Firefox's nested chroot helper under the existing deny-by-default policy."""
+    policy = json.loads(source)
+    if not isinstance(policy, dict) or policy.get('defaultAction') != 'SCMP_ACT_ERRNO':
+        raise SetupError('The Podman policy must deny by default.')
+    rules = policy.get('syscalls')
+    if not isinstance(rules, list) or not rules:
+        raise SetupError('The Podman policy is missing its syscall rules.')
+    kept = []
+    for rule in rules:
+        names = rule.get('names') if isinstance(rule, dict) else None
+        if not isinstance(names, list) or not names or not all(isinstance(name, str) for name in names):
+            raise SetupError('The Podman policy contains an invalid syscall rule.')
+        names = [name for name in names if name != 'chroot']
+        if names:
+            kept.append({**rule, 'names': names})
+    kept.append({'names': ['chroot'], 'action': 'SCMP_ACT_ALLOW'})
+    return (json.dumps({**policy, 'syscalls': kept}, indent=2) + '\n').encode()
+
+
+def ensure_browser_network(root):
+    """Install the rootless browser network helper on APT hosts when needed."""
+    helper = Path('/usr/bin/slirp4netns')
+    if helper.is_file():
+        return
+    if not Path('/usr/bin/apt-get').is_file():
+        raise SetupError('Install slirp4netns with your server’s package manager and run browser setup again.')
+    print('Installing the rootless browser networking package. Setup may ask for sudo.', flush=True)
+    with os.fdopen(private_file(root / 'browser-network.log', os.O_WRONLY | os.O_CREAT), 'w') as log:
+        log.truncate()
+        try:
+            environment = build_environment()
+            apt = [
+                '/usr/bin/sudo', '/usr/bin/env', 'DEBIAN_FRONTEND=noninteractive', 'NEEDRESTART_MODE=l',
+                '/usr/bin/apt-get', '-o', 'DPkg::Lock::Timeout=30', '-o', 'Acquire::Retries=1',
+            ]
+            run([*apt, 'update'], env=environment, stdout=log, stderr=subprocess.STDOUT, timeout=180)
+            run([
+                *apt, 'install',
+                '--no-install-recommends', '--no-upgrade', '--no-remove', '--yes', 'slirp4netns',
+            ], env=environment, stdout=log, stderr=subprocess.STDOUT, timeout=180)
+        except (OSError, subprocess.SubprocessError) as error:
+            raise SetupError('Could not install slirp4netns. See the private browser-network.log.') from error
+    if not helper.is_file():
+        raise SetupError('The slirp4netns package did not provide the browser networking helper.')
+
+
+def prepare_bot_browser(root, source):
+    """Build Firefox and prepare its private policy without changing the Web service."""
+    containerfile = source / BOT_BROWSER_CONTAINERFILE
+    if containerfile.is_symlink() or not containerfile.is_file():
+        raise SetupError('Run browser setup from a Y Harness checkout that includes the browser desktop.')
+    packaged = next((path for path in PODMAN_POLICIES if path.exists()), None)
+    if packaged is None:
+        raise SetupError('Install the system Podman syscall policy and retry browser setup.')
+    info = packaged.stat(follow_symlinks=False)
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
+        raise SetupError('The system Podman policy must be an administrator-owned file.')
+    policy = firefox_seccomp_policy(packaged.read_bytes())
+    ensure_browser_network(root)
+    podman = ensure_bot_image(root, source)
+    with os.fdopen(private_file(root / 'browser-build.log', os.O_WRONLY | os.O_CREAT), 'w') as log:
+        log.truncate()
+        try:
+            run(
+                [str(podman), 'build', '--pull=never', '--no-cache', '--network=host', '--tag', BOT_BROWSER_IMAGE,
+                 '--file', str(containerfile), str(containerfile.parent)],
+                cwd=source, env=podman_environment(), stdout=log, stderr=subprocess.STDOUT, timeout=600,
+            )
+        except (OSError, subprocess.SubprocessError) as error:
+            raise SetupError('Could not build the Firefox desktop. See the private browser-build.log.') from error
+    write_private_copy(root / BOT_BROWSER_POLICY, policy)
 
 
 def node_executable():
@@ -591,9 +669,9 @@ def launch_url(path):
 
 
 def main():
-    """Run the server-side setup, status or explicit private-link command."""
+    """Run setup, browser preparation, sandbox checks, status or private-link output."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', nargs='?', choices=('setup', 'status', 'url', 'sandbox'), default='setup')
+    parser.add_argument('action', nargs='?', choices=('setup', 'status', 'url', 'sandbox', 'browser'), default='setup')
     action = parser.parse_args().action
     os.umask(0o077)
     account_home = Path(pwd.getpwuid(os.getuid()).pw_dir)
@@ -604,6 +682,14 @@ def main():
             if not config_home.is_absolute():
                 raise SetupError('XDG_CONFIG_HOME must be an absolute path.')
             setup(root, config_home / 'systemd/user')
+        elif action == 'browser':
+            require_linux_user()
+            require_outside_git(root)
+            private_directory(root)
+            with os.fdopen(private_file(root / 'setup.lock', os.O_RDWR | os.O_CREAT), 'r+') as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX)
+                prepare_bot_browser(root, Path(__file__).resolve().parent.parent)
+            print('Firefox is ready. Select the Bots that can use it in the private Web profile.')
         elif action == 'sandbox':
             require_linux_user()
             private_directory(root)

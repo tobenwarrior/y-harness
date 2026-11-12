@@ -28,14 +28,17 @@ function result(code = 0, stdout = ''): VpsCommandResult {
 function fixture(run: (argv: readonly string[]) => Promise<VpsCommandResult> | VpsCommandResult = async (argv) => {
   if (argv[1] === 'container' && argv[2] === 'exists') return result(1)
   return result()
-}): Fixture {
+}, browser = false): Fixture {
   const root = mkdtempSync(join(tmpdir(), 'dsh-vps-runtime-'))
   roots.push(root)
   const calls: string[][] = []
+  const seccompProfile = join(root, 'browser-seccomp.json')
+  if (browser) writeFileSync(seccompProfile, '{}', { mode: 0o600 })
   const defaultVolumeCommand = async (argv: readonly string[]): Promise<VpsCommandResult> => {
-    if (argv[2] === 'exists') return result(1)
-    if (argv[2] === 'create') return result(0, `${argv.at(-1) ?? ''}\n`)
     const volume = argv.at(-1) ?? ''
+    const profile = volume.endsWith('-browser')
+    if (argv[2] === 'exists') return result(browser && !profile ? 0 : 1)
+    if (argv[2] === 'create') return result(0, `${argv.at(-1) ?? ''}\n`)
     const session = volume.includes('botsessionbbbb') ? sessions.bob : sessions.alice
     return result(0, JSON.stringify({
       Name: volume,
@@ -44,6 +47,7 @@ function fixture(run: (argv: readonly string[]) => Promise<VpsCommandResult> | V
         'io.yharness.vps.image': 'localhost/yharness-vps-bot:24.04',
         'io.yharness.vps.session': session,
         'io.yharness.vps.workspace': runtime.workspace(session),
+        ...(profile ? { 'io.yharness.vps.purpose': 'browser' } : {}),
       },
     }))
   }
@@ -53,7 +57,7 @@ function fixture(run: (argv: readonly string[]) => Promise<VpsCommandResult> | V
       if (argv[1] === 'volume') return await defaultVolumeCommand(argv)
       return await run(argv)
     },
-  })
+  }, browser ? { image: 'localhost/yharness-vps-bot-browser:24.04-v1', seccompProfile } : undefined)
   return { root, calls, runtime }
 }
 
@@ -75,6 +79,9 @@ describe('VpsRuntime', () => {
     const run = f.calls.find(argv => argv[1] === 'run')
     expect(run).toBeDefined()
     expect(run).toContain('--userns=keep-id')
+    expect(run).toContain('--pid=private')
+    expect(run).toContain('--ipc=private')
+    expect(run).toContain('--uts=private')
     expect(run).toContain('--user')
     expect(run).toContain('--network=none')
     expect(run).toContain('--http-proxy=false')
@@ -94,6 +101,28 @@ describe('VpsRuntime', () => {
     expect(run).not.toContain('--socket')
     expect(run?.at(-1)).toBe('localhost/yharness-vps-bot:24.04')
     expect(statSync(workspace).mode & 0o777).toBe(0o700)
+  })
+
+  it('keeps the existing workspace and mounts a separate browser profile for each session', async () => {
+    const f = fixture(undefined, true)
+    await f.runtime.ensure(sessions.alice)
+    await f.runtime.ensure(sessions.bob)
+    const launches = f.calls.filter(argv => argv[1] === 'run')
+    expect(launches).toHaveLength(2)
+    const profiles: string[] = []
+    for (const launch of launches) {
+      expect(launch).toContain('--network=slirp4netns:allow_host_loopback=false')
+      expect(launch).toContain(`--security-opt=seccomp=${join(f.root, 'browser-seccomp.json')}`)
+      expect(launch).toContain('--cap-drop=ALL')
+      expect(launch).not.toContain('--publish')
+      expect(launch.at(-1)).toBe('localhost/yharness-vps-bot-browser:24.04-v1')
+      const profile = launch.find(arg => arg.endsWith(':/var/lib/yharness-browser-profile:rw,nodev,nosuid,nocopy'))
+      expect(profile).toBeDefined()
+      if (profile !== undefined) profiles.push(profile.split(':')[0] ?? '')
+    }
+    expect(new Set(profiles).size).toBe(2)
+    expect(f.calls.filter(argv => argv[1] === 'volume' && argv[2] === 'create').map(argv => argv.at(-1)))
+      .toEqual(profiles)
   })
 
   it('reuses a short ready cache for repeated filesystem operations', async () => {
@@ -135,11 +164,14 @@ describe('VpsRuntime', () => {
   })
 
   it.each([
-    { report: 'literal ALL', capDrop: ['ALL'], effective: undefined, bounding: undefined, capAdd: [], allowed: true },
-    { report: 'expanded empty capabilities', capDrop: ['CAP_CHOWN'], effective: null, bounding: null, capAdd: [], allowed: true },
-    { report: 'nonempty bounding set', capDrop: ['CAP_CHOWN'], effective: null, bounding: ['CAP_KILL'], capAdd: [], allowed: false },
-    { report: 'explicit additions', capDrop: ['ALL'], effective: null, bounding: null, capAdd: ['CAP_KILL'], allowed: false },
-  ])('checks $report before restarting a stopped container', async ({ capDrop, effective, bounding, capAdd, allowed }) => {
+    { report: 'literal ALL', capDrop: ['ALL'], effective: undefined, bounding: undefined, capAdd: [], namespaces: {}, allowed: true },
+    { report: 'expanded empty capabilities', capDrop: ['CAP_CHOWN'], effective: null, bounding: null, capAdd: [], namespaces: {}, allowed: true },
+    { report: 'nonempty bounding set', capDrop: ['CAP_CHOWN'], effective: null, bounding: ['CAP_KILL'], capAdd: [], namespaces: {}, allowed: false },
+    { report: 'explicit additions', capDrop: ['ALL'], effective: null, bounding: null, capAdd: ['CAP_KILL'], namespaces: {}, allowed: false },
+    { report: 'a host PID namespace', capDrop: ['ALL'], effective: null, bounding: null, capAdd: [], namespaces: { PidMode: 'host' }, allowed: false },
+    { report: 'a borrowed IPC namespace', capDrop: ['ALL'], effective: null, bounding: null, capAdd: [], namespaces: { IpcMode: 'container:other' }, allowed: false },
+    { report: 'a host UTS namespace', capDrop: ['ALL'], effective: null, bounding: null, capAdd: [], namespaces: { UTSMode: 'host' }, allowed: false },
+  ])('checks $report before restarting a stopped container', async ({ capDrop, effective, bounding, capAdd, namespaces, allowed }) => {
     const f = fixture(async (argv) => {
       if (argv[1] === 'container' && argv[2] === 'exists') return result()
       if (argv[1] === 'inspect') return result(0, JSON.stringify({
@@ -162,6 +194,7 @@ describe('VpsRuntime', () => {
         ],
         HostConfig: {
           NetworkMode: 'none', Privileged: false, SecurityOpt: ['no-new-privileges'], CapDrop: capDrop, CapAdd: capAdd, UsernsMode: 'private', Tmpfs: { '/tmp': 'rw,noexec,nosuid,nodev,rprivate,tmpcopyup' },
+          ...namespaces,
         },
       }))
       return result()

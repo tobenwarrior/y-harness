@@ -77,6 +77,8 @@ The optional `computer` configuration supplies one shared X11 display for a cust
 
 `botComputers.desktopOnlyBots` selects Bots whose private Computer should use the isolated desktop while their shell and file tools retain the existing Host workspace and policy. The list contains only Bots selected by `botComputers`.
 
+`botComputers.browser` grants selected private Computers a Firefox desktop with outbound networking and a persistent profile. The selected Bot keeps its workspace volume when its desktop is replaced. See [Enable Firefox for selected Bots](../../../docs/user/guide/vps.md#enable-firefox-for-selected-bots).
+
 The private `vpsJournal` configuration grants selected owner Bots with a dedicated VPS desktop read access to a host-operated Unix socket. The Web Host supplies the reader to both the scoped tool and the native Codex Bot action. The socket stays in the Host process.
 
 The native macOS Desktop Host registers `mac_computer` on operator presets. It relays actions over its private Electron IPC channel with the invoking Session ID. The Electron main process authorizes the currently shared Bot before capturing the primary display or delivering input.

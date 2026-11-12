@@ -517,7 +517,7 @@ interface BotWorkspaces {
   /** Compute the server-assigned directory for this Bot's Session. */
   workspace(sessionId: SessionId): string
   /** Prepare the same computer across retries before publishing a new Session. */
-  prepare(sessionId: SessionId): Promise<void>
+  prepare(sessionId: SessionId, botId: BotId): Promise<void>
   /** Select only the exact Bot ids assigned to an isolated workspace. */
   managed?(botId: string): boolean
   /** Select a dedicated desktop that retains the Bot's existing shell execution. */
@@ -7161,7 +7161,7 @@ export class BotService extends TypertRemoteService {
       const workspace = botWorkspace(workspaces, String(bot.id), bot.sessionId)
       const skillWorkspace = workspace ?? bot.cwd
       if (workspace !== undefined && plan.skills.length > 0 && request.preview !== true) {
-        await workspaces?.prepare(bot.sessionId)
+        await workspaces?.prepare(bot.sessionId, bot.id)
       }
       const installed = plan.skills.length === 0 ? undefined
         : await importGrokBotSkills(skillWorkspace, plan.skills, {
@@ -7690,7 +7690,7 @@ export class BotService extends TypertRemoteService {
     try {
       const workspaces = this.ctx.get('botWorkspaces')
       if (botWorkspace(workspaces, String(record.id), record.sessionId) !== undefined) {
-        await workspaces?.prepare(record.sessionId)
+        await workspaces?.prepare(record.sessionId, record.id)
       }
       const created = await this.ctx.sessionController.create(
         sessionRequest(record),

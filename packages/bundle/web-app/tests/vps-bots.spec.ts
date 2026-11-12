@@ -25,6 +25,35 @@ describe('managed VPS Bot composition', () => {
     }, [])).toThrow('Desktop-only VPS Bots must be selected by botComputers.bots.')
   })
 
+  it('limits browser access to Bots with private Computers', () => {
+    expect(() => mountVpsBots(new Context(), {
+      root: '/yharness-test-bots', image: 'localhost/yharness-test', bots: ['bot-private'],
+      browser: { bots: ['bot-shared-desktop'], image: 'localhost/yharness-browser', seccompProfile: '/yharness-browser.json' },
+    }, [])).toThrow('VPS browser access must select private Computer Bots.')
+  })
+
+  it('prepares the browser runtime only for the selected Bot', async () => {
+    const ctx = new Context()
+    const ensure = vi.spyOn(VpsRuntime.prototype, 'ensure').mockResolvedValue(undefined)
+    try {
+      await ctx.plugin(scope => mountVpsBots(scope, {
+        root: '/yharness-test-bots', image: 'localhost/yharness-test',
+        browser: { bots: ['bot-browser'], image: 'localhost/yharness-browser', seccompProfile: '/yharness-browser.json' },
+      }, []))
+      const workspaces = ctx.get('botWorkspaces')
+      if (workspaces === undefined) throw new Error('VPS Bot workspaces were not registered')
+      await workspaces.prepare(BOT_SESSION, BotId('bot-browser'))
+      await workspaces.prepare(DESKTOP_SESSION, BotId('bot-offline'))
+      await workspaces.prepare(BOT_SESSION, BotId('bot-browser'))
+      expect(ensure.mock.calls).toEqual([[BOT_SESSION], [DESKTOP_SESSION], [BOT_SESSION]])
+      expect(ensure.mock.contexts[0]).toBe(ensure.mock.contexts[2])
+      expect(ensure.mock.contexts[0]).not.toBe(ensure.mock.contexts[1])
+    } finally {
+      ensure.mockRestore()
+      await ctx.fiber.dispose()
+    }
+  })
+
   it('binds the real Agent scope and fences host tools without changing ordinary sessions', async () => {
     const ctx = new Context()
     const argv = vi.spyOn(VpsRuntime.prototype, 'execArgv')

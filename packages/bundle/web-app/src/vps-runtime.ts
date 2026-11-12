@@ -2,9 +2,9 @@
  * Rootless Podman runtime for one private desktop per Web Bot session.
  *
  * A runtime owns only the workspaces below its configured private root. Each
- * session receives one long-lived container with one named Podman volume
- * mounted at that same absolute workspace path, an ephemeral private `/tmp`,
- * no network, no inherited container environment, and no host sockets.
+ * session receives a container with a named workspace volume, a private
+ * `/tmp`, and no host sockets. Browser desktops add a separate profile volume
+ * and outbound networking with host loopback blocked.
  * Commands are returned as argv so callers can route shell and Computer
  * operations through the container without a shell interpolation step.
  * @module @yharness/web-app/vps-runtime
@@ -23,6 +23,9 @@ const PODMAN_TIMEOUT_MS = 120_000
 const PODMAN_OUTPUT_LIMIT = 64 * 1024
 const DESKTOP_READY_TIMEOUT_MS = 30_000
 const DESKTOP_HEALTH_CACHE_MS = 500
+const BROWSER_PROFILE = '/var/lib/yharness-browser-profile'
+const BROWSER_NETWORK = 'slirp4netns:allow_host_loopback=false'
+const BROWSER_READY = '/tmp/yharness-browser-ready'
 
 /** Exit facts returned by the Podman command seam. */
 export interface VpsCommandResult {
@@ -41,6 +44,14 @@ export type VpsCommandRunner = (argv: readonly string[]) => Promise<VpsCommandRe
 export interface VpsRuntimeInternals {
   readonly run?: VpsCommandRunner
   readonly uid?: () => number | undefined
+}
+
+/** Locally provisioned browser desktop resources for an explicitly selected Bot. */
+export interface VpsBrowserOptions {
+  /** Local browser desktop image built from the standard desktop. */
+  readonly image: string
+  /** Absolute path to the private Firefox-compatible Podman policy. */
+  readonly seccompProfile: string
 }
 
 /** Runtime options for one `podman exec` operation. */
@@ -65,7 +76,7 @@ export class VpsRuntimeError extends Error {
 }
 
 /**
- * One rootless Podman container and named volume per validated Bot session.
+ * One rootless Podman desktop and workspace per validated Bot session.
  *
  * The constructor is intentionally side-effect free. `ensure()` creates the
  * private root and host placeholder workspace lazily, then creates and starts
@@ -75,18 +86,23 @@ export class VpsRuntimeError extends Error {
 export class VpsRuntime {
   private readonly rootPath: string
   private readonly imageName: string
+  private readonly workspaceImage: string
   private readonly internals: VpsRuntimeInternals
+  private readonly browserPolicy?: string
   private readonly pending = new Map<string, Promise<void>>()
   private readonly healthyUntil = new Map<string, number>()
 
   /**
    * @param root - Absolute owner-only directory containing all Bot workspaces.
-   * @param image - Audited local Podman image reference.
+   * @param image - Standard desktop image and existing workspace label.
    * @param internals - Optional command seam used by tests.
+   * @param browser - Provisioned resources for browser desktops.
    */
-  constructor(root: string, image: string, internals: VpsRuntimeInternals = {}) {
+  constructor(root: string, image: string, internals: VpsRuntimeInternals = {}, browser?: VpsBrowserOptions) {
     this.rootPath = privatePath(root, 'VPS Bot root')
-    this.imageName = imageReference(image)
+    this.workspaceImage = imageReference(image)
+    this.imageName = browser === undefined ? this.workspaceImage : imageReference(browser.image)
+    if (browser !== undefined) this.browserPolicy = privatePath(browser.seccompProfile, 'VPS Bot browser policy')
     this.internals = internals
   }
 
@@ -163,12 +179,23 @@ export class VpsRuntime {
     await ensurePrivateDirectory(workspace, this.internals.uid)
     const name = containerName(this.rootPath, sessionId)
     const volume = volumeName(this.rootPath, sessionId)
+    const browserPolicy = this.browserPolicy
+    const browserVolume = browserPolicy === undefined ? undefined : `${volume}-browser`
+    if (browserPolicy !== undefined) {
+      const policy = await lstat(browserPolicy).catch(() => undefined)
+      const uid = this.internals.uid?.() ?? process.getuid?.()
+      if (policy === undefined || !policy.isFile() || policy.nlink !== 1 || policy.uid !== uid
+        || (policy.mode & PRIVATE_MODE_MASK) !== 0) {
+        throw new VpsRuntimeError('VPS Bot browser policy must be an owner-only file')
+      }
+    }
     const exists = await this.runPodman(['container', 'exists', name])
     if (exists.code === 0) {
-      await this.ensureVolume(volume, sessionId, workspace)
       const inspected = await this.runPodman(['inspect', '--format', '{{json .}}', name])
       if (inspected.code !== 0) throw new VpsRuntimeError('VPS Bot container inspection failed')
-      const metadata = inspectContainer(inspected.stdout, this.rootPath, this.imageName, sessionId, workspace, volume)
+      const metadata = inspectContainer(inspected.stdout, this.rootPath, this.imageName, sessionId, workspace, volume, browserPolicy)
+      await this.ensureVolume(volume, sessionId, workspace)
+      if (browserVolume !== undefined) await this.ensureVolume(browserVolume, sessionId, workspace, 'browser')
       if (!metadata.running) {
         const started = await this.runPodman(['start', name])
         if (started.code !== 0) throw new VpsRuntimeError('VPS Bot container could not be restarted')
@@ -178,19 +205,25 @@ export class VpsRuntime {
     }
     if (exists.code !== 1) throw new VpsRuntimeError('VPS Bot container lookup failed')
     await this.ensureVolume(volume, sessionId, workspace)
+    if (browserVolume !== undefined) await this.ensureVolume(browserVolume, sessionId, workspace, 'browser')
     const launched = await this.runPodman([
       'run',
       '--detach',
       '--name', name,
       '--userns=keep-id',
+      '--pid=private',
+      '--ipc=private',
+      '--uts=private',
       ...runtimeUserArgs(),
-      '--network=none',
+      browserPolicy === undefined ? '--network=none' : `--network=${BROWSER_NETWORK}`,
       '--no-hosts',
       '--http-proxy=false',
       '--image-volume=ignore',
       '--security-opt=no-new-privileges',
+      ...(browserPolicy === undefined ? [] : [`--security-opt=seccomp=${browserPolicy}`]),
       '--cap-drop=ALL',
       '--volume', `${volume}:${workspace}:rw,nodev,nosuid`,
+      ...(browserVolume === undefined ? [] : ['--volume', `${browserVolume}:${BROWSER_PROFILE}:rw,nodev,nosuid,nocopy`]),
       '--tmpfs', '/tmp:rw,noexec,nosuid,nodev',
       '--workdir', workspace,
       '--label', `io.yharness.vps.root=${this.rootPath}`,
@@ -205,7 +238,7 @@ export class VpsRuntime {
     await this.waitForDesktop(name, workspace)
   }
 
-  private async ensureVolume(volume: string, sessionId: string, workspace: string): Promise<void> {
+  private async ensureVolume(volume: string, sessionId: string, workspace: string, purpose?: 'browser'): Promise<void> {
     const exists = await this.runPodman(['volume', 'exists', volume])
     if (exists.code === 1) {
       const created = await this.runPodman([
@@ -213,7 +246,8 @@ export class VpsRuntime {
         '--label', `io.yharness.vps.root=${this.rootPath}`,
         '--label', `io.yharness.vps.session=${sessionId}`,
         '--label', `io.yharness.vps.workspace=${workspace}`,
-        '--label', `io.yharness.vps.image=${this.imageName}`,
+        '--label', `io.yharness.vps.image=${this.workspaceImage}`,
+        ...(purpose === undefined ? [] : ['--label', `io.yharness.vps.purpose=${purpose}`]),
         volume,
       ])
       if (created.code !== 0) throw new VpsRuntimeError('VPS Bot workspace volume could not be created')
@@ -221,15 +255,19 @@ export class VpsRuntime {
       throw new VpsRuntimeError('VPS Bot workspace volume lookup failed')
     }
     const inspected = await this.runPodman(['volume', 'inspect', '--format', '{{json .}}', volume])
-    if (inspected.code !== 0 || !inspectVolume(inspected.stdout, this.rootPath, this.imageName, sessionId, workspace, volume)) {
+    if (inspected.code !== 0
+      || !inspectVolume(inspected.stdout, this.rootPath, this.workspaceImage, sessionId, workspace, volume, purpose)) {
       throw new VpsRuntimeError('VPS Bot workspace volume ownership does not match this runtime')
     }
   }
 
   private async waitForDesktop(name: string, workspace: string): Promise<void> {
     const deadline = Date.now() + DESKTOP_READY_TIMEOUT_MS
+    const probe = this.browserPolicy === undefined
+      ? ['xdotool', 'getdisplaygeometry']
+      : ['test', '-f', BROWSER_READY]
     while (Date.now() < deadline) {
-      const ready = await this.runPodman(['exec', '--workdir', workspace, name, 'xdotool', 'getdisplaygeometry'])
+      const ready = await this.runPodman(['exec', '--workdir', workspace, name, ...probe])
       if (ready.code === 0) return
       await new Promise<void>((resolveReady) => { setTimeout(resolveReady, 50) })
     }
@@ -302,6 +340,7 @@ function inspectVolume(
   sessionId: string,
   workspace: string,
   volume: string,
+  purpose: 'browser' | undefined,
 ): boolean {
   let value: unknown
   try {
@@ -313,7 +352,8 @@ function inspectVolume(
     || value.Labels['io.yharness.vps.root'] !== root
     || value.Labels['io.yharness.vps.image'] !== image
     || value.Labels['io.yharness.vps.session'] !== sessionId
-    || value.Labels['io.yharness.vps.workspace'] !== workspace) {
+    || value.Labels['io.yharness.vps.workspace'] !== workspace
+    || value.Labels['io.yharness.vps.purpose'] !== purpose) {
     return false
   }
   return true
@@ -326,6 +366,7 @@ function inspectContainer(
   sessionId: string,
   workspace: string,
   volume: string,
+  browserPolicy: string | undefined,
 ): ContainerMetadata {
   let value: unknown
   try {
@@ -360,7 +401,14 @@ function inspectContainer(
   if (workspaceMounts.length !== 1 || workspaceMounts[0]?.Name !== volume || workspaceMounts[0]?.RW !== true) {
     throw new VpsRuntimeError('VPS Bot container workspace mount is invalid')
   }
-  if (value.Mounts.some(mount => mount.Type === 'bind' || (mount.Type === 'volume' && mount.Destination !== workspace))) {
+  const profileMounts = value.Mounts.filter(mount => mount.Type === 'volume' && mount.Destination === BROWSER_PROFILE)
+  const profile = profileMounts[0]
+  if (browserPolicy !== undefined && (profileMounts.length !== 1 || profile?.Name !== `${volume}-browser`
+    || profile.RW !== true || !mountOptions(profile).includes('nodev') || !mountOptions(profile).includes('nosuid'))) {
+    throw new VpsRuntimeError('VPS Bot browser profile mount is invalid')
+  }
+  if (value.Mounts.some(mount => mount.Type === 'bind' || (mount.Type === 'volume'
+    && mount.Destination !== workspace && (browserPolicy === undefined || mount.Destination !== BROWSER_PROFILE)))) {
     throw new VpsRuntimeError('VPS Bot container has an unexpected host mount')
   }
   const volumeMode = workspaceMounts[0] === undefined ? [] : mountOptions(workspaceMounts[0])
@@ -374,12 +422,22 @@ function inspectContainer(
   if (!tmpfsOptions.includes('noexec') || !tmpfsOptions.includes('nosuid') || !tmpfsOptions.includes('nodev')) {
     throw new VpsRuntimeError('VPS Bot container temporary storage is invalid')
   }
-  if (!isRecord(hostConfig) || hostConfig.NetworkMode !== 'none' || hostConfig.Privileged === true
+  if (!isRecord(hostConfig) || hostConfig.Privileged === true
     || !stringArray(hostConfig.SecurityOpt, 'no-new-privileges')
     || !capabilitiesDropped(value, hostConfig)
+    || ![hostConfig.PidMode, hostConfig.IpcMode, hostConfig.UTSMode].every(mode => mode === undefined || mode === '' || mode === 'private')
     || (typeof hostConfig.UsernsMode !== 'string'
       || (hostConfig.UsernsMode !== 'private' && !hostConfig.UsernsMode.startsWith('keep-id')))) {
     throw new VpsRuntimeError('VPS Bot container privileges are invalid')
+  }
+  if (browserPolicy === undefined) {
+    if (hostConfig.NetworkMode !== 'none') throw new VpsRuntimeError('VPS Bot container network is invalid')
+  } else if ((hostConfig.NetworkMode !== 'slirp4netns' && hostConfig.NetworkMode !== BROWSER_NETWORK)
+    || !stringArray(labels.CreateCommand, `--network=${BROWSER_NETWORK}`)
+    || !stringArray(hostConfig.SecurityOpt, `seccomp=${browserPolicy}`)
+    || hostConfig.PublishAllPorts === true
+    || (isRecord(hostConfig.PortBindings) && Object.keys(hostConfig.PortBindings).length > 0)) {
+    throw new VpsRuntimeError('VPS Bot browser container network or policy is invalid')
   }
   const containerConfig = value.Config
   if (!isRecord(containerConfig) || typeof containerConfig.User !== 'string' || /^0(?::0)?$/u.test(containerConfig.User)) {

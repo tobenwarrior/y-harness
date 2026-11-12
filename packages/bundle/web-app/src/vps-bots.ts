@@ -13,7 +13,7 @@ import type {} from '@yharness/system-prompt'
 import { containerComputer, type VpsComputer } from './computer.ts'
 import * as ComputerTool from './computer-tool.ts'
 import { botComputerRoutesWithLegacy } from './computer-api.ts'
-import { VpsRuntime } from './vps-runtime.ts'
+import { VpsRuntime, type VpsBrowserOptions } from './vps-runtime.ts'
 import { registerVpsServiceTools, VpsServices, type VpsServiceAccess } from './vps-services.ts'
 import { registerVpsJournalTool, VpsJournal, type VpsJournalConfig } from './vps-journal.ts'
 
@@ -33,7 +33,7 @@ const BOT_TOOLS = new Set([
 /**
  * Mount managed Linux computers in the shipped VPS Web profile.
  * @param ctx - Web Host composition.
- * @param config - Installer-assigned runtime root, local desktop image, and Bot Computer selection.
+ * @param config - Runtime root, local desktop images, and Bot Computer selection.
  * @param grants - Exact operator-configured systemd grants.
  * @param legacyComputer - Existing shared controller used by Bots outside the allowlist.
  * @param journalConfig - Private socket and authorized Computer Bots.
@@ -43,17 +43,18 @@ export function mountVpsBots(
   config: {
     readonly root: string
     readonly image: string
-    readonly bots?: readonly string[]
+    readonly bots?: readonly string[] | null
     readonly desktopOnlyBots?: readonly string[]
+    readonly browser?: (VpsBrowserOptions & { readonly bots: readonly string[] }) | null
   },
   grants: readonly VpsServiceAccess[],
   legacyComputer?: VpsComputer,
   journalConfig?: VpsJournalConfig,
 ): void {
-  const runtime = new VpsRuntime(config.root, config.image)
+  const defaultRuntime = new VpsRuntime(config.root, config.image)
   const services = new VpsServices(grants)
   const computers = new Map<string, VpsComputer>()
-  const managedBotIds = config.bots === undefined ? undefined : new Set(config.bots)
+  const managedBotIds = config.bots == null ? undefined : new Set(config.bots)
   const desktopOnlyBotIds = new Set(config.desktopOnlyBots ?? [])
   const isManagedBot = (botId: string): boolean => !desktopOnlyBotIds.has(botId)
     && (managedBotIds === undefined || managedBotIds.has(botId))
@@ -61,6 +62,15 @@ export function mountVpsBots(
     throw new Error('Desktop-only VPS Bots must be selected by botComputers.bots.')
   }
   const isDesktopBot = (botId: string): boolean => isManagedBot(botId) || desktopOnlyBotIds.has(botId)
+  const browserBotIds = new Set(config.browser?.bots)
+  if ([...browserBotIds].some(botId => !isDesktopBot(botId))) {
+    throw new Error('VPS browser access must select private Computer Bots.')
+  }
+  const browserRuntime = config.browser == null
+    ? undefined
+    : new VpsRuntime(config.root, config.image, undefined, config.browser)
+  const runtimeFor = (botId: string): VpsRuntime =>
+    browserRuntime !== undefined && browserBotIds.has(botId) ? browserRuntime : defaultRuntime
   if (journalConfig?.bots.some(botId => !isDesktopBot(botId))) {
     throw new Error('VPS journal grants must select Computer Bots.')
   }
@@ -71,8 +81,8 @@ export function mountVpsBots(
     })
   }
   ctx.provide('botWorkspaces', {
-    workspace: sessionId => runtime.workspace(sessionId),
-    prepare: sessionId => runtime.ensure(sessionId),
+    workspace: sessionId => defaultRuntime.workspace(sessionId),
+    prepare: (sessionId, botId) => runtimeFor(botId).ensure(sessionId),
     managed: (botId: string) => isManagedBot(botId),
     desktopOnly: botId => desktopOnlyBotIds.has(botId),
   })
@@ -82,7 +92,8 @@ export function mountVpsBots(
     await Promise.all(active.map(computer => computer.dispose()))
   }, 'vps-bots: dispose desktop controllers')
 
-  const computerFor = async (sessionId: string): Promise<VpsComputer> => {
+  const computerFor = async (sessionId: string, botId: string): Promise<VpsComputer> => {
+    const runtime = runtimeFor(botId)
     await runtime.ensure(sessionId)
     const existing = computers.get(sessionId)
     if (existing !== undefined) return existing
@@ -112,7 +123,7 @@ export function mountVpsBots(
       if (bot?.state !== 'active') return undefined
       if (isDesktopBot(bot.id)) {
         return {
-          computer: await computerFor(bot.sessionId),
+          computer: await computerFor(bot.sessionId, bot.id),
           id: bot.id,
           permissionScope: 'bot' as const,
         }
@@ -159,13 +170,14 @@ export function mountVpsBots(
           })
           ComputerTool.applyVpsBotComputer(agentCtx, async (sessionId) => {
             if (sessionId !== bot.sessionId) throw new Error('VPS Computer requires the owning Bot Session.')
-            return computerFor(sessionId)
+            return computerFor(sessionId, bot.id)
           })
           if (journal !== undefined) registerVpsJournalTool(agentCtx, bot.id, bot.sessionId, journal, agent.ctx)
         })
         return
       }
       await agent.ctx.inject(['tools', 'attachments', 'llm', 'systemPrompt', 'subprocess', 'sandboxPolicy'], async (agentCtx) => {
+        const runtime = runtimeFor(bot.id)
         const workspace = runtime.workspace(bot.sessionId)
         const managedContext = agentCtx.isolate('fs').isolate('subprocess').isolate('shell')
         const subprocess = new VpsBotSubprocess(managedContext, {
@@ -217,7 +229,7 @@ export function mountVpsBots(
         })
         ComputerTool.applyVpsBotComputer(agentCtx, async (sessionId) => {
           if (sessionId !== bot.sessionId) throw new Error('VPS Computer requires the owning Bot Session.')
-          return computerFor(sessionId)
+          return computerFor(sessionId, bot.id)
         })
         registerVpsServiceTools(agentCtx, bot.id, services)
         if (journal !== undefined) registerVpsJournalTool(agentCtx, bot.id, bot.sessionId, journal, agent.ctx)

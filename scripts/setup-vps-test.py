@@ -2,6 +2,7 @@
 
 import importlib.util
 import io
+import json
 import os
 import shutil
 import subprocess
@@ -85,6 +86,45 @@ class SetupVpsTest(unittest.TestCase):
         build = next(call for call in calls if call[:3] == ['/usr/bin/podman', 'build', '--pull=never'])
         self.assertIn('--network=host', build)
         self.assertNotIn('--pull=always', build)
+
+    def test_firefox_policy_keeps_other_container_rules(self):
+        source = {
+            'defaultAction': 'SCMP_ACT_ERRNO',
+            'architectures': ['SCMP_ARCH_X86_64'],
+            'syscalls': [
+                {'names': ['chroot'], 'action': 'SCMP_ACT_ALLOW', 'includes': {'caps': ['CAP_SYS_CHROOT']}},
+                {'names': ['chroot', 'mount'], 'action': 'SCMP_ACT_ERRNO'},
+                {'names': ['read'], 'action': 'SCMP_ACT_ALLOW'},
+            ],
+        }
+        policy = json.loads(installer.firefox_seccomp_policy(json.dumps(source)))
+        self.assertEqual(policy, {
+            'defaultAction': 'SCMP_ACT_ERRNO',
+            'architectures': ['SCMP_ARCH_X86_64'],
+            'syscalls': [
+                {'names': ['mount'], 'action': 'SCMP_ACT_ERRNO'},
+                {'names': ['read'], 'action': 'SCMP_ACT_ALLOW'},
+                {'names': ['chroot'], 'action': 'SCMP_ACT_ALLOW'},
+            ],
+        })
+        with self.assertRaisesRegex(installer.SetupError, 'deny by default'):
+            installer.firefox_seccomp_policy('{"defaultAction":"SCMP_ACT_ALLOW","syscalls":[]}')
+
+    def test_browser_setup_verifies_the_network_helper_after_installing(self):
+        self.root.mkdir(mode=0o700)
+        with (
+            patch.object(Path, 'is_file', autospec=True, side_effect=lambda path: str(path) == '/usr/bin/apt-get'),
+            patch.object(installer, 'run') as command,
+            patch('sys.stdout', new_callable=io.StringIO),
+        ):
+            with self.assertRaisesRegex(installer.SetupError, 'did not provide the browser networking helper'):
+                installer.ensure_browser_network(self.root)
+        self.assertEqual(len(command.call_args_list), 2)
+        self.assertEqual(command.call_args_list[0].args[0][-1], 'update')
+        install = command.call_args_list[1].args[0]
+        self.assertIn('--no-upgrade', install)
+        self.assertIn('--no-remove', install)
+        self.assertEqual(install[-1], 'slirp4netns')
 
     def test_podman_prerequisite_uses_owner_visible_sudo(self):
         self.root.mkdir(mode=0o700)
