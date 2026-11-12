@@ -6,6 +6,7 @@ import { homedir, tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { parse as parseYaml } from 'yaml'
 import { resolveUpstreamCommit, UPSTREAM_REPOSITORY } from './upstream-head.ts'
+import { requestUpstreamManifest, upstreamManifestVersion } from './upstream-manifest.ts'
 
 const repository = UPSTREAM_REPOSITORY
 const names = ['compound', 'map', 'setup', 'setup-global', 'status-global'] as const
@@ -366,8 +367,8 @@ async function updateOverlayOnce(root: string, minimumVersion?: string, signal?:
     commit = snapshot.commit
     entries = snapshot.entries
   }
-  const manifest = await json(`https://raw.githubusercontent.com/${repository}/${commit}/plugin.json`, signal)
-  const version = typeof manifest === 'object' && manifest !== null ? (manifest as { version?: unknown }).version : undefined
+  const manifest = await boundedBody(await requestUpstreamManifest(commit, signal), maxTotal)
+  const version = upstreamManifestVersion(JSON.parse(manifest.toString('utf8')))
   if (typeof version !== 'string' || !versionPattern.test(version)) throw new Error('invalid upstream version')
   if (minimumVersion !== undefined && !versionPattern.test(minimumVersion)) throw new Error('invalid bundled version')
   if (minimumVersion !== undefined && olderVersion(version, minimumVersion)) throw new Error('upstream version would downgrade bundled skills')

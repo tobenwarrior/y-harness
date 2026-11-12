@@ -26,7 +26,7 @@
 
 ## Re-sync
 
-Update this package when upstream publishes a new `plugin.json` version; the `skill-compound` update indicator reports that difference in the Y Harness UI.
+Update this package when upstream publishes a new version in `.codex-plugin/plugin.json`. Older revisions publish the same field in the root `plugin.json`. The `skill-compound` update indicator reports a new revision in the Y Harness UI.
 
 ```sh
 git clone https://github.com/tobenwarrior/compound-skills /tmp/compound-skills

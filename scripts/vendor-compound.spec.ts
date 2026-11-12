@@ -36,7 +36,7 @@ describe('upstream record', () => {
 
   it('records the release, commit, and date without touching other rows', () => {
     const next = recordVendoredRelease(source, '0.12.0', 'b'.repeat(40), '2026-10-19')
-    expect(next).toContain('| Vendored version | `0.12.0` (upstream `plugin.json`) |')
+    expect(next).toContain('| Vendored version | `0.12.0` (upstream release manifest) |')
     expect(next).toContain(`| Vendored commit | \`${'b'.repeat(40)}\` (2026-10-19) |`)
     expect(next).toContain('| Vendored on | 2026-10-19 |')
     expect(next).toContain('| Upstream repository | `https://github.com/tobenwarrior/compound-skills` |')
