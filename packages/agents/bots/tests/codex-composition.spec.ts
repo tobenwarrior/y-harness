@@ -286,7 +286,8 @@ it('composes Bot identity and Codex dynamic collaboration with sender-bound deli
   expect(ctx.tools.get('schedule_create', senderAgent)).not.toBe(ctx.tools.get('schedule_create'))
   expect(scopeOf(senderAgent.ctx)).toBeDefined()
   expect(ctx.tools.get('schedule_create', minimalAgent)).toBeUndefined()
-  const dynamicToolsForMinimal = await (ctx.get('codexDynamicTools') as BotNativeToolProvider).resolve({ sessionId: minimal.bot.sessionId })
+  const dynamicTools = ctx.get('codexDynamicTools') as BotNativeToolProvider
+  const dynamicToolsForMinimal = await dynamicTools.resolve({ sessionId: minimal.bot.sessionId })
   expect(dynamicToolsForMinimal.map(tool => tool.name)).not.toContain('vps_service_journal')
   expect(dynamicToolsForMinimal.map(tool => tool.name)).not.toEqual(expect.arrayContaining([
     'schedule_create', 'schedule_list', 'schedule_update', 'schedule_delete',
@@ -294,9 +295,9 @@ it('composes Bot identity and Codex dynamic collaboration with sender-bound deli
   ]))
   ctx.provide('botWorkspaces', {
     workspace: () => '/fixture/vps-workspace',
-    managed: botId => botId === minimal.bot.id,
+    managed: (botId: string) => botId === minimal.bot.id,
   })
-  await expect(ctx.get('codexDynamicTools')?.resolve({ sessionId: minimal.bot.sessionId }))
+  await expect(dynamicTools.resolve({ sessionId: minimal.bot.sessionId }))
     .rejects.toThrow('Native Codex requires desktop-only mode for a VPS Bot.')
   expect(senderPrompt).toContain('Your Bot id is "bot-sender".')
 

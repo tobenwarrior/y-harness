@@ -350,7 +350,7 @@ describe('VPS Bot file provider', () => {
         this.decoder = new RealDecoder(label, options)
       }
 
-      decode(input?: AllowSharedBufferSource, options?: TextDecoderOptions): string {
+      decode(input?: AllowSharedBufferSource, options?: Parameters<TextDecoder['decode']>[1]): string {
         if (input === undefined) return 'fixture tail'
         return this.decoder.decode(input, options)
       }
@@ -401,11 +401,12 @@ describe('VPS Bot file provider', () => {
   it('enforces mutation policy and reports delete and retained-source outcomes', async () => {
     const f = await fixture()
     const target = await f.fs.resolve('notes.txt')
-    await expect(f.fs.writeText(target, 'blocked', undefined, undefined, { mode: 'read-only' })).rejects.toMatchObject({ code: 'FS_SANDBOX_DENIED' })
+    const readOnly = { mode: 'read-only' as const, workspaceRoot: f.root }
+    await expect(f.fs.writeText(target, 'blocked', undefined, undefined, readOnly)).rejects.toMatchObject({ code: 'FS_SANDBOX_DENIED' })
     await expect(f.fs.writeText(target, 'x'.repeat(8 * 1024 * 1024 + 1))).rejects.toMatchObject({ code: 'FS_TOO_LARGE' })
-    await expect(f.fs.editText(target, { oldString: 'a', newString: 'b', replaceAll: false }, undefined, undefined, { mode: 'read-only' })).rejects.toMatchObject({ code: 'FS_SANDBOX_DENIED' })
-    await expect(f.fs.patchText(target, [], undefined, undefined, { mode: 'read-only' })).rejects.toMatchObject({ code: 'FS_SANDBOX_DENIED' })
-    await expect(f.fs.deleteFile(target, undefined, undefined, { mode: 'read-only' })).rejects.toMatchObject({ code: 'FS_SANDBOX_DENIED' })
+    await expect(f.fs.editText(target, { oldString: 'a', newString: 'b', replaceAll: false }, undefined, undefined, readOnly)).rejects.toMatchObject({ code: 'FS_SANDBOX_DENIED' })
+    await expect(f.fs.patchText(target, [], undefined, undefined, readOnly)).rejects.toMatchObject({ code: 'FS_SANDBOX_DENIED' })
+    await expect(f.fs.deleteFile(target, undefined, undefined, readOnly)).rejects.toMatchObject({ code: 'FS_SANDBOX_DENIED' })
     await f.fs.writeText(target, 'remove me')
     await expect(f.fs.deleteFile(target)).resolves.toEqual({ before: 'remove me' })
     await expect(f.fs.deleteFile(target)).rejects.toMatchObject({ code: 'FS_STALE_VERSION' })

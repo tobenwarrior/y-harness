@@ -309,7 +309,7 @@ describe('VPS service tools', () => {
       callId: ToolCallId('service-restart'),
       name: 'vps_service_restart',
       arguments: { unit: 'example-worker.service' },
-      agent,
+      ...(agent === undefined ? {} : { agent }),
     })
     try {
       const missingOwner = await execute()

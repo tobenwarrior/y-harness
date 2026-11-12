@@ -136,13 +136,7 @@ function stdout(value: string): ExecResult {
   return { stdout: value, stderr: '' }
 }
 
-async function fixture(): Promise<{
-  root: string
-  workspace: string
-  runtime: VpsRuntime
-  host: HostRuntime
-  process: VpsBotSubprocess
-}> {
+async function fixture() {
   const root = await mkdtemp(join(tmpdir(), 'yh-bot-process-'))
   roots.push(root)
   const runtime = new VpsRuntime(root, 'localhost/test')
