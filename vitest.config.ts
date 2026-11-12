@@ -46,6 +46,8 @@ const windowsUnsupportedTests = process.platform === 'win32'
       'packages/subprocess/subprocess-local/tests/process-inspector.spec.ts',
       'packages/subprocess/subprocess-local/tests/spawn.spec.ts',
       'packages/subprocess/subprocess-local/tests/terminal.spec.ts',
+      // The rootless VPS runtime fixtures assert POSIX directory ownership and mode bits.
+      'packages/bundle/web-app/tests/vps-runtime.spec.ts',
       // Oracle-diff suites: they compare the worker's POSIX path/url faces
       // against the host Node's own answers, which are win32 semantics on
       // Windows. The worker always speaks POSIX; the Linux lanes hold the diff.
@@ -97,6 +99,9 @@ const windowsOnlyCoverageExclusions = process.platform !== 'win32'
 const windowsRunnerCoverageExclusions = process.platform === 'win32'
   ? [
       'packages/sandbox/sandbox-windows-acl/src/runner.ts',
+      // The managed VPS runtime and its composition tests use rootless Podman and POSIX permissions.
+      'packages/bundle/web-app/src/vps-runtime.ts',
+      'packages/bundle/web-app/src/vps-bots.ts',
       // The session write lock's POSIX face (fs-ext flock plus inode
       // verification) executes only off-Windows: the Linux lanes hold its
       // per-file 100%, while the Windows branch is unit-pinned by

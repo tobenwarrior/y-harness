@@ -19,6 +19,7 @@ afterEach(async () => {
 })
 
 async function socketPath(): Promise<string> {
+  if (process.platform === 'win32') return '\\\\.\\pipe\\yh-vps-journal-' + randomUUID()
   const root = await mkdtemp(join(tmpdir(), 'yh-vps-journal-'))
   temporaryRoots.push(root)
   return join(root, 'j')
