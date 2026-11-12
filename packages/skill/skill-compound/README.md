@@ -79,4 +79,4 @@ Mounting the provider adds five catalog entries; loading a skill appends its bod
 
 ### Dev Note
 
-The update indicator reports a newer upstream revision by comparing both the upstream `plugin.json` version and commit with the active revision. Applying an update writes only to the private `overlayRoot`; the managed checkout stays immutable and does not need a branch, merge, or rebuild.
+The update indicator compares the upstream version and commit with the active revision. The check and installer both read `.codex-plugin/plugin.json` at the resolved commit, with root `plugin.json` as a fallback for older revisions. Applying an update writes only to the private `overlayRoot`; the managed checkout stays immutable and does not need a branch, merge, or rebuild.

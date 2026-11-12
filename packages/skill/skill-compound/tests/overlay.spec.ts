@@ -118,7 +118,8 @@ function upstream(
     count += 1
     onFetch?.(url)
     if (url.includes('/commits/')) return Promise.resolve(Response.json({ sha: commit }))
-    if (url.endsWith('/plugin.json')) return Promise.resolve(Response.json({ version }))
+    if (url.endsWith('/.codex-plugin/plugin.json')) return Promise.resolve(Response.json({ version }))
+    if (url.endsWith('/plugin.json')) return Promise.resolve(new Response(null, { status: 404 }))
     if (url.includes('/git/trees/')) return Promise.resolve(Response.json({ truncated: false, tree }))
     const path = [...files.keys()].find(key => url.endsWith(key))!
     return Promise.resolve(new Response(corrupt ? 'bad' : files.get(path)))
