@@ -4,7 +4,7 @@
  * The controller owns one fixed 1280×800 display. Native commands receive a
  * credential-scrubbed environment and are always started with argv, never a
  * shell. Browser input and model input share one admission queue; an expiring
- * viewer lease excludes model input while a human is controlling the display.
+ * viewer lease excludes model input and observation during human control.
  * @module @yharness/web-app/computer
  */
 
@@ -349,19 +349,21 @@ export class VpsComputer {
   }
 
   /**
-   * Capture a model/tool frame without claiming or renewing a human lease.
+   * Capture a model/tool frame when no viewer controls the display.
    * @param signal - Optional request cancellation.
    * @returns Base64 JPEG with the non-viewer mode.
    */
-  async observe(signal?: AbortSignal): Promise<ComputerFrame> {
-    this.assertOpen()
-    throwIfAborted(signal)
-    const image = await this.capture(signal)
-    return { ...image, mode: 'other', botActive: this.pendingBotActions > 0 }
+  observe(signal?: AbortSignal): Promise<ComputerFrame> {
+    return this.admit(async () => {
+      this.expireLease()
+      if (this.owner !== undefined) throw new ComputerLeaseError('computer is controlled by a human')
+      const image = await this.capture(signal)
+      return { ...image, mode: 'other', botActive: this.pendingBotActions > 0 }
+    }, signal)
   }
 
   /**
-   * Admit one viewer as controller after all previously admitted input settles.
+   * Admit one viewer as controller after all admitted input and model frames settle.
    * @param viewerId - UUID identifying the browser viewer.
    * @param signal - Optional request cancellation while waiting for admission.
    * @returns The controlling mode.

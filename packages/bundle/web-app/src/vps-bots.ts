@@ -74,6 +74,7 @@ export function mountVpsBots(
     workspace: sessionId => runtime.workspace(sessionId),
     prepare: sessionId => runtime.ensure(sessionId),
     managed: (botId: string) => isManagedBot(botId),
+    desktopOnly: botId => desktopOnlyBotIds.has(botId),
   })
   ctx.effect(() => async () => {
     const active = [...computers.values()]

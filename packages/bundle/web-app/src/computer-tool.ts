@@ -62,7 +62,7 @@ function registerVpsComputer(
   registerComputerTool(ctx, {
     name: 'vps_computer',
     description: `Observe or operate ${desktop} shown in the Computer panel. `
-      + 'Observe before targeting visible controls. Input is paused while the user is in control.',
+      + 'Observe before targeting visible controls. The tool pauses while the user is in control.',
     keyDescription: 'X11 key or chord, for example Return or ctrl+a.',
     observe: async (sessionId, signal) => (await resolve(sessionId)).observe(signal),
     act: async (sessionId, action, signal) => (await resolve(sessionId)).actAsBot(action, signal),

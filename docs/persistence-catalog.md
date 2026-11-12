@@ -28,7 +28,7 @@ The [format references](persistence-changes/historical-formats/README.md) cover 
 | `event:assistant/attempt` | event | `15d5dfdd822aa35e115afd74a8982825a493880457774e6850bc1520b50875e4` | [`{ type: "assistant/attempt" }`](#persistence-type-sha256-15d5dfdd822aa35e115afd74a8982825a493880457774e6850bc1520b50875e4) |
 | `event:assistant/message` | event | `1033093edd0db80ff410e00830b523405e00bb0c7684948e531ff65095799625` | [`{ type: "assistant/message" }`](#persistence-type-sha256-1033093edd0db80ff410e00830b523405e00bb0c7684948e531ff65095799625) |
 | `event:bot/collaboration` | event | `c18d481bf8e13be60dc6f553f37e9edd5163f4ae015724d7f3384c6520f301af` | [`{ type: "bot/collaboration" }`](#persistence-type-sha256-c18d481bf8e13be60dc6f553f37e9edd5163f4ae015724d7f3384c6520f301af) |
-| `event:bot/dynamic-tool` | event | `0bf1eedc74932bfd1594fab107fd835e5692d83dc7f3f3f6a6b6b388c7261213` | [`{ type: "bot/dynamic-tool" }`](#persistence-type-sha256-0bf1eedc74932bfd1594fab107fd835e5692d83dc7f3f3f6a6b6b388c7261213) |
+| `event:bot/dynamic-tool` | event | `6eebf6368950ede361f0ece53861dc120ef9b6f86db90b8def54b569f90f5d54` | [`{ type: "bot/dynamic-tool" }`](#persistence-type-sha256-6eebf6368950ede361f0ece53861dc120ef9b6f86db90b8def54b569f90f5d54) |
 | `event:bot/memory` | event | `8a530ef5e641ff7d754a5105cafe451f7ad5bca04f8d8cd283a1da406361ae1d` | [`{ type: "bot/memory" }`](#persistence-type-sha256-8a530ef5e641ff7d754a5105cafe451f7ad5bca04f8d8cd283a1da406361ae1d) |
 | `event:claude-code/root-protocol` | event | `77e2c680b972fb40016c720849e5bea44b970eb828e1d67d64559d399483b903` | [`{ type: "claude-code/root-protocol" }`](#persistence-type-sha256-77e2c680b972fb40016c720849e5bea44b970eb828e1d67d64559d399483b903) |
 | `event:coding-session/import-initialization` | event | `3346bc09a8edab78ee6e631001882eaae8ade37e91c606068146234790297406` | [`{ type: "coding-session/import-initialization" }`](#persistence-type-sha256-3346bc09a8edab78ee6e631001882eaae8ade37e91c606068146234790297406) |
@@ -337,7 +337,7 @@ Source: [`packages/core/session/src/types.ts:341`](../packages/core/session/src/
 'bot/collaboration': BotCollaborationDeliveryEvent
 ```
 
-Source: [`packages/agents/bots/src/collaboration.ts:147`](../packages/agents/bots/src/collaboration.ts)
+Source: [`packages/agents/bots/src/collaboration.ts:150`](../packages/agents/bots/src/collaboration.ts)
 
 <a id="botdynamic-tool--log-only"></a>
 
@@ -348,7 +348,7 @@ Source: [`packages/agents/bots/src/collaboration.ts:147`](../packages/agents/bot
 'bot/dynamic-tool': BotDynamicToolEvent
 ```
 
-Source: [`packages/agents/bots/src/collaboration.ts:145`](../packages/agents/bots/src/collaboration.ts)
+Source: [`packages/agents/bots/src/collaboration.ts:148`](../packages/agents/bots/src/collaboration.ts)
 
 <a id="botmemory--log-only"></a>
 
@@ -3547,7 +3547,7 @@ Sources: [`packages/context/agent-instructions/src/state.ts:37`](../packages/con
 
 SHA-256: `86f5c266f245199fde44d5b1a257cf2fbed15b6950053c644879d1e0a49eba5a`
 
-Sources: [`packages/agents/bots/src/collaboration.ts:51`](../packages/agents/bots/src/collaboration.ts) · [`packages/subagent/subagent/src/continuation-messages.ts:15`](../packages/subagent/subagent/src/continuation-messages.ts)
+Sources: [`packages/agents/bots/src/collaboration.ts:52`](../packages/agents/bots/src/collaboration.ts) · [`packages/subagent/subagent/src/continuation-messages.ts:15`](../packages/subagent/subagent/src/continuation-messages.ts)
 
 | Property | Presence | Type |
 |---|---|---|
@@ -3648,7 +3648,7 @@ Array of [`AssistantStreamRecord`](#persistence-type-sha256-33341aac09312300de5a
 
 SHA-256: `099ece90f3311a4dc332e1a0b3bcbd4d795c6773edbd3ca91485c91de258e93a`
 
-Sources: [`packages/agents/bots/src/collaboration.ts:33`](../packages/agents/bots/src/collaboration.ts)
+Sources: [`packages/agents/bots/src/collaboration.ts:34`](../packages/agents/bots/src/collaboration.ts)
 
 | Property | Presence | Type |
 |---|---|---|
@@ -3656,7 +3656,7 @@ Sources: [`packages/agents/bots/src/collaboration.ts:33`](../packages/agents/bot
 | `senderSessionId` | required | `string` |
 | `status` | required | [`union (2 variants)`](#persistence-type-sha256-f1ed18b84a3e7f393f8e751f723fd2556b80445d9cbff350636c16843ad6a0e4) |
 
-<a id="persistence-type-sha256-157b4a66b95eebe0d753769d491a195f95e712cffe123431ca4ede91804c0d2d"></a>
+<a id="persistence-type-sha256-a24a4523c15b8e694a0bbb4be2ed19e335b43cb48437be70b3cd9071c449fd83"></a>
 
 <a id="persistence-type-botdynamictoolevent"></a>
 
@@ -3664,9 +3664,9 @@ Sources: [`packages/agents/bots/src/collaboration.ts:33`](../packages/agents/bot
 
 ### `BotDynamicToolEvent`
 
-SHA-256: `157b4a66b95eebe0d753769d491a195f95e712cffe123431ca4ede91804c0d2d`
+SHA-256: `a24a4523c15b8e694a0bbb4be2ed19e335b43cb48437be70b3cd9071c449fd83`
 
-Sources: [`packages/agents/bots/src/collaboration.ts:131`](../packages/agents/bots/src/collaboration.ts)
+Sources: [`packages/agents/bots/src/collaboration.ts:134`](../packages/agents/bots/src/collaboration.ts)
 
 | Property | Presence | Type |
 |---|---|---|
@@ -3674,12 +3674,12 @@ Sources: [`packages/agents/bots/src/collaboration.ts:131`](../packages/agents/bo
 | `callId` | required | `string` |
 | `name` | required | `string` |
 | `phase` | required | [`union (2 variants)`](#persistence-type-sha256-ee56f65f1ce49806039be2ae37ad1ce86c578039b04c69cc86a74946f9d8f92c) |
-| `result` | optional | [`BotDynamicToolEventResult`](#persistence-type-sha256-92c45085dec3dab097833109751939f1bfe5f9b639dac5df2b946b0ac27e679e) |
+| `result` | optional | [`BotDynamicToolEventResult`](#persistence-type-sha256-442d54eaa89cebdf092c66fbe029424d6754a8be165e52eb39e6f10cdcefe23e) |
 | `sessionId` | required | `string` |
 | `threadId` | required | `string` |
 | `turnId` | required | `string` |
 
-<a id="persistence-type-sha256-92c45085dec3dab097833109751939f1bfe5f9b639dac5df2b946b0ac27e679e"></a>
+<a id="persistence-type-sha256-442d54eaa89cebdf092c66fbe029424d6754a8be165e52eb39e6f10cdcefe23e"></a>
 
 <a id="persistence-type-botdynamictooleventresult"></a>
 
@@ -3687,13 +3687,14 @@ Sources: [`packages/agents/bots/src/collaboration.ts:131`](../packages/agents/bo
 
 ### `BotDynamicToolEventResult`
 
-SHA-256: `92c45085dec3dab097833109751939f1bfe5f9b639dac5df2b946b0ac27e679e`
+SHA-256: `442d54eaa89cebdf092c66fbe029424d6754a8be165e52eb39e6f10cdcefe23e`
 
-Sources: [`packages/agents/bots/src/collaboration.ts:121`](../packages/agents/bots/src/collaboration.ts)
+Sources: [`packages/agents/bots/src/collaboration.ts:122`](../packages/agents/bots/src/collaboration.ts)
 
 | Property | Presence | Type |
 |---|---|---|
 | `contentItems` | required | [`{ type: "inputText" }[]`](#persistence-type-sha256-800e61357db9ad18d50144f43f69398c0cc428a66b72d9631018e33efc2952cc) |
+| `image` | optional | [`ImageAttachmentRef`](#persistence-type-sha256-b0b0eb1b16490f6bee135b2377e8f8c39227974c799ad7d49ff418af23ecbc35) |
 | `success` | required | `boolean` |
 
 <a id="persistence-type-sha256-864b10d596242f598b204bee86d9cbf523f8d1fa8ed9d6f07d48350dc8a5522d"></a>
@@ -3706,7 +3707,7 @@ Sources: [`packages/agents/bots/src/collaboration.ts:121`](../packages/agents/bo
 
 SHA-256: `864b10d596242f598b204bee86d9cbf523f8d1fa8ed9d6f07d48350dc8a5522d`
 
-Sources: [`packages/agents/bots/src/collaboration.ts:43`](../packages/agents/bots/src/collaboration.ts)
+Sources: [`packages/agents/bots/src/collaboration.ts:44`](../packages/agents/bots/src/collaboration.ts)
 
 | Property | Presence | Type |
 |---|---|---|
@@ -3723,7 +3724,7 @@ Sources: [`packages/agents/bots/src/collaboration.ts:43`](../packages/agents/bot
 
 SHA-256: `eae05a06e6bde1e2f256286d3bd3e85d7096c7153d4eb2b9ab3b5ebfccab7c8a`
 
-Sources: [`packages/agents/bots/src/collaboration.ts:78`](../packages/agents/bots/src/collaboration.ts)
+Sources: [`packages/agents/bots/src/collaboration.ts:79`](../packages/agents/bots/src/collaboration.ts)
 
 | Property | Presence | Type |
 |---|---|---|
@@ -6314,7 +6315,7 @@ Array of `number`.
 
 SHA-256: `4cd48f3e5108bd6ebedf7301c3638839b8b2b9db8dbd493974177fbdeb91a01b`
 
-Sources: [`packages/agents/bots/src/collaboration.ts:18`](../packages/agents/bots/src/collaboration.ts) · [`packages/agents/bots/src/group-chat.ts:27`](../packages/agents/bots/src/group-chat.ts) · [`packages/agents/bots/src/group-chat.ts:38`](../packages/agents/bots/src/group-chat.ts) · [`packages/agents/bots/src/memory.ts:8`](../packages/agents/bots/src/memory.ts) · [`packages/agents/bots/src/types.ts:21`](../packages/agents/bots/src/types.ts) · [`packages/api/session-controller/src/types.ts:413`](../packages/api/session-controller/src/types.ts) · [`packages/attachment/attachment/src/brand.ts:6`](../packages/attachment/attachment/src/brand.ts) · [`packages/compaction/compaction/src/brand.ts:4`](../packages/compaction/compaction/src/brand.ts) · [`packages/core/session/src/types.ts:20`](../packages/core/session/src/types.ts) · [`packages/experimental/agent-team/src/types.ts:20`](../packages/experimental/agent-team/src/types.ts) · [`packages/experimental/agent-team/src/types.ts:32`](../packages/experimental/agent-team/src/types.ts) · [`packages/experimental/agent-team/src/types.ts:8`](../packages/experimental/agent-team/src/types.ts) · [`packages/feedback/message-feedback/src/types.ts:14`](../packages/feedback/message-feedback/src/types.ts) · [`packages/goal/goal/src/types.ts:17`](../packages/goal/goal/src/types.ts) · [`packages/interaction/commands/src/brand.ts:31`](../packages/interaction/commands/src/brand.ts) · [`packages/interaction/user-approval/src/types.ts:17`](../packages/interaction/user-approval/src/types.ts) · [`packages/llm/llm-retry/src/brand.ts:4`](../packages/llm/llm-retry/src/brand.ts) · [`packages/llm/llm/src/brand.ts:16`](../packages/llm/llm/src/brand.ts) · [`packages/llm/llm/src/brand.ts:31`](../packages/llm/llm/src/brand.ts) · [`packages/llm/llm/src/brand.ts:43`](../packages/llm/llm/src/brand.ts) · [`packages/llm/llm/src/brand.ts:67`](../packages/llm/llm/src/brand.ts) · [`packages/llm/llm/src/brand.ts:79`](../packages/llm/llm/src/brand.ts) · [`packages/schedule/schedule/src/types.ts:14`](../packages/schedule/schedule/src/types.ts) · [`packages/session/coding-session/src/linked-import-types.ts:8`](../packages/session/coding-session/src/linked-import-types.ts) · [`packages/session/coding-session/src/types.ts:10`](../packages/session/coding-session/src/types.ts) · [`packages/session/coding-session/src/types.ts:12`](../packages/session/coding-session/src/types.ts) · [`packages/session/coding-session/src/types.ts:14`](../packages/session/coding-session/src/types.ts) · [`packages/session/session-title/src/index.ts:42`](../packages/session/session-title/src/index.ts) · [`packages/session/session-title/src/types.ts:17`](../packages/session/session-title/src/types.ts) · [`packages/skill/skill-library/src/learning-types.ts:26`](../packages/skill/skill-library/src/learning-types.ts) · [`packages/skill/skill-library/src/learning-types.ts:28`](../packages/skill/skill-library/src/learning-types.ts) · [`packages/skill/skill-library/src/learning-types.ts:30`](../packages/skill/skill-library/src/learning-types.ts) · [`packages/skill/skill-library/src/learning-types.ts:32`](../packages/skill/skill-library/src/learning-types.ts) · [`packages/skill/skill-library/src/learning-types.ts:34`](../packages/skill/skill-library/src/learning-types.ts) · [`packages/skill/skill-library/src/learning-types.ts:36`](../packages/skill/skill-library/src/learning-types.ts) · [`packages/skill/skill-library/src/learning-types.ts:38`](../packages/skill/skill-library/src/learning-types.ts) · [`packages/skill/skill-library/src/learning-types.ts:40`](../packages/skill/skill-library/src/learning-types.ts) · [`packages/skill/skill-library/src/learning-types.ts:92`](../packages/skill/skill-library/src/learning-types.ts) · [`packages/skill/skill-library/src/types.ts:5`](../packages/skill/skill-library/src/types.ts) · [`packages/webhook/webhook/src/brand.ts:12`](../packages/webhook/webhook/src/brand.ts) · [`packages/webhook/webhook/src/brand.ts:6`](../packages/webhook/webhook/src/brand.ts) · [`packages/webhook/webhook/src/brand.ts:9`](../packages/webhook/webhook/src/brand.ts) · [`packages/workflow/workflow/src/types.ts:13`](../packages/workflow/workflow/src/types.ts)
+Sources: [`packages/agents/bots/src/collaboration.ts:19`](../packages/agents/bots/src/collaboration.ts) · [`packages/agents/bots/src/group-chat.ts:27`](../packages/agents/bots/src/group-chat.ts) · [`packages/agents/bots/src/group-chat.ts:38`](../packages/agents/bots/src/group-chat.ts) · [`packages/agents/bots/src/memory.ts:8`](../packages/agents/bots/src/memory.ts) · [`packages/agents/bots/src/types.ts:21`](../packages/agents/bots/src/types.ts) · [`packages/api/session-controller/src/types.ts:413`](../packages/api/session-controller/src/types.ts) · [`packages/attachment/attachment/src/brand.ts:6`](../packages/attachment/attachment/src/brand.ts) · [`packages/compaction/compaction/src/brand.ts:4`](../packages/compaction/compaction/src/brand.ts) · [`packages/core/session/src/types.ts:20`](../packages/core/session/src/types.ts) · [`packages/experimental/agent-team/src/types.ts:20`](../packages/experimental/agent-team/src/types.ts) · [`packages/experimental/agent-team/src/types.ts:32`](../packages/experimental/agent-team/src/types.ts) · [`packages/experimental/agent-team/src/types.ts:8`](../packages/experimental/agent-team/src/types.ts) · [`packages/feedback/message-feedback/src/types.ts:14`](../packages/feedback/message-feedback/src/types.ts) · [`packages/goal/goal/src/types.ts:17`](../packages/goal/goal/src/types.ts) · [`packages/interaction/commands/src/brand.ts:31`](../packages/interaction/commands/src/brand.ts) · [`packages/interaction/user-approval/src/types.ts:17`](../packages/interaction/user-approval/src/types.ts) · [`packages/llm/llm-retry/src/brand.ts:4`](../packages/llm/llm-retry/src/brand.ts) · [`packages/llm/llm/src/brand.ts:16`](../packages/llm/llm/src/brand.ts) · [`packages/llm/llm/src/brand.ts:31`](../packages/llm/llm/src/brand.ts) · [`packages/llm/llm/src/brand.ts:43`](../packages/llm/llm/src/brand.ts) · [`packages/llm/llm/src/brand.ts:67`](../packages/llm/llm/src/brand.ts) · [`packages/llm/llm/src/brand.ts:79`](../packages/llm/llm/src/brand.ts) · [`packages/schedule/schedule/src/types.ts:14`](../packages/schedule/schedule/src/types.ts) · [`packages/session/coding-session/src/linked-import-types.ts:8`](../packages/session/coding-session/src/linked-import-types.ts) · [`packages/session/coding-session/src/types.ts:10`](../packages/session/coding-session/src/types.ts) · [`packages/session/coding-session/src/types.ts:12`](../packages/session/coding-session/src/types.ts) · [`packages/session/coding-session/src/types.ts:14`](../packages/session/coding-session/src/types.ts) · [`packages/session/session-title/src/index.ts:42`](../packages/session/session-title/src/index.ts) · [`packages/session/session-title/src/types.ts:17`](../packages/session/session-title/src/types.ts) · [`packages/skill/skill-library/src/learning-types.ts:26`](../packages/skill/skill-library/src/learning-types.ts) · [`packages/skill/skill-library/src/learning-types.ts:28`](../packages/skill/skill-library/src/learning-types.ts) · [`packages/skill/skill-library/src/learning-types.ts:30`](../packages/skill/skill-library/src/learning-types.ts) · [`packages/skill/skill-library/src/learning-types.ts:32`](../packages/skill/skill-library/src/learning-types.ts) · [`packages/skill/skill-library/src/learning-types.ts:34`](../packages/skill/skill-library/src/learning-types.ts) · [`packages/skill/skill-library/src/learning-types.ts:36`](../packages/skill/skill-library/src/learning-types.ts) · [`packages/skill/skill-library/src/learning-types.ts:38`](../packages/skill/skill-library/src/learning-types.ts) · [`packages/skill/skill-library/src/learning-types.ts:40`](../packages/skill/skill-library/src/learning-types.ts) · [`packages/skill/skill-library/src/learning-types.ts:92`](../packages/skill/skill-library/src/learning-types.ts) · [`packages/skill/skill-library/src/types.ts:5`](../packages/skill/skill-library/src/types.ts) · [`packages/webhook/webhook/src/brand.ts:12`](../packages/webhook/webhook/src/brand.ts) · [`packages/webhook/webhook/src/brand.ts:6`](../packages/webhook/webhook/src/brand.ts) · [`packages/webhook/webhook/src/brand.ts:9`](../packages/webhook/webhook/src/brand.ts) · [`packages/workflow/workflow/src/types.ts:13`](../packages/workflow/workflow/src/types.ts)
 
 `string`
 
@@ -7418,7 +7419,7 @@ Sources: [`packages/core/session/src/types.ts:206`](../packages/core/session/src
 
 SHA-256: `838ee520d8e15fed42575c847fdb6ad38defd9b2b149135a9a62a1e2a60c0cbb`
 
-Sources: [`packages/agents/bots/src/collaboration.ts:64`](../packages/agents/bots/src/collaboration.ts)
+Sources: [`packages/agents/bots/src/collaboration.ts:65`](../packages/agents/bots/src/collaboration.ts)
 
 | Property | Presence | Type |
 |---|---|---|
@@ -9203,17 +9204,17 @@ SHA-256: `c18d481bf8e13be60dc6f553f37e9edd5163f4ae015724d7f3384c6520f301af`
 | `time` | required | `number` |
 | `type` | required | `"bot/collaboration"` |
 
-<a id="persistence-type-sha256-0bf1eedc74932bfd1594fab107fd835e5692d83dc7f3f3f6a6b6b388c7261213"></a>
+<a id="persistence-type-sha256-6eebf6368950ede361f0ece53861dc120ef9b6f86db90b8def54b569f90f5d54"></a>
 
 <a id="persistence-type-eventbotdynamic-tool"></a>
 
 ### `{ type: "bot/dynamic-tool" }`
 
-SHA-256: `0bf1eedc74932bfd1594fab107fd835e5692d83dc7f3f3f6a6b6b388c7261213`
+SHA-256: `6eebf6368950ede361f0ece53861dc120ef9b6f86db90b8def54b569f90f5d54`
 
 | Property | Presence | Type |
 |---|---|---|
-| `data` | required | [`BotDynamicToolEvent`](#persistence-type-sha256-157b4a66b95eebe0d753769d491a195f95e712cffe123431ca4ede91804c0d2d) |
+| `data` | required | [`BotDynamicToolEvent`](#persistence-type-sha256-a24a4523c15b8e694a0bbb4be2ed19e335b43cb48437be70b3cd9071c449fd83) |
 | `ignorable` | optional | `true` |
 | `seq` | required | `number` |
 | `time` | required | `number` |
@@ -9555,7 +9556,7 @@ SHA-256: `b222069eea2d768065161c1147b1f2c78c1b54328c84b3586ae5c8f91b8ed35e`
 
 SHA-256: `11c7e946f76f16eda6dd66de89593719d5916b92305b33a18ffc444bd96394cd`
 
-Sources: [`packages/agents/bots/src/collaboration.ts:123`](../packages/agents/bots/src/collaboration.ts)
+Sources: [`packages/agents/bots/src/collaboration.ts:124`](../packages/agents/bots/src/collaboration.ts)
 
 | Property | Presence | Type |
 |---|---|---|

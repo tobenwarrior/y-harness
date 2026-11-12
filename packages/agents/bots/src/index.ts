@@ -15,9 +15,9 @@ import {
   sharedPrincipalOf,
   type HostConnectionHandle,
 } from '@yharness/client-connection'
-import { MessageId } from '@yharness/llm/brand'
+import { MessageId, ToolCallId } from '@yharness/llm/brand'
 import { createSystemMessage, freezeMessage, HarnessError, isAgentLoopRequest } from '@yharness/llm'
-import type { AuxiliarySessionAdmission, AuxiliarySessionPurpose, GenerateOptions, StreamChunk, ToolCallId } from '@yharness/llm'
+import type { AuxiliarySessionAdmission, AuxiliarySessionPurpose, GenerateOptions, StreamChunk } from '@yharness/llm'
 import type { Agent } from '@yharness/agent'
 import type {
   PreToolDecision,
@@ -119,7 +119,7 @@ import type {
   BotGroupReactionValue,
 } from './group-chat.ts'
 import type { BotAttachmentGrantValue } from './attachment-grants.ts'
-import { createBotNativeToolProvider } from './native-tools.ts'
+import { createBotNativeToolProvider, VPS_COMPUTER_TOOL } from './native-tools.ts'
 import type { BotNativeToolHost, BotRoutineCreateResolution, BotRoutineCreateReservation, BotVpsJournalReader } from './native-tools.ts'
 import { installBotCollaborationTools } from './scoped-tools.ts'
 import { installBotRoutineTools } from './routine-tools.ts'
@@ -520,6 +520,8 @@ interface BotWorkspaces {
   prepare(sessionId: SessionId): Promise<void>
   /** Select only the exact Bot ids assigned to an isolated workspace. */
   managed?(botId: string): boolean
+  /** Select a dedicated desktop that retains the Bot's existing shell execution. */
+  desktopOnly?(botId: string): boolean
 }
 
 interface BotVpsJournal {
@@ -3098,6 +3100,15 @@ export class BotService extends TypertRemoteService {
       }
       return admittedDecision
     })
+    const liveNativeOwner = async (sessionId: SessionId) => {
+      const agents = ctx.get('agents')
+      const agent = agents?.get(sessionId)
+      if (agent === undefined) return undefined
+      const bot = await this.ownerBotForSession(sessionId)
+      if (bot?.state !== 'active' || agents?.get(sessionId) !== agent
+        || this.sharedScopeAgents.has(agent) || this.sharedScopeFences.has(agent)) return undefined
+      return { bot, agent }
+    }
     ctx.provide('codexDynamicTools', createBotNativeToolProvider({
       bind: async (sessionId) => {
         const agent = ctx.get('agents')?.get(sessionId)
@@ -3122,13 +3133,33 @@ export class BotService extends TypertRemoteService {
       grokHistory: (sessionId, request, signal) => this.readGrokHistoryPageForSession(sessionId, request, signal),
       vpsJournal: async (sessionId) => {
         if (ctx.get('botVpsJournal') === undefined) return undefined
-        const agents = ctx.get('agents')
-        const agent = agents?.get(sessionId)
-        if (agent === undefined) return undefined
-        const bot = await this.ownerBotForSession(sessionId)
-        if (bot?.state !== 'active' || agents?.get(sessionId) !== agent
-          || this.sharedScopeAgents.has(agent) || this.sharedScopeFences.has(agent)) return undefined
-        return ctx.get('botVpsJournal')?.forBot(bot.id)
+        const owner = await liveNativeOwner(sessionId)
+        return owner === undefined ? undefined : ctx.get('botVpsJournal')?.forBot(owner.bot.id)
+      },
+      vpsComputer: async (sessionId) => {
+        if (ctx.get('botWorkspaces')?.desktopOnly === undefined) return undefined
+        const owner = await liveNativeOwner(sessionId)
+        if (owner === undefined || ctx.get('botWorkspaces')?.desktopOnly?.(owner.bot.id) !== true) return undefined
+        const tool = ctx.tools.get(VPS_COMPUTER_TOOL, owner.agent)
+        if (tool === undefined) return undefined
+        return {
+          description: tool.description,
+          inputSchema: tool.parameters,
+          execute: async (args, context) => {
+            const result = await ctx.tools.execute({
+              callId: ToolCallId(context.callId), name: VPS_COMPUTER_TOOL, arguments: args,
+              agent: owner.agent, signal: context.signal,
+            })
+            const image = result.content.find(block => block.type === 'image')?.attachment
+            return {
+              success: !result.isError,
+              contentItems: result.content.flatMap(block => block.type === 'text'
+                ? [{ type: 'inputText' as const, text: block.text }]
+                : []),
+              ...(image === undefined ? {} : { image }),
+            }
+          },
+        }
       },
       manage: this.manageBots = async (action, args, context) => {
         const text = (key: string): string | undefined => {

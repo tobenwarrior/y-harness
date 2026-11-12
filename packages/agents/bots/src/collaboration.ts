@@ -2,6 +2,7 @@
 
 import { randomUUID } from 'node:crypto'
 import type { Agent } from '@yharness/agent'
+import type { ImageAttachmentRef } from '@yharness/attachment'
 import type { AgentMessageSource } from '@yharness/subagent'
 import { freezeMessage, MessageId } from '@yharness/llm'
 import type { ContentBlock, MessageSourceMap, UserMessage } from '@yharness/llm'
@@ -121,6 +122,8 @@ export interface BotCollaborationHost {
 export interface BotDynamicToolEventResult {
   readonly success: boolean
   readonly contentItems: readonly { readonly type: 'inputText'; readonly text: string }[]
+  /** Durable screen image returned by a native Computer observation. */
+  readonly image?: ImageAttachmentRef
 }
 
 /**

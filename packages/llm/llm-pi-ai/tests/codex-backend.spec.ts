@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { AttachmentStore } from '@yharness/attachment'
+import { AttachmentId, type AttachmentStore } from '@yharness/attachment'
 import { parseCodexModels, declineCodexRequest, projectCodexHistory, projectCodexDynamicToolReplay, CodexBackendAdapter, CodexBackendRuntime } from '../src/codex-backend.ts'
 import type { CodexDynamicTool, CodexDynamicToolEvent, CodexDynamicToolResolver, CodexDynamicToolReplayer } from '../src/codex-backend.ts'
 import { ReasoningEffortId, ServiceTierId } from '@yharness/llm'
@@ -286,6 +286,36 @@ describe('Codex native backend', () => {
     const chunks = await running
     expect(chunks.at(-1)).toMatchObject({ type: 'finish', reason: { kind: 'stop' } })
     f.runtime.close()
+  })
+  it('delivers a native Computer frame from its durable attachment reference', async () => {
+    const attachment = { attachmentId: AttachmentId('computer-frame'), mediaType: 'image/jpeg' as const, bytes: 3, width: 1, height: 1 }
+    const readImage = vi.fn(async () => ({ ref: attachment, data: new Uint8Array([1, 2, 3]) }))
+    const result = { success: true, contentItems: [], image: attachment }
+    const tool: CodexDynamicTool = {
+      name: 'vps_computer', description: 'Observe the Computer.', inputSchema: { type: 'object' }, execute: async () => result,
+    }
+    const events: CodexDynamicToolEvent[] = []
+    const f = fixture(catalog, () => ({ readImage }) as never, undefined, undefined, {}, () => [tool], (event) => { events.push(event) })
+    await f.runtime.refresh()
+    await f.runtime.configure(true)
+    const original = f.request.getMockImplementation()!
+    f.request.mockImplementation(async (method, params) => method === 'turn/start' ? { turn: { id: 'turn1' } } : original(method, params))
+    const turn = (async () => {
+      for await (const _chunk of f.runtime.stream({ provider: 'codex-backend', model: 'gpt-6.1-sol', messages: [] })) { /* settle */ }
+    })()
+    try {
+      await vi.waitFor(() => expect(f.request.mock.calls.some(call => call[0] === 'turn/start')).toBe(true))
+      await expect(f.invoke('item/tool/call', { threadId: 'thread1', turnId: 'turn1', callId: 'frame-1', tool: 'vps_computer', arguments: '{}' })).resolves.toEqual({
+        success: true, contentItems: [{ type: 'inputImage', imageUrl: 'data:image/jpeg;base64,AQID' }],
+      })
+      expect(readImage).toHaveBeenCalledExactlyOnceWith(attachment, expect.any(AbortSignal))
+      expect(events.map(event => event.phase)).toEqual(['started', 'settled'])
+      expect(events[1]?.result).toEqual(result)
+    } finally {
+      f.emit('turn/completed', { threadId: 'thread1', turnId: 'turn1', turn: { id: 'turn1', status: 'completed' } })
+      await turn
+      f.runtime.close()
+    }
   })
   it('replays persisted dynamic-tool records after cursor loss without duplicating valid continuation', async () => {
     const tool: CodexDynamicTool = {

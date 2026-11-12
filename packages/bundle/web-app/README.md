@@ -71,7 +71,7 @@ When you launch `yharness --profile web` over SSH, the URL line still prints but
 
 ### Private Computer
 
-The VPS installer enables `botComputers` and provisions a separate rootless Podman computer for each owner Bot. The owner-authenticated Computer routes resolve the requested Session against the Bot roster. The model tool uses the calling Session. Each desktop has its own controller and renewable human input lease. An existing Bot receives its computer when first accessed, while its saved Session and roster identity stay in place.
+The VPS installer enables `botComputers` and provisions a separate rootless Podman computer for each owner Bot. The owner-authenticated Computer routes resolve the requested Session against the Bot roster. The model tool uses the calling Session. Each desktop has its own controller and renewable human lease that pauses the Computer tool's screenshots and input. An existing Bot receives its computer when first accessed, while its saved Session and roster identity stay in place.
 
 The optional `computer` configuration supplies one shared X11 display for a custom Web deployment. It uses `YH_VPS_DISPLAY` and `YH_VPS_XAUTHORITY`. Set `botComputers.bots` to select owner Bots for private computers while keeping the shared display for other Bots. See [VPS setup and service grants](../../../docs/user/guide/vps.md#give-a-bot-access-to-service-diagnostics).
 

@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@yharness/cordis'
+import { AttachmentId } from '@yharness/attachment'
 import { createUserMessage } from '@yharness/llm'
 import type { Agent } from '@yharness/agent'
 import { SessionId } from '@yharness/session'
@@ -95,6 +96,7 @@ function nativePeer(): PeerFixture {
                   targetBotId: 'bot-target', text: 'Please report your status.', messageId: 'relay-1',
                 }) },
                 { name: 'vps_service_journal', callId: 'journal-call', arguments: '{}' },
+                { name: 'vps_computer', callId: 'computer-call', arguments: '{"action":"observe"}' },
               ]
               for (const call of calls) {
                 const result = await handler('item/tool/call', {
@@ -157,6 +159,22 @@ it('composes Bot identity and Codex dynamic collaboration with sender-bound deli
   }
   const readJournal = vi.fn(async (_signal: AbortSignal) => journal)
   ctx.provide('botVpsJournal', { forBot: (botId: BotId) => botId === BotId('bot-sender') ? readJournal : undefined })
+  ctx.provide('botWorkspaces', {
+    workspace: sessionId => join(root, sessionId), prepare: async () => {}, managed: () => false,
+    desktopOnly: botId => botId === 'bot-sender',
+  })
+  const image = { attachmentId: AttachmentId('fixture-desktop'), mediaType: 'image/jpeg' as const, bytes: 3, width: 1, height: 1 }
+  const observe = vi.fn(async () => 'Desktop coordinates are 1×1 pixels.')
+  ctx.on('agent/created', ({ agent }) => {
+    agent.ctx.effect(() => agent.ctx.tools.register(Tools.defineTool({
+      name: 'vps_computer', description: 'Observe the VPS Computer.',
+      parameters: { action: { type: 'string', enum: ['observe'], required: true } },
+      output: { schema: { type: 'string' }, render: (_args, value) => [
+        { type: 'text', text: value }, { type: 'image', attachment: image },
+      ] },
+      execute: observe,
+    })))
+  })
 
   const pool = new MemoryMediaPool()
   const createdAgents = new Map<SessionId, Agent>()
@@ -181,7 +199,8 @@ it('composes Bot identity and Codex dynamic collaboration with sender-bound deli
     }),
   }
   ctx.provide('sessionController', sessionController as never)
-  ctx.provide('attachments', { readImage: vi.fn() } as never)
+  const readImage = vi.fn(async () => ({ ref: image, data: new Uint8Array([1, 2, 3]) }))
+  ctx.provide('attachments', { readImage } as never)
   ctx.provide('schedule', {
     create: vi.fn(async () => { throw new Error('schedule create was not expected in this composition test') }),
     list: vi.fn(async () => []),
@@ -288,6 +307,7 @@ it('composes Bot identity and Codex dynamic collaboration with sender-bound deli
   expect(ctx.tools.get('schedule_create', minimalAgent)).toBeUndefined()
   const dynamicToolsForMinimal = await (ctx.get('codexDynamicTools') as BotNativeToolProvider).resolve({ sessionId: minimal.bot.sessionId })
   expect(dynamicToolsForMinimal.map(tool => tool.name)).not.toContain('vps_service_journal')
+  expect(dynamicToolsForMinimal.map(tool => tool.name)).not.toContain('vps_computer')
   expect(dynamicToolsForMinimal.map(tool => tool.name)).not.toEqual(expect.arrayContaining([
     'schedule_create', 'schedule_list', 'schedule_update', 'schedule_delete',
     'schedule_pause', 'schedule_resume', 'schedule_history',
@@ -311,12 +331,13 @@ it('composes Bot identity and Codex dynamic collaboration with sender-bound deli
   expect(threadStart?.params.dynamicTools, JSON.stringify(peerFixture.requests)).toEqual(expect.arrayContaining([
     expect.objectContaining({ name: 'list_bots' }), expect.objectContaining({ name: 'inspect_bot' }), expect.objectContaining({ name: 'send_bot_message' }),
     expect.objectContaining({ name: 'vps_service_journal', inputSchema: { type: 'object', properties: {}, additionalProperties: false } }),
+    expect.objectContaining({ name: 'vps_computer' }),
     expect.objectContaining({ name: 'schedule_create' }), expect.objectContaining({ name: 'schedule_list' }),
     expect.objectContaining({ name: 'schedule_update' }), expect.objectContaining({ name: 'schedule_delete' }),
     expect.objectContaining({ name: 'schedule_pause' }), expect.objectContaining({ name: 'schedule_resume' }),
     expect.objectContaining({ name: 'schedule_history' }),
   ]))
-  if (peerFixture.toolResults.length !== 4) throw new Error(`Native tool calls failed: requests=${JSON.stringify(peerFixture.requests)} chunks=${JSON.stringify(chunks)}`)
+  if (peerFixture.toolResults.length !== 5) throw new Error(`Native tool calls failed: requests=${JSON.stringify(peerFixture.requests)} chunks=${JSON.stringify(chunks)}`)
   expect(output(peerFixture.toolResults[0]?.result)).toMatchObject({ success: true })
   const listedBots = JSON.parse(output(peerFixture.toolResults[0]?.result).contentItems[0]!.text)
   expect(listedBots).toHaveLength(2)
@@ -331,16 +352,30 @@ it('composes Bot identity and Codex dynamic collaboration with sender-bound deli
   expect(journalResult.success).toBe(true)
   expect(JSON.parse(journalResult.contentItems[0]!.text)).toEqual(journal)
   expect(readJournal).toHaveBeenCalledExactlyOnceWith(expect.any(AbortSignal))
+  expect(peerFixture.toolResults[4]).toEqual({ name: 'vps_computer', result: {
+    success: true, contentItems: [
+      { type: 'inputText', text: 'Desktop coordinates are 1×1 pixels.' },
+      { type: 'inputImage', imageUrl: 'data:image/jpeg;base64,AQID' },
+    ],
+  } })
+  expect(observe).toHaveBeenCalledOnce()
+  expect(readImage).toHaveBeenCalledExactlyOnceWith(image, expect.any(AbortSignal))
   expect(targetFollowup).toHaveBeenCalledOnce()
   expect(targetFollowup.mock.calls[0]?.[0].source).toMatchObject({ kind: 'agent-message', senderSessionId: senderAgent.id })
   expect(approval).toHaveBeenCalledOnce()
   expect(chunks.some(chunk => typeof chunk === 'object' && chunk !== null && 'type' in chunk && chunk.type === 'finish')).toBe(true)
 
   const senderEvents = senderAgent.session.snapshotEvents().filter(event => event.type === 'bot/dynamic-tool')
-  expect(senderEvents).toHaveLength(8)
+  expect(senderEvents).toHaveLength(10)
   expect(senderEvents.every(event => event.ignorable === undefined && event.data.sessionId === senderAgent.id)).toBe(true)
   expect(senderEvents.filter(event => event.data.name === 'vps_service_journal').map(event => event.data)).toEqual([
     expect.objectContaining({ phase: 'started', callId: 'journal-call', arguments: {} }),
     expect.objectContaining({ phase: 'settled', callId: 'journal-call', result: journalResult }),
+  ])
+  expect(senderEvents.filter(event => event.data.name === 'vps_computer').map(event => event.data)).toEqual([
+    expect.objectContaining({ phase: 'started', callId: 'computer-call', arguments: { action: 'observe' } }),
+    expect.objectContaining({ phase: 'settled', callId: 'computer-call', result: {
+      success: true, contentItems: [{ type: 'inputText', text: 'Desktop coordinates are 1×1 pixels.' }], image,
+    } }),
   ])
 })

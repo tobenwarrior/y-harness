@@ -32,10 +32,7 @@ type JsonObject = Record<string, unknown>
 type SafeJson = null | boolean | number | string | SafeJson[] | { readonly [key: string]: SafeJson }
 
 /** The native action result vocabulary accepted by the Codex app-server. */
-export interface BotNativeToolResult {
-  readonly success: boolean
-  readonly contentItems: readonly { readonly type: 'inputText'; readonly text: string }[]
-}
+export type BotNativeToolResult = BotDynamicToolEventResult
 
 /** Native action context supplied by the Codex bridge for one live call. */
 export interface BotNativeToolContext {
@@ -128,6 +125,8 @@ export interface BotNativeToolHost {
   ) => Promise<BotGrokHistoryPage | null>
   /** Resolve a current read-only grant for an exact live owner Bot Session. */
   readonly vpsJournal?: (sessionId: SessionId) => Promise<BotVpsJournalReader | undefined>
+  /** Resolve the currently enabled Computer action of an exact live owner Bot Session. */
+  readonly vpsComputer?: (sessionId: SessionId) => Promise<Omit<BotNativeTool, 'name'> | undefined>
 }
 
 /** Context provider shape consumed by the optional native Codex backend. */
@@ -138,9 +137,11 @@ export interface BotNativeToolProvider {
 }
 
 const VPS_JOURNAL_TOOL = 'vps_service_journal'
+/** The Computer tool shared by the scoped registry and native provider. */
+export const VPS_COMPUTER_TOOL = 'vps_computer'
 const BOT_TOOL_NAMES = [
   'list_bots', 'inspect_bot', 'send_bot_message', 'create_bot', 'edit_bot_profile',
-  'read_own_grok_history', VPS_JOURNAL_TOOL,
+  'read_own_grok_history', VPS_JOURNAL_TOOL, VPS_COMPUTER_TOOL,
   'schedule_create', 'schedule_list', 'schedule_update', 'schedule_delete', 'schedule_pause', 'schedule_resume', 'schedule_history',
   'list_bot_memory', 'remember_bot_memory', 'forget_bot_memory',
   'list_bot_groups', 'inspect_bot_group', 'create_bot_group', 'update_bot_group', 'send_bot_group_message',
@@ -561,6 +562,7 @@ function boundedResult(value: BotNativeToolResult): BotNativeToolResult {
       type: 'inputText' as const,
       text: item.text.slice(0, MAX_EVENT_STRING),
     })),
+    ...(value.image === undefined ? {} : { image: value.image }),
   }
   if (JSON.stringify(candidate).length <= MAX_EVENT_STRING) return candidate
   return {
@@ -572,12 +574,7 @@ function boundedResult(value: BotNativeToolResult): BotNativeToolResult {
 }
 
 function safeResult(value: BotNativeToolResult | undefined): BotDynamicToolEventResult | undefined {
-  if (value === undefined) return undefined
-  const bounded = boundedResult(value)
-  return {
-    success: bounded.success,
-    contentItems: bounded.contentItems,
-  }
+  return value === undefined ? undefined : boundedResult(value)
 }
 
 function output(value: unknown, success = true): BotNativeToolResult {
@@ -674,6 +671,25 @@ function vpsJournalTool(resolve: NonNullable<BotNativeToolHost['vpsJournal']>, s
           ? failure('cancelled', 'The VPS journal read was cancelled.')
           : failure('unavailable', 'The VPS journal is unavailable.')
       }
+    },
+  }
+}
+
+function vpsComputerTool(
+  resolve: NonNullable<BotNativeToolHost['vpsComputer']>,
+  sessionId: SessionId,
+  binding: Omit<BotNativeTool, 'name'>,
+): BotNativeTool {
+  return {
+    name: VPS_COMPUTER_TOOL,
+    description: binding.description,
+    inputSchema: binding.inputSchema,
+    execute: async (args, context) => {
+      if (context.sessionId !== sessionId) return failure('unavailable', 'Computer requires the owning Bot Session.')
+      const current = await resolve(sessionId)
+      if (current === undefined) return failure('unavailable', 'The VPS Computer grant is unavailable.')
+      if (context.signal.aborted) return failure('cancelled', 'The Computer action was cancelled.')
+      return boundedResult(await current.execute(args, context))
     },
   }
 }
@@ -1633,6 +1649,8 @@ export function createBotNativeToolProvider(host: BotNativeToolHost): BotNativeT
       const journalTools = options.purpose === undefined && journal !== undefined && await journal(sessionId) !== undefined
         ? [vpsJournalTool(journal, sessionId)]
         : []
+      const computer = host.vpsComputer
+      const computerBinding = options.purpose === undefined ? await computer?.(sessionId) : undefined
       const managementTool = (action: 'create' | 'edit'): BotNativeTool => ({
         name: action === 'create' ? 'create_bot' : 'edit_bot_profile',
         description: action === 'create'
@@ -1692,6 +1710,7 @@ export function createBotNativeToolProvider(host: BotNativeToolHost): BotNativeT
         listTool(client), inspectTool(client),
         ...(host.grokHistory === undefined ? [] : [ownGrokHistoryTool(host, sessionId)]),
         ...journalTools,
+        ...(computer === undefined || computerBinding === undefined ? [] : [vpsComputerTool(computer, sessionId, computerBinding)]),
         sendTool(client, host, sessionId),
         memoryListTool(client), memoryRememberTool(client, host, sessionId), memoryForgetTool(client, host, sessionId),
         managementTool('create'), managementTool('edit'),
@@ -1710,6 +1729,9 @@ export function createBotNativeToolProvider(host: BotNativeToolHost): BotNativeT
       if (event.name === VPS_JOURNAL_TOOL && event.phase === 'started' && await host.vpsJournal?.(event.sessionId) === undefined) {
         throw new Error('The VPS journal grant is unavailable.')
       }
+      if (event.name === VPS_COMPUTER_TOOL && event.phase === 'started' && await host.vpsComputer?.(event.sessionId) === undefined) {
+        throw new Error('The VPS Computer grant is unavailable.')
+      }
       const result = safeResult(event.result)
       await host.persist({
         phase: event.phase, name: event.name, callId: event.callId, threadId: event.threadId,
@@ -1725,10 +1747,13 @@ export function createBotNativeToolProvider(host: BotNativeToolHost): BotNativeT
       if (sessionId === undefined) return []
       if (await host.bind(sessionId) === undefined) return []
       const events = await host.replay(sessionId)
-      if (!events.some(event => event.name === VPS_JOURNAL_TOOL)) return events
-      return options.purpose === undefined && await host.vpsJournal?.(sessionId) !== undefined
-        ? events
-        : events.filter(event => event.name !== VPS_JOURNAL_TOOL)
+      const canReplayJournal = !events.some(event => event.name === VPS_JOURNAL_TOOL)
+        || (options.purpose === undefined && await host.vpsJournal?.(sessionId) !== undefined)
+      const canReplayComputer = !events.some(event => event.name === VPS_COMPUTER_TOOL)
+        || (options.purpose === undefined && await host.vpsComputer?.(sessionId) !== undefined)
+      return canReplayJournal && canReplayComputer ? events : events.filter(event =>
+        (canReplayJournal || event.name !== VPS_JOURNAL_TOOL) && (canReplayComputer || event.name !== VPS_COMPUTER_TOOL),
+      )
     },
   }
 }

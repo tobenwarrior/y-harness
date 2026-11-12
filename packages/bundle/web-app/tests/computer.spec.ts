@@ -186,8 +186,36 @@ describe('private computer Host', () => {
     await f.host.takeControl(viewers.alice)
     await expect(f.host.input(viewers.bob, { kind: 'click', x: 1, y: 1, button: 1 })).rejects.toBeInstanceOf(ComputerLeaseError)
     await expect(f.host.botAction({ kind: 'click', x: 2, y: 2, button: 1 })).rejects.toBeInstanceOf(ComputerLeaseError)
+    await expect(f.host.observe()).rejects.toBeInstanceOf(ComputerLeaseError)
     expect(f.commands).toEqual([])
+    await expect(f.host.frame(viewers.alice)).resolves.toMatchObject({ mode: 'controlling' })
+    await f.host.releaseControl(viewers.alice)
+    await expect(f.host.observe()).resolves.toMatchObject({ mode: 'other' })
     await f.dispose()
+  })
+
+  it('finishes an admitted bot observation before handing the display to a viewer', async () => {
+    const started = Promise.withResolvers<undefined>()
+    const release = Promise.withResolvers<undefined>()
+    const host = containerComputer(async () => {
+      started.resolve(undefined)
+      await release.promise
+      return Buffer.from([0xff, 0xd8, 0xff, 0xd9])
+    })
+    const frame = host.observe()
+    await started.promise
+    const events: string[] = []
+    const takeover = host.takeControl(viewers.alice).then(() => { events.push('control') })
+    const observed = frame.then(() => { events.push('frame') })
+    try {
+      await Promise.resolve()
+      release.resolve(undefined)
+      await Promise.all([observed, takeover])
+      expect(events).toEqual(['frame', 'control'])
+    } finally {
+      release.resolve(undefined)
+      await host.dispose()
+    }
   })
 
   it('supports all bounded input forms with argv-only xdotool calls', async () => {

@@ -5769,7 +5769,7 @@
       "kind": "event",
       "event": "bot/dynamic-tool",
       "surface": false,
-      "digest": "0bf1eedc74932bfd1594fab107fd835e5692d83dc7f3f3f6a6b6b388c7261213",
+      "digest": "6eebf6368950ede361f0ece53861dc120ef9b6f86db90b8def54b569f90f5d54",
       "schema": {
         "root": 0,
         "nodes": [
@@ -5783,22 +5783,22 @@
               },
               {
                 "name": "ignorable",
-                "type": 13,
+                "type": 21,
                 "optional": true
               },
               {
                 "name": "seq",
-                "type": 14,
+                "type": 13,
                 "optional": false
               },
               {
                 "name": "time",
-                "type": 14,
+                "type": 13,
                 "optional": false
               },
               {
                 "name": "type",
-                "type": 15,
+                "type": 22,
                 "optional": false
               }
             ],
@@ -5892,8 +5892,13 @@
                 "optional": false
               },
               {
-                "name": "success",
+                "name": "image",
                 "type": 12,
+                "optional": true
+              },
+              {
+                "name": "success",
+                "type": 20,
                 "optional": false
               }
             ],
@@ -5924,16 +5929,98 @@
             "value": "inputText"
           },
           {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "attachmentId",
+                "type": 3,
+                "optional": false
+              },
+              {
+                "name": "bytes",
+                "type": 13,
+                "optional": false
+              },
+              {
+                "name": "height",
+                "type": 13,
+                "optional": false
+              },
+              {
+                "name": "mediaType",
+                "type": 14,
+                "optional": false
+              },
+              {
+                "name": "name",
+                "type": 3,
+                "optional": true
+              },
+              {
+                "name": "originalDimensions",
+                "type": 19,
+                "optional": true
+              },
+              {
+                "name": "width",
+                "type": 13,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "primitive",
+            "type": "number"
+          },
+          {
+            "kind": "union",
+            "types": [
+              15,
+              16,
+              17,
+              18
+            ]
+          },
+          {
+            "kind": "literal",
+            "value": "image/gif"
+          },
+          {
+            "kind": "literal",
+            "value": "image/jpeg"
+          },
+          {
+            "kind": "literal",
+            "value": "image/png"
+          },
+          {
+            "kind": "literal",
+            "value": "image/webp"
+          },
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "height",
+                "type": 13,
+                "optional": false
+              },
+              {
+                "name": "width",
+                "type": 13,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
             "kind": "primitive",
             "type": "boolean"
           },
           {
             "kind": "literal",
             "value": true
-          },
-          {
-            "kind": "primitive",
-            "type": "number"
           },
           {
             "kind": "literal",
@@ -28144,7 +28231,7 @@
         "packages/agents/bots/src/collaboration.ts#BotCollaborationDeliveryEvent"
       ],
       "sources": [
-        "packages/agents/bots/src/collaboration.ts:33"
+        "packages/agents/bots/src/collaboration.ts:34"
       ]
     },
     {
@@ -28210,11 +28297,6 @@
     },
     {
       "digest": "0bdaf9cb63594be4ef034b68901fffe792fe09d6d5f6bac42d7f56f6e7834fb9",
-      "names": [],
-      "sources": []
-    },
-    {
-      "digest": "0bf1eedc74932bfd1594fab107fd835e5692d83dc7f3f3f6a6b6b388c7261213",
       "names": [],
       "sources": []
     },
@@ -28343,7 +28425,7 @@
       "digest": "11c7e946f76f16eda6dd66de89593719d5916b92305b33a18ffc444bd96394cd",
       "names": [],
       "sources": [
-        "packages/agents/bots/src/collaboration.ts:123"
+        "packages/agents/bots/src/collaboration.ts:124"
       ]
     },
     {
@@ -28413,15 +28495,6 @@
       "digest": "1571525adc95a24e5d25b5a6440df401cd7cdd881b745178e85f5a333435cd1b",
       "names": [],
       "sources": []
-    },
-    {
-      "digest": "157b4a66b95eebe0d753769d491a195f95e712cffe123431ca4ede91804c0d2d",
-      "names": [
-        "packages/agents/bots/src/collaboration.ts#BotDynamicToolEvent"
-      ],
-      "sources": [
-        "packages/agents/bots/src/collaboration.ts:131"
-      ]
     },
     {
       "digest": "15d5dfdd822aa35e115afd74a8982825a493880457774e6850bc1520b50875e4",
@@ -29209,6 +29282,15 @@
       ]
     },
     {
+      "digest": "442d54eaa89cebdf092c66fbe029424d6754a8be165e52eb39e6f10cdcefe23e",
+      "names": [
+        "packages/agents/bots/src/collaboration.ts#BotDynamicToolEventResult"
+      ],
+      "sources": [
+        "packages/agents/bots/src/collaboration.ts:122"
+      ]
+    },
+    {
       "digest": "44818000e56acb97afdb5045ce235eb55e3fb1ccabc9fc7d0750bb38f36a7f8e",
       "names": [],
       "sources": []
@@ -29380,7 +29462,7 @@
         "packages/workflow/workflow/src/types.ts#WorkflowRunId"
       ],
       "sources": [
-        "packages/agents/bots/src/collaboration.ts:18",
+        "packages/agents/bots/src/collaboration.ts:19",
         "packages/agents/bots/src/group-chat.ts:27",
         "packages/agents/bots/src/group-chat.ts:38",
         "packages/agents/bots/src/memory.ts:8",
@@ -29972,6 +30054,11 @@
       "sources": []
     },
     {
+      "digest": "6eebf6368950ede361f0ece53861dc120ef9b6f86db90b8def54b569f90f5d54",
+      "names": [],
+      "sources": []
+    },
+    {
       "digest": "6f091fe32ab24407236090ca9d710bbaf59bb57466e9f3b8f1f6e4862bc863c6",
       "names": [],
       "sources": []
@@ -30355,7 +30442,7 @@
       "digest": "838ee520d8e15fed42575c847fdb6ad38defd9b2b149135a9a62a1e2a60c0cbb",
       "names": [],
       "sources": [
-        "packages/agents/bots/src/collaboration.ts:64"
+        "packages/agents/bots/src/collaboration.ts:65"
       ]
     },
     {
@@ -30426,7 +30513,7 @@
         "packages/agents/bots/src/collaboration.ts#BotEventRelayContext"
       ],
       "sources": [
-        "packages/agents/bots/src/collaboration.ts:43"
+        "packages/agents/bots/src/collaboration.ts:44"
       ]
     },
     {
@@ -30454,7 +30541,7 @@
         "packages/subagent/subagent/src/continuation-messages.ts#AgentMessageSource"
       ],
       "sources": [
-        "packages/agents/bots/src/collaboration.ts:51",
+        "packages/agents/bots/src/collaboration.ts:52",
         "packages/subagent/subagent/src/continuation-messages.ts:15"
       ]
     },
@@ -30617,15 +30704,6 @@
       "digest": "904bf499d98be4a3a5f836fcac533b6c4899569b018071e6604e1d32657d00fd",
       "names": [],
       "sources": []
-    },
-    {
-      "digest": "92c45085dec3dab097833109751939f1bfe5f9b639dac5df2b946b0ac27e679e",
-      "names": [
-        "packages/agents/bots/src/collaboration.ts#BotDynamicToolEventResult"
-      ],
-      "sources": [
-        "packages/agents/bots/src/collaboration.ts:121"
-      ]
     },
     {
       "digest": "930c1cd289def119d443e19dd90008916bf035f0a4d23e07241e7f050f2b89b7",
@@ -30924,6 +31002,15 @@
       "digest": "a2066bd52f61218ba15b758def2641cc6a8bd3d4a594a488ee4c65be356d7e39",
       "names": [],
       "sources": []
+    },
+    {
+      "digest": "a24a4523c15b8e694a0bbb4be2ed19e335b43cb48437be70b3cd9071c449fd83",
+      "names": [
+        "packages/agents/bots/src/collaboration.ts#BotDynamicToolEvent"
+      ],
+      "sources": [
+        "packages/agents/bots/src/collaboration.ts:134"
+      ]
     },
     {
       "digest": "a2b49331716ba0a7078b026d145306a70eae64b7313c3e6204bd931e75ec3bb1",
@@ -32068,7 +32155,7 @@
         "packages/agents/bots/src/collaboration.ts#BotGroupMessageSource"
       ],
       "sources": [
-        "packages/agents/bots/src/collaboration.ts:78"
+        "packages/agents/bots/src/collaboration.ts:79"
       ]
     },
     {

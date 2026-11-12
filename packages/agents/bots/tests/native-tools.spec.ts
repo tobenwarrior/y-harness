@@ -1,4 +1,5 @@
 import { SessionId } from '@yharness/session'
+import { AttachmentId } from '@yharness/attachment'
 import { describe, expect, it, vi } from 'vitest'
 import {
   BotCollaborationError,
@@ -82,6 +83,40 @@ function groups(sendResult: 'accepted' | 'partial' = 'accepted'): GroupHostFixtu
 }
 
 describe('native Bot actions', () => {
+  it('exposes and records the selected owner Bot Computer, with revocation checked before input', async () => {
+    const sessionId = SessionId('bot-session-alpha')
+    const otherSessionId = SessionId('bot-session-beta')
+    const image = { attachmentId: AttachmentId('test-screen'), mediaType: 'image/jpeg' as const, bytes: 3, width: 1, height: 1 }
+    const execute = vi.fn(async () => ({ success: true, contentItems: [], image }))
+    const recorded: BotDynamicToolEvent[] = []
+    let granted = true
+    const host = {
+      bind: async () => client(),
+      persist: async (event: BotDynamicToolEvent) => { recorded.push(event) },
+      replay: async () => recorded,
+      vpsComputer: async (id: SessionId) => granted && id === sessionId
+        ? { description: 'Observe or operate the selected Computer.', inputSchema: { type: 'object' }, execute }
+        : undefined,
+    }
+    const provider = createBotNativeToolProvider(host)
+    const computer = (await provider.resolve({ sessionId })).find(tool => tool.name === 'vps_computer')
+    if (computer === undefined) throw new Error('native Computer tool missing')
+    expect((await provider.resolve({ sessionId: otherSessionId })).map(tool => tool.name)).not.toContain(computer.name)
+    expect((await provider.resolve({ sessionId, purpose: 'session-title' })).map(tool => tool.name)).not.toContain(computer.name)
+    await expect(computer.execute({ action: 'click' }, context({ sessionId: otherSessionId }))).resolves.toMatchObject({ success: false })
+    expect(execute).not.toHaveBeenCalled()
+    const call = { name: computer.name, callId: 'call-1', threadId: 'thread-1', turnId: 'turn-1', sessionId, arguments: { action: 'observe' } }
+    await provider.observe({ phase: 'started', ...call })
+    const result = await computer.execute(call.arguments, context({ sessionId }))
+    await provider.observe({ phase: 'settled', ...call, result })
+    expect(recorded[1]?.result).toEqual({ success: true, contentItems: [], image })
+    await expect(provider.replay({ sessionId, purpose: 'session-title' })).resolves.toEqual([])
+    granted = false
+    await expect(computer.execute({ action: 'click' }, context({ sessionId }))).resolves.toMatchObject({ success: false })
+    await expect(provider.replay({ sessionId })).resolves.toEqual([])
+    expect(execute).toHaveBeenCalledTimes(1)
+  })
+
   it('rechecks a journal grant at invocation and withholds the journal from other Sessions', async () => {
     const sessionId = SessionId('bot-session-alpha')
     const otherSessionId = SessionId('bot-session-beta')
