@@ -116,15 +116,43 @@ describe('upstream release tracker', () => {
     await expect(new UpstreamReleaseTracker(() => Promise.resolve({ ...changed, commit: 'd36f372a60624b92e0e364871cae2c50cbf4ba01' })).status()).resolves.toMatchObject({ updateAvailable: false, error: null })
   })
 
-  it('reads the published release from the repository raw file', async () => {
+  it('reads a release published only in the Codex plugin manifest', async () => {
     const requested: string[] = []
+    const manifest = `https://raw.githubusercontent.com/${UPSTREAM_REPOSITORY}/${'a'.repeat(40)}/.codex-plugin/plugin.json`
     vi.stubGlobal('fetch', (url: string) => {
       requested.push(url)
-      return Promise.resolve(Response.json(url.includes('api.github.com') ? { sha: 'a'.repeat(40) } : { name: 'compound-skills', version: '0.13.0' }))
+      if (url.includes('api.github.com')) return Promise.resolve(Response.json({ sha: 'a'.repeat(40) }))
+      if (url === manifest) return Promise.resolve(Response.json({ name: 'compound-skills', version: '0.17.2' }))
+      return Promise.resolve(new Response(null, { status: 404 }))
     })
     const status = await new UpstreamReleaseTracker().status()
-    expect(requested).toEqual([`https://api.github.com/repos/${UPSTREAM_REPOSITORY}/commits/main`, `https://raw.githubusercontent.com/${UPSTREAM_REPOSITORY}/${'a'.repeat(40)}/plugin.json`])
-    expect(status).toMatchObject({ upstream: '0.13.0', updateAvailable: true, error: null })
+    expect(requested).toEqual([`https://api.github.com/repos/${UPSTREAM_REPOSITORY}/commits/main`, manifest])
+    expect(status).toMatchObject({ upstream: '0.17.2', updateAvailable: true, error: null })
+  })
+
+  it('checks the root manifest at the same commit when the Codex manifest is missing', async () => {
+    const commit = 'a'.repeat(40)
+    const raw = `https://raw.githubusercontent.com/${UPSTREAM_REPOSITORY}/${commit}`
+    const fetch = vi.fn((url: string) => {
+      if (url.includes('/commits/')) return Promise.resolve(Response.json({ sha: commit }))
+      if (url === `${raw}/plugin.json`) return Promise.resolve(Response.json({ version: '0.13.0' }))
+      return Promise.resolve(new Response('Not found', { status: 404 }))
+    })
+    vi.stubGlobal('fetch', fetch)
+    await expect(new UpstreamReleaseTracker().status()).resolves.toMatchObject({ upstream: '0.13.0', error: null })
+    expect(fetch.mock.calls.slice(1).map(([url]) => url)).toEqual([
+      `${raw}/.codex-plugin/plugin.json`, `${raw}/plugin.json`,
+    ])
+  })
+
+  it('reports other manifest errors without trying the legacy path', async () => {
+    const fetch = vi.fn((url: string) => Promise.resolve(url.includes('/commits/')
+      ? Response.json({ sha: 'a'.repeat(40) }) : new Response(null, { status: 503 })))
+    vi.stubGlobal('fetch', fetch)
+    await expect(new UpstreamReleaseTracker().status()).resolves.toMatchObject({
+      error: 'upstream .codex-plugin/plugin.json answered HTTP 503', updateAvailable: false,
+    })
+    expect(fetch).toHaveBeenCalledTimes(2)
   })
 
   it.each([403, 429])('uses noninteractive git head fallback for GitHub HTTP %s rate limits', async (statusCode) => {
@@ -145,7 +173,7 @@ describe('upstream release tracker', () => {
     try {
       const result = await new UpstreamReleaseTracker().status()
       expect(result).toMatchObject({ upstream: '0.13.0', updateAvailable: true, error: null })
-      expect(requested).toEqual([`https://api.github.com/repos/${UPSTREAM_REPOSITORY}/commits/main`, `https://raw.githubusercontent.com/${UPSTREAM_REPOSITORY}/${commit}/plugin.json`])
+      expect(requested).toEqual([`https://api.github.com/repos/${UPSTREAM_REPOSITORY}/commits/main`, `https://raw.githubusercontent.com/${UPSTREAM_REPOSITORY}/${commit}/.codex-plugin/plugin.json`])
       expect(await readFile(marker, 'utf8')).toBe('0|||' + 'never\n')
     } finally {
       process.env.PATH = previousPath
@@ -165,9 +193,9 @@ describe('upstream release tracker', () => {
     expect(status.error).not.toBeNull()
   })
 
-  it('reports JSON that carries no version', async () => {
-    vi.stubGlobal('fetch', (url: string) => Promise.resolve(Response.json(url.includes('api.github.com') ? { sha: 'a'.repeat(40) } : { name: 'compound-skills' })))
-    await expect(new UpstreamReleaseTracker().status()).resolves.toMatchObject({ error: 'upstream plugin.json carries no version' })
+  it.each([null, '0.17.2', { name: 'compound-skills' }, { version: 17 }])('reports an invalid manifest (%j)', async (manifest) => {
+    vi.stubGlobal('fetch', (url: string) => Promise.resolve(Response.json(url.includes('api.github.com') ? { sha: 'a'.repeat(40) } : manifest)))
+    await expect(new UpstreamReleaseTracker().status()).resolves.toMatchObject({ error: 'upstream release manifest carries no version' })
   })
 
   it('cancels an in-flight remote read when its caller is disposed', async () => {

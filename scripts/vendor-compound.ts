@@ -17,6 +17,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
 import { hasUpdate, recordedCommit, UPSTREAM_REPOSITORY, VENDORED_VERSION } from '../packages/skill/skill-compound/src/upstream.ts'
+import { UPSTREAM_MANIFEST_PATHS, upstreamManifestVersion } from '../packages/skill/skill-compound/src/upstream-manifest.ts'
 
 const REPOSITORY_URL = `https://github.com/${UPSTREAM_REPOSITORY}`
 const BRANCH = 'main'
@@ -70,7 +71,7 @@ export function compareReleases(left: string, right: string): number {
  */
 export function recordVendoredRelease(source: string, release: string, commit: string, day: string): string {
   return source
-    .replace(/^\| Vendored version \| .*$/m, `| Vendored version | \`${release}\` (upstream \`plugin.json\`) |`)
+    .replace(/^\| Vendored version \| .*$/m, `| Vendored version | \`${release}\` (upstream release manifest) |`)
     .replace(/^\| Vendored commit \| .*$/m, `| Vendored commit | \`${commit}\` (${day}) |`)
     .replace(/^\| Vendored on \| .*$/m, `| Vendored on | ${day} |`)
 }
@@ -106,12 +107,12 @@ function cloneUpstream(): { directory: string; release: string; commit: string }
   const directory = mkdtempSync(join(tmpdir(), 'compound-skills-'))
   note(`cloning ${REPOSITORY_URL} (${BRANCH})`)
   run('git', ['clone', '--quiet', '--depth', '1', '--branch', BRANCH, REPOSITORY_URL, directory], process.cwd())
-  const manifest = JSON.parse(readFileSync(join(directory, 'plugin.json'), 'utf8')) as { version?: unknown }
-  if (typeof manifest.version !== 'string' || manifest.version === '') {
-    throw new Error('upstream plugin.json declares no version')
-  }
+  const manifest = UPSTREAM_MANIFEST_PATHS.find(path => existsSync(join(directory, path)))
+  if (manifest === undefined) throw new Error('upstream release manifest is missing')
+  const release = upstreamManifestVersion(JSON.parse(readFileSync(join(directory, manifest), 'utf8')))
+  if (release === undefined || release === '') throw new Error('upstream release manifest declares no version')
   const commit = run('git', ['rev-parse', 'HEAD'], directory).trim()
-  return { directory, release: manifest.version, commit }
+  return { directory, release, commit }
 }
 
 /** Mirror upstream's skill tree and record files into this package. */

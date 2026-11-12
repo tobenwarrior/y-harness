@@ -14,6 +14,7 @@ import { join } from 'node:path'
 import type { Context } from '@yharness/cordis'
 import { activeOverlay, overlayRoot, updateOverlay, type OverlayRevision } from './overlay.ts'
 import { resolveUpstreamCommit, UPSTREAM_REPOSITORY as RESOLVER_REPOSITORY } from './upstream-head.ts'
+import { requestUpstreamManifest, upstreamManifestVersion } from './upstream-manifest.ts'
 export { resolveUpstreamCommit } from './upstream-head.ts'
 
 /** Release of the vendored content; kept equal to the table in `UPSTREAM.md`. */
@@ -21,8 +22,6 @@ export const VENDORED_VERSION = '0.11.1'
 
 /** Upstream repository the vendored content is copied from. */
 export const UPSTREAM_REPOSITORY = RESOLVER_REPOSITORY
-
-/** Branch whose `plugin.json` carries the current release. */
 
 /** Same-origin route the browser half reads update status from. */
 export const UPDATE_ROUTE = '/api/skill-compound.update'
@@ -35,7 +34,6 @@ const FRESH_MS = 6 * 60 * 60 * 1000
 
 /** How long a failed reading suppresses further attempts. */
 const RETRY_MS = 15 * 60 * 1000
-const UPSTREAM_REQUEST_TIMEOUT_MS = 30_000
 
 /** One reading of the upstream release, as the browser half receives it. */
 export interface UpdateStatus {
@@ -96,17 +94,9 @@ export function hasUpdate(release: string, vendored: string, commit: string, cur
  */
 async function fetchUpstreamRelease(signal?: AbortSignal): Promise<{ version: string; commit: string }> {
   const commit = await resolveUpstreamCommit(signal)
-  const timeout = AbortSignal.timeout(UPSTREAM_REQUEST_TIMEOUT_MS)
-  const requestSignal = signal === undefined ? timeout : AbortSignal.any([signal, timeout])
-  const options = { signal: requestSignal, headers: { accept: 'application/json' } }
-  const url = `https://raw.githubusercontent.com/${UPSTREAM_REPOSITORY}/${commit}/plugin.json`
-  const response = await fetch(url, options)
-  if (!response.ok) throw new Error(`upstream plugin.json answered HTTP ${response.status}`)
-  const manifest: unknown = await response.json()
-  const version = typeof manifest === 'object' && manifest !== null && 'version' in manifest
-    ? (manifest as { version?: unknown }).version
-    : undefined
-  if (typeof version !== 'string') throw new Error('upstream plugin.json carries no version')
+  const response = await requestUpstreamManifest(commit, signal)
+  const version = upstreamManifestVersion(await response.json())
+  if (version === undefined) throw new Error('upstream release manifest carries no version')
   return { version, commit }
 }
 
