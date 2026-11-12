@@ -43,22 +43,58 @@ Each owner Bot has its own Linux workspace and desktop. The Bot’s shell and fi
 
 Choose **Take control** to use your mouse and keyboard in the panel. Bot input through the Computer tool pauses while you hold control. Choose **Hand back** to let the Bot use it again. Closing the panel releases control, and a lost connection releases it after a short timeout. The Bot computer stays on the VPS when you disconnect.
 
-## Give a Bot access to service diagnostics
+### Move existing Bots in stages
 
-Ask the VPS owner to add a service grant in the Web profile patch at `~/.yharness-vps/state/profiles/web/cordis.patch.yml`. The grant names an exact systemd service and the Bot roster IDs that may inspect it. This example grants read access to a service managed by the same Linux user as Y Harness.
+To select which existing Bots receive a private computer, set `botComputers.bots` to their Bot roster IDs in the private Web profile patch at `~/.yharness-vps/state/profiles/web/cordis.patch.yml`. The patch replaces the `web-runtime` configuration as a whole. Keep your existing settings when adding to a patch entry. The example starts from the installer’s defaults.
 
 ```yaml
 - id: web-runtime
   config:
-    vpsServices:
-      - unit: example-worker.service
-        scope: user
-        bots: [bot-worker]
+    openBrowser: !!js ctx.webStartup.openBrowser
+    printUrl: true
+    publicUrl: !!js ctx.webStartup.publicUrl
+    surfaceContext: true
+    trustedHosts: !!js ctx.webStartup.trustedHosts
+    botComputers:
+      root: /home/vps-user/.yharness-vps/bots
+      image: localhost/yharness-vps-bot:24.04
+      bots: [bot-worker]
+    computer: !!js >-
+      process.env.YH_VPS_DISPLAY === undefined && process.env.YH_VPS_XAUTHORITY === undefined
+        ? undefined
+        : { display: process.env.YH_VPS_DISPLAY, authorityPath: process.env.YH_VPS_XAUTHORITY }
 ```
 
-Restart the Web service when its tasks are idle. The Bot can call `vps_service_status` to read the unit’s state, restart count and last exit details. A `system` grant targets the system manager. The tool returns selected systemd fields and keeps raw journals and service configuration on the host.
+Bots outside the list continue using their existing working directories and shared desktop settings. Follow the [workspace migration steps](../../upgrade-guide/v0.2.1-rc.2/vps-bot-computers/guide.md#migration) to copy working files and review existing routines.
+
+For a selected Bot that still needs its host working directory or existing routine tools, add its roster ID to `botComputers.desktopOnlyBots`. Its **Computer** panel and `vps_computer` tool use the private desktop. Its shell and file tools keep their existing permissions and working directory.
+
+## Give a Bot access to service diagnostics
+
+Ask the VPS owner to add `vpsServices` inside the same `web-runtime` configuration. The grant names an exact systemd service and the Bot roster IDs that may inspect it. This example grants read access to a service managed by the same Linux user as Y Harness.
+
+```yaml
+vpsServices:
+  - unit: example-worker.service
+    scope: user
+    bots: [bot-worker]
+```
+
+Restart the Web service when its tasks are idle. The Bot can call `vps_service_status` to read the unit’s state, restart count and last exit details. A `system` grant targets the system manager. The status tool returns selected systemd fields.
 
 To enable a restart request for an exact service, add `restart: true` to its grant. Select **Ask for approval** in that **Cloud** Bot conversation. The owner must accept each restart request, and the Web service account must have Linux permission to restart the unit. Use the VPS administrator’s own login for code changes and other protected maintenance.
+
+### Read a filtered journal feed
+
+If you operate a host-side journal feed, add `vpsJournal` to the same private `web-runtime` configuration. Give the Web service account permission to connect to the socket and list only the managed owner Bots allowed to read its output.
+
+```yaml
+vpsJournal:
+  socketPath: /run/example-journal.sock
+  bots: [bot-worker]
+```
+
+The selected Bot can call `vps_service_journal` with no arguments. The host connects to the socket and reads one bounded JSON response containing `version`, `generatedAt`, `recovery` and `primaryAudit`. The feed operator controls which entries the two arrays contain. The socket stays on the host, and the tool only reads from it.
 
 ## Import a Grok Bot export
 

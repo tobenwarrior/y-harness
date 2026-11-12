@@ -73,7 +73,11 @@ When you launch `yharness --profile web` over SSH, the URL line still prints but
 
 The VPS installer enables `botComputers` and provisions a separate rootless Podman computer for each owner Bot. The owner-authenticated Computer routes resolve the requested Session against the Bot roster. The model tool uses the calling Session. Each desktop has its own controller and renewable human input lease. An existing Bot receives its computer when first accessed, while its saved Session and roster identity stay in place.
 
-The optional `computer` configuration supplies one shared X11 display for a custom Web deployment. It uses `YH_VPS_DISPLAY` and `YH_VPS_XAUTHORITY`. Managed Bot computers take precedence when configured. See [VPS setup and service grants](../../../docs/user/guide/vps.md#give-a-bot-access-to-service-diagnostics).
+The optional `computer` configuration supplies one shared X11 display for a custom Web deployment. It uses `YH_VPS_DISPLAY` and `YH_VPS_XAUTHORITY`. Set `botComputers.bots` to select owner Bots for private computers while keeping the shared display for other Bots. See [VPS setup and service grants](../../../docs/user/guide/vps.md#give-a-bot-access-to-service-diagnostics).
+
+`botComputers.desktopOnlyBots` selects Bots whose private Computer should use the isolated desktop while their shell and file tools retain the existing Host workspace and policy. The list contains only Bots selected by `botComputers`.
+
+The private `vpsJournal` configuration grants selected managed owner Bots read access to a host-operated Unix socket. The Host reads one bounded response on each call. The socket and grant remain in the Host process.
 
 The native macOS Desktop Host registers `mac_computer` on operator presets. It relays actions over its private Electron IPC channel with the invoking Session ID. The Electron main process authorizes the currently shared Bot before capturing the primary display or delivering input.
 

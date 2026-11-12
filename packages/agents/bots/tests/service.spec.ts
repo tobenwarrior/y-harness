@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { createHash, randomUUID } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { Context, Service } from '@yharness/cordis'
 import { SharedAccessAuthority, sharedPrincipalOf, type ConnectionFetchRoute } from '@yharness/client-connection'
@@ -834,6 +834,34 @@ describe('durable Bot roster', () => {
       await expect(h.service.ownerBotForSession(first.sessionId)).resolves.toMatchObject({ id: first.id, state: 'active' })
       await expect(h.service.ownerBotForSession(SessionId('other-session'))).resolves.toBeUndefined()
       await expect(h.service.create({ name: 'Host directory', cwd: root })).rejects.toThrow('assigned a private workspace')
+    } finally {
+      await close(h.ctx)
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps non-allowlisted Bot creation on the legacy cwd and skips VPS preparation', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'yh-allowlisted-bot-'))
+    const workspace = (sessionId: SessionId) => join(root, sessionId)
+    const prepare = vi.fn(async (sessionId: SessionId) => { await mkdir(workspace(sessionId), { mode: 0o700 }) })
+    const h = await harness(undefined, undefined, undefined, [], new Map(), new Map(), true, 'native', false, {
+      beforeService: (ctx) => {
+        ctx.provide('botWorkspaces', {
+          workspace,
+          prepare,
+          managed: (botId: string) => botId === 'bot-research',
+        })
+      },
+    })
+    try {
+      const managed = (await h.service.create({ id: BotId('bot-research'), name: 'Research' })).bot
+      const legacy = (await h.service.create({ id: BotId('bot-legacy'), name: 'Legacy', cwd: root })).bot
+      expect(managed.cwd).toBe(workspace(managed.sessionId))
+      expect(legacy.cwd).toBe(resolve(root))
+      await expect(h.service.create({ id: BotId('bot-legacy'), name: 'Legacy', cwd: root }))
+        .resolves.toMatchObject({ bot: { cwd: resolve(root), sessionId: legacy.sessionId } })
+      expect(prepare).toHaveBeenCalledWith(managed.sessionId)
+      expect(prepare).not.toHaveBeenCalledWith(legacy.sessionId)
     } finally {
       await close(h.ctx)
       await rm(root, { recursive: true, force: true })

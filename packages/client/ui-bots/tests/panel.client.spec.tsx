@@ -229,7 +229,7 @@ describe('Bots conversation slot wiring', () => {
     })
     render(<BotsPanel {...props} />)
 
-    expect(screen.getByText('VPS Bot computer')).toBeTruthy()
+    expect(screen.getByText('Dedicated VPS desktop')).toBeTruthy()
   })
 })
 

@@ -35,6 +35,7 @@ import { VpsComputer } from './computer.ts'
 import { MacComputerBridge } from './mac-computer.ts'
 import { mountVpsBots } from './vps-bots.ts'
 import type { VpsServiceAccess } from './vps-services.ts'
+import type { VpsJournalConfig } from './vps-journal.ts'
 
 /** Stable Cordis plugin name. */
 export const name = 'web-app'
@@ -79,9 +80,15 @@ export interface Config {
     root: string
     /** Locally built desktop image. */
     image: string
+    /** Exact Bot ids assigned isolated VPS Computers; absent assigns every Bot. */
+    bots?: string[]
+    /** Exact selected Bot ids that receive only a private Computer, not a VPS workspace. */
+    desktopOnlyBots?: string[]
   } | null
   /** Exact Linux service grants, selected by the VPS owner. */
   vpsServices?: VpsServiceAccess[]
+  /** Private read-only journal socket and its owner Bot allowlist. */
+  vpsJournal?: VpsJournalConfig | null
   /** Opt in to the private Linux desktop using its X display and owner-only authority file. */
   computer?: {
     /** Local X11 display identifier for the private desktop. */
@@ -98,7 +105,12 @@ export const Config: z<Config> = z.object({
   publicUrl: z.transform(z.string(), value => parsePublicUrl(value).href),
   trustedHosts: z.array(String).default([]),
   botComputers: z.union([
-    z.object({ root: z.string().required(), image: z.string().required() }),
+    z.object({
+      root: z.string().required(),
+      image: z.string().required(),
+      bots: z.array(String),
+      desktopOnlyBots: z.array(String),
+    }),
     z.const(null),
   ]),
   vpsServices: z.array(z.object({
@@ -107,6 +119,16 @@ export const Config: z<Config> = z.object({
     bots: z.array(String).required(),
     restart: z.boolean(),
   })),
+  vpsJournal: z.union([
+    z.object({
+      socketPath: z.string().required(),
+      bots: z.array(String).required(),
+      timeoutMs: z.number(),
+      maxBytes: z.number(),
+      maxEntries: z.number(),
+    }),
+    z.const(null),
+  ]),
   computer: z.union([
     z.object({
       display: z.string().required(),
@@ -308,13 +330,21 @@ export function apply(ctx: Context, config: Config): void {
       })
     })
   }
+  const legacyComputer = config.computer === undefined || config.computer === null
+    ? undefined
+    : new VpsComputer(config.computer)
+  if (config.vpsJournal !== undefined && config.vpsJournal !== null && config.botComputers == null) {
+    throw new Error('VPS journal grants require managed Bot computers.')
+  }
+  if (legacyComputer !== undefined) {
+    ctx.provide('vpsComputer', legacyComputer)
+    ctx.effect(() => () => legacyComputer.dispose(), 'vps-computer: private desktop')
+  }
   if (config.botComputers !== undefined && config.botComputers !== null) {
     if (process.platform !== 'linux') throw new Error('Managed VPS Bot computers require Linux.')
-    mountVpsBots(ctx, config.botComputers, config.vpsServices ?? [])
-  } else if (config.computer !== undefined && config.computer !== null) {
-    const computer = new VpsComputer(config.computer)
-    ctx.provide('vpsComputer', computer)
-    ctx.effect(() => () => computer.dispose(), 'vps-computer: private desktop')
+    mountVpsBots(ctx, config.botComputers, config.vpsServices ?? [], legacyComputer, config.vpsJournal ?? undefined)
+  } else if (legacyComputer !== undefined) {
+    const computer = legacyComputer
     ctx.on('agent/created', ({ agent }) => {
       const canUseComputer = (): boolean => {
         const preset = ctx.get('agentPresets')?.composedPreset(agent.ctx)

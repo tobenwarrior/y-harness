@@ -467,7 +467,7 @@ export type Config = LocalConfig
 ## `@yharness/bots`
 
 - `inject`: `agents` · `storageDomain` · `sessionController` · `sessions` · `attachments` · `systemPrompt` · `tools`
-- `source`: [`packages/agents/bots/src/index.ts:555`](../packages/agents/bots/src/index.ts)
+- `source`: [`packages/agents/bots/src/index.ts:566`](../packages/agents/bots/src/index.ts)
 
 ```ts config-catalog
 /** Bot service configuration. */
@@ -4409,7 +4409,7 @@ export interface WebRuntimeConfig {
 ## `@yharness/web-app`
 
 - `inject`: `webServer`
-- `source`: [`packages/bundle/web-app/src/index.ts:54`](../packages/bundle/web-app/src/index.ts)
+- `source`: [`packages/bundle/web-app/src/index.ts:55`](../packages/bundle/web-app/src/index.ts)
 
 ```ts config-catalog
 /** Plugin config: composed deployment settings plus per-invocation command-line values. */
@@ -4441,9 +4441,15 @@ export interface Config {
     root: string
     /** Locally built desktop image. */
     image: string
+    /** Exact Bot ids assigned isolated VPS Computers; absent assigns every Bot. */
+    bots?: string[]
+    /** Exact selected Bot ids that receive only a private Computer, not a VPS workspace. */
+    desktopOnlyBots?: string[]
   } | null
   /** Exact Linux service grants, selected by the VPS owner. */
   vpsServices?: VpsServiceAccess[]
+  /** Private read-only journal socket and its owner Bot allowlist. */
+  vpsJournal?: VpsJournalConfig | null
   /** Opt in to the private Linux desktop using its X display and owner-only authority file. */
   computer?: {
     /** Local X11 display identifier for the private desktop. */
@@ -4463,6 +4469,20 @@ export interface VpsServiceAccess {
   readonly bots: string[]
   /** Allow a single restart after the owner accepts the request. */
   readonly restart?: boolean
+}
+
+/** Trusted owner configuration for one read-only VPS journal socket. */
+export interface VpsJournalConfig {
+  /** Absolute Unix-domain socket path owned by the VPS journal service. */
+  readonly socketPath: string
+  /** Bot roster ids allowed to read this journal. */
+  readonly bots: string[]
+  /** Maximum wall-clock time for one socket read. Defaults to five seconds. */
+  readonly timeoutMs?: number
+  /** Maximum response frame size in bytes. Defaults to 256 KiB. */
+  readonly maxBytes?: number
+  /** Maximum entries retained in each response array. Defaults to 256. */
+  readonly maxEntries?: number
 }
 ```
 <!-- END GENERATED config-catalog:@yharness/web-app -->

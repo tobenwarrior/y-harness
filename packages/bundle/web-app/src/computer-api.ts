@@ -15,6 +15,11 @@ interface ComputerRouteController {
   readonly status?: () => { readonly available: boolean }
 }
 
+interface ResolvedComputer {
+  readonly controller: ComputerRouteController
+  readonly metadata?: ComputerStatusMetadata
+}
+
 /** Cloud Computer location exposed by an authenticated status response. */
 export type ComputerLocation = 'vps'
 
@@ -28,6 +33,16 @@ export interface ComputerStatusMetadata {
   /** Execution location; credentials and host paths are intentionally omitted. */
   readonly location: ComputerLocation
   /** Whether input and display access are isolated to a Bot or shared by the workspace. */
+  readonly permissionScope: ComputerPermissionScope
+}
+
+/** Server-selected Computer target for a Bot Session route. */
+export interface BotComputerRouteTarget {
+  /** Controller selected after resolving the exact owner Bot Session. */
+  readonly computer: VpsComputer
+  /** Stable identity rendered by the Web Computer status panel. */
+  readonly id: string
+  /** Whether permissions apply to the Bot or the legacy shared workspace. */
   readonly permissionScope: ComputerPermissionScope
 }
 
@@ -85,12 +100,14 @@ async function readPayload(request: Request): Promise<unknown> {
 
 interface RouteOptions {
   readonly managed: boolean
+  /** Permit the old shared route's omitted session id during an allowlisted rollout. */
+  readonly allowMissingSession?: boolean
   readonly legacyComputer?: ComputerRouteController
-  readonly status: (computer: ComputerRouteController | undefined, target: SessionTarget) => Response
+  readonly status: (computer: ResolvedComputer | undefined, target: SessionTarget) => Response
 }
 
 function routesFor(
-  resolveComputer: (sessionId: string) => Promise<ComputerRouteController | undefined>,
+  resolveComputer: (sessionId: string) => Promise<ResolvedComputer | undefined>,
   options: RouteOptions,
 ): readonly ConnectionFetchRoute[] {
   const action = (computer: ComputerRouteController, endpoint: string) => {
@@ -117,9 +134,14 @@ function routesFor(
           return json({ error: 'invalid-request' }, 400)
         }
         if (!isRecord(payload)) return json({ error: 'invalid-request' }, 400)
-        const target = sessionTarget(payload, options.managed)
+        const target = sessionTarget(payload, options.managed && options.allowMissingSession !== true)
         if (target === undefined) return json({ error: 'invalid-request' }, 400)
-        if (!options.managed) return options.status(options.legacyComputer, target)
+        if (!options.managed) {
+          return options.status(
+            options.legacyComputer === undefined ? undefined : { controller: options.legacyComputer },
+            target,
+          )
+        }
         try {
           return options.status(await resolveComputer(target.id), target)
         } catch (error) {
@@ -144,11 +166,11 @@ function routesFor(
         }
         if (!isRecord(payload)) return json({ error: 'invalid-request' }, 400)
         const id = viewerId(payload.viewerId)
-        const target = sessionTarget(payload, options.managed)
+        const target = sessionTarget(payload, options.managed && options.allowMissingSession !== true)
         if (id === undefined || target === undefined) return json({ error: 'invalid-request' }, 400)
         try {
-          const computer = await resolveComputer(target.id)
-          const handle = computer === undefined ? undefined : action(computer, endpoint)
+          const resolved = await resolveComputer(target.id)
+          const handle = resolved === undefined ? undefined : action(resolved.controller, endpoint)
           if (handle === undefined) return json({ error: 'computer-unavailable' }, 409)
           return json(await handle(id, payload, request.signal))
         } catch (error) {
@@ -171,11 +193,11 @@ function routesFor(
  * @returns The five private POST routes.
  */
 export function computerRoutes(computer: ComputerRouteController): readonly ConnectionFetchRoute[] {
-  return routesFor(() => Promise.resolve(computer), {
+  return routesFor(() => Promise.resolve({ controller: computer }), {
     managed: false,
     legacyComputer: computer,
-    status: controller => json({
-      available: controller?.status?.().available !== false,
+    status: resolved => json({
+      available: resolved?.controller.status?.().available !== false,
       kind: 'vps',
       computer: {
         id: 'shared-vps',
@@ -200,10 +222,13 @@ export function computerRoutes(computer: ComputerRouteController): readonly Conn
 export function botComputerRoutes(
   resolveComputer: (sessionId: string) => Promise<VpsComputer | undefined>,
 ): readonly ConnectionFetchRoute[] {
-  return routesFor(resolveComputer, {
+  return routesFor(async (sessionId) => {
+    const computer = await resolveComputer(sessionId)
+    return computer === undefined ? undefined : { controller: computer }
+  }, {
     managed: true,
-    status: (computer, target) => json({
-      available: computer?.status?.().available === true,
+    status: (resolved, target) => json({
+      available: resolved?.controller.status?.().available === true,
       kind: 'vps',
       computer: {
         id: target.managed ? target.id : 'shared-vps',
@@ -211,5 +236,48 @@ export function botComputerRoutes(
         permissionScope: target.managed ? 'bot' : 'workspace',
       } satisfies ComputerStatusMetadata,
     }),
+  })
+}
+
+/**
+ * Build one owner-authenticated route set that can select managed or legacy
+ * Computer state only after resolving the exact server-owned Bot Session.
+ *
+ * The resolver must return `undefined` for unknown or inactive Sessions. A
+ * client-supplied id therefore cannot choose the legacy controller as a
+ * fallback; the Host decides whether a known Bot is selected for isolation.
+ * @param resolveTarget - Resolve the server-selected Computer target.
+ * @param options - Permit omitted session ids only for an explicit legacy rollout.
+ * @returns The same five private POST routes as the other Computer APIs.
+ */
+export function botComputerRoutesWithLegacy(
+  resolveTarget: (sessionId: string) => Promise<BotComputerRouteTarget | undefined>,
+  options: { readonly allowMissingSession?: boolean } = {},
+): readonly ConnectionFetchRoute[] {
+  return routesFor(async (sessionId) => {
+    const target = await resolveTarget(sessionId)
+    return target === undefined ? undefined : {
+      controller: target.computer,
+      metadata: {
+        id: target.id,
+        location: 'vps',
+        permissionScope: target.permissionScope,
+      },
+    }
+  }, {
+    managed: true,
+    ...(options.allowMissingSession === undefined ? {} : { allowMissingSession: options.allowMissingSession }),
+    status: (resolved, target) => {
+      const metadata = resolved?.metadata ?? {
+        id: target.id,
+        location: 'vps' as const,
+        permissionScope: 'bot' as const,
+      }
+      return json({
+        available: resolved?.controller.status?.().available === true,
+        kind: 'vps',
+        computer: metadata satisfies ComputerStatusMetadata,
+      })
+    },
   })
 }

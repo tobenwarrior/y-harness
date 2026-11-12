@@ -518,6 +518,17 @@ interface BotWorkspaces {
   workspace(sessionId: SessionId): string
   /** Prepare the same computer across retries before publishing a new Session. */
   prepare(sessionId: SessionId): Promise<void>
+  /** Select only the exact Bot ids assigned to an isolated workspace. */
+  managed?(botId: string): boolean
+}
+
+function botWorkspace(
+  workspaces: BotWorkspaces | undefined,
+  botId: string,
+  sessionId: SessionId,
+): string | undefined {
+  if (workspaces === undefined || workspaces.managed?.(botId) === false) return undefined
+  return workspaces.workspace(sessionId)
 }
 
 declare module '@yharness/cordis' {
@@ -7099,14 +7110,15 @@ export class BotService extends TypertRemoteService {
         return badRequest('The destination Bot has insufficient memory capacity for this export.')
       }
       const workspaces = this.ctx.get('botWorkspaces')
-      const skillWorkspace = workspaces?.workspace(bot.sessionId) ?? bot.cwd
-      if (workspaces !== undefined && plan.skills.length > 0 && request.preview !== true) {
-        await workspaces.prepare(bot.sessionId)
+      const workspace = botWorkspace(workspaces, String(bot.id), bot.sessionId)
+      const skillWorkspace = workspace ?? bot.cwd
+      if (workspace !== undefined && plan.skills.length > 0 && request.preview !== true) {
+        await workspaces?.prepare(bot.sessionId)
       }
       const installed = plan.skills.length === 0 ? undefined
         : await importGrokBotSkills(skillWorkspace, plan.skills, {
           preview: request.preview === true,
-          previewMissingDirectory: workspaces !== undefined,
+          previewMissingDirectory: workspace !== undefined,
         })
       const skillNames = new Map(Object.entries(installed?.namesBySourceName ?? {}).map(([source, name]) => [source.toLowerCase(), name]))
       const missingRoutineSkills = [...new Set(plan.routines.flatMap(routine =>
@@ -7239,7 +7251,8 @@ export class BotService extends TypertRemoteService {
       if (existing.ownerId !== this.ownerId) {
         throw new RemoteError('bot/id-conflict', `Bot "${id}" already exists`, { botId: id })
       }
-      if (request.cwd === undefined && workspaces !== undefined && existing.cwd === workspaces.workspace(existing.sessionId)) {
+      const existingWorkspace = botWorkspace(workspaces, String(existing.id), existing.sessionId)
+      if (request.cwd === undefined && existingWorkspace !== undefined && existing.cwd === existingWorkspace) {
         normalized = { ...normalized, cwd: existing.cwd }
       }
       if (existing.state === 'active' && matchesMetadata(existing, normalized)) {
@@ -7279,7 +7292,8 @@ export class BotService extends TypertRemoteService {
     // id is user-facing and must never accidentally adopt an unrelated
     // ordinary Session with a matching derived name.
     const sessionId = SessionId(`bot-session-${randomUUID()}`)
-    if (workspaces !== undefined && request.cwd !== undefined) {
+    const workspace = botWorkspace(workspaces, String(id), sessionId)
+    if (workspace !== undefined && request.cwd !== undefined) {
       return badRequest('This Bot is assigned a private workspace. Omit the working directory to create it.')
     }
     const record: BotRecord = {
@@ -7294,7 +7308,7 @@ export class BotService extends TypertRemoteService {
       connectedAppIds: [],
       pinned: false,
       hidden: false,
-      cwd: workspaces?.workspace(sessionId) ?? normalized.cwd,
+      cwd: workspace ?? normalized.cwd,
       ...(normalized.persona === undefined ? {} : { persona: normalized.persona }),
       ...(normalized.capabilities === undefined ? {} : { capabilities: normalized.capabilities }),
       ...(normalized.agentPreset === undefined ? {} : { agentPreset: normalized.agentPreset }),
@@ -7626,7 +7640,10 @@ export class BotService extends TypertRemoteService {
     signal?: AbortSignal,
   ): Promise<BotRecord> {
     try {
-      await this.ctx.get('botWorkspaces')?.prepare(record.sessionId)
+      const workspaces = this.ctx.get('botWorkspaces')
+      if (botWorkspace(workspaces, String(record.id), record.sessionId) !== undefined) {
+        await workspaces?.prepare(record.sessionId)
+      }
       const created = await this.ctx.sessionController.create(
         sessionRequest(record),
         new AbortController().signal,

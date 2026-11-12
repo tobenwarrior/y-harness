@@ -11,15 +11,16 @@ import type {} from '@yharness/bots'
 import type {} from '@yharness/client-connection'
 import type {} from '@yharness/system-prompt'
 import { containerComputer, type VpsComputer } from './computer.ts'
-import { botComputerRoutes } from './computer-api.ts'
-import { applyVpsBotComputer } from './computer-tool.ts'
+import * as ComputerTool from './computer-tool.ts'
+import { botComputerRoutesWithLegacy } from './computer-api.ts'
 import { VpsRuntime } from './vps-runtime.ts'
 import { registerVpsServiceTools, VpsServices, type VpsServiceAccess } from './vps-services.ts'
+import { registerVpsJournalTool, VpsJournal, type VpsJournalConfig } from './vps-journal.ts'
 
 const exec = promisify(execFile)
 const BOT_TOOLS = new Set([
   'bash', 'read', 'write', 'edit', 'apply_patch', 'glob', 'grep', 'job_output', 'job_list', 'job_kill',
-  'vps_computer', 'vps_service_status', 'vps_service_restart', 'skill', 'search_skills',
+  'vps_computer', 'vps_service_status', 'vps_service_restart', 'vps_service_journal', 'skill', 'search_skills',
   'schedule_create', 'schedule_list', 'schedule_delete', 'schedule_update', 'schedule_pause', 'schedule_resume', 'schedule_history',
   'schedule_event_create', 'schedule_event_list', 'schedule_event_delete', 'schedule_event_update',
   'schedule_event_pause', 'schedule_event_resume', 'schedule_event_history',
@@ -32,20 +33,42 @@ const BOT_TOOLS = new Set([
 /**
  * Mount managed Linux computers in the shipped VPS Web profile.
  * @param ctx - Web Host composition.
- * @param config - Installer-assigned runtime root and local desktop image.
+ * @param config - Installer-assigned runtime root, local desktop image, and Bot Computer selection.
  * @param grants - Exact operator-configured systemd grants.
+ * @param legacyComputer - Existing shared controller used by Bots outside the allowlist.
+ * @param journalConfig - Private socket and authorized Computer Bots.
  */
 export function mountVpsBots(
   ctx: Context,
-  config: { readonly root: string; readonly image: string },
+  config: {
+    readonly root: string
+    readonly image: string
+    readonly bots?: readonly string[]
+    readonly desktopOnlyBots?: readonly string[]
+  },
   grants: readonly VpsServiceAccess[],
+  legacyComputer?: VpsComputer,
+  journalConfig?: VpsJournalConfig,
 ): void {
   const runtime = new VpsRuntime(config.root, config.image)
   const services = new VpsServices(grants)
   const computers = new Map<string, VpsComputer>()
+  const managedBotIds = config.bots === undefined ? undefined : new Set(config.bots)
+  const desktopOnlyBotIds = new Set(config.desktopOnlyBots ?? [])
+  const isManagedBot = (botId: string): boolean => !desktopOnlyBotIds.has(botId)
+    && (managedBotIds === undefined || managedBotIds.has(botId))
+  if (managedBotIds !== undefined && [...desktopOnlyBotIds].some(botId => !managedBotIds.has(botId))) {
+    throw new Error('Desktop-only VPS Bots must be selected by botComputers.bots.')
+  }
+  const isDesktopBot = (botId: string): boolean => isManagedBot(botId) || desktopOnlyBotIds.has(botId)
+  if (journalConfig?.bots.some(botId => !isDesktopBot(botId))) {
+    throw new Error('VPS journal grants must select Computer Bots.')
+  }
+  const journal = journalConfig === undefined ? undefined : new VpsJournal(journalConfig)
   ctx.provide('botWorkspaces', {
     workspace: sessionId => runtime.workspace(sessionId),
     prepare: sessionId => runtime.ensure(sessionId),
+    managed: (botId: string) => isManagedBot(botId),
   })
   ctx.effect(() => async () => {
     const active = [...computers.values()]
@@ -70,26 +93,72 @@ export function mountVpsBots(
   }
 
   ctx.inject(['bots', 'connection'], (scope) => {
-    for (const route of botComputerRoutes(async (sessionId) => {
+    for (const route of botComputerRoutesWithLegacy(async (sessionId) => {
+      // Only an explicit allowlist rollout retains the old omitted-session
+      // request as the shared legacy display. Fresh managed installations
+      // require a Bot Session and fail closed in the route parser.
+      if (sessionId === '' && managedBotIds !== undefined) {
+        return legacyComputer === undefined
+          ? undefined
+          : { computer: legacyComputer, id: 'shared-vps', permissionScope: 'workspace' as const }
+      }
       const bot = await scope.bots.ownerBotForSession(sessionId)
       if (bot?.state !== 'active') return undefined
-      return computerFor(bot.sessionId)
-    })) {
+      if (isDesktopBot(bot.id)) {
+        return {
+          computer: await computerFor(bot.sessionId),
+          id: bot.id,
+          permissionScope: 'bot' as const,
+        }
+      }
+      if (legacyComputer === undefined) return undefined
+      return { computer: legacyComputer, id: 'shared-vps', permissionScope: 'workspace' as const }
+    }, { allowMissingSession: managedBotIds !== undefined })) {
       scope.effect(() => scope.connection.fetch.register(route), 'vps-bots: owner desktop route')
     }
   })
 
   ctx.inject(['bots'], (scope) => {
     scope.on('tools/pre-execute', async (call, next) => {
-      if (call.agent !== undefined && managedBotExecutionFor(call) === undefined
-        && await scope.bots.ownerBotForSession(call.agent.id) !== undefined) {
+      const bot = call.agent === undefined ? undefined : await scope.bots.ownerBotForSession(call.agent.id)
+      if (bot !== undefined && isManagedBot(bot.id) && managedBotExecutionFor(call) === undefined) {
         return { kind: 'deny', reason: 'The Bot’s VPS environment could not be bound to this Session.' }
       }
       return next()
     }, { prepend: true })
     scope.on('agent/created', async ({ agent }) => {
       const bot = await scope.bots.ownerBotForSession(agent.id)
-      if (bot === undefined) return
+      if (bot === undefined || !isDesktopBot(bot.id)) {
+        if (managedBotIds === undefined || legacyComputer === undefined) return
+        const canUseComputer = (): boolean => {
+          const preset = ctx.get('agentPresets')?.composedPreset(agent.ctx)
+          return preset !== undefined && /^(?:standard|cordis|ptc)$/u.test(preset)
+        }
+        if (!canUseComputer()) return
+        await agent.ctx.inject(ComputerTool.inject, (agentCtx) => {
+          ComputerTool.apply(agentCtx)
+          agentCtx.effect(() => agentCtx.tools.guard(exec => exec.name === 'vps_computer' && !canUseComputer()
+            ? 'This Agent preset cannot access the private Computer.'
+            : undefined), 'vps-bots: preserve legacy Computer guard')
+        })
+        return
+      }
+      if (!isManagedBot(bot.id)) {
+        await agent.ctx.inject(['tools', 'attachments', 'llm', 'systemPrompt'], (agentCtx) => {
+          agentCtx.systemPrompt.section({
+            name: 'app:vps-bot-desktop',
+            order: agentCtx.systemPrompt.getSectionOrder('WEB_SURFACE'),
+            text: () => 'Use vps_computer for visual interaction on your private VPS desktop. '
+              + 'Bash and file tools use your existing Session workspace and permissions.',
+          })
+          ComputerTool.applyVpsBotComputer(agentCtx, async (sessionId) => {
+            if (sessionId !== bot.sessionId) throw new Error('VPS Computer requires the owning Bot Session.')
+            return computerFor(sessionId)
+          })
+          if (journal !== undefined) registerVpsJournalTool(agentCtx, bot.id, bot.sessionId, journal, agent.ctx)
+        })
+        return
+      }
       await agent.ctx.inject(['tools', 'attachments', 'llm', 'systemPrompt', 'subprocess', 'sandboxPolicy'], async (agentCtx) => {
         const workspace = runtime.workspace(bot.sessionId)
         const managedContext = agentCtx.isolate('fs').isolate('subprocess').isolate('shell')
@@ -140,11 +209,12 @@ export function mountVpsBots(
             + 'Use Bash, file tools and vps_computer there; do not use the Chat session cwd. '
             + 'Host service access requires a separate grant. Mac permissions do not apply here.',
         })
-        applyVpsBotComputer(agentCtx, async (sessionId) => {
+        ComputerTool.applyVpsBotComputer(agentCtx, async (sessionId) => {
           if (sessionId !== bot.sessionId) throw new Error('VPS Computer requires the owning Bot Session.')
           return computerFor(sessionId)
         })
         registerVpsServiceTools(agentCtx, bot.id, services)
+        if (journal !== undefined) registerVpsJournalTool(agentCtx, bot.id, bot.sessionId, journal, agent.ctx)
       })
     })
   })

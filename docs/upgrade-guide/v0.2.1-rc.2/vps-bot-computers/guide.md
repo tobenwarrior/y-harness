@@ -11,7 +11,7 @@ The VPS installer assigns each Bot its own Linux computer. Previously, Bots used
 
 ## Migration
 
-1. Update the installed Y Harness checkout. Rerun the [VPS installer](../../../user/guide/vps.md#install-and-start) and restart the Web service when it is idle.
+1. Update the installed Y Harness checkout. Rerun the [VPS installer](../../../user/guide/vps.md#install-and-start), [select the Bots to move](../../../user/guide/vps.md#move-existing-bots-in-stages), and restart the Web service when it is idle.
 2. Reconnect to Cloud and open a Bot. Verify that its header shows its VPS computer and that **Computer** shows its desktop.
-3. Use `podman ps --filter label=io.yharness.vps.session=BOT_SESSION_ID` to identify the running computer. Copy reviewed working files into the computer with `podman cp ./reviewed-files/. CONTAINER:WORKSPACE/`, using the workspace path reported by the Bot’s shell. Copy any approved imported skills into the host-side `~/.yharness-vps/bots/BOT_SESSION_ID/.agents/skills` directory. Review routine prompts for old paths or direct network access before resuming them.
+3. For a Bot moving its shell and files, use `podman ps --filter label=io.yharness.vps.session=BOT_SESSION_ID` to identify the running computer. Copy reviewed working files into the computer with `podman cp ./reviewed-files/. CONTAINER:WORKSPACE/`, using the workspace path reported by the Bot’s shell. Copy any approved imported skills into the host-side `~/.yharness-vps/bots/BOT_SESSION_ID/.agents/skills` directory. Review routine prompts for old paths or direct network access before resuming them.
 4. Configure [service grants](../../../user/guide/vps.md#give-a-bot-access-to-service-diagnostics) for Bots that need service diagnostics or owner-approved restarts.

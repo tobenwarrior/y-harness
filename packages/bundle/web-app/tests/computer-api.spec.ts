@@ -1,9 +1,22 @@
 import { writeFile } from 'node:fs/promises'
+import type { ConnectionFetchRoute } from '@yharness/client-connection'
 import { describe, expect, it, vi } from 'vitest'
-import { botComputerRoutes, computerRoutes } from '../src/computer-api.ts'
+import { botComputerRoutes, botComputerRoutesWithLegacy, computerRoutes } from '../src/computer-api.ts'
 import { ComputerHost } from '../src/computer.ts'
 
 const viewerId = '11111111-1111-4111-8111-111111111111'
+
+function sender(routes: readonly ConnectionFetchRoute[]) {
+  return async (endpoint: string, payload: unknown): Promise<Response> => {
+    const route = routes.find(candidate => candidate.path === `/api/computer/${endpoint}`)
+    if (route === undefined) throw new Error('Missing Computer endpoint')
+    return route.fetch(new Request(`http://127.0.0.1${route.path}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    }))
+  }
+}
 
 function harness() {
   const computer = {
@@ -13,16 +26,7 @@ function harness() {
     input: vi.fn(async () => ({ mode: 'controlling' as const })),
   }
   const routes = computerRoutes(computer)
-  const send = async (endpoint: string, payload: unknown): Promise<Response> => {
-    const route = routes.find(candidate => candidate.path === `/api/computer/${endpoint}`)
-    if (route === undefined) throw new Error('Missing Computer endpoint')
-    return route.fetch(new Request(`http://127.0.0.1${route.path}`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(payload),
-    }))
-  }
-  return { computer, routes, send }
+  return { computer, routes, send: sender(routes) }
 }
 
 describe('Computer HTTP routes', () => {
@@ -80,16 +84,7 @@ describe('Computer HTTP routes', () => {
       },
     })
     const resolveComputer = vi.fn(async (sessionId: string) => sessionId === 'bot-session' ? computer : undefined)
-    const routes = botComputerRoutes(resolveComputer)
-    const send = async (endpoint: string, payload: unknown): Promise<Response> => {
-      const route = routes.find(candidate => candidate.path === `/api/computer/${endpoint}`)
-      if (route === undefined) throw new Error('Missing Bot Computer endpoint')
-      return route.fetch(new Request(`http://127.0.0.1${route.path}`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(payload),
-      }))
-    }
+    const send = sender(botComputerRoutes(resolveComputer))
     try {
       expect((await send('status', {})).status).toBe(400)
       expect(await (await send('status', { sessionId: 'bot-session' })).json()).toEqual({
@@ -105,6 +100,51 @@ describe('Computer HTTP routes', () => {
       expect(resolveComputer).toHaveBeenCalledWith('bot-session')
     } finally {
       await computer.dispose()
+    }
+  })
+
+  it('reports the server-selected Bot or legacy scope without trusting the session id as a fallback', async () => {
+    const managed = new ComputerHost({ display: ':managed', authorityPath: '/private/managed-xauthority' }, { run: async () => {} })
+    const legacy = new ComputerHost({ display: ':legacy', authorityPath: '/private/legacy-xauthority' }, { run: async () => {} })
+    const resolveTarget = vi.fn(async (sessionId: string) => {
+      if (sessionId === 'managed-session') return { computer: managed, id: 'bot-research', permissionScope: 'bot' as const }
+      if (sessionId === 'legacy-session' || sessionId === '') return { computer: legacy, id: 'shared-vps', permissionScope: 'workspace' as const }
+      return undefined
+    })
+    const managedRoutes = botComputerRoutesWithLegacy(resolveTarget)
+    const managedStatus = managedRoutes.find(candidate => candidate.path === '/api/computer/status')
+    if (managedStatus === undefined) throw new Error('Missing managed Computer status endpoint')
+    const missingSession = await managedStatus.fetch(new Request('http://127.0.0.1/api/computer/status', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
+    }))
+    expect(missingSession.status).toBe(400)
+    const send = sender(botComputerRoutesWithLegacy(resolveTarget, { allowMissingSession: true }))
+    try {
+      await expect((await send('status', { sessionId: 'managed-session' })).json()).resolves.toEqual({
+        available: true,
+        kind: 'vps',
+        computer: { id: 'bot-research', location: 'vps', permissionScope: 'bot' },
+      })
+      await expect((await send('status', { sessionId: 'legacy-session' })).json()).resolves.toEqual({
+        available: true,
+        kind: 'vps',
+        computer: { id: 'shared-vps', location: 'vps', permissionScope: 'workspace' },
+      })
+      await expect((await send('status', {})).json()).resolves.toEqual({
+        available: true,
+        kind: 'vps',
+        computer: { id: 'shared-vps', location: 'vps', permissionScope: 'workspace' },
+      })
+      await expect((await send('take-control', { viewerId, sessionId: 'managed-session' })).json()).resolves.toEqual({
+        mode: 'controlling',
+      })
+      expect((await send('status', { sessionId: 'unknown-session' })).status).toBe(200)
+      expect(resolveTarget).toHaveBeenCalledWith('managed-session')
+      expect(resolveTarget).toHaveBeenCalledWith('legacy-session')
+      expect(resolveTarget).toHaveBeenCalledWith('')
+    } finally {
+      await managed.dispose()
+      await legacy.dispose()
     }
   })
 })
