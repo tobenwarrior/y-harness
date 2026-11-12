@@ -84,7 +84,7 @@ describe('managed VPS Bot composition', () => {
       expect(managedBotExecutionFor({ agent: legacy })).toBeUndefined()
       expect(managedBotExecutionFor({ agent: desktop })).toBeUndefined()
       const desktopPrompt = renderPrompt(await ctx.systemPrompt.assemble({ scope: desktop }))
-      expect(desktopPrompt).toContain('existing Session workspace, shell, files and routine execution remain unchanged')
+      expect(desktopPrompt).toContain('Bash and file tools use your existing Session workspace and permissions.')
       expect(desktopPrompt).not.toContain('managed runtime workspace')
       expect(ctx.tools.get('vps_computer', bot)).toBeDefined()
       expect(ctx.tools.get('vps_computer', desktop)).toBeDefined()
