@@ -151,6 +151,9 @@
 }
 
 .setup {
+  --dsh-scrollbar-thumb: var(--yh-alias-scrollbar-bg-l2);
+  --dsh-scrollbar-thumb-hover: var(--yh-alias-scrollbar-hover-l2);
+
   width: min(100%, 430px);
   margin: auto;
   padding: 24px 18px;
@@ -174,8 +177,8 @@
 
 .permissionList {
   display: grid;
-  border: 1px solid var(--yh-alias-border-l2);
-  border-radius: 12px;
+  border: 0.5px solid var(--yh-alias-border-l2);
+  border-radius: var(--yh-radius-md);
 }
 
 .permission {
@@ -187,7 +190,7 @@
 }
 
 .permission + .permission {
-  border-top: 1px solid var(--yh-alias-border-l2);
+  border-top: 0.5px solid var(--yh-alias-border-l2);
 }
 
 .permission strong {

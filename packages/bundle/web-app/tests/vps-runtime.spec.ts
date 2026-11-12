@@ -852,8 +852,10 @@ describe('VpsRuntime', () => {
       expect(unsafe).not.toContain('XDG_RUNTIME_DIR=unsafe\u0000runtime')
 
       vi.stubEnv('HOME', undefined)
-      const absentHome = f.runtime.execArgv(sessions.alice, ['echo'])
-      expect(absentHome.some(value => value.startsWith('HOME='))).toBe(false)
+      vi.stubEnv('XDG_RUNTIME_DIR', undefined)
+      const absent = f.runtime.execArgv(sessions.alice, ['echo'])
+      expect(absent.some(value => value.startsWith('HOME='))).toBe(false)
+      expect(absent.some(value => value.startsWith('XDG_RUNTIME_DIR='))).toBe(false)
     } finally {
       vi.unstubAllEnvs()
     }

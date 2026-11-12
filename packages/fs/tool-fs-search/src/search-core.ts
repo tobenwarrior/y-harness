@@ -1,19 +1,13 @@
 /**
  * Shared execution plumbing for the `glob` / `grep` search tools: the
- * package-owned `SEARCH_*` error vocabulary, one spawn helper that runs the
- * PACKAGED ripgrep binary (`@vscode/ripgrep`) with a plain argv vector and
- * returns complete raw stdout, the best-effort formatted-result spill handoff,
- * and workdir-relative path display.
+ * package-owned `SEARCH_*` errors, bounded ripgrep output collection,
+ * formatted-result spill handoff, and workdir-relative path display.
  *
- * Both tools execute as ordinary foreground spawns through `ctx.subprocess` —
- * never `ctx.shell`, never `ctx.shell.start()`, never a model-visible background
- * task. The ripgrep binary ships inside the npm package, so no system `rg`
- * install is required, and no shell layer exists between the argv vector and
- * ripgrep, so no shell quoting is involved. Raw `rg` stdout is an internal
- * transport detail: the tools request a per-run stdout capture budget from the
- * subprocess seam, parse only complete in-memory stdout within
- * `rawOutputMaxBytes`, and never read spill files. The model-facing recovery
- * artifact is the formatted result saved through `ctx.spillStore.saveText()`
+ * Both tools use a foreground subprocess and an argv vector. Host searches
+ * use the packaged binary or runtime sidecar. Managed Bot searches use the
+ * Bot's subprocess provider and resolve ripgrep and paths in its workspace.
+ * The tools parse complete in-memory stdout within `rawOutputMaxBytes`. The
+ * model-facing recovery artifact is the formatted result saved through `ctx.spillStore.saveText()`
  * ({@link trySaveFormattedResult}).
  *
  * @module @yharness/tool-fs-search/search-core
@@ -77,9 +71,7 @@ function routeManagedSearchPath(execution: ReturnType<typeof managedBotExecution
   if (execution === undefined) return argv
   const separator = argv.indexOf('--')
   if (separator === -1 || separator + 1 >= argv.length) return argv
-  const path = argv[separator + 1]
-  if (path === undefined) return argv
-  return [...argv.slice(0, separator + 1), resolveManagedWorkdir(execution, path), ...argv.slice(separator + 2)]
+  return [...argv.slice(0, separator + 1), resolveManagedWorkdir(execution, argv[separator + 1]), ...argv.slice(separator + 2)]
 }
 
 /**
@@ -228,8 +220,8 @@ export function resolveRgPath(): Promise<string> {
  * `SEARCH_FAILED` with the original as `cause`; an abort already observed by
  * creation time becomes `SEARCH_ABORTED` instead.
  *
- * @param ctx - the plugin context; execution uses its `subprocess` service.
- * @param exec - the tool-execution context; supplies the session cwd and the abort signal.
+ * @param ctx - the plugin context supplying the ordinary subprocess provider.
+ * @param exec - the calling Session, managed execution binding, and abort signal.
  * @param toolName - `glob` or `grep`, used in error messages.
  * @param argv - the ripgrep arguments (every model value an unquoted argv element; no shell layer exists).
  * @param rawOutputMaxBytes - cap on the complete raw stdout the tool will parse.
