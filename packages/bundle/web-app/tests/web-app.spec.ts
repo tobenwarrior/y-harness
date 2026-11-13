@@ -121,7 +121,13 @@ describe('web-app runtime glue', () => {
     ctx.provide('webServer', fakeHttpServer().server)
     try {
       expect(() => {
-        apply(ctx, new Config({ vpsJournal: { socketPath: '/run/yharness-journal.sock', bots: ['test-bot'] } }))
+        apply(ctx, new Config({
+          surfaceContext: false,
+          printUrl: false,
+          openBrowser: false,
+          trustedHosts: [],
+          vpsJournal: { socketPath: '/run/yharness-journal.sock', bots: ['test-bot'] },
+        }))
       }).toThrow('VPS journal grants require managed Bot computers.')
     } finally {
       await ctx.fiber.dispose()
@@ -136,6 +142,7 @@ describe('web-app runtime glue', () => {
       surfaceContext: false,
       printUrl: false,
       openBrowser: false,
+      trustedHosts: [],
       botComputers: { root: '/var/lib/yharness-test', image: 'localhost/yharness-test', bots: ['test-bot'] },
     })
     try {
