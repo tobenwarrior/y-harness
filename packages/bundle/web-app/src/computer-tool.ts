@@ -6,6 +6,7 @@ import type { ContentBlock } from '@yharness/llm'
 import type { MacComputerBridge } from './mac-computer.ts'
 import { defineTool, type ToolExecution } from '@yharness/tools'
 import type { ComputerSignInResult } from './computer.ts'
+import type { VpsBrowserLoginResult } from './vps-browser-login.ts'
 
 /** Stable Cordis plugin name. */
 export const name = 'vps-computer-tool'
@@ -52,14 +53,16 @@ export function apply(ctx: Context): void {
  * @param resolve - Resolves the current owner Bot's desktop from the calling Session.
  * @param signIn - Optional handoff restricted to a direct owner turn.
  * @param navigate - Optional website navigation through the calling Bot's browser.
+ * @param savedLogin - Optional saved-login request restricted to a direct owner turn.
  */
 export function applyVpsBotComputer(
   ctx: Context,
   resolve: (sessionId: string) => Promise<ComputerAgentControls>,
   signIn?: ComputerToolTarget['signIn'],
   navigate?: ComputerToolTarget['navigate'],
+  savedLogin?: ComputerToolTarget['savedLogin'],
 ): void {
-  registerVpsComputer(ctx, resolve, 'this Bot’s private VPS desktop', signIn, navigate)
+  registerVpsComputer(ctx, resolve, 'this Bot’s private VPS desktop', signIn, navigate, savedLogin)
 }
 
 function registerVpsComputer(
@@ -68,6 +71,7 @@ function registerVpsComputer(
   desktop: string,
   signIn?: ComputerToolTarget['signIn'],
   navigate?: ComputerToolTarget['navigate'],
+  savedLogin?: ComputerToolTarget['savedLogin'],
 ): void {
   registerComputerTool(ctx, {
     name: 'vps_computer',
@@ -75,12 +79,14 @@ function registerVpsComputer(
       + 'Observe before targeting visible controls. The tool pauses while the user is in control.'
       + (signIn === undefined ? '' : ' For a website sign-in or verification that needs the owner, use request_sign_in. '
         + 'The owner uses the Computer directly. Never ask for a password or code in chat.')
-      + (navigate === undefined ? '' : ' Use navigate for an HTTP(S) website URL without credentials.'),
+      + (navigate === undefined ? '' : ' Use navigate for an HTTP(S) website URL without credentials.')
+      + (savedLogin === undefined ? '' : ' Use request_saved_login only in a direct owner Bot turn; verify the page after the request.'),
     keyDescription: 'X11 key or chord, for example Return or ctrl+a.',
     observe: async (sessionId, signal) => (await resolve(sessionId)).observe(signal),
     act: async (sessionId, action, signal) => (await resolve(sessionId)).actAsBot(action, signal),
     ...(signIn === undefined ? {} : { signIn }),
     ...(navigate === undefined ? {} : { navigate }),
+    ...(savedLogin === undefined ? {} : { savedLogin }),
   })
 }
 
@@ -109,6 +115,7 @@ interface ComputerToolTarget {
   act(sessionId: string, action: object, signal: AbortSignal): Promise<unknown>
   readonly signIn?: (agent: NonNullable<ToolExecution['agent']>, signal: AbortSignal) => Promise<ComputerSignInResult>
   readonly navigate?: (sessionId: string, url: string, signal: AbortSignal) => Promise<void>
+  readonly savedLogin?: (agent: NonNullable<ToolExecution['agent']>, signal: AbortSignal) => Promise<VpsBrowserLoginResult>
 }
 
 function registerComputerTool(ctx: Context, target: ComputerToolTarget): void {
@@ -120,11 +127,13 @@ function registerComputerTool(ctx: Context, target: ComputerToolTarget): void {
         type: 'string',
         enum: ['observe', 'move', 'click', 'drag', 'scroll', 'key', 'text',
           ...(target.signIn === undefined ? [] : ['request_sign_in' as const]),
-          ...(target.navigate === undefined ? [] : ['navigate' as const])],
+          ...(target.navigate === undefined ? [] : ['navigate' as const]),
+          ...(target.savedLogin === undefined ? [] : ['request_saved_login' as const])],
         required: true,
         description: 'Observe the screen or send one pointer, keyboard, or text action.'
           + (target.signIn === undefined ? '' : ' Request sign-in with no other arguments.')
-          + (target.navigate === undefined ? '' : ' Navigate with an HTTP(S) URL without credentials.'),
+          + (target.navigate === undefined ? '' : ' Navigate with an HTTP(S) URL without credentials.')
+          + (target.savedLogin === undefined ? '' : ' Request saved website login with no other arguments.'),
       },
       x: { type: 'integer', description: 'Horizontal pixel for move, click, drag, or scroll.' },
       y: { type: 'integer', description: 'Vertical pixel for move, click, drag, or scroll.' },
@@ -179,6 +188,20 @@ function registerComputerTool(ctx: Context, target: ComputerToolTarget): void {
         }
         await target.navigate(sessionId, values.url, exec.signal)
         return { message: 'Browser navigation sent.' }
+      }
+      if (action === 'request_saved_login') {
+        if (exec.agent === undefined || target.savedLogin === undefined || Object.keys(values).length !== 0) {
+          throw new Error('Saved website login takes no arguments and requires the owner Bot chat.')
+        }
+        const result = await target.savedLogin(exec.agent, exec.signal)
+        switch (result.state) {
+          case 'submitted':
+            return { message: 'The website received the sign-in submission. Check the page to see whether you’re signed in.' }
+          case 'needs-owner':
+            return { message: 'The website needs a manual sign-in or verification step.' }
+          case 'unavailable':
+            return { message: 'The saved login request ended. Ask the owner before trying again.' }
+        }
       }
       if (action !== 'observe') {
         await target.act(sessionId, { kind: action, ...values }, exec.signal)

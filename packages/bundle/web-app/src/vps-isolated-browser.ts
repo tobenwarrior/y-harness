@@ -10,6 +10,10 @@ const MAX_REQUEST_BYTES = 16 * 1024
 const MAX_RESPONSE_BYTES = 3 * 1024 * 1024
 const MAX_JPEG_BYTES = 2 * 1024 * 1024
 const URL_MAX_BYTES = 4_096
+const LOGIN_METADATA_MAX_BYTES = 4_096
+const LOGIN_ID_MAX_BYTES = 256
+const LOGIN_ID = /^[0-9a-f]{32}$/u
+const LOGIN_HOST_LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u
 
 const UNAUTHORIZED = 'This Bot is not authorized for the isolated browser.'
 const ABORTED = 'The isolated browser request was cancelled.'
@@ -26,6 +30,8 @@ export interface VpsIsolatedBrowserConfig {
   readonly socketPath: string
   /** Exact Bot roster ids allowed to use the browser service. */
   readonly bots: string[]
+  /** Whether the owner-approved saved-login flow is available to these Bots. */
+  readonly savedLogins?: boolean
 }
 
 /** Deterministic socket seam used by Host tests. */
@@ -42,10 +48,27 @@ interface AckResponse {
   readonly ok: true
 }
 
+/** Metadata shown only to the authenticated owner while a saved login is pending. */
+export interface VpsBrowserLoginRequest {
+  /** Opaque broker request identifier. */
+  readonly id: string
+  /** Website origin selected by the Bot's saved-login request. */
+  readonly origin: string
+  /** Exact same-origin website POST URL for the saved-login approval. */
+  readonly destination: string
+  /** The only creation state accepted from the broker. */
+  readonly state: 'pending'
+}
+
+/** State returned by saved-login status and cancellation operations. */
+export type VpsBrowserLoginState = 'pending' | 'submitted' | 'needs-owner' | 'unavailable'
+
 type Request =
   | { readonly action: 'status' | 'frame'; readonly bot: string; readonly session: string }
   | { readonly action: 'input'; readonly bot: string; readonly session: string; readonly input: ComputerAction }
   | { readonly action: 'navigate'; readonly bot: string; readonly session: string; readonly url: string }
+  | { readonly action: 'request-login'; readonly bot: string; readonly session: string }
+  | { readonly action: 'login-status' | 'cancel-login'; readonly bot: string; readonly session: string; readonly id: string }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -79,6 +102,54 @@ function decodeStatus(value: unknown): StatusResponse {
 function decodeAck(value: unknown): AckResponse {
   if (isRecord(value) && value.ok === true) return { ok: true }
   throw new Error(INVALID_RESPONSE)
+}
+
+function metadataString(value: unknown, maximumBytes: number): value is string {
+  return typeof value === 'string' && value.length > 0 && Buffer.byteLength(value, 'utf8') <= maximumBytes
+    && !/[\u0000-\u001f\u007f]/u.test(value)
+}
+
+function loginMetadata(originValue: unknown, destinationValue: unknown): Pick<VpsBrowserLoginRequest, 'origin' | 'destination'> | undefined {
+  if (!metadataString(originValue, LOGIN_METADATA_MAX_BYTES) || !metadataString(destinationValue, LOGIN_METADATA_MAX_BYTES)) {
+    return undefined
+  }
+  try {
+    const normalizedOrigin = validateIsolatedBrowserUrl(originValue)
+    const normalizedDestination = validateIsolatedBrowserUrl(destinationValue)
+    const originUrl = new URL(normalizedOrigin)
+    const destinationUrl = new URL(normalizedDestination)
+    const labels = originUrl.hostname.split('.')
+    if (originUrl.origin !== originValue || normalizedDestination !== destinationValue
+      || originUrl.protocol !== 'https:' || originUrl.pathname !== '/' || originUrl.search !== '' || originUrl.hash !== ''
+      || destinationUrl.protocol !== 'https:' || destinationUrl.origin !== originUrl.origin
+      || destinationUrl.search !== '' || destinationUrl.hash !== ''
+      || !destinationValue.startsWith(originUrl.origin + '/') || destinationValue.includes('?') || destinationValue.includes('#')
+      || labels.length < 2 || labels.some(label => !LOGIN_HOST_LABEL.test(label))
+      || /^\d+$/u.test(labels.at(-1) ?? '') || /(?:^|\.)(?:local|localhost|localdomain)$/u.test(originUrl.hostname)) {
+      return undefined
+    }
+    return { origin: originValue, destination: destinationValue }
+  } catch {
+    return undefined
+  }
+}
+
+function decodeLoginRequest(value: unknown): VpsBrowserLoginRequest {
+  const metadata = isRecord(value) ? loginMetadata(value.origin, value.destination) : undefined
+  if (!isRecord(value) || Object.keys(value).length !== 4 || value.state !== 'pending'
+    || !metadataString(value.id, LOGIN_ID_MAX_BYTES) || !LOGIN_ID.test(value.id)
+    || metadata === undefined) {
+    throw new Error(INVALID_RESPONSE)
+  }
+  return { id: value.id, origin: metadata.origin, destination: metadata.destination, state: 'pending' }
+}
+
+function decodeLoginState(value: unknown): VpsBrowserLoginState {
+  if (!isRecord(value) || Object.keys(value).length !== 1
+    || (value.state !== 'pending' && value.state !== 'submitted' && value.state !== 'needs-owner' && value.state !== 'unavailable')) {
+    throw new Error(INVALID_RESPONSE)
+  }
+  return value.state
 }
 
 function decodeFrame(value: unknown): Buffer {
@@ -198,6 +269,43 @@ export class VpsIsolatedBrowser {
   async navigate(bot: string, session: string, url: string, signal: AbortSignal): Promise<void> {
     const validatedUrl = validateUrl(url)
     await this.request({ action: 'navigate', bot, session: validateSession(session), url: validatedUrl }, decodeAck, signal)
+  }
+
+  /**
+   * Ask the broker to create one owner-approved saved-login request.
+   * @param bot - Authorized Bot roster id.
+   * @param session - Canonical Bot Session id.
+   * @param signal - Calling turn cancellation signal.
+   * @returns Pending owner-only request metadata.
+   */
+  async requestLogin(bot: string, session: string, signal: AbortSignal): Promise<VpsBrowserLoginRequest> {
+    return this.request({ action: 'request-login', bot, session: validateSession(session) }, decodeLoginRequest, signal)
+  }
+
+  /**
+   * Read one saved-login request state without exposing broker diagnostics.
+   * @param bot - Authorized Bot roster id.
+   * @param session - Canonical Bot Session id.
+   * @param id - Broker request identifier.
+   * @param signal - Calling turn cancellation signal.
+   * @returns Current request state.
+   */
+  async loginStatus(bot: string, session: string, id: string, signal: AbortSignal): Promise<VpsBrowserLoginState> {
+    if (!metadataString(id, LOGIN_ID_MAX_BYTES) || !LOGIN_ID.test(id)) throw new Error(INVALID_RESPONSE)
+    return this.request({ action: 'login-status', bot, session: validateSession(session), id }, decodeLoginState, signal)
+  }
+
+  /**
+   * Cancel one pending saved-login request.
+   * @param bot - Authorized Bot roster id.
+   * @param session - Canonical Bot Session id.
+   * @param id - Broker request identifier.
+   * @param signal - Cancellation for this cleanup exchange.
+   * @returns Broker's resulting request state.
+   */
+  async cancelLogin(bot: string, session: string, id: string, signal: AbortSignal): Promise<VpsBrowserLoginState> {
+    if (!metadataString(id, LOGIN_ID_MAX_BYTES) || !LOGIN_ID.test(id)) throw new Error(INVALID_RESPONSE)
+    return this.request({ action: 'cancel-login', bot, session: validateSession(session), id }, decodeLoginState, signal)
   }
 
   /**

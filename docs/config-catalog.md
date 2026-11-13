@@ -4478,6 +4478,8 @@ export interface VpsIsolatedBrowserConfig {
   readonly socketPath: string
   /** Exact Bot roster ids allowed to use the browser service. */
   readonly bots: string[]
+  /** Whether the owner-approved saved-login flow is available to these Bots. */
+  readonly savedLogins?: boolean
 }
 
 /** One exact Linux service and the Bots allowed to inspect it. */

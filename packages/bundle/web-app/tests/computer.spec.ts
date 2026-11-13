@@ -57,6 +57,23 @@ function fixture(): Fixture {
 }
 
 describe('private computer Host', () => {
+  it('admits a browser request only while the Bot controls the Computer', async () => {
+    const f = fixture()
+    const signal = new AbortController().signal
+    let calls = 0
+    const operation = async () => { calls++; return { pending: true } }
+    try {
+      await f.host.takeControl(viewers.alice)
+      await expect(f.host.runWhileBotControls(operation, signal)).rejects.toBeInstanceOf(ComputerLeaseError)
+      expect(calls).toBe(0)
+      await f.host.releaseControl(viewers.alice)
+      await expect(f.host.runWhileBotControls(operation, signal)).resolves.toEqual({ pending: true })
+      expect(calls).toBe(1)
+    } finally {
+      await f.dispose()
+    }
+  })
+
   it('gives the owner an exclusive sign-in handoff and resumes only after that viewer finishes', async () => {
     const f = fixture()
     try {

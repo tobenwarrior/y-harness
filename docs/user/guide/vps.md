@@ -136,7 +136,15 @@ isolatedBrowser:
   bots: [bot-worker]
 ```
 
-Reload Cloud when its tasks are idle. Ask the Bot to open a public website, or open its **Computer** panel, choose **Take control**, and enter a website address. **Hand back** lets the Bot resume. This panel shows website content. Use the Firefox workflow above for private sign-in handoff while saved-login support is pending.
+Reload Cloud when its tasks are idle. Ask the Bot to open a public website, or open its **Computer** panel, choose **Take control**, and enter a website address. **Hand back** lets the Bot resume. This panel shows website content. The Firefox desktop above supports a manual sign-in handoff for sites that require your input.
+
+### Approve a saved website login
+
+Use the Mac app's **Cloud → Vault → Websites** to save a login. Enable `--saved-logins` when installing the isolated browser worker and set `botComputers.isolatedBrowser.savedLogins` to `true` in the private Web profile. Both options default to off. Stop an existing browser worker and its sockets before running the installer again. The Mac app, Web release, and installed VPS Vault script all need to support saved login approvals.
+
+In a direct Bot chat, ask the Bot to sign in with your saved login. Open **Approve sign-in**, check the website and destination, select the login, and approve. The Bot receives the outcome and can check whether the website signed in. The request expires after five minutes. Declining or stopping the turn releases the browser.
+
+Saved login approval supports a single HTTPS sign-in form that submits to the same website. Sites using single sign-on, passkeys, or a separate verification step may require manual sign-in. Removing or replacing a Vault entry prevents use of the old value. Sign out at the website to end an existing browser session.
 
 ## Give a Bot access to service diagnostics
 
@@ -188,7 +196,7 @@ Run `sudo /usr/local/sbin/yharness-vault deny-desktop` to remove Desktop managem
 
 Install the current VPS Vault command and update the Mac app. In **Cloud → Vault → Websites**, choose **Add login**. Enter the HTTPS website, a label you can recognize, and the account details. Vault binds each login to that exact HTTPS host and port. The list shows the website and label. To update a login, choose **Replace** and enter the current account details again. Choose **Remove** to delete it from Vault.
 
-Website logins are encrypted on the VPS and available for owner management. Use [Computer sign-in handoff](#enable-firefox-for-selected-bots) to sign in on a Bot's desktop. Removing a saved login leaves existing website sessions active until you sign out or revoke them with the website.
+Website logins are encrypted on the VPS. You can [approve a saved login](#approve-a-saved-website-login) from a direct Bot chat with the isolated browser enabled.
 
 ### Let a Bot request a key in chat
 

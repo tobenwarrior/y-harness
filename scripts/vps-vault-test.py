@@ -11,6 +11,7 @@ import tempfile
 import unittest
 import warnings
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 SPEC = importlib.util.spec_from_file_location('vps_vault', Path(__file__).with_name('vps-vault.py'))
@@ -484,6 +485,212 @@ class VaultTest(unittest.TestCase):
             self.store.use_website_login(login['id'], login['origin'], fail_with_secret)
         self.assertEqual(str(failure.exception), vault.WEBSITE_LOGIN_UNAVAILABLE)
         self.assertNotIn('private', str(failure.exception))
+
+    def test_desktop_login_use_actions_are_exact_and_cloud_cannot_call_them(self):
+        inspect = {'action': 'inspect-login-use', 'id': 'a' * 32}
+        approve = {'action': 'approve-login-use', 'id': 'a' * 32, 'loginId': 'b' * 32,
+                   'generation': 'c' * 64}
+        self.assertEqual(vault.desktop_request(json.dumps(inspect).encode()), inspect)
+        self.assertEqual(vault.desktop_request(json.dumps(approve).encode()), approve)
+        decline = {'action': 'decline-login-use', 'id': 'a' * 32}
+        self.assertEqual(vault.desktop_request(json.dumps(decline).encode()), decline)
+        for malformed in (
+            {'action': 'inspect-login-use', 'id': 'A' * 32},
+            {'action': 'inspect-login-use', 'id': 'a' * 32, 'extra': 1},
+            {'action': 'approve-login-use', 'id': 'a' * 32, 'loginId': 'b' * 31, 'generation': 'c' * 64},
+            {'action': 'approve-login-use', 'id': 'a' * 32, 'loginId': 'b' * 32, 'generation': 'c' * 63},
+            {'action': 'approve-login-use', 'id': 'a' * 32, 'loginId': 'b' * 32, 'generation': 'c' * 64, 'extra': 1},
+            {'action': 'decline-login-use', 'id': 'a' * 32, 'extra': 1},
+        ):
+            with self.subTest(request=malformed), self.assertRaises(vault.VaultError):
+                vault.desktop_request(json.dumps(malformed).encode())
+        for request in (inspect, approve, decline):
+            with self.subTest(action=request['action']), self.assertRaises(vault.VaultError):
+                vault.cloud_request(json.dumps(request).encode())
+
+    def test_browser_login_metadata_requires_exact_same_origin_post_destination(self):
+        request_id = 'a' * 32
+        valid = {
+            'id': request_id, 'origin': 'https://example.com:8443',
+            'destination': 'https://example.com:8443/login', 'state': 'pending',
+        }
+        self.assertEqual(vault.browser_login_inspection(json.dumps(valid).encode(), request_id), valid)
+        for destination in (
+            'https://other.example/login', 'http://example.com:8443/login',
+            'https://example.com:8443/login?next=1', 'https://example.com:8443/login#fragment',
+            'https://example.com:8443/login\\escape', 'https://example.com:8443/login with-space',
+            'https://example.com:8443/login\n',
+            'https://example.com:8443/login' + ('x' * vault.WEBSITE_LOGIN_DESTINATION_LIMIT),
+        ):
+            with self.subTest(destination=destination), self.assertRaises(vault.VaultError):
+                vault.browser_login_inspection(json.dumps({**valid, 'destination': destination}).encode(), request_id)
+
+    def test_browser_socket_peer_uses_the_dedicated_worker_account(self):
+        with patch.object(vault.pwd, 'getpwnam', return_value=SimpleNamespace(pw_uid=23003)) as lookup:
+            self.assertEqual(vault.browser_peer_uid(), 23003)
+        lookup.assert_called_once_with(vault.BROWSER_ACCOUNT)
+        for account in (SimpleNamespace(pw_uid=0), SimpleNamespace(pw_uid='23003')):
+            with patch.object(vault.pwd, 'getpwnam', return_value=account), self.assertRaises(vault.VaultError):
+                vault.browser_peer_uid()
+        with patch.object(vault.pwd, 'getpwnam', side_effect=KeyError), self.assertRaises(vault.VaultError):
+            vault.browser_peer_uid()
+
+    def test_desktop_login_use_requires_the_current_owner_before_contacting_browser(self):
+        self.store.allow_desktop(OWNER_UID, CLOUD_UID, [])
+        request = {'action': 'inspect-login-use', 'id': 'a' * 32}
+        with patch.object(vault, 'browser_client') as browser:
+            for requester in (OWNER_UID + 1, CLOUD_UID):
+                with self.subTest(requester=requester), self.assertRaises(vault.VaultError):
+                    self.store.desktop(request, requester)
+            browser.assert_not_called()
+
+    def test_desktop_login_use_inspects_browser_metadata_and_matching_saved_logins(self):
+        self.store.allow_desktop(OWNER_UID, CLOUD_UID, [])
+        self.store.desktop({
+            'action': 'add-login', 'origin': 'https://example.com', 'label': 'Example',
+            'username': 'owner', 'password': 'private',
+        }, OWNER_UID)
+        self.store.desktop({
+            'action': 'add-login', 'origin': 'https://other.example', 'label': 'Other',
+            'username': 'other', 'password': 'other-private',
+        }, OWNER_UID)
+        logins = self.store.desktop({'action': 'list-logins'}, OWNER_UID)['logins']
+        example_login = next(login for login in logins if login['origin'] == 'https://example.com')
+        record = next(record for record in self.store.website_login_records() if record['id'] == example_login['id'])
+        generation = vault.website_login_generation(record)
+        request_id = 'a' * 32
+        destination = 'https://example.com/login'
+        calls = []
+
+        def browser(payload):
+            calls.append(json.loads(payload))
+            return json.dumps({
+                'id': request_id, 'origin': 'https://example.com', 'destination': destination, 'state': 'pending',
+            }).encode()
+
+        with patch.object(vault, 'browser_client', side_effect=browser):
+            result = self.store.desktop({'action': 'inspect-login-use', 'id': request_id}, OWNER_UID)
+
+        self.assertEqual(result, {'request': {
+            'id': request_id, 'origin': 'https://example.com', 'destination': destination,
+            'logins': [{'id': example_login['id'], 'label': 'Example', 'generation': generation}],
+        }})
+        self.assertEqual(calls, [{'action': 'inspect-login', 'id': request_id}])
+        self.assertNotIn('private', json.dumps(result))
+
+    def test_desktop_login_use_approves_after_reinspection_and_delivers_only_to_browser(self):
+        self.store.allow_desktop(OWNER_UID, CLOUD_UID, [])
+        self.store.desktop({
+            'action': 'add-login', 'origin': 'https://example.com', 'label': 'Example',
+            'username': 'owner', 'password': 'private',
+        }, OWNER_UID)
+        login = self.store.desktop({'action': 'list-logins'}, OWNER_UID)['logins'][0]
+        generation = next(record for record in self.store.website_login_records() if record['id'] == login['id'])
+        generation = vault.website_login_generation(generation)
+        request_id = 'a' * 32
+        destination = 'https://example.com/login'
+        calls = []
+
+        def browser(payload):
+            request = json.loads(payload)
+            calls.append(request)
+            if request['action'] == 'inspect-login':
+                return json.dumps({
+                    'id': request_id, 'origin': 'https://example.com', 'destination': destination, 'state': 'pending',
+                }).encode()
+            self.assertEqual(request, {
+                'action': 'use-login', 'id': request_id, 'origin': 'https://example.com',
+                'username': 'owner', 'password': 'private',
+            })
+            return b'{"state":"submitted"}'
+
+        with patch.object(vault, 'browser_client', side_effect=browser):
+            result = self.store.desktop({
+                'action': 'approve-login-use', 'id': request_id, 'loginId': login['id'], 'generation': generation,
+            }, OWNER_UID)
+
+        self.assertEqual(result, {'state': 'submitted'})
+        self.assertEqual([request['action'] for request in calls], ['inspect-login', 'use-login'])
+        self.assertEqual(len(self.decrypt_calls), 1)
+
+    def test_desktop_login_use_rejects_wrong_origin_and_stale_generation_before_decrypting(self):
+        self.store.allow_desktop(OWNER_UID, CLOUD_UID, [])
+        self.store.desktop({
+            'action': 'add-login', 'origin': 'https://example.com', 'label': 'Example',
+            'username': 'owner', 'password': 'private',
+        }, OWNER_UID)
+        login = self.store.desktop({'action': 'list-logins'}, OWNER_UID)['logins'][0]
+        record = next(record for record in self.store.website_login_records() if record['id'] == login['id'])
+        generation = vault.website_login_generation(record)
+        request_id = 'a' * 32
+
+        def wrong_origin(payload):
+            self.assertEqual(json.loads(payload), {'action': 'inspect-login', 'id': request_id})
+            return b'{"id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","origin":"https://other.example","destination":"https://other.example/login","state":"pending"}'
+
+        with patch.object(vault, 'browser_client', side_effect=wrong_origin):
+            result = self.store.desktop({
+                'action': 'approve-login-use', 'id': request_id, 'loginId': login['id'], 'generation': generation,
+            }, OWNER_UID)
+        self.assertEqual(result, {'state': 'unavailable'})
+        self.assertEqual(self.decrypt_calls, [])
+
+        self.store.desktop({
+            'action': 'replace-login', 'id': login['id'], 'label': 'Rotated',
+            'username': 'new-owner', 'password': 'new-private',
+        }, OWNER_UID)
+        with patch.object(vault, 'browser_client', return_value=b'{"id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","origin":"https://example.com","destination":"https://example.com/login","state":"pending"}'):
+            result = self.store.desktop({
+                'action': 'approve-login-use', 'id': request_id, 'loginId': login['id'], 'generation': generation,
+            }, OWNER_UID)
+        self.assertEqual(result, {'state': 'unavailable'})
+        self.assertEqual(self.decrypt_calls, [])
+
+    def test_desktop_login_use_decline_cancels_the_browser_request_without_diagnostics(self):
+        self.store.allow_desktop(OWNER_UID, CLOUD_UID, [])
+        request_id = 'a' * 32
+        calls = []
+
+        def browser(payload):
+            calls.append(json.loads(payload))
+            return b'{"state":"submitted","extra":"private"}'
+
+        with patch.object(vault, 'browser_client', side_effect=browser):
+            result = self.store.desktop({'action': 'decline-login-use', 'id': request_id}, OWNER_UID)
+        self.assertEqual(result, {'state': 'unavailable'})
+        self.assertEqual(calls, [{'action': 'cancel-login', 'id': request_id}])
+
+    def test_desktop_login_use_sanitizes_invalid_browser_metadata_and_delivery_errors(self):
+        self.store.allow_desktop(OWNER_UID, CLOUD_UID, [])
+        self.store.desktop({
+            'action': 'add-login', 'origin': 'https://example.com', 'label': 'Example',
+            'username': 'owner', 'password': 'private',
+        }, OWNER_UID)
+        login = self.store.desktop({'action': 'list-logins'}, OWNER_UID)['logins'][0]
+        record = next(record for record in self.store.website_login_records() if record['id'] == login['id'])
+        request_id = 'a' * 32
+        generation = vault.website_login_generation(record)
+
+        with patch.object(vault, 'browser_client', return_value=b'{"id":"a","origin":"https://example.com","destination":"https://other.example/login","state":"pending"}'):
+            with self.assertRaises(vault.VaultError) as failure:
+                self.store.desktop({'action': 'inspect-login-use', 'id': request_id}, OWNER_UID)
+        self.assertNotIn('private', str(failure.exception))
+
+        def browser(payload):
+            request = json.loads(payload)
+            if request['action'] == 'inspect-login':
+                return json.dumps({
+                    'id': request_id, 'origin': 'https://example.com',
+                    'destination': 'https://example.com/login', 'state': 'pending',
+                }).encode()
+            raise RuntimeError('private')
+
+        with patch.object(vault, 'browser_client', side_effect=browser):
+            result = self.store.desktop({
+                'action': 'approve-login-use', 'id': request_id, 'loginId': login['id'], 'generation': generation,
+            }, OWNER_UID)
+        self.assertEqual(result, {'state': 'unavailable'})
+        self.assertEqual(len(self.decrypt_calls), 1)
 
     @unittest.skipUnless(hasattr(socket, 'SO_PEERCRED'), 'Linux UNIX peer credentials')
     def test_desktop_peer_identity_comes_from_the_connected_socket(self):

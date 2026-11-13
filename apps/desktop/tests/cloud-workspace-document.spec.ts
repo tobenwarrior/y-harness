@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { cloudAction, cloudDocument, cloudRequestAllowed, cloudSignInCookie, cloudVaultRequestId } from '../src/cloud-workspace-document.ts'
+import { cloudAction, cloudDocument, cloudRequestAllowed, cloudSignInCookie, cloudVaultRequestId, cloudWebsiteLoginUseRequestId } from '../src/cloud-workspace-document.ts'
 import { en } from '../src/locale.ts'
 
 it('accepts workspace actions only from the private control document', () => {
@@ -47,6 +47,19 @@ it('accepts only an exact authenticated Cloud Vault request link', () => {
   expect(cloudVaultRequestId(origin, `${origin}/__yharness/vault-request/${id.toUpperCase()}`)).toBeUndefined()
   expect(cloudVaultRequestId(origin, `${origin}/__yharness/vault-request/${'b'.repeat(31)}`)).toBeUndefined()
   expect(cloudVaultRequestId(origin, `http://127.0.0.1:1235/__yharness/vault-request/${id}`)).toBeUndefined()
+})
+
+it('accepts only an exact authenticated website-login approval link', () => {
+  const origin = 'http://127.0.0.1:1234'
+  const id = 'a'.repeat(32)
+  expect(cloudWebsiteLoginUseRequestId(origin, `${origin}/__yharness/vault-login-use/${id}`)).toBe(id)
+  for (const suffix of [
+    '?next=/vault', '#request', `/${id}`,
+  ]) {
+    expect(cloudWebsiteLoginUseRequestId(origin, `${origin}/__yharness/vault-login-use/${id}${suffix}`)).toBeUndefined()
+  }
+  expect(cloudWebsiteLoginUseRequestId(origin, `http://user@127.0.0.1:1234/__yharness/vault-login-use/${id}`)).toBeUndefined()
+  expect(cloudWebsiteLoginUseRequestId(origin, `${origin}/__yharness/vault-login-use/${id.toUpperCase()}`)).toBeUndefined()
 })
 
 it('accepts only a Y Harness login cookie from a redirect to the clean workspace', () => {

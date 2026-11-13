@@ -19,6 +19,8 @@ const PROVIDER = 'browser-fixture'
 const MODEL = 'reply'
 const WEBSITE = 'https://example.test/'
 const REPLY = 'I opened the website.'
+const LOGIN = { id: 'a'.repeat(32), origin: 'https://example.test', destination: 'https://example.test/session', state: 'pending' }
+const LOGIN_REPLY = 'The login was submitted. I’ll check the page.'
 
 class BrowserAdapter extends LlmAdapter {
   override async listModels(provider: string) {
@@ -26,11 +28,13 @@ class BrowserAdapter extends LlmAdapter {
   }
 
   override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
-    const result = options.messages.findLast(message => message.role === 'tool')
+    const latestUser = options.messages.findLastIndex(message => message.role === 'user')
+    const savedLogin = options.messages[latestUser]?.content.some(block => block.type === 'text' && block.text.includes('saved login')) === true
+    const result = options.messages.slice(latestUser + 1).findLast(message => message.role === 'tool')
     if (result === undefined) {
-      const id = ToolCallId('fixture-browser-navigation')
+      const id = ToolCallId(savedLogin ? 'fixture-browser-login' : 'fixture-browser-navigation')
       const name = 'vps_computer'
-      const args = JSON.stringify({ action: 'navigate', url: WEBSITE })
+      const args = JSON.stringify(savedLogin ? { action: 'request_saved_login' } : { action: 'navigate', url: WEBSITE })
       expect(options.tools?.some(tool => tool.name === name)).toBe(true)
       yield { type: 'block-start', index: 0, blockType: 'tool-call' }
       yield { type: 'tool-call-delta', index: 0, id, name, argumentsDelta: args }
@@ -38,10 +42,17 @@ class BrowserAdapter extends LlmAdapter {
       yield { type: 'finish', reason: { kind: 'tool-calls' } }
       return
     }
-    expect(result.content.some(block => block.type === 'text' && block.text.includes('Browser'))).toBe(true)
+    if (savedLogin) {
+      expect(result.content.some(block => block.type === 'text' && /sign-in submission/iu.test(block.text))).toBe(true)
+      expect(JSON.stringify(result)).not.toContain(LOGIN.destination)
+      expect(JSON.stringify(result)).not.toContain(LOGIN.id)
+    } else {
+      expect(result.content.some(block => block.type === 'text' && block.text.includes('Browser'))).toBe(true)
+    }
+    const text = savedLogin ? LOGIN_REPLY : REPLY
     yield { type: 'block-start', index: 0, blockType: 'text' }
-    yield { type: 'text-delta', index: 0, text: REPLY }
-    yield { type: 'block-end', index: 0, block: { type: 'text', text: REPLY } }
+    yield { type: 'text-delta', index: 0, text }
+    yield { type: 'block-end', index: 0, block: { type: 'text', text } }
     yield { type: 'finish', reason: { kind: 'stop' } }
   }
 }
@@ -52,13 +63,14 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('opens websites for
   const overlay = join(root, 'browser.yml')
   const socketPath = join(root, 'browser.sock')
   const websites: string[] = []
+  let loginApproved = false
   let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined
   let scaffold: Awaited<ReturnType<typeof launchWebScaffold>> | undefined
   let socketServer: ReturnType<typeof createServer> | undefined
   const sockets = new Set<import('node:net').Socket>()
   try {
     const runtime = browser = await chromium.launch()
-    const page = await runtime.newPage({ locale: 'en-US', viewport: { width: 1180, height: 900 } })
+    const page = await runtime.newPage({ locale: 'en-US', userAgent: 'YHarnessCloudDesktop/1', viewport: { width: 1180, height: 900 } })
     const consoleLog = watchConsole(page)
     const jpeg = await page.evaluate(() => {
       const image = document.createElement('canvas')
@@ -82,8 +94,14 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('opens websites for
       socket.once('end', () => {
         const request = JSON.parse(body) as { action: string; url?: string }
         if (request.action === 'navigate' && request.url !== undefined) websites.push(request.url)
-        const response = request.action === 'status' ? { available: true }
-          : request.action === 'frame' ? { jpeg, width: 1280, height: 800 } : { ok: true }
+        let response: object
+        switch (request.action) {
+          case 'status': response = { available: true }; break
+          case 'frame': response = { jpeg, width: 1280, height: 800 }; break
+          case 'request-login': response = LOGIN; break
+          case 'login-status': response = { state: loginApproved ? 'submitted' : 'pending' }; break
+          default: response = { ok: true }
+        }
         socket.end(JSON.stringify(response))
       })
     })
@@ -95,7 +113,7 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('opens websites for
     `)
     await writeFile(overlay, JSON.stringify([{ insert: [{ id: 'isolated-browser-fixture', name: pathToFileURL(runtimePath).href,
       config: { root: join(root, 'bots'), image: 'localhost/yharness-test', bots: [BOT], desktopOnlyBots: [BOT],
-        isolatedBrowser: { bots: [BOT], socketPath } },
+        isolatedBrowser: { bots: [BOT], socketPath, savedLogins: true } },
     }] }]))
     const web = scaffold = await launchWebScaffold({ extraOverlayPath: overlay, replayFixture: FIXTURE, replayProvidersOnly: true, toolsMode: 'native' })
     const adapter = new BrowserAdapter()
@@ -129,8 +147,25 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('opens websites for
       body: JSON.stringify({ sessionId: bot.sessionId, viewerId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', url: WEBSITE }),
     })
     expect(unauthorized.status).toBe(401)
+    await panel.getByRole('button', { name: 'Close computer panel' }).click()
+    await conversation.locator('[data-composer-input][contenteditable="true"]').fill('Use my saved login.')
+    await conversation.getByRole('button', { name: 'Send message', exact: true }).click()
+    const loginSelector = 'section[aria-label="Approve website sign-in"]'
+    const approval = page.locator(loginSelector)
+    await approval.waitFor()
+    expect(await approval.locator('input').count()).toBe(0)
+    const approvalLink = await approval.getByRole('link', { name: 'Approve sign-in' }).getAttribute('href')
+    expect(approvalLink).toBe(`/__yharness/vault-login-use/${LOGIN.id}`)
+    const loginRoute = `/api/bot-website-login?sessionId=${bot.sessionId}`
+    expect((await fetch(new URL(loginRoute, web.baseUrl))).status).toBe(401)
+    const loginMetadata = { id: LOGIN.id, origin: LOGIN.origin, destination: LOGIN.destination }
+    expect(await (await web.hostFetch(loginRoute)).json()).toEqual({ request: loginMetadata })
+    const review = await captureStableAria(page, loginSelector, web.workspaceCwd, { replacements: [[LOGIN.id, '{{id}}']] })
+    loginApproved = true
+    await conversation.getByText(LOGIN_REPLY, { exact: true }).waitFor()
+    await approval.waitFor({ state: 'hidden' })
     expect(consoleLog.pageErrors).toEqual([])
-    await compareOrRefreshGolden(GOLDEN, `## In control\n\n${controlling}\n\n## Watching\n\n${viewing}`, MODE)
+    await compareOrRefreshGolden(GOLDEN, `## In control\n\n${controlling}\n\n## Watching\n\n${viewing}\n\n## Saved login approval\n\n${review}`, MODE)
   } finally {
     try { await browser?.close() }
     finally {

@@ -13,6 +13,7 @@ import * as ComputerTool from './computer-tool.ts'
 import { botComputerRoutesWithLegacy, computerSignInRoute } from './computer-api.ts'
 import { VpsRuntime, type VpsBrowserOptions } from './vps-runtime.ts'
 import { VpsIsolatedBrowser, type VpsIsolatedBrowserConfig } from './vps-isolated-browser.ts'
+import { VpsBrowserLogin, vpsBrowserLoginRoute } from './vps-browser-login.ts'
 import { registerVpsServiceTools, VpsServices, type VpsServiceAccess } from './vps-services.ts'
 import { registerVpsJournalTool, VpsJournal, type VpsJournalConfig } from './vps-journal.ts'
 
@@ -80,9 +81,17 @@ export function mountVpsBots(
   const isolatedBrowser = config.isolatedBrowser == null
     ? undefined
     : new VpsIsolatedBrowser(config.isolatedBrowser)
+  const browserLogin = isolatedBrowser === undefined || config.isolatedBrowser?.savedLogins !== true
+    ? undefined
+    : new VpsBrowserLogin(isolatedBrowser)
   if ([...browserBotIds].some(hasBrowserSignIn)) {
     ctx.on('webserver/index-inject', (table) => {
       table.push({ kind: 'global', name: '__YH_BOT_COMPUTER_SIGN_IN__', value: true })
+    })
+  }
+  if (browserLogin !== undefined) {
+    ctx.on('webserver/index-inject', (table) => {
+      table.push({ kind: 'global', name: '__YH_BOT_WEBSITE_LOGIN__', value: true })
     })
   }
   const runtimeFor = (botId: string): VpsRuntime =>
@@ -105,6 +114,7 @@ export function mountVpsBots(
   ctx.effect(() => async () => {
     const active = [...computers.values()]
     computers.clear()
+    await browserLogin?.dispose()
     await Promise.all(active.map(computer => computer.dispose()))
   }, 'vps-bots: dispose desktop controllers')
 
@@ -140,6 +150,9 @@ export function mountVpsBots(
   }
 
   ctx.inject(['bots', 'connection'], (scope) => {
+    if (browserLogin !== undefined) {
+      scope.effect(() => scope.connection.fetch.register(vpsBrowserLoginRoute(scope, browserLogin)), 'vps-bots: owner saved-login metadata')
+    }
     scope.effect(() => scope.connection.fetch.register(computerSignInRoute(async (sessionId) => {
       const bot = await scope.bots.ownerBotForSession(sessionId)
       if (bot?.state !== 'active' || !hasBrowserSignIn(bot.id)) return undefined
@@ -218,6 +231,13 @@ export function mountVpsBots(
           } : undefined, isolatedBrowserBotIds.has(bot.id) ? (sessionId, url, signal) => {
             if (sessionId !== bot.sessionId) throw new Error('VPS Computer requires the owning Bot Session.')
             return navigateFor(bot.id, sessionId, url, signal)
+          } : undefined, browserLogin !== undefined && isolatedBrowserBotIds.has(bot.id) ? async (caller, signal) => {
+            if (caller !== agent || !await scope.bots.isDirectOwnerTurn(caller, signal)) {
+              throw new Error('Saved website login is available in a direct owner Bot chat.')
+            }
+            const computer = await computerFor(bot.sessionId, bot.id)
+            return browserLogin.request(bot.id, bot.sessionId,
+              (operation, requestSignal) => computer.runWhileBotControls(operation, requestSignal), signal)
           } : undefined)
           if (journal !== undefined) registerVpsJournalTool(agentCtx, bot.id, bot.sessionId, journal, agent.ctx)
         })
@@ -280,6 +300,13 @@ export function mountVpsBots(
         }, undefined, isolatedBrowserBotIds.has(bot.id) ? (sessionId, url, signal) => {
           if (sessionId !== bot.sessionId) throw new Error('VPS Computer requires the owning Bot Session.')
           return navigateFor(bot.id, sessionId, url, signal)
+        } : undefined, browserLogin !== undefined && isolatedBrowserBotIds.has(bot.id) ? async (caller, signal) => {
+          if (caller !== agent || !await scope.bots.isDirectOwnerTurn(caller, signal)) {
+            throw new Error('Saved website login is available in a direct owner Bot chat.')
+          }
+          const computer = await computerFor(bot.sessionId, bot.id)
+          return browserLogin.request(bot.id, bot.sessionId,
+            (operation, requestSignal) => computer.runWhileBotControls(operation, requestSignal), signal)
         } : undefined)
         registerVpsServiceTools(agentCtx, bot.id, services)
         if (journal !== undefined) registerVpsJournalTool(agentCtx, bot.id, bot.sessionId, journal, agent.ctx)

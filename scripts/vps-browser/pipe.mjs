@@ -2,13 +2,14 @@
 
 import { spawn } from 'node:child_process'
 import { mkdir, mkdtemp, rm, lstat } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { isAbsolute, join, resolve } from 'node:path'
 
 const MAX_MESSAGE_BYTES = 16 * 1024 * 1024
 const COMMAND_TIMEOUT_MS = 12_000
 const TERMINATION_GRACE_MS = 1_000
 const DEFAULT_PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
-const TEMP_PREFIX = '.yharness-browser-tmp-'
+const TEMP_PREFIX = 'yh-browser-'
 
 const ERROR_MESSAGES = Object.freeze({
   launch: 'Browser launch failed.',
@@ -106,9 +107,9 @@ async function privateProfile(profile) {
   return path
 }
 
-async function runtimeDirectory(profile) {
+async function runtimeDirectory() {
   try {
-    const path = await mkdtemp(join(profile, TEMP_PREFIX))
+    const path = await mkdtemp(join(tmpdir(), TEMP_PREFIX))
     await Promise.all(['config', 'cache', 'data', 'state', 'runtime']
       .map(directory => mkdir(join(path, directory), { mode: 0o700 })))
     return path
@@ -413,7 +414,7 @@ export async function launchBrowser(executable, profile, options = {}) {
     if (!checkString(executable)) throw launchError()
     profilePath = await privateProfile(profile)
     const overrides = checkEnvironment(options?.env)
-    temporary = await runtimeDirectory(profilePath)
+    temporary = await runtimeDirectory()
     const environment = browserEnvironment(overrides, profilePath, temporary)
     const child = spawn(executable, browserArguments(profilePath), {
       env: environment,

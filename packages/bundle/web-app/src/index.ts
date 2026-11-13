@@ -138,6 +138,7 @@ export const Config: z<Config> = z.object({
         z.object({
           socketPath: z.string().required(),
           bots: z.array(String).required(),
+          savedLogins: z.boolean(),
         }),
         z.const(null),
       ]),

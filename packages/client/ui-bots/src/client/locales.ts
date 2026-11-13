@@ -673,6 +673,11 @@ export const en = {
   vaultRequestDesktopOnly: 'Open this chat in the Y Harness desktop app to enter the key securely.',
   vaultRequestSaved: 'Saved securely',
   vaultRequestCancelled: 'Request cancelled',
+  websiteLoginRequestTitle: 'Approve website sign-in',
+  websiteLoginOrigin: 'Website',
+  websiteLoginDestination: 'Destination',
+  websiteLoginOpenDesktop: 'Approve sign-in',
+  websiteLoginDesktopOnly: 'Open this chat in the Y Harness desktop app to approve the sign-in securely.',
 } as const
 
 /** Keys owned by the bot workspace dictionary. */

@@ -547,7 +547,7 @@ export class VpsComputer {
    */
   async actAsBot(action: unknown, signal?: AbortSignal): Promise<void> {
     const normalized = validateComputerAction(action)
-    return this.admitBot(() => this.execute(normalized, signal), signal)
+    return this.runWhileBotControls(() => this.execute(normalized, signal), signal)
   }
 
   /**
@@ -558,7 +558,7 @@ export class VpsComputer {
    * @returns When the provider has accepted the navigation.
    */
   navigateAsBot(url: string, signal: AbortSignal, navigate: (url: string, signal: AbortSignal) => Promise<void>): Promise<void> {
-    return this.admitBot(() => navigate(url, signal), signal)
+    return this.runWhileBotControls(() => navigate(url, signal), signal)
   }
 
   /**
@@ -581,7 +581,13 @@ export class VpsComputer {
     }, signal)
   }
 
-  private admitBot(work: () => Promise<void>, signal?: AbortSignal): Promise<void> {
+  /**
+   * Admit a Bot operation while the owner has no active Computer lease.
+   * @param work - Provider operation that settles before the next input is admitted.
+   * @param signal - Cancellation while waiting for admission.
+   * @returns The operation's result.
+   */
+  runWhileBotControls<T>(work: () => Promise<T>, signal?: AbortSignal): Promise<T> {
     this.pendingBotActions += 1
     const result = this.admit(() => {
       this.expireLease()

@@ -48,6 +48,8 @@ The macOS **Workspace** menu switches between this Mac and an [existing private 
 
 Cloud’s [Vault](../../docs/user/guide/vps.md#manage-service-secrets-from-the-mac-app) opens in a separate desktop-owned window. Its preload accepts only that window’s document. The main process sends requests over the connected owner’s SSH account and returns operation status, service and key names, or [website login labels and origins](../../docs/user/guide/vps.md#save-website-logins-from-the-mac-app).
 
+The [saved login approval](../../docs/user/guide/vps.md#approve-a-saved-website-login) window shows the exact site and matching login labels. It sends the owner’s selected login ID to the VPS Vault over SSH. The Vault decrypts the selected entry and sends it directly to the VPS browser.
+
 A [Bot credential request](../../docs/user/guide/vps.md#let-a-bot-request-a-key-in-chat) opens the same isolated window for one request. Desktop accepts the exact request link from the selected Cloud view and resolves the current request over SSH before showing a masked field.
 
 ### Mac Computer

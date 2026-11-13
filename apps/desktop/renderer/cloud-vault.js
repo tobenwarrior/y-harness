@@ -11,9 +11,17 @@ const editor = element('editor')
 const nameInput = element('name')
 const valueInput = element('value')
 const request = element('request')
+const loginUse = element('login-use')
 const requestEditor = element('request-editor')
 const requestValue = element('request-value')
 const requestOutcome = element('request-outcome')
+const loginUseOriginValue = element('login-use-origin')
+const loginUseDestinationValue = element('login-use-destination')
+const loginChoice = element('login-choice')
+const loginUseEmpty = element('login-use-empty')
+const loginUseApprove = element('login-use-approve')
+const loginUseDecline = element('login-use-decline')
+const loginUseOutcome = element('login-use-outcome')
 const confirmation = element('confirmation')
 const notice = element('notice')
 const websitesNotice = element('websites-notice')
@@ -28,6 +36,8 @@ let messages
 let mode
 let requestId
 let requestState
+let loginUseLogins = []
+let loginUseReady = false
 let services = []
 let logins = []
 let editing
@@ -54,6 +64,11 @@ function setRequestOutcome(key, tone = '') {
   requestOutcome.dataset.tone = tone
 }
 
+function setLoginUseOutcome(key, tone = '') {
+  loginUseOutcome.textContent = key === undefined ? '' : messages[key]
+  loginUseOutcome.dataset.tone = tone
+}
+
 function record(value) {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
@@ -61,6 +76,55 @@ function record(value) {
 function validRequestMode(value) {
   return record(value) && Object.keys(value).length === 2 && value.kind === 'request'
     && typeof value.id === 'string' && /^[a-f0-9]{32}$/.test(value.id)
+}
+
+function validLoginUseMode(value) {
+  return record(value) && Object.keys(value).length === 2 && value.kind === 'login-use'
+    && typeof value.id === 'string' && /^[a-f0-9]{32}$/.test(value.id)
+}
+
+function loginUseOrigin(value) {
+  if (typeof value !== 'string' || value.trim() !== value) return
+  let url
+  try { url = new URL(value) }
+  catch { return }
+  const labels = url.hostname.split('.')
+  if (url.protocol !== 'https:' || url.username !== '' || url.password !== '' || url.pathname !== '/'
+    || url.search !== '' || url.hash !== '' || url.origin !== value || labels.length < 2
+    || labels.at(-1)?.match(/^\d+$/u) || /(?:^|\.)(?:local|localhost|localdomain)$/u.test(url.hostname)) return
+  return value
+}
+
+function loginUseDestination(value, origin) {
+  if (typeof value !== 'string' || value.trim() !== value || origin === undefined
+    || !/^[\x21-\x7e]+$/.test(value) || /[?#\\]/u.test(value) || !value.startsWith(`${origin}/`)) return
+  let url
+  try { url = new URL(value) }
+  catch { return }
+  if (url.protocol !== 'https:' || url.username !== '' || url.password !== '' || url.origin !== origin
+    || url.search !== '' || url.hash !== '' || url.href !== value) return
+  return value
+}
+
+function loginUseMetadata(value) {
+  if (!record(value) || Object.keys(value).length !== 1 || !record(value.request)) return
+  const item = value.request
+  if (Object.keys(item).length !== 4 || typeof item.id !== 'string' || item.id !== requestId) return
+  const origin = loginUseOrigin(item.origin)
+  const destination = loginUseDestination(item.destination, origin)
+  if (origin === undefined || destination === undefined || !Array.isArray(item.logins) || item.logins.length > 64) return
+  const ids = new Set()
+  const logins = []
+  for (const login of item.logins) {
+    if (!record(login) || Object.keys(login).length !== 3 || typeof login.id !== 'string'
+      || !/^[a-f0-9]{32}$/.test(login.id) || typeof login.label !== 'string'
+      || login.label.trim() !== login.label || login.label.length === 0 || [...login.label].length > 80
+      || typeof login.generation !== 'string' || !/^[a-f0-9]{64}$/.test(login.generation)
+      || ids.has(login.id)) return
+    ids.add(login.id)
+    logins.push({ id: login.id, label: login.label, generation: login.generation })
+  }
+  return { id: item.id, origin, destination, logins }
 }
 
 function requestMetadata(value) {
@@ -101,6 +165,13 @@ function availability() {
     requestValue.disabled = busy || !active
     element('request-save').disabled = busy || !active
     element('request-cancel').disabled = busy || !active
+    return
+  }
+  if (mode?.kind === 'login-use') {
+    const active = loginUseReady && loginUseLogins.length > 0
+    loginChoice.disabled = busy || !active
+    loginUseApprove.disabled = busy || !active
+    loginUseDecline.disabled = busy
     return
   }
   service.disabled = busy || !ready
@@ -390,6 +461,78 @@ async function loadRequest() {
   availability()
 }
 
+function renderLoginUseChoices() {
+  loginChoice.replaceChildren(...loginUseLogins.map(login => new Option(login.label, login.id)))
+  loginChoice.hidden = loginUseLogins.length === 0
+  loginUseEmpty.hidden = loginUseLogins.length > 0
+  availability()
+}
+
+async function loadLoginUse() {
+  busy = true
+  setLoginUseOutcome('cloudVaultLoginUseInspecting')
+  availability()
+  const reply = await send({ action: 'inspect-login-use', id: requestId })
+  const item = loginUseMetadata(reply)
+  if (item === undefined) {
+    busy = false
+    loginUseReady = false
+    setLoginUseOutcome('cloudVaultLoginUseUnavailable', 'error')
+    availability()
+    return
+  }
+  loginUseOriginValue.textContent = item.origin
+  loginUseDestinationValue.textContent = item.destination
+  loginUseLogins = item.logins
+  renderLoginUseChoices()
+  loginUseReady = true
+  busy = false
+  setLoginUseOutcome()
+  availability()
+  if (loginUseLogins.length > 0) loginChoice.focus({ preventScroll: true })
+}
+
+async function approveLoginUse() {
+  if (busy || !loginUseReady || loginUseLogins.length === 0 || loginChoice.value === '') return
+  busy = true
+  availability()
+  setLoginUseOutcome('cloudVaultLoginUseApproving')
+  const selected = loginUseLogins.find(login => login.id === loginChoice.value)
+  if (selected === undefined) {
+    busy = false
+    availability()
+    setLoginUseOutcome('cloudVaultLoginUseUnavailable', 'error')
+    return
+  }
+  const result = await send({ action: 'approve-login-use', id: requestId, loginId: selected.id, generation: selected.generation })
+  loginUseReady = false
+  busy = false
+  if (record(result) && Object.keys(result).length === 1 && result.state === 'submitted') {
+    setLoginUseOutcome('cloudVaultLoginUseSubmitted')
+  } else if (record(result) && Object.keys(result).length === 1 && result.state === 'needs-owner') {
+    setLoginUseOutcome('cloudVaultLoginUseNeedsOwner', 'error')
+  } else {
+    setLoginUseOutcome('cloudVaultLoginUseUnavailable', 'error')
+  }
+  availability()
+}
+
+async function declineLoginUse() {
+  if (busy || !loginUseReady) return
+  busy = true
+  availability()
+  setLoginUseOutcome('cloudVaultLoginUseDeclining')
+  const result = await send({ action: 'decline-login-use', id: requestId })
+  loginUseReady = false
+  busy = false
+  if (record(result) && Object.keys(result).length === 1 && result.state === 'unavailable') {
+    setLoginUseOutcome('cloudVaultLoginUseUnavailable')
+  } else {
+    setLoginUseOutcome('cloudVaultLoginUseFailed', 'error')
+  }
+  availability()
+}
+
 async function saveRequest(value) {
   if (busy || !ready || requestState !== 'pending') return
   busy = true
@@ -475,10 +618,12 @@ requestEditor.addEventListener('submit', event => {
   void saveRequest(requestValue.value)
 })
 element('request-cancel').addEventListener('click', () => { void dismissRequest() })
+loginUseApprove.addEventListener('click', () => { void approveLoginUse() })
+loginUseDecline.addEventListener('click', () => { void declineLoginUse() })
 document.addEventListener('keydown', event => {
   if (event.key !== 'Escape' || confirmation.open) return
   event.preventDefault()
-  if (mode?.kind === 'request') { void api.close().catch(() => {}); return }
+  if (mode?.kind === 'request' || mode?.kind === 'login-use') { void api.close().catch(() => {}); return }
   if (editor.hidden && loginEditor.hidden || busy) void api.close().catch(() => {})
   else if (activeSection === 'websites') { closeLoginEditor(); element('add-login').focus() }
   else { closeEditor(); element('add').focus() }
@@ -487,6 +632,7 @@ window.addEventListener('pagehide', () => {
   closeEditor()
   closeLoginEditor()
   requestValue.value = ''
+  loginChoice.replaceChildren()
   loginPasswordInput.value = ''
 }, { once: true })
 
@@ -505,6 +651,9 @@ void Promise.all([api.messages(), api.mode()]).then(([copy, presentation]) => {
     ['apply', 'cloudVaultApply'], ['refresh', 'cloudVaultRefresh'], ['confirm-cancel', 'cancel'], ['confirm-revoke', 'cloudVaultRevoke'],
     ['confirm-detail', 'cloudVaultApply'], ['request-service-label', 'cloudVaultRequestService'], ['request-name-label', 'cloudVaultRequestName'],
     ['request-value-label', 'cloudVaultRequestValue'], ['request-cancel', 'cloudVaultRequestCancel'], ['request-save', 'cloudVaultRequestSave'],
+    ['login-use-origin-label', 'cloudVaultLoginUseOrigin'], ['login-use-destination-label', 'cloudVaultLoginUseDestination'],
+    ['login-use-login-label', 'cloudVaultLoginUseLogin'], ['login-use-empty', 'cloudVaultLoginUseEmpty'],
+    ['login-use-approve', 'cloudVaultLoginUseApprove'], ['login-use-decline', 'cloudVaultLoginUseDecline'],
   ]) element(id).textContent = copy[key]
   if (validRequestMode(mode)) {
     requestId = mode.id
@@ -517,6 +666,19 @@ void Promise.all([api.messages(), api.mode()]).then(([copy, presentation]) => {
     notice.hidden = true
     main.hidden = false
     return loadRequest()
+  }
+  if (validLoginUseMode(mode)) {
+    requestId = mode.id
+    document.title = copy.cloudVaultLoginUseTitle
+    element('title').textContent = copy.cloudVaultLoginUseTitle
+    element('hint').textContent = copy.cloudVaultLoginUseHint
+    loginUse.hidden = false
+    management.hidden = true
+    request.hidden = true
+    element('apply').parentElement.hidden = true
+    notice.hidden = true
+    main.hidden = false
+    return loadLoginUse()
   }
   if (!record(mode) || Object.keys(mode).length !== 1 || mode.kind !== 'manage') throw new Error('Invalid Vault mode')
   request.hidden = true

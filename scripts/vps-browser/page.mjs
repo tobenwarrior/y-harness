@@ -1,6 +1,7 @@
 /** Map fixed Computer operations to a single Chromium tab. */
 
 import { launchBrowser } from './pipe.mjs'
+import { savedLoginPage } from './saved-login.mjs'
 
 export const BROWSER_WIDTH = 1280
 export const BROWSER_HEIGHT = 800
@@ -150,6 +151,7 @@ export async function createBrowserPage(executable, profile) {
     })
     await browser.command('Target.setDiscoverTargets', { discover: true })
     return {
+      ...savedLoginPage(command, browser.close),
       input: action => performInput(command, action),
       async frame() {
         const { data } = await command('Page.captureScreenshot', {

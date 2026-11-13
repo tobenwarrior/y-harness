@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { afterEach, describe, expect, it } from 'vitest'
-import { cloudVaultRequest, isVaultRequestId, vaultRequestAllowed, type VaultExec } from '../src/cloud-vault.ts'
+import { cloudVaultRequest, isVaultLoginUseRequestId, isVaultRequestId, vaultRequestAllowed, type VaultExec } from '../src/cloud-vault.ts'
 
 const unit = 'fixture-worker.service'
 const value = 'a synthetic value with spaces, quotes and \n a second line'
@@ -42,6 +42,62 @@ describe('Desktop Vault SSH transport', () => {
       .resolves.toEqual({ request: { id, unit, name: 'FIXTURE_KEY', state: 'pending' } })
   })
 
+  it('inspects a website login request without returning credential values', async () => {
+    const id = 'f'.repeat(32)
+    const loginId = 'e'.repeat(32)
+    const generation = '1'.repeat(64)
+    const execute: VaultExec = (_file, _args, options, callback) => fixture(`
+      let body = '';
+      process.stdin.setEncoding('utf8');
+      process.stdin.on('data', chunk => { body += chunk });
+      process.stdin.on('end', () => {
+        const request = JSON.parse(body);
+        if (request.action !== 'inspect-login-use' || request.id !== ${JSON.stringify(id)}) process.exit(2);
+        process.stdout.write(JSON.stringify({ request: {
+          id: ${JSON.stringify(id)}, origin: 'https://example.com',
+          destination: 'https://example.com/sign-in',
+          logins: [{ id: ${JSON.stringify(loginId)}, label: 'Example', generation: ${JSON.stringify(generation)} }]
+        } }));
+      });
+    `)(_file, _args, options, callback)
+    await expect(cloudVaultRequest('fixture-vps', { action: 'inspect-login-use', id }, signal, execute))
+      .resolves.toEqual({ request: {
+        id, origin: 'https://example.com', destination: 'https://example.com/sign-in',
+        logins: [{ id: loginId, label: 'Example', generation }],
+      } })
+  })
+
+  it.each(['submitted', 'needs-owner', 'unavailable'] as const)('returns website login approval state %s', async (state) => {
+    const id = 'f'.repeat(32)
+    const loginId = 'e'.repeat(32)
+    const generation = '1'.repeat(64)
+    await expect(cloudVaultRequest('fixture-vps', { action: 'approve-login-use', id, loginId, generation }, signal,
+      fixture(`process.stdout.write(JSON.stringify({ state: ${JSON.stringify(state)} }));`)))
+      .resolves.toEqual({ state })
+  })
+
+  it('sends an exact website login decline and returns the fixed unavailable state', async () => {
+    const id = 'f'.repeat(32)
+    await expect(cloudVaultRequest('fixture-vps', { action: 'decline-login-use', id }, signal,
+      fixture('process.stdout.write(JSON.stringify({ state: "unavailable" }));')))
+      .resolves.toEqual({ state: 'unavailable' })
+  })
+
+  it('rejects website login replies with a non-canonical destination, duplicate choices, or credential fields', async () => {
+    const id = 'f'.repeat(32)
+    const loginId = 'e'.repeat(32)
+    const generation = '1'.repeat(64)
+    const malformed = [
+      { request: { id, origin: 'https://example.com', destination: 'https://example.com/sign-in?next=1', logins: [] } },
+      { request: { id, origin: 'https://example.com', destination: 'https://example.com/sign-in', logins: [{ id: loginId, label: 'Example', generation }, { id: loginId, label: 'Again', generation }] } },
+      { request: { id, origin: 'https://example.com', destination: 'https://example.com/sign-in', logins: [{ id: loginId, label: 'Example', generation, password: 'secret' }] } },
+    ]
+    for (const reply of malformed) {
+      await expect(cloudVaultRequest('fixture-vps', { action: 'inspect-login-use', id }, signal,
+        fixture(`process.stdout.write(${JSON.stringify(JSON.stringify(reply))});`))).resolves.toEqual({ ok: false, reason: 'unavailable' })
+    }
+  })
+
   it('accepts a save acknowledgment', async () => {
     const id = 'b'.repeat(32)
     await expect(cloudVaultRequest('fixture-vps', { action: 'save-request', id, value }, signal,
@@ -66,6 +122,20 @@ describe('Desktop Vault SSH transport', () => {
     expect(vaultRequestAllowed({ action: 'replace-login', id, label: 'Site', username: 'fixture', password: 'dummy' }, undefined)).toBe(true)
     expect(vaultRequestAllowed({ action: 'remove-login', id }, undefined)).toBe(true)
     expect(vaultRequestAllowed({ action: 'remove-login', id }, id)).toBe(false)
+  })
+
+  it('binds website login approval to its exact native request mode', () => {
+    const id = 'f'.repeat(32)
+    const loginId = 'e'.repeat(32)
+    const generation = '1'.repeat(64)
+    const otherId = 'd'.repeat(32)
+    if (!isVaultLoginUseRequestId(id) || !isVaultLoginUseRequestId(otherId)) throw new Error('Fixture id is invalid.')
+    expect(vaultRequestAllowed({ action: 'approve-login-use', id, loginId, generation }, { kind: 'login-use', id })).toBe(true)
+    expect(vaultRequestAllowed({ action: 'inspect-login-use', id }, { kind: 'login-use', id })).toBe(true)
+    expect(vaultRequestAllowed({ action: 'approve-login-use', id, loginId, generation }, { kind: 'login-use', id: otherId })).toBe(false)
+    expect(vaultRequestAllowed({ action: 'approve-login-use', id, loginId, generation }, { kind: 'manage' })).toBe(false)
+    expect(vaultRequestAllowed({ action: 'decline-login-use', id }, { kind: 'login-use', id })).toBe(true)
+    expect(vaultRequestAllowed({ action: 'approve-login-use', id, loginId: 'A'.repeat(32), generation }, { kind: 'login-use', id })).toBe(false)
   })
 
   it('sends secret bytes on stdin to the fixed command and returns an acknowledgment', async () => {

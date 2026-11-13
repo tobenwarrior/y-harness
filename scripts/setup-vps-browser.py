@@ -270,11 +270,12 @@ def _validate_uid_for_unit(cloud_uid):
     return _positive_uid(cloud_uid)
 
 
-def service_unit(cloud_uid, node, chromium):
+def service_unit(cloud_uid, node, chromium, *, saved_logins=False):
     """Render the private browser worker and its two socket-activation fds."""
     cloud_uid = _validate_uid_for_unit(cloud_uid)
     node_path = trusted_unit_path(node)
     chromium_path = trusted_unit_path(chromium)
+    login_arg = ' --saved-logins' if saved_logins else ''
     return f"""{MANAGED_MARKER.decode()}[Unit]
 Description=Y Harness isolated browser worker
 Requires={CONTROL_SOCKET_UNIT} {VAULT_SOCKET_UNIT}
@@ -295,7 +296,7 @@ Environment=XDG_DATA_HOME={STATE_ROOT}/data
 Environment=XDG_STATE_HOME={STATE_ROOT}/state
 UMask=0077
 Sockets={CONTROL_SOCKET_UNIT} {VAULT_SOCKET_UNIT}
-ExecStart={node_path} {SERVICE_SOURCE} --chromium {chromium_path} --root {STATE_ROOT} --cloud-uid {cloud_uid} --grants {GRANTS_PATH}
+ExecStart={node_path} {SERVICE_SOURCE} --chromium {chromium_path} --root {STATE_ROOT} --cloud-uid {cloud_uid} --grants {GRANTS_PATH}{login_arg}
 StandardOutput=journal
 StandardError=journal
 Restart=on-failure
@@ -382,7 +383,7 @@ WantedBy=sockets.target
 
 
 SOURCE_ROOT = Path(__file__).resolve().with_name('vps-browser')
-SERVICE_ARTIFACTS = ('service.mjs', 'page.mjs', 'pipe.mjs')
+SERVICE_ARTIFACTS = ('service.mjs', 'page.mjs', 'pipe.mjs', 'saved-login.mjs')
 
 
 def service_source():
@@ -522,7 +523,7 @@ def ensure_units_inactive():
             raise BrowserError('Stop the isolated browser service before changing its settings.')
 
 
-def install(chromium, node, cloud_uid, grants, *, paths=InstallPaths()):
+def install(chromium, node, cloud_uid, grants, *, paths=InstallPaths(), saved_logins=False):
     """Install the browser worker, sockets, private state, and root grant list."""
     chromium_path = trusted_executable(chromium)
     node_path = trusted_executable(node)
@@ -537,7 +538,7 @@ def install(chromium, node, cloud_uid, grants, *, paths=InstallPaths()):
         for name in SERVICE_ARTIFACTS
     ) + (
         (paths.config_root / 'grants.json', grants_payload(records), 0, account.pw_gid, 0o640, False),
-        (paths.unit_root / SERVICE_UNIT, service_unit(cloud_uid, node_path, chromium_path), 0, 0, 0o644, True),
+        (paths.unit_root / SERVICE_UNIT, service_unit(cloud_uid, node_path, chromium_path, saved_logins=saved_logins), 0, 0, 0o644, True),
         (paths.unit_root / CONTROL_SOCKET_UNIT, control_socket_unit(cloud_uid), 0, 0, 0o644, True),
         (paths.unit_root / VAULT_SOCKET_UNIT, vault_socket_unit(), 0, 0, 0o644, True),
     )
@@ -568,6 +569,7 @@ def main(argv=None):
     install_parser = actions.add_parser('install', help='install the inactive browser worker and its sockets')
     install_parser.add_argument('--chromium', required=True, help='absolute preinstalled Chromium executable')
     install_parser.add_argument('--node', required=True, help='absolute preinstalled Node executable')
+    install_parser.add_argument('--saved-logins', action='store_true', help='allow owner-approved logins from the Cloud Vault')
     cloud = install_parser.add_mutually_exclusive_group()
     cloud.add_argument('--cloud-user', default='yharness-cloud', help='Cloud Linux account owning control.sock')
     cloud.add_argument('--cloud-uid', type=int, help='Cloud uid owning control.sock')
@@ -582,7 +584,7 @@ def main(argv=None):
         os.umask(0o077)
         if args.action == 'install':
             cloud_uid = args.cloud_uid if args.cloud_uid is not None else user_uid(args.cloud_user)
-            install(args.chromium, args.node, cloud_uid, args.grant)
+            install(args.chromium, args.node, cloud_uid, args.grant, saved_logins=args.saved_logins)
             print('Isolated browser installed; run activate to enable its sockets.')
         else:
             activate()

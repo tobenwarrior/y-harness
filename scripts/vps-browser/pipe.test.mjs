@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { createReadStream, createWriteStream } from 'node:fs'
-import { chmod, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { chmod, lstat, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -150,7 +150,8 @@ if (process.argv.includes(TEST_FIXTURE_FLAG)) {
     assert.equal(inspection.env.LC_ALL, undefined)
     assert.equal(inspection.env.YH_PIPE_SECRET, undefined)
     assert.equal(typeof inspection.env.TMPDIR, 'string')
-    assert.equal(inspection.env.TMPDIR.startsWith(fixture.profile), true)
+    assert.ok(inspection.env.TMPDIR.startsWith(join(tmpdir(), 'yh-browser-')))
+    assert.equal((await lstat(inspection.env.TMPDIR)).mode & 0o777, 0o700)
     assert.equal(inspection.env.XDG_RUNTIME_DIR.startsWith(inspection.env.TMPDIR), true)
     assert.equal(inspection.env.TMP, inspection.env.TMPDIR)
     assert.equal(inspection.env.TEMP, inspection.env.TMPDIR)

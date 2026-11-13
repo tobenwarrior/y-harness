@@ -31,6 +31,20 @@
         </form>
         <p id="request-outcome" role="status" aria-live="polite"></p>
       </section>
+      <section id="login-use" hidden aria-labelledby="title">
+        <dl class="request-target">
+          <div><dt id="login-use-origin-label"></dt><dd id="login-use-origin"></dd></div>
+          <div><dt id="login-use-destination-label"></dt><dd id="login-use-destination"></dd></div>
+        </dl>
+        <label for="login-choice" id="login-use-login-label"></label>
+        <select id="login-choice"></select>
+        <p id="login-use-empty" class="empty" hidden></p>
+        <div class="actions">
+          <button id="login-use-decline" type="button"></button>
+          <button id="login-use-approve" class="primary" type="button"></button>
+        </div>
+        <p id="login-use-outcome" role="status" aria-live="polite"></p>
+      </section>
       <div id="management" hidden>
         <nav class="segments" role="tablist" aria-labelledby="title">
           <button id="api-keys-tab" type="button" role="tab" aria-controls="api-keys-panel" aria-selected="true"></button>

@@ -20,6 +20,7 @@ import { createComputerClient } from './computer-client.ts'
 import { ComputerGlyph } from './ComputerAction.tsx'
 import { createBotReferenceSource } from './bot-reference-source.ts'
 import { BotVaultRequestCard } from './BotVaultRequestCard.tsx'
+import { BotWebsiteLoginRequestCard } from './BotWebsiteLoginRequestCard.tsx'
 import { ComputerSignInCard } from './ComputerSignInCard.tsx'
 
 /** Stable main-panel identity shared by the sidebar entry and main occupant. */
@@ -149,6 +150,9 @@ export function apply(ctx: Context): void {
     const disposeVaultRequest = ctx.slots.inject('conversation.composer.dock', () => ctx.slots.register({
       name: 'conversation.composer.dock', id: 'bot-vault-request', order: -1, locale: 'bots',
     }, BotVaultRequestCard))
+    const disposeWebsiteLoginRequest = ctx.slots.inject('conversation.composer.dock', () => ctx.slots.register({
+      name: 'conversation.composer.dock', id: 'bot-website-login-request', order: -1, locale: 'bots',
+    }, BotWebsiteLoginRequestCard))
     const disposeSignIn = ctx.slots.inject('conversation.composer.dock', () => ctx.slots.register({
       name: 'conversation.composer.dock', id: 'bot-computer-sign-in', order: -1, locale: 'bots',
       inject: () => ({
@@ -182,6 +186,7 @@ export function apply(ctx: Context): void {
       disposeChanged()
       disposeScheduleChanged()
       disposeVaultRequest()
+      disposeWebsiteLoginRequest()
       disposeSignIn()
       disposeSidebar()
       disposeReplyAvatar()

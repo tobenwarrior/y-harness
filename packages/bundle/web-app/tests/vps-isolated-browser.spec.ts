@@ -97,6 +97,70 @@ describe('isolated browser broker client', () => {
     ])
   })
 
+  it('exchanges saved-login requests using the Bot and canonical Session', async () => {
+    const requests: Record<string, unknown>[] = []
+    const socketPath = await listen((request) => {
+      requests.push(request)
+      switch (request.action) {
+        case 'request-login': return { id: '0123456789abcdef0123456789abcdef', origin: 'https://example.test', destination: 'https://example.test/login-123', state: 'pending' }
+        case 'login-status': return { state: 'submitted' }
+        case 'cancel-login': return { state: 'unavailable' }
+        default: throw new Error('unexpected action')
+      }
+    })
+    const browser = new VpsIsolatedBrowser({ socketPath, bots: [BOT] })
+    const signal = new AbortController().signal
+
+    await expect(browser.requestLogin(BOT, SESSION, signal)).resolves.toEqual({
+      id: '0123456789abcdef0123456789abcdef', origin: 'https://example.test', destination: 'https://example.test/login-123', state: 'pending',
+    })
+    await expect(browser.loginStatus(BOT, SESSION, '0123456789abcdef0123456789abcdef', signal)).resolves.toBe('submitted')
+    await expect(browser.cancelLogin(BOT, SESSION, '0123456789abcdef0123456789abcdef', signal)).resolves.toBe('unavailable')
+    expect(requests).toEqual([
+      { action: 'request-login', bot: BOT, session: SESSION },
+      { action: 'login-status', bot: BOT, session: SESSION, id: '0123456789abcdef0123456789abcdef' },
+      { action: 'cancel-login', bot: BOT, session: SESSION, id: '0123456789abcdef0123456789abcdef' },
+    ])
+  })
+
+  it('rejects malformed saved-login broker responses', async () => {
+    const socketPath = await listen(request => request.action === 'request-login'
+      ? { id: '0123456789abcdef0123456789abcdef', origin: 'https://example.test', destination: 'https://example.test/login-123', state: 'submitted' }
+      : { state: 'unknown' })
+    const browser = new VpsIsolatedBrowser({ socketPath, bots: [BOT] })
+
+    await expect(browser.requestLogin(BOT, SESSION, new AbortController().signal))
+      .rejects.toThrow('The isolated browser response was invalid.')
+    await expect(browser.loginStatus(BOT, SESSION, '0123456789abcdef0123456789abcdef', new AbortController().signal))
+      .rejects.toThrow('The isolated browser response was invalid.')
+    await expect(browser.loginStatus(BOT, SESSION, 'invalid-id', new AbortController().signal))
+      .rejects.toThrow('The isolated browser response was invalid.')
+    await expect(browser.cancelLogin(BOT, SESSION, 'invalid-id', new AbortController().signal))
+      .rejects.toThrow('The isolated browser response was invalid.')
+    const crossOriginPath = await listen(() => ({
+      id: '0123456789abcdef0123456789abcdef', origin: 'https://example.test', destination: 'https://other.test/login', state: 'pending',
+    }))
+    const crossOriginBrowser = new VpsIsolatedBrowser({ socketPath: crossOriginPath, bots: [BOT] })
+    await expect(crossOriginBrowser.requestLogin(BOT, SESSION, new AbortController().signal))
+      .rejects.toThrow('The isolated browser response was invalid.')
+    const missingOriginPath = await listen(() => ({
+      id: '0123456789abcdef0123456789abcdef', origin: null, destination: 'https://example.test/login', state: 'pending',
+    }))
+    const missingOriginBrowser = new VpsIsolatedBrowser({ socketPath: missingOriginPath, bots: [BOT] })
+    await expect(missingOriginBrowser.requestLogin(BOT, SESSION, new AbortController().signal))
+      .rejects.toThrow('The isolated browser response was invalid.')
+    const malformedUrlPath = await listen(() => ({
+      id: '0123456789abcdef0123456789abcdef', origin: 'https://[::1', destination: 'https://[::1/login', state: 'pending',
+    }))
+    const malformedUrlBrowser = new VpsIsolatedBrowser({ socketPath: malformedUrlPath, bots: [BOT] })
+    await expect(malformedUrlBrowser.requestLogin(BOT, SESSION, new AbortController().signal))
+      .rejects.toThrow('The isolated browser response was invalid.')
+    const nullResponsePath = await listen(() => null)
+    const nullResponseBrowser = new VpsIsolatedBrowser({ socketPath: nullResponsePath, bots: [BOT] })
+    await expect(nullResponseBrowser.requestLogin(BOT, SESSION, new AbortController().signal))
+      .rejects.toThrow('The isolated browser response was invalid.')
+  })
+
   it('validates trusted configuration and model navigation URLs', () => {
     expect(() => new VpsIsolatedBrowser({ socketPath: 'relative.sock', bots: [BOT] })).toThrow('socketPath must be absolute')
     expect(() => new VpsIsolatedBrowser({ socketPath: '/run/browser\u0000.sock', bots: [BOT] })).toThrow('socketPath must be absolute')

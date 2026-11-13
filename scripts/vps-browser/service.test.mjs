@@ -85,6 +85,39 @@ test('refuses profiles that point outside the browser account directory', async 
   assert.deepEqual(await controlResponse(control, { ...request, action: 'frame' }), { error: 'unavailable' })
 })
 
+test('reserves the exact browser for one owner-approved login and consumes it once', async t => {
+  const origin = 'https://login.example.test'
+  const destination = `${origin}/session`
+  const document = Symbol('fixture document')
+  const finished = Promise.withResolvers()
+  const submitted = []
+  const { control, vault } = await setup(t, {
+    savedLogins: true,
+    createPage: async () => ({
+      captureLogin: async () => ({ origin, destination, document }),
+      submitLogin: async (selected, username, password) => {
+        submitted.push({ document: selected.document, username, password })
+        return 'submitted'
+      },
+      frame: async () => '/9j/2Q==',
+      close: async () => { finished.resolve() }, closed: finished.promise,
+    }),
+  })
+  const pending = await controlResponse(control, { ...request, action: 'request-login' })
+  assert.match(pending.id, /^[a-f0-9]{32}$/u)
+  assert.deepEqual(pending, { id: pending.id, origin, destination, state: 'pending' })
+  const use = { action: 'use-login', id: pending.id, origin, username: 'fixture-user', password: 'fixture-password' }
+  assert.deepEqual(await controlResponse(control, { ...request, ...use }), { error: 'unavailable' })
+  assert.deepEqual(await controlResponse(vault, { action: 'inspect-login', id: pending.id }), pending)
+  assert.deepEqual(await controlResponse(control, { ...request, action: 'frame' }), { error: 'unavailable' })
+  assert.deepEqual(await controlResponse(vault, { ...use, origin: 'https://different.example.test' }), { error: 'unavailable' })
+  assert.deepEqual(await controlResponse(vault, use), { state: 'submitted' })
+  assert.deepEqual(await controlResponse(vault, use), { error: 'unavailable' })
+  assert.deepEqual(await controlResponse(control, { ...request, action: 'login-status', id: pending.id }), { state: 'submitted' })
+  assert.deepEqual(submitted, [{ document, username: use.username, password: use.password }])
+  assert.deepEqual(await controlResponse(control, { ...request, action: 'frame' }), { jpeg: '/9j/2Q==', width: 1280, height: 800 })
+})
+
 test('opens a real browser through its pipe, renders a page, and sends typed input', {
   skip: process.env.YH_ISOLATED_TEST_CHROMIUM === undefined,
 }, async t => {

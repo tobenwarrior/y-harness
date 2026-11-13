@@ -1,11 +1,13 @@
 /** Systemd socket worker for fixed, private Computer operations. */
 
+import { randomBytes } from 'node:crypto'
 import { lstat, mkdir, readFile, realpath } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { isAbsolute, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { parseArgs } from 'node:util'
 import { BROWSER_HEIGHT, BROWSER_WIDTH, browserInput, createBrowserPage, parseWebsite } from './page.mjs'
+import { loginDestination } from './saved-login.mjs'
 
 const BOT = /^bot-[a-zA-Z0-9][a-zA-Z0-9-]{0,245}$/u
 const SESSION = /^bot-session-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u
@@ -13,9 +15,13 @@ const MAX_BOTS = 64
 const MAX_PAGES = 4
 const MAX_CLIENTS = 24
 const MAX_REQUEST = 16 * 1024
+const MAX_VAULT_REQUEST = 64 * 1024
 const MAX_REPLY = 3 * 1024 * 1024
 const REQUEST_TIMEOUT = 25_000
 const IDLE_TIMEOUT = 10 * 60_000
+const LOGIN_TTL = 5 * 60_000
+const LOGIN_RECEIPT_TTL = 60_000
+const LOGIN_ID = /^[a-f0-9]{32}$/u
 const UNAVAILABLE = Object.freeze({ error: 'unavailable' })
 
 function object(value) {
@@ -51,6 +57,11 @@ function parseControl(value, grants) {
     return { session: value.session, action: 'input', input: browserInput(value.input) }
   } else if (value.action === 'navigate' && fields(value, [...base, 'url'])) {
     return { session: value.session, action: 'navigate', url: parseWebsite(value.url) }
+  } else if (value.action === 'request-login' && fields(value, base)) {
+    return { session: value.session, action: value.action }
+  } else if ((value.action === 'login-status' || value.action === 'cancel-login') && fields(value, [...base, 'id'])
+    && typeof value.id === 'string' && LOGIN_ID.test(value.id)) {
+    return { session: value.session, action: value.action, id: value.id }
   }
   throw new Error('Browser unavailable')
 }
@@ -124,7 +135,7 @@ function browserPool({ root, executable, createPage = createBrowserPage }) {
   }
 }
 
-function endpoint(handle) {
+function endpoint(handle, requestLimit = MAX_REQUEST) {
   const clients = new Set()
   const server = createServer({ allowHalfOpen: true }, socket => {
     if (clients.size >= MAX_CLIENTS) { socket.destroy(); return }
@@ -141,7 +152,7 @@ function endpoint(handle) {
     })
     socket.on('data', chunk => {
       size += chunk.length
-      if (size > MAX_REQUEST) socket.destroy()
+      if (size > requestLimit) socket.destroy()
       else chunks.push(chunk)
     })
     socket.once('end', () => {
@@ -161,23 +172,113 @@ function endpoint(handle) {
   } }
 }
 
+function credential(value, limit) {
+  return typeof value === 'string' && value.length > 0 && value.isWellFormed() && Buffer.byteLength(value) <= limit
+    && !/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/u.test(value)
+}
+
+function browserLogins(pool, enabled) {
+  const byId = new Map()
+  const bySession = new Map()
+  function remove(record) {
+    clearTimeout(record.timeout)
+    byId.delete(record.id)
+    if (bySession.get(record.session) === record) bySession.delete(record.session)
+  }
+  function finish(record, state) {
+    clearTimeout(record.timeout)
+    if (bySession.get(record.session) === record) bySession.delete(record.session)
+    record.state = state
+    record.page = undefined
+    record.reviewed = undefined
+    record.timeout = setTimeout(() => remove(record), LOGIN_RECEIPT_TTL).unref()
+    return { state }
+  }
+  function expires(record) {
+    return record.state === 'pending' && performance.now() >= record.deadline
+  }
+  function find(id) {
+    const record = byId.get(id)
+    if (record !== undefined && expires(record)) finish(record, 'unavailable')
+    return record
+  }
+  function view(record) {
+    return { id: record.id, origin: record.reviewed.origin, destination: record.reviewed.destination, state: 'pending' }
+  }
+  return {
+    reserved: session => bySession.has(session),
+    async control({ session, action, id }, signal) {
+      if (!enabled) return UNAVAILABLE
+      if (action === 'request-login') {
+        return pool.run(session, async page => {
+          if (bySession.has(session) || byId.size >= MAX_BOTS) return UNAVAILABLE
+          const id = randomBytes(16).toString('hex')
+          const reviewed = await page.captureLogin(id)
+          signal.throwIfAborted()
+          if (!loginDestination(reviewed.origin, reviewed.destination)) return UNAVAILABLE
+          const record = { id, session, page, reviewed, state: 'pending', deadline: performance.now() + LOGIN_TTL }
+          record.timeout = setTimeout(() => finish(record, 'unavailable'), LOGIN_TTL).unref()
+          bySession.set(session, record)
+          byId.set(id, record)
+          void page.closed.then(() => { if (record.state === 'pending') finish(record, 'unavailable') })
+          return view(record)
+        }, signal)
+      }
+      const record = find(id)
+      if (record === undefined || record.session !== session) return { state: 'unavailable' }
+      if (action === 'cancel-login' && record.state === 'pending') return finish(record, 'unavailable')
+      return { state: record.state === 'using' ? 'pending' : record.state }
+    },
+    async vault(body, signal) {
+      if (!enabled || !object(body) || typeof body.id !== 'string' || !LOGIN_ID.test(body.id)) return UNAVAILABLE
+      const record = find(body.id)
+      if (record?.state !== 'pending') return UNAVAILABLE
+      if (fields(body, ['action', 'id'])) {
+        if (body.action === 'inspect-login') return view(record)
+        if (body.action === 'cancel-login') return finish(record, 'unavailable')
+      }
+      if (body.action !== 'use-login' || !fields(body, ['action', 'id', 'origin', 'username', 'password'])
+        || body.origin !== record.reviewed.origin || !credential(body.username, 512) || !credential(body.password, 8192)) return UNAVAILABLE
+      return pool.run(record.session, async page => {
+        if (record.state !== 'pending') return UNAVAILABLE
+        if (expires(record) || page !== record.page) return finish(record, 'unavailable')
+        clearTimeout(record.timeout)
+        record.state = 'using'
+        try {
+          const result = await page.submitLogin(record.reviewed, body.username, body.password, signal)
+          return finish(record, result === 'submitted' ? result : 'needs-owner')
+        } catch (error) { void error; return finish(record, 'needs-owner') }
+      }, signal)
+    },
+    close() {
+      for (const record of byId.values()) remove(record)
+    },
+  }
+}
+
 /** Build both listeners without binding any TCP port. */
 export function browserServers(options) {
   const pool = browserPool(options)
+  const logins = browserLogins(pool, options.savedLogins === true)
   const control = endpoint(async (body, signal) => {
     const request = parseControl(body, options.grants)
     if (request.action === 'status') return { available: true }
+    if (request.action === 'request-login' || request.action === 'login-status' || request.action === 'cancel-login') {
+      return logins.control(request, signal)
+    }
     return pool.run(request.session, async page => {
+      if (logins.reserved(request.session)) return UNAVAILABLE
       if (request.action === 'frame') return { jpeg: await page.frame(), width: BROWSER_WIDTH, height: BROWSER_HEIGHT }
       if (request.action === 'input') await page.input(request.input)
       else await page.navigate(request.url)
       return { ok: true }
     }, signal)
   })
-  const vault = endpoint(() => UNAVAILABLE)
+  const vault = endpoint(logins.vault, MAX_VAULT_REQUEST)
   return { control: control.server, vault: vault.server, close: async () => {
     await Promise.all([control.close(), vault.close()])
     await pool.close()
+    logins.close()
   } }
 }
 
@@ -192,6 +293,7 @@ async function trustedFile(path) {
 async function main() {
   const { values } = parseArgs({ options: {
     chromium: { type: 'string' }, root: { type: 'string' }, 'cloud-uid': { type: 'string' }, grants: { type: 'string' },
+    'saved-logins': { type: 'boolean' },
   } })
   const cloudUid = Number(values['cloud-uid'])
   const uid = process.getuid()
@@ -205,7 +307,7 @@ async function main() {
   const names = process.env.LISTEN_FDNAMES?.split(':') ?? []
   if (process.env.LISTEN_PID !== String(process.pid) || process.env.LISTEN_FDS !== '2'
     || names.length !== 2 || !names.includes('control') || !names.includes('vault')) throw new Error('Browser sockets unavailable')
-  const servers = browserServers({ executable, root: values.root, grants })
+  const servers = browserServers({ executable, root: values.root, grants, savedLogins: values['saved-logins'] })
   const stop = () => { void servers.close().catch(() => { process.exitCode = 1 }) }
   process.once('SIGTERM', stop)
   process.once('SIGINT', stop)

@@ -9,9 +9,11 @@ import SessionProjections from '@yharness/session-projection'
 import SystemPrompt, { renderPrompt } from '@yharness/system-prompt'
 import ToolRuntime, { defineTool } from '@yharness/tools'
 import { LocalSubprocessRuntime } from '@yharness/subprocess-local'
+import type { IndexInjection } from '@yharness/host-webserver'
 import { describe, expect, it, vi } from 'vitest'
 import { mountVpsBots } from '../src/vps-bots.ts'
 import { VpsJournal } from '../src/vps-journal.ts'
+import { VpsBrowserLogin } from '../src/vps-browser-login.ts'
 import { VpsIsolatedBrowser } from '../src/vps-isolated-browser.ts'
 import { VpsRuntime } from '../src/vps-runtime.ts'
 
@@ -98,6 +100,8 @@ describe('managed VPS Bot composition', () => {
     })
     const browserStatus = vi.spyOn(VpsIsolatedBrowser.prototype, 'status').mockResolvedValue({ available: true })
     const browserNavigate = vi.spyOn(VpsIsolatedBrowser.prototype, 'navigate').mockResolvedValue(undefined)
+    const browserLogin = vi.spyOn(VpsBrowserLogin.prototype, 'request').mockResolvedValue({ state: 'submitted' })
+    let directOwnerTurn = true
     try {
       await ctx.plugin(LlmRuntime)
       await ctx.plugin(SessionStore)
@@ -116,16 +120,20 @@ describe('managed VPS Bot composition', () => {
           if (sessionId === LEGACY_SESSION) return { id: 'bot-legacy', sessionId, state: 'active' }
           return undefined
         },
+        isDirectOwnerTurn: async () => directOwnerTurn,
       } as never)
       await ctx.plugin((scope) => {
         mountVpsBots(scope, {
           root: '/yharness-test-bots', image: 'localhost/yharness-test', bots: ['bot-test', 'bot-desktop'],
           desktopOnlyBots: ['bot-desktop'],
-          isolatedBrowser: { socketPath: '/run/yharness-browser.sock', bots: ['bot-test'] },
+          isolatedBrowser: { socketPath: '/run/yharness-browser.sock', bots: ['bot-test'], savedLogins: true },
         }, [], undefined, {
           socketPath: '/run/yharness-test.sock', bots: ['bot-test', 'bot-desktop'],
         })
       })
+      const injections: IndexInjection[] = []
+      ctx.emit('webserver/index-inject', injections)
+      expect(injections).toContainEqual({ kind: 'global', name: '__YH_BOT_WEBSITE_LOGIN__', value: true })
       ctx.tools.register(defineTool({
         name: 'host_probe',
         description: 'Fixture tool that models a host-only operation.',
@@ -159,7 +167,7 @@ describe('managed VPS Bot composition', () => {
       expect(ctx.tools.get('vps_computer', desktop)).toBeDefined()
       expect(ctx.tools.get('vps_computer', regular)).toBeUndefined()
       expect(ctx.tools.get('vps_computer', bot)?.parameters).toMatchObject({
-        properties: { action: { enum: expect.arrayContaining(['navigate']) } },
+        properties: { action: { enum: expect.arrayContaining(['navigate', 'request_saved_login']) } },
       })
       expect(ctx.tools.get('vps_computer', desktop)?.parameters).toMatchObject({
         properties: { action: { enum: expect.not.arrayContaining(['navigate']) } },
@@ -175,6 +183,24 @@ describe('managed VPS Bot composition', () => {
       expect(browserNavigate).toHaveBeenCalledWith(
         'bot-test', BOT_SESSION, 'https://example.test/path', expect.any(AbortSignal),
       )
+      await expect(ctx.tools.execute({
+        ...call,
+        name: 'vps_computer',
+        callId: ToolCallId('bot-login-call'),
+        arguments: { action: 'request_saved_login' },
+        agent: bot,
+      })).resolves.toMatchObject({ isError: false })
+      expect(browserLogin).toHaveBeenCalledWith('bot-test', BOT_SESSION, expect.any(Function), expect.any(AbortSignal))
+      const loginCalls = browserLogin.mock.calls.length
+      directOwnerTurn = false
+      await expect(ctx.tools.execute({
+        ...call,
+        name: 'vps_computer',
+        callId: ToolCallId('bot-login-not-owner-call'),
+        arguments: { action: 'request_saved_login' },
+        agent: bot,
+      })).resolves.toMatchObject({ isError: true })
+      expect(browserLogin).toHaveBeenCalledTimes(loginCalls)
       expect(ctx.tools.get('vps_service_journal', bot)).toBeDefined()
       expect(ctx.tools.get('vps_service_journal', desktop)).toBeDefined()
       expect(ctx.tools.get('vps_service_journal', legacy)).toBeUndefined()
@@ -204,6 +230,7 @@ describe('managed VPS Bot composition', () => {
       readJournal.mockRestore()
       browserStatus.mockRestore()
       browserNavigate.mockRestore()
+      browserLogin.mockRestore()
       await ctx.fiber.dispose()
     }
   })

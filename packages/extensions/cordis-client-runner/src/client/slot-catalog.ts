@@ -579,6 +579,7 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
     declaredBy: 'an entry in \'conversation.composer.bar\' (client-ui-conversation), so it exists while that entry is mounted',
     occupants: [
       'client-ui-bots BotVaultRequestCard id \'bot-vault-request\'',
+      'client-ui-bots BotWebsiteLoginRequestCard id \'bot-website-login-request\'',
       'client-ui-bots ComputerSignInCard id \'bot-computer-sign-in\'',
       'client-ui-chat ActivityPill id \'activity\'',
       'client-ui-chat UsagePill id \'usage\'',

@@ -15,6 +15,13 @@ import {
   type BotVaultRequest,
 } from '../src/client/bot-vault-request.ts'
 import { BotVaultRequestCard } from '../src/client/BotVaultRequestCard.tsx'
+import {
+  fetchBotWebsiteLoginRequest,
+  isBotWebsiteLoginRequestEnabled,
+  parseBotWebsiteLoginResponse,
+  type BotWebsiteLoginRequest,
+} from '../src/client/bot-website-login-request.ts'
+import { BotWebsiteLoginRequestCard } from '../src/client/BotWebsiteLoginRequestCard.tsx'
 
 afterEach(() => {
   cleanup()
@@ -24,6 +31,68 @@ afterEach(() => {
 
 const t = makeTranslate(en)
 const REQUEST_ID = '0123456789abcdef0123456789abcdef'
+
+function websiteResponse(overrides: Partial<BotWebsiteLoginRequest> = {}): { request: BotWebsiteLoginRequest } {
+  return {
+    request: {
+      id: REQUEST_ID as BotWebsiteLoginRequest['id'],
+      origin: 'https://example.com',
+      destination: 'https://example.com/sign-in',
+      ...overrides,
+    },
+  }
+}
+
+describe('Bot website login request response', () => {
+  it('accepts exact metadata and rejects secret-shaped or off-origin values', () => {
+    expect(parseBotWebsiteLoginResponse({ request: null })).toBeNull()
+    expect(parseBotWebsiteLoginResponse(websiteResponse())).toEqual(websiteResponse().request)
+    expect(parseBotWebsiteLoginResponse({ request: { ...websiteResponse().request, destination: 'http://example.com/sign-in' } })).toBeNull()
+    expect(parseBotWebsiteLoginResponse({ request: { ...websiteResponse().request, destination: 'https://other.example/sign-in' } })).toBeNull()
+    expect(parseBotWebsiteLoginResponse({ request: { ...websiteResponse().request, username: 'alice', password: 'secret' } })).toBeNull()
+  })
+
+  it('uses the exact same-origin session route without a cache', async () => {
+    const fetcher = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(websiteResponse()), { status: 200 }))
+    await expect(fetchBotWebsiteLoginRequest('owner session/one', new AbortController().signal)).resolves.toEqual(websiteResponse().request)
+    expect(fetcher).toHaveBeenCalledWith('/api/bot-website-login?sessionId=owner%20session%2Fone', expect.objectContaining({
+      method: 'GET', credentials: 'same-origin', cache: 'no-store',
+    }))
+  })
+
+  it('requires the explicit website-login feature flag', () => {
+    window.__YH_BOT_WEBSITE_LOGIN__ = true
+    expect(isBotWebsiteLoginRequestEnabled()).toBe(true)
+    delete window.__YH_BOT_WEBSITE_LOGIN__
+    expect(isBotWebsiteLoginRequestEnabled()).toBe(false)
+  })
+})
+
+describe('BotWebsiteLoginRequestCard', () => {
+  beforeEach(() => { window.__YH_BOT_WEBSITE_LOGIN__ = true })
+  afterEach(() => { delete window.__YH_BOT_WEBSITE_LOGIN__ })
+
+  it('shows origin and exact destination without rendering a credential editor', async () => {
+    vi.spyOn(window.navigator, 'userAgent', 'get').mockReturnValue('YHarnessCloudDesktop/1')
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(websiteResponse()), { status: 200 }))
+    render(<BotWebsiteLoginRequestCard {...cardProps() as ComponentProps<typeof BotWebsiteLoginRequestCard>} />)
+    expect(await screen.findByText('https://example.com')).toBeTruthy()
+    expect(screen.getByText('https://example.com/sign-in')).toBeTruthy()
+    expect(screen.getByRole('link').getAttribute('href')).toBe(`/__yharness/vault-login-use/${REQUEST_ID}`)
+    expect(screen.queryByRole('textbox')).toBeNull()
+  })
+
+  it('does not query ordinary conversations or Web handoff links', async () => {
+    const fetcher = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(websiteResponse()), { status: 200 }))
+    render(<BotWebsiteLoginRequestCard {...cardProps({ botChat: false }) as ComponentProps<typeof BotWebsiteLoginRequestCard>} />)
+    await Promise.resolve()
+    expect(fetcher).not.toHaveBeenCalled()
+    cleanup()
+    render(<BotWebsiteLoginRequestCard {...cardProps() as ComponentProps<typeof BotWebsiteLoginRequestCard>} />)
+    expect(await screen.findByText(en.websiteLoginDesktopOnly)).toBeTruthy()
+    expect(screen.queryByRole('link')).toBeNull()
+  })
+})
 
 function response(overrides: Partial<BotVaultRequest> = {}): { request: BotVaultRequest } {
   return {

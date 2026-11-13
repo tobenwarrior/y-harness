@@ -5,6 +5,7 @@ import argparse
 import base64
 import fcntl
 import getpass
+import hashlib
 import ipaddress
 import json
 import math
@@ -22,6 +23,7 @@ import time
 import warnings
 from contextlib import contextmanager
 from pathlib import Path
+from urllib.parse import urlsplit
 
 
 ROOT = Path('/var/lib/yharness-vault')
@@ -37,6 +39,11 @@ DESKTOP_REQUEST_LIMIT = 64 * 1024
 DESKTOP_SERVICE_LIMIT = 16
 DESKTOP_NAME_LIMIT = 100
 DESKTOP_RESPONSE_LIMIT = 160 * 1024
+BROWSER_SOCKET = Path('/run/yharness-browser/vault.sock')
+BROWSER_ACCOUNT = 'yharness-browser'
+BROWSER_REQUEST_LIMIT = 16 * 1024
+BROWSER_RESPONSE_LIMIT = 64 * 1024
+BROWSER_TIMEOUT = 25
 CLOUD_REQUEST_LIMIT = 4 * 1024
 REQUEST_RECORD_LIMIT = 64
 REQUEST_TTL = 10 * 60
@@ -53,6 +60,7 @@ INSTALLED_VAULT = Path('/usr/local/sbin/yharness-vault')
 SYSTEMCTL = ['/usr/bin/systemctl', '--system', '--no-pager', '--no-ask-password']
 COMMAND_ENV = {'PATH': '/usr/bin:/bin', 'LC_ALL': 'C'}
 REQUEST_UNAVAILABLE = 'The Vault request is unavailable.'
+BROWSER_UNAVAILABLE = 'The browser Vault is unavailable.'
 WEBSITE_LOGIN_DIRECTORY = 'website-logins'
 WEBSITE_LOGIN_LIMIT = 64
 WEBSITE_LOGIN_FILE_LIMIT = 64 * 1024
@@ -61,6 +69,8 @@ WEBSITE_LOGIN_LABEL_LIMIT = 80
 WEBSITE_LOGIN_USERNAME_LIMIT = 512
 WEBSITE_LOGIN_PASSWORD_LIMIT = 8192
 WEBSITE_LOGIN_UNAVAILABLE = 'The website login is unavailable.'
+WEBSITE_LOGIN_GENERATION = re.compile(r'[0-9a-f]{64}')
+WEBSITE_LOGIN_DESTINATION_LIMIT = 4096
 WEBSITE_LOGIN_HOST_LABEL = r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?'
 WEBSITE_LOGIN_LOCAL_SUFFIXES = ('localhost', 'local', 'localdomain')
 WEBSITE_LOGIN_ORIGIN = re.compile(
@@ -171,6 +181,16 @@ def valid_login_id(value):
     return type(value) is str and WEBSITE_LOGIN_ID.fullmatch(value) is not None
 
 
+def valid_login_generation(value):
+    """Accept the opaque digest returned with one inspected website login."""
+    return type(value) is str and WEBSITE_LOGIN_GENERATION.fullmatch(value) is not None
+
+
+def website_login_generation(record):
+    """Bind one owner selection to the current encrypted record bytes."""
+    return hashlib.sha256(record['credential'].encode('ascii')).hexdigest()
+
+
 def valid_login_origin(value):
     """Accept one canonical, lower-case HTTPS DNS origin without a path."""
     if type(value) is not str or not value.isascii():
@@ -194,6 +214,22 @@ def valid_login_origin(value):
         return False
     port = match['port']
     return port is None or int(port) <= 65535 and int(port) != 443
+
+
+def valid_login_destination(origin, destination):
+    """Accept one canonical HTTPS POST destination on the exact saved origin."""
+    if (type(origin) is not str or type(destination) is not str or not valid_login_origin(origin)
+            or not destination.isascii() or not 0 < len(destination.encode('ascii')) <= WEBSITE_LOGIN_DESTINATION_LIMIT
+            or not destination.startswith(origin + '/') or '?' in destination or '#' in destination
+            or any(ord(character) <= 0x20 or ord(character) == 0x7f or character == '\\' for character in destination)):
+        return False
+    try:
+        parsed = urlsplit(destination)
+    except ValueError:
+        return False
+    authority = origin.removeprefix('https://')
+    return (parsed.scheme == 'https' and parsed.netloc == authority and parsed.path.startswith('/')
+            and parsed.username is None and parsed.password is None and parsed.query == '' and parsed.fragment == '')
 
 
 def login_text(value, limit, *, trim=False):
@@ -242,6 +278,44 @@ def website_login_request(request):
     }
 
 
+def browser_login_inspection(payload, expected_id):
+    """Decode one bounded browser inspection without returning browser diagnostics."""
+    try:
+        if len(payload) > BROWSER_RESPONSE_LIMIT:
+            raise VaultError(BROWSER_UNAVAILABLE)
+        reply = json.loads(payload.decode('utf-8'), object_pairs_hook=exact_object)
+        if type(reply) is not dict:
+            raise VaultError(BROWSER_UNAVAILABLE)
+        if set(reply) == {'error'} and reply['error'] == 'unavailable':
+            raise VaultError(BROWSER_UNAVAILABLE)
+        if (set(reply) != {'id', 'origin', 'destination', 'state'}
+                or reply.get('id') != expected_id or not valid_request_id(reply.get('id'))
+                or reply.get('state') != 'pending' or not valid_login_origin(reply.get('origin'))
+                or not valid_login_destination(reply['origin'], reply.get('destination'))):
+            raise VaultError(BROWSER_UNAVAILABLE)
+        return reply
+    except VaultError:
+        raise
+    except (UnicodeError, ValueError, RecursionError, TypeError):
+        raise VaultError(BROWSER_UNAVAILABLE) from None
+
+
+def browser_login_state(payload):
+    """Decode the browser's fixed login-delivery state without exposing its reply."""
+    try:
+        if len(payload) > BROWSER_RESPONSE_LIMIT:
+            raise VaultError(BROWSER_UNAVAILABLE)
+        reply = json.loads(payload.decode('utf-8'), object_pairs_hook=exact_object)
+        if type(reply) is not dict or set(reply) != {'state'} or reply['state'] not in (
+                'submitted', 'needs-owner', 'unavailable'):
+            raise VaultError(BROWSER_UNAVAILABLE)
+        return {'state': reply['state']}
+    except VaultError:
+        raise
+    except (UnicodeError, ValueError, RecursionError, TypeError):
+        raise VaultError(BROWSER_UNAVAILABLE) from None
+
+
 def request_grant(value):
     """Decode an exact service and key from the administrator's grant argument."""
     unit, _, name = value.partition('=')
@@ -263,6 +337,17 @@ def desktop_request(payload):
             return request
         if action in ('list-logins', 'add-login', 'replace-login', 'remove-login'):
             return website_login_request(request)
+        if action == 'inspect-login-use' or action == 'decline-login-use':
+            if set(request) != {'action', 'id'} or not valid_request_id(request.get('id')):
+                raise VaultError('Invalid Vault request.')
+            return request
+        if action == 'approve-login-use':
+            if (set(request) != {'action', 'id', 'loginId', 'generation'}
+                    or not valid_request_id(request.get('id'))
+                    or not valid_login_id(request.get('loginId'))
+                    or not valid_login_generation(request.get('generation'))):
+                raise VaultError('Invalid Vault request.')
+            return request
         if action in ('inspect-request', 'dismiss-request'):
             if set(request) != {'action', 'id'} or not valid_request_id(request.get('id')):
                 raise VaultError('Invalid Vault request.')
@@ -441,6 +526,47 @@ def desktop_client(payload, endpoint=DESKTOP_SOCKET):
             result = reply.read(DESKTOP_RESPONSE_LIMIT + 1)
     if not result or len(result) > DESKTOP_RESPONSE_LIMIT:
         raise VaultError('Desktop Vault is unavailable.')
+    return result
+
+
+def browser_peer_uid():
+    """Resolve the dedicated browser worker account used by the root-only socket."""
+    try:
+        uid = pwd.getpwnam(BROWSER_ACCOUNT).pw_uid
+    except (AttributeError, KeyError, TypeError):
+        raise VaultError(BROWSER_UNAVAILABLE) from None
+    if type(uid) is not int or uid <= 0:
+        raise VaultError(BROWSER_UNAVAILABLE)
+    return uid
+
+
+def browser_client(payload):
+    """Send one bounded request to the fixed root-owned browser socket."""
+    if type(payload) is not bytes or len(payload) > BROWSER_REQUEST_LIMIT or os.geteuid() != 0:
+        raise VaultError(BROWSER_UNAVAILABLE)
+    endpoint = BROWSER_SOCKET
+    try:
+        if not directory(endpoint.parent, private=False, uid=0):
+            raise VaultError(BROWSER_UNAVAILABLE)
+        info = endpoint.lstat()
+        if (not stat.S_ISSOCK(info.st_mode) or info.st_uid != 0
+                or stat.S_IMODE(info.st_mode) != 0o600):
+            raise VaultError(BROWSER_UNAVAILABLE)
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+            connection.settimeout(BROWSER_TIMEOUT)
+            connection.connect(str(endpoint))
+            if desktop_peer(connection) != browser_peer_uid():
+                raise VaultError(BROWSER_UNAVAILABLE)
+            connection.sendall(payload)
+            connection.shutdown(socket.SHUT_WR)
+            with connection.makefile('rb') as reply:
+                result = reply.read(BROWSER_RESPONSE_LIMIT + 1)
+    except VaultError:
+        raise
+    except (OSError, ValueError):
+        raise VaultError(BROWSER_UNAVAILABLE) from None
+    if not result or len(result) > BROWSER_RESPONSE_LIMIT:
+        raise VaultError(BROWSER_UNAVAILABLE)
     return result
 
 
@@ -729,6 +855,26 @@ class Vault:
         except (UnicodeError, ValueError, RecursionError, TypeError):
             raise VaultError(WEBSITE_LOGIN_UNAVAILABLE) from None
 
+    def _use_website_login_locked(self, login_id, origin, deliver):
+        """Decrypt and deliver one login while the caller owns the Vault lock."""
+        path = self.website_login_directory()
+        record = self.read_website_login(path / login_id, login_id)
+        if record['origin'] != origin:
+            raise VaultError(WEBSITE_LOGIN_UNAVAILABLE)
+        decrypted = self.command(
+            [
+                '/usr/bin/systemd-creds', '--with-key=host',
+                f'--name={PREFIX}_website_login_{login_id}', 'decrypt', '-', '-',
+            ],
+            WEBSITE_LOGIN_UNAVAILABLE,
+            input=record['credential'].encode('ascii'), stdout=subprocess.PIPE,
+        )
+        username, password = self._website_login_values(decrypted)
+        try:
+            return deliver(username, password)
+        except Exception:
+            raise VaultError(WEBSITE_LOGIN_UNAVAILABLE) from None
+
     def use_website_login(self, login_id, origin, deliver):
         """Deliver a v1 login to an authorized browser callback under the Vault lock.
 
@@ -739,23 +885,7 @@ class Vault:
             raise VaultError(WEBSITE_LOGIN_UNAVAILABLE)
         try:
             with self.locked():
-                path = self.website_login_directory()
-                record = self.read_website_login(path / login_id, login_id)
-                if record['origin'] != origin:
-                    raise VaultError(WEBSITE_LOGIN_UNAVAILABLE)
-                decrypted = self.command(
-                    [
-                        '/usr/bin/systemd-creds', '--with-key=host',
-                        f'--name={PREFIX}_website_login_{login_id}', 'decrypt', '-', '-',
-                    ],
-                    WEBSITE_LOGIN_UNAVAILABLE,
-                    input=record['credential'].encode('ascii'), stdout=subprocess.PIPE,
-                )
-                username, password = self._website_login_values(decrypted)
-                try:
-                    deliver(username, password)
-                except Exception:
-                    raise VaultError(WEBSITE_LOGIN_UNAVAILABLE) from None
+                self._use_website_login_locked(login_id, origin, deliver)
         except VaultError:
             raise VaultError(WEBSITE_LOGIN_UNAVAILABLE) from None
         except (AttributeError, OSError, OverflowError, TypeError, ValueError, RecursionError):
@@ -1137,6 +1267,58 @@ class Vault:
         """Render the owner-visible request metadata without a secret value."""
         return {'request': {key: record[key] for key in ('id', 'unit', 'name', 'state')}}
 
+    def _browser_login_metadata(self, request_id):
+        """Reinspect one pending browser request over the fixed root-only socket."""
+        payload = json.dumps({'action': 'inspect-login', 'id': request_id}, separators=(',', ':')).encode('ascii')
+        return browser_login_inspection(browser_client(payload), request_id)
+
+    def _browser_login_views(self, origin):
+        """List saved login metadata and encrypted-record generations for one origin."""
+        return [
+            {'id': record['id'], 'label': record['label'], 'generation': website_login_generation(record)}
+            for record in self.website_login_records() if record['origin'] == origin
+        ]
+
+    def _inspect_browser_login(self, request):
+        """Return pending browser metadata and matching owner-visible login choices."""
+        inspected = self._browser_login_metadata(request['id'])
+        return {'request': {
+            'id': inspected['id'], 'origin': inspected['origin'], 'destination': inspected['destination'],
+            'logins': self._browser_login_views(inspected['origin']),
+        }}
+
+    def _approve_browser_login(self, request):
+        """Deliver an owner-selected login while policy, generation, and delivery share one lock."""
+        try:
+            inspected = self._browser_login_metadata(request['id'])
+            records = self.website_login_records()
+            record = next((candidate for candidate in records
+                           if candidate['id'] == request['loginId'] and candidate['origin'] == inspected['origin']), None)
+            if record is None or website_login_generation(record) != request['generation']:
+                return {'state': 'unavailable'}
+            result = {}
+
+            def deliver(username, password):
+                payload = json.dumps({
+                    'action': 'use-login', 'id': inspected['id'], 'origin': inspected['origin'],
+                    'username': username, 'password': password,
+                }, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
+                result.update(browser_login_state(browser_client(payload)))
+
+            self._use_website_login_locked(record['id'], inspected['origin'], deliver)
+            return result if result else {'state': 'unavailable'}
+        except (AttributeError, VaultError, OSError, OverflowError, TypeError, ValueError, UnicodeError, RecursionError):
+            return {'state': 'unavailable'}
+
+    def _decline_browser_login(self, request):
+        """Release one pending browser request without returning browser diagnostics."""
+        try:
+            payload = json.dumps({'action': 'cancel-login', 'id': request['id']}, separators=(',', ':')).encode('ascii')
+            browser_client(payload)
+        except Exception:
+            pass
+        return {'state': 'unavailable'}
+
     def desktop(self, request, requester_uid):
         """Apply a validated Desktop request and return metadata or an acknowledgment."""
         if not directory(self.root):
@@ -1158,6 +1340,12 @@ class Vault:
                 else:
                     self.remove_website_login(request)
                 return {'ok': True}
+            if action == 'inspect-login-use':
+                return self._inspect_browser_login(request)
+            if action == 'approve-login-use':
+                return self._approve_browser_login(request)
+            if action == 'decline-login-use':
+                return self._decline_browser_login(request)
             if action in ('inspect-request', 'save-request', 'dismiss-request'):
                 grants = self.require_requests(policy)
                 records, changed = self.clean_request_records(self.read_request_records())

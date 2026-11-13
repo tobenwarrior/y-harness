@@ -21,3 +21,13 @@
   - img "Live computer screen"
   - text: Watching only
   - button "Paste" [disabled]
+
+## Saved login approval
+
+- region "Approve website sign-in":
+  - text: Approve website sign-in Website
+  - code: https://example.test
+  - text: Destination
+  - code: https://example.test/session
+  - link "Approve sign-in":
+    - /url: /__yharness/vault-login-use/{{id}}
