@@ -4,7 +4,7 @@ import { JSDOM } from 'jsdom'
 import { expect, it, onTestFinished, vi } from 'vitest'
 import { en } from '../src/locale.ts'
 
-function page(mode: { readonly kind: 'request'; readonly id: string } | { readonly kind: 'manage' }, request: (value: unknown) => Promise<unknown>) {
+function page(mode: { readonly kind: 'request'; readonly id: string } | { readonly kind: 'login-use'; readonly id: string } | { readonly kind: 'manage' }, request: (value: unknown) => Promise<unknown>) {
   const dom = new JSDOM(readFileSync(new URL('../renderer/cloud-vault.html', import.meta.url), 'utf8'), {
     runScripts: 'outside-only', url: 'dsh-app://shell/cloud-vault.html',
   })
@@ -50,6 +50,50 @@ it('renders request mode without generic Vault controls and saves only after a t
   ])
   expect((p.element('request-value') as HTMLInputElement).value).toBe('')
   expect((p.element('request-save') as HTMLButtonElement).disabled).toBe(true)
+})
+
+it('renders website login approval metadata, lets the owner choose one login, and never asks for a secret', async () => {
+  const id = 'f'.repeat(32)
+  const loginId = 'e'.repeat(32)
+  const generation = '1'.repeat(64)
+  const requests: unknown[] = []
+  const request = vi.fn(async (value: unknown) => {
+    requests.push(value)
+    if (value && typeof value === 'object' && 'action' in value && value.action === 'inspect-login-use') {
+      return { request: {
+        id, origin: 'https://example.com', destination: 'https://example.com/sign-in',
+        logins: [{ id: loginId, label: 'Example', generation }],
+      } }
+    }
+    return { state: 'submitted' }
+  })
+  const p = page({ kind: 'login-use', id }, request)
+  p.run()
+  await expect.poll(() => p.element('login-use').hidden).toBe(false)
+  expect(p.element('request').hidden).toBe(true)
+  expect(p.element('management').hidden).toBe(true)
+  expect(p.element('login-use-origin').textContent).toBe('https://example.com')
+  expect(p.element('login-use-destination').textContent).toBe('https://example.com/sign-in')
+  expect((p.element('login-choice') as HTMLSelectElement).options[0]?.textContent).toBe('Example')
+  expect(p.element('login-use').querySelectorAll('input')).toHaveLength(0)
+  p.element('login-use-approve').click()
+  expect((p.element('login-use-approve') as HTMLButtonElement).disabled).toBe(true)
+  await expect.poll(() => p.element('login-use-outcome').textContent).toBe(en.cloudVaultLoginUseSubmitted)
+  expect(requests).toEqual([
+    { action: 'inspect-login-use', id },
+    { action: 'approve-login-use', id, loginId, generation },
+  ])
+})
+
+it('keeps website login approval disabled when inspection returns no saved logins', async () => {
+  const id = 'a'.repeat(32)
+  const p = page({ kind: 'login-use', id }, vi.fn(async () => ({ request: {
+    id, origin: 'https://example.com', destination: 'https://example.com/sign-in', logins: [],
+  } })))
+  p.run()
+  await expect.poll(() => p.element('login-use-empty').hidden).toBe(false)
+  expect((p.element('login-use-approve') as HTMLButtonElement).disabled).toBe(true)
+  expect((p.element('login-use-decline') as HTMLButtonElement).disabled).toBe(false)
 })
 
 it('lets Escape close request mode without dismissing a still-pending request', async () => {

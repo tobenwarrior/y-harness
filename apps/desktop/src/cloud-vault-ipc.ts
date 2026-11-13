@@ -1,5 +1,5 @@
 /** Private IPC shared by the desktop Vault window and its isolated preload. */
-import type { VaultReply, VaultRequest, VaultRequestId } from './cloud-vault.ts'
+import type { VaultReply, VaultRequest, VaultRequestMode } from './cloud-vault.ts'
 import type { DesktopMessages } from './locale.ts'
 
 /** Exact shell document allowed to manage a Vault. */
@@ -14,10 +14,7 @@ export const VAULT_IPC = {
 } as const
 
 /** Presentation selected by the desktop-owned opener, never by Cloud content. */
-export type CloudVaultMode = { readonly kind: 'manage' } | {
-  readonly kind: 'request'
-  readonly id: VaultRequestId
-}
+export type CloudVaultMode = VaultRequestMode
 
 /** Operations available only to the desktop-owned Vault document. */
 export interface CloudVaultApi {

@@ -48,6 +48,8 @@ The macOS **Workspace** menu switches between this Mac and an [existing private 
 
 Cloud’s [Vault](../../docs/user/guide/vps.md#manage-service-secrets-from-the-mac-app) opens in a separate desktop-owned window. Its preload accepts only that window’s document. The main process sends requests over the connected owner’s SSH account and returns operation status, service and key names, or [website login labels and origins](../../docs/user/guide/vps.md#save-website-logins-from-the-mac-app).
 
+A compatible Cloud Host can open the same window for website sign-in approval. Review the site and select a saved login. The VPS Vault sends the approved login directly to the browser on the VPS.
+
 A Bot credential request from a compatible Cloud Host opens the same isolated window for one request. Desktop accepts the exact request link from the selected Cloud view and resolves the current request over SSH before showing a masked field.
 
 ### Mac Computer

@@ -1,9 +1,10 @@
 /** Script-free controls for the desktop-owned Cloud workspace. */
-import type { VaultRequestId } from './cloud-vault.ts'
+import type { VaultLoginUseRequestId, VaultRequestId } from './cloud-vault.ts'
 import type { DesktopMessages } from './locale.ts'
 
 const CONTROL_ORIGIN = 'https://workspace.invalid'
 const VAULT_REQUEST_PATH = /^\/__yharness\/vault-request\/([a-f0-9]{32})$/u
+const WEBSITE_LOGIN_USE_PATH = /^\/__yharness\/vault-login-use\/([a-f0-9]{32})$/u
 
 /** Marker appended to the authenticated Cloud view's user agent for native capability detection. */
 export const CLOUD_DESKTOP_USER_AGENT = 'YHarnessCloudDesktop/1'
@@ -55,6 +56,23 @@ export function cloudVaultRequestId(origin: string, destination: string): VaultR
     if (url.origin !== origin || url.username || url.password || url.search || url.hash) return undefined
     const id = VAULT_REQUEST_PATH.exec(url.pathname)?.[1]
     return id === undefined ? undefined : id as VaultRequestId
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Decode a native website-login approval link from the authenticated Cloud main frame.
+ * @param origin - private loopback origin owned by this connection.
+ * @param destination - navigation URL emitted by the Cloud WebContents.
+ * @returns the lowercase owner-approval identifier, or undefined for every other URL.
+ */
+export function cloudWebsiteLoginUseRequestId(origin: string, destination: string): VaultLoginUseRequestId | undefined {
+  try {
+    const url = new URL(destination)
+    if (url.origin !== origin || url.username || url.password || url.search || url.hash) return undefined
+    const id = WEBSITE_LOGIN_USE_PATH.exec(url.pathname)?.[1]
+    return id === undefined ? undefined : id as VaultLoginUseRequestId
   } catch {
     return undefined
   }
