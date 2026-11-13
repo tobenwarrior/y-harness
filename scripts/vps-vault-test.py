@@ -167,6 +167,20 @@ class VaultTest(unittest.TestCase):
                                 'value': FIRST_VALUE.decode()}, OWNER_UID)
         self.assertEqual(self.sealed, [])
 
+    def test_desktop_can_start_without_granting_access_to_any_service(self):
+        with patch.object(vault, 'trusted_file'):
+            self.store.allow_desktop(OWNER_UID, CLOUD_UID, [], start=True)
+        self.assertTrue(self.listener_active)
+        self.assertEqual(self.store.desktop({'action': 'list'}, OWNER_UID), {'services': []})
+        self.store.enable(FIRST_UNIT, CLOUD_UID)
+        self.assertEqual(self.store.desktop({'action': 'list'}, OWNER_UID), {'services': []})
+        with self.assertRaises(vault.VaultError):
+            self.store.desktop({'action': 'add', 'unit': FIRST_UNIT, 'name': 'EXAMPLE_KEY',
+                                'value': FIRST_VALUE.decode()}, OWNER_UID)
+        with self.assertRaises(vault.VaultError):
+            self.store.desktop({'action': 'list'}, CLOUD_UID)
+        self.assertEqual(self.sealed, [])
+
     def test_desktop_can_add_replace_and_revoke_without_returning_any_secret_value(self):
         self.store.enable(FIRST_UNIT, CLOUD_UID)
         self.store.allow_desktop(OWNER_UID, CLOUD_UID, [FIRST_UNIT])

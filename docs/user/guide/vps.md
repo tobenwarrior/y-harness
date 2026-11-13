@@ -152,6 +152,8 @@ sudo /usr/local/sbin/yharness-vault --cloud-user yharness-cloud allow-desktop \
   --owner SSH_OWNER example-worker.service
 ```
 
+Leave the service names out to open an empty Vault. After enabling a service, rerun `allow-desktop` with the complete list of services that Desktop may manage.
+
 Open **Cloud** and select the lock icon in its title bar. Choose a service, then **Add secret**, **Replace**, or **Revoke**. Enter values in the masked field. The window sends values directly to the VPS Vault over SSH and shows saved names after submission. Values stay outside Cloud chat, Bot tools, and model requests. The selected service loads its current values on its next start.
 
 Run `sudo /usr/local/sbin/yharness-vault deny-desktop` to remove Desktop management access and stop its listener. Stored credentials are available to their services until you revoke them. To grant management to a different SSH account, run `deny-desktop` first, then run `allow-desktop` with the new account.
