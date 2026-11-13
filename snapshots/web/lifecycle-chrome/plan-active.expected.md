@@ -1,9 +1,14 @@
 - button "New session"
 - button "Collapse sidebar"
+- group "Workspace mode":
+  - button "Code" [pressed]
+  - button "Bots"
 - button "New session": New Session
 - navigation "Global panels":
   - button "Plugins"
   - button "Automation tasks"
+  - button "Skills"
+  - button "Code map"
 - text: Workspaces
 - button "Search sessions"
 - textbox "Search session names"
@@ -20,7 +25,7 @@
 - button "Standard mode"
 - textbox "Describe what you want to build, / commands, @ files or sessions"
 - button "Add files or run commands"
-- 'button "Access mode, current: Workspace Write"': Workspace Write
+- 'button "Access mode, current: Approve for me"': Approve for me
 - button "Plan mode on, press to turn off": Plan
 - button "Select model, current DeepSeek-V4-Flash": DeepSeek-V4-Flash
 - button "Send message" [disabled]

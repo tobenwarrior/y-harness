@@ -12,7 +12,7 @@ import {
   fixtureUserPrompts, launchWebScaffold, recordFixture, watchConsole,
   webSnapshotMode, type WebScaffold,
 } from './scaffold.ts'
-import { connectFreshWorkspaceZh, ZH_BROWSER_LOCALE } from './support.ts'
+import { connectFreshWorkspace, newEnglishPage } from './support.ts'
 
 const DIR = fileURLToPath(new URL('../../../snapshots/web/present-svg', import.meta.url))
 const FIXTURE = join(DIR, 'session.v3.jsonl')
@@ -45,9 +45,7 @@ describe('web e2e: requested SVG is explicitly delivered', () => {
       ...(replayOverride === undefined ? {} : { replayFixture: FIXTURE, replayOverride }),
     })
     browser = await chromium.launch()
-    page = await browser.newPage({
-      viewport: { width: 1680, height: 1000 }, locale: ZH_BROWSER_LOCALE, timezoneId: 'Asia/Shanghai',
-    })
+    page = await newEnglishPage(browser)
     tripwire = watchConsole(page)
     page.on('console', (message) => {
       if (message.text().startsWith('[connection]')) connectionDiagnostics.push(message.text())
@@ -63,7 +61,7 @@ describe('web e2e: requested SVG is explicitly delivered', () => {
     })
     await page.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
     await page.waitForSelector('[class*="frame"]')
-    await connectFreshWorkspaceZh(page, scaffold.workspaceCwd)
+    await connectFreshWorkspace(page, scaffold.workspaceCwd)
   })
 
   afterAll(async () => {
@@ -119,13 +117,13 @@ describe('web e2e: requested SVG is explicitly delivered', () => {
     const card = page.locator('[data-presented-file]').filter({ hasText: FILE })
     await card.waitFor({ state: 'visible' })
     expect(await card.count()).toBe(1)
-    expect(await page.getByText('\u{4EA7}\u{7269}', { exact: true }).count()).toBe(0)
+    expect(await page.getByText('Product', { exact: true }).count()).toBe(0)
     // The scaffold workspace is not a git repository; the write call supplies its single changed file.
     const changes = page.locator('[data-changed-files]')
     // Changed-file cards wait for a separate summary request after the presentation events arrive.
     await changes.waitFor({ state: 'visible' })
     expect(await changes.count()).toBe(1)
-    expect(await changes.getByText(`\u{5DF2}\u{7F16}\u{8F91} ${FILE}`, { exact: true }).count()).toBe(1)
+    expect(await changes.getByText(`Edited ${FILE}`, { exact: true }).count()).toBe(1)
     expect(await changes.getByRole('list').count()).toBe(0)
     expect(await changes.locator('svg').evaluate(icon => icon.innerHTML))
       .toBe(await card.locator('svg').evaluate(icon => icon.innerHTML))
@@ -166,10 +164,10 @@ describe('web e2e: requested SVG is explicitly delivered', () => {
   })
 
   it('opens the single edited file from its compact card', async () => {
-    await page.locator('[data-changed-files]').getByRole('button', { name: `\u{67E5}\u{770B} ${FILE} \u{7684}\u{6539}\u{52A8}` }).click()
+    await page.locator('[data-changed-files]').getByRole('button', { name: `View changes to ${FILE}` }).click()
     const review = page.locator('[data-changes-review]')
     await review.waitFor({ state: 'visible' })
-    expect(await review.getByRole('button', { name: '\u{9009}\u{62E9}\u{8981}\u{67E5}\u{770B}\u{7684}\u{6587}\u{4EF6}' }).innerText()).toContain(FILE)
+    expect(await review.getByRole('button', { name: 'Choose the file to review' }).innerText()).toContain(FILE)
     expect(tripwire.pageErrors).toEqual([])
   })
 })
