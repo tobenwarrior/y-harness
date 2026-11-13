@@ -19,6 +19,18 @@ const FORMAT_REVERSALS = [
   'scripts/fixtures/migrate-sessions-to-v4/v5-to-v6-format.patch',
   'scripts/fixtures/migrate-sessions-to-v4/v4-to-v5-format.patch',
 ] as const
+/** Source graph and configs needed by the V4 subprocess, excluding unrelated repository trees. */
+const V4_ARCHIVE_PATHS = [
+  'packages',
+  'vendor',
+  'native',
+  'scripts/migrate-sessions-to-v4.ts',
+  'scripts/migration-failure-summary.ts',
+  'scripts/fixtures/migrate-sessions-to-v4',
+  'package.json',
+  'tsconfig.json',
+  'tsconfig.base.json',
+] as const
 const MIGRATION_TEST_TIMEOUT = 60_000
 const directories = new Set<string>()
 const stopProcesses: Array<() => Promise<void>> = []
@@ -53,7 +65,7 @@ function run(...args: string[]) {
 beforeAll(async () => {
   v4Checkout = mkdtempSync(join(tmpdir(), 'dsh-migrate-v4-checkout-'))
   const archive = join(v4Checkout, 'source.tar')
-  await execa('git', ['archive', '--format=tar', '--output', archive, 'HEAD'], { cwd: repository })
+  await execa('git', ['archive', '--format=tar', '--output', archive, 'HEAD', ...V4_ARCHIVE_PATHS], { cwd: repository })
   await extractTar({ file: archive, cwd: v4Checkout })
   await unlink(archive)
   for (const relativePatch of FORMAT_REVERSALS) {

@@ -40,6 +40,32 @@ vi.mock('node:fs/promises', async (importOriginal) => {
   }
 })
 
+/** Windows native locks write their marker through callback-based fs.write. */
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>()
+  return {
+    ...actual,
+    write: (
+      fd: number,
+      buffer: Buffer,
+      offset: number,
+      length: number,
+      position: number | null,
+      callback: (error: NodeJS.ErrnoException | null, bytesWritten: number, buffer: Buffer) => void,
+    ) => {
+      const bytes = state.markerWriteBytes
+      if (bytes === undefined || process.platform !== 'win32') {
+        actual.write(fd, buffer, offset, length, position, callback)
+        return
+      }
+      state.markerWriteBytes = undefined
+      actual.write(fd, buffer, offset, length, position, (error, _bytesWritten, writtenBuffer) => {
+        callback(error, bytes, writtenBuffer)
+      })
+    },
+  }
+})
+
 const scratchDirs: string[] = []
 const execFileAsync = promisify(execFile)
 
@@ -299,7 +325,7 @@ describe('withFileLock', () => {
         if (error?.code !== 'ERR_ATOMIC_WRITE_LOCK_PROTOCOL') process.exitCode = 1
       }
     `
-    const child = spawn(process.execPath, ['--experimental-strip-types', '--input-type=module', '-e', childSource], {
+    const child = spawn(process.execPath, ['--import', 'tsx/esm', '--input-type=module', '-e', childSource], {
       cwd: process.cwd(),
       stdio: ['ignore', 'ignore', 'pipe'],
     })
