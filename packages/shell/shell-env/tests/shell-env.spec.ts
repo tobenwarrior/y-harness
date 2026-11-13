@@ -72,12 +72,13 @@ describe('ShellEnvRegistry', () => {
   })
 
   it('resolves DSH_HOME from the ambient override or the user-home default', async () => {
+    vi.stubEnv('YH_HOME', undefined)
     vi.stubEnv('DSH_HOME', './ambient-dsh-home')
     const fromEnvironment = new ShellEnvRegistry(new Context())
     expect(fromEnvironment.collect(execution()).DSH_HOME).toBe(resolve('./ambient-dsh-home'))
 
     const root = await mkdtemp(join(tmpdir(), 'yh-shell-env-home-'))
-    vi.stubEnv('HOME', root)
+    vi.stubEnv(process.platform === 'win32' ? 'USERPROFILE' : 'HOME', root)
     vi.stubEnv('DSH_HOME', undefined)
     try {
       const fromDefault = new ShellEnvRegistry(new Context())
