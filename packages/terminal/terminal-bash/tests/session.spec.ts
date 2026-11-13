@@ -1262,6 +1262,31 @@ describe('LocalPtySession readiness and output', () => {
     expect(await operation.done).toMatchObject({ waitReason: 'stdin_read' })
   })
 
+  it('holds exact stdin readiness while terminal output is still arriving', async () => {
+    vi.useFakeTimers()
+    const terminal = new FakeTerminal()
+    const inspector = new FakeInspector()
+    const session = makeSession(terminal, inspector, config())
+    await initialize(session, terminal)
+
+    const write = terminal.write.bind(terminal)
+    terminal.write = async (data) => {
+      await write(data)
+      if (data === 'large\r') inspector.waiting = true
+    }
+    const operation = session.startSend({ text: 'large', submit: true })
+    let settled = false
+    void operation.done.then(() => { settled = true })
+    await vi.advanceTimersByTimeAsync(19)
+    terminal.emitData('late output\r\n')
+    await vi.advanceTimersByTimeAsync(1)
+    expect(settled).toBe(false)
+
+    terminal.emitData('\x1b]133;D;0\x07yharness> ')
+    await vi.advanceTimersByTimeAsync(10)
+    expect(await operation.done).toMatchObject({ waitReason: 'stdin_read' })
+  })
+
   it('retains a prompt marker until the startup shell regains the foreground group', async () => {
     vi.useFakeTimers()
     const terminal = new FakeTerminal()

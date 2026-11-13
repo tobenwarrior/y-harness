@@ -9,6 +9,9 @@
 - id: llm-deepseek
   disabled: true
 
+- id: skill-compound
+  disabled: true
+
 - id: sandbox-policy
   config:
     mode: workspace-write

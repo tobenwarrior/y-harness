@@ -56,6 +56,21 @@ function event(inventory: PersistenceSchemaInventory, name = 'test/record'): str
 }
 
 describe('persistent source type extraction', () => {
+  it('ignores temporary lint contract sources in the workspace', () => {
+    const root = fixture('export interface Payload { value: string }')
+    const expected = extractPersistenceSchema(root)
+    put(root, 'packages/core/session/src/oxlint-contract-1f4761e7-695f-4964-8f38-be5ae66f642b.ts', `
+      declare module '@yharness/session/types' {
+        interface SessionEventMap {
+          /** An event in a lint-only fixture. */
+          'test/lint-probe': { value: string }
+        }
+      }
+      export {}
+    `)
+    expect(extractPersistenceSchema(root)).toEqual(expected)
+  })
+
   it('keeps authored names and anonymous declaration locations without synthesized traversal names', () => {
     const root = fixture('interface Section { text: string }\nexport interface Payload { inserted: { source: { kind: "hooks-codex"; sections: Section[] } }[] }')
     const inventory = extractPersistenceSchema(root)

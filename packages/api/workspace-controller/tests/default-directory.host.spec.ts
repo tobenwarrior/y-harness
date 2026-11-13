@@ -29,7 +29,7 @@ describe('system Documents directory', () => {
     const legacy = join(documents, 'deepseek-harness', 'default-workspace')
     try {
       await mkdir(legacy, { recursive: true })
-      await expect(defaultWorkspaceDirectory(documents, new AbortController().signal, { platform: 'linux' }))
+      await expect(defaultWorkspaceDirectory(documents, new AbortController().signal))
         .resolves.toBe(legacy)
     } finally {
       await rm(documents, { recursive: true, force: true })

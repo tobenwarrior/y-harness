@@ -7,7 +7,21 @@
  * @module @yharness/tool-fs/session-cwd
  */
 
+import type { Context } from '@yharness/cordis'
+import type { FileSystem } from '@yharness/fs'
 import type { ToolExecution } from '@yharness/tools'
+import { managedBotExecutionFor, resolveManagedWorkdir } from '@yharness/sandbox-policy'
+
+/**
+ * Select the filesystem for one tool call. Managed Bot calls carry an
+ * execution-world provider; ordinary calls retain the context provider.
+ * @param ctx - the plugin context with the host provider fallback.
+ * @param exec - the current tool execution.
+ * @returns the provider that owns this call's path identities and effects.
+ */
+export function fileSystemForExecution(ctx: Context, exec: ToolExecution): FileSystem {
+  return managedBotExecutionFor(exec)?.fs ?? ctx.fs
+}
 
 /**
  * The session workspace cwd for this call, or `undefined` when none applies.
@@ -28,7 +42,10 @@ export function sessionResolveOptions(
   exec: ToolExecution,
   policyWorkspaceRoot?: string,
 ): { cwd?: string; signal?: AbortSignal } {
-  const cwd = policyWorkspaceRoot ?? sessionCwd(exec)
+  const managed = managedBotExecutionFor(exec)
+  const cwd = managed === undefined
+    ? policyWorkspaceRoot ?? sessionCwd(exec)
+    : resolveManagedWorkdir(managed)
   return {
     ...cwd !== undefined ? { cwd } : {},
     signal: exec.signal,

@@ -1,0 +1,30 @@
+# Keyless replay composition for the scoped VPS Bot Computer snapshot owner.
+
+- id: headless-runner
+  config:
+    task: !!js ctx.headlessStartup.task
+    sessionId: bot-session-sender
+    json: !!js ctx.headlessStartup.json
+
+- insert:
+    - id: agent-bots
+      name: '@yharness/bots'
+
+- id: llm-deepseek
+  disabled: true
+
+- insert:
+    - id: llm-replay
+      name: '@yharness/llm-replay'
+      config:
+        providers:
+          - id: deepseek-official
+            name: DeepSeek
+            models:
+              - id: deepseek-v4-flash
+                inputModalities: [text]
+              - id: deepseek-v4-pro
+                inputModalities: [text]
+
+    - id: vps-bot-computer-fixture
+      name: './vps-bot-computer-fixture.mjs'

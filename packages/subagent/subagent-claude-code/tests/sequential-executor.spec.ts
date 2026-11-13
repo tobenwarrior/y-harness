@@ -1,7 +1,8 @@
 /** Real idle Y root and persistence composition; only native SDK and process enforcement are substituted. */
 import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
+import { tmpdir } from 'node:os'
 import { pathToFileURL } from 'node:url'
 import { PassThrough } from 'node:stream'
 import { Context } from '@yharness/cordis'
@@ -70,7 +71,7 @@ async function* normalFrames(input: SDKUserMessage, options: Options): AsyncGene
   yield { type: 'system', subtype: 'session_state_changed', state: 'idle', uuid: frameIds.idle, session_id }
 }
 async function fixture(script: Script = normalFrames, diagnostics = '') {
-  const root = await realpath(await mkdtemp('/tmp/dsh-sequential-claude-'))
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'dsh-sequential-claude-')))
   const ctx = new Context()
   const owner: { fixtureHome?: string; executor?: ClaudeSequentialExecutor } = {}
   let stop = () => {}; let detach = () => {}
@@ -311,9 +312,13 @@ it.each(['container', 'context-management', 'server-tool-usage', 'malformed-text
 })
 
 it('matches pinned long native project path encoding and NFC normalization', () => {
-  const directory = `/fixture/${'é'.repeat(210)}`; const normalized = process.platform === 'darwin' ? directory.normalize('NFC') : directory
+  const profile = resolve('/fixture/profile')
+  const directory = resolve('/fixture', 'é'.repeat(210))
+  const normalized = process.platform === 'darwin' ? directory.normalize('NFC') : directory
   let hash = 0; for (const char of normalized) hash = (hash << 5) - hash + char.charCodeAt(0) | 0
   const expected = `${normalized.replace(/[^a-zA-Z0-9]/g, '-').slice(0, 200)}-${Math.abs(hash).toString(36)}`
-  expect(claudeSequentialProjectDirectory('/fixture/profile', directory)).toBe(join('/fixture/profile', 'projects', expected))
-  if (process.platform === 'darwin') expect(claudeSequentialProjectDirectory('/fixture/profile', directory.normalize('NFD'))).toBe(claudeSequentialProjectDirectory('/fixture/profile', directory))
+  expect(claudeSequentialProjectDirectory(profile, directory)).toBe(join(profile, 'projects', expected))
+  if (process.platform === 'darwin') {
+    expect(claudeSequentialProjectDirectory(profile, directory.normalize('NFD'))).toBe(claudeSequentialProjectDirectory(profile, directory))
+  }
 })

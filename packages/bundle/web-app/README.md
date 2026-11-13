@@ -71,11 +71,17 @@ When you launch `yharness --profile web` over SSH, the URL line still prints but
 
 ### Private Computer
 
-The optional `computer` configuration connects the Web host to a private X11 desktop. The shipped overlay reads `YH_VPS_DISPLAY` and `YH_VPS_XAUTHORITY`. Use the [VPS setup guide](../../../docs/user/guide/vps.md#watch-and-control-the-computer) to install and supervise the desktop.
+The VPS installer enables `botComputers` on fresh installations. Existing installations can select Bots in their Web profile patch. The owner-authenticated Computer routes resolve the requested Session against the Bot roster. The model tool uses the calling Session. Each Bot has a separate rootless Podman computer, desktop controller, and renewable human input lease. A selected Bot receives its computer when first accessed, while its saved Session and roster identity stay in place.
 
-The owner-authenticated Computer routes and the operator presets' `vps_computer` tool use one controller. The controller serializes input and reserves it for one browser while that browser holds a renewable lease. The shared Bot preset has no desktop access. The lease covers input through this controller. Applications running as the VPS account can still access its X11 session.
+The optional `computer` configuration supplies one shared X11 display for a custom Web deployment. It uses `YH_VPS_DISPLAY` and `YH_VPS_XAUTHORITY`. Set `botComputers.bots` to select owner Bots for private computers while keeping the shared display for other Bots. See [VPS setup and service grants](../../../docs/user/guide/vps.md#give-a-bot-access-to-service-diagnostics).
 
-The native macOS Desktop Host registers `mac_computer` on operator presets. It relays actions over its private Electron IPC channel with the invoking Session ID. The Electron main process authorizes the currently shared Bot before capturing the primary display or delivering input. Web and Cloud deployments use the VPS configuration above.
+`botComputers.desktopOnlyBots` selects Bots whose private Computer uses the isolated desktop while their shell and file tools retain the existing Host workspace and policy. The list contains only Bots selected by `botComputers`. VPS Bots using native Codex require this mode.
+
+Fully managed Bots resolve file paths and file URLs in their Linux workspace.
+
+The private `vpsJournal` configuration grants selected owner Bots with a dedicated VPS desktop read access to a host-operated Unix socket. The Web Host supplies the reader to both the scoped tool and the native Codex Bot action. The socket stays in the Host process.
+
+The native macOS Desktop Host registers `mac_computer` on operator presets. It relays actions over its private Electron IPC channel with the invoking Session ID. The Electron main process authorizes the currently shared Bot before capturing the primary display or delivering input.
 
 ### Per-session agent setup
 

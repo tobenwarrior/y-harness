@@ -134,8 +134,8 @@ importers:
         specifier: ^4.2.0
         version: 4.2.0
       jscpd:
-        specifier: ^5.0.12
-        version: 5.0.12
+        specifier: 5.4.3
+        version: 5.4.3
       jsdom:
         specifier: 29.1.1
         version: 29.1.1(@noble/hashes@2.3.0)
@@ -2620,6 +2620,9 @@ importers:
       '@yharness/avatar-generation':
         specifier: workspace:*
         version: link:../../agents/avatar-generation
+      '@yharness/bash-local':
+        specifier: workspace:*
+        version: link:../../shell/bash-local
       '@yharness/bots':
         specifier: workspace:*
         version: link:../../agents/bots
@@ -2851,6 +2854,12 @@ importers:
       '@yharness/file-reference-local':
         specifier: workspace:*
         version: link:../../context/file-reference-local
+      '@yharness/fs':
+        specifier: workspace:*
+        version: link:../../fs/fs
+      '@yharness/fs-patch':
+        specifier: workspace:*
+        version: link:../../fs/fs-patch
       '@yharness/host-directory-picker-auto':
         specifier: workspace:*
         version: link:../../host/directory-picker-auto
@@ -2896,6 +2905,12 @@ importers:
       '@yharness/plugin-manager':
         specifier: workspace:*
         version: link:../../boot/plugin-manager
+      '@yharness/sandbox':
+        specifier: workspace:*
+        version: link:../../sandbox/sandbox
+      '@yharness/sandbox-policy':
+        specifier: workspace:*
+        version: link:../../sandbox/sandbox-policy
       '@yharness/schedule':
         specifier: workspace:*
         version: link:../../schedule/schedule
@@ -3010,10 +3025,19 @@ importers:
       open:
         specifier: ^11.0.0
         version: 11.0.4
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
     devDependencies:
       '@deepseek-ai/libreoffice-kit':
         specifier: ^0.1.5
         version: 0.1.5
+      '@yharness/agent':
+        specifier: workspace:*
+        version: link:../../core/agent
+      '@yharness/agent-loop':
+        specifier: workspace:*
+        version: link:../../core/agent-loop
       '@yharness/cordis':
         specifier: workspace:~
         version: link:../../../vendor/cordis
@@ -3023,18 +3047,12 @@ importers:
       '@yharness/cordis-plugin-loader':
         specifier: workspace:~
         version: link:../../../vendor/loader
-      '@yharness/fs':
-        specifier: workspace:*
-        version: link:../../fs/fs
       '@yharness/fs-local':
         specifier: workspace:*
         version: link:../../fs/fs-local
       '@yharness/otel':
         specifier: workspace:*
         version: link:../../telemetry/otel
-      '@yharness/sandbox-policy':
-        specifier: workspace:*
-        version: link:../../sandbox/sandbox-policy
       '@yharness/session':
         specifier: workspace:*
         version: link:../../core/session
@@ -3044,6 +3062,9 @@ importers:
       '@yharness/shell-env':
         specifier: workspace:*
         version: link:../../shell/shell-env
+      '@yharness/subprocess-local':
+        specifier: workspace:*
+        version: link:../../subprocess/subprocess-local
       '@yharness/system-prompt':
         specifier: workspace:*
         version: link:../../core/system-prompt
@@ -7126,6 +7147,9 @@ importers:
       '@yharness/llm-deepseek-api-key':
         specifier: workspace:*
         version: link:../../llm/llm-deepseek-api-key
+      '@yharness/sandbox-policy':
+        specifier: workspace:*
+        version: link:../../sandbox/sandbox-policy
       '@yharness/session':
         specifier: workspace:*
         version: link:../../core/session
@@ -9409,6 +9433,12 @@ importers:
       '@yharness/session-projection':
         specifier: workspace:*
         version: link:../../session/session-projection
+      '@yharness/shell':
+        specifier: workspace:*
+        version: link:../../shell/shell
+      '@yharness/subprocess':
+        specifier: workspace:*
+        version: link:../../subprocess/subprocess
       '@yharness/system-prompt':
         specifier: workspace:*
         version: link:../../core/system-prompt
@@ -9440,6 +9470,9 @@ importers:
       '@yharness/output-retention':
         specifier: workspace:*
         version: link:../../util/output-retention
+      '@yharness/sandbox-policy':
+        specifier: workspace:*
+        version: link:../../sandbox/sandbox-policy
       '@yharness/scope':
         specifier: workspace:*
         version: link:../../core/scope
@@ -11233,6 +11266,9 @@ importers:
       '@yharness/cordis':
         specifier: workspace:~
         version: link:../../../vendor/cordis
+      '@yharness/fs':
+        specifier: workspace:*
+        version: link:../../fs/fs
       '@yharness/sandbox':
         specifier: workspace:*
         version: link:../sandbox
@@ -11242,6 +11278,12 @@ importers:
       '@yharness/session-projection':
         specifier: workspace:*
         version: link:../../session/session-projection
+      '@yharness/shell':
+        specifier: workspace:*
+        version: link:../../shell/shell
+      '@yharness/subprocess':
+        specifier: workspace:*
+        version: link:../../subprocess/subprocess
       '@yharness/system-prompt':
         specifier: workspace:*
         version: link:../../core/system-prompt
@@ -12888,6 +12930,9 @@ importers:
       '@yharness/home-paths':
         specifier: workspace:*
         version: link:../../util/home-paths
+      '@yharness/sandbox-policy':
+        specifier: workspace:*
+        version: link:../../sandbox/sandbox-policy
       '@yharness/skill':
         specifier: workspace:*
         version: link:../skill
@@ -14427,12 +14472,18 @@ importers:
       '@yharness/agent':
         specifier: workspace:*
         version: link:../../core/agent
+      '@yharness/agent-default-model':
+        specifier: workspace:*
+        version: link:../../core/agent-default-model
       '@yharness/agent-loop':
         specifier: workspace:*
         version: link:../../core/agent-loop
       '@yharness/api-session-controller':
         specifier: workspace:*
         version: link:../../api/session-controller
+      '@yharness/attachment':
+        specifier: workspace:*
+        version: link:../../attachment/attachment
       '@yharness/bots':
         specifier: workspace:*
         version: link:../../agents/bots
@@ -14463,15 +14514,27 @@ importers:
       '@yharness/session-persistence':
         specifier: workspace:*
         version: link:../../session/session-persistence
+      '@yharness/storage-domain':
+        specifier: workspace:*
+        version: link:../../storage/storage-domain
       '@yharness/subagent':
         specifier: workspace:*
         version: link:../../subagent/subagent
+      '@yharness/tool-schedule':
+        specifier: workspace:*
+        version: link:../../schedule/tool-schedule
       '@yharness/tool-web':
         specifier: workspace:*
         version: link:../../web/tool-web
       '@yharness/tools':
         specifier: workspace:*
         version: link:../../core/tools
+      '@yharness/typert-protocol':
+        specifier: workspace:*
+        version: link:../../typert/protocol
+      '@yharness/user-approval':
+        specifier: workspace:*
+        version: link:../../interaction/user-approval
       '@yharness/user-questions':
         specifier: workspace:*
         version: link:../../interaction/user-questions
@@ -20885,41 +20948,52 @@ packages:
   jsbn@0.1.1:
     resolution: {integrity: sha512-UVU9dibq2JcFWxQPA6KCqj5O42VOmAY3zQUfEKxU0KpTGXwNoCjkX1e13eHNvw/xPynt6pU0rZ1htjWTNTSXsg==}
 
-  jscpd-darwin-arm64@5.0.12:
-    resolution: {integrity: sha512-CQCDYhQY9yOGGeauzkRGYW/QtXurPCjfDkEhUoM/M5UdmpzxfG3i9mnNsaheJ0RdFRf73mL7JaLVRP8U2l5/kA==}
+  jscpd-darwin-arm64@5.4.3:
+    resolution: {integrity: sha512-2Zu6FrML6exhznj4hryUrnfVRM6dmfH0N7nldeY09cs7fA2TRQD+xzo5wA7SIqzhRDaUo0CBPBNVJz/XFmUEbg==}
     cpu: [arm64]
     os: [darwin]
 
-  jscpd-darwin-x64@5.0.12:
-    resolution: {integrity: sha512-7XNCDfChP9fPkIWLepd0zGnTov7/5mR7rJ5Utc1MdWFdgkN//qz6FAJ1FhQA0E/qjFedy9XTucfUCgLybSBsjw==}
+  jscpd-darwin-x64@5.4.3:
+    resolution: {integrity: sha512-Y4KykQqxMtVEV3pdjtfYbzONCmLOEgAyX8d2fUbwLW+uH/IZqUVCIwB3LrgCVv4Y+b/7mbOsdrGuIragTGpC/Q==}
     cpu: [x64]
     os: [darwin]
 
-  jscpd-linux-arm64-gnu@5.0.12:
-    resolution: {integrity: sha512-i/usHD0/8twzb2Qo4vFWcnuAD4IDLS6K/mTXwYy1CiJZDw4gmjfH45jtjdKUyoutTAiNs+ZWZgx1gIRljUbFuA==}
+  jscpd-linux-arm64-gnu@5.4.3:
+    resolution: {integrity: sha512-08d2DKt9BELglfZj0ZfhEs7I4gxiAk9Iflgjnsd0z4pB1OjWA4+DGDbfWmGOf6W2sVMDpwkVoa5Q5DWaOMPyoA==}
     cpu: [arm64]
     os: [linux]
     libc: [glibc]
 
-  jscpd-linux-x64-gnu@5.0.12:
-    resolution: {integrity: sha512-TqaeSTaGawcqyXSrQvYJFtLRn4aQeHgphGGsq2ZtVAg+lPeuMmh81c3bl0yi2dL3gDX1RGBQKBVul1XQknOuoA==}
+  jscpd-linux-arm64-musl@5.4.3:
+    resolution: {integrity: sha512-YbgJ7tQzztL441UCKX6UVN6n8zXc7eEwuJ4MHCdFtTf5w6EGpfFDi7+lgBi+MtwampG2k1PoltCYYiRZyPg4/g==}
+    cpu: [arm64]
+    os: [linux]
+    libc: [musl]
+
+  jscpd-linux-x64-gnu@5.4.3:
+    resolution: {integrity: sha512-BbL0HypadbjpxNfK/KY4CfpD4sCd2zf9HpFnGwwOjdryjdTG098isft/95BiS/XvZjVT3p6lwLf5ToI97OoqCg==}
     cpu: [x64]
     os: [linux]
     libc: [glibc]
 
-  jscpd-linux-x64-musl@5.0.12:
-    resolution: {integrity: sha512-WelugY1/rdoo0Y0sqJ2XQOIvyIZTfRe+vP3MJe4XvEUwPF0v+9SQoS34FnfblRhsddVixyNkgl7x/sHid9UMJw==}
+  jscpd-linux-x64-musl@5.4.3:
+    resolution: {integrity: sha512-0DlkzVDuuZ83JRZMOc4Fd2tBFKIrtXDHkHvxdF6d4HK+b954PZxuKhwBMArg76CtVSOQcuiICd/zxU9HtdT+mg==}
     cpu: [x64]
     os: [linux]
     libc: [musl]
 
-  jscpd-windows-x64-msvc@5.0.12:
-    resolution: {integrity: sha512-01x1klKjvfzI6Of5tI9u72x7TIQZQLLG6kMdsEPJKl/BXbskdknrfCepeTXRBbdFPKs25jfcd0klZ4OdDvww5w==}
+  jscpd-windows-arm64-msvc@5.4.3:
+    resolution: {integrity: sha512-BUD8kCzLyXUomw3vWRDbaBcIPByX6yU3VyqsKSf7/sjzr8y9ZmTRcn0cwmCV2WChrzD5JF4HeQl+hZlb7+s8lg==}
+    cpu: [arm64]
+    os: [win32]
+
+  jscpd-windows-x64-msvc@5.4.3:
+    resolution: {integrity: sha512-qYSVGZE2WP0NNdZU1S8DsfcCDpjwKSExvsUd86c4Vx9eWwZdw1i+V7h/9FWazo3PxEa+FzPLsCD5YjVawaarRA==}
     cpu: [x64]
     os: [win32]
 
-  jscpd@5.0.12:
-    resolution: {integrity: sha512-87dC+akj2mCywlt8p3xnRlDg0B55u4GDbfE9cuwOOeIxbEuWuIoNqGoYi65A0516aJ4EzAjGwBj1Qb/Ahc8WAQ==}
+  jscpd@5.4.3:
+    resolution: {integrity: sha512-2Ult/j407sgAx4Z8kW4nOB3wfGwvtyKyPN9XE+tbvNEP/QemBN8pijKtG6zC+8nfMuIiiWjNcez7VZo5ZjJRtA==}
     engines: {node: '>=18'}
     hasBin: true
 
@@ -28376,32 +28450,40 @@ snapshots:
 
   jsbn@0.1.1: {}
 
-  jscpd-darwin-arm64@5.0.12:
+  jscpd-darwin-arm64@5.4.3:
     optional: true
 
-  jscpd-darwin-x64@5.0.12:
+  jscpd-darwin-x64@5.4.3:
     optional: true
 
-  jscpd-linux-arm64-gnu@5.0.12:
+  jscpd-linux-arm64-gnu@5.4.3:
     optional: true
 
-  jscpd-linux-x64-gnu@5.0.12:
+  jscpd-linux-arm64-musl@5.4.3:
     optional: true
 
-  jscpd-linux-x64-musl@5.0.12:
+  jscpd-linux-x64-gnu@5.4.3:
     optional: true
 
-  jscpd-windows-x64-msvc@5.0.12:
+  jscpd-linux-x64-musl@5.4.3:
     optional: true
 
-  jscpd@5.0.12:
+  jscpd-windows-arm64-msvc@5.4.3:
+    optional: true
+
+  jscpd-windows-x64-msvc@5.4.3:
+    optional: true
+
+  jscpd@5.4.3:
     optionalDependencies:
-      jscpd-darwin-arm64: 5.0.12
-      jscpd-darwin-x64: 5.0.12
-      jscpd-linux-arm64-gnu: 5.0.12
-      jscpd-linux-x64-gnu: 5.0.12
-      jscpd-linux-x64-musl: 5.0.12
-      jscpd-windows-x64-msvc: 5.0.12
+      jscpd-darwin-arm64: 5.4.3
+      jscpd-darwin-x64: 5.4.3
+      jscpd-linux-arm64-gnu: 5.4.3
+      jscpd-linux-arm64-musl: 5.4.3
+      jscpd-linux-x64-gnu: 5.4.3
+      jscpd-linux-x64-musl: 5.4.3
+      jscpd-windows-arm64-msvc: 5.4.3
+      jscpd-windows-x64-msvc: 5.4.3
 
   jsdom@29.1.1(@noble/hashes@2.3.0):
     dependencies:

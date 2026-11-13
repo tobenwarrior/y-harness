@@ -24,6 +24,8 @@ import {
   yhHomePath,
 } from '@yharness/home-paths'
 
+const homeVariable = process.platform === 'win32' ? 'USERPROFILE' : 'HOME'
+
 afterEach(() => {
   vi.unstubAllEnvs()
 })
@@ -53,7 +55,7 @@ describe('dsh path helpers', () => {
 
   it('treats an empty or whitespace-only DSH_HOME as unset', async () => {
     const root = await mkdtemp(join(tmpdir(), 'yh-empty-home-'))
-    vi.stubEnv('HOME', root)
+    vi.stubEnv(homeVariable, root)
     try {
       expect(resolveDshHome(undefined, { DSH_HOME: '' })).toBe(join(root, '.yharness'))
       expect(resolveDshHome(undefined, { DSH_HOME: '   ' })).toBe(join(root, '.yharness'))
@@ -77,7 +79,8 @@ describe('dsh path helpers', () => {
   it.each([undefined, '', '   ', '~/env-dsh', './relative-dsh'] as const)(
     'resolves cache paths with DSH_HOME=%j', async (home) => {
       const root = await mkdtemp(join(tmpdir(), 'yh-cache-home-'))
-      vi.stubEnv('HOME', root)
+      vi.stubEnv(homeVariable, root)
+      vi.stubEnv(YH_HOME_ENV, undefined)
       vi.stubEnv('DSH_HOME', home)
       try {
         const expectedHome = home === undefined || home.trim() === ''
@@ -140,7 +143,7 @@ describe('Y Harness home compatibility', () => {
   it('routes old path helpers to the canonical default when both roots are new', async () => {
     const root = await mkdtemp(join(tmpdir(), 'yh-home-legacy-helper-'))
     try {
-      vi.stubEnv('HOME', root)
+      vi.stubEnv(homeVariable, root)
       vi.stubEnv(YH_HOME_ENV, '')
       vi.stubEnv(DSH_HOME_ENV, '')
       expect(resolveDshHome(undefined, {})).toBe(join(root, '.yharness'))
@@ -167,7 +170,7 @@ describe('Y Harness home compatibility', () => {
   it('keeps a populated legacy default when the canonical default is empty or partial', async () => {
     const root = await mkdtemp(join(tmpdir(), 'yh-home-resolution-'))
     try {
-      vi.stubEnv('HOME', root)
+      vi.stubEnv(homeVariable, root)
       const legacy = join(root, '.dsh')
       const canonical = join(root, '.yharness')
       await mkdir(join(legacy, 'profiles'), { recursive: true })
@@ -187,7 +190,7 @@ describe('Y Harness home compatibility', () => {
   it('uses a populated canonical default when no legacy data exists', async () => {
     const root = await mkdtemp(join(tmpdir(), 'yh-home-resolution-canonical-'))
     try {
-      vi.stubEnv('HOME', root)
+      vi.stubEnv(homeVariable, root)
       const canonical = join(root, '.yharness')
       await mkdir(canonical)
       await writeFile(join(canonical, 'settings.json'), '{}\n')

@@ -24,6 +24,7 @@ import { MAX_TIMER_DELAY_MS } from '@yharness/timeout'
 import { rgPath } from '@vscode/ripgrep'
 import { SpillLocator, SpillStore } from '@yharness/spill'
 import type { SaveTextSpill, SpillRef } from '@yharness/spill'
+import { bindManagedBotExecution, createManagedBotExecution } from '@yharness/sandbox-policy'
 import * as ToolFsSearch from '@yharness/tool-fs-search'
 import {
   buildGlobCommand,
@@ -157,7 +158,11 @@ class FakeHandle implements SubprocessHandle {
 class FakeSubprocess extends SubprocessRuntime {
   async terminalEnvironment() { return { platform: 'posix' as const } }
   spawns: SubprocessSpawnSpec[] = []
-  override async resolveExecutable(command: string): Promise<string> { return command }
+  resolvedExecutables: string[] = []
+  override async resolveExecutable(command: string): Promise<string> {
+    this.resolvedExecutables.push(command)
+    return command
+  }
   override spawnTerminal(): Promise<never> { throw new Error('search tools spawn pipes, never terminals') }
   handles: FakeHandle[] = []
   /** Arms the per-spawn script; a `{ reject }` return scripts a spawn-level failure. */
@@ -212,6 +217,31 @@ async function setup(options: SetupOptions = {}) {
 
 /** A stand-in agent whose session header carries the given cwd (and a stable id). */
 const agent = (cwd?: string) => ({ session: { header: { id: 'session-1', ...cwd !== undefined ? { cwd } : {} } } })
+
+/** Bind a search-only managed execution to an exact Agent context. */
+function managedSearchAgent(workspaceRoot = '/managed/workspace') {
+  const context = new Context()
+  const subprocess = new FakeSubprocess(context)
+  const execution = createManagedBotExecution({
+    context,
+    // Search never touches these capability members; the fake subprocess is
+    // the only managed provider exercised by these consumer tests.
+    shell: undefined as never,
+    fs: undefined as never,
+    subprocess,
+    sandboxPolicy: {
+      defaultMode: 'workspace-write',
+      resolve: () => ({ mode: 'workspace-write', workspaceRoot }),
+    },
+    workspaceRoot,
+  })
+  const unbind = bindManagedBotExecution(context, execution)
+  return {
+    subprocess,
+    agent: { ctx: context, session: { header: { id: 'managed-session', cwd: '/host/session' } } },
+    unbind,
+  }
+}
 
 let callCounter = 0
 function call(
@@ -398,6 +428,56 @@ describe('workdir derivation and signal forwarding', () => {
     // A non-agent caller takes the same default.
     await call(ctx, 'grep', { pattern: 'x' })
     expect(subprocess.spawns[1]?.cwd).toBe(process.cwd())
+  })
+
+  it('routes a managed search through its provider and roots an optional path in the managed workspace', async () => {
+    const { ctx, subprocess: hostSubprocess } = await setup()
+    const managed = managedSearchAgent()
+    try {
+      managed.subprocess.handler = () => runResult('src/a.ts\n')
+      const result = await call(ctx, 'glob', { pattern: '*.ts', path: 'src' }, { agent: managed.agent })
+
+      expect(result.isError).toBe(false)
+      expect(hostSubprocess.spawns).toHaveLength(0)
+      expect(managed.subprocess.resolvedExecutables).toEqual(['rg'])
+      expect(managed.subprocess.spawns[0]?.cwd).toBe('/managed/workspace')
+      expect(managed.subprocess.spawns[0]?.argv.at(-1)).toBe('/managed/workspace/src')
+    } finally {
+      managed.unbind()
+    }
+  })
+
+  it('uses the managed workspace as the default search root when no path is supplied', async () => {
+    const { ctx, subprocess: hostSubprocess } = await setup()
+    const managed = managedSearchAgent()
+    try {
+      managed.subprocess.handler = () => runResult('', { exitCode: 1 })
+      const result = await call(ctx, 'grep', { pattern: 'needle' }, { agent: managed.agent })
+
+      expect(result.isError).toBe(false)
+      expect(hostSubprocess.spawns).toHaveLength(0)
+      expect(managed.subprocess.resolvedExecutables).toEqual(['rg'])
+      expect(managed.subprocess.spawns[0]?.cwd).toBe('/managed/workspace')
+      expect(managed.subprocess.spawns[0]?.argv).not.toContain('--')
+    } finally {
+      managed.unbind()
+    }
+  })
+
+  it('rejects a managed search path outside the workspace before spawning', async () => {
+    const { ctx, subprocess: hostSubprocess } = await setup()
+    const managed = managedSearchAgent()
+    try {
+      const result = await call(ctx, 'glob', { pattern: '*', path: '../outside' }, { agent: managed.agent })
+
+      expect(result.isError).toBe(true)
+      expect(result.error).toMatchObject({ info: { name: 'SearchError', code: 'SEARCH_FAILED' } })
+      expect(text(result)).toContain('could not start its search command')
+      expect(hostSubprocess.spawns).toHaveLength(0)
+      expect(managed.subprocess.spawns).toHaveLength(0)
+    } finally {
+      managed.unbind()
+    }
   })
 
   it('spawns the packaged ripgrep binary with --no-config, the fixed argv, and budgeted collect streams', async () => {

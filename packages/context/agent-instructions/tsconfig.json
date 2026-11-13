@@ -33,6 +33,9 @@
       "path": "../../fs/fs"
     },
     {
+      "path": "../../sandbox/sandbox-policy"
+    },
+    {
       "path": "../../util/home-paths"
     }
   ]

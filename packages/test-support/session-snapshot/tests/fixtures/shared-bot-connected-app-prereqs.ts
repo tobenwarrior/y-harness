@@ -9,15 +9,17 @@ import { basename } from 'node:path'
 import { mkdir, rm } from 'node:fs/promises'
 import { SessionId } from '@yharness/session'
 import { defineTool, type ToolDefinition } from '@yharness/tools'
-import { BotId } from '@yharness/bots/types'
-import { BotPrincipalId } from '@yharness/bots/src/sharing.ts'
 import {
+  BotId,
+  BotPrincipalId,
   BotService,
   SHARED_BOT_AGENT_PRESET,
+  botDomain,
   sharedBotWorkingDirectory,
+  sharedMembershipSnapshotSchema,
+  sharedPrivateSessionSchema,
   type SharedBotHost,
 } from '@yharness/bots'
-import { botDomain, sharedMembershipSnapshotSchema, sharedPrivateSessionSchema } from '@yharness/bots/src/storage.ts'
 import { z } from 'zod'
 
 export const name = 'snapshot-shared-bot-connected-app-prereqs'

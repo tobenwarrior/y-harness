@@ -83,6 +83,8 @@ Historical body preparation completes the parent catalog through [V3→V4](../se
 
 Historical `stat` and `list` revisions require metadata work proportional to the root’s Session count. Fresh body preparation scans all selected headers and decodes direct-child bodies; memo reuse still scans membership and checks revisions. Read-only access never publishes an upgrade, so cold processes and evicted preparations repeat that work. Current V6 body reads and revisions avoid the historical corpus scan. See the [measured costs and diagnostic command](../../../.agents/notes/implemented/architecture/2026-08-31-released-session-format-migrations.md#catalog-scan-measurements).
 
+The shipped verifier bundles its JavaScript workspace dependencies from the Host compiler output. It can verify a staged generation in a fresh Worker without resolving other workspace bundles at runtime.
+
 -----
 
 <a id="understand-the-implementation"></a>

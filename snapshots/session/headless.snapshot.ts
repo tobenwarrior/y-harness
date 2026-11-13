@@ -302,10 +302,18 @@ async function writeHeaderSidecars(
     if (toolsAbsent) {
       expect(schemas, `${scenario.name}: child ${index} declared an absent tools field but emitted a schema set`)
         .toHaveLength(0)
+      const headers = normalizedHeaders(child.content, ctx)
+      expect(headers, `${scenario.name}: child ${index} declared an absent tools field but emitted no request headers`)
+        .not.toHaveLength(0)
+      await writeFile(
+        join(scenario.dir, `tool-schemas.${index}.expected.json`),
+        formatToolSchemasSnapshot([], headers.slice(1).map(() => [])),
+      )
+      continue
     }
     await writeFile(
       join(scenario.dir, `tool-schemas.${index}.expected.json`),
-      formatToolSchemasSnapshot(toolsAbsent ? [] : schemas[0] as unknown[], schemas.slice(1)),
+      formatToolSchemasSnapshot(schemas[0] as unknown[], schemas.slice(1)),
     )
   }
 }
@@ -449,7 +457,7 @@ function stderrFromSession(log: string): string {
   if (typeof error?.code !== 'string' || typeof error.message !== 'string') {
     throw new Error('headless snapshot error reason has no code and message')
   }
-  return `${output}dsh: ${error.code}: ${error.message}\n`
+  return `${output}yharness: ${error.code}: ${error.message}\n`
 }
 
 function modelFromSession(log: string): { provider: string; model: string } {

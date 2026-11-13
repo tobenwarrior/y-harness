@@ -47,6 +47,8 @@ Deployments that supply the explicit `DSH_CODEX_BINARY`, `DSH_CODEX_NODE`, `DSH_
 
 The `codex-backend` route is unsupported for shared sessions whose durable header has `agentPreset: 'shared-bot'`; access is rejected before sandbox-policy resolution or native thread startup.
 
+Owner VPS Bots with private desktops can use `codex-backend` in [desktop-only mode](../../../docs/user/guide/vps.md#move-existing-bots-in-stages). Native Codex runs shell and file actions under the Host Session policy.
+
 The `dynamicToolReplayMaxBytes` connection setting bounds the UTF-8 action-history excerpt sent after a native cursor loss; it defaults to 64 KiB and accepts values from 1 KiB through 4 MiB. Omitted records are disclosed to the model, and unresolved action groups remain prioritized for recovery.
 
 When the skill library is mounted, its Codex inventory reads metadata only from an already connected native peer, scoped to registered project directories. Library discovery does not start Codex, request sign-in, read instruction bodies, or scan the native launch directory when no project is registered. Native entries remain protected and read-only; disabled entries stay visible. Disconnected, unsupported, incomplete, and failed inventories are distinguished. Native implicit skill usage remains unknown. Existing Harness skill instructions enter native requests through the logged message path; this inventory does not add native skill-input items or infer usage from assistant text.

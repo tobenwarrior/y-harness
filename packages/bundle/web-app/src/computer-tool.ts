@@ -42,13 +42,30 @@ const ATTACHMENT = {
  */
 export function apply(ctx: Context): void {
   const computer = ctx.vpsComputer
+  registerVpsComputer(ctx, () => Promise.resolve(computer), 'the private VPS desktop')
+}
+
+/**
+ * Expose the managed computer of the exact calling Bot Session.
+ * @param ctx - Agent scope carrying tools and attachments.
+ * @param resolve - Resolves the current owner Bot's desktop from the calling Session.
+ */
+export function applyVpsBotComputer(ctx: Context, resolve: (sessionId: string) => Promise<ComputerAgentControls>): void {
+  registerVpsComputer(ctx, resolve, 'this Bot’s private VPS desktop')
+}
+
+function registerVpsComputer(
+  ctx: Context,
+  resolve: (sessionId: string) => Promise<ComputerAgentControls>,
+  desktop: string,
+): void {
   registerComputerTool(ctx, {
     name: 'vps_computer',
-    description: 'Observe or operate the private VPS desktop shown in the Computer panel. '
+    description: `Observe or operate ${desktop} shown in the Computer panel. `
       + 'Observe before targeting visible controls. Input is paused while the user is in control.',
     keyDescription: 'X11 key or chord, for example Return or ctrl+a.',
-    observe: (_sessionId, signal) => computer.observe(signal),
-    act: (_sessionId, action, signal) => computer.actAsBot(action, signal),
+    observe: async (sessionId, signal) => (await resolve(sessionId)).observe(signal),
+    act: async (sessionId, action, signal) => (await resolve(sessionId)).actAsBot(action, signal),
   })
 }
 

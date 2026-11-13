@@ -284,6 +284,17 @@ class SingleExeBuild {
     await this.runPnpm('build', ['run', 'build'])
   }
 
+  /** Build the static launcher on the native Linux wheel builder before deployment. */
+  async buildLandlock(): Promise<void> {
+    const linux = this.cli.targets.filter(target => target.platform === 'linux')
+    if (linux.length === 0) return
+    const nonNative = linux.find(target => process.platform !== 'linux' || process.arch !== target.arch)
+    if (!this.cli.dryRun && nonNative !== undefined) {
+      throw new Error(`build-exe-for-python-sdk: build ${nonNative.spec} on a native Linux ${nonNative.arch} host with musl-gcc.`)
+    }
+    await this.runPnpm('Landlock launcher', ['--dir', 'native/system', 'run', 'build:native', '--landlock-only'])
+  }
+
   /** Clear and deploy the runtime closure into the node carrier. */
   async deployStaging(): Promise<void> {
     if (this.staging === root || root.startsWith(this.staging + sep)) {
@@ -423,7 +434,7 @@ class SingleExeBuild {
   /**
    * Package one target; SEA mode accepts one target per invocation.
    * @param target - the pkg target triple to build.
-   * @returns the executable, resource directories, ripgrep, and required macOS spawn helper paths.
+   * @returns the executable, resource directories (including the Linux launcher sidecar), ripgrep, and required macOS spawn helper paths.
    */
   async pack(target: Target): Promise<string[]> {
     const productBase = join(this.outDir, `${OUTPUT_BASENAME}-${target.platform}-${target.arch}`)
@@ -462,6 +473,7 @@ class SingleExeBuild {
         cache: join(tmpdir(), 'dsh-primary-runtime-downloads'), version })
       smokePrimaryRuntime(join(resources, 'primary-runtime'))
     }
+    await this.copyLandlockSidecar(target, resources)
     if (target.platform !== 'macos') return [product, ripgrep, office, resources]
     const spawnHelper = `${product}-spawn-helper`
     const source = join(this.staging, 'node_modules', 'node-pty', 'prebuilds', `darwin-${target.arch}`, 'spawn-helper')
@@ -472,6 +484,29 @@ class SingleExeBuild {
       await chmod(spawnHelper, 0o755)
     }
     return [product, ripgrep, spawnHelper, office, resources]
+  }
+
+  /** Copy the target Linux launcher into the existing real resource directory for SEA. */
+  private async copyLandlockSidecar(target: Target, resources: string): Promise<void> {
+    if (target.platform !== 'linux') return
+    const source = join(
+      this.staging,
+      'node_modules',
+      '@yharness',
+      `node-addon-system-linux-${target.arch}`,
+      'bin',
+      'landlock-run',
+    )
+    const destination = join(resources, 'landlock-run')
+    if (this.cli.dryRun) {
+      console.log(`build-exe-for-python-sdk: [dry-run] cp ${source} ${destination}`)
+      return
+    }
+    if (!existsSync(source)) {
+      throw new Error(`build-exe-for-python-sdk: target Landlock launcher is missing at ${source}.`)
+    }
+    await copyFile(source, destination)
+    await chmod(destination, 0o755)
   }
 
   /** Copy the target ripgrep binary beside the executable so Node can spawn it outside pkg's virtual filesystem. */
@@ -644,6 +679,7 @@ async function main(): Promise<void> {
   console.log(`build-exe-for-python-sdk: staging: ${pipeline.staging}`)
   await pipeline.verifyClosure()
   await pipeline.build()
+  await pipeline.buildLandlock()
   await pipeline.deployStaging()
   await pipeline.injectPkgConfig()
   const products: string[] = []

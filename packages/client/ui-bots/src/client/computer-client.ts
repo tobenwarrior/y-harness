@@ -2,10 +2,24 @@
 
 export type ComputerMode = 'watching' | 'controlling' | 'other'
 
+/** Execution location reported for a Computer provider. */
+export type ComputerLocation = 'mac' | 'vps'
+
+/** Owner scope to which a Computer provider's permissions apply. */
+export type ComputerPermissionScope = 'bot' | 'workspace'
+
+/** Non-sensitive identity metadata for the Computer selected by the active Bot. */
+export interface ComputerIdentity {
+  readonly id?: string
+  readonly location: ComputerLocation
+  readonly permissionScope: ComputerPermissionScope
+}
+
 /** Direct response from the Computer status route. */
 export interface ComputerStatus {
   readonly available: boolean
-  readonly kind?: 'mac'
+  readonly kind?: ComputerLocation
+  readonly computer?: ComputerIdentity
 }
 
 /** Direct response from a Computer frame request. */
@@ -44,16 +58,36 @@ export class ComputerApiError extends Error {
 
 /** Authenticated browser client for the Computer routes. */
 export interface ComputerClient {
-  /** Read whether the Host exposes a Computer provider. */
-  status(signal?: AbortSignal): Promise<ComputerStatus>
-  /** Read one current screenshot and lease mode. */
-  frame(viewerId: string, signal?: AbortSignal): Promise<ComputerFrame>
-  /** Ask the Host for the human control lease. */
-  takeControl(viewerId: string, signal?: AbortSignal): Promise<ComputerControlResult>
-  /** Return the human control lease to the Host. */
-  releaseControl(viewerId: string, options?: { readonly keepalive?: boolean }): Promise<ComputerControlResult>
-  /** Send one bounded human input action while holding the lease. */
-  input(viewerId: string, action: ComputerInputAction, signal?: AbortSignal): Promise<ComputerControlResult>
+  /** Read whether the Host exposes a Computer provider.
+   * @param signal - Optional cancellation signal.
+   * @param sessionId - Active Bot Session selecting an isolated Cloud Computer.
+   */
+  status(signal?: AbortSignal, sessionId?: string): Promise<ComputerStatus>
+  /** Read one current screenshot and lease mode.
+   * @param viewerId - Browser viewer identity.
+   * @param signal - Optional cancellation signal.
+   * @param sessionId - Active Bot Session selecting an isolated Cloud Computer.
+   */
+  frame(viewerId: string, signal?: AbortSignal, sessionId?: string): Promise<ComputerFrame>
+  /** Ask the Host for the human control lease.
+   * @param viewerId - Browser viewer identity.
+   * @param signal - Optional cancellation signal.
+   * @param sessionId - Active Bot Session selecting an isolated Cloud Computer.
+   */
+  takeControl(viewerId: string, signal?: AbortSignal, sessionId?: string): Promise<ComputerControlResult>
+  /** Return the human control lease to the Host.
+   * @param viewerId - Browser viewer identity.
+   * @param options - Optional keepalive behavior for unmount cleanup.
+   * @param sessionId - Active Bot Session selecting an isolated Cloud Computer.
+   */
+  releaseControl(viewerId: string, options?: { readonly keepalive?: boolean }, sessionId?: string): Promise<ComputerControlResult>
+  /** Send one bounded human input action while holding the lease.
+   * @param viewerId - Browser viewer identity.
+   * @param action - Validated pointer or keyboard action.
+   * @param signal - Optional cancellation signal.
+   * @param sessionId - Active Bot Session selecting an isolated Cloud Computer.
+   */
+  input(viewerId: string, action: ComputerInputAction, signal?: AbortSignal, sessionId?: string): Promise<ComputerControlResult>
 }
 
 const STATUS_PATH = 'api/computer/status'
@@ -70,13 +104,30 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
 }
 
+function identityOf(value: unknown): ComputerIdentity | undefined {
+  if (!isRecord(value)) return undefined
+  const location = value.location === 'mac' || value.location === 'vps' ? value.location : undefined
+  const permissionScope = value.permissionScope === 'bot' || value.permissionScope === 'workspace'
+    ? value.permissionScope : undefined
+  const id = typeof value.id === 'string' && value.id.length > 0 && value.id.length <= 256
+    && !/[\u0000-\u001f\u007f]/u.test(value.id) ? value.id : undefined
+  if (location === undefined || permissionScope === undefined) return undefined
+  return { ...(id === undefined ? {} : { id }), location, permissionScope }
+}
+
 function modeOf(value: unknown): ComputerMode | undefined {
   return value === 'watching' || value === 'controlling' || value === 'other' ? value : undefined
 }
 
 function statusOf(value: unknown): ComputerStatus | undefined {
   if (!isRecord(value) || typeof value.available !== 'boolean') return undefined
-  return value.kind === 'mac' ? { available: value.available, kind: 'mac' } : { available: value.available }
+  const kind = value.kind === 'mac' || value.kind === 'vps' ? value.kind : undefined
+  const computer = identityOf(value.computer)
+  return {
+    available: value.available,
+    ...(kind === undefined ? {} : { kind }),
+    ...(computer === undefined ? {} : { computer }),
+  }
 }
 
 function frameOf(value: unknown): ComputerFrame | undefined {
@@ -92,6 +143,10 @@ function controlOf(value: unknown): ComputerControlResult | undefined {
   if (!isRecord(value)) return undefined
   const mode = modeOf(value.mode)
   return mode === undefined ? undefined : { mode }
+}
+
+function withSession(payload: Record<string, unknown>, sessionId: string | undefined): Record<string, unknown> {
+  return sessionId === undefined || sessionId === '' ? payload : { ...payload, sessionId }
 }
 
 async function post<T>(
@@ -130,11 +185,15 @@ async function post<T>(
  */
 export function createComputerClient(): ComputerClient {
   return {
-    status: signal => post(STATUS_PATH, {}, statusOf, requestOptions(signal)),
-    frame: (viewerId, signal) => post(FRAME_PATH, { viewerId }, frameOf, requestOptions(signal)),
-    takeControl: (viewerId, signal) => post(TAKE_CONTROL_PATH, { viewerId }, controlOf, requestOptions(signal)),
-    releaseControl: (viewerId, options) => post(RELEASE_CONTROL_PATH, { viewerId }, controlOf, options),
-    input: (viewerId, action, signal) => post(INPUT_PATH, { viewerId, action }, controlOf, requestOptions(signal)),
+    status: (signal, sessionId) => post(STATUS_PATH, withSession({}, sessionId), statusOf, requestOptions(signal)),
+    frame: (viewerId, signal, sessionId) => post(FRAME_PATH, withSession({ viewerId }, sessionId), frameOf, requestOptions(signal)),
+    takeControl: (viewerId, signal, sessionId) => post(
+      TAKE_CONTROL_PATH, withSession({ viewerId }, sessionId), controlOf, requestOptions(signal),
+    ),
+    releaseControl: (viewerId, options, sessionId) => post(RELEASE_CONTROL_PATH, withSession({ viewerId }, sessionId), controlOf, options),
+    input: (viewerId, action, signal, sessionId) => post(
+      INPUT_PATH, withSession({ viewerId, action }, sessionId), controlOf, requestOptions(signal),
+    ),
   }
 }
 
@@ -174,10 +233,10 @@ export function createMacComputerClient(sessionId: string, viewerId: string): Ma
   const owner = { sessionId, viewerId }
   const path = (operation: string): string => 'api/computer/mac/' + operation
   const computer: ComputerClient = {
-    status: signal => post(STATUS_PATH, {}, statusOf, requestOptions(signal)),
-    frame: (_viewerId, signal) => post(path('frame'), owner, frameOf, requestOptions(signal)),
-    takeControl: (_viewerId, signal) => post(path('take-control'), owner, controlOf, requestOptions(signal)),
-    releaseControl: (_viewerId, options) => post(path('release-control'), owner, controlOf, options),
+    status: (signal, _sessionId) => post(STATUS_PATH, {}, statusOf, requestOptions(signal)),
+    frame: (_viewerId, signal, _sessionId) => post(path('frame'), owner, frameOf, requestOptions(signal)),
+    takeControl: (_viewerId, signal, _sessionId) => post(path('take-control'), owner, controlOf, requestOptions(signal)),
+    releaseControl: (_viewerId, options, _sessionId) => post(path('release-control'), owner, controlOf, options),
     input: () => Promise.reject(new Error('Use your Mac keyboard and mouse to control the local display.')),
   }
   return {

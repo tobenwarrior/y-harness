@@ -11,9 +11,11 @@
  */
 
 import type { Context } from '@yharness/cordis'
+import type { FileSystem } from '@yharness/fs'
 import type { ToolExecution } from '@yharness/tools'
 import type { SandboxExecutionPolicy, SandboxMode } from '@yharness/sandbox'
 import { ESCALATION_TARGETS, approveEscalation, escalationHintMarker, sandboxDenialMarker, sandboxPermissionsDescription, validateEscalationArgs } from '@yharness/sandbox'
+import { managedBotExecutionFor } from '@yharness/sandbox-policy'
 import type { SandboxPolicyService } from '@yharness/sandbox-policy'
 import { FsError } from '@yharness/fs'
 
@@ -46,6 +48,16 @@ export class FsSandboxController {
     if (defaultMode !== undefined && this.policy === undefined) {
       throw new Error('tool-fs: the mounted filesystem confines but ctx.sandboxPolicy is missing')
     }
+  }
+
+  /**
+   * Select the filesystem provider for one tool call. Managed Bot calls never
+   * fall back to the host provider, including after a policy escalation.
+   * @param exec - the current tool execution.
+   * @returns the managed provider or the composition's ordinary provider.
+   */
+  filesystem(exec: ToolExecution): FileSystem {
+    return managedBotExecutionFor(exec)?.fs ?? this.ctx.fs
   }
 
   /**
@@ -89,7 +101,8 @@ export class FsSandboxController {
       ? undefined
       : args.justification
     validateEscalationArgs(args.sandbox_permissions, justification)
-    const standingPolicy = this.policy?.resolve({ ...exec.agent ? { session: exec.agent.session } : {} })
+    const managed = managedBotExecutionFor(exec)
+    const standingPolicy = (managed?.sandboxPolicy ?? this.policy)?.resolve({ ...exec.agent ? { session: exec.agent.session } : {} })
     if (args.sandbox_permissions !== undefined && args.sandbox_permissions === standingPolicy?.mode) return standingPolicy
     if (args.sandbox_permissions === undefined || args.justification === undefined) {
       return standingPolicy

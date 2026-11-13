@@ -8,6 +8,9 @@
 - id: llm-deepseek
   disabled: true
 
+- id: skill-compound
+  disabled: true
+
 - id: agent-loop
   config:
     agents:

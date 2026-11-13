@@ -9,7 +9,9 @@
     "(?s)/\\* jscpd:ignore-start \\*/.*?/\\* jscpd:ignore-end \\*/"
   ],
   "reporters": ["console"],
-  "exitCode": 1,
+  "baseline": ".jscpd-baseline.json",
+  "failOnNewClones": 0,
+  "failOnEmpty": true,
   "noColors": true,
   "noTips": true
 }

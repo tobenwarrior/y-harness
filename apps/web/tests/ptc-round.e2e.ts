@@ -204,17 +204,26 @@ describe('web e2e: PTC mode round renders nested sub-calls', () => {
     )))
     await compareOrRefreshGolden(TRAJECTORY_EXPECTED, overview.join('\n'), MODE)
 
-    await page.getByRole('button', { name: 'Code', exact: true }).click()
+    await page.getByRole('tabpanel').getByRole('button', { name: 'Code', exact: true }).click()
     const source = page.locator('[data-line-numbers] pre')
     await source.waitFor()
     expect(await source.textContent()).toBe(args.code.endsWith('\n') ? args.code.slice(0, -1) : args.code)
     const wrap = page.getByRole('button', { name: 'Wrap lines', exact: true })
     expect(await wrap.getAttribute('aria-pressed')).toBe('false')
     const content = page.locator('[data-wrap]').filter({ has: source })
-    expect(await content.evaluate(element => element.scrollWidth > element.clientWidth)).toBe(true)
-    await wrap.click()
-    expect(await wrap.getAttribute('aria-pressed')).toBe('true')
-    await expect.poll(() => content.evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1)
+    const maxWidth = await content.evaluate((element: HTMLElement) => {
+      const previous = element.style.maxWidth
+      element.style.maxWidth = '240px'
+      return previous
+    })
+    try {
+      expect(await content.evaluate(element => element.scrollWidth > element.clientWidth)).toBe(true)
+      await wrap.click()
+      expect(await wrap.getAttribute('aria-pressed')).toBe('true')
+      await expect.poll(() => content.evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1)
+    } finally {
+      await content.evaluate((element: HTMLElement, previous) => { element.style.maxWidth = previous }, maxWidth)
+    }
     const code = await captureStableAria(page, '[role="tabpanel"]', scaffold.workspaceCwd)
     await compareOrRefreshGolden(CODE_EXPECTED, code, MODE)
 

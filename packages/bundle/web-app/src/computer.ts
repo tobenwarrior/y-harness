@@ -75,10 +75,23 @@ export type ComputerCommandRunner = (
   signal: AbortSignal,
 ) => Promise<void>
 
+/**
+ * Capture one JPEG from an execution environment that owns its display.
+ *
+ * The returned bytes must come from that environment's stdout or equivalent
+ * byte channel. The Host never supplies a shared filesystem path for this
+ * operation.
+ * @param signal - Cancellation and command deadline signal.
+ * @returns JPEG bytes captured inside the execution environment.
+ */
+export type ComputerCaptureRunner = (signal: AbortSignal) => Promise<Buffer>
+
 /** Deterministic seams for tests; production uses the local clock and child process runner. */
 export interface ComputerInternals {
   readonly now?: () => number
   readonly run?: ComputerCommandRunner
+  /** Optional in-environment screenshot capture used by container-backed Hosts. */
+  readonly capture?: ComputerCaptureRunner
 }
 
 /** Stable error codes for route and tool owners that need to classify failures. */
@@ -291,6 +304,7 @@ export class VpsComputer {
   private readonly config: ComputerConfig
   private readonly now: () => number
   private readonly run: ComputerCommandRunner
+  private readonly captureRunner: ComputerCaptureRunner | undefined
   private queue: Promise<void> = Promise.resolve()
   private readonly captures = new Set<Promise<void>>()
   private owner: string | undefined
@@ -307,6 +321,7 @@ export class VpsComputer {
     this.config = validateConfig(config)
     this.now = internals.now ?? Date.now
     this.run = internals.run ?? runNativeCommand
+    this.captureRunner = internals.capture
   }
 
   /**
@@ -525,6 +540,19 @@ export class VpsComputer {
 
   private async captureNow(signal?: AbortSignal): Promise<ComputerImage> {
     throwIfAborted(signal)
+    if (this.captureRunner !== undefined) {
+      try {
+        const bytes = await this.captureRunner(signal ?? new AbortController().signal)
+        if (bytes.length < 2 || bytes[0] !== 0xff || bytes[1] !== 0xd8) {
+          throw new ComputerError('computer frame capture failed', 'capture-failed')
+        }
+        return { jpeg: bytes.toString('base64'), width: COMPUTER_WIDTH, height: COMPUTER_HEIGHT }
+      } catch (error) {
+        if (error instanceof ComputerError) throw error
+        if (signal?.aborted === true) throw abortError()
+        throw new ComputerError('computer frame capture failed', 'capture-failed')
+      }
+    }
     let directory: string | undefined
     try {
       directory = await mkdtemp(join(tmpdir(), 'dsh-computer-'))
@@ -544,6 +572,28 @@ export class VpsComputer {
       }
     }
   }
+}
+
+/**
+ * Create a Computer Host whose display commands execute inside a private
+ * container or remote execution environment.
+ *
+ * `run` receives argv without a shell. Input actions invoke `xdotool` through
+ * that callback, while screenshots invoke the image’s capture command so the JPEG stays
+ * inside the execution environment until the callback returns its bytes.
+ * @param run - Execute one argv vector and return stdout bytes.
+ * @returns A Computer Host using the supplied execution environment.
+ */
+export function containerComputer(
+  run: (argv: readonly string[], signal: AbortSignal) => Promise<Buffer>,
+): VpsComputer {
+  const execute: ComputerCommandRunner = async (command, args, _env, signal) => {
+    await run([command, ...args], signal)
+  }
+  const capture: ComputerCaptureRunner = signal => run(
+    ['/usr/local/bin/yharness-vps-bot-capture'], signal,
+  )
+  return new VpsComputer({ display: ':container', authorityPath: '/dev/null' }, { run: execute, capture })
 }
 
 /** Compatibility name for Host-side callers that prefer the generic service term. */

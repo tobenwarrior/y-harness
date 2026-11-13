@@ -90,12 +90,18 @@ export function canonicalGrokSkillName(sourceName: string): string {
 export async function importGrokBotSkills(
   botCwd: string,
   skills: readonly GrokImportedSkill[],
-  options: { readonly preview?: boolean } = {},
+  options: { readonly preview?: boolean; readonly previewMissingDirectory?: boolean } = {},
 ): Promise<GrokSkillImportResult> {
-  if (!isAbsolute(botCwd) || !(await lstat(botCwd)).isDirectory()) {
-    throw new Error('The destination Bot needs an existing absolute working directory.')
+  if (!isAbsolute(botCwd)) throw new Error('The destination Bot needs an absolute working directory.')
+  const missingPreview = options.preview === true && options.previewMissingDirectory === true
+  let cwd: string
+  try {
+    if (!(await lstat(botCwd)).isDirectory()) throw new Error('The destination Bot needs an existing working directory.')
+    cwd = await realpath(botCwd)
+  } catch (error) {
+    if (!missingPreview || !(error instanceof Error) || !('code' in error) || error.code !== 'ENOENT') throw error
+    cwd = botCwd
   }
-  const cwd = await realpath(botCwd)
   if (cwd === parse(cwd).root) throw new Error('The Bot working directory must not be a filesystem root.')
   const agentsRoot = join(cwd, '.agents')
   const skillRoot = join(agentsRoot, 'skills')

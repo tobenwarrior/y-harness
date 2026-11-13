@@ -74,6 +74,8 @@ Rendering keeps the most specific files first: it drops whole broader files befo
 <a id="understand-the-implementation"></a>
 ## Understand the implementation
 
+Managed VPS Bots use their own workspace. The Host skips user and project instruction discovery for these Bots.
+
 <details>
 <summary>Implementation internals — click to expand</summary>
 

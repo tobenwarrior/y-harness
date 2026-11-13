@@ -917,9 +917,10 @@ describe('sandbox escalation API (write/edit)', () => {
     }
   })
 
-  it('a plain write stamps the default mode with the calling session root', async () => {
+  it.each([{}, { justification: '  ' }])('a write without an escalation stamps the default mode (%j)', async (options) => {
     const { ctx, fs } = await setupConfining()
-    await call(ctx, 'write', { file_path: 'a.txt', content: 'x' }, escalationAgent())
+    const result = await call(ctx, 'write', { file_path: 'a.txt', content: 'x', ...options }, escalationAgent())
+    expect(result.isError).toBe(false)
     expect(fs.stamped).toEqual([{
       mode: 'workspace-write',
       workspaceRoot: '/session-project',

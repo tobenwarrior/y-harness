@@ -4,7 +4,7 @@ import type { Context } from '@yharness/cordis'
 import { ToolCallId } from '@yharness/llm'
 import type { GenerateOptions } from '@yharness/llm'
 import type {} from '@yharness/agent'
-import type {} from '@yharness/sandbox-policy'
+import { managedBotExecutionFor } from '@yharness/sandbox-policy'
 import type {} from '@yharness/user-approval'
 import type {} from '@yharness/user-questions'
 import { writableRoots } from '@yharness/sandbox'
@@ -49,7 +49,7 @@ export interface CodexTurnAccess {
 /**
  * Resolve native execution from the exact live initiating Harness agent. Harness
  * file policy does not restrict networking, so confined native policies allow it.
- * Shared Bot sessions, missing session authority, or missing policy services fail before sandbox resolution or a native turn starts.
+ * Shared Bots and Bots with managed VPS workspaces cannot start host-native turns.
  * @param ctx - context owning the live agent and policy services.
  * @param options - assembled request identity and cancellation lifetime.
  * @returns session settings and action-scoped approval/question forwarding.
@@ -64,6 +64,9 @@ export function resolveCodexAccess(ctx: Context, options: GenerateOptions | Pick
   const session = agent.session
   if (session.header.agentPreset === 'shared-bot') {
     throw new Error('Native Codex does not support shared Bot sessions.')
+  }
+  if (managedBotExecutionFor({ agent }) !== undefined) {
+    throw new Error('Native Codex requires desktop-only mode for a VPS Bot.')
   }
   const sandboxPolicy = ctx.get('sandboxPolicy')
   const approval = ctx.get('approval')

@@ -32,7 +32,7 @@ import { evaluatePluginCompatibility, pluginCompatibilityWarning } from './plugi
 import { readProfileVersionExemptions } from './profile-compatibility.ts'
 import { loadOverlayPatches } from './index.ts'
 import { realModuleDirectory } from './profile-resolution/legacy-links.ts'
-import { bundlePackageNameCandidates } from './profile-resolution/package-aliases.ts'
+import { bundlePackageNameCandidates, samePackageName } from './profile-resolution/package-aliases.ts'
 
 export { bundlePackageNameCandidates } from './profile-resolution/package-aliases.ts'
 
@@ -370,11 +370,6 @@ function readPackageManifest(anchor: string): ProfileManifest {
 /** Return dependency names that may be imported by a loader-visible plugin. */
 function profileDependencyNames(manifest: ProfileManifest): string[] {
   return [...Object.keys(manifest.dependencies ?? {}), ...Object.keys(manifest.peerDependencies ?? {})]
-}
-
-/** Whether two package keys identify the same pre- or post-rebrand package. */
-function samePackageName(left: string, right: string): boolean {
-  return bundlePackageNameCandidates(left).includes(right)
 }
 
 /** Whether a package-name set contains either spelling of a requested package. */
@@ -838,5 +833,5 @@ export function composeEntries(
   return applyEntryPatches([], structuredClone(layers.flat()), (message: string, ...args: unknown[]) => {
     let index = 0
     warn(message.replace(/%C/g, () => JSON.stringify(args[index++])))
-  })
+  }, samePackageName)
 }

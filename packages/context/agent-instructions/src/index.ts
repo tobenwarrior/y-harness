@@ -17,6 +17,7 @@ import type { Session, UserMessage } from '@yharness/session'
 import type {} from '@yharness/session-projection'
 import type { ToolExecution, ToolExecutionResult, ToolExecutionToken } from '@yharness/tools'
 import { parsePatch } from '@yharness/fs-patch'
+import { managedBotExecutionFor } from '@yharness/sandbox-policy'
 import { Config, resolveConfig, workspaceBaselineIdentity, type ResolvedConfig } from './config.ts'
 import { findProjectRoot, loadBaselineInstructionSet } from './files.ts'
 import {
@@ -125,6 +126,10 @@ export function apply(ctx: Context, config: Config): void {
     touchedPaths: readonly string[] = [],
   ): Promise<UserMessage | undefined> => {
     signal.throwIfAborted()
+    // Managed Bots must not inherit host project or user instruction files.
+    // Their execution world is a named volume, so the host provider cannot
+    // resolve a trustworthy instruction chain for that workspace.
+    if (managedBotExecutionFor({ agent }) !== undefined) return undefined
     if (resolved.maxBytes <= 0 || !Number.isFinite(resolved.maxBytes)) {
       return undefined
     }

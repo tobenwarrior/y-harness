@@ -305,15 +305,15 @@ void Promise.all([api.messages(), api.mode()]).then(([copy, presentation]) => {
   messages = copy
   mode = presentation
   document.title = copy.cloudVault
-  for (const [id, key] of [
-    ['title', 'cloudVault'], ['hint', 'cloudVaultHint'], ['service-label', 'cloudVaultService'], ['names', 'cloudVaultNames'],
-    ['empty', 'cloudVaultEmpty'], ['add-label', 'cloudVaultAdd'], ['name-label', 'cloudVaultName'], ['value-label', 'cloudVaultValue'],
-    ['save', 'cloudVaultSave'], ['editor-cancel', 'cancel'], ['apply', 'cloudVaultApply'], ['refresh', 'cloudVaultRefresh'],
-    ['confirm-cancel', 'cancel'], ['confirm-revoke', 'cloudVaultRevoke'], ['confirm-detail', 'cloudVaultApply'],
-    ['request-service-label', 'cloudVaultRequestService'], ['request-name-label', 'cloudVaultRequestName'],
-    ['request-value-label', 'cloudVaultRequestValue'], ['request-cancel', 'cloudVaultRequestCancel'],
-    ['request-save', 'cloudVaultRequestSave'],
-  ]) element(id).textContent = copy[key]
+  for (const [id, text] of Object.entries({
+    title: copy.cloudVault, hint: copy.cloudVaultHint, 'service-label': copy.cloudVaultService, names: copy.cloudVaultNames,
+    empty: copy.cloudVaultEmpty, 'add-label': copy.cloudVaultAdd, 'name-label': copy.cloudVaultName, 'value-label': copy.cloudVaultValue,
+    save: copy.cloudVaultSave, 'editor-cancel': copy.cancel, apply: copy.cloudVaultApply, refresh: copy.cloudVaultRefresh,
+    'confirm-cancel': copy.cancel, 'confirm-revoke': copy.cloudVaultRevoke, 'confirm-detail': copy.cloudVaultApply,
+    'request-service-label': copy.cloudVaultRequestService, 'request-name-label': copy.cloudVaultRequestName,
+    'request-value-label': copy.cloudVaultRequestValue, 'request-cancel': copy.cloudVaultRequestCancel,
+    'request-save': copy.cloudVaultRequestSave,
+  })) element(id).textContent = text
   if (validRequestMode(mode)) {
     requestId = mode.id
     document.title = copy.cloudVaultRequestTitle

@@ -11,11 +11,12 @@ import { connectFreshWorkspace, newEnglishPage, saveFailureShot } from './suppor
 
 const FIXTURE = fileURLToPath(new URL('../../../snapshots/web/fresh-round-trip/session.v3.jsonl', import.meta.url))
 const UI_EXPECTED = fileURLToPath(new URL('../../../snapshots/web/fresh-round-trip/ui-expanded.expected.md', import.meta.url))
+const MODE = webSnapshotMode()
 
-describe.skipIf(webSnapshotMode() === 'record')('web session replay', () => {
+describe.skipIf(MODE === 'record')('web session replay', () => {
   it.each([{ name: 'Chromium', engine: chromium }, { name: 'WebKit', engine: webkit }])(
     '$name restores an active stream, a completed turn, and a reopened session', async ({ engine }) => {
-      const scaffold = await launchWebScaffold({ replayFixture: FIXTURE, compareReplaySession: 'read-only' })
+      const scaffold = await launchWebScaffold({ replayFixture: FIXTURE, compareReplaySession: true })
       onTestFinished(() => scaffold.close())
       const release = Promise.withResolvers<undefined>()
       const reached = Promise.withResolvers<string>()
@@ -64,14 +65,14 @@ describe.skipIf(webSnapshotMode() === 'record')('web session replay', () => {
       await page.getByText('DONE', { exact: true }).waitFor({ timeout: 15_000 })
       acknowledgeReloadConnectionLoss(tripwire, warningStart)
       await compareOrRefreshGolden(UI_EXPECTED,
-        await captureExpandedTurnProcessAria(page, '[class*="centerCol"]', scaffold.workspaceCwd), 'replay')
+        await captureExpandedTurnProcessAria(page, '[class*="centerCol"]', scaffold.workspaceCwd), MODE)
 
       await page.getByRole('button', { name: 'New session', exact: true }).last().click()
       await page.getByText('Into the Unknown', { exact: true }).waitFor()
       await page.getByRole('treeitem').filter({ has: page.getByText('Use the bash tool to', { exact: true }) }).click()
       await page.getByText('DONE', { exact: true }).waitFor({ timeout: 15_000 })
       await compareOrRefreshGolden(UI_EXPECTED,
-        await captureExpandedTurnProcessAria(page, '[class*="centerCol"]', scaffold.workspaceCwd), 'replay')
+        await captureExpandedTurnProcessAria(page, '[class*="centerCol"]', scaffold.workspaceCwd), MODE)
       expect(tripwire.pageErrors).toEqual([])
       expect(tripwire.warnings).toEqual([])
     },

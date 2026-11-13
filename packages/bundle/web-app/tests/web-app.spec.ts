@@ -115,6 +115,184 @@ interface BashContribution {
 }
 
 describe('web-app runtime glue', () => {
+  it('requires managed Bot computers before accepting a journal grant', async () => {
+    stageDist()
+    const ctx = new Context()
+    ctx.provide('webServer', fakeHttpServer().server)
+    try {
+      expect(() => {
+        apply(ctx, new Config({
+          surfaceContext: false,
+          printUrl: false,
+          openBrowser: false,
+          trustedHosts: [],
+          vpsJournal: { socketPath: '/run/yharness-journal.sock', bots: ['test-bot'] },
+        }))
+      }).toThrow('VPS journal grants require managed Bot computers.')
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('mounts the selected Bot workspaces only on Linux', async () => {
+    stageDist()
+    const ctx = new Context()
+    ctx.provide('webServer', fakeHttpServer().server)
+    const config = new Config({
+      surfaceContext: false,
+      printUrl: false,
+      openBrowser: false,
+      trustedHosts: [],
+      botComputers: { root: '/var/lib/yharness-test', image: 'localhost/yharness-test', bots: ['test-bot'] },
+      vpsServices: [],
+    })
+    try {
+      if (process.platform === 'linux') {
+        apply(ctx, config)
+        const workspaces = ctx.get('botWorkspaces')
+        expect(workspaces?.managed?.('test-bot')).toBe(true)
+        expect(workspaces?.managed?.('another-bot')).toBe(false)
+        expect(ctx.get('vpsComputer')).toBeUndefined()
+      } else {
+        expect(() => { apply(ctx, config) }).toThrow('Managed VPS Bot computers require Linux.')
+      }
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('attaches the legacy VPS Computer tool only to an allowed Agent preset', async () => {
+    stageDist()
+    const ctx = new Context()
+    ctx.provide('webServer', fakeHttpServer().server)
+    const registerRoute = vi.fn(() => () => {})
+    ctx.provide('connection', { fetch: { register: registerRoute } } as never)
+    const composedPreset = vi.fn<() => string | undefined>(() => 'standard')
+    ctx.provide('agentPresets', { composedPreset } as never)
+    const register = vi.fn((_: unknown) => () => {})
+    const guards: Array<(exec: { readonly name: string }) => string | undefined> = []
+    ctx.provide('tools', {
+      register,
+      guard: (predicate: (exec: { readonly name: string }) => string | undefined) => {
+        guards.push(predicate)
+        return () => {}
+      },
+    } as never)
+    ctx.provide('attachments', {} as never)
+    ctx.provide('llm', {} as never)
+    try {
+      apply(ctx, new Config({
+        surfaceContext: false,
+        printUrl: false,
+        openBrowser: false,
+        trustedHosts: [],
+        computer: { display: ':legacy', authorityPath: '/dev/null' },
+      }))
+      const agent = (id: string): never => ({ id, ctx } as never)
+      await ctx.serial('agent/created', { agent: agent('allowed-agent'), source: 'startup' })
+      await vi.waitFor(() => { expect(register).toHaveBeenCalledOnce() })
+      expect(guards).toHaveLength(1)
+      const guard = guards[0]!
+      expect(guard({ name: 'other' })).toBeUndefined()
+      expect(guard({ name: 'vps_computer' })).toBeUndefined()
+
+      composedPreset.mockReturnValue('minimal')
+      expect(guard({ name: 'vps_computer' })).toBe('This Agent preset cannot access the private Computer.')
+      composedPreset.mockReturnValue(undefined)
+      await ctx.serial('agent/created', { agent: agent('minimal-agent'), source: 'startup' })
+      expect(register).toHaveBeenCalledOnce()
+      expect(ctx.get('vpsComputer')).toBeDefined()
+      expect(registerRoute).toHaveBeenCalledTimes(5)
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('mounts managed Bot computers when the Host reports Linux', async () => {
+    const platform = vi.spyOn(process, 'platform', 'get').mockReturnValue('linux')
+    stageDist()
+    const ctx = new Context()
+    ctx.provide('webServer', fakeHttpServer().server)
+    try {
+      const config = new Config({
+        surfaceContext: false,
+        printUrl: false,
+        openBrowser: false,
+        trustedHosts: [],
+        botComputers: { root: '/var/lib/yharness-test', image: 'localhost/yharness-test', bots: ['test-bot'] },
+      })
+      Object.defineProperty(config, 'vpsServices', { configurable: true, value: undefined })
+      apply(ctx, config)
+      expect(ctx.get('botWorkspaces')?.managed?.('test-bot')).toBe(true)
+    } finally {
+      await ctx.fiber.dispose()
+      platform.mockRestore()
+    }
+  })
+
+  it('rejects managed Bot computers when the Host is not Linux', async () => {
+    const platform = vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin')
+    stageDist()
+    const ctx = new Context()
+    ctx.provide('webServer', fakeHttpServer().server)
+    try {
+      expect(() => { apply(ctx, new Config({
+        surfaceContext: false,
+        printUrl: false,
+        openBrowser: false,
+        trustedHosts: [],
+        botComputers: { root: '/var/lib/yharness-test', image: 'localhost/yharness-test', bots: ['test-bot'] },
+      })) }).toThrow('Managed VPS Bot computers require Linux.')
+    } finally {
+      await ctx.fiber.dispose()
+      platform.mockRestore()
+    }
+  })
+
+  it('attaches the Mac Computer tool only to an allowed desktop Agent preset', async () => {
+    const platform = vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin')
+    const connected = Object.getOwnPropertyDescriptor(process, 'connected')
+    Object.defineProperty(process, 'connected', { configurable: true, value: true })
+    vi.stubEnv('YH_MAC_COMPUTER', '1')
+    stageDist()
+    const ctx = new Context()
+    ctx.provide('webServer', fakeHttpServer().server)
+    ctx.provide('profileContext', { name: 'desktop' } as never)
+    const composedPreset = vi.fn<() => string | undefined>(() => 'standard')
+    ctx.provide('agentPresets', { composedPreset } as never)
+    const register = vi.fn((_: unknown) => () => {})
+    const guards: Array<(exec: { readonly name: string }) => string | undefined> = []
+    ctx.provide('tools', {
+      register,
+      guard: (predicate: (exec: { readonly name: string }) => string | undefined) => {
+        guards.push(predicate)
+        return () => {}
+      },
+    } as never)
+    ctx.provide('attachments', {} as never)
+    ctx.provide('llm', {} as never)
+    try {
+      apply(ctx, new Config({ surfaceContext: false, printUrl: false, openBrowser: false, trustedHosts: [] }))
+      const agent = (id: string): never => ({ id, ctx } as never)
+      await ctx.serial('agent/created', { agent: agent('mac-agent'), source: 'startup' })
+      await vi.waitFor(() => { expect(register).toHaveBeenCalledOnce() })
+      expect(guards).toHaveLength(1)
+      const guard = guards[0]!
+      expect(guard({ name: 'other' })).toBeUndefined()
+      expect(guard({ name: 'mac_computer' })).toBeUndefined()
+      composedPreset.mockReturnValue('minimal')
+      expect(guard({ name: 'mac_computer' })).toBe('This Agent preset cannot access the Mac Computer.')
+      composedPreset.mockReturnValue(undefined)
+      await ctx.serial('agent/created', { agent: agent('minimal-agent'), source: 'startup' })
+      expect(register).toHaveBeenCalledOnce()
+    } finally {
+      await ctx.fiber.dispose()
+      if (connected === undefined) Reflect.deleteProperty(process, 'connected')
+      else Object.defineProperty(process, 'connected', connected)
+      platform.mockRestore()
+    }
+  })
+
   it('mounts dist serving, prompt section, bash variables, and publishes the URL with the LAN snapshot', async () => {
     stageDist()
     const ctx = new Context()

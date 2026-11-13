@@ -3,7 +3,7 @@ import { Context } from '@yharness/cordis'
 import { SessionId } from '@yharness/session'
 import { ToolCallId } from '@yharness/llm'
 import { mountAgentLoopTestDependencies, mountAgentLoopTestHarness } from '@yharness/agent-loop-testkit'
-import SandboxPolicy, { setSandboxMode } from '@yharness/sandbox-policy'
+import SandboxPolicy, { bindManagedBotExecution, setSandboxMode } from '@yharness/sandbox-policy'
 import { writableRoots } from '@yharness/sandbox'
 import Approval, { setApprovalPolicy } from '@yharness/user-approval'
 import Questions from '@yharness/user-questions'
@@ -47,6 +47,24 @@ describe('native Codex session authority', () => {
     expect(() => ctx.agents.withInitiator(agent, () => resolveCodexAccess(ctx, {
       ...options, sessionId: SessionId('another-session'),
     }))).toThrow('initiator')
+  })
+
+  it('rejects host-native execution while the Agent owns a managed VPS workspace', async () => {
+    const { ctx, agent, resolve } = await fixture()
+    const unbind = bindManagedBotExecution(agent.ctx, {
+      context: agent.ctx,
+      workspaceRoot: '/fixture/bot-workspace',
+      sandboxPolicy: ctx.sandboxPolicy,
+      get shell(): never { throw new Error('Unexpected managed shell access') },
+      get fs(): never { throw new Error('Unexpected managed filesystem access') },
+      get subprocess(): never { throw new Error('Unexpected managed subprocess access') },
+    })
+    try {
+      expect(resolve).toThrow('Native Codex requires desktop-only mode for a VPS Bot.')
+    } finally {
+      unbind()
+    }
+    expect(resolve()).toMatchObject({ cwd: process.cwd(), sandbox: 'workspace-write' })
   })
 
   it.each(['item/commandExecution/requestApproval', 'item/fileChange/requestApproval'])('audits and grants only one %s action', async (method) => {

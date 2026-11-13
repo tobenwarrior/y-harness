@@ -23,7 +23,7 @@ Create named Bots with durable identities, one persistent Session each, and opti
 <a id="use-this-package"></a>
 ## Use this package
 
-Mount this Host plugin when a composition needs user-owned Bots that map one-to-one to ordinary Sessions. The roster is exposed through the Bot Remote and does not replace ordinary Session navigation. Each Bot scope receives tools to list, inspect, message, create, edit, remember, list memory, and forget memory, plus membership-scoped group inspection, creation, update, and delivery; a native provider may expose the same actions through its own tool bridge. When Connection and credentials are present, the plugin also mounts the isolated self-hosted shared-Bot route.
+Mount this Host plugin when a composition needs user-owned Bots that map one-to-one to ordinary Sessions. The roster is exposed through the Bot Remote and does not replace ordinary Session navigation. A managed VPS Host assigns a workspace when it provisions a new Bot, including a Bot created through a managed Bot's scoped tool; a caller-supplied `cwd` remains rejected for managed creation. Existing Bot Sessions keep their saved identity and working-directory record. Each Bot scope receives tools to list, inspect, message, create, edit, remember, list memory, and forget memory, plus membership-scoped group inspection, creation, update, and delivery; a native provider may expose the same actions through its own tool bridge. When Connection and credentials are present, the plugin also mounts the isolated self-hosted shared-Bot route.
 
 Shared Sessions admit a scoped `web_search` from the Agent or its preset. The shipped shared preset uses the Host's configured search provider; searches consume that provider's configured account and transmit the collaborator's query to it. Global tools, page fetch, filesystem, shell, and ungranted connected apps remain unavailable. Search results are treated as untrusted external data.
 
@@ -93,6 +93,8 @@ The Host accepts only the exported `BOT_IDENTITIES` and `BOT_ACCENTS` values, so
 Owner-imported Grok chat archives are stored separately from runnable Sessions. Archives retain original message roles, timestamps, and source order. A repeat import is idempotent, and an updated export must preserve every recovered message. The owner uses `bots.importGrokHistory` to attach a version-one archive to an existing Bot. The conversation header reads it through `bots.readGrokHistory`. An archive never starts a turn.
 
 While an owner-local Bot is live, its scoped and native Codex tool surfaces expose `read_own_grok_history` when the Host supports the archive reader. The read-only tool accepts an optional `limit` from 1 through 10 and an exclusive `before` source-sequence cursor, and returns `firstCachedSequence`, `totalMessages`, and bounded chronological excerpts with an optional `nextBefore` cursor. Excerpts are framed as untrusted quoted data. The archive is never injected into a prompt, and peer or shared Sessions cannot select another Bot's archive.
+
+The native Codex bridge exposes `vps_service_journal` for a live owner Bot Session with a VPS journal grant. It records the bounded result in the Bot’s Session and checks the current grant before replaying those records. [VPS journal configuration](../../../docs/user/guide/vps.md#read-a-filtered-journal-feed).
 
 ### Shared Bot policy foundation
 

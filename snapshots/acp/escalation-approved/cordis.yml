@@ -24,6 +24,23 @@
   config:
     policy: !!js "(process.env.DSH_PERMISSION_MODE ?? (process.env.DSH_SNAPSHOT === undefined ? 'workspace-write' : 'danger-full-access')) === 'danger-full-access' ? 'never' : 'ask'"
 
+- id: permission
+  config:
+    defaultPreset: !!js "process.env.DSH_PERMISSION_MODE ?? 'approve-for-me'"
+    presets:
+      read-only:
+        sandbox: read-only
+        approval: ask
+      workspace-write:
+        sandbox: workspace-write
+        approval: ask
+      approve-for-me:
+        sandbox: workspace-write
+        approval: never
+      danger-full-access:
+        sandbox: danger-full-access
+        approval: never
+
 - id: session-persistence-jsonl
   name: '@yharness/session-persistence-jsonl'
   config:

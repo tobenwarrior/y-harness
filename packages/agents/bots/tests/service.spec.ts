@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { createHash, randomUUID } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { Context, Service } from '@yharness/cordis'
 import { SharedAccessAuthority, sharedPrincipalOf, type ConnectionFetchRoute } from '@yharness/client-connection'
@@ -811,6 +811,106 @@ function provideResolvedTemplatePreset(ctx: Context): void {
 }
 
 describe('durable Bot roster', () => {
+  it('provisions one managed workspace per Bot and retains it across a failed setup retry', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'yh-managed-bot-'))
+    const workspace = (sessionId: SessionId) => join(root, sessionId)
+    const prepare = vi.fn(async (sessionId: SessionId) => { await mkdir(workspace(sessionId), { mode: 0o700 }) })
+    prepare.mockRejectedValueOnce(new Error('Computer unavailable'))
+    const h = await harness(undefined, undefined, undefined, [], new Map(), new Map(), true, 'native', false, {
+      beforeService: (ctx) => { ctx.provide('botWorkspaces', { workspace, prepare }) },
+    })
+    try {
+      const request = { id: BotId('bot-managed'), name: 'Managed Bot' }
+      await expect(h.service.create(request)).rejects.toThrow('Computer unavailable')
+      expect(h.create).not.toHaveBeenCalled()
+      const first = (await h.service.create(request)).bot
+      const second = (await h.service.create({ name: 'Second Bot' })).bot
+      expect(first.cwd).toBe(workspace(first.sessionId))
+      expect(second.cwd).not.toBe(first.cwd)
+      expect(prepare.mock.calls[0]).toEqual([first.sessionId])
+      expect(prepare.mock.calls[1]).toEqual([first.sessionId])
+      await expect(h.service.create(request)).resolves.toMatchObject({ bot: { sessionId: first.sessionId } })
+      expect(h.create).toHaveBeenCalledWith(expect.objectContaining({ sessionId: first.sessionId, cwd: first.cwd }), expect.anything())
+      await expect(h.service.ownerBotForSession(first.sessionId)).resolves.toMatchObject({ id: first.id, state: 'active' })
+      await expect(h.service.ownerBotForSession(SessionId('other-session'))).resolves.toBeUndefined()
+      await expect(h.service.create({ name: 'Host directory', cwd: root })).rejects.toThrow('assigned a private workspace')
+    } finally {
+      await close(h.ctx)
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('creates a managed child Bot from its scoped tool without inheriting a host cwd', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const parent = await first.service.create({ name: 'Managed parent', cwd: '/host/workspace' })
+    await close(first.ctx)
+    const root = await mkdtemp(join(tmpdir(), 'yh-scoped-managed-child-'))
+    const workspace = (sessionId: SessionId) => join(root, String(sessionId))
+    const prepare = vi.fn(async () => {})
+    const h = await harness(pool, undefined, undefined, [String(parent.bot.sessionId)], new Map(), new Map(), true, 'native', false, {
+      beforeService: (ctx) => {
+        ctx.provide('botWorkspaces', { workspace, prepare, managed: () => true })
+      },
+    })
+    try {
+      const agent = h.agents[0]
+      if (agent === undefined) throw new Error('managed parent Agent was not created')
+      const create = h.ctx.tools.get('create_bot', agent)
+      if (create === undefined) throw new Error('scoped Bot creation tool was not installed')
+      const callId = ToolCallId('managed-scoped-child-create')
+      const result = await create.execute({ name: 'Managed child' }, {
+        callId,
+        rootCallId: callId,
+        name: 'create_bot',
+        arguments: { name: 'Managed child' },
+        agent,
+        signal: new AbortController().signal,
+        token: Symbol('managed-scoped-child-create') as ToolExecutionToken,
+        deferContext: () => {},
+        concludeTurn: () => {},
+      })
+      expect(result).toMatchObject({ name: 'Managed child', state: 'active' })
+      const [request] = h.create.mock.calls.at(-1) ?? []
+      if (request === undefined || request.sessionId === undefined) throw new Error('managed child Session request was not recorded')
+      expect(request).toMatchObject({ cwd: workspace(SessionId(request.sessionId)) })
+      expect(prepare).toHaveBeenCalledWith(SessionId(request.sessionId))
+      await expect(h.service.create({ name: 'Explicit managed cwd', cwd: '/host/escape' }))
+        .rejects.toThrow('assigned a private workspace')
+    } finally {
+      await close(h.ctx)
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps non-allowlisted Bot creation on the legacy cwd and skips VPS preparation', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'yh-allowlisted-bot-'))
+    const workspace = (sessionId: SessionId) => join(root, sessionId)
+    const prepare = vi.fn(async (sessionId: SessionId) => { await mkdir(workspace(sessionId), { mode: 0o700 }) })
+    const h = await harness(undefined, undefined, undefined, [], new Map(), new Map(), true, 'native', false, {
+      beforeService: (ctx) => {
+        ctx.provide('botWorkspaces', {
+          workspace,
+          prepare,
+          managed: (botId: string) => botId === 'bot-research',
+        })
+      },
+    })
+    try {
+      const managed = (await h.service.create({ id: BotId('bot-research'), name: 'Research' })).bot
+      const legacy = (await h.service.create({ id: BotId('bot-legacy'), name: 'Legacy', cwd: root })).bot
+      expect(managed.cwd).toBe(workspace(managed.sessionId))
+      expect(legacy.cwd).toBe(resolve(root))
+      await expect(h.service.create({ id: BotId('bot-legacy'), name: 'Legacy', cwd: root }))
+        .resolves.toMatchObject({ bot: { cwd: resolve(root), sessionId: legacy.sessionId } })
+      expect(prepare).toHaveBeenCalledWith(managed.sessionId)
+      expect(prepare).not.toHaveBeenCalledWith(legacy.sessionId)
+    } finally {
+      await close(h.ctx)
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('waits for an in-flight local attachment upload before closing its attachment domain', async () => {
     let route: ConnectionFetchRoute | undefined
     let enteredResolve: (() => void) | undefined
@@ -1591,11 +1691,8 @@ describe('durable Bot roster', () => {
       })
       child.kill('SIGKILL')
       const [exitCode, signal] = await closePromise
-      // Windows terminates through taskkill and reports an exit code instead
-      // of the POSIX signal; both forms prove the child was stopped.
-      if (process.platform === 'win32') {
+      if (process.platform === 'win32' && signal === null) {
         expect(exitCode).not.toBeNull()
-        expect(signal).toBeNull()
       } else {
         expect(exitCode).toBeNull()
         expect(signal).toBe('SIGKILL')
@@ -4864,7 +4961,7 @@ describe('durable Bot roster', () => {
       expect((await create.execute({ name: 'Research', identity: 'heart', accent: 'rose' }, context)).success).toBe(true)
       const bots = (await h.service.list({})).bots
       const research = bots.find(bot => bot.name === 'Research')!
-      expect(research).toMatchObject({ identity: 'heart', accent: 'rose', cwd: '/tmp' })
+      expect(research).toMatchObject({ identity: 'heart', accent: 'rose', cwd: resolve('/tmp') })
       expect((await create.execute({ name: 'Research', identity: 'heart', accent: 'rose' }, context)).success).toBe(true)
       expect((await h.service.list({})).bots.filter(bot => bot.name === 'Research')).toHaveLength(1)
       const edit = tools.find(tool => tool.name === 'edit_bot_profile')!
@@ -9015,7 +9112,7 @@ describe('durable Bot roster', () => {
       expect(created.bot.accent).toBe('blue')
       expect(created.bot.sessionId).toMatch(/^bot-session-/)
       expect(h.create).toHaveBeenCalledWith(
-        { sessionId: created.bot.sessionId, cwd: '/tmp' },
+        { sessionId: created.bot.sessionId, cwd: resolve('/tmp') },
         expect.any(AbortSignal),
       )
 
@@ -14004,7 +14101,7 @@ describe('durable Bot roster', () => {
       expect(retried.bot.state).toBe('active')
       expect(create).toHaveBeenNthCalledWith(
         2,
-        { sessionId: firstSessionId, cwd: '/tmp' },
+        { sessionId: firstSessionId, cwd: resolve('/tmp') },
         expect.any(AbortSignal),
       )
     } finally {
