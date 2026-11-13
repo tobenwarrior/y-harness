@@ -534,23 +534,24 @@ def install(chromium, node, cloud_uid, grants, *, paths=InstallPaths(), saved_lo
     records = grant_records(grants)
     _prepare_directories(paths, account)
     artifacts = tuple(
-        (paths.install_root / name, artifact_payload(name), 0, 0, 0o644, True)
+        (paths.install_root / name, artifact_payload(name), 0, 0, 0o644, ARTIFACT_MARKER)
         for name in SERVICE_ARTIFACTS
     ) + (
-        (paths.config_root / 'grants.json', grants_payload(records), 0, account.pw_gid, 0o640, False),
-        (paths.unit_root / SERVICE_UNIT, service_unit(cloud_uid, node_path, chromium_path, saved_logins=saved_logins), 0, 0, 0o644, True),
-        (paths.unit_root / CONTROL_SOCKET_UNIT, control_socket_unit(cloud_uid), 0, 0, 0o644, True),
-        (paths.unit_root / VAULT_SOCKET_UNIT, vault_socket_unit(), 0, 0, 0o644, True),
+        (paths.config_root / 'grants.json', grants_payload(records), 0, account.pw_gid, 0o640, None),
+        (paths.unit_root / SERVICE_UNIT, service_unit(cloud_uid, node_path, chromium_path, saved_logins=saved_logins), 0, 0, 0o644, MANAGED_MARKER),
+        (paths.unit_root / CONTROL_SOCKET_UNIT, control_socket_unit(cloud_uid), 0, 0, 0o644, MANAGED_MARKER),
+        (paths.unit_root / VAULT_SOCKET_UNIT, vault_socket_unit(), 0, 0, 0o644, MANAGED_MARKER),
     )
     changes = []
-    for path, payload, uid, gid, mode, managed in artifacts:
+    for path, payload, uid, gid, mode, marker in artifacts:
         if _file_needs_change(path, payload, uid, gid, mode):
-            changes.append((path, payload, uid, gid, mode, managed))
+            changes.append((path, payload, uid, gid, mode, marker))
     if changes:
         ensure_units_inactive()
-        for path, payload, uid, gid, mode, managed in changes:
-            if managed and path.exists() and not path.read_bytes().startswith(MANAGED_MARKER):
+        for path, _, _, _, _, marker in changes:
+            if marker is not None and path.exists() and not path.read_bytes().startswith(marker):
                 raise BrowserError(f'A different file already exists at {path}. Review it before changing the deployment.')
+        for path, payload, uid, gid, mode, _ in changes:
             _write_file(path, payload, uid, gid, mode)
 
 

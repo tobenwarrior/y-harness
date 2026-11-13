@@ -116,7 +116,7 @@ For a Firefox-enabled Bot also listed in `botComputers.desktopOnlyBots`, the Bot
 
 ### Enable an isolated browser for selected Bots
 
-The isolated browser gives each selected Bot a persistent Chromium profile under a separate Linux account. The Bot keeps its existing shell and file workspace. Use a supported, up-to-date Chromium build with working renderer sandboxing and an administrator-owned executable path.
+The isolated browser gives each selected Bot a persistent Chromium profile under a separate Linux account. The Bot keeps its existing shell and file workspace. Use a supported, up-to-date Chromium build with working renderer sandboxing and an administrator-owned executable path. On Ubuntu 24.04, Google Chrome at `/opt/google/chrome/chrome` uses Ubuntu's built-in AppArmor profile. Ubuntu's Chromium Snap launcher requires privileges the isolated worker does not have.
 
 From the VPS administrator checkout, install the worker with the trusted Node and Chromium paths. Repeat `--grant` for each Bot roster ID and its existing Session ID. This installs a separate service and keeps the existing browser profiles available.
 
@@ -138,9 +138,11 @@ isolatedBrowser:
 
 Reload Cloud when its tasks are idle. Ask the Bot to open a public website, or open its **Computer** panel, choose **Take control**, and enter a website address. **Hand back** lets the Bot resume. This panel shows website content. The Firefox desktop above supports a manual sign-in handoff for sites that require your input.
 
+To update the worker, stop its service and both sockets, then run the install and activate commands from the new release with the complete grant list. The worker reuses the existing Bot browser profiles.
+
 ### Approve a saved website login
 
-Use the Mac app's **Cloud → Vault → Websites** to save a login. Enable `--saved-logins` when installing the isolated browser worker and set `botComputers.isolatedBrowser.savedLogins` to `true` in the private Web profile. Both options default to off. Stop an existing browser worker and its sockets before running the installer again. The Mac app, Web release, and installed VPS Vault script all need to support saved login approvals.
+Use the Mac app's **Cloud → Vault → Websites** to save a login. Enable `--saved-logins` when installing the isolated browser worker and set `botComputers.isolatedBrowser.savedLogins` to `true` in the private Web profile. Both options default to off. The Mac app, Web release, and installed VPS Vault script all need to support saved login approvals.
 
 In a direct Bot chat, ask the Bot to sign in with your saved login. Open **Approve sign-in**, check the website and destination, select the login, and approve. The Bot receives the outcome and can check whether the website signed in. The request expires after five minutes. Declining or stopping the turn releases the browser.
 

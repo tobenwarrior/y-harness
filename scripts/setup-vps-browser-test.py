@@ -255,6 +255,65 @@ class IsolatedBrowserTest(unittest.TestCase):
             inactive.assert_called_once()
             self.assertEqual(service.read_text(), 'administrator edit\n')
 
+    def test_install_updates_managed_browser_modules_and_preserves_private_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            paths = installer.InstallPaths(
+                install_root=root / 'usr-local-lib',
+                state_root=root / 'var-lib',
+                config_root=root / 'etc',
+                unit_root=root / 'units',
+                runtime_root=root / 'run',
+            )
+            grant = ('bot-alpha', 'bot-session-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')
+            account = SimpleNamespace(pw_uid=721, pw_gid=721)
+            with (
+                patch.object(installer, 'ensure_account', return_value=account),
+                patch.object(installer, 'trusted_executable', side_effect=pathlib.Path),
+                patch.object(installer, 'ensure_units_inactive') as inactive,
+            ):
+                installer.install('/opt/chromium/chrome', '/opt/node/bin/node', 722, [grant], paths=paths)
+                profile = paths.state_root / grant[1]
+                profile.mkdir(mode=0o700)
+                cookie_store = profile / 'Cookies'
+                cookie_store.write_bytes(b'fixture profile state')
+                page = paths.install_root / 'page.mjs'
+                previous = page.read_bytes()
+                page.write_bytes(installer.ARTIFACT_MARKER + b'export const oldPage = true\n')
+                installer.install('/opt/chromium/chrome', '/opt/node/bin/node', 722, [grant], paths=paths)
+            self.assertEqual(inactive.call_count, 2)
+            self.assertEqual(page.read_bytes(), previous)
+            self.assertEqual(cookie_store.read_bytes(), b'fixture profile state')
+
+    def test_install_leaves_managed_files_alone_when_a_unit_has_an_administrator_edit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            paths = installer.InstallPaths(
+                install_root=root / 'usr-local-lib',
+                state_root=root / 'var-lib',
+                config_root=root / 'etc',
+                unit_root=root / 'units',
+                runtime_root=root / 'run',
+            )
+            grant = ('bot-alpha', 'bot-session-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')
+            account = SimpleNamespace(pw_uid=721, pw_gid=721)
+            with (
+                patch.object(installer, 'ensure_account', return_value=account),
+                patch.object(installer, 'trusted_executable', side_effect=pathlib.Path),
+                patch.object(installer, 'ensure_units_inactive'),
+            ):
+                installer.install('/opt/chromium/chrome', '/opt/node/bin/node', 722, [grant], paths=paths)
+                page = paths.install_root / 'page.mjs'
+                previous = installer.ARTIFACT_MARKER + b'export const oldPage = true\n'
+                page.write_bytes(previous)
+                unit = paths.unit_root / installer.VAULT_SOCKET_UNIT
+                custom = b'# Administrator socket configuration\n'
+                unit.write_bytes(custom)
+                with self.assertRaisesRegex(installer.BrowserError, installer.VAULT_SOCKET_UNIT):
+                    installer.install('/opt/chromium/chrome', '/opt/node/bin/node', 722, [grant], paths=paths)
+            self.assertEqual(page.read_bytes(), previous)
+            self.assertEqual(unit.read_bytes(), custom)
+
     def test_install_does_not_fix_permissions_on_unrelated_existing_state(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
