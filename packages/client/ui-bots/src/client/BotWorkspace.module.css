@@ -2968,6 +2968,24 @@
   list-style: none;
 }
 
+.grokHistorySource {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 12px;
+  color: var(--yh-alias-label-secondary);
+  font-size: 12px;
+}
+
+.grokHistorySource select {
+  min-width: 0;
+  padding: 6px 8px;
+  color: var(--yh-alias-label-primary);
+  border: 1px solid var(--yh-alias-border-l2);
+  border-radius: var(--yh-radius-md);
+  background: var(--yh-alias-bg-layer-1);
+  font: inherit;
+}
+
 .grokHistoryMessage {
   padding: 10px 12px;
   border-radius: var(--yh-radius-lg);
@@ -2991,4 +3009,10 @@
 .grokHistoryMessage p {
   margin: 6px 0 0;
   white-space: pre-wrap;
+}
+
+.grokHistoryMessageStatus {
+  margin-top: 6px;
+  color: var(--yh-alias-label-secondary);
+  font-size: 12px;
 }

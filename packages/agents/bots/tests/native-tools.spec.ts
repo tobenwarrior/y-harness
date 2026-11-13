@@ -10,9 +10,9 @@ import { BotMemoryId } from '../src/memory.ts'
 import type { BotMemoryClient } from '../src/memory.ts'
 import { BotGroupId, BotGroupMessageId } from '../src/group-chat.ts'
 import type { BotGroupToolHost } from '../src/scoped-tools.ts'
-import { BotId } from '../src/types.ts'
-import { createBotNativeToolProvider, type BotNativeToolContext } from '../src/native-tools.ts'
-import type { BotGrokHistoryPage } from '../src/grok-history.ts'
+import { BotId, type BotGrokHistoryArchive } from '../src/types.ts'
+import { createBotNativeToolProvider, type BotNativeToolContext, type BotNativeToolHost } from '../src/native-tools.ts'
+import { decodeGrokHistory, readGrokHistoryPage, type BotGrokHistoryPage } from '../src/grok-history.ts'
 import { UNTRUSTED_TRANSCRIPT_NOTICE, UNTRUSTED_TRANSCRIPT_END } from '../src/collaboration.ts'
 
 function client(): BotCollaborationClient {
@@ -87,10 +87,7 @@ describe('native Bot actions', () => {
       source: 'grok-bot', version: 1, firstCachedSequence: 4, totalMessages: 2, nextBefore: 8,
       messages: [{ sourceSequence: 8, role: 'assistant', text: 'A'.repeat(2_000), timestampMs: 2_000 }],
     }
-    const history = vi.fn(async (_sessionId: SessionId, request: { readonly limit?: number; readonly before?: number }) => {
-      expect(request).toEqual({ limit: 1 })
-      return archivePage
-    })
+    const history = vi.fn<NonNullable<BotNativeToolHost['grokHistory']>>(async () => archivePage)
     const provider = createBotNativeToolProvider({
       bind: async () => client(), persist: async () => {}, replay: async () => [], grokHistory: history,
     })
@@ -108,6 +105,89 @@ describe('native Bot actions', () => {
     expect(value.messages[0]?.text).toContain(UNTRUSTED_TRANSCRIPT_END)
     expect(value.messages[0]?.text.length).toBeLessThan(1_300)
     expect(history).toHaveBeenCalledWith(SessionId('bot-session-alpha'), { limit: 1 }, expect.any(AbortSignal))
+
+    history.mockResolvedValueOnce({
+      ...archivePage,
+      version: 2,
+      sourceId: 'full-export',
+      sourceLabel: 'Source label',
+      sources: [{ id: 'full-export', label: 'Source label' }],
+      messages: [{ sourceSequence: 8, role: 'assistant', text: 'Recovered text', timestampMs: null, author: 'Source author', fromBot: 'Source bot' }],
+    })
+    const selected = await tool.execute({ limit: 1, source: 'full-export' }, context())
+    expect(selected.success).toBe(true)
+    const recovered = JSON.parse(selected.contentItems[0]?.text ?? '') as BotGrokHistoryPage
+    expect(recovered.sourceId).toBe('full-export')
+    expect(recovered.sourceLabel).toContain(UNTRUSTED_TRANSCRIPT_NOTICE)
+    expect(recovered.sources?.[0]?.label).toContain(UNTRUSTED_TRANSCRIPT_NOTICE)
+    expect(recovered.messages[0]?.author).toContain(UNTRUSTED_TRANSCRIPT_NOTICE)
+    expect(recovered.messages[0]?.fromBot).toContain(UNTRUSTED_TRANSCRIPT_NOTICE)
+    expect(history).toHaveBeenLastCalledWith(SessionId('bot-session-alpha'), { limit: 1, source: 'full-export' }, expect.any(AbortSignal))
+    expect((await tool.execute({ source: 12 }, context())).success).toBe(false)
+    expect(history).toHaveBeenCalledTimes(2)
+  })
+
+  it.each([false, true])('pages through a full version-two archive within the native result limit (maximum JSON escapes: %s)', async (maximalEscaping) => {
+    const messages = Array.from({ length: 10 }, (_, index) => ({
+      sourceSequence: index + 1, role: 'assistant',
+      text: maximalEscaping ? '\u0000'.repeat(1_000) : 'Quoted \\"\\n'.repeat(100),
+      timestampMs: null,
+      author: maximalEscaping ? '\u0000'.repeat(256) : 'Author '.repeat(30),
+      fromBot: maximalEscaping ? '\u0000'.repeat(256) : 'Other bot '.repeat(20),
+    }))
+    const sources = Array.from({ length: 16 }, (_, index) => ({
+      id: maximalEscaping ? `${String.fromCharCode(0x0e + index)}${'\u0000'.repeat(127)}` : `source-${index}`,
+      label: maximalEscaping ? '\u0000'.repeat(256) : 'Supplemental source '.repeat(12),
+      firstCachedSequence: 1, messages: index === 0 ? messages : messages.slice(0, 1),
+    }))
+    const archive: BotGrokHistoryArchive = {
+      source: 'grok-bot', version: 2, firstCachedSequence: 1, messages, sources,
+    }
+    expect(decodeGrokHistory(JSON.stringify(archive))).toEqual(archive)
+    const provider = createBotNativeToolProvider({
+      bind: async () => client(), persist: async () => {}, replay: async () => [],
+      grokHistory: async (_sessionId, request) => readGrokHistoryPage(archive, request),
+    })
+    const tool = (await provider.resolve({ sessionId: SessionId('bot-session-alpha') }))
+      .find(candidate => candidate.name === 'read_own_grok_history')
+    if (tool === undefined) throw new Error('own Grok history tool missing')
+
+    const sequences: number[] = []
+    let before: number | undefined
+    do {
+      const result = await tool.execute(before === undefined ? { limit: 10 } : { limit: 10, before }, context())
+      expect(result.success).toBe(true)
+      expect(JSON.stringify(result).length).toBeLessThanOrEqual(16_000)
+      const page = JSON.parse(result.contentItems[0]?.text ?? '') as BotGrokHistoryPage
+      expect(page.sources?.map(source => source.id)).toEqual(sources.map(source => source.id))
+      if (maximalEscaping) expect(page.sources?.every(source => source.label === undefined)).toBe(true)
+      expect(page.messages.length).toBeGreaterThan(0)
+      expect(page.messages.length).toBeLessThan(10)
+      expect(page.messages[0]?.text).toContain(UNTRUSTED_TRANSCRIPT_NOTICE)
+      const oldest = page.messages[0]?.sourceSequence
+      if (before !== undefined) expect(oldest).toBeLessThan(before)
+      if (page.nextBefore !== undefined) expect(page.nextBefore).toBe(oldest)
+      sequences.unshift(...page.messages.map(message => message.sourceSequence))
+      before = page.nextBefore
+    } while (before !== undefined)
+    expect(sequences).toEqual(messages.map(message => message.sourceSequence))
+
+    if (maximalEscaping) {
+      for (const [index, lastSequence] of [10, 1].entries()) {
+        const sourceId = sources[index]?.id
+        const selected = await tool.execute({ source: sourceId, limit: 10 }, context())
+        expect(selected.success).toBe(true)
+        const selectedPage = JSON.parse(selected.contentItems[0]?.text ?? '') as BotGrokHistoryPage
+        expect(selectedPage.sourceId).toBe(sourceId)
+        expect(selectedPage.sourceLabel).toContain(UNTRUSTED_TRANSCRIPT_NOTICE)
+        expect(selectedPage.sources).toBeUndefined()
+        expect(selectedPage.messages.map(message => message.sourceSequence)).toEqual([lastSequence])
+        expect(selectedPage.nextBefore).toBe(index === 0 ? lastSequence : undefined)
+      }
+      const empty = await tool.execute({ before: 1 }, context())
+      expect(empty.success).toBe(true)
+      expect(JSON.parse(empty.contentItems[0]?.text ?? '')).toMatchObject({ messages: [] })
+    }
   })
 
   it('offers approved routine actions bound to the Bot Session', async () => {

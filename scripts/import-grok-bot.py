@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Preview or import one Grok Bot export into an existing VPS Bot."""
+"""Import Grok Bot exports or recovered chat archives into an existing VPS Bot."""
 
 import argparse
 import http.client
@@ -12,6 +12,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 MAX_DOCUMENT_BYTES = 512 * 1024
+MAX_HISTORY_DOCUMENT_BYTES = 2 * 1024 * 1024
 
 
 class ImportErrorDetail(Exception):
@@ -66,12 +67,20 @@ def main():
     parser.add_argument('export', type=Path)
     parser.add_argument('--bot', required=True, help='Exact destination Bot name or id')
     parser.add_argument('--source-name', help='Source Bot name for exports containing several Bots')
+    parser.add_argument('--history', action='store_true', help='Import a normalized Grok history archive')
     parser.add_argument('--apply', action='store_true', help='Write entries. By default, preview only.')
     options = parser.parse_args()
+    if options.history and options.source_name is not None:
+        parser.error('--source-name applies to Bot exports, not history archives.')
+    if options.history and not options.apply:
+        parser.error('--history requires --apply because history imports do not support preview.')
     try:
+        max_bytes = MAX_HISTORY_DOCUMENT_BYTES if options.history else MAX_DOCUMENT_BYTES
         with options.export.open('rb') as file:
-            raw = file.read(MAX_DOCUMENT_BYTES + 1)
-        if len(raw) > MAX_DOCUMENT_BYTES:
+            raw = file.read(max_bytes + 1)
+        if len(raw) > max_bytes:
+            if options.history:
+                raise ImportErrorDetail('Choose a Grok history archive of at most 2 MiB.')
             raise ImportErrorDetail('Choose a Grok Bot export of at most 512 KiB.')
         document = raw.decode('utf-8-sig')
         connection, cookie = connect()
@@ -80,11 +89,17 @@ def main():
             matches = [bot for bot in bots if options.bot in (bot['id'], bot['name'])]
             if len(matches) != 1:
                 raise ImportErrorDetail('Choose exactly one existing destination Bot by name or id.')
-            request = {'botId': matches[0]['id'], 'document': document, 'preview': not options.apply}
-            if options.source_name is not None:
-                request['sourceName'] = options.source_name
-            result = invoke(connection, cookie, 'bots/importGrokBot', request=request)
-            print(json.dumps({'mode': 'import' if options.apply else 'preview', **result}, ensure_ascii=False))
+            request = {'botId': matches[0]['id'], 'document': document}
+            if options.history:
+                result = invoke(connection, cookie, 'bots/importGrokHistory', request=request)
+                mode = 'history-import'
+            else:
+                request['preview'] = not options.apply
+                if options.source_name is not None:
+                    request['sourceName'] = options.source_name
+                result = invoke(connection, cookie, 'bots/importGrokBot', request=request)
+                mode = 'import' if options.apply else 'preview'
+            print(json.dumps({'mode': mode, **result}, ensure_ascii=False))
         finally:
             connection.close()
     except ImportErrorDetail as error:
