@@ -5,6 +5,7 @@ import { writeFileAtomic } from '@yharness/atomic-write'
 import { WebContentsView, session, type BrowserWindow } from 'electron'
 import { isCloudTarget, openCloudConnection, type CloudConnection } from './cloud-connection.ts'
 import { cloudAction, cloudDocument, cloudRequestAllowed, cloudSignInCookie, type CloudWorkspaceStatus } from './cloud-workspace-document.ts'
+import type { DesktopCloudVault } from './cloud-vault-window.ts'
 import type { DesktopMessages } from './locale.ts'
 
 const BAR_HEIGHT = 50
@@ -53,10 +54,12 @@ export class DesktopCloudWorkspace {
    * @param file - owner-private local preference path.
    * @param messages - current native shell dictionary.
    * @param preferenceError - notification when the choice cannot be saved.
+   * @param vault - application-owned VPS secret window.
    * @param onShowCloud - revokes access scoped to the Mac workspace.
    */
   constructor(private readonly file: string, private readonly messages: () => DesktopMessages,
-    private readonly preferenceError: () => void, private readonly onShowCloud?: () => void) {}
+    private readonly preferenceError: () => void, private readonly vault: DesktopCloudVault,
+    private readonly onShowCloud?: () => void) {}
 
   private onClosed = (): void => { void this.dispose() }
 
@@ -89,11 +92,19 @@ export class DesktopCloudWorkspace {
 
   /** Return to the local workspace, preserving an open Cloud view for quick switching. */
   showMac(): void {
+    this.vault.close()
     this.selected = false
     if (this.connection === undefined) this.resetConnection()
     if (this.saved?.selected === true) this.save(this.saved.target)
     this.render()
     this.owner?.webContents.focus()
+  }
+
+  /** Open Vault for the active Cloud connection. */
+  showVault(): void {
+    if (this.selected && this.status === 'online' && this.target !== undefined && this.owner !== undefined) {
+      this.vault.open(this.owner, this.target)
+    }
   }
 
   /**
@@ -159,6 +170,7 @@ export class DesktopCloudWorkspace {
         if (action === undefined) return
         switch (action.type) {
           case 'mac': this.showMac(); break
+          case 'vault': this.showVault(); break
           case 'configure':
             this.resetConnection()
             this.target = undefined
@@ -190,6 +202,7 @@ export class DesktopCloudWorkspace {
   }
 
   private resetConnection(owner = this.owner): void {
+    this.vault.close()
     clearTimeout(this.retry)
     this.retry = undefined
     const { pending, connection, remote } = this

@@ -1,8 +1,11 @@
 """Exercise Vault administration with a disposable filesystem and systemd adapter."""
 
 import base64
+import io
 import importlib.util
+import json
 import os
+import socket
 import subprocess
 import tempfile
 import unittest
@@ -18,6 +21,7 @@ SPEC.loader.exec_module(vault)
 FIRST_UNIT = 'example-search.service'
 SECOND_UNIT = 'example-report@batch.service'
 CLOUD_UID = 23000
+OWNER_UID = 23002
 FIRST_VALUE = b'example value before rotation'
 SECOND_VALUE = b'example value after rotation'
 
@@ -28,11 +32,13 @@ class VaultTest(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name) / 'vault'
         self.units = Path(temporary.name) / 'units'
-        self.units.mkdir()
+        self.units.mkdir(mode=0o700)
         self.properties = {'LoadState': 'loaded', 'User': str(CLOUD_UID + 1), 'DynamicUser': 'no'}
         self.reloads = 0
         self.failed_reload = False
         self.failed_encryption = False
+        self.failed_listener_start = False
+        self.listener_active = False
         self.sealed = []
         self.store = vault.Vault(self.root, self.units, self.run_systemd)
 
@@ -49,6 +55,9 @@ class VaultTest(unittest.TestCase):
         if args[0] == '/usr/bin/systemctl' and args[-1] == 'daemon-reload':
             self.reloads += 1
             return subprocess.CompletedProcess(args, int(self.failed_reload))
+        if args[0] == '/usr/bin/systemctl' and args[-1] == vault.DESKTOP_LISTENER:
+            self.listener_active = 'enable' in args
+            return subprocess.CompletedProcess(args, int(self.listener_active and self.failed_listener_start))
         self.assertEqual(args, ['/usr/bin/systemd-creds', '--with-key=host', '--name=yharness_EXAMPLE_KEY', 'encrypt', '-', '-'])
         self.assertEqual(options['stderr'], subprocess.DEVNULL)
         self.sealed.append(options['input'])
@@ -144,6 +153,109 @@ class VaultTest(unittest.TestCase):
         with patch.object(vault.getpass, 'getpass', side_effect=echoed_input):
             with self.assertRaisesRegex(vault.VaultError, 'interactive terminal'):
                 vault.prompt_secret()
+
+    def test_desktop_management_requires_the_owner_and_an_enabled_service(self):
+        self.store.enable(FIRST_UNIT, CLOUD_UID)
+        self.store.enable(SECOND_UNIT, CLOUD_UID)
+        self.store.allow_desktop(OWNER_UID, CLOUD_UID, [FIRST_UNIT])
+        self.assertEqual(self.store.desktop({'action': 'list'}, OWNER_UID), {'services': [{'unit': FIRST_UNIT, 'names': []}]})
+        for requester in (0, CLOUD_UID, OWNER_UID + 1):
+            with self.subTest(requester=requester), self.assertRaises(vault.VaultError):
+                self.store.desktop({'action': 'list'}, requester)
+        with self.assertRaises(vault.VaultError):
+            self.store.desktop({'action': 'add', 'unit': SECOND_UNIT, 'name': 'EXAMPLE_KEY',
+                                'value': FIRST_VALUE.decode()}, OWNER_UID)
+        self.assertEqual(self.sealed, [])
+
+    def test_desktop_can_add_replace_and_revoke_without_returning_any_secret_value(self):
+        self.store.enable(FIRST_UNIT, CLOUD_UID)
+        self.store.allow_desktop(OWNER_UID, CLOUD_UID, [FIRST_UNIT])
+        request = {'unit': FIRST_UNIT, 'name': 'EXAMPLE_KEY'}
+        def desktop(action, **extra):
+            return self.store.desktop({'action': action, **request, **extra}, OWNER_UID)
+
+        with self.assertRaises(vault.VaultError):
+            desktop('replace', value=FIRST_VALUE.decode())
+        self.assertEqual(desktop('add', value=FIRST_VALUE.decode()), {'ok': True})
+        with self.assertRaises(vault.VaultError):
+            desktop('add', value=SECOND_VALUE.decode())
+        self.assertEqual(desktop('replace', value=SECOND_VALUE.decode()), {'ok': True})
+        inventory = self.store.desktop({'action': 'list'}, OWNER_UID)
+        self.assertEqual(inventory, {'services': [{'unit': FIRST_UNIT, 'names': ['EXAMPLE_KEY']}]})
+        self.assertNotIn(SECOND_VALUE, json.dumps(inventory).encode())
+        self.assertEqual(self.sealed, [FIRST_VALUE, SECOND_VALUE])
+        self.assertEqual(desktop('revoke'), {'ok': True})
+        self.assertEqual(self.store.names(FIRST_UNIT), [])
+
+    def test_desktop_policy_cannot_grant_cloud_or_an_unconfigured_service(self):
+        self.store.enable(FIRST_UNIT, CLOUD_UID)
+        with self.assertRaises(vault.VaultError):
+            self.store.allow_desktop(CLOUD_UID, CLOUD_UID, [FIRST_UNIT])
+        with self.assertRaises(vault.VaultError):
+            self.store.allow_desktop(OWNER_UID, CLOUD_UID, [SECOND_UNIT])
+        with self.assertRaises(vault.VaultError):
+            self.store.desktop({'action': 'list'}, OWNER_UID)
+        self.store.allow_desktop(OWNER_UID, CLOUD_UID, [FIRST_UNIT])
+        self.store.deny_desktop()
+        with self.assertRaises(vault.VaultError):
+            self.store.desktop({'action': 'list'}, OWNER_UID)
+        self.assertTrue(self.dropin(FIRST_UNIT).is_file())
+
+    def test_desktop_wire_accepts_only_bounded_exact_requests(self):
+        valid = {'action': 'add', 'unit': FIRST_UNIT, 'name': 'EXAMPLE_KEY', 'value': '  a private value  '}
+        self.assertEqual(vault.desktop_request(json.dumps(valid).encode()), valid)
+        for malformed in (b'', b'null', b'{"action":"list","action":"revoke"}', b'{"action":"list","extra":1}',
+                          b'{"action":"enable"}', b' ' * (64 * 1024 + 1), b'\xff'):
+            with self.subTest(size=len(malformed)), self.assertRaises(vault.VaultError):
+                vault.desktop_request(malformed)
+        for overrides in ({'value': 'x' * 8193}, {'value': 'a\0b'}, {'value': 12}, {'name': '../key'},
+                          {'unit': '../else.service'}, {'unit': 'fixture@.service'}, {'action': 'list'}):
+            bad = {**valid, **overrides}
+            with self.subTest(fields=list(overrides)), self.assertRaises(vault.VaultError):
+                vault.desktop_request(json.dumps(bad).encode())
+        with self.assertRaises(vault.VaultError):
+            vault.desktop_body(io.BytesIO(b'a' * (vault.DESKTOP_REQUEST_LIMIT + 1)))
+
+    @unittest.skipUnless(hasattr(socket, 'SO_PEERCRED'), 'Linux UNIX peer credentials')
+    def test_desktop_peer_identity_comes_from_the_connected_socket(self):
+        sender, receiver = socket.socketpair()
+        with sender, receiver:
+            self.assertEqual(vault.desktop_peer(receiver), os.getuid())
+
+    def test_desktop_socket_is_limited_to_the_owner_and_has_a_short_lifetime(self):
+        listener = vault.desktop_socket_unit(OWNER_UID).decode()
+        worker = vault.desktop_worker_unit().decode()
+        self.assertIn(f'SocketUser={OWNER_UID}', listener)
+        self.assertIn('SocketMode=0600', listener)
+        self.assertIn('ListenStream=/run/yharness-vault/desktop.sock', listener)
+        self.assertIn('Accept=yes', listener)
+        self.assertIn('PrivateNetwork=yes', worker)
+        self.assertIn('StandardInput=socket', worker)
+        self.assertIn('LimitCORE=0', worker)
+
+    def test_removing_desktop_access_disables_the_socket_and_allows_a_new_owner(self):
+        self.store.enable(FIRST_UNIT, CLOUD_UID)
+        listener = self.units / vault.DESKTOP_LISTENER
+        with patch.object(vault, 'trusted_file'):
+            self.store.allow_desktop(OWNER_UID, CLOUD_UID, [FIRST_UNIT], start=True)
+            self.assertTrue(self.listener_active)
+            self.store.deny_desktop()
+            self.assertFalse(self.listener_active)
+            self.assertFalse(listener.exists())
+            self.store.allow_desktop(OWNER_UID + 1, CLOUD_UID, [FIRST_UNIT], start=True)
+        self.assertIn(f'SocketUser={OWNER_UID + 1}', listener.read_text())
+        with self.assertRaises(vault.VaultError):
+            self.store.desktop({'action': 'list'}, OWNER_UID)
+        self.assertEqual(self.store.desktop({'action': 'list'}, OWNER_UID + 1), {'services': [{'unit': FIRST_UNIT, 'names': []}]})
+
+    def test_failed_first_listener_start_removes_its_policy_and_socket(self):
+        self.store.enable(FIRST_UNIT, CLOUD_UID)
+        self.failed_listener_start = True
+        with patch.object(vault, 'trusted_file'), self.assertRaises(vault.VaultError):
+            self.store.allow_desktop(OWNER_UID, CLOUD_UID, [FIRST_UNIT], start=True)
+        self.assertFalse(self.listener_active)
+        self.assertFalse((self.units / vault.DESKTOP_LISTENER).exists())
+        self.assertFalse((self.root / 'desktop.json').exists())
 
 
 if __name__ == '__main__':
