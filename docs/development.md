@@ -132,6 +132,8 @@ Contributors can opt into the comprehensive local gate set with `pnpm run check:
 
 The keyless [CI workflow](../.github/workflows/ci.yml) groups independent gates into broad lanes and runs a smaller compatibility signal across supported Node versions. Artifact consumers wait for one build within their lane. Required benchmarks run separately on standard GitHub-hosted Linux; the [benchmark runner reference](../benchmarks/AGENTS.md) owns routing and the job timeout. The separate real-API workflow runs `pnpm run test:e2e` with its configured worker bound. See [scripts/run-gates.ts](../scripts/run-gates.ts) and the workflow files for the current gate and job inventory.
 
+`pnpm run duplication` reports duplicate code in `packages/` and `scripts/` and fails when a match exceeds the recorded counts in [the baseline](../.jscpd-baseline.json) or the scan finds no source files.
+
 PRs default to standard GitHub-hosted Linux and Windows runners. Enable a configured private standby pool with `DSH_CI_STANDBY_LINUX_ENABLED=true` or `DSH_CI_STANDBY_WINDOWS_ENABLED=true`. Set `DSH_CI_RUNNER_BENCHMARKS_ENABLED=true` to enable the manual benchmark tiers. The `DSH_CI_FAILOVER_LINUX` and `DSH_CI_FAILOVER_WINDOWS` variables select configured alternate runner pools.
 
 Set `DSH_REAL_API_TESTS_ENABLED=true` and configure `DEEPSEEK_API_KEY_EXTERNAL` to enable real DeepSeek API validation, including installed-wheel smokes. Issue lifecycle automation and Cloudflare PR previews also require their credentials and their respective `DSH_ISSUE_LIFECYCLE_ENABLED` and `DSH_CLOUDFLARE_PREVIEW_ENABLED` variables. Keyless CI runs independently of these integrations.

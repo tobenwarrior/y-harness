@@ -309,6 +309,10 @@ export function apply(ctx: Context, config: Config): void {
   // The loopback URL belongs to this host. Under SSH, the operator reaches it
   // through a local forwarding address that this process cannot derive.
   const handoffBrowser = config.openBrowser && !launchedThroughSsh(launchEnvironmentOf(ctx))
+  const canUseComputer = (agentContext: Context): boolean => {
+    const preset = ctx.get('agentPresets')?.composedPreset(agentContext)
+    return preset !== undefined && COMPUTER_PRESETS.test(preset)
+  }
   // Release dependent rows only after bind-dependent trust has been sampled once.
   ctx.provide(WEB_RUNTIME_SERVICE, runtime)
   ctx.plugin(FrontendStatic, { distIndex: internals.resolveDistIndex() })
@@ -317,14 +321,10 @@ export function apply(ctx: Context, config: Config): void {
     const computer = new MacComputerBridge()
     ctx.effect(() => () => computer.dispose(), 'mac-computer: local desktop')
     ctx.on('agent/created', ({ agent }) => {
-      const canUseComputer = (): boolean => {
-        const preset = ctx.get('agentPresets')?.composedPreset(agent.ctx)
-        return preset !== undefined && COMPUTER_PRESETS.test(preset)
-      }
-      if (!canUseComputer()) return
+      if (!canUseComputer(agent.ctx)) return
       agent.ctx.inject(['tools', 'attachments', 'llm'], (scope) => {
         ComputerTool.applyMacComputer(scope, computer)
-        scope.effect(() => scope.tools.guard(exec => exec.name === 'mac_computer' && !canUseComputer()
+        scope.effect(() => scope.tools.guard(exec => exec.name === 'mac_computer' && !canUseComputer(agent.ctx)
           ? 'This Agent preset cannot access the Mac Computer.'
           : undefined))
       })
@@ -346,14 +346,10 @@ export function apply(ctx: Context, config: Config): void {
   } else if (legacyComputer !== undefined) {
     const computer = legacyComputer
     ctx.on('agent/created', ({ agent }) => {
-      const canUseComputer = (): boolean => {
-        const preset = ctx.get('agentPresets')?.composedPreset(agent.ctx)
-        return preset !== undefined && COMPUTER_PRESETS.test(preset)
-      }
-      if (!canUseComputer()) return
+      if (!canUseComputer(agent.ctx)) return
       agent.ctx.inject(ComputerTool.inject, (scope) => {
         ComputerTool.apply(scope)
-        scope.effect(() => scope.tools.guard(exec => exec.name === 'vps_computer' && !canUseComputer()
+        scope.effect(() => scope.tools.guard(exec => exec.name === 'vps_computer' && !canUseComputer(agent.ctx)
           ? 'This Agent preset cannot access the private Computer.'
           : undefined))
       })
