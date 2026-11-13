@@ -89,13 +89,17 @@ export function mountVpsBots(
     ])
   }, 'vps-bots: dispose desktop controllers')
 
-  const computerFor = async (sessionId: string): Promise<VpsComputer> => {
+  const requireOpenScope = (): void => {
     if (closing) throw new Error('VPS Bot Computer scope is closed')
+  }
+
+  const computerFor = async (sessionId: string): Promise<VpsComputer> => {
+    requireOpenScope()
     const pending = pendingComputers.get(sessionId)
     if (pending !== undefined) return pending
     const creation = (async (): Promise<VpsComputer> => {
       await runtime.ensure(sessionId)
-      if (closing) throw new Error('VPS Bot Computer scope is closed')
+      requireOpenScope()
       const existing = computers.get(sessionId)
       if (existing !== undefined) return existing
       const computer = containerComputer(async (argv, signal) => {
