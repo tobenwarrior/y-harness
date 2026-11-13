@@ -67,6 +67,40 @@ describe('managed VPS Bot composition', () => {
     }
   })
 
+  it('quiesces a pending Computer resolution before disposing the VPS scope', async () => {
+    const ctx = new Context()
+    const request = registerRoutes(ctx)
+    const entered = Promise.withResolvers<undefined>()
+    const release = Promise.withResolvers<undefined>()
+    const ensure = vi.spyOn(VpsRuntime.prototype, 'ensure').mockImplementation(async (sessionId) => {
+      if (sessionId !== BOT_SESSION) throw new Error('unexpected VPS Session')
+      entered.resolve(undefined)
+      await release.promise
+    })
+    ctx.provide('bots', {
+      ownerBotForSession: async (sessionId: string) => sessionId === BOT_SESSION
+        ? { id: 'bot-test', sessionId, state: 'active' }
+        : undefined,
+    } as never)
+    let disposed = false
+    let disposing: Promise<void> | undefined
+    try {
+      await ctx.plugin((scope) => { mountVpsBots(scope, { root: '/yharness-test-bots', image: 'localhost/yharness-test' }, []) })
+      const status = request('status', { sessionId: BOT_SESSION })
+      await entered.promise
+      disposing = ctx.fiber.dispose().then(() => { disposed = true })
+      await Promise.resolve()
+      expect(disposed).toBe(false)
+      release.resolve(undefined)
+      await expect((await status).json()).resolves.toMatchObject({ available: false })
+      await disposing
+    } finally {
+      release.resolve(undefined)
+      ensure.mockRestore()
+      if (!disposed) await ctx.fiber.dispose()
+    }
+  })
+
   // The managed filesystem and execution world use absolute Linux paths.
   it.skipIf(process.platform === 'win32').each([false, true])('binds the exact Agent and desktop with a shared display configured=%s', async (withLegacy) => {
     const ctx = new Context()

@@ -517,13 +517,16 @@ interface BotVpsJournal {
   forBot(botId: BotId): BotVpsJournalReader | undefined
 }
 
+function managedBotWorkspace(workspaces: BotWorkspaces | undefined, botId: string): workspaces is BotWorkspaces {
+  return workspaces !== undefined && workspaces.managed?.(botId) !== false
+}
+
 function botWorkspace(
   workspaces: BotWorkspaces | undefined,
   botId: string,
   sessionId: SessionId,
 ): string | undefined {
-  if (workspaces === undefined || workspaces.managed?.(botId) === false) return undefined
-  return workspaces.workspace(sessionId)
+  return managedBotWorkspace(workspaces, botId) ? workspaces.workspace(sessionId) : undefined
 }
 
 declare module '@yharness/cordis' {
@@ -3158,8 +3161,12 @@ export class BotService extends TypertRemoteService {
           const sender = context.sessionId === undefined ? undefined : this.recordsBySession.get(String(context.sessionId))
           if (sender === undefined) throw new Error('Bot management requires a live Bot.')
           const digest = createHash('sha256').update(`${context.sessionId}:${context.threadId}:${context.turnId}:${context.callId}`).digest('hex')
-          const created = await this.createImpl({ id: BotId(`bot-${digest}`), name,
-            cwd: sender.cwd,
+          const id = BotId(`bot-${digest}`)
+          const workspaces = ctx.get('botWorkspaces')
+          // Managed children receive a workspace selected by the Host; only
+          // legacy children inherit the sender's working directory.
+          const created = await this.createImpl({ id, name,
+            ...(managedBotWorkspace(workspaces, String(id)) ? {} : { cwd: sender.cwd }),
             ...(description === undefined ? {} : { description }),
             ...(identity === undefined ? {} : { identity }), ...(accent === undefined ? {} : { accent }) }, context.signal)
           try {

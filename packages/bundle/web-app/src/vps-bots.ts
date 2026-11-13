@@ -53,6 +53,8 @@ export function mountVpsBots(
   const runtime = new VpsRuntime(config.root, config.image)
   const services = new VpsServices(grants)
   const computers = new Map<string, VpsComputer>()
+  const pendingComputers = new Map<string, Promise<VpsComputer>>()
+  let closing = false
   const managedBotIds = config.bots === undefined ? undefined : new Set(config.bots)
   const desktopOnlyBotIds = new Set(config.desktopOnlyBots ?? [])
   const isManagedBot = (botId: string): boolean => !desktopOnlyBotIds.has(botId)
@@ -76,25 +78,43 @@ export function mountVpsBots(
     managed: (botId: string) => isManagedBot(botId),
   })
   ctx.effect(() => async () => {
+    closing = true
+    // Runtime preparation can outlive an unload; wait before reporting scope disposal complete.
     const active = [...computers.values()]
     computers.clear()
-    await Promise.all(active.map(computer => computer.dispose()))
+    const pending = [...pendingComputers.values()]
+    await Promise.all([
+      ...active.map(computer => computer.dispose()),
+      Promise.allSettled(pending),
+    ])
   }, 'vps-bots: dispose desktop controllers')
 
   const computerFor = async (sessionId: string): Promise<VpsComputer> => {
-    await runtime.ensure(sessionId)
-    const existing = computers.get(sessionId)
-    if (existing !== undefined) return existing
-    const computer = containerComputer(async (argv, signal) => {
-      signal.throwIfAborted()
-      const [program, ...args] = runtime.execArgv(sessionId, argv)
-      const { stdout } = await exec(program, args, {
-        encoding: 'buffer', maxBuffer: 4 * 1024 * 1024, timeout: 12_000, signal,
+    if (closing) throw new Error('VPS Bot Computer scope is closed')
+    const pending = pendingComputers.get(sessionId)
+    if (pending !== undefined) return pending
+    const creation = (async (): Promise<VpsComputer> => {
+      await runtime.ensure(sessionId)
+      if (closing) throw new Error('VPS Bot Computer scope is closed')
+      const existing = computers.get(sessionId)
+      if (existing !== undefined) return existing
+      const computer = containerComputer(async (argv, signal) => {
+        signal.throwIfAborted()
+        const [program, ...args] = runtime.execArgv(sessionId, argv)
+        const { stdout } = await exec(program, args, {
+          encoding: 'buffer', maxBuffer: 4 * 1024 * 1024, timeout: 12_000, signal,
+        })
+        return stdout
       })
-      return stdout
-    })
-    computers.set(sessionId, computer)
-    return computer
+      computers.set(sessionId, computer)
+      return computer
+    })()
+    pendingComputers.set(sessionId, creation)
+    try {
+      return await creation
+    } finally {
+      pendingComputers.delete(sessionId)
+    }
   }
 
   ctx.inject(['bots', 'connection'], (scope) => {

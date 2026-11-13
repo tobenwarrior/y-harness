@@ -840,6 +840,49 @@ describe('durable Bot roster', () => {
     }
   })
 
+  it('creates a managed child Bot from its scoped tool without inheriting a host cwd', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const parent = await first.service.create({ name: 'Managed parent', cwd: '/host/workspace' })
+    await close(first.ctx)
+    const root = await mkdtemp(join(tmpdir(), 'yh-scoped-managed-child-'))
+    const workspace = (sessionId: SessionId) => join(root, String(sessionId))
+    const prepare = vi.fn(async () => {})
+    const h = await harness(pool, undefined, undefined, [String(parent.bot.sessionId)], new Map(), new Map(), true, 'native', false, {
+      beforeService: (ctx) => {
+        ctx.provide('botWorkspaces', { workspace, prepare, managed: () => true })
+      },
+    })
+    try {
+      const agent = h.agents[0]
+      if (agent === undefined) throw new Error('managed parent Agent was not created')
+      const create = h.ctx.tools.get('create_bot', agent)
+      if (create === undefined) throw new Error('scoped Bot creation tool was not installed')
+      const callId = ToolCallId('managed-scoped-child-create')
+      const result = await create.execute({ name: 'Managed child' }, {
+        callId,
+        rootCallId: callId,
+        name: 'create_bot',
+        arguments: { name: 'Managed child' },
+        agent,
+        signal: new AbortController().signal,
+        token: Symbol('managed-scoped-child-create') as ToolExecutionToken,
+        deferContext: () => {},
+        concludeTurn: () => {},
+      })
+      expect(result).toMatchObject({ name: 'Managed child', state: 'active' })
+      const [request] = h.create.mock.calls.at(-1) ?? []
+      if (request === undefined || request.sessionId === undefined) throw new Error('managed child Session request was not recorded')
+      expect(request).toMatchObject({ cwd: workspace(SessionId(request.sessionId)) })
+      expect(prepare).toHaveBeenCalledWith(SessionId(request.sessionId))
+      await expect(h.service.create({ name: 'Explicit managed cwd', cwd: '/host/escape' }))
+        .rejects.toThrow('assigned a private workspace')
+    } finally {
+      await close(h.ctx)
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('keeps non-allowlisted Bot creation on the legacy cwd and skips VPS preparation', async () => {
     const root = await mkdtemp(join(tmpdir(), 'yh-allowlisted-bot-'))
     const workspace = (sessionId: SessionId) => join(root, sessionId)
