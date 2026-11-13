@@ -4,7 +4,7 @@ profile: web
 composition: web-default
 recording: authored
 sessionFormat:
-  version: 2
+  version: 5
   coverage: [adjacent-migration]
 header:
   class: web-default
