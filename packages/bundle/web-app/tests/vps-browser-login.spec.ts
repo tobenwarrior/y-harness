@@ -211,9 +211,10 @@ describe('isolated browser saved-login registry', () => {
 
     const ctx = new Context()
     ctx.provide('bots', {
-      ownerBotForSession: async (session: string) => session === SESSION
-        ? { id: BOT, sessionId: SESSION, state: 'active' }
-        : undefined,
+      ownerBotForSession: async (session: string) => {
+        if (session === SESSION || session === 'empty-session') return { id: BOT, sessionId: session, state: 'active' }
+        if (session === 'unauthorized-session') return { id: 'bot-other', sessionId: session, state: 'active' }
+      },
     } as never)
     const route = vpsBrowserLoginRoute(ctx, logins)
     const response = await route.fetch(new Request(`http://127.0.0.1${route.path}?sessionId=${encodeURIComponent(SESSION)}`))
@@ -223,6 +224,14 @@ describe('isolated browser saved-login registry', () => {
     })
     const other = await route.fetch(new Request(`http://127.0.0.1${route.path}?sessionId=other`))
     await expect(other.json()).resolves.toEqual({ request: null })
+    const extra = await route.fetch(new Request(`http://127.0.0.1${route.path}?sessionId=${encodeURIComponent(SESSION)}&extra=1`))
+    await expect(extra.json()).resolves.toEqual({ request: null })
+    const invalid = await route.fetch(new Request(`http://127.0.0.1${route.path}?sessionId=%00`))
+    await expect(invalid.json()).resolves.toEqual({ request: null })
+    const empty = await route.fetch(new Request(`http://127.0.0.1${route.path}?sessionId=empty-session`))
+    await expect(empty.json()).resolves.toEqual({ request: null })
+    const unauthorized = await route.fetch(new Request(`http://127.0.0.1${route.path}?sessionId=unauthorized-session`))
+    await expect(unauthorized.json()).resolves.toEqual({ request: null })
 
     now = Number.MAX_SAFE_INTEGER
     expect(logins.current(SESSION)).toBeUndefined()
