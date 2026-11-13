@@ -16,6 +16,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 
@@ -349,6 +350,18 @@ def install(node, release, port):
     start_cloud(account.pw_uid, port)
 
 
+@contextmanager
+def installation_lock():
+    """Serialize root operations that prepare the dedicated Cloud service and its mounts."""
+    descriptor = os.open(LOCK, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
+    with os.fdopen(descriptor, 'r+') as lock:
+        info = os.fstat(lock.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_nlink != 1 or info.st_mode & 0o077:
+            raise AccountError('The dedicated Cloud setup lock has unexpected ownership.')
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        yield
+
+
 def main():
     """Install, verify, or print the owner-only link for a dedicated Cloud service."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -373,12 +386,7 @@ def main():
         elif os.geteuid() != 0:
             raise AccountError('Run this Cloud administration command through sudo.')
         elif options.action == 'install':
-            descriptor = os.open(LOCK, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
-            with os.fdopen(descriptor, 'r+') as lock:
-                info = os.fstat(lock.fileno())
-                if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_nlink != 1 or info.st_mode & 0o077:
-                    raise AccountError('The dedicated Cloud setup lock has unexpected ownership.')
-                fcntl.flock(lock, fcntl.LOCK_EX)
+            with installation_lock():
                 install(options.node, options.release, options.port)
             print('Dedicated Cloud service enabled.')
         elif options.action == 'url':

@@ -34,6 +34,16 @@ sudo /usr/bin/python3 -I /opt/yharness/release/scripts/setup-vps-account.py url 
 
 Use the selected loopback port for both sides of the [SSH forward](#open-y-harness), then open the printed private sign-in link. The `yharness-cloud.service` user service starts at boot under the locked Cloud account and stores its data under `/var/lib/yharness-cloud/.yharness-vps`. It starts with its own Bot workspaces and provider settings. Keep an existing Cloud installation running until its chats, files, providers, and desktop volumes have been moved and verified.
 
+### Preserve the existing workspace path
+
+On Ubuntu 24.04 with an ID-mapped filesystem such as ext4, prepare the dedicated account before its service manager starts. Replace `SSH_OWNER` with the regular account whose `~/.yharness-vps/workspace` Cloud uses.
+
+```sh
+sudo /usr/bin/python3 -I /opt/yharness/release/scripts/setup-vps-workspace.py --owner SSH_OWNER
+```
+
+The dedicated account's service manager presents the original workspace path with the dedicated account's file ownership. Writes go to the original workspace files. Only the prepared directory at `/var/lib/yharness-cloud-data` appears at the old `~/.yharness-vps` path in that manager. Keep a backup of the workspace and verify the service configuration, state, provider paths, and desktop volumes before changing which Cloud service runs.
+
 ## Open Y Harness
 
 On macOS, choose **Workspace → Open Cloud Workspace** in Y Harness and enter the SSH host name or alias you use in Terminal. The app needs a verified host key and an SSH key or agent that can sign in without prompting. It remembers your selection and connects automatically. Cloud opens the bots, chats, and providers stored on the server. Use that Cloud workspace on each device to continue the same chats while the VPS runs your jobs and schedules. The **Mac** switch opens your separate local workspace.
