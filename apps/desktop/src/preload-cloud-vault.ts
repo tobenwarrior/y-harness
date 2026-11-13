@@ -4,6 +4,7 @@ import { VAULT_IPC, VAULT_PAGE, type CloudVaultApi } from './cloud-vault-ipc.ts'
 
 const api: CloudVaultApi = {
   messages: () => ipcRenderer.invoke(VAULT_IPC.messages) as ReturnType<CloudVaultApi['messages']>,
+  mode: () => ipcRenderer.invoke(VAULT_IPC.mode) as ReturnType<CloudVaultApi['mode']>,
   request: request => ipcRenderer.invoke(VAULT_IPC.request, request) as ReturnType<CloudVaultApi['request']>,
   close: () => ipcRenderer.invoke(VAULT_IPC.close) as Promise<void>,
 }
