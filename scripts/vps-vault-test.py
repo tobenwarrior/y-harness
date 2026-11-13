@@ -44,6 +44,8 @@ class VaultTest(unittest.TestCase):
         self.now = 1_000.0
         self.sealed = []
         self.sealed_names = []
+        self.decrypt_calls = []
+        self.decryptions = {}
         self.store = vault.Vault(self.root, self.units, self.run_systemd)
         self.store.clock = lambda: self.now
 
@@ -70,14 +72,26 @@ class VaultTest(unittest.TestCase):
         self.assertIn(args[:2], [
             ['/usr/bin/systemd-creds', '--with-key=host'],
         ])
-        self.assertEqual(args[-3:], ['encrypt', '-', '-'])
         self.assertTrue(args[2].startswith('--name=yharness_'))
         self.assertEqual(options['stderr'], subprocess.DEVNULL)
+        if args[-3:] == ['decrypt', '-', '-']:
+            self.decrypt_calls.append((args[2], options['input']))
+            try:
+                ciphertext = base64.b64decode(options['input'], validate=True)
+            except (TypeError, ValueError):
+                return subprocess.CompletedProcess(args, 1, stdout=b'')
+            plaintext = self.decryptions.get(ciphertext)
+            if plaintext is None:
+                return subprocess.CompletedProcess(args, 1, stdout=b'')
+            return subprocess.CompletedProcess(args, 0, stdout=plaintext)
+        self.assertEqual(args[-3:], ['encrypt', '-', '-'])
         self.sealed_names.append(args[2])
         self.sealed.append(options['input'])
         if self.failed_encryption:
             return subprocess.CompletedProcess(args, 1, stdout=options['input'])
-        return subprocess.CompletedProcess(args, 0, stdout=base64.b64encode(f'sealed-{len(self.sealed)}'.encode()) + b'\n')
+        ciphertext = f'sealed-{len(self.sealed)}'.encode()
+        self.decryptions[ciphertext] = options['input']
+        return subprocess.CompletedProcess(args, 0, stdout=base64.b64encode(ciphertext) + b'\n')
 
     def test_enables_an_exact_system_service_without_starting_it(self):
         self.store.enable(FIRST_UNIT, CLOUD_UID)
@@ -377,6 +391,99 @@ class VaultTest(unittest.TestCase):
                 'action': 'replace-login', 'id': login['id'], 'label': 'Changed',
                 'username': 'new-owner', 'password': 'new-private',
             }, OWNER_UID)
+
+    def test_trusted_browser_consumes_an_existing_v1_login_with_synchronous_delivery(self):
+        self.store.allow_desktop(OWNER_UID, CLOUD_UID, [])
+        self.store.desktop({
+            'action': 'add-login', 'origin': 'https://example.com', 'label': 'Example',
+            'username': 'owner', 'password': 'private',
+        }, OWNER_UID)
+        login = self.store.desktop({'action': 'list-logins'}, OWNER_UID)['logins'][0]
+        path = self.root / vault.WEBSITE_LOGIN_DIRECTORY / login['id']
+        previous = path.read_bytes()
+        delivered = []
+        reopened = vault.Vault(self.root, self.units, self.run_systemd)
+
+        result = reopened.use_website_login(
+            login['id'], login['origin'], lambda username, password: delivered.append((username, password)),
+        )
+
+        self.assertIsNone(result)
+        self.assertEqual(delivered, [('owner', 'private')])
+        self.assertEqual(path.read_bytes(), previous)
+        self.assertEqual(self.decrypt_calls, [(
+            f'--name=yharness_website_login_{login["id"]}',
+            base64.b64encode(b'sealed-1'),
+        )])
+
+    def test_trusted_browser_rejects_an_origin_before_decrypting(self):
+        self.store.allow_desktop(OWNER_UID, CLOUD_UID, [])
+        self.store.desktop({
+            'action': 'add-login', 'origin': 'https://example.com', 'label': 'Example',
+            'username': 'owner', 'password': 'private',
+        }, OWNER_UID)
+        login = self.store.desktop({'action': 'list-logins'}, OWNER_UID)['logins'][0]
+
+        for origin in ('https://other.example', 'http://example.com', 'https://example.com/'):
+            with self.subTest(origin=origin), self.assertRaises(vault.VaultError) as failure:
+                self.store.use_website_login(login['id'], origin, lambda *_values: self.fail('delivered'))
+            self.assertEqual(str(failure.exception), vault.WEBSITE_LOGIN_UNAVAILABLE)
+        self.assertEqual(self.decrypt_calls, [])
+
+    def test_trusted_browser_observes_rotation_and_refuses_a_removed_login(self):
+        self.store.allow_desktop(OWNER_UID, CLOUD_UID, [])
+        self.store.desktop({
+            'action': 'add-login', 'origin': 'https://example.com', 'label': 'Example',
+            'username': 'owner', 'password': 'private',
+        }, OWNER_UID)
+        login = self.store.desktop({'action': 'list-logins'}, OWNER_UID)['logins'][0]
+        delivered = []
+        self.store.use_website_login(login['id'], login['origin'], lambda username, password: delivered.append((username, password)))
+
+        self.store.desktop({
+            'action': 'replace-login', 'id': login['id'], 'label': 'Rotated',
+            'username': 'new-owner', 'password': 'new-private',
+        }, OWNER_UID)
+        self.store.use_website_login(login['id'], login['origin'], lambda username, password: delivered.append((username, password)))
+        self.assertEqual(delivered, [('owner', 'private'), ('new-owner', 'new-private')])
+
+        self.assertEqual(self.store.desktop({'action': 'remove-login', 'id': login['id']}, OWNER_UID), {'ok': True})
+        with self.assertRaises(vault.VaultError) as failure:
+            self.store.use_website_login(login['id'], login['origin'], lambda *_values: self.fail('delivered'))
+        self.assertEqual(str(failure.exception), vault.WEBSITE_LOGIN_UNAVAILABLE)
+        self.assertEqual(len(self.decrypt_calls), 2)
+
+    def test_trusted_browser_rejects_invalid_decrypted_fields_and_callback_errors_safely(self):
+        self.store.allow_desktop(OWNER_UID, CLOUD_UID, [])
+        self.store.desktop({
+            'action': 'add-login', 'origin': 'https://example.com', 'label': 'Example',
+            'username': 'owner', 'password': 'private',
+        }, OWNER_UID)
+        login = self.store.desktop({'action': 'list-logins'}, OWNER_UID)['logins'][0]
+        record = json.loads((self.root / vault.WEBSITE_LOGIN_DIRECTORY / login['id']).read_text())
+        ciphertext = base64.b64decode(record['credential'])
+        invalid = (
+            b'{"username":"owner"}',
+            b'{"username":"owner","password":"private","extra":"private"}',
+            b'{"username":"","password":"private"}',
+            json.dumps({'username': 'owner', 'password': 'p' * (vault.WEBSITE_LOGIN_PASSWORD_LIMIT + 1)}).encode(),
+        )
+        for payload in invalid:
+            with self.subTest(payload_size=len(payload)):
+                self.decryptions[ciphertext] = payload
+                with self.assertRaises(vault.VaultError) as failure:
+                    self.store.use_website_login(login['id'], login['origin'], lambda *_values: self.fail('delivered'))
+                self.assertEqual(str(failure.exception), vault.WEBSITE_LOGIN_UNAVAILABLE)
+                self.assertNotIn('private', str(failure.exception))
+
+        self.decryptions[ciphertext] = b'{"username":"owner","password":"private"}'
+        def fail_with_secret(_username, password):
+            raise RuntimeError(password)
+
+        with self.assertRaises(vault.VaultError) as failure:
+            self.store.use_website_login(login['id'], login['origin'], fail_with_secret)
+        self.assertEqual(str(failure.exception), vault.WEBSITE_LOGIN_UNAVAILABLE)
+        self.assertNotIn('private', str(failure.exception))
 
     @unittest.skipUnless(hasattr(socket, 'SO_PEERCRED'), 'Linux UNIX peer credentials')
     def test_desktop_peer_identity_comes_from_the_connected_socket(self):

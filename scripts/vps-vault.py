@@ -60,6 +60,7 @@ WEBSITE_LOGIN_ID = re.compile(r'[0-9a-f]{32}')
 WEBSITE_LOGIN_LABEL_LIMIT = 80
 WEBSITE_LOGIN_USERNAME_LIMIT = 512
 WEBSITE_LOGIN_PASSWORD_LIMIT = 8192
+WEBSITE_LOGIN_UNAVAILABLE = 'The website login is unavailable.'
 WEBSITE_LOGIN_HOST_LABEL = r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?'
 WEBSITE_LOGIN_LOCAL_SUFFIXES = ('localhost', 'local', 'localdomain')
 WEBSITE_LOGIN_ORIGIN = re.compile(
@@ -711,6 +712,54 @@ class Vault:
         if not cipher:
             raise VaultError('Systemd returned an empty encrypted website login.')
         return base64.b64encode(cipher).decode('ascii')
+
+    def _website_login_values(self, payload):
+        """Validate decrypted v1 values for the synchronous browser callback."""
+        if type(payload) is not bytes or len(payload) > WEBSITE_LOGIN_FILE_LIMIT:
+            raise VaultError(WEBSITE_LOGIN_UNAVAILABLE)
+        try:
+            data = json.loads(payload.decode('utf-8'), object_pairs_hook=exact_object)
+            if type(data) is not dict or set(data) != {'username', 'password'}:
+                raise VaultError(WEBSITE_LOGIN_UNAVAILABLE)
+            username = login_text(data.get('username'), WEBSITE_LOGIN_USERNAME_LIMIT)
+            password = login_text(data.get('password'), WEBSITE_LOGIN_PASSWORD_LIMIT)
+            return username, password
+        except VaultError:
+            raise VaultError(WEBSITE_LOGIN_UNAVAILABLE) from None
+        except (UnicodeError, ValueError, RecursionError, TypeError):
+            raise VaultError(WEBSITE_LOGIN_UNAVAILABLE) from None
+
+    def use_website_login(self, login_id, origin, deliver):
+        """Deliver a v1 login to an authorized browser callback under the Vault lock.
+
+        The caller authenticates the browser and approves its exact login action.
+        The callback must finish within the caller's deadline.
+        """
+        if not valid_login_id(login_id) or not valid_login_origin(origin) or not callable(deliver):
+            raise VaultError(WEBSITE_LOGIN_UNAVAILABLE)
+        try:
+            with self.locked():
+                path = self.website_login_directory()
+                record = self.read_website_login(path / login_id, login_id)
+                if record['origin'] != origin:
+                    raise VaultError(WEBSITE_LOGIN_UNAVAILABLE)
+                decrypted = self.command(
+                    [
+                        '/usr/bin/systemd-creds', '--with-key=host',
+                        f'--name={PREFIX}_website_login_{login_id}', 'decrypt', '-', '-',
+                    ],
+                    WEBSITE_LOGIN_UNAVAILABLE,
+                    input=record['credential'].encode('ascii'), stdout=subprocess.PIPE,
+                )
+                username, password = self._website_login_values(decrypted)
+                try:
+                    deliver(username, password)
+                except Exception:
+                    raise VaultError(WEBSITE_LOGIN_UNAVAILABLE) from None
+        except VaultError:
+            raise VaultError(WEBSITE_LOGIN_UNAVAILABLE) from None
+        except (AttributeError, OSError, OverflowError, TypeError, ValueError, RecursionError):
+            raise VaultError(WEBSITE_LOGIN_UNAVAILABLE) from None
 
     def new_website_login_id(self, path):
         """Allocate a lower-case opaque id that is absent from the login directory."""
