@@ -27,6 +27,8 @@ Mount the Client export alongside the Bot Remote, Session UI, conversation UI, l
 
 One-to-one conversations place the user's messages on the right, show a small waiting bubble while the Bot works, and identify the final reply by name and avatar. Scheduled replies carry an expandable origin label. Composer approvals and questions stay visible while they await a response. Open the usage icon for token details.
 
+When the selected owner Bot requests a credential, the composer dock shows only the validated service unit, API key name, and request status. The Client never receives or edits the credential value. In the supported Cloud Desktop app, the pending card links to its native-handled Vault path; in a Web browser it explains how to open the same chat in the desktop app. Saved and cancelled requests use status-only presentation, and a broker response with no request removes the card.
+
 Open **Group settings** in a shared room to see its Bots and people. Room owners can change the name or remove a member's access to the room.
 
 Use **Reply** on a group message to quote it in the composer and send a reply to that message. Use the reaction picker to add or remove your reaction. The transcript displays the quoted message and counts each reaction.

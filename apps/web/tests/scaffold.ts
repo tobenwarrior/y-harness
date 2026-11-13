@@ -591,10 +591,7 @@ export async function launchWebScaffold(options: LaunchOptions = {}): Promise<We
     : (typeof options.extraOverlayPath === 'string' ? [options.extraOverlayPath] : options.extraOverlayPath)
       .flatMap(path => loadOverlayPatches('web e2e scaffold', path))
   const composedRows = composeEntries([basePatches, surfacePatches, extraOverlayPatches])
-  const webRuntimeConfig = composedRows.find(row => row.id === 'web-runtime')?.config as {
-    surfaceContext?: boolean
-  } | undefined
-  const surfaceContext = webRuntimeConfig?.surfaceContext !== false
+  const webRuntimeConfig = composedRows.find(row => row.id === 'web-runtime')?.config as Record<string, unknown> | undefined
   // The scaffold's own overrides, above every bundle layer like `--patch` overlays.
   const overlayPatches: PatchOptions[] = [
     // Without HMR the profile applies configuration changes at its next start.
@@ -665,9 +662,7 @@ export async function launchWebScaffold(options: LaunchOptions = {}): Promise<We
     // The bundle's web-runtime row resolves the same built dist under test
     // (apps/web IS @yharness/web-frontend); native browser opening and the
     // URL line are disabled because this scaffold owns its Playwright browser.
-    // Preserve the composed surface-context choice because a patch replaces
-    // the row's complete config.
-    { id: 'web-runtime', config: { openBrowser: false, printUrl: false, surfaceContext } },
+    { id: 'web-runtime', config: { ...webRuntimeConfig, openBrowser: false, printUrl: false } },
     ...publicHost === undefined && options.remoteAuthority === undefined
       ? []
       : [{

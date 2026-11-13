@@ -83,6 +83,51 @@ function groups(sendResult: 'accepted' | 'partial' = 'accepted'): GroupHostFixtu
 }
 
 describe('native Bot actions', () => {
+  it('records only the exact Vault request fields and withholds the action from other Sessions', async () => {
+    const sessionId = SessionId('bot-session-alpha')
+    const recorded: BotDynamicToolEvent[] = []
+    const arguments_ = { unit: 'example-worker.service', name: 'EXAMPLE_API_KEY' }
+    const execute = vi.fn(async () => ({
+      success: true, contentItems: [{ type: 'inputText' as const, text: 'The key is saved in the VPS Vault.' }],
+    }))
+    let granted = true
+    const provider = createBotNativeToolProvider({
+      bind: async () => client(), persist: async (event) => { recorded.push(event) }, replay: async () => recorded,
+      vpsVaultRequest: async id => granted && id === sessionId ? {
+        description: 'Request an approved key.',
+        inputSchema: {
+          type: 'object', additionalProperties: false, required: ['unit', 'name'],
+          properties: {
+            unit: { type: 'string', const: arguments_.unit },
+            name: { type: 'string', const: arguments_.name },
+          },
+        },
+        execute,
+      } : undefined,
+    })
+    const tool = (await provider.resolve({ sessionId })).find(candidate => candidate.name === 'request_vps_secret')
+    if (tool === undefined) throw new Error('native Vault tool missing')
+    const call = { name: tool.name, callId: 'call-1', threadId: 'thread-1', turnId: 'turn-1', sessionId, arguments: arguments_ }
+    const other = SessionId('bot-session-beta')
+    expect((await provider.resolve({ sessionId: other })).map(candidate => candidate.name)).not.toContain(tool.name)
+    expect((await provider.resolve({ sessionId, purpose: 'session-title' })).map(candidate => candidate.name)).not.toContain(tool.name)
+    await expect(provider.observe({ phase: 'started', ...call, arguments: { ...arguments_, value: 'fixture-secret' } }))
+      .rejects.toThrow('invalid')
+    await expect(provider.observe({ phase: 'started', ...call, arguments: { ...arguments_, name: 'fixture-secret' } }))
+      .rejects.toThrow('invalid')
+    expect(recorded).toEqual([])
+    await expect(tool.execute(arguments_, context({ sessionId: other }))).resolves.toMatchObject({ success: false })
+    await provider.observe({ phase: 'started', ...call })
+    const result = await tool.execute(arguments_, context({ sessionId }))
+    await provider.observe({ phase: 'settled', ...call, result })
+    expect(recorded).toEqual([{ phase: 'started', ...call }, { phase: 'settled', ...call, result }])
+    await expect(provider.replay({ sessionId, purpose: 'session-title' })).resolves.toEqual([])
+    granted = false
+    await expect(tool.execute(arguments_, context({ sessionId }))).resolves.toMatchObject({ success: false })
+    await expect(provider.replay({ sessionId })).resolves.toEqual([])
+    expect(execute).toHaveBeenCalledTimes(1)
+  })
+
   it('exposes and records the selected owner Bot Computer, with revocation checked before input', async () => {
     const sessionId = SessionId('bot-session-alpha')
     const otherSessionId = SessionId('bot-session-beta')

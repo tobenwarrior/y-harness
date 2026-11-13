@@ -158,6 +158,29 @@ Open **Cloud** and select the lock icon in its title bar. Choose a service, then
 
 Run `sudo /usr/local/sbin/yharness-vault deny-desktop` to remove Desktop management access and stop its listener. Stored credentials are available to their services until you revoke them. To grant management to a different SSH account, run `deny-desktop` first, then run `allow-desktop` with the new account.
 
+### Let a Bot request a key in chat
+
+Use the current Vault command from your administrator checkout. Once the service is available in Desktop Vault, authorize the exact service and key name for requests. Pass the complete list of service and key pairs each time you change the allowlist.
+
+```sh
+sudo /usr/local/sbin/yharness-vault enable-requests example-worker.service=EXAMPLE_API_KEY
+```
+
+In the private `web-runtime` configuration, grant the same pair to the exact Bot roster ID. Restart Cloud when it is idle.
+
+```yaml
+vpsVaultRequests:
+  socketPath: /run/yharness-vault/cloud-requests.sock
+  grants:
+    - bot: bot-worker
+      unit: example-worker.service
+      name: EXAMPLE_API_KEY
+```
+
+Open that Bot's Cloud chat and ask it to request the key. Choose **Enter key securely** on the card and enter the value in the Mac Vault window. The Bot receives the result of the request. The service loads the key on its next start. Use the Vault in the Cloud title bar to replace or revoke an existing key.
+
+To stop accepting requests, run `sudo /usr/local/sbin/yharness-vault disable-requests`. This cancels open requests and keeps saved credentials available for their services.
+
 ### Read a filtered journal feed
 
 If you operate a host-side journal feed, add `vpsJournal` to the same private `web-runtime` configuration. Give the Web service account permission to connect to the socket and list only the managed owner Bots allowed to read its output.

@@ -653,6 +653,13 @@ export const en = {
   computerInputRejected: 'That input could not be sent. Try again.',
   computerPasteFailed: 'Clipboard text could not be read.',
   computerTextTrimmed: 'Pasted text was shortened to fit the input limit.',
+  vaultRequestTitle: 'Secure request',
+  vaultRequestService: 'Service',
+  vaultRequestKey: 'Key',
+  vaultRequestOpenDesktop: 'Enter key securely',
+  vaultRequestDesktopOnly: 'Open this chat in the Y Harness desktop app to enter the key securely.',
+  vaultRequestSaved: 'Saved securely',
+  vaultRequestCancelled: 'Request cancelled',
 } as const
 
 /** Keys owned by the bot workspace dictionary. */

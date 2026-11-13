@@ -36,6 +36,8 @@ import { MacComputerBridge } from './mac-computer.ts'
 import { mountVpsBots } from './vps-bots.ts'
 import type { VpsServiceAccess } from './vps-services.ts'
 import type { VpsJournalConfig } from './vps-journal.ts'
+import { mountVpsVaultRequests } from './vps-vault-requests.ts'
+import type { VpsVaultRequestsConfig } from './vps-vault-requests.ts'
 
 /** Stable Cordis plugin name. */
 export const name = 'web-app'
@@ -98,6 +100,8 @@ export interface Config {
   vpsServices?: VpsServiceAccess[]
   /** Private read-only journal socket and its owner Bot allowlist. */
   vpsJournal?: VpsJournalConfig | null
+  /** Allow exact owner Bots to request service credentials through the Desktop Vault. */
+  vpsVaultRequests?: VpsVaultRequestsConfig | null
   /** Opt in to the private Linux desktop using its X display and owner-only authority file. */
   computer?: {
     /** Local X11 display identifier for the private desktop. */
@@ -136,6 +140,17 @@ export const Config: z<Config> = z.object({
     bots: z.array(String).required(),
     restart: z.boolean(),
   })),
+  vpsVaultRequests: z.union([
+    z.object({
+      socketPath: z.string().required(),
+      grants: z.array(z.object({
+        bot: z.string().required(),
+        unit: z.string().required(),
+        name: z.string().required(),
+      })).required(),
+    }),
+    z.const(null),
+  ]),
   vpsJournal: z.union([
     z.object({
       socketPath: z.string().required(),
@@ -350,6 +365,7 @@ export function apply(ctx: Context, config: Config): void {
   const legacyComputer = config.computer === undefined || config.computer === null
     ? undefined
     : new VpsComputer(config.computer)
+  if (config.vpsVaultRequests != null) mountVpsVaultRequests(ctx, config.vpsVaultRequests)
   if (config.vpsJournal !== undefined && config.vpsJournal !== null && config.botComputers == null) {
     throw new Error('VPS journal grants require managed Bot computers.')
   }

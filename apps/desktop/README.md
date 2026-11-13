@@ -48,6 +48,8 @@ The macOS **Workspace** menu switches between this Mac and an [existing private 
 
 Cloud’s [Vault](../../docs/user/guide/vps.md#manage-service-secrets-from-the-mac-app) opens in a separate desktop-owned window. Its preload accepts only that window’s document. The main process sends requests over the connected owner’s SSH account and returns only service and secret names or operation status.
 
+A [Bot credential request](../../docs/user/guide/vps.md#let-a-bot-request-a-key-in-chat) opens the same isolated window for one request. Desktop accepts the exact request link from the selected Cloud view and resolves the current request over SSH before showing a masked field.
+
 ### Mac Computer
 
 The [Computer panel](../../docs/user/guide/index.md#let-a-bot-use-your-mac) uses the application’s macOS permissions. The Electron main process owns the permission checks, native confirmation, primary-display capture and input. It accepts panel requests from the local application document and model actions from the Desktop Host IPC channel. A renewable panel lease binds both paths to the selected Bot Session. The main process revokes that lease on workspace switch, main document navigation, window close, lock or suspension.

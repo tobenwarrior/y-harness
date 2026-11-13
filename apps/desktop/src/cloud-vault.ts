@@ -6,8 +6,15 @@ const SSH = '/usr/bin/ssh'
 const COMMAND = '/usr/local/sbin/yharness-vault desktop-client'
 const UNIT = /^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,220}\.service$/u
 const NAME = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/u
+const REQUEST_ID = /^[a-f0-9]{32}$/u
+const REQUEST_STATES = new Set(['pending', 'saved', 'cancelled'])
 const VALUE_LIMIT = 8192
 const MAX_OUTPUT = 160 * 1024
+
+declare const VAULT_REQUEST_ID: unique symbol
+
+/** Opaque request identifier issued by the connected Cloud workspace. */
+export type VaultRequestId = string & { readonly [VAULT_REQUEST_ID]: true }
 
 /** Request from the dedicated Vault window. No operation reads a saved value. */
 export type VaultRequest = { readonly action: 'list' } | {
@@ -19,6 +26,16 @@ export type VaultRequest = { readonly action: 'list' } | {
   readonly unit: string
   readonly name: string
   readonly value: string
+} | {
+  readonly action: 'inspect-request'
+  readonly id: VaultRequestId
+} | {
+  readonly action: 'save-request'
+  readonly id: VaultRequestId
+  readonly value: string
+} | {
+  readonly action: 'dismiss-request'
+  readonly id: VaultRequestId
 }
 
 /** Names for a single administrator-enabled Linux service. */
@@ -27,10 +44,22 @@ export interface VaultService {
   readonly names: readonly string[]
 }
 
+/** Metadata for one Cloud-to-Vault key request; no secret value is returned. */
+export interface VaultRequestMetadata {
+  readonly id: VaultRequestId
+  readonly unit: string
+  readonly name: string
+  readonly state: 'pending' | 'saved' | 'cancelled'
+}
+
 /** Metadata, acknowledgment, or a fixed diagnostic. */
 export type VaultReply = {
   readonly ok: true
   readonly services?: readonly VaultService[]
+} | {
+  readonly request: VaultRequestMetadata
+} | {
+  readonly state: 'saved' | 'cancelled'
 } | {
   readonly ok: false
   readonly reason: 'invalid' | 'unavailable'
@@ -54,11 +83,31 @@ function keyName(value: unknown): value is string {
   return typeof value === 'string' && value === value.trim() && NAME.test(value)
 }
 
+function requestState(value: unknown): value is VaultRequestMetadata['state'] {
+  return typeof value === 'string' && REQUEST_STATES.has(value)
+}
+
+/**
+ * Validate an opaque request identifier before it crosses into SSH transport.
+ * @param value - untrusted IPC or navigation input.
+ * @returns whether the value is a lowercase 32-character hexadecimal request id.
+ */
+export function isVaultRequestId(value: unknown): value is VaultRequestId {
+  return typeof value === 'string' && REQUEST_ID.test(value)
+}
+
 function requestBody(value: unknown): VaultRequest | undefined {
   if (!record(value)) return undefined
   const { action, unit, name } = value
   const fields = Object.keys(value).length
   if (action === 'list' && fields === 1) return { action }
+  if (action === 'inspect-request' && fields === 2 && isVaultRequestId(value.id)) return { action, id: value.id }
+  if (action === 'dismiss-request' && fields === 2 && isVaultRequestId(value.id)) return { action, id: value.id }
+  if (action === 'save-request' && fields === 3 && isVaultRequestId(value.id)
+    && typeof value.value === 'string' && value.value.length > 0 && !value.value.includes('\0')
+    && value.value.isWellFormed() && Buffer.byteLength(value.value, 'utf8') <= VALUE_LIMIT) {
+    return { action, id: value.id, value: value.value }
+  }
   if (!unitName(unit) || !keyName(name)) return undefined
   if (action === 'revoke' && fields === 3) return { action, unit, name }
   const secret = value.value
@@ -69,9 +118,22 @@ function requestBody(value: unknown): VaultRequest | undefined {
   }
 }
 
-function replyBody(action: VaultRequest['action'], stdout: string): VaultReply | undefined {
+function replyBody(action: VaultRequest['action'], stdout: string, expectedId?: VaultRequestId): VaultReply | undefined {
   const value: unknown = JSON.parse(stdout)
   if (!record(value) || Object.keys(value).length !== 1) return undefined
+  if (action === 'inspect-request') {
+    const request = value.request
+    if (!record(request) || Object.keys(request).length !== 4 || !isVaultRequestId(request.id)
+      || request.id !== expectedId || !unitName(request.unit) || !keyName(request.name)
+      || !requestState(request.state)) return undefined
+    return { request: {
+      id: request.id, unit: request.unit, name: request.name,
+      state: request.state,
+    } }
+  }
+  if (action === 'dismiss-request') {
+    return value.state === 'saved' || value.state === 'cancelled' ? { state: value.state } : undefined
+  }
   if (action !== 'list') return value.ok === true ? { ok: true } : undefined
   if (!Array.isArray(value.services) || value.services.length > 16) return undefined
   const services: VaultService[] = []
@@ -87,6 +149,18 @@ function replyBody(action: VaultRequest['action'], stdout: string): VaultReply |
 }
 
 const unavailable: VaultReply = { ok: false, reason: 'unavailable' }
+
+/**
+ * Limit the isolated form to the request displayed in that window.
+ * @param value - Untrusted operation from the Vault renderer.
+ * @param requestId - Owner-selected request, or undefined for Vault management.
+ * @returns Whether the operation belongs to the window's current mode.
+ */
+export function vaultRequestAllowed(value: unknown, requestId: VaultRequestId | undefined): boolean {
+  const request = requestBody(value)
+  if (request === undefined) return false
+  return 'id' in request ? request.id === requestId : requestId === undefined
+}
 
 /**
  * Send one bounded request over SSH and return only validated metadata or a fixed failure.
@@ -116,7 +190,10 @@ export async function cloudVaultRequest(
         env: Object.fromEntries(Object.entries(process.env).filter(([key]) => !/(?:KEY|SECRET|TOKEN|PASSWORD)/iu.test(key))),
       }, (error, stdout) => {
         if (error !== null || signal.aborted) { resolve(unavailable); return }
-        try { resolve(replyBody(request.action, stdout) ?? unavailable) }
+        try {
+          const expectedId = request.action === 'inspect-request' ? request.id : undefined
+          resolve(replyBody(request.action, stdout, expectedId) ?? unavailable)
+        }
         catch { resolve(unavailable) }
       })
       // OpenSSH can exit before reading stdin, for example if the owner lost access.

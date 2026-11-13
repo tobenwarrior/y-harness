@@ -19,6 +19,7 @@ import { createComputerAvailability } from './computer-availability.ts'
 import { createComputerClient } from './computer-client.ts'
 import { ComputerGlyph } from './ComputerAction.tsx'
 import { createBotReferenceSource } from './bot-reference-source.ts'
+import { BotVaultRequestCard } from './BotVaultRequestCard.tsx'
 
 /** Stable main-panel identity shared by the sidebar entry and main occupant. */
 export const PANEL_ID = 'bots' as MainPanelId
@@ -138,6 +139,9 @@ export function apply(ctx: Context): void {
     const disposeConversation = ctx.slots.inject('bots.conversation', () => ctx.slots.register({
       name: 'bots.conversation',
     }, BotsConversation))
+    const disposeVaultRequest = ctx.slots.inject('conversation.composer.dock', () => ctx.slots.register({
+      name: 'conversation.composer.dock', id: 'bot-vault-request', order: -1, locale: 'bots',
+    }, BotVaultRequestCard))
     const disposeReplyAvatar = ctx.slots.inject('conversation.bot.reply.avatar', () => ctx.slots.register({
       name: 'conversation.bot.reply.avatar',
       inject: (): BotReplyAvatarFace => {
@@ -159,6 +163,7 @@ export function apply(ctx: Context): void {
     return () => {
       disposeChanged()
       disposeScheduleChanged()
+      disposeVaultRequest()
       disposeSidebar()
       disposeReplyAvatar()
       disposeConversation()

@@ -81,6 +81,8 @@ The optional `computer` configuration supplies one shared X11 display for a cust
 
 The private `vpsJournal` configuration grants selected owner Bots with a dedicated VPS desktop read access to a host-operated Unix socket. The Web Host supplies the reader to both the scoped tool and the native Codex Bot action. The socket stays in the Host process.
 
+`vpsVaultRequests` lets selected owner Bots open a credential request during a direct chat turn. The Host publishes request metadata through the authenticated operator route and watches a local Vault broker for the receipt. Desktop sends the value to the broker's separate owner socket. See [Bot requests for VPS Vault keys](../../../docs/user/guide/vps.md#let-a-bot-request-a-key-in-chat).
+
 The native macOS Desktop Host registers `mac_computer` on operator presets. It relays actions over its private Electron IPC channel with the invoking Session ID. The Electron main process authorizes the currently shared Bot before capturing the primary display or delivering input.
 
 ### Per-session agent setup

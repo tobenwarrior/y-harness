@@ -864,6 +864,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'The owner Bot, including provisioning state, or undefined for other Sessions.',
       },
       {
+        signature: 'async isDirectOwnerTurn(agent: Agent, signal?: AbortSignal): Promise<boolean>',
+        description: 'Check whether the live owner Bot is answering a direct human message.',
+        parameters: [{ name: 'agent', description: 'Exact live Agent invoking the owner-only operation.' }, { name: 'signal', description: 'Cancellation while reading the current Session log.' }],
+        returns: 'Whether the current turn belongs exclusively to a direct owner conversation.',
+      },
+      {
         signature: '@Remote(\'rename\') async rename(request: BotRenameRequest): Promise<BotRenameValue>',
         description: 'Rename one Bot while preserving its one Session mapping and visual identity.',
         parameters: [{ name: 'request', description: 'Bot id and new display name.' }],

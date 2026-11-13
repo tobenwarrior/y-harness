@@ -375,6 +375,14 @@ collaborationFor(agent: Pick<Agent, 'id'>): Promise<BotCollaborationClient>
 async ownerBotForSession(sessionId: string): Promise<{ readonly id: BotId readonly sessionId: SessionId readonly state: 'active' | 'provisioning' } | undefined>
 
 /**
+ * Check whether the live owner Bot is answering a direct human message.
+ * @param agent - Exact live Agent invoking the owner-only operation.
+ * @param signal - Cancellation while reading the current Session log.
+ * @returns Whether the current turn belongs exclusively to a direct owner conversation.
+ */
+async isDirectOwnerTurn(agent: Agent, signal?: AbortSignal): Promise<boolean>
+
+/**
  * Rename one Bot while preserving its one Session mapping and visual identity.
  * @param request - Bot id and new display name.
  * @returns the committed row.

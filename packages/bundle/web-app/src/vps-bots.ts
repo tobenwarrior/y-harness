@@ -21,6 +21,7 @@ const exec = promisify(execFile)
 const BOT_TOOLS = new Set([
   'bash', 'read', 'write', 'edit', 'apply_patch', 'glob', 'grep', 'job_output', 'job_list', 'job_kill',
   'vps_computer', 'vps_service_status', 'vps_service_restart', 'vps_service_journal', 'skill', 'search_skills',
+  'request_vps_secret',
   'schedule_create', 'schedule_list', 'schedule_delete', 'schedule_update', 'schedule_pause', 'schedule_resume', 'schedule_history',
   'schedule_event_create', 'schedule_event_list', 'schedule_event_delete', 'schedule_event_update',
   'schedule_event_pause', 'schedule_event_resume', 'schedule_event_history',

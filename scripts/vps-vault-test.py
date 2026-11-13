@@ -20,6 +20,7 @@ SPEC.loader.exec_module(vault)
 
 FIRST_UNIT = 'example-search.service'
 SECOND_UNIT = 'example-report@batch.service'
+REQUEST_KEYS = [(FIRST_UNIT, 'EXAMPLE_KEY')]
 CLOUD_UID = 23000
 OWNER_UID = 23002
 FIRST_VALUE = b'example value before rotation'
@@ -39,8 +40,11 @@ class VaultTest(unittest.TestCase):
         self.failed_encryption = False
         self.failed_listener_start = False
         self.listener_active = False
+        self.cloud_listener_active = False
+        self.now = 1_000.0
         self.sealed = []
         self.store = vault.Vault(self.root, self.units, self.run_systemd)
+        self.store.clock = lambda: self.now
 
     def dropin(self, unit):
         return self.units / (unit + '.d') / '90-yharness-vault.conf'
@@ -55,9 +59,13 @@ class VaultTest(unittest.TestCase):
         if args[0] == '/usr/bin/systemctl' and args[-1] == 'daemon-reload':
             self.reloads += 1
             return subprocess.CompletedProcess(args, int(self.failed_reload))
-        if args[0] == '/usr/bin/systemctl' and args[-1] == vault.DESKTOP_LISTENER:
-            self.listener_active = 'enable' in args
-            return subprocess.CompletedProcess(args, int(self.listener_active and self.failed_listener_start))
+        if args[0] == '/usr/bin/systemctl' and args[-1] in (vault.DESKTOP_LISTENER, vault.CLOUD_LISTENER):
+            active = 'enable' in args
+            if args[-1] == vault.DESKTOP_LISTENER:
+                self.listener_active = active
+            else:
+                self.cloud_listener_active = active
+            return subprocess.CompletedProcess(args, int(active and self.failed_listener_start))
         self.assertEqual(args, ['/usr/bin/systemd-creds', '--with-key=host', '--name=yharness_EXAMPLE_KEY', 'encrypt', '-', '-'])
         self.assertEqual(options['stderr'], subprocess.DEVNULL)
         self.sealed.append(options['input'])
@@ -270,6 +278,192 @@ class VaultTest(unittest.TestCase):
         self.assertFalse(self.listener_active)
         self.assertFalse((self.units / vault.DESKTOP_LISTENER).exists())
         self.assertFalse((self.root / 'desktop.json').exists())
+
+    def test_cloud_request_wire_is_exact_and_bounded(self):
+        valid = {'action': 'create', 'id': 'a' * 32, 'unit': FIRST_UNIT, 'name': 'EXAMPLE_KEY'}
+        self.assertEqual(vault.cloud_request(json.dumps(valid).encode()), valid)
+        for malformed in (
+            b'', b'null', b'{"action":"status","id":"' + b'a' * 32 + b'","id":"' + b'b' * 32 + b'"}',
+            b'{"action":"create","id":"' + b'A' * 32 + b'","unit":"' + FIRST_UNIT.encode() + b'","name":"EXAMPLE_KEY"}',
+            b' ' * (vault.CLOUD_REQUEST_LIMIT + 1), b'\xff',
+        ):
+            with self.subTest(size=len(malformed)), self.assertRaises(vault.VaultError):
+                vault.cloud_request(malformed)
+        for overrides in ({'id': 'a' * 31}, {'unit': '../escape.service'}, {'name': '../KEY'}, {'extra': 1}):
+            bad = {**valid, **overrides}
+            with self.subTest(fields=list(overrides)), self.assertRaises(vault.VaultError):
+                vault.cloud_request(json.dumps(bad).encode())
+
+    def test_cloud_request_round_trip_is_add_only_and_returns_no_secret(self):
+        self.store.enable(FIRST_UNIT, CLOUD_UID)
+        self.store.allow_desktop(OWNER_UID, CLOUD_UID, [FIRST_UNIT])
+        self.store.enable_requests(REQUEST_KEYS)
+        request = {'action': 'create', 'id': 'a' * 32, 'unit': FIRST_UNIT, 'name': 'EXAMPLE_KEY'}
+        self.assertEqual(self.store.cloud(request, CLOUD_UID), {'state': 'pending'})
+        self.assertEqual(self.store.desktop({'action': 'inspect-request', 'id': 'a' * 32}, OWNER_UID), {
+            'request': {'id': 'a' * 32, 'unit': FIRST_UNIT, 'name': 'EXAMPLE_KEY', 'state': 'pending'},
+        })
+        self.assertEqual(self.store.desktop({'action': 'save-request', 'id': 'a' * 32, 'value': FIRST_VALUE.decode()}, OWNER_UID), {'ok': True})
+        self.assertEqual(self.store.cloud({'action': 'status', 'id': 'a' * 32}, CLOUD_UID), {'state': 'saved'})
+        previous = (self.root / FIRST_UNIT / 'credentials' / 'EXAMPLE_KEY').read_bytes()
+        self.assertEqual(self.store.desktop({'action': 'save-request', 'id': 'a' * 32, 'value': SECOND_VALUE.decode()}, OWNER_UID), {'ok': True})
+        self.assertEqual((self.root / FIRST_UNIT / 'credentials' / 'EXAMPLE_KEY').read_bytes(), previous)
+        self.assertEqual(self.sealed, [FIRST_VALUE])
+        self.assertEqual(self.store.cloud({'action': 'cancel', 'id': 'a' * 32}, CLOUD_UID), {'state': 'saved'})
+        self.assertEqual(self.store.desktop({'action': 'dismiss-request', 'id': 'a' * 32}, OWNER_UID), {'state': 'saved'})
+        self.assertNotIn(FIRST_VALUE, json.dumps(self.store.desktop({'action': 'inspect-request', 'id': 'a' * 32}, OWNER_UID)).encode())
+
+    def test_cloud_status_renews_a_short_lease_and_expiry_cancels_the_owner_request(self):
+        self.store.enable(FIRST_UNIT, CLOUD_UID)
+        self.store.allow_desktop(OWNER_UID, CLOUD_UID, [FIRST_UNIT])
+        self.store.enable_requests(REQUEST_KEYS)
+        request = {'action': 'create', 'id': 'b' * 32, 'unit': FIRST_UNIT, 'name': 'EXAMPLE_KEY'}
+        self.assertEqual(self.store.cloud(request, CLOUD_UID), {'state': 'pending'})
+        self.now += vault.REQUEST_LEASE - 1
+        self.assertEqual(self.store.cloud({'action': 'status', 'id': 'b' * 32}, CLOUD_UID), {'state': 'pending'})
+        self.now += vault.REQUEST_LEASE - 1
+        self.assertEqual(self.store.cloud({'action': 'status', 'id': 'b' * 32}, CLOUD_UID), {'state': 'pending'})
+        self.now += vault.REQUEST_LEASE + 1
+        self.assertEqual(self.store.cloud({'action': 'status', 'id': 'b' * 32}, CLOUD_UID), {'state': 'cancelled'})
+        self.assertEqual(self.store.cloud({'action': 'cancel', 'id': 'b' * 32}, CLOUD_UID), {'state': 'cancelled'})
+        self.assertEqual(self.store.desktop({'action': 'inspect-request', 'id': 'b' * 32}, OWNER_UID), {
+            'request': {'id': 'b' * 32, 'unit': FIRST_UNIT, 'name': 'EXAMPLE_KEY', 'state': 'cancelled'},
+        })
+        with self.assertRaises(vault.VaultError):
+            self.store.desktop({'action': 'save-request', 'id': 'b' * 32, 'value': FIRST_VALUE.decode()}, OWNER_UID)
+
+    def test_cloud_request_scope_and_deny_desktop_fail_closed(self):
+        self.store.enable(FIRST_UNIT, CLOUD_UID)
+        self.store.enable(SECOND_UNIT, CLOUD_UID)
+        self.store.allow_desktop(OWNER_UID, CLOUD_UID, [FIRST_UNIT])
+        self.store.enable_requests(REQUEST_KEYS)
+        request = {'action': 'create', 'id': 'c' * 32, 'unit': FIRST_UNIT, 'name': 'EXAMPLE_KEY'}
+        for requester in (0, OWNER_UID, CLOUD_UID + 1):
+            with self.subTest(requester=requester), self.assertRaises(vault.VaultError):
+                self.store.cloud(request, requester)
+        with self.assertRaises(vault.VaultError):
+            self.store.cloud({**request, 'unit': SECOND_UNIT}, CLOUD_UID)
+        with patch.object(vault, 'trusted_file'):
+            self.store.enable_requests(REQUEST_KEYS, start=True)
+            self.store.deny_desktop()
+        with self.assertRaises(vault.VaultError):
+            self.store.cloud(request, CLOUD_UID)
+
+    def test_deny_desktop_clears_requests_before_a_later_regrant(self):
+        self.store.enable(FIRST_UNIT, CLOUD_UID)
+        self.store.allow_desktop(OWNER_UID, CLOUD_UID, [FIRST_UNIT])
+        self.store.enable_requests(REQUEST_KEYS)
+        request = {'action': 'create', 'id': 'g' * 32, 'unit': FIRST_UNIT, 'name': 'EXAMPLE_KEY'}
+        self.assertEqual(self.store.cloud(request, CLOUD_UID), {'state': 'pending'})
+        self.store.deny_desktop()
+        self.store.allow_desktop(OWNER_UID, CLOUD_UID, [FIRST_UNIT])
+        self.store.enable_requests(REQUEST_KEYS)
+        with self.assertRaises(vault.VaultError):
+            self.store.desktop({'action': 'inspect-request', 'id': 'g' * 32}, OWNER_UID)
+
+    def test_disabling_cloud_requests_clears_pending_owner_receipts(self):
+        self.store.enable(FIRST_UNIT, CLOUD_UID)
+        self.store.allow_desktop(OWNER_UID, CLOUD_UID, [FIRST_UNIT])
+        self.store.enable_requests(REQUEST_KEYS)
+        request = {'action': 'create', 'id': 'h' * 32, 'unit': FIRST_UNIT, 'name': 'EXAMPLE_KEY'}
+        self.assertEqual(self.store.cloud(request, CLOUD_UID), {'state': 'pending'})
+        with patch.object(vault, 'trusted_file'):
+            self.store.enable_requests(REQUEST_KEYS, start=True)
+            self.store.disable_requests()
+        with self.assertRaises(vault.VaultError):
+            self.store.desktop({'action': 'inspect-request', 'id': 'h' * 32}, OWNER_UID)
+
+    def test_accepted_worker_cannot_create_after_requests_are_disabled(self):
+        self.store.enable(FIRST_UNIT, CLOUD_UID)
+        self.store.allow_desktop(OWNER_UID, CLOUD_UID, [FIRST_UNIT])
+        self.store.enable_requests(REQUEST_KEYS)
+        self.store.disable_requests()
+        with self.assertRaises(vault.VaultError):
+            self.store.cloud({'action': 'create', 'id': 'i' * 32, 'unit': FIRST_UNIT, 'name': 'EXAMPLE_KEY'}, CLOUD_UID)
+
+    def test_broker_accepts_only_the_administrator_selected_key_names(self):
+        self.store.enable(FIRST_UNIT, CLOUD_UID)
+        self.store.allow_desktop(OWNER_UID, CLOUD_UID, [FIRST_UNIT])
+        self.store.enable_requests(REQUEST_KEYS)
+        request = {'action': 'create', 'id': 'a' * 32, 'unit': FIRST_UNIT, 'name': 'EXAMPLE_KEY'}
+        with self.assertRaises(vault.VaultError):
+            self.store.cloud({**request, 'name': 'OTHER_KEY'}, CLOUD_UID)
+        self.assertEqual(self.store.cloud(request, CLOUD_UID), {'state': 'pending'})
+        self.store.enable_requests([(FIRST_UNIT, 'OTHER_KEY')])
+        with self.assertRaises(vault.VaultError):
+            self.store.desktop({'action': 'save-request', 'id': request['id'], 'value': FIRST_VALUE.decode()}, OWNER_UID)
+        self.assertEqual(self.sealed, [])
+
+    def test_requests_from_an_older_boot_are_not_reused(self):
+        self.store.enable(FIRST_UNIT, CLOUD_UID)
+        self.store.allow_desktop(OWNER_UID, CLOUD_UID, [FIRST_UNIT])
+        self.store.enable_requests(REQUEST_KEYS)
+        request = {'action': 'create', 'id': 'e' * 32, 'unit': FIRST_UNIT, 'name': 'EXAMPLE_KEY'}
+        self.assertEqual(self.store.cloud(request, CLOUD_UID), {'state': 'pending'})
+        restarted = vault.Vault(self.root, self.units, self.run_systemd, clock=lambda: self.now, boot_id='new-boot')
+        self.assertEqual(restarted.cloud(request, CLOUD_UID), {'state': 'pending'})
+        with self.assertRaises(vault.VaultError):
+            restarted.cloud({'action': 'status', 'id': 'a' * 32}, CLOUD_UID)
+
+    def test_cloud_request_socket_is_cloud_owned_and_can_be_disabled_exactly(self):
+        listener = vault.cloud_socket_unit(CLOUD_UID).decode()
+        worker = vault.cloud_worker_unit().decode()
+        self.assertIn(f'SocketUser={CLOUD_UID}', listener)
+        self.assertIn('SocketGroup=root', listener)
+        self.assertIn('SocketMode=0600', listener)
+        self.assertIn('ListenStream=/run/yharness-vault/cloud-requests.sock', listener)
+        self.assertIn('StandardInput=socket', worker)
+        self.store.enable(FIRST_UNIT, CLOUD_UID)
+        self.store.allow_desktop(OWNER_UID, CLOUD_UID, [FIRST_UNIT])
+        with patch.object(vault, 'trusted_file'):
+            self.store.enable_requests(REQUEST_KEYS, start=True)
+            self.assertTrue(self.cloud_listener_active)
+            self.assertEqual((self.units / vault.CLOUD_LISTENER).read_bytes(), vault.cloud_socket_unit(CLOUD_UID))
+            self.store.disable_requests()
+        self.assertFalse(self.cloud_listener_active)
+        self.assertFalse((self.units / vault.CLOUD_LISTENER).exists())
+
+    def test_failed_first_cloud_listener_start_removes_its_generated_units(self):
+        self.store.enable(FIRST_UNIT, CLOUD_UID)
+        self.store.allow_desktop(OWNER_UID, CLOUD_UID, [FIRST_UNIT])
+        self.failed_listener_start = True
+        with patch.object(vault, 'trusted_file'), self.assertRaises(vault.VaultError):
+            self.store.enable_requests(REQUEST_KEYS, start=True)
+        self.assertFalse(self.cloud_listener_active)
+        self.assertFalse((self.units / vault.CLOUD_LISTENER).exists())
+        self.assertFalse((self.units / vault.CLOUD_WORKER).exists())
+
+    def test_disabling_cloud_requests_checks_both_generated_units_before_stopping(self):
+        self.store.enable(FIRST_UNIT, CLOUD_UID)
+        self.store.allow_desktop(OWNER_UID, CLOUD_UID, [FIRST_UNIT])
+        with patch.object(vault, 'trusted_file'):
+            self.store.enable_requests(REQUEST_KEYS, start=True)
+            worker = self.units / vault.CLOUD_WORKER
+            worker.write_bytes(worker.read_bytes() + b'\n# owner edit\n')
+            with self.assertRaises(vault.VaultError):
+                self.store.disable_requests()
+        self.assertTrue(self.cloud_listener_active)
+        self.assertTrue((self.units / vault.CLOUD_LISTENER).exists())
+
+    def test_pending_request_becomes_saved_when_key_appears_without_reading_value(self):
+        self.store.enable(FIRST_UNIT, CLOUD_UID)
+        self.store.allow_desktop(OWNER_UID, CLOUD_UID, [FIRST_UNIT])
+        self.store.enable_requests(REQUEST_KEYS)
+        request = {'action': 'create', 'id': 'd' * 32, 'unit': FIRST_UNIT, 'name': 'EXAMPLE_KEY'}
+        self.assertEqual(self.store.cloud(request, CLOUD_UID), {'state': 'pending'})
+        self.store.save(FIRST_UNIT, 'EXAMPLE_KEY', FIRST_VALUE, CLOUD_UID)
+        self.assertEqual(self.store.cloud({'action': 'status', 'id': 'd' * 32}, CLOUD_UID), {'state': 'saved'})
+        self.assertEqual(self.sealed, [FIRST_VALUE])
+
+    def test_saved_key_remains_a_receipt_when_cloud_status_misses_the_lease(self):
+        self.store.enable(FIRST_UNIT, CLOUD_UID)
+        self.store.allow_desktop(OWNER_UID, CLOUD_UID, [FIRST_UNIT])
+        self.store.enable_requests(REQUEST_KEYS)
+        request = {'action': 'create', 'id': 'f' * 32, 'unit': FIRST_UNIT, 'name': 'EXAMPLE_KEY'}
+        self.assertEqual(self.store.cloud(request, CLOUD_UID), {'state': 'pending'})
+        self.now += vault.REQUEST_LEASE + 1
+        self.store.save(FIRST_UNIT, 'EXAMPLE_KEY', FIRST_VALUE, CLOUD_UID)
+        self.assertEqual(self.store.cloud({'action': 'status', 'id': 'f' * 32}, CLOUD_UID), {'state': 'saved'})
 
 
 if __name__ == '__main__':

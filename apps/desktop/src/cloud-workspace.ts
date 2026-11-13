@@ -4,7 +4,15 @@ import { readFileSync } from 'node:fs'
 import { writeFileAtomic } from '@yharness/atomic-write'
 import { WebContentsView, session, type BrowserWindow } from 'electron'
 import { isCloudTarget, openCloudConnection, type CloudConnection } from './cloud-connection.ts'
-import { cloudAction, cloudDocument, cloudRequestAllowed, cloudSignInCookie, type CloudWorkspaceStatus } from './cloud-workspace-document.ts'
+import {
+  CLOUD_DESKTOP_USER_AGENT,
+  cloudAction,
+  cloudDocument,
+  cloudRequestAllowed,
+  cloudSignInCookie,
+  cloudVaultRequestId,
+  type CloudWorkspaceStatus,
+} from './cloud-workspace-document.ts'
 import type { DesktopCloudVault } from './cloud-vault-window.ts'
 import type { DesktopMessages } from './locale.ts'
 
@@ -274,6 +282,17 @@ export class DesktopCloudWorkspace {
       })
       remote.webContents.on('render-process-gone', () => { this.disconnected(connection) })
       const contents = remote.webContents
+      const userAgent = contents.getUserAgent()
+      if (!userAgent.split(/\s+/u).includes(CLOUD_DESKTOP_USER_AGENT)) {
+        contents.setUserAgent(`${userAgent} ${CLOUD_DESKTOP_USER_AGENT}`.trim())
+      }
+      contents.on('will-navigate', (event, url) => {
+        if (!this.selected || this.connection !== connection || this.remote?.webContents !== contents) return
+        const requestId = cloudVaultRequestId(connection.origin, url)
+        if (requestId === undefined || this.owner === undefined) return
+        event.preventDefault()
+        this.vault.open(this.owner, target, requestId)
+      })
       const responseStatus = new Promise<number>((resolve) => {
         contents.once('did-navigate', (_event, _url, status) => { resolve(status) })
       })

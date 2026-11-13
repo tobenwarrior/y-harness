@@ -4409,7 +4409,7 @@ export interface WebRuntimeConfig {
 ## `@yharness/web-app`
 
 - `inject`: `webServer`
-- `source`: [`packages/bundle/web-app/src/index.ts:55`](../packages/bundle/web-app/src/index.ts)
+- `source`: [`packages/bundle/web-app/src/index.ts:57`](../packages/bundle/web-app/src/index.ts)
 
 ```ts config-catalog
 /** Plugin config: composed deployment settings plus per-invocation command-line values. */
@@ -4459,6 +4459,8 @@ export interface Config {
   vpsServices?: VpsServiceAccess[]
   /** Private read-only journal socket and its owner Bot allowlist. */
   vpsJournal?: VpsJournalConfig | null
+  /** Allow exact owner Bots to request service credentials through the Desktop Vault. */
+  vpsVaultRequests?: VpsVaultRequestsConfig | null
   /** Opt in to the private Linux desktop using its X display and owner-only authority file. */
   computer?: {
     /** Local X11 display identifier for the private desktop. */
@@ -4492,6 +4494,28 @@ export interface VpsJournalConfig {
   readonly maxBytes?: number
   /** Maximum entries retained in each response array. Defaults to 256. */
   readonly maxEntries?: number
+}
+
+/** Trusted Web Host configuration for the VPS Vault request listener. */
+export interface VpsVaultRequestsConfig {
+  /** Absolute path to the local, Cloud-account-only broker socket. */
+  readonly socketPath: string
+  /** Exact Bot, system service and key combinations that may be requested. */
+  readonly grants: VpsVaultGrant[]
+}
+
+/** A credential request grant for a single owner Bot. */
+export interface VpsVaultGrant extends VpsVaultCredential {
+  /** Exact Bot roster ID. */
+  readonly bot: string
+}
+
+/** One exact service and key a Bot can ask its owner to enter. */
+export interface VpsVaultCredential {
+  /** Administrator-enabled system service receiving the key. */
+  readonly unit: string
+  /** Exact key name within the service's private credential directory. */
+  readonly name: string
 }
 ```
 <!-- END GENERATED config-catalog:@yharness/web-app -->

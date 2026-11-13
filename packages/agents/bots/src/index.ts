@@ -119,8 +119,8 @@ import type {
   BotGroupReactionValue,
 } from './group-chat.ts'
 import type { BotAttachmentGrantValue } from './attachment-grants.ts'
-import { createBotNativeToolProvider, VPS_COMPUTER_TOOL } from './native-tools.ts'
-import type { BotNativeToolHost, BotRoutineCreateResolution, BotRoutineCreateReservation, BotVpsJournalReader } from './native-tools.ts'
+import { createBotNativeToolProvider, VPS_COMPUTER_TOOL, VPS_VAULT_REQUEST_TOOL } from './native-tools.ts'
+import type { BotNativeTool, BotNativeToolHost, BotRoutineCreateResolution, BotRoutineCreateReservation, BotVpsJournalReader } from './native-tools.ts'
 import { installBotCollaborationTools } from './scoped-tools.ts'
 import { installBotRoutineTools } from './routine-tools.ts'
 import type { BotEventRoutineToolHost } from './routine-tools.ts'
@@ -3109,6 +3109,34 @@ export class BotService extends TypertRemoteService {
         || this.sharedScopeAgents.has(agent) || this.sharedScopeFences.has(agent)) return undefined
       return { bot, agent }
     }
+    const scopedVpsTool = async (
+      name: typeof VPS_COMPUTER_TOOL | typeof VPS_VAULT_REQUEST_TOOL,
+      sessionId: SessionId,
+    ): Promise<Omit<BotNativeTool, 'name'> | undefined> => {
+      const owner = await liveNativeOwner(sessionId)
+      if (owner === undefined || (name === VPS_COMPUTER_TOOL
+        && ctx.get('botWorkspaces')?.desktopOnly?.(owner.bot.id) !== true)) return undefined
+      const tool = ctx.tools.get(name, owner.agent)
+      if (tool === undefined) return undefined
+      return {
+        description: tool.description,
+        inputSchema: tool.parameters,
+        execute: async (args, context) => {
+          const result = await ctx.tools.execute({
+            callId: ToolCallId(context.callId), name, arguments: args,
+            agent: owner.agent, signal: context.signal,
+          })
+          const image = name === VPS_COMPUTER_TOOL ? result.content.find(block => block.type === 'image')?.attachment : undefined
+          return {
+            success: !result.isError,
+            contentItems: result.content.flatMap(block => block.type === 'text'
+              ? [{ type: 'inputText' as const, text: block.text }]
+              : []),
+            ...(image === undefined ? {} : { image }),
+          }
+        },
+      }
+    }
     ctx.provide('codexDynamicTools', createBotNativeToolProvider({
       bind: async (sessionId) => {
         const agent = ctx.get('agents')?.get(sessionId)
@@ -3136,31 +3164,9 @@ export class BotService extends TypertRemoteService {
         const owner = await liveNativeOwner(sessionId)
         return owner === undefined ? undefined : ctx.get('botVpsJournal')?.forBot(owner.bot.id)
       },
-      vpsComputer: async (sessionId) => {
-        if (ctx.get('botWorkspaces')?.desktopOnly === undefined) return undefined
-        const owner = await liveNativeOwner(sessionId)
-        if (owner === undefined || ctx.get('botWorkspaces')?.desktopOnly?.(owner.bot.id) !== true) return undefined
-        const tool = ctx.tools.get(VPS_COMPUTER_TOOL, owner.agent)
-        if (tool === undefined) return undefined
-        return {
-          description: tool.description,
-          inputSchema: tool.parameters,
-          execute: async (args, context) => {
-            const result = await ctx.tools.execute({
-              callId: ToolCallId(context.callId), name: VPS_COMPUTER_TOOL, arguments: args,
-              agent: owner.agent, signal: context.signal,
-            })
-            const image = result.content.find(block => block.type === 'image')?.attachment
-            return {
-              success: !result.isError,
-              contentItems: result.content.flatMap(block => block.type === 'text'
-                ? [{ type: 'inputText' as const, text: block.text }]
-                : []),
-              ...(image === undefined ? {} : { image }),
-            }
-          },
-        }
-      },
+      vpsComputer: sessionId => ctx.get('botWorkspaces')?.desktopOnly === undefined
+        ? Promise.resolve(undefined) : scopedVpsTool(VPS_COMPUTER_TOOL, sessionId),
+      vpsVaultRequest: sessionId => scopedVpsTool(VPS_VAULT_REQUEST_TOOL, sessionId),
       manage: this.manageBots = async (action, args, context) => {
         const text = (key: string): string | undefined => {
           const value = args[key]
@@ -7274,6 +7280,23 @@ export class BotService extends TypertRemoteService {
     return current?.ownerId === this.ownerId && current.sessionId === sessionId
       ? { id: current.id, sessionId: current.sessionId, state: current.state }
       : undefined
+  }
+
+  /**
+   * Check whether the live owner Bot is answering a direct human message.
+   * @param agent - Exact live Agent invoking the owner-only operation.
+   * @param signal - Cancellation while reading the current Session log.
+   * @returns Whether the current turn belongs exclusively to a direct owner conversation.
+   */
+  async isDirectOwnerTurn(agent: Agent, signal?: AbortSignal): Promise<boolean> {
+    const agents = this.ctx.agents
+    const liveOwner = (): boolean => agents.get(agent.id) === agent && agent.status === 'running'
+      && !this.sharedScopeAgents.has(agent) && !this.sharedScopeFences.has(agent) && !this.stopping
+    if (!liveOwner()
+      || (await this.ownerBotForSession(agent.id))?.state !== 'active') return false
+    const inspection = await this.ctx.sessionController.inspect(agent.id, signal)
+    signal?.throwIfAborted()
+    return liveOwner() && hasDirectUserInputInOpenTurn(inspection.events)
   }
 
   private async createImpl(request: BotCreateRequest, signal?: AbortSignal): Promise<BotCreateValue> {
