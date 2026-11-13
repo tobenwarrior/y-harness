@@ -404,13 +404,13 @@ class Vault:
         return True
 
     def allow_desktop(self, owner_uid, cloud_uid, units, *, start=False):
-        """Authorize one distinct SSH account for already enabled services."""
+        """Authorize one SSH owner for an explicit list of enabled services."""
         if owner_uid <= 0 or cloud_uid <= 0 or owner_uid == cloud_uid:
             raise VaultError('Desktop Vault needs an SSH owner account separate from Cloud.')
         units = sorted(set(units))
-        if not 0 < len(units) <= DESKTOP_SERVICE_LIMIT:
-            raise VaultError('Select between 1 and 16 services for Desktop Vault.')
-        if not directory(self.root):
+        if len(units) > DESKTOP_SERVICE_LIMIT:
+            raise VaultError('Select at most 16 services for Desktop Vault.')
+        if not directory(self.root, create=not units):
             raise VaultError('Enable the Vault for each selected service first.')
         with self.locked():
             for unit in units:
@@ -507,7 +507,7 @@ class Vault:
                     or data.get('owner') != requester_uid or type(data.get('owner')) is not int
                     or type(data.get('cloud')) is not int or data['cloud'] <= 0
                     or requester_uid <= 0 or requester_uid == data['cloud']
-                    or type(data.get('services')) is not list or not 0 < len(data['services']) <= DESKTOP_SERVICE_LIMIT
+                    or type(data.get('services')) is not list or len(data['services']) > DESKTOP_SERVICE_LIMIT
                     or any(not valid_unit(unit) for unit in data['services'])):
                 raise VaultError(denied)
             return data
@@ -574,7 +574,7 @@ def main():
             command.add_argument('name', help='credential name such as EXAMPLE_API_KEY')
     allow = actions.add_parser('allow-desktop')
     allow.add_argument('--owner', required=True, help='SSH account used by Y Harness Desktop')
-    allow.add_argument('units', nargs='+', help='enabled services that Desktop may manage')
+    allow.add_argument('units', nargs='*', help='exact enabled services that Desktop may manage')
     actions.add_parser('deny-desktop')
     actions.add_parser('desktop-client', help='forward one Desktop request to the local Vault socket')
     actions.add_parser('desktop-worker', help=argparse.SUPPRESS)
