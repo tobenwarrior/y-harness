@@ -57,7 +57,7 @@ it('shares menu transparency and blur across palettes and follows native menu bo
         fill: dark ? 'rgba(67, 69, 74, 0.45)' : 'rgba(248, 249, 250, 0.58)',
         blur: 'blur(40px) saturate(1.5)',
       })
-      expect(appearance.shadow).toContain(`${dark ? 'rgba(255, 255, 255, 0.16)' : 'rgba(0, 0, 0, 0.04)'} 0px 0px 0px 0.5px`)
+      expect(appearance.shadow).toContain(`${dark ? 'rgb(49, 49, 49)' : 'rgba(0, 0, 0, 0.04)'} 0px 0px 0px 0.5px`)
       results[`${platform}-${dark ? 'dark' : 'light'}`] = appearance
       const backing = page.locator('[data-menu-backing]')
       if (platform === 'darwin') {

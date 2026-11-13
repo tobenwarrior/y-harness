@@ -24,6 +24,7 @@ async function paint(target: Locator) {
       modality: document.documentElement.getAttribute('data-input-modality'),
       focusColor: resolveColor(style.getPropertyValue('--yh-alias-state-business-primary').trim()),
       hover: resolveColor(style.getPropertyValue('--yh-alias-interactive-bg-hover').trim()),
+      dangerHover: resolveColor(style.getPropertyValue('--yh-alias-interactive-bg-hover-danger').trim()),
       outline: style.outlineColor,
       outlineStyle: style.outlineStyle,
       outlineWidth: style.outlineWidth,
@@ -104,7 +105,7 @@ it.each(['light', 'dark'] as const)('assembled app (%s): pointer keys stay silen
   await connectFreshWorkspace(page, scaffold.workspaceCwd)
   await expect.poll(() => page.locator('body').getAttribute('data-ds-dark-theme')).toBe(theme === 'dark' ? '' : null)
   const trigger = page.getByRole('button', { name: /^Access mode, current:/ })
-  expect((await paint(trigger)).focusColor).toBe(theme === 'dark' ? 'rgb(122, 170, 255)' : 'rgb(65, 118, 230)')
+  expect((await paint(trigger)).focusColor).toBe(theme === 'dark' ? 'rgb(89, 157, 231)' : 'rgb(65, 118, 230)')
 
   await trigger.click()
   await page.getByRole('menu').waitFor()
@@ -142,7 +143,8 @@ it.each(['light', 'dark'] as const)('assembled app (%s): pointer keys stay silen
       expect(state.focusVisible).toBe(true)
       expect(state.modality).toBe('keyboard')
       // Menu rows intentionally use the hover fill instead of a second outline.
-      expect(state.background).toBe(state.hover)
+      const isFullAccess = await row.and(menu.getByRole('menuitem', { name: 'Full access', exact: true })).count() === 1
+      expect(state.background).toBe(isFullAccess ? state.dangerHover : state.hover)
       expect(state.background).not.toBe('rgba(0, 0, 0, 0)')
     }
     await page.keyboard.press('Escape')
@@ -514,7 +516,7 @@ describe('source-compiled supplementary focus paint', () => {
     await button.focus()
     const dark = await ringReport(button)
     expect(dark.width).toBe('2px')
-    expect(dark.color).toBe('rgb(122, 170, 255)')
+    expect(dark.color).toBe('rgb(89, 157, 231)')
     expect(dark.contrast).not.toBeNull()
     expect(dark.contrast!).toBeGreaterThanOrEqual(3)
 
