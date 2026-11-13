@@ -42,6 +42,9 @@ p { color: var(--muted); line-height: 1.45; }
 .heading p { margin-top: 3px; }
 #notice { min-height: 20px; margin: 13px 0 8px; line-height: 1.5; color: var(--accent); }
 #notice[data-tone="error"] { color: var(--error); }
+#websites-notice { min-height: 20px; margin: 8px 0; line-height: 1.5; color: var(--accent); }
+#websites-notice[data-tone="error"] { color: var(--error); }
+#websites-notice:empty { display: none; }
 #request-outcome { margin: 12px 0 0; line-height: 1.5; color: var(--accent); }
 #request-outcome:empty { margin: 0; }
 #request-outcome[data-tone="error"] { color: var(--error); }
@@ -49,6 +52,10 @@ p { color: var(--muted); line-height: 1.45; }
 .request-target div { display: grid; grid-template-columns: minmax(0, 110px) minmax(0, 1fr); gap: 12px; align-items: baseline; }
 .request-target dt { color: var(--muted); }
 .request-target dd { margin: 0; overflow-wrap: anywhere; }
+.segments { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 3px; margin: 15px 0 12px; padding: 3px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+.segments button { min-height: 32px; border-color: transparent; background: transparent; }
+.segments button[aria-selected="true"] { background: var(--button); color: var(--button-ink); }
+.panel-hint { margin: 0 0 10px; }
 label { display: block; margin-bottom: 6px; color: var(--muted); }
 input, select, button { font: inherit; border: 1px solid var(--line); border-radius: 8px; color: var(--ink); }
 input, select { width: 100%; min-height: 34px; padding: 5px 9px; background: var(--panel); }
@@ -64,6 +71,8 @@ ul { margin: 0; padding: 0; list-style: none; }
 li { display: flex; align-items: center; gap: 8px; justify-content: space-between; min-height: 42px; padding: 5px 8px 5px 11px; }
 li + li { border-top: 1px solid var(--line); }
 li > span { min-width: 0; overflow-wrap: anywhere; }
+.login-details { display: grid; gap: 2px; }
+.login-details span:last-child { color: var(--muted); font-size: 12px; }
 .actions { display: flex; align-items: center; justify-content: flex-end; gap: 7px; flex: none; }
 li .actions { gap: 3px; }
 .danger { color: var(--error); }

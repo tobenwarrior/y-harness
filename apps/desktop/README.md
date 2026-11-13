@@ -46,7 +46,7 @@ The tray renderer enlarges the whale by 20% around the tile center while preserv
 
 The macOS **Workspace** menu switches between this Mac and an [existing private VPS workspace](../../docs/user/guide/vps.md#open-y-harness). Cloud loads the server UI in an isolated view with no address bar. The desktop stores the SSH destination and last workspace in its private application data and obtains the sign-in token over SSH for each connection.
 
-Cloud’s [Vault](../../docs/user/guide/vps.md#manage-service-secrets-from-the-mac-app) opens in a separate desktop-owned window. Its preload accepts only that window’s document. The main process sends requests over the connected owner’s SSH account and returns only service and secret names or operation status.
+Cloud’s [Vault](../../docs/user/guide/vps.md#manage-service-secrets-from-the-mac-app) opens in a separate desktop-owned window. Its preload accepts only that window’s document. The main process sends requests over the connected owner’s SSH account and returns operation status, service and key names, or [website login labels and origins](../../docs/user/guide/vps.md#save-website-logins-from-the-mac-app).
 
 A Bot credential request from a compatible Cloud Host opens the same isolated window for one request. Desktop accepts the exact request link from the selected Cloud view and resolves the current request over SSH before showing a masked field.
 
