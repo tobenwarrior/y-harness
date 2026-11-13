@@ -37,7 +37,10 @@ try {
     $desktop = $before.directory
     $other = (State $other).directory
     Require ($before.activeCommand -eq (Join-Path $npm 'yharness.cmd')) 'existing npm command was not detected'
+    [void](Apply 'install' $legacy)
     Require ((State $legacy).available) 'legacy dsh launcher was not accepted'
+    [void](Apply 'remove' $legacy)
+    Require ((UserPath) -eq $npm) 'removing the legacy launcher changed unrelated PATH entries'
     [void](Apply 'install' $desktop)
     Require ((UserPath) -eq ($desktop + ';' + $npm)) 'installation changed unrelated PATH entries'
     $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($environmentKey, $true)

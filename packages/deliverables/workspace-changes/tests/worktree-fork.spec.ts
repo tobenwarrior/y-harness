@@ -6,7 +6,7 @@
  */
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { GitRunner, GitRunOptions, GitRunResult } from '../src/git.ts'
 import {
@@ -53,12 +53,13 @@ function gitStub(script: readonly (readonly [string, GitRunResult])[]): GitRunne
 }
 
 const SIGNAL = new AbortController().signal
-const SOURCE = '/repo/sub'
+const REPOSITORY_ROOT = resolve('/repo')
+const SOURCE = resolve('/repo/sub')
 
 /** The happy path: a normal repository on a commit with a free branch. */
 function healthy(): GitRunner & { calls: Call[] } {
   return gitStub([
-    ['rev-parse --show-toplevel', result(0, '/repo\n')],
+    ['rev-parse --show-toplevel', result(0, `${REPOSITORY_ROOT}\n`)],
     ['rev-parse HEAD', result(0, 'abc123\n')],
     ['rev-parse --verify --quiet refs/heads/', result(1)],
   ])
@@ -96,7 +97,7 @@ describe('createForkWorktree', () => {
       kind: 'created',
       path: join(root, 'fix-the-parser-bug'),
       branch: 'dsh/fork/fix-the-parser-bug',
-      repositoryRoot: '/repo',
+      repositoryRoot: REPOSITORY_ROOT,
       baseCommit: 'abc123',
     })
     const add = git.calls.find(call => call.args[0] === 'worktree')
@@ -149,7 +150,7 @@ describe('createForkWorktree', () => {
 
   it('refuses a repository with no commits', async () => {
     const git = gitStub([
-      ['rev-parse --show-toplevel', result(0, '/repo\n')],
+      ['rev-parse --show-toplevel', result(0, `${REPOSITORY_ROOT}\n`)],
       ['rev-parse HEAD', result(128, '', 'fatal: ambiguous argument HEAD')],
     ])
     const outcome = await createForkWorktree(git, {
@@ -175,7 +176,7 @@ describe('createForkWorktree', () => {
 
   it('refuses when the branch already exists', async () => {
     const git = gitStub([
-      ['rev-parse --show-toplevel', result(0, '/repo\n')],
+      ['rev-parse --show-toplevel', result(0, `${REPOSITORY_ROOT}\n`)],
       ['rev-parse HEAD', result(0, 'abc123\n')],
       ['rev-parse --verify --quiet refs/heads/', result(0, 'deadbeef\n')],
     ])
@@ -193,7 +194,7 @@ describe('createForkWorktree', () => {
 
   it('reports worktree-add failure with its stage and stderr tail', async () => {
     const git = gitStub([
-      ['rev-parse --show-toplevel', result(0, '/repo\n')],
+      ['rev-parse --show-toplevel', result(0, `${REPOSITORY_ROOT}\n`)],
       ['rev-parse HEAD', result(0, 'abc123\n')],
       ['rev-parse --verify --quiet refs/heads/', result(1)],
       ['worktree add', result(128, '', "fatal: 'dsh/fork/x' is already checked out")],
@@ -263,7 +264,7 @@ describe('removeForkWorktree', () => {
 describe('canForkIntoWorktree', () => {
   it('is true for a repository with a commit', async () => {
     const git = gitStub([
-      ['rev-parse --show-toplevel', result(0, '/repo\n')],
+      ['rev-parse --show-toplevel', result(0, `${REPOSITORY_ROOT}\n`)],
       ['rev-parse --verify --quiet HEAD', result(0, 'abc123\n')],
     ])
     expect(await canForkIntoWorktree(git, SOURCE, SIGNAL)).toBe(true)
@@ -273,7 +274,7 @@ describe('canForkIntoWorktree', () => {
     const outside = gitStub([['rev-parse --show-toplevel', result(128, '', 'fatal: not a git repository')]])
     expect(await canForkIntoWorktree(outside, SOURCE, SIGNAL)).toBe(false)
     const empty = gitStub([
-      ['rev-parse --show-toplevel', result(0, '/repo\n')],
+      ['rev-parse --show-toplevel', result(0, `${REPOSITORY_ROOT}\n`)],
       ['rev-parse --verify --quiet HEAD', result(1)],
     ])
     expect(await canForkIntoWorktree(empty, SOURCE, SIGNAL)).toBe(false)

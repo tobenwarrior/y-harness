@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { dump } from 'js-yaml'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createGitHubReleasePlan, publishGitHubRelease } from '../scripts/publish-github-release.ts'
@@ -83,8 +83,8 @@ describe('GitHub Desktop release publisher', () => {
     expect(calls[0]).toEqual(['gh', 'release', 'view', `v${version}`, '--repo', 'tobenwarrior/y-harness'])
     expect(calls[1]?.slice(0, 8)).toEqual(['gh', 'release', 'create', `v${version}`, '--repo', 'tobenwarrior/y-harness', '--verify-tag', '--title'])
     expect(calls[1]).toContain('--prerelease')
-    expect(calls[1]?.some(value => value.endsWith('/latest.yml'))).toBe(true)
-    expect(calls[1]?.some(value => value.endsWith('/latest-mac.yml'))).toBe(true)
+    expect(calls[1]?.some(value => basename(value) === 'latest.yml')).toBe(true)
+    expect(calls[1]?.some(value => basename(value) === 'latest-mac.yml')).toBe(true)
   })
 
   it('refuses to mutate an existing release', async () => {

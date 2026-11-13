@@ -156,7 +156,7 @@ describe('packaged Codex runtime', () => {
     const unpackedRuntime = join(`${archive}.unpacked`, 'dsh')
     const unpackedWrapper = join(unpackedRuntime, 'node_modules', '@yharness', 'llm-pi-ai', 'node_modules', '@openai', 'codex', 'bin', 'codex.js')
     const unpackedNative = join(unpackedRuntime, 'node_modules', '@yharness', 'llm-pi-ai', 'node_modules', '@openai', target!.packageName.slice('@openai/'.length), 'vendor', target!.triple, 'bin', target!.executable)
-    const archiveEntries = asarTools().listPackage(archive)
+    const archiveEntries = asarTools().listPackage(archive).map(entry => entry.replaceAll('\\', '/'))
     expect(archiveEntries).toContain('/dsh/node_modules/@yharness/llm-pi-ai/node_modules/@openai/codex/bin/codex.js')
     expect(asarTools().statFile(archive, 'dsh/node_modules/@yharness/llm-pi-ai/node_modules/@openai/codex/bin/codex.js').unpacked).toBe(true)
     expect(asarTools().statFile(archive, `dsh/node_modules/@yharness/llm-pi-ai/node_modules/@openai/${target!.packageName.slice('@openai/'.length)}/vendor/${target!.triple}/bin/${target!.executable}`).unpacked).toBe(true)
