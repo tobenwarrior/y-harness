@@ -22,6 +22,18 @@ On other Linux hosts, setup uses an available Bubblewrap or Landlock runner, or 
 
 If setup reports that your user cannot enable lingering, ask the VPS administrator to run `sudo loginctl enable-linger YOUR_USER`, then retry setup. This lets systemd keep the user service running without an active login.
 
+### Run Cloud under a dedicated Linux account
+
+Use the dedicated-account installer to start a new Cloud instance without giving the Web process access to your administrator home. On Ubuntu 24.04, prepare the system's Bubblewrap and Podman packages first. Use a built Y Harness release and a compatible Node installation in administrator-owned directories that the service can read.
+
+```sh
+sudo /usr/bin/python3 -I /opt/yharness/release/scripts/setup-vps-account.py install \
+  --release /opt/yharness/release --node /opt/node/bin/node --port 3180
+sudo /usr/bin/python3 -I /opt/yharness/release/scripts/setup-vps-account.py url --port 3180
+```
+
+Use the selected loopback port for both sides of the [SSH forward](#open-y-harness), then open the printed private sign-in link. The `yharness-cloud.service` user service starts at boot under the locked Cloud account and stores its data under `/var/lib/yharness-cloud/.yharness-vps`. It starts with its own Bot workspaces and provider settings. Keep an existing Cloud installation running until its chats, files, providers, and desktop volumes have been moved and verified.
+
 ## Open Y Harness
 
 On macOS, choose **Workspace → Open Cloud Workspace** in Y Harness and enter the SSH host name or alias you use in Terminal. The app needs a verified host key and an SSH key or agent that can sign in without prompting. It remembers your selection and connects automatically. Cloud opens the bots, chats, and providers stored on the server. Use that Cloud workspace on each device to continue the same chats while the VPS runs your jobs and schedules. The **Mac** switch opens your separate local workspace.
