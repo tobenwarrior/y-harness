@@ -56,6 +56,7 @@ import { DesktopPolicyTestAuth } from './policy-test-auth.ts'
 import { DesktopUpdateDialog, type UpdateDialogOptions } from './update-dialog.ts'
 import { readDesktopRuntime } from './runtime-tree.ts'
 import { DesktopCloudWorkspace } from './cloud-workspace.ts'
+import { DesktopCloudVault } from './cloud-vault-window.ts'
 import { MacComputer } from './mac-computer.ts'
 import { macDesktop } from './mac-desktop.ts'
 import { DesktopBrowserGuests } from './browser-guests.ts'
@@ -1060,7 +1061,8 @@ async function main(): Promise<void> {
     ? new DesktopCloudWorkspace(join(app.getPath('userData'), 'cloud-workspace.json'),
       () => currentDesktopLocale().messages, () => {
         void dialog.showMessageBox({ type: 'warning', message: currentDesktopLocale().messages.cloudPreferenceError })
-      }, () => { macComputer?.revoke() })
+      }, new DesktopCloudVault(fileURLToPath(new URL('./preload-cloud-vault.cjs', import.meta.url)),
+        join(app.getAppPath(), 'renderer'), () => currentDesktopLocale().messages), () => { macComputer?.revoke() })
     : undefined
 
   const automaticCheck = (): void => {

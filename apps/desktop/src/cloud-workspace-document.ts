@@ -6,7 +6,7 @@ const CONTROL_ORIGIN = 'https://workspace.invalid'
 /** Connection state rendered by the workspace controls. */
 export type CloudWorkspaceStatus = 'setup' | 'connecting' | 'online' | 'offline'
 
-type CloudAction = { type: 'mac' | 'configure' | 'retry' } | { type: 'connect'; target: string }
+type CloudAction = { type: 'mac' | 'configure' | 'retry' | 'vault' } | { type: 'connect'; target: string }
 
 /**
  * Decode a navigation initiated by the trusted workspace controls.
@@ -20,6 +20,7 @@ export function cloudAction(destination: string): CloudAction | undefined {
     case '/mac': return { type: 'mac' }
     case '/configure': return { type: 'configure' }
     case '/retry': return { type: 'retry' }
+    case '/vault': return { type: 'vault' }
     case '/connect': return { type: 'connect', target: url.searchParams.get('target')?.trim() ?? '' }
     default: return undefined
   }
@@ -57,6 +58,7 @@ export function cloudSignInCookie(origin: string, response: Pick<Response, 'stat
 const macIcon = '<svg viewBox="0 0 20 20" aria-hidden="true"><rect x="4" y="4" width="12" height="9" rx="1.5"/><path d="M2.5 16h15"/></svg>'
 const cloudIcon = '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M6 14.5a3.5 3.5 0 1 1 .5-7 4.1 4.1 0 0 1 7.9 1.1 3 3 0 0 1-.5 5.9Z"/></svg>'
 const settingsIcon = '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 6h12M4 14h12"/><circle cx="8" cy="6" r="2"/><circle cx="12" cy="14" r="2"/></svg>'
+const vaultIcon = '<svg viewBox="0 0 20 20" aria-hidden="true"><rect x="4" y="8.5" width="12" height="8" rx="2"/><path d="M7 8.5V6a3 3 0 0 1 6 0v2.5M10 12v1.5"/></svg>'
 
 function html(text: string): string {
   return text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;')
@@ -134,7 +136,8 @@ export function cloudDocument(messages: DesktopMessages, status: CloudWorkspaceS
         <span aria-current="page">${cloudIcon}<span>${t('cloudLabel')}</span></span>
       </nav>
       <div class="status ${status}"><i></i>${t(state)}
-        ${connected ? `<a class="settings" aria-label="${t('cloudChangeServer')}" title="${t('cloudChangeServer')}" href="${CONTROL_ORIGIN}/configure">${settingsIcon}</a>` : ''}
+        ${connected ? `<a class="settings" aria-label="${t('cloudVault')}" title="${t('cloudVault')}" href="${CONTROL_ORIGIN}/vault">${vaultIcon}</a>
+          <a class="settings" aria-label="${t('cloudChangeServer')}" title="${t('cloudChangeServer')}" href="${CONTROL_ORIGIN}/configure">${settingsIcon}</a>` : ''}
       </div>
     </header>${body}
   </html>`)}`

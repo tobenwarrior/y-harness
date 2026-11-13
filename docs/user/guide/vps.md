@@ -96,6 +96,35 @@ vpsJournal:
 
 The selected Bot can call `vps_service_journal` with no arguments. Native Codex exposes the same tool in desktop-only mode. The host connects to the socket and reads one bounded JSON response containing `version`, `generatedAt`, `recovery` and `primaryAudit`. The feed operator controls which entries the two arrays contain. The socket stays on the host, and the tool only reads from it.
 
+## Save credentials for a dedicated service
+
+The VPS Vault stores encrypted API keys for trusted systemd system services. Set up the service with its own explicit `User=` account, separate from the Linux account that runs Cloud. An explicit `User=` also works with `DynamicUser=yes`. The service receives its keys in systemd's private credential directory.
+
+Use a trusted administrator login on the VPS. Keep the Linux account that runs Cloud and any accounts used by Bot shells unprivileged. Install the command from your trusted administrator checkout. Replace `CLOUD_USER` with the Cloud account and `example-worker.service` with the exact system service name.
+
+```sh
+sudo install -o root -g root -m 0755 scripts/vps-vault.py /usr/local/sbin/yharness-vault
+sudo /usr/local/sbin/yharness-vault --cloud-user CLOUD_USER enable example-worker.service
+sudo /usr/local/sbin/yharness-vault --cloud-user CLOUD_USER set example-worker.service EXAMPLE_API_KEY
+```
+
+Enter the value at the masked terminal prompt. In the service, read `yharness_EXAMPLE_API_KEY` from the directory named by `CREDENTIALS_DIRECTORY`. The Vault lists saved names with `list example-worker.service`. Run `set` again to rotate a key, or `revoke example-worker.service EXAMPLE_API_KEY` to remove it. Save, rotation, and revocation apply the next time you start the target service. If it already used the old key, revoke that key with its issuer to invalidate it there too.
+
+The values are encrypted with the VPS's systemd host key. A replacement VPS needs its own keys entered for the service. [systemd credential documentation](https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html#Credentials)
+
+### Manage service secrets from the Mac app
+
+Run Cloud under a dedicated, unprivileged Linux account. From the VPS administrator login, allow the SSH account that Y Harness Desktop uses to manage the exact services you enabled above. Replace `CLOUD_USER` with the Cloud account and `SSH_OWNER` with the separate SSH account.
+
+```sh
+sudo /usr/local/sbin/yharness-vault --cloud-user CLOUD_USER allow-desktop \
+  --owner SSH_OWNER example-worker.service
+```
+
+Open **Cloud** and select the lock icon in its title bar. Choose a service, then **Add secret**, **Replace**, or **Revoke**. Enter values in the masked field. The window sends values directly to the VPS Vault over SSH and shows saved names after submission. Values stay outside Cloud chat, Bot tools, and model requests. The selected service loads its current values on its next start.
+
+Run `sudo /usr/local/sbin/yharness-vault deny-desktop` to remove Desktop management access and stop its listener. Stored credentials are available to their services until you revoke them. To grant management to a different SSH account, run `deny-desktop` first, then run `allow-desktop` with the new account.
+
 ## Import a Grok Bot export
 
 Create the destination bot in **Cloud → Bots**. Put its version-one Grok Bot export JSON in a private directory on the VPS. From your SSH session, preview the import with the tool included in the Y Harness checkout:

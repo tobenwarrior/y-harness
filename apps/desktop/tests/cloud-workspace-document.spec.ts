@@ -7,6 +7,7 @@ it('accepts workspace actions only from the private control document', () => {
     type: 'connect', target: 'fixture-host',
   })
   expect(cloudAction('https://workspace.invalid/mac')).toEqual({ type: 'mac' })
+  expect(cloudAction('https://workspace.invalid/vault')).toEqual({ type: 'vault' })
   expect(cloudAction('https://workspace.invalid/online')).toBeUndefined()
   expect(cloudAction('https://other.invalid/connect?target=fixture-host')).toBeUndefined()
   expect(cloudAction('https://name@workspace.invalid/mac')).toBeUndefined()
@@ -18,6 +19,8 @@ it('presents a workspace switch without a browser address or a server identifier
   expect(markup).toContain('>Mac<')
   expect(markup).toContain('>Cloud<')
   expect(markup).toContain('Connected')
+  expect(markup).toContain('href="https://workspace.invalid/vault"')
+  expect(markup).toContain('aria-label="Vault"')
   expect(markup).not.toMatch(/127\.0\.0\.1|token=|name="target"/u)
 })
 
