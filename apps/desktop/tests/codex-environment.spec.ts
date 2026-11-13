@@ -265,7 +265,7 @@ describe('Desktop Codex environment', () => {
       targetPlatform: TEST_PLATFORM, targetArch: 'x64',
     })
     expect(result.reason).toBeUndefined()
-    expect(result.environment.DSH_CODEX_BINARY).toContain('codex/bin/codex.js')
+    expect(result.environment.DSH_CODEX_BINARY).toContain(join('codex', 'bin', 'codex.js'))
   })
 
   it('resolves the wrapper and native package from the physical runtime beside ASAR', () => {
