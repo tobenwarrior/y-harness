@@ -12,6 +12,7 @@ import { encodeSegment, generationLogFilename, type JsonlCompression } from '../
 import { compressZstdFrame, decompressZstdFrame, scanZstdFrames } from '../packages/session/session-persistence-jsonl/src/zstd.ts'
 import { runMigrationJobs } from './migrate-sessions-to-v4.ts'
 import { removeFixtureSafely } from './test-fixture-cleanup.ts'
+import { COVERAGE_TEST_TIMEOUT_ENV, parseCoverageTestTimeout } from './coverage-partitions.ts'
 
 const repository = resolve(import.meta.dirname, '..')
 /** Committed adjacent format deltas, reversed in order without requiring Git history. */
@@ -31,7 +32,7 @@ const V4_ARCHIVE_PATHS = [
   'tsconfig.json',
   'tsconfig.base.json',
 ] as const
-const MIGRATION_TEST_TIMEOUT = 60_000
+const MIGRATION_TEST_TIMEOUT = Math.max(60_000, parseCoverageTestTimeout(process.env[COVERAGE_TEST_TIMEOUT_ENV]) ?? 0)
 const directories = new Set<string>()
 const stopProcesses: Array<() => Promise<void>> = []
 let v4Checkout = ''
@@ -66,7 +67,7 @@ beforeAll(async () => {
   v4Checkout = mkdtempSync(join(tmpdir(), 'dsh-migrate-v4-checkout-'))
   const archive = join(v4Checkout, 'source.tar')
   await execa('git', ['archive', '--format=tar', '--output', archive, 'HEAD', ...V4_ARCHIVE_PATHS], { cwd: repository })
-  await extractTar({ file: archive, cwd: v4Checkout })
+  await extractTar({ file: archive, cwd: v4Checkout, filter: path => !path.split('/').includes('tests') })
   await unlink(archive)
   for (const relativePatch of FORMAT_REVERSALS) {
     const reversal = join(v4Checkout, relativePatch)
