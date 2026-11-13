@@ -68,7 +68,9 @@ it('disposes a sync owner inside HMR while its imported write is queued, without
   await b.ctx.hmr.runExclusive(async () => {})
   expect(readFileSync(b.profile.patchPath, 'utf8')).toBe(before)
   await expect(withFileLock(shared, async () => 'released', { waitMs: 0 })).resolves.toBe('released')
-  expect(b.ctx.get('providerConfigSync')).toBeUndefined()
+  await vi.waitFor(() => {
+    expect(b.ctx.get('providerConfigSync') === undefined).toBe(true)
+  })
 })
 
 it('keeps local profiles through hot disable and resumes missed ordinary changes after remount', async () => {

@@ -264,7 +264,7 @@ describe('VPS Bot journal', () => {
     const path = await socketPath()
     const bot = randomUUID()
     const otherBot = randomUUID()
-    const journal = new VpsJournal({ socketPath: path, bots: [bot], timeoutMs: 20 })
+    const journal = new VpsJournal({ socketPath: path, bots: [bot] })
     await expect(journal.read(otherBot, new AbortController().signal)).rejects.toThrow('not authorized')
 
     const abortServer = createServer(() => {})
@@ -278,10 +278,12 @@ describe('VPS Bot journal', () => {
       await close(abortServer)
     }
 
+    const timeoutPath = await socketPath()
     const timeoutServer = createServer(() => {})
-    await listen(timeoutServer, path)
+    await listen(timeoutServer, timeoutPath)
     try {
-      await expect(journal.read(bot, new AbortController().signal)).rejects.toThrow('timed out')
+      const stalled = new VpsJournal({ socketPath: timeoutPath, bots: [bot], timeoutMs: 20 })
+      await expect(stalled.read(bot, new AbortController().signal)).rejects.toThrow('timed out')
     } finally {
       await close(timeoutServer)
     }
@@ -307,26 +309,32 @@ describe('VPS Bot journal', () => {
       }, 5)
     })
     const incrementalSignals = observeConnection(incrementalServer)
-    await listen(incrementalServer, path)
+    const incrementalPath = await socketPath()
+    await listen(incrementalServer, incrementalPath)
     try {
-      await expect(journal.read(bot, new AbortController().signal)).rejects.toThrow('timed out')
+      const incremental = new VpsJournal({ socketPath: incrementalPath, bots: [bot], timeoutMs: 250 })
+      await expect(incremental.read(bot, new AbortController().signal)).rejects.toThrow('timed out')
       await incrementalSignals.closed
     } finally {
       await close(incrementalServer)
     }
 
+    const closePath = await socketPath()
     const closeServer = createServer((socket) => { socket.destroy() })
-    await listen(closeServer, path)
+    await listen(closeServer, closePath)
     try {
-      await expect(journal.read(bot, new AbortController().signal)).rejects.toThrow('unavailable')
+      const closed = new VpsJournal({ socketPath: closePath, bots: [bot] })
+      await expect(closed.read(bot, new AbortController().signal)).rejects.toThrow('unavailable')
     } finally {
       await close(closeServer)
     }
 
+    const invalidPath = await socketPath()
     const invalidServer = createServer((socket) => { socket.end('{"version":1,"generatedAt":"now","recovery":[],"primaryAudit":"bad"}') })
-    await listen(invalidServer, path)
+    await listen(invalidServer, invalidPath)
     try {
-      await expect(journal.read(bot, new AbortController().signal)).rejects.toThrow('invalid')
+      const invalid = new VpsJournal({ socketPath: invalidPath, bots: [bot] })
+      await expect(invalid.read(bot, new AbortController().signal)).rejects.toThrow('invalid')
     } finally {
       await close(invalidServer)
     }

@@ -66,9 +66,9 @@ function boundedString(value: unknown): value is string {
 
 function freezeJson(value: VpsJournalValue): VpsJournalValue {
   if (Array.isArray(value)) {
-    for (const child of value) freezeJson(child)
+    for (const child of value as readonly VpsJournalValue[]) freezeJson(child)
   } else if (isRecord(value)) {
-    for (const child of Object.values(value)) freezeJson(child as VpsJournalValue)
+    for (const child of Object.values(value)) freezeJson(child)
   }
   return Object.freeze(value)
 }
@@ -238,14 +238,14 @@ export class VpsJournal {
         }
       }
       const onClose = (): void => { finish({ error: new Error(UNAVAILABLE) }) }
-      const deadline = setTimeout(() => finish({ error: new Error(TIMED_OUT) }), this.timeoutMs)
+      const deadline = setTimeout(() => { finish({ error: new Error(TIMED_OUT) }) }, this.timeoutMs)
       signal.addEventListener('abort', onAbort, { once: true })
       try {
         socket = createConnection({ path: this.socketPath })
         socket.on('data', onData)
         socket.once('end', onEnd)
         socket.once('close', onClose)
-        socket.once('error', error => finish({ error: safeFailure(error) }))
+        socket.once('error', (error) => { finish({ error: safeFailure(error) }) })
       } catch (error) {
         finish({ error: safeFailure(error) })
       }

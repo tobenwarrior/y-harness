@@ -1,6 +1,6 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   COMPUTER_HEIGHT,
@@ -74,13 +74,15 @@ describe('private computer Host', () => {
       const command = f.commands[0]
       expect(command?.command).toBe('scrot')
       expect(command?.args.slice(0, 3)).toEqual(['--pointer', '--quality', '85'])
-      expect(command?.args.at(-1)).toMatch(/dsh-computer-[^/]+\/frame\.jpg$/u)
+      const outputPath = command?.args.at(-1) ?? ''
+      expect(basename(outputPath)).toBe('frame.jpg')
+      expect(basename(dirname(outputPath))).toMatch(/^dsh-computer-.+$/u)
       expect(command?.env.DISPLAY).toBe(':99')
       expect(command?.env.XAUTHORITY).toBe('/run/user/1000/gdm/Xauthority')
       expect(command?.env.DEEPSEEK_API_KEY).toBeUndefined()
       expect(command?.env.COMPUTER_TEST_VISIBLE).toBe('visible')
       await f.dispose()
-      expect(() => readFileSync(command?.args.at(-1) ?? '')).toThrow()
+      expect(() => readFileSync(outputPath)).toThrow()
     } finally {
       delete process.env.DEEPSEEK_API_KEY
       delete process.env.COMPUTER_TEST_VISIBLE
@@ -107,6 +109,64 @@ describe('private computer Host', () => {
       ['xdotool', 'click', '1'],
     ])
     await host.dispose()
+  })
+
+  it('rejects container frames that are not JPEG data', async () => {
+    const calls: Array<readonly string[]> = []
+    const host = containerComputer(async (argv) => {
+      calls.push(argv)
+      return Buffer.from('not a jpeg')
+    })
+    try {
+      await expect(host.observe()).rejects.toMatchObject({
+        name: 'ComputerError',
+        code: 'capture-failed',
+        message: 'computer frame capture failed',
+      })
+      expect(calls).toEqual([['/usr/local/bin/yharness-vps-bot-capture']])
+    } finally {
+      await host.dispose()
+    }
+  })
+
+  it('redacts container capture runner failures', async () => {
+    const host = containerComputer(async () => {
+      throw new Error('private capture runner diagnostic')
+    })
+    try {
+      await expect(host.observe()).rejects.toMatchObject({
+        name: 'ComputerError',
+        code: 'capture-failed',
+        message: 'computer frame capture failed',
+      })
+    } finally {
+      await host.dispose()
+    }
+  })
+
+  it('normalizes an aborted container capture after the runner observes cancellation', async () => {
+    let startedResolve: (() => void) | undefined
+    const started = new Promise<void>((resolve) => { startedResolve = resolve })
+    const host = containerComputer(async (_argv, signal) => {
+      startedResolve?.()
+      return new Promise<Buffer>((_resolve, reject) => {
+        signal.addEventListener('abort', () => { reject(new Error('private capture cancelled')) }, { once: true })
+      })
+    })
+    const controller = new AbortController()
+    try {
+      const observation = host.observe(controller.signal)
+      await started
+      controller.abort()
+      await expect(observation).rejects.toMatchObject({
+        name: 'ComputerError',
+        code: 'aborted',
+        message: 'computer operation aborted',
+      })
+    } finally {
+      controller.abort()
+      await host.dispose()
+    }
   })
 
   it('serializes bot and human input, and waits for admitted bot work before taking control', async () => {

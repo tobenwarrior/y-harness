@@ -42,7 +42,7 @@ const ATTACHMENT = {
  */
 export function apply(ctx: Context): void {
   const computer = ctx.vpsComputer
-  registerVpsComputer(ctx, async () => computer, 'the private VPS desktop')
+  registerVpsComputer(ctx, () => Promise.resolve(computer), 'the private VPS desktop')
 }
 
 /**

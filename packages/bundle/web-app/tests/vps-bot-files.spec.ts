@@ -1,6 +1,6 @@
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, posix } from 'node:path'
 import { Context } from '@yharness/cordis'
 import type { FsTarget, FsVersion } from '@yharness/fs'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -237,6 +237,7 @@ async function fixture(initial: ReadonlyArray<[string, WorkerEntry]> = []) {
   const hostRoot = await mkdtemp(join(tmpdir(), 'yh-bot-files-'))
   roots.push(hostRoot)
   const runtime = new VpsRuntime(hostRoot, 'localhost/test')
+  vi.spyOn(runtime, 'workspace').mockReturnValue(posix.join('/workspace', sessionId))
   const root = runtime.workspace(sessionId)
   vi.spyOn(runtime, 'ensure').mockResolvedValue()
   const execArgv = vi.spyOn(runtime, 'execArgv')
@@ -308,9 +309,9 @@ describe('VPS Bot file provider', () => {
 
   it('maps stat, lstat and directory results without exposing symlink identity', async () => {
     const f = await fixture()
-    f.state.entries.set(join(f.root, 'dir'), file('v1', '', 'directory'))
-    f.state.entries.set(join(f.root, 'link'), file('v2', '', 'symlink'))
-    f.state.entries.set(join(f.root, 'plain.txt'), file('v3', 'ok'))
+    f.state.entries.set(posix.join(f.root, 'dir'), file('v1', '', 'directory'))
+    f.state.entries.set(posix.join(f.root, 'link'), file('v2', '', 'symlink'))
+    f.state.entries.set(posix.join(f.root, 'plain.txt'), file('v3', 'ok'))
     const link = await f.fs.resolve('link')
     expect(await f.fs.stat(link)).toMatchObject({ type: 'other', version: 'v2' })
     expect(await f.fs.lstat('link')).toMatchObject({ type: 'symlink', version: 'v2' })
@@ -324,7 +325,7 @@ describe('VPS Bot file provider', () => {
   it('reads byte windows and streams UTF-8 across worker chunks', async () => {
     const content = `${'a'.repeat(256 * 1024)}tail`
     const f = await fixture()
-    f.state.entries.set(join(f.root, 'large.txt'), file('v1', content))
+    f.state.entries.set(posix.join(f.root, 'large.txt'), file('v1', content))
     const target = await f.fs.resolve('large.txt')
     await expect(f.fs.readByteRange(target, { offset: 256 * 1024, length: 4 })).resolves.toEqual(Buffer.from('tail'))
     await expect(f.fs.readBytes(target, undefined, 4)).rejects.toMatchObject({ code: 'FS_TOO_LARGE' })

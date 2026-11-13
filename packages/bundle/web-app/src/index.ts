@@ -319,7 +319,7 @@ export function apply(ctx: Context, config: Config): void {
   if (process.platform === 'darwin' && process.connected && process.env.YH_MAC_COMPUTER === '1'
     && ctx.get('profileContext')?.name === 'desktop') {
     const computer = new MacComputerBridge()
-    ctx.effect(() => () => computer.dispose(), 'mac-computer: local desktop')
+    ctx.effect(() => () => { computer.dispose() }, 'mac-computer: local desktop')
     ctx.on('agent/created', ({ agent }) => {
       if (!canUseComputer(agent.ctx)) return
       agent.ctx.inject(['tools', 'attachments', 'llm'], (scope) => {

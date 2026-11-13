@@ -168,7 +168,7 @@ export function mountVpsBots(
         })
         return
       }
-      await agent.ctx.inject(['tools', 'attachments', 'llm', 'systemPrompt', 'subprocess', 'sandboxPolicy'], async (agentCtx) => {
+      await agent.ctx.inject(['tools', 'attachments', 'llm', 'systemPrompt', 'subprocess', 'sandboxPolicy'], (agentCtx) => {
         const workspace = runtime.workspace(bot.sessionId)
         const managedContext = agentCtx.isolate('fs').isolate('subprocess').isolate('shell')
         const subprocess = new VpsBotSubprocess(managedContext, {

@@ -38,15 +38,15 @@ function registerRoutes(ctx: Context) {
 
 describe('managed VPS Bot composition', () => {
   it('rejects desktop-only Bots outside the selected Bot allowlist', () => {
-    expect(() => mountVpsBots(new Context(), {
+    expect(() => { mountVpsBots(new Context(), {
       root: '/yharness-test-bots', image: 'localhost/yharness-test', bots: ['bot-selected'], desktopOnlyBots: ['bot-other'],
-    }, [])).toThrow('Desktop-only VPS Bots must be selected by botComputers.bots.')
+    }, []) }).toThrow('Desktop-only VPS Bots must be selected by botComputers.bots.')
   })
 
   it('rejects a journal grant outside the selected Computer Bots', () => {
-    expect(() => mountVpsBots(new Context(), {
+    expect(() => { mountVpsBots(new Context(), {
       root: '/yharness-test-bots', image: 'localhost/yharness-test', bots: ['bot-selected'],
-    }, [], undefined, { socketPath: '/run/yharness-test.sock', bots: ['bot-other'] }))
+    }, [], undefined, { socketPath: '/run/yharness-test.sock', bots: ['bot-other'] }) })
       .toThrow('VPS journal grants must select Computer Bots.')
   })
 
@@ -56,7 +56,7 @@ describe('managed VPS Bot composition', () => {
     const ownerBotForSession = vi.fn(async () => undefined)
     ctx.provide('bots', { ownerBotForSession } as never)
     try {
-      await ctx.plugin(scope => mountVpsBots(scope, { root: '/yharness-test-bots', image: 'localhost/yharness-test' }, []))
+      await ctx.plugin((scope) => { mountVpsBots(scope, { root: '/yharness-test-bots', image: 'localhost/yharness-test' }, []) })
       expect(ctx.get('botWorkspaces')?.managed?.('fixture-bot')).toBe(true)
       expect(ctx.get('botVpsJournal')).toBeUndefined()
       expect((await request('status', {})).status).toBe(400)

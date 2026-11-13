@@ -6,9 +6,13 @@ export const name = 'vps-bot-computer-fixture'
 export const inject = ['agentDefaultModel', 'agents', 'sessions', 'storageDomain']
 
 export async function apply(ctx) {
-  const { SessionId } = await import('@yharness/session')
-  const { BotId } = await import('../../../packages/agents/bots/src/types.ts')
-  const { botDomain } = await import('../../../packages/agents/bots/src/storage.ts')
+  const built = process.env.DSH_EXAMPLE_MODE === 'lib'
+  const { BotId, botDomain } = built
+    ? await import('../../../packages/agents/bots/lib/index.js')
+    : await import('../../../packages/agents/bots/src/index.ts')
+  const { SessionId } = built
+    ? await import('../../../packages/core/session/lib/index.js')
+    : await import('../../../packages/core/session/src/index.ts')
   const selection = ctx.agentDefaultModel.currentSelection()
   const sessionId = SessionId('bot-session-sender')
   const handle = await ctx.agents.create({
@@ -40,13 +44,17 @@ export async function apply(ctx) {
     inspect: async () => ({ events: [] }),
   })
 
-  const { VpsRuntime } = await import('../../../packages/bundle/web-app/src/vps-runtime.ts')
+  const { VpsRuntime } = built
+    ? await import('../../../packages/bundle/web-app/lib/types/vps-runtime.js')
+    : await import('../../../packages/bundle/web-app/src/vps-runtime.ts')
   const desktop = fileURLToPath(new URL('./vps-bot-computer-desktop.mjs', import.meta.url))
   VpsRuntime.prototype.ensure = async function ensureFixture() {}
   VpsRuntime.prototype.execArgv = function execArgvFixture(session, argv) {
     return Object.freeze([process.execPath, desktop, String(session), ...argv])
   }
-  const { mountVpsBots } = await import('../../../packages/bundle/web-app/src/vps-bots.ts')
+  const { mountVpsBots } = built
+    ? await import('../../../packages/bundle/web-app/lib/types/vps-bots.js')
+    : await import('../../../packages/bundle/web-app/src/vps-bots.ts')
   mountVpsBots(ctx, {
     root: '/tmp/yharness-vps-bot-computer',
     image: 'fixture-image',

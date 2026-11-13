@@ -31,7 +31,7 @@ function harness() {
 
 describe('Computer HTTP routes', () => {
   it('reserves only exact operator API routes and marks desktop data private', async () => {
-    const { routes, send } = harness()
+    const { computer, routes, send } = harness()
     expect(routes.map(route => route.path).sort()).toEqual([
       '/api/computer/frame',
       '/api/computer/input',
@@ -47,6 +47,22 @@ describe('Computer HTTP routes', () => {
       kind: 'vps',
       computer: { id: 'shared-vps', location: 'vps', permissionScope: 'workspace' },
     })
+    expect(await (await send('release-control', { viewerId })).json()).toEqual({ mode: 'watching' })
+    expect(computer.releaseControl).toHaveBeenCalledWith(viewerId, expect.any(AbortSignal))
+  })
+
+  it('rejects missing and malformed request bodies before dispatch', async () => {
+    const { computer, routes } = harness()
+    const status = routes.find(route => route.path === '/api/computer/status')
+    if (status === undefined) throw new Error('Missing Computer status endpoint')
+    const request = (body?: string) => status.fetch(new Request('http://127.0.0.1/api/computer/status', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      ...(body === undefined ? {} : { body }),
+    }))
+    expect((await request()).status).toBe(400)
+    expect((await request('{')).status).toBe(400)
+    expect(computer.frame).not.toHaveBeenCalled()
   })
 
   it('rejects invalid viewer identifiers and oversized input before dispatch', async () => {
@@ -130,6 +146,7 @@ describe('Computer HTTP routes', () => {
         kind: 'vps',
         computer: { id: 'shared-vps', location: 'vps', permissionScope: 'workspace' },
       })
+      expect((await send('status', { sessionId: '' })).status).toBe(400)
       await expect((await send('status', {})).json()).resolves.toEqual({
         available: true,
         kind: 'vps',
@@ -139,6 +156,7 @@ describe('Computer HTTP routes', () => {
         mode: 'controlling',
       })
       expect((await send('status', { sessionId: 'unknown-session' })).status).toBe(200)
+      expect((await send('release-control', { viewerId, sessionId: 'unknown-session' })).status).toBe(409)
       expect(resolveTarget).toHaveBeenCalledWith('managed-session')
       expect(resolveTarget).toHaveBeenCalledWith('legacy-session')
       expect(resolveTarget).toHaveBeenCalledWith('')
@@ -146,5 +164,31 @@ describe('Computer HTTP routes', () => {
       await managed.dispose()
       await legacy.dispose()
     }
+  })
+
+  it('sanitizes resolver failures in managed status responses', async () => {
+    const resolveTarget = vi.fn(async () => {
+      throw new Error('private resolver diagnostic')
+    })
+    const send = sender(botComputerRoutesWithLegacy(resolveTarget))
+    const response = await send('status', { sessionId: 'resolver-failure' })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({
+      available: false,
+      kind: 'vps',
+      computer: { id: 'resolver-failure', location: 'vps', permissionScope: 'bot' },
+    })
+  })
+
+  it('reports unavailable status and actions when a Bot Computer is absent', async () => {
+    const resolveComputer = vi.fn(async () => undefined)
+    const send = sender(botComputerRoutes(resolveComputer))
+    expect(await (await send('status', { sessionId: 'missing-session' })).json()).toEqual({
+      available: false,
+      kind: 'vps',
+      computer: { id: 'missing-session', location: 'vps', permissionScope: 'bot' },
+    })
+    expect((await send('release-control', { viewerId, sessionId: 'missing-session' })).status).toBe(409)
+    expect(resolveComputer).toHaveBeenCalledWith('missing-session')
   })
 })

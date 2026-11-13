@@ -42,6 +42,35 @@ describe('Computer HTTP client', () => {
     }))
   })
 
+  it('drops malformed Computer metadata while retaining safe fields', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response({
+        available: true,
+        kind: 'linux',
+        computer: { id: 'bad\u0000id', location: 'vps', permissionScope: 'bot' },
+      }))
+      .mockResolvedValueOnce(response({
+        available: true,
+        computer: { location: 'linux', permissionScope: 'workspace' },
+      }))
+      .mockResolvedValueOnce(response({
+        available: true,
+        computer: { location: 'vps', permissionScope: 'workspace' },
+      }))
+    vi.stubGlobal('fetch', fetchMock)
+    const client = createComputerClient()
+
+    await expect(client.status()).resolves.toEqual({
+      available: true,
+      computer: { location: 'vps', permissionScope: 'bot' },
+    })
+    await expect(client.status()).resolves.toEqual({ available: true })
+    await expect(client.status()).resolves.toEqual({
+      available: true,
+      computer: { location: 'vps', permissionScope: 'workspace' },
+    })
+  })
+
   it('forwards the selected Bot session to frame, take, release and input routes', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(response({ jpeg: 'image', width: 1, height: 1, mode: 'watching', botActive: true }))
