@@ -211,7 +211,7 @@ describe('session format guard through the assembled app', () => {
       },
     })
     expect(result.stderr).toContain(
-      `session "${sessionId}" contains event type "future/event" (seq 2) unknown to this harness and not marked ignorable; refusing to interpret the log — it was likely written by a newer harness`,
+      `SessionFormatUnsupportedError: format v${SESSION_FORMAT_VERSION} contains unknown event type "future/event" at seq 2`,
     )
     // macOS reports the temp dir via the /private symlink parent; assert the
     // stable path suffix instead of the realpath-dependent prefix.
