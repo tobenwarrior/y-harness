@@ -115,6 +115,44 @@ interface BashContribution {
 }
 
 describe('web-app runtime glue', () => {
+  it('requires managed Bot computers before accepting a journal grant', async () => {
+    stageDist()
+    const ctx = new Context()
+    ctx.provide('webServer', fakeHttpServer().server)
+    try {
+      expect(() => {
+        apply(ctx, new Config({ vpsJournal: { socketPath: '/run/yharness-journal.sock', bots: ['test-bot'] } }))
+      }).toThrow('VPS journal grants require managed Bot computers.')
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('mounts the selected Bot workspaces only on Linux', async () => {
+    stageDist()
+    const ctx = new Context()
+    ctx.provide('webServer', fakeHttpServer().server)
+    const config = new Config({
+      surfaceContext: false,
+      printUrl: false,
+      openBrowser: false,
+      botComputers: { root: '/var/lib/yharness-test', image: 'localhost/yharness-test', bots: ['test-bot'] },
+    })
+    try {
+      if (process.platform === 'linux') {
+        apply(ctx, config)
+        const workspaces = ctx.get('botWorkspaces')
+        expect(workspaces?.managed?.('test-bot')).toBe(true)
+        expect(workspaces?.managed?.('another-bot')).toBe(false)
+        expect(ctx.get('vpsComputer')).toBeUndefined()
+      } else {
+        expect(() => { apply(ctx, config) }).toThrow('Managed VPS Bot computers require Linux.')
+      }
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
   it('mounts dist serving, prompt section, bash variables, and publishes the URL with the LAN snapshot', async () => {
     stageDist()
     const ctx = new Context()
