@@ -77,12 +77,11 @@ beforeAll(async () => {
     await unlink(reversal)
   }
   const linkType = process.platform === 'win32' ? 'junction' : 'dir'
-  await symlink(join(repository, 'node_modules'), join(v4Checkout, 'node_modules'), linkType)
-  await symlink(
-    join(repository, 'native/system/packages/entry/node_modules'),
-    join(v4Checkout, 'native/system/packages/entry/node_modules'),
-    linkType,
-  )
+  // Native imports resolve from their owning workspace's pnpm installation.
+  for (const directory of ['', 'native/system/packages/entry', 'packages/session/session-persistence-jsonl']) {
+    const modules = join(directory, 'node_modules')
+    await symlink(join(repository, modules), join(v4Checkout, modules), linkType)
+  }
   await symlink(join(repository, '.git'), join(v4Checkout, '.git'), linkType)
   v4Script = join(v4Checkout, 'scripts/migrate-sessions-to-v4.ts')
 }, MIGRATION_TEST_TIMEOUT)
