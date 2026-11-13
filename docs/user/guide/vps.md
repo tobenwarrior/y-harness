@@ -32,7 +32,7 @@ sudo /usr/bin/python3 -I /opt/yharness/release/scripts/setup-vps-account.py inst
 sudo /usr/bin/python3 -I /opt/yharness/release/scripts/setup-vps-account.py url --port 3180
 ```
 
-Use the selected loopback port for both sides of the [SSH forward](#open-y-harness), then open the printed private sign-in link. The `yharness-cloud.service` user service starts at boot under the locked Cloud account and stores its data under `/var/lib/yharness-cloud/.yharness-vps`. It starts with its own Bot workspaces and provider settings. Keep an existing Cloud installation running until its chats, files, providers, and desktop volumes have been moved and verified.
+Use the selected loopback port for both sides of the [SSH forward](#open-y-harness), then open the printed private sign-in link. Setup prepares the Bot image inside Cloud's service environment so it can use the same container storage at startup. The `yharness-cloud.service` user service starts at boot under the locked Cloud account and stores its data under `/var/lib/yharness-cloud/.yharness-vps`. It starts with its own Bot workspaces and provider settings. Keep an existing Cloud installation running until its chats, files, providers, and desktop volumes have been moved and verified.
 
 ### Preserve the existing workspace path
 

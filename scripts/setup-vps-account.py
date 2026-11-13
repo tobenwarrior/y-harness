@@ -160,19 +160,35 @@ def check_executable(path):
     raise AccountError('Cloud requires Node and Podman executables without file capabilities.')
 
 
-def cloud_command(uid, *args):
-    """Enter the dedicated account with only the environment needed by Cloud."""
+def cloud_environment(uid):
+    """Use the same minimal environment for setup and Cloud account commands."""
     runtime = f'/run/user/{uid}'
     return [
-        '/usr/sbin/runuser', '-u', ACCOUNT, '--', '/usr/bin/env', '-i',
+        '/usr/bin/env', '-i',
         'HOME=' + str(HOME), 'PATH=/usr/local/bin:/usr/bin:/bin', 'LC_ALL=C',
-        'XDG_RUNTIME_DIR=' + runtime, 'DBUS_SESSION_BUS_ADDRESS=unix:path=' + runtime + '/bus', *args,
+        'XDG_RUNTIME_DIR=' + runtime, 'DBUS_SESSION_BUS_ADDRESS=unix:path=' + runtime + '/bus',
     ]
+
+
+def cloud_command(uid, *args):
+    """Run a command as the dedicated account."""
+    return ['/usr/sbin/runuser', '-u', ACCOUNT, '--', *cloud_environment(uid), *args]
 
 
 def cloud_systemctl(uid, *args):
     """Address the Cloud account's local systemd user manager."""
     return cloud_command(uid, '/usr/bin/systemctl', '--user', '--no-pager', '--no-ask-password', *args)
+
+
+def prepare_cloud_runtime(uid, node, release):
+    """Build and check Podman from the same mount namespace as the Web service."""
+    command(cloud_command(
+        uid, '/usr/bin/systemd-run', '--user', '--wait', '--pipe', '--collect', '--quiet',
+        '--property=RuntimeMaxSec=890s', '--property=TimeoutStopSec=5s', '--property=UMask=0077',
+        *cloud_environment(uid),
+        '/usr/bin/python3', '-I', str(release / 'scripts/setup-vps-account.py'),
+        'check-runtime', '--node', str(node), '--release', str(release), '--prepare-image',
+    ), 'The Cloud prerequisites could not be prepared. Check the private Podman build log.', timeout=900)
 
 
 def install_unit(path, content):
@@ -341,10 +357,7 @@ def install(node, release, port):
     command([*SYSTEMCTL, 'start', f'user@{account.pw_uid}.service'], 'Could not start the Cloud user manager.')
     # The administrator's working directory may be private.
     os.chdir('/')
-    command(cloud_command(
-        account.pw_uid, '/usr/bin/python3', '-I', str(release / 'scripts/setup-vps-account.py'),
-        'check-runtime', '--node', str(node), '--release', str(release), '--prepare-image',
-    ), 'The Cloud prerequisites could not be prepared. Check the private Podman build log.', timeout=900)
+    prepare_cloud_runtime(account.pw_uid, node, release)
     install_unit(UNIT_PATH, unit)
     command(cloud_systemctl(account.pw_uid, 'daemon-reload'), 'Could not reload the Cloud user unit configuration.')
     start_cloud(account.pw_uid, port)

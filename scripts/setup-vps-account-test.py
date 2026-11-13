@@ -142,6 +142,39 @@ class DedicatedCloudTest(unittest.TestCase):
                 installer.ensure_account()
             run.assert_not_called()
 
+    def test_install_prepares_the_container_image_inside_the_cloud_user_manager(self):
+        account = SimpleNamespace(pw_uid=721)
+        node = pathlib.Path('/opt/node/bin/node')
+        release = pathlib.Path('/opt/yharness/release')
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.object(installer, 'UNIT_PATH', pathlib.Path(directory) / installer.UNIT),
+            patch.object(installer, 'trusted_path', side_effect=lambda path: path),
+            patch.object(pathlib.Path, 'is_file', return_value=True),
+            patch.object(installer, 'check_executable'),
+            patch.object(installer, 'ensure_account', return_value=account),
+            patch.object(installer, 'command') as run,
+            patch.object(installer.os, 'chdir'),
+            patch.object(installer, 'start_cloud'),
+        ):
+            installer.install(node, release, 3180)
+        preparation = next(call for call in run.call_args_list if '--prepare-image' in call.args[0])
+        arguments = preparation.args[0]
+        launcher = arguments.index('/usr/bin/systemd-run')
+        entry = arguments.index('/usr/bin/python3')
+        self.assertIn('--user', arguments[launcher:entry])
+        self.assertIn('--wait', arguments[launcher:entry])
+        self.assertIn('--collect', arguments[launcher:entry])
+        self.assertIn('--property=RuntimeMaxSec=890s', arguments[launcher:entry])
+        self.assertIn('/usr/bin/env', arguments[launcher:entry])
+        self.assertIn('-i', arguments[launcher:entry])
+        self.assertIn('HOME=' + str(installer.HOME), arguments[launcher:entry])
+        self.assertIn('XDG_RUNTIME_DIR=/run/user/721', arguments[launcher:entry])
+        self.assertEqual(arguments[entry:], [
+            '/usr/bin/python3', '-I', str(release / 'scripts/setup-vps-account.py'),
+            'check-runtime', '--node', str(node), '--release', str(release), '--prepare-image',
+        ])
+
     def test_enables_the_service_after_the_current_process_is_ready(self):
         calls = []
         with (
