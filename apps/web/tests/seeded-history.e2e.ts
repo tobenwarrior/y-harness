@@ -238,6 +238,7 @@ describe('web e2e: seeded history renders through cold resume', () => {
       extraOverlayPath: [
         ...process.platform === 'win32' ? [] : [fileURLToPath(new URL('./fixtures/sidebar-terminal.patch.yml', import.meta.url))],
         fileURLToPath(new URL('./fixtures/native-open-on.patch.yml', import.meta.url)),
+        fileURLToPath(new URL('./fixtures/permission-presets.patch.yml', import.meta.url)),
       ],
       openInAppEnvironment: createLaunchEnvironmentSnapshot([{ source: 'process', values: { SSH_CONNECTION: '10.0.0.2 55000 10.0.0.9 22' } }]),
     })
@@ -728,7 +729,7 @@ describe('web e2e: seeded history renders through cold resume', () => {
 
   it.skipIf(MODE === 'record')('an Access-chip switch persists its command without adding a Chat row', async () => {
     onTestFailed(() => saveFailureShot(page, 'web-e2e-seeded-command-row'))
-    await page.getByRole('button', { name: 'Access mode, current: Workspace Write' }).click()
+    await page.getByRole('button', { name: 'Access mode, current: Ask for approval' }).click()
     await page.getByRole('menuitem', { name: 'Read Only' }).click()
     const access = page.getByRole('button', { name: 'Access mode, current: Read Only' })
     await expect.poll(() => access.isEnabled(), { timeout: 10_000 }).toBe(true)
