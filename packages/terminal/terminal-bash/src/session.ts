@@ -575,7 +575,9 @@ export class LocalPtySession implements TerminalBackendSession {
       const startupHasOutput = !this.initializing || !this.scrollback.isEmpty
       const acceptsStdinWait = startupHasOutput && foreground !== undefined
         && operation.acceptsStdinWait(foreground.processGroupId, foreground.inputWaiting)
-      if (elapsed >= this.config.exactProbeAfterMs && acceptsStdinWait) {
+      // The foreground can return to stdin before the PTY delivers the final output chunk.
+      // Keep one poll interval quiet so a successor cannot overtake that output.
+      if (elapsed >= this.config.exactProbeAfterMs && idleFor >= this.config.pollIntervalMs && acceptsStdinWait) {
         this.settleActive('stdin_read')
         return
       }
