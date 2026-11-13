@@ -106,7 +106,7 @@ describe('ComputerPanel managed Bot behavior', () => {
   it('hands back a control lease that arrives after the panel closes', async () => {
     const grant = Promise.withResolvers<Awaited<ReturnType<ComputerClient['takeControl']>>>()
     const takeControl = vi.fn<ComputerClient['takeControl']>().mockReturnValue(grant.promise)
-    const releaseControl = vi.fn<ComputerClient['releaseControl']>().mockResolvedValue({ mode: 'watching' })
+    const releaseControl = vi.fn<ComputerClient['releaseControl']>().mockRejectedValue(new Error('late release'))
     const computer = makeComputer({ takeControl, releaseControl })
     const panel = render(<ComputerPanel computer={computer} sessionId="bot-session" close={vi.fn()} t={t} />)
 
@@ -121,6 +121,88 @@ describe('ComputerPanel managed Bot behavior', () => {
       expect(releaseControl).toHaveBeenCalledOnce()
       expect(releaseControl).toHaveBeenCalledWith(expect.any(String), { keepalive: true }, 'bot-session')
     })
+    await new Promise(resolve => setTimeout(resolve, 0))
+  })
+
+  it('ignores a status rejection after the panel closes', async () => {
+    const status = Promise.withResolvers<Awaited<ReturnType<ComputerClient['status']>>>()
+    const statusCall = vi.fn<ComputerClient['status']>().mockReturnValue(status.promise)
+    const computer = makeComputer({ status: statusCall })
+    const panel = render(<ComputerPanel computer={computer} sessionId="bot-session" close={vi.fn()} t={t} />)
+
+    await waitFor(() => { expect(statusCall).toHaveBeenCalledWith(expect.any(AbortSignal), 'bot-session') })
+    panel.unmount()
+    status.reject(new Error('status unavailable'))
+    await new Promise(resolve => setTimeout(resolve, 0))
+  })
+
+  it('ignores a status result after the panel closes', async () => {
+    const status = Promise.withResolvers<Awaited<ReturnType<ComputerClient['status']>>>()
+    const statusCall = vi.fn<ComputerClient['status']>().mockReturnValue(status.promise)
+    const computer = makeComputer({ status: statusCall })
+    const panel = render(<ComputerPanel computer={computer} sessionId="bot-session" close={vi.fn()} t={t} />)
+
+    await waitFor(() => { expect(statusCall).toHaveBeenCalledWith(expect.any(AbortSignal), 'bot-session') })
+    panel.unmount()
+    status.resolve({ available: true })
+    await new Promise(resolve => setTimeout(resolve, 0))
+  })
+
+  it('handles a status rejection while the panel is mounted', async () => {
+    const status = vi.fn<ComputerClient['status']>().mockRejectedValue(new Error('status unavailable'))
+    const computer = makeComputer({ status })
+    render(<ComputerPanel computer={computer} sessionId="bot-session" close={vi.fn()} t={t} />)
+
+    await screen.findByRole('img', { name: 'Live computer screen' })
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(status).toHaveBeenCalledWith(expect.any(AbortSignal), 'bot-session')
+  })
+
+  it('ignores a watching result from a stale take-control request', async () => {
+    const grant = Promise.withResolvers<Awaited<ReturnType<ComputerClient['takeControl']>>>()
+    const takeControl = vi.fn<ComputerClient['takeControl']>().mockReturnValue(grant.promise)
+    const releaseControl = vi.fn<ComputerClient['releaseControl']>().mockResolvedValue({ mode: 'watching' })
+    const computer = makeComputer({ takeControl, releaseControl })
+    const panel = render(<ComputerPanel computer={computer} sessionId="bot-session" close={vi.fn()} t={t} />)
+
+    await screen.findByRole('img', { name: 'Live computer screen' })
+    fireEvent.click(screen.getByRole('button', { name: 'Take control' }))
+    panel.unmount()
+    grant.resolve({ mode: 'watching' })
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(releaseControl).not.toHaveBeenCalled()
+  })
+
+  it('reports a failed lease release during teardown without rejecting the panel', async () => {
+    const takeControl = vi.fn<ComputerClient['takeControl']>().mockResolvedValue({ mode: 'controlling' })
+    const releaseControl = vi.fn<ComputerClient['releaseControl']>().mockRejectedValue(new Error('teardown release'))
+    const frame = vi.fn<ComputerClient['frame']>()
+      .mockResolvedValueOnce(watchingFrame)
+      .mockImplementation((_viewerId, signal) => untilAbort<ComputerFrame>(signal))
+    const computer = makeComputer({ frame, takeControl, releaseControl })
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const panel = render(<ComputerPanel computer={computer} sessionId="bot-session" close={vi.fn()} t={t} />)
+
+    await screen.findByRole('img', { name: 'Live computer screen' })
+    fireEvent.click(screen.getByRole('button', { name: 'Take control' }))
+    await screen.findByRole('button', { name: 'Hand back' })
+    panel.unmount()
+
+    await waitFor(() => { expect(releaseControl).toHaveBeenCalledWith(expect.any(String), { keepalive: true }, 'bot-session') })
+    await waitFor(() => { expect(warning).toHaveBeenCalledWith('Computer lease release failed:', expect.any(Error)) })
+  })
+
+  it('shows the workspace Computer scope metadata', async () => {
+    const status = vi.fn<ComputerClient['status']>().mockResolvedValue({
+      available: true,
+      kind: 'vps',
+      computer: { id: 'shared-vps', location: 'vps', permissionScope: 'workspace' },
+    })
+    const computer = makeComputer({ status })
+    render(<ComputerPanel computer={computer} sessionId="bot-session" close={vi.fn()} t={t} />)
+
+    await screen.findByRole('img', { name: 'Live computer screen' })
+    await waitFor(() => { expect(screen.getByRole('status').textContent).toContain('Display and input are shared by this Cloud workspace') })
   })
 
   it('releases an active lease with keepalive during teardown', async () => {

@@ -57,6 +57,10 @@ describe('Computer HTTP client', () => {
         available: true,
         computer: { location: 'vps', permissionScope: 'workspace' },
       }))
+      .mockResolvedValueOnce(response({
+        available: true,
+        computer: { location: 'vps', permissionScope: 'admin' },
+      }))
     vi.stubGlobal('fetch', fetchMock)
     const client = createComputerClient()
 
@@ -69,6 +73,7 @@ describe('Computer HTTP client', () => {
       available: true,
       computer: { location: 'vps', permissionScope: 'workspace' },
     })
+    await expect(client.status()).resolves.toEqual({ available: true })
   })
 
   it('forwards the selected Bot session to frame, take, release and input routes', async () => {
@@ -164,6 +169,30 @@ describe('Computer HTTP client', () => {
       body: JSON.stringify({ sessionId: 'bot-session', viewerId: 'mac-panel' }),
     }))
     expect(fetchMock).toHaveBeenNthCalledWith(3, 'api/computer/mac/stop', expect.objectContaining({ keepalive: true }))
+  })
+
+  it('forwards native status, frame, and release routes to the mounted Bot', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response({ available: true, kind: 'mac' }))
+      .mockResolvedValueOnce(response({ jpeg: 'image', width: 10, height: 8, mode: 'watching', botActive: false }))
+      .mockResolvedValueOnce(response({ mode: 'watching' }))
+    vi.stubGlobal('fetch', fetchMock)
+    const client = createMacComputerClient('bot-session', 'mac-panel')
+
+    await expect(client.computer.status(undefined, 'ignored-session')).resolves.toEqual({ available: true, kind: 'mac' })
+    await expect(client.computer.frame('ignored-viewer', undefined, 'ignored-session')).resolves.toEqual({
+      jpeg: 'image', width: 10, height: 8, mode: 'watching', botActive: false,
+    })
+    await expect(client.computer.releaseControl('ignored-viewer', { keepalive: true }, 'ignored-session'))
+      .resolves.toEqual({ mode: 'watching' })
+
+    expect(fetchMock).toHaveBeenNthCalledWith(1, 'api/computer/status', expect.objectContaining({ body: '{}' }))
+    expect(fetchMock).toHaveBeenNthCalledWith(2, 'api/computer/mac/frame', expect.objectContaining({
+      body: JSON.stringify({ sessionId: 'bot-session', viewerId: 'mac-panel' }),
+    }))
+    expect(fetchMock).toHaveBeenNthCalledWith(3, 'api/computer/mac/release-control', expect.objectContaining({
+      body: JSON.stringify({ sessionId: 'bot-session', viewerId: 'mac-panel' }), keepalive: true,
+    }))
   })
 
   it('preserves HTTP conflict status for lease feedback', async () => {

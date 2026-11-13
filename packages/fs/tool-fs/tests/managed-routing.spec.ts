@@ -3,10 +3,11 @@ import { Context } from '@yharness/cordis'
 import SystemPrompt from '@yharness/system-prompt'
 import ToolRuntime from '@yharness/tools'
 import { ToolCallId } from '@yharness/llm'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join, posix } from 'node:path'
 import { tmpdir } from 'node:os'
 import LocalFileSystem from '@yharness/fs-local'
+import { FsError } from '@yharness/fs'
 import { ShellExecutor } from '@yharness/shell'
 import type { ShellExecRequest, ShellExecSpec, ShellExecution } from '@yharness/shell'
 import { SubprocessRuntime } from '@yharness/subprocess'
@@ -92,7 +93,7 @@ describe('managed Bot filesystem routing', () => {
       await ctx.plugin(SystemPrompt)
       await ctx.plugin(ToolRuntime)
       await ctx.plugin(LocalFileSystem, { cwd: hostRoot })
-      await ctx.plugin(ToolFs)
+      await ctx.plugin(ToolFs, { applyPatch: true })
 
       const agentFiber = ctx.plugin(() => {})
       const managedContext = agentFiber.ctx
@@ -130,6 +131,30 @@ describe('managed Bot filesystem routing', () => {
       expect(result.isError).toBe(false)
       expect(text(result)).toContain('managed')
       expect(text(result)).not.toContain('host')
+
+      const writeText = managedFs.writeText.bind(managedFs)
+      vi.spyOn(managedFs, 'writeText').mockImplementationOnce(async (...args) => {
+        await writeText(...args)
+        throw new FsError('Provider lost the write acknowledgement.', 'FS_IO_ERROR')
+      })
+      const patch = await ctx.tools.execute({
+        signal: new AbortController().signal,
+        callId: ToolCallId('managed-patch'),
+        name: 'apply_patch',
+        arguments: { input: [
+          '*** Begin Patch', '*** Add File: written.txt', '+managed write',
+          '*** Add File: skipped.txt', '+not written', '*** End Patch',
+        ].join('\n') },
+        agent: agent as never,
+      })
+      expect(patch).toMatchObject({
+        isError: false,
+        value: { operations: [{ status: 'unknown', code: 'FS_IO_ERROR' }, { status: 'skipped' }] },
+      })
+      expect(text(patch)).toContain('re-read the affected files before retrying')
+      expect(readFileSync(join(managedRoot, 'written.txt'), 'utf8')).toBe('managed write\n')
+      expect(existsSync(join(managedRoot, 'skipped.txt'))).toBe(false)
+      expect(existsSync(join(hostRoot, 'nested', 'written.txt'))).toBe(false)
     } finally {
       await ctx.fiber.dispose()
       rmSync(hostRoot, { recursive: true, force: true })

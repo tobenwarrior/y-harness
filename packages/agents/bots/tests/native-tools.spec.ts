@@ -115,6 +115,41 @@ describe('native Bot actions', () => {
     expect(readJournal).toHaveBeenCalledTimes(1)
   })
 
+  it.each(['resolve', 'read', 'reject', 'unavailable'] as const)(
+    'keeps cancelled or failed journal reads private during %s',
+    async (failurePoint) => {
+      const sessionId = SessionId('bot-session-alpha')
+      const abort = new AbortController()
+      const read = vi.fn(async () => ({ version: 1, recovery: [], primaryAudit: [] }))
+      const grant = vi.fn(async () => read)
+      const provider = createBotNativeToolProvider({
+        bind: async () => client(), persist: async () => {}, replay: async () => [], vpsJournal: grant,
+      })
+      const journal = (await provider.resolve({ sessionId })).find(tool => tool.name === 'vps_service_journal')
+      if (journal === undefined) throw new Error('native journal tool missing')
+
+      if (failurePoint === 'resolve') {
+        grant.mockImplementationOnce(async () => {
+          abort.abort()
+          return read
+        })
+      } else {
+        read.mockImplementationOnce(async () => {
+          if (failurePoint !== 'unavailable') abort.abort()
+          if (failurePoint !== 'read') throw new Error('private Host journal diagnostic')
+          return { version: 1, recovery: [], primaryAudit: [] }
+        })
+      }
+      const result = await journal.execute({}, context({ sessionId, signal: abort.signal }))
+      expect(result.success).toBe(false)
+      expect(JSON.parse(result.contentItems[0]?.text ?? '{}')).toMatchObject({
+        error: failurePoint === 'unavailable' ? 'unavailable' : 'cancelled',
+      })
+      expect(result.contentItems[0]?.text).not.toContain('private Host journal diagnostic')
+      expect(read).toHaveBeenCalledTimes(failurePoint === 'resolve' ? 0 : 1)
+    },
+  )
+
   it('reads only the owned Grok archive as paginated untrusted excerpts', async () => {
     const archivePage: BotGrokHistoryPage = {
       source: 'grok-bot', version: 1, firstCachedSequence: 4, totalMessages: 2, nextBefore: 8,

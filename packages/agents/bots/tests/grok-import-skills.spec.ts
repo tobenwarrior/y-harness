@@ -1,5 +1,5 @@
-import { chmod, lstat, mkdtemp, readFile, rm, symlink } from 'node:fs/promises'
-import { join } from 'node:path'
+import { chmod, lstat, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { join, parse } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
@@ -90,6 +90,30 @@ describe('Grok Bot skill import', () => {
       skipped: [],
     })
     await expect(lstat(join(cwd, '.agents'))).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('allows a managed workspace preview before the workspace is prepared', async () => {
+    const cwd = join(await botCwd(), 'unprepared')
+    const skills = [{ name: 'Managed Preview', description: '', instructions: 'Prepare the checklist.' }]
+
+    await expect(importGrokBotSkills(cwd, skills, { preview: true, previewMissingDirectory: true }))
+      .resolves.toEqual({
+        created: ['managed-preview'], skipped: [], namesBySourceName: { 'Managed Preview': 'managed-preview' },
+      })
+    await expect(importGrokBotSkills(cwd, skills, { preview: true })).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(importGrokBotSkills(cwd, skills, { previewMissingDirectory: true })).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(lstat(cwd)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('rejects relative paths, filesystem roots, and files as workspace destinations', async () => {
+    const cwd = await botCwd()
+    const file = join(cwd, 'workspace-file')
+    await writeFile(file, '')
+
+    await expect(importGrokBotSkills('relative', [])).rejects.toThrow('absolute working directory')
+    await expect(importGrokBotSkills(parse(cwd).root, [])).rejects.toThrow('must not be a filesystem root')
+    await expect(importGrokBotSkills(file, [], { preview: true, previewMissingDirectory: true }))
+      .rejects.toThrow('existing working directory')
   })
 
   it('rejects symlinked skill roots before writing outside the Bot workspace', async () => {
