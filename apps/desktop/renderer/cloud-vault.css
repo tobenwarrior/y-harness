@@ -42,6 +42,13 @@ p { color: var(--muted); line-height: 1.45; }
 .heading p { margin-top: 3px; }
 #notice { min-height: 20px; margin: 13px 0 8px; line-height: 1.5; color: var(--accent); }
 #notice[data-tone="error"] { color: var(--error); }
+#request-outcome { margin: 12px 0 0; line-height: 1.5; color: var(--accent); }
+#request-outcome:empty { margin: 0; }
+#request-outcome[data-tone="error"] { color: var(--error); }
+.request-target { display: grid; gap: 8px; margin: 16px 0 12px; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+.request-target div { display: grid; grid-template-columns: minmax(0, 110px) minmax(0, 1fr); gap: 12px; align-items: baseline; }
+.request-target dt { color: var(--muted); }
+.request-target dd { margin: 0; overflow-wrap: anywhere; }
 label { display: block; margin-bottom: 6px; color: var(--muted); }
 input, select, button { font: inherit; border: 1px solid var(--line); border-radius: 8px; color: var(--ink); }
 input, select { width: 100%; min-height: 34px; padding: 5px 9px; background: var(--panel); }

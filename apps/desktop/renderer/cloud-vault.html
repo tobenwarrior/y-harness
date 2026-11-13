@@ -16,6 +16,21 @@
         <div><h1 id="title"></h1><p id="hint"></p></div>
       </header>
       <div id="notice" role="status" aria-live="polite"></div>
+      <section id="request" hidden aria-labelledby="title">
+        <dl class="request-target">
+          <div><dt id="request-service-label"></dt><dd id="request-unit"></dd></div>
+          <div><dt id="request-name-label"></dt><dd id="request-name"></dd></div>
+        </dl>
+        <form id="request-editor" autocomplete="off" hidden>
+          <label for="request-value" id="request-value-label"></label>
+          <input id="request-value" type="password" maxlength="8192" autocomplete="new-password" autocapitalize="off" spellcheck="false" required>
+          <div class="actions">
+            <button id="request-cancel" type="button"></button>
+            <button id="request-save" class="primary" type="submit"></button>
+          </div>
+        </form>
+        <p id="request-outcome" role="status" aria-live="polite"></p>
+      </section>
       <section id="services" hidden>
         <label for="service" id="service-label"></label>
         <select id="service"></select>

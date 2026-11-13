@@ -1,8 +1,8 @@
 /** Shell-owned, isolated Vault window for one connected Cloud workspace. */
 import { randomUUID } from 'node:crypto'
 import { BrowserWindow, type IpcMainInvokeEvent } from 'electron'
-import { cloudVaultRequest } from './cloud-vault.ts'
-import { VAULT_IPC, VAULT_PAGE } from './cloud-vault-ipc.ts'
+import { cloudVaultRequest, isVaultRequestId, vaultRequestAllowed, type VaultRequestId } from './cloud-vault.ts'
+import { VAULT_IPC, VAULT_PAGE, type CloudVaultMode } from './cloud-vault-ipc.ts'
 import type { DesktopMessages } from './locale.ts'
 import { serveWebDocument } from './web-document.ts'
 
@@ -10,6 +10,7 @@ import { serveWebDocument } from './web-document.ts'
 export class DesktopCloudVault {
   private window: BrowserWindow | undefined
   private pending: AbortController | undefined
+  private mode: CloudVaultMode = { kind: 'manage' }
 
   /**
    * @param preload - Packaged isolated Vault bridge.
@@ -22,13 +23,22 @@ export class DesktopCloudVault {
   /**
    * @param parent - Window holding the connected Cloud workspace.
    * @param target - Verified SSH destination of the current connection.
+   * @param requestId - Optional Cloud-issued request id; omission opens ordinary Vault management.
    */
-  open(parent: BrowserWindow, target: string): void {
+  open(parent: BrowserWindow, target: string, requestId?: VaultRequestId): void {
     if (parent.isDestroyed() || !parent.isVisible()) return
-    if (this.window !== undefined) { this.window.focus(); return }
+    if (requestId !== undefined && !isVaultRequestId(requestId)) return
+    if (this.window !== undefined) {
+      if (this.mode.kind === 'request' && this.mode.id === requestId) { this.window.focus(); return }
+      if (this.mode.kind === 'manage' && requestId === undefined) { this.window.focus(); return }
+      this.close()
+    }
+    this.mode = requestId === undefined ? { kind: 'manage' } : { kind: 'request', id: requestId }
+    const messages = this.messages()
     const window = new BrowserWindow({
-      parent, modal: true, show: false, width: 550, height: 565, minWidth: 400, minHeight: 380,
-      resizable: true, minimizable: false, maximizable: false, title: this.messages().cloudVault,
+      parent, modal: true, show: false, width: 550, height: requestId === undefined ? 565 : 370, minWidth: 400, minHeight: 345,
+      resizable: true, minimizable: false, maximizable: false,
+      title: requestId === undefined ? messages.cloudVault : messages.cloudVaultRequestTitle,
       webPreferences: {
         partition: `cloud-vault-${randomUUID()}`, preload: this.preload, contextIsolation: true,
         sandbox: true, nodeIntegration: false, webSecurity: true, devTools: false,
@@ -51,13 +61,15 @@ export class DesktopCloudVault {
     window.setMenu(null)
     const owned = (event: IpcMainInvokeEvent): void => {
       if (this.window !== window || event.sender !== contents
-        || event.senderFrame !== contents.mainFrame || event.senderFrame?.url !== VAULT_PAGE) {
+        || event.senderFrame !== contents.mainFrame || event.senderFrame.url !== VAULT_PAGE) {
         throw new Error('Vault window is unavailable')
       }
     }
     contents.ipc.handle(VAULT_IPC.messages, (event) => { owned(event); return this.messages() })
+    contents.ipc.handle(VAULT_IPC.mode, (event) => { owned(event); return this.mode })
     contents.ipc.handle(VAULT_IPC.request, async (event, request: unknown) => {
       owned(event)
+      if (!vaultRequestAllowed(request, requestId)) return { ok: false, reason: 'invalid' }
       if (this.pending !== undefined) return { ok: false, reason: 'unavailable' }
       const pending = new AbortController()
       this.pending = pending
@@ -72,6 +84,7 @@ export class DesktopCloudVault {
       vaultSession.protocol.unhandle('dsh-app')
       if (this.window !== window) return
       this.window = undefined
+      this.mode = { kind: 'manage' }
       this.pending?.abort()
       this.pending = undefined
     })
@@ -80,5 +93,12 @@ export class DesktopCloudVault {
   }
 
   /** Dismiss the Vault and cancel an in-flight connection. */
-  close(): void { this.window?.destroy() }
+  close(): void {
+    const window = this.window
+    this.window = undefined
+    this.mode = { kind: 'manage' }
+    this.pending?.abort()
+    this.pending = undefined
+    window?.destroy()
+  }
 }
