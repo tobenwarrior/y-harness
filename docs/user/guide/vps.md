@@ -112,6 +112,8 @@ If the Bot already has a private desktop, wait until the Bot and Computer panel 
 
 The browser desktop and any shell running inside it can make outbound connections. The VPS loopback remains private. Choose **Take control** to review Firefox's welcome screen the first time and sign in to websites. Browser sign-ins live in the selected Bot's profile volume and survive replacing its container.
 
+For a Firefox-enabled Bot also listed in `botComputers.desktopOnlyBots`, the Bot can pause a direct owner chat to request website sign-in. Choose **Take over**, check the website address, then complete the sign-in or verification in the Computer panel. Once the signed-in page loads, choose **I’m done** to resume the waiting Bot. If you cancel after taking control, clear the sign-in form first. If you close the panel, reopen it and choose **Take over** again to finish. The private Computer remains reserved until you return it, even if the Bot's ten-minute wait ends. Sign-in handoffs end when Cloud restarts.
+
 ## Give a Bot access to service diagnostics
 
 Ask the VPS owner to add `vpsServices` inside the same `web-runtime` configuration. The grant names an exact systemd service and the Bot roster IDs that may inspect it. This example grants read access to a service managed by the same Linux user as Y Harness.

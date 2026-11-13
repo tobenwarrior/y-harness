@@ -17,6 +17,13 @@ import type { AvailabilityState } from './computer-availability.ts'
 import type { ComputerClient, ComputerIdentity } from './computer-client.ts'
 import css from './BotWorkspace.module.css'
 
+/** Selected sign-in request and its Computer panel. */
+export interface ComputerSignInTarget {
+  readonly sessionId: string
+  readonly requestId: string
+  readonly attempt: number
+}
+
 /** Main panel child slot that owns the selected Bot's Session binding. */
 declare module '@yharness/client-ui-slots' {
   interface SlotMap {
@@ -41,6 +48,7 @@ export type BotsPanelProps =
       readonly computerAvailability: HostObservable<AvailabilityState>
       readonly computerIdentity: HostObservable<ComputerIdentity | undefined>
       readonly computerTarget: HostObservable<string | null>
+      readonly computerSignIn: HostObservable<ComputerSignInTarget | undefined>
     }
   }>
 
@@ -145,7 +153,7 @@ export function BotsPanel({
   sendGroupMessageWithAttachments, reactGroupMessage, groupsAvailable, loadAvatar,
   rename, updateProfile, memoryManager, readGrokHistory,
   routineManager, skillManager, SessionProvider, renderSlot, t, share, computer, useComputerAvailability,
-  setComputerTarget, useComputerTarget, useComputerIdentity,
+  setComputerTarget, useComputerTarget, useComputerIdentity, useComputerSignIn,
 }: BotsPanelProps): ReactNode {
   const state: BotWorkspaceState = useWorkspace(value => value)
   const statuses = useSessionStatus(value => value)
@@ -153,6 +161,7 @@ export function BotsPanel({
   const availability = useComputerAvailability(value => value)
   const computerIdentity = useComputerIdentity(value => value)
   const computerTarget = useComputerTarget(value => value)
+  const signIn = useComputerSignIn(value => value)
   const selectedBot = bots.find(bot => bot.id === state.selectedBotId)
   const selectedReference = reference()
   const canShowComputer = (availability === 'available' || availability === 'mac') && selectedReference !== undefined
@@ -214,6 +223,7 @@ export function BotsPanel({
             ? <MacComputerPanel key={selectedReference.sessionId} sessionId={selectedReference.sessionId}
               close={closeComputer} t={t} />
             : <ComputerPanel key={selectedReference.sessionId} computer={computer} sessionId={selectedReference.sessionId}
+              signIn={signIn?.sessionId === selectedReference.sessionId ? signIn : undefined}
               close={closeComputer} t={t} />}
         </div>
       )}

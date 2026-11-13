@@ -1,7 +1,7 @@
 import { writeFile } from 'node:fs/promises'
 import type { ConnectionFetchRoute } from '@yharness/client-connection'
 import { describe, expect, it, vi } from 'vitest'
-import { botComputerRoutes, botComputerRoutesWithLegacy, computerRoutes } from '../src/computer-api.ts'
+import { botComputerRoutes, botComputerRoutesWithLegacy, computerRoutes, computerSignInRoute } from '../src/computer-api.ts'
 import { ComputerHost } from '../src/computer.ts'
 
 const viewerId = '11111111-1111-4111-8111-111111111111'
@@ -30,6 +30,34 @@ function harness() {
 }
 
 describe('Computer HTTP routes', () => {
+  it('scopes sign-in metadata and answers to the exact Bot and rejects extra values', async () => {
+    const computer = new ComputerHost({ display: ':fixture', authorityPath: '/private/fixture' }, { run: async () => {} })
+    const send = sender([computerSignInRoute(async sessionId => sessionId === 'bot-session' ? {
+      status: () => computer.signInRequest(), answer: (...args) => computer.answerSignIn(...args),
+    } : undefined)])
+    try {
+      const waiting = computer.requestSignIn(new AbortController().signal)
+      await expect.poll(() => computer.signInRequest()).toBeDefined()
+      const request = computer.signInRequest()!
+      const status = { action: 'status', sessionId: 'bot-session' }
+      const claim = { action: 'take', sessionId: 'bot-session', requestId: request.id, viewerId }
+      const initial = await send('sign-in', status)
+      expect(initial.headers.get('cache-control')).toBe('no-store')
+      await expect(initial.json()).resolves.toEqual({ request })
+      await expect((await send('sign-in', { ...status, sessionId: 'another-session' })).json()).resolves.toEqual({ request: null })
+      expect((await send('sign-in', { ...claim, sessionId: 'another-session' })).status).toBe(409)
+      expect((await send('sign-in', { ...claim, secret: 'a value the endpoint must reject' })).status).toBe(400)
+      expect((await send('sign-in', { ...claim, viewerId: 'invalid' })).status).toBe(400)
+      expect((await send('sign-in', { ...claim, action: 'complete' })).status).toBe(409)
+      await expect((await send('sign-in', claim)).json()).resolves.toEqual({ mode: 'controlling' })
+      expect((await send('sign-in', { ...claim, action: 'complete' })).status).toBe(200)
+      await expect(waiting).resolves.toBe('completed')
+      expect((await send('sign-in', claim)).status).toBe(409)
+    } finally {
+      await computer.dispose()
+    }
+  })
+
   it('reserves only exact operator API routes and marks desktop data private', async () => {
     const { routes, send } = harness()
     expect(routes.map(route => route.path).sort()).toEqual([

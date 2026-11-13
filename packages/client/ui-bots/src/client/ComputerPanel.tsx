@@ -1,6 +1,6 @@
 /** Session-scoped Computer viewer and human-control surface. */
 
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, ReactNode, WheelEvent as ReactWheelEvent } from 'react'
 import {
   Button, IconCloseOutlineRegular, IconRefreshOutlineRegular, IconStopFillRegular, StateDot, Tooltip,
@@ -18,11 +18,12 @@ interface ComputerPanelProps extends PropsLocale<'bots'> {
   readonly sessionId?: string
   readonly close: () => void
   readonly local?: { readonly checkSharing: () => void }
+  readonly signIn?: { readonly requestId: string; readonly attempt: number } | undefined
 }
 
 type PanelPhase = 'loading' | 'ready' | 'disconnected' | 'unavailable'
 type BusyAction = 'take' | 'release' | undefined
-type FeedbackKey = 'computerControlBusy' | 'computerInputRejected' | 'computerPasteFailed' | 'computerTextTrimmed'
+type FeedbackKey = 'computerControlBusy' | 'computerInputRejected' | 'computerPasteFailed' | 'computerTextTrimmed' | 'computerSignInError'
 
 const FRAME_POLL_MS = 300
 const MAX_TEXT_LENGTH = 4_096
@@ -31,6 +32,10 @@ const MAX_QUEUED_INPUTS = 64
 
 const X11_KEY_NAMES: Readonly<Record<string, string>> = {
   ' ': 'space',
+  '+': 'plus',
+  '"': 'quotedbl',
+  '{': 'braceleft',
+  '}': 'braceright',
   Enter: 'Return',
   Escape: 'Escape',
   Tab: 'Tab',
@@ -61,7 +66,7 @@ function x11Key(event: ReactKeyboardEvent<HTMLImageElement>): string | undefined
   const modifiers: string[] = []
   if (event.ctrlKey) modifiers.push('Ctrl')
   if (event.altKey) modifiers.push('Alt')
-  if (event.shiftKey) modifiers.push('Shift')
+  if (event.shiftKey && (event.key.length !== 1 || event.ctrlKey || event.altKey || event.metaKey)) modifiers.push('Shift')
   if (event.metaKey) modifiers.push('Super')
   const key = X11_KEY_NAMES[event.key] ?? event.key
   return [...modifiers, key].join('+')
@@ -122,7 +127,7 @@ function imageErrorPhase(error: unknown): PanelPhase {
 }
 
 /** Render the Computer tab's image, lease controls, and bounded input affordances. */
-export function ComputerPanel({ computer, sessionId, close, local, t }: ComputerPanelProps): ReactNode {
+export function ComputerPanel({ computer, sessionId, close, local, signIn, t }: ComputerPanelProps): ReactNode {
   const viewerIdRef = useRef<string>()
   if (viewerIdRef.current === undefined) viewerIdRef.current = randomUUID()
   const viewerId = viewerIdRef.current
@@ -131,6 +136,7 @@ export function ComputerPanel({ computer, sessionId, close, local, t }: Computer
   const disposedRef = useRef(false)
   const requestEpochRef = useRef(0)
   const operationRef = useRef(0)
+  const claimedSignIn = useRef<string>()
   const inputQueue = useRef(Promise.resolve())
   const queuedInputs = useRef(0)
   const imageRef = useRef<HTMLImageElement | null>(null)
@@ -150,6 +156,7 @@ export function ComputerPanel({ computer, sessionId, close, local, t }: Computer
   const [busy, setBusy] = useState<BusyAction>()
   const [feedback, setFeedback] = useState<FeedbackKey>()
   const [retryNonce, setRetryNonce] = useState(0)
+  const signInApi = computer.signIn
 
   frameRef.current = frame
 
@@ -176,10 +183,10 @@ export function ComputerPanel({ computer, sessionId, close, local, t }: Computer
     return () => { disposed = true; controller.abort() }
   }, [computer, local, sessionId])
 
-  const applyMode = (next: ComputerMode): void => {
+  const applyMode = useCallback((next: ComputerMode): void => {
     modeRef.current = next
     setMode(next)
-  }
+  }, [])
 
   useEffect(() => {
     disposedRef.current = false
@@ -208,13 +215,17 @@ export function ComputerPanel({ computer, sessionId, close, local, t }: Computer
           if (disposed || controller.signal.aborted || requestEpoch !== requestEpochRef.current) continue
           setFrame(next)
           frameRef.current = next
+          if (next.signIn === undefined || next.mode !== 'controlling') claimedSignIn.current = undefined
           applyMode(next.mode)
           setBotActive(next.botActive)
           setPhase('ready')
-          setFeedback(undefined)
         } catch (error: unknown) {
           if (disposed || controller.signal.aborted || isAbortError(error)) return
           if (requestEpoch !== requestEpochRef.current) continue
+          if (frameRef.current?.signIn !== undefined || claimedSignIn.current !== undefined) {
+            setFrame(undefined)
+            frameRef.current = undefined
+          }
           setPhase(imageErrorPhase(error))
           local?.checkSharing()
           return
@@ -224,26 +235,34 @@ export function ComputerPanel({ computer, sessionId, close, local, t }: Computer
     }
     void poll()
     return () => { disposed = true; controller.abort() }
-  }, [computer, local, retryNonce, sessionId, viewerId])
+  }, [applyMode, computer, local, retryNonce, sessionId, viewerId])
 
   const alive = (operation: number): boolean => !disposedRef.current && operation === operationRef.current
 
-  const takeControl = (): void => {
-    if (busy !== undefined || phase === 'unavailable') return
+  const takeControl = useCallback((requestId?: string): void => {
+    if (requestId !== undefined && (signInApi === undefined || sessionId === undefined)) return
     const operation = ++operationRef.current
     ++requestEpochRef.current
     setBusy('take')
     setFeedback(undefined)
-    void computer.takeControl(viewerId, undefined, sessionId).then((result) => {
-      if (!alive(operation)) {
-        if (result.mode === 'controlling') void computer.releaseControl(viewerId, { keepalive: true }, sessionId).catch((error: unknown) => { void error })
+    const request = requestId === undefined || signInApi === undefined || sessionId === undefined
+      ? computer.takeControl(viewerId, undefined, sessionId)
+      : signInApi.take(sessionId, requestId, viewerId)
+    void request.then((result) => {
+      if (disposedRef.current || operation !== operationRef.current) {
+        if (disposedRef.current && result.mode === 'controlling') {
+          void computer.releaseControl(viewerId, { keepalive: true }, sessionId).catch((error: unknown) => { void error })
+        }
         return
       }
+      ++requestEpochRef.current
+      claimedSignIn.current = requestId
       applyMode(result.mode)
       setBusy(undefined)
+      if (requestId !== undefined) setRetryNonce(value => value + 1)
       if (result.mode !== 'controlling') setFeedback('computerControlBusy')
     }).catch((error: unknown) => {
-      if (!alive(operation)) return
+      if (disposedRef.current || operation !== operationRef.current) return
       setBusy(undefined)
       if (error instanceof ComputerApiError && error.status === 409) {
         applyMode('other')
@@ -254,28 +273,47 @@ export function ComputerPanel({ computer, sessionId, close, local, t }: Computer
         setPhase('disconnected')
       }
     })
-  }
+  }, [applyMode, computer, sessionId, signInApi, viewerId])
 
-  const releaseControl = (): void => {
+  useEffect(() => {
+    if (signIn !== undefined) takeControl(signIn.requestId)
+  }, [signIn, takeControl])
+
+  const releaseControl = (cancel = false): void => {
     if (busy !== undefined || modeRef.current !== 'controlling') return
     const operation = ++operationRef.current
     ++requestEpochRef.current
     setBusy('release')
     setFeedback(undefined)
-    void inputQueue.current.then(() => computer.releaseControl(viewerId, undefined, sessionId)).then((result) => {
+    const requestId = claimedSignIn.current
+    void inputQueue.current.then(() => {
+      if (requestId !== undefined && signInApi !== undefined && sessionId !== undefined) {
+        return cancel ? signInApi.cancel(sessionId, requestId, viewerId) : signInApi.complete(sessionId, requestId, viewerId)
+      }
+      return computer.releaseControl(viewerId, undefined, sessionId)
+    }).then((result) => {
       if (!alive(operation)) return
+      ++requestEpochRef.current
+      claimedSignIn.current = undefined
+      if (requestId !== undefined) {
+        frameRef.current = undefined
+        setFrame(undefined)
+        setRetryNonce(value => value + 1)
+      }
       applyMode(result.mode)
       setBusy(undefined)
     }).catch((error: unknown) => {
       if (!alive(operation)) return
       setBusy(undefined)
-      setFeedback(error instanceof ComputerApiError && error.status === 404 ? 'computerInputRejected' : 'computerControlBusy')
+      setFeedback(requestId !== undefined ? 'computerSignInError'
+        : error instanceof ComputerApiError && error.status === 404 ? 'computerInputRejected' : 'computerControlBusy')
     })
   }
 
   const sendAction = (action: ComputerInputAction): void => {
     if (local !== undefined || busy !== undefined || modeRef.current !== 'controlling' || phase !== 'ready'
       || queuedInputs.current >= MAX_QUEUED_INPUTS) return
+    setFeedback(undefined)
     queuedInputs.current++
     inputQueue.current = inputQueue.current.then(async () => {
       if (disposedRef.current || modeRef.current !== 'controlling') return
@@ -366,21 +404,23 @@ export function ComputerPanel({ computer, sessionId, close, local, t }: Computer
     sendAction({ kind: 'scroll', x: point.x, y: point.y, delta })
   }
 
-  const status = phase === 'loading'
-    ? t('computerLoading')
-    : phase === 'unavailable'
-      ? t('computerUnavailable')
-      : phase === 'disconnected'
-        ? t('computerDisconnected')
-        : botActive
-          ? t('computerBotActive')
-          : mode === 'controlling'
-            ? t('computerControlling')
-            : mode === 'other'
-              ? t('computerOtherController')
-              : t('computerWatching')
-  const hasFrame = frame !== undefined
-  const frameSource = frame === undefined ? undefined : `data:image/jpeg;base64,${frame.jpeg}`
+  const privateSignIn = frame?.signIn ?? claimedSignIn.current
+  const status = privateSignIn !== undefined && phase === 'ready'
+    ? t('computerSignInPrivate')
+    : phase === 'loading'
+      ? t('computerLoading')
+      : phase === 'unavailable'
+        ? t('computerUnavailable')
+        : phase === 'disconnected'
+          ? t('computerDisconnected')
+          : botActive
+            ? t('computerBotActive')
+            : mode === 'controlling'
+              ? t('computerControlling')
+              : mode === 'other'
+                ? t('computerOtherController')
+                : t('computerWatching')
+  const frameSource = frame === undefined || frame.jpeg === '' ? undefined : `data:image/jpeg;base64,${frame.jpeg}`
   const scopeMeta = computerStatus?.computer?.permissionScope === 'bot'
     ? t('computerScopeBotMeta')
     : computerStatus?.computer?.permissionScope === 'workspace'
@@ -400,16 +440,24 @@ export function ComputerPanel({ computer, sessionId, close, local, t }: Computer
         <div className={css.controls}>
           {phase === 'disconnected' && <Button variant="ghost" size="sm" icon={<IconRefreshOutlineRegular size={14} />} onClick={() => { setRetryNonce(value => value + 1) }}>{t('computerRetry')}</Button>}
           {mode === 'controlling'
-            ? <Button variant="outline" size="sm" disabled={busy !== undefined} icon={<IconStopFillRegular size={14} />} onClick={releaseControl}>{t('computerHandBack')}</Button>
-            : <Button variant="primary" size="sm" disabled={busy !== undefined || phase === 'unavailable'} onClick={takeControl}>{t('computerTakeControl')}</Button>}
+            ? <Button variant={privateSignIn === undefined ? 'outline' : 'primary'} size="sm" disabled={busy !== undefined}
+              icon={<IconStopFillRegular size={14} />} onClick={() => { releaseControl() }}>{t(privateSignIn === undefined ? 'computerHandBack' : 'computerSignInDone')}</Button>
+            : <Button variant="primary" size="sm" disabled={busy !== undefined || phase === 'unavailable'}
+              onClick={() => { takeControl(privateSignIn) }}>{t(privateSignIn === undefined ? 'computerTakeControl' : 'computerSignInTake')}</Button>}
+          {mode === 'controlling' && privateSignIn !== undefined && (
+            <Button variant="ghost" size="sm" disabled={busy !== undefined} onClick={() => { releaseControl(true) }}>{t('cancel')}</Button>
+          )}
           {local !== undefined
             ? <Button variant="ghost" size="sm" icon={<IconStopFillRegular size={14} />} onClick={close}>{t('macComputerStop')}</Button>
             : <Button variant="ghost" size="sm" icon={<IconCloseOutlineRegular size={14} />} aria-label={t('computerClose')} onClick={close} />}
         </div>
       </header>
+      {privateSignIn !== undefined && mode === 'controlling' && (
+        <div className={css.signInNotice}>{t('computerSignInHint')} {t('computerSignInReturn')}</div>
+      )}
       {feedback !== undefined && <div className={css.notice} role="alert">{t(feedback)}</div>}
       <div className={css.viewport} data-computer-viewport>
-        {hasFrame && frameSource !== undefined
+        {frameSource !== undefined
           ? <img
             ref={imageRef}
             className={css.screen}
@@ -425,8 +473,8 @@ export function ComputerPanel({ computer, sessionId, close, local, t }: Computer
             onWheel={local === undefined ? onWheel : undefined}
           />
           : <div className={css.empty}>
-            <StateDot state={phase === 'loading' ? 'ongoing' : 'error'} size={14} />
-            <p>{status}</p>
+            <StateDot state={phase === 'loading' || privateSignIn !== undefined ? 'ongoing' : 'error'} size={14} />
+            <p>{privateSignIn !== undefined && phase === 'ready' ? t('computerSignInWaiting') : status}</p>
             {phase === 'disconnected' && <Button variant="outline" size="sm" onClick={() => { setRetryNonce(value => value + 1) }}>{t('computerRetry')}</Button>}
           </div>}
       </div>

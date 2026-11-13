@@ -92,3 +92,19 @@
   margin: 2px 0 0;
   color: var(--yh-alias-label-secondary);
 }
+
+.signIn {
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.signIn .content {
+  flex: 1 1 180px;
+}
+
+.signInActions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 6px;
+  margin-inline-start: auto;
+}

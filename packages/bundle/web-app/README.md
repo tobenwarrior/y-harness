@@ -83,6 +83,8 @@ The private `vpsJournal` configuration grants selected owner Bots with a dedicat
 
 `vpsVaultRequests` lets selected owner Bots open a credential request during a direct chat turn. The Host publishes request metadata through the authenticated operator route and watches a local Vault broker for the receipt. Desktop sends the value to the broker's separate owner socket. See [Bot requests for VPS Vault keys](../../../docs/user/guide/vps.md#let-a-bot-request-a-key-in-chat).
 
+Firefox-enabled desktop-only Bots can request a sign-in handoff in a direct owner chat. The authenticated Computer route pairs each request with its Bot Session and the viewer's control lease. It withholds frames from other viewers, and sends private keyboard input through a pipe to the Computer. See [Firefox setup and sign-in](../../../docs/user/guide/vps.md#enable-firefox-for-selected-bots).
+
 The native macOS Desktop Host registers `mac_computer` on operator presets. It relays actions over its private Electron IPC channel with the invoking Session ID. The Electron main process authorizes the currently shared Bot before capturing the primary display or delivering input.
 
 ### Per-session agent setup

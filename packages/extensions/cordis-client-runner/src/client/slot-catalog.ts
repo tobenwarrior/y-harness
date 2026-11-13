@@ -114,7 +114,7 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
     ],
     replaceRisk: 'shadows-shipped-ui',
     example: 'return {\n  inject: [\'slots\'],\n  apply(ctx) {\n    ctx.slots.inject(\'bots.conversation\', () => ctx.slots.register(\n      { name: \'bots.conversation\' },\n      () => React.createElement(\'div\', null, \'hello\'),\n    ))\n  },\n}',
-    source: 'packages/client/ui-bots/src/client/panel.tsx:24',
+    source: 'packages/client/ui-bots/src/client/panel.tsx:31',
   },
   {
     key: 'conversation.approval.detail',
@@ -579,6 +579,7 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
     declaredBy: 'an entry in \'conversation.composer.bar\' (client-ui-conversation), so it exists while that entry is mounted',
     occupants: [
       'client-ui-bots BotVaultRequestCard id \'bot-vault-request\'',
+      'client-ui-bots ComputerSignInCard id \'bot-computer-sign-in\'',
       'client-ui-chat ActivityPill id \'activity\'',
       'client-ui-chat UsagePill id \'usage\'',
     ],

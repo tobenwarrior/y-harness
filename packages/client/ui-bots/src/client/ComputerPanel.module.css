@@ -88,6 +88,15 @@
   line-height: 16px;
 }
 
+.signInNotice {
+  flex: none;
+  padding: 8px 12px;
+  background: var(--yh-alias-bg-layer-2);
+  color: var(--yh-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
 .viewport {
   display: flex;
   min-width: 0;

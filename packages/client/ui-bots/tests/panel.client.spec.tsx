@@ -259,6 +259,7 @@ function panelProps(
     useComputerAvailability,
     useComputerIdentity,
     useComputerTarget,
+    useComputerSignIn: selector => selector(undefined),
     reference: () => reference,
     select: () => {},
     selectGroup: () => {},

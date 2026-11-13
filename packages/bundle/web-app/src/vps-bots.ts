@@ -1,7 +1,5 @@
 /** Assign each owner Bot on a configured VPS its own shell, files and desktop. */
 
-import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
 import type { Context } from '@yharness/cordis'
 import { LocalBashExecutor } from '@yharness/bash-local'
 import { bindManagedBotExecution, createManagedBotExecution, managedBotExecutionFor } from '@yharness/sandbox-policy'
@@ -12,12 +10,11 @@ import type {} from '@yharness/client-connection'
 import type {} from '@yharness/system-prompt'
 import { containerComputer, type VpsComputer } from './computer.ts'
 import * as ComputerTool from './computer-tool.ts'
-import { botComputerRoutesWithLegacy } from './computer-api.ts'
+import { botComputerRoutesWithLegacy, computerSignInRoute } from './computer-api.ts'
 import { VpsRuntime, type VpsBrowserOptions } from './vps-runtime.ts'
 import { registerVpsServiceTools, VpsServices, type VpsServiceAccess } from './vps-services.ts'
 import { registerVpsJournalTool, VpsJournal, type VpsJournalConfig } from './vps-journal.ts'
 
-const exec = promisify(execFile)
 const BOT_TOOLS = new Set([
   'bash', 'read', 'write', 'edit', 'apply_patch', 'glob', 'grep', 'job_output', 'job_list', 'job_kill',
   'vps_computer', 'vps_service_status', 'vps_service_restart', 'vps_service_journal', 'skill', 'search_skills',
@@ -64,12 +61,18 @@ export function mountVpsBots(
   }
   const isDesktopBot = (botId: string): boolean => isManagedBot(botId) || desktopOnlyBotIds.has(botId)
   const browserBotIds = new Set(config.browser?.bots)
+  const hasBrowserSignIn = (botId: string): boolean => browserBotIds.has(botId) && desktopOnlyBotIds.has(botId)
   if ([...browserBotIds].some(botId => !isDesktopBot(botId))) {
     throw new Error('VPS browser access must select private Computer Bots.')
   }
   const browserRuntime = config.browser == null
     ? undefined
     : new VpsRuntime(config.root, config.image, undefined, config.browser)
+  if ([...browserBotIds].some(hasBrowserSignIn)) {
+    ctx.on('webserver/index-inject', (table) => {
+      table.push({ kind: 'global', name: '__YH_BOT_COMPUTER_SIGN_IN__', value: true })
+    })
+  }
   const runtimeFor = (botId: string): VpsRuntime =>
     browserRuntime !== undefined && browserBotIds.has(botId) ? browserRuntime : defaultRuntime
   if (journalConfig?.bots.some(botId => !isDesktopBot(botId))) {
@@ -98,19 +101,19 @@ export function mountVpsBots(
     await runtime.ensure(sessionId)
     const existing = computers.get(sessionId)
     if (existing !== undefined) return existing
-    const computer = containerComputer(async (argv, signal) => {
-      signal.throwIfAborted()
-      const [program, ...args] = runtime.execArgv(sessionId, argv)
-      const { stdout } = await exec(program, args, {
-        encoding: 'buffer', maxBuffer: 4 * 1024 * 1024, timeout: 12_000, signal,
-      })
-      return stdout
-    })
+    const computer = containerComputer((argv, signal, stdin) => runtime.desktopCommand(sessionId, argv, signal, stdin))
     computers.set(sessionId, computer)
     return computer
   }
 
   ctx.inject(['bots', 'connection'], (scope) => {
+    scope.effect(() => scope.connection.fetch.register(computerSignInRoute(async (sessionId) => {
+      const bot = await scope.bots.ownerBotForSession(sessionId)
+      if (bot?.state !== 'active' || !hasBrowserSignIn(bot.id)) return undefined
+      const computer = computers.get(sessionId)
+      if (computer === undefined) return undefined
+      return { status: () => computer.signInRequest(), answer: (...args) => computer.answerSignIn(...args) }
+    })), 'vps-bots: owner sign-in handoff')
     for (const route of botComputerRoutesWithLegacy(async (sessionId) => {
       // Only an explicit allowlist rollout retains the old omitted-session
       // request as the shared legacy display. Fresh managed installations
@@ -172,7 +175,12 @@ export function mountVpsBots(
           ComputerTool.applyVpsBotComputer(agentCtx, async (sessionId) => {
             if (sessionId !== bot.sessionId) throw new Error('VPS Computer requires the owning Bot Session.')
             return computerFor(sessionId, bot.id)
-          })
+          }, hasBrowserSignIn(bot.id) ? async (caller, signal) => {
+            if (caller !== agent || !await scope.bots.isDirectOwnerTurn(caller, signal)) {
+              throw new Error('Computer sign-in is available in a direct owner Bot chat.')
+            }
+            return (await computerFor(bot.sessionId, bot.id)).requestSignIn(signal)
+          } : undefined)
           if (journal !== undefined) registerVpsJournalTool(agentCtx, bot.id, bot.sessionId, journal, agent.ctx)
         })
         return

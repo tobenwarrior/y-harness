@@ -29,6 +29,14 @@ export interface ComputerFrame {
   readonly height: number
   readonly mode: ComputerMode
   readonly botActive: boolean
+  /** An active owner sign-in request. Non-controlling viewers receive an empty JPEG. */
+  readonly signIn?: string
+}
+
+/** Metadata for the owner-only Computer sign-in card. */
+export interface ComputerSignInRequest {
+  readonly id: string
+  readonly canCancel: boolean
 }
 
 /** Bounded human input accepted by the Computer input route. */
@@ -88,6 +96,13 @@ export interface ComputerClient {
    * @param sessionId - Active Bot Session selecting an isolated Cloud Computer.
    */
   input(viewerId: string, action: ComputerInputAction, signal?: AbortSignal, sessionId?: string): Promise<ComputerControlResult>
+  /** Read or respond to sign-in requests on a VPS Bot's Computer. */
+  readonly signIn?: {
+    status(sessionId: string, signal: AbortSignal): Promise<{ readonly request: ComputerSignInRequest | null }>
+    take(sessionId: string, requestId: string, viewerId: string): Promise<ComputerControlResult>
+    complete(sessionId: string, requestId: string, viewerId: string): Promise<ComputerControlResult>
+    cancel(sessionId: string, requestId: string, viewerId?: string): Promise<ComputerControlResult>
+  }
 }
 
 const STATUS_PATH = 'api/computer/status'
@@ -95,6 +110,8 @@ const FRAME_PATH = 'api/computer/frame'
 const TAKE_CONTROL_PATH = 'api/computer/take-control'
 const RELEASE_CONTROL_PATH = 'api/computer/release-control'
 const INPUT_PATH = 'api/computer/input'
+const SIGN_IN_PATH = 'api/computer/sign-in'
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu
 
 function requestOptions(signal: AbortSignal | undefined): { readonly signal?: AbortSignal } {
   return signal === undefined ? {} : { signal }
@@ -136,7 +153,22 @@ function frameOf(value: unknown): ComputerFrame | undefined {
     || !Number.isFinite(value.height) || value.height <= 0 || typeof value.botActive !== 'boolean') return undefined
   const mode = modeOf(value.mode)
   if (mode === undefined) return undefined
-  return { jpeg: value.jpeg, width: value.width, height: value.height, mode, botActive: value.botActive }
+  const signIn = signInId(value.signIn)
+  return { jpeg: value.jpeg, width: value.width, height: value.height, mode, botActive: value.botActive,
+    ...(signIn === undefined ? {} : { signIn }) }
+}
+
+function signInId(value: unknown): string | undefined {
+  return typeof value === 'string' && UUID.test(value) ? value : undefined
+}
+
+function signInStatusOf(value: unknown): { readonly request: ComputerSignInRequest | null } | undefined {
+  if (!isRecord(value)) return undefined
+  const request = value.request
+  if (request === null) return { request: null }
+  if (!isRecord(request) || typeof request.canCancel !== 'boolean') return undefined
+  const id = signInId(request.id)
+  return id === undefined ? undefined : { request: { id, canCancel: request.canCancel } }
 }
 
 function controlOf(value: unknown): ComputerControlResult | undefined {
@@ -194,6 +226,12 @@ export function createComputerClient(): ComputerClient {
     input: (viewerId, action, signal, sessionId) => post(
       INPUT_PATH, withSession({ viewerId, action }, sessionId), controlOf, requestOptions(signal),
     ),
+    signIn: {
+      status: (sessionId, signal) => post(SIGN_IN_PATH, { action: 'status', sessionId }, signInStatusOf, { signal }),
+      take: (sessionId, requestId, viewerId) => post(SIGN_IN_PATH, { action: 'take', sessionId, requestId, viewerId }, controlOf),
+      complete: (sessionId, requestId, viewerId) => post(SIGN_IN_PATH, { action: 'complete', sessionId, requestId, viewerId }, controlOf),
+      cancel: (sessionId, requestId, viewerId) => post(SIGN_IN_PATH, { action: 'cancel', sessionId, requestId, viewerId }, controlOf),
+    },
   }
 }
 

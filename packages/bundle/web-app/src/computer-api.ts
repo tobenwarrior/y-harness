@@ -2,7 +2,7 @@
 
 import type { Branded } from '@yharness/brand'
 import type { ConnectionFetchRoute } from '@yharness/client-connection'
-import type { VpsComputer } from './computer.ts'
+import type { ComputerSignInAction, VpsComputer } from './computer.ts'
 
 type ViewerId = Branded<'computer-viewer-id'>
 type Action = (viewer: ViewerId, signal: AbortSignal) => Promise<unknown>
@@ -18,6 +18,11 @@ interface ComputerRouteController {
 interface ResolvedComputer {
   readonly controller: ComputerRouteController
   readonly metadata?: ComputerStatusMetadata
+}
+
+interface ComputerSignInRouteTarget {
+  readonly status: () => ReturnType<VpsComputer['signInRequest']>
+  readonly answer: VpsComputer['answerSignIn']
 }
 
 /** Cloud Computer location exposed by an authenticated status response. */
@@ -280,4 +285,61 @@ export function botComputerRoutesWithLegacy(
       })
     },
   })
+}
+
+/**
+ * Mount metadata and owner actions for eligible Bot sign-in handoffs.
+ * @param resolve - Resolve an exact owner Session with sign-in access, without starting its desktop.
+ * @returns The authenticated sign-in route. It accepts no form values or credentials.
+ */
+export function computerSignInRoute(
+  resolve: (sessionId: string) => Promise<ComputerSignInRouteTarget | undefined>,
+): ConnectionFetchRoute {
+  return {
+    path: '/api/computer/sign-in',
+    methods: ['POST'],
+    requestBody: 'streaming',
+    async fetch(request) {
+      let payload: unknown
+      try {
+        payload = await readPayload(request)
+      } catch (error) {
+        // Malformed or interrupted input never reaches the controller.
+        void error
+        return json({ error: 'invalid-request' }, 400)
+      }
+      if (!isRecord(payload)) return json({ error: 'invalid-request' }, 400)
+      const target = sessionTarget(payload, true)
+      if (target === undefined) return json({ error: 'invalid-request' }, 400)
+      const action = payload.action
+      if (action === 'status' && Object.keys(payload).length === 2) {
+        try {
+          const computer = await resolve(target.id)
+          return json({ request: computer?.status() ?? null })
+        } catch (error) {
+          // Resolution errors must not disclose workspace metadata.
+          void error
+          return json({ error: 'computer-unavailable' }, 409)
+        }
+      }
+      const id = payload.requestId
+      const viewer = viewerId(payload.viewerId)
+      if (typeof id !== 'string' || !VIEWER_ID.test(id) || !signInAction(action)
+        || (viewer === undefined ? action !== 'cancel' || Object.keys(payload).length !== 3 : Object.keys(payload).length !== 4)) {
+        return json({ error: 'invalid-request' }, 400)
+      }
+      try {
+        const computer = await resolve(target.id)
+        if (computer !== undefined) return json(await computer.answer(id, action, viewer, request.signal))
+      } catch (error) {
+        // Lease and provider diagnostics are private to the Host.
+        void error
+      }
+      return json({ error: 'computer-unavailable' }, 409)
+    },
+  }
+}
+
+function signInAction(value: unknown): value is ComputerSignInAction {
+  return value === 'take' || value === 'complete' || value === 'cancel'
 }

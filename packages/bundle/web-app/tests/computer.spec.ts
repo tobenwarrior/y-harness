@@ -26,7 +26,7 @@ afterEach(() => {
 
 interface Fixture {
   host: ComputerHost
-  commands: Array<{ command: string; args: readonly string[]; env: Readonly<Record<string, string>> }>
+  commands: Array<{ command: string; args: readonly string[]; env: Readonly<Record<string, string>>; stdin?: string }>
   setNow: (value: number) => void
   dispose: () => Promise<void>
 }
@@ -36,8 +36,8 @@ function fixture(): Fixture {
   tempRoots.push(root)
   let now = 1_000
   const commands: Fixture['commands'] = []
-  const runner: ComputerCommandRunner = async (command, args, env) => {
-    commands.push({ command, args, env })
+  const runner: ComputerCommandRunner = async (command, args, env, _signal, stdin) => {
+    commands.push({ command, args, env, ...(stdin === undefined ? {} : { stdin }) })
     if (command === 'scrot') {
       const outputPath = args.at(-1)
       if (outputPath === undefined) throw new Error('test scrot path missing')
@@ -57,6 +57,75 @@ function fixture(): Fixture {
 }
 
 describe('private computer Host', () => {
+  it('gives the owner an exclusive sign-in handoff and resumes only after that viewer finishes', async () => {
+    const f = fixture()
+    try {
+      const waiting = f.host.requestSignIn(new AbortController().signal)
+      await expect.poll(() => f.host.signInRequest()).toMatchObject({ id: expect.any(String) })
+      const request = f.host.signInRequest()!
+      await expect(f.host.observe()).rejects.toBeInstanceOf(ComputerLeaseError)
+      await expect(f.host.takeControl(viewers.alice)).rejects.toBeInstanceOf(ComputerLeaseError)
+      await expect(f.host.answerSignIn(request.id, 'take', viewers.alice)).resolves.toEqual({ mode: 'controlling' })
+      await expect(f.host.frame(viewers.bob)).resolves.toMatchObject({ jpeg: '', mode: 'other', signIn: request.id })
+      await expect(f.host.frame(viewers.alice)).resolves.toMatchObject({ jpeg: expect.not.stringMatching(/^$/u), mode: 'controlling' })
+      await f.host.input(viewers.alice, { kind: 'key', key: '$' })
+      await f.host.input(viewers.alice, { kind: 'text', text: 'fixture-$value' })
+      expect(f.commands.slice(-2).map(({ args, stdin }) => [args, stdin])).toEqual([
+        [['-'], 'key --clearmodifiers dollar\n'],
+        [['type', '--clearmodifiers', '--delay', '12', '--file', '-'], 'fixture-$value'],
+      ])
+      await expect(f.host.answerSignIn(request.id, 'cancel')).rejects.toBeInstanceOf(ComputerLeaseError)
+      await expect(f.host.answerSignIn(request.id, 'complete', viewers.bob)).rejects.toBeInstanceOf(ComputerLeaseError)
+      await expect(f.host.answerSignIn(request.id, 'complete', viewers.alice)).resolves.toEqual({ mode: 'watching' })
+      await expect(waiting).resolves.toBe('completed')
+      expect(f.host.signInRequest()).toBeUndefined()
+      await expect(f.host.observe()).resolves.toMatchObject({ mode: 'other' })
+    } finally {
+      await f.dispose()
+    }
+  })
+
+  it('keeps sign-in private after the turn stops and lets the owner reclaim the Computer', async () => {
+    const f = fixture()
+    try {
+      const controller = new AbortController()
+      const waiting = f.host.requestSignIn(controller.signal)
+      await expect.poll(() => f.host.signInRequest()).toBeDefined()
+      const { id } = f.host.signInRequest()!
+      await f.host.answerSignIn(id, 'take', viewers.alice)
+      controller.abort()
+      await expect(waiting).resolves.toBe('interrupted')
+      await expect(f.host.releaseControl(viewers.alice)).resolves.toEqual({ mode: 'watching' })
+      await expect(f.host.botAction({ kind: 'click', x: 0, y: 0, button: 1 })).rejects.toBeInstanceOf(ComputerLeaseError)
+      await expect(f.host.frame(viewers.bob)).resolves.toMatchObject({ jpeg: '', signIn: id })
+      await f.host.answerSignIn(id, 'take', viewers.bob)
+      await expect(f.host.answerSignIn(id, 'complete', viewers.alice)).rejects.toBeInstanceOf(ComputerLeaseError)
+      await f.host.answerSignIn(id, 'complete', viewers.bob)
+      expect(f.host.signInRequest()).toBeUndefined()
+    } finally {
+      await f.dispose()
+    }
+  })
+
+  it('drops a frame that started before a private handoff', async () => {
+    const capture = Promise.withResolvers<Buffer>()
+    const host = new ComputerHost({ display: ':99', authorityPath: '/xauthority' }, { capture: () => capture.promise })
+    try {
+      const watching = host.frame(viewers.bob)
+      const waiting = host.requestSignIn(new AbortController().signal)
+      await expect.poll(() => host.signInRequest()).toBeDefined()
+      const { id } = host.signInRequest()!
+      await host.answerSignIn(id, 'take', viewers.alice)
+      capture.resolve(Buffer.from([0xff, 0xd8]))
+      await expect(watching).resolves.toMatchObject({ jpeg: '', signIn: id })
+      await host.answerSignIn(id, 'cancel', viewers.alice)
+      await expect(waiting).resolves.toBe('cancelled')
+    } finally {
+      capture.resolve(Buffer.from([0xff, 0xd8]))
+      await host.dispose()
+    }
+  })
+
   it('captures a fixed-size JPEG with the cursor through a private temp path and scrubbed env', async () => {
     process.env.DEEPSEEK_API_KEY = 'should-not-reach-x11'
     process.env.COMPUTER_TEST_VISIBLE = 'visible'

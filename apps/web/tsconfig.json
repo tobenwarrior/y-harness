@@ -58,6 +58,7 @@
     "tests/bot-group.e2e.ts",
     "tests/bot-conversation.e2e.ts",
     "tests/bot-vault-request.e2e.ts",
+    "tests/bot-computer-sign-in.e2e.ts",
     "tests/bot-mentions.e2e.ts",
     "tests/plan-review.e2e.ts",
     "tests/steering.e2e.ts",

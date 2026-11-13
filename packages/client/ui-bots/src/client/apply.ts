@@ -12,7 +12,7 @@ import type { BotAvatar } from '@yharness/bots/client'
 import { createSnapshotStore } from '@yharness/client-store'
 import type { MainPanelId } from '@yharness/client-ui-layout/client'
 import { BotWorkspaceController } from './controller.ts'
-import { BotReplyAvatar, BotsConversation, BotsPanel, BotsRoster, type BotReplyAvatarFace } from './panel.tsx'
+import { BotReplyAvatar, BotsConversation, BotsPanel, BotsRoster, type BotReplyAvatarFace, type ComputerSignInTarget } from './panel.tsx'
 import { en, zh } from './locales.ts'
 import { createSharedBotsClient } from './shared-client.ts'
 import { createComputerAvailability } from './computer-availability.ts'
@@ -20,6 +20,7 @@ import { createComputerClient } from './computer-client.ts'
 import { ComputerGlyph } from './ComputerAction.tsx'
 import { createBotReferenceSource } from './bot-reference-source.ts'
 import { BotVaultRequestCard } from './BotVaultRequestCard.tsx'
+import { ComputerSignInCard } from './ComputerSignInCard.tsx'
 
 /** Stable main-panel identity shared by the sidebar entry and main occupant. */
 export const PANEL_ID = 'bots' as MainPanelId
@@ -49,6 +50,8 @@ export function apply(ctx: Context): void {
   const computer = createComputerClient()
   const computerAvailability = createComputerAvailability(computer)
   const computerTarget = createSnapshotStore<string | null>(null)
+  const computerSignIn = createSnapshotStore<ComputerSignInTarget | undefined>(undefined)
+  let signInAttempt = 0
   const workspace = controller.face().hooks.workspace
   const selectedSessionId = (): string | undefined => {
     const snapshot = workspace.getSnapshot()
@@ -126,12 +129,16 @@ export function apply(ctx: Context): void {
       inject: () => {
         const face = controller.face()
         return {
-          ...face, computer, setComputerTarget: (sessionId: string | null) => { computerTarget.set(sessionId) },
+          ...face, computer, setComputerTarget: (sessionId: string | null) => {
+            computerSignIn.set(undefined)
+            computerTarget.set(sessionId)
+          },
           hooks: {
             ...face.hooks,
             computerAvailability: computerAvailability.source,
             computerIdentity: computerAvailability.identity,
             computerTarget,
+            computerSignIn,
           },
         }
       },
@@ -142,6 +149,17 @@ export function apply(ctx: Context): void {
     const disposeVaultRequest = ctx.slots.inject('conversation.composer.dock', () => ctx.slots.register({
       name: 'conversation.composer.dock', id: 'bot-vault-request', order: -1, locale: 'bots',
     }, BotVaultRequestCard))
+    const disposeSignIn = ctx.slots.inject('conversation.composer.dock', () => ctx.slots.register({
+      name: 'conversation.composer.dock', id: 'bot-computer-sign-in', order: -1, locale: 'bots',
+      inject: () => ({
+        computer,
+        openSignIn: (sessionId: string, requestId: string) => {
+          if (selectedSessionId() !== sessionId) return
+          computerSignIn.set({ sessionId, requestId, attempt: ++signInAttempt })
+          computerTarget.set(sessionId)
+        },
+      }),
+    }, ComputerSignInCard))
     const disposeReplyAvatar = ctx.slots.inject('conversation.bot.reply.avatar', () => ctx.slots.register({
       name: 'conversation.bot.reply.avatar',
       inject: (): BotReplyAvatarFace => {
@@ -164,6 +182,7 @@ export function apply(ctx: Context): void {
       disposeChanged()
       disposeScheduleChanged()
       disposeVaultRequest()
+      disposeSignIn()
       disposeSidebar()
       disposeReplyAvatar()
       disposeConversation()

@@ -10,10 +10,11 @@
  * @module @yharness/web-app/vps-runtime
  */
 
-import { spawn } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { mkdir, lstat } from 'node:fs/promises'
 import { isAbsolute, relative, resolve, sep } from 'node:path'
+import { promisify } from 'node:util'
 
 const PODMAN = '/usr/bin/podman'
 const SESSION_ID_PATTERN = /^bot-session-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u
@@ -26,6 +27,7 @@ const DESKTOP_HEALTH_CACHE_MS = 500
 const BROWSER_PROFILE = '/var/lib/yharness-browser-profile'
 const BROWSER_NETWORK = 'slirp4netns:allow_host_loopback=false'
 const BROWSER_READY = '/tmp/yharness-browser-ready'
+const exec = promisify(execFile)
 
 /** Exit facts returned by the Podman command seam. */
 export interface VpsCommandResult {
@@ -171,6 +173,31 @@ export class VpsRuntime {
     if (options.interactive === true) command.push('--tty')
     command.push('--workdir', workdir, containerName(this.rootPath, sessionId), ...argv)
     return Object.freeze(command)
+  }
+
+  /**
+   * Run a Computer command in the selected Session's ready container.
+   * @param sessionId - Roster UUID for the Bot Session.
+   * @param argv - Fixed command and arguments from the Computer controller.
+   * @param signal - Request cancellation.
+   * @param stdin - Optional owner input carried by a pipe.
+   * @returns Command output bytes for the Computer controller.
+   */
+  async desktopCommand(sessionId: string, argv: readonly string[], signal: AbortSignal, stdin?: string): Promise<Buffer> {
+    signal.throwIfAborted()
+    const [program, ...args] = this.execArgv(sessionId, argv, { stdin: stdin !== undefined })
+    try {
+      const child = exec(program, args, { encoding: 'buffer', maxBuffer: 4 * 1024 * 1024, timeout: 12_000, signal })
+      if (stdin !== undefined) {
+        child.child.stdin?.on('error', (error) => { void error })
+        child.child.stdin?.end(stdin)
+      }
+      return (await child).stdout
+    } catch (error) {
+      if (stdin === undefined) throw error
+      signal.throwIfAborted()
+      throw new VpsRuntimeError('The private Computer input could not be sent')
+    }
   }
 
   private async ensureOne(sessionId: string): Promise<void> {

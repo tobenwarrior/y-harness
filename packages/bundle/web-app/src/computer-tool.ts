@@ -4,7 +4,8 @@ import type { Context } from '@yharness/cordis'
 import { AttachmentId } from '@yharness/attachment'
 import type { ContentBlock } from '@yharness/llm'
 import type { MacComputerBridge } from './mac-computer.ts'
-import { defineTool } from '@yharness/tools'
+import { defineTool, type ToolExecution } from '@yharness/tools'
+import type { ComputerSignInResult } from './computer.ts'
 
 /** Stable Cordis plugin name. */
 export const name = 'vps-computer-tool'
@@ -49,23 +50,32 @@ export function apply(ctx: Context): void {
  * Expose the managed computer of the exact calling Bot Session.
  * @param ctx - Agent scope carrying tools and attachments.
  * @param resolve - Resolves the current owner Bot's desktop from the calling Session.
+ * @param signIn - Optional handoff restricted to a direct owner turn.
  */
-export function applyVpsBotComputer(ctx: Context, resolve: (sessionId: string) => Promise<ComputerAgentControls>): void {
-  registerVpsComputer(ctx, resolve, 'this Bot’s private VPS desktop')
+export function applyVpsBotComputer(
+  ctx: Context,
+  resolve: (sessionId: string) => Promise<ComputerAgentControls>,
+  signIn?: ComputerToolTarget['signIn'],
+): void {
+  registerVpsComputer(ctx, resolve, 'this Bot’s private VPS desktop', signIn)
 }
 
 function registerVpsComputer(
   ctx: Context,
   resolve: (sessionId: string) => Promise<ComputerAgentControls>,
   desktop: string,
+  signIn?: ComputerToolTarget['signIn'],
 ): void {
   registerComputerTool(ctx, {
     name: 'vps_computer',
     description: `Observe or operate ${desktop} shown in the Computer panel. `
-      + 'Observe before targeting visible controls. The tool pauses while the user is in control.',
+      + 'Observe before targeting visible controls. The tool pauses while the user is in control.'
+      + (signIn === undefined ? '' : ' For a website sign-in or verification that needs the owner, use request_sign_in. '
+        + 'The owner uses the Computer directly. Never ask for a password or code in chat.'),
     keyDescription: 'X11 key or chord, for example Return or ctrl+a.',
     observe: async (sessionId, signal) => (await resolve(sessionId)).observe(signal),
     act: async (sessionId, action, signal) => (await resolve(sessionId)).actAsBot(action, signal),
+    ...(signIn === undefined ? {} : { signIn }),
   })
 }
 
@@ -92,6 +102,7 @@ interface ComputerToolTarget {
   readonly keyDescription: string
   observe(sessionId: string, signal: AbortSignal): ReturnType<ComputerAgentControls['observe']>
   act(sessionId: string, action: object, signal: AbortSignal): Promise<unknown>
+  readonly signIn?: (agent: NonNullable<ToolExecution['agent']>, signal: AbortSignal) => Promise<ComputerSignInResult>
 }
 
 function registerComputerTool(ctx: Context, target: ComputerToolTarget): void {
@@ -101,9 +112,11 @@ function registerComputerTool(ctx: Context, target: ComputerToolTarget): void {
     parameters: {
       action: {
         type: 'string',
-        enum: ['observe', 'move', 'click', 'drag', 'scroll', 'key', 'text'],
+        enum: ['observe', 'move', 'click', 'drag', 'scroll', 'key', 'text',
+          ...(target.signIn === undefined ? [] : ['request_sign_in' as const])],
         required: true,
-        description: 'Observe the screen or send one pointer, keyboard, or text action.',
+        description: 'Observe the screen or send one pointer, keyboard, or text action.'
+          + (target.signIn === undefined ? '' : ' Request sign-in with no other arguments.'),
       },
       x: { type: 'integer', description: 'Horizontal pixel for move, click, drag, or scroll.' },
       y: { type: 'integer', description: 'Vertical pixel for move, click, drag, or scroll.' },
@@ -138,6 +151,17 @@ function registerComputerTool(ctx: Context, target: ComputerToolTarget): void {
     async execute(args, exec) {
       const { action, ...values } = args
       const sessionId = exec.agent?.session.id ?? ''
+      if (action === 'request_sign_in') {
+        if (exec.agent === undefined || target.signIn === undefined || Object.keys(values).length !== 0) {
+          throw new Error('Computer sign-in takes no arguments and requires the owner Bot chat.')
+        }
+        const result = await target.signIn(exec.agent, exec.signal)
+        switch (result) {
+          case 'completed': return { message: 'The owner returned the Computer. Observe the current page before continuing.' }
+          case 'cancelled': return { message: 'The owner declined the sign-in request.' }
+          case 'interrupted': return { message: 'The sign-in wait ended. Wait for the owner before continuing with the site.' }
+        }
+      }
       if (action !== 'observe') {
         await target.act(sessionId, { kind: action, ...values }, exec.signal)
         return { message: 'Computer input sent.' }
