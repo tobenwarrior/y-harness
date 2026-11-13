@@ -53,14 +53,28 @@ export interface LauncherGrants {
 }
 
 /**
+ * The executable builder places the static Linux launcher in the target's
+ * existing resource directory. SEA's virtual filesystem cannot execute an
+ * extensionless helper, so packaged Linux processes use that real sibling;
+ * ordinary Node processes continue to resolve the platform npm package.
+ * @returns the packaged launcher path, or undefined outside a packaged Linux runtime.
+ */
+function packagedLauncherPath(): string | undefined {
+  if (process.platform !== 'linux' || !('pkg' in process)) return undefined
+  return join(dirname(process.execPath), `linux-${process.arch}`, LAUNCHER_BIN)
+}
+
+/**
  * Path of the launcher binary for this host: resolved from the canonical
  * per-platform npm package `@yharness/node-addon-system-<platform>-<arch>`,
  * with a fallback to the legacy
  * `@deepseek-ai/node-addon-system-<platform>-<arch>` package for existing
- * installs. npm's `os`/`cpu` fields make installers fetch only the matching
- * one. When neither package is resolvable — a platform without one, or an
- * install that skipped the optional dependency — the returned fallback path
- * points inside this package's own `node_modules` and simply never exists.
+ * installs. Packaged Linux SEA runtimes instead use the real
+ * `linux-<arch>/landlock-run` resource sidecar beside the executable. npm's
+ * `os`/`cpu` fields make installers fetch only the matching platform package.
+ * When neither package is resolvable — a platform without one, or an install
+ * that skipped the optional dependency — the returned fallback path points
+ * inside this package's own `node_modules` and simply never exists.
  * Existence is deliberately not checked either way: {@link probe} is the
  * single availability signal (a missing binary probes `unusable` the same way
  * an unenforcing kernel does).
@@ -72,6 +86,8 @@ export interface LauncherGrants {
 export function launcherPath(
   resolvePackageJson: (specifier: string) => string = createRequire(import.meta.url).resolve,
 ): string {
+  const packaged = packagedLauncherPath()
+  if (packaged !== undefined) return packaged
   const [canonicalPackage] = platformPackageNames()
   try {
     const { manifest } = resolvePlatformPackageJson(resolvePackageJson)

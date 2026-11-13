@@ -1053,6 +1053,20 @@ describe('Python release workflows', () => {
     expect(JSON.stringify(manylinuxSmoke)).toContain('-e DSH_TELEMETRY_DISABLED')
   })
 
+  it('prepares the musl compiler before packaging Linux runtime wheels', () => {
+    const build = workflowJob(loadWorkflow('.github/workflows/build-exe-for-python-sdk.yml'), 'build')
+    if (!Array.isArray(build.steps)) throw new TypeError('Python wheel build must define steps')
+    const steps = build.steps.filter(isRecord)
+    const landlock = steps.find(step => step.name === 'Install Linux Landlock build tools')
+    const singleExe = steps.find(step => step.name === 'Build single-exe')
+    if (!isRecord(landlock) || typeof landlock.run !== 'string' || !isRecord(singleExe)) {
+      throw new TypeError('Python wheel build must prepare Landlock before its executable')
+    }
+    expect(landlock).toMatchObject({ if: "runner.os == 'Linux'" })
+    expect(landlock.run).toContain('sudo apt-get install -yq musl-tools')
+    expect(steps.indexOf(landlock)).toBeLessThan(steps.indexOf(singleExe))
+  })
+
   it('uses the shared macOS deployment-target check in GitLab', () => {
     const workflow = loadWorkflow('.gitlab-ci.yml')
     const runtimeWheel = workflow['.runtime-wheel']

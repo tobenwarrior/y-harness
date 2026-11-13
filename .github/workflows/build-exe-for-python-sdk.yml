@@ -219,6 +219,13 @@ jobs:
           done
           exit 1
 
+      - name: Install Linux Landlock build tools
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          sudo apt-get update -q
+          sudo apt-get install -yq musl-tools
+
       - name: Rebuild Linux node-pty against manylinux 2.28
         if: runner.os == 'Linux'
         env:
