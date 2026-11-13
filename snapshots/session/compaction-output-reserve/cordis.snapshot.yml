@@ -18,6 +18,7 @@
     headroomTokens: 1800
     retainTokens: 20
     maxTokens: 32
+    compactionRetries: 0
 
 - insert:
     - id: llm-replay

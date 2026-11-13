@@ -25,7 +25,6 @@
     policy: !!js "(process.env.DSH_PERMISSION_MODE ?? (process.env.DSH_SNAPSHOT === undefined ? 'workspace-write' : 'danger-full-access')) === 'danger-full-access' ? 'never' : 'ask'"
 
 - id: permission
-  name: '@yharness/permission-presets'
   config:
     defaultPreset: !!js "process.env.DSH_PERMISSION_MODE ?? 'approve-for-me'"
     presets:
