@@ -2841,14 +2841,15 @@ describe('dynamic nested workspace context injection', () => {
     }
   })
 
-  it('attaches instructions from every file touched by a successful apply_patch result', async () => {
+  it('attaches instructions from added files and both sides of a move reported by apply_patch', async () => {
     const root = await tempRepo()
     const home = await tempRepo()
+    const ctx = new Context()
     try {
       await mkdir(join(root, '.git'), { recursive: true })
       await write(join(root, 'pkg/AGENTS.md'), 'nested package rule')
       await write(join(root, 'other/AGENTS.md'), 'other package rule')
-      const ctx = new Context()
+      await write(join(root, 'archive/AGENTS.md'), 'archive package rule')
       await mountFileToolsAndAgentInstructions(ctx, { dshHome: home, maxBytes: 65536 })
       const agent = await stubAgent(root)
 
@@ -2861,7 +2862,10 @@ describe('dynamic nested workspace context injection', () => {
             '*** Begin Patch',
             '*** Add File: pkg/new.txt',
             '+one',
-            '*** Add File: other/new.txt',
+            '*** Update File: other/old.txt',
+            '*** Move to: archive/old.txt',
+            '@@',
+            '-old',
             '+two',
             '*** End Patch',
           ].join('\n'),
@@ -2873,7 +2877,36 @@ describe('dynamic nested workspace context injection', () => {
       const rendered = blocksText(context.content)
       expect(rendered).toContain('nested package rule')
       expect(rendered).toContain('other package rule')
+      expect(rendered).toContain('archive package rule')
     } finally {
+      await ctx.fiber.dispose()
+      await rm(root, { recursive: true, force: true })
+      await rm(home, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps the next step clear when a patch result has unparseable input', async () => {
+    const root = await tempRepo()
+    const home = await tempRepo()
+    const ctx = new Context()
+    try {
+      await mkdir(join(root, '.git'), { recursive: true })
+      await write(join(root, 'pkg/AGENTS.md'), 'nested package rule')
+      await mountFileToolsAndAgentInstructions(ctx, { dshHome: home, maxBytes: 65536 })
+      const agent = await stubAgent(root)
+
+      ctx.emit('tools/result', stubToolExecution({
+        signal: testToolSignal,
+        callId: ToolCallId('invalid-patch-result'),
+        name: 'apply_patch',
+        arguments: { input: '*** Begin Patch\n*** Add File: pkg/new.txt\n+one' },
+        agent,
+      }), { content: [], isError: false, value: null })
+
+      await syncAgentInstructions(ctx, agent)
+      expect(agent.inbox.nextStep).toEqual([])
+    } finally {
+      await ctx.fiber.dispose()
       await rm(root, { recursive: true, force: true })
       await rm(home, { recursive: true, force: true })
     }

@@ -61,6 +61,10 @@ describe('Computer HTTP client', () => {
         available: true,
         computer: { location: 'vps', permissionScope: 'admin' },
       }))
+      .mockResolvedValueOnce(response({
+        available: true,
+        computer: { id: 'x'.repeat(257), location: 'vps', permissionScope: 'bot' },
+      }))
     vi.stubGlobal('fetch', fetchMock)
     const client = createComputerClient()
 
@@ -74,6 +78,67 @@ describe('Computer HTTP client', () => {
       computer: { location: 'vps', permissionScope: 'workspace' },
     })
     await expect(client.status()).resolves.toEqual({ available: true })
+    await expect(client.status()).resolves.toEqual({
+      available: true,
+      computer: { location: 'vps', permissionScope: 'bot' },
+    })
+  })
+
+  it('passes cancellation and keepalive options through to fetch', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response({ available: true }))
+      .mockResolvedValueOnce(response({ mode: 'other' }))
+    vi.stubGlobal('fetch', fetchMock)
+    const signal = new AbortController().signal
+    const client = createComputerClient()
+
+    await client.status(signal)
+    await client.releaseControl('viewer-id', { keepalive: false })
+
+    expect(fetchMock).toHaveBeenNthCalledWith(1, 'api/computer/status', expect.objectContaining({ signal }))
+    expect(fetchMock).toHaveBeenNthCalledWith(2, 'api/computer/release-control', expect.objectContaining({ keepalive: false }))
+  })
+
+  it.each([
+    ['a status without availability', { kind: 'vps' }],
+    ['a non-object status', null],
+  ])('rejects %s', async (_description, body) => {
+    vi.stubGlobal('fetch', vi.fn(async () => response(body)))
+
+    await expect(createComputerClient().status()).rejects.toMatchObject({
+      name: 'ComputerApiError', status: 200, message: 'Computer returned an invalid response',
+    })
+  })
+
+  it.each([
+    ['a nonpositive width', { width: 0 }],
+    ['missing screenshot data', { jpeg: null }],
+    ['an unknown lease mode', { mode: 'unknown' }],
+    ['a missing Bot activity flag', { botActive: undefined }],
+  ])('rejects a frame with %s', async (_description, override) => {
+    vi.stubGlobal('fetch', vi.fn(async () => response({
+      jpeg: 'image', width: 10, height: 8, mode: 'watching', botActive: false, ...override,
+    })))
+
+    await expect(createComputerClient().frame('viewer-id')).rejects.toMatchObject({
+      name: 'ComputerApiError', status: 200, message: 'Computer returned an invalid response',
+    })
+  })
+
+  it.each([null, { mode: 'busy' }])('rejects an invalid lease response %j', async (body) => {
+    vi.stubGlobal('fetch', vi.fn(async () => response(body)))
+
+    await expect(createComputerClient().takeControl('viewer-id')).rejects.toMatchObject({
+      name: 'ComputerApiError', status: 200, message: 'Computer returned an invalid response',
+    })
+  })
+
+  it('rejects a successful response without a JSON body', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('service proxy returned HTML')))
+
+    await expect(createComputerClient().status()).rejects.toMatchObject({
+      name: 'ComputerApiError', status: 200, message: 'Computer returned an invalid response',
+    })
   })
 
   it('forwards the selected Bot session to frame, take, release and input routes', async () => {
@@ -193,6 +258,19 @@ describe('Computer HTTP client', () => {
     expect(fetchMock).toHaveBeenNthCalledWith(3, 'api/computer/mac/release-control', expect.objectContaining({
       body: JSON.stringify({ sessionId: 'bot-session', viewerId: 'mac-panel' }), keepalive: true,
     }))
+  })
+
+  it('requires native sharing status and directs input to the physical Mac', async () => {
+    const fetchMock = vi.fn(async () => response({ screenRecording: true, accessibility: true }))
+    vi.stubGlobal('fetch', fetchMock)
+    const client = createMacComputerClient('bot-session', 'mac-panel')
+
+    await expect(client.setup('setup')).rejects.toMatchObject({
+      name: 'ComputerApiError', status: 200, message: 'Computer returned an invalid response',
+    })
+    await expect(client.computer.input('mac-panel', { kind: 'key', key: 'Return' }))
+      .rejects.toThrow('Use your Mac keyboard and mouse to control the local display.')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
   it('preserves HTTP conflict status for lease feedback', async () => {

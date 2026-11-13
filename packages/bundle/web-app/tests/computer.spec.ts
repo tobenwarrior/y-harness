@@ -1,7 +1,10 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import type { SpawnOptions } from 'node:child_process'
+import { EventEmitter } from 'node:events'
+import { readFileSync, writeFileSync } from 'node:fs'
+import { rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { basename, dirname, join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { basename, dirname, resolve } from 'node:path'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   COMPUTER_HEIGHT,
   COMPUTER_WIDTH,
@@ -9,19 +12,43 @@ import {
   ComputerInputError,
   ComputerLeaseError,
   containerComputer,
+  validateComputerAction,
   type ComputerAction,
   type ComputerCommandRunner,
 } from '../src/computer.ts'
+
+const { spawnMock, tempMock, removeMock } = vi.hoisted(() => ({
+  spawnMock: vi.fn<(command: string, args: readonly string[], options: SpawnOptions) => EventEmitter>(),
+  tempMock: vi.fn<(prefix: string) => Promise<string>>(),
+  removeMock: vi.fn<typeof rm>(),
+}))
+vi.mock('node:child_process', async original => ({
+  ...await original<typeof import('node:child_process')>(), spawn: spawnMock,
+}))
+vi.mock('node:fs/promises', async original => ({
+  ...await original<typeof import('node:fs/promises')>(),
+  mkdtemp: tempMock,
+  rm: removeMock,
+}))
 
 const viewers = {
   alice: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
   bob: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
 } as const
 
-const tempRoots: string[] = []
+const nativeConfig = { display: ':99', authorityPath: resolve(tmpdir(), 'xauthority') }
+const fs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
 
-afterEach(() => {
-  for (const root of tempRoots.splice(0)) rmSync(root, { recursive: true, force: true })
+tempMock.mockImplementation(fs.mkdtemp)
+removeMock.mockImplementation(fs.rm)
+afterEach(async () => {
+  const directories = removeMock.mock.calls.flatMap(([path]) => typeof path === 'string' ? [path] : [])
+  vi.useRealTimers()
+  vi.unstubAllEnvs()
+  spawnMock.mockReset()
+  tempMock.mockReset().mockImplementation(fs.mkdtemp)
+  removeMock.mockReset().mockImplementation(fs.rm)
+  await Promise.all(directories.map(path => fs.rm(path, { recursive: true, force: true })))
 })
 
 interface Fixture {
@@ -32,8 +59,6 @@ interface Fixture {
 }
 
 function fixture(): Fixture {
-  const root = mkdtempSync(join(tmpdir(), 'dsh-computer-test-'))
-  tempRoots.push(root)
   let now = 1_000
   const commands: Fixture['commands'] = []
   const runner: ComputerCommandRunner = async (command, args, env) => {
@@ -58,35 +83,30 @@ function fixture(): Fixture {
 
 describe('private computer Host', () => {
   it('captures a fixed-size JPEG with the cursor through a private temp path and scrubbed env', async () => {
-    process.env.DEEPSEEK_API_KEY = 'should-not-reach-x11'
-    process.env.COMPUTER_TEST_VISIBLE = 'visible'
-    try {
-      const f = fixture()
-      const frame = await f.host.observe()
+    vi.stubEnv('DEEPSEEK_API_KEY', 'should-not-reach-x11')
+    vi.stubEnv('COMPUTER_TEST_VISIBLE', 'visible')
+    const f = fixture()
+    const frame = await f.host.observe()
 
-      expect(frame).toEqual({
-        jpeg: Buffer.from([0xff, 0xd8, 0xff, 0xd9]).toString('base64'),
-        width: COMPUTER_WIDTH,
-        height: COMPUTER_HEIGHT,
-        mode: 'other',
-        botActive: false,
-      })
-      const command = f.commands[0]
-      expect(command?.command).toBe('scrot')
-      expect(command?.args.slice(0, 3)).toEqual(['--pointer', '--quality', '85'])
-      const outputPath = command?.args.at(-1) ?? ''
-      expect(basename(outputPath)).toBe('frame.jpg')
-      expect(basename(dirname(outputPath))).toMatch(/^dsh-computer-.+$/u)
-      expect(command?.env.DISPLAY).toBe(':99')
-      expect(command?.env.XAUTHORITY).toBe('/run/user/1000/gdm/Xauthority')
-      expect(command?.env.DEEPSEEK_API_KEY).toBeUndefined()
-      expect(command?.env.COMPUTER_TEST_VISIBLE).toBe('visible')
-      await f.dispose()
-      expect(() => readFileSync(outputPath)).toThrow()
-    } finally {
-      delete process.env.DEEPSEEK_API_KEY
-      delete process.env.COMPUTER_TEST_VISIBLE
-    }
+    expect(frame).toEqual({
+      jpeg: Buffer.from([0xff, 0xd8, 0xff, 0xd9]).toString('base64'),
+      width: COMPUTER_WIDTH,
+      height: COMPUTER_HEIGHT,
+      mode: 'other',
+      botActive: false,
+    })
+    const command = f.commands[0]
+    expect(command?.command).toBe('scrot')
+    expect(command?.args.slice(0, 3)).toEqual(['--pointer', '--quality', '85'])
+    const outputPath = command?.args.at(-1) ?? ''
+    expect(basename(outputPath)).toBe('frame.jpg')
+    expect(basename(dirname(outputPath))).toMatch(/^dsh-computer-.+$/u)
+    expect(command?.env.DISPLAY).toBe(':99')
+    expect(command?.env.XAUTHORITY).toBe('/run/user/1000/gdm/Xauthority')
+    expect(command?.env.DEEPSEEK_API_KEY).toBeUndefined()
+    expect(command?.env.COMPUTER_TEST_VISIBLE).toBe('visible')
+    await f.dispose()
+    expect(() => readFileSync(outputPath)).toThrow()
   })
 
   it('captures container frames through returned bytes and sends input as argv', async () => {
@@ -310,5 +330,160 @@ describe('private computer Host', () => {
     await action
     await disposing
     expect(disposed).toBe(true)
+  })
+
+  it.each([
+    [{ display: '', authorityPath: nativeConfig.authorityPath }, 'display'],
+    [{ display: ':99', authorityPath: 'relative' }, 'authority path'],
+  ])('rejects an invalid display configuration %j', (config, invalidField) => {
+    expect(() => new ComputerHost(config)).toThrow(`invalid computer ${invalidField}`)
+  })
+
+  it.each([
+    [null, 'invalid computer action'],
+    [{ kind: 'unknown' }, 'invalid computer action'],
+    [{ kind: 'key', key: '' }, 'invalid computer key'],
+    [{ kind: 'key', key: 'ctrl+' }, 'invalid computer key'],
+    [{ kind: 'key', key: 'ctrl+λ' }, 'invalid computer key'],
+  ])('rejects invalid input %j before admitting it', (action, message) => {
+    expect(() => validateComputerAction(action)).toThrow(message)
+  })
+
+  it('does not admit a cancelled action or a new action after disposal', async () => {
+    const f = fixture()
+    await expect(f.host.botAction({ kind: 'move', x: 4, y: 5 }, AbortSignal.abort())).rejects.toMatchObject({ code: 'aborted' })
+    await Promise.all([f.dispose(), f.dispose()])
+    await expect(f.host.observe()).rejects.toMatchObject({ code: 'disposed' })
+    expect(f.commands).toEqual([])
+  })
+
+  it('moves the pointer on zero scroll and uses the down button for positive scroll', async () => {
+    const f = fixture()
+    await f.host.botAction({ kind: 'scroll', x: 1, y: 2, delta: 0 })
+    await f.host.botAction({ kind: 'scroll', x: 3, y: 4, delta: 2 })
+    expect(f.commands.map(command => command.args)).toEqual([
+      ['mousemove', '--sync', '1', '2'], ['mousemove', '--sync', '3', '4'], ['click', '--repeat', '2', '5'],
+    ])
+    await f.dispose()
+  })
+
+  it.each([false, true])('preserves the first drag failure when button release also fails, movement fails=%s', async (movementFails) => {
+    const run: ComputerCommandRunner = async (_command, args) => {
+      if (movementFails && args[0] === 'mousemove' && args[2] === '8') throw new Error('movement failed')
+      if (args[0] === 'mouseup') throw new Error('release failed')
+    }
+    const host = new ComputerHost(nativeConfig, { run })
+    await expect(host.botAction({ kind: 'drag', x: 1, y: 2, toX: 8, toY: 9 }))
+      .rejects.toThrow(movementFails ? 'movement failed' : 'release failed')
+    await host.dispose()
+  })
+
+  it.each(['invalid image', 'missing image'])('normalizes local capture failure for %s', async (failure) => {
+    const host = new ComputerHost(nativeConfig, { run: async (_command, args) => {
+      if (failure === 'invalid image') writeFileSync(args.at(-1)!, 'not a JPEG')
+    } })
+    try {
+      await expect(host.observe()).rejects.toMatchObject({ code: 'capture-failed', message: 'computer frame capture failed' })
+    } finally {
+      await host.dispose()
+    }
+  })
+
+  it('returns the frame when temporary-file cleanup reports an error', async () => {
+    const f = fixture()
+    removeMock.mockRejectedValueOnce(new Error('fixture cleanup failed'))
+    try {
+      await expect(f.host.observe()).resolves.toMatchObject({ width: COMPUTER_WIDTH })
+      expect(rm).toHaveBeenCalledOnce()
+    } finally {
+      await f.dispose()
+    }
+  })
+
+  it('reports capture failure when it cannot create a private temporary directory', async () => {
+    tempMock.mockRejectedValueOnce(new Error('fixture temporary root unavailable'))
+    const f = fixture()
+    try {
+      await expect(f.host.observe()).rejects.toMatchObject({ code: 'capture-failed' })
+      expect(f.commands).toEqual([])
+      expect(rm).not.toHaveBeenCalled()
+    } finally {
+      await f.dispose()
+    }
+  })
+
+  it('keeps the native input error private when the display command fails to start', async () => {
+    spawnMock.mockImplementationOnce(() => { throw new Error('private fixture path') })
+    const host = new ComputerHost(nativeConfig)
+    try {
+      await expect(host.botAction({ kind: 'key', key: 'Escape' })).rejects.toMatchObject({
+        code: 'command-failed', message: 'computer command failed',
+      })
+    } finally {
+      await host.dispose()
+    }
+  })
+
+  it.each(['success', 'nonzero exit', 'spawn error', 'abort', 'deadline'] as const)('settles native input on %s', async (result) => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const child = Object.assign(new EventEmitter(), { kill: vi.fn(() => true) })
+    if (result === 'abort' || result === 'deadline') {
+      child.kill.mockImplementationOnce(() => { throw new Error('child already closed') })
+    }
+    const launched = Promise.withResolvers<undefined>()
+    spawnMock.mockImplementationOnce(() => {
+      launched.resolve(undefined)
+      return child
+    })
+    const controller = new AbortController()
+    const host = new ComputerHost(nativeConfig)
+    const input = host.botAction({ kind: 'key', key: 'Escape' }, controller.signal)
+    const expected = result === 'success' ? expect(input).resolves.toBeUndefined()
+      : expect(input).rejects.toMatchObject({
+        code: result === 'abort' ? 'aborted' : result === 'deadline' ? 'command-timeout' : 'command-failed',
+      })
+    try {
+      await launched.promise
+      const [command, args, options] = spawnMock.mock.calls[0] ?? []
+      expect(command).toBe('xdotool')
+      expect(args).toEqual(['key', '--clearmodifiers', 'Escape'])
+      expect(options).toMatchObject({
+        env: { DISPLAY: ':99', XAUTHORITY: nativeConfig.authorityPath }, shell: false, stdio: 'ignore',
+      })
+      if (result === 'spawn error') child.emit('error', new Error('private fixture diagnostic'))
+      if (result === 'abort') controller.abort()
+      if (result === 'deadline') vi.runOnlyPendingTimers()
+      child.emit('close', result === 'success' ? 0 : 1)
+      await expected
+      if (result === 'abort' || result === 'deadline') expect(child.kill).toHaveBeenCalledExactlyOnceWith('SIGKILL')
+      else expect(child.kill).not.toHaveBeenCalled()
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      child.emit('close', 1)
+      await Promise.allSettled([input, expected])
+      await host.dispose()
+    }
+  })
+
+  it('releases the pointer after cancellation between native drag commands', async () => {
+    const controller = new AbortController()
+    spawnMock.mockImplementation((_command, args) => {
+      const child = new EventEmitter()
+      queueMicrotask(() => {
+        child.emit('close', 0)
+        if (args[0] === 'mousedown') controller.abort()
+      })
+      return child
+    })
+    const host = new ComputerHost(nativeConfig)
+    try {
+      await expect(host.botAction({ kind: 'drag', x: 1, y: 2, toX: 8, toY: 9 }, controller.signal))
+        .rejects.toMatchObject({ code: 'aborted' })
+      expect(spawnMock.mock.calls.map(([, args]) => args)).toEqual([
+        ['mousemove', '--sync', '1', '2'], ['mousedown', '1'], ['mouseup', '1'],
+      ])
+    } finally {
+      await host.dispose()
+    }
   })
 })
