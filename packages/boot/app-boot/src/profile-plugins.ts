@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import {
   bundlePackageNameCandidates, readProfileManifest, resolveBundleDir, writeProfileManifest, type ProfileManifest,
 } from './profile.ts'
+import { samePackageName } from './profile-resolution/package-aliases.ts'
 
 /** Profile directory and installation used by the shared bundle resolver. */
 export interface ProfilePluginLocation {
@@ -58,10 +59,6 @@ export function installedProfilePackageDir(profileDir: string, name: string): st
     if (existsSync(join(packageDir, 'package.json'))) return packageDir
   }
   return undefined
-}
-
-function samePackageName(left: string, right: string): boolean {
-  return bundlePackageNameCandidates(left).includes(right)
 }
 
 function hasPackageName(names: ReadonlySet<string>, name: string): boolean {
@@ -136,7 +133,8 @@ export function reconcileProfilePlugins(options: ProfilePluginLocation & {
     ? options.before.dependencies.filter(dependency => dependency.bundle && !dependency.enabled).map(dependency => dependency.name)
     : [])
   const previous = after.manifest.dsh?.profile?.bundles ?? []
-  const bundles = previous.filter(name => (!hasPackageName(beforeNames, name) && !hasPackageName(afterNames, name)) || hasPackageName(bundleNames, name))
+  const bundles = previous.filter(name =>
+    (!hasPackageName(beforeNames, name) && !hasPackageName(afterNames, name)) || hasPackageName(bundleNames, name))
   for (const dependency of after.dependencies) {
     if (dependency.bundle && !hasPackageName(disabled, dependency.name) && !bundles.some(name => samePackageName(name, dependency.name))) {
       bundles.push(dependency.name)

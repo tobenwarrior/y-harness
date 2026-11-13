@@ -62,7 +62,7 @@ Your machine-local preferences also live in the Harness home:
 
 The enabled `dsh-hmr` plugin watches the profile manifest and both user patch files, re-reads the ordered bundle layers, and applies the [reload failure policy](#startup-and-reload-failures). [DSH HMR](../hmr/README.md) serializes these reloads with [Plugin Manager](../plugin-manager/README.md) configuration writes; package operations run outside its queue. The launcher does not install HMR or watchers; disabled or absent HMR means changes require restart.
 
-Inserted plugin names may be absolute filesystem paths, file URLs, or package specifiers. Patch loading converts absolute paths and patch-relative `./` or `../` paths to file URLs within `insert` rows and their nested groups; existing-entry name assertions and replacement `config` values remain literal.
+Inserted plugin names may be absolute filesystem paths, file URLs, or package specifiers. Patch loading converts absolute paths and patch-relative `./` or `../` paths to file URLs within `insert` rows and their nested groups. A profile patch can assert the current or legacy package name of the same plugin, including the same subpath. The assertion keeps the configured row name, and replacement `config` values stay literal.
 
 Before mounting profile rows, the `dsh` launcher computes one immutable runtime resolution from the installation and ordered bundle dependency graphs. Every profile launcher uses runtime resolution, including plain Node, packaged executables, and the Electron Host. It installs the runtime resolution through Node's ESM and CommonJS resolvers without creating fallback links.
 

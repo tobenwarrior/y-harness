@@ -7,7 +7,7 @@ description: "Y Harness changes the first-party package, CLI, Python SDK, and ho
 
 ## Change
 
-First-party Node packages now use the `@yharness/*` namespace. The CLI package is `@yharness/cli` and installs both `yharness` (canonical) and `dsh` (legacy) commands. Profiles created with `@deepseek-ai/dsh-*`, `@deepseek-ai/dsh`, or the supported pre-rebrand Cordis package names continue to resolve through exact aliases, including subpaths. The resolver does not rewrite profile manifests or lockfiles. Provider identities such as `@yharness/llm-deepseek*` remain provider names; unrelated `@deepseek-ai/*` packages are not aliased.
+First-party Node packages now use the `@yharness/*` namespace. The CLI package is `@yharness/cli` and installs both `yharness` (canonical) and `dsh` (legacy) commands. Profiles created with `@deepseek-ai/dsh-*`, `@deepseek-ai/dsh`, or the supported pre-rebrand Cordis package names continue to resolve through exact aliases, including subpaths. Profile patch name assertions accept the same aliases. The resolver does not rewrite profile manifests or lockfiles. Provider identities such as `@yharness/llm-deepseek*` remain provider names; unrelated `@deepseek-ai/*` packages are not aliased.
 
 The Python SDK's canonical distributions are `yharness-sdk` and `yharness-runtime-bin`; their modules are `yharness` and `yharness_runtime`, with `YHarness` and `YHarnessConfig` as the primary classes. The old `deepseek_harness` and `deepseek_harness_runtime` modules, `DeepSeekHarness` names, `dsh` command, legacy option names, and legacy environment variables remain compatibility aliases.
 
