@@ -156,9 +156,15 @@ sudo /usr/local/sbin/yharness-vault --cloud-user yharness-cloud allow-desktop \
 
 Leave the service names out to open an empty Vault. After enabling a service, rerun `allow-desktop` with the complete list of services that Desktop may manage.
 
-Open **Cloud** and select the lock icon in its title bar. Choose a service, then **Add secret**, **Replace**, or **Revoke**. Enter values in the masked field. The window sends values directly to the VPS Vault over SSH and shows saved names after submission. Values stay outside Cloud chat, Bot tools, and model requests. The selected service loads its current values on its next start.
+Open **Cloud** and select the lock icon in its title bar. In **API keys**, choose a service, then **Add secret**, **Replace**, or **Revoke**. Enter values in the masked field. The window sends values directly to the VPS Vault over SSH and shows saved names after submission. Values stay outside Cloud chat, Bot tools, and model requests. The selected service loads its current values on its next start.
 
 Run `sudo /usr/local/sbin/yharness-vault deny-desktop` to remove Desktop management access and stop its listener. Stored credentials are available to their services until you revoke them. To grant management to a different SSH account, run `deny-desktop` first, then run `allow-desktop` with the new account.
+
+### Save website logins from the Mac app
+
+Install the current VPS Vault command and update the Mac app. In **Cloud → Vault → Websites**, choose **Add login**. Enter the HTTPS website, a label you can recognize, and the account details. Vault binds each login to that exact HTTPS host and port. The list shows the website and label. To update a login, choose **Replace** and enter the current account details again. Choose **Remove** to delete it from Vault.
+
+Website logins are encrypted on the VPS and available for owner management. Use [Computer sign-in handoff](#enable-firefox-for-selected-bots) to sign in on a Bot's desktop. Removing a saved login leaves existing website sessions active until you sign out or revoke them with the website.
 
 ### Let a Bot request a key in chat
 

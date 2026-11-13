@@ -1,5 +1,6 @@
 /** Write-only VPS Vault management over the owner's existing SSH login. */
 import { execFile, type ChildProcess, type ExecFileOptions } from 'node:child_process'
+import { isIP } from 'node:net'
 import { isCloudTarget } from './cloud-connection.ts'
 
 const SSH = '/usr/bin/ssh'
@@ -7,14 +8,25 @@ const COMMAND = '/usr/local/sbin/yharness-vault desktop-client'
 const UNIT = /^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,220}\.service$/u
 const NAME = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/u
 const REQUEST_ID = /^[a-f0-9]{32}$/u
+const LOGIN_ID = /^[a-f0-9]{32}$/u
+const DNS_LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u
 const REQUEST_STATES = new Set(['pending', 'saved', 'cancelled'])
+const CONTROL = /[\u0000-\u001F\u007F-\u009F\u2028\u2029]/u
 const VALUE_LIMIT = 8192
+const LOGIN_LABEL_LIMIT = 80
+const LOGIN_USERNAME_LIMIT = 512
+const LOGIN_PASSWORD_LIMIT = 8192
+const MAX_LOGINS = 64
 const MAX_OUTPUT = 160 * 1024
 
 declare const VAULT_REQUEST_ID: unique symbol
+declare const VAULT_LOGIN_ID: unique symbol
 
 /** Opaque request identifier issued by the connected Cloud workspace. */
 export type VaultRequestId = string & { readonly [VAULT_REQUEST_ID]: true }
+
+/** Opaque website-login identifier issued by the VPS Vault. */
+export type VaultLoginId = string & { readonly [VAULT_LOGIN_ID]: true }
 
 /** Request from the dedicated Vault window. No operation reads a saved value. */
 export type VaultRequest = { readonly action: 'list' } | {
@@ -26,6 +38,23 @@ export type VaultRequest = { readonly action: 'list' } | {
   readonly unit: string
   readonly name: string
   readonly value: string
+} | {
+  readonly action: 'list-logins'
+} | {
+  readonly action: 'add-login'
+  readonly origin: string
+  readonly label: string
+  readonly username: string
+  readonly password: string
+} | {
+  readonly action: 'replace-login'
+  readonly id: VaultLoginId
+  readonly label: string
+  readonly username: string
+  readonly password: string
+} | {
+  readonly action: 'remove-login'
+  readonly id: VaultLoginId
 } | {
   readonly action: 'inspect-request'
   readonly id: VaultRequestId
@@ -52,10 +81,18 @@ export interface VaultRequestMetadata {
   readonly state: 'pending' | 'saved' | 'cancelled'
 }
 
+/** Non-secret metadata for one saved website login. */
+export interface VaultLogin {
+  readonly id: VaultLoginId
+  readonly origin: string
+  readonly label: string
+}
+
 /** Metadata, acknowledgment, or a fixed diagnostic. */
 export type VaultReply = {
   readonly ok: true
   readonly services?: readonly VaultService[]
+  readonly logins?: readonly VaultLogin[]
 } | {
   readonly request: VaultRequestMetadata
 } | {
@@ -96,6 +133,50 @@ export function isVaultRequestId(value: unknown): value is VaultRequestId {
   return typeof value === 'string' && REQUEST_ID.test(value)
 }
 
+/**
+ * Validate an opaque website-login identifier before it crosses into SSH transport.
+ * @param value - untrusted IPC or remote reply input.
+ * @returns whether the value is a lowercase 32-character hexadecimal login id.
+ */
+export function isVaultLoginId(value: unknown): value is VaultLoginId {
+  return typeof value === 'string' && LOGIN_ID.test(value)
+}
+
+function boundedLoginText(value: unknown, limit: number, trim: boolean): string | undefined {
+  if (typeof value !== 'string' || !value.isWellFormed() || CONTROL.test(value)) return undefined
+  const normalized = trim ? value.trim() : value
+  if (normalized.length === 0 || Buffer.byteLength(normalized, 'utf8') > limit) return undefined
+  return normalized
+}
+
+function loginOrigin(value: unknown, requireCanonical = false): string | undefined {
+  if (typeof value !== 'string' || !value.isWellFormed() || value !== value.trim() || CONTROL.test(value)) return undefined
+  const separator = value.indexOf('://')
+  if (separator < 0) return undefined
+  const authorityAndPath = value.slice(separator + 3)
+  const suffixIndex = authorityAndPath.search(/[/?#]/u)
+  const suffix = suffixIndex < 0 ? '' : authorityAndPath.slice(suffixIndex)
+  if (suffix !== '' && suffix !== '/') return undefined
+  let url: URL
+  try { url = new URL(value) }
+  catch { return undefined }
+  if (url.protocol !== 'https:' || url.username !== '' || url.password !== ''
+    || url.pathname !== '/' || url.search !== '' || url.hash !== '') return undefined
+  if (isIP(url.hostname) !== 0) return undefined
+  const hostname = url.hostname
+  if (hostname === 'localhost' || hostname.endsWith('.localhost') || hostname === 'local'
+    || hostname.endsWith('.local') || hostname === 'localdomain' || hostname.endsWith('.localdomain')) return undefined
+  const labels = hostname.split('.')
+  if (labels.length < 2 || hostname.length > 253 || !labels.every(label => DNS_LABEL.test(label))
+    || /^\d+$/u.test(labels.at(-1) ?? '')) return undefined
+  const authority = suffixIndex < 0 ? authorityAndPath : authorityAndPath.slice(0, suffixIndex)
+  const port = /:(\d+)$/u.exec(authority)?.[1]
+  if (port !== undefined && Number(port) === 443 && requireCanonical) return undefined
+  if (authority.endsWith(':')) return undefined
+  const origin = url.origin
+  return requireCanonical && value !== origin ? undefined : origin
+}
+
 function requestBody(value: unknown): VaultRequest | undefined {
   if (!record(value)) return undefined
   const { action, unit, name } = value
@@ -108,6 +189,29 @@ function requestBody(value: unknown): VaultRequest | undefined {
     && value.value.isWellFormed() && Buffer.byteLength(value.value, 'utf8') <= VALUE_LIMIT) {
     return { action, id: value.id, value: value.value }
   }
+  if (action === 'list-logins' && fields === 1) return { action }
+  if (action === 'remove-login' && fields === 2 && isVaultLoginId(value.id)) {
+    return { action, id: value.id }
+  }
+  if (action === 'replace-login' && fields === 5 && isVaultLoginId(value.id)) {
+    const label = boundedLoginText(value.label, LOGIN_LABEL_LIMIT, true)
+    const username = boundedLoginText(value.username, LOGIN_USERNAME_LIMIT, false)
+    const password = boundedLoginText(value.password, LOGIN_PASSWORD_LIMIT, false)
+    if (label !== undefined && username !== undefined && password !== undefined) {
+      return { action, id: value.id, label, username, password }
+    }
+    return undefined
+  }
+  if (action === 'add-login' && fields === 5) {
+    const origin = loginOrigin(value.origin)
+    const label = boundedLoginText(value.label, LOGIN_LABEL_LIMIT, true)
+    const username = boundedLoginText(value.username, LOGIN_USERNAME_LIMIT, false)
+    const password = boundedLoginText(value.password, LOGIN_PASSWORD_LIMIT, false)
+    if (origin !== undefined && label !== undefined && username !== undefined && password !== undefined) {
+      return { action, origin, label, username, password }
+    }
+    return undefined
+  }
   if (!unitName(unit) || !keyName(name)) return undefined
   if (action === 'revoke' && fields === 3) return { action, unit, name }
   const secret = value.value
@@ -116,6 +220,14 @@ function requestBody(value: unknown): VaultRequest | undefined {
     && Buffer.byteLength(secret, 'utf8') <= VALUE_LIMIT) {
     return { action, unit, name, value: secret }
   }
+}
+
+function loginMetadata(value: unknown): VaultLogin | undefined {
+  if (!record(value) || Object.keys(value).length !== 3 || !isVaultLoginId(value.id)) return undefined
+  const origin = loginOrigin(value.origin, true)
+  const label = boundedLoginText(value.label, LOGIN_LABEL_LIMIT, true)
+  if (origin === undefined || label === undefined) return undefined
+  return { id: value.id, origin, label }
 }
 
 function replyBody(action: VaultRequest['action'], stdout: string, expectedId?: VaultRequestId): VaultReply | undefined {
@@ -133,6 +245,18 @@ function replyBody(action: VaultRequest['action'], stdout: string, expectedId?: 
   }
   if (action === 'dismiss-request') {
     return value.state === 'saved' || value.state === 'cancelled' ? { state: value.state } : undefined
+  }
+  if (action === 'list-logins') {
+    if (!Array.isArray(value.logins) || value.logins.length > MAX_LOGINS) return undefined
+    const logins: VaultLogin[] = []
+    const ids = new Set<string>()
+    for (const login of value.logins) {
+      const metadata = loginMetadata(login)
+      if (metadata === undefined || ids.has(metadata.id)) return undefined
+      ids.add(metadata.id)
+      logins.push(metadata)
+    }
+    return { ok: true, logins }
   }
   if (action !== 'list') return value.ok === true ? { ok: true } : undefined
   if (!Array.isArray(value.services) || value.services.length > 16) return undefined
@@ -159,7 +283,10 @@ const unavailable: VaultReply = { ok: false, reason: 'unavailable' }
 export function vaultRequestAllowed(value: unknown, requestId: VaultRequestId | undefined): boolean {
   const request = requestBody(value)
   if (request === undefined) return false
-  return 'id' in request ? request.id === requestId : requestId === undefined
+  if (request.action === 'inspect-request' || request.action === 'save-request' || request.action === 'dismiss-request') {
+    return request.id === requestId
+  }
+  return requestId === undefined
 }
 
 /**
