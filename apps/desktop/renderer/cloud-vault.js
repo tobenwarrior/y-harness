@@ -177,12 +177,12 @@ window.addEventListener('pagehide', closeEditor, { once: true })
 void api.messages().then(copy => {
   messages = copy
   document.title = copy.cloudVault
-  for (const [id, key] of Object.entries({
-    title: 'cloudVault', hint: 'cloudVaultHint', 'service-label': 'cloudVaultService', names: 'cloudVaultNames',
-    empty: 'cloudVaultEmpty', 'add-label': 'cloudVaultAdd', 'name-label': 'cloudVaultName', 'value-label': 'cloudVaultValue',
-    save: 'cloudVaultSave', 'editor-cancel': 'cancel', apply: 'cloudVaultApply', refresh: 'cloudVaultRefresh',
-    'confirm-cancel': 'cancel', 'confirm-revoke': 'cloudVaultRevoke', 'confirm-detail': 'cloudVaultApply',
-  })) element(id).textContent = copy[key]
+  for (const [id, text] of Object.entries({
+    title: copy.cloudVault, hint: copy.cloudVaultHint, 'service-label': copy.cloudVaultService, names: copy.cloudVaultNames,
+    empty: copy.cloudVaultEmpty, 'add-label': copy.cloudVaultAdd, 'name-label': copy.cloudVaultName, 'value-label': copy.cloudVaultValue,
+    save: copy.cloudVaultSave, 'editor-cancel': copy.cancel, apply: copy.cloudVaultApply, refresh: copy.cloudVaultRefresh,
+    'confirm-cancel': copy.cancel, 'confirm-revoke': copy.cloudVaultRevoke, 'confirm-detail': copy.cloudVaultApply,
+  })) element(id).textContent = text
   main.hidden = false
   return refresh()
 }).catch(() => { void api.close().catch(() => {}) })
