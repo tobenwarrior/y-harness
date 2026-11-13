@@ -18,10 +18,19 @@ class WorkspaceSetupTest(unittest.TestCase):
     def test_map_preserves_workspace_path_in_only_the_cloud_user_manager(self):
         owner = SimpleNamespace(pw_dir='/home/operator', pw_uid=1001, pw_gid=1002)
         cloud = SimpleNamespace(pw_uid=721, pw_gid=722)
-        mount, manager = setup.workspace_units(owner, cloud, pathlib.Path('/var/lib/yharness-cloud-data'), 'fixture.mount')
-        self.assertIn('What=/home/operator/.yharness-vps/workspace\n', mount.decode())
+        lower, mount, manager = setup.workspace_units(
+            owner, cloud, pathlib.Path('/var/lib/yharness-cloud-data'), pathlib.Path('/var/lib/yharness-cloud-layers'),
+            'fixture.mount', 'fixture-lower.mount',
+        )
+        self.assertIn('What=/home/operator/.yharness-vps/workspace\n', lower.decode())
+        self.assertIn('Where=/var/lib/yharness-cloud-layers/lower\n', lower.decode())
+        self.assertIn('Options=bind,ro,nosuid,nodev,X-mount.idmap=u:1001:721:1 g:1002:722:1\n', lower.decode())
         self.assertIn('Where=/var/lib/yharness-cloud-data/workspace\n', mount.decode())
-        self.assertIn('Options=bind,nosuid,nodev,X-mount.idmap=u:1001:721:1 g:1002:722:1\n', mount.decode())
+        self.assertIn('Requires=fixture-lower.mount\nAfter=fixture-lower.mount\n', mount.decode())
+        self.assertIn('What=overlay\n', mount.decode())
+        self.assertIn('Type=overlay\n', mount.decode())
+        self.assertIn('Options=lowerdir=/var/lib/yharness-cloud-layers/lower,upperdir=/var/lib/yharness-cloud-layers/changes,', mount.decode())
+        self.assertIn('workdir=/var/lib/yharness-cloud-layers/work,nosuid,nodev,index=on,redirect_dir=on,metacopy=off\n', mount.decode())
         self.assertIn('Requires=fixture.mount\n', manager.decode())
         self.assertIn('After=fixture.mount\n', manager.decode())
         self.assertIn('TemporaryFileSystem=/home/operator:ro,mode=0755\n', manager.decode())
@@ -42,7 +51,34 @@ class WorkspaceSetupTest(unittest.TestCase):
         ):
             with self.subTest(home=home, uid=uid, gid=gid), self.assertRaises(setup.AccountError):
                 setup.workspace_units(SimpleNamespace(pw_dir=home, pw_uid=uid, pw_gid=gid), cloud,
-                                      pathlib.Path('/var/lib/yharness-cloud-data'), 'fixture.mount')
+                                      pathlib.Path('/var/lib/yharness-cloud-data'), pathlib.Path('/var/lib/yharness-cloud-layers'),
+                                      'fixture.mount', 'fixture-lower.mount')
+
+    def test_rejects_layers_inside_the_service_mount_or_original_home(self):
+        owner = SimpleNamespace(pw_dir='/home/operator', pw_uid=1001, pw_gid=1002)
+        cloud = SimpleNamespace(pw_uid=721, pw_gid=722)
+        data = pathlib.Path('/var/lib/yharness-cloud-data')
+        for layers in (data, data / 'layers', data.parent, pathlib.Path('/home/operator/layers'),
+                       pathlib.Path('/var/lib/../opt/elsewhere'), pathlib.Path('/var/lib/escape,workdir=tmp')):
+            with self.subTest(layers=layers), self.assertRaises(setup.AccountError):
+                setup.workspace_units(owner, cloud, data, layers, 'fixture.mount', 'fixture-lower.mount')
+
+    def test_existing_overlay_content_is_preserved_and_rejected(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = pathlib.Path(folder)
+            changes = root / 'changes'
+            changes.mkdir(mode=0o700)
+            marker = changes / 'saved'
+            marker.write_text('owner workspace change')
+            with (
+                patch.object(setup, 'require_directory', return_value=SimpleNamespace(st_uid=0, st_gid=0, st_mode=0o700)),
+                patch.object(setup, 'mount_points', return_value=set()),
+                patch.object(setup.os, 'chown') as change,
+                self.assertRaises(setup.AccountError),
+            ):
+                setup.prepare_layers(root, 721, 722)
+            self.assertFalse(change.called)
+            self.assertEqual(marker.read_text(), 'owner workspace change')
 
     def test_refuses_to_replace_the_workspace_or_follow_a_link(self):
         with tempfile.TemporaryDirectory() as folder:

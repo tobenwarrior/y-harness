@@ -32,6 +32,7 @@ LEGACY_DIR = '.yharness-vps'
 SYSTEM_UNITS = Path('/etc/systemd/system')
 MANAGER_CONFIG = '90-yharness-cloud-workspace.conf'
 MAPPED_DATA = account.HOME.parent / 'yharness-cloud-data'
+WORKSPACE_LAYERS = account.HOME.parent / 'yharness-cloud-layers'
 HOME_PATH = re.compile(r'/home/[A-Za-z0-9_][A-Za-z0-9_.-]*')
 MOUNT_NAME = re.compile(r'[A-Za-z0-9_\\.-]+\.mount')
 
@@ -54,23 +55,36 @@ def source_home(owner, cloud):
     return Path(owner.pw_dir)
 
 
-def workspace_units(owner, cloud, data, name):
-    """Render a mapped workspace and the dedicated manager's private home view."""
+def workspace_units(owner, cloud, data, layers, name, lower_name):
+    """Render the read-only source, writable overlay, and private home view."""
     home = source_home(owner, cloud)
-    if (not account.SAFE_PATH.fullmatch(str(data)) or '..' in data.parts or not MOUNT_NAME.fullmatch(name)
-            or data.is_relative_to(home)):
+    if (any(not account.SAFE_PATH.fullmatch(str(path)) or '..' in path.parts
+            or path.is_relative_to(home) or home.is_relative_to(path) for path in (data, layers))
+            or data.is_relative_to(layers) or layers.is_relative_to(data)
+            or not all(MOUNT_NAME.fullmatch(unit) for unit in (name, lower_name)) or name == lower_name):
         raise AccountError('The Cloud workspace mapping paths are invalid.')
     legacy = home / LEGACY_DIR
-    options = (f'bind,nosuid,nodev,X-mount.idmap=u:{owner.pw_uid}:{cloud.pw_uid}:1'
+    options = (f'bind,ro,nosuid,nodev,X-mount.idmap=u:{owner.pw_uid}:{cloud.pw_uid}:1'
                f' g:{owner.pw_gid}:{cloud.pw_gid}:1')
-    mount = f"""[Unit]
-Description=Y Harness Cloud workspace mapping
+    lower = f"""[Unit]
+Description=Y Harness Cloud read-only workspace source
 
 [Mount]
 What={legacy}/workspace
-Where={data}/workspace
+Where={layers}/lower
 Type=none
 Options={options}
+"""
+    mount = f"""[Unit]
+Description=Y Harness Cloud workspace mapping
+Requires={lower_name}
+After={lower_name}
+
+[Mount]
+What=overlay
+Where={data}/workspace
+Type=overlay
+Options=lowerdir={layers}/lower,upperdir={layers}/changes,workdir={layers}/work,nosuid,nodev,index=on,redirect_dir=on,metacopy=off
 """
     manager = f"""[Unit]
 Requires={name}
@@ -80,7 +94,7 @@ After={name}
 TemporaryFileSystem={home}:ro,mode=0755
 BindPaths={data}:{legacy}:rbind
 """
-    return mount.encode(), manager.encode()
+    return lower.encode(), mount.encode(), manager.encode()
 
 
 def check_unit(path, content):
@@ -133,6 +147,26 @@ def prepare_data_root(path, cloud_gid):
     path.chmod(0o750)
 
 
+def prepare_layers(path, uid, gid):
+    """Keep backing directories hidden from the Cloud account and preserve existing data."""
+    path.mkdir(mode=0o700, exist_ok=True)
+    info = require_directory(path, 0, 0)
+    if info.st_mode & 0o077 or any(mount.is_relative_to(path) for mount in mount_points()):
+        raise AccountError('Cloud workspace layers must be private and unmounted during setup.')
+    if any(entry.name not in ('lower', 'changes', 'work') for entry in path.iterdir()):
+        raise AccountError('Cloud workspace layers contain unrelated files.')
+    prepare_mountpoint(path / 'lower')
+    for name in ('changes', 'work'):
+        directory = path / name
+        directory.mkdir(mode=0o700, exist_ok=True)
+        info = directory.lstat()
+        if (not stat.S_ISDIR(info.st_mode) or (info.st_uid, info.st_gid) not in ((0, 0), (uid, gid))
+                or info.st_mode & 0o077 or any(directory.iterdir())):
+            raise AccountError('Cloud workspace layers already contain data or have unexpected ownership.')
+    for name in ('changes', 'work'):
+        os.chown(path / name, uid, gid)
+
+
 def read_accounts(owner_name):
     """Verify the separately provisioned Cloud account and its private primary group."""
     owner = pwd.getpwnam(owner_name)
@@ -177,16 +211,19 @@ def prepare(owner_name):
         raise AccountError('Stop the dedicated Cloud account manager before preparing its workspace mapping.')
     require_directory(account.HOME, cloud.pw_uid, cloud.pw_gid)
     data = MAPPED_DATA
-    name = command(['/usr/bin/systemd-escape', '--path', '--suffix=mount', str(data / 'workspace')],
-                   'Could not identify the Cloud workspace mount unit.').strip()
-    mount, manager = workspace_units(owner, cloud, data, name)
-    mount_path = SYSTEM_UNITS / name
+    layers = WORKSPACE_LAYERS
+    name, lower_name = (command(['/usr/bin/systemd-escape', '--path', '--suffix=mount', str(path)],
+                                'Could not identify the Cloud workspace mount unit.').strip()
+                        for path in (data / 'workspace', layers / 'lower'))
+    lower, mount, manager = workspace_units(owner, cloud, data, layers, name, lower_name)
     config = SYSTEM_UNITS / (unit + '.d') / MANAGER_CONFIG
     for parent in (SYSTEM_UNITS, SYSTEM_UNITS.parent, Path('/var/lib')):
         require_directory(parent, 0)
     if config.parent.exists() or config.parent.is_symlink():
         require_directory(config.parent, 0, 0)
-    found = [(path, contents, check_unit(path, contents)) for path, contents in ((mount_path, mount), (config, manager))]
+    units = ((SYSTEM_UNITS / lower_name, lower), (SYSTEM_UNITS / name, mount), (config, manager))
+    found = [(path, contents, check_unit(path, contents)) for path, contents in units]
+    prepare_layers(layers, cloud.pw_uid, cloud.pw_gid)
     prepare_data_root(data, cloud.pw_gid)
     config.parent.mkdir(mode=0o755, exist_ok=True)
     require_directory(config.parent, 0, 0)

@@ -36,13 +36,13 @@ Use the selected loopback port for both sides of the [SSH forward](#open-y-harne
 
 ### Preserve the existing workspace path
 
-On Ubuntu 24.04 with an ID-mapped filesystem such as ext4, prepare the dedicated account before its service manager starts. Replace `SSH_OWNER` with the regular account whose `~/.yharness-vps/workspace` Cloud uses.
+On Ubuntu 24.04 with OverlayFS and an ID-mapped filesystem such as ext4, prepare the workspace mapping before starting the dedicated account's service manager. The script creates the locked account if needed. Replace `SSH_OWNER` with the regular account whose `~/.yharness-vps/workspace` Cloud uses.
 
 ```sh
 sudo /usr/bin/python3 -I /opt/yharness/release/scripts/setup-vps-workspace.py --owner SSH_OWNER
 ```
 
-The dedicated account's service manager presents the original workspace path with the dedicated account's file ownership. Writes go to the original workspace files. Only the prepared directory at `/var/lib/yharness-cloud-data` appears at the old `~/.yharness-vps` path in that manager. Keep a backup of the workspace and verify the service configuration, state, provider paths, and desktop volumes before changing which Cloud service runs.
+The dedicated account sees the original workspace path with the new account's file ownership. Existing files form a read-only layer. Cloud stores changes in `/var/lib/yharness-cloud-layers/changes`. Keep enough free space there for new files and any original files you edit. After switching, edit the workspace through Cloud and keep the original files in place for the read-only layer. The service manager exposes only the prepared directory at `/var/lib/yharness-cloud-data` under the old home path. Keep a backup of the workspace and verify the service configuration, state, provider paths, and desktop volumes before changing which Cloud service runs.
 
 ## Open Y Harness
 
