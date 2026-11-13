@@ -3,7 +3,7 @@
 import { readFileSync } from 'node:fs'
 import { dirname, extname, relative, resolve, sep } from 'node:path'
 import ts from 'typescript'
-import { collectLogEvents } from './persistence-catalog-source.ts'
+import { collectLogEvents, isLintContractProbe } from './persistence-catalog-source.ts'
 import { sourceCompatibilityAnnotations } from './persistence-source-annotations.ts'
 import { validSourceCompatibility } from './persistence-source-policy.ts'
 import {
@@ -149,7 +149,8 @@ function hostSourceFiles(root: string, configPath: string, seen = new Set<string
   const errors = parsed.errors.filter(error => error.code !== 18003)
   if (errors.length > 0) throw new PersistenceSchemaError(errors.map(diagnosticText).join('\n'))
   return [
-    ...parsed.fileNames.filter(file => /^packages\/[^/]+\/[^/]+\/src\//.test(slash(relative(root, file)))),
+    ...parsed.fileNames.filter(file => !isLintContractProbe(file)
+      && /^packages\/[^/]+\/[^/]+\/src\//.test(slash(relative(root, file)))),
     ...(parsed.projectReferences ?? []).flatMap(reference =>
       hostSourceFiles(root, extname(reference.path) === '.json' ? reference.path : resolve(reference.path, 'tsconfig.json'), seen)),
   ]
