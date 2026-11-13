@@ -18,6 +18,7 @@ import { connectFreshWorkspace, newEnglishPage, saveFailureShot } from './suppor
 
 const SNAPSHOT_DIR = fileURLToPath(new URL('../../../snapshots/web/approval-composer', import.meta.url))
 const FIXTURE = join(SNAPSHOT_DIR, 'session.v3.jsonl')
+const PERMISSION_PRESETS = fileURLToPath(new URL('./fixtures/permission-presets.patch.yml', import.meta.url))
 // The golden covers the stable waiting panel; direct assertions cover its answer.
 const UI_EXPECTED = join(SNAPSHOT_DIR, 'ui.expected.md')
 const MODE = webSnapshotMode()
@@ -38,7 +39,10 @@ describe.each(MODE === 'record' ? ['button'] as const : ['button', 'keyboard'] a
   const sessionEvents: SessionEvent[] = []
 
   beforeAll(async () => {
-    scaffold = await launchWebScaffold(MODE === 'record' ? {} : { replayFixture: FIXTURE, paceMs: 15, compareReplaySession: true })
+    scaffold = await launchWebScaffold({
+      extraOverlayPath: PERMISSION_PRESETS,
+      ...MODE === 'record' ? {} : { replayFixture: FIXTURE, paceMs: 15, compareReplaySession: true },
+    })
     scaffold.ctx.on('session/event', (_session, event: SessionEvent) => { sessionEvents.push(event) })
     browser = await chromium.launch()
     page = await newEnglishPage(browser)

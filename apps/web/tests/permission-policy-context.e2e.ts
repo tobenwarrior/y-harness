@@ -22,6 +22,7 @@ import { connectFreshWorkspace, newEnglishPage, saveFailureShot, writeComposerDr
 
 const SNAPSHOT_DIR = fileURLToPath(new URL('../../../snapshots/web/permission-policy-context', import.meta.url))
 const FIXTURE = fileURLToPath(new URL('../../../snapshots/web/permission-policy-context/session.v3.jsonl', import.meta.url))
+const PERMISSION_PRESETS = fileURLToPath(new URL('./fixtures/permission-presets.patch.yml', import.meta.url))
 const MODE = webSnapshotMode()
 
 const PROMPTS = [
@@ -31,7 +32,7 @@ const PROMPTS = [
   'Create the relative path policy-neutral.txt in the current workspace containing exactly POLICY_NEUTRAL_OK, verify its contents, then report completion.',
 ] as const
 
-const PRESET_LABELS = ['Read Only', 'Full access', 'Workspace Write'] as const
+const PRESET_LABELS = ['Read Only', 'Full access', 'Ask for approval'] as const
 
 function systemPrompts(events: readonly SessionEvent[]): string[] {
   return events.flatMap((event) => {
@@ -74,9 +75,10 @@ describe('web e2e: current sandbox policy reaches the model before tools', () =>
   beforeAll(async () => {
     scaffold = await launchWebScaffold({
       ...MODE === 'record' ? {} : { replayFixture: FIXTURE, compareReplaySession: true },
-      ...process.platform === 'win32' ? {} : {
-        extraOverlayPath: fileURLToPath(new URL('./fixtures/sidebar-terminal.patch.yml', import.meta.url)),
-      },
+      extraOverlayPath: process.platform === 'win32' ? PERMISSION_PRESETS : [
+        PERMISSION_PRESETS,
+        fileURLToPath(new URL('./fixtures/sidebar-terminal.patch.yml', import.meta.url)),
+      ],
     })
     outsideWorkspace = await mkdtemp(join(tmpdir(), 'dsh-user-terminal-'))
     disposeApproval = scaffold.ctx.on('approval/request', () => Promise.resolve('allowed-once'), { prepend: true })
