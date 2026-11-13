@@ -101,6 +101,56 @@ describe('managed VPS Bot composition', () => {
     }
   })
 
+  it('shares an in-progress Computer startup and rejects resolution through a retired route', async () => {
+    const ctx = new Context()
+    const request = registerRoutes(ctx)
+    const entered = Promise.withResolvers<undefined>()
+    const release = Promise.withResolvers<undefined>()
+    const ownersRead = Promise.withResolvers<undefined>()
+    const lookupEntered = Promise.withResolvers<undefined>()
+    const releaseLookup = Promise.withResolvers<undefined>()
+    const ensure = vi.spyOn(VpsRuntime.prototype, 'ensure').mockImplementation(async () => {
+      entered.resolve(undefined)
+      await release.promise
+    })
+    const ownerBotForSession = vi.fn(async () => {
+      const lookups = ownerBotForSession.mock.calls.length
+      if (lookups === 2) ownersRead.resolve(undefined)
+      if (lookups === 3) {
+        lookupEntered.resolve(undefined)
+        await releaseLookup.promise
+      }
+      return { id: 'bot-test', sessionId: BOT_SESSION, state: 'active' }
+    })
+    ctx.provide('bots', { ownerBotForSession } as never)
+    const statusRequests: Promise<Response>[] = []
+    try {
+      await ctx.plugin((scope) => { mountVpsBots(scope, { root: '/yharness-test-bots', image: 'localhost/yharness-test' }, []) })
+      statusRequests.push(request('status', { sessionId: BOT_SESSION }))
+      await entered.promise
+      statusRequests.push(request('status', { sessionId: BOT_SESSION }))
+      await ownersRead.promise
+      release.resolve(undefined)
+      for (const response of await Promise.all(statusRequests)) {
+        await expect(response.json()).resolves.toMatchObject({ available: true, computer: { id: 'bot-test' } })
+      }
+      expect(ensure).toHaveBeenCalledExactlyOnceWith(BOT_SESSION)
+      const lateStatus = request('status', { sessionId: BOT_SESSION })
+      statusRequests.push(lateStatus)
+      await lookupEntered.promise
+      await ctx.fiber.dispose()
+      releaseLookup.resolve(undefined)
+      await expect((await lateStatus).json()).resolves.toMatchObject({ available: false })
+      expect(ensure).toHaveBeenCalledTimes(1)
+    } finally {
+      release.resolve(undefined)
+      releaseLookup.resolve(undefined)
+      await Promise.allSettled(statusRequests)
+      await ctx.fiber.dispose()
+      ensure.mockRestore()
+    }
+  })
+
   // The managed filesystem and execution world use absolute Linux paths.
   it.skipIf(process.platform === 'win32').each([false, true])('binds the exact Agent and desktop with a shared display configured=%s', async (withLegacy) => {
     const ctx = new Context()
