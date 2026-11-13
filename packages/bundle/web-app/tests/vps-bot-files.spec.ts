@@ -297,10 +297,10 @@ describe('VPS Bot file provider', () => {
   it('keeps target identity, URI and containment in the VPS execution world', async () => {
     const f = await fixture()
     const root = await f.fs.resolve('.')
-    const child = await f.fs.resolve('dir/file.txt')
+    const child = await f.fs.resolve('dir/file #1.txt')
     const sibling = { targetKey: '/outside', displayPath: '../outside' } as FsTarget
     expect(f.fs.processPath(root)).toBe(f.root)
-    expect(f.fs.fileUrl(child)).toBe(`file://${f.root}/dir/file.txt`)
+    expect(f.fs.fileUrl(child)).toBe(`file://${f.root}/dir/file%20%231.txt`)
     expect(f.fs.contains(root, root)).toBe(true)
     expect(f.fs.contains(root, child)).toBe(true)
     expect(f.fs.contains(child, root)).toBe(false)

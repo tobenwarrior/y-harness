@@ -1,10 +1,10 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { Context } from '@yharness/cordis'
 import SystemPrompt from '@yharness/system-prompt'
 import ToolRuntime from '@yharness/tools'
 import { ToolCallId } from '@yharness/llm'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, posix } from 'node:path'
 import { tmpdir } from 'node:os'
 import LocalFileSystem from '@yharness/fs-local'
 import { ShellExecutor } from '@yharness/shell'
@@ -83,11 +83,12 @@ describe('managed Bot filesystem routing', () => {
   it('uses the scoped filesystem even when the session header points at the host workspace', async () => {
     const hostRoot = mkdtempSync(join(tmpdir(), 'dsh-managed-host-'))
     const managedRoot = mkdtempSync(join(tmpdir(), 'dsh-managed-workspace-'))
+    const workspaceRoot = '/managed/workspace'
+    const ctx = new Context()
     try {
       mkdirSync(join(hostRoot, 'nested'))
       writeFileSync(join(hostRoot, 'nested', 'note.txt'), 'host\n')
       writeFileSync(join(managedRoot, 'note.txt'), 'managed\n')
-      const ctx = new Context()
       await ctx.plugin(SystemPrompt)
       await ctx.plugin(ToolRuntime)
       await ctx.plugin(LocalFileSystem, { cwd: hostRoot })
@@ -95,10 +96,15 @@ describe('managed Bot filesystem routing', () => {
 
       const agentFiber = ctx.plugin(() => {})
       const managedContext = agentFiber.ctx
-      const managedFs = new LocalFileSystem(new Context(), { cwd: managedRoot, diffBasisMaxBytes: 10 * 1024 * 1024 })
+      const managedFs = new LocalFileSystem(managedContext.isolate('fs'), { cwd: managedRoot, diffBasisMaxBytes: 10 * 1024 * 1024 })
+      const resolveLocal = managedFs.resolve.bind(managedFs)
+      vi.spyOn(managedFs, 'resolve').mockImplementation((path, options) => {
+        expect(options?.cwd).toBe(workspaceRoot)
+        return resolveLocal(path, { ...options, cwd: managedRoot })
+      })
       const policy: Pick<SandboxPolicyService, 'defaultMode' | 'resolve'> = {
         defaultMode: 'danger-full-access',
-        resolve: () => ({ mode: 'danger-full-access', workspaceRoot: managedRoot }),
+        resolve: () => ({ mode: 'danger-full-access', workspaceRoot }),
       }
       const capability = createManagedBotExecution({
         context: managedContext,
@@ -106,7 +112,7 @@ describe('managed Bot filesystem routing', () => {
         fs: managedFs,
         subprocess: new UnusedSubprocess(managedContext),
         sandboxPolicy: policy,
-        workspaceRoot: managedRoot,
+        workspaceRoot,
       })
       bindManagedBotExecution(managedContext, capability)
       const agent = {
@@ -125,34 +131,33 @@ describe('managed Bot filesystem routing', () => {
       expect(text(result)).toContain('managed')
       expect(text(result)).not.toContain('host')
     } finally {
+      await ctx.fiber.dispose()
       rmSync(hostRoot, { recursive: true, force: true })
       rmSync(managedRoot, { recursive: true, force: true })
     }
   })
 
-  it('rejects an absolute managed workdir before a provider call', () => {
-    const root = mkdtempSync(join(tmpdir(), 'dsh-managed-workdir-'))
+  it('rejects a managed workdir that escapes the private workspace', async () => {
+    const ctx = new Context()
+    const workspaceRoot = '/managed/workspace'
     try {
-      const ctx = new Context()
-      const agentFiber = ctx.plugin(() => {})
-      const managedContext = agentFiber.ctx
       const policy: Pick<SandboxPolicyService, 'defaultMode' | 'resolve'> = {
         defaultMode: 'danger-full-access',
-        resolve: () => ({ mode: 'danger-full-access', workspaceRoot: root }),
+        resolve: () => ({ mode: 'danger-full-access', workspaceRoot }),
       }
       const capability = createManagedBotExecution({
-        context: managedContext,
-        shell: new UnusedShell(managedContext),
-        fs: new LocalFileSystem(new Context(), { cwd: root, diffBasisMaxBytes: 10 * 1024 * 1024 }),
-        subprocess: new UnusedSubprocess(managedContext),
+        context: ctx,
+        shell: new UnusedShell(ctx),
+        fs: new LocalFileSystem(ctx, { cwd: process.cwd(), diffBasisMaxBytes: 1_024 }),
+        subprocess: new UnusedSubprocess(ctx),
         sandboxPolicy: policy,
-        workspaceRoot: root,
+        workspaceRoot,
       })
-      expect(resolveManagedWorkdir(capability, 'nested')).toBe(join(root, 'nested'))
+      expect(resolveManagedWorkdir(capability, 'nested')).toBe(posix.join(workspaceRoot, 'nested'))
       expect(() => resolveManagedWorkdir(capability, '/etc')).toThrow('stay inside')
       expect(() => resolveManagedWorkdir(capability, '../outside')).toThrow('stay inside')
     } finally {
-      rmSync(root, { recursive: true, force: true })
+      await ctx.fiber.dispose()
     }
   })
 })

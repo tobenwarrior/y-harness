@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { withFileLock } from '@yharness/atomic-write'
+import Hmr from '@yharness/hmr'
 import { expect, it, onTestFinished, vi } from 'vitest'
 import { fixture } from './loader-fixture.ts'
 
@@ -53,7 +54,12 @@ it('disposes a sync owner inside HMR while its imported write is queued, without
   const sourceEntry = a.ctx.configEditor.entries().find(entry => entry.options.id === 'provider-config-sync')
   await a.ctx.configEditor.edit(sourceEntry as NonNullable<typeof sourceEntry>, () => ({ sharedPath: shared }))
   await a.ctx.providerConfigSync.synchronize()
-  const b = await fixture('test-dispose', shared, {}, false, true)
+  // This test controls owner disposal directly. Profile file watching is covered by the external-disable test.
+  const watchConfig = vi.spyOn(Hmr.prototype, 'watchConfig').mockResolvedValue(async () => {})
+  const b = await (async () => {
+    try { return await fixture('test-dispose', shared, {}, false, true) }
+    finally { watchConfig.mockRestore() }
+  })()
   await b.ctx.providerConfigSync.synchronize()
   const before = readFileSync(b.profile.patchPath, 'utf8')
   await b.ctx.hmr.runExclusive(async () => {
@@ -63,14 +69,13 @@ it('disposes a sync owner inside HMR while its imported write is queued, without
       await expect(withFileLock(shared, async () => undefined, { waitMs: 0 })).rejects.toThrow('timed out waiting for the writer lock')
     })
     const entry = b.ctx.configEditor.entries().find(entry => entry.options.id === 'provider-config-sync')
-    await entry?.fiber?.dispose()
+    if (entry?.fiber === undefined) throw new Error('sync owner must be mounted before disposal')
+    await entry.fiber.dispose()
+    expect(b.ctx.get('providerConfigSync') === undefined).toBe(true)
   })
   await b.ctx.hmr.runExclusive(async () => {})
   expect(readFileSync(b.profile.patchPath, 'utf8')).toBe(before)
   await expect(withFileLock(shared, async () => 'released', { waitMs: 0 })).resolves.toBe('released')
-  await vi.waitFor(() => {
-    expect(b.ctx.get('providerConfigSync') === undefined).toBe(true)
-  })
 })
 
 it('keeps local profiles through hot disable and resumes missed ordinary changes after remount', async () => {

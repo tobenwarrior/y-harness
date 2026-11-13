@@ -185,7 +185,8 @@ describe('dsh-skill-filesystem plugin exports', () => {
 })
 
 describe('FileSystemSkillProvider', () => {
-  it('restricts managed Bot lookups to the owner-controlled workspace placeholder', async () => {
+  // The Host scans the Podman workspace placeholder at a real Linux filesystem path.
+  it.skipIf(process.platform === 'win32')('restricts managed Bot lookups to the owner-controlled workspace placeholder', async () => {
     const home = await tempDir('skill-managed-home')
     const project = await tempDir('skill-managed-project')
     const managedRoot = await tempDir('skill-managed-workspace')
