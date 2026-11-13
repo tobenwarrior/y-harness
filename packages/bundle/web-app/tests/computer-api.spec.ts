@@ -85,6 +85,28 @@ describe('Computer HTTP routes', () => {
     expect(computer.input).not.toHaveBeenCalled()
   })
 
+  it('advertises and admits browser navigation only for a controlling viewer of the selected Bot', async () => {
+    const computer = new ComputerHost({ display: ':browser', authorityPath: '/dev/null' })
+    const navigate = vi.fn(async (_url: string, _signal: AbortSignal) => {})
+    const send = sender(botComputerRoutesWithLegacy(async session => session === 'browser-session' ? {
+      computer, id: 'bot-browser', permissionScope: 'bot', navigate,
+    } : undefined))
+    const target = { sessionId: 'browser-session', viewerId }
+    try {
+      expect(await (await send('status', { sessionId: target.sessionId })).json()).toMatchObject({ computer: { browser: true } })
+      expect((await send('navigate', { ...target, url: 'https://example.test/' })).status).toBe(409)
+      await send('take-control', target)
+      expect((await send('navigate', { ...target, url: 'file:///etc/hosts' })).status).toBe(400)
+      expect((await send('navigate', { ...target, url: 'https://example.test/', extra: true })).status).toBe(400)
+      expect((await send('navigate', { ...target, sessionId: 'different', url: 'https://example.test/' })).status).toBe(409)
+      expect(navigate).not.toHaveBeenCalled()
+      expect(await (await send('navigate', { ...target, url: 'https://example.test/' })).json()).toEqual({ mode: 'controlling' })
+      expect(navigate).toHaveBeenCalledExactlyOnceWith('https://example.test/', expect.any(AbortSignal))
+    } finally {
+      await computer.dispose()
+    }
+  })
+
   it('returns a frame and routes input through the current viewer identity', async () => {
     const { computer, send } = harness()
     expect(await (await send('frame', { viewerId })).json()).toMatchObject({ mode: 'watching', width: 1280 })

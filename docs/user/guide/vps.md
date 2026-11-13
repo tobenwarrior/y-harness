@@ -114,6 +114,30 @@ The browser desktop and any shell running inside it can make outbound connection
 
 For a Firefox-enabled Bot also listed in `botComputers.desktopOnlyBots`, the Bot can pause a direct owner chat to request website sign-in. Choose **Take over**, check the website address, then complete the sign-in or verification in the Computer panel. Once the signed-in page loads, choose **I’m done** to resume the waiting Bot. If you cancel after taking control, clear the sign-in form first. If you close the panel, reopen it and choose **Take over** again to finish. The private Computer remains reserved until you return it, even if the Bot's ten-minute wait ends. Sign-in handoffs end when Cloud restarts.
 
+### Enable an isolated browser for selected Bots
+
+The isolated browser gives each selected Bot a persistent Chromium profile under a separate Linux account. The Bot keeps its existing shell and file workspace. Use a supported, up-to-date Chromium build with working renderer sandboxing and an administrator-owned executable path.
+
+From the VPS administrator checkout, install the worker with the trusted Node and Chromium paths. Repeat `--grant` for each Bot roster ID and its existing Session ID. This installs a separate service and keeps the existing browser profiles available.
+
+```sh
+sudo python3 scripts/setup-vps-browser.py install \
+  --node /usr/bin/node --chromium /opt/google/chrome/chrome \
+  --cloud-user yharness-cloud \
+  --grant bot-worker=bot-session-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa
+sudo python3 scripts/setup-vps-browser.py activate
+```
+
+Add `isolatedBrowser` under `botComputers` in the private Web profile patch. Use the same selected Bot roster IDs in the installer and the patch. Remove those IDs from `browser.bots` if they previously used Firefox. Keep their Bot and Session data and existing container volumes.
+
+```yaml
+isolatedBrowser:
+  socketPath: /run/yharness-browser/control.sock
+  bots: [bot-worker]
+```
+
+Reload Cloud when its tasks are idle. Ask the Bot to open a public website, or open its **Computer** panel, choose **Take control**, and enter a website address. **Hand back** lets the Bot resume. This panel shows website content. Use the Firefox workflow above for private sign-in handoff while saved-login support is pending.
+
 ## Give a Bot access to service diagnostics
 
 Ask the VPS owner to add `vpsServices` inside the same `web-runtime` configuration. The grant names an exact systemd service and the Bot roster IDs that may inspect it. This example grants read access to a service managed by the same Linux user as Y Harness.

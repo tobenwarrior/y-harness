@@ -38,6 +38,7 @@ import type { VpsServiceAccess } from './vps-services.ts'
 import type { VpsJournalConfig } from './vps-journal.ts'
 import { mountVpsVaultRequests } from './vps-vault-requests.ts'
 import type { VpsVaultRequestsConfig } from './vps-vault-requests.ts'
+import type { VpsIsolatedBrowserConfig } from './vps-isolated-browser.ts'
 
 /** Stable Cordis plugin name. */
 export const name = 'web-app'
@@ -95,6 +96,8 @@ export interface Config {
       /** Absolute path to the prepared owner-only browser policy. */
       seccompProfile: string
     } | null
+    /** Cloud-managed browser broker for selected private Computer Bots. */
+    isolatedBrowser?: VpsIsolatedBrowserConfig | null
   } | null
   /** Exact Linux service grants, selected by the VPS owner. */
   vpsServices?: VpsServiceAccess[]
@@ -128,6 +131,13 @@ export const Config: z<Config> = z.object({
           bots: z.array(String).required(),
           image: z.string().required(),
           seccompProfile: z.string().required(),
+        }),
+        z.const(null),
+      ]),
+      isolatedBrowser: z.union([
+        z.object({
+          socketPath: z.string().required(),
+          bots: z.array(String).required(),
         }),
         z.const(null),
       ]),

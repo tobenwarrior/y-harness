@@ -287,6 +287,42 @@ describe('private computer Host', () => {
     }
   })
 
+  it('uses a typed browser input provider only for the current controller', async () => {
+    const actions: ComputerAction[] = []
+    const host = new ComputerHost({ display: ':browser', authorityPath: '/dev/null' }, {
+      input: async (action) => { actions.push(action) },
+      run: async () => { throw new Error('The browser does not run desktop commands.') },
+    })
+    try {
+      const action = { kind: 'click', x: 7, y: 8, button: 1 }
+      await host.botAction(action)
+      await host.takeControl(viewers.alice)
+      await expect(host.botAction(action)).rejects.toBeInstanceOf(ComputerLeaseError)
+      await expect(host.input(viewers.bob, action)).rejects.toBeInstanceOf(ComputerLeaseError)
+      await expect(host.input(viewers.alice, { ...action, x: -1 })).rejects.toBeInstanceOf(ComputerInputError)
+      await host.input(viewers.alice, { kind: 'text', text: 'Browser fixture' })
+      expect(actions).toEqual([action, { kind: 'text', text: 'Browser fixture' }])
+    } finally {
+      await host.dispose()
+    }
+  })
+
+  it('queues browser navigation behind the Computer lease', async () => {
+    const f = fixture()
+    const visited: string[] = []
+    const signal = new AbortController().signal
+    const navigate = async (url: string) => { visited.push(url) }
+    try {
+      await f.host.takeControl(viewers.alice)
+      await expect(f.host.navigateAsBot('https://example.test', signal, navigate)).rejects.toBeInstanceOf(ComputerLeaseError)
+      await f.host.releaseControl(viewers.alice)
+      await f.host.navigateAsBot('https://example.test', signal, navigate)
+      expect(visited).toEqual(['https://example.test'])
+    } finally {
+      await f.dispose()
+    }
+  })
+
   it('supports all bounded input forms with argv-only xdotool calls', async () => {
     const f = fixture()
     const actions: ComputerAction[] = [

@@ -58,6 +58,19 @@ describe('Computer HTTP client', () => {
     }))
   })
 
+  it('reads the isolated browser capability and sends a website to that viewer lease', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response({ available: true, computer: { location: 'vps', permissionScope: 'bot', browser: true } }))
+      .mockResolvedValueOnce(response({ mode: 'controlling' }))
+    vi.stubGlobal('fetch', fetchMock)
+    const client = createComputerClient()
+    await expect(client.status(undefined, 'bot-session')).resolves.toMatchObject({ computer: { browser: true } })
+    await expect(client.navigate?.('viewer-id', 'https://example.test/', 'bot-session')).resolves.toEqual({ mode: 'controlling' })
+    expect(fetchMock).toHaveBeenNthCalledWith(2, 'api/computer/navigate', expect.objectContaining({
+      body: JSON.stringify({ viewerId: 'viewer-id', url: 'https://example.test/', sessionId: 'bot-session' }),
+    }))
+  })
+
   it('binds native setup and control to the Bot and its mounted panel', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(response({ screenRecording: true, accessibility: false, deviceControlLabel: true, shared: false }))

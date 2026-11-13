@@ -4409,7 +4409,7 @@ export interface WebRuntimeConfig {
 ## `@yharness/web-app`
 
 - `inject`: `webServer`
-- `source`: [`packages/bundle/web-app/src/index.ts:57`](../packages/bundle/web-app/src/index.ts)
+- `source`: [`packages/bundle/web-app/src/index.ts:58`](../packages/bundle/web-app/src/index.ts)
 
 ```ts config-catalog
 /** Plugin config: composed deployment settings plus per-invocation command-line values. */
@@ -4454,6 +4454,8 @@ export interface Config {
       /** Absolute path to the prepared owner-only browser policy. */
       seccompProfile: string
     } | null
+    /** Cloud-managed browser broker for selected private Computer Bots. */
+    isolatedBrowser?: VpsIsolatedBrowserConfig | null
   } | null
   /** Exact Linux service grants, selected by the VPS owner. */
   vpsServices?: VpsServiceAccess[]
@@ -4468,6 +4470,14 @@ export interface Config {
     /** Absolute path to the file that authenticates the private display. */
     authorityPath: string
   } | null
+}
+
+/** Trusted Web Host configuration for one isolated browser broker socket. */
+export interface VpsIsolatedBrowserConfig {
+  /** Absolute Unix-domain socket path owned by the Cloud browser service. */
+  readonly socketPath: string
+  /** Exact Bot roster ids allowed to use the browser service. */
+  readonly bots: string[]
 }
 
 /** One exact Linux service and the Bots allowed to inspect it. */

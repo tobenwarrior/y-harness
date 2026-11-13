@@ -132,6 +132,14 @@ describe('web-app runtime glue', () => {
     expect(new Config({ ...defaults, botComputers }).botComputers).toMatchObject(botComputers)
   })
 
+  it('accepts an isolated browser broker for selected private Computers', () => {
+    const botComputers = {
+      root: '/example/computers', image: 'localhost/example',
+      isolatedBrowser: { socketPath: '/run/yharness-browser.sock', bots: ['bot-isolated'] },
+    }
+    expect(new Config({ ...defaults, botComputers }).botComputers).toMatchObject(botComputers)
+  })
+
   it('preserves the difference between all Bots and an empty private Computer allowlist', () => {
     const botComputers = { root: '/example/computers', image: 'localhost/example' }
     expect(new Config({ ...defaults, botComputers }).botComputers?.bots).toBeUndefined()

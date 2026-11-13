@@ -13,6 +13,7 @@ export interface ComputerIdentity {
   readonly id?: string
   readonly location: ComputerLocation
   readonly permissionScope: ComputerPermissionScope
+  readonly browser?: true
 }
 
 /** Direct response from the Computer status route. */
@@ -96,6 +97,8 @@ export interface ComputerClient {
    * @param sessionId - Active Bot Session selecting an isolated Cloud Computer.
    */
   input(viewerId: string, action: ComputerInputAction, signal?: AbortSignal, sessionId?: string): Promise<ComputerControlResult>
+  /** Open a URL while the viewer controls the selected isolated browser. */
+  readonly navigate?: (viewerId: string, url: string, sessionId: string, signal?: AbortSignal) => Promise<ComputerControlResult>
   /** Read or respond to sign-in requests on a VPS Bot's Computer. */
   readonly signIn?: {
     status(sessionId: string, signal: AbortSignal): Promise<{ readonly request: ComputerSignInRequest | null }>
@@ -110,6 +113,7 @@ const FRAME_PATH = 'api/computer/frame'
 const TAKE_CONTROL_PATH = 'api/computer/take-control'
 const RELEASE_CONTROL_PATH = 'api/computer/release-control'
 const INPUT_PATH = 'api/computer/input'
+const NAVIGATE_PATH = 'api/computer/navigate'
 const SIGN_IN_PATH = 'api/computer/sign-in'
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu
 
@@ -129,7 +133,8 @@ function identityOf(value: unknown): ComputerIdentity | undefined {
   const id = typeof value.id === 'string' && value.id.length > 0 && value.id.length <= 256
     && !/[\u0000-\u001f\u007f]/u.test(value.id) ? value.id : undefined
   if (location === undefined || permissionScope === undefined) return undefined
-  return { ...(id === undefined ? {} : { id }), location, permissionScope }
+  return { ...(id === undefined ? {} : { id }), location, permissionScope,
+    ...(location === 'vps' && permissionScope === 'bot' && value.browser === true ? { browser: true } : {}) }
 }
 
 function modeOf(value: unknown): ComputerMode | undefined {
@@ -225,6 +230,9 @@ export function createComputerClient(): ComputerClient {
     releaseControl: (viewerId, options, sessionId) => post(RELEASE_CONTROL_PATH, withSession({ viewerId }, sessionId), controlOf, options),
     input: (viewerId, action, signal, sessionId) => post(
       INPUT_PATH, withSession({ viewerId, action }, sessionId), controlOf, requestOptions(signal),
+    ),
+    navigate: (viewerId, url, sessionId, signal) => post(
+      NAVIGATE_PATH, { viewerId, url, sessionId }, controlOf, requestOptions(signal),
     ),
     signIn: {
       status: (sessionId, signal) => post(SIGN_IN_PATH, { action: 'status', sessionId }, signInStatusOf, { signal }),

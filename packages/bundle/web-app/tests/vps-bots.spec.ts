@@ -12,6 +12,7 @@ import { LocalSubprocessRuntime } from '@yharness/subprocess-local'
 import { describe, expect, it, vi } from 'vitest'
 import { mountVpsBots } from '../src/vps-bots.ts'
 import { VpsJournal } from '../src/vps-journal.ts'
+import { VpsIsolatedBrowser } from '../src/vps-isolated-browser.ts'
 import { VpsRuntime } from '../src/vps-runtime.ts'
 
 const BOT_SESSION = SessionId('bot-session-0e9beecd-b6f5-40b1-8d52-f97259bdcf76')
@@ -30,6 +31,40 @@ describe('managed VPS Bot composition', () => {
       root: '/yharness-test-bots', image: 'localhost/yharness-test', bots: ['bot-private'],
       browser: { bots: ['bot-shared-desktop'], image: 'localhost/yharness-browser', seccompProfile: '/yharness-browser.json' },
     }, [])).toThrow('VPS browser access must select private Computer Bots.')
+  })
+
+  it('requires isolated browser Bots to have private Computers', () => {
+    expect(() => mountVpsBots(new Context(), {
+      root: '/yharness-test-bots', image: 'localhost/yharness-test', bots: ['bot-private'],
+      isolatedBrowser: { socketPath: '/run/yharness-browser.sock', bots: ['bot-shared-desktop'] },
+    }, [])).toThrow('VPS isolated browser access must select private Computer Bots.')
+  })
+
+  it('rejects overlapping Podman and isolated browser selections', () => {
+    expect(() => mountVpsBots(new Context(), {
+      root: '/yharness-test-bots', image: 'localhost/yharness-test', bots: ['bot-browser'],
+      browser: { bots: ['bot-browser'], image: 'localhost/yharness-browser', seccompProfile: '/yharness-browser.json' },
+      isolatedBrowser: { socketPath: '/run/yharness-browser.sock', bots: ['bot-browser'] },
+    }, [])).toThrow('VPS browser and isolated browser Bots must not overlap.')
+  })
+
+  it('keeps isolated browser Bots on their existing workspace runtime', async () => {
+    const ctx = new Context()
+    const ensure = vi.spyOn(VpsRuntime.prototype, 'ensure').mockResolvedValue(undefined)
+    try {
+      await ctx.plugin(scope => mountVpsBots(scope, {
+        root: '/yharness-test-bots', image: 'localhost/yharness-test',
+        isolatedBrowser: { socketPath: '/run/yharness-browser.sock', bots: ['bot-isolated'] },
+      }, []))
+      const workspaces = ctx.get('botWorkspaces')
+      if (workspaces === undefined) throw new Error('VPS Bot workspaces were not registered')
+      await workspaces.prepare(BOT_SESSION, BotId('bot-isolated'))
+      await workspaces.prepare(DESKTOP_SESSION, BotId('bot-other'))
+      expect(ensure.mock.calls).toEqual([[BOT_SESSION], [DESKTOP_SESSION]])
+    } finally {
+      ensure.mockRestore()
+      await ctx.fiber.dispose()
+    }
   })
 
   it('prepares the browser runtime only for the selected Bot', async () => {
@@ -61,6 +96,8 @@ describe('managed VPS Bot composition', () => {
     const readJournal = vi.spyOn(VpsJournal.prototype, 'read').mockResolvedValue({
       version: 1, generatedAt: '2026-01-01T00:00:00.000Z', recovery: [], primaryAudit: [],
     })
+    const browserStatus = vi.spyOn(VpsIsolatedBrowser.prototype, 'status').mockResolvedValue({ available: true })
+    const browserNavigate = vi.spyOn(VpsIsolatedBrowser.prototype, 'navigate').mockResolvedValue(undefined)
     try {
       await ctx.plugin(LlmRuntime)
       await ctx.plugin(SessionStore)
@@ -84,6 +121,7 @@ describe('managed VPS Bot composition', () => {
         mountVpsBots(scope, {
           root: '/yharness-test-bots', image: 'localhost/yharness-test', bots: ['bot-test', 'bot-desktop'],
           desktopOnlyBots: ['bot-desktop'],
+          isolatedBrowser: { socketPath: '/run/yharness-browser.sock', bots: ['bot-test'] },
         }, [], undefined, {
           socketPath: '/run/yharness-test.sock', bots: ['bot-test', 'bot-desktop'],
         })
@@ -101,6 +139,7 @@ describe('managed VPS Bot composition', () => {
       const desktop = await ctx.agentLoop.create(DESKTOP_SESSION, options)
       const legacy = await ctx.agentLoop.create(LEGACY_SESSION, options)
       const regular = await ctx.agentLoop.create(SessionId('regular-session'), options)
+      const call = { signal: new AbortController().signal, name: 'host_probe', arguments: {} }
       const execution = managedBotExecutionFor({ agent: bot })
       if (execution === undefined) throw new Error('managed Bot execution was not bound')
       expect(execution.workspaceRoot).toBe('/yharness-test-bots/' + BOT_SESSION)
@@ -119,12 +158,28 @@ describe('managed VPS Bot composition', () => {
       expect(ctx.tools.get('vps_computer', bot)).toBeDefined()
       expect(ctx.tools.get('vps_computer', desktop)).toBeDefined()
       expect(ctx.tools.get('vps_computer', regular)).toBeUndefined()
+      expect(ctx.tools.get('vps_computer', bot)?.parameters).toMatchObject({
+        properties: { action: { enum: expect.arrayContaining(['navigate']) } },
+      })
+      expect(ctx.tools.get('vps_computer', desktop)?.parameters).toMatchObject({
+        properties: { action: { enum: expect.not.arrayContaining(['navigate']) } },
+      })
+      await expect(ctx.tools.execute({
+        ...call,
+        name: 'vps_computer',
+        callId: ToolCallId('bot-navigate-call'),
+        arguments: { action: 'navigate', url: 'https://example.test/path' },
+        agent: bot,
+      })).resolves.toMatchObject({ isError: false })
+      expect(browserStatus).toHaveBeenCalledWith('bot-test', BOT_SESSION, expect.any(AbortSignal))
+      expect(browserNavigate).toHaveBeenCalledWith(
+        'bot-test', BOT_SESSION, 'https://example.test/path', expect.any(AbortSignal),
+      )
       expect(ctx.tools.get('vps_service_journal', bot)).toBeDefined()
       expect(ctx.tools.get('vps_service_journal', desktop)).toBeDefined()
       expect(ctx.tools.get('vps_service_journal', legacy)).toBeUndefined()
       expect(ctx.tools.get('vps_service_journal', regular)).toBeUndefined()
 
-      const call = { signal: new AbortController().signal, name: 'host_probe', arguments: {} }
       await expect(ctx.tools.execute({ ...call, name: 'vps_service_journal', callId: ToolCallId('journal-call'), agent: bot }))
         .resolves.toMatchObject({ isError: false })
       expect(readJournal).toHaveBeenCalledExactlyOnceWith('bot-test', call.signal)
@@ -147,6 +202,8 @@ describe('managed VPS Bot composition', () => {
     } finally {
       argv.mockRestore()
       readJournal.mockRestore()
+      browserStatus.mockRestore()
+      browserNavigate.mockRestore()
       await ctx.fiber.dispose()
     }
   })

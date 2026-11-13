@@ -3,6 +3,7 @@
 import type { Branded } from '@yharness/brand'
 import type { ConnectionFetchRoute } from '@yharness/client-connection'
 import type { ComputerSignInAction, VpsComputer } from './computer.ts'
+import { validateIsolatedBrowserUrl } from './vps-isolated-browser.ts'
 
 type ViewerId = Branded<'computer-viewer-id'>
 type Action = (viewer: ViewerId, signal: AbortSignal) => Promise<unknown>
@@ -18,6 +19,7 @@ interface ComputerRouteController {
 interface ResolvedComputer {
   readonly controller: ComputerRouteController
   readonly metadata?: ComputerStatusMetadata
+  readonly navigate?: (viewer: string, url: string, signal: AbortSignal) => Promise<unknown>
 }
 
 interface ComputerSignInRouteTarget {
@@ -39,6 +41,8 @@ export interface ComputerStatusMetadata {
   readonly location: ComputerLocation
   /** Whether input and display access are isolated to a Bot or shared by the workspace. */
   readonly permissionScope: ComputerPermissionScope
+  /** Whether the Computer exposes browser address navigation. */
+  readonly browser?: true
 }
 
 /** Server-selected Computer target for a Bot Session route. */
@@ -49,6 +53,8 @@ export interface BotComputerRouteTarget {
   readonly id: string
   /** Whether permissions apply to the Bot or the legacy shared workspace. */
   readonly permissionScope: ComputerPermissionScope
+  /** Network navigation for an isolated browser, admitted by this Computer's viewer lease. */
+  readonly navigate?: (url: string, signal: AbortSignal) => Promise<void>
 }
 
 const BODY_LIMIT = 16_384
@@ -188,6 +194,37 @@ function routesFor(
   ]
 }
 
+function browserNavigationRoute(resolveComputer: (sessionId: string) => Promise<ResolvedComputer | undefined>): ConnectionFetchRoute {
+  return {
+    path: '/api/computer/navigate', methods: ['POST'], requestBody: 'streaming',
+    async fetch(request) {
+      let target: string
+      let viewer: ViewerId
+      let url: string
+      try {
+        const payload = await readPayload(request)
+        if (!isRecord(payload) || Object.keys(payload).length !== 3 || typeof payload.url !== 'string') {
+          return json({ error: 'invalid-request' }, 400)
+        }
+        const selected = sessionTarget(payload, true)
+        const id = viewerId(payload.viewerId)
+        if (selected === undefined || id === undefined) return json({ error: 'invalid-request' }, 400)
+        target = selected.id
+        viewer = id
+        url = validateIsolatedBrowserUrl(payload.url)
+      } catch (error) {
+        void error
+        return json({ error: 'invalid-request' }, 400)
+      }
+      try {
+        const navigate = (await resolveComputer(target))?.navigate
+        if (navigate !== undefined) return json(await navigate(viewer, url, request.signal))
+      } catch (error) { void error }
+      return json({ error: 'computer-unavailable' }, 409)
+    },
+  }
+}
+
 /**
  * Build the exact routes carried by Connection's authenticated operator channel.
  *
@@ -253,23 +290,30 @@ export function botComputerRoutes(
  * fallback; the Host decides whether a known Bot is selected for isolation.
  * @param resolveTarget - Resolve the server-selected Computer target.
  * @param options - Permit omitted session ids only for an explicit legacy rollout.
- * @returns The same five private POST routes as the other Computer APIs.
+ * @returns Private Computer routes and the optional browser navigation route.
  */
 export function botComputerRoutesWithLegacy(
   resolveTarget: (sessionId: string) => Promise<BotComputerRouteTarget | undefined>,
   options: { readonly allowMissingSession?: boolean } = {},
 ): readonly ConnectionFetchRoute[] {
-  return routesFor(async (sessionId) => {
+  const resolveComputer = async (sessionId: string): Promise<ResolvedComputer | undefined> => {
     const target = await resolveTarget(sessionId)
-    return target === undefined ? undefined : {
+    if (target === undefined) return undefined
+    const navigate = target.navigate
+    return {
       controller: target.computer,
       metadata: {
         id: target.id,
         location: 'vps',
         permissionScope: target.permissionScope,
+        ...(navigate === undefined ? {} : { browser: true }),
       },
+      ...(navigate === undefined ? {} : {
+        navigate: (viewer, url, signal) => target.computer.navigateAsViewer(viewer, url, signal, navigate),
+      }),
     }
-  }, {
+  }
+  return [...routesFor(resolveComputer, {
     managed: true,
     ...(options.allowMissingSession === undefined ? {} : { allowMissingSession: options.allowMissingSession }),
     status: (resolved, target) => {
@@ -284,7 +328,7 @@ export function botComputerRoutesWithLegacy(
         computer: metadata satisfies ComputerStatusMetadata,
       })
     },
-  })
+  }), browserNavigationRoute(resolveComputer)]
 }
 
 /**

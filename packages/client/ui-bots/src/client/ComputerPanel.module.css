@@ -97,6 +97,21 @@
   line-height: 18px;
 }
 
+.browserAddress {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 6px 10px;
+  border-bottom: 0.5px solid var(--yh-alias-border-l2);
+}
+
+.browserAddress > :first-child {
+  min-width: 0;
+  flex: 1;
+}
+
 .viewport {
   display: flex;
   min-width: 0;

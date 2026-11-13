@@ -12,6 +12,7 @@ import { containerComputer, type VpsComputer } from './computer.ts'
 import * as ComputerTool from './computer-tool.ts'
 import { botComputerRoutesWithLegacy, computerSignInRoute } from './computer-api.ts'
 import { VpsRuntime, type VpsBrowserOptions } from './vps-runtime.ts'
+import { VpsIsolatedBrowser, type VpsIsolatedBrowserConfig } from './vps-isolated-browser.ts'
 import { registerVpsServiceTools, VpsServices, type VpsServiceAccess } from './vps-services.ts'
 import { registerVpsJournalTool, VpsJournal, type VpsJournalConfig } from './vps-journal.ts'
 
@@ -44,6 +45,7 @@ export function mountVpsBots(
     readonly bots?: readonly string[] | null
     readonly desktopOnlyBots?: readonly string[]
     readonly browser?: (VpsBrowserOptions & { readonly bots: readonly string[] }) | null
+    readonly isolatedBrowser?: VpsIsolatedBrowserConfig | null
   },
   grants: readonly VpsServiceAccess[],
   legacyComputer?: VpsComputer,
@@ -61,13 +63,23 @@ export function mountVpsBots(
   }
   const isDesktopBot = (botId: string): boolean => isManagedBot(botId) || desktopOnlyBotIds.has(botId)
   const browserBotIds = new Set(config.browser?.bots)
+  const isolatedBrowserBotIds = new Set(config.isolatedBrowser?.bots)
   const hasBrowserSignIn = (botId: string): boolean => browserBotIds.has(botId) && desktopOnlyBotIds.has(botId)
   if ([...browserBotIds].some(botId => !isDesktopBot(botId))) {
     throw new Error('VPS browser access must select private Computer Bots.')
   }
+  if ([...isolatedBrowserBotIds].some(botId => !isDesktopBot(botId))) {
+    throw new Error('VPS isolated browser access must select private Computer Bots.')
+  }
+  if ([...browserBotIds].some(botId => isolatedBrowserBotIds.has(botId))) {
+    throw new Error('VPS browser and isolated browser Bots must not overlap.')
+  }
   const browserRuntime = config.browser == null
     ? undefined
     : new VpsRuntime(config.root, config.image, undefined, config.browser)
+  const isolatedBrowser = config.isolatedBrowser == null
+    ? undefined
+    : new VpsIsolatedBrowser(config.isolatedBrowser)
   if ([...browserBotIds].some(hasBrowserSignIn)) {
     ctx.on('webserver/index-inject', (table) => {
       table.push({ kind: 'global', name: '__YH_BOT_COMPUTER_SIGN_IN__', value: true })
@@ -97,6 +109,14 @@ export function mountVpsBots(
   }, 'vps-bots: dispose desktop controllers')
 
   const computerFor = async (sessionId: string, botId: string): Promise<VpsComputer> => {
+    if (isolatedBrowser !== undefined && isolatedBrowserBotIds.has(botId)) {
+      await isolatedBrowser.status(botId, sessionId, new AbortController().signal)
+      const existing = computers.get(sessionId)
+      if (existing !== undefined) return existing
+      const computer = isolatedBrowser.computer(botId, sessionId)
+      computers.set(sessionId, computer)
+      return computer
+    }
     const runtime = runtimeFor(botId)
     await runtime.ensure(sessionId)
     const existing = computers.get(sessionId)
@@ -104,6 +124,19 @@ export function mountVpsBots(
     const computer = containerComputer((argv, signal, stdin) => runtime.desktopCommand(sessionId, argv, signal, stdin))
     computers.set(sessionId, computer)
     return computer
+  }
+  const navigateFor = async (botId: string, sessionId: string, url: string, signal: AbortSignal): Promise<void> => {
+    if (isolatedBrowser === undefined || !isolatedBrowserBotIds.has(botId)) {
+      throw new Error('Browser navigation is unavailable for this Bot.')
+    }
+    const computer = await computerFor(sessionId, botId)
+    await computer.navigateAsBot(url, signal, (targetUrl, targetSignal) => isolatedBrowser.navigate(
+      botId, sessionId, targetUrl, targetSignal,
+    ))
+  }
+  const browserNavigateFor = (botId: string, sessionId: string): ((url: string, signal: AbortSignal) => Promise<void>) | undefined => {
+    if (isolatedBrowser === undefined || !isolatedBrowserBotIds.has(botId)) return undefined
+    return (url, signal) => isolatedBrowser.navigate(botId, sessionId, url, signal)
   }
 
   ctx.inject(['bots', 'connection'], (scope) => {
@@ -126,10 +159,12 @@ export function mountVpsBots(
       const bot = await scope.bots.ownerBotForSession(sessionId)
       if (bot?.state !== 'active') return undefined
       if (isDesktopBot(bot.id)) {
+        const navigate = browserNavigateFor(bot.id, bot.sessionId)
         return {
           computer: await computerFor(bot.sessionId, bot.id),
           id: bot.id,
           permissionScope: 'bot' as const,
+          ...(navigate === undefined ? {} : { navigate }),
         }
       }
       if (legacyComputer === undefined) return undefined
@@ -180,6 +215,9 @@ export function mountVpsBots(
               throw new Error('Computer sign-in is available in a direct owner Bot chat.')
             }
             return (await computerFor(bot.sessionId, bot.id)).requestSignIn(signal)
+          } : undefined, isolatedBrowserBotIds.has(bot.id) ? (sessionId, url, signal) => {
+            if (sessionId !== bot.sessionId) throw new Error('VPS Computer requires the owning Bot Session.')
+            return navigateFor(bot.id, sessionId, url, signal)
           } : undefined)
           if (journal !== undefined) registerVpsJournalTool(agentCtx, bot.id, bot.sessionId, journal, agent.ctx)
         })
@@ -239,7 +277,10 @@ export function mountVpsBots(
         ComputerTool.applyVpsBotComputer(agentCtx, async (sessionId) => {
           if (sessionId !== bot.sessionId) throw new Error('VPS Computer requires the owning Bot Session.')
           return computerFor(sessionId, bot.id)
-        })
+        }, undefined, isolatedBrowserBotIds.has(bot.id) ? (sessionId, url, signal) => {
+          if (sessionId !== bot.sessionId) throw new Error('VPS Computer requires the owning Bot Session.')
+          return navigateFor(bot.id, sessionId, url, signal)
+        } : undefined)
         registerVpsServiceTools(agentCtx, bot.id, services)
         if (journal !== undefined) registerVpsJournalTool(agentCtx, bot.id, bot.sessionId, journal, agent.ctx)
       })

@@ -51,13 +51,15 @@ export function apply(ctx: Context): void {
  * @param ctx - Agent scope carrying tools and attachments.
  * @param resolve - Resolves the current owner Bot's desktop from the calling Session.
  * @param signIn - Optional handoff restricted to a direct owner turn.
+ * @param navigate - Optional website navigation through the calling Bot's browser.
  */
 export function applyVpsBotComputer(
   ctx: Context,
   resolve: (sessionId: string) => Promise<ComputerAgentControls>,
   signIn?: ComputerToolTarget['signIn'],
+  navigate?: ComputerToolTarget['navigate'],
 ): void {
-  registerVpsComputer(ctx, resolve, 'this Bot’s private VPS desktop', signIn)
+  registerVpsComputer(ctx, resolve, 'this Bot’s private VPS desktop', signIn, navigate)
 }
 
 function registerVpsComputer(
@@ -65,17 +67,20 @@ function registerVpsComputer(
   resolve: (sessionId: string) => Promise<ComputerAgentControls>,
   desktop: string,
   signIn?: ComputerToolTarget['signIn'],
+  navigate?: ComputerToolTarget['navigate'],
 ): void {
   registerComputerTool(ctx, {
     name: 'vps_computer',
     description: `Observe or operate ${desktop} shown in the Computer panel. `
       + 'Observe before targeting visible controls. The tool pauses while the user is in control.'
       + (signIn === undefined ? '' : ' For a website sign-in or verification that needs the owner, use request_sign_in. '
-        + 'The owner uses the Computer directly. Never ask for a password or code in chat.'),
+        + 'The owner uses the Computer directly. Never ask for a password or code in chat.')
+      + (navigate === undefined ? '' : ' Use navigate for an HTTP(S) website URL without credentials.'),
     keyDescription: 'X11 key or chord, for example Return or ctrl+a.',
     observe: async (sessionId, signal) => (await resolve(sessionId)).observe(signal),
     act: async (sessionId, action, signal) => (await resolve(sessionId)).actAsBot(action, signal),
     ...(signIn === undefined ? {} : { signIn }),
+    ...(navigate === undefined ? {} : { navigate }),
   })
 }
 
@@ -103,6 +108,7 @@ interface ComputerToolTarget {
   observe(sessionId: string, signal: AbortSignal): ReturnType<ComputerAgentControls['observe']>
   act(sessionId: string, action: object, signal: AbortSignal): Promise<unknown>
   readonly signIn?: (agent: NonNullable<ToolExecution['agent']>, signal: AbortSignal) => Promise<ComputerSignInResult>
+  readonly navigate?: (sessionId: string, url: string, signal: AbortSignal) => Promise<void>
 }
 
 function registerComputerTool(ctx: Context, target: ComputerToolTarget): void {
@@ -113,10 +119,12 @@ function registerComputerTool(ctx: Context, target: ComputerToolTarget): void {
       action: {
         type: 'string',
         enum: ['observe', 'move', 'click', 'drag', 'scroll', 'key', 'text',
-          ...(target.signIn === undefined ? [] : ['request_sign_in' as const])],
+          ...(target.signIn === undefined ? [] : ['request_sign_in' as const]),
+          ...(target.navigate === undefined ? [] : ['navigate' as const])],
         required: true,
         description: 'Observe the screen or send one pointer, keyboard, or text action.'
-          + (target.signIn === undefined ? '' : ' Request sign-in with no other arguments.'),
+          + (target.signIn === undefined ? '' : ' Request sign-in with no other arguments.')
+          + (target.navigate === undefined ? '' : ' Navigate with an HTTP(S) URL without credentials.'),
       },
       x: { type: 'integer', description: 'Horizontal pixel for move, click, drag, or scroll.' },
       y: { type: 'integer', description: 'Vertical pixel for move, click, drag, or scroll.' },
@@ -126,6 +134,9 @@ function registerComputerTool(ctx: Context, target: ComputerToolTarget): void {
       delta: { type: 'integer', description: 'Scroll steps. Positive is down, negative is up.' },
       key: { type: 'string', description: target.keyDescription },
       text: { type: 'string', description: 'Literal text to type into the focused application.' },
+      ...(target.navigate === undefined ? {} : {
+        url: { type: 'string', description: 'HTTP(S) website URL without embedded credentials.' },
+      }),
     },
     output: {
       schema: {
@@ -161,6 +172,13 @@ function registerComputerTool(ctx: Context, target: ComputerToolTarget): void {
           case 'cancelled': return { message: 'The owner declined the sign-in request.' }
           case 'interrupted': return { message: 'The sign-in wait ended. Wait for the owner before continuing with the site.' }
         }
+      }
+      if (action === 'navigate') {
+        if (target.navigate === undefined || typeof values.url !== 'string' || Object.keys(values).length !== 1) {
+          throw new Error('Browser navigation requires one HTTP(S) URL and no other arguments.')
+        }
+        await target.navigate(sessionId, values.url, exec.signal)
+        return { message: 'Browser navigation sent.' }
       }
       if (action !== 'observe') {
         await target.act(sessionId, { kind: action, ...values }, exec.signal)

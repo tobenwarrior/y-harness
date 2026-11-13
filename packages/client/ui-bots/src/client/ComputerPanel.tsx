@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, ReactNode, WheelEvent as ReactWheelEvent } from 'react'
 import {
-  Button, IconCloseOutlineRegular, IconRefreshOutlineRegular, IconStopFillRegular, StateDot, Tooltip,
+  Button, IconCloseOutlineRegular, IconRefreshOutlineRegular, IconStopFillRegular, Input, StateDot, Tooltip,
 } from '@yharness/client-ui-primitives'
 import type { PropsLocale } from '@yharness/client-ui-slots'
 import { randomUUID } from '@yharness/util-crypto'
@@ -23,7 +23,7 @@ interface ComputerPanelProps extends PropsLocale<'bots'> {
 
 type PanelPhase = 'loading' | 'ready' | 'disconnected' | 'unavailable'
 type BusyAction = 'take' | 'release' | undefined
-type FeedbackKey = 'computerControlBusy' | 'computerInputRejected' | 'computerPasteFailed' | 'computerTextTrimmed' | 'computerSignInError'
+type FeedbackKey = 'computerControlBusy' | 'computerInputRejected' | 'computerPasteFailed' | 'computerTextTrimmed' | 'computerSignInError' | 'computerNavigationFailed'
 
 const FRAME_POLL_MS = 300
 const MAX_TEXT_LENGTH = 4_096
@@ -156,6 +156,9 @@ export function ComputerPanel({ computer, sessionId, close, local, signIn, t }: 
   const [busy, setBusy] = useState<BusyAction>()
   const [feedback, setFeedback] = useState<FeedbackKey>()
   const [retryNonce, setRetryNonce] = useState(0)
+  const [website, setWebsite] = useState('')
+  const [navigating, setNavigating] = useState(false)
+  const navigation = useRef<AbortController>()
   const signInApi = computer.signIn
 
   frameRef.current = frame
@@ -167,6 +170,9 @@ export function ComputerPanel({ computer, sessionId, close, local, signIn, t }: 
     setMode('watching')
     setBotActive(false)
     setPhase('loading')
+    setWebsite('')
+    setNavigating(false)
+    return () => { navigation.current?.abort(); navigation.current = undefined }
   }, [sessionId])
 
   useEffect(() => {
@@ -340,6 +346,31 @@ export function ComputerPanel({ computer, sessionId, close, local, signIn, t }: 
     if (bounded.length !== value.length) setFeedback('computerTextTrimmed')
   }
 
+  const openWebsite = (): void => {
+    const address = website.trim()
+    const navigate = computer.navigate
+    if (address === '' || sessionId === undefined || navigate === undefined || navigation.current !== undefined
+      || modeRef.current !== 'controlling' || busy !== undefined) return
+    const controller = new AbortController()
+    navigation.current = controller
+    setFeedback(undefined)
+    setNavigating(true)
+    inputQueue.current = inputQueue.current.then(async () => {
+      if (controller.signal.aborted || disposedRef.current || modeRef.current !== 'controlling') return
+      try {
+        await navigate(viewerId, address, sessionId, controller.signal)
+        if (!controller.signal.aborted && !disposedRef.current) imageRef.current?.focus()
+      } catch (error: unknown) {
+        if (!controller.signal.aborted && !disposedRef.current) setFeedback('computerNavigationFailed')
+        void error
+      }
+    }).finally(() => {
+      if (navigation.current !== controller) return
+      navigation.current = undefined
+      setNavigating(false)
+    })
+  }
+
   const paste = (): void => {
     if (modeRef.current !== 'controlling' || navigator.clipboard === undefined) {
       setFeedback('computerPasteFailed')
@@ -452,6 +483,16 @@ export function ComputerPanel({ computer, sessionId, close, local, signIn, t }: 
             : <Button variant="ghost" size="sm" icon={<IconCloseOutlineRegular size={14} />} aria-label={t('computerClose')} onClick={close} />}
         </div>
       </header>
+      {computerStatus?.computer?.browser === true && mode === 'controlling' && (
+        <form className={css.browserAddress} onSubmit={(event) => { event.preventDefault(); openWebsite() }}>
+          <Input type="url" inputMode="url" aria-label={t('computerWebsiteAddress')} placeholder={t('computerWebsitePlaceholder')}
+            value={website} onChange={(event) => { setWebsite(event.currentTarget.value) }} maxLength={4096}
+            disabled={navigating || busy !== undefined} autoComplete="off" />
+          <Button type="submit" variant="outline" size="sm" disabled={website.trim() === '' || navigating || busy !== undefined}>
+            {t('computerOpenWebsite')}
+          </Button>
+        </form>
+      )}
       {privateSignIn !== undefined && mode === 'controlling' && (
         <div className={css.signInNotice}>{t('computerSignInHint')} {t('computerSignInReturn')}</div>
       )}

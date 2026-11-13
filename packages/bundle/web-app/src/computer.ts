@@ -123,6 +123,8 @@ export interface ComputerInternals {
   readonly run?: ComputerCommandRunner
   /** Optional in-environment screenshot capture used by container-backed Hosts. */
   readonly capture?: ComputerCaptureRunner
+  /** An isolated browser receives normalized input after Computer lease admission. */
+  readonly input?: (action: ComputerAction, signal: AbortSignal) => Promise<void>
 }
 
 /** Stable error codes for route and tool owners that need to classify failures. */
@@ -348,6 +350,7 @@ export class VpsComputer {
   private readonly now: () => number
   private readonly run: ComputerCommandRunner
   private readonly captureRunner: ComputerCaptureRunner | undefined
+  private readonly inputRunner: ComputerInternals['input']
   private queue: Promise<void> = Promise.resolve()
   private readonly captures = new Set<Promise<void>>()
   private owner: string | undefined
@@ -367,6 +370,7 @@ export class VpsComputer {
     this.now = internals.now ?? Date.now
     this.run = internals.run ?? runNativeCommand
     this.captureRunner = internals.capture
+    this.inputRunner = internals.input
   }
 
   /**
@@ -543,11 +547,46 @@ export class VpsComputer {
    */
   async actAsBot(action: unknown, signal?: AbortSignal): Promise<void> {
     const normalized = validateComputerAction(action)
+    return this.admitBot(() => this.execute(normalized, signal), signal)
+  }
+
+  /**
+   * Admit a website navigation through the Bot's isolated browser provider.
+   * @param url - Website to validate and visit at the provider.
+   * @param signal - Cancellation before admission and during provider work.
+   * @param navigate - The already selected provider for this Bot's browser.
+   * @returns When the provider has accepted the navigation.
+   */
+  navigateAsBot(url: string, signal: AbortSignal, navigate: (url: string, signal: AbortSignal) => Promise<void>): Promise<void> {
+    return this.admitBot(() => navigate(url, signal), signal)
+  }
+
+  /**
+   * Navigate the viewer's isolated browser while that viewer holds control.
+   * @param viewerId - Current viewer lease identifier.
+   * @param url - Validated website URL.
+   * @param signal - Request cancellation.
+   * @param navigate - Provider for this Computer's browser.
+   * @returns The viewer mode after navigation.
+   */
+  navigateAsViewer(viewerId: string, url: string, signal: AbortSignal,
+    navigate: (url: string, signal: AbortSignal) => Promise<void>): Promise<ComputerControlResult> {
+    const id = validateViewer(viewerId)
+    return this.admit(async () => {
+      this.expireLease()
+      if (this.owner !== id || this.signIn !== undefined) throw new ComputerLeaseError('viewer does not hold browser control')
+      await navigate(url, signal)
+      this.leaseExpiry = this.now() + LEASE_DURATION_MS
+      return { mode: 'controlling' }
+    }, signal)
+  }
+
+  private admitBot(work: () => Promise<void>, signal?: AbortSignal): Promise<void> {
     this.pendingBotActions += 1
-    const result = this.admit(async () => {
+    const result = this.admit(() => {
       this.expireLease()
       this.assertBotControl()
-      await this.execute(normalized, signal)
+      return work()
     }, signal)
     return result.finally(() => { this.pendingBotActions -= 1 })
   }
@@ -633,6 +672,10 @@ export class VpsComputer {
 
   private async execute(action: ComputerAction, signal?: AbortSignal, signIn = false): Promise<void> {
     throwIfAborted(signal)
+    if (this.inputRunner !== undefined) {
+      await this.inputRunner(action, signal ?? new AbortController().signal)
+      return
+    }
     const env = { ...scrubbedParentEnv(), DISPLAY: this.config.display, XAUTHORITY: this.config.authorityPath }
     const move = async (x: number, y: number): Promise<void> => {
       await this.run('xdotool', ['mousemove', '--sync', String(x), String(y)], env, signal ?? new AbortController().signal)
