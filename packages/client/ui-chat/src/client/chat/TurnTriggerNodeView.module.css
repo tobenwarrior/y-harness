@@ -30,6 +30,49 @@
 .explanation { margin: 8px 0; color: var(--yh-alias-label-secondary); font: var(--yh-font-xxs-12); }
 .content { max-height: 240px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: var(--yh-font-xxs-12); }
 
+:global([data-conversation-surface='bots']) .root[data-turn-trigger] {
+  width: fit-content;
+  max-width: calc(100% - var(--dsh-bot-reply-inset));
+  margin-inline-start: var(--dsh-bot-reply-inset);
+  border: 0;
+  border-radius: var(--yh-radius-md);
+  background: transparent;
+}
+
+:global([data-conversation-surface='bots']) .root[data-turn-trigger]:has(.body) {
+  width: calc(100% - var(--dsh-bot-reply-inset));
+  background: var(--yh-alias-turn-trigger-bg, var(--yh-alias-markdown-code-block));
+}
+
+:global([data-conversation-surface='bots']) .root[data-turn-trigger] .header {
+  width: fit-content;
+  max-width: 100%;
+  gap: 6px;
+  min-height: calc(24px + var(--dsh-content-font-delta-secondary, 0px));
+  padding: 4px 8px;
+  border-radius: var(--yh-radius-md);
+  font-size: var(--dsh-content-font-size-secondary, 13px);
+}
+
+:global([data-conversation-surface='bots']) .root[data-turn-trigger]:has(.body) .header {
+  width: 100%;
+}
+
+:global([data-conversation-surface='bots']) .root[data-turn-trigger] .title {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+:global([data-conversation-surface='bots']) .root[data-turn-trigger] .time {
+  margin-inline-start: 0;
+}
+
+:global([data-conversation-surface='bots']) .root[data-turn-trigger] .body {
+  padding: 0 8px 8px 30px;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .root, .header { transition: none; }
 }

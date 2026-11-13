@@ -192,6 +192,21 @@ describe('composer stats pills', () => {
     expect(view.container.textContent).toBe('')
   })
 
+  it('Bots compact stats keep Activity and token numbers in their dialogs', () => {
+    const { source } = makeSource({ nodes: [timedStep()] })
+    const view = render(<StatsPills {...props(source)} botChat />)
+    const activity = view.getByRole('button', { name: 'Activity' })
+    const usage = view.getByRole('button', { name: 'Token usage' })
+    expect(activity.textContent).toBe('Activity')
+    expect(usage.textContent).toBe('Token usage')
+
+    fireEvent.click(activity)
+    expect(view.getByRole('dialog').textContent).toContain('1 turns 1 steps')
+    fireEvent.keyDown(document, { key: 'Escape' })
+    fireEvent.click(usage)
+    expect(view.getByRole('dialog').textContent).toContain('105 tok')
+  })
+
   it('renders the counts reading and usage pill and hides a brand-new empty session', () => {
     const { source } = makeSource({ nodes: [assistant(1, 1)] })
     const view = render(<StatsPills {...props(source)} />)

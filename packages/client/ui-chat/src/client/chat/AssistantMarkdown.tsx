@@ -32,6 +32,8 @@ export interface AssistantMarkdownProps {
   groupPart?: string | undefined
   /** Stable Hook forwarded to each independently expandable reasoning block. */
   useDisclosure: UseDisclosure
+  /** Speaker and avatar slot for a reply in the Bots transcript. */
+  speaker?: { readonly name: string; readonly avatar: ReactNode }
   blocks: readonly AssistantBlock[]
   streaming: boolean
   /** Frozen partial of an aborted turn: rendered with a stopped marker. */
@@ -52,7 +54,7 @@ export interface AssistantMarkdownProps {
 
 /** Reasoning block as the Think variant summary row (figma 39:28304). */
 export const AssistantMarkdown = memo(function AssistantMarkdown({
-  blocks, streaming, interrupted, renderMessageImages, groupPart, useDisclosure,
+  blocks, speaker, streaming, interrupted, renderMessageImages, groupPart, useDisclosure,
   reasoningHidden = false, usePresentation, revealProcess, mentions, t,
 }: AssistantMarkdownProps) {
   // Stable per locale revision (t identity changes on switch): a fresh object
@@ -140,7 +142,14 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
     }
   }
   return (
-    <div className={css.root} data-yh-part="assistant-prose" data-streaming={streaming || undefined}>
+    <div className={speaker === undefined ? css.root : `${css.root} ${css.botReply}`}
+      data-yh-part="assistant-prose" data-streaming={streaming || undefined}>
+      {speaker !== undefined && (
+        <div className={css.botSpeaker} data-bot-reply-speaker="">
+          <span className={css.botReplyAvatar} aria-hidden="true">{speaker.avatar}</span>
+          {speaker.name}
+        </div>
+      )}
       <div className={css.body}>
         {rendered}
         {interrupted && (groupPart === undefined || groupPart === 'response'

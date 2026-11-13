@@ -1,13 +1,16 @@
 import { memo, useCallback, useMemo } from 'react'
-import type { InjectFace } from '@yharness/client-ui-slots'
+import type { InjectFace, PropsRenderSlots } from '@yharness/client-ui-slots'
 import type { ChatNodeViewProps, PresentationInjected, TurnTailOwnerProps } from '../contract/slots.ts'
+import { hasAssistantReplyContent } from '../contract/assistant-content.ts'
 import { AssistantMarkdown } from './AssistantMarkdown.tsx'
 
-type AssistantNodeViewProps = ChatNodeViewProps<'assistant-step'> & InjectFace<PresentationInjected>
+type AssistantNodeViewProps = ChatNodeViewProps<'assistant-step'>
+  & InjectFace<PresentationInjected> & PropsRenderSlots<'conversation.bot.reply.avatar'>
 
 /** Streaming, settled, and interrupted Assistant states share one keyed renderer instance. */
 export const AssistantNodeView = memo(function AssistantNodeView({
-  node, groupPart, useDisclosure, useTurnData, turnProcess, openFile, renderMessageImages, fileMentions, usePresentation, t,
+  node, groupPart, bot, renderSlot, useDisclosure, useTurnData, turnProcess,
+  openFile, renderMessageImages, fileMentions, usePresentation, t,
 }: AssistantNodeViewProps) {
   const data = node.data
   const turn = node.location.kind === 'turn' || node.location.kind === 'step'
@@ -29,8 +32,12 @@ export const AssistantNodeView = memo(function AssistantNodeView({
     && turnProcess.spec.inlineReasoning
     && !turnProcess.open
   const revealProcess = useCallback(() => { turnProcess?.setOpen(true) }, [turnProcess])
+  const speaker = bot !== undefined && groupPart !== 'reasoning' && hasAssistantReplyContent(data.blocks)
+    ? { name: bot.name, avatar: renderSlot('conversation.bot.reply.avatar', {}) }
+    : undefined
   return (
     <AssistantMarkdown
+      {...speaker === undefined ? {} : { speaker }}
       blocks={data.blocks}
       groupPart={groupPart}
       useDisclosure={useDisclosure}

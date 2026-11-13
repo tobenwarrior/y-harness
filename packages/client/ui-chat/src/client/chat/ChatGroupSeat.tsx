@@ -132,7 +132,7 @@ export const ChatGroupSeat = memo(function ChatGroupSeat({ groupKey, useChatGrou
   const members = useChatGroup(groupKey, group => group?.members)
   const turn = useChatGroup(groupKey, group => group?.data.turn)
   const closed = useChatGroup(groupKey, group => group?.data.closed)
-  const foldCompleted = props.usePresentation(policy => policy.foldCompletedTurns)
+  const foldCompleted = props.usePresentation(policy => props.bot !== undefined || policy.foldCompletedTurns)
   const { expanded: open, setExpanded: setOpen } = useDisclosure()
   const firstKey = members?.[0]?.key ?? ''
   const presentation = props.useChatNodeProcess(firstKey)
