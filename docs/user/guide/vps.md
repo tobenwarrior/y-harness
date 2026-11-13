@@ -133,6 +133,19 @@ Enter the value at the masked terminal prompt. In the service, read `yharness_EX
 
 The values are encrypted with the VPS's systemd host key. A replacement VPS needs its own keys entered for the service. [systemd credential documentation](https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html#Credentials)
 
+### Manage service secrets from the Mac app
+
+Run Cloud under its [dedicated Linux account](#run-cloud-under-a-dedicated-linux-account). As the VPS administrator, allow the SSH account you use to connect from Y Harness to manage the exact services you enabled above. Replace `SSH_OWNER` with that account name.
+
+```sh
+sudo /usr/local/sbin/yharness-vault --cloud-user yharness-cloud allow-desktop \
+  --owner SSH_OWNER example-worker.service
+```
+
+Open **Cloud** and select the lock icon in its title bar. Choose a service, then **Add secret**, **Replace**, or **Revoke**. Enter values in the masked field. The window sends values directly to the VPS Vault over SSH and shows saved names after submission. Values stay outside Cloud chat, Bot tools, and model requests. The selected service loads its current values on its next start.
+
+Run `sudo /usr/local/sbin/yharness-vault deny-desktop` to remove Desktop management access and stop its listener. Stored credentials are available to their services until you revoke them. To grant management to a different SSH account, run `deny-desktop` first, then run `allow-desktop` with the new account.
+
 ### Read a filtered journal feed
 
 If you operate a host-side journal feed, add `vpsJournal` to the same private `web-runtime` configuration. Give the Web service account permission to connect to the socket and list only the managed owner Bots allowed to read its output.

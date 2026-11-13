@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-src 'none'">
+    <title></title>
+    <link rel="stylesheet" href="cloud-vault.css">
+  </head>
+  <body>
+    <main hidden>
+      <header class="heading">
+        <div class="mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><rect x="4.5" y="10.5" width="15" height="10" rx="2.5"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5m-4 4v2"/></svg>
+        </div>
+        <div><h1 id="title"></h1><p id="hint"></p></div>
+      </header>
+      <div id="notice" role="status" aria-live="polite"></div>
+      <section id="services" hidden>
+        <label for="service" id="service-label"></label>
+        <select id="service"></select>
+        <div class="list-title">
+          <h2 id="names"></h2>
+          <button id="add" class="subtle" type="button">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4.5v11m-5.5-5.5h11"/></svg><span id="add-label"></span>
+          </button>
+        </div>
+        <p id="empty" class="empty"></p>
+        <ul id="secrets" aria-labelledby="names"></ul>
+        <form id="editor" autocomplete="off" hidden>
+          <h2 id="editor-title"></h2>
+          <label for="name" id="name-label"></label>
+          <input id="name" type="text" maxlength="64" pattern="[A-Za-z_][A-Za-z0-9_]{0,63}" autocomplete="off" spellcheck="false" required>
+          <label for="value" id="value-label"></label>
+          <input id="value" type="password" maxlength="8192" autocomplete="new-password" autocapitalize="off" spellcheck="false" required>
+          <div class="actions">
+            <button id="editor-cancel" type="button"></button>
+            <button id="save" class="primary" type="submit"></button>
+          </div>
+        </form>
+      </section>
+      <footer><p id="apply"></p><button id="refresh" type="button"></button></footer>
+    </main>
+    <dialog id="confirmation" aria-labelledby="confirm-title" aria-describedby="confirm-detail">
+      <h2 id="confirm-title"></h2>
+      <p id="confirm-detail"></p>
+      <div class="actions">
+        <button id="confirm-cancel" type="button" autofocus></button>
+        <button id="confirm-revoke" class="danger" type="button"></button>
+      </div>
+    </dialog>
+    <script src="cloud-vault.js"></script>
+  </body>
+</html>
