@@ -88,7 +88,7 @@ browser:
 
 If the Bot already has a private desktop, wait until the Bot and Computer panel are idle. On the VPS, find that Bot's container with `podman ps -a --filter label=io.yharness.vps.session=BOT_SESSION_ID`. Stop the identified container and remove it with `podman rm`. Keep the named volumes. Restart Cloud with the updated profile when its tasks are idle. Opening **Computer** starts Firefox and reconnects the existing workspace and browser profile. Right-click the desktop and choose **Open Firefox** to reopen it.
 
-The browser desktop and any shell running inside it can make outbound connections. The VPS loopback remains private. Choose **Take control** to sign in to a site. Browser sign-ins live in the selected Bot's profile volume and survive replacing its container.
+The browser desktop and any shell running inside it can make outbound connections. The VPS loopback remains private. Choose **Take control** to review Firefox's welcome screen the first time and sign in to websites. Browser sign-ins live in the selected Bot's profile volume and survive replacing its container.
 
 ## Give a Bot access to service diagnostics
 
