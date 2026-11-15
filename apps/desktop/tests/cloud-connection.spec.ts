@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { afterEach, describe, expect, it } from 'vitest'
-import { isCloudTarget, openCloudConnection, type CloudConnectionTestOptions } from '../src/cloud-connection.ts'
+import { isCloudTarget, openCloudConnection, openCloudForward, type CloudConnectionOptions } from '../src/cloud-connection.ts'
 
 const TOKEN = 'a'.repeat(43)
 
@@ -8,7 +8,7 @@ const children: ChildProcess[] = []
 let script = ''
 const calls: Array<{ file: string; args: readonly string[]; environment: NodeJS.ProcessEnv }> = []
 
-function options(overrides: Partial<CloudConnectionTestOptions> = {}): CloudConnectionTestOptions {
+function options(overrides: Partial<CloudConnectionOptions> = {}): CloudConnectionOptions {
   return {
     spawnProcess: (file, args, spawnOptions) => {
       calls.push({ file, args: [...args], environment: { ...spawnOptions.env } })
@@ -92,6 +92,40 @@ describe('cloud connection', () => {
     await expect(fetch(connection.loginUrl).then(response => response.text())).resolves.toBe('ok')
     connection.close()
     await connection.closed
+  })
+
+  it('keeps the loopback origin reserved across independently owned SSH attempts', async () => {
+    const forward = await openCloudForward()
+    const fakeResponse = (body: string): string => [
+      "const net = require('node:net')",
+      "const server = net.createServer(socket => socket.once('data', () => socket.end(" + JSON.stringify(
+        'HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: ' + String(body.length) + '\r\n\r\n' + body,
+      ) + ')))',
+      'server.listen(__SOCKET_PATH__, () => process.stdout.write(' + JSON.stringify('http://127.0.0.1:3080/?token=' + TOKEN + '\n') + '))',
+    ].join(';')
+    const controller = new AbortController()
+    try {
+      script = fakeResponse('first')
+      const first = await openCloudConnection('fixture-host', controller.signal, options({ forward }))
+      expect(first.origin).toBe(forward.origin)
+      await expect(fetch(first.loginUrl).then(response => response.text())).resolves.toBe('first')
+      await expect(openCloudConnection('fixture-host', controller.signal, options({ forward }))).rejects.toThrow('Cloud connection failed')
+      expect(calls).toHaveLength(1)
+      first.close()
+      await first.closed
+      await expect(fetch(forward.origin, { signal: AbortSignal.timeout(1_000) })).rejects.toThrow()
+
+      script = fakeResponse('second')
+      const second = await openCloudConnection('fixture-host', controller.signal, options({ forward }))
+      expect(second.origin).toBe(first.origin)
+      await expect(fetch(second.loginUrl).then(response => response.text())).resolves.toBe('second')
+      second.close()
+      await second.closed
+    } finally {
+      controller.abort()
+      forward.close()
+      await forward.closed
+    }
   })
 
   it('rejects before spawning when already aborted', async () => {

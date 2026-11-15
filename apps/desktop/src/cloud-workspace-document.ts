@@ -10,7 +10,7 @@ const WEBSITE_LOGIN_USE_PATH = /^\/__yharness\/vault-login-use\/([a-f0-9]{32})$/
 export const CLOUD_DESKTOP_USER_AGENT = 'YHarnessCloudDesktop/1'
 
 /** Connection state rendered by the workspace controls. */
-export type CloudWorkspaceStatus = 'setup' | 'connecting' | 'online' | 'offline'
+export type CloudWorkspaceStatus = 'setup' | 'connecting' | 'online' | 'reconnecting' | 'offline'
 
 type CloudAction = { type: 'mac' | 'configure' | 'retry' | 'vault' } | { type: 'connect'; target: string }
 
@@ -109,18 +109,23 @@ function html(text: string): string {
  * @param messages - resolved Desktop dictionary.
  * @param status - connection state.
  * @param invalidTarget - whether the submitted SSH name needs correction.
+ * @param hasWorkspace - whether the previous Cloud document stays mounted during recovery.
  * @returns a local document URL with no script or remote resources.
  */
-export function cloudDocument(messages: DesktopMessages, status: CloudWorkspaceStatus, invalidTarget = false): string {
+export function cloudDocument(
+  messages: DesktopMessages, status: CloudWorkspaceStatus, invalidTarget = false, hasWorkspace = false,
+): string {
   const t = (key: keyof DesktopMessages): string => html(messages[key])
   const connected = status === 'online'
-  const title = status === 'setup' ? 'cloudSetupTitle' : status === 'offline' ? 'cloudOffline' : 'cloudConnecting'
-  const state = status === 'online' ? 'cloudConnected' : status === 'setup' ? 'cloudSetup' : title
-  const body = connected ? '' : `
+  const reconnecting = status === 'reconnecting'
+  const title = status === 'setup' ? 'cloudSetupTitle' : status === 'offline' ? 'cloudOffline'
+    : reconnecting ? 'cloudReconnecting' : 'cloudConnecting'
+  const state = connected ? 'cloudConnected' : status === 'setup' ? 'cloudSetup' : title
+  const body = connected || hasWorkspace ? '' : `
     <main><section>
       <div class="mark">${cloudIcon}</div>
       <h1>${t(title)}</h1>
-      <p>${t(status === 'offline' ? 'cloudOfflineHelp' : 'cloudWorkspaceHelp')}</p>
+      <p>${t(status === 'offline' ? 'cloudOfflineHelp' : reconnecting ? 'cloudReconnectingHelp' : 'cloudWorkspaceHelp')}</p>
       ${status === 'setup' ? `
         <form method="get" action="${CONTROL_ORIGIN}/connect">
           <label for="target">${t('cloudTarget')}</label>
@@ -128,7 +133,7 @@ export function cloudDocument(messages: DesktopMessages, status: CloudWorkspaceS
           ${invalidTarget ? `<p class="error" role="alert">${t('cloudInvalidTarget')}</p>` : ''}
           <button type="submit">${t('cloudConnect')}</button>
         </form>` : ''}
-      ${status === 'offline' ? `
+      ${status === 'offline' || reconnecting ? `
         <div class="actions"><a class="primary" href="${CONTROL_ORIGIN}/retry">${t('cloudRetry')}</a>
         <a href="${CONTROL_ORIGIN}/configure">${t('cloudChangeServer')}</a></div>` : ''}
     </section></main>`
@@ -175,9 +180,9 @@ export function cloudDocument(messages: DesktopMessages, status: CloudWorkspaceS
         <a href="${CONTROL_ORIGIN}/mac">${macIcon}<span>${t('cloudMac')}</span></a>
         <span aria-current="page">${cloudIcon}<span>${t('cloudLabel')}</span></span>
       </nav>
-      <div class="status ${status}"><i></i>${t(state)}
-        ${connected ? `<a class="settings" aria-label="${t('cloudVault')}" title="${t('cloudVault')}" href="${CONTROL_ORIGIN}/vault">${vaultIcon}</a>
-          <a class="settings" aria-label="${t('cloudChangeServer')}" title="${t('cloudChangeServer')}" href="${CONTROL_ORIGIN}/configure">${settingsIcon}</a>` : ''}
+      <div class="status ${status}"><i></i><span role="status">${t(state)}</span>
+        ${connected ? `<a class="settings" aria-label="${t('cloudVault')}" title="${t('cloudVault')}" href="${CONTROL_ORIGIN}/vault">${vaultIcon}</a>` : ''}
+        ${connected || hasWorkspace ? `<a class="settings" aria-label="${t('cloudChangeServer')}" title="${t('cloudChangeServer')}" href="${CONTROL_ORIGIN}/configure">${settingsIcon}</a>` : ''}
       </div>
     </header>${body}
   </html>`)}`

@@ -2,8 +2,8 @@
 import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { writeFileAtomic } from '@yharness/atomic-write'
-import { WebContentsView, session, type BrowserWindow } from 'electron'
-import { isCloudTarget, openCloudConnection, type CloudConnection } from './cloud-connection.ts'
+import { WebContentsView, session, type BrowserWindow, type Session } from 'electron'
+import { isCloudTarget, openCloudConnection, openCloudForward, type CloudConnection, type CloudForward } from './cloud-connection.ts'
 import {
   CLOUD_DESKTOP_USER_AGENT,
   cloudAction,
@@ -19,6 +19,7 @@ import type { DesktopMessages } from './locale.ts'
 
 const BAR_HEIGHT = 50
 const RETRY_MS = 5_000
+const MAX_RETRY_MS = 30_000
 const LOAD_TIMEOUT_MS = 20_000
 
 interface CloudPreference {
@@ -48,8 +49,12 @@ export class DesktopCloudWorkspace {
   private owner: BrowserWindow | undefined
   private controls: WebContentsView | undefined
   private remote: WebContentsView | undefined
+  private remoteReady = false
   private controlsDocument: string | undefined
+  private forward: CloudForward | undefined
   private connection: CloudConnection | undefined
+  private authenticated = false
+  private readonly flights = new Set<Promise<void>>()
   private pending: AbortController | undefined
   private saved: CloudPreference | undefined
   private target: string | undefined
@@ -57,6 +62,7 @@ export class DesktopCloudWorkspace {
   private invalidTarget = false
   private status: CloudWorkspaceStatus = 'setup'
   private retry: NodeJS.Timeout | undefined
+  private retryDelay = RETRY_MS
   private writes = Promise.resolve()
 
   /**
@@ -67,7 +73,7 @@ export class DesktopCloudWorkspace {
    * @param onShowCloud - revokes access scoped to the Mac workspace.
    */
   constructor(private readonly file: string, private readonly messages: () => DesktopMessages,
-    private readonly preferenceError: () => void, private readonly vault: DesktopCloudVault,
+    private readonly preferenceError: () => void, private readonly vault: Pick<DesktopCloudVault, 'open' | 'close'>,
     private readonly onShowCloud?: () => void) {}
 
   private onClosed = (): void => { void this.dispose() }
@@ -93,7 +99,7 @@ export class DesktopCloudWorkspace {
     this.onShowCloud?.()
     if (this.saved !== undefined && !this.saved.selected) this.save(this.saved.target)
     if (this.connection === undefined && this.pending === undefined && this.target !== undefined) {
-      void this.connect(this.target)
+      this.connect(this.target)
       return
     }
     this.render()
@@ -103,7 +109,11 @@ export class DesktopCloudWorkspace {
   showMac(): void {
     this.vault.close()
     this.selected = false
-    if (this.connection === undefined) this.resetConnection()
+    if (this.status !== 'online') {
+      this.stopConnection()
+      if (!this.remoteReady) this.dropRemote()
+      this.retryDelay = RETRY_MS
+    }
     if (this.saved?.selected === true) this.save(this.saved.target)
     this.render()
     this.owner?.webContents.focus()
@@ -125,12 +135,11 @@ export class DesktopCloudWorkspace {
     this.owner = undefined
     owner?.off('resize', this.layout)
     owner?.off('closed', this.onClosed)
-    const closed = this.connection?.closed
-    this.resetConnection(owner)
+    this.resetWorkspace(owner)
     this.release(this.controls, owner)
     this.controls = undefined
     this.controlsDocument = undefined
-    await Promise.all([closed, this.writes])
+    await Promise.all([...this.flights, this.writes])
   }
 
   private save(target: string): void {
@@ -144,8 +153,7 @@ export class DesktopCloudWorkspace {
   private layout = (): void => {
     if (this.owner === undefined || this.owner.isDestroyed()) return
     const { width, height } = this.owner.getContentBounds()
-    const online = this.status === 'online'
-    this.controls?.setBounds({ x: 0, y: 0, width, height: online ? BAR_HEIGHT : height })
+    this.controls?.setBounds({ x: 0, y: 0, width, height: this.remoteReady ? BAR_HEIGHT : height })
     this.remote?.setBounds({ x: 0, y: BAR_HEIGHT, width, height: Math.max(0, height - BAR_HEIGHT) })
   }
 
@@ -181,23 +189,23 @@ export class DesktopCloudWorkspace {
           case 'mac': this.showMac(); break
           case 'vault': this.showVault(); break
           case 'configure':
-            this.resetConnection()
+            this.resetWorkspace()
             this.target = undefined
             this.invalidTarget = false
             this.status = 'setup'
             this.render()
             break
-          case 'retry': this.showCloud(); break
+          case 'retry': if (this.target !== undefined) this.connect(this.target); break
           case 'connect':
             this.invalidTarget = !isCloudTarget(action.target)
             if (this.invalidTarget) this.render()
-            else void this.connect(action.target)
+            else this.connect(action.target)
             break
         }
       })
       owner.contentView.addChildView(controls)
     }
-    const document = cloudDocument(this.messages(), this.status, this.invalidTarget)
+    const document = cloudDocument(this.messages(), this.status, this.invalidTarget, this.remoteReady)
     if (this.controlsDocument !== document) {
       this.controlsDocument = document
       void this.controls.webContents.loadURL(document).catch(() => {
@@ -206,133 +214,210 @@ export class DesktopCloudWorkspace {
     }
     this.layout()
     this.controls.setVisible(true)
-    this.remote?.setVisible(this.status === 'online')
+    this.remote?.setVisible(this.remoteReady)
     if (this.status === 'online') this.remote?.webContents.focus()
   }
 
-  private resetConnection(owner = this.owner): void {
-    this.vault.close()
+  private track(task: Promise<void>): void {
+    this.flights.add(task)
+    const done = (): void => { this.flights.delete(task) }
+    void task.then(done, done)
+  }
+
+  private clearRetry(): void {
     clearTimeout(this.retry)
     this.retry = undefined
-    const { pending, connection, remote } = this
+  }
+
+  private stopConnection(): void {
+    this.vault.close()
+    this.clearRetry()
+    const { pending, connection } = this
     this.pending = undefined
     this.connection = undefined
-    this.remote = undefined
-    this.release(remote, owner)
+    this.authenticated = false
     pending?.abort()
-    connection?.close()
+    if (connection !== undefined) {
+      connection.close()
+      this.track(connection.closed)
+    }
+  }
+
+  private dropRemote(owner = this.owner): void {
+    const remote = this.remote
+    this.remote = undefined
+    this.remoteReady = false
+    this.release(remote, owner)
+  }
+
+  private resetWorkspace(owner = this.owner): void {
+    this.stopConnection()
+    this.dropRemote(owner)
+    const forward = this.forward
+    this.forward = undefined
+    if (forward !== undefined) {
+      forward.close()
+      this.track(forward.closed)
+    }
+    this.retryDelay = RETRY_MS
+  }
+
+  private offline(): void {
+    const target = this.target
+    if (this.selected && target !== undefined && target === this.saved?.target) {
+      this.status = 'reconnecting'
+      this.retry = setTimeout(() => {
+        this.retry = undefined
+        this.connect(target)
+      }, this.retryDelay)
+      this.retryDelay = Math.min(this.retryDelay * 2, MAX_RETRY_MS)
+    } else {
+      this.status = 'offline'
+    }
+    this.render()
   }
 
   private disconnected(connection: CloudConnection): void {
     if (this.connection !== connection) return
-    const reconnect = this.status === 'online'
-    this.resetConnection()
-    this.status = 'offline'
-    this.render()
-    if (reconnect && this.selected) {
-      this.retry = setTimeout(() => { if (this.selected) this.showCloud() }, RETRY_MS)
-    }
+    this.stopConnection()
+    if (!this.remoteReady) this.dropRemote()
+    this.offline()
   }
 
   private isPending(pending: AbortController): boolean {
     return this.pending === pending && !pending.signal.aborted
   }
 
-  private async connect(target: string): Promise<void> {
+  private connect(target: string): void {
     const owner = this.owner
-    if (owner === undefined || owner.isDestroyed()) return
-    this.resetConnection()
+    if (!this.selected || owner === undefined || owner.isDestroyed()
+      || this.pending !== undefined || this.connection !== undefined) return
+    if (this.target !== target) this.resetWorkspace()
+    this.clearRetry()
+    this.target = target
+    this.status = this.status === 'reconnecting' ? 'reconnecting' : 'connecting'
     const pending = new AbortController()
     this.pending = pending
-    this.target = target
-    this.status = 'connecting'
     this.render()
+    this.track(this.connectOnce(owner, target, pending))
+  }
+
+  private async connectOnce(owner: BrowserWindow, target: string, pending: AbortController): Promise<void> {
     const timer = setTimeout(() => { pending.abort() }, LOAD_TIMEOUT_MS)
     try {
-      const connection = await openCloudConnection(target, pending.signal)
-      if (!this.isPending(pending)) { connection.close(); return }
+      let forward = this.forward
+      if (forward === undefined) {
+        const opened = await openCloudForward()
+        if (!this.isPending(pending)) { opened.close(); await opened.closed; return }
+        this.forward = forward = opened
+        void opened.closed.then(() => {
+          if (this.forward !== opened) return
+          this.resetWorkspace()
+          this.offline()
+        })
+      }
+      const connection = await openCloudConnection(target, pending.signal, { forward })
+      if (!this.isPending(pending)) { connection.close(); await connection.closed; return }
       this.connection = connection
       void connection.closed.then(() => { this.disconnected(connection) })
 
-      const isolated = session.fromPartition(`cloud-workspace-${randomUUID()}`, { cache: false })
-      await isolated.setProxy({ mode: 'direct' })
+      const activeView = this.remote
+      const isolated = activeView?.webContents.session ?? session.fromPartition(`cloud-workspace-${randomUUID()}`, { cache: false })
+      if (activeView === undefined) await isolated.setProxy({ mode: 'direct' })
       const response = await fetch(connection.loginUrl, { redirect: 'manual', signal: pending.signal })
       const cookie = cloudSignInCookie(connection.origin, response)
       if (cookie === undefined) throw new Error('Cloud authentication failed')
+      if (!this.isPending(pending)) return
       await isolated.cookies.set(cookie)
       if (!this.isPending(pending)) return
-      isolated.setPermissionCheckHandler((_contents, permission) => permission === 'clipboard-sanitized-write')
-      isolated.setPermissionRequestHandler((_contents, permission, callback) => {
-        callback(permission === 'clipboard-sanitized-write')
-      })
-      isolated.webRequest.onBeforeRequest((details, callback) => {
-        callback({ cancel: this.connection !== connection || !cloudRequestAllowed(connection.origin, details.url) })
-      })
+      this.authenticated = true
+      if (activeView === undefined) await this.loadWorkspace(owner, isolated, forward, target, pending)
+      if (!this.isPending(pending)) return
 
-      const remote = new WebContentsView({ webPreferences: {
-        session: isolated, nodeIntegration: false, contextIsolation: true, sandbox: true, devTools: false,
-      } })
-      this.remote = remote
-      remote.setVisible(false)
-      remote.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
-      remote.webContents.on('will-frame-navigate', (event) => {
-        if (!cloudRequestAllowed(connection.origin, event.url)) event.preventDefault()
-      })
-      remote.webContents.on('will-redirect', (event) => {
-        if (!cloudRequestAllowed(connection.origin, event.url)) event.preventDefault()
-      })
-      remote.webContents.on('render-process-gone', () => { this.disconnected(connection) })
-      const contents = remote.webContents
-      const userAgent = contents.getUserAgent()
-      if (!userAgent.split(/\s+/u).includes(CLOUD_DESKTOP_USER_AGENT)) {
-        contents.setUserAgent(`${userAgent} ${CLOUD_DESKTOP_USER_AGENT}`.trim())
-      }
-      contents.on('will-navigate', (event, url) => {
-        if (!this.selected || this.connection !== connection || this.remote?.webContents !== contents) return
-        const loginUseRequestId = cloudWebsiteLoginUseRequestId(connection.origin, url)
-        if (loginUseRequestId !== undefined && this.owner !== undefined) {
-          event.preventDefault()
-          this.vault.open(this.owner, target, { kind: 'login-use', id: loginUseRequestId })
-          return
-        }
-        const requestId = cloudVaultRequestId(connection.origin, url)
-        if (requestId === undefined || this.owner === undefined) return
-        event.preventDefault()
-        this.vault.open(this.owner, target, { kind: 'request', id: requestId })
-      })
-      const responseStatus = new Promise<number>((resolve) => {
-        contents.once('did-navigate', (_event, _url, status) => { resolve(status) })
-      })
-      const cancelLoad = (): void => { closeView(remote) }
-      pending.signal.addEventListener('abort', cancelLoad, { once: true })
-      owner.contentView.addChildView(remote)
-      try {
-        const status = await Promise.race([responseStatus, contents.loadURL(connection.origin + '/').then(() => 0)])
-        if (!this.isPending(pending)) return
-        if (status !== 200) throw new Error('Cloud workspace did not load')
-      } finally {
-        pending.signal.removeEventListener('abort', cancelLoad)
-      }
       this.status = 'online'
-      this.save(target)
+      this.retryDelay = RETRY_MS
+      if (this.saved?.target !== target || this.saved.selected !== this.selected) this.save(target)
       this.render()
     } catch {
-      // Raw SSH and Electron errors can contain the target or sign-in URL.
-      if (this.pending === pending) {
-        this.resetConnection()
-        this.status = 'offline'
-        this.render()
-      }
+      // Raw SSH and Electron errors can contain the destination or sign-in URL.
     } finally {
       clearTimeout(timer)
       if (this.pending === pending) {
         this.pending = undefined
-        if (pending.signal.aborted) {
-          this.resetConnection()
-          this.status = 'offline'
-          this.render()
+        if (this.status !== 'online') {
+          this.stopConnection()
+          if (!this.remoteReady) this.dropRemote()
+          this.offline()
         }
       }
+    }
+  }
+
+  private async loadWorkspace(
+    owner: BrowserWindow, isolated: Session, forward: CloudForward, target: string, pending: AbortController,
+  ): Promise<void> {
+    const { origin } = forward
+    isolated.setPermissionCheckHandler((_contents, permission) => permission === 'clipboard-sanitized-write')
+    isolated.setPermissionRequestHandler((_contents, permission, callback) => {
+      callback(permission === 'clipboard-sanitized-write')
+    })
+    isolated.webRequest.onBeforeRequest((details, callback) => {
+      callback({ cancel: this.forward !== forward || !this.authenticated || !cloudRequestAllowed(origin, details.url) })
+    })
+
+    const remote = new WebContentsView({ webPreferences: {
+      session: isolated, nodeIntegration: false, contextIsolation: true, sandbox: true, devTools: false,
+    } })
+    this.remote = remote
+    remote.setVisible(false)
+    const contents = remote.webContents
+    contents.setWindowOpenHandler(() => ({ action: 'deny' }))
+    contents.on('will-frame-navigate', (event) => {
+      if (!cloudRequestAllowed(origin, event.url)) event.preventDefault()
+    })
+    contents.on('will-redirect', (event) => {
+      if (!cloudRequestAllowed(origin, event.url)) event.preventDefault()
+    })
+    contents.on('render-process-gone', () => {
+      if (this.remote !== remote) return
+      this.dropRemote()
+      const connection = this.connection
+      if (connection !== undefined) this.disconnected(connection)
+      else this.render()
+    })
+    const userAgent = contents.getUserAgent()
+    if (!userAgent.split(/\s+/u).includes(CLOUD_DESKTOP_USER_AGENT)) {
+      contents.setUserAgent(`${userAgent} ${CLOUD_DESKTOP_USER_AGENT}`.trim())
+    }
+    contents.on('will-navigate', (event, url) => {
+      if (!this.selected || this.status !== 'online' || this.connection === undefined
+        || this.forward !== forward || this.remote !== remote) return
+      const loginUseRequestId = cloudWebsiteLoginUseRequestId(origin, url)
+      if (loginUseRequestId !== undefined) {
+        event.preventDefault()
+        this.vault.open(owner, target, { kind: 'login-use', id: loginUseRequestId })
+        return
+      }
+      const requestId = cloudVaultRequestId(origin, url)
+      if (requestId === undefined) return
+      event.preventDefault()
+      this.vault.open(owner, target, { kind: 'request', id: requestId })
+    })
+    const responseStatus = new Promise<number>((resolve) => {
+      contents.once('did-navigate', (_event, _url, status) => { resolve(status) })
+    })
+    const cancelLoad = (): void => {
+      if (this.remote === remote) this.dropRemote(owner)
+    }
+    pending.signal.addEventListener('abort', cancelLoad, { once: true })
+    owner.contentView.addChildView(remote)
+    try {
+      const status = await Promise.race([responseStatus, contents.loadURL(origin + '/').then(() => 0)])
+      if (!this.isPending(pending)) return
+      if (status !== 200) throw new Error('Cloud workspace did not load')
+      this.remoteReady = true
+    } finally {
+      pending.signal.removeEventListener('abort', cancelLoad)
     }
   }
 }
