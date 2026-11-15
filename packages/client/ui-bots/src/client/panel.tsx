@@ -15,6 +15,7 @@ import { ComputerPanel } from './ComputerPanel.tsx'
 import { MacComputerPanel } from './MacComputerPanel.tsx'
 import type { AvailabilityState } from './computer-availability.ts'
 import type { ComputerClient, ComputerIdentity } from './computer-client.ts'
+import { Button, PluginArtworkTerminal, Tooltip } from '@yharness/client-ui-primitives'
 import css from './BotWorkspace.module.css'
 
 /** Selected sign-in request and its Computer panel. */
@@ -44,11 +45,13 @@ export type BotsPanelProps =
   & InjectFace<BotWorkspaceFace & {
     readonly computer: ComputerClient
     readonly setComputerTarget: (sessionId: string | null) => void
+    readonly openTerminal: () => void
     readonly hooks: {
       readonly computerAvailability: HostObservable<AvailabilityState>
       readonly computerIdentity: HostObservable<ComputerIdentity | undefined>
       readonly computerTarget: HostObservable<string | null>
       readonly computerSignIn: HostObservable<ComputerSignInTarget | undefined>
+      readonly terminalAvailable: HostObservable<boolean>
     }
   }>
 
@@ -153,7 +156,7 @@ export function BotsPanel({
   sendGroupMessageWithAttachments, reactGroupMessage, groupsAvailable, loadAvatar,
   rename, updateProfile, memoryManager, readGrokHistory,
   routineManager, skillManager, SessionProvider, renderSlot, t, share, computer, useComputerAvailability,
-  setComputerTarget, useComputerTarget, useComputerIdentity, useComputerSignIn,
+  setComputerTarget, useComputerTarget, useComputerIdentity, useComputerSignIn, openTerminal, useTerminalAvailable,
 }: BotsPanelProps): ReactNode {
   const state: BotWorkspaceState = useWorkspace(value => value)
   const statuses = useSessionStatus(value => value)
@@ -162,6 +165,7 @@ export function BotsPanel({
   const computerIdentity = useComputerIdentity(value => value)
   const computerTarget = useComputerTarget(value => value)
   const signIn = useComputerSignIn(value => value)
+  const showTerminalAction = useTerminalAvailable(value => value)
   const selectedBot = bots.find(bot => bot.id === state.selectedBotId)
   const selectedReference = reference()
   const canShowComputer = (availability === 'available' || availability === 'mac') && selectedReference !== undefined
@@ -202,6 +206,12 @@ export function BotsPanel({
               {...(computerIdentity === undefined ? {} : { identity: computerIdentity })}
               toggle={() => { setComputerTarget(showComputer ? null : selectedReference.sessionId) }} t={t} />
           )}
+          {showTerminalAction && (
+            <Tooltip label={t('terminalOpen')} side="bottom" delayMs={500}>
+              <Button variant="toolbar" size="sm" icon={<PluginArtworkTerminal size={16} />}
+                aria-label={t('terminalOpen')} onClick={openTerminal}>{t('terminalLabel')}</Button>
+            </Tooltip>
+          )}
           {readGrokHistory !== undefined && selectedBot !== undefined && (
             <GrokHistoryAction key={selectedBot.id} botId={selectedBot.id} botName={selectedBot.name} read={readGrokHistory} t={t} />
           )}
@@ -219,7 +229,7 @@ export function BotsPanel({
       />
       {showComputer && (
         <div className={css.computerSidebar}>
-          {availability === 'mac' && selectedReference !== undefined
+          {availability === 'mac'
             ? <MacComputerPanel key={selectedReference.sessionId} sessionId={selectedReference.sessionId}
               close={closeComputer} t={t} />
             : <ComputerPanel key={selectedReference.sessionId} computer={computer} sessionId={selectedReference.sessionId}

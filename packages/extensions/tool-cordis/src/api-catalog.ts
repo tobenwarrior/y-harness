@@ -3962,6 +3962,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     description: 'Typed Remote control of transient Session-owned terminal processes.',
     methods: [
       {
+        signature: 'bindWorkspace(agent: Agent, workspace: TerminalWorkspace): () => Promise<void>',
+        description: 'Bind one Agent\'s owner terminals to a workspace.',
+        parameters: [{ name: 'agent', description: 'Agent whose terminal uses the supplied workspace.' }, { name: 'workspace', description: 'Shell provider and initial directory for owner terminals.' }],
+        returns: 'A disposer that closes the Agent\'s terminals and disables new shells in this scope.',
+      },
+      {
         signature: '@Remote environment(agent: Agent, signal: AbortSignal): TerminalEnvironment',
         description: 'Read the Session working directory and terminal limits without resolving a shell.',
         parameters: [{ name: 'agent', description: 'Session owner supplied by the Gateway.' }, { name: 'signal', description: 'request cancellation.' }],
@@ -10023,6 +10029,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'TerminalWaitReason',
     declaration: 'export type TerminalWaitReason = \'stdin_read\' | \'inferred_idle\' | \'timeout\' | \'session_exit\';',
+  },
+  {
+    name: 'TerminalWorkspace',
+    declaration: 'export interface TerminalWorkspace {\n    readonly subprocess: Context[\'subprocess\'];\n    readonly cwd: string;\n}',
   },
   {
     name: 'TextProps',

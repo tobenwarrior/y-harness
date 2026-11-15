@@ -24,6 +24,9 @@
       "path": "../../api/workspace-files/tsconfig.host.json"
     },
     {
+      "path": "../../api/terminal-controller/tsconfig.host.json"
+    },
+    {
       "path": "../../boot/app-boot"
     },
     {

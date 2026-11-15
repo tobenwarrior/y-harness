@@ -71,6 +71,14 @@ interface OwnedSession {
   readonly allocations: Map<WebTerminalId, TerminalAllocation>
 }
 
+/** Shell provider and working directory for owner terminals. */
+export interface TerminalWorkspace {
+  /** Shell provider for the owner's terminal. */
+  readonly subprocess: Context['subprocess']
+  /** Initial working directory within that provider. */
+  readonly cwd: string
+}
+
 /** Typed Remote control of transient Session-owned terminal processes. */
 export class TerminalController extends TypertRemoteService {
   static inject = ['subprocess', 'sandboxPolicy', 'typert']
@@ -92,6 +100,7 @@ export class TerminalController extends TypertRemoteService {
   })
 
   private readonly owners = new Map<SessionId, OwnedSession>()
+  private readonly workspaces = new WeakMap<Agent, TerminalWorkspace | null>()
   private readonly lifetime = new AbortController()
 
   /**
@@ -106,6 +115,24 @@ export class TerminalController extends TypertRemoteService {
       const errors = results.filter(result => result.status === 'rejected').map(result => result.reason as unknown)
       if (errors.length > 0) throw new AggregateError(errors, 'Browser terminal cleanup failed')
     }, 'terminal-controller.processes')
+  }
+
+  /**
+   * Bind one Agent's owner terminals to a workspace.
+   * @param agent - Agent whose terminal uses the supplied workspace.
+   * @param workspace - Shell provider and initial directory for owner terminals.
+   * @returns A disposer that closes the Agent's terminals and disables new shells in this scope.
+   */
+  bindWorkspace(agent: Agent, workspace: TerminalWorkspace): () => Promise<void> {
+    const current = this.workspaces.get(agent)
+    if (current !== undefined && current !== null) throw new Error('Terminal workspace is already bound')
+    this.workspaces.set(agent, workspace)
+    return async () => {
+      if (this.workspaces.get(agent) !== workspace) return
+      this.workspaces.set(agent, null)
+      const owner = this.owners.get(agent.id)
+      if (owner !== undefined) await this.disposeOwner(agent.id, owner)
+    }
   }
 
   /**
@@ -329,7 +356,10 @@ export class TerminalController extends TypertRemoteService {
       || !Number.isSafeInteger(rows) || rows < 1 || rows > this.config.maxRows) throw new Error('Terminal dimensions exceed the configured limits')
   }
 
-  private execution(agent: Agent): { subprocess: Context['subprocess']; cwd: string; profile?: Config['shell'] } {
+  private execution(agent: Agent): TerminalWorkspace & { profile?: Config['shell'] } {
+    const workspace = this.workspaces.get(agent)
+    if (workspace === null) throw new RemoteError('terminal/unavailable', 'Terminal workspace is unavailable', {})
+    if (workspace !== undefined) return workspace
     const managed = managedBotExecutionFor({ agent })
     if (managed !== undefined) return { subprocess: managed.subprocess, cwd: managed.workspaceRoot }
     // Agent contexts select execution providers without injecting consumer services.

@@ -230,6 +230,14 @@ Typed Remote control of transient Session-owned terminal processes.
 
 ```ts cordis-catalog
 /**
+ * Bind one Agent's owner terminals to a workspace.
+ * @param agent - Agent whose terminal uses the supplied workspace.
+ * @param workspace - Shell provider and initial directory for owner terminals.
+ * @returns A disposer that closes the Agent's terminals and disables new shells in this scope.
+ */
+bindWorkspace(agent: Agent, workspace: TerminalWorkspace): () => Promise<void>
+
+/**
  * Read the Session working directory and terminal limits without resolving a shell.
  * @param agent - Session owner supplied by the Gateway.
  * @param signal - request cancellation.

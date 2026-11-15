@@ -5,6 +5,7 @@ import type { ConnectionHandle } from '@yharness/client-connection/client'
 import type {} from '@yharness/api-remotes/client'
 import type {} from '@yharness/client-ui-renderer/client'
 import type {} from '@yharness/client-ui-sidebar/client'
+import type {} from '@yharness/client-ui-sidebar-right/client'
 import type {} from '@yharness/client-ui-conversation/client'
 import type {} from '@yharness/client-locale/client'
 import type { InputTriggerSource } from '@yharness/client-ui-input-trigger/client'
@@ -59,6 +60,51 @@ export function apply(ctx: Context): void {
     const selected = snapshot.bots.find(bot => bot.id === snapshot.selectedBotId)
     return selected?.sessionId
   }
+  const terminalAvailable = createSnapshotStore(false)
+  const setComputerTarget = (sessionId: string | null, request?: ComputerSignInTarget): void => {
+    const sidebar = ctx.get('sidebarRight')
+    if (sessionId !== null && sidebar !== undefined && sidebar.mounted.getSnapshot() === sessionId && sidebar.isExpanded()) {
+      sidebar.toggleExpanded()
+    }
+    computerSignIn.set(request)
+    computerTarget.set(sessionId)
+  }
+  const openTerminal = (): void => {
+    const sidebar = ctx.get('sidebarRight')
+    const sessionId = controller.face().reference()?.sessionId
+    if (sidebar === undefined || sessionId === undefined || sidebar.mounted.getSnapshot() !== sessionId) return
+    const target = sidebar.commandTarget(null)
+    if (target === undefined || !terminalAvailable.getSnapshot()) return
+    setComputerTarget(null)
+    const active = sidebar.active()
+    const existing = active?.kind === 'terminal' ? active : sidebar.tabsIn(sessionId).find(tab => tab.kind === 'terminal')
+    if (existing === undefined) {
+      sidebar.openTabFromTarget('terminal', target)
+      return
+    }
+    sidebar.focus(existing.id)
+    if (!sidebar.isExpanded()) sidebar.toggleExpanded()
+  }
+  ctx.inject(['sidebarRight', 'sidebarRightTabs'], (scope) => {
+    scope.effect(() => {
+      const sync = (): void => {
+        const sessionId = controller.face().reference()?.sessionId
+        const selection = workspace.getSnapshot().selectedBotId
+        const identity = computerAvailability.identity.getSnapshot()
+        const available = sessionId !== undefined && identity?.id === selection && identity.terminal === true
+          && scope.sidebarRightTabs.get('terminal') !== undefined
+        scope.sidebarRight.selectPanelSession(PANEL_ID, available ? sessionId : undefined)
+        terminalAvailable.set(available)
+      }
+      const stops = [workspace.subscribe(sync), computerAvailability.identity.subscribe(sync), scope.sidebarRightTabs.subscribe(sync)]
+      sync()
+      return () => {
+        for (const stop of stops) stop()
+        scope.sidebarRight.selectPanelSession(PANEL_ID, undefined)
+        terminalAvailable.set(false)
+      }
+    }, 'ui-bots: selected terminal Session')
+  })
   const rosterReady = controller.load()
   ctx.inject(['inputTriggers'], (scope) => {
     const loadAvatar = (botId: string, avatar: BotAvatar): Promise<string> =>
@@ -81,13 +127,13 @@ export function apply(ctx: Context): void {
       name: 'computer',
       order: -2,
       showGroupTitle: false,
-      async candidates({ sessionId }, { query, quoted, drilled }) {
-        if (quoted || drilled || !'computer'.startsWith(query.trim().toLowerCase()) || !availableFor(sessionId)) return []
-        return [{ name: 'Computer', icon: ComputerGlyph, description: scope.locale.bind('bots')('computerMentionDescription') }]
+      candidates({ sessionId }, { query, quoted, drilled }) {
+        if (quoted || drilled || !'computer'.startsWith(query.trim().toLowerCase()) || !availableFor(sessionId)) return Promise.resolve([])
+        return Promise.resolve([{ name: 'Computer', icon: ComputerGlyph, description: scope.locale.bind('bots')('computerMentionDescription') }])
       },
       onPick({ session: { sessionId }, candidate }) {
         if (candidate.name !== 'Computer' || !availableFor(sessionId)) return undefined
-        computerTarget.set(sessionId)
+        setComputerTarget(sessionId)
         return { insert: { source: 'computer', ref: '@Computer', label: scope.locale.bind('bots')('computerLabel'), clipboardText: '@Computer' } }
       },
       codec: {
@@ -96,7 +142,7 @@ export function apply(ctx: Context): void {
       },
       openReference({ sessionId }, { ref }) {
         if (ref !== '@Computer' || !availableFor(sessionId)) return false
-        computerTarget.set(sessionId)
+        setComputerTarget(sessionId)
         return true
       },
     }
@@ -130,16 +176,14 @@ export function apply(ctx: Context): void {
       inject: () => {
         const face = controller.face()
         return {
-          ...face, computer, setComputerTarget: (sessionId: string | null) => {
-            computerSignIn.set(undefined)
-            computerTarget.set(sessionId)
-          },
+          ...face, computer, setComputerTarget, openTerminal,
           hooks: {
             ...face.hooks,
             computerAvailability: computerAvailability.source,
             computerIdentity: computerAvailability.identity,
             computerTarget,
             computerSignIn,
+            terminalAvailable,
           },
         }
       },
@@ -159,8 +203,7 @@ export function apply(ctx: Context): void {
         computer,
         openSignIn: (sessionId: string, requestId: string) => {
           if (selectedSessionId() !== sessionId) return
-          computerSignIn.set({ sessionId, requestId, attempt: ++signInAttempt })
-          computerTarget.set(sessionId)
+          setComputerTarget(sessionId, { sessionId, requestId, attempt: ++signInAttempt })
         },
       }),
     }, ComputerSignInCard))

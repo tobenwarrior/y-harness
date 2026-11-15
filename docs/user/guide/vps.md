@@ -65,6 +65,10 @@ Each owner Bot has its own Linux workspace and desktop. The Bot’s shell and fi
 
 Choose **Take control** to use your mouse and keyboard in the panel. Bot input through the Computer tool pauses while you hold control. Choose **Hand back** to let the Bot use it again. Closing the panel releases control, and a lost connection releases it after a short timeout. The Bot computer stays on the VPS when you disconnect.
 
+### Open a Bot terminal
+
+Choose **Terminal** beside **Computer** in the chat of a Bot with a private VPS computer. The shell starts in that computer’s workspace. Switch back to **Computer** to watch or take control while the terminal stays open. Close the terminal tab to end its shell.
+
 ### Save results from Cloud
 
 Ask the Bot to deliver the file in chat and use the download icon on the result card. Save the result inside the Bot's workspace before delivering it so Cloud can serve it to your device.

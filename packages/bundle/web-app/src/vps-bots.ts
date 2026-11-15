@@ -1,6 +1,7 @@
 /** Assign each owner Bot on a configured VPS its own shell, files and desktop. */
 
 import type { Context } from '@yharness/cordis'
+import type {} from '@yharness/api-terminal-controller'
 import { LocalBashExecutor } from '@yharness/bash-local'
 import { bindManagedBotExecution, createManagedBotExecution, managedBotExecutionFor } from '@yharness/sandbox-policy'
 import { VpsBotSubprocess } from './vps-bot-process.ts'
@@ -200,6 +201,7 @@ export function mountVpsBots(
           computer: await computerFor(bot.sessionId, bot.id),
           id: bot.id,
           permissionScope: 'bot' as const,
+          ...(scope.get('terminalController') === undefined ? {} : { terminal: true as const }),
           ...(navigate === undefined ? {} : { navigate }),
         }
       }
@@ -261,6 +263,15 @@ export function mountVpsBots(
         } : undefined)
       }
       if (!isManagedBot(bot.id)) {
+        await agent.ctx.inject(['terminalController', 'subprocess'], (terminalCtx) => {
+          const runtime = runtimeFor(bot.id)
+          const subprocess = new VpsBotSubprocess(terminalCtx.isolate('subprocess'), {
+            runtime, sessionId: bot.sessionId, host: terminalCtx.subprocess,
+          })
+          terminalCtx.effect(() => terminalCtx.terminalController.bindWorkspace(agent, {
+            cwd: runtime.workspace(bot.sessionId), subprocess,
+          }), 'vps-bots: bind owner terminal')
+        })
         await agent.ctx.inject(['tools', 'attachments', 'llm', 'systemPrompt'], (agentCtx) => {
           agentCtx.systemPrompt.section({
             name: 'app:vps-bot-desktop',

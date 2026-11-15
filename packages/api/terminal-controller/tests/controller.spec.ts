@@ -94,6 +94,24 @@ describe('TerminalController', () => {
     }
   })
 
+  it('binds an owner terminal to the private desktop without changing its Agent workspace', async () => {
+    const host = fixture()
+    const desktop = fixture()
+    const agent = owner(host.ctx, 'desktop-bot', '/host-agent-workspace')
+    const closeWorkspace = host.controller.bindWorkspace(agent, {
+      cwd: '/private-desktop', subprocess: desktop.ctx.subprocess,
+    })
+    const terminal = await host.controller.create(agent, request, signal())
+    expect(terminal.cwd).toBe('/private-desktop')
+    expect(agent.session.header.cwd).toBe('/host-agent-workspace')
+    expect(host.subprocess.spawnTerminal).not.toHaveBeenCalled()
+    expect(desktop.subprocess.spawnTerminal).toHaveBeenCalledWith(expect.objectContaining({ cwd: '/private-desktop' }))
+    await closeWorkspace()
+    expect(desktop.handle.terminate).toHaveBeenCalledOnce()
+    expect(host.controller.list(agent.id)).toEqual([])
+    expect(() => host.controller.environment(agent, signal())).toThrow('Terminal workspace is unavailable')
+  })
+
   it('creates the environment default shell and keeps an existing identity when that default changes', async () => {
     const { controller, agent, subprocess } = fixture({ shell: undefined })
     subprocess.terminalEnvironment.mockResolvedValue({ platform: 'posix', defaultShell: '/usr/local/bin/zsh' })

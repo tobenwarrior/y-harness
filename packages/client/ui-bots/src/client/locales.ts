@@ -608,6 +608,8 @@ export const en = {
   'status.offline': 'Offline',
   unread: '{count} new',
   computerLabel: 'Computer',
+  terminalLabel: 'Terminal',
+  terminalOpen: 'Open VPS terminal',
   computerScopeBotChip: 'Dedicated VPS desktop',
   computerScopeWorkspaceChip: 'Shared VPS desktop',
   computerScopeBotMeta: 'Display and input are dedicated to this Bot',

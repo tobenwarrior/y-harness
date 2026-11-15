@@ -3554,6 +3554,9 @@ importers:
       '@yharness/client-ui-sidebar':
         specifier: workspace:*
         version: link:../ui-sidebar
+      '@yharness/client-ui-sidebar-right':
+        specifier: workspace:*
+        version: link:../ui-sidebar-right
       '@yharness/client-ui-slots':
         specifier: workspace:*
         version: link:../ui-slots

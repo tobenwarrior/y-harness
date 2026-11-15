@@ -104,6 +104,7 @@ describe('managed VPS Bot composition', () => {
     const browserNavigate = vi.spyOn(VpsIsolatedBrowser.prototype, 'navigate').mockResolvedValue(undefined)
     const browserLogin = vi.spyOn(VpsBrowserLogin.prototype, 'request').mockResolvedValue({ state: 'submitted' })
     const routes: ConnectionFetchRoute[] = []
+    const bindWorkspace = vi.fn<Context['terminalController']['bindWorkspace']>().mockReturnValue(() => Promise.resolve())
     let directOwnerTurn = true
     try {
       await ctx.plugin(LlmRuntime)
@@ -116,6 +117,7 @@ describe('managed VPS Bot composition', () => {
       await ctx.plugin(LocalSubprocessRuntime)
       await ctx.plugin(AgentLoop, { agents: [] })
       ctx.provide('attachments', {} as never)
+      ctx.provide('terminalController', { bindWorkspace } as never)
       ctx.provide('connection', { fetch: {
         register(route: ConnectionFetchRoute) {
           routes.push(route)
@@ -175,6 +177,8 @@ describe('managed VPS Bot composition', () => {
       expect(managedBotExecutionFor({ agent: regular })).toBeUndefined()
       expect(managedBotExecutionFor({ agent: legacy })).toBeUndefined()
       expect(managedBotExecutionFor({ agent: desktop })).toBeUndefined()
+      expect(bindWorkspace).toHaveBeenCalledOnce()
+      expect(bindWorkspace).toHaveBeenCalledWith(desktop, expect.objectContaining({ cwd: '/yharness-test-bots/' + DESKTOP_SESSION }))
       const desktopPrompt = renderPrompt(await ctx.systemPrompt.assemble({ scope: desktop }))
       expect(desktopPrompt).toContain('Bash and file tools use your existing Session workspace and permissions.')
       expect(desktopPrompt).not.toContain('managed runtime workspace')

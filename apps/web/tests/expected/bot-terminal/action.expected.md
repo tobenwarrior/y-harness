@@ -1,0 +1,3 @@
+- button "Open VPS terminal":
+  - img
+  - text: Terminal

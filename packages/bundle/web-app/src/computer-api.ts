@@ -43,6 +43,8 @@ export interface ComputerStatusMetadata {
   readonly permissionScope: ComputerPermissionScope
   /** Whether the Computer exposes browser address navigation. */
   readonly browser?: true
+  /** Whether the owner's terminal uses this Bot's private computer. */
+  readonly terminal?: true
 }
 
 /** Server-selected Computer target for a Bot Session route. */
@@ -53,6 +55,8 @@ export interface BotComputerRouteTarget {
   readonly id: string
   /** Whether permissions apply to the Bot or the legacy shared workspace. */
   readonly permissionScope: ComputerPermissionScope
+  /** Whether the owner's terminal uses this Bot's private computer. */
+  readonly terminal?: true
   /** Network navigation for an isolated browser, admitted by this Computer's viewer lease. */
   readonly navigate?: (url: string, signal: AbortSignal) => Promise<void>
 }
@@ -307,6 +311,7 @@ export function botComputerRoutesWithLegacy(
         location: 'vps',
         permissionScope: target.permissionScope,
         ...(navigate === undefined ? {} : { browser: true }),
+        ...(target.terminal === true ? { terminal: true } : {}),
       },
       ...(navigate === undefined ? {} : {
         navigate: (viewer, url, signal) => target.computer.navigateAsViewer(viewer, url, signal, navigate),
