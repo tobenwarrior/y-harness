@@ -1,7 +1,12 @@
 import { lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
-import { afterEach, describe, expect, it } from 'vitest'
+import { PassThrough } from 'node:stream'
+import { Context } from '@yharness/cordis'
+import type { SubprocessTerminalHandle, SubprocessTerminalSpawnSpec } from '@yharness/subprocess'
+import LocalSubprocessRuntime from '@yharness/subprocess-local'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { VpsBotSubprocess } from '../src/vps-bot-process.ts'
 import { VpsRuntime, VpsRuntimeError, type VpsCommandResult } from '../src/vps-runtime.ts'
 
 const sessions = {
@@ -306,5 +311,62 @@ describe('VpsRuntime', () => {
     await expect(other.ensure(sessions.alice)).rejects.toThrow()
     expect(lstatSync(workspace).isSymbolicLink()).toBe(true)
     expect(readFileSync(file, 'utf8')).toBe('not a directory')
+  })
+})
+
+describe('VpsBotSubprocess terminal', () => {
+  it('starts the selected container shell through a scrubbed attached PTY', async () => {
+    const { runtime } = fixture()
+    const ctx = new Context()
+    try {
+      const host = new LocalSubprocessRuntime(ctx)
+      const exit = Promise.withResolvers<{ exitCode: number; signal: null }>()
+      const stopLocal = vi.fn(async () => { exit.resolve({ exitCode: 0, signal: null }) })
+      const terminal: SubprocessTerminalHandle = {
+        pid: 123, output: new PassThrough(), done: exit.promise,
+        write: async () => {}, resize: async () => {}, terminate: stopLocal,
+        inspectForeground: async () => undefined, signalForeground: async () => 123,
+        inspectActivity: async () => ({ state: 'unknown', revision: 0 }),
+      }
+      const start = vi.spyOn(host, 'spawnTerminal').mockResolvedValue(terminal)
+      const stopContainer = vi.spyOn(runtime, 'desktopCommand').mockResolvedValue(Buffer.alloc(0))
+      const ensure = vi.spyOn(runtime, 'ensure')
+      const provider = new VpsBotSubprocess(ctx.isolate('subprocess'), { runtime, sessionId: sessions.alice, host })
+      const cwd = runtime.workspace(sessions.alice)
+      const spec: SubprocessTerminalSpawnSpec = {
+        argv: ['/bin/bash', '-i'], cwd, env: { PRIVATE_API_KEY: 'fixture-value' },
+        cols: 80, rows: 25, terminalType: 'xterm-256color', shellActivity: true, graceMs: 1000,
+      }
+      const scoped = await provider.spawnTerminal(spec)
+      expect(scoped.output).toBe(terminal.output)
+      expect(ensure).toHaveBeenCalledWith(sessions.alice)
+      const passed = start.mock.calls[0]?.[0]
+      expect(passed).toMatchObject({ cwd: '/', env: undefined, cols: 80, rows: 25 })
+      expect(passed?.argv).toEqual(expect.arrayContaining([
+        '/usr/bin/env', '-i', '/usr/bin/podman', 'exec', '--interactive', '--tty', '--workdir', cwd, '/bin/bash',
+      ]))
+      expect(passed?.argv).not.toContain('PRIVATE_API_KEY')
+      const protocol = passed?.argv.slice(-5)
+      expect(protocol).toEqual(['start', expect.stringMatching(/^[a-f0-9]{32}$/u), 'xterm-256color', '/bin/bash', '-i'])
+      await Promise.all([scoped.terminate(), scoped.terminate()])
+      expect(stopContainer).toHaveBeenCalledOnce()
+      expect(stopContainer.mock.calls[0]?.[0]).toBe(sessions.alice)
+      expect(stopContainer.mock.calls[0]?.[1].slice(-3)).toEqual(['stop', protocol?.[1], '1000'])
+      expect(stopLocal).toHaveBeenCalledOnce()
+      await expect(provider.spawnTerminal({ ...spec, cwd: runtime.workspace(sessions.bob) })).rejects.toThrow('workspace')
+      expect(start).toHaveBeenCalledOnce()
+
+      const initializing = Promise.withResolvers<undefined>()
+      ensure.mockReturnValueOnce(initializing.promise)
+      const abort = new AbortController()
+      const pending = provider.spawnTerminal({ ...spec, signal: abort.signal })
+      const cancelled = expect(pending).rejects.toThrow('fixture allocation cancelled')
+      abort.abort(new Error('fixture allocation cancelled'))
+      initializing.resolve(undefined)
+      await cancelled
+      expect(start).toHaveBeenCalledOnce()
+    } finally {
+      await ctx.fiber.dispose()
+    }
   })
 })

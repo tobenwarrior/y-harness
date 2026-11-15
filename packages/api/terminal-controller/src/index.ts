@@ -3,7 +3,7 @@ import type { Context } from '@yharness/cordis'
 import z from '@yharness/schemastery'
 import type { Agent } from '@yharness/agent'
 import type { SessionId } from '@yharness/session'
-import type {} from '@yharness/sandbox-policy'
+import { managedBotExecutionFor } from '@yharness/sandbox-policy'
 import { Remote, RemoteError, TypertRemoteService } from '@yharness/typert-protocol'
 import { discoverShells, resolveShell } from './shells.ts'
 import { BrowserTerminal } from './terminal.ts'
@@ -117,8 +117,8 @@ export class TerminalController extends TypertRemoteService {
   @Remote
   environment(agent: Agent, signal: AbortSignal): TerminalEnvironment {
     signal.throwIfAborted()
-    const { sandboxPolicy } = this.execution(agent)
-    return { cwd: agent.session.header.cwd ?? sandboxPolicy.workspaceRoot,
+    const { cwd } = this.execution(agent)
+    return { cwd,
       maxInputBytes: this.config.maxInputBytes, maxCols: this.config.maxCols,
       maxRows: this.config.maxRows, scrollback: this.config.scrollback }
   }
@@ -132,7 +132,8 @@ export class TerminalController extends TypertRemoteService {
   @Remote
   shells(agent: Agent, signal: AbortSignal): Promise<TerminalShell[]> {
     signal.throwIfAborted()
-    return discoverShells(this.execution(agent).subprocess, this.config.shell, this.config.shellCandidates, signal)
+    const { subprocess, profile } = this.execution(agent)
+    return discoverShells(subprocess, profile, this.config.shellCandidates, signal)
   }
 
   /**
@@ -328,29 +329,32 @@ export class TerminalController extends TypertRemoteService {
       || !Number.isSafeInteger(rows) || rows < 1 || rows > this.config.maxRows) throw new Error('Terminal dimensions exceed the configured limits')
   }
 
-  private execution(agent: Agent): { subprocess: Context['subprocess']; sandboxPolicy: Context['sandboxPolicy'] } {
-    // The Agent context selects execution providers but does not inject consumer services.
+  private execution(agent: Agent): { subprocess: Context['subprocess']; cwd: string; profile?: Config['shell'] } {
+    const managed = managedBotExecutionFor({ agent })
+    if (managed !== undefined) return { subprocess: managed.subprocess, cwd: managed.workspaceRoot }
+    // Agent contexts select execution providers without injecting consumer services.
     const subprocess = agent.ctx.get('subprocess')
     const sandboxPolicy = agent.ctx.get('sandboxPolicy')
     if (subprocess === undefined || sandboxPolicy === undefined) throw new Error('The Session execution environment requires subprocess and sandbox policy providers')
-    return { subprocess, sandboxPolicy }
+    return { subprocess, cwd: agent.session.header.cwd ?? sandboxPolicy.workspaceRoot, profile: this.config.shell }
   }
 
   private async spawn(agent: Agent, owner: OwnedSession, request: TerminalCreateRequest, signal: AbortSignal): Promise<BrowserTerminal> {
-    const environment = this.environment(agent, signal)
-    const { subprocess } = this.execution(agent)
+    signal.throwIfAborted()
+    const { subprocess, cwd, profile } = this.execution(agent)
     const shell = request.shellPath === undefined
-      ? await resolveShell(subprocess, this.config.shell, signal)
-      : (await this.shells(agent, signal)).find(candidate => candidate.path === request.shellPath)
+      ? await resolveShell(subprocess, profile, signal)
+      : (await discoverShells(subprocess, profile, this.config.shellCandidates, signal))
+        .find(candidate => candidate.path === request.shellPath)
     if (shell === undefined) throw new Error('Selected shell is not available in this execution environment')
     const handle = await subprocess.spawnTerminal({
-      argv: [shell.path, ...shell.args], cwd: environment.cwd, cols: request.cols, rows: request.rows,
+      argv: [shell.path, ...shell.args], cwd, cols: request.cols, rows: request.rows,
       terminalType: 'xterm-256color', env: { DSH_SESSION_ID: agent.id },
       shellActivity: true,
       graceMs: this.config.disposeGraceMs, signal,
     })
     const info: WebTerminalInfo = {
-      id: request.id, shell, title: shell.name, cwd: environment.cwd,
+      id: request.id, shell, title: shell.name, cwd,
       cols: request.cols, rows: request.rows, state: 'running', exitCode: null,
     }
     try {

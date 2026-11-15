@@ -56,6 +56,7 @@
   "dependencies": {
     "@yharness/deque": "workspace:*",
     "@yharness/lazy-require": "workspace:*",
+    "@yharness/sandbox-policy": "workspace:*",
     "@yharness/typert-protocol": "workspace:*",
     "@yharness/schemastery": "workspace:~",
     "@xterm/headless": "^6.0.0",
@@ -75,7 +76,6 @@
     "@yharness/fs": "workspace:*",
     "@yharness/remote-mock": "workspace:*",
     "@yharness/sandbox": "workspace:*",
-    "@yharness/sandbox-policy": "workspace:*",
     "@yharness/session": "workspace:*",
     "@yharness/session-projection": "workspace:*",
     "@yharness/subprocess": "workspace:*",

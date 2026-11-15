@@ -11,6 +11,8 @@ The VPS installer assigns each Bot its own Linux computer. Previously, Bots used
 
 Omitting `botComputers.bots` now selects every owner Bot. Earlier builds treated omission as an empty list. Use an explicit list to keep an existing selection, or set `bots: []` before restarting to keep all Bots on their previous Host configuration.
 
+Owner terminals opened for a managed Bot use the Bot’s Linux shell and workspace. Open a regular Code session on the VPS when you need a terminal in the service account’s workspace.
+
 ## Migration
 
 1. Update the installed Y Harness checkout. Rerun the [VPS installer](../../../user/guide/vps.md#install-and-start), [select the Bots to move](../../../user/guide/vps.md#move-existing-bots-in-stages), and restart the Web service when it is idle.

@@ -9,6 +9,7 @@ import type { SessionEvent, SessionId } from '@yharness/session'
 import type { SandboxExecutionPolicy, SandboxMode } from '@yharness/sandbox'
 import { SubprocessExecutableNotFoundError, type SubprocessRuntime, type SubprocessTerminalEnvironment, type SubprocessTerminalHandle } from '@yharness/subprocess'
 import LocalSubprocessRuntime from '@yharness/subprocess-local'
+import { bindManagedBotExecution, type ManagedBotExecution } from '@yharness/sandbox-policy'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TerminalController, type Config } from '../src/index.ts'
 import { resolveShell } from '../src/shells.ts'
@@ -29,7 +30,7 @@ function fixture(overrides: Partial<Config> = {}) {
   const ctx = new Context()
   roots.push(ctx)
   const effects = vi.spyOn(ctx.fiber, 'effect')
-  const sandboxPolicy = { defaultMode: 'danger-full-access', workspaceRoot: '/workspace', resolve: vi.fn((): SandboxExecutionPolicy => ({ mode: 'danger-full-access', workspaceRoot: '/workspace' })) }
+  const sandboxPolicy = { defaultMode: 'danger-full-access' as const, workspaceRoot: '/workspace', resolve: vi.fn((): SandboxExecutionPolicy => ({ mode: 'danger-full-access', workspaceRoot: '/workspace' })) }
   ctx.provide('sandboxPolicy', sandboxPolicy as never)
   const output = new PassThrough()
   const done = Promise.withResolvers<{ exitCode: number; signal: null }>()
@@ -60,6 +61,37 @@ describe('TerminalController', () => {
     expect(controller.environment(agent, signal())).toMatchObject({ cwd: '/workspace' })
     await controller.create(agent, request, signal())
     await controller.close(agent, id)
+  })
+
+  it('opens a managed Bot terminal in its container workspace with shells discovered there', async () => {
+    const host = fixture({ shell: { path: '/host/bin/custom-shell', name: 'custom', args: ['-i'] } })
+    const managed = fixture()
+    managed.subprocess.terminalEnvironment.mockResolvedValue({ platform: 'posix', defaultShell: '/bin/bash' })
+    const agent = owner(host.ctx, 'bot-session', '/legacy-host-workspace')
+    const execution: ManagedBotExecution = {
+      context: agent.ctx, workspaceRoot: '/private-bot/workspace',
+      shell: {} as ManagedBotExecution['shell'], fs: {} as ManagedBotExecution['fs'],
+      subprocess: managed.ctx.subprocess, sandboxPolicy: managed.sandboxPolicy,
+    }
+    const unbind = bindManagedBotExecution(agent.ctx, execution)
+    try {
+      expect(host.controller.environment(agent, signal()).cwd).toBe(execution.workspaceRoot)
+      expect((await host.controller.shells(agent, signal()))[0]?.path).toBe('/bin/bash')
+      await expect(host.controller.create(agent, { ...request, shellPath: '/host/bin/custom-shell' }, signal()))
+        .rejects.toThrow('Selected shell is not available')
+      const terminal = await host.controller.create(agent, request, signal())
+      expect(terminal).toMatchObject({ cwd: execution.workspaceRoot, shell: { path: '/bin/bash' } })
+      expect(managed.subprocess.spawnTerminal).toHaveBeenCalledOnce()
+      expect(managed.subprocess.spawnTerminal).toHaveBeenCalledWith(expect.objectContaining({
+        argv: ['/bin/bash', '-i'], cwd: execution.workspaceRoot,
+      }))
+      expect(host.subprocess.resolveExecutable).not.toHaveBeenCalled()
+      expect(host.subprocess.spawnTerminal).not.toHaveBeenCalled()
+      await host.controller.close(agent, terminal.id)
+      expect(managed.handle.terminate).toHaveBeenCalledOnce()
+    } finally {
+      unbind()
+    }
   })
 
   it('creates the environment default shell and keeps an existing identity when that default changes', async () => {

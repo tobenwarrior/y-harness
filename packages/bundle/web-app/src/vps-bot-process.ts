@@ -1,6 +1,7 @@
 /** Subprocess adapter for the managed Bot computer. */
 
 import { execFile } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { promisify } from 'node:util'
 import { isAbsolute } from 'node:path/posix'
 import type { Context } from '@yharness/cordis'
@@ -13,7 +14,8 @@ import {
   type SubprocessTerminalHandle,
   type SubprocessTerminalSpawnSpec,
 } from '@yharness/subprocess'
-import type { VpsRuntime } from './vps-runtime.ts'
+import { VpsRuntimeError, type VpsRuntime } from './vps-runtime.ts'
+import { scopedBotTerminal, TERMINAL_SCOPE_SCRIPT } from './vps-bot-terminal.ts'
 
 const exec = promisify(execFile)
 
@@ -67,7 +69,33 @@ export class VpsBotSubprocess extends SubprocessRuntime {
   }
 
   /** @inheritdoc */
-  override spawnTerminal(_spec: SubprocessTerminalSpawnSpec): Promise<SubprocessTerminalHandle> {
-    return Promise.reject(new Error('Open the VPS Bot’s Computer panel to use an interactive terminal.'))
+  override async spawnTerminal(spec: SubprocessTerminalSpawnSpec): Promise<SubprocessTerminalHandle> {
+    spec.signal?.throwIfAborted()
+    const { runtime, sessionId, host } = this.config
+    const scope = randomUUID().replaceAll('-', '')
+    const control = ['/usr/bin/python3', '-I', '-c', TERMINAL_SCOPE_SCRIPT]
+    const argv = runtime.execArgv(sessionId, [...control, 'start', scope, spec.terminalType, ...spec.argv], {
+      workdir: spec.cwd, interactive: true,
+    })
+    await runtime.ensure(sessionId)
+    spec.signal?.throwIfAborted()
+    const stop = async (): Promise<void> => {
+      try {
+        await runtime.desktopCommand(sessionId, [...control, 'stop', scope, String(spec.graceMs)], new AbortController().signal)
+      } catch (error) {
+        void error
+        throw new VpsRuntimeError('The VPS Bot terminal session could not be closed.')
+      }
+    }
+    try {
+      return scopedBotTerminal(await host.spawnTerminal({ ...spec, argv, cwd: '/', env: undefined }), stop)
+    } catch (error) {
+      try {
+        await stop()
+      } catch (cleanup) {
+        throw new AggregateError([error, cleanup], 'The VPS Bot terminal could not be opened or cleaned up.')
+      }
+      throw error
+    }
   }
 }

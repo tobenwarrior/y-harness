@@ -1671,6 +1671,9 @@ importers:
       '@yharness/lazy-require':
         specifier: workspace:*
         version: link:../../util/lazy-require
+      '@yharness/sandbox-policy':
+        specifier: workspace:*
+        version: link:../../sandbox/sandbox-policy
       '@yharness/schemastery':
         specifier: link:../../../vendor/schemastery
         version: link:../../../vendor/schemastery
@@ -1705,9 +1708,6 @@ importers:
       '@yharness/sandbox':
         specifier: workspace:*
         version: link:../../sandbox/sandbox
-      '@yharness/sandbox-policy':
-        specifier: workspace:*
-        version: link:../../sandbox/sandbox-policy
       '@yharness/session':
         specifier: workspace:*
         version: link:../../core/session
