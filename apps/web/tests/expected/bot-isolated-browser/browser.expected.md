@@ -31,3 +31,13 @@
   - code: https://example.test/session
   - link "Approve sign-in":
     - /url: /__yharness/vault-login-use/{{id}}
+
+## Shared login approval
+
+- region "Approve shared website sign-in":
+  - text: Approve shared website sign-in Website
+  - code: https://example.test
+  - text: Destination
+  - code: https://example.test/session
+  - link "Approve sign-in":
+    - /url: /__yharness/vault-login-use/{{id}}

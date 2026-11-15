@@ -27,6 +27,8 @@ Mount this Host plugin when a composition needs user-owned Bots that map one-to-
 
 Shared Sessions admit a scoped `web_search` from the Agent or its preset. The shipped shared preset uses the Host's configured search provider; searches consume that provider's configured account and transmit the collaborator's query to it. Global tools, page fetch, filesystem, shell, and ungranted connected apps remain unavailable. Search results are treated as untrusted external data.
 
+When a Host supplies `ctx.botSharedBrowser`, an explicitly opted Bot may also expose the exact `shared_browser` definition inside its shared private or isolated group Agent only. The Bot service checks the live Agent, exact private binding or current group delivery turn and step, and current membership immediately before the tool body; owner Sessions, stale or competing group input, revoked principals, and fenced Sessions remain unavailable. The provider must call the supplied `authorized` callback before every browser action and saved-login poll. Call `authorized(signal)` for a read-only poll; pass a synchronous `start` callback for the final operation so the Bot service starts it under the authority lock without awaiting the operation there. The package owns admission and scoped tool visibility; the Host provider owns browser transport and any deployment grant.
+
 The Bot Remote exposes `listConnectedApps` and `setConnectedAppAccess` for owner-local Bot access, plus `listSharedAppAccess` and `setSharedAppAccess` for the separate shared-session policy. Shared access is default-deny, stored in the shared authority with a per-Bot revision, and changed only with the expected revision; a stale write returns `gateway/conflict`. The Client uses the shared methods for the owner-facing shared-app controls. Both catalogs are derived from MCP tool definitions' Host-only source metadata and visible MCP resource servers; public names are not parsed because server and tool names may contain `__`. A shared grant is checked against the exact private binding or isolated group delivery and current collaborator membership before approval, rechecked after approval, and checked again at the last-mile body-admission seam after async wrappers settle, so owner-local access, hidden controls, or revocation during a wait cannot bypass the shared policy. If the composed approval policy asks for a decision, the service writes a durable per-call request to the shared authority mailbox and pauses the call before the provider body runs. Only the initiating collaborator's authenticated principal can list or decide that request through `bots/share/list-approvals` and `bots/share/decide-approval`; `allow` authorizes that call once and `reject` denies it. The `always-allow` decision also remembers permission for future requests from the same principal, Bot, shared conversation, app, and exact registered tool. The principal can read or revoke these permissions through `bots/share/list-approval-grants` and `bots/share/revoke-approval-grant`. The Host checks the remembered permission before invoking the app, including after a restart. Changes to the relevant access invalidate a remembered permission. Pending requests expire after 15 minutes by default (configurable from 1 second to 1 hour), and membership or app-grant revocation cancels a waiting request or blocks the later body-admission recheck. Approval previews contain only bounded JSON arguments: every scalar value is replaced with `[redacted]`, while oversized, deeply nested, or otherwise unsafe structures may be omitted or marked truncated; previews are not the provider's complete argument payload.
 
 Owner uploads use the authenticated `/api/bots/group/uploadAttachment` streaming route. Shared collaborators use the exact authenticated `/shared-bots/bots/share/uploadAttachment` route or the bounded image-admission endpoints; both routes require an explicit message id, cap one streamed file at 20 MiB for 60 seconds, and scope the opaque grant to the caller's current ACL. Grant and lease projections reload under the shared authority lock before cross-Host reads or mutations. Shared private delivery uses an authority-locked lease that renews while the Session flushes and uses the Session's `user` message `rpcId` as its durable receipt. A revoked or changed membership cannot consume a reserved grant, a lease takeover fences stale settlement, and an uncertain lease remains retryable rather than being treated as accepted.
@@ -252,6 +254,20 @@ The list tool and an access-denial message consume tokens only when the Bot call
 #### KV Cache effect
 
 Changing a Bot grant does not rewrite Session history. The scoped tool set remains stable; only the result of a later app call changes.
+
+### Shared browser access
+
+#### What the model sees
+
+An optional Host browser provider can expose one `shared_browser` tool to an explicitly opted Bot's shared Session. The tool is absent from owner and ordinary Sessions, and a definition with another name is ignored. Every call is rechecked against the exact live Agent and current private or group admission before the provider body starts; a group call must still have one isolated delivery for the current turn and step. The provider's `authorized` callback remains required during saved-login polling so membership or principal revocation stops pending work; use its synchronous `start` argument at the final body boundary so the authority read and operation start cannot be separated by a queued revocation.
+
+#### Token effect
+
+The browser schema consumes tokens only in an opted shared Session. Admission checks and revocation do not add model-visible messages.
+
+#### KV Cache effect
+
+The tool set changes only when the Host mounts or removes the scoped provider; access revocation changes the result of a later call without rewriting Session history.
 
 ### Host-local skill assignment
 

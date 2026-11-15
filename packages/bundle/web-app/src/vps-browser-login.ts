@@ -5,6 +5,9 @@ import type {} from '@yharness/bots'
 import type { ConnectionFetchRoute } from '@yharness/client-connection'
 import type { Context } from '@yharness/cordis'
 import {
+  isSharedBrowserSession,
+  runAuthorizedBrowserOperation,
+  type VpsBrowserAdmission,
   type VpsBrowserLoginRequest,
   VpsIsolatedBrowser,
 } from './vps-isolated-browser.ts'
@@ -26,6 +29,8 @@ export interface VpsBrowserLoginView {
   readonly origin: string
   /** Exact same-origin website POST URL for the saved-login approval. */
   readonly destination: string
+  /** The login was requested in a collaborator chat. */
+  readonly scope?: 'shared'
 }
 
 /** Result safe to return to the model after owner approval processing. */
@@ -46,8 +51,10 @@ export interface VpsBrowserLoginInternals {
 }
 
 interface Entry {
+  readonly bot: string
   readonly request: VpsBrowserLoginRequest
   readonly expires: number
+  readonly signal: AbortSignal
 }
 
 /**
@@ -100,29 +107,54 @@ export class VpsBrowserLogin {
   current(session: string): VpsBrowserLoginView | undefined {
     const entry = this.entries.get(session)
     if (entry === undefined) return undefined
-    if (entry.expires <= this.now()) {
+    if (entry.signal.aborted || entry.expires <= this.now()) {
       this.entries.delete(session)
       return undefined
     }
-    return { id: entry.request.id, origin: entry.request.origin, destination: entry.request.destination }
+    return {
+      id: entry.request.id, origin: entry.request.origin, destination: entry.request.destination,
+      ...(isSharedBrowserSession(session) ? { scope: 'shared' as const } : {}),
+    }
   }
 
   /**
-   * Create and await one saved-login request for a direct owner Bot turn.
+   * Read the next pending request for the owner of this Bot.
+   * @param bot - Exact Bot roster identity.
+   * @param ownerSession - Bot's canonical owner Session.
+   * @returns The direct request or the earliest still-pending shared request.
+   */
+  currentForOwner(bot: string, ownerSession: string): VpsBrowserLoginView | undefined {
+    const own = this.current(ownerSession)
+    if (own !== undefined) return own
+    for (const [session, entry] of this.entries) {
+      if (entry.bot !== bot || !isSharedBrowserSession(session)) continue
+      const shared = this.current(session)
+      if (shared !== undefined) return shared
+    }
+    return undefined
+  }
+
+  /**
+   * Create and await one owner-approved saved-login request.
    * @param bot - Authorized Bot roster id.
-   * @param session - Canonical Bot Session id.
+   * @param session - Exact owner or admitted shared Session id.
    * @param lease - Admits only the request-create exchange through the Computer lease.
    * @param signal - Calling turn cancellation signal.
+   * @param continueShared - Admit shared browser operations and recheck access while polling.
    * @returns State-only result; broker ids and website metadata never reach the model.
    */
-  async request(bot: string, session: string, lease: VpsBrowserLoginLease, signal: AbortSignal): Promise<VpsBrowserLoginResult> {
-    if (!this.authorized(bot)) throw new Error(UNAUTHORIZED)
+  async request(
+    bot: string, session: string, lease: VpsBrowserLoginLease, signal: AbortSignal,
+    continueShared?: VpsBrowserAdmission,
+  ): Promise<VpsBrowserLoginResult> {
+    if (!this.browser.authorized(bot, session)) throw new Error(UNAUTHORIZED)
     if (!SESSION_ID.test(session)) throw new Error(UNAVAILABLE)
+    if (isSharedBrowserSession(session) && continueShared === undefined) throw new Error(UNAUTHORIZED)
     if (signal.aborted || this.closed.signal.aborted) return { state: 'unavailable' }
     if (this.hasPending(session)) throw new Error('A saved website login is already pending in this Session.')
     if (this.pending.size >= MAX_PENDING) return { state: 'unavailable' }
     this.pending.add(session)
-    const running = this.run(bot, session, lease, signal)
+    const running = this.run(bot, session, lease, signal, continueShared)
     this.flights.add(running)
     return running.finally(() => {
       this.flights.delete(running)
@@ -140,16 +172,30 @@ export class VpsBrowserLogin {
     this.pending.clear()
   }
 
-  private async run(bot: string, session: string, lease: VpsBrowserLoginLease, signal: AbortSignal): Promise<VpsBrowserLoginResult> {
+  private async run(
+    bot: string, session: string, lease: VpsBrowserLoginLease, signal: AbortSignal,
+    continueShared?: VpsBrowserAdmission,
+  ): Promise<VpsBrowserLoginResult> {
     const bounded = AbortSignal.any([signal, this.closed.signal, AbortSignal.timeout(REQUEST_TTL_MS)])
     let request: VpsBrowserLoginRequest | undefined
     try {
-      request = await lease(() => this.browser.requestLogin(bot, session, bounded), bounded)
-      this.entries.set(session, { request, expires: this.now() + REQUEST_TTL_MS })
+      const begin = (): Promise<VpsBrowserLoginRequest> => this.browser.requestLogin(bot, session, bounded)
+      request = await lease(() => continueShared === undefined
+        ? begin() : runAuthorizedBrowserOperation(continueShared, begin, bounded), bounded)
+      this.entries.set(session, { bot, request, expires: this.now() + REQUEST_TTL_MS, signal: bounded })
       for (let poll = 0; poll < MAX_POLLS; poll++) {
         if (poll > 0) await this.sleep(POLL_MS, bounded)
+        if (continueShared !== undefined && !await continueShared(bounded)) throw new Error(UNAVAILABLE)
         const state = await this.browser.loginStatus(bot, session, request.id, bounded)
-        if (state !== 'pending') return { state }
+        if (typeof state !== 'string') {
+          if (continueShared === undefined) throw new Error(UNAVAILABLE)
+          const id = request.id
+          await runAuthorizedBrowserOperation(continueShared, () =>
+            this.browser.authorizeLogin(bot, session, id, state.challenge, bounded), bounded)
+        } else if (state !== 'pending') {
+          if (continueShared !== undefined && !await continueShared(bounded)) throw new Error(UNAVAILABLE)
+          return { state }
+        }
         if (this.current(session) === undefined) throw new Error(UNAVAILABLE)
       }
       throw new Error(UNAVAILABLE)
@@ -194,7 +240,7 @@ export function vpsBrowserLoginRoute(ctx: Context, requests: VpsBrowserLogin): C
       const bot = session !== undefined && SESSION_ID.test(session)
         ? await ctx.bots.ownerBotForSession(session) : undefined
       const view = bot?.state === 'active' && requests.authorized(bot.id)
-        ? requests.current(bot.sessionId) ?? null
+        ? requests.currentForOwner(bot.id, bot.sessionId) ?? null
         : null
       return Response.json({ request: view }, { headers: { 'Cache-Control': 'no-store' } })
     },

@@ -10,6 +10,7 @@ import { VpsBrowserLogin, type VpsBrowserLoginLease, vpsBrowserLoginRoute } from
 
 const BOT = 'bot-login'
 const SESSION = 'bot-session-0e9beecd-b6f5-40b1-8d52-f97259bdcf76'
+const SHARED_SESSION = 'shared-session-0e9beecd-b6f5-40b1-8d52-f97259bdcf77'
 const LOGIN_ID = '0123456789abcdef0123456789abcdef'
 
 const roots: string[] = []
@@ -130,6 +131,101 @@ describe('isolated browser saved-login registry', () => {
       .resolves.toEqual({ state: 'unavailable' })
     await expect(logins.request(BOT, SESSION, lease, new AbortController().signal))
       .resolves.toEqual({ state: 'unavailable' })
+  })
+
+  it('requires the Cloud allowlist before opening a shared browser', async () => {
+    const socket = vi.fn(() => { throw new Error('unexpected connection') })
+    const socketPath = '/run/browser-fixture.sock'
+    const browser = new VpsIsolatedBrowser({ socketPath, bots: [BOT] }, { connect: socket })
+    await expect(browser.status(BOT, SHARED_SESSION, new AbortController().signal)).rejects.toThrow('not authorized')
+    expect(socket).not.toHaveBeenCalled()
+    expect(() => new VpsIsolatedBrowser({ socketPath, bots: [BOT], sharedBots: ['bot-other'] }))
+      .toThrow('select')
+    expect(() => new VpsIsolatedBrowser({ socketPath, bots: [BOT], sharedBots: [BOT, BOT] }))
+      .toThrow('unique')
+  })
+
+  it('offers a shared request in the exact owner Bot chat and withdraws it when the turn ends', async () => {
+    const commands: Record<string, unknown>[] = []
+    const socketPath = await listen((request) => {
+      commands.push(request)
+      return request.action === 'request-login'
+        ? { id: LOGIN_ID, origin: 'https://example.test', destination: 'https://example.test/login', state: 'pending' }
+        : request.action === 'login-status' ? { state: 'pending' } : { state: 'unavailable' }
+    })
+    const browser = new VpsIsolatedBrowser({ socketPath, bots: [BOT, 'bot-other'], sharedBots: [BOT], savedLogins: true })
+    const logins = new VpsBrowserLogin(browser)
+    const controller = new AbortController()
+    const pending = logins.request(BOT, SHARED_SESSION, async operation => operation(), controller.signal,
+      async (_signal, start) => { start?.(); return true })
+    try {
+      await expect.poll(() => logins.current(SHARED_SESSION)).toMatchObject({ id: LOGIN_ID })
+      const ctx = new Context()
+      ctx.provide('bots', {
+        ownerBotForSession: async (session: string) => {
+          if (session === SESSION) return { id: BOT, sessionId: session, state: 'active' }
+          if (session === 'other-owner') return { id: 'bot-other', sessionId: session, state: 'active' }
+        },
+      } as never)
+      const route = vpsBrowserLoginRoute(ctx, logins)
+      const fetch = (session: string) => route.fetch(new Request(`http://127.0.0.1${route.path}?sessionId=${session}`))
+      await expect((await fetch(SESSION)).json()).resolves.toEqual({
+        request: { id: LOGIN_ID, origin: 'https://example.test', destination: 'https://example.test/login', scope: 'shared' },
+      })
+      await expect((await fetch(SHARED_SESSION)).json()).resolves.toEqual({ request: null })
+      await expect((await fetch('other-owner')).json()).resolves.toEqual({ request: null })
+      controller.abort()
+      await expect(pending).resolves.toEqual({ state: 'unavailable' })
+      expect(commands).toContainEqual({ action: 'cancel-login', bot: BOT, session: SHARED_SESSION, id: LOGIN_ID })
+      await expect((await fetch(SESSION)).json()).resolves.toEqual({ request: null })
+    } finally {
+      controller.abort()
+      await logins.dispose()
+    }
+  })
+
+  it('starts shared login submission under current access and withholds the result after revocation', async () => {
+    const commands: string[] = []
+    const challenge = 'b'.repeat(32)
+    let accessible = true
+    let started = false
+    let allowBrowserSubmit = true
+    const socketPath = await listen((request) => {
+      commands.push(String(request.action))
+      if (request.action === 'request-login') {
+        return { id: LOGIN_ID, origin: 'https://example.test', destination: 'https://example.test/login', state: 'pending' }
+      }
+      if (request.action === 'authorize-login') {
+        expect(request).toMatchObject({ session: SHARED_SESSION, bot: BOT, id: LOGIN_ID, challenge })
+        started = true
+        return { ok: true }
+      }
+      if (request.action === 'cancel-login') return { state: 'unavailable' }
+      if (started || !allowBrowserSubmit) accessible = false
+      return started ? { state: 'submitted' } : { state: 'approval-pending', challenge }
+    })
+    const browser = new VpsIsolatedBrowser({ socketPath, bots: [BOT], sharedBots: [BOT], savedLogins: true })
+    const logins = new VpsBrowserLogin(browser, { sleep: async () => {} })
+    const authorized = async (_signal: AbortSignal, start?: () => void): Promise<boolean> => {
+      if (!accessible) return false
+      start?.()
+      return true
+    }
+    const run = (): Promise<import('../src/vps-browser-login.ts').VpsBrowserLoginResult> => logins.request(
+      BOT, SHARED_SESSION, async operation => operation(), new AbortController().signal, authorized,
+    )
+    try {
+      await expect(run()).resolves.toEqual({ state: 'unavailable' })
+      expect(commands).toEqual(['request-login', 'login-status', 'authorize-login', 'login-status', 'cancel-login'])
+      commands.length = 0
+      accessible = true
+      started = false
+      allowBrowserSubmit = false
+      await expect(run()).resolves.toEqual({ state: 'unavailable' })
+      expect(commands).toEqual(['request-login', 'login-status', 'cancel-login'])
+    } finally {
+      await logins.dispose()
+    }
   })
 
   it('uses the bounded default poll delay', async () => {

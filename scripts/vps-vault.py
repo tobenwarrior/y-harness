@@ -323,7 +323,9 @@ def browser_login_inspection(payload, expected_id):
             raise VaultError(BROWSER_UNAVAILABLE)
         if set(reply) == {'error'} and reply['error'] == 'unavailable':
             raise VaultError(BROWSER_UNAVAILABLE)
-        if (set(reply) != {'id', 'origin', 'destination', 'state'}
+        fields = {'id', 'origin', 'destination', 'state'}
+        shared = set(reply) == fields | {'scope', 'bot'} and reply['scope'] == 'shared' and valid_bot(reply['bot'])
+        if (not (set(reply) == fields or shared)
                 or reply.get('id') != expected_id or not valid_request_id(reply.get('id'))
                 or reply.get('state') != 'pending' or not valid_login_origin(reply.get('origin'))
                 or not valid_login_destination(reply['origin'], reply.get('destination'))):
@@ -1359,9 +1361,11 @@ class Vault:
         return browser_login_inspection(browser_client(payload), request_id)
 
     def _browser_login_records(self, inspected):
-        """Choose the matching Bot accounts or the owner's matching personal accounts."""
+        """Choose accounts for the reviewed Bot and website."""
         origin = inspected['origin']
         assigned = [record for record in self.website_login_records(scoped=True) if record['origin'] == origin]
+        if inspected.get('scope') == 'shared':
+            return [record for record in assigned if record['bot'] == inspected['bot']]
         if assigned:
             query = json.dumps({'action': 'inspect-login-bot', 'id': inspected['id']},
                                separators=(',', ':')).encode('ascii')
@@ -1388,7 +1392,7 @@ class Vault:
                 for record in self._browser_login_records(inspected)
             ],
         }
-        if request.get('form') == 'entry':
+        if request.get('form') == 'entry' and inspected.get('scope') != 'shared':
             visible['acceptsCredentials'] = True
         return {'request': visible}
 
@@ -1422,7 +1426,8 @@ class Vault:
         """Submit a one-time login and save it only after submission and explicit consent."""
         try:
             inspected = self._browser_login_metadata(request['id'])
-            if inspected['origin'] != request['origin'] or inspected['destination'] != request['destination']:
+            if (inspected.get('scope') == 'shared' or inspected['origin'] != request['origin']
+                    or inspected['destination'] != request['destination']):
                 return {'state': 'unavailable'}
             result = self._deliver_browser_login(inspected, request['username'], request['password'])
         except (VaultError, OSError):

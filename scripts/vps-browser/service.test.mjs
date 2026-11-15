@@ -13,6 +13,8 @@ import { browserServers, parseGrants } from './service.mjs'
 const BOT = 'bot-example'
 const SESSION = 'bot-session-a1a1a1a1-a1a1-41a1-81a1-a1a1a1a1a1a1'
 const otherSession = 'bot-session-b2b2b2b2-b2b2-42b2-82b2-b2b2b2b2b2b2'
+const sharedSession = 'shared-session-c3c3c3c3-c3c3-43c3-83c3-c3c3c3c3c3c3'
+const anotherSharedSession = 'shared-session-d4d4d4d4-d4d4-44d4-84d4-d4d4d4d4d4d4'
 const request = { bot: BOT, session: SESSION }
 
 const controlResponse = (socketPath, data) => new Promise((resolve, reject) => {
@@ -26,6 +28,16 @@ const controlResponse = (socketPath, data) => new Promise((resolve, reject) => {
     try { resolve(JSON.parse(reply)) } catch (error) { reject(error) }
   })
 })
+
+async function approvalStatus(control, chat, id) {
+  let status
+  for (let attempt = 0; attempt < 50; attempt++) {
+    status = await controlResponse(control, { ...chat, action: 'login-status', id })
+    if (status.state !== 'pending') return status
+    await new Promise(resolve => setTimeout(resolve, 10))
+  }
+  return status
+}
 
 async function setup(t, options = {}) {
   const root = await mkdtemp(join(tmpdir(), 'yh-isolated-browser-'))
@@ -52,6 +64,30 @@ test('checks the exact Bot and Session without launching a browser', async t => 
   assert.deepEqual(await controlResponse(control, { ...request, action: 'status', session: otherSession }), { error: 'unavailable' })
   assert.deepEqual(await controlResponse(control, { ...request, action: 'status', bot: 'bot-other' }), { error: 'unavailable' })
   assert.throws(() => parseGrants([request, { bot: 'bot-duplicate', session: SESSION }]))
+})
+
+test('opens only explicitly enabled shared chats in their own browser profiles', async t => {
+  const profiles = []
+  const { control } = await setup(t, {
+    grants: parseGrants([{ ...request, shared: true }, { bot: 'bot-other', session: otherSession }]),
+    createPage: async (_executable, profile) => {
+      profiles.push(profile)
+      const closing = Promise.withResolvers()
+      return { frame: async () => '/9j/2Q==', close: async () => closing.resolve(), closed: closing.promise }
+    },
+  })
+  for (const session of [SESSION, sharedSession, anotherSharedSession, sharedSession]) {
+    const frame = await controlResponse(control, { bot: BOT, session, action: 'frame' })
+    assert.equal(frame.jpeg, '/9j/2Q==')
+  }
+  assert.equal(new Set(profiles).size, 3)
+  assert.equal(profiles.filter(profile => profile.endsWith('/' + SESSION)).length, 1)
+  assert.equal(profiles.some(profile => profile.includes(sharedSession)), false)
+  assert.deepEqual(await controlResponse(control, { bot: 'bot-other', session: sharedSession, action: 'status' }),
+    { error: 'unavailable' })
+  assert.deepEqual(await controlResponse(control, { bot: BOT, session: 'shared-session-incorrect', action: 'status' }),
+    { error: 'unavailable' })
+  assert.throws(() => parseGrants([{ ...request, shared: 'true' }]))
 })
 
 test('admits only screen input and web navigation, and keeps the Vault endpoint closed to requests', async t => {
@@ -119,6 +155,59 @@ test('reserves the exact browser for one owner-approved login and consumes it on
   assert.deepEqual(await controlResponse(control, { ...request, action: 'login-status', id: pending.id }), { state: 'submitted' })
   assert.deepEqual(submitted, [{ document, username: use.username, password: use.password }])
   assert.deepEqual(await controlResponse(control, { ...request, action: 'frame' }), { jpeg: '/9j/2Q==', width: 1280, height: 800 })
+})
+
+test('allows a shared login only for the requesting chat and its assigned Bot account', async t => {
+  const origin = 'https://login.example.test'
+  const destination = `${origin}/session`
+  const closed = Promise.withResolvers()
+  let submissions = 0
+  const { control, vault } = await setup(t, {
+    grants: parseGrants([{ ...request, shared: true }]),
+    savedLogins: true,
+    createPage: async () => ({
+      captureLogin: async () => ({ origin, destination }),
+      submitLogin: async () => { submissions++; return 'submitted' },
+      close: async () => closed.resolve(), closed: closed.promise,
+    }),
+  })
+  const chat = { bot: BOT, session: sharedSession }
+  const pending = await controlResponse(control, { ...chat, action: 'request-login' })
+  assert.match(pending.id, /^[a-f0-9]{32}$/u)
+  assert.deepEqual(pending, { id: pending.id, origin, destination, state: 'pending' })
+  const inspect = { action: 'inspect-login', id: pending.id }
+  assert.deepEqual(await controlResponse(control, { ...chat, ...inspect }), { error: 'unavailable' })
+  assert.deepEqual(await controlResponse(vault, inspect), { ...pending, scope: 'shared', bot: BOT })
+  const use = { action: 'use-login', id: pending.id, origin, username: 'fixture-team', password: 'fixture-password' }
+  assert.deepEqual(await controlResponse(vault, use), { error: 'unavailable' })
+  assert.deepEqual(await controlResponse(vault, { ...use, bot: 'bot-other' }), { error: 'unavailable' })
+  assert.deepEqual(await controlResponse(control, { ...request, action: 'cancel-login', id: pending.id }), { state: 'unavailable' })
+  assert.deepEqual(await controlResponse(control, { ...chat, session: anotherSharedSession, action: 'login-status', id: pending.id }),
+    { state: 'unavailable' })
+  assert.equal(submissions, 0)
+  const approval = controlResponse(vault, { ...use, bot: BOT })
+  const status = await approvalStatus(control, chat, pending.id)
+  assert.equal(status.state, 'approval-pending')
+  assert.match(status.challenge, /^[a-f0-9]{32}$/u)
+  assert.equal(submissions, 0)
+  const authorize = { ...chat, action: 'authorize-login', id: pending.id, challenge: status.challenge }
+  assert.deepEqual(await controlResponse(vault, authorize), { error: 'unavailable' })
+  assert.deepEqual(await controlResponse(control, { ...authorize, session: anotherSharedSession }), { error: 'unavailable' })
+  assert.deepEqual(await controlResponse(control, { ...authorize, challenge: 'b'.repeat(32) }), { error: 'unavailable' })
+  assert.deepEqual(await controlResponse(control, authorize), { ok: true })
+  assert.deepEqual(await approval, { state: 'submitted' })
+  assert.deepEqual(await controlResponse(control, authorize), { error: 'unavailable' })
+  assert.deepEqual(await controlResponse(control, { ...chat, action: 'login-status', id: pending.id }), { state: 'submitted' })
+  assert.equal(submissions, 1)
+
+  const next = await controlResponse(control, { ...chat, action: 'request-login' })
+  const rejected = controlResponse(vault, { ...use, id: next.id, bot: BOT })
+  const nextStatus = await approvalStatus(control, chat, next.id)
+  assert.equal(nextStatus.state, 'approval-pending')
+  assert.deepEqual(await controlResponse(control, { ...chat, action: 'cancel-login', id: next.id }), { state: 'unavailable' })
+  assert.deepEqual(await rejected, { state: 'unavailable' })
+  assert.deepEqual(await controlResponse(control, { ...authorize, id: next.id, challenge: nextStatus.challenge }), { error: 'unavailable' })
+  assert.equal(submissions, 1)
 })
 
 test('opens a real browser through its pipe and submits keyboard input with Enter', {

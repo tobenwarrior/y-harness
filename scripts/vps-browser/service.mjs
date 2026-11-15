@@ -1,6 +1,6 @@
 /** Systemd socket worker for fixed, private Computer operations. */
 
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { lstat, mkdir, readFile, realpath } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { isAbsolute, join } from 'node:path'
@@ -11,6 +11,7 @@ import { loginDestination } from './saved-login.mjs'
 
 const BOT = /^bot-[a-zA-Z0-9][a-zA-Z0-9-]{0,245}$/u
 const SESSION = /^bot-session-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u
+const SHARED_SESSION = /^shared-session-(?:group-)?[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u
 const MAX_BOTS = 64
 const MAX_PAGES = 4
 const MAX_CLIENTS = 24
@@ -38,30 +39,39 @@ export function parseGrants(value) {
   const sessions = new Set()
   const grants = new Map()
   for (const entry of value) {
-    if (!fields(entry, ['bot', 'session']) || typeof entry.bot !== 'string' || !BOT.test(entry.bot)
+    const base = ['bot', 'session']
+    if (!(fields(entry, base) || (fields(entry, [...base, 'shared']) && entry.shared === true))
+      || typeof entry.bot !== 'string' || !BOT.test(entry.bot)
       || typeof entry.session !== 'string' || !SESSION.test(entry.session)
       || grants.has(entry.bot) || sessions.has(entry.session)) throw new Error('Invalid isolated browser grants')
-    grants.set(entry.bot, entry.session)
+    grants.set(entry.bot, { session: entry.session, shared: entry.shared === true })
     sessions.add(entry.session)
   }
   return grants
 }
 
 function parseControl(value, grants) {
-  if (!object(value) || typeof value.bot !== 'string' || grants.get(value.bot) !== value.session
-    || typeof value.session !== 'string') throw new Error('Browser unavailable')
+  if (!object(value) || typeof value.bot !== 'string' || typeof value.session !== 'string') throw new Error('Browser unavailable')
+  const grant = grants.get(value.bot)
+  const shared = grant?.shared === true && SHARED_SESSION.test(value.session)
+  if (!shared && grant?.session !== value.session) throw new Error('Browser unavailable')
+  const session = shared ? 'shared-' + createHash('sha256').update(value.bot + '\0' + value.session).digest('hex') : value.session
   const base = ['action', 'bot', 'session']
   if (value.action === 'frame' || value.action === 'status') {
-    if (fields(value, base)) return { session: value.session, action: value.action }
+    if (fields(value, base)) return { session, action: value.action }
   } else if (value.action === 'input' && fields(value, [...base, 'input'])) {
-    return { session: value.session, action: 'input', input: browserInput(value.input) }
+    return { session, action: 'input', input: browserInput(value.input) }
   } else if (value.action === 'navigate' && fields(value, [...base, 'url'])) {
-    return { session: value.session, action: 'navigate', url: parseWebsite(value.url) }
+    return { session, action: 'navigate', url: parseWebsite(value.url) }
   } else if (value.action === 'request-login' && fields(value, base)) {
-    return { bot: value.bot, session: value.session, action: value.action }
+    return { bot: value.bot, session, shared, action: value.action }
   } else if ((value.action === 'login-status' || value.action === 'cancel-login') && fields(value, [...base, 'id'])
     && typeof value.id === 'string' && LOGIN_ID.test(value.id)) {
-    return { session: value.session, action: value.action, id: value.id }
+    return { session, action: value.action, id: value.id }
+  } else if (shared && value.action === 'authorize-login' && fields(value, [...base, 'id', 'challenge'])
+    && typeof value.id === 'string' && LOGIN_ID.test(value.id)
+    && typeof value.challenge === 'string' && LOGIN_ID.test(value.challenge)) {
+    return { session, action: value.action, id: value.id, challenge: value.challenge }
   }
   throw new Error('Browser unavailable')
 }
@@ -180,13 +190,20 @@ function credential(value, limit) {
 function browserLogins(pool, enabled) {
   const byId = new Map()
   const bySession = new Map()
+  function cancelApproval(record) {
+    const approval = record.approval
+    record.approval = undefined
+    approval?.resolve(false)
+  }
   function remove(record) {
     clearTimeout(record.timeout)
+    cancelApproval(record)
     byId.delete(record.id)
     if (bySession.get(record.session) === record) bySession.delete(record.session)
   }
   function finish(record, state) {
     clearTimeout(record.timeout)
+    cancelApproval(record)
     if (bySession.get(record.session) === record) bySession.delete(record.session)
     record.state = state
     record.page = undefined
@@ -195,7 +212,7 @@ function browserLogins(pool, enabled) {
     return { state }
   }
   function expires(record) {
-    return record.state === 'pending' && performance.now() >= record.deadline
+    return (record.state === 'pending' || record.approval !== undefined) && performance.now() >= record.deadline
   }
   function find(id) {
     const record = byId.get(id)
@@ -205,9 +222,23 @@ function browserLogins(pool, enabled) {
   function view(record) {
     return { id: record.id, origin: record.reviewed.origin, destination: record.reviewed.destination, state: 'pending' }
   }
+  async function awaitSharedApproval(record, signal) {
+    if (signal.aborted) return false
+    const decision = Promise.withResolvers()
+    const approval = { challenge: randomBytes(16).toString('hex'), resolve: decision.resolve }
+    record.approval = approval
+    const cancel = () => decision.resolve(false)
+    signal.addEventListener('abort', cancel, { once: true })
+    try {
+      return await decision.promise
+    } finally {
+      signal.removeEventListener('abort', cancel)
+      if (record.approval === approval) record.approval = undefined
+    }
+  }
   return {
     reserved: session => bySession.has(session),
-    async control({ bot, session, action, id }, signal) {
+    async control({ bot, session, shared, action, id, challenge }, signal) {
       if (!enabled) return UNAVAILABLE
       if (action === 'request-login') {
         return pool.run(session, async page => {
@@ -216,17 +247,29 @@ function browserLogins(pool, enabled) {
           const reviewed = await page.captureLogin(id)
           signal.throwIfAborted()
           if (!loginDestination(reviewed.origin, reviewed.destination)) return UNAVAILABLE
-          const record = { id, bot, session, page, reviewed, state: 'pending', deadline: performance.now() + LOGIN_TTL }
+          const record = { id, bot, session, shared, page, reviewed, state: 'pending', deadline: performance.now() + LOGIN_TTL }
           record.timeout = setTimeout(() => finish(record, 'unavailable'), LOGIN_TTL).unref()
           bySession.set(session, record)
           byId.set(id, record)
-          void page.closed.then(() => { if (record.state === 'pending') finish(record, 'unavailable') })
+          void page.closed.then(() => {
+            if (record.state === 'pending' || record.approval !== undefined) finish(record, 'unavailable')
+          })
           return view(record)
         }, signal)
       }
       const record = find(id)
+      if (action === 'authorize-login') {
+        if (record === undefined || record.session !== session || record.approval?.challenge !== challenge) return UNAVAILABLE
+        const approval = record.approval
+        record.approval = undefined
+        approval.resolve(true)
+        return { ok: true }
+      }
       if (record === undefined || record.session !== session) return { state: 'unavailable' }
-      if (action === 'cancel-login' && record.state === 'pending') return finish(record, 'unavailable')
+      if (action === 'cancel-login' && (record.state === 'pending' || record.approval !== undefined)) {
+        return finish(record, 'unavailable')
+      }
+      if (record.approval !== undefined) return { state: 'approval-pending', challenge: record.approval.challenge }
       return { state: record.state === 'using' ? 'pending' : record.state }
     },
     async vault(body, signal) {
@@ -234,18 +277,26 @@ function browserLogins(pool, enabled) {
       const record = find(body.id)
       if (record?.state !== 'pending') return UNAVAILABLE
       if (fields(body, ['action', 'id'])) {
-        if (body.action === 'inspect-login') return view(record)
+        if (body.action === 'inspect-login') return record.shared
+          ? { ...view(record), scope: 'shared', bot: record.bot } : view(record)
         if (body.action === 'inspect-login-bot') return { bot: record.bot }
         if (body.action === 'cancel-login') return finish(record, 'unavailable')
       }
       const useFields = ['action', 'id', 'origin', 'username', 'password']
-      if (body.action !== 'use-login' || !(fields(body, useFields) || (fields(body, [...useFields, 'bot']) && body.bot === record.bot))
+      const botAccount = fields(body, [...useFields, 'bot']) && body.bot === record.bot
+      if (body.action !== 'use-login' || !(botAccount || (!record.shared && fields(body, useFields)))
         || body.origin !== record.reviewed.origin || !credential(body.username, 512) || !credential(body.password, 8192)) return UNAVAILABLE
       return pool.run(record.session, async page => {
         if (record.state !== 'pending') return UNAVAILABLE
         if (expires(record) || page !== record.page) return finish(record, 'unavailable')
-        clearTimeout(record.timeout)
         record.state = 'using'
+        if (record.shared) {
+          // The Cloud Host must still admit the shared turn after the owner approves.
+          const approved = await awaitSharedApproval(record, signal)
+          if (record.state !== 'using') return { state: record.state }
+          if (!approved || signal.aborted || performance.now() >= record.deadline) return finish(record, 'unavailable')
+        }
+        clearTimeout(record.timeout)
         try {
           const result = await page.submitLogin(record.reviewed, body.username, body.password, signal)
           return finish(record, result === 'submitted' ? result : 'needs-owner')
@@ -265,7 +316,8 @@ export function browserServers(options) {
   const control = endpoint(async (body, signal) => {
     const request = parseControl(body, options.grants)
     if (request.action === 'status') return { available: true }
-    if (request.action === 'request-login' || request.action === 'login-status' || request.action === 'cancel-login') {
+    if (request.action === 'request-login' || request.action === 'login-status' || request.action === 'cancel-login'
+      || request.action === 'authorize-login') {
       return logins.control(request, signal)
     }
     return pool.run(request.session, async page => {

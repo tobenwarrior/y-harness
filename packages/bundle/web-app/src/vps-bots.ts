@@ -20,7 +20,7 @@ import { resolveVpsFileUploadLimits, uploadComputerFile, type VpsFileUploadConfi
 import { SessionId } from '@yharness/session/types'
 import { isVpsSharedPath, VpsRuntime, type VpsBrowserOptions } from './vps-runtime.ts'
 import { registerVpsProjectTool } from './vps-project-tool.ts'
-import { VpsIsolatedBrowser, type VpsIsolatedBrowserConfig } from './vps-isolated-browser.ts'
+import { isSharedBrowserSession, runAuthorizedBrowserOperation, VpsIsolatedBrowser, type VpsIsolatedBrowserConfig } from './vps-isolated-browser.ts'
 import { VpsBrowserLogin, vpsBrowserLoginRoute } from './vps-browser-login.ts'
 import { registerVpsServiceTools, VpsServices, type VpsServiceAccess } from './vps-services.ts'
 import { registerVpsJournalTool, VpsJournal, type VpsJournalConfig } from './vps-journal.ts'
@@ -121,6 +121,34 @@ export function mountVpsBots(
   const browserLogin = isolatedBrowser === undefined || config.isolatedBrowser?.savedLogins !== true
     ? undefined
     : new VpsBrowserLogin(isolatedBrowser)
+  if (isolatedBrowser !== undefined && (config.isolatedBrowser?.sharedBots?.length ?? 0) > 0) {
+    ctx.provide('botSharedBrowser', {
+      toolForSession(scope, agent, botId, authorized) {
+        const sessionId = agent.id
+        if (!isSharedBrowserSession(sessionId) || !isolatedBrowser.authorized(botId, sessionId)) return undefined
+        if (scope.get('attachments') === undefined || scope.get('llm') === undefined) {
+          throw new Error('The shared browser requires attachment and model services.')
+        }
+        const computer = isolatedBrowser.computer(botId, sessionId, authorized)
+        scope.effect(() => () => computer.dispose(), 'vps-bots: shared browser controls')
+        return ComputerTool.sharedVpsBrowserTool(
+          scope,
+          computer,
+          async (caller, signal) => caller === agent && await authorized(signal),
+          (_sessionId, url, signal) => computer.navigateAsBot(url, signal, (target, operationSignal) =>
+            runAuthorizedBrowserOperation(authorized,
+              () => isolatedBrowser.navigate(botId, sessionId, target, operationSignal), operationSignal)),
+          browserLogin === undefined ? undefined : (_caller, signal) => browserLogin.request(botId, sessionId,
+            (operation, requestSignal) => computer.runWhileBotControls(operation, requestSignal), signal, authorized),
+        )
+      },
+    })
+    if (browserLogin !== undefined) {
+      ctx.on('webserver/index-inject', (table) => {
+        table.push({ kind: 'global', name: '__YH_BOT_SHARED_BROWSER__', value: true })
+      })
+    }
+  }
   if (isolatedBrowserBotIds.size > 0 || [...browserBotIds].some(hasBrowserSignIn)) {
     ctx.on('webserver/index-inject', (table) => {
       table.push({ kind: 'global', name: '__YH_BOT_COMPUTER_SIGN_IN__', value: true })

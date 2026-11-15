@@ -699,6 +699,62 @@ class VaultTest(unittest.TestCase):
             shown = self.store.desktop({'action': 'inspect-login-use', 'id': request_id}, OWNER_UID)
         self.assertEqual(shown['request']['logins'], [])
 
+    def test_shared_browser_only_offers_assigned_accounts_to_the_owner(self):
+        self.store.allow_desktop(OWNER_UID, CLOUD_UID, [])
+        origin = 'https://example.com'
+        request_id = 'a' * 32
+        login = {'action': 'add-login', 'origin': origin, 'label': 'Personal',
+                 'username': 'fixture-personal', 'password': 'fixture-password'}
+        self.store.desktop(login, OWNER_UID)
+        self.store.desktop({**login, 'bot': 'bot-other', 'label': 'Other'}, OWNER_UID)
+        page = {'id': request_id, 'origin': origin, 'destination': origin + '/login',
+                'state': 'pending', 'scope': 'shared', 'bot': 'bot-scout'}
+        submissions = []
+
+        def browser(payload):
+            command = json.loads(payload)
+            if command['action'] == 'use-login':
+                submissions.append(command)
+                return b'{"state":"submitted"}'
+            self.assertEqual(command, {'action': 'inspect-login', 'id': request_id})
+            return json.dumps(page).encode()
+
+        inspect = {'action': 'inspect-login-use', 'id': request_id, 'form': 'entry'}
+        with patch.object(vault, 'browser_client', side_effect=browser):
+            with self.assertRaises(vault.VaultError):
+                self.store.desktop(inspect, CLOUD_UID)
+            available = self.store.desktop(inspect, OWNER_UID)['request']
+            self.assertEqual(available['logins'], [])
+            self.assertNotIn('acceptsCredentials', available)
+            self.assertEqual(self.store.desktop({
+                'action': 'enter-login-use', 'id': request_id, 'origin': origin,
+                'destination': page['destination'], 'username': 'fixture-entered', 'password': 'fixture-password',
+            }, OWNER_UID), {'state': 'unavailable'})
+            self.assertEqual(submissions, [])
+            self.store.desktop({**login, 'bot': 'bot-scout', 'label': 'Team',
+                                'username': 'fixture-team'}, OWNER_UID)
+            request = self.store.desktop(inspect, OWNER_UID)['request']
+            self.assertNotIn('acceptsCredentials', request)
+            [choice] = request['logins']
+            self.assertEqual(choice['label'], 'Team')
+            approve = {'action': 'approve-login-use', 'id': request_id,
+                       'loginId': choice['id'], 'generation': choice['generation']}
+            page['bot'] = 'bot-other'
+            self.assertEqual(self.store.desktop(approve, OWNER_UID), {'state': 'unavailable'})
+            self.assertEqual(self.decrypt_calls, [])
+            page['bot'] = 'bot-scout'
+            self.assertEqual(self.store.desktop(approve, OWNER_UID), {'state': 'submitted'})
+            self.assertEqual([(call['bot'], call['username']) for call in submissions], [('bot-scout', 'fixture-team')])
+
+    def test_shared_browser_rejects_invalid_scope_metadata(self):
+        request_id = 'a' * 32
+        page = {'id': request_id, 'origin': 'https://example.com',
+                'destination': 'https://example.com/login', 'state': 'pending'}
+        for fields in ({'scope': 'shared'}, {'bot': 'bot-scout'}, {'scope': 'owner', 'bot': 'bot-scout'},
+                       {'scope': 'shared', 'bot': 'invalid'}, {'scope': 'shared', 'bot': 'bot-scout', 'other': True}):
+            with self.subTest(fields=fields), self.assertRaises(vault.VaultError):
+                vault.browser_login_inspection(json.dumps({**page, **fields}).encode(), request_id)
+
     def test_entered_login_requires_the_owner_and_the_reviewed_destination(self):
         self.store.allow_desktop(OWNER_UID, CLOUD_UID, [])
         request = {'action': 'enter-login-use', 'id': 'a' * 32, 'origin': 'https://example.com',

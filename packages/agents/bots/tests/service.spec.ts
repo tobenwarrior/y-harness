@@ -2669,6 +2669,127 @@ describe('durable Bot roster', () => {
     }
   })
 
+  it('installs an exact shared browser only in the shared Agent and rechecks admission before its body', async () => {
+    const pool = new MemoryMediaPool()
+    const sharedSessionId = SessionId('shared-session-browser-admission')
+    const connection = {
+      sharedRpc: {
+        enroll: vi.fn(() => async () => {}),
+        handle: vi.fn(() => async () => {}),
+      },
+    }
+    const first = await harness(pool, undefined, undefined, [], new Map(), new Map(), true, 'native', false, { connection })
+    let firstClosed = false
+    let ownerPrincipalId = ''
+    try {
+      const created = await first.service.create({ name: 'Shared browser owner', cwd: '/tmp' })
+      const authority = await SharedAccessAuthority.create(first.ctx, first.credentials, {
+        sessionMaxAgeMs: 60_000,
+        inviteMaxAgeMs: 60_000,
+      })
+      try {
+        const owner = await authority.enrollOwner({ headers: { host: '127.0.0.1:3080' } })
+        ownerPrincipalId = String(owner.principalId)
+        await bindSharedSession(authority, created.bot.id, sharedSessionId, ownerPrincipalId)
+        await authority.mutateExtension('agent-bots/shared-memberships', (current) => {
+          const membership = sharedMembershipSnapshotSchema.parse(current)
+          return {
+            value: undefined,
+            next: {
+              ...membership,
+              memberships: [...membership.memberships, {
+                botId: created.bot.id,
+                principalId: BotPrincipalId(ownerPrincipalId),
+                role: 'owner' as const,
+                grantedBy: BotPrincipalId(ownerPrincipalId),
+                createdAt: 1,
+                updatedAt: 1,
+              }],
+            },
+          }
+        })
+      } finally {
+        await authority.dispose()
+      }
+      const records = first.records
+      await close(first.ctx)
+      firstClosed = true
+
+      const calls = vi.fn(async () => 'shared browser result')
+      let authorized: ReturnType<typeof vi.fn<(signal: AbortSignal, start?: () => void) => Promise<boolean>>> | undefined
+      const h = await harness(pool, undefined, undefined, [String(sharedSessionId)], new Map(), records, true, 'native', false, {
+        connection,
+        inspectSharedSessions: true,
+        beforeService: (ctx) => {
+          ctx.provide('botSharedBrowser', {
+            toolForSession: (
+              _scope: Context,
+              _agent: Agent,
+              _botId: BotId,
+              check: (signal: AbortSignal, start?: () => void) => Promise<boolean>,
+            ) => {
+              authorized = vi.fn((signal, start) => check(signal, start))
+              return plainFixtureTool('shared_browser', async () => {
+                if (authorized === undefined) throw new Error('shared browser unavailable')
+                let operation: Promise<string> | undefined
+                if (!await authorized(new AbortController().signal, () => {
+                  operation = calls()
+                }) || operation === undefined) throw new Error('shared browser unavailable')
+                return operation
+              })
+            },
+          } as never)
+        },
+      })
+      try {
+        const agent = h.agents[0]
+        if (agent === undefined) throw new Error('shared browser Agent was not created')
+        Object.defineProperty(agent, 'status', { value: 'running', configurable: true })
+        expect(h.ctx.tools.schemas(agent).map(schema => schema.name)).toContain('shared_browser')
+        expect(h.ctx.tools.schemas().map(schema => schema.name)).not.toContain('shared_browser')
+        await expect(h.ctx.tools.execute({
+          callId: ToolCallId('shared-browser-admitted'), name: 'shared_browser', arguments: {},
+          signal: new AbortController().signal, agent,
+        })).resolves.toMatchObject({ isError: false })
+        expect(calls).toHaveBeenCalledOnce()
+        if (authorized === undefined) throw new Error('shared browser authorization callback was not installed')
+        const admittedStart = vi.fn()
+        await expect(authorized(new AbortController().signal, admittedStart)).resolves.toBe(true)
+        expect(admittedStart).toHaveBeenCalledOnce()
+        const authority = await SharedAccessAuthority.create(h.ctx, h.credentials, {
+          sessionMaxAgeMs: 60_000,
+          inviteMaxAgeMs: 60_000,
+        })
+        try {
+          await authority.mutateExtension('agent-bots/shared-memberships', (current) => {
+            const membership = sharedMembershipSnapshotSchema.parse(current)
+            return {
+              value: undefined,
+              next: {
+                ...membership,
+                memberships: membership.memberships.filter(member => String(member.principalId) !== ownerPrincipalId),
+              },
+            }
+          })
+        } finally {
+          await authority.dispose()
+        }
+        const revokedStart = vi.fn()
+        await expect(authorized(new AbortController().signal, revokedStart)).resolves.toBe(false)
+        expect(revokedStart).not.toHaveBeenCalled()
+        await expect(h.ctx.tools.execute({
+          callId: ToolCallId('shared-browser-revoked'), name: 'shared_browser', arguments: {},
+          signal: new AbortController().signal, agent,
+        })).resolves.toMatchObject({ isError: true })
+        expect(calls).toHaveBeenCalledOnce()
+      } finally {
+        await close(h.ctx)
+      }
+    } finally {
+      if (!firstClosed) await close(first.ctx)
+    }
+  })
+
   it('keeps an approved preset web search after shared deny-all restriction refreshes', async () => {
     const sharedSessionId = SessionId('shared-session-preset-web-search')
     const search = vi.fn(async () => 'preset search result')

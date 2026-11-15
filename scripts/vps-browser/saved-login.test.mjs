@@ -2,6 +2,7 @@
 
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { createServer } from 'node:https'
 import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
 import { connect } from 'node:net'
@@ -13,21 +14,24 @@ import { browserServers, parseGrants } from './service.mjs'
 const HOST = 'login.example.test'
 const ALTERNATE = 'other.example.test'
 const BOT = { bot: 'bot-fixture', session: 'bot-session-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' }
+const SHARED = { bot: BOT.bot, session: 'shared-session-cccccccc-cccc-4ccc-8ccc-cccccccccccc' }
 const CREDENTIAL = { username: 'vault-user@example.test', password: 'fixture-only-password' }
 const form = (action, extra = '') => `<!doctype html><form method="post" action="${action}">
   <input name="account" type="email" autocomplete="username">
   <input name="pass" type="password" autocomplete="current-password">
   <input name="nonce" type="hidden" value="fixture"><button>Sign in</button></form>${extra}`
 
-async function tls(root, profile) {
+async function tls(root, profiles) {
   const key = join(root, 'fixture.key')
   const cert = join(root, 'fixture.crt')
   execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1', '-subj', `/CN=${HOST}`,
     '-addext', `subjectAltName=DNS:${HOST},DNS:${ALTERNATE}`, '-out', cert, '-keyout', key], { stdio: 'ignore' })
-  const db = join(profile, '.pki', 'nssdb')
-  await mkdir(db, { recursive: true, mode: 0o700 })
-  for (const args of [['-N', '--empty-password'], ['-A', '-n', 'Fixture', '-t', 'C,,', '-i', cert]]) {
-    execFileSync('certutil', ['-d', `sql:${db}`, ...args], { stdio: 'ignore' })
+  for (const profile of profiles) {
+    const db = join(profile, '.pki', 'nssdb')
+    await mkdir(db, { recursive: true, mode: 0o700 })
+    for (const args of [['-N', '--empty-password'], ['-A', '-n', 'Fixture', '-t', 'C,,', '-i', cert]]) {
+      execFileSync('certutil', ['-d', `sql:${db}`, ...args], { stdio: 'ignore' })
+    }
   }
   return { key: await readFile(key), cert: await readFile(cert) }
 }
@@ -67,7 +71,8 @@ test('submits a reviewed HTTPS form without typing credentials or forwarding the
       await rm(root, { recursive: true, force: true })
     }
   })
-  const security = await tls(root, join(root, BOT.session))
+  const sharedProfile = 'shared-' + createHash('sha256').update(SHARED.bot + '\0' + SHARED.session).digest('hex')
+  const security = await tls(root, [join(root, BOT.session), join(root, sharedProfile)])
   const changeForm = Promise.withResolvers()
   const changed = Promise.withResolvers()
   const workerReady = Promise.withResolvers()
@@ -143,7 +148,8 @@ test('submits a reviewed HTTPS form without typing credentials or forwarding the
   const origin = `https://${HOST}:${port}`
   const controlPath = join(root, 'control.sock')
   const vaultPath = join(root, 'vault.sock')
-  browser = browserServers({ root, executable: process.env.YH_ISOLATED_TEST_CHROMIUM, grants: parseGrants([BOT]), savedLogins: true })
+  browser = browserServers({ root, executable: process.env.YH_ISOLATED_TEST_CHROMIUM,
+    grants: parseGrants([{ ...BOT, shared: true }]), savedLogins: true })
   await Promise.all([listen(browser.control, controlPath), listen(browser.vault, vaultPath)])
   const control = (action, parameters) => exchange(controlPath, { ...BOT, action, ...parameters })
   const use = id => exchange(vaultPath, { action: 'use-login', id, origin, bot: BOT.bot, ...CREDENTIAL })
@@ -182,4 +188,30 @@ test('submits a reviewed HTTPS form without typing credentials or forwarding the
   assert.equal(intercepted, false)
   assert.deepEqual(await control('navigate', { url: `${origin}/signed-in` }), { ok: true })
   assert.deepEqual(await control('request-login'), { error: 'unavailable' })
+
+  const shared = (action, parameters) => exchange(controlPath, { ...SHARED, action, ...parameters })
+  assert.deepEqual(await shared('navigate', { url: `${origin}/signed-in` }), { ok: true })
+  const team = await shared('request-login')
+  assert.match(team.id, /^[a-f0-9]{32}$/u)
+  assert.deepEqual(await exchange(vaultPath, { action: 'inspect-login', id: team.id }),
+    { ...team, scope: 'shared', bot: BOT.bot })
+  assert.deepEqual(await exchange(vaultPath, { action: 'use-login', id: team.id, origin, ...CREDENTIAL }),
+    { error: 'unavailable' })
+  const ownerApproval = use(team.id)
+  let status
+  for (let attempt = 0; attempt < 50; attempt++) {
+    status = await shared('login-status', { id: team.id })
+    if (status.state !== 'pending') break
+    await new Promise(resolve => setTimeout(resolve, 10))
+  }
+  assert.equal(status.state, 'approval-pending')
+  assert.equal(posts.length, 2)
+  assert.deepEqual(await shared('authorize-login', { id: team.id, challenge: status.challenge }), { ok: true })
+  assert.deepEqual(await ownerApproval, { state: 'submitted' })
+  assert.deepEqual(await shared('navigate', { url: `${origin}/signed-in` }), { ok: true })
+  assert.deepEqual(await shared('request-login'), { error: 'unavailable' })
+  assert.equal(posts.length, 3)
+  assert.equal(posts.at(-1).matches, true)
+  assert.equal(visibleValue, false)
+  assert.equal(intercepted, false)
 })

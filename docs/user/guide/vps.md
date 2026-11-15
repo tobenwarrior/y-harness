@@ -187,6 +187,12 @@ Select **Save this login to Vault** and add a label to keep an entered login aft
 
 Saved login approval supports a single HTTPS sign-in form that submits to the same website. Sites using single sign-on, passkeys, or a separate verification step may require manual sign-in. Removing or replacing a Vault entry prevents use of the old value. Sign out at the website to end an existing browser session.
 
+### Let a shared Bot use its browser
+
+Pass `--shared-bot BOT_ID` for each isolated browser Bot whose collaborators should be able to browse. Add those same IDs to `botComputers.isolatedBrowser.sharedBots` in the private Web profile. Each private shared chat and each Bot in a shared group uses its own browser profile.
+
+To let a shared Bot sign in, enable saved logins and select the Bot under **Saved for** when you save its website account. When a collaborator asks the Bot to sign in, open the Bot’s main chat in Y Harness and review **Approve shared website sign-in**. Select an account assigned to that Bot for the displayed website. The collaborator sees the outcome in their chat. End any existing sign-in at the website if you revoke the account’s access.
+
 ## Give a Bot access to service diagnostics
 
 Ask the VPS owner to add `vpsServices` inside the same `web-runtime` configuration. The grant names an exact systemd service and the Bot roster IDs that may inspect it. This example grants read access to a service managed by the same Linux user as Y Harness.

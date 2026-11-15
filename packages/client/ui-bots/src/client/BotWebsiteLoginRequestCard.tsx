@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react'
 import type { PropsLocale, PropsRuntime } from '@yharness/client-ui-slots'
 import type {} from '@yharness/client-ui-conversation/client'
 import { IconShieldOutlineRegular } from '@yharness/client-ui-primitives'
-import { createBotWebsiteLoginRequestPoller, isBotWebsiteLoginRequestEnabled, type BotWebsiteLoginRequest } from './bot-website-login-request.ts'
+import { createBotWebsiteLoginRequestPoller, isBotSharedBrowserEnabled, isBotWebsiteLoginRequestEnabled, type BotWebsiteLoginRequest } from './bot-website-login-request.ts'
 import { isYHarnessCloudDesktop } from './bot-vault-request.ts'
 import css from './BotVaultRequestCard.module.css'
 
@@ -27,6 +27,7 @@ export function BotWebsiteLoginRequestCard({ botChat, sessionId, useSession, t }
   const running = useSession(snapshot => snapshot.running)
   const [sessionRequest, setSessionRequest] = useState<SessionRequest | null>(null)
   const enabled = isBotWebsiteLoginRequestEnabled() && botChat === true
+  const sharedBrowserEnabled = isBotSharedBrowserEnabled()
   const request = enabled && sessionRequest?.sessionId === sessionId ? sessionRequest.request : null
 
   useEffect(() => {
@@ -39,17 +40,18 @@ export function BotWebsiteLoginRequestCard({ botChat, sessionId, useSession, t }
         setSessionRequest(nextRequest === null ? null : { sessionId: selectedSessionId, request: nextRequest })
       },
     })
-    poller.select(sessionId, running)
+    poller.select(sessionId, running || sharedBrowserEnabled)
     return poller.dispose
-  }, [enabled, running, sessionId])
+  }, [enabled, running, sessionId, sharedBrowserEnabled])
 
   if (request === null) return null
   const desktop = isYHarnessCloudDesktop(typeof navigator === 'undefined' ? '' : navigator.userAgent)
+  const title = request.scope === 'shared' ? t('websiteLoginSharedRequestTitle') : t('websiteLoginRequestTitle')
   return (
-    <section className={css.card} aria-label={t('websiteLoginRequestTitle')}>
+    <section className={css.card} aria-label={title}>
       <span className={css.icon} aria-hidden="true"><IconShieldOutlineRegular size={16} /></span>
       <div className={css.content}>
-        <span className={css.title}>{t('websiteLoginRequestTitle')}</span>
+        <span className={css.title}>{title}</span>
         <div className={css.target}>
           <span className={css.targetLabel}>{t('websiteLoginOrigin')}</span>
           <code className={css.targetValue}>{request.origin}</code>

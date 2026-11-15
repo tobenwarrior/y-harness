@@ -30,6 +30,8 @@ export interface VpsIsolatedBrowserConfig {
   readonly socketPath: string
   /** Exact Bot roster ids allowed to use the browser service. */
   readonly bots: string[]
+  /** Bot roster ids also allowed to use separate browsers in their shared chats. */
+  readonly sharedBots?: string[]
   /** Whether the owner-approved saved-login flow is available to these Bots. */
   readonly savedLogins?: boolean
 }
@@ -63,12 +65,22 @@ export interface VpsBrowserLoginRequest {
 /** State returned by saved-login status and cancellation operations. */
 export type VpsBrowserLoginState = 'pending' | 'submitted' | 'needs-owner' | 'unavailable'
 
+/** Worker challenge issued when the owner approves a shared sign-in. */
+export interface VpsBrowserApprovalChallenge {
+  readonly state: 'approval-pending'
+  readonly challenge: string
+}
+
+/** Validate current shared access and start work inside its authority check. */
+export type VpsBrowserAdmission = (signal: AbortSignal, start?: () => void) => Promise<boolean>
+
 type Request =
   | { readonly action: 'status' | 'frame'; readonly bot: string; readonly session: string }
   | { readonly action: 'input'; readonly bot: string; readonly session: string; readonly input: ComputerAction }
   | { readonly action: 'navigate'; readonly bot: string; readonly session: string; readonly url: string }
   | { readonly action: 'request-login'; readonly bot: string; readonly session: string }
   | { readonly action: 'login-status' | 'cancel-login'; readonly bot: string; readonly session: string; readonly id: string }
+  | { readonly action: 'authorize-login'; readonly bot: string; readonly session: string; readonly id: string; readonly challenge: string }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -84,6 +96,23 @@ function validateConfig(config: VpsIsolatedBrowserConfig): void {
   if (new Set(config.bots).size !== config.bots.length) {
     throw new TypeError('VPS isolated browser bots must be unique.')
   }
+  if (config.sharedBots !== undefined) {
+    if (new Set(config.sharedBots).size !== config.sharedBots.length) {
+      throw new TypeError('VPS shared browser Bots must be unique.')
+    }
+    if (config.sharedBots.some(bot => !config.bots.includes(bot))) {
+      throw new TypeError('VPS shared browser Bots must select already isolated browser Bots.')
+    }
+  }
+}
+
+/**
+ * Classify the Session namespace used for collaborator browser access.
+ * @param session - Server-owned Session id.
+ * @returns Whether it belongs to the shared Session namespace.
+ */
+export function isSharedBrowserSession(session: string): boolean {
+  return session.startsWith('shared-session-')
 }
 
 function decodeJson(bytes: Buffer): unknown {
@@ -152,6 +181,14 @@ function decodeLoginState(value: unknown): VpsBrowserLoginState {
   return value.state
 }
 
+function decodeLoginStatus(value: unknown): VpsBrowserLoginState | VpsBrowserApprovalChallenge {
+  if (isRecord(value) && Object.keys(value).length === 2 && value.state === 'approval-pending'
+    && typeof value.challenge === 'string' && LOGIN_ID.test(value.challenge)) {
+    return { state: value.state, challenge: value.challenge }
+  }
+  return decodeLoginState(value)
+}
+
 function decodeFrame(value: unknown): Buffer {
   if (!isRecord(value) || value.width !== 1280 || value.height !== 800 || typeof value.jpeg !== 'string') {
     throw new Error(INVALID_RESPONSE)
@@ -197,10 +234,36 @@ function safeSocketError(error: unknown): Error {
   return new Error(UNAVAILABLE)
 }
 
+/**
+ * Start a shared browser operation at the current authority check and await it outside the lock.
+ * @param authorized - Exact Session's admission check.
+ * @param operation - Browser socket operation to start.
+ * @param signal - Calling turn cancellation.
+ * @returns The admitted operation's result.
+ */
+export async function runAuthorizedBrowserOperation<T>(
+  authorized: VpsBrowserAdmission, operation: () => Promise<T>, signal: AbortSignal,
+): Promise<T> {
+  let started: Promise<T> | undefined
+  try {
+    const allowed = await authorized(signal, () => {
+      signal.throwIfAborted()
+      started = operation()
+      void started.catch(() => undefined)
+    })
+    if (!allowed || started === undefined) throw new Error('The shared browser is unavailable for this chat.')
+    return await started
+  } catch (error) {
+    await started?.catch(() => undefined)
+    throw error
+  }
+}
+
 /** Host-side client for one configured isolated browser broker. */
 export class VpsIsolatedBrowser {
   private readonly socketPath: string
   private readonly bots: ReadonlySet<string>
+  private readonly sharedBots: ReadonlySet<string>
   private readonly connect: (options: { readonly path: string }) => Socket
 
   /**
@@ -211,16 +274,19 @@ export class VpsIsolatedBrowser {
     validateConfig(config)
     this.socketPath = config.socketPath
     this.bots = new Set(config.bots)
+    this.sharedBots = new Set(config.sharedBots)
     this.connect = internals.connect ?? createConnection
   }
 
   /**
    * Check whether a Bot is admitted by the owner allowlist.
    * @param bot - Bot roster id.
+   * @param session - If supplied, verify the Session's browser scope.
    * @returns Whether the Bot may use this broker.
    */
-  authorized(bot: string): boolean {
-    return this.bots.has(bot)
+  authorized(bot: string, session?: string): boolean {
+    return session !== undefined && isSharedBrowserSession(session)
+      ? this.sharedBots.has(bot) : this.bots.has(bot)
   }
 
   /**
@@ -290,9 +356,28 @@ export class VpsIsolatedBrowser {
    * @param signal - Calling turn cancellation signal.
    * @returns Current request state.
    */
-  async loginStatus(bot: string, session: string, id: string, signal: AbortSignal): Promise<VpsBrowserLoginState> {
+  async loginStatus(
+    bot: string,
+    session: string,
+    id: string,
+    signal: AbortSignal,
+  ): Promise<VpsBrowserLoginState | VpsBrowserApprovalChallenge> {
     if (!metadataString(id, LOGIN_ID_MAX_BYTES) || !LOGIN_ID.test(id)) throw new Error(INVALID_RESPONSE)
-    return this.request({ action: 'login-status', bot, session: validateSession(session), id }, decodeLoginState, signal)
+    return this.request({ action: 'login-status', bot, session: validateSession(session), id }, decodeLoginStatus, signal)
+  }
+
+  /**
+   * Release the broker's pending shared sign-in after the Host rechecks membership.
+   * @param bot - Authorized Bot roster id.
+   * @param session - Exact admitted shared Session.
+   * @param id - Broker login request identifier.
+   * @param challenge - Single-use approval challenge from the broker.
+   * @param signal - Caller cancellation.
+   * @returns When the browser acknowledges the approval.
+   */
+  async authorizeLogin(bot: string, session: string, id: string, challenge: string, signal: AbortSignal): Promise<void> {
+    if (!LOGIN_ID.test(id) || !LOGIN_ID.test(challenge) || !isSharedBrowserSession(session)) throw new Error(INVALID_RESPONSE)
+    await this.request({ action: 'authorize-login', bot, session, id, challenge }, decodeAck, signal)
   }
 
   /**
@@ -312,20 +397,23 @@ export class VpsIsolatedBrowser {
    * Construct a Computer controller backed entirely by this broker.
    * @param bot - Authorized Bot roster id.
    * @param session - Canonical Bot Session id.
+   * @param authorize - Optional fresh admission after the Computer queue releases.
    * @returns A controller whose frame and input operations never invoke Podman or a shell.
    */
-  computer(bot: string, session: string): VpsComputer {
-    if (!this.authorized(bot)) throw new Error(UNAUTHORIZED)
+  computer(bot: string, session: string, authorize?: VpsBrowserAdmission): VpsComputer {
+    if (!this.authorized(bot, session)) throw new Error(UNAUTHORIZED)
     validateSession(session)
-    const capture: ComputerCaptureRunner = signal => this.frame(bot, session, signal)
+    const run = <T>(operation: () => Promise<T>, signal: AbortSignal): Promise<T> => authorize === undefined
+      ? operation() : runAuthorizedBrowserOperation(authorize, operation, signal)
+    const capture: ComputerCaptureRunner = signal => run(() => this.frame(bot, session, signal), signal)
     return new ComputerHost({ display: COMPUTER_DISPLAY, authorityPath: COMPUTER_AUTHORITY }, {
       capture,
-      input: (action, signal) => this.input(bot, session, action, signal),
+      input: (action, signal) => run(() => this.input(bot, session, action, signal), signal),
     })
   }
 
   private async request<T>(request: Request, decode: (value: unknown) => T, signal: AbortSignal): Promise<T> {
-    if (!this.authorized(request.bot)) throw new Error(UNAUTHORIZED)
+    if (!this.authorized(request.bot, request.session)) throw new Error(UNAUTHORIZED)
     if (signal.aborted) throw new Error(ABORTED)
     const body = Buffer.from(JSON.stringify(request), 'utf8')
     if (body.byteLength > MAX_REQUEST_BYTES) throw new Error(INVALID_RESPONSE)

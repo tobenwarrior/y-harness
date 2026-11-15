@@ -467,7 +467,7 @@ export type Config = LocalConfig
 ## `@yharness/bots`
 
 - `inject`: `agents` · `storageDomain` · `sessionController` · `sessions` · `attachments` · `systemPrompt` · `tools`
-- `source`: [`packages/agents/bots/src/index.ts:575`](../packages/agents/bots/src/index.ts)
+- `source`: [`packages/agents/bots/src/index.ts:602`](../packages/agents/bots/src/index.ts)
 
 ```ts config-catalog
 /** Bot service configuration. */
@@ -4497,6 +4497,8 @@ export interface VpsIsolatedBrowserConfig {
   readonly socketPath: string
   /** Exact Bot roster ids allowed to use the browser service. */
   readonly bots: string[]
+  /** Bot roster ids also allowed to use separate browsers in their shared chats. */
+  readonly sharedBots?: string[]
   /** Whether the owner-approved saved-login flow is available to these Bots. */
   readonly savedLogins?: boolean
 }

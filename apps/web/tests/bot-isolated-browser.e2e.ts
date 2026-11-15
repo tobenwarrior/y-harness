@@ -1,10 +1,11 @@
 /** Verify the Bot browser panel through the real Cloud Host and browser worker protocol. */
 
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
 import { createServer } from 'node:net'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { BotId } from '@yharness/bots'
+import { BotId, BotPrincipalId } from '@yharness/bots'
 import { LlmAdapter, ToolCallId, type GenerateOptions, type StreamChunk } from '@yharness/llm'
 import { chromium } from 'playwright'
 import { expect, it } from 'vitest'
@@ -20,6 +21,8 @@ const MODEL = 'reply'
 const WEBSITE = 'https://example.test/'
 const REPLY = 'I opened the website.'
 const LOGIN = { id: 'a'.repeat(32), origin: 'https://example.test', destination: 'https://example.test/session', state: 'pending' }
+const SHARED_LOGIN = { ...LOGIN, id: 'b'.repeat(32) }
+const SHARED_CHALLENGE = 'c'.repeat(32)
 const LOGIN_REPLY = 'The login was submitted. I’ll check the page.'
 
 class BrowserAdapter extends LlmAdapter {
@@ -29,13 +32,18 @@ class BrowserAdapter extends LlmAdapter {
 
   override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     const latestUser = options.messages.findLastIndex(message => message.role === 'user')
-    const savedLogin = options.messages[latestUser]?.content.some(block => block.type === 'text' && block.text.includes('saved login')) === true
+    const input = options.messages[latestUser]?.content.filter(block => block.type === 'text').map(block => block.text).join(' ') ?? ''
+    const savedLogin = input.includes('saved login')
+    const shared = input.includes('shared chat')
     const result = options.messages.slice(latestUser + 1).findLast(message => message.role === 'tool')
     if (result === undefined) {
       const id = ToolCallId(savedLogin ? 'fixture-browser-login' : 'fixture-browser-navigation')
-      const name = 'vps_computer'
+      const name = shared ? 'shared_browser' : 'vps_computer'
       const args = JSON.stringify(savedLogin ? { action: 'request_saved_login' } : { action: 'navigate', url: WEBSITE })
       expect(options.tools?.some(tool => tool.name === name)).toBe(true)
+      if (shared) {
+        expect(options.tools?.some(tool => ['vps_computer', 'bash', 'request_vps_secret'].includes(tool.name))).toBe(false)
+      }
       yield { type: 'block-start', index: 0, blockType: 'tool-call' }
       yield { type: 'tool-call-delta', index: 0, id, name, argumentsDelta: args }
       yield { type: 'block-end', index: 0, block: { type: 'tool-call', id, name, arguments: args } }
@@ -46,6 +54,7 @@ class BrowserAdapter extends LlmAdapter {
       expect(result.content.some(block => block.type === 'text' && /sign-in submission/iu.test(block.text))).toBe(true)
       expect(JSON.stringify(result)).not.toContain(LOGIN.destination)
       expect(JSON.stringify(result)).not.toContain(LOGIN.id)
+      expect(JSON.stringify(result)).not.toContain(SHARED_LOGIN.id)
     } else {
       expect(result.content.some(block => block.type === 'text' && block.text.includes('Browser'))).toBe(true)
     }
@@ -57,13 +66,16 @@ class BrowserAdapter extends LlmAdapter {
   }
 }
 
-it.skipIf(MODE === 'record' || process.platform === 'win32')('opens websites for a Bot and its controlling viewer in Cloud', async () => {
+it.skipIf(MODE === 'record' || process.platform === 'win32')('opens websites for an owner or collaborator and approves the exact Bot sign-in in Cloud', async () => {
   const root = await mkdtemp('/tmp/yh-browser-web-')
   const runtimePath = join(root, 'browser.mjs')
   const overlay = join(root, 'browser.yml')
   const socketPath = join(root, 'browser.sock')
   const websites: string[] = []
+  const sharedRequests: Array<{ readonly action: string; readonly session: string }> = []
   let loginApproved = false
+  let sharedApproved = false
+  let sharedAuthorized = false
   let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined
   let scaffold: Awaited<ReturnType<typeof launchWebScaffold>> | undefined
   let socketServer: ReturnType<typeof createServer> | undefined
@@ -92,14 +104,25 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('opens websites for
       socket.setEncoding('utf8')
       socket.on('data', (value) => { body += value })
       socket.once('end', () => {
-        const request = JSON.parse(body) as { action: string; url?: string }
+        const request = JSON.parse(body) as { action: string; session: string; url?: string; id?: string; challenge?: string }
+        const shared = request.session.startsWith('shared-session-')
+        if (shared) sharedRequests.push({ action: request.action, session: request.session })
         if (request.action === 'navigate' && request.url !== undefined) websites.push(request.url)
         let response: object
         switch (request.action) {
           case 'status': response = { available: true }; break
           case 'frame': response = { jpeg, width: 1280, height: 800 }; break
-          case 'request-login': response = LOGIN; break
-          case 'login-status': response = { state: loginApproved ? 'submitted' : 'pending' }; break
+          case 'request-login': response = shared ? SHARED_LOGIN : LOGIN; break
+          case 'login-status':
+            response = shared && sharedApproved && !sharedAuthorized
+              ? { state: 'approval-pending', challenge: SHARED_CHALLENGE }
+              : { state: (shared ? sharedAuthorized : loginApproved) ? 'submitted' : 'pending' }
+            break
+          case 'authorize-login':
+            sharedAuthorized = shared && sharedApproved && request.id === SHARED_LOGIN.id && request.challenge === SHARED_CHALLENGE
+            response = sharedAuthorized ? { ok: true } : { error: 'unavailable' }
+            break
+          case 'cancel-login': response = { state: 'unavailable' }; break
           default: response = { ok: true }
         }
         socket.end(JSON.stringify(response))
@@ -113,7 +136,7 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('opens websites for
     `)
     await writeFile(overlay, JSON.stringify([{ insert: [{ id: 'isolated-browser-fixture', name: pathToFileURL(runtimePath).href,
       config: { root: join(root, 'bots'), image: 'localhost/yharness-test', bots: [BOT], desktopOnlyBots: [BOT],
-        isolatedBrowser: { bots: [BOT], socketPath, savedLogins: true } },
+        isolatedBrowser: { bots: [BOT], sharedBots: [BOT], socketPath, savedLogins: true } },
     }] }]))
     const web = scaffold = await launchWebScaffold({ extraOverlayPath: overlay, replayFixture: FIXTURE, replayProvidersOnly: true, toolsMode: 'native' })
     const adapter = new BrowserAdapter()
@@ -164,8 +187,66 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('opens websites for
     loginApproved = true
     await conversation.getByText(LOGIN_REPLY, { exact: true }).waitFor()
     await approval.waitFor({ state: 'hidden' })
+
+    const origin = new URL(web.baseUrl).origin
+    const sharedCall = async (operation: string, payload: object, cookie?: string) => {
+      const method = `bots/share/${operation}`
+      const response = await fetch(new URL(`/shared-bots/${method}`, origin), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Origin: origin, ...(cookie === undefined ? {} : { Cookie: cookie }) },
+        body: JSON.stringify({ type: 'client-request', rpcId: randomUUID(), method, payload }),
+        signal: AbortSignal.timeout(15_000),
+      }).catch((error: unknown) => { throw new Error(`Shared fixture request failed: ${method}`, { cause: error }) })
+      const result = (await response.json() as { result: { ok: boolean; value?: { principalId?: string; recent?: unknown } } }).result
+      return { response, result }
+    }
+    const ownerInvite = await web.ctx.bots.createShareInvite({ botId: BOT, role: 'owner' })
+    expect((await sharedCall('enroll', { code: ownerInvite.code })).result.ok).toBe(true)
+    const invite = await web.ctx.bots.createShareInvite({ botId: BOT, role: 'collaborator' })
+    const member = await sharedCall('enroll', { code: invite.code })
+    const cookie = member.response.headers.get('Set-Cookie')?.split(';', 1)[0]
+    const principalId = member.result.value?.principalId
+    if (!member.result.ok || cookie === undefined || principalId === undefined) throw new Error('Could not enroll the test collaborator')
+    const chat = (text: string) => sharedCall('chat', { botId: BOT, text }, cookie)
+    const recent = async (): Promise<string> => {
+      const view = await sharedCall('read-private-chat', { botId: BOT }, cookie)
+      return JSON.stringify(view.result.value?.recent ?? [])
+    }
+    expect((await chat('Open the test site in this shared chat.')).result.ok).toBe(true)
+    await expect.poll(recent).toContain(REPLY)
+    const sharedSession = sharedRequests.find(request => request.action === 'navigate')?.session
+    expect(sharedSession).toMatch(/^shared-session-/u)
+    expect(websites).toEqual([WEBSITE, 'https://example.test/next', WEBSITE])
+
+    expect((await chat('Use the saved login in this shared chat.')).result.ok).toBe(true)
+    const sharedSelector = 'section[aria-label="Approve shared website sign-in"]'
+    const sharedApproval = page.locator(sharedSelector)
+    await sharedApproval.waitFor({ timeout: 15_000 })
+    expect(await sharedApproval.getByRole('link', { name: 'Approve sign-in' }).getAttribute('href'))
+      .toBe(`/__yharness/vault-login-use/${SHARED_LOGIN.id}`)
+    const guestApproval = await fetch(new URL(loginRoute, origin), { headers: { Cookie: cookie } })
+    expect(guestApproval.status).toBe(401)
+    expect(await (await web.hostFetch(`/api/bot-website-login?sessionId=${sharedSession}`)).json()).toEqual({ request: null })
+    const sharedReview = await captureStableAria(page, sharedSelector, web.workspaceCwd,
+      { replacements: [[SHARED_LOGIN.id, '{{id}}']] })
+    sharedApproved = true
+    await expect.poll(recent, { timeout: 10_000 }).toContain(LOGIN_REPLY)
+    await sharedApproval.waitFor({ state: 'hidden', timeout: 15_000 })
+    expect(await recent()).not.toContain(SHARED_LOGIN.id)
+    expect(sharedRequests).toContainEqual({ action: 'authorize-login', session: sharedSession })
+
+    sharedApproved = false
+    sharedAuthorized = false
+    expect((await chat('Request the saved login again in this shared chat.')).result.ok).toBe(true)
+    await sharedApproval.waitFor({ timeout: 15_000 })
+    await web.ctx.bots.revokeShareMember({ botId: BOT, principalId: BotPrincipalId(principalId) })
+    await sharedApproval.waitFor({ state: 'hidden', timeout: 15_000 })
+    await expect.poll(() => sharedRequests).toContainEqual({ action: 'cancel-login', session: sharedSession })
+    expect(sharedRequests.filter(request => request.action === 'authorize-login')).toHaveLength(1)
     expect(consoleLog.pageErrors).toEqual([])
-    await compareOrRefreshGolden(GOLDEN, `## In control\n\n${controlling}\n\n## Watching\n\n${viewing}\n\n## Saved login approval\n\n${review}`, MODE)
+    await compareOrRefreshGolden(GOLDEN,
+      `## In control\n\n${controlling}\n\n## Watching\n\n${viewing}\n\n## Saved login approval\n\n${review}\n\n## Shared login approval\n\n${sharedReview}`,
+      MODE)
   } finally {
     try { await browser?.close() }
     finally {

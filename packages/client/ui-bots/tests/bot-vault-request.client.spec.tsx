@@ -2,7 +2,7 @@
 
 import type { SessionSnapshot } from '@yharness/api-session-controller/client'
 import type { ComponentProps } from 'react'
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { makeTranslate } from '@yharness/client-test-runtime'
 import { SessionId } from '@yharness/session/types'
@@ -47,6 +47,10 @@ describe('Bot website login request response', () => {
   it('accepts exact metadata and rejects secret-shaped or off-origin values', () => {
     expect(parseBotWebsiteLoginResponse({ request: null })).toBeNull()
     expect(parseBotWebsiteLoginResponse(websiteResponse())).toEqual(websiteResponse().request)
+    expect(parseBotWebsiteLoginResponse({ request: { ...websiteResponse().request, scope: 'shared' } })).toEqual({
+      ...websiteResponse().request, scope: 'shared',
+    })
+    expect(parseBotWebsiteLoginResponse({ request: { ...websiteResponse().request, scope: 'owner' } })).toBeNull()
     expect(parseBotWebsiteLoginResponse({ request: { ...websiteResponse().request, destination: 'http://example.com/sign-in' } })).toBeNull()
     expect(parseBotWebsiteLoginResponse({ request: { ...websiteResponse().request, destination: 'https://other.example/sign-in' } })).toBeNull()
     expect(parseBotWebsiteLoginResponse({ request: { ...websiteResponse().request, username: 'alice', password: 'secret' } })).toBeNull()
@@ -70,7 +74,10 @@ describe('Bot website login request response', () => {
 
 describe('BotWebsiteLoginRequestCard', () => {
   beforeEach(() => { window.__YH_BOT_WEBSITE_LOGIN__ = true })
-  afterEach(() => { delete window.__YH_BOT_WEBSITE_LOGIN__ })
+  afterEach(() => {
+    delete window.__YH_BOT_WEBSITE_LOGIN__
+    delete window.__YH_BOT_SHARED_BROWSER__
+  })
 
   it('shows origin and exact destination without rendering a credential editor', async () => {
     vi.spyOn(window.navigator, 'userAgent', 'get').mockReturnValue('YHarnessCloudDesktop/1')
@@ -91,6 +98,23 @@ describe('BotWebsiteLoginRequestCard', () => {
     render(<BotWebsiteLoginRequestCard {...cardProps() as ComponentProps<typeof BotWebsiteLoginRequestCard>} />)
     expect(await screen.findByText(en.websiteLoginDesktopOnly)).toBeTruthy()
     expect(screen.queryByRole('link')).toBeNull()
+  })
+
+  it('keeps polling an idle owner session for a shared approval', async () => {
+    vi.useFakeTimers()
+    window.__YH_BOT_SHARED_BROWSER__ = true
+    vi.spyOn(window.navigator, 'userAgent', 'get').mockReturnValue('YHarnessCloudDesktop/1')
+    const fetcher = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      request: { ...websiteResponse().request, scope: 'shared' },
+    }), { status: 200 }))
+    render(<BotWebsiteLoginRequestCard {...cardProps() as ComponentProps<typeof BotWebsiteLoginRequestCard>} />)
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    expect(screen.getByText(en.websiteLoginSharedRequestTitle)).toBeTruthy()
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(2_000) })
+    expect(fetcher).toHaveBeenCalledTimes(2)
   })
 })
 

@@ -421,10 +421,13 @@ def artifact_payload(name):
     return source if source.startswith(ARTIFACT_MARKER) else ARTIFACT_MARKER + source
 
 
-def grant_records(grants):
-    """Validate and canonically sort Bot roster/session grant pairs."""
+def grant_records(grants, *, shared_bots=()):
+    """Validate and sort grants with optional shared browser access."""
     if type(grants) is not list or len(grants) == 0 or len(grants) > 64:
         raise BrowserError('Select 1 to 64 isolated browser grants.')
+    shared = set(shared_bots)
+    if len(shared) != len(shared_bots):
+        raise BrowserError('Shared browser grants must not contain duplicate Bots.')
     records = []
     seen_bots = set()
     seen_sessions = set()
@@ -438,7 +441,12 @@ def grant_records(grants):
             raise BrowserError('Browser grants must not contain duplicate Bot or Session ids.')
         seen_bots.add(bot)
         seen_sessions.add(session)
-        records.append({'bot': bot, 'session': session})
+        record = {'bot': bot, 'session': session}
+        if bot in shared:
+            record['shared'] = True
+        records.append(record)
+    if shared - seen_bots:
+        raise BrowserError('Shared browser access requires an existing browser grant for each Bot.')
     return sorted(records, key=lambda record: (record['bot'], record['session']))
 
 
@@ -523,15 +531,15 @@ def ensure_units_inactive():
             raise BrowserError('Stop the isolated browser service before changing its settings.')
 
 
-def install(chromium, node, cloud_uid, grants, *, paths=InstallPaths(), saved_logins=False):
+def install(chromium, node, cloud_uid, grants, *, paths=InstallPaths(), saved_logins=False, shared_bots=()):
     """Install the browser worker, sockets, private state, and root grant list."""
     chromium_path = trusted_executable(chromium)
     node_path = trusted_executable(node)
     cloud_uid = _validate_uid_for_unit(cloud_uid)
+    records = grant_records(grants, shared_bots=shared_bots)
     account = ensure_account()
     if cloud_uid == account.pw_uid:
         raise BrowserError('The Cloud account must not be the isolated browser account.')
-    records = grant_records(grants)
     _prepare_directories(paths, account)
     artifacts = tuple(
         (paths.install_root / name, artifact_payload(name), 0, 0, 0o644, ARTIFACT_MARKER)
@@ -578,6 +586,10 @@ def main(argv=None):
         '--grant', action='append', type=parse_grant, default=[], metavar='BOT=BOT_SESSION_ID',
         help='root-approved Bot roster/session pair; repeat for each pair',
     )
+    install_parser.add_argument(
+        '--shared-bot', action='append', default=[], metavar='BOT',
+        help='enable an isolated browser for shared chats of this granted Bot; repeat for each Bot',
+    )
     actions.add_parser('activate', help='enable only the browser sockets without restarting Cloud')
     args = parser.parse_args(argv)
     try:
@@ -585,7 +597,8 @@ def main(argv=None):
         os.umask(0o077)
         if args.action == 'install':
             cloud_uid = args.cloud_uid if args.cloud_uid is not None else user_uid(args.cloud_user)
-            install(args.chromium, args.node, cloud_uid, args.grant, saved_logins=args.saved_logins)
+            install(args.chromium, args.node, cloud_uid, args.grant,
+                    saved_logins=args.saved_logins, shared_bots=args.shared_bot)
             print('Isolated browser installed; run activate to enable its sockets.')
         else:
             activate()

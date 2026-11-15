@@ -10,6 +10,7 @@ export interface BotWebsiteLoginRequest {
   readonly id: BotWebsiteLoginRequestId
   readonly origin: string
   readonly destination: string
+  readonly scope?: 'shared'
 }
 
 /** Fetch seam used by the browser reader and lifecycle tests. */
@@ -57,17 +58,24 @@ function publicDestination(value: unknown, origin: string): value is string {
 }
 
 /**
- * Validate the exact no-secret GET response.
+ * Validate the exact no-secret GET response, including an optional shared-chat scope.
  * @param value - untrusted JSON decoded at the authenticated HTTP boundary.
  * @returns validated request metadata, or null for an empty or malformed response.
  */
 export function parseBotWebsiteLoginResponse(value: unknown): BotWebsiteLoginRequest | null {
   if (!record(value) || Object.keys(value).length !== 1 || value.request === null) return null
   const request = value.request
-  if (!record(request) || Object.keys(request).length !== 3
+  const shared = record(request) && request.scope === 'shared'
+  if (!record(request) || Object.keys(request).length !== (shared ? 4 : 3)
+    || (request.scope !== undefined && !shared)
     || typeof request.id !== 'string' || !REQUEST_ID.test(request.id)
     || !publicOrigin(request.origin) || !publicDestination(request.destination, request.origin)) return null
-  return { id: request.id as BotWebsiteLoginRequestId, origin: request.origin, destination: request.destination }
+  return {
+    id: request.id as BotWebsiteLoginRequestId,
+    origin: request.origin,
+    destination: request.destination,
+    ...(shared ? { scope: 'shared' as const } : {}),
+  }
 }
 
 /**
@@ -161,8 +169,16 @@ export function isBotWebsiteLoginRequestEnabled(): boolean {
   return typeof window !== 'undefined' && window.__YH_BOT_WEBSITE_LOGIN__ === true
 }
 
+/** Check the explicit Cloud flag that keeps shared approvals visible while a Bot is idle.
+ * @returns whether shared website-login polling is enabled for the current Cloud view.
+ */
+export function isBotSharedBrowserEnabled(): boolean {
+  return typeof window !== 'undefined' && window.__YH_BOT_SHARED_BROWSER__ === true
+}
+
 declare global {
   interface Window {
     __YH_BOT_WEBSITE_LOGIN__?: true
+    __YH_BOT_SHARED_BROWSER__?: true
   }
 }

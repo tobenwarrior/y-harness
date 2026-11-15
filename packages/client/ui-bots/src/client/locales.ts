@@ -682,6 +682,7 @@ export const en = {
   vaultRequestSaved: 'Saved securely',
   vaultRequestCancelled: 'Request cancelled',
   websiteLoginRequestTitle: 'Approve website sign-in',
+  websiteLoginSharedRequestTitle: 'Approve shared website sign-in',
   websiteLoginOrigin: 'Website',
   websiteLoginDestination: 'Destination',
   websiteLoginOpenDesktop: 'Approve sign-in',

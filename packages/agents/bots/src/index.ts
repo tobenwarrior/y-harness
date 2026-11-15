@@ -26,6 +26,7 @@ import type {
   ToolExecution,
   ToolExecutionToken,
   ToolFailure,
+  ToolDefinition,
   ToolSource,
   McpResourceToolSource,
 } from '@yharness/tools'
@@ -241,6 +242,7 @@ import {
 import type {
   SharedConnectedAppAccessValue,
   SharedConnectedAppAuthorizationRequest,
+  SharedBrowserAuthorizationRequest,
   SharedAppApprovalOutcome,
 } from './shared-service.ts'
 import type { SharedGroupDeliveryRecoveryResult, SharedGroupSessionBinding } from './shared-group.ts'
@@ -529,6 +531,29 @@ interface BotVpsJournal {
   forBot(botId: BotId): BotVpsJournalReader | undefined
 }
 
+/** Host-owned shared browser definition for one admitted shared Bot Session. */
+export interface BotSharedBrowser {
+  /**
+   * Build the exact model-facing browser tool for one shared Bot Agent.
+   * The authorization callback must be checked before every provider action,
+   * including each saved-login poll. Pass only the signal for a read-only
+   * poll; pass `start` for the final operation boundary. The callback invokes
+   * `start` synchronously under the authority lock and does not await its
+   * returned operation while that lock is held.
+   * @param scope - the exact shared Agent scope receiving the tool.
+   * @param agent - the live shared Bot Agent.
+   * @param botId - the Bot identity bound to the shared Session.
+   * @param authorized - current private/group admission check and optional final body starter.
+   * @returns the named `shared_browser` definition, or undefined when unavailable.
+   */
+  readonly toolForSession: (
+    scope: Context,
+    agent: Agent,
+    botId: BotId,
+    authorized: (signal: AbortSignal, start?: () => void) => Promise<boolean>,
+  ) => ToolDefinition | undefined
+}
+
 function botWorkspace(
   workspaces: BotWorkspaces | undefined,
   botId: string,
@@ -544,6 +569,8 @@ declare module '@yharness/cordis' {
     botWorkspaces: BotWorkspaces
     /** Optional owner-configured read-only VPS journal feed. */
     botVpsJournal?: BotVpsJournal
+    /** Optional shared-Bot browser provider; only shared Bot Agent scopes may mount it. */
+    botSharedBrowser?: BotSharedBrowser
     /** Durable user-owned Bot roster and one-Session provisioning service. */
     bots: BotService
   }
@@ -2485,6 +2512,8 @@ const SHARED_BOT_CAPABILITY_ERROR = {
 } as const
 const SHARED_BOT_CAPABILITY_REASON = 'Shared Bot Sessions cannot access host capabilities.'
 const SHARED_BOT_LLM_REJECTION = 'Shared Bot Session LLM calls require an admitted agent-loop request or an audited auxiliary request.'
+const SHARED_BOT_BROWSER_TOOL_NAME = 'shared_browser'
+const SHARED_BOT_BROWSER_CAPABILITY_REASON = 'The shared Bot browser is unavailable.'
 
 /** Accept only bounded auxiliary envelopes whose model input is independently framed and attributed. */
 function isAuditedSharedAuxiliaryRequest(options: GenerateOptions): boolean {
@@ -2535,6 +2564,13 @@ function sharedConnectedAppDenied(exec: { readonly name: string }): ToolFailure 
 class SharedConnectedAppAccessError extends HarnessError {
   constructor(message: string) {
     super(message, 'SHARED_BOT_APP_ACCESS_REQUIRED')
+  }
+}
+
+/** Error returned when a shared browser call loses its live Session admission. */
+class SharedBotBrowserAccessError extends HarnessError {
+  constructor() {
+    super(SHARED_BOT_BROWSER_CAPABILITY_REASON, 'SHARED_BOT_BROWSER_ACCESS_REQUIRED')
   }
 }
 
@@ -4506,6 +4542,9 @@ export class BotService extends TypertRemoteService {
       ? undefined
       : this.sharedApprovalExecutions.get(approval.agent)?.get(String(approval.callId))
     const execution = executions?.size === 1 ? [...executions][0] : undefined
+    if (approval.toolName === SHARED_BOT_BROWSER_TOOL_NAME || execution?.name === SHARED_BOT_BROWSER_TOOL_NAME) {
+      return Promise.resolve('unavailable')
+    }
     const source = this.ctx.tools.get(approval.toolName, approval.agent)?.source
     const executionSource = execution === undefined ? undefined : this.ctx.tools.get(execution.name, approval.agent)?.source
     const isConnectedApp = execution !== undefined && (
@@ -4549,6 +4588,80 @@ export class BotService extends TypertRemoteService {
     const request = this.sharedConnectedAppAuthorizationRequest(agent, exec)
     if (request === undefined) return false
     return sharedService.authorizeSharedConnectedApp(request, exec.signal, rememberedApproval)
+  }
+
+  /** Recheck one shared browser call against its exact live private or group Session. */
+  private async authorizeSharedBrowser(
+    agent: Agent,
+    botId: BotId,
+    signal: AbortSignal,
+    start?: () => void,
+  ): Promise<boolean> {
+    const sessionKey = String(agent.id)
+    const sessionId = SessionId(sessionKey)
+    if (this.stopping || signal.aborted || this.sharedScopeShutdownController.signal.aborted) return false
+    if (agent.status !== 'running') return false
+    if (!this.sharedScopeAgents.has(agent)
+      || this.sharedScopeFences.has(agent)
+      || this.ownerApprovalAgents.has(agent)
+      || this.recordsBySession.has(sessionKey)
+      || !this.sharedSessionIds.has(sessionKey)
+      || this.sharedSessionFailures.has(sessionKey)
+      || this.ctx.agents.get(sessionId) !== agent) return false
+    const record = this.sharedRecordsBySession.get(sessionKey)
+    const sharedService = this.sharedService
+    if (record === undefined || record.id !== botId || record.state !== 'active' || sharedService === undefined) return false
+    const group = this.sharedGroupSessionsBySession.get(sessionKey)
+    const coordinate = group === undefined ? undefined : this.sharedExecutionCoordinatesBySession.get(sessionKey)
+    const stillLive = (): boolean => {
+      if (this.stopping || this.sharedScopeShutdownController.signal.aborted
+        || agent.status !== 'running'
+        || this.ctx.agents.get(sessionId) !== agent
+        || !this.sharedScopeAgents.has(agent)
+        || this.sharedScopeFences.has(agent)
+        || this.ownerApprovalAgents.has(agent)
+        || this.recordsBySession.has(sessionKey)
+        || !this.sharedSessionIds.has(sessionKey)
+        || this.sharedSessionFailures.has(sessionKey)) return false
+      const current = this.sharedRecordsBySession.get(sessionKey)
+      if (current === undefined || current.id !== record.id || current.sessionId !== record.sessionId || current.state !== 'active') return false
+      const currentGroup = this.sharedGroupSessionsBySession.get(sessionKey)
+      if (group === undefined) return currentGroup === undefined
+      const currentCoordinate = this.sharedExecutionCoordinatesBySession.get(sessionKey)
+      return currentGroup?.groupId === group.groupId
+        && currentGroup.botId === group.botId
+        && coordinate !== undefined
+        && currentCoordinate?.turn === coordinate.turn
+        && currentCoordinate.step === coordinate.step
+    }
+    if (!stillLive()) return false
+    signal.throwIfAborted()
+    let request: SharedBrowserAuthorizationRequest
+    if (group === undefined) {
+      request = { kind: 'private', botId, sessionId }
+    } else {
+      if (group.botId !== botId || coordinate === undefined) return false
+      request = {
+        kind: 'group',
+        groupId: group.groupId,
+        botId,
+        sessionId,
+        turn: coordinate.turn,
+        step: coordinate.step,
+      }
+    }
+    let started = false
+    const startUnderLock = start === undefined
+      ? undefined
+      : (): void => {
+        signal.throwIfAborted()
+        if (!stillLive()) return
+        start()
+        started = true
+      }
+    const authorized = await sharedService.authorizeSharedBrowser(request, signal, startUnderLock)
+    if (start === undefined) return authorized && stillLive()
+    return authorized && started
   }
 
   /** Project the authority-backed shared-app policy over the Host app catalog. */
@@ -7995,7 +8108,8 @@ export class BotService extends TypertRemoteService {
           releaseConnectedAppRestriction = scope.tools.restrict({ allow })
         }
         const refreshConnectedAppRestriction = async (): Promise<BotRecord | undefined> => {
-          if (!this.sharedPolicyReady) {
+          // Session creation holds the Bot roster lock during prompt migration.
+          if (!this.sharedPolicyReady || this.sharedPromptMigrations.has(agent)) {
             const current = this.sharedRecordsBySession.get(sessionKey)
             sharedAppAccess = { revision: 0, allowedAppIds: [] }
             applyConnectedAppRestriction(sharedAppAccess)
@@ -8010,6 +8124,18 @@ export class BotService extends TypertRemoteService {
           return current
         }
         applyConnectedAppRestriction(sharedAppAccess)
+        let sharedBrowserDefinition: ToolDefinition | undefined
+        if (sharedAdmission && record !== undefined) {
+          const authorized = (signal: AbortSignal, start?: () => void): Promise<boolean> =>
+            this.authorizeSharedBrowser(agent, record.id, signal, start)
+          const candidate = scope.get('botSharedBrowser')?.toolForSession(scope, agent, record.id, authorized)
+          if (candidate?.name === SHARED_BOT_BROWSER_TOOL_NAME) {
+            scope.tools.register(candidate)
+            if (scope.tools.get(SHARED_BOT_BROWSER_TOOL_NAME, agent) === candidate) {
+              sharedBrowserDefinition = candidate
+            }
+          }
+        }
         const sharedAppDecisions = new Map<ToolExecution['token'], boolean>()
         const sharedApprovalExecutions = this.sharedApprovalExecutions.get(agent) ?? new Map<string, Set<ToolExecution>>()
         this.sharedApprovalExecutions.set(agent, sharedApprovalExecutions)
@@ -8021,6 +8147,12 @@ export class BotService extends TypertRemoteService {
         const finalSharedAppRevalidationDisposals = new Map<ToolExecution['token'], () => void>()
         const connectedAppFailure = (exec: { readonly name: string }): ToolFailure => sharedConnectedAppDenied(exec)
         const capabilityFailure = (exec: { readonly name: string; readonly token?: ToolExecution['token'] }): ToolFailure | undefined => {
+          if (exec.name === SHARED_BOT_BROWSER_TOOL_NAME) {
+            return sharedBrowserDefinition !== undefined
+              && scope.tools.get(SHARED_BOT_BROWSER_TOOL_NAME, agent) === sharedBrowserDefinition
+              ? undefined
+              : sharedBotCapabilityDenied(exec)
+          }
           if (connectedAppSources.has(exec.name)) {
             return exec.token !== undefined && sharedAppDecisions.get(exec.token) === true
               ? undefined
@@ -8043,6 +8175,10 @@ export class BotService extends TypertRemoteService {
           const currentByName = new Map(currentSchemas.map(schema => [schema.name, schema]))
           const visibleToSharedSession = (name: string): boolean => {
             if (name === 'web_search') return searchIsApproved()
+            if (name === SHARED_BOT_BROWSER_TOOL_NAME) {
+              return sharedBrowserDefinition !== undefined
+                && scope.tools.get(SHARED_BOT_BROWSER_TOOL_NAME, agent) === sharedBrowserDefinition
+            }
             const source = connectedAppSources.get(name)
             if (source?.kind === 'mcp') return allowedApps.has(source.serverName)
             return source?.kind === 'mcp-resource' && allowedApps.size > 0
@@ -8083,6 +8219,7 @@ export class BotService extends TypertRemoteService {
             : sharedApprovalExecutions.get(String(approval.callId))
           const execution = executions?.size === 1 ? [...executions][0] : undefined
           const executionSource = execution === undefined ? undefined : scope.tools.get(execution.name, agent)?.source
+          if (execution?.name === SHARED_BOT_BROWSER_TOOL_NAME) return Promise.resolve('unavailable')
           const isConnectedApp = execution !== undefined && (connectedAppSources.has(execution.name)
             || executionSource?.kind === 'mcp'
             || executionSource?.kind === 'mcp-resource')
@@ -8107,6 +8244,16 @@ export class BotService extends TypertRemoteService {
         }, { prepend: true })
         scope.on('tools/pre-execute', async (exec, next) => {
           await refreshConnectedAppRestriction()
+          if (exec.name === SHARED_BOT_BROWSER_TOOL_NAME) {
+            const denial = capabilityFailure(exec)
+            return denial === undefined
+              ? next()
+              : Promise.resolve<PreToolDecision>({
+                kind: 'deny',
+                reason: denial.message,
+                ...(denial.info === undefined ? {} : { info: denial.info }),
+              })
+          }
           if (connectedAppSources.has(exec.name)) {
             const allowed = await this.authorizeSharedConnectedAppExecution(agent, exec)
             sharedAppDecisions.set(exec.token, allowed)
@@ -8186,7 +8333,23 @@ export class BotService extends TypertRemoteService {
             }
         })
         scope.tools.beforeDispatchAdmission(async (exec, start) => {
-          if (!connectedAppSources.has(exec.name)) return start()
+          if (exec.name === SHARED_BOT_BROWSER_TOOL_NAME) {
+            let started: ReturnType<typeof start> | undefined
+            const authorized = sharedBrowserDefinition !== undefined
+              && scope.tools.get(SHARED_BOT_BROWSER_TOOL_NAME, agent) === sharedBrowserDefinition
+              && record !== undefined
+              && await this.authorizeSharedBrowser(agent, record.id, exec.signal, () => {
+                if (scope.tools.get(SHARED_BOT_BROWSER_TOOL_NAME, agent) !== sharedBrowserDefinition) return
+                started = start()
+              })
+            if (!authorized || started === undefined) {
+              throw new SharedBotBrowserAccessError()
+            }
+            return started
+          }
+          if (!connectedAppSources.has(exec.name)) {
+            return start()
+          }
           const sharedService = this.sharedService
           const request = this.sharedConnectedAppAuthorizationRequest(agent, exec)
           if (sharedService === undefined || request === undefined) {

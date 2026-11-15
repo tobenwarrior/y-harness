@@ -129,10 +129,21 @@ class IsolatedBrowserTest(unittest.TestCase):
             with self.subTest(bad=bad), self.assertRaises(installer.BrowserError):
                 installer.grant_records(bad)
 
+    def test_shared_grants_require_an_existing_distinct_bot_selection(self):
+        session = 'bot-session-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+        grants = [('bot-alpha', session)]
+        self.assertEqual(installer.grant_records(grants, shared_bots=['bot-alpha']),
+                         [{'bot': 'bot-alpha', 'session': session, 'shared': True}])
+        for shared in (['bot-unknown'], ['bot-alpha', 'bot-alpha']):
+            with self.subTest(shared=shared), self.assertRaises(installer.BrowserError):
+                installer.grant_records(grants, shared_bots=shared)
+
     def test_trusted_path_requires_root_owned_non_writable_executable(self):
         path = pathlib.Path('/opt/chromium/chrome')
-        with patch.object(pathlib.Path, 'resolve', return_value=path), patch.object(
-            pathlib.Path, 'stat', return_value=SimpleNamespace(st_uid=0, st_mode=stat.S_IFREG | 0o755)
+        with (
+            patch.object(pathlib.Path, 'resolve', return_value=path),
+            patch.object(pathlib.Path, 'stat', return_value=SimpleNamespace(st_uid=0, st_mode=stat.S_IFREG | 0o755)),
+            patch.object(installer.os, 'getxattr', side_effect=OSError(installer.errno.ENODATA, 'fixture'), create=True),
         ):
             self.assertEqual(installer.trusted_executable(path), path)
         with patch.object(pathlib.Path, 'resolve', return_value=path), patch.object(

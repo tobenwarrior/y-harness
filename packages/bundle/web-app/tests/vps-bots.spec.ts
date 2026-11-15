@@ -22,6 +22,7 @@ import { VpsRuntime } from '../src/vps-runtime.ts'
 const BOT_SESSION = SessionId('bot-session-0e9beecd-b6f5-40b1-8d52-f97259bdcf76')
 const DESKTOP_SESSION = SessionId('bot-session-5f3ec8e4-4c34-4ec6-a38f-aad6d07cb337')
 const LEGACY_SESSION = SessionId('bot-session-37888424-5b3d-4a8c-81f5-751ed2d24f95')
+const SHARED_BROWSER_SESSION = SessionId('shared-session-37888424-5b3d-4a8c-81f5-751ed2d24f96')
 
 describe('managed VPS Bot composition', () => {
   it('rejects desktop-only Bots outside the selected Bot allowlist', () => {
@@ -107,6 +108,66 @@ describe('managed VPS Bot composition', () => {
     } finally {
       ensure.mockRestore()
       await ctx.fiber.dispose()
+    }
+  })
+
+  it('binds the shared browser to one admitted Agent and rechecks access on each action', async () => {
+    const ctx = new Context()
+    const navigate = vi.spyOn(VpsIsolatedBrowser.prototype, 'navigate').mockResolvedValue(undefined)
+    const login = vi.spyOn(VpsBrowserLogin.prototype, 'request').mockResolvedValue({ state: 'submitted' })
+    const botId = BotId('bot-team')
+    const agent = { id: SHARED_BROWSER_SESSION, session: { id: SHARED_BROWSER_SESSION } } as never
+    const signal = new AbortController().signal
+    const authorized = vi.fn(async (_signal: AbortSignal, start?: () => void) => { start?.(); return true })
+    const url = 'https://example.test/'
+    try {
+      await ctx.plugin(LlmRuntime)
+      ctx.provide('attachments', {} as never)
+      await ctx.plugin((scope) => { mountVpsBots(scope, {
+        root: '/yharness-test-bots', image: 'localhost/yharness-test',
+        isolatedBrowser: { socketPath: '/run/yharness-browser.sock', bots: [botId, 'bot-private'], sharedBots: [botId], savedLogins: true },
+      }, []) })
+      const browser = ctx.get('botSharedBrowser')
+      expect(browser?.toolForSession(ctx, agent, BotId('bot-private'), authorized)).toBeUndefined()
+      expect(browser?.toolForSession(ctx, { id: BOT_SESSION } as never, botId, authorized)).toBeUndefined()
+      const tool = browser?.toolForSession(ctx, agent, botId, authorized)
+      expect(tool?.name).toBe('shared_browser')
+      if (tool === undefined) throw new Error('No shared browser registered')
+      await expect(tool.execute({ action: 'navigate', url }, { agent, signal } as never)).resolves.toBeDefined()
+      expect(navigate).toHaveBeenCalledExactlyOnceWith(botId, SHARED_BROWSER_SESSION, url, expect.any(AbortSignal))
+      await expect(tool.execute({ action: 'request_saved_login' }, { agent, signal } as never))
+        .resolves.toEqual({ message: expect.stringContaining('sign-in submission') })
+      expect(login).toHaveBeenCalledExactlyOnceWith(botId, SHARED_BROWSER_SESSION, expect.any(Function), signal, authorized)
+      await expect(tool.execute({ action: 'navigate', url }, { agent: { id: SHARED_BROWSER_SESSION }, signal } as never))
+        .rejects.toThrow('unavailable')
+      authorized.mockResolvedValue(false)
+      await expect(tool.execute({ action: 'navigate', url }, { agent, signal } as never)).rejects.toThrow('unavailable')
+      expect(navigate).toHaveBeenCalledOnce()
+      expect(JSON.stringify(tool.parameters)).toContain('"request_saved_login"')
+      expect(JSON.stringify(tool.parameters)).not.toContain('"request_sign_in"')
+
+      const inFlight = Promise.withResolvers<undefined>()
+      authorized.mockImplementation(async (_signal, start) => { start?.(); return true })
+      navigate.mockImplementationOnce(() => inFlight.promise)
+      const first = tool.execute({ action: 'navigate', url }, { agent, signal } as never)
+      try {
+        await expect.poll(() => navigate.mock.calls.length).toBe(2)
+        const checksBeforeQueue = authorized.mock.calls.length
+        const queued = tool.execute({ action: 'navigate', url }, { agent, signal } as never)
+        const denied = expect(queued).rejects.toThrow('unavailable')
+        await expect.poll(() => authorized.mock.calls.length).toBeGreaterThan(checksBeforeQueue)
+        authorized.mockResolvedValue(false)
+        inFlight.resolve(undefined)
+        await first
+        await denied
+        expect(navigate).toHaveBeenCalledTimes(2)
+      } finally {
+        inFlight.resolve(undefined)
+      }
+    } finally {
+      await ctx.fiber.dispose()
+      navigate.mockRestore()
+      login.mockRestore()
     }
   })
 
