@@ -914,8 +914,12 @@ describe('durable Bot roster', () => {
   it('withholds the VPS journal without a live owner Bot and revokes it when the roster row disappears', async () => {
     const pool = new MemoryMediaPool()
     const seed = await harness(pool)
-    const { bot } = await seed.service.create({ name: 'Journal owner', cwd: tmpdir() })
-      .finally(() => close(seed.ctx))
+    let bot: BotView
+    try {
+      bot = (await seed.service.create({ name: 'Journal owner', cwd: tmpdir() })).bot
+    } finally {
+      await close(seed.ctx)
+    }
     const unrelated = SessionId('unrelated-journal-session')
     const read = vi.fn(async () => ({ version: 1, recovery: [], primaryAudit: [] }))
     const forBot = vi.fn((botId: BotId) => botId === bot.id ? read : undefined)

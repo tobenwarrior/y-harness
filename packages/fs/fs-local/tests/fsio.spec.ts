@@ -919,8 +919,9 @@ describe('writeFileAtomic — temp-file safety', () => {
   it('reports an I/O error when an existing file blocks creation of the parent directory', async () => {
     const parent = join(dir, 'existing.txt')
     await writeFile(parent, 'keep')
-    await expect(writeFileAtomic(join(parent, 'child.txt'), 'ours', undefined, undefined))
-      .rejects.toMatchObject({ code: 'FS_IO_ERROR', message: expect.stringContaining('child.txt') })
+    const write = writeFileAtomic(join(parent, 'child.txt'), 'ours', undefined, undefined)
+    await expect(write).rejects.toMatchObject({ code: 'FS_IO_ERROR' })
+    await expect(write).rejects.toThrow('child.txt')
     expect(await readFile(parent, 'utf8')).toBe('keep')
     expect(await readdir(dir)).toEqual(['existing.txt'])
   })
