@@ -305,7 +305,7 @@ it('keeps API keys as the default section and renders website login metadata sep
     return { ok: true, logins: [{ id: 'a'.repeat(32), origin: 'https://example.com', label: 'Example' }] }
   }))
   p.run()
-  await expect.poll(() => p.element('service').querySelectorAll('option').length).toBe(1)
+  await expect.poll(() => p.dom.window.document.querySelector('main')?.getAttribute('aria-busy')).toBe('false')
   expect(p.element('api-keys-panel').hidden).toBe(false)
   expect(p.element('websites-panel').hidden).toBe(true)
   p.element('websites-tab').click()
@@ -314,7 +314,7 @@ it('keeps API keys as the default section and renders website login metadata sep
   expect(p.element('logins').textContent).toContain('https://example.com')
   expect(p.element('logins').textContent).toContain('Example')
   expect(p.element('logins').textContent).not.toContain('password')
-  expect(requests).toEqual([{ action: 'list' }, { action: 'list-logins' }])
+  expect(requests).toEqual([{ action: 'list' }, { action: 'list-logins' }, { action: 'list-bot-logins' }])
   expect(concurrent).toBe(false)
 })
 
@@ -376,6 +376,46 @@ it('starts website rotation with a blank username and clears the masked password
   p.element('login-editor').dispatchEvent(new p.dom.window.Event('submit', { bubbles: true, cancelable: true }))
   await expect.poll(() => requests.some(value => value && typeof value === 'object' && 'action' in value && value.action === 'replace-login')).toBe(true)
   expect(requests).toContainEqual({ action: 'replace-login', id, label: 'Updated', username: 'new-user', password: 'new-password' })
+  expect((p.element('login-password') as HTMLInputElement).value).toBe('')
+})
+
+it('assigns a website login to a Bot and displays its account without exposing the credentials', async () => {
+  const bot = { id: 'bot-scout', name: 'Scout' }
+  const assigned = { id: 'e'.repeat(32), origin: 'https://example.com', label: 'Operations', bot: bot.id }
+  const requests: unknown[] = []
+  let saved = false
+  const p = page({ kind: 'manage' }, vi.fn(async (value: unknown) => {
+    requests.push(value)
+    if (value && typeof value === 'object' && 'action' in value) {
+      if (value.action === 'list') return { ok: true, services: [] }
+      if (value.action === 'list-logins') return { ok: true, logins: [] }
+      if (value.action === 'list-bot-logins') return { ok: true, botLogins: saved ? [assigned] : [], bots: [bot] }
+      if (value.action === 'add-login') { saved = true; return { ok: true } }
+    }
+    return { ok: false, reason: 'unavailable' }
+  }))
+  p.run()
+  await expect.poll(() => p.dom.window.document.querySelector('main')?.getAttribute('aria-busy')).toBe('false')
+  p.element('websites-tab').click()
+  p.element('add-login').click()
+  const scope = p.element('login-bot') as HTMLSelectElement
+  expect([...scope.options].map(option => option.text)).toEqual(['Personal', 'Scout'])
+  scope.value = bot.id
+  const fill = (id: string, value: string): void => { (p.element(id) as HTMLInputElement).value = value }
+  fill('login-origin', assigned.origin)
+  fill('login-label', assigned.label)
+  fill('login-username', 'fixture-user')
+  fill('login-password', 'fixture-password')
+  p.element('login-editor').dispatchEvent(new p.dom.window.Event('submit', { bubbles: true, cancelable: true }))
+  await expect.poll(() => p.element('logins').textContent).toContain('Scout')
+  expect(p.element('logins').textContent).not.toContain('fixture-')
+  expect(requests).toContainEqual({
+    action: 'add-login', bot: bot.id, origin: assigned.origin, label: assigned.label,
+    username: 'fixture-user', password: 'fixture-password',
+  })
+  p.element('logins').querySelector('button')?.click()
+  expect(scope.value).toBe(bot.id)
+  expect(scope.disabled).toBe(true)
   expect((p.element('login-password') as HTMLInputElement).value).toBe('')
 })
 

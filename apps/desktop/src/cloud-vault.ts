@@ -58,9 +58,10 @@ export type VaultRequest = { readonly action: 'list' | 'list-grants' } | ({
   readonly name: string
   readonly value: string
 } | {
-  readonly action: 'list-logins'
+  readonly action: 'list-logins' | 'list-bot-logins'
 } | {
   readonly action: 'add-login'
+  readonly bot?: VaultBotId
   readonly origin: string
   readonly label: string
   readonly username: string
@@ -68,12 +69,14 @@ export type VaultRequest = { readonly action: 'list' | 'list-grants' } | ({
 } | {
   readonly action: 'replace-login'
   readonly id: VaultLoginId
+  readonly bot?: VaultBotId
   readonly label: string
   readonly username: string
   readonly password: string
 } | {
   readonly action: 'remove-login'
   readonly id: VaultLoginId
+  readonly bot?: VaultBotId
 } | {
   readonly action: 'inspect-request'
   readonly id: VaultRequestId
@@ -144,6 +147,8 @@ export interface VaultLogin {
   readonly id: VaultLoginId
   readonly origin: string
   readonly label: string
+  /** Assigned Bot for a dedicated account. Omitted for personal accounts. */
+  readonly bot?: VaultBotId
 }
 
 /** Metadata for one paused browser sign-in request; no credential value is returned. */
@@ -176,6 +181,10 @@ export type VaultReply = {
   readonly ok: true
   readonly services?: readonly VaultService[]
   readonly logins?: readonly VaultLogin[]
+} | {
+  readonly ok: true
+  readonly botLogins: readonly VaultLogin[]
+  readonly bots?: readonly VaultBotChoice[]
 } | {
   readonly ok: true
   readonly access: VaultBotAccess
@@ -332,28 +341,21 @@ function requestBody(value: unknown): VaultRequest | undefined {
     && value.value.isWellFormed() && Buffer.byteLength(value.value, 'utf8') <= VALUE_LIMIT) {
     return { action, id: value.id, value: value.value }
   }
-  if (action === 'list-logins' && fields === 1) return { action }
-  if (action === 'remove-login' && fields === 2 && isVaultLoginId(value.id)) {
-    return { action, id: value.id }
-  }
-  if (action === 'replace-login' && fields === 5 && isVaultLoginId(value.id)) {
+  if ((action === 'list-logins' || action === 'list-bot-logins') && fields === 1) return { action }
+  if (action === 'add-login' || action === 'replace-login' || action === 'remove-login') {
+    const assigned = Object.hasOwn(value, 'bot')
+    if (assigned && !botId(value.bot)) return undefined
+    const scope = botId(value.bot) ? { bot: value.bot } : {}
+    if (fields !== (action === 'remove-login' ? 2 : 5) + Number(assigned)) return undefined
+    if (action === 'remove-login') return isVaultLoginId(value.id) ? { action, id: value.id, ...scope } : undefined
     const label = boundedLoginText(value.label, LOGIN_LABEL_LIMIT, true)
     const username = boundedLoginText(value.username, LOGIN_USERNAME_LIMIT, false)
     const password = boundedLoginText(value.password, LOGIN_PASSWORD_LIMIT, false)
-    if (label !== undefined && username !== undefined && password !== undefined) {
-      return { action, id: value.id, label, username, password }
-    }
-    return undefined
-  }
-  if (action === 'add-login' && fields === 5) {
+    if (label === undefined || username === undefined || password === undefined) return undefined
+    const credentials = { label, username, password, ...scope }
+    if (action === 'replace-login') return isVaultLoginId(value.id) ? { action, id: value.id, ...credentials } : undefined
     const origin = loginOrigin(value.origin)
-    const label = boundedLoginText(value.label, LOGIN_LABEL_LIMIT, true)
-    const username = boundedLoginText(value.username, LOGIN_USERNAME_LIMIT, false)
-    const password = boundedLoginText(value.password, LOGIN_PASSWORD_LIMIT, false)
-    if (origin !== undefined && label !== undefined && username !== undefined && password !== undefined) {
-      return { action, origin, label, username, password }
-    }
-    return undefined
+    return origin === undefined ? undefined : { action, origin, ...credentials }
   }
   if (!unitName(unit) || !keyName(name)) return undefined
   if (action === 'revoke' && fields === 3) return { action, unit, name }
@@ -365,12 +367,13 @@ function requestBody(value: unknown): VaultRequest | undefined {
   }
 }
 
-function loginMetadata(value: unknown): VaultLogin | undefined {
-  if (!record(value) || Object.keys(value).length !== 3 || !isVaultLoginId(value.id)) return undefined
+function loginMetadata(value: unknown, scoped: boolean): VaultLogin | undefined {
+  if (!record(value) || Object.keys(value).length !== (scoped ? 4 : 3) || !isVaultLoginId(value.id)
+    || (scoped && !botId(value.bot))) return undefined
   const origin = loginOrigin(value.origin, true)
   const label = boundedLoginText(value.label, LOGIN_LABEL_LIMIT, true)
   if (origin === undefined || label === undefined) return undefined
-  return { id: value.id, origin, label }
+  return { id: value.id, origin, label, ...(scoped && botId(value.bot) ? { bot: value.bot } : {}) }
 }
 
 function loginUseChoice(value: unknown): VaultLoginUseChoice | undefined {
@@ -467,17 +470,19 @@ function replyBody(
   if (action === 'dismiss-request') {
     return value.state === 'saved' || value.state === 'cancelled' ? { state: value.state } : undefined
   }
-  if (action === 'list-logins') {
-    if (!Array.isArray(value.logins) || value.logins.length > MAX_LOGINS) return undefined
+  if (action === 'list-logins' || action === 'list-bot-logins') {
+    const scoped = action === 'list-bot-logins'
+    const records = scoped ? value.botLogins : value.logins
+    if (!Array.isArray(records) || records.length > MAX_LOGINS) return undefined
     const logins: VaultLogin[] = []
     const ids = new Set<string>()
-    for (const login of value.logins) {
-      const metadata = loginMetadata(login)
+    for (const login of records) {
+      const metadata = loginMetadata(login, scoped)
       if (metadata === undefined || ids.has(metadata.id)) return undefined
       ids.add(metadata.id)
       logins.push(metadata)
     }
-    return { ok: true, logins }
+    return scoped ? { ok: true, botLogins: logins } : { ok: true, logins }
   }
   if (action !== 'list') return value.ok === true ? { ok: true } : undefined
   if (!Array.isArray(value.services) || value.services.length > 16) return undefined
@@ -615,6 +620,11 @@ export async function cloudVaultRequest(
     if (request.action !== 'remove-grant') bots = await readCloudVaultBots(workspace.origin, workspace.fetch, signal)
     if (request.action === 'add-grant' && !bots?.some(bot => bot.id === request.bot)) return unavailable
   }
+  const assignedLogin = request.action === 'add-login' ? request.bot : undefined
+  if (request.action === 'list-bot-logins' || assignedLogin !== undefined) {
+    if (workspace !== undefined) bots = await readCloudVaultBots(workspace.origin, workspace.fetch, signal)
+    if (assignedLogin !== undefined && !bots?.some(bot => bot.id === assignedLogin)) return unavailable
+  }
   if (signal.aborted) return unavailable
   return new Promise((resolve) => {
     try {
@@ -634,7 +644,7 @@ export async function cloudVaultRequest(
           const expectedId = request.action === 'inspect-request' || request.action === 'inspect-login-use'
             ? request.id : undefined
           const reply = replyBody(request.action, stdout, expectedId) ?? unavailable
-          resolve(request.action === 'list-grants' && 'access' in reply && bots !== undefined ? { ...reply, bots } : reply)
+          resolve(('access' in reply || 'botLogins' in reply) && bots !== undefined ? { ...reply, bots } : reply)
         }
         catch { resolve(unavailable) }
       })
