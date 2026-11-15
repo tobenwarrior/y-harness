@@ -612,6 +612,8 @@ export const en = {
   terminalOpen: 'Open VPS terminal',
   filesLabel: 'Files',
   filesOpen: 'Open VPS files',
+  filesPrivateWorkspace: 'Private workspace',
+  filesSharedWorkspace: 'Shared workspace',
   computerScopeBotChip: 'Dedicated VPS desktop',
   computerScopeWorkspaceChip: 'Shared VPS desktop',
   computerScopeBotMeta: 'Display and input are dedicated to this Bot',

@@ -54,7 +54,7 @@ The composition must provide the injected Bot Remote, Session store, locale, lay
 
 When the Host reports `available: true` from the authenticated `api/computer/status` route, the Bot header exposes a Computer action that opens the desktop beside the selected Bot conversation. The panel polls `api/computer/frame` only while visible, displays the current lease mode, and sends click, drag, scroll, keyboard, and pasted-text input only while the browser owns the control lease. Closing the panel requests lease release; server-side disconnect expiry remains the fallback.
 
-The private VPS capabilities for **Terminal** and **Files** open the selected Bot's workspace in the existing right sidebar. Files uses a Computer-specific address, so links in the Bot's conversation can still address the Session workspace.
+The private VPS capabilities for **Terminal** and **Files** open the selected Bot's workspace in the existing right sidebar. Files uses a Computer-specific address, so links in the Bot's conversation can still address the Session workspace. When the Host also reports shared files, the Files action offers **Private workspace** and **Shared workspace**, each with its own retained tree.
 
 The owner Bot composer dock shows pending sign-in requests when the Cloud Host enables them. **Take over** opens the same Computer panel and claims the exact request. **I’m done** returns control to the waiting Bot. A viewer without the private lease receives status in place of a screenshot.
 

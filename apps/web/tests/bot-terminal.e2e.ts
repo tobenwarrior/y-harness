@@ -12,6 +12,7 @@ import { compareOrRefreshGolden, launchWebScaffold, watchConsole, webSnapshotMod
 const FIXTURE = fileURLToPath(new URL('../../../snapshots/web/bot-workspace/session.v3.jsonl', import.meta.url))
 const GOLDEN = fileURLToPath(new URL('./expected/bot-terminal/action.expected.md', import.meta.url))
 const FILES_GOLDEN = fileURLToPath(new URL('./expected/bot-terminal/files-action.expected.md', import.meta.url))
+const SHARED_GOLDEN = fileURLToPath(new URL('./expected/bot-terminal/shared-workspaces.expected.md', import.meta.url))
 const UPLOAD_GOLDEN = fileURLToPath(new URL('./expected/bot-terminal/upload-action.expected.md', import.meta.url))
 const COPY_GOLDEN = fileURLToPath(new URL('./expected/bot-terminal/copy-action.expected.md', import.meta.url))
 const RUNTIME = new URL('../../../packages/bundle/web-app/lib/types/vps-runtime.js', import.meta.url).href
@@ -44,6 +45,22 @@ it.skipIf(process.platform === 'win32')('switches between a Bot’s Computer and
     })
     const plugin = join(scope, 'terminal.mjs')
     const patch = join(scope, 'terminal.yml')
+    const project = join(scope, 'project')
+    await mkdir(project, { mode: 0o700 })
+    const projectWorkerHarness = [
+      'import json, subprocess, sys',
+      'script, root = sys.argv[1:3]',
+      'request = json.load(sys.stdin)',
+      'request["path"] = root + request["path"][len("/workspace"):]',
+      'r = subprocess.run([sys.executable, "-I", "-c", script, root], input=json.dumps(request), text=True, capture_output=True, check=True)',
+      'data = json.loads(r.stdout)',
+      'if request["operation"] == "resolve" and "value" in data:',
+      '    data["value"] = "/workspace" + data["value"][len(root):]',
+      'if request["operation"] == "list" and "value" in data:',
+      '    for item in data["value"]:',
+      '        item["path"] = "/workspace" + item["path"][len(root):]',
+      'print(json.dumps(data))',
+    ].join('\n')
     await writeFile(plugin, `
       import { mkdir } from 'node:fs/promises'
       import { VpsRuntime } from ${JSON.stringify(RUNTIME)}
@@ -67,7 +84,14 @@ it.skipIf(process.platform === 'win32')('switches between a Bot’s Computer and
             if (argv[2] === '/usr/local/lib/yharness/files.py') {
               return ['python3', argv[1], ${JSON.stringify(FILE_WORKER)}, ...argv.slice(3)]
             }
-            if (argv[0] === '/usr/bin/python3' && argv[2] === '-c') return ['python3', ...argv.slice(1)]
+            if (argv[0] === '/usr/bin/python3' && argv[2] === '-c') {
+              if (argv[4] !== '/workspace') return ['python3', ...argv.slice(1)]
+              const root = ${JSON.stringify(project)}
+              if (argv.length === 5) {
+                return ['python3', '-I', '-c', ${JSON.stringify(projectWorkerHarness)}, argv[3], root]
+              }
+              return ['python3', ...argv.slice(1, 4), root, ...argv.slice(5)]
+            }
             return original.execArgv.call(this, sessionId, argv, options)
           }
           VpsBotSubprocess.prototype.resolveExecutable = (command, env, signal) => ctx.subprocess.resolveExecutable(command, env, signal)
@@ -90,7 +114,7 @@ it.skipIf(process.platform === 'win32')('switches between a Bot’s Computer and
       id: 'bot-terminal-fixture', name: pathToFileURL(plugin).href,
       config: {
         root: join(scope, 'bots'), image: 'localhost/yharness-test', bots: [FIRST, SECOND],
-        desktopOnlyBots: [FIRST, SECOND],
+        desktopOnlyBots: [FIRST, SECOND], sharedWorkspace: { bots: [FIRST, SECOND] },
       },
     }] }]))
     const web = server = await launchWebScaffold({ extraOverlayPath: patch, replayFixture: FIXTURE, replayProvidersOnly: true })
@@ -118,8 +142,13 @@ it.skipIf(process.platform === 'win32')('switches between a Bot’s Computer and
     const filesAction = page.getByRole('button', { name: 'Open VPS files', exact: true })
     const fileTree = page.locator('[data-files-state="tree"]:visible')
     const preview = page.locator('[data-textpreview-body]:visible')
-    const openBrief = async (): Promise<void> => {
+    const fileMenu = page.getByRole('menu').filter({ has: page.getByRole('menuitem', { name: 'Shared workspace', exact: true }) })
+    const openFiles = async (kind: 'Private workspace' | 'Shared workspace'): Promise<void> => {
       await filesAction.click()
+      await fileMenu.getByRole('menuitem', { name: kind, exact: true }).click()
+    }
+    const openBrief = async (): Promise<void> => {
+      await openFiles('Private workspace')
       await fileTree.getByRole('button', { name: 'reports', exact: true }).click({ timeout: 6500 }).catch(async (cause: unknown) => {
         const tree = await page.locator('[data-files-state]').allTextContents()
         const dock = await page.locator('[data-sidebar-right-session]:visible').allTextContents()
@@ -177,7 +206,7 @@ it.skipIf(process.platform === 'win32')('switches between a Bot’s Computer and
     uploadUrl.searchParams.set('sessionId', legacy.sessionId)
     expect((await page.request.post(uploadUrl.href, { data: uploadBytes })).status()).toBe(404)
 
-    await filesAction.click()
+    await openFiles('Private workspace')
     const upload = fileTree.getByRole('button', { name: 'Upload files', exact: true })
     await compareOrRefreshGolden(UPLOAD_GOLDEN, (await upload.ariaSnapshot()).trimEnd(), webSnapshotMode())
     const [folderPicker] = await Promise.all([
@@ -217,7 +246,7 @@ it.skipIf(process.platform === 'win32')('switches between a Bot’s Computer and
     expect((await page.request.post(copyPath.href, { data: { ...copy, targetBotId: LEGACY } })).status()).toBe(404)
 
     await select(FIRST)
-    await filesAction.click()
+    await openFiles('Private workspace')
     const reportsFolder = fileTree.getByRole('button', { name: 'reports', exact: true })
     await reportsFolder.waitFor()
     if (await reportsFolder.getAttribute('aria-expanded') !== 'true') await reportsFolder.click()
@@ -259,6 +288,27 @@ it.skipIf(process.platform === 'win32')('switches between a Bot’s Computer and
     } finally {
       approval.mockRestore()
     }
+
+    await filesAction.click()
+    await compareOrRefreshGolden(SHARED_GOLDEN, (await fileMenu.ariaSnapshot()).trimEnd(), webSnapshotMode())
+    await fileMenu.getByRole('menuitem', { name: 'Shared workspace', exact: true }).click()
+    const projectTree = page.locator('[data-files-root="/workspace"]:visible')
+    const [projectPicker] = await Promise.all([
+      page.waitForEvent('filechooser'), projectTree.getByRole('button', { name: 'Upload files', exact: true }).click(),
+    ])
+    const projectBytes = Buffer.from('Shared research note')
+    await projectPicker.setFiles({ name: 'Desk Notes.txt', mimeType: 'text/plain', buffer: projectBytes })
+    await projectTree.getByRole('button', { name: 'Desk Notes.txt', exact: true }).waitFor()
+    expect(await readFile(join(project, 'Desk Notes.txt'))).toEqual(projectBytes)
+
+    await select(SECOND)
+    await openFiles('Shared workspace')
+    await projectTree.getByRole('button', { name: 'Desk Notes.txt', exact: true }).click()
+    await preview.getByText(projectBytes.toString(), { exact: true }).waitFor()
+    await expect.poll(() => page.getByRole('button', { name: 'Copy to bot', exact: true }).count()).toBe(0)
+    const sharedDownload = page.getByRole('link', { name: 'Download file', exact: true })
+    const [sharedFile] = await Promise.all([page.waitForEvent('download'), sharedDownload.click()])
+    expect(await readFile(await sharedFile.path())).toEqual(projectBytes)
 
     await select(LEGACY)
     await sidebar.locator('[data-bot-id="' + LEGACY + '"][aria-current="page"]').waitFor()

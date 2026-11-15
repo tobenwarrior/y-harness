@@ -62,6 +62,7 @@ export function apply(ctx: Context): void {
   }
   const terminalAvailable = createSnapshotStore(false)
   const filesAvailable = createSnapshotStore(false)
+  const sharedFilesAvailable = createSnapshotStore(false)
   const setComputerTarget = (sessionId: string | null, request?: ComputerSignInTarget): void => {
     const sidebar = ctx.get('sidebarRight')
     if (sessionId !== null && sidebar !== undefined && sidebar.mounted.getSnapshot() === sessionId && sidebar.isExpanded()) {
@@ -70,12 +71,14 @@ export function apply(ctx: Context): void {
     computerSignIn.set(request)
     computerTarget.set(sessionId)
   }
-  const openWorkspaceTab = (kind: 'terminal' | 'computer-files'): void => {
+  const openWorkspaceTab = (kind: 'terminal' | 'computer-files' | 'computer-shared-files'): void => {
     const sidebar = ctx.get('sidebarRight')
     const sessionId = controller.face().reference()?.sessionId
     if (sidebar === undefined || sessionId === undefined || sidebar.mounted.getSnapshot() !== sessionId) return
     const target = sidebar.commandTarget(null)
-    const available = kind === 'terminal' ? terminalAvailable : filesAvailable
+    const available = kind === 'terminal'
+      ? terminalAvailable
+      : kind === 'computer-files' ? filesAvailable : sharedFilesAvailable
     if (target === undefined || !available.getSnapshot()) return
     setComputerTarget(null)
     const active = sidebar.active()
@@ -96,9 +99,12 @@ export function apply(ctx: Context): void {
         const selected = sessionId !== undefined && identity?.id === selection ? identity : undefined
         const terminal = selected?.terminal === true && scope.sidebarRightTabs.get('terminal') !== undefined
         const files = selected?.files === true && scope.sidebarRightTabs.get('computer-files') !== undefined
-        scope.sidebarRight.selectPanelSession(PANEL_ID, terminal || files ? sessionId : undefined)
+        const sharedFiles = files && selected?.sharedFiles === true
+          && scope.sidebarRightTabs.get('computer-shared-files') !== undefined
+        scope.sidebarRight.selectPanelSession(PANEL_ID, terminal || files || sharedFiles ? sessionId : undefined)
         terminalAvailable.set(terminal)
         filesAvailable.set(files)
+        sharedFilesAvailable.set(sharedFiles)
       }
       const stops = [workspace.subscribe(sync), computerAvailability.identity.subscribe(sync), scope.sidebarRightTabs.subscribe(sync)]
       sync()
@@ -107,6 +113,7 @@ export function apply(ctx: Context): void {
         scope.sidebarRight.selectPanelSession(PANEL_ID, undefined)
         terminalAvailable.set(false)
         filesAvailable.set(false)
+        sharedFilesAvailable.set(false)
       }
     }, 'ui-bots: selected VPS workspace')
   })
@@ -190,6 +197,7 @@ export function apply(ctx: Context): void {
             computerSignIn,
             terminalAvailable,
             filesAvailable,
+            sharedFilesAvailable,
           },
         }
       },

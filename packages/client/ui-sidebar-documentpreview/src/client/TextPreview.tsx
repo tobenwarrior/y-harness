@@ -95,10 +95,11 @@ export function TextPreview({
   const displayPath = file.computer === true ? file.path : absolutePath ?? file.path
   // Contributions that hand the file to the Host wait for its Host path.
   const fileOwner = file.computer === true || absolutePath === undefined ? undefined : { absolutePath }
+  const sharedProject = file.path === '/workspace' || file.path.startsWith('/workspace/')
   const computerActions = file.computer === true && meta.value !== undefined ? (
     <>
-      <ComputerFileCopy key={file.sessionId + '/' + file.path} sessionId={file.sessionId} path={file.path}
-        version={meta.value.version} lifetime={signal} t={t} className={css.tool} />
+      {!sharedProject && <ComputerFileCopy key={file.sessionId + '/' + file.path} sessionId={file.sessionId} path={file.path}
+        version={meta.value.version} lifetime={signal} t={t} className={css.tool} />}
       <Tooltip label={t('download')} side="bottom" delayMs={500}>
         <a className={css.tool} aria-label={t('download')}
           href={`/api/computer/files/download?${new URLSearchParams({ sessionId: file.sessionId, path: file.path })}`}

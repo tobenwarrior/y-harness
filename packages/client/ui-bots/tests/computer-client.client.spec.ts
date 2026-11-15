@@ -27,7 +27,26 @@ describe('Computer HTTP client', () => {
     const fetchMock = vi.fn(async () => response({
       available: true,
       kind: 'vps',
-      computer: { id: 'bot-session', location: 'vps', permissionScope: 'bot' },
+      computer: { id: 'bot-session', location: 'vps', permissionScope: 'bot', files: true, sharedFiles: true },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    const client = createComputerClient()
+
+    await expect(client.status(undefined, 'bot-session')).resolves.toEqual({
+      available: true,
+      kind: 'vps',
+      computer: { id: 'bot-session', location: 'vps', permissionScope: 'bot', files: true, sharedFiles: true },
+    })
+    expect(fetchMock).toHaveBeenCalledWith('api/computer/status', expect.objectContaining({
+      body: JSON.stringify({ sessionId: 'bot-session' }),
+    }))
+  })
+
+  it('does not expose shared files without the private Files capability', async () => {
+    const fetchMock = vi.fn(async () => response({
+      available: true,
+      kind: 'vps',
+      computer: { id: 'bot-session', location: 'vps', permissionScope: 'bot', sharedFiles: true },
     }))
     vi.stubGlobal('fetch', fetchMock)
     const client = createComputerClient()
@@ -37,9 +56,6 @@ describe('Computer HTTP client', () => {
       kind: 'vps',
       computer: { id: 'bot-session', location: 'vps', permissionScope: 'bot' },
     })
-    expect(fetchMock).toHaveBeenCalledWith('api/computer/status', expect.objectContaining({
-      body: JSON.stringify({ sessionId: 'bot-session' }),
-    }))
   })
 
   it('sends the viewer lease and input action to their exact routes', async () => {

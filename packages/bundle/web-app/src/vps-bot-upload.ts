@@ -4,7 +4,7 @@ import { execFile } from 'node:child_process'
 import { pipeline } from 'node:stream/promises'
 import { promisify } from 'node:util'
 import { z } from 'zod'
-import type { VpsRuntime } from './vps-runtime.ts'
+import { isVpsSharedPath, type VpsRuntime } from './vps-runtime.ts'
 
 const exec = promisify(execFile)
 const outcomes = z.enum(['stored', 'exists', 'folder-unavailable', 'no-space', 'incomplete', 'unavailable'])
@@ -30,7 +30,7 @@ export type VpsFileUploadLimits = z.output<typeof options>
 
 /** A workspace-relative destination and the incoming raw file. */
 export interface ComputerFileUpload {
-  /** Workspace-relative folder or "." for the root. */
+  /** Private workspace-relative folder or an absolute shared project folder. */
   readonly directory: string
   /** One base filename with no directory components. */
   readonly name: string
@@ -172,7 +172,7 @@ except OSError as error:
 `
 
 /**
- * Publish one complete transfer in the selected Bot's private volume.
+ * Publish one complete transfer in an authorized Bot volume.
  * @param runtime - runtime selected by the exact owner Bot.
  * @param sessionId - roster Session of the selected Bot.
  * @param file - validated destination and raw request body.
@@ -184,11 +184,15 @@ export async function uploadComputerFile(
   runtime: VpsRuntime, sessionId: string, file: ComputerFileUpload, limits: VpsFileUploadLimits, signal: AbortSignal,
 ): Promise<ComputerFileUploadOutcome> {
   signal.throwIfAborted()
+  const shared = isVpsSharedPath(file.directory)
+  const root = shared ? runtime.sharedRoot : runtime.workspace(sessionId)
+  if (root === undefined) return 'folder-unavailable'
+  const directory = shared ? file.directory.slice(root.length + 1) || '.' : file.directory
   await runtime.ensure(sessionId)
   signal.throwIfAborted()
   const seconds = Math.ceil(limits.timeoutMs / 1000)
   const [program, ...argv] = runtime.execArgv(sessionId, [
-    '/usr/bin/python3', '-I', '-c', uploadWorker, runtime.workspace(sessionId), file.directory, file.name,
+    '/usr/bin/python3', '-I', '-c', uploadWorker, root, directory, file.name,
     String(file.bytes), String(limits.reserveBytes), String(seconds),
   ], { stdin: true })
   const closed = new AbortController()

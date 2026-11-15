@@ -87,7 +87,12 @@ export interface Config {
     bots?: string[] | null
     /** Exact selected Bot ids that receive only a private Computer, not a VPS workspace. */
     desktopOnlyBots?: string[]
-    /** Direct file transfer limits for private Bot workspaces. */
+    /** Owner project volume shared by the selected private Computer Bots. */
+    sharedWorkspace?: {
+      /** Exact participants. Omit or use null for every private Computer Bot. */
+      bots?: string[] | null
+    } | null
+    /** Direct file transfer limits for Bot workspaces. */
     uploads?: {
       /** Largest allowed file in bytes. */
       maxBytes?: number
@@ -135,6 +140,7 @@ export const Config: z<Config> = z.object({
       image: z.string().required(),
       bots: z.union([z.array(String), z.const(null)]),
       desktopOnlyBots: z.array(String),
+      sharedWorkspace: z.union([z.object({ bots: z.union([z.array(String), z.const(null)]) }), z.const(null)]),
       uploads: z.object({ maxBytes: z.number(), reserveBytes: z.number(), timeoutMs: z.number() }),
       browser: z.union([
         z.object({

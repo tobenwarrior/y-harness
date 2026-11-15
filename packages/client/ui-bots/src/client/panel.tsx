@@ -1,5 +1,6 @@
 /** Global Bot panel and its explicitly Session-bound Conversation child. */
 
+import { useState } from 'react'
 import type { ReactNode } from 'react'
 import type { BotView } from '@yharness/bots/client'
 import type { HostObservable, PropsLocale, PropsRenderFactories, PropsRenderSlots, PropsRuntime, InjectFace } from '@yharness/client-ui-slots'
@@ -15,7 +16,7 @@ import { ComputerPanel } from './ComputerPanel.tsx'
 import { MacComputerPanel } from './MacComputerPanel.tsx'
 import type { AvailabilityState } from './computer-availability.ts'
 import type { ComputerClient, ComputerIdentity } from './computer-client.ts'
-import { Button, IconFolderOpenOutlineRegular, PluginArtworkTerminal, Tooltip } from '@yharness/client-ui-primitives'
+import { Button, IconFolderOpenOutlineRegular, Menu, PluginArtworkTerminal, Tooltip } from '@yharness/client-ui-primitives'
 import css from './BotWorkspace.module.css'
 
 /** Selected sign-in request and its Computer panel. */
@@ -24,6 +25,8 @@ export interface ComputerSignInTarget {
   readonly requestId: string
   readonly attempt: number
 }
+
+type WorkspaceTabKind = 'terminal' | 'computer-files' | 'computer-shared-files'
 
 /** Main panel child slot that owns the selected Bot's Session binding. */
 declare module '@yharness/client-ui-slots' {
@@ -45,7 +48,7 @@ export type BotsPanelProps =
   & InjectFace<BotWorkspaceFace & {
     readonly computer: ComputerClient
     readonly setComputerTarget: (sessionId: string | null) => void
-    readonly openWorkspaceTab: (kind: 'terminal' | 'computer-files') => void
+    readonly openWorkspaceTab: (kind: WorkspaceTabKind) => void
     readonly hooks: {
       readonly computerAvailability: HostObservable<AvailabilityState>
       readonly computerIdentity: HostObservable<ComputerIdentity | undefined>
@@ -53,6 +56,7 @@ export type BotsPanelProps =
       readonly computerSignIn: HostObservable<ComputerSignInTarget | undefined>
       readonly terminalAvailable: HostObservable<boolean>
       readonly filesAvailable: HostObservable<boolean>
+      readonly sharedFilesAvailable: HostObservable<boolean>
     }
   }>
 
@@ -90,6 +94,50 @@ function summaryOf(bot: BotView, statuses: SessionStatusSnapshot): BotSummary {
     identity: bot.identity,
     ...(bot.avatar === undefined ? {} : { avatar: bot.avatar }),
   }
+}
+
+interface BotFilesActionProps {
+  readonly sharedFilesAvailable: boolean
+  readonly openWorkspaceTab: (kind: Extract<WorkspaceTabKind, 'computer-files' | 'computer-shared-files'>) => void
+  readonly t: BotsPanelProps['t']
+}
+
+function BotFilesAction({ sharedFilesAvailable, openWorkspaceTab, t }: BotFilesActionProps): ReactNode {
+  const [open, setOpen] = useState(false)
+  const anchor = (
+    <Tooltip label={t('filesOpen')} side="bottom" delayMs={500}>
+      <Button variant="toolbar" size="sm" icon={<IconFolderOpenOutlineRegular size={16} />}
+        aria-label={t('filesOpen')}
+        {...(sharedFilesAvailable ? { 'aria-haspopup': 'menu', 'aria-expanded': open } : {})}
+        onClick={() => {
+          if (sharedFilesAvailable) setOpen(value => !value)
+          else openWorkspaceTab('computer-files')
+        }}>
+        <span className={css.workspaceToolLabel}>{t('filesLabel')}</span>
+      </Button>
+    </Tooltip>
+  )
+  if (!sharedFilesAvailable) return anchor
+  return (
+    <Menu
+      open={open}
+      onClose={() => { setOpen(false) }}
+      autoFocus
+      dense
+      portal
+      align="end"
+      items={[
+        { id: 'private', label: t('filesPrivateWorkspace') },
+        { id: 'shared', label: t('filesSharedWorkspace') },
+      ]}
+      onSelect={(id) => {
+        setOpen(false)
+        if (id === 'private') openWorkspaceTab('computer-files')
+        else if (id === 'shared') openWorkspaceTab('computer-shared-files')
+      }}
+      anchor={anchor}
+    />
+  )
 }
 
 /** Render the selected Bot's real Conversation under its retained Session. */
@@ -158,6 +206,7 @@ export function BotsPanel({
   rename, updateProfile, memoryManager, readGrokHistory,
   routineManager, skillManager, SessionProvider, renderSlot, t, share, computer, useComputerAvailability,
   setComputerTarget, useComputerTarget, useComputerIdentity, useComputerSignIn, openWorkspaceTab, useTerminalAvailable, useFilesAvailable,
+  useSharedFilesAvailable,
 }: BotsPanelProps): ReactNode {
   const state: BotWorkspaceState = useWorkspace(value => value)
   const statuses = useSessionStatus(value => value)
@@ -168,6 +217,7 @@ export function BotsPanel({
   const signIn = useComputerSignIn(value => value)
   const showTerminalAction = useTerminalAvailable(value => value)
   const showFilesAction = useFilesAvailable(value => value)
+  const showSharedFilesAction = useSharedFilesAvailable(value => value)
   const selectedBot = bots.find(bot => bot.id === state.selectedBotId)
   const selectedReference = reference()
   const canShowComputer = (availability === 'available' || availability === 'mac') && selectedReference !== undefined
@@ -217,12 +267,7 @@ export function BotsPanel({
             </Tooltip>
           )}
           {showFilesAction && (
-            <Tooltip label={t('filesOpen')} side="bottom" delayMs={500}>
-              <Button variant="toolbar" size="sm" icon={<IconFolderOpenOutlineRegular size={16} />}
-                aria-label={t('filesOpen')} onClick={() => { openWorkspaceTab('computer-files') }}>
-                <span className={css.workspaceToolLabel}>{t('filesLabel')}</span>
-              </Button>
-            </Tooltip>
+            <BotFilesAction sharedFilesAvailable={showSharedFilesAction} openWorkspaceTab={openWorkspaceTab} t={t} />
           )}
           {readGrokHistory !== undefined && selectedBot !== undefined && (
             <GrokHistoryAction key={selectedBot.id} botId={selectedBot.id} botName={selectedBot.name} read={readGrokHistory} t={t} />

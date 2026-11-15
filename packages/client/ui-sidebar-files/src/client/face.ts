@@ -94,7 +94,7 @@ export type WorkspaceFilesListRemote = {
 /**
  * Bind the listing to one Remote face, keeping only what the tree stores.
  * @param remote - the Client Remote face carrying the `workspaceFiles` namespace.
- * @param computer - list directories in the private Computer workspace.
+ * @param computer - list directories in a Computer workspace.
  * @returns the listing the tree's face performs.
  */
 export function createList(remote: WorkspaceFilesListRemote, computer = false): ListWorkspaceDirectory {

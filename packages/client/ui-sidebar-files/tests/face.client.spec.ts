@@ -296,6 +296,15 @@ describe('createList', () => {
     expect(result).toEqual({ ok: true, value: { entries: listing.entries, truncated: true } })
   })
 
+  it('uses the absolute Computer workspace path for shared file listings', async () => {
+    const listing: WorkspaceDirectoryListing = { path: '/workspace', entries: [], truncated: false }
+    const list = vi.fn<WorkspaceFilesListRemote['workspaceFiles']['list']>()
+      .mockResolvedValue({ ok: true, value: listing })
+    const signal = new AbortController().signal
+    await createList({ workspaceFiles: { list } }, true)(SESSION, '/workspace', signal)
+    expect(list).toHaveBeenCalledWith(SESSION, { computer: '/workspace' }, signal)
+  })
+
   it('returns a failure as the endpoint reported it', async () => {
     const error = new RemoteError('workspace-file/not-directory', 'file', { path: 'x', kind: 'file' })
     const list = vi.fn<WorkspaceFilesListRemote['workspaceFiles']['list']>()

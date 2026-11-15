@@ -436,12 +436,13 @@ Resolve a managed Session without opening its Agent or consulting the Host files
 forSession(sessionId: SessionId, signal: AbortSignal): Promise<WorkspaceFileAccess | undefined>
 
 /**
- * Select the owner Bot's private Computer files.
+ * Resolve the authorized Computer filesystem for the requested path.
  * @param sessionId - exact Session identity.
  * @param signal - caller cancellation.
- * @returns the Computer workspace, or undefined when it is unavailable for this Session.
+ * @param path - requested Computer path or the base file for a relative read.
+ * @returns the selected workspace, or undefined when it is unavailable for this Session.
  */
-forComputer?(sessionId: SessionId, signal: AbortSignal): Promise<WorkspaceFileAccess | undefined>
+forComputer?(sessionId: SessionId, signal: AbortSignal, path?: string): Promise<WorkspaceFileAccess | undefined>
 ```
 
 Types: [SessionId](core.md)

@@ -103,6 +103,14 @@ Bots outside the list continue using their existing working directories and shar
 
 For a selected Bot that still needs its host working directory or existing routine tools, add its roster ID to `botComputers.desktopOnlyBots`. Its **Computer** panel and `vps_computer` tool use the private desktop, including with an image-capable native Codex model. Its shell and file tools keep their existing permissions and working directory.
 
+### Share project files between Bots
+
+Use **Files → Shared workspace** from a participating Bot. Upload or open files there, then switch to another participating Bot to work on those same files. In the VPS Terminal the folder is at `/workspace`. Ask a Bot to save its work there by name, such as `/workspace/research/notes.md`.
+
+Add `sharedWorkspace: {}` under the existing `botComputers` entry in the private Web profile to enroll all private Computer Bots. Use `sharedWorkspace: { bots: [bot-first, bot-second] }` to select individual Bots by their roster IDs. The share starts empty. Each participant can read and write its contents. Use the private workspace or the Vault for material you want to limit to one Bot or service.
+
+The share attaches when a private Computer is created. To enroll or remove an existing Computer, wait until Cloud and that Computer are idle. Preserve its named volumes and replace its container using the same procedure as [enabling Firefox](#enable-firefox-for-selected-bots). Restart Cloud with the new settings. Opening the Computer reconnects its private workspace and any Firefox profile. The shared project volume persists across restarts and can be mounted again by enrolling a private Computer.
+
 ### Enable Firefox for selected Bots
 
 Run the browser setup from the Y Harness checkout that supplies the Web release. It builds Firefox and prepares outbound networking for the selected desktops.

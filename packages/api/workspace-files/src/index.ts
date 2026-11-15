@@ -91,12 +91,13 @@ export interface WorkspaceFileAccessProvider {
    */
   forSession(sessionId: SessionId, signal: AbortSignal): Promise<WorkspaceFileAccess | undefined>
   /**
-   * Select the owner Bot's private Computer files.
+   * Resolve the authorized Computer filesystem for the requested path.
    * @param sessionId - exact Session identity.
    * @param signal - caller cancellation.
-   * @returns the Computer workspace, or undefined when it is unavailable for this Session.
+   * @param path - requested Computer path or the base file for a relative read.
+   * @returns the selected workspace, or undefined when it is unavailable for this Session.
    */
-  forComputer?(sessionId: SessionId, signal: AbortSignal): Promise<WorkspaceFileAccess | undefined>
+  forComputer?(sessionId: SessionId, signal: AbortSignal, path?: string): Promise<WorkspaceFileAccess | undefined>
 }
 
 declare module '@yharness/typert-protocol' {
@@ -219,6 +220,14 @@ function directoryEntry(child: FsDirEntry): WorkspaceDirectoryEntry {
   }
 }
 
+async function requireSameComputerVersion(
+  fs: FileSystem, target: FsTarget, version: FsInfo['version'], path: string, signal: AbortSignal,
+): Promise<void> {
+  const current = await fs.stat(target, signal)
+  signal.throwIfAborted()
+  if (current?.version !== version) throw new RemoteError('workspace-file/changed', 'The file changed during the read.', { path })
+}
+
 /** Host Remote file reads and workspace directory observations over the composed filesystem. */
 export class WorkspaceFiles extends TypertRemoteService {
   static inject = ['fs', 'sandboxPolicy', 'sessions', 'typert']
@@ -280,6 +289,7 @@ export class WorkspaceFiles extends TypertRemoteService {
     const { access, name, confined } = await this.location(workspaceFileScope, path, signal)
     const { target, info } = await this.locateFile(access, name, signal, confined)
     const page = await this.cutPage(access.fs, target, offset, limit, signal, name)
+    if (confined) await requireSameComputerVersion(access.fs, target, info.version, name, signal)
     if (page.text.includes(NUL)) {
       throw new RemoteError('workspace-file/not-text', `"${name}" contains NUL bytes`, { path: name })
     }
@@ -303,17 +313,16 @@ export class WorkspaceFiles extends TypertRemoteService {
   ): Promise<WorkspaceFileBytes> {
     const name = typeof path === 'string' ? path : path.computer
     const window = options.range === undefined ? undefined : this.resolveWindow(options.range, name)
-    const { access, confined } = await this.location(workspaceFileScope, path, signal)
+    const { access, confined } = await this.location(workspaceFileScope, path, signal, options.baseFile)
     const resolved = options.baseFile === undefined ? name : await this.relativePath(access, options.baseFile, name, signal, confined)
     const { target, info } = await this.locateFile(access, resolved, signal, confined)
-    if (window !== undefined) {
-      const { offset, length } = window
-      const data = await access.fs.readByteRange(target, window, signal)
-      const eof = info.size === undefined ? data.length < length : offset + data.length >= info.size
-      return { ...this.statOf(access.fs, target, info), offset, data, eof }
-    }
-    const data = await this.readComplete(access.fs, target, name, signal)
-    return { ...this.statOf(access.fs, target, info), offset: 0, data, eof: true }
+    const data = window === undefined
+      ? await this.readComplete(access.fs, target, name, signal)
+      : await access.fs.readByteRange(target, window, signal)
+    if (confined) await requireSameComputerVersion(access.fs, target, info.version, name, signal)
+    const offset = window?.offset ?? 0
+    const eof = window === undefined || (info.size === undefined ? data.length < window.length : offset + data.length >= info.size)
+    return { ...this.statOf(access.fs, target, info), offset, data, eof }
   }
 
   /**
@@ -350,7 +359,9 @@ export class WorkspaceFiles extends TypertRemoteService {
       throw error
     })
     if (info.version !== expected.version || access.fs.processPath(target) !== expected.absolutePath) throw changed()
-    return access.fs.readBytes(target, signal, maxBytes)
+    const data = await access.fs.readBytes(target, signal, maxBytes)
+    if (confined) await requireSameComputerVersion(access.fs, target, info.version, name, signal)
+    return data
   }
 
   /**
@@ -376,7 +387,7 @@ export class WorkspaceFiles extends TypertRemoteService {
   async openComputerFile(
     sessionId: SessionId, path: string, signal: AbortSignal, expectedVersion?: string,
   ): Promise<ComputerFileTransfer> {
-    const access = await this.computerAccess(sessionId, signal)
+    const access = await this.computerAccess(sessionId, path, signal)
     const { target, info } = await this.locateFile(access, path, signal, true)
     const { fs } = access
     const { size, version } = info
@@ -400,9 +411,8 @@ export class WorkspaceFiles extends TypertRemoteService {
             return
           }
           const data = await fs.readByteRange(target, { offset, length }, lifetime)
-          const current = await fs.stat(target, lifetime)
-          lifetime.throwIfAborted()
-          if (current?.version !== version || (size !== undefined && data.length !== length)) {
+          await requireSameComputerVersion(fs, target, version, path, lifetime)
+          if (size !== undefined && data.length !== length) {
             throw new Error('The file changed during download.')
           }
           offset += data.length
@@ -524,15 +534,15 @@ export class WorkspaceFiles extends TypertRemoteService {
   }
 
   private async location(
-    scope: WorkspaceFileScope, path: WorkspaceFilePath, signal: AbortSignal,
+    scope: WorkspaceFileScope, path: WorkspaceFilePath, signal: AbortSignal, baseFile?: string,
   ): Promise<{ access: WorkspaceFileAccess; name: string; confined: boolean }> {
     if (typeof path === 'string') return { access: await this.access(scope, signal), name: path, confined: false }
-    return { access: await this.computerAccess(scope.sessionId, signal), name: path.computer, confined: true }
+    return { access: await this.computerAccess(scope.sessionId, baseFile ?? path.computer, signal), name: path.computer, confined: true }
   }
 
-  private async computerAccess(sessionId: SessionId, signal: AbortSignal): Promise<WorkspaceFileAccess> {
+  private async computerAccess(sessionId: SessionId, path: string, signal: AbortSignal): Promise<WorkspaceFileAccess> {
     signal.throwIfAborted()
-    const access = await this.ctx.get('workspaceFileAccess')?.forComputer?.(sessionId, signal)
+    const access = await this.ctx.get('workspaceFileAccess')?.forComputer?.(sessionId, signal, path)
     signal.throwIfAborted()
     if (access === undefined) throw new RemoteError('workspace-file/computer-unavailable', 'Computer files are unavailable', {})
     return access

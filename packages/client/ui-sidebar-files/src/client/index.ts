@@ -81,15 +81,16 @@ export function apply(ctx: ClientContext): void {
   ctx.effect(() => ctx.locale.register(NS, { en }), 'ui-sidebar-files: dictionaries')
 
   const readOnce: WatchWorkspaceDirectory = () => ['ready']
-  for (const computer of [false, true]) {
+  for (const computer of [false, true, 'shared'] as const) {
+    const isComputer = computer !== false
     const definition = filesDefinition(t, computer)
     const store = createFilesStore()
-    const inject = filesFace(createList(ctx.remote, computer), computer ? readOnce : createWatch(ctx.remote))
+    const inject = filesFace(createList(ctx.remote, isComputer), isComputer ? readOnce : createWatch(ctx.remote))
     ctx.effect(() => ctx.sidebarRightTabs.register(definition), 'ui-sidebar-files: files type')
     ctx.effect(() => ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register(
       {
         name: 'sidebar.right.pane.tab', key: definition.id, locale: NS, store, inject,
-        children: computer ? {} : { 'sidebar.right.tab.files.actions': { kind: 'list', scope: 'session' } },
+        children: isComputer ? {} : { 'sidebar.right.tab.files.actions': { kind: 'list', scope: 'session' } },
       },
       FilesBody,
     )), 'ui-sidebar-files: files tab body')

@@ -24,6 +24,8 @@ const PODMAN_TIMEOUT_MS = 120_000
 const PODMAN_OUTPUT_LIMIT = 64 * 1024
 const DESKTOP_READY_TIMEOUT_MS = 30_000
 const DESKTOP_HEALTH_CACHE_MS = 500
+const SHARED_PROJECT = '/workspace'
+const SHARED_PROJECT_PURPOSE = 'shared-project'
 const BROWSER_PROFILE = '/var/lib/yharness-browser-profile'
 const BROWSER_NETWORK = 'slirp4netns:allow_host_loopback=false'
 const BROWSER_READY = '/tmp/yharness-browser-ready'
@@ -56,9 +58,20 @@ export interface VpsBrowserOptions {
   readonly seccompProfile: string
 }
 
+/**
+ * Identify the absolute project path namespace, including paths the filesystem must reject for traversal.
+ * @param path - requested Computer or process path.
+ * @param privateRoot - exact private workspace. Its absolute paths keep their private meaning.
+ * @returns Whether the path must be confined to the shared project instead of the private volume.
+ */
+export function isVpsSharedPath(path: string, privateRoot?: string): boolean {
+  return (path === SHARED_PROJECT || path.startsWith(SHARED_PROJECT + '/'))
+    && (privateRoot === undefined || (path !== privateRoot && !path.startsWith(privateRoot + '/')))
+}
+
 /** Runtime options for one `podman exec` operation. */
 export interface VpsExecOptions {
-  /** Absolute directory below this session's workspace. */
+  /** Absolute directory in the private workspace or an enabled shared project. */
   readonly workdir?: string
   /** Keep stdin open without allocating a pseudo-terminal. */
   readonly stdin?: boolean
@@ -91,6 +104,9 @@ export class VpsRuntime {
   private readonly workspaceImage: string
   private readonly internals: VpsRuntimeInternals
   private readonly browserPolicy?: string
+  private readonly projectVolume?: string
+  /** Absolute mount point inside participating Bot containers. */
+  readonly sharedRoot?: string
   private readonly pending = new Map<string, Promise<void>>()
   private readonly healthyUntil = new Map<string, number>()
 
@@ -99,13 +115,21 @@ export class VpsRuntime {
    * @param image - Standard desktop image and existing workspace label.
    * @param internals - Optional command seam used by tests.
    * @param browser - Provisioned resources for browser desktops.
+   * @param sharedWorkspace - Mount this installation's shared project volume.
    */
-  constructor(root: string, image: string, internals: VpsRuntimeInternals = {}, browser?: VpsBrowserOptions) {
+  constructor(
+    root: string, image: string, internals: VpsRuntimeInternals = {}, browser?: VpsBrowserOptions, sharedWorkspace = false,
+  ) {
     this.rootPath = privatePath(root, 'VPS Bot root')
     this.workspaceImage = imageReference(image)
     this.imageName = browser === undefined ? this.workspaceImage : imageReference(browser.image)
     if (browser !== undefined) this.browserPolicy = privatePath(browser.seccompProfile, 'VPS Bot browser policy')
     this.internals = internals
+    if (sharedWorkspace) {
+      if (isVpsSharedPath(this.rootPath)) throw new VpsRuntimeError('Private and shared Bot workspaces must be distinct')
+      this.sharedRoot = SHARED_PROJECT
+      this.projectVolume = 'yharness-bot-project-' + rootDigest(this.rootPath)
+    }
   }
 
   /**
@@ -149,7 +173,7 @@ export class VpsRuntime {
    *
    * The command is not run by this method. Callers must await `ensure()` and
    * then pass this argv to their process provider. `workdir` may not escape
-   * the session workspace, and command arguments are never parsed as a shell.
+   * its private or enabled shared workspace. A shell never parses the invocation arguments.
    * @param sessionId - Roster UUID for the Bot session.
    * @param argv - Non-empty executable and positional arguments.
    * @param options - Optional scoped working directory and terminal mode.
@@ -161,7 +185,10 @@ export class VpsRuntime {
       throw new VpsRuntimeError('VPS Bot command must contain a non-empty argv without NUL bytes')
     }
     const workspace = this.workspace(sessionId)
-    const workdir = options.workdir === undefined ? workspace : scopedWorkdir(workspace, options.workdir)
+    const directory = options.workdir
+    const root = directory !== undefined && this.sharedRoot !== undefined && isVpsSharedPath(directory)
+      ? this.sharedRoot : workspace
+    const workdir = directory === undefined ? workspace : scopedWorkdir(root, directory)
     if (options.stdin !== undefined && typeof options.stdin !== 'boolean') {
       throw new VpsRuntimeError('VPS Bot stdin mode must be a boolean')
     }
@@ -206,6 +233,7 @@ export class VpsRuntime {
     await ensurePrivateDirectory(workspace, this.internals.uid)
     const name = containerName(this.rootPath, sessionId)
     const volume = volumeName(this.rootPath, sessionId)
+    const projectVolume = this.projectVolume
     const browserPolicy = this.browserPolicy
     const browserVolume = browserPolicy === undefined ? undefined : `${volume}-browser`
     if (browserPolicy !== undefined) {
@@ -220,9 +248,12 @@ export class VpsRuntime {
     if (exists.code === 0) {
       const inspected = await this.runPodman(['inspect', '--format', '{{json .}}', name])
       if (inspected.code !== 0) throw new VpsRuntimeError('VPS Bot container inspection failed')
-      const metadata = inspectContainer(inspected.stdout, this.rootPath, this.imageName, sessionId, workspace, volume, browserPolicy)
+      const metadata = inspectContainer(
+        inspected.stdout, this.rootPath, this.imageName, sessionId, workspace, volume, browserPolicy, projectVolume,
+      )
       await this.ensureVolume(volume, sessionId, workspace)
       if (browserVolume !== undefined) await this.ensureVolume(browserVolume, sessionId, workspace, 'browser')
+      if (projectVolume !== undefined) await this.ensureSharedVolume(projectVolume)
       if (!metadata.running) {
         const started = await this.runPodman(['start', name])
         if (started.code !== 0) throw new VpsRuntimeError('VPS Bot container could not be restarted')
@@ -233,6 +264,7 @@ export class VpsRuntime {
     if (exists.code !== 1) throw new VpsRuntimeError('VPS Bot container lookup failed')
     await this.ensureVolume(volume, sessionId, workspace)
     if (browserVolume !== undefined) await this.ensureVolume(browserVolume, sessionId, workspace, 'browser')
+    if (projectVolume !== undefined) await this.ensureSharedVolume(projectVolume)
     const launched = await this.runPodman([
       'run',
       '--detach',
@@ -251,6 +283,7 @@ export class VpsRuntime {
       '--cap-drop=ALL',
       '--volume', `${volume}:${workspace}:rw,nodev,nosuid`,
       ...(browserVolume === undefined ? [] : ['--volume', `${browserVolume}:${BROWSER_PROFILE}:rw,nodev,nosuid,nocopy`]),
+      ...(projectVolume === undefined ? [] : ['--volume', projectVolume + ':' + SHARED_PROJECT + ':rw,nodev,nosuid,nocopy']),
       '--tmpfs', '/tmp:rw,noexec,nosuid,nodev',
       '--workdir', workspace,
       '--label', `io.yharness.vps.root=${this.rootPath}`,
@@ -285,6 +318,25 @@ export class VpsRuntime {
     if (inspected.code !== 0
       || !inspectVolume(inspected.stdout, this.rootPath, this.workspaceImage, sessionId, workspace, volume, purpose)) {
       throw new VpsRuntimeError('VPS Bot workspace volume ownership does not match this runtime')
+    }
+  }
+
+  private async ensureSharedVolume(name: string): Promise<void> {
+    const exists = await this.runPodman(['volume', 'exists', name])
+    if (exists.code === 1) {
+      const created = await this.runPodman([
+        'volume', 'create', '--ignore', '--driver', 'local',
+        '--label', 'io.yharness.vps.root=' + this.rootPath,
+        '--label', 'io.yharness.vps.purpose=' + SHARED_PROJECT_PURPOSE,
+        name,
+      ])
+      if (created.code !== 0) throw new VpsRuntimeError('Shared project volume could not be created')
+    } else if (exists.code !== 0) {
+      throw new VpsRuntimeError('Shared project volume lookup failed')
+    }
+    const inspection = await this.runPodman(['volume', 'inspect', '--format', '{{json .}}', name])
+    if (inspection.code !== 0 || !inspectSharedVolume(inspection.stdout, this.rootPath, name)) {
+      throw new VpsRuntimeError('Shared project volume must be a local volume owned by this runtime')
     }
   }
 
@@ -346,14 +398,16 @@ function scopedWorkdir(workspace: string, requested: string): string {
   return normalized
 }
 
+function rootDigest(root: string): string {
+  return createHash('sha256').update(root).digest('hex').slice(0, 16)
+}
+
 function containerName(root: string, sessionId: string): string {
-  const rootDigest = createHash('sha256').update(root).digest('hex').slice(0, 16)
-  return `yharness-bot-${rootDigest}-${sessionId.replaceAll('-', '')}`
+  return `yharness-bot-${rootDigest(root)}-${sessionId.replaceAll('-', '')}`
 }
 
 function volumeName(root: string, sessionId: string): string {
-  const rootDigest = createHash('sha256').update(root).digest('hex').slice(0, 16)
-  return `yharness-bot-volume-${rootDigest}-${sessionId.replaceAll('-', '')}`
+  return `yharness-bot-volume-${rootDigest(root)}-${sessionId.replaceAll('-', '')}`
 }
 
 interface ContainerMetadata {
@@ -386,6 +440,19 @@ function inspectVolume(
   return true
 }
 
+function inspectSharedVolume(serialized: string, root: string, name: string): boolean {
+  let value: unknown
+  try {
+    value = JSON.parse(serialized)
+  } catch {
+    return false
+  }
+  return isRecord(value) && value.Name === name && value.Driver === 'local'
+    && (value.Options === null || (isRecord(value.Options) && Object.keys(value.Options).length === 0))
+    && isRecord(value.Labels) && value.Labels['io.yharness.vps.root'] === root
+    && value.Labels['io.yharness.vps.purpose'] === SHARED_PROJECT_PURPOSE
+}
+
 function inspectContainer(
   serialized: string,
   root: string,
@@ -394,6 +461,7 @@ function inspectContainer(
   workspace: string,
   volume: string,
   browserPolicy: string | undefined,
+  projectVolume: string | undefined,
 ): ContainerMetadata {
   let value: unknown
   try {
@@ -434,8 +502,17 @@ function inspectContainer(
     || profile.RW !== true || !mountOptions(profile).includes('nodev') || !mountOptions(profile).includes('nosuid'))) {
     throw new VpsRuntimeError('VPS Bot browser profile mount is invalid')
   }
+  const projects = value.Mounts.filter(mount => mount.Destination === SHARED_PROJECT)
+  const project = projects[0]
+  if (projectVolume !== undefined && (projects.length !== 1 || project?.Type !== 'volume'
+    || project.Name !== projectVolume || project.RW !== true
+    || !mountOptions(project).includes('nodev') || !mountOptions(project).includes('nosuid'))) {
+    throw new VpsRuntimeError('The Bot container needs the shared project mount. Prepare its computer while idle before enabling it.')
+  }
   if (value.Mounts.some(mount => mount.Type === 'bind' || (mount.Type === 'volume'
-    && mount.Destination !== workspace && (browserPolicy === undefined || mount.Destination !== BROWSER_PROFILE)))) {
+    && mount.Destination !== workspace
+    && (browserPolicy === undefined || mount.Destination !== BROWSER_PROFILE)
+    && (projectVolume === undefined || mount.Destination !== SHARED_PROJECT)))) {
     throw new VpsRuntimeError('VPS Bot container has an unexpected host mount')
   }
   const volumeMode = workspaceMounts[0] === undefined ? [] : mountOptions(workspaceMounts[0])

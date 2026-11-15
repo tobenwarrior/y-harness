@@ -47,6 +47,8 @@ export interface ComputerStatusMetadata {
   readonly terminal?: true
   /** Whether the owner's file browser uses this Bot's private workspace. */
   readonly files?: true
+  /** Whether the owner can browse this Bot's shared project files. */
+  readonly sharedFiles?: true
 }
 
 /** Server-selected Computer target for a Bot Session route. */
@@ -61,6 +63,8 @@ export interface BotComputerRouteTarget {
   readonly terminal?: true
   /** Whether the owner's file browser uses this Bot's private workspace. */
   readonly files?: true
+  /** Whether the owner can browse this Bot's shared project files. */
+  readonly sharedFiles?: true
   /** Network navigation for an isolated browser, admitted by this Computer's viewer lease. */
   readonly navigate?: (url: string, signal: AbortSignal) => Promise<void>
 }
@@ -68,6 +72,7 @@ export interface BotComputerRouteTarget {
 import type { BotId } from '@yharness/bots'
 import { brandString } from '@yharness/brand'
 import { SessionId } from '@yharness/session/types'
+import { isVpsSharedPath } from './vps-runtime.ts'
 import type { ComputerFileUpload, ComputerFileUploadOutcome } from './vps-bot-upload.ts'
 import type { ComputerFileCopyResult, VpsBotFileHandoffs } from './vps-bot-file-handoffs.ts'
 
@@ -111,6 +116,12 @@ function fileSegment(value: string): boolean {
     && Buffer.byteLength(value) <= 255 && !/[/\u0000-\u001f\u007f]/u.test(value)
 }
 
+function uploadDirectory(value: string): boolean {
+  if (value === '.') return true
+  if (isVpsSharedPath(value)) return value === '/workspace' || value.split('/').slice(2).every(fileSegment)
+  return value.split('/').every(fileSegment)
+}
+
 const uploadStatus: Readonly<Record<ComputerFileUploadOutcome, number>> = {
   stored: 201, exists: 409, 'folder-unavailable': 404, 'no-space': 507, incomplete: 400, unavailable: 503,
 }
@@ -141,7 +152,7 @@ export function computerFileUploadRoute(
       const contentLength = request.headers.get('content-length')
       if (sessionId === null || !SESSION_ID.test(sessionId) || name === null || !fileSegment(name)
         || directory === null || Buffer.byteLength(directory) > 4096
-        || (directory !== '.' && !directory.split('/').every(fileSegment))
+        || !uploadDirectory(directory)
         || length === null || !/^(0|[1-9][0-9]{0,15})$/u.test(length)
         || (contentLength !== null && contentLength !== length)) {
         return json({ error: 'invalid-request' }, 400)
@@ -475,6 +486,7 @@ export function botComputerRoutesWithLegacy(
         ...(navigate === undefined ? {} : { browser: true }),
         ...(target.terminal === true ? { terminal: true } : {}),
         ...(target.files === true ? { files: true } : {}),
+        ...(target.files === true && target.sharedFiles === true ? { sharedFiles: true } : {}),
       },
       ...(navigate === undefined ? {} : {
         navigate: (viewer, url, signal) => target.computer.navigateAsViewer(viewer, url, signal, navigate),

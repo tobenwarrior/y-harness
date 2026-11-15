@@ -37,7 +37,7 @@ Document implementations register metadata with `ctx.documentPreviews.register({
 <a id="addresses"></a>
 ## Addresses
 
-A tab uses a Session or Computer file address carrying the file path and its authorization Session. Metadata is shared by the complete address. Computer previews keep related-file reads in the same workspace. Owners can download the file or copy its selected version into another eligible Bot’s VPS workspace. See [Workspace Files](../../api/workspace-files/README.md).
+A tab uses a Session or Computer file address carrying the file path and its authorization Session. Metadata is shared by the complete address. Computer previews keep related-file reads in the same workspace. Owners can download Computer files. A private Computer file can also be copied at its selected version into another eligible Bot’s VPS workspace. See [Workspace Files](../../api/workspace-files/README.md).
 
 After all text pages load, Markdown images use the authenticated `/api/file` route for absolute file paths and paths relative to the source document's directory. Relative images wait for the Host's absolute document path. URL escapes are decoded once; query and fragment suffixes are excluded from the filename. HTTP(S) images retain their authored URLs, and failed image loads show alt text. Local images require an HTTP(S) application base URL; image files are not added to automatic-refresh dependencies.
 

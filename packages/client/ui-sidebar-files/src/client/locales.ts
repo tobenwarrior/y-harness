@@ -27,7 +27,9 @@ export type SidebarFilesKey = keyof typeof en
 export const en = {
   'shortcut.noSession': 'Select a session first',
   'type.label': 'Files',
+  'sharedType.label': 'Shared files',
   computerWorkspace: 'VPS workspace',
+  computerSharedWorkspace: 'Shared VPS workspace',
   'guide.title': 'Workspace files',
   'guide.description': 'Browse files in this session\'s workspace',
   loading: 'Reading…',

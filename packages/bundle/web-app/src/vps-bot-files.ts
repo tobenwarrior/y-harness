@@ -10,7 +10,8 @@ import type { FsEditRequest, FsInfo, FsPathInfo, FsTarget, FsVersion as Version,
 import { applyHunks, type PatchHunk } from '@yharness/fs-patch'
 import type { SandboxExecutionPolicy } from '@yharness/sandbox'
 import { z } from 'zod'
-import type { VpsRuntime } from './vps-runtime.ts'
+import { VpsRuntimeError, type VpsRuntime } from './vps-runtime.ts'
+import { vpsProjectWorker } from './vps-project-worker.ts'
 
 const exec = promisify(execFile)
 const MAX_TEXT_BYTES = 8 * 1024 * 1024
@@ -64,9 +65,14 @@ function writeOutcome(result: z.output<typeof outcome>, after: string) {
 export class VpsBotFileSystem extends FileSystem {
   private readonly root: string
 
-  constructor(ctx: Context, private readonly runtime: VpsRuntime, private readonly sessionId: string) {
+  constructor(
+    ctx: Context, private readonly runtime: VpsRuntime, private readonly sessionId: string,
+    private readonly workspace: 'private' | 'shared' = 'private',
+  ) {
     super(ctx)
-    this.root = runtime.workspace(sessionId)
+    const root = workspace === 'shared' ? runtime.sharedRoot : runtime.workspace(sessionId)
+    if (root === undefined) throw new VpsRuntimeError('Shared project files are unavailable on this Computer')
+    this.root = root
   }
 
   /** @inheritdoc */
@@ -250,7 +256,8 @@ export class VpsBotFileSystem extends FileSystem {
     signal?.throwIfAborted()
     await this.runtime.ensure(this.sessionId)
     signal?.throwIfAborted()
-    const command = ['/usr/bin/python3', '-I', '/usr/local/lib/yharness/files.py', this.root]
+    const worker = this.workspace === 'shared' ? ['-c', vpsProjectWorker] : ['/usr/local/lib/yharness/files.py']
+    const command = ['/usr/bin/python3', '-I', ...worker, this.root]
     const [program, ...argv] = this.runtime.execArgv(this.sessionId, command, { stdin: true })
     try {
       const child = exec(program, argv, { signal, timeout: 30_000, maxBuffer: MAX_TEXT_BYTES * 2 })

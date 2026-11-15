@@ -324,7 +324,7 @@ export interface Config {
 ## `@yharness/api-workspace-files`
 
 - `inject`: `fs` · `sandboxPolicy` · `sessions` · `typert`
-- `source`: [`packages/api/workspace-files/src/index.ts:110`](../packages/api/workspace-files/src/index.ts)
+- `source`: [`packages/api/workspace-files/src/index.ts:111`](../packages/api/workspace-files/src/index.ts)
 
 ```ts config-catalog
 /** Deployment caps on one page or one listing. */
@@ -4445,7 +4445,12 @@ export interface Config {
     bots?: string[] | null
     /** Exact selected Bot ids that receive only a private Computer, not a VPS workspace. */
     desktopOnlyBots?: string[]
-    /** Direct file transfer limits for private Bot workspaces. */
+    /** Owner project volume shared by the selected private Computer Bots. */
+    sharedWorkspace?: {
+      /** Exact participants. Omit or use null for every private Computer Bot. */
+      bots?: string[] | null
+    } | null
+    /** Direct file transfer limits for Bot workspaces. */
     uploads?: {
       /** Largest allowed file in bytes. */
       maxBytes?: number

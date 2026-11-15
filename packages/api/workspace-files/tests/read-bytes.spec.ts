@@ -63,6 +63,21 @@ describe('workspaceFiles.readBytes — the window', () => {
     expect(outside.code).toBe('workspace-file/outside-workspace')
   })
 
+  it('rejects a Computer text page when a writer changes the file during the read', async () => {
+    const path = join(harness.outside, 'notes.txt')
+    await writeFile(path, 'Original')
+    harness.ctx.provide('workspaceFileAccess', {
+      forSession: () => Promise.resolve(undefined),
+      forComputer: () => Promise.resolve({ fs: harness.ctx.fs, workspaceRoot: harness.outside }),
+    })
+    vi.spyOn(harness.ctx.fs, 'streamText').mockImplementation(async () => (async function* () {
+      await writeFile(path, 'Different content and length')
+      yield 'Original'
+    })())
+    await expect(endpoint().read(harness.scope, { computer: 'notes.txt' }, {}, signal()))
+      .rejects.toMatchObject({ code: 'workspace-file/changed' })
+  })
+
   it('never reads a regular Session file when its Computer is unavailable', async () => {
     await writeFile(join(workspace, 'notes.txt'), 'Session notes')
     const failure = await failureOf(endpoint().readBytes(harness.scope, { computer: 'notes.txt' }, {}, signal()))

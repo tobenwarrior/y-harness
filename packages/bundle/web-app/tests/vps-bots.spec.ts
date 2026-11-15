@@ -44,6 +44,13 @@ describe('managed VPS Bot composition', () => {
     }, []) }).toThrow('VPS isolated browser access must select private Computer Bots.')
   })
 
+  it('requires project participants to have private Computers', () => {
+    expect(() => { mountVpsBots(new Context(), {
+      root: '/yharness-test-bots', image: 'localhost/yharness-test', bots: ['bot-private'],
+      sharedWorkspace: { bots: ['bot-shared-desktop'] },
+    }, []) }).toThrow('Shared project access must select private Computer Bots.')
+  })
+
   it('rejects overlapping Podman and isolated browser selections', () => {
     expect(() => { mountVpsBots(new Context(), {
       root: '/yharness-test-bots', image: 'localhost/yharness-test', bots: ['bot-browser'],
@@ -137,6 +144,7 @@ describe('managed VPS Bot composition', () => {
         mountVpsBots(scope, {
           root: '/yharness-test-bots', image: 'localhost/yharness-test', bots: ['bot-test', 'bot-desktop'],
           desktopOnlyBots: ['bot-desktop'],
+          sharedWorkspace: { bots: ['bot-desktop'] },
           isolatedBrowser: { socketPath: '/run/yharness-browser.sock', bots: ['bot-test', 'bot-desktop'], savedLogins: true },
         }, [], undefined, {
           socketPath: '/run/yharness-test.sock', bots: ['bot-test', 'bot-desktop'],
@@ -152,6 +160,12 @@ describe('managed VPS Bot composition', () => {
       expect(desktopFiles?.fs).toBeInstanceOf(VpsBotFileSystem)
       await expect(ctx.workspaceFileAccess.forComputer?.(LEGACY_SESSION, new AbortController().signal)).resolves.toBeUndefined()
       await expect(ctx.workspaceFileAccess.forComputer?.(BOT_SESSION, new AbortController().signal)).resolves.toEqual(files)
+      const signal = new AbortController().signal
+      const sharedFiles = await ctx.workspaceFileAccess.forComputer?.(DESKTOP_SESSION, signal, '/workspace/notes.txt')
+      expect(sharedFiles?.workspaceRoot).toBe('/workspace')
+      expect(sharedFiles?.fs).not.toBe(desktopFiles?.fs)
+      await expect(ctx.workspaceFileAccess.forComputer?.(BOT_SESSION, signal, '/workspace')).resolves.toBeUndefined()
+      await expect(ctx.workspaceFileAccess.forComputer?.(LEGACY_SESSION, signal, '/workspace')).resolves.toBeUndefined()
       const injections: IndexInjection[] = []
       ctx.emit('webserver/index-inject', injections)
       expect(injections).toContainEqual({ kind: 'global', name: '__YH_BOT_WEBSITE_LOGIN__', value: true })

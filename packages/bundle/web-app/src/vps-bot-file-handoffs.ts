@@ -7,7 +7,7 @@ import type { SessionId } from '@yharness/session/types'
 import type { ContentBlock } from '@yharness/llm'
 import { defineTool, type ToolExecution } from '@yharness/tools'
 import { uploadComputerFile, type VpsFileUploadLimits } from './vps-bot-upload.ts'
-import type { VpsRuntime } from './vps-runtime.ts'
+import { isVpsSharedPath, type VpsRuntime } from './vps-runtime.ts'
 
 /** One recipient the owner can select for a file copy. */
 export interface ComputerFileRecipient {
@@ -89,7 +89,9 @@ export class VpsBotFileHandoffs {
    */
   async copy(request: ComputerFileCopyRequest, signal: AbortSignal): Promise<ComputerFileCopyResult> {
     const source = await this.ownerWorkspace(request.sessionId, signal)
-    if (source === undefined) return { status: 'source-unavailable' }
+    if (source === undefined || isVpsSharedPath(request.path, this.runtimeFor(source.id).workspace(request.sessionId))) {
+      return { status: 'source-unavailable' }
+    }
     const target = (await this.targets(source.id, signal)).find(bot => bot.id === request.targetBotId)
     if (target === undefined || (await this.ownerWorkspace(target.sessionId, signal))?.id !== target.id) {
       return { status: 'target-unavailable' }
@@ -132,6 +134,7 @@ export class VpsBotFileHandoffs {
     const owner = await this.ownerWorkspace(sessionId, signal)
     if (owner === undefined) throw new Error('The Bot’s private VPS workspace is unavailable.')
     const workspaceRoot = this.runtimeFor(owner.id).workspace(sessionId)
+    if (isVpsSharedPath(path, workspaceRoot)) throw new Error('Use vps_project_files to read a shared project file.')
     const page = await this.ctx.workspaceFiles.read({ sessionId, workspaceRoot }, { computer: path }, { offset, limit: 200 }, signal)
     return page.text + (page.eof ? '' : '\nContinue at line ' + (offset + page.lines) + '.')
   }

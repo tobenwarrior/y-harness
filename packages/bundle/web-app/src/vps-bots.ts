@@ -18,7 +18,8 @@ import {
 import { registerVpsBotFileTools, VpsBotFileHandoffs } from './vps-bot-file-handoffs.ts'
 import { resolveVpsFileUploadLimits, uploadComputerFile, type VpsFileUploadConfig } from './vps-bot-upload.ts'
 import { SessionId } from '@yharness/session/types'
-import { VpsRuntime, type VpsBrowserOptions } from './vps-runtime.ts'
+import { isVpsSharedPath, VpsRuntime, type VpsBrowserOptions } from './vps-runtime.ts'
+import { registerVpsProjectTool } from './vps-project-tool.ts'
 import { VpsIsolatedBrowser, type VpsIsolatedBrowserConfig } from './vps-isolated-browser.ts'
 import { VpsBrowserLogin, vpsBrowserLoginRoute } from './vps-browser-login.ts'
 import { registerVpsServiceTools, VpsServices, type VpsServiceAccess } from './vps-services.ts'
@@ -26,7 +27,7 @@ import { registerVpsJournalTool, VpsJournal, type VpsJournalConfig } from './vps
 
 const BOT_TOOLS = new Set([
   'bash', 'read', 'write', 'edit', 'apply_patch', 'glob', 'grep', 'present', 'job_output', 'job_list', 'job_kill',
-  'vps_computer', 'copy_vps_file', 'read_vps_file', 'vps_service_status', 'vps_service_restart', 'vps_service_journal', 'skill', 'search_skills',
+  'vps_computer', 'copy_vps_file', 'read_vps_file', 'vps_project_files', 'vps_service_status', 'vps_service_restart', 'vps_service_journal', 'skill', 'search_skills',
   'request_vps_secret',
   'schedule_create', 'schedule_list', 'schedule_delete', 'schedule_update', 'schedule_pause', 'schedule_resume', 'schedule_history',
   'schedule_event_create', 'schedule_event_list', 'schedule_event_delete', 'schedule_event_update',
@@ -52,6 +53,7 @@ export function mountVpsBots(
     readonly image: string
     readonly bots?: readonly string[] | null
     readonly desktopOnlyBots?: readonly string[]
+    readonly sharedWorkspace?: { readonly bots?: readonly string[] | null } | null
     readonly uploads?: VpsFileUploadConfig
     readonly browser?: (VpsBrowserOptions & { readonly bots: readonly string[] }) | null
     readonly isolatedBrowser?: VpsIsolatedBrowserConfig | null
@@ -65,6 +67,7 @@ export function mountVpsBots(
   const services = new VpsServices(grants)
   const computers = new Map<string, VpsComputer>()
   const previewFiles = new Map<string, VpsBotFileSystem>()
+  const projectFiles = new Map<string, VpsBotFileSystem>()
   const managedBotIds = config.bots == null ? undefined : new Set(config.bots)
   const desktopOnlyBotIds = new Set(config.desktopOnlyBots ?? [])
   const isManagedBot = (botId: string): boolean => !desktopOnlyBotIds.has(botId)
@@ -73,6 +76,12 @@ export function mountVpsBots(
     throw new Error('Desktop-only VPS Bots must be selected by botComputers.bots.')
   }
   const isDesktopBot = (botId: string): boolean => isManagedBot(botId) || desktopOnlyBotIds.has(botId)
+  const sharedBotIds = config.sharedWorkspace?.bots == null ? undefined : new Set(config.sharedWorkspace.bots)
+  if (sharedBotIds !== undefined && [...sharedBotIds].some(botId => !isDesktopBot(botId))) {
+    throw new Error('Shared project access must select private Computer Bots.')
+  }
+  const sharesProject = (botId: string): boolean => config.sharedWorkspace != null && isDesktopBot(botId)
+    && (sharedBotIds === undefined || sharedBotIds.has(botId))
   const browserBotIds = new Set(config.browser?.bots)
   const isolatedBrowserBotIds = new Set(config.isolatedBrowser?.bots)
   const hasBrowserSignIn = (botId: string): boolean => isolatedBrowserBotIds.has(botId)
@@ -89,6 +98,10 @@ export function mountVpsBots(
   const browserRuntime = config.browser == null
     ? undefined
     : new VpsRuntime(config.root, config.image, undefined, config.browser)
+  const projectRuntime = config.sharedWorkspace == null
+    ? undefined : new VpsRuntime(config.root, config.image, undefined, undefined, true)
+  const browserProjectRuntime = config.sharedWorkspace == null || config.browser == null
+    ? undefined : new VpsRuntime(config.root, config.image, undefined, config.browser, true)
   const isolatedBrowser = config.isolatedBrowser == null
     ? undefined
     : new VpsIsolatedBrowser(config.isolatedBrowser)
@@ -105,8 +118,13 @@ export function mountVpsBots(
       table.push({ kind: 'global', name: '__YH_BOT_WEBSITE_LOGIN__', value: true })
     })
   }
-  const runtimeFor = (botId: string): VpsRuntime =>
-    browserRuntime !== undefined && browserBotIds.has(botId) ? browserRuntime : defaultRuntime
+  const runtimeFor = (botId: string): VpsRuntime => {
+    const browser = browserBotIds.has(botId)
+    const shared = sharesProject(botId)
+    const runtime = browser ? (shared ? browserProjectRuntime : browserRuntime) : (shared ? projectRuntime : defaultRuntime)
+    if (runtime === undefined) throw new Error('The configured Bot Computer runtime is unavailable.')
+    return runtime
+  }
   if (journalConfig?.bots.some(botId => !isDesktopBot(botId))) {
     throw new Error('VPS journal grants must select Computer Bots.')
   }
@@ -126,6 +144,7 @@ export function mountVpsBots(
     const active = [...computers.values()]
     computers.clear()
     previewFiles.clear()
+    projectFiles.clear()
     await browserLogin?.dispose()
     await Promise.all(active.map(computer => computer.dispose()))
   }, 'vps-bots: dispose desktop controllers')
@@ -161,25 +180,31 @@ export function mountVpsBots(
     return (url, signal) => isolatedBrowser.navigate(botId, sessionId, url, signal)
   }
 
+  const filesFor = (
+    scope: Context, allowed: (botId: string) => boolean,
+  ): NonNullable<WorkspaceFileAccessProvider['forComputer']> => async (sessionId, signal, path) => {
+    signal.throwIfAborted()
+    const bot = await scope.bots.ownerBotForSession(sessionId)
+    signal.throwIfAborted()
+    if (bot === undefined || !allowed(bot.id)) return undefined
+    if (bot.state !== 'active') throw new Error('The Bot workspace is not ready.')
+    const runtime = runtimeFor(bot.id)
+    const privateRoot = runtime.workspace(sessionId)
+    const shared = path !== undefined && isVpsSharedPath(path, privateRoot)
+    const workspaceRoot = shared ? runtime.sharedRoot : privateRoot
+    if (workspaceRoot === undefined) return undefined
+    const files = shared ? projectFiles : previewFiles
+    let fs = files.get(sessionId)
+    if (fs === undefined) {
+      fs = new VpsBotFileSystem(scope.isolate('fs'), runtime, sessionId, shared ? 'shared' : 'private')
+      files.set(sessionId, fs)
+    }
+    return { fs, workspaceRoot }
+  }
   ctx.inject(['bots'], (scope) => {
-    const filesFor = (allowed: (botId: string) => boolean): WorkspaceFileAccessProvider['forSession'] =>
-      async (sessionId, signal) => {
-        signal.throwIfAborted()
-        const bot = await scope.bots.ownerBotForSession(sessionId)
-        signal.throwIfAborted()
-        if (bot === undefined || !allowed(bot.id)) return undefined
-        if (bot.state !== 'active') throw new Error('The Bot workspace is not ready.')
-        const runtime = runtimeFor(bot.id)
-        let fs = previewFiles.get(sessionId)
-        if (fs === undefined) {
-          fs = new VpsBotFileSystem(scope.isolate('fs'), runtime, sessionId)
-          previewFiles.set(sessionId, fs)
-        }
-        return { fs, workspaceRoot: runtime.workspace(sessionId) }
-      }
     scope.provide('workspaceFileAccess', {
-      forSession: filesFor(isManagedBot),
-      forComputer: filesFor(isDesktopBot),
+      forSession: filesFor(scope, isManagedBot),
+      forComputer: filesFor(scope, isDesktopBot),
     })
   })
 
@@ -229,7 +254,8 @@ export function mountVpsBots(
           id: bot.id,
           permissionScope: 'bot' as const,
           ...(scope.get('terminalController') === undefined ? {} : { terminal: true as const }),
-          ...(scope.get('workspaceFiles') === undefined ? {} : { files: true as const }),
+          ...(scope.get('workspaceFiles') === undefined ? {}
+            : { files: true as const, ...(sharesProject(bot.id) ? { sharedFiles: true as const } : {}) }),
           ...(navigate === undefined ? {} : { navigate }),
         }
       }
@@ -271,6 +297,10 @@ export function mountVpsBots(
           registerVpsBotFileTools(agentCtx, agent,
             new VpsBotFileHandoffs({ bots: scope.bots, workspaceFiles }, runtimeFor, isDesktopBot, uploadLimits),
             !isManagedBot(bot.id))
+          if (sharesProject(bot.id)) {
+            registerVpsProjectTool(agentCtx, agent, workspaceFiles,
+              signal => filesFor(scope, isDesktopBot)(bot.sessionId, signal, runtimeFor(bot.id).sharedRoot))
+          }
         }
         ComputerTool.applyVpsBotComputer(agentCtx, async (sessionId) => {
           if (sessionId !== bot.sessionId) throw new Error('VPS Computer requires the owning Bot Session.')

@@ -33,7 +33,7 @@ function result(code = 0, stdout = ''): VpsCommandResult {
 function fixture(run: (argv: readonly string[]) => Promise<VpsCommandResult> | VpsCommandResult = async (argv) => {
   if (argv[1] === 'container' && argv[2] === 'exists') return result(1)
   return result()
-}, browser = false): Fixture {
+}, browser = false, sharedWorkspace = false, hostileSharedVolume = false): Fixture {
   const root = mkdtempSync(join(tmpdir(), 'dsh-vps-runtime-'))
   roots.push(root)
   const calls: string[][] = []
@@ -42,6 +42,19 @@ function fixture(run: (argv: readonly string[]) => Promise<VpsCommandResult> | V
   const defaultVolumeCommand = async (argv: readonly string[]): Promise<VpsCommandResult> => {
     const volume = argv.at(-1) ?? ''
     const profile = volume.endsWith('-browser')
+    if (volume.startsWith('yharness-bot-project-')) {
+      if (argv[2] === 'exists') return result(hostileSharedVolume ? 0 : 1)
+      if (argv[2] === 'create') return result()
+      return result(0, JSON.stringify({
+        Name: volume,
+        Driver: 'local',
+        Options: hostileSharedVolume ? { device: '/srv/other-project', o: 'bind' } : {},
+        Labels: {
+          'io.yharness.vps.root': root,
+          'io.yharness.vps.purpose': 'shared-project',
+        },
+      }))
+    }
     if (argv[2] === 'exists') return result(browser && !profile ? 0 : 1)
     if (argv[2] === 'create') return result(0, `${argv.at(-1) ?? ''}\n`)
     const session = volume.includes('botsessionbbbb') ? sessions.bob : sessions.alice
@@ -62,7 +75,7 @@ function fixture(run: (argv: readonly string[]) => Promise<VpsCommandResult> | V
       if (argv[1] === 'volume') return await defaultVolumeCommand(argv)
       return await run(argv)
     },
-  }, browser ? { image: 'localhost/yharness-vps-bot-browser:24.04-v1', seccompProfile } : undefined)
+  }, browser ? { image: 'localhost/yharness-vps-bot-browser:24.04-v1', seccompProfile } : undefined, sharedWorkspace)
   return { root, calls, runtime }
 }
 
@@ -128,6 +141,29 @@ describe('VpsRuntime', () => {
     expect(new Set(profiles).size).toBe(2)
     expect(f.calls.filter(argv => argv[1] === 'volume' && argv[2] === 'create').map(argv => argv.at(-1)))
       .toEqual(profiles)
+  })
+
+  it('gives two selected Bots the same project volume alongside distinct private workspaces', async () => {
+    const f = fixture(undefined, false, true)
+    await Promise.all([f.runtime.ensure(sessions.alice), f.runtime.ensure(sessions.bob)])
+    const runs = f.calls.filter(argv => argv[1] === 'run')
+    const project = runs.map(argv => argv.find(arg => arg.endsWith(':/workspace:rw,nodev,nosuid,nocopy')))
+    expect(project[0]).toMatch(/^yharness-bot-project-[0-9a-f]{16}:\/workspace:/u)
+    expect(project).toEqual([project[0], project[0]])
+    expect(f.runtime.execArgv(sessions.alice, ['pwd'], { workdir: '/workspace/research' }))
+      .toContain('/workspace/research')
+    expect(() => f.runtime.execArgv(sessions.bob, ['pwd'], { workdir: '/workspace/../outside' }))
+      .toThrow('workspace')
+    expect(() => fixture().runtime.execArgv(sessions.alice, ['pwd'], { workdir: '/workspace' }))
+      .toThrow('workspace')
+    const privateMounts = runs.map(argv => argv[argv.indexOf('--volume') + 1])
+    expect(new Set(privateMounts).size).toBe(2)
+  })
+
+  it('refuses a pre-existing project volume backed by a host path', async () => {
+    const f = fixture(undefined, false, true, true)
+    await expect(f.runtime.ensure(sessions.alice)).rejects.toThrow('Shared project volume')
+    expect(f.calls.some(argv => argv[1] === 'run')).toBe(false)
   })
 
   it('reuses a short ready cache for repeated filesystem operations', async () => {

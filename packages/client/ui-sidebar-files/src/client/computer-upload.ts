@@ -1,4 +1,4 @@
-/** Upload state for the exact private Computer Files tab. */
+/** Upload state for a Computer Files tab. */
 
 import { useEffect, useRef, useState } from 'react'
 import type { RefObject } from 'react'
@@ -34,7 +34,7 @@ async function uploadFile(sessionId: string, directory: string, file: File, sign
   }
 }
 
-/** Private file picker and transfer state owned by a Files tab body. */
+/** Computer file picker and transfer state owned by a Files tab body. */
 interface ComputerFilePicker {
   readonly input: RefObject<HTMLInputElement>
   readonly pick: (directory: string) => void
@@ -48,12 +48,13 @@ interface ComputerFilePicker {
  * Keep picker and transfer state tied to the exact active Files body.
  * @param sessionId - owner Bot's Session.
  * @param lifetime - owning tab record's lifetime.
+ * @param root - absolute or relative Computer workspace root.
  * @param refresh - refresh the destination Files tree after a successful copy.
  * @returns local state and picker actions.
  */
-export function useComputerFilePicker(sessionId: string, lifetime: AbortSignal, refresh: () => void): ComputerFilePicker {
+export function useComputerFilePicker(sessionId: string, lifetime: AbortSignal, root: string, refresh: () => void): ComputerFilePicker {
   const input = useRef<HTMLInputElement>(null)
-  const directory = useRef('.')
+  const directory = useRef(root)
   const active = useRef<AbortController | undefined>(undefined)
   const [uploading, setUploading] = useState<string>()
   const [failures, setFailures] = useState<readonly UploadFailure[]>([])

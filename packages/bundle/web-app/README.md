@@ -91,6 +91,8 @@ Firefox-enabled desktop-only Bots can request a sign-in handoff in a direct owne
 
 The private Computer reports workspace file access when Workspace Files is installed. Its authenticated file transfer routes resolve the exact owner Bot. Uploads stream to the private volume and create the destination only after receiving the declared bytes. The upload worker checks space on that volume. `botComputers.uploads` configures the file limit, retained free space, and transfer timeout. Owner file copies use the same transfer limits. The copy tool requires approval and uses the calling Bot as the source. Desktop-only Bots use their existing Session filesystem for ordinary file operations and have a separate tool for reading text on their Computer.
 
+The optional `botComputers.sharedWorkspace` mounts one owner project volume at `/workspace` in each participating private Computer. The file browser, transfer routes, and `vps_project_files` resolve the participant by its owner Session. The project file tool serializes create-only and version-checked writes across Computers. Terminal commands access the same files through the mounted directory. File previews and downloads check for changes while reading, and Computer file operations reject project symlinks. See [Share project files between Bots](../../../docs/user/guide/vps.md#share-project-files-between-bots).
+
 The native macOS Desktop Host registers `mac_computer` on operator presets. It relays actions over its private Electron IPC channel with the invoking Session ID. The Electron main process authorizes the currently shared Bot before capturing the primary display or delivering input.
 
 ### Per-session agent setup

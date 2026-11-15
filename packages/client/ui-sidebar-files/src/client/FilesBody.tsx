@@ -20,7 +20,7 @@ import {
   IconPauseOutlineRegular, IconPlayOutlineRegular, IconUploadOutlineRegular, PathLabel,
 } from '@yharness/client-ui-primitives'
 import { computerFileAddress, fileAddressFor } from '@yharness/util-workspace-path'
-import { COMPUTER_FILES_KIND } from './definition.tsx'
+import { COMPUTER_FILES_KIND, COMPUTER_SHARED_FILES_KIND } from './definition.tsx'
 import { useComputerFilePicker } from './computer-upload.ts'
 import type { WorkspaceDirectoryEntry } from '@yharness/api-workspace-files/types'
 import { childPath } from './face.ts'
@@ -163,10 +163,12 @@ export function FilesBody({
   const { tab } = useTabInfo()
   useEffect(() => tab.actions.bindCommands({ refresh: () => { refresh(tab.id) } }), [tab.actions, tab.id, refresh])
   const { signal, actions: tabActions } = tab
-  const computer = tab.kind === COMPUTER_FILES_KIND
-  const picker = useComputerFilePicker(sessionId, signal, () => { refresh(tab.id) })
+  const sharedComputer = tab.kind === COMPUTER_SHARED_FILES_KIND
+  const computer = tab.kind === COMPUTER_FILES_KIND || sharedComputer
+  const computerRoot = sharedComputer ? '/workspace' : '.'
+  const picker = useComputerFilePicker(sessionId, signal, computerRoot, () => { refresh(tab.id) })
   const sessionRoot = useSessions(sessions => sessions.byId[sessionId]?.cwd)
-  const cwd = computer ? '.' : sessionRoot
+  const cwd = computer ? computerRoot : sessionRoot
   const state = useStore(store => store.byTab[tab.id])
   const bodyRef = useRef<HTMLDivElement>(null)
   const scrollTopRef = useRef(0)
@@ -219,7 +221,7 @@ export function FilesBody({
     <div className={css.root} data-files-state="tree" data-files-root={state.root}>
       <div className={css.header} data-yh-terminal="toolbar">
         {computer
-          ? <span className={css.path} data-files-path>{t('computerWorkspace')}</span>
+          ? <span className={css.path} data-files-path>{t(sharedComputer ? 'computerSharedWorkspace' : 'computerWorkspace')}</span>
           : <PathLabel path={state.root} className={css.path} data-files-path />}
         <span hidden>
           <button type="button" className={css.tool} aria-label={t('autoRefresh')}
@@ -249,7 +251,7 @@ export function FilesBody({
               event.currentTarget.value = ''
             }} />
             <button type="button" className={css.uploadButton} aria-label={t('upload.label')}
-              disabled={picker.uploading !== undefined} onClick={() => { picker.pick('.') }}>
+              disabled={picker.uploading !== undefined} onClick={() => { picker.pick(computerRoot) }}>
               <IconUploadOutlineRegular />
               {t('upload.button')}
             </button>

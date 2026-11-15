@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import type { ComponentProps } from 'react'
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { SessionBinding, SessionListState, SessionReference } from '@yharness/api-session-controller/client'
 import { BotId, type BotView } from '@yharness/bots/client'
@@ -231,6 +231,47 @@ describe('Bots conversation slot wiring', () => {
 
     expect(screen.getByText('Dedicated VPS desktop')).toBeTruthy()
   })
+
+  it('offers private and shared workspace choices from the Files action', () => {
+    const selected = bot()
+    const state = workspaceState([selected], selected.id)
+    const reference = sessionReference(selected.sessionId)
+    const openWorkspaceTab = vi.fn<BotsPanelProps['openWorkspaceTab']>()
+    const renderSlot: BotsPanelProps['renderSlot'] = () => <span data-testid="conversation-slot">Conversation</span>
+    const props = panelProps(state, reference, renderSlot, {
+      availability: 'available',
+      identity: { id: selected.sessionId, location: 'vps', permissionScope: 'bot', files: true, sharedFiles: true },
+      target: selected.sessionId,
+      filesAvailable: true,
+      sharedFilesAvailable: true,
+      openWorkspaceTab,
+    })
+    render(<BotsPanel {...props} />)
+
+    fireEvent.click(screen.getByRole('button', { name: en.filesOpen }))
+    expect(screen.getByRole('menuitem', { name: en.filesPrivateWorkspace })).toBeTruthy()
+    fireEvent.click(screen.getByRole('menuitem', { name: en.filesSharedWorkspace }))
+    expect(openWorkspaceTab).toHaveBeenCalledWith('computer-shared-files')
+  })
+
+  it('keeps the Files action as a direct private workspace opener without sharing', () => {
+    const selected = bot()
+    const state = workspaceState([selected], selected.id)
+    const reference = sessionReference(selected.sessionId)
+    const openWorkspaceTab = vi.fn<BotsPanelProps['openWorkspaceTab']>()
+    const renderSlot: BotsPanelProps['renderSlot'] = () => <span data-testid="conversation-slot">Conversation</span>
+    render(<BotsPanel {...panelProps(state, reference, renderSlot, {
+      availability: 'available',
+      identity: { id: selected.sessionId, location: 'vps', permissionScope: 'bot', files: true },
+      target: selected.sessionId,
+      filesAvailable: true,
+      openWorkspaceTab,
+    })} />)
+
+    fireEvent.click(screen.getByRole('button', { name: en.filesOpen }))
+    expect(openWorkspaceTab).toHaveBeenCalledWith('computer-files')
+    expect(screen.queryByRole('menuitem')).toBeNull()
+  })
 })
 
 function panelProps(
@@ -241,6 +282,9 @@ function panelProps(
     readonly availability?: 'checking' | 'available' | 'mac' | 'unavailable'
     readonly identity?: ComputerIdentity
     readonly target?: string
+    readonly filesAvailable?: boolean
+    readonly sharedFilesAvailable?: boolean
+    readonly openWorkspaceTab?: BotsPanelProps['openWorkspaceTab']
   } = {},
 ): BotsPanelProps {
   const useWorkspace: BotsPanelProps['useWorkspace'] = selector => selector(state)
@@ -261,8 +305,9 @@ function panelProps(
     useComputerTarget,
     useComputerSignIn: selector => selector(undefined),
     useTerminalAvailable: selector => selector(false),
-    useFilesAvailable: selector => selector(false),
-    openWorkspaceTab: () => {},
+    useFilesAvailable: selector => selector(options.filesAvailable ?? false),
+    useSharedFilesAvailable: selector => selector(options.sharedFilesAvailable ?? false),
+    openWorkspaceTab: options.openWorkspaceTab ?? (() => {}),
     reference: () => reference,
     select: () => {},
     selectGroup: () => {},

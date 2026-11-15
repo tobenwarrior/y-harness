@@ -7,7 +7,7 @@ kind: "package-reference"
 
 ## Summary
 
-Browse a Session's workspace tree and open files in Sidebar previews. The root and expanded directories refresh automatically from direct-entry watches; manual reload remains available. The tab is reached from the guide and claims no resource address.
+Browse a Session's workspace tree and open files in Sidebar previews. The root and expanded directories refresh automatically from direct-entry watches; manual reload remains available. The tab is reached from the guide and claims no resource address. The package also registers private and shared Computer workspace trees for Cloud Bots.
 
 ## Table of Contents
 
@@ -25,6 +25,7 @@ Browse a Session's workspace tree and open files in Sidebar previews. The root a
 The `workspace.files` command opens or focuses the file page in the focused pane; from the conversation it uses the current Session's active dock pane. A guide gives way to the file page, and repeated opens retain one file page per pane. Desktop defaults to Mod+P. The guide entry displays the effective shortcut; Windows and macOS Web use the [shortcut service’s platform defaults](../shortcuts/README.md); Linux Web leaves this command unbound by default.
 
 - **The type** — `ctx.sidebarRightTabs.register(...)` with kind `files`, id `@yharness/client-ui-sidebar-files`, band `builtin`, no patterns, and one guide entry (order 10, its title and description from the `sidebarFiles` namespace, its glyph a yellow folder) that opens the type.
+- **Computer types** — `computer-files` and `computer-shared-files` are separate builtin kinds without guide entries; the shared kind starts at `/workspace` and is available only when the selected Bot reports shared files.
 - **The body** — the keyed `sidebar.right.pane.tab` seat under that id: a header row under the strip, then the tree. The shared [`PathLabel`](../ui-primitives/README.md#component-catalog) displays the root path with subdued directories and a primary final segment. A clipped path retains its trailing characters with a left-edge fade; hovering reveals the full path. The reload control and the Session-scoped `sidebar.right.tab.files.actions` list stay at its right, with the displayed root passed as `absolutePath`; [`ui-open-in-app`](../ui-open-in-app/README.md) contributes the workspace directory opener.
 - **The chip title** — the keyed `sidebar.right.pane.tab.title` seat under that id: a shared `FileTypeIcon` folder glyph at 16px before the type's label. The tree's own rows never draw this sheet.
 
@@ -43,7 +44,7 @@ The root is the session's working directory, read from `useSessions().byId[sessi
 
 A level cut by the endpoint's entry cap ends with a marker; an empty level says so; a level that failed shows one line per code — `workspace-file/not-found`, `outside-workspace`, `not-directory` — and the transport's own message otherwise. Reload refreshes the root and expanded levels in place, retaining displayed entries during reads instead of resetting the whole tree; collapsed levels are fetched again when they next open. A session without a working directory shows a single line instead of a tree.
 
-The private Computer tree uses workspace-relative entries and Computer file addresses. Upload selects files for the root or an individual folder. The tab displays progress or a file-specific failure, and refreshes open directories after a successful upload.
+Computer trees use workspace-relative entries and Computer file addresses. The private tree starts at `.`, while the shared tree starts at `/workspace`; each tab keeps its own expanded levels and scroll offset. Upload selects files for the root or an individual folder, preserving the matching root path. The tab displays progress or a file-specific failure, and refreshes open directories after a successful upload.
 
 State lives in the type's own store, bucketed by tab id: `root`, `levels` (loading / ready / failed per absolute path), `expanded`, `autoRefresh`, and `scrollTop`, which the body tracks locally while scrolling and commits once when it unmounts. Because the store outlives the body, switching to another sidebar tab and back remounts the tree with its levels intact and its scroll offset restored. The owner's `signal` ends a bucket: on abort the tab is forgotten, and neither a listing that settles afterwards nor the unmount's offset commit writes anything.
 
@@ -62,7 +63,7 @@ None; directory listings travel over the Remote and assemble no model request.
 
 <a id="known-limitations-and-deferred-work"></a>
 - **Listing only.** No search, artifact filter, drag-and-drop, rename, context menu, or current-file highlight.
-- **One root.** The tree is rooted at the session's working directory; there is no way to browse above it, and the Host refuses paths outside the workspace root anyway.
+- **One root per mode.** The ordinary tree is rooted at the Session working directory, the private Computer tree at `.`, and the shared Computer tree at `/workspace`; there is no way to browse above a selected root.
 
 <a id="dev-note"></a>
 ### Dev Note

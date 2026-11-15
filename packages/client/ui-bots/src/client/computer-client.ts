@@ -16,6 +16,7 @@ export interface ComputerIdentity {
   readonly browser?: true
   readonly terminal?: true
   readonly files?: true
+  readonly sharedFiles?: true
 }
 
 /** Direct response from the Computer status route. */
@@ -139,7 +140,10 @@ function identityOf(value: unknown): ComputerIdentity | undefined {
   return { ...(id === undefined ? {} : { id }), location, permissionScope,
     ...(dedicated && value.browser === true ? { browser: true } : {}),
     ...(dedicated && value.terminal === true ? { terminal: true } : {}),
-    ...(dedicated && value.files === true ? { files: true } : {}) }
+    ...(dedicated && value.files === true ? {
+      files: true,
+      ...(value.sharedFiles === true ? { sharedFiles: true } : {}),
+    } : {}) }
 }
 
 function modeOf(value: unknown): ComputerMode | undefined {
