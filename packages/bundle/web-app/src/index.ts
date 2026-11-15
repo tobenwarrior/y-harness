@@ -101,7 +101,12 @@ export interface Config {
       /** Maximum transfer lifetime in milliseconds. */
       timeoutMs?: number
     }
-    /** Firefox and outbound networking for selected private Computer Bots. Omit or use null to leave desktops offline. */
+    /** Exact private Computer Bots with outbound network access. Omit or use null to keep the Firefox defaults. */
+    network?: {
+      /** Private Computer Bot ids. An empty list keeps all private desktops and terminals offline. */
+      bots: string[]
+    } | null
+    /** Firefox for selected private Computer Bots. */
     browser?: {
       /** Exact Bot ids allowed to run the browser desktop. */
       bots: string[]
@@ -141,6 +146,7 @@ export const Config: z<Config> = z.object({
       bots: z.union([z.array(String), z.const(null)]),
       desktopOnlyBots: z.array(String),
       sharedWorkspace: z.union([z.object({ bots: z.union([z.array(String), z.const(null)]) }), z.const(null)]),
+      network: z.union([z.object({ bots: z.array(String).required() }), z.const(null)]),
       uploads: z.object({ maxBytes: z.number(), reserveBytes: z.number(), timeoutMs: z.number() }),
       browser: z.union([
         z.object({

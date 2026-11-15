@@ -216,6 +216,7 @@ export function BotsPanel({
   const computerTarget = useComputerTarget(value => value)
   const signIn = useComputerSignIn(value => value)
   const showTerminalAction = useTerminalAvailable(value => value)
+  const terminalInternet = computerIdentity?.terminalInternet
   const showFilesAction = useFilesAvailable(value => value)
   const showSharedFilesAction = useSharedFilesAvailable(value => value)
   const selectedBot = bots.find(bot => bot.id === state.selectedBotId)
@@ -259,7 +260,8 @@ export function BotsPanel({
               toggle={() => { setComputerTarget(showComputer ? null : selectedReference.sessionId) }} t={t} />
           )}
           {showTerminalAction && (
-            <Tooltip label={t('terminalOpen')} side="bottom" delayMs={500}>
+            <Tooltip label={t(terminalInternet === undefined ? 'terminalOpen'
+              : terminalInternet ? 'terminalInternetEnabled' : 'terminalInternetDisabled')} side="bottom" delayMs={500}>
               <Button variant="toolbar" size="sm" icon={<PluginArtworkTerminal size={16} />}
                 aria-label={t('terminalOpen')} onClick={() => { openWorkspaceTab('terminal') }}>
                 <span className={css.workspaceToolLabel}>{t('terminalLabel')}</span>

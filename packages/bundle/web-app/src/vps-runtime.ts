@@ -3,8 +3,8 @@
  *
  * A runtime owns only the workspaces below its configured private root. Each
  * session receives a container with a named workspace volume, a private
- * `/tmp`, and no host sockets. Browser desktops add a separate profile volume
- * and outbound networking with host loopback blocked.
+ * `/tmp`, and no host sockets. Firefox desktops use a separate profile volume.
+ * Selected desktops use rootless outbound networking with host loopback blocked.
  * Commands are returned as argv so callers can route shell and Computer
  * operations through the container without a shell interpolation step.
  * @module @yharness/web-app/vps-runtime
@@ -27,7 +27,8 @@ const DESKTOP_HEALTH_CACHE_MS = 500
 const SHARED_PROJECT = '/workspace'
 const SHARED_PROJECT_PURPOSE = 'shared-project'
 const BROWSER_PROFILE = '/var/lib/yharness-browser-profile'
-const BROWSER_NETWORK = 'slirp4netns:allow_host_loopback=false'
+const OUTBOUND_NETWORK = 'slirp4netns:allow_host_loopback=false'
+type VpsNetworkMode = 'none' | typeof OUTBOUND_NETWORK
 const BROWSER_READY = '/tmp/yharness-browser-ready'
 const exec = promisify(execFile)
 
@@ -56,6 +57,16 @@ export interface VpsBrowserOptions {
   readonly image: string
   /** Absolute path to the private Firefox-compatible Podman policy. */
   readonly seccompProfile: string
+}
+
+/** Provisioning options for a private Bot desktop. */
+export interface VpsRuntimeOptions {
+  /** Local Firefox image and its syscall policy. */
+  readonly browser?: VpsBrowserOptions
+  /** Mount the installation's shared project volume alongside the private workspace. */
+  readonly sharedWorkspace?: boolean
+  /** Allow outbound traffic. By default only the provisioned Firefox desktop has internet access. */
+  readonly internet?: boolean
 }
 
 /**
@@ -105,6 +116,9 @@ export class VpsRuntime {
   private readonly internals: VpsRuntimeInternals
   private readonly browserPolicy?: string
   private readonly projectVolume?: string
+  private readonly networkMode: VpsNetworkMode
+  /** Whether the Bot's private computer and terminal have outbound internet access. */
+  readonly internet: boolean
   /** Absolute mount point inside participating Bot containers. */
   readonly sharedRoot?: string
   private readonly pending = new Map<string, Promise<void>>()
@@ -114,17 +128,19 @@ export class VpsRuntime {
    * @param root - Absolute owner-only directory containing all Bot workspaces.
    * @param image - Standard desktop image and existing workspace label.
    * @param internals - Optional command seam used by tests.
-   * @param browser - Provisioned resources for browser desktops.
-   * @param sharedWorkspace - Mount this installation's shared project volume.
+   * @param options - Provisioned resources, project access, and outbound network access.
    */
   constructor(
-    root: string, image: string, internals: VpsRuntimeInternals = {}, browser?: VpsBrowserOptions, sharedWorkspace = false,
+    root: string, image: string, internals: VpsRuntimeInternals = {}, options: VpsRuntimeOptions = {},
   ) {
+    const { browser, sharedWorkspace } = options
     this.rootPath = privatePath(root, 'VPS Bot root')
     this.workspaceImage = imageReference(image)
     this.imageName = browser === undefined ? this.workspaceImage : imageReference(browser.image)
     if (browser !== undefined) this.browserPolicy = privatePath(browser.seccompProfile, 'VPS Bot browser policy')
     this.internals = internals
+    this.internet = options.internet ?? (browser !== undefined)
+    this.networkMode = this.internet ? OUTBOUND_NETWORK : 'none'
     if (sharedWorkspace) {
       if (isVpsSharedPath(this.rootPath)) throw new VpsRuntimeError('Private and shared Bot workspaces must be distinct')
       this.sharedRoot = SHARED_PROJECT
@@ -249,7 +265,9 @@ export class VpsRuntime {
       const inspected = await this.runPodman(['inspect', '--format', '{{json .}}', name])
       if (inspected.code !== 0) throw new VpsRuntimeError('VPS Bot container inspection failed')
       const metadata = inspectContainer(
-        inspected.stdout, this.rootPath, this.imageName, sessionId, workspace, volume, browserPolicy, projectVolume,
+        inspected.stdout, this.rootPath, this.imageName, sessionId, workspace, volume, {
+          browserPolicy, projectVolume, networkMode: this.networkMode,
+        },
       )
       await this.ensureVolume(volume, sessionId, workspace)
       if (browserVolume !== undefined) await this.ensureVolume(browserVolume, sessionId, workspace, 'browser')
@@ -274,7 +292,7 @@ export class VpsRuntime {
       '--ipc=private',
       '--uts=private',
       ...runtimeUserArgs(),
-      browserPolicy === undefined ? '--network=none' : `--network=${BROWSER_NETWORK}`,
+      `--network=${this.networkMode}`,
       '--no-hosts',
       '--http-proxy=false',
       '--image-volume=ignore',
@@ -460,9 +478,13 @@ function inspectContainer(
   sessionId: string,
   workspace: string,
   volume: string,
-  browserPolicy: string | undefined,
-  projectVolume: string | undefined,
+  options: {
+    readonly browserPolicy: string | undefined
+    readonly projectVolume: string | undefined
+    readonly networkMode: VpsNetworkMode
+  },
 ): ContainerMetadata {
+  const { browserPolicy, projectVolume, networkMode } = options
   let value: unknown
   try {
     value = JSON.parse(serialized)
@@ -534,14 +556,15 @@ function inspectContainer(
       || (hostConfig.UsernsMode !== 'private' && !hostConfig.UsernsMode.startsWith('keep-id')))) {
     throw new VpsRuntimeError('VPS Bot container privileges are invalid')
   }
-  if (browserPolicy === undefined) {
-    if (hostConfig.NetworkMode !== 'none') throw new VpsRuntimeError('VPS Bot container network is invalid')
-  } else if ((hostConfig.NetworkMode !== 'slirp4netns' && hostConfig.NetworkMode !== BROWSER_NETWORK)
-    || !stringArray(labels.CreateCommand, `--network=${BROWSER_NETWORK}`)
-    || !stringArray(hostConfig.SecurityOpt, `seccomp=${browserPolicy}`)
-    || hostConfig.PublishAllPorts === true
+  const matchingNetwork = networkMode === 'none' ? hostConfig.NetworkMode === 'none'
+    : (hostConfig.NetworkMode === 'slirp4netns' || hostConfig.NetworkMode === networkMode)
+      && stringArray(labels.CreateCommand, `--network=${networkMode}`)
+  if (!matchingNetwork || hostConfig.PublishAllPorts === true
     || (isRecord(hostConfig.PortBindings) && Object.keys(hostConfig.PortBindings).length > 0)) {
-    throw new VpsRuntimeError('VPS Bot browser container network or policy is invalid')
+    throw new VpsRuntimeError('VPS Bot container network does not match its settings. Prepare the Computer while idle.')
+  }
+  if (browserPolicy !== undefined && !stringArray(hostConfig.SecurityOpt, `seccomp=${browserPolicy}`)) {
+    throw new VpsRuntimeError('VPS Bot browser container policy is invalid')
   }
   const containerConfig = value.Config
   if (!isRecord(containerConfig) || typeof containerConfig.User !== 'string' || /^0(?::0)?$/u.test(containerConfig.User)) {

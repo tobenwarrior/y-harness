@@ -157,7 +157,9 @@ describe('Computer HTTP routes', () => {
     const managed = new ComputerHost({ display: ':managed', authorityPath: '/private/managed-xauthority' }, { run: async () => {} })
     const legacy = new ComputerHost({ display: ':legacy', authorityPath: '/private/legacy-xauthority' }, { run: async () => {} })
     const resolveTarget = vi.fn(async (sessionId: string) => {
-      if (sessionId === 'managed-session') return { computer: managed, id: 'bot-research', permissionScope: 'bot' as const }
+      if (sessionId === 'managed-session') return {
+        computer: managed, id: 'bot-research', permissionScope: 'bot' as const, terminal: true as const, terminalInternet: false,
+      }
       if (sessionId === 'legacy-session' || sessionId === '') return { computer: legacy, id: 'shared-vps', permissionScope: 'workspace' as const }
       return undefined
     })
@@ -173,7 +175,7 @@ describe('Computer HTTP routes', () => {
       await expect((await send('status', { sessionId: 'managed-session' })).json()).resolves.toEqual({
         available: true,
         kind: 'vps',
-        computer: { id: 'bot-research', location: 'vps', permissionScope: 'bot' },
+        computer: { id: 'bot-research', location: 'vps', permissionScope: 'bot', terminal: true, terminalInternet: false },
       })
       await expect((await send('status', { sessionId: 'legacy-session' })).json()).resolves.toEqual({
         available: true,

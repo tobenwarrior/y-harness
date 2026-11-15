@@ -33,7 +33,12 @@ function result(code = 0, stdout = ''): VpsCommandResult {
 function fixture(run: (argv: readonly string[]) => Promise<VpsCommandResult> | VpsCommandResult = async (argv) => {
   if (argv[1] === 'container' && argv[2] === 'exists') return result(1)
   return result()
-}, browser = false, sharedWorkspace = false, hostileSharedVolume = false): Fixture {
+}, { browser = false, sharedWorkspace = false, hostileSharedVolume = false, internet }: {
+  browser?: boolean
+  sharedWorkspace?: boolean
+  hostileSharedVolume?: boolean
+  internet?: boolean
+} = {}): Fixture {
   const root = mkdtempSync(join(tmpdir(), 'dsh-vps-runtime-'))
   roots.push(root)
   const calls: string[][] = []
@@ -75,11 +80,33 @@ function fixture(run: (argv: readonly string[]) => Promise<VpsCommandResult> | V
       if (argv[1] === 'volume') return await defaultVolumeCommand(argv)
       return await run(argv)
     },
-  }, browser ? { image: 'localhost/yharness-vps-bot-browser:24.04-v1', seccompProfile } : undefined, sharedWorkspace)
+  }, {
+    ...(browser ? { browser: { image: 'localhost/yharness-vps-bot-browser:24.04-v1', seccompProfile } } : {}),
+    sharedWorkspace,
+    ...(internet === undefined ? {} : { internet }),
+  })
   return { root, calls, runtime }
 }
 
 describe('VpsRuntime', () => {
+  it('gives a standard desktop outbound internet independently of Firefox', async () => {
+    const f = fixture(undefined, { internet: true })
+    await f.runtime.ensure(sessions.alice)
+    const launch = f.calls.find(argv => argv[1] === 'run')
+    expect(launch).toContain('--network=slirp4netns:allow_host_loopback=false')
+    expect(launch).not.toContain('--publish')
+    expect(launch?.at(-1)).toBe('localhost/yharness-vps-bot:24.04')
+    expect(launch?.some(arg => arg.includes(':/var/lib/yharness-browser-profile:'))).toBe(false)
+  })
+
+  it('can keep a Firefox profile on an offline desktop', async () => {
+    const f = fixture(undefined, { browser: true, internet: false })
+    await f.runtime.ensure(sessions.alice)
+    const launch = f.calls.find(argv => argv[1] === 'run')
+    expect(launch).toContain('--network=none')
+    expect(launch?.some(arg => arg.endsWith(':/var/lib/yharness-browser-profile:rw,nodev,nosuid,nocopy'))).toBe(true)
+  })
+
   it('maps each roster UUID to a private deterministic workspace', () => {
     const f = fixture()
     const first = f.runtime.workspace(sessions.alice)
@@ -122,7 +149,7 @@ describe('VpsRuntime', () => {
   })
 
   it('keeps the existing workspace and mounts a separate browser profile for each session', async () => {
-    const f = fixture(undefined, true)
+    const f = fixture(undefined, { browser: true })
     await f.runtime.ensure(sessions.alice)
     await f.runtime.ensure(sessions.bob)
     const launches = f.calls.filter(argv => argv[1] === 'run')
@@ -144,7 +171,7 @@ describe('VpsRuntime', () => {
   })
 
   it('gives two selected Bots the same project volume alongside distinct private workspaces', async () => {
-    const f = fixture(undefined, false, true)
+    const f = fixture(undefined, { sharedWorkspace: true })
     await Promise.all([f.runtime.ensure(sessions.alice), f.runtime.ensure(sessions.bob)])
     const runs = f.calls.filter(argv => argv[1] === 'run')
     const project = runs.map(argv => argv.find(arg => arg.endsWith(':/workspace:rw,nodev,nosuid,nocopy')))
@@ -161,7 +188,7 @@ describe('VpsRuntime', () => {
   })
 
   it('refuses a pre-existing project volume backed by a host path', async () => {
-    const f = fixture(undefined, false, true, true)
+    const f = fixture(undefined, { sharedWorkspace: true, hostileSharedVolume: true })
     await expect(f.runtime.ensure(sessions.alice)).rejects.toThrow('Shared project volume')
     expect(f.calls.some(argv => argv[1] === 'run')).toBe(false)
   })
@@ -172,6 +199,40 @@ describe('VpsRuntime', () => {
     const firstCallCount = f.calls.length
     await f.runtime.ensure(sessions.alice)
     expect(f.calls).toHaveLength(firstCallCount)
+  })
+
+  it.each([
+    { description: 'the existing matching rootless network', internet: true, mode: 'slirp4netns', partialArgv: ['--network=slirp4netns:allow_host_loopback=false'], published: {}, allowed: true },
+    { description: 'an existing connected container after revocation', internet: false, mode: 'slirp4netns', partialArgv: ['--network=slirp4netns:allow_host_loopback=false'], published: {}, allowed: false },
+    { description: 'a rootless network with host loopback access', internet: true, mode: 'slirp4netns', partialArgv: ['--network=slirp4netns:allow_host_loopback=true'], published: {}, allowed: false },
+    { description: 'a container with a published port', internet: true, mode: 'slirp4netns', partialArgv: ['--network=slirp4netns:allow_host_loopback=false'], published: { '443/tcp': [{ HostPort: '8443' }] }, allowed: false },
+  ])('validates $description before reuse', async ({ internet, mode, partialArgv, published, allowed }) => {
+    const f = fixture(async (argv) => {
+      if (argv[1] !== 'inspect') return result()
+      const volume = `yharness-bot-volume-${(argv.at(-1) ?? '').replace(/^yharness-bot-/u, '')}`
+      const workspace = f.runtime.workspace(sessions.alice)
+      return result(0, JSON.stringify({
+        ImageName: 'localhost/yharness-vps-bot:24.04',
+        Config: { User: '1000:1000', CreateCommand: ['podman', 'run', ...partialArgv], Labels: {
+          'io.yharness.vps.root': f.root,
+          'io.yharness.vps.image': 'localhost/yharness-vps-bot:24.04',
+          'io.yharness.vps.session': sessions.alice,
+          'io.yharness.vps.workspace': workspace,
+          'io.yharness.vps.volume': volume,
+        } },
+        State: { Running: false },
+        Mounts: [{ Type: 'volume', Name: volume, Destination: workspace, RW: true, Options: ['nodev', 'nosuid'] }],
+        HostConfig: {
+          NetworkMode: mode, PortBindings: published, SecurityOpt: ['no-new-privileges'], CapDrop: ['ALL'],
+          UsernsMode: 'private', Tmpfs: { '/tmp': 'rw,noexec,nosuid,nodev' },
+        },
+      }))
+    }, { internet })
+    const ready = f.runtime.ensure(sessions.alice)
+    if (allowed) await ready
+    else await expect(ready).rejects.toThrow('network does not match its settings')
+    expect(f.calls.some(argv => argv[1] === 'start')).toBe(allowed)
+    expect(f.calls.some(argv => argv[1] === 'run')).toBe(false)
   })
 
   it('shares a single launch across concurrent calls for one session and isolates another session', async () => {

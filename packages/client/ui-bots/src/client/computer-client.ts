@@ -15,6 +15,8 @@ export interface ComputerIdentity {
   readonly permissionScope: ComputerPermissionScope
   readonly browser?: true
   readonly terminal?: true
+  /** Configured internet access for a Bot's private VPS terminal. */
+  readonly terminalInternet?: boolean
   readonly files?: true
   readonly sharedFiles?: true
 }
@@ -139,7 +141,10 @@ function identityOf(value: unknown): ComputerIdentity | undefined {
   const dedicated = location === 'vps' && permissionScope === 'bot'
   return { ...(id === undefined ? {} : { id }), location, permissionScope,
     ...(dedicated && value.browser === true ? { browser: true } : {}),
-    ...(dedicated && value.terminal === true ? { terminal: true } : {}),
+    ...(dedicated && value.terminal === true ? {
+      terminal: true,
+      ...(typeof value.terminalInternet === 'boolean' ? { terminalInternet: value.terminalInternet } : {}),
+    } : {}),
     ...(dedicated && value.files === true ? {
       files: true,
       ...(value.sharedFiles === true ? { sharedFiles: true } : {}),

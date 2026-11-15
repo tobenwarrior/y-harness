@@ -111,6 +111,19 @@ Add `sharedWorkspace: {}` under the existing `botComputers` entry in the private
 
 The share attaches when a private Computer is created. To enroll or remove an existing Computer, wait until Cloud and that Computer are idle. Preserve its named volumes and replace its container using the same procedure as [enabling Firefox](#enable-firefox-for-selected-bots). Restart Cloud with the new settings. Opening the Computer reconnects its private workspace and any Firefox profile. The shared project volume persists across restarts and can be mounted again by enrolling a private Computer.
 
+### Give a Bot's VPS terminal internet access
+
+Run `python3 scripts/setup-vps.py network` from the VPS release checkout to prepare rootless networking. Set this list under `botComputers` in the private Web profile, using the roster IDs of the Bots you want to connect.
+
+```yaml
+network:
+  bots: [bot-worker]
+```
+
+The list controls each private desktop and its **Terminal**. Bash in a fully managed Bot also uses that desktop. A desktop-only Bot's ordinary Bash keeps its existing workspace policy. The separate [isolated browser](#enable-an-isolated-browser-for-selected-bots) keeps its own network policy. Private desktops start with no network by default, except Firefox desktops when the list is omitted. Set `bots: []` to keep every private desktop offline and retain any Firefox profiles.
+
+For each Bot whose access changes, stop and replace its idle container using the [Firefox steps](#enable-firefox-for-selected-bots). Preserve the named volumes. After restarting Cloud with the updated profile, hover over **Terminal** in the Bot header to see its configured internet access. Rootless networking blocks the host loopback address. Review any services reachable from the VPS network before granting access.
+
 ### Enable Firefox for selected Bots
 
 Run the browser setup from the Y Harness checkout that supplies the Web release. It builds Firefox and prepares outbound networking for the selected desktops.
@@ -130,7 +143,7 @@ browser:
 
 If the Bot already has a private desktop, wait until the Bot and Computer panel are idle. On the VPS, find that Bot's container with `podman ps -a --filter label=io.yharness.vps.session=BOT_SESSION_ID`. Stop the identified container and remove it with `podman rm`. Keep the named volumes. Restart Cloud with the updated profile when its tasks are idle. Opening **Computer** starts Firefox and reconnects the existing workspace and browser profile. Right-click the desktop and choose **Open Firefox** to reopen it.
 
-The browser desktop and any shell running inside it can make outbound connections. The VPS loopback remains private. Choose **Take control** to review Firefox's welcome screen the first time and sign in to websites. Browser sign-ins live in the selected Bot's profile volume and survive replacing its container.
+Firefox can make outbound connections when [network access](#give-a-bots-vps-terminal-internet-access) is enabled. Choose **Take control** to review Firefox's welcome screen the first time and sign in to websites. Browser sign-ins live in the selected Bot's profile volume and survive replacing its container.
 
 For a Firefox-enabled Bot also listed in `botComputers.desktopOnlyBots`, the Bot can pause a direct owner chat to request website sign-in. Choose **Take over**, check the website address, then complete the sign-in or verification in the Computer panel. Once the signed-in page loads, choose **I’m done** to resume the waiting Bot. If you cancel after taking control, clear the sign-in form first. If you close the panel, reopen it and choose **Take over** again to finish. The private Computer remains reserved until you return it, even if the Bot's ten-minute wait ends. Sign-in handoffs end when Cloud restarts.
 

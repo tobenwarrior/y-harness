@@ -51,6 +51,38 @@ describe('managed VPS Bot composition', () => {
     }, []) }).toThrow('Shared project access must select private Computer Bots.')
   })
 
+  it('limits terminal internet access to Bots with private Computers', () => {
+    expect(() => { mountVpsBots(new Context(), {
+      root: '/yharness-test-bots', image: 'localhost/yharness-test', bots: ['bot-private'],
+      network: { bots: ['bot-shared-desktop'] },
+    }, []) }).toThrow('VPS internet access must select private Computer Bots.')
+  })
+
+  it('only connects the private Computers selected by the explicit internet allowlist', async () => {
+    const ctx = new Context()
+    const ensure = vi.spyOn(VpsRuntime.prototype, 'ensure').mockResolvedValue(undefined)
+    try {
+      await ctx.plugin((scope) => { mountVpsBots(scope, {
+        root: '/yharness-test-bots', image: 'localhost/yharness-test',
+        browser: { bots: ['bot-browser'], image: 'localhost/yharness-browser', seccompProfile: '/yharness-browser.json' },
+        network: { bots: ['bot-terminal'] },
+      }, []) })
+      const workspaces = ctx.get('botWorkspaces')
+      if (workspaces === undefined) throw new Error('VPS Bot workspaces were not registered')
+      await workspaces.prepare(BOT_SESSION, BotId('bot-browser'))
+      await workspaces.prepare(DESKTOP_SESSION, BotId('bot-terminal'))
+      await workspaces.prepare(LEGACY_SESSION, BotId('bot-other'))
+      expect(ensure.mock.contexts).toEqual([
+        expect.objectContaining({ internet: false }),
+        expect.objectContaining({ internet: true }),
+        expect.objectContaining({ internet: false }),
+      ])
+    } finally {
+      ensure.mockRestore()
+      await ctx.fiber.dispose()
+    }
+  })
+
   it('rejects overlapping Podman and isolated browser selections', () => {
     expect(() => { mountVpsBots(new Context(), {
       root: '/yharness-test-bots', image: 'localhost/yharness-test', bots: ['bot-browser'],

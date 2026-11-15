@@ -45,6 +45,8 @@ export interface ComputerStatusMetadata {
   readonly browser?: true
   /** Whether the owner's terminal uses this Bot's private computer. */
   readonly terminal?: true
+  /** Whether the private VPS terminal is configured for outbound internet access. */
+  readonly terminalInternet?: boolean
   /** Whether the owner's file browser uses this Bot's private workspace. */
   readonly files?: true
   /** Whether the owner can browse this Bot's shared project files. */
@@ -61,6 +63,8 @@ export interface BotComputerRouteTarget {
   readonly permissionScope: ComputerPermissionScope
   /** Whether the owner's terminal uses this Bot's private computer. */
   readonly terminal?: true
+  /** Whether outbound internet access is enabled in the private Computer's runtime. */
+  readonly terminalInternet?: boolean
   /** Whether the owner's file browser uses this Bot's private workspace. */
   readonly files?: true
   /** Whether the owner can browse this Bot's shared project files. */
@@ -485,6 +489,8 @@ export function botComputerRoutesWithLegacy(
         permissionScope: target.permissionScope,
         ...(navigate === undefined ? {} : { browser: true }),
         ...(target.terminal === true ? { terminal: true } : {}),
+        ...(target.permissionScope === 'bot' && target.terminal === true && target.terminalInternet !== undefined
+          ? { terminalInternet: target.terminalInternet } : {}),
         ...(target.files === true ? { files: true } : {}),
         ...(target.files === true && target.sharedFiles === true ? { sharedFiles: true } : {}),
       },

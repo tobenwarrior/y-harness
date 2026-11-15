@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 SPEC = importlib.util.spec_from_file_location('setup_vps', Path(__file__).with_name('setup-vps.py'))
@@ -110,21 +111,37 @@ class SetupVpsTest(unittest.TestCase):
         with self.assertRaisesRegex(installer.SetupError, 'deny by default'):
             installer.firefox_seccomp_policy('{"defaultAction":"SCMP_ACT_ALLOW","syscalls":[]}')
 
-    def test_browser_setup_verifies_the_network_helper_after_installing(self):
+    def test_network_setup_verifies_the_helper_after_installing(self):
         self.root.mkdir(mode=0o700)
         with (
             patch.object(Path, 'is_file', autospec=True, side_effect=lambda path: str(path) == '/usr/bin/apt-get'),
             patch.object(installer, 'run') as command,
             patch('sys.stdout', new_callable=io.StringIO),
         ):
-            with self.assertRaisesRegex(installer.SetupError, 'did not provide the browser networking helper'):
-                installer.ensure_browser_network(self.root)
+            with self.assertRaisesRegex(installer.SetupError, 'did not provide the networking helper'):
+                installer.ensure_bot_network(self.root)
         self.assertEqual(len(command.call_args_list), 2)
         self.assertEqual(command.call_args_list[0].args[0][-1], 'update')
         install = command.call_args_list[1].args[0]
         self.assertIn('--no-upgrade', install)
         self.assertIn('--no-remove', install)
         self.assertEqual(install[-1], 'slirp4netns')
+
+    def test_network_preparation_does_not_build_the_browser_or_restart_web(self):
+        with (
+            patch('sys.argv', ['setup-vps.py', 'network']),
+            patch.object(installer.os, 'umask'),
+            patch.object(installer.pwd, 'getpwuid', return_value=SimpleNamespace(pw_dir=str(self.home))),
+            patch.object(installer, 'require_linux_user'),
+            patch.object(installer, 'ensure_bot_network') as network,
+            patch.object(installer, 'prepare_bot_browser') as browser,
+            patch.object(installer, 'run') as command,
+            patch('sys.stdout', new_callable=io.StringIO),
+        ):
+            installer.main()
+        network.assert_called_once_with(self.root)
+        browser.assert_not_called()
+        command.assert_not_called()
 
     def test_podman_prerequisite_uses_owner_visible_sudo(self):
         self.root.mkdir(mode=0o700)

@@ -54,6 +54,7 @@ export function mountVpsBots(
     readonly bots?: readonly string[] | null
     readonly desktopOnlyBots?: readonly string[]
     readonly sharedWorkspace?: { readonly bots?: readonly string[] | null } | null
+    readonly network?: { readonly bots: readonly string[] } | null
     readonly uploads?: VpsFileUploadConfig
     readonly browser?: (VpsBrowserOptions & { readonly bots: readonly string[] }) | null
     readonly isolatedBrowser?: VpsIsolatedBrowserConfig | null
@@ -63,7 +64,6 @@ export function mountVpsBots(
   journalConfig?: VpsJournalConfig,
 ): void {
   const uploadLimits = resolveVpsFileUploadLimits(config.uploads)
-  const defaultRuntime = new VpsRuntime(config.root, config.image)
   const services = new VpsServices(grants)
   const computers = new Map<string, VpsComputer>()
   const previewFiles = new Map<string, VpsBotFileSystem>()
@@ -83,11 +83,15 @@ export function mountVpsBots(
   const sharesProject = (botId: string): boolean => config.sharedWorkspace != null && isDesktopBot(botId)
     && (sharedBotIds === undefined || sharedBotIds.has(botId))
   const browserBotIds = new Set(config.browser?.bots)
+  const networkBotIds = config.network == null ? undefined : new Set(config.network.bots)
   const isolatedBrowserBotIds = new Set(config.isolatedBrowser?.bots)
   const hasBrowserSignIn = (botId: string): boolean => isolatedBrowserBotIds.has(botId)
     || (browserBotIds.has(botId) && desktopOnlyBotIds.has(botId))
   if ([...browserBotIds].some(botId => !isDesktopBot(botId))) {
     throw new Error('VPS browser access must select private Computer Bots.')
+  }
+  if (networkBotIds !== undefined && [...networkBotIds].some(botId => !isDesktopBot(botId))) {
+    throw new Error('VPS internet access must select private Computer Bots.')
   }
   if ([...isolatedBrowserBotIds].some(botId => !isDesktopBot(botId))) {
     throw new Error('VPS isolated browser access must select private Computer Bots.')
@@ -95,13 +99,22 @@ export function mountVpsBots(
   if ([...browserBotIds].some(botId => isolatedBrowserBotIds.has(botId))) {
     throw new Error('VPS browser and isolated browser Bots must not overlap.')
   }
-  const browserRuntime = config.browser == null
-    ? undefined
-    : new VpsRuntime(config.root, config.image, undefined, config.browser)
-  const projectRuntime = config.sharedWorkspace == null
-    ? undefined : new VpsRuntime(config.root, config.image, undefined, undefined, true)
-  const browserProjectRuntime = config.sharedWorkspace == null || config.browser == null
-    ? undefined : new VpsRuntime(config.root, config.image, undefined, config.browser, true)
+  const runtimes = new Map<string, VpsRuntime>()
+  const runtimeWith = (browser: VpsBrowserOptions | undefined, sharedWorkspace: boolean, internet: boolean): VpsRuntime => {
+    const key = `${browser !== undefined}/${sharedWorkspace}/${internet}`
+    let runtime = runtimes.get(key)
+    if (runtime === undefined) {
+      runtime = new VpsRuntime(config.root, config.image, undefined, {
+        ...(browser === undefined ? {} : { browser }),
+        sharedWorkspace, internet,
+      })
+      runtimes.set(key, runtime)
+    }
+    return runtime
+  }
+  const defaultRuntime = runtimeWith(undefined, false, false)
+  if (config.sharedWorkspace != null) runtimeWith(undefined, true, false)
+  if (config.browser != null) runtimeWith(config.browser, false, networkBotIds === undefined)
   const isolatedBrowser = config.isolatedBrowser == null
     ? undefined
     : new VpsIsolatedBrowser(config.isolatedBrowser)
@@ -119,11 +132,9 @@ export function mountVpsBots(
     })
   }
   const runtimeFor = (botId: string): VpsRuntime => {
-    const browser = browserBotIds.has(botId)
-    const shared = sharesProject(botId)
-    const runtime = browser ? (shared ? browserProjectRuntime : browserRuntime) : (shared ? projectRuntime : defaultRuntime)
-    if (runtime === undefined) throw new Error('The configured Bot Computer runtime is unavailable.')
-    return runtime
+    const browser = browserBotIds.has(botId) ? config.browser ?? undefined : undefined
+    const internet = networkBotIds === undefined ? browser !== undefined : networkBotIds.has(botId)
+    return runtimeWith(browser, sharesProject(botId), internet)
   }
   if (journalConfig?.bots.some(botId => !isDesktopBot(botId))) {
     throw new Error('VPS journal grants must select Computer Bots.')
@@ -253,7 +264,9 @@ export function mountVpsBots(
           computer: await computerFor(bot.sessionId, bot.id),
           id: bot.id,
           permissionScope: 'bot' as const,
-          ...(scope.get('terminalController') === undefined ? {} : { terminal: true as const }),
+          ...(scope.get('terminalController') === undefined ? {} : {
+            terminal: true as const, terminalInternet: runtimeFor(bot.id).internet,
+          }),
           ...(scope.get('workspaceFiles') === undefined ? {}
             : { files: true as const, ...(sharesProject(bot.id) ? { sharedFiles: true as const } : {}) }),
           ...(navigate === undefined ? {} : { navigate }),

@@ -58,6 +58,24 @@ describe('Computer HTTP client', () => {
     })
   })
 
+  it('reads internet policy only for an advertised private VPS terminal', async () => {
+    const fetchMock = vi.fn()
+    const base = { available: true, kind: 'vps' }
+    const bot = { id: 'bot-internet', location: 'vps', permissionScope: 'bot', terminal: true }
+    fetchMock
+      .mockResolvedValueOnce(response({ ...base, computer: { ...bot, terminalInternet: false } }))
+      .mockResolvedValueOnce(response({ ...base, computer: { ...bot, terminalInternet: true } }))
+      .mockResolvedValueOnce(response({ ...base, computer: { ...bot, terminal: undefined, terminalInternet: true } }))
+      .mockResolvedValueOnce(response({ ...base, computer: { ...bot, permissionScope: 'workspace', terminalInternet: true } }))
+    vi.stubGlobal('fetch', fetchMock)
+    const client = createComputerClient()
+
+    await expect(client.status()).resolves.toMatchObject({ computer: { terminal: true, terminalInternet: false } })
+    await expect(client.status()).resolves.toMatchObject({ computer: { terminal: true, terminalInternet: true } })
+    await expect(client.status()).resolves.toEqual({ ...base, computer: { id: bot.id, location: 'vps', permissionScope: 'bot' } })
+    await expect(client.status()).resolves.toEqual({ ...base, computer: { id: bot.id, location: 'vps', permissionScope: 'workspace' } })
+  })
+
   it('sends the viewer lease and input action to their exact routes', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(response({ mode: 'controlling' }))

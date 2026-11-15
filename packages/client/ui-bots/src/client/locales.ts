@@ -610,6 +610,8 @@ export const en = {
   computerLabel: 'Computer',
   terminalLabel: 'Terminal',
   terminalOpen: 'Open VPS terminal',
+  terminalInternetEnabled: 'VPS terminal · Internet enabled',
+  terminalInternetDisabled: 'VPS terminal · Internet disabled',
   filesLabel: 'Files',
   filesOpen: 'Open VPS files',
   filesPrivateWorkspace: 'Private workspace',

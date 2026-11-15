@@ -249,15 +249,15 @@ def firefox_seccomp_policy(source):
     return (json.dumps({**policy, 'syscalls': kept}, indent=2) + '\n').encode()
 
 
-def ensure_browser_network(root):
-    """Install the rootless browser network helper on APT hosts when needed."""
+def ensure_bot_network(root):
+    """Install the rootless Bot network helper on APT hosts when needed."""
     helper = Path('/usr/bin/slirp4netns')
     if helper.is_file():
         return
     if not Path('/usr/bin/apt-get').is_file():
-        raise SetupError('Install slirp4netns with your server’s package manager and run browser setup again.')
-    print('Installing the rootless browser networking package. Setup may ask for sudo.', flush=True)
-    with os.fdopen(private_file(root / 'browser-network.log', os.O_WRONLY | os.O_CREAT), 'w') as log:
+        raise SetupError('Install slirp4netns with your server’s package manager and run setup again.')
+    print('Installing the rootless networking package. Setup may ask for sudo.', flush=True)
+    with os.fdopen(private_file(root / 'bot-network.log', os.O_WRONLY | os.O_CREAT), 'w') as log:
         log.truncate()
         try:
             environment = build_environment()
@@ -271,9 +271,9 @@ def ensure_browser_network(root):
                 '--no-install-recommends', '--no-upgrade', '--no-remove', '--yes', 'slirp4netns',
             ], env=environment, stdout=log, stderr=subprocess.STDOUT, timeout=180)
         except (OSError, subprocess.SubprocessError) as error:
-            raise SetupError('Could not install slirp4netns. See the private browser-network.log.') from error
+            raise SetupError('Could not install slirp4netns. See the private bot-network.log.') from error
     if not helper.is_file():
-        raise SetupError('The slirp4netns package did not provide the browser networking helper.')
+        raise SetupError('The slirp4netns package did not provide the networking helper.')
 
 
 def prepare_bot_browser(root, source):
@@ -288,7 +288,7 @@ def prepare_bot_browser(root, source):
     if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
         raise SetupError('The system Podman policy must be an administrator-owned file.')
     policy = firefox_seccomp_policy(packaged.read_bytes())
-    ensure_browser_network(root)
+    ensure_bot_network(root)
     podman = ensure_bot_image(root, source)
     with os.fdopen(private_file(root / 'browser-build.log', os.O_WRONLY | os.O_CREAT), 'w') as log:
         log.truncate()
@@ -669,9 +669,9 @@ def launch_url(path):
 
 
 def main():
-    """Run setup, browser preparation, sandbox checks, status or private-link output."""
+    """Run setup, computer prerequisites, sandbox checks, status or private-link output."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', nargs='?', choices=('setup', 'status', 'url', 'sandbox', 'browser'), default='setup')
+    parser.add_argument('action', nargs='?', choices=('setup', 'status', 'url', 'sandbox', 'browser', 'network'), default='setup')
     action = parser.parse_args().action
     os.umask(0o077)
     account_home = Path(pwd.getpwuid(os.getuid()).pw_dir)
@@ -682,14 +682,20 @@ def main():
             if not config_home.is_absolute():
                 raise SetupError('XDG_CONFIG_HOME must be an absolute path.')
             setup(root, config_home / 'systemd/user')
-        elif action == 'browser':
+        elif action in ('browser', 'network'):
             require_linux_user()
             require_outside_git(root)
             private_directory(root)
             with os.fdopen(private_file(root / 'setup.lock', os.O_RDWR | os.O_CREAT), 'r+') as lock:
                 fcntl.flock(lock, fcntl.LOCK_EX)
-                prepare_bot_browser(root, Path(__file__).resolve().parent.parent)
-            print('Firefox is ready. Select the Bots that can use it in the private Web profile.')
+                if action == 'browser':
+                    prepare_bot_browser(root, Path(__file__).resolve().parent.parent)
+                else:
+                    ensure_bot_network(root)
+            if action == 'browser':
+                print('Firefox is ready. Select the Bots that can use it in the private Web profile.')
+            else:
+                print('Rootless networking is ready. Select the Bots that can use it in the private Web profile.')
         elif action == 'sandbox':
             require_linux_user()
             private_directory(root)

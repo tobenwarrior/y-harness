@@ -4459,7 +4459,12 @@ export interface Config {
       /** Maximum transfer lifetime in milliseconds. */
       timeoutMs?: number
     }
-    /** Firefox and outbound networking for selected private Computer Bots. Omit or use null to leave desktops offline. */
+    /** Exact private Computer Bots with outbound network access. Omit or use null to keep the Firefox defaults. */
+    network?: {
+      /** Private Computer Bot ids. An empty list keeps all private desktops and terminals offline. */
+      bots: string[]
+    } | null
+    /** Firefox for selected private Computer Bots. */
     browser?: {
       /** Exact Bot ids allowed to run the browser desktop. */
       bots: string[]
