@@ -4,12 +4,28 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { expect, it } from 'vitest'
 import { SessionId } from '@yharness/session'
-import { VpsVaultRequests } from '../src/vps-vault-requests.ts'
+import { VPS_VAULT_REQUEST_SOCKET, VpsVaultRequests, vpsVaultAccessRoute, type VpsVaultRequestsConfig } from '../src/vps-vault-requests.ts'
 
 const bot = 'bot-example'
 const session = SessionId('bot-session-7e2e3bd7-aec8-4f11-925d-478a83ed004a')
 const other = SessionId('bot-session-2d12d9ae-30aa-4465-83ad-2253c62bbb59')
 const credential = { unit: 'example-worker.service', name: 'EXAMPLE_API_KEY' }
+
+it.each<{ label: string; config?: VpsVaultRequestsConfig | null; mode: string }>([
+  { label: 'absent requests', mode: 'disabled' },
+  { label: 'disabled requests', config: null, mode: 'disabled' },
+  { label: 'the standard broker', config: { socketPath: VPS_VAULT_REQUEST_SOCKET }, mode: 'managed' },
+  { label: 'null grants', config: { socketPath: VPS_VAULT_REQUEST_SOCKET, grants: null }, mode: 'managed' },
+  { label: 'profile grants', config: { socketPath: VPS_VAULT_REQUEST_SOCKET, grants: [{ bot, ...credential }] }, mode: 'external' },
+  { label: 'a custom broker', config: { socketPath: '/run/another-vault.sock' }, mode: 'external' },
+])('reports Bot access mode for $label without disclosing the policy', async ({ config, mode }) => {
+  const route = vpsVaultAccessRoute(config)
+  const response = await route.fetch(new Request('http://127.0.0.1/api/bot-vault-access'))
+  expect(route.path).toBe('/api/bot-vault-access')
+  expect(route.methods).toEqual(['GET'])
+  expect(response.headers.get('cache-control')).toBe('no-store')
+  expect(await response.json()).toEqual({ mode })
+})
 
 async function withBroker<T>(
   reply: (request: Record<string, unknown>) => object | string,

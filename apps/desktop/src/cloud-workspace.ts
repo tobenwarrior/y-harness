@@ -4,7 +4,6 @@ import { readFileSync } from 'node:fs'
 import { writeFileAtomic } from '@yharness/atomic-write'
 import { WebContentsView, session, type BrowserWindow } from 'electron'
 import { isCloudTarget, openCloudConnection, type CloudConnection } from './cloud-connection.ts'
-import { readCloudVaultBots } from './cloud-vault.ts'
 import {
   CLOUD_DESKTOP_USER_AGENT,
   cloudAction,
@@ -115,10 +114,13 @@ export class DesktopCloudWorkspace {
     const { connection, owner, remote, target } = this
     if (!this.selected || this.status !== 'online' || connection === undefined || owner === undefined
       || remote === undefined || target === undefined) return
-    this.vault.open(owner, target, { kind: 'manage' }, (signal) => {
-      const contents = remote.webContents
-      if (this.connection !== connection || contents.isDestroyed()) return Promise.resolve(undefined)
-      return readCloudVaultBots(connection.origin, (url, options) => contents.session.fetch(url, options), signal)
+    const contents = remote.webContents
+    this.vault.open(owner, target, { kind: 'manage' }, {
+      origin: connection.origin,
+      fetch: async (url, options) => {
+        if (this.connection !== connection || contents.isDestroyed()) throw new Error('Cloud workspace disconnected')
+        return contents.session.fetch(url, options)
+      },
     })
   }
 

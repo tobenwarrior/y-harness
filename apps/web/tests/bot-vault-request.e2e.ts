@@ -60,6 +60,25 @@ class RequestAdapter extends LlmAdapter {
 }
 
 it.skipIf(MODE === 'record' || process.platform === 'win32').each([
+  { mode: 'managed', vpsVaultRequests: { socketPath: '/run/yharness-vault/cloud-requests.sock' } },
+  { mode: 'disabled', vpsVaultRequests: null },
+])('reports the configured $mode Bot access policy to the owner', async ({ mode, vpsVaultRequests }) => {
+  const root = await mkdtemp('/tmp/yh-vault-policy-')
+  const overlay = join(root, 'vault.yml')
+  try {
+    await writeFile(overlay, JSON.stringify([{ id: 'web-runtime', config: { vpsVaultRequests } }]))
+    const web = await launchWebScaffold({ extraOverlayPath: overlay, replayFixture: FIXTURE, replayProvidersOnly: true })
+    try {
+      const response = await web.hostFetch('/api/bot-vault-access')
+      expect(response.status).toBe(200)
+      expect(response.headers.get('cache-control')).toBe('no-store')
+      expect(await response.json()).toEqual({ mode })
+      expect((await fetch(new URL('/api/bot-vault-access', web.baseUrl))).status).toBe(401)
+    } finally { await web.close() }
+  } finally { await rm(root, { recursive: true, force: true }) }
+})
+
+it.skipIf(MODE === 'record' || process.platform === 'win32').each([
   { policy: 'Web profile', managed: false },
   { policy: 'live Vault', managed: true },
 ])('offers a secure handoff and returns a receipt with $policy grants', async ({ managed }) => {
@@ -99,6 +118,10 @@ it.skipIf(MODE === 'record' || process.platform === 'win32').each([
     const web = scaffold = await launchWebScaffold({
       extraOverlayPath: overlay, replayFixture: FIXTURE, replayProvidersOnly: true, toolsMode: 'native',
     })
+    const access = await web.hostFetch('/api/bot-vault-access')
+    expect(access.status).toBe(200)
+    expect(await access.json()).toEqual({ mode: 'external' })
+    expect((await fetch(new URL('/api/bot-vault-access', web.baseUrl))).status).toBe(401)
     const adapter = new RequestAdapter(managed)
     web.ctx.effect(() => web.ctx.llm.registerAdapter([PROVIDER], adapter), 'Vault request fixture model')
     await web.ctx.agentDefaultModel.saveSelection({ provider: PROVIDER, model: MODEL })

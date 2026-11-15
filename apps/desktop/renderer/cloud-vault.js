@@ -55,6 +55,7 @@ let services = []
 let logins = []
 let grantAccess
 let grantBots
+let grantAccessReason
 let editing
 let editingLogin
 let revoking
@@ -397,6 +398,10 @@ function renderLogins() {
 }
 
 function renderGrants() {
+  const limited = grantAccessReason === 'external' || grantAccessReason === 'disabled'
+  element('grants-hint').hidden = limited
+  element('grants-title').hidden = limited
+  element('add-grant').hidden = limited
   const rows = grantAccess?.grants.map(grant => {
     const row = document.createElement('li')
     const details = document.createElement('span')
@@ -449,18 +454,22 @@ async function readLogins() {
   return true
 }
 
-async function readGrantAccess() {
-  const reply = await send({ action: 'list-grants' })
+function displayGrantAccess(reply) {
   grantsReady = reply.ok === true && record(reply.access)
-  if (grantsReady) {
-    grantAccess = reply.access
-    grantBots = reply.bots
-  }
+  grantAccess = grantsReady ? reply.access : undefined
+  grantBots = grantsReady ? reply.bots : undefined
+  grantAccessReason = reply.ok === false ? reply.reason : undefined
   renderGrants()
 }
 
+async function readGrantAccess() {
+  displayGrantAccess(await send({ action: 'list-grants' }))
+}
+
 function grantInventoryNotice(success) {
-  if (!grantsReady) setNotice('cloudVaultBotAccessUnavailable', 'error')
+  if (grantAccessReason === 'external') setNotice('cloudVaultBotAccessExternal', 'info')
+  else if (grantAccessReason === 'disabled') setNotice('cloudVaultBotAccessDisabled', 'info')
+  else if (!grantsReady) setNotice('cloudVaultBotAccessUnavailable', 'error')
   else if (success !== undefined) setNotice(success)
   else if (grantBots === undefined) setNotice('cloudVaultBotAccessRosterUnavailable', 'error')
   else setNotice(grantBots.length === 0 && grantAccess.services.length > 0 ? 'cloudVaultBotAccessNoBots' : undefined)
@@ -508,8 +517,12 @@ async function changeGrant(request) {
     await readGrantAccess()
     grantInventoryNotice(request.action === 'add-grant' ? 'cloudVaultBotAccessGranted' : 'cloudVaultBotAccessRemoved')
   } else {
-    if (result.reason !== 'invalid') grantsReady = false
-    setNotice(result.reason === 'invalid' ? 'cloudVaultBotAccessInvalid' : 'cloudVaultFailed', 'error')
+    if (result.reason === 'invalid') setNotice('cloudVaultBotAccessInvalid', 'error')
+    else {
+      closeGrantEditor()
+      displayGrantAccess(result)
+      grantInventoryNotice()
+    }
   }
   busy = false
   availability()

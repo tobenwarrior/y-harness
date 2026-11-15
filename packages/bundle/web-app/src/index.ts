@@ -36,7 +36,7 @@ import { MacComputerBridge } from './mac-computer.ts'
 import { mountVpsBots } from './vps-bots.ts'
 import type { VpsServiceAccess } from './vps-services.ts'
 import type { VpsJournalConfig } from './vps-journal.ts'
-import { mountVpsVaultRequests, VPS_VAULT_REQUEST_SOCKET } from './vps-vault-requests.ts'
+import { mountVpsVaultRequests, VPS_VAULT_REQUEST_SOCKET, vpsVaultAccessRoute } from './vps-vault-requests.ts'
 import type { VpsVaultRequestsConfig } from './vps-vault-requests.ts'
 import type { VpsIsolatedBrowserConfig } from './vps-isolated-browser.ts'
 
@@ -405,6 +405,9 @@ export function apply(ctx: Context, config: Config): void {
     ? { socketPath: VPS_VAULT_REQUEST_SOCKET }
     : config.vpsVaultRequests
   if (vaultRequests != null) mountVpsVaultRequests(ctx, vaultRequests)
+  ctx.inject(['connection'], (scope) => {
+    scope.effect(() => scope.connection.fetch.register(vpsVaultAccessRoute(vaultRequests)), 'vps-vault: Bot access mode')
+  })
   if (config.vpsJournal !== undefined && config.vpsJournal !== null && config.botComputers == null) {
     throw new Error('VPS journal grants require managed Bot computers.')
   }

@@ -1,11 +1,32 @@
 import { execFile } from 'node:child_process'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cloudVaultRequest, isVaultLoginUseRequestId, isVaultRequestId, readCloudVaultBots, vaultRequestAllowed, type VaultExec } from '../src/cloud-vault.ts'
 
 const unit = 'fixture-worker.service'
 const value = 'a synthetic value with spaces, quotes and \n a second line'
 const signal = new AbortController().signal
+const origin = 'http://127.0.0.1:28634'
 const children = new Set<ReturnType<typeof execFile>>()
+
+function managedWorkspace() {
+  return {
+    origin,
+    async fetch(url: string, options: RequestInit) {
+      if (url === `${origin}/api/bot-vault-access`) {
+        expect(options.method).toBe('GET')
+        expect(options.credentials).toBe('include')
+        expect(options.redirect).toBe('error')
+        expect(options.cache).toBe('no-store')
+        return Response.json({ mode: 'managed' })
+      }
+      expect(url).toBe(`${origin}/api/bots/list`)
+      const call = JSON.parse(String(options.body))
+      return Response.json({ type: 'server-response', rpcId: call.rpcId, result: { ok: true, value: {
+        bots: [{ id: 'bot-scout', state: 'active', name: 'Scout' }],
+      } } })
+    },
+  }
+}
 
 function fixture(script: string): VaultExec {
   return (_file, _args, options, callback) => {
@@ -35,16 +56,66 @@ describe('Desktop Vault SSH transport', () => {
     expect(vaultRequestAllowed({ ...add, value }, { kind: 'manage' })).toBe(false)
     const valid = { access: { services: [unit], grants: [grant] } }
     await expect(cloudVaultRequest('fixture-vps', { action: 'list-grants' }, signal,
-      fixture(`process.stdout.write(${JSON.stringify(JSON.stringify(valid))});`)))
-      .resolves.toEqual({ ok: true, ...valid })
+      fixture(`process.stdout.write(${JSON.stringify(JSON.stringify(valid))});`), managedWorkspace()))
+      .resolves.toEqual({ ok: true, ...valid, bots: [{ id: 'bot-scout', name: 'Scout' }] })
     const invalid = { access: { services: [unit], grants: [{ ...grant, value }] } }
     await expect(cloudVaultRequest('fixture-vps', { action: 'list-grants' }, signal,
-      fixture(`process.stdout.write(${JSON.stringify(JSON.stringify(invalid))});`)))
+      fixture(`process.stdout.write(${JSON.stringify(JSON.stringify(invalid))});`), managedWorkspace()))
       .resolves.toEqual({ ok: false, reason: 'unavailable' })
   })
 
+  it.each([
+    { body: { mode: 'external' }, status: 200, reason: 'external' },
+    { body: { mode: 'disabled' }, status: 200, reason: 'disabled' },
+    { body: { mode: 'managed' }, status: 404, reason: 'unavailable' },
+    { body: { mode: 'managed', extra: value }, status: 200, reason: 'unavailable' },
+    { body: { mode: 'x'.repeat(1024) }, status: 200, reason: 'unavailable' },
+  ])('does not contact the VPS Vault when the policy cannot be managed ($reason, $status)', async ({ body, status, reason }) => {
+    const execute = vi.fn(fixture('process.stdout.write(\'{"ok":true}\');'))
+    const fetch = vi.fn(async () => Response.json(body, { status }))
+    const workspace = { origin, fetch }
+    const grant = { bot: 'bot-scout', unit, name: 'FIXTURE_KEY' }
+    for (const request of [{ action: 'list-grants' }, { action: 'add-grant', ...grant }, { action: 'remove-grant', ...grant }]) {
+      await expect(cloudVaultRequest('fixture-vps', request, signal, execute, workspace)).resolves.toEqual({ ok: false, reason })
+    }
+    expect(fetch).toHaveBeenCalledTimes(3)
+    expect(execute).not.toHaveBeenCalled()
+  })
+
+  it('checks the current policy for each change and accepts a grant only for a roster Bot', async () => {
+    const workspace = managedWorkspace()
+    let managed = true
+    const fetch = vi.fn(async (url: string, options: RequestInit) => !managed && url.endsWith('/api/bot-vault-access')
+      ? Response.json({ mode: 'external' })
+      : workspace.fetch(url, options))
+    const execute = vi.fn(fixture('process.stdout.write(\'{"ok":true}\');'))
+    const grant = { bot: 'bot-scout', unit, name: 'FIXTURE_KEY' }
+    await expect(cloudVaultRequest('fixture-vps', { action: 'add-grant', ...grant, bot: 'bot-other-vps' },
+      signal, execute, { ...workspace, fetch })).resolves.toEqual({ ok: false, reason: 'unavailable' })
+    expect(execute).not.toHaveBeenCalled()
+    await expect(cloudVaultRequest('fixture-vps', { action: 'add-grant', ...grant },
+      signal, execute, { ...workspace, fetch })).resolves.toEqual({ ok: true })
+    managed = false
+    await expect(cloudVaultRequest('fixture-vps', { action: 'remove-grant', ...grant },
+      signal, execute, { ...workspace, fetch })).resolves.toEqual({ ok: false, reason: 'external' })
+    expect(execute).toHaveBeenCalledOnce()
+  })
+
+  it('does not start a grant operation if the Cloud connection closes during the policy check', async () => {
+    const controller = new AbortController()
+    const execute = vi.fn(fixture('process.stdout.write(\'{"ok":true}\');'))
+    const grant = { bot: 'bot-scout', unit, name: 'FIXTURE_KEY' }
+    await expect(cloudVaultRequest('fixture-vps', { action: 'remove-grant', ...grant }, controller.signal, execute, {
+      origin,
+      async fetch() {
+        controller.abort()
+        return Response.json({ mode: 'managed' })
+      },
+    })).resolves.toEqual({ ok: false, reason: 'unavailable' })
+    expect(execute).not.toHaveBeenCalled()
+  })
+
   it('loads only the named Bot choices from the connected owner workspace', async () => {
-    const origin = 'http://127.0.0.1:28634'
     const fetcher = async (url: string, init: RequestInit) => {
       expect(url).toBe(`${origin}/api/bots/list`)
       expect(init.credentials).toBe('include')

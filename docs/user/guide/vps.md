@@ -241,7 +241,7 @@ Website logins are encrypted on the VPS. You can [approve a saved login](#approv
 
 ### Let a Bot request a key in chat
 
-Once the service is available in Desktop Vault, open **Cloud → Vault → Bot access**. Choose **Grant access**, then select the bot and service and enter the key name. Grant changes take effect while Cloud is running.
+Update the Mac app and Cloud. Once the service is available in Desktop Vault, open **Cloud → Vault → Bot access**. Choose **Grant access**, then select the bot and service and enter the key name. Grant changes take effect while Cloud is running.
 
 Open that bot’s Cloud chat and ask it to request the key. Choose **Enter key securely** on the card and enter the value in the Mac Vault window. The bot receives the result of the request. The service loads the key on its next start. Use **API keys** in Vault to replace or revoke a saved key.
 
@@ -255,7 +255,7 @@ sudo /usr/local/sbin/yharness-vault enable-requests bot-worker/example-worker.se
 
 Run `sudo /usr/local/sbin/yharness-vault disable-requests` to withdraw all request grants and stop the request listener.
 
-Profiles with explicit `web-runtime.vpsVaultRequests.grants` use their configured Bot grants and the matching `UNIT.service=KEY_NAME` Vault entries. To use Vault-managed Bot grants, remove the explicit profile `grants` and restart Cloud once when it is idle.
+Desktop Vault checks how the running Cloud workspace manages requests before enabling grant controls. Profiles with explicit `web-runtime.vpsVaultRequests.grants` use their configured Bot grants and the matching `UNIT.service=KEY_NAME` Vault entries. Deployments with a custom broker manage access through that broker. To use Desktop Vault grant controls, configure the standard local broker with Vault-managed grants, then restart Cloud when it is idle.
 
 ### Read a filtered journal feed
 

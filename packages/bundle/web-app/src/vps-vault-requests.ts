@@ -184,6 +184,24 @@ export function vpsVaultRequestRoute(ctx: Context, requests: VpsVaultRequests): 
   }
 }
 
+/**
+ * Report whether the connected Web Host uses the local Vault's Bot grants.
+ * @param config - Effective Vault request configuration for this Web Host.
+ * @returns An owner API route that exposes the mode without policy entries or socket paths.
+ */
+export function vpsVaultAccessRoute(config: VpsVaultRequestsConfig | null | undefined): ConnectionFetchRoute {
+  const mode = config == null ? 'disabled'
+    : config.socketPath === VPS_VAULT_REQUEST_SOCKET && config.grants == null ? 'managed' : 'external'
+  return {
+    path: '/api/bot-vault-access',
+    methods: ['GET'],
+    requestBody: 'buffered',
+    async fetch() {
+      return Response.json({ mode }, { headers: { 'Cache-Control': 'no-store' } })
+    },
+  }
+}
+
 function credentialIsValid({ unit, name }: VpsVaultCredential): boolean {
   return unit === unit.trim() && name === name.trim()
     && SERVICE.test(unit) && !unit.endsWith('@.service') && KEY.test(name)

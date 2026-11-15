@@ -21,6 +21,8 @@ const LOGIN_PASSWORD_LIMIT = 8192
 const MAX_LOGINS = 64
 const MAX_OUTPUT = 160 * 1024
 const MAX_ROSTER_BYTES = 4 * 1024 * 1024
+const MAX_ACCESS_MODE_BYTES = 128
+const LOOPBACK_ORIGIN = /^http:\/\/127\.0\.0\.1:[1-9][0-9]{0,4}$/u
 
 declare const VAULT_REQUEST_ID: unique symbol
 declare const VAULT_LOGIN_USE_REQUEST_ID: unique symbol
@@ -187,7 +189,13 @@ export type VaultReply = {
   readonly saved?: boolean
 } | {
   readonly ok: false
-  readonly reason: 'invalid' | 'unavailable'
+  readonly reason: 'invalid' | 'unavailable' | 'external' | 'disabled'
+}
+
+/** Authenticated connection to the Cloud view that opened the Vault. */
+export interface VaultCloudWorkspace {
+  readonly origin: string
+  readonly fetch: (url: string, options: RequestInit) => Promise<Response>
 }
 
 /** SSH execution seam used by tests with a real local subprocess. */
@@ -506,11 +514,11 @@ export function vaultRequestAllowed(value: unknown, scope: VaultRequestMode | Va
   return scope === undefined || (typeof scope !== 'string' && scope.kind === 'manage')
 }
 
-async function readRosterReply(response: Response): Promise<unknown> {
+async function readCloudReply(response: Response, maxBytes: number): Promise<unknown> {
   if (!response.ok || response.body === null) return undefined
   const reader = response.body.getReader()
   const chunks: Uint8Array[] = []
-  let remaining = MAX_ROSTER_BYTES
+  let remaining = maxBytes
   try {
     for (;;) {
       const next = await reader.read()
@@ -527,6 +535,25 @@ async function readRosterReply(response: Response): Promise<unknown> {
   }
 }
 
+async function readCloudVaultMode(
+  workspace: VaultCloudWorkspace, signal: AbortSignal,
+): Promise<'managed' | 'external' | 'disabled' | undefined> {
+  const { origin } = workspace
+  if (signal.aborted || !LOOPBACK_ORIGIN.test(origin)) return undefined
+  try {
+    const response = await workspace.fetch(`${origin}/api/bot-vault-access`, {
+      method: 'GET', redirect: 'error', credentials: 'include', cache: 'no-store',
+      signal: AbortSignal.any([signal, AbortSignal.timeout(5_000)]),
+    })
+    const reply = await readCloudReply(response, MAX_ACCESS_MODE_BYTES)
+    if (signal.aborted || !record(reply) || Object.keys(reply).length !== 1) return undefined
+    const { mode } = reply
+    return mode === 'managed' || mode === 'external' || mode === 'disabled' ? mode : undefined
+  } catch (_error) {
+    return undefined
+  }
+}
+
 /**
  * Fetch only the owner-visible Bot choices for Vault from the private workspace.
  * @param origin - Origin of the connected loopback SSH forward.
@@ -537,7 +564,7 @@ async function readRosterReply(response: Response): Promise<unknown> {
 export async function readCloudVaultBots(
   origin: string, fetcher: (url: string, options: RequestInit) => Promise<Response>, signal: AbortSignal,
 ): Promise<readonly VaultBotChoice[] | undefined> {
-  if (signal.aborted || !/^http:\/\/127\.0\.0\.1:[1-9][0-9]{0,4}$/u.test(origin)) return undefined
+  if (signal.aborted || !LOOPBACK_ORIGIN.test(origin)) return undefined
   const rpcId = randomUUID()
   try {
     const response = await fetcher(`${origin}/api/bots/list`, {
@@ -546,7 +573,7 @@ export async function readCloudVaultBots(
       body: JSON.stringify({ type: 'client-request', rpcId, method: 'bots/list', payload: { args: { request: { includeHidden: true } } } }),
       signal: AbortSignal.any([signal, AbortSignal.timeout(5_000)]),
     })
-    const reply = await readRosterReply(response)
+    const reply = await readCloudReply(response, MAX_ROSTER_BYTES)
     if (signal.aborted || !record(reply) || reply.type !== 'server-response' || reply.rpcId !== rpcId
       || !record(reply.result) || reply.result.ok !== true || !record(reply.result.value)
       || !Array.isArray(reply.result.value.bots)) return undefined
@@ -572,13 +599,22 @@ export async function readCloudVaultBots(
  * @param value - Untrusted IPC input from the Vault window.
  * @param signal - Cancel the SSH child when its window closes.
  * @param execute - Subprocess injection for tests.
+ * @param workspace - Authenticated Cloud connection required for Bot grant operations.
  * @returns A safe response for the Vault window.
  */
 export async function cloudVaultRequest(
-  target: string, value: unknown, signal: AbortSignal, execute: VaultExec = execFile,
+  target: string, value: unknown, signal: AbortSignal, execute: VaultExec = execFile, workspace?: VaultCloudWorkspace,
 ): Promise<VaultReply> {
   const request = requestBody(value)
   if (!isCloudTarget(target) || request === undefined) return { ok: false, reason: 'invalid' }
+  let bots: readonly VaultBotChoice[] | undefined
+  if (request.action === 'list-grants' || request.action === 'add-grant' || request.action === 'remove-grant') {
+    if (workspace === undefined) return unavailable
+    const mode = await readCloudVaultMode(workspace, signal)
+    if (mode !== 'managed') return { ok: false, reason: mode ?? 'unavailable' }
+    if (request.action !== 'remove-grant') bots = await readCloudVaultBots(workspace.origin, workspace.fetch, signal)
+    if (request.action === 'add-grant' && !bots?.some(bot => bot.id === request.bot)) return unavailable
+  }
   if (signal.aborted) return unavailable
   return new Promise((resolve) => {
     try {
@@ -597,7 +633,8 @@ export async function cloudVaultRequest(
         try {
           const expectedId = request.action === 'inspect-request' || request.action === 'inspect-login-use'
             ? request.id : undefined
-          resolve(replyBody(request.action, stdout, expectedId) ?? unavailable)
+          const reply = replyBody(request.action, stdout, expectedId) ?? unavailable
+          resolve(request.action === 'list-grants' && 'access' in reply && bots !== undefined ? { ...reply, bots } : reply)
         }
         catch { resolve(unavailable) }
       })
