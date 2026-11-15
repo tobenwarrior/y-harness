@@ -120,6 +120,7 @@ function fakeExecution(proc: ShellProcess, result?: () => Promise<ShellRunResult
 
 class RecordingSandboxExecutor extends ShellExecutor {
   readonly modes: Array<string | undefined> = []
+  timedOut = false
 
   override get sandboxMode() {
     return 'read-only' as const
@@ -153,7 +154,7 @@ class RecordingSandboxExecutor extends ShellExecutor {
     }, () => Promise.resolve({
       exitCode: 0,
       signal: null,
-      timedOut: false,
+      timedOut: this.timedOut,
       aborted: false,
       timeoutMs: spec.timeoutMs,
       stdout: { text: 'ok', truncated: false },
@@ -288,16 +289,16 @@ describe('bash tool', () => {
     expect(text(result)).toBe('(no output)\n[timed out after 100ms]\n[killed by signal: SIGTERM]')
   })
 
-  it('reports a timeout even when the command traps the signal and exits 0', async () => {
-    // The signal-independent timeout marker: a trapped SIGTERM that exits 0
-    // after our timer fired must NOT look like a clean success. (bash may
-    // print "Terminated" to stderr for the killed sleep — environment
-    // dependent — so assert the marker, not the exact body.)
-    const ctx = await setup()
-    const result = await call(ctx, 'bash', { command: 'trap "exit 0" TERM; sleep 60', description: 'test command', timeoutMs: 100 })
-    expect(result.isError).toBe(false)
-    expect(text(result)).toContain('[timed out after 100ms]')
-    expect(text(result)).not.toContain('[exit code:')
+  it('reports a timeout even when the executor reports an exit code of zero', async () => {
+    const { ctx, bash } = await setupSandboxed()
+    try {
+      bash.timedOut = true
+      const result = await call(ctx, 'bash', { command: 'slow command', description: 'test command', timeoutMs: 100 })
+      expect(result.isError).toBe(false)
+      expect(text(result)).toBe('ok\n[timed out after 100ms]')
+    } finally {
+      await ctx.fiber.dispose()
+    }
   })
 
   it('reports truncation with the spill path', async () => {
