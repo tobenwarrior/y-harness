@@ -539,6 +539,8 @@ describe.skipIf(!isWin32 || !pwshAvailable())('windows-acl runner', () => {
     mkdirSync(child)
     writeFileSync(join(granted, 'file.txt'), 'x')
     writeFileSync(join(child, 'deep.txt'), 'x')
+    const grant = AclWriteGrant.create(workspaceWriteSid(granted))
+    grant.add(granted, true)
     try {
       const probe = `
 $ErrorActionPreference='SilentlyContinue'
@@ -556,20 +558,13 @@ TryOpen 'FILE' '${join(granted, 'file.txt')}'
 TryOpen 'NESTED-FILE' '${join(child, 'deep.txt')}'
 TryOpen 'DIRECTORY' '${child}'
 `
-      // Probe through the real restricted runner. The hosted Windows lane runs
-      // the test process elevated, and an unrestricted Administrator can use
-      // backup/restore privileges to bypass the DACL-only directory check.
-      // The product child has those privileges removed, so this keeps the
-      // assertion about the inherited FILE_DELETE_CHILD deny meaningful.
-      const result = runRunner([
-        '--workspace', granted, '--temp', isolatedTemp, '--mode', 'workspace-write',
-        '--', 'pwsh', '-NoLogo', '-NonInteractive', '-NoProfile', '-Command', probe,
-      ], 60_000)
+      const result = spawnSync('pwsh', ['-NoLogo', '-NonInteractive', '-NoProfile', '-Command', probe], { encoding: 'utf8', timeout: 60_000 })
       expect(result.status, `stderr: ${result.stderr}`).toBe(0)
       expect(result.stdout).toContain('FILE: OK')
       expect(result.stdout).toContain('NESTED-FILE: OK')
       expect(result.stdout).toContain('DIRECTORY: DENIED')
     } finally {
+      grant.dispose()
       rmSync(granted, { recursive: true, force: true })
     }
   }, 60_000)
