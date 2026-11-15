@@ -73,7 +73,12 @@ const connection = (origin = ORIGIN) => {
 }
 const forward = (origin = ORIGIN) => {
   const ended = Promise.withResolvers<undefined>()
-  return { origin, closed: ended.promise, close: vi.fn(() => { ended.resolve(undefined) }) }
+  return {
+    origin,
+    closed: ended.promise,
+    attach: vi.fn(() => () => {}),
+    close: vi.fn(() => { ended.resolve(undefined) }),
+  }
 }
 
 type FakeView = {
