@@ -73,6 +73,8 @@ When you launch `yharness --profile web` over SSH, the URL line still prints but
 
 The VPS installer enables `botComputers` and provisions a separate rootless Podman computer for each owner Bot. The owner-authenticated Computer routes resolve the requested Session against the Bot roster. The model tool uses the calling Session. Each desktop has its own controller and renewable human lease that pauses the Computer tool's screenshots and input. An existing Bot receives its computer when first accessed, while its saved Session and roster identity stay in place. File cards and previews use the selected Bot's workspace, including for a cold Session.
 
+The Web systemd user service starts each private Computer in a separate scope. Its runtime and network processes can continue across a Web service restart. Interactive Web launches use Podman directly.
+
 The optional `computer` configuration supplies one shared X11 display for a custom Web deployment. It uses `YH_VPS_DISPLAY` and `YH_VPS_XAUTHORITY`. Set `botComputers.bots` to select owner Bots for private computers while keeping the shared display for other Bots. See [VPS setup and service grants](../../../docs/user/guide/vps.md#give-a-bot-access-to-service-diagnostics).
 
 `botComputers.desktopOnlyBots` selects Bots whose private Computer should use the isolated desktop while their shell and file tools retain the existing Host workspace and policy. The list contains only Bots selected by `botComputers`.

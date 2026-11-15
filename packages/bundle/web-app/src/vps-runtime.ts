@@ -12,11 +12,16 @@
 
 import { execFile, spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import { mkdir, lstat } from 'node:fs/promises'
 import { isAbsolute, relative, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
 
 const PODMAN = '/usr/bin/podman'
+const USER_COMPUTER_SCOPE = [
+  '/usr/bin/systemd-run', '--user', '--scope', '--quiet', '--collect', '--no-ask-password',
+  '--description=Y Harness Bot Computer', '--',
+] as const
 const SESSION_ID_PATTERN = /^bot-session-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u
 const IMAGE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/@:-]*$/u
 const PRIVATE_MODE_MASK = 0o077
@@ -49,6 +54,8 @@ export type VpsCommandRunner = (argv: readonly string[]) => Promise<VpsCommandRe
 export interface VpsRuntimeInternals {
   readonly run?: VpsCommandRunner
   readonly uid?: () => number | undefined
+  /** Simulate a Web host launched as a systemd user service. */
+  readonly userService?: boolean
 }
 
 /** Locally provisioned browser desktop resources for an explicitly selected Bot. */
@@ -117,6 +124,7 @@ export class VpsRuntime {
   private readonly browserPolicy?: string
   private readonly projectVolume?: string
   private readonly networkMode: VpsNetworkMode
+  private readonly scopedLaunch: boolean
   /** Whether the Bot's private computer and terminal have outbound internet access. */
   readonly internet: boolean
   /** Absolute mount point inside participating Bot containers. */
@@ -139,6 +147,7 @@ export class VpsRuntime {
     this.imageName = browser === undefined ? this.workspaceImage : imageReference(browser.image)
     if (browser !== undefined) this.browserPolicy = privatePath(browser.seccompProfile, 'VPS Bot browser policy')
     this.internals = internals
+    this.scopedLaunch = internals.userService ?? inSystemdUserService()
     this.internet = options.internet ?? (browser !== undefined)
     this.networkMode = this.internet ? OUTBOUND_NETWORK : 'none'
     if (sharedWorkspace) {
@@ -372,12 +381,37 @@ export class VpsRuntime {
   }
 
   private async runPodman(args: readonly string[]): Promise<VpsCommandResult> {
-    const result = await (this.internals.run ?? runPodmanProcess)([PODMAN, ...args])
+    const startsComputer = args[0] === 'run' || args[0] === 'start'
+    const argv = this.scopedLaunch && startsComputer
+      ? [...USER_COMPUTER_SCOPE, PODMAN, ...args]
+      : [PODMAN, ...args]
+    const result = await (this.internals.run ?? runPodmanProcess)(argv)
     if (!Number.isInteger(result.code) || typeof result.stdout !== 'string' || typeof result.stderr !== 'string') {
       throw new VpsRuntimeError('VPS Bot Podman returned invalid command facts')
     }
     return result
   }
+}
+
+function inSystemdUserService(): boolean {
+  const uid = process.getuid?.()
+  if (process.platform !== 'linux' || uid === undefined || uid === 0) return false
+  let membership: string
+  try {
+    membership = readFileSync('/proc/self/cgroup', 'utf8')
+  } catch (error) {
+    // Web can run directly in an environment without readable Linux cgroup metadata.
+    void error
+    return false
+  }
+  const userManager = `user@${uid}.service`
+  return membership.split('\n').some((line) => {
+    const path = /^\d+:(?:|name=systemd):(\/.+)$/u.exec(line)?.[1]
+    if (path === undefined) return false
+    const parents = path.split('/')
+    const manager = parents.indexOf(userManager)
+    return manager >= 0 && parents.slice(manager + 1).some(unit => unit.endsWith('.service'))
+  })
 }
 
 function validateSessionId(sessionId: string): void {

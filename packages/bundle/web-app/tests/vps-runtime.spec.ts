@@ -33,11 +33,12 @@ function result(code = 0, stdout = ''): VpsCommandResult {
 function fixture(run: (argv: readonly string[]) => Promise<VpsCommandResult> | VpsCommandResult = async (argv) => {
   if (argv[1] === 'container' && argv[2] === 'exists') return result(1)
   return result()
-}, { browser = false, sharedWorkspace = false, hostileSharedVolume = false, internet }: {
+}, { browser = false, sharedWorkspace = false, hostileSharedVolume = false, internet, userService = false }: {
   browser?: boolean
   sharedWorkspace?: boolean
   hostileSharedVolume?: boolean
   internet?: boolean
+  userService?: boolean
 } = {}): Fixture {
   const root = mkdtempSync(join(tmpdir(), 'dsh-vps-runtime-'))
   roots.push(root)
@@ -75,10 +76,12 @@ function fixture(run: (argv: readonly string[]) => Promise<VpsCommandResult> | V
     }))
   }
   const runtime = new VpsRuntime(root, 'localhost/yharness-vps-bot:24.04', {
+    userService,
     run: async (argv) => {
       calls.push([...argv])
-      if (argv[1] === 'volume') return await defaultVolumeCommand(argv)
-      return await run(argv)
+      const podman = argv.slice(argv.indexOf('/usr/bin/podman'))
+      if (podman[1] === 'volume') return await defaultVolumeCommand(podman)
+      return await run(podman)
     },
   }, {
     ...(browser ? { browser: { image: 'localhost/yharness-vps-bot-browser:24.04-v1', seccompProfile } } : {}),
@@ -89,6 +92,19 @@ function fixture(run: (argv: readonly string[]) => Promise<VpsCommandResult> | V
 }
 
 describe('VpsRuntime', () => {
+  it('starts a desktop in a separate user scope while keeping inspection in the Web service', async () => {
+    const f = fixture(undefined, { userService: true, internet: true })
+    await f.runtime.ensure(sessions.alice)
+    const launch = f.calls.find(argv => argv.includes('--detach'))
+    expect(launch?.slice(0, launch.indexOf('/usr/bin/podman'))).toEqual([
+      '/usr/bin/systemd-run', '--user', '--scope', '--quiet', '--collect', '--no-ask-password',
+      '--description=Y Harness Bot Computer', '--',
+    ])
+    expect(f.calls.filter(argv => argv[0] === '/usr/bin/systemd-run')).toEqual([launch])
+    expect(f.calls.some(argv => argv[0] === '/usr/bin/podman' && argv[1] === 'container')).toBe(true)
+    expect(f.calls.some(argv => argv[0] === '/usr/bin/podman' && argv[1] === 'exec')).toBe(true)
+  })
+
   it('gives a standard desktop outbound internet independently of Firefox', async () => {
     const f = fixture(undefined, { internet: true })
     await f.runtime.ensure(sessions.alice)
@@ -227,12 +243,12 @@ describe('VpsRuntime', () => {
           UsernsMode: 'private', Tmpfs: { '/tmp': 'rw,noexec,nosuid,nodev' },
         },
       }))
-    }, { internet })
+    }, { internet, userService: true })
     const ready = f.runtime.ensure(sessions.alice)
     if (allowed) await ready
     else await expect(ready).rejects.toThrow('network does not match its settings')
-    expect(f.calls.some(argv => argv[1] === 'start')).toBe(allowed)
-    expect(f.calls.some(argv => argv[1] === 'run')).toBe(false)
+    const launches = f.calls.filter(argv => argv[0] === '/usr/bin/systemd-run')
+    expect(launches.map(argv => argv.slice(argv.indexOf('/usr/bin/podman') + 1)[0])).toEqual(allowed ? ['start'] : [])
   })
 
   it('shares a single launch across concurrent calls for one session and isolates another session', async () => {
