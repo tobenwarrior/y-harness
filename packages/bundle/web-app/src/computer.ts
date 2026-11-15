@@ -562,7 +562,7 @@ export class VpsComputer {
   }
 
   /**
-   * Navigate the viewer's isolated browser while that viewer holds control.
+   * Navigate the isolated browser for the viewer holding control, including during a claimed sign-in handoff.
    * @param viewerId - Current viewer lease identifier.
    * @param url - Validated website URL.
    * @param signal - Request cancellation.
@@ -574,7 +574,7 @@ export class VpsComputer {
     const id = validateViewer(viewerId)
     return this.admit(async () => {
       this.expireLease()
-      if (this.owner !== id || this.signIn !== undefined) throw new ComputerLeaseError('viewer does not hold browser control')
+      if (this.owner !== id || this.signIn?.taken === false) throw new ComputerLeaseError('viewer does not hold browser control')
       await navigate(url, signal)
       this.leaseExpiry = this.now() + LEASE_DURATION_MS
       return { mode: 'controlling' }

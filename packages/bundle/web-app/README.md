@@ -79,7 +79,7 @@ The optional `computer` configuration supplies one shared X11 display for a cust
 
 `botComputers.browser` grants selected private Computers a Firefox desktop with outbound networking and a persistent profile. The selected Bot keeps its workspace volume when its desktop is replaced. See [Enable Firefox for selected Bots](../../../docs/user/guide/vps.md#enable-firefox-for-selected-bots).
 
-`botComputers.isolatedBrowser` routes selected Bots’ Computer input and screenshots to a separate browser service over a private Unix socket. The Bot’s existing shell and file providers stay in their current runtime. The same viewer lease applies to browser navigation. See [Enable an isolated browser for selected Bots](../../../docs/user/guide/vps.md#enable-an-isolated-browser-for-selected-bots).
+`botComputers.isolatedBrowser` routes selected Bots’ Computer input and screenshots to a separate browser service over a private Unix socket. The Bot’s shell and file providers stay in their current runtime. In a direct owner turn, the Bot can hand the browser to the owner for sign-in. Only the viewer holding that handoff receives frames and can send input or navigate. See [Enable an isolated browser for selected Bots](../../../docs/user/guide/vps.md#enable-an-isolated-browser-for-selected-bots).
 
 `botComputers.isolatedBrowser.savedLogins` enables the [owner approval flow](../../../docs/user/guide/vps.md#approve-a-saved-website-login) for direct Bot chats. Cloud handles request metadata and a fixed outcome. The installed Vault submits an owner-entered or saved login to the browser worker over its root-owned socket.
 

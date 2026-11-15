@@ -49,7 +49,8 @@ function keyInput(value) {
     modifiers |= bit
   }
   const virtual = KEY_CODES.get(key) ?? (/^[a-z0-9]$/iu.test(key) ? key.toUpperCase().charCodeAt(0) : 0)
-  const text = key.length === 1 && (modifiers & 7) === 0 ? key : ''
+  const printable = key === 'Enter' ? '\r' : key
+  const text = printable.length === 1 && (modifiers & 7) === 0 ? printable : ''
   return { key, modifiers, windowsVirtualKeyCode: virtual, ...(text === '' ? {} : { text }) }
 }
 

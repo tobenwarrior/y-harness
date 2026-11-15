@@ -199,7 +199,8 @@ function registerComputerTool(ctx: Context, target: ComputerToolTarget): void {
           case 'submitted':
             return { message: 'The website received the sign-in submission. Check the page to see whether you’re signed in.' }
           case 'needs-owner':
-            return { message: 'The website needs a manual sign-in or verification step.' }
+            return { message: 'The website needs a manual sign-in or verification step.'
+              + (target.signIn === undefined ? '' : ' Use request_sign_in to ask the owner to take over.') }
           case 'unavailable':
             return { message: 'The website sign-in request ended. Ask the owner before trying again.' }
         }

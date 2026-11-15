@@ -9,6 +9,7 @@ import SessionProjections from '@yharness/session-projection'
 import SystemPrompt, { renderPrompt } from '@yharness/system-prompt'
 import ToolRuntime, { defineTool } from '@yharness/tools'
 import { LocalSubprocessRuntime } from '@yharness/subprocess-local'
+import type { ConnectionFetchRoute } from '@yharness/client-connection'
 import type { IndexInjection } from '@yharness/host-webserver'
 import { describe, expect, it, vi } from 'vitest'
 import { mountVpsBots } from '../src/vps-bots.ts'
@@ -101,6 +102,7 @@ describe('managed VPS Bot composition', () => {
     const browserStatus = vi.spyOn(VpsIsolatedBrowser.prototype, 'status').mockResolvedValue({ available: true })
     const browserNavigate = vi.spyOn(VpsIsolatedBrowser.prototype, 'navigate').mockResolvedValue(undefined)
     const browserLogin = vi.spyOn(VpsBrowserLogin.prototype, 'request').mockResolvedValue({ state: 'submitted' })
+    const routes: ConnectionFetchRoute[] = []
     let directOwnerTurn = true
     try {
       await ctx.plugin(LlmRuntime)
@@ -113,6 +115,12 @@ describe('managed VPS Bot composition', () => {
       await ctx.plugin(LocalSubprocessRuntime)
       await ctx.plugin(AgentLoop, { agents: [] })
       ctx.provide('attachments', {} as never)
+      ctx.provide('connection', { fetch: {
+        register(route: ConnectionFetchRoute) {
+          routes.push(route)
+          return () => { routes.splice(routes.indexOf(route), 1) }
+        },
+      } } as never)
       ctx.provide('bots', {
         ownerBotForSession: async (sessionId: string) => {
           if (sessionId === BOT_SESSION) return { id: 'bot-test', sessionId, state: 'active' }
@@ -126,7 +134,7 @@ describe('managed VPS Bot composition', () => {
         mountVpsBots(scope, {
           root: '/yharness-test-bots', image: 'localhost/yharness-test', bots: ['bot-test', 'bot-desktop'],
           desktopOnlyBots: ['bot-desktop'],
-          isolatedBrowser: { socketPath: '/run/yharness-browser.sock', bots: ['bot-test'], savedLogins: true },
+          isolatedBrowser: { socketPath: '/run/yharness-browser.sock', bots: ['bot-test', 'bot-desktop'], savedLogins: true },
         }, [], undefined, {
           socketPath: '/run/yharness-test.sock', bots: ['bot-test', 'bot-desktop'],
         })
@@ -134,6 +142,7 @@ describe('managed VPS Bot composition', () => {
       const injections: IndexInjection[] = []
       ctx.emit('webserver/index-inject', injections)
       expect(injections).toContainEqual({ kind: 'global', name: '__YH_BOT_WEBSITE_LOGIN__', value: true })
+      expect(injections).toContainEqual({ kind: 'global', name: '__YH_BOT_COMPUTER_SIGN_IN__', value: true })
       ctx.tools.register(defineTool({
         name: 'host_probe',
         description: 'Fixture tool that models a host-only operation.',
@@ -166,12 +175,36 @@ describe('managed VPS Bot composition', () => {
       expect(ctx.tools.get('vps_computer', bot)).toBeDefined()
       expect(ctx.tools.get('vps_computer', desktop)).toBeDefined()
       expect(ctx.tools.get('vps_computer', regular)).toBeUndefined()
-      expect(ctx.tools.get('vps_computer', bot)?.parameters).toMatchObject({
-        properties: { action: { enum: expect.arrayContaining(['navigate', 'request_saved_login']) } },
-      })
-      expect(ctx.tools.get('vps_computer', desktop)?.parameters).toMatchObject({
-        properties: { action: { enum: expect.not.arrayContaining(['navigate']) } },
-      })
+      const handoff = routes.find(route => route.path === '/api/computer/sign-in')
+      if (handoff === undefined) throw new Error('Owner handoff route is unavailable')
+      const send = (body: object): Promise<Response> => handoff.fetch(new Request('http://127.0.0.1/api/computer/sign-in', {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+      }))
+      for (const agent of [bot, desktop]) {
+        expect(ctx.tools.get('vps_computer', agent)?.parameters).toMatchObject({
+          properties: { action: { enum: expect.arrayContaining(['navigate', 'request_saved_login', 'request_sign_in']) } },
+        })
+        const sessionId = agent.session.id
+        const controller = new AbortController()
+        const waiting = ctx.tools.execute({
+          ...call, signal: controller.signal, name: 'vps_computer', callId: ToolCallId('manual-sign-in-' + sessionId),
+          arguments: { action: 'request_sign_in' }, agent,
+        })
+        try {
+          const status = { action: 'status', sessionId }
+          await expect.poll(async () => (await send(status)).json()).toMatchObject({ request: { id: expect.any(String) } })
+          const { request }: { request: { id: string } } = await (await send(status)).json()
+          await expect((await send({ ...status, sessionId: LEGACY_SESSION })).json()).resolves.toEqual({ request: null })
+          const answer = { sessionId, requestId: request.id, viewerId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' }
+          expect((await send({ ...answer, action: 'take', sessionId: LEGACY_SESSION })).status).toBe(409)
+          await expect((await send({ ...answer, action: 'take' })).json()).resolves.toEqual({ mode: 'controlling' })
+          expect((await send({ ...answer, action: 'complete' })).status).toBe(200)
+          await expect(waiting).resolves.toMatchObject({ isError: false })
+        } finally {
+          controller.abort()
+          await waiting
+        }
+      }
       await expect(ctx.tools.execute({
         ...call,
         name: 'vps_computer',
@@ -191,6 +224,22 @@ describe('managed VPS Bot composition', () => {
         agent: bot,
       })).resolves.toMatchObject({ isError: false })
       expect(browserLogin).toHaveBeenCalledWith('bot-test', BOT_SESSION, expect.any(Function), expect.any(AbortSignal))
+      browserLogin.mockResolvedValueOnce({ state: 'needs-owner' })
+      const fallback = await ctx.tools.execute({
+        ...call, name: 'vps_computer', callId: ToolCallId('saved-login-needs-owner'),
+        arguments: { action: 'request_saved_login' }, agent: bot,
+      })
+      expect(JSON.stringify(fallback)).toContain('Use request_sign_in to ask the owner to take over.')
+      const pending = vi.spyOn(VpsBrowserLogin.prototype, 'hasPending').mockImplementation(session => session === BOT_SESSION)
+      try {
+        await expect(ctx.tools.execute({
+          ...call, name: 'vps_computer', callId: ToolCallId('manual-sign-in-overlap'),
+          arguments: { action: 'request_sign_in' }, agent: bot,
+        })).resolves.toMatchObject({ isError: true })
+        await expect((await send({ action: 'status', sessionId: BOT_SESSION })).json()).resolves.toEqual({ request: null })
+      } finally {
+        pending.mockRestore()
+      }
       const loginCalls = browserLogin.mock.calls.length
       directOwnerTurn = false
       await expect(ctx.tools.execute({
@@ -201,6 +250,11 @@ describe('managed VPS Bot composition', () => {
         agent: bot,
       })).resolves.toMatchObject({ isError: true })
       expect(browserLogin).toHaveBeenCalledTimes(loginCalls)
+      await expect(ctx.tools.execute({
+        ...call, name: 'vps_computer', callId: ToolCallId('manual-sign-in-not-owner'),
+        arguments: { action: 'request_sign_in' }, agent: bot,
+      })).resolves.toMatchObject({ isError: true })
+      await expect((await send({ action: 'status', sessionId: BOT_SESSION })).json()).resolves.toEqual({ request: null })
       expect(ctx.tools.get('vps_service_journal', bot)).toBeDefined()
       expect(ctx.tools.get('vps_service_journal', desktop)).toBeDefined()
       expect(ctx.tools.get('vps_service_journal', legacy)).toBeUndefined()

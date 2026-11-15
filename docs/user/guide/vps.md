@@ -136,7 +136,9 @@ isolatedBrowser:
   bots: [bot-worker]
 ```
 
-Reload Cloud when its tasks are idle. Ask the Bot to open a public website, or open its **Computer** panel, choose **Take control**, and enter a website address. **Hand back** lets the Bot resume. This panel shows website content. The Firefox desktop above supports a manual sign-in handoff for sites that require your input.
+Reload Cloud when its tasks are idle. Ask the Bot to open a public website, or open its **Computer** panel, choose **Take control**, and enter a website address. **Hand back** lets the Bot resume.
+
+For a sign-in or verification step that needs your input, ask the Bot to hand you the Computer from its direct chat. Choose **Take over** and verify the website before entering anything. The Bot and other viewers stop receiving browser frames during the handoff. Choose **I’m done** once the signed-in page loads. If you cancel after taking control, clear the form first.
 
 To update the worker, stop its service and both sockets, then run the install and activate commands from the new release with the complete grant list. The worker reuses the existing Bot browser profiles.
 

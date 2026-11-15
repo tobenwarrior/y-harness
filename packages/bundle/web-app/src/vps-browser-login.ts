@@ -84,6 +84,15 @@ export class VpsBrowserLogin {
   }
 
   /**
+   * Check whether a Session has reserved its browser for Vault sign-in.
+   * @param session - Canonical Bot Session id.
+   * @returns Whether a request is starting, awaiting approval, or releasing its browser.
+   */
+  hasPending(session: string): boolean {
+    return this.pending.has(session)
+  }
+
+  /**
    * Read pending owner metadata for one exact Bot Session.
    * @param session - Canonical Bot Session id.
    * @returns Owner-only request metadata, or undefined after completion/expiry.
@@ -110,7 +119,7 @@ export class VpsBrowserLogin {
     if (!this.authorized(bot)) throw new Error(UNAUTHORIZED)
     if (!SESSION_ID.test(session)) throw new Error(UNAVAILABLE)
     if (signal.aborted || this.closed.signal.aborted) return { state: 'unavailable' }
-    if (this.pending.has(session)) throw new Error('A saved website login is already pending in this Session.')
+    if (this.hasPending(session)) throw new Error('A saved website login is already pending in this Session.')
     if (this.pending.size >= MAX_PENDING) return { state: 'unavailable' }
     this.pending.add(session)
     const running = this.run(bot, session, lease, signal)

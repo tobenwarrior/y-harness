@@ -77,14 +77,24 @@ describe('private computer Host', () => {
   it('gives the owner an exclusive sign-in handoff and resumes only after that viewer finishes', async () => {
     const f = fixture()
     try {
+      await f.host.takeControl(viewers.alice)
       const waiting = f.host.requestSignIn(new AbortController().signal)
       await expect.poll(() => f.host.signInRequest()).toMatchObject({ id: expect.any(String) })
       const request = f.host.signInRequest()!
+      const destinations: string[] = []
+      const navigate = async (url: string): Promise<void> => { destinations.push(url) }
+      const signal = new AbortController().signal
+      const url = 'https://login.example.test'
       await expect(f.host.observe()).rejects.toBeInstanceOf(ComputerLeaseError)
       await expect(f.host.takeControl(viewers.alice)).rejects.toBeInstanceOf(ComputerLeaseError)
+      await expect(f.host.navigateAsViewer(viewers.alice, url, signal, navigate)).rejects.toBeInstanceOf(ComputerLeaseError)
       await expect(f.host.answerSignIn(request.id, 'take', viewers.alice)).resolves.toEqual({ mode: 'controlling' })
       await expect(f.host.frame(viewers.bob)).resolves.toMatchObject({ jpeg: '', mode: 'other', signIn: request.id })
       await expect(f.host.frame(viewers.alice)).resolves.toMatchObject({ jpeg: expect.not.stringMatching(/^$/u), mode: 'controlling' })
+      await expect(f.host.navigateAsBot(url, signal, navigate)).rejects.toBeInstanceOf(ComputerLeaseError)
+      await expect(f.host.navigateAsViewer(viewers.bob, url, signal, navigate)).rejects.toBeInstanceOf(ComputerLeaseError)
+      await expect(f.host.navigateAsViewer(viewers.alice, url, signal, navigate)).resolves.toEqual({ mode: 'controlling' })
+      expect(destinations).toEqual([url])
       await f.host.input(viewers.alice, { kind: 'key', key: '$' })
       await f.host.input(viewers.alice, { kind: 'text', text: 'fixture-$value' })
       expect(f.commands.slice(-2).map(({ args, stdin }) => [args, stdin])).toEqual([

@@ -102,6 +102,7 @@ describe('isolated browser saved-login registry', () => {
     })
     const firstController = new AbortController()
     const first = logins.request(BOT, SESSION, async operation => operation(), firstController.signal)
+    const opening = { pending: logins.hasPending(SESSION), visible: logins.current(SESSION) }
     await expect.poll(() => logins.current(SESSION)).toMatchObject({ id: LOGIN_ID })
     await expect(logins.request(BOT, SESSION, async operation => operation(), new AbortController().signal))
       .rejects.toThrow('already pending')
@@ -110,6 +111,8 @@ describe('isolated browser saved-login registry', () => {
     releaseSleep?.()
     await expect(first).resolves.toEqual({ state: 'unavailable' })
     expect(logins.current(SESSION)).toBeUndefined()
+    expect(opening).toEqual({ pending: true, visible: undefined })
+    expect(logins.hasPending(SESSION)).toBe(false)
   })
 
   it('keeps authorization and broker failures state-only', async () => {

@@ -65,7 +65,8 @@ export function mountVpsBots(
   const isDesktopBot = (botId: string): boolean => isManagedBot(botId) || desktopOnlyBotIds.has(botId)
   const browserBotIds = new Set(config.browser?.bots)
   const isolatedBrowserBotIds = new Set(config.isolatedBrowser?.bots)
-  const hasBrowserSignIn = (botId: string): boolean => browserBotIds.has(botId) && desktopOnlyBotIds.has(botId)
+  const hasBrowserSignIn = (botId: string): boolean => isolatedBrowserBotIds.has(botId)
+    || (browserBotIds.has(botId) && desktopOnlyBotIds.has(botId))
   if ([...browserBotIds].some(botId => !isDesktopBot(botId))) {
     throw new Error('VPS browser access must select private Computer Bots.')
   }
@@ -84,7 +85,7 @@ export function mountVpsBots(
   const browserLogin = isolatedBrowser === undefined || config.isolatedBrowser?.savedLogins !== true
     ? undefined
     : new VpsBrowserLogin(isolatedBrowser)
-  if ([...browserBotIds].some(hasBrowserSignIn)) {
+  if (isolatedBrowserBotIds.size > 0 || [...browserBotIds].some(hasBrowserSignIn)) {
     ctx.on('webserver/index-inject', (table) => {
       table.push({ kind: 'global', name: '__YH_BOT_COMPUTER_SIGN_IN__', value: true })
     })
@@ -212,6 +213,31 @@ export function mountVpsBots(
         })
         return
       }
+      const installComputerTool = (agentCtx: Context): void => {
+        ComputerTool.applyVpsBotComputer(agentCtx, async (sessionId) => {
+          if (sessionId !== bot.sessionId) throw new Error('VPS Computer requires the owning Bot Session.')
+          return computerFor(sessionId, bot.id)
+        }, hasBrowserSignIn(bot.id) ? async (caller, signal) => {
+          if (caller !== agent || !await scope.bots.isDirectOwnerTurn(caller, signal)) {
+            throw new Error('Computer sign-in is available in a direct owner Bot chat.')
+          }
+          const computer = await computerFor(bot.sessionId, bot.id)
+          if (browserLogin?.hasPending(bot.sessionId) === true) {
+            throw new Error('Resolve the pending Vault sign-in before requesting Computer handoff.')
+          }
+          return computer.requestSignIn(signal)
+        } : undefined, isolatedBrowserBotIds.has(bot.id) ? (sessionId, url, signal) => {
+          if (sessionId !== bot.sessionId) throw new Error('VPS Computer requires the owning Bot Session.')
+          return navigateFor(bot.id, sessionId, url, signal)
+        } : undefined, browserLogin !== undefined && isolatedBrowserBotIds.has(bot.id) ? async (caller, signal) => {
+          if (caller !== agent || !await scope.bots.isDirectOwnerTurn(caller, signal)) {
+            throw new Error('Saved website login is available in a direct owner Bot chat.')
+          }
+          const computer = await computerFor(bot.sessionId, bot.id)
+          return browserLogin.request(bot.id, bot.sessionId,
+            (operation, requestSignal) => computer.runWhileBotControls(operation, requestSignal), signal)
+        } : undefined)
+      }
       if (!isManagedBot(bot.id)) {
         await agent.ctx.inject(['tools', 'attachments', 'llm', 'systemPrompt'], (agentCtx) => {
           agentCtx.systemPrompt.section({
@@ -220,25 +246,7 @@ export function mountVpsBots(
             text: () => 'Use vps_computer for visual interaction on your private VPS desktop. '
               + 'Bash and file tools use your existing Session workspace and permissions.',
           })
-          ComputerTool.applyVpsBotComputer(agentCtx, async (sessionId) => {
-            if (sessionId !== bot.sessionId) throw new Error('VPS Computer requires the owning Bot Session.')
-            return computerFor(sessionId, bot.id)
-          }, hasBrowserSignIn(bot.id) ? async (caller, signal) => {
-            if (caller !== agent || !await scope.bots.isDirectOwnerTurn(caller, signal)) {
-              throw new Error('Computer sign-in is available in a direct owner Bot chat.')
-            }
-            return (await computerFor(bot.sessionId, bot.id)).requestSignIn(signal)
-          } : undefined, isolatedBrowserBotIds.has(bot.id) ? (sessionId, url, signal) => {
-            if (sessionId !== bot.sessionId) throw new Error('VPS Computer requires the owning Bot Session.')
-            return navigateFor(bot.id, sessionId, url, signal)
-          } : undefined, browserLogin !== undefined && isolatedBrowserBotIds.has(bot.id) ? async (caller, signal) => {
-            if (caller !== agent || !await scope.bots.isDirectOwnerTurn(caller, signal)) {
-              throw new Error('Saved website login is available in a direct owner Bot chat.')
-            }
-            const computer = await computerFor(bot.sessionId, bot.id)
-            return browserLogin.request(bot.id, bot.sessionId,
-              (operation, requestSignal) => computer.runWhileBotControls(operation, requestSignal), signal)
-          } : undefined)
+          installComputerTool(agentCtx)
           if (journal !== undefined) registerVpsJournalTool(agentCtx, bot.id, bot.sessionId, journal, agent.ctx)
         })
         return
@@ -294,20 +302,7 @@ export function mountVpsBots(
             + 'Use Bash, file tools and vps_computer there; do not use the Chat session cwd. '
             + 'Host service access requires a separate grant. Mac permissions do not apply here.',
         })
-        ComputerTool.applyVpsBotComputer(agentCtx, async (sessionId) => {
-          if (sessionId !== bot.sessionId) throw new Error('VPS Computer requires the owning Bot Session.')
-          return computerFor(sessionId, bot.id)
-        }, undefined, isolatedBrowserBotIds.has(bot.id) ? (sessionId, url, signal) => {
-          if (sessionId !== bot.sessionId) throw new Error('VPS Computer requires the owning Bot Session.')
-          return navigateFor(bot.id, sessionId, url, signal)
-        } : undefined, browserLogin !== undefined && isolatedBrowserBotIds.has(bot.id) ? async (caller, signal) => {
-          if (caller !== agent || !await scope.bots.isDirectOwnerTurn(caller, signal)) {
-            throw new Error('Saved website login is available in a direct owner Bot chat.')
-          }
-          const computer = await computerFor(bot.sessionId, bot.id)
-          return browserLogin.request(bot.id, bot.sessionId,
-            (operation, requestSignal) => computer.runWhileBotControls(operation, requestSignal), signal)
-        } : undefined)
+        installComputerTool(agentCtx)
         registerVpsServiceTools(agentCtx, bot.id, services)
         if (journal !== undefined) registerVpsJournalTool(agentCtx, bot.id, bot.sessionId, journal, agent.ctx)
       })

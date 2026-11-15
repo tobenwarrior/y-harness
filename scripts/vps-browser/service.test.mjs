@@ -118,28 +118,38 @@ test('reserves the exact browser for one owner-approved login and consumes it on
   assert.deepEqual(await controlResponse(control, { ...request, action: 'frame' }), { jpeg: '/9j/2Q==', width: 1280, height: 800 })
 })
 
-test('opens a real browser through its pipe, renders a page, and sends typed input', {
+test('opens a real browser through its pipe and submits keyboard input with Enter', {
   skip: process.env.YH_ISOLATED_TEST_CHROMIUM === undefined,
 }, async t => {
   const root = await mkdtemp(join(tmpdir(), 'yh-chromium-profile-'))
-  t.after(() => rm(root, { recursive: true, force: true }))
   const received = Promise.withResolvers()
+  let browser
   const http = createHttpServer((incoming, reply) => {
-    if (incoming.url === '/received') {
-      received.resolve('keyboard input received')
-      reply.end()
+    if (incoming.method === 'POST') {
+      let body = ''
+      incoming.setEncoding('utf8')
+      incoming.on('data', chunk => { body += chunk })
+      incoming.once('end', () => {
+        received.resolve(new URLSearchParams(body).get('code'))
+        reply.end()
+      })
       return
     }
     reply.writeHead(200, { 'content-type': 'text/html' })
-    reply.end(`<!doctype html><title>Isolated browser</title><input style="position:absolute;left:0;top:0;width:200px;height:40px"
-      oninput="if (this.value === 'hello!') fetch('/received')">`)
+    reply.end('<!doctype html><title>Isolated browser</title><form method="post">'
+      + '<input name="code" style="position:absolute;left:0;top:0;width:200px;height:40px"><button>Submit</button></form>')
+  })
+  t.after(async () => {
+    try { await browser?.close() }
+    finally {
+      if (http.listening) await new Promise(resolve => { http.close(resolve); http.closeAllConnections() })
+      await rm(root, { recursive: true, force: true })
+    }
   })
   await new Promise((resolve, reject) => { http.once('error', reject); http.listen(0, '127.0.0.1', resolve) })
-  t.after(() => new Promise(resolve => { http.close(resolve); http.closeAllConnections() }))
-  const browser = await createBrowserPage(process.env.YH_ISOLATED_TEST_CHROMIUM, root).catch(error => {
+  browser = await createBrowserPage(process.env.YH_ISOLATED_TEST_CHROMIUM, root).catch(error => {
     throw new Error('Could not start the browser page', { cause: error })
   })
-  t.after(() => browser.close())
   await browser.navigate(`http://127.0.0.1:${http.address().port}/`).catch(error => {
     throw new Error('Could not navigate to the fixture', { cause: error })
   })
@@ -150,8 +160,9 @@ test('opens a real browser through its pipe, renders a page, and sends typed inp
   await browser.input({ kind: 'click', x: 10, y: 10, button: 1 })
   await browser.input({ kind: 'text', text: 'hello' })
   await browser.input({ kind: 'key', key: '!' })
+  await browser.input({ kind: 'key', key: 'Return' })
   const deadline = setTimeout(() => received.reject(new Error('Browser input did not reach the fixture')), 3000)
-  try { await received.promise } finally { clearTimeout(deadline) }
+  try { assert.equal(await received.promise, 'hello!') } finally { clearTimeout(deadline) }
   await browser.close()
   await browser.closed
 })
