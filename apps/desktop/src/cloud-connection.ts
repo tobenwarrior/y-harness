@@ -25,14 +25,16 @@ export interface CloudConnection {
   readonly origin: string
   /** Authenticated login URL rewritten to the local forward's origin. */
   readonly loginUrl: string
-  /** Settles after the SSH process, proxy sockets and private socket directory are closed. */
+  /** Settles after the SSH process, its proxy sockets and private socket directory are closed. */
   readonly closed: Promise<void>
   /** Stop this connection; repeated calls are harmless. */
   close(): void
 }
 
-/** Internal process injection used by lifecycle tests; production callers leave it unset. */
-export interface CloudConnectionTestOptions {
+/** Loopback listener ownership and internal test seams for an SSH attempt. */
+export interface CloudConnectionOptions {
+  /** Reusable loopback origin owned by the workspace. The attempt owns one when omitted. */
+  readonly forward?: CloudForward
   readonly spawnProcess?: (file: string, args: readonly string[], options: SpawnOptions) => ChildProcess
   readonly startupTimeoutMs?: number
   readonly terminateTimeoutMs?: number
@@ -99,18 +101,91 @@ function parseRemoteLoginUrl(line: string): string | undefined {
   }
 }
 
-function rewriteLoginUrl(remote: string, port: number): { origin: string; loginUrl: string } {
+function rewriteLoginUrl(remote: string, origin: string): { origin: string; loginUrl: string } {
   const url = new URL(remote)
-  url.port = String(port)
-  const origin = url.origin
-  return { origin, loginUrl: url.href }
+  return { origin, loginUrl: origin + '/' + url.search }
 }
 
-function closeServer(server: Server | undefined): Promise<void> {
-  if (server === undefined || !server.listening) return Promise.resolve()
+function closeServer(server: Server): Promise<void> {
+  if (!server.listening) return Promise.resolve()
   return new Promise((resolve) => {
     server.close(() => { resolve() })
   })
+}
+
+/** Private loopback origin retained by one Cloud workspace across SSH attempts. */
+export interface CloudForward {
+  /** Random local HTTP origin owned by this listener until it closes. */
+  readonly origin: string
+  /** Settles after the listener and all proxied sockets have closed. */
+  readonly closed: Promise<void>
+  /**
+   * Route new connections to one private Unix socket until its SSH attempt ends.
+   * @param socketPath - Absolute socket path owned by the SSH attempt.
+   * @returns A release function that also closes that attempt's proxied connections.
+   */
+  attach(socketPath: string): () => void
+  /** Release the loopback origin and close existing connections. */
+  close(): void
+}
+
+/**
+ * Reserve a random local origin for one Cloud workspace. An unbound listener refuses traffic.
+ * @returns The ready listener that can be reused by sequential SSH attempts.
+ */
+export async function openCloudForward(): Promise<CloudForward> {
+  const clients = new Set<Socket>()
+  let destination: { readonly path: string } | undefined
+  let closing = false
+  const closed = Promise.withResolvers<void>()
+  const disconnect = (): void => {
+    destination = undefined
+    for (const socket of clients) socket.destroy()
+    clients.clear()
+  }
+  const server = createServer((client) => {
+    if (destination === undefined) { client.destroy(); return }
+    const upstream = createConnection(destination)
+    clients.add(client)
+    clients.add(upstream)
+    const closePair = (): void => { client.destroy(); upstream.destroy() }
+    client.once('close', () => { clients.delete(client); upstream.destroy() })
+    upstream.once('close', () => { clients.delete(upstream); client.destroy() })
+    client.once('error', closePair)
+    upstream.once('error', closePair)
+    client.pipe(upstream)
+    upstream.pipe(client)
+  })
+  const close = (): void => {
+    if (closing) return
+    closing = true
+    disconnect()
+    void closeServer(server).finally(closed.resolve)
+  }
+  const port = await new Promise<number>((resolve, reject) => {
+    server.on('error', () => {
+      close()
+      reject(failedError())
+    })
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address()
+      if (address === null || typeof address === 'string') {
+        close()
+        reject(failedError())
+      } else resolve(address.port)
+    })
+  })
+  return {
+    origin: 'http://127.0.0.1:' + String(port),
+    closed: closed.promise,
+    attach(socketPath) {
+      if (closing || destination !== undefined) throw failedError()
+      const owned = { path: socketPath }
+      destination = owned
+      return () => { if (destination === owned) disconnect() }
+    },
+    close,
+  }
 }
 
 /**
@@ -123,26 +198,26 @@ function closeServer(server: Server | undefined): Promise<void> {
  *
  * @param target - Existing OpenSSH host alias or `user@host` destination.
  * @param signal - Cancellation for startup and, after readiness, the connection lifetime.
- * @param testOptions - Test-only process and deadline injection.
+ * @param options - Optional workspace-owned origin and test seams.
  * @returns The private origin, authenticated login URL and owned lifecycle.
  * @throws If the destination is invalid, SSH cannot start, the server URL is invalid,
  * or startup is cancelled or exceeds its deadline. Failure messages never include target
  * names or child output.
  */
 export async function openCloudConnection(
-  target: string, signal: AbortSignal, testOptions: CloudConnectionTestOptions = {},
+  target: string, signal: AbortSignal, options: CloudConnectionOptions = {},
 ): Promise<CloudConnection> {
   if (!isCloudTarget(target)) throw invalidTargetError()
   throwIfAborted(signal)
 
-  const startupTimeoutMs = testOptions.startupTimeoutMs ?? CLOUD_CONNECTION_STARTUP_TIMEOUT_MS
-  const terminateTimeoutMs = testOptions.terminateTimeoutMs ?? CLOUD_CONNECTION_TERMINATE_TIMEOUT_MS
-  const spawnProcess = testOptions.spawnProcess ?? ((file: string, args: readonly string[], options: SpawnOptions) =>
+  const startupTimeoutMs = options.startupTimeoutMs ?? CLOUD_CONNECTION_STARTUP_TIMEOUT_MS
+  const terminateTimeoutMs = options.terminateTimeoutMs ?? CLOUD_CONNECTION_TERMINATE_TIMEOUT_MS
+  const spawnProcess = options.spawnProcess ?? ((file: string, args: readonly string[], options: SpawnOptions) =>
     spawn(file, args, options))
   const directory = await mkdtemp(join(tmpdir(), 'yharness-cloud-'))
   const socketPath = join(directory, 'forward.sock')
-  const clients = new Set<Socket>()
-  let server: Server | undefined
+  let forward: CloudForward | undefined
+  let detach: (() => void) | undefined
   let child: ChildProcess | undefined
   let childExitResolve!: () => void
   let childExited = false
@@ -184,9 +259,7 @@ export async function openCloudConnection(
     finalizing = (async () => {
       try {
         await terminateChild()
-        for (const socket of clients) socket.destroy()
-        clients.clear()
-        await closeServer(server)
+        if (options.forward === undefined) await forward?.closed
         await rm(directory, { recursive: true, force: true })
       } catch {
         // The owned process and listeners have already been stopped; cleanup failure must not leave
@@ -202,6 +275,8 @@ export async function openCloudConnection(
   const requestClose = (): void => {
     if (closeRequested) return
     closeRequested = true
+    detach?.()
+    if (options.forward === undefined) forward?.close()
     void finalize()
   }
 
@@ -211,42 +286,16 @@ export async function openCloudConnection(
   }
 
   try {
-    server = createServer((client) => {
-      clients.add(client)
-      const upstream = createConnection({ path: socketPath })
-      clients.add(upstream)
-      const closePair = (): void => {
-        client.destroy()
-        upstream.destroy()
-      }
-      client.once('close', () => { clients.delete(client); upstream.destroy() })
-      upstream.once('close', () => { clients.delete(upstream); client.destroy() })
-      client.once('error', closePair)
-      upstream.once('error', closePair)
-      client.pipe(upstream)
-      upstream.pipe(client)
-    })
-    const localServer = server
-    const localPort = await new Promise<number>((resolve, reject) => {
-      let didListen = false
-      const onServerError = (): void => {
-        if (!didListen) reject(failedError())
-        else {
-          if (!startupSettled) settleStartup(failedError())
-          requestClose()
-        }
-      }
-      const onListening = (): void => {
-        didListen = true
-        const address = server?.address()
-        if (address === null || address === undefined || typeof address === 'string' || !Number.isSafeInteger(address.port)) {
-          reject(failedError())
-        } else resolve(address.port)
-      }
-      localServer.on('error', onServerError)
-      localServer.listen(0, '127.0.0.1', onListening)
-    })
+    forward = options.forward ?? await openCloudForward()
+    const origin = forward.origin
     throwIfAborted(signal)
+    detach = forward.attach(socketPath)
+    if (options.forward === undefined) {
+      void forward.closed.then(() => {
+        if (!startupSettled) settleStartup(failedError())
+        requestClose()
+      })
+    }
     signal.addEventListener('abort', onAbort, { once: true })
     abortListenerAttached = true
     try {
@@ -276,7 +325,7 @@ export async function openCloudConnection(
       childExited = true
       childExitResolve()
       if (!startupSettled) settleStartup(failedError())
-      void finalize()
+      requestClose()
     })
     owned.once('error', () => {
       if (!startupSettled) settleStartup(failedError())
@@ -290,12 +339,12 @@ export async function openCloudConnection(
       for (const line of lines) {
         const remote = parseRemoteLoginUrl(line)
         if (remote !== undefined && !closeRequested) {
-          settleStartup(undefined, rewriteLoginUrl(remote, localPort))
+          settleStartup(undefined, rewriteLoginUrl(remote, origin))
           return
         }
       }
       const remote = parseRemoteLoginUrl(stdout)
-      if (remote !== undefined && !closeRequested) settleStartup(undefined, rewriteLoginUrl(remote, localPort))
+      if (remote !== undefined && !closeRequested) settleStartup(undefined, rewriteLoginUrl(remote, origin))
     })
     if (owned.stdout === null || owned.stderr === null) throw failedError()
     const timeout = setTimeout(() => {

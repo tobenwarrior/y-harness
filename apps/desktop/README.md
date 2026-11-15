@@ -44,7 +44,7 @@ The tray renderer enlarges the whale by 20% around the tile center while preserv
 
 ## Mac and Cloud workspaces
 
-The macOS **Workspace** menu switches between this Mac and an [existing private VPS workspace](../../docs/user/guide/vps.md#open-y-harness). Cloud loads the server UI in an isolated view with no address bar. The desktop stores the SSH destination and last workspace in its private application data and obtains the sign-in token over SSH for each connection.
+The macOS **Workspace** menu switches between this Mac and an [existing private VPS workspace](../../docs/user/guide/vps.md#open-y-harness). Cloud loads the server UI in an isolated view with no address bar. The desktop stores the SSH destination and last workspace in its private application data and obtains the sign-in token over SSH for each connection. If the connection drops while Cloud is selected, Y Harness reconnects to the saved server and keeps the open chat in the window. Switching to Mac pauses retries until you reopen Cloud.
 
 Cloud’s [Vault](../../docs/user/guide/vps.md#manage-service-secrets-from-the-mac-app) opens in a separate desktop-owned window. Its preload accepts only that window’s document. The main process sends requests over the connected owner’s SSH account and returns operation status, service and key names, or [website login labels and origins](../../docs/user/guide/vps.md#save-website-logins-from-the-mac-app).
 

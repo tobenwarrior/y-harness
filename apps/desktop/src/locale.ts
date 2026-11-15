@@ -41,6 +41,8 @@ export const en = {
   cloudInvalidTarget: 'Enter the host name or alias you use with SSH.',
   cloudConnect: 'Connect to Cloud',
   cloudConnecting: 'Connecting to Cloud…',
+  cloudReconnecting: 'Reconnecting to Cloud…',
+  cloudReconnectingHelp: 'Y Harness will reconnect when your server is reachable.',
   cloudConnected: 'Connected',
   cloudOffline: 'Cloud is disconnected',
   cloudOfflineHelp: 'Check your SSH connection and confirm Y Harness is running on the server. You can also switch to Mac.',
