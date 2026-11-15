@@ -2669,7 +2669,7 @@ describe('durable Bot roster', () => {
     }
   })
 
-  it('installs an exact shared browser only in the shared Agent and rechecks admission before its body', async () => {
+  it('installs exact shared browser and Vault request tools only in the shared Agent and rechecks admission before their bodies', async () => {
     const pool = new MemoryMediaPool()
     const sharedSessionId = SessionId('shared-session-browser-admission')
     const connection = {
@@ -2717,6 +2717,9 @@ describe('durable Bot roster', () => {
 
       const calls = vi.fn(async () => 'shared browser result')
       let authorized: ReturnType<typeof vi.fn<(signal: AbortSignal, start?: () => void) => Promise<boolean>>> | undefined
+      const vaultCalls = vi.fn(async () => 'shared vault result')
+      let vaultAuthorized: ReturnType<typeof vi.fn<(signal: AbortSignal, start?: () => void) => Promise<boolean>>> | undefined
+      let vaultOwnerSessionId: SessionId | undefined
       const h = await harness(pool, undefined, undefined, [String(sharedSessionId)], new Map(), records, true, 'native', false, {
         connection,
         inspectSharedSessions: true,
@@ -2739,6 +2742,26 @@ describe('durable Bot roster', () => {
               })
             },
           } as never)
+          ctx.provide('botSharedVaultRequests', {
+            toolForSession: (
+              _scope: Context,
+              _agent: Agent,
+              _botId: BotId,
+              ownerSessionId: SessionId,
+              check: (signal: AbortSignal, start?: () => void) => Promise<boolean>,
+            ) => {
+              vaultOwnerSessionId = ownerSessionId
+              vaultAuthorized = vi.fn((signal, start) => check(signal, start))
+              return plainFixtureTool('request_vps_secret', async () => {
+                if (vaultAuthorized === undefined) throw new Error('shared vault request unavailable')
+                let operation: Promise<string> | undefined
+                if (!await vaultAuthorized(new AbortController().signal, () => {
+                  operation = vaultCalls()
+                }) || operation === undefined) throw new Error('shared vault request unavailable')
+                return operation
+              })
+            },
+          } as never)
         },
       })
       try {
@@ -2746,13 +2769,22 @@ describe('durable Bot roster', () => {
         if (agent === undefined) throw new Error('shared browser Agent was not created')
         Object.defineProperty(agent, 'status', { value: 'running', configurable: true })
         expect(h.ctx.tools.schemas(agent).map(schema => schema.name)).toContain('shared_browser')
+        expect(h.ctx.tools.schemas(agent).map(schema => schema.name)).toContain('request_vps_secret')
         expect(h.ctx.tools.schemas().map(schema => schema.name)).not.toContain('shared_browser')
+        expect(h.ctx.tools.schemas().map(schema => schema.name)).not.toContain('request_vps_secret')
+        expect(vaultOwnerSessionId).toBe(created.bot.sessionId)
         await expect(h.ctx.tools.execute({
           callId: ToolCallId('shared-browser-admitted'), name: 'shared_browser', arguments: {},
           signal: new AbortController().signal, agent,
         })).resolves.toMatchObject({ isError: false })
         expect(calls).toHaveBeenCalledOnce()
+        await expect(h.ctx.tools.execute({
+          callId: ToolCallId('shared-vault-admitted'), name: 'request_vps_secret', arguments: {},
+          signal: new AbortController().signal, agent,
+        })).resolves.toMatchObject({ isError: false })
+        expect(vaultCalls).toHaveBeenCalledOnce()
         if (authorized === undefined) throw new Error('shared browser authorization callback was not installed')
+        if (vaultAuthorized === undefined) throw new Error('shared vault authorization callback was not installed')
         const admittedStart = vi.fn()
         await expect(authorized(new AbortController().signal, admittedStart)).resolves.toBe(true)
         expect(admittedStart).toHaveBeenCalledOnce()
@@ -2777,11 +2809,19 @@ describe('durable Bot roster', () => {
         const revokedStart = vi.fn()
         await expect(authorized(new AbortController().signal, revokedStart)).resolves.toBe(false)
         expect(revokedStart).not.toHaveBeenCalled()
+        const revokedVaultStart = vi.fn()
+        await expect(vaultAuthorized(new AbortController().signal, revokedVaultStart)).resolves.toBe(false)
+        expect(revokedVaultStart).not.toHaveBeenCalled()
         await expect(h.ctx.tools.execute({
           callId: ToolCallId('shared-browser-revoked'), name: 'shared_browser', arguments: {},
           signal: new AbortController().signal, agent,
         })).resolves.toMatchObject({ isError: true })
+        await expect(h.ctx.tools.execute({
+          callId: ToolCallId('shared-vault-revoked'), name: 'request_vps_secret', arguments: {},
+          signal: new AbortController().signal, agent,
+        })).resolves.toMatchObject({ isError: true })
         expect(calls).toHaveBeenCalledOnce()
+        expect(vaultCalls).toHaveBeenCalledOnce()
       } finally {
         await close(h.ctx)
       }

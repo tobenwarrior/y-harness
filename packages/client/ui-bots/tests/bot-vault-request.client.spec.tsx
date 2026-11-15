@@ -134,6 +134,10 @@ describe('Bot Vault request response parser', () => {
   it('accepts only the exact metadata response and rejects secret-shaped or malformed values', () => {
     expect(parseBotVaultRequestResponse({ request: null })).toBeNull()
     expect(parseBotVaultRequestResponse(response())).toEqual(response().request)
+    expect(parseBotVaultRequestResponse({ request: { ...response().request, scope: 'shared' } })).toEqual({
+      ...response().request, scope: 'shared',
+    })
+    expect(parseBotVaultRequestResponse({ request: { ...response().request, scope: 'owner' } })).toBeNull()
     expect(parseBotVaultRequestResponse({ request: { ...response().request, id: 'ABC' } })).toBeNull()
     expect(parseBotVaultRequestResponse({ request: { ...response().request, unit: '../worker.service' } })).toBeNull()
     expect(parseBotVaultRequestResponse({ request: { ...response().request, name: 'API-KEY' } })).toBeNull()
@@ -202,7 +206,10 @@ function cardProps(overrides: Partial<CardProps> = {}): CardProps {
 
 describe('BotVaultRequestCard', () => {
   beforeEach(() => { window.__YH_BOT_VAULT_REQUESTS__ = true })
-  afterEach(() => { delete window.__YH_BOT_VAULT_REQUESTS__ })
+  afterEach(() => {
+    delete window.__YH_BOT_VAULT_REQUESTS__
+    delete window.__YH_BOT_SHARED_VAULT_REQUESTS__
+  })
 
   it('does not query ordinary conversations', async () => {
     const fetcher = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(response()), { status: 200 }))
@@ -254,5 +261,20 @@ describe('BotVaultRequestCard', () => {
     view.rerender(<BotVaultRequestCard {...props} useSession={selector => selector({ running: true } as SessionSnapshot)} />)
     await waitFor(() => { expect(fetcher).toHaveBeenCalledTimes(2) })
     await waitFor(() => { expect(screen.queryByText(en.vaultRequestTitle)).toBeNull() })
+  })
+
+  it('keeps polling an idle owner session for a shared Vault request', async () => {
+    vi.useFakeTimers()
+    window.__YH_BOT_SHARED_VAULT_REQUESTS__ = true
+    const fetcher = vi.spyOn(globalThis, 'fetch').mockImplementation(() => Promise.resolve(new Response(JSON.stringify({
+      request: { ...response().request, scope: 'shared' },
+    }), { status: 200 })))
+    render(<BotVaultRequestCard {...cardProps()} />)
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    await act(async () => { await vi.advanceTimersByTimeAsync(2_000) })
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(screen.getByText(en.vaultRequestSharedTitle)).toBeTruthy()
   })
 })

@@ -29,7 +29,7 @@ Hover over **Terminal** to see whether the private VPS terminal has internet acc
 
 One-to-one conversations place the user's messages on the right, show a small waiting bubble while the Bot works, and identify the final reply by name and avatar. Scheduled replies carry an expandable origin label. Composer approvals and questions stay visible while they await a response. Open the usage icon for token details.
 
-When the selected owner Bot requests a credential, the composer dock shows only the validated service unit, API key name, and request status. The Client never receives or edits the credential value. In the supported Cloud Desktop app, the pending card links to its native-handled Vault path; in a Web browser it explains how to open the same chat in the desktop app. Saved and cancelled requests use status-only presentation, and a broker response with no request removes the card.
+When the selected owner Bot requests a credential, the composer dock shows only the validated service unit, API key name, and request status. The Client never receives or edits the credential value. In the supported Cloud Desktop app, the pending card links to its native-handled Vault path; in a Web browser it explains how to open the same chat in the desktop app. Saved and cancelled requests use status-only presentation, and a broker response with no request removes the card. An explicitly shared credential request appears in the Bot’s main chat even while the owner’s chat is idle.
 
 When a selected Bot requests sign-in from a shared chat, its owner sees the website and destination in the Bot’s main chat. **Approve sign-in** opens the native Vault with accounts assigned to that Bot.
 

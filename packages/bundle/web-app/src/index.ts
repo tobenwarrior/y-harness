@@ -177,6 +177,7 @@ export const Config: z<Config> = z.object({
   vpsVaultRequests: z.union([
     z.object({
       socketPath: z.string().required(),
+      sharedRequests: z.boolean(),
       grants: z.union([
         z.array(z.object({
           bot: z.string().required(),

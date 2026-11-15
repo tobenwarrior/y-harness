@@ -467,7 +467,7 @@ export type Config = LocalConfig
 ## `@yharness/bots`
 
 - `inject`: `agents` · `storageDomain` · `sessionController` · `sessions` · `attachments` · `systemPrompt` · `tools`
-- `source`: [`packages/agents/bots/src/index.ts:602`](../packages/agents/bots/src/index.ts)
+- `source`: [`packages/agents/bots/src/index.ts:630`](../packages/agents/bots/src/index.ts)
 
 ```ts config-catalog
 /** Bot service configuration. */
@@ -4535,6 +4535,8 @@ export interface VpsVaultRequestsConfig {
   readonly socketPath: string
   /** Explicit Web profile grants. Omit or set to null to use the Vault's current Bot-specific grants. */
   readonly grants?: VpsVaultGrant[] | null
+  /** Allow explicitly granted shared requests. The standard Vault-managed broker enables this by default. */
+  readonly sharedRequests?: boolean
 }
 
 /** A credential request grant for a single owner Bot. */

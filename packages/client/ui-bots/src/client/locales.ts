@@ -681,6 +681,7 @@ export const en = {
   vaultRequestDesktopOnly: 'Open this chat in the Y Harness desktop app to enter the key securely.',
   vaultRequestSaved: 'Saved securely',
   vaultRequestCancelled: 'Request cancelled',
+  vaultRequestSharedTitle: 'Shared secure request',
   websiteLoginRequestTitle: 'Approve website sign-in',
   websiteLoginSharedRequestTitle: 'Approve shared website sign-in',
   websiteLoginOrigin: 'Website',

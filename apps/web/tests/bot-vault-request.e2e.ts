@@ -1,10 +1,11 @@
 /** Exercise the secure request through the shipped Web Host and Bot composer. */
 
+import { randomUUID } from 'node:crypto'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { BotId } from '@yharness/bots'
+import { BotId, BotPrincipalId } from '@yharness/bots'
 import { LlmAdapter, ToolCallId, type GenerateOptions, type StreamChunk } from '@yharness/llm'
 import { chromium } from 'playwright'
 import { expect, it } from 'vitest'
@@ -13,6 +14,8 @@ import { captureStableAria, compareOrRefreshGolden, launchWebScaffold, watchCons
 const FIXTURE = fileURLToPath(new URL('../../../snapshots/web/bot-workspace/session.v3.jsonl', import.meta.url))
 const GOLDEN = fileURLToPath(new URL('./expected/bot-vault-request/request.expected.md', import.meta.url))
 const MODE = webSnapshotMode()
+const SHARED_GOLDEN = fileURLToPath(new URL('./expected/bot-vault-request/shared.expected.md', import.meta.url))
+const CHALLENGE = 'd'.repeat(32)
 const BOT = BotId('bot-vault-fixture')
 const SERVICE = 'example-worker.service'
 const KEY = 'EXAMPLE_API_KEY'
@@ -79,14 +82,19 @@ it.skipIf(MODE === 'record' || process.platform === 'win32').each([
 })
 
 it.skipIf(MODE === 'record' || process.platform === 'win32').each([
-  { policy: 'Web profile', managed: false },
-  { policy: 'live Vault', managed: true },
-])('offers a secure handoff and returns a receipt with $policy grants', async ({ managed }) => {
+  { policy: 'Web profile', managed: false, scope: 'owner' },
+  { policy: 'live Vault', managed: true, scope: 'owner' },
+  { policy: 'shared Vault', managed: true, scope: 'shared' },
+  { policy: 'shared group Vault', managed: true, scope: 'group' },
+])('offers a secure handoff and returns a receipt with $policy grants', async ({ managed, scope }) => {
+  const shared = scope !== 'owner'
   const root = await mkdtemp('/tmp/yh-vault-web-')
   const socketPath = join(root, 'r')
   const overlay = join(root, 'vault.yml')
   let ownerSaved = false
   let allowed = !managed
+  let ownerConsent: string | undefined
+  let sharedAuthorized: string | undefined
   const commands: Array<Record<string, unknown>> = []
   const server = createServer({ allowHalfOpen: true }, (socket) => {
     let payload = ''
@@ -96,9 +104,19 @@ it.skipIf(MODE === 'record' || process.platform === 'win32').each([
       const command = JSON.parse(payload) as Record<string, unknown>
       commands.push(command)
       if (command.action === 'list') {
-        const credentials = allowed && command.bot === BOT ? [{ unit: SERVICE, name: KEY }] : []
+        const scoped = shared ? command.scope === 'shared' : command.scope === undefined
+        const credentials = allowed && scoped && command.bot === BOT ? [{ unit: SERVICE, name: KEY }] : []
         socket.end(JSON.stringify({ credentials }))
         return
+      }
+      if (command.scope === 'shared' && typeof command.id === 'string' && command.id === ownerConsent) {
+        if (command.action === 'authorize' && command.challenge === CHALLENGE) {
+          sharedAuthorized = command.id
+        } else if (command.action === 'status') {
+          socket.end(JSON.stringify(sharedAuthorized === command.id ? { state: 'saved' }
+            : { state: 'awaiting-authorization', challenge: CHALLENGE }))
+          return
+        }
       }
       const state = command.action === 'cancel' ? 'cancelled' : ownerSaved ? 'saved' : 'pending'
       socket.end(JSON.stringify({ state }))
@@ -111,10 +129,10 @@ it.skipIf(MODE === 'record' || process.platform === 'win32').each([
       server.once('error', reject)
       server.listen(socketPath, resolve)
     })
-    const config = {
-      vpsVaultRequests: managed ? { socketPath } : { socketPath, grants: [{ bot: BOT, unit: SERVICE, name: KEY }] },
-    }
-    await writeFile(overlay, JSON.stringify([{ id: 'web-runtime', config }]))
+    const vpsVaultRequests = managed
+      ? { socketPath, ...(shared ? { sharedRequests: true } : {}) }
+      : { socketPath, grants: [{ bot: BOT, unit: SERVICE, name: KEY }] }
+    await writeFile(overlay, JSON.stringify([{ id: 'web-runtime', config: { vpsVaultRequests } }]))
     const web = scaffold = await launchWebScaffold({
       extraOverlayPath: overlay, replayFixture: FIXTURE, replayProvidersOnly: true, toolsMode: 'native',
     })
@@ -144,6 +162,106 @@ it.skipIf(MODE === 'record' || process.platform === 'win32').each([
     const send = async (text: string) => {
       await conversation.locator('[data-composer-input][contenteditable="true"]').fill(text)
       await conversation.getByRole('button', { name: 'Send message', exact: true }).click()
+    }
+    if (shared) {
+      allowed = true
+      const origin = new URL(web.baseUrl).origin
+      const sharedCall = async (operation: string, payload: object, cookie?: string) => {
+        const method = `bots/share/${operation}`
+        const response = await fetch(new URL(`/shared-bots/${method}`, origin), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Origin: origin, ...(cookie === undefined ? {} : { Cookie: cookie }) },
+          body: JSON.stringify({ type: 'client-request', rpcId: randomUUID(), method, payload }),
+          signal: AbortSignal.timeout(15_000),
+        })
+        const { result } = await response.json() as {
+          result: {
+            ok: boolean
+            value?: { principalId?: string; recent?: unknown; messages?: unknown; group?: { id: string }; code?: string }
+          }
+        }
+        return { response, result }
+      }
+      const owner = await web.ctx.bots.createShareInvite({ botId: BOT, role: 'owner' })
+      const ownerEnrollment = await sharedCall('enroll', { code: owner.code })
+      const ownerCookie = ownerEnrollment.response.headers.get('Set-Cookie')?.split(';', 1)[0]
+      if (!ownerEnrollment.result.ok || ownerCookie === undefined) throw new Error('Could not enroll the owner')
+      const invite = await web.ctx.bots.createShareInvite({ botId: BOT, role: 'collaborator' })
+      const member = await sharedCall('enroll', { code: invite.code })
+      const cookie = member.response.headers.get('Set-Cookie')?.split(';', 1)[0]
+      const principalId = member.result.value?.principalId
+      if (!member.result.ok || cookie === undefined || principalId === undefined) throw new Error('Could not enroll the collaborator')
+      let groupId: string | undefined
+      if (scope === 'group') {
+        const secondOwner = await web.ctx.bots.createShareInvite({ botId: other.id, role: 'owner' })
+        expect((await sharedCall('enroll', { code: secondOwner.code }, ownerCookie)).result.ok).toBe(true)
+        const secondInvite = await web.ctx.bots.createShareInvite({ botId: other.id, role: 'collaborator' })
+        expect((await sharedCall('enroll', { code: secondInvite.code }, cookie)).result.ok).toBe(true)
+        const created = await sharedCall('create-group', { name: 'Shared Vault group', botIds: [BOT, other.id] }, ownerCookie)
+        groupId = created.result.value?.group?.id
+        if (!created.result.ok || groupId === undefined) throw new Error('Could not create the shared group')
+        const groupInvite = await sharedCall('manage-group-members', { groupId, action: 'create-invite' }, ownerCookie)
+        const code = groupInvite.result.value?.code
+        if (!groupInvite.result.ok || code === undefined) throw new Error('Could not invite the collaborator to the group')
+        expect((await sharedCall('enroll', { code }, cookie)).result.ok).toBe(true)
+      }
+      const chat = (text: string) => groupId === undefined
+        ? sharedCall('chat', { botId: BOT, text }, cookie)
+        : sharedCall('send-group-message', {
+          groupId, text, targetBotIds: [BOT], messageId: `bot-group-message-${randomUUID()}`,
+        }, cookie)
+      const recent = async () => {
+        if (groupId === undefined) {
+          const view = await sharedCall('read-private-chat', { botId: BOT }, cookie)
+          return JSON.stringify(view.result.value?.recent ?? [])
+        }
+        const view = await sharedCall('inspect-group', { groupId }, cookie)
+        return JSON.stringify(view.result.value?.messages ?? [])
+      }
+
+      expect(await page.evaluate(() => Reflect.get(window, '__YH_BOT_SHARED_VAULT_REQUESTS__'))).toBe(true)
+      expect((await chat('Request the shared service key.')).result.ok).toBe(true)
+      const selector = 'section[aria-label="Shared secure request"][data-bot-vault-request-state="pending"]'
+      const pending = page.locator(selector)
+      await pending.waitFor({ timeout: 12_000 })
+      const handoff = await pending.getByRole('link', { name: 'Enter key securely' }).getAttribute('href')
+      const id = handoff?.split('/').at(-1)
+      if (id === undefined) throw new Error('The shared Vault request is missing its owner handoff.')
+      expect(handoff).toMatch(/^\/__yharness\/vault-request\/[0-9a-f]{32}$/u)
+      expect(commands).toContainEqual({ action: 'list', bot: BOT, scope: 'shared' })
+      expect(commands).toContainEqual({ action: 'create', bot: BOT, scope: 'shared', unit: SERVICE, name: KEY, id })
+      expect(await (await web.hostFetch(ownRoute)).json()).toEqual({
+        request: { scope: 'shared', id, unit: SERVICE, name: KEY, state: 'pending' },
+      })
+      expect((await fetch(new URL(ownRoute, web.baseUrl), { headers: { Cookie: cookie } })).status).toBe(401)
+      const snapshot = await captureStableAria(page, selector, web.workspaceCwd, { replacements: [[id, '{{id}}']] })
+      ownerConsent = id
+      await expect.poll(recent, { timeout: 12_000 }).toContain(REPLY)
+      expect(await recent()).not.toContain(id)
+      expect(await recent()).not.toContain(CHALLENGE)
+      expect(commands).toContainEqual({ action: 'authorize', bot: BOT, scope: 'shared', id, challenge: CHALLENGE })
+      await page.locator('[data-bot-vault-request-state="saved"]').waitFor({ timeout: 12_000 })
+
+      expect((await chat('Request the key again.')).result.ok).toBe(true)
+      await pending.waitFor({ timeout: 12_000 })
+      const newHandoff = await pending.getByRole('link', { name: 'Enter key securely' }).getAttribute('href')
+      const newId = newHandoff?.split('/').at(-1)
+      expect(newId).toMatch(/^[a-f0-9]{32}$/u)
+      expect(newId).not.toBe(id)
+      if (groupId === undefined) {
+        await web.ctx.bots.revokeShareMember({ botId: BOT, principalId: BotPrincipalId(principalId) })
+      } else {
+        const revoked = await sharedCall('manage-group-members', { groupId, action: 'revoke', principalId }, ownerCookie)
+        expect(revoked.result.ok).toBe(true)
+      }
+      ownerConsent = newId
+      await pending.waitFor({ state: 'hidden', timeout: 12_000 })
+      await expect.poll(() => commands).toContainEqual({ action: 'cancel', bot: BOT, scope: 'shared', id: newId })
+      expect(commands.filter(command => command.action === 'authorize')).toHaveLength(1)
+      expect(commands.every(command => !Object.hasOwn(command, 'value'))).toBe(true)
+      expect(consoleLog.pageErrors).toEqual([])
+      await compareOrRefreshGolden(SHARED_GOLDEN, snapshot, MODE)
+      return
     }
     if (managed) {
       await send('Check my Vault permissions.')

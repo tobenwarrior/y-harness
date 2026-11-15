@@ -217,7 +217,7 @@ The roster does not modify request prefixes until the scoped collaboration tools
 
 #### What the model sees
 
-The Web Host provides `request_vps_secret` during direct owner turns. When the VPS Vault owns grants, an argument-free call lists the Bot's current service and key names. A request with an exact pair returns an owner receipt. The scoped tool and native Codex action use the same grants. See [VPS Vault requests](../../../docs/user/guide/vps.md#let-a-bot-request-a-key-in-chat).
+The Web Host provides `request_vps_secret` during direct owner turns and for explicitly permitted shared requests. When the VPS Vault owns grants, an argument-free call lists the Bot’s allowed service and key names. A request with an exact pair returns an owner receipt. The shared tool from `ctx.botSharedVaultRequests` directs the approval to the Bot’s main session and checks access in the requesting private chat or group before admitting the save. See [VPS Vault requests](../../../docs/user/guide/vps.md#let-a-bot-request-a-key-in-chat).
 
 #### Token effect
 

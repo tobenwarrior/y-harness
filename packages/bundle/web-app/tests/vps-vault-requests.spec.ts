@@ -156,3 +156,62 @@ unixTest('rejects a broker response with trailing bytes and withdraws the uncert
     expect(calls.map(call => call.action)).toEqual(['create', 'cancel'])
   })
 })
+
+unixTest('discovers only shared grants for an admitted collaborator', async () => {
+  await withBroker(request => ({ credentials: request.scope === 'shared' ? [credential] : [] }), async (socketPath, calls) => {
+    const requests = new VpsVaultRequests({ socketPath, sharedRequests: true })
+    const signal = new AbortController().signal
+    const authorize = async (_signal: AbortSignal, start?: () => void) => { start?.(); return true }
+    try {
+      await expect(requests.discover(bot, signal, authorize)).resolves.toEqual([credential])
+      await expect(requests.discover(bot, signal, async () => false)).rejects.toThrow('could not confirm')
+      expect(calls).toEqual([{ action: 'list', bot, scope: 'shared' }])
+    } finally {
+      await requests.dispose()
+    }
+  })
+})
+
+unixTest.each([false, true])('checks live admission when a shared owner enters a key (revoked: %s)', async (revocation) => {
+  let revoked = false
+  let approved = false
+  const challenge = 'a'.repeat(32)
+  await withBroker((command) => {
+    if (command.action === 'cancel') return { state: 'cancelled' }
+    if (command.action === 'authorize') {
+      expect(command.challenge).toBe(challenge)
+      approved = true
+      return { state: 'pending' }
+    }
+    if (command.action === 'status') {
+      if (approved) return { state: 'saved' }
+      revoked = revocation
+      return { state: 'awaiting-authorization', challenge }
+    }
+    return { state: 'pending' }
+  }, async (socketPath, calls) => {
+    const requests = new VpsVaultRequests({ socketPath, sharedRequests: true })
+    const signal = new AbortController().signal
+    const authorize = async (_signal: AbortSignal, start?: () => void) => {
+      if (revoked) return false
+      start?.()
+      return true
+    }
+    const result = requests.request(bot, session, credential, signal, authorize)
+    const outcome = revocation ? expect(result).rejects.toThrow('could not confirm')
+      : expect(result).resolves.toEqual({ state: 'saved' })
+    try {
+      await expect.poll(() => requests.current(session)).toMatchObject({ ...credential, state: 'pending', scope: 'shared' })
+      expect(requests.current(other)).toBeUndefined()
+      expect(JSON.stringify(requests.current(session))).not.toContain(challenge)
+      await outcome
+      expect(approved).toBe(!revocation)
+      expect(requests.current(session)?.state).toBe(revocation ? 'cancelled' : 'saved')
+      expect(calls.map(call => call.action)).toEqual(revocation
+        ? ['create', 'status', 'cancel'] : ['create', 'status', 'authorize', 'status'])
+      expect(calls.every(call => call.bot === bot && call.scope === 'shared' && !Object.hasOwn(call, 'value'))).toBe(true)
+    } finally {
+      await requests.dispose()
+    }
+  })
+}, 10_000)

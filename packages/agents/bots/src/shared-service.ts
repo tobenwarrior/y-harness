@@ -249,8 +249,8 @@ export interface SharedPrivateSessionInitiatorRequest {
   readonly sessionId: SessionId
 }
 
-/** Exact shared Session coordinate used at a browser body-start boundary. */
-export type SharedBrowserAuthorizationRequest =
+/** Exact shared Session coordinate used at a shared-tool body-start boundary. */
+export type SharedToolAuthorizationRequest =
   | {
     readonly kind: 'private'
     /** Shared Bot backing the private Session. */
@@ -2043,8 +2043,8 @@ export class SharedBotService {
     })
   }
 
-  private async authorizeSharedBrowserWithHook(
-    request: SharedBrowserAuthorizationRequest,
+  private async authorizeSharedToolWithHook(
+    request: SharedToolAuthorizationRequest,
     signal: AbortSignal | undefined,
     onAuthorized?: () => void,
   ): Promise<boolean> {
@@ -2361,7 +2361,7 @@ export class SharedBotService {
   }
 
   /**
-   * Authorize one shared browser operation and optionally start its body under
+   * Authorize one shared tool operation and optionally start its body under
    * the authority record lock. The starter is synchronous: it may launch a
    * provider promise, but this method never awaits that promise while the lock
    * is held.
@@ -2370,12 +2370,12 @@ export class SharedBotService {
    * @param onAuthorized - Optional synchronous body starter used at final admission.
    * @returns Whether the current principal and delivery are authorized.
    */
-  async authorizeSharedBrowser(
-    request: SharedBrowserAuthorizationRequest,
+  async authorizeSharedTool(
+    request: SharedToolAuthorizationRequest,
     signal?: AbortSignal,
     onAuthorized?: () => void,
   ): Promise<boolean> {
-    return this.authorizeSharedBrowserWithHook(request, signal, onAuthorized)
+    return this.authorizeSharedToolWithHook(request, signal, onAuthorized)
   }
 
   /**

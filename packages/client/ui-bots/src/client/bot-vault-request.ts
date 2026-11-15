@@ -14,6 +14,7 @@ export interface BotVaultRequest {
   readonly unit: string
   readonly name: string
   readonly state: BotVaultRequestState
+  readonly scope?: 'shared'
 }
 
 /** Fetch seam used by the browser reader and lifecycle tests. */
@@ -63,13 +64,16 @@ export function parseBotVaultRequestResponse(value: unknown): BotVaultRequest | 
   if (!record(value) || Object.keys(value).length !== 1) return null
   const request = value.request
   if (request === null) return null
-  if (!record(request) || Object.keys(request).length !== 4) return null
+  const shared = record(request) && request.scope === 'shared'
+  if (!record(request) || Object.keys(request).length !== (shared ? 5 : 4)
+    || (request.scope !== undefined && !shared)) return null
   if (!requestId(request.id) || !unitName(request.unit) || !keyName(request.name) || !requestState(request.state)) return null
   return {
     id: request.id,
     unit: request.unit,
     name: request.name,
     state: request.state,
+    ...(shared ? { scope: 'shared' as const } : {}),
   }
 }
 

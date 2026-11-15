@@ -20,6 +20,7 @@ interface SessionRequest {
 declare global {
   interface Window {
     __YH_BOT_VAULT_REQUESTS__?: true
+    __YH_BOT_SHARED_VAULT_REQUESTS__?: true
   }
 }
 
@@ -44,6 +45,7 @@ export function BotVaultRequestCard({ botChat, sessionId, useSession, t }: BotVa
   const running = useSession(snapshot => snapshot.running === true)
   const [sessionRequest, setSessionRequest] = useState<SessionRequest | null>(null)
   const enabled = typeof window !== 'undefined' && window.__YH_BOT_VAULT_REQUESTS__ === true && botChat === true
+  const sharedRequestsEnabled = typeof window !== 'undefined' && window.__YH_BOT_SHARED_VAULT_REQUESTS__ === true
   const request = enabled && sessionRequest?.sessionId === sessionId ? sessionRequest.request : null
 
   useEffect(() => {
@@ -56,17 +58,18 @@ export function BotVaultRequestCard({ botChat, sessionId, useSession, t }: BotVa
         setSessionRequest(nextRequest === null ? null : { sessionId: selectedSessionId, request: nextRequest })
       },
     })
-    poller.select(sessionId, running)
+    poller.select(sessionId, running || sharedRequestsEnabled)
     return poller.dispose
-  }, [enabled, running, sessionId])
+  }, [enabled, running, sessionId, sharedRequestsEnabled])
 
   if (request === null) return null
   const desktop = isYHarnessCloudDesktop(userAgent())
+  const title = request.scope === 'shared' ? t('vaultRequestSharedTitle') : t('vaultRequestTitle')
   return (
-    <section className={css.card} data-bot-vault-request-state={request.state} aria-label={t('vaultRequestTitle')}>
+    <section className={css.card} data-bot-vault-request-state={request.state} aria-label={title}>
       <span className={css.icon} aria-hidden="true"><IconShieldOutlineRegular size={16} /></span>
       <div className={css.content}>
-        <span className={css.title}>{t('vaultRequestTitle')}</span>
+        <span className={css.title}>{title}</span>
         <div className={css.target}>
           <span className={css.targetLabel}>{t('vaultRequestService')}</span>
           <code className={css.targetValue}>{request.unit}</code>

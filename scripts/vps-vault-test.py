@@ -10,6 +10,8 @@ import subprocess
 import tempfile
 import unittest
 import warnings
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -1121,6 +1123,84 @@ class VaultTest(unittest.TestCase):
         self.store.enable_requests(grants)
         with self.assertRaises(vault.VaultError):
             self.store.desktop({'action': 'inspect-request', 'id': actor['id']}, OWNER_UID)
+
+    def test_shared_request_needs_a_shared_grant_and_a_fresh_owner_save_challenge(self):
+        self.store.enable(FIRST_UNIT, CLOUD_UID)
+        self.store.allow_desktop(OWNER_UID, CLOUD_UID, [FIRST_UNIT])
+        grant = ('bot-research', FIRST_UNIT, 'EXAMPLE_KEY')
+        actor = {'id': 'a' * 32, 'bot': grant[0], 'scope': 'shared'}
+        mapping = {'unit': grant[1], 'name': grant[2]}
+        discover = {'action': 'list', 'bot': grant[0], 'scope': 'shared'}
+        create = {'action': 'create', **actor, **mapping}
+        other_grant = ('bot-other', FIRST_UNIT, 'ANOTHER_KEY')
+        self.store.enable_requests([grant, other_grant])
+        self.assertEqual(vault.cloud_request(json.dumps(create).encode()), create)
+        self.assertEqual(self.store.cloud(discover, CLOUD_UID), {'credentials': []})
+        with self.assertRaises(vault.VaultError):
+            self.store.cloud(create, CLOUD_UID)
+        self.store.set_shared_request_grant(grant, True)
+        self.assertEqual(self.store.cloud({'action': 'list', 'bot': other_grant[0]}, CLOUD_UID), {
+            'credentials': [{'unit': FIRST_UNIT, 'name': 'ANOTHER_KEY'}],
+        })
+        self.assertEqual(self.store.cloud(discover, CLOUD_UID), {'credentials': [mapping]})
+        self.assertEqual(self.store.cloud({'action': 'list', 'bot': grant[0]}, CLOUD_UID), {'credentials': [mapping]})
+        self.assertEqual(self.store.cloud(create, CLOUD_UID), {'state': 'pending'})
+        with self.assertRaises(vault.VaultError):
+            self.store.cloud({'action': 'status', 'id': actor['id'], 'bot': actor['bot']}, CLOUD_UID)
+        with self.assertRaises(vault.VaultError):
+            self.store.cloud({'action': 'authorize', 'challenge': '0' * 32, **actor}, CLOUD_UID)
+
+        def begin_save(executor, request_id):
+            approval_written = Event()
+            writer = self.store.write_request_records
+
+            def record_write(records):
+                writer(records)
+                if any(entry.get('approval') and entry['id'] == request_id for entry in records):
+                    approval_written.set()
+
+            with patch.object(self.store, 'write_request_records', side_effect=record_write):
+                receipt = executor.submit(self.store.desktop, {
+                    'action': 'save-request', 'id': request_id, 'value': FIRST_VALUE.decode(),
+                }, OWNER_UID)
+                self.assertTrue(approval_written.wait(4), 'The owner did not request live admission.')
+            return receipt
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            held = begin_save(executor, actor['id'])
+            status = self.store.cloud({'action': 'status', **actor}, CLOUD_UID)
+            self.assertEqual(set(status), {'state', 'challenge'})
+            self.assertEqual(status['state'], 'awaiting-authorization')
+            self.assertFalse(self.sealed)
+            self.assertNotIn(status['challenge'], json.dumps(self.store.desktop({
+                'action': 'inspect-request', 'id': actor['id'],
+            }, OWNER_UID)))
+            self.assertEqual(self.store.cloud({'action': 'cancel', **actor}, CLOUD_UID), {'state': 'cancelled'})
+            with self.assertRaises(vault.VaultError):
+                held.result(timeout=4)
+            with self.assertRaises(vault.VaultError):
+                self.store.cloud({'action': 'authorize', 'challenge': status['challenge'], **actor}, CLOUD_UID)
+            self.assertFalse(self.sealed)
+
+            next_actor = {**actor, 'id': 'b' * 32}
+            self.assertEqual(self.store.cloud({**create, **next_actor}, CLOUD_UID), {'state': 'pending'})
+            held = begin_save(executor, next_actor['id'])
+            status = self.store.cloud({'action': 'status', **next_actor}, CLOUD_UID)
+            authorization = {'action': 'authorize', 'challenge': status['challenge'], **next_actor}
+            with self.assertRaises(vault.VaultError):
+                self.store.cloud({**authorization, 'bot': 'bot-other'}, CLOUD_UID)
+            self.assertEqual(self.store.cloud(authorization, CLOUD_UID), {'state': 'pending'})
+            self.assertEqual(held.result(timeout=4), {'ok': True})
+            with self.assertRaises(vault.VaultError):
+                self.store.cloud(authorization, CLOUD_UID)
+        self.assertEqual(self.store.cloud({'action': 'status', **next_actor}, CLOUD_UID), {'state': 'saved'})
+        self.assertEqual(self.sealed, [FIRST_VALUE])
+        self.assertNotIn(FIRST_VALUE, self.store.request_file().read_bytes())
+        self.store.set_shared_request_grant(grant, False)
+        self.assertEqual(self.store.cloud(discover, CLOUD_UID), {'credentials': []})
+        self.assertEqual(self.store.cloud({'action': 'list', 'bot': grant[0]}, CLOUD_UID), {'credentials': [mapping]})
+        with self.assertRaises(vault.VaultError):
+            self.store.cloud({'action': 'status', **next_actor}, CLOUD_UID)
 
     def test_cloud_request_round_trip_is_add_only_and_returns_no_secret(self):
         self.store.enable(FIRST_UNIT, CLOUD_UID)

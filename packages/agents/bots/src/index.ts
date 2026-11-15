@@ -242,7 +242,7 @@ import {
 import type {
   SharedConnectedAppAccessValue,
   SharedConnectedAppAuthorizationRequest,
-  SharedBrowserAuthorizationRequest,
+  SharedToolAuthorizationRequest,
   SharedAppApprovalOutcome,
 } from './shared-service.ts'
 import type { SharedGroupDeliveryRecoveryResult, SharedGroupSessionBinding } from './shared-group.ts'
@@ -554,6 +554,32 @@ export interface BotSharedBrowser {
   ) => ToolDefinition | undefined
 }
 
+/** Host-owned shared Vault request definition for one admitted shared Bot Session. */
+export interface BotSharedVaultRequests {
+  /**
+   * Build the exact model-facing Vault request tool for one shared Bot Agent.
+   * The authorization callback must be checked before every provider action,
+   * including each pending request poll. Pass the true owner Session id only
+   * for publishing private request metadata; it is not the calling Session.
+   * Pass only the signal for a read-only poll; pass `start` for the final
+   * operation boundary. The callback invokes `start` synchronously under the
+   * authority lock and does not await its returned operation while locked.
+   * @param scope - the exact shared Agent scope receiving the tool.
+   * @param agent - the live shared Bot Agent.
+   * @param botId - the Bot identity bound to the shared Session.
+   * @param ownerSessionId - the true owner Bot Session for private metadata.
+   * @param authorized - current private/group admission and optional body starter.
+   * @returns the literal `request_vps_secret` definition, or undefined when unavailable.
+   */
+  readonly toolForSession: (
+    scope: Context,
+    agent: Agent,
+    botId: BotId,
+    ownerSessionId: SessionId,
+    authorized: (signal: AbortSignal, start?: () => void) => Promise<boolean>,
+  ) => ToolDefinition | undefined
+}
+
 function botWorkspace(
   workspaces: BotWorkspaces | undefined,
   botId: string,
@@ -571,6 +597,8 @@ declare module '@yharness/cordis' {
     botVpsJournal?: BotVpsJournal
     /** Optional shared-Bot browser provider; only shared Bot Agent scopes may mount it. */
     botSharedBrowser?: BotSharedBrowser
+    /** Optional shared-Bot Vault request provider; only shared Bot Agent scopes may mount it. */
+    botSharedVaultRequests?: BotSharedVaultRequests
     /** Durable user-owned Bot roster and one-Session provisioning service. */
     bots: BotService
   }
@@ -2514,6 +2542,7 @@ const SHARED_BOT_CAPABILITY_REASON = 'Shared Bot Sessions cannot access host cap
 const SHARED_BOT_LLM_REJECTION = 'Shared Bot Session LLM calls require an admitted agent-loop request or an audited auxiliary request.'
 const SHARED_BOT_BROWSER_TOOL_NAME = 'shared_browser'
 const SHARED_BOT_BROWSER_CAPABILITY_REASON = 'The shared Bot browser is unavailable.'
+const SHARED_BOT_VAULT_REQUEST_CAPABILITY_REASON = 'The shared Bot Vault request is unavailable.'
 
 /** Accept only bounded auxiliary envelopes whose model input is independently framed and attributed. */
 function isAuditedSharedAuxiliaryRequest(options: GenerateOptions): boolean {
@@ -2571,6 +2600,13 @@ class SharedConnectedAppAccessError extends HarnessError {
 class SharedBotBrowserAccessError extends HarnessError {
   constructor() {
     super(SHARED_BOT_BROWSER_CAPABILITY_REASON, 'SHARED_BOT_BROWSER_ACCESS_REQUIRED')
+  }
+}
+
+/** Error returned when a shared Vault request loses its live Session admission. */
+class SharedBotVaultRequestAccessError extends HarnessError {
+  constructor() {
+    super(SHARED_BOT_VAULT_REQUEST_CAPABILITY_REASON, 'SHARED_BOT_VAULT_REQUEST_ACCESS_REQUIRED')
   }
 }
 
@@ -4542,7 +4578,10 @@ export class BotService extends TypertRemoteService {
       ? undefined
       : this.sharedApprovalExecutions.get(approval.agent)?.get(String(approval.callId))
     const execution = executions?.size === 1 ? [...executions][0] : undefined
-    if (approval.toolName === SHARED_BOT_BROWSER_TOOL_NAME || execution?.name === SHARED_BOT_BROWSER_TOOL_NAME) {
+    if (approval.toolName === SHARED_BOT_BROWSER_TOOL_NAME
+      || execution?.name === SHARED_BOT_BROWSER_TOOL_NAME
+      || approval.toolName === VPS_VAULT_REQUEST_TOOL
+      || execution?.name === VPS_VAULT_REQUEST_TOOL) {
       return Promise.resolve('unavailable')
     }
     const source = this.ctx.tools.get(approval.toolName, approval.agent)?.source
@@ -4590,8 +4629,13 @@ export class BotService extends TypertRemoteService {
     return sharedService.authorizeSharedConnectedApp(request, exec.signal, rememberedApproval)
   }
 
-  /** Recheck one shared browser call against its exact live private or group Session. */
-  private async authorizeSharedBrowser(
+  /** Resolve the true owner Session for a shared Bot provider's private metadata. */
+  private ownerSessionIdForSharedBot(botId: BotId): SessionId | undefined {
+    return [...this.recordsBySession.values()].find(record => record.id === botId && record.state === 'active')?.sessionId
+  }
+
+  /** Recheck one shared tool call against its exact live private or group Session. */
+  private async authorizeSharedTool(
     agent: Agent,
     botId: BotId,
     signal: AbortSignal,
@@ -4636,7 +4680,7 @@ export class BotService extends TypertRemoteService {
     }
     if (!stillLive()) return false
     signal.throwIfAborted()
-    let request: SharedBrowserAuthorizationRequest
+    let request: SharedToolAuthorizationRequest
     if (group === undefined) {
       request = { kind: 'private', botId, sessionId }
     } else {
@@ -4659,7 +4703,7 @@ export class BotService extends TypertRemoteService {
         start()
         started = true
       }
-    const authorized = await sharedService.authorizeSharedBrowser(request, signal, startUnderLock)
+    const authorized = await sharedService.authorizeSharedTool(request, signal, startUnderLock)
     if (start === undefined) return authorized && stillLive()
     return authorized && started
   }
@@ -8125,14 +8169,34 @@ export class BotService extends TypertRemoteService {
         }
         applyConnectedAppRestriction(sharedAppAccess)
         let sharedBrowserDefinition: ToolDefinition | undefined
-        if (sharedAdmission && record !== undefined) {
-          const authorized = (signal: AbortSignal, start?: () => void): Promise<boolean> =>
-            this.authorizeSharedBrowser(agent, record.id, signal, start)
+        let sharedVaultRequestDefinition: ToolDefinition | undefined
+        const sharedToolAuthorized = sharedAdmission && record !== undefined
+          ? (signal: AbortSignal, start?: () => void): Promise<boolean> =>
+            this.authorizeSharedTool(agent, record.id, signal, start)
+          : undefined
+        if (record !== undefined && sharedToolAuthorized !== undefined) {
+          const authorized = sharedToolAuthorized
           const candidate = scope.get('botSharedBrowser')?.toolForSession(scope, agent, record.id, authorized)
           if (candidate?.name === SHARED_BOT_BROWSER_TOOL_NAME) {
             scope.tools.register(candidate)
             if (scope.tools.get(SHARED_BOT_BROWSER_TOOL_NAME, agent) === candidate) {
               sharedBrowserDefinition = candidate
+            }
+          }
+          const ownerSessionId = this.ownerSessionIdForSharedBot(record.id)
+          if (ownerSessionId !== undefined) {
+            const vaultCandidate = scope.get('botSharedVaultRequests')?.toolForSession(
+              scope,
+              agent,
+              record.id,
+              ownerSessionId,
+              authorized,
+            )
+            if (vaultCandidate?.name === VPS_VAULT_REQUEST_TOOL) {
+              scope.tools.register(vaultCandidate)
+              if (scope.tools.get(VPS_VAULT_REQUEST_TOOL, agent) === vaultCandidate) {
+                sharedVaultRequestDefinition = vaultCandidate
+              }
             }
           }
         }
@@ -8150,6 +8214,12 @@ export class BotService extends TypertRemoteService {
           if (exec.name === SHARED_BOT_BROWSER_TOOL_NAME) {
             return sharedBrowserDefinition !== undefined
               && scope.tools.get(SHARED_BOT_BROWSER_TOOL_NAME, agent) === sharedBrowserDefinition
+              ? undefined
+              : sharedBotCapabilityDenied(exec)
+          }
+          if (exec.name === VPS_VAULT_REQUEST_TOOL) {
+            return sharedVaultRequestDefinition !== undefined
+              && scope.tools.get(VPS_VAULT_REQUEST_TOOL, agent) === sharedVaultRequestDefinition
               ? undefined
               : sharedBotCapabilityDenied(exec)
           }
@@ -8178,6 +8248,10 @@ export class BotService extends TypertRemoteService {
             if (name === SHARED_BOT_BROWSER_TOOL_NAME) {
               return sharedBrowserDefinition !== undefined
                 && scope.tools.get(SHARED_BOT_BROWSER_TOOL_NAME, agent) === sharedBrowserDefinition
+            }
+            if (name === VPS_VAULT_REQUEST_TOOL) {
+              return sharedVaultRequestDefinition !== undefined
+                && scope.tools.get(VPS_VAULT_REQUEST_TOOL, agent) === sharedVaultRequestDefinition
             }
             const source = connectedAppSources.get(name)
             if (source?.kind === 'mcp') return allowedApps.has(source.serverName)
@@ -8219,7 +8293,9 @@ export class BotService extends TypertRemoteService {
             : sharedApprovalExecutions.get(String(approval.callId))
           const execution = executions?.size === 1 ? [...executions][0] : undefined
           const executionSource = execution === undefined ? undefined : scope.tools.get(execution.name, agent)?.source
-          if (execution?.name === SHARED_BOT_BROWSER_TOOL_NAME) return Promise.resolve('unavailable')
+          if (execution?.name === SHARED_BOT_BROWSER_TOOL_NAME || execution?.name === VPS_VAULT_REQUEST_TOOL) {
+            return Promise.resolve('unavailable')
+          }
           const isConnectedApp = execution !== undefined && (connectedAppSources.has(execution.name)
             || executionSource?.kind === 'mcp'
             || executionSource?.kind === 'mcp-resource')
@@ -8245,6 +8321,16 @@ export class BotService extends TypertRemoteService {
         scope.on('tools/pre-execute', async (exec, next) => {
           await refreshConnectedAppRestriction()
           if (exec.name === SHARED_BOT_BROWSER_TOOL_NAME) {
+            const denial = capabilityFailure(exec)
+            return denial === undefined
+              ? next()
+              : Promise.resolve<PreToolDecision>({
+                kind: 'deny',
+                reason: denial.message,
+                ...(denial.info === undefined ? {} : { info: denial.info }),
+              })
+          }
+          if (exec.name === VPS_VAULT_REQUEST_TOOL) {
             const denial = capabilityFailure(exec)
             return denial === undefined
               ? next()
@@ -8338,12 +8424,26 @@ export class BotService extends TypertRemoteService {
             const authorized = sharedBrowserDefinition !== undefined
               && scope.tools.get(SHARED_BOT_BROWSER_TOOL_NAME, agent) === sharedBrowserDefinition
               && record !== undefined
-              && await this.authorizeSharedBrowser(agent, record.id, exec.signal, () => {
+              && await this.authorizeSharedTool(agent, record.id, exec.signal, () => {
                 if (scope.tools.get(SHARED_BOT_BROWSER_TOOL_NAME, agent) !== sharedBrowserDefinition) return
                 started = start()
               })
             if (!authorized || started === undefined) {
               throw new SharedBotBrowserAccessError()
+            }
+            return started
+          }
+          if (exec.name === VPS_VAULT_REQUEST_TOOL) {
+            let started: ReturnType<typeof start> | undefined
+            const authorized = sharedVaultRequestDefinition !== undefined
+              && scope.tools.get(VPS_VAULT_REQUEST_TOOL, agent) === sharedVaultRequestDefinition
+              && record !== undefined
+              && await this.authorizeSharedTool(agent, record.id, exec.signal, () => {
+                if (scope.tools.get(VPS_VAULT_REQUEST_TOOL, agent) !== sharedVaultRequestDefinition) return
+                started = start()
+              })
+            if (!authorized || started === undefined) {
+              throw new SharedBotVaultRequestAccessError()
             }
             return started
           }

@@ -49,6 +49,8 @@ CLOUD_REQUEST_LIMIT = 4 * 1024
 REQUEST_RECORD_LIMIT = 64
 REQUEST_TTL = 10 * 60
 REQUEST_LEASE = 20
+REQUEST_APPROVAL_WINDOW = 8
+REQUEST_APPROVAL_POLL = 0.05
 DESKTOP_SOCKET = Path('/run/yharness-vault/desktop.sock')
 DESKTOP_LISTENER = 'yharness-vault-desktop.socket'
 DESKTOP_WORKER = 'yharness-vault-desktop@.service'
@@ -354,24 +356,35 @@ def browser_login_state(payload):
 
 
 def valid_request_grant(grant):
-    """Validate an exact service and key with an optional Bot restriction."""
-    return (type(grant) in (tuple, list) and len(grant) in (2, 3)
-            and (len(grant) == 2 or valid_bot(grant[0]))
+    """Validate a service/key pair and its optional Bot and shared permission."""
+    return (type(grant) in (tuple, list) and len(grant) in (2, 3, 4)
+            and (len(grant) == 2 or valid_bot(grant[-3]))
+            and (len(grant) != 4 or grant[0] == 'shared')
             and valid_unit(grant[-2]) and type(grant[-1]) is str and NAME.fullmatch(grant[-1]) is not None)
 
 
 def request_grant(value):
-    """Decode a Bot-scoped grant or a grant restricted by the Web profile."""
+    """Decode exact service, private Bot, and shared Bot grants."""
     target, _, name = value.partition('=')
     grant = (*target.split('/'), name)
     if not valid_request_grant(grant):
-        raise argparse.ArgumentTypeError('Use BOT/UNIT.service=KEY_NAME or UNIT.service=KEY_NAME.')
+        raise argparse.ArgumentTypeError('Use [shared/]BOT/UNIT.service=KEY_NAME or UNIT.service=KEY_NAME.')
     return grant
 
 
-def grant_key(unit, name, bot=None):
-    """Resolve the grant for a request in its original authorization mode."""
-    return (unit, name) if bot is None else (bot, unit, name)
+def request_granted(grants, unit, name, bot=None, scope=None):
+    """Shared turns require an explicit shared grant for their Bot and key."""
+    if bot is None:
+        return scope is None and (unit, name) in grants
+    if ('shared', bot, unit, name) in grants:
+        return True
+    return scope is None and (bot, unit, name) in grants
+
+
+def finish_request(record, state):
+    """Discard the owner approval challenge when a request settles."""
+    record['state'] = state
+    record.pop('approval', None)
 
 
 def desktop_request(payload):
@@ -451,6 +464,10 @@ def cloud_request(payload):
             if not valid_bot(request['bot']):
                 raise VaultError('Invalid Vault request.')
             fields.remove('bot')
+        if 'scope' in fields:
+            if request['scope'] != 'shared' or 'bot' not in request:
+                raise VaultError('Invalid Vault request.')
+            fields.remove('scope')
         if action == 'list' and fields == {'action'} and 'bot' in request:
             return request
         if action == 'create':
@@ -464,6 +481,9 @@ def cloud_request(payload):
         if action in ('status', 'cancel'):
             if fields != {'action', 'id'} or not valid_request_id(request.get('id')):
                 raise VaultError('Invalid Vault request.')
+            return request
+        if (action == 'authorize' and request.get('scope') == 'shared' and fields == {'action', 'id', 'challenge'}
+                and valid_request_id(request.get('id')) and valid_request_id(request.get('challenge'))):
             return request
         raise VaultError('Invalid Vault request.')
     except (UnicodeError, ValueError, RecursionError):
@@ -1116,6 +1136,20 @@ class Vault:
                 self.enabled_credentials(grant[-2], policy['cloud'])
             self.write_request_grants(policy, set(map(tuple, grants)), start=start)
 
+    def set_shared_request_grant(self, grant, enabled):
+        """Change an existing Bot credential grant without replacing unrelated grants."""
+        if not directory(self.root) or not valid_request_grant(grant) or len(grant) != 3:
+            raise VaultError('Select an existing exact Bot, service and key grant.')
+        with self.locked():
+            policy = self.root_policy()
+            grants = self.require_requests(policy)
+            bot, unit, name = grant
+            self.request_credentials(policy, grants, unit, name, bot)
+            shared = ('shared', *grant)
+            grants.difference_update((grant, shared))
+            grants.add(shared if enabled else grant)
+            self.write_request_grants(policy, grants)
+
     def write_request_grants(self, policy, grants, *, start=False):
         """Publish a grant set and discard withdrawn requests under the Vault lock."""
         if len(grants) > REQUEST_RECORD_LIMIT:
@@ -1132,7 +1166,7 @@ class Vault:
             if previous != payload:
                 records, expired = self.clean_request_records(self.read_request_records() if previous is not None else [])
                 kept = [record for record in records
-                        if grant_key(record['unit'], record['name'], record.get('bot')) in grants]
+                        if request_granted(grants, record['unit'], record['name'], record.get('bot'), record.get('scope'))]
                 if previous is None or expired or len(kept) != len(records):
                     self.write_request_records(kept)
                 replace_file(marker, payload, self.root, 0o600)
@@ -1288,18 +1322,27 @@ class Vault:
             checked = []
             fields = {'id', 'unit', 'name', 'state', 'created', 'lease'}
             for record in records:
-                if type(record) is not dict or set(record) - {'bot'} != fields:
+                if type(record) is not dict or set(record) - {'bot', 'scope', 'approval'} != fields:
                     raise VaultError(REQUEST_UNAVAILABLE)
                 created = record.get('created')
                 lease = record.get('lease')
                 if (not valid_request_id(record.get('id')) or not valid_unit(record.get('unit'))
                         or ('bot' in record and not valid_bot(record['bot']))
+                        or ('scope' in record and (record['scope'] != 'shared' or 'bot' not in record))
                         or type(record.get('name')) is not str or not NAME.fullmatch(record['name'])
                         or record.get('state') not in ('pending', 'saved', 'cancelled')
                         or type(created) not in (int, float) or type(lease) not in (int, float)
                         or not math.isfinite(created) or not math.isfinite(lease)
                         or created < 0 or lease < created):
                     raise VaultError(REQUEST_UNAVAILABLE)
+                if 'approval' in record:
+                    approval = record['approval']
+                    if (record.get('scope') != 'shared' or record['state'] != 'pending'
+                            or type(approval) is not dict or set(approval) != {'challenge', 'expires', 'admitted'}
+                            or not valid_request_id(approval.get('challenge')) or type(approval.get('admitted')) is not bool
+                            or type(approval.get('expires')) not in (int, float) or not math.isfinite(approval['expires'])
+                            or not created < approval['expires'] <= lease):
+                        raise VaultError(REQUEST_UNAVAILABLE)
                 checked.append(record)
             if len({record['id'] for record in checked}) != len(checked):
                 raise VaultError(REQUEST_UNAVAILABLE)
@@ -1335,9 +1378,9 @@ class Vault:
         """Find one request by its opaque id without exposing unrelated metadata."""
         return next((record for record in records if record['id'] == request_id), None)
 
-    def request_credentials(self, policy, grants, unit, name, bot=None):
+    def request_credentials(self, policy, grants, unit, name, bot=None, scope=None):
         """Revalidate one request against the live root service allowlist."""
-        if unit not in policy['services'] or grant_key(unit, name, bot) not in grants:
+        if unit not in policy['services'] or not request_granted(grants, unit, name, bot, scope):
             raise VaultError(REQUEST_UNAVAILABLE)
         try:
             return self.enabled_credentials(unit, policy['cloud'])
@@ -1347,7 +1390,7 @@ class Vault:
     def observe_request(self, record, credentials):
         """Count an existing encrypted key as a receipt without reading its value."""
         if record['state'] == 'pending' and file_exists(credentials / record['name']):
-            record['state'] = 'saved'
+            finish_request(record, 'saved')
             return True
         return False
 
@@ -1458,29 +1501,105 @@ class Vault:
         action = request['action']
         if action == 'list-grants':
             return {'access': {'services': policy['services'], 'grants': [
-                {'bot': grant[0], 'unit': grant[1], 'name': grant[2]}
-                for grant in sorted(grants) if len(grant) == 3
+                {'bot': bot, 'unit': unit, 'name': name}
+                for bot, unit, name in sorted({grant[-3:] for grant in grants if len(grant) >= 3})
             ]}}
         grant = (request['bot'], request['unit'], request['name'])
+        shared_grant = ('shared', *grant)
         if action == 'remove-grant':
-            if grant in grants:
-                grants.remove(grant)
+            if grant in grants or shared_grant in grants:
+                grants.difference_update((grant, shared_grant))
                 self.write_request_grants(policy, grants)
         else:
             if grant[1] not in policy['services']:
                 raise VaultError('This service is not enabled for Desktop Vault.')
             self.enabled_credentials(grant[1], policy['cloud'])
-            grants.add(grant)
+            if shared_grant not in grants:
+                grants.add(grant)
             self.write_request_grants(policy, grants, start=True)
         return {'ok': True}
+
+    def desktop_credential_request(self, request, requester_uid):
+        """Serve owner metadata and wait for live admission before a shared save."""
+        action = request['action']
+        value = request['value'].encode() if action == 'save-request' else None
+        if value is not None and not valid_secret(value):
+            raise VaultError('Enter a non-empty credential of at most 8 KiB.')
+        with self.locked():
+            policy = self.desktop_policy(requester_uid)
+            grants = self.require_requests(policy)
+            records, changed = self.clean_request_records(self.read_request_records())
+            record = self.request_record(records, request['id'])
+            if record is None:
+                raise VaultError(REQUEST_UNAVAILABLE)
+            scope = record.get('scope')
+            credentials = self.request_credentials(policy, grants, record['unit'], record['name'], record.get('bot'), scope)
+            changed = self.observe_request(record, credentials) or changed
+            now = self.clock()
+            if record['state'] == 'pending' and (now >= record['lease'] or action == 'dismiss-request'):
+                finish_request(record, 'cancelled')
+                changed = True
+            if changed:
+                self.write_request_records(records)
+            if action == 'inspect-request':
+                return self.request_reply(record)
+            if action == 'dismiss-request':
+                return {'state': record['state']}
+            if record['state'] == 'saved':
+                return {'ok': True}
+            if record['state'] != 'pending':
+                raise VaultError(REQUEST_UNAVAILABLE)
+            if scope is None:
+                self.write_value(credentials, record['name'], value, 'add')
+                finish_request(record, 'saved')
+                self.write_request_records(records)
+                return {'ok': True}
+            if record.get('approval') is not None and record['approval']['expires'] > now:
+                raise VaultError(REQUEST_UNAVAILABLE)
+            challenge = secrets.token_hex(16)
+            record['approval'] = {'challenge': challenge, 'expires': min(now + REQUEST_APPROVAL_WINDOW, record['lease']),
+                                  'admitted': False}
+            self.write_request_records(records)
+        return self.await_shared_credential_save(requester_uid, request['id'], challenge, value)
+
+    def await_shared_credential_save(self, requester_uid, request_id, challenge, value):
+        """Keep the key in the Desktop worker while awaiting its single-use approval."""
+        deadline = time.monotonic() + REQUEST_APPROVAL_WINDOW
+        while True:
+            with self.locked():
+                policy = self.desktop_policy(requester_uid)
+                records, _ = self.clean_request_records(self.read_request_records())
+                record = self.request_record(records, request_id)
+                approval = record.get('approval') if record is not None else None
+                if approval is None or approval['challenge'] != challenge:
+                    raise VaultError(REQUEST_UNAVAILABLE)
+                if self.clock() >= approval['expires'] or time.monotonic() >= deadline:
+                    finish_request(record, 'cancelled')
+                    self.write_request_records(records)
+                    raise VaultError(REQUEST_UNAVAILABLE)
+                if approval['admitted']:
+                    grants = self.require_requests(policy)
+                    credentials = self.request_credentials(policy, grants, record['unit'], record['name'],
+                                                           record['bot'], record['scope'])
+                    record.pop('approval')
+                    try:
+                        if not self.observe_request(record, credentials):
+                            self.write_value(credentials, record['name'], value, 'add')
+                            finish_request(record, 'saved')
+                    finally:
+                        self.write_request_records(records)
+                    return {'ok': True}
+            time.sleep(REQUEST_APPROVAL_POLL)
 
     def desktop(self, request, requester_uid):
         """Apply a validated Desktop request and return metadata or an acknowledgment."""
         if not directory(self.root):
             raise VaultError('Desktop Vault access is unavailable for this SSH account.')
+        action = request['action']
+        if action in ('inspect-request', 'save-request', 'dismiss-request'):
+            return self.desktop_credential_request(request, requester_uid)
         with self.locked():
             policy = self.desktop_policy(requester_uid)
-            action = request['action']
             if action in ('list-grants', 'add-grant', 'remove-grant'):
                 return self.desktop_grants(policy, request)
             if action in ('list-logins', 'list-bot-logins', 'add-login', 'replace-login', 'remove-login'):
@@ -1510,43 +1629,6 @@ class Vault:
                 return self._enter_browser_login(entered_website_login_request(request))
             if action == 'decline-login-use':
                 return self._decline_browser_login(request)
-            if action in ('inspect-request', 'save-request', 'dismiss-request'):
-                grants = self.require_requests(policy)
-                records, changed = self.clean_request_records(self.read_request_records())
-                record = self.request_record(records, request['id'])
-                if record is None:
-                    raise VaultError(REQUEST_UNAVAILABLE)
-                credentials = self.request_credentials(policy, grants, record['unit'], record['name'], record.get('bot'))
-                changed = self.observe_request(record, credentials) or changed
-                now = self.clock()
-                if action == 'inspect-request':
-                    if record['state'] == 'pending' and now >= record['lease']:
-                        record['state'] = 'cancelled'
-                        changed = True
-                    if changed:
-                        self.write_request_records(records)
-                    return self.request_reply(record)
-                if action == 'dismiss-request':
-                    if record['state'] == 'pending':
-                        record['state'] = 'cancelled'
-                        changed = True
-                    if changed:
-                        self.write_request_records(records)
-                    return {'state': record['state']}
-                if not valid_secret(request['value'].encode()):
-                    raise VaultError('Enter a non-empty credential of at most 8 KiB.')
-                if record['state'] == 'saved':
-                    if changed:
-                        self.write_request_records(records)
-                    return {'ok': True}
-                if record['state'] != 'pending' or now >= record['lease']:
-                    record['state'] = 'cancelled'
-                    self.write_request_records(records)
-                    raise VaultError(REQUEST_UNAVAILABLE)
-                self.write_value(credentials, record['name'], request['value'].encode(), 'add')
-                record['state'] = 'saved'
-                self.write_request_records(records)
-                return {'ok': True}
             if action == 'list':
                 services = []
                 for unit in policy['services']:
@@ -1578,26 +1660,30 @@ class Vault:
                     raise VaultError(REQUEST_UNAVAILABLE)
                 action = request.get('action')
                 bot = request.get('bot')
-                if action not in ('list', 'create', 'status', 'cancel') or ('bot' in request and not valid_bot(bot)):
+                scope = request.get('scope')
+                if (action not in ('list', 'create', 'status', 'cancel', 'authorize')
+                        or ('bot' in request and not valid_bot(bot))
+                        or ('scope' in request and (scope != 'shared' or bot is None))
+                        or (action == 'authorize' and scope != 'shared')):
                     raise VaultError(REQUEST_UNAVAILABLE)
                 grants = self.require_requests(policy)
                 if action == 'list':
                     if bot is None:
                         raise VaultError(REQUEST_UNAVAILABLE)
-                    return {'credentials': [
-                        {'unit': grant[1], 'name': grant[2]} for grant in sorted(grants)
-                        if len(grant) == 3 and grant[0] == bot and grant[1] in policy['services']
-                    ]}
+                    pairs = {grant[-2:] for grant in grants if len(grant) >= 3 and grant[-3] == bot
+                             and (scope is None or len(grant) == 4) and grant[-2] in policy['services']}
+                    return {'credentials': [{'unit': unit, 'name': name} for unit, name in sorted(pairs)]}
                 records, changed = self.clean_request_records(self.read_request_records())
                 if action == 'create':
-                    credentials = self.request_credentials(policy, grants, request['unit'], request['name'], bot)
+                    credentials = self.request_credentials(policy, grants, request['unit'], request['name'], bot, scope)
                     record = self.request_record(records, request['id'])
                     if record is not None:
-                        if record.get('bot') != bot or record['unit'] != request['unit'] or record['name'] != request['name']:
+                        if (record.get('bot') != bot or record.get('scope') != scope
+                                or record['unit'] != request['unit'] or record['name'] != request['name']):
                             raise VaultError(REQUEST_UNAVAILABLE)
                         changed = self.observe_request(record, credentials) or changed
                         if record['state'] == 'pending' and self.clock() >= record['lease']:
-                            record['state'] = 'cancelled'
+                            finish_request(record, 'cancelled')
                             changed = True
                     else:
                         if len(records) >= REQUEST_RECORD_LIMIT:
@@ -1613,6 +1699,8 @@ class Vault:
                         }
                         if bot is not None:
                             record['bot'] = bot
+                        if scope is not None:
+                            record['scope'] = scope
                         records.append(record)
                         changed = True
                     if changed:
@@ -1620,23 +1708,30 @@ class Vault:
                     return {'state': record['state']}
 
                 record = self.request_record(records, request['id'])
-                if record is None or record.get('bot') != bot:
+                if record is None or record.get('bot') != bot or record.get('scope') != scope:
                     raise VaultError(REQUEST_UNAVAILABLE)
-                credentials = self.request_credentials(policy, grants, record['unit'], record['name'], bot)
+                credentials = self.request_credentials(policy, grants, record['unit'], record['name'], bot, scope)
                 changed = self.observe_request(record, credentials) or changed
-                if action == 'status' and record['state'] == 'pending':
-                    now = self.clock()
-                    if now >= record['lease']:
-                        record['state'] = 'cancelled'
+                now = self.clock()
+                approval = record.get('approval')
+                if action == 'authorize':
+                    if (approval is None or approval['admitted'] or approval['challenge'] != request.get('challenge')
+                            or now >= approval['expires']):
+                        raise VaultError(REQUEST_UNAVAILABLE)
+                    approval['admitted'] = True
+                    changed = True
+                elif record['state'] == 'pending':
+                    if action == 'cancel' or now >= record['lease']:
+                        finish_request(record, 'cancelled')
                         changed = True
                     elif record['lease'] - now <= REQUEST_LEASE / 2:
                         record['lease'] = now + REQUEST_LEASE
                         changed = True
-                elif action == 'cancel' and record['state'] == 'pending':
-                    record['state'] = 'cancelled'
-                    changed = True
                 if changed:
                     self.write_request_records(records)
+                approval = record.get('approval')
+                if action == 'status' and approval is not None and not approval['admitted'] and now < approval['expires']:
+                    return {'state': 'awaiting-authorization', 'challenge': approval['challenge']}
                 return {'state': record['state']}
             except VaultError:
                 raise
@@ -1679,7 +1774,11 @@ def main():
     allow.add_argument('units', nargs='*', help='exact enabled services that Desktop may manage')
     actions.add_parser('deny-desktop')
     enable_requests = actions.add_parser('enable-requests', help='enable the root Cloud request broker')
-    enable_requests.add_argument('grants', metavar='[BOT/]UNIT.service=KEY_NAME', nargs='+', type=request_grant)
+    enable_requests.add_argument('grants', metavar='[[shared/]BOT/]UNIT.service=KEY_NAME', nargs='+', type=request_grant)
+    for action, help_text in (('share-request-grant', 'allow a Bot grant in shared chats'),
+                              ('unshare-request-grant', 'limit a Bot grant to owner chats')):
+        command = actions.add_parser(action, help=help_text)
+        command.add_argument('grant', metavar='BOT/UNIT.service=KEY_NAME', type=request_grant)
     actions.add_parser('disable-requests', help='disable the root Cloud request broker')
     actions.add_parser('desktop-client', help='forward one Desktop request to the local Vault socket')
     actions.add_parser('desktop-worker', help=argparse.SUPPRESS)
@@ -1710,6 +1809,9 @@ def main():
         elif args.action == 'deny-desktop':
             vault.deny_desktop()
             print('Desktop Vault access removed.')
+        elif args.action in ('share-request-grant', 'unshare-request-grant'):
+            vault.set_shared_request_grant(args.grant, args.action == 'share-request-grant')
+            print('Vault request grant updated.')
         elif args.action == 'enable-requests':
             vault.enable_requests(args.grants, start=True)
             print('Cloud Vault request broker enabled.')
