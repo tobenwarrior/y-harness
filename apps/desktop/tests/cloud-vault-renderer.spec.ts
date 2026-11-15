@@ -70,6 +70,33 @@ it('grants and withdraws one named Bot’s request access', async () => {
   expect(request).toHaveBeenCalledWith({ action: 'remove-grant', ...grant })
 })
 
+it('clears a previously loaded grant when Cloud policy takes over during removal', async () => {
+  const unit = 'fixture-worker.service'
+  const grant = { bot: 'bot-scout', unit, name: 'SCOUT_API_KEY' }
+  const request = vi.fn(async (value: unknown) => {
+    if (value && typeof value === 'object' && 'action' in value) {
+      switch (value.action) {
+        case 'list': return { ok: true, services: [{ unit, names: [] }] }
+        case 'list-logins': return { ok: true, logins: [] }
+        case 'list-grants': return { ok: true, access: { services: [unit], grants: [grant] },
+          bots: [{ id: 'bot-scout', name: 'Scout' }] }
+        case 'remove-grant': return { ok: false, reason: 'external' }
+      }
+    }
+    return { ok: false }
+  })
+  const p = page({ kind: 'manage' }, request)
+  p.run()
+  await expect.poll(() => p.dom.window.document.querySelector('main')?.getAttribute('aria-busy')).toBe('false')
+  p.element('bot-access-tab').click()
+  await expect.poll(() => p.element('grants').textContent).toContain('Scout')
+  p.element('grants').querySelector('button')?.click()
+  p.element('confirm-revoke').click()
+  await expect.poll(() => p.element('grants').children.length).toBe(0)
+  expect(p.element('add-grant').hidden).toBe(true)
+  expect(p.element('grant-notice').textContent).toBe('Bot access is managed outside this Vault by your Cloud configuration.')
+})
+
 it('renders request mode without generic Vault controls and saves only after a trusted acknowledgment', async () => {
   const id = 'a'.repeat(32)
   const requests: unknown[] = []

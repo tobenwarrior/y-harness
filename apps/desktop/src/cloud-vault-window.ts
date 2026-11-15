@@ -2,7 +2,7 @@
 import { randomUUID } from 'node:crypto'
 import { BrowserWindow, type IpcMainInvokeEvent } from 'electron'
 import { cloudVaultRequest, isVaultLoginUseRequestId, isVaultRequestId, vaultRequestAllowed } from './cloud-vault.ts'
-import type { VaultBotChoice } from './cloud-vault.ts'
+import type { VaultCloudWorkspace } from './cloud-vault.ts'
 import { VAULT_IPC, VAULT_PAGE, type CloudVaultMode } from './cloud-vault-ipc.ts'
 import type { DesktopMessages } from './locale.ts'
 import { serveWebDocument } from './web-document.ts'
@@ -25,10 +25,10 @@ export class DesktopCloudVault {
    * @param parent - Window holding the connected Cloud workspace.
    * @param target - Verified SSH destination of the current connection.
    * @param mode - Owner-selected presentation; management is the default.
-   * @param loadBots - Owner-authenticated roster of the connected workspace for grant management.
+   * @param workspace - Owner-authenticated Cloud view for Bot policy and roster checks.
    */
   open(parent: BrowserWindow, target: string, mode: CloudVaultMode = { kind: 'manage' },
-    loadBots?: (signal: AbortSignal) => Promise<readonly VaultBotChoice[] | undefined>): void {
+    workspace?: VaultCloudWorkspace): void {
     if (parent.isDestroyed() || !parent.isVisible()) return
     if (mode.kind === 'request' && !isVaultRequestId(mode.id)) return
     if (mode.kind === 'login-use' && !isVaultLoginUseRequestId(mode.id)) return
@@ -85,15 +85,7 @@ export class DesktopCloudVault {
       const pending = new AbortController()
       this.pending = pending
       try {
-        if (request.action === 'add-grant') {
-          const bots = await loadBots?.(pending.signal)
-          if (pending.signal.aborted || !bots?.some(bot => bot.id === request.bot)) return { ok: false, reason: 'unavailable' }
-        }
-        const reply = await cloudVaultRequest(target, request, pending.signal)
-        if (request.action !== 'list-grants' || !('access' in reply)) return reply
-        const bots = await loadBots?.(pending.signal)
-        if (pending.signal.aborted) return { ok: false, reason: 'unavailable' }
-        return bots === undefined ? reply : { ...reply, bots }
+        return await cloudVaultRequest(target, request, pending.signal, undefined, workspace)
       }
       finally { if (this.pending === pending) this.pending = undefined }
     })

@@ -42,6 +42,7 @@ p { color: var(--muted); line-height: 1.45; }
 .heading p { margin-top: 3px; }
 #notice { min-height: 20px; margin: 13px 0 8px; line-height: 1.5; color: var(--accent); }
 #grant-notice { color: var(--accent); }
+#grant-notice[data-tone="info"] { color: var(--muted); }
 #notice[data-tone="error"], #grant-notice[data-tone="error"] { color: var(--error); }
 #websites-notice { min-height: 20px; margin: 8px 0; line-height: 1.5; color: var(--accent); }
 #websites-notice[data-tone="error"] { color: var(--error); }
