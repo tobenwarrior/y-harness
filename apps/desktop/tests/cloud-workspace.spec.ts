@@ -2,6 +2,7 @@
 import { EventEmitter } from 'node:events'
 import { BrowserWindow } from 'electron'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import type { openCloudConnection, openCloudForward } from '../src/cloud-connection.ts'
 import { DesktopCloudWorkspace } from '../src/cloud-workspace.ts'
 import type { DesktopCloudVault } from '../src/cloud-vault-window.ts'
 import { en } from '../src/locale.ts'
@@ -11,8 +12,8 @@ type RequestHandler = (request: { url: string }, reply: (result: { cancel: boole
 const fixture = vi.hoisted(() => ({
   preference: '',
   views: [] as Array<{ options: { webPreferences: { session?: object } } }>,
-  open: vi.fn(),
-  forward: vi.fn(),
+  open: vi.fn<typeof openCloudConnection>(),
+  forward: vi.fn<typeof openCloudForward>(),
   write: vi.fn(async () => {}),
   installCookie: vi.fn(async () => {}),
   interceptRequest: vi.fn<(listener: RequestHandler) => void>(),
