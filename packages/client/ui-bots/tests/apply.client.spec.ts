@@ -6,11 +6,17 @@ import { SlotRegistry } from '@yharness/client-ui-renderer/client'
 import { SessionId } from '@yharness/session'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { apply, inject } from '../src/client/apply.ts'
+import type { ComputerAvailability } from '../src/client/computer-availability.ts'
+import type { BotWorkspaceFace } from '../src/client/controller.ts'
 
 const fibers: Array<{ dispose: () => Promise<void> }> = []
 
 afterEach(async () => {
-  while (fibers.length > 0) await fibers.pop()!.dispose()
+  try {
+    while (fibers.length > 0) await fibers.pop()!.dispose()
+  } finally {
+    vi.unstubAllGlobals()
+  }
 })
 
 async function mount(rows: readonly BotView[] = []) {
@@ -27,7 +33,7 @@ async function mount(rows: readonly BotView[] = []) {
   } as never)
   const registerSource = vi.fn(() => () => {})
   ctx.provide('inputTriggers', { registerSource } as never)
-  const list = vi.fn(async () => ({ ok: true as const, value: { bots: rows } }))
+  const list = async () => ({ ok: true as const, value: { bots: rows } })
   new TestRemote(ctx, { bots: { list } })
   for (const row of rows) await sessions.add({ id: row.sessionId })
   await ctx.plugin(SlotRegistry).await()
@@ -42,7 +48,7 @@ async function mount(rows: readonly BotView[] = []) {
   const fiber = ctx.plugin({ inject: [...inject], apply })
   fibers.push(fiber)
   await fiber.await()
-  return { ctx, sessions, fiber, list, registerSource, notifyGeneration: () => { generationListener?.() } }
+  return { ctx, fiber, registerSource, notifyGeneration: () => { generationListener?.() } }
 }
 
 describe('ui-bots apply', () => {
@@ -66,25 +72,45 @@ describe('ui-bots apply', () => {
     expect(ctx.slots.entries('sidebar.bots')).toHaveLength(0)
   })
 
-  it('refreshes Computer availability for the selected Bot and connection generation', async () => {
+  it('publishes the selected Bot’s Computer scope and refreshes it on reconnect', async () => {
     const row: BotView = {
       id: BotId('research'),
       sessionId: SessionId('session-research'),
       name: 'Research partner', identity: 'agent', accent: 'violet', cwd: '/workspace', state: 'active',
       createdAt: 1, updatedAt: 1, availability: 'idle', pinned: false, hidden: false,
     }
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ available: false }), {
-      status: 200, headers: { 'content-type': 'application/json' },
-    }))
+    const legacyBot = { ...row, id: BotId('legacy'), sessionId: SessionId('session-legacy'), name: 'Legacy Bot' }
+    const managedComputer = { id: 'research-computer', location: 'vps', permissionScope: 'bot' } as const
+    const workspaceComputer = { location: 'vps', permissionScope: 'workspace' } as const
+    const managedBody = JSON.stringify({ sessionId: row.sessionId })
+    const legacyBody = JSON.stringify({ sessionId: legacyBot.sessionId })
+    const fetchMock = vi.fn(async (url: string, options: RequestInit) => {
+      if (url !== 'api/computer/status') throw new Error(`Unexpected request: ${url}`)
+      const computer = options.body === managedBody ? managedComputer : workspaceComputer
+      return Response.json({ available: true, kind: 'vps', computer })
+    })
     vi.stubGlobal('fetch', fetchMock)
-    const mounted = await mount([row])
+    const mounted = await mount([row, legacyBot])
+    const panel = mounted.ctx.slots.entries('main')[0]?.inject?.() as Partial<Pick<BotWorkspaceFace, 'select'>> & {
+      hooks?: BotWorkspaceFace['hooks'] & { computerIdentity?: ComputerAvailability['identity'] }
+    } | undefined
+    const identity = panel?.hooks?.computerIdentity
+    if (panel?.select === undefined || identity === undefined) throw new Error('The Bot panel did not publish its Computer scope')
 
-    await vi.waitFor(() => { expect(mounted.list).toHaveBeenCalled() })
+    await vi.waitFor(() => { expect(panel.hooks?.workspace.getSnapshot().bots).toHaveLength(2) })
+    panel.select(row.id)
+    await vi.waitFor(() => { expect(identity.getSnapshot()).toEqual(managedComputer) })
+    const priorCalls = fetchMock.mock.calls.length
     mounted.notifyGeneration()
     await vi.waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith('api/computer/status', expect.objectContaining({
-        body: JSON.stringify({ sessionId: 'session-research' }),
-      }))
+      expect(fetchMock).toHaveBeenCalledTimes(priorCalls + 1)
+      expect(fetchMock.mock.lastCall?.[1].body).toBe(managedBody)
+      expect(identity.getSnapshot()).toEqual(managedComputer)
+    })
+    panel.select(legacyBot.id)
+    await vi.waitFor(() => {
+      expect(fetchMock.mock.lastCall?.[1].body).toBe(legacyBody)
+      expect(identity.getSnapshot()).toEqual(workspaceComputer)
     })
   })
 })
