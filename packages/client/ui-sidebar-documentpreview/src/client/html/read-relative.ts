@@ -2,7 +2,7 @@
 import type { RemoteResult } from '@yharness/api-remotes/client'
 import type { DocumentFileBytes } from '../rpc.ts'
 import type { ReadHtmlRelative } from './pack.ts'
-import { sessionFileAddress } from '@yharness/util-workspace-path'
+import { computerFileAddress, sessionFileAddress } from '@yharness/util-workspace-path'
 import { hostFileOf } from '../rpc.ts'
 
 /**
@@ -37,15 +37,16 @@ export function createReadHtmlRelative(
     const combined = AbortSignal.any([lifetime, signal])
     combined.throwIfAborted()
     const file = hostFileOf(address)
+    const workspaceAddress = file.computer === true ? computerFileAddress : sessionFileAddress
     const result = await readRelated(address, path, combined)
     combined.throwIfAborted()
     if (!result.ok) {
       if ('path' in result.error.details && typeof result.error.details.path === 'string') {
-        addResource(sessionFileAddress(file.sessionId, result.error.details.path))
+        addResource(workspaceAddress(file.sessionId, result.error.details.path))
       }
       throw new Error(result.error.message)
     }
-    addResource(sessionFileAddress(file.sessionId, result.value.absolutePath))
+    addResource(workspaceAddress(file.sessionId, result.value.absolutePath))
     return result.value
   }
 }

@@ -71,6 +71,8 @@ Choose **Terminal** beside **Computer** in the chat of a Bot with a private VPS 
 
 ### Save results from Cloud
 
+Choose **Files** in a private VPS Bot chat to browse the same workspace that opens in **Terminal**. Open a file to preview it, or use **Download file** to save a copy on your device. Use **Reload** after work in the terminal or the Bot changes a folder.
+
 Ask the Bot to deliver the file in chat and use the download icon on the result card. Save the result inside the Bot's workspace before delivering it so Cloud can serve it to your device.
 
 ### Move existing Bots in stages

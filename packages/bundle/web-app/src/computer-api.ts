@@ -45,6 +45,8 @@ export interface ComputerStatusMetadata {
   readonly browser?: true
   /** Whether the owner's terminal uses this Bot's private computer. */
   readonly terminal?: true
+  /** Whether the owner's file browser uses this Bot's private workspace. */
+  readonly files?: true
 }
 
 /** Server-selected Computer target for a Bot Session route. */
@@ -57,6 +59,8 @@ export interface BotComputerRouteTarget {
   readonly permissionScope: ComputerPermissionScope
   /** Whether the owner's terminal uses this Bot's private computer. */
   readonly terminal?: true
+  /** Whether the owner's file browser uses this Bot's private workspace. */
+  readonly files?: true
   /** Network navigation for an isolated browser, admitted by this Computer's viewer lease. */
   readonly navigate?: (url: string, signal: AbortSignal) => Promise<void>
 }
@@ -64,6 +68,37 @@ export interface BotComputerRouteTarget {
 const BODY_LIMIT = 16_384
 const VIEWER_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu
 const SESSION_ID = /^(?=.{1,256}$)[^\u0000-\u001f\u007f]+$/u
+
+/**
+ * Stream a file from a Bot's private workspace through the owner connection.
+ * @param download - authorized file reader for an exact Bot Session.
+ * @returns the authenticated Computer download route.
+ */
+export function computerFileDownloadRoute(
+  download: (sessionId: string, path: string, signal: AbortSignal) => Promise<Response>,
+): ConnectionFetchRoute {
+  return {
+    path: '/api/computer/files/download',
+    methods: ['GET'],
+    requestBody: 'buffered',
+    async fetch(request) {
+      const params = new URL(request.url).searchParams
+      const sessionId = params.get('sessionId')
+      const path = params.get('path')
+      if (sessionId === null || !SESSION_ID.test(sessionId) || path === null
+        || path.length === 0 || path.length > 4096 || path.includes('\u0000')) {
+        return new Response(null, { status: 400 })
+      }
+      try {
+        return await download(sessionId, path, request.signal)
+      } catch (error) {
+        void error
+        request.signal.throwIfAborted()
+        return new Response(null, { status: 404 })
+      }
+    },
+  }
+}
 
 function viewerId(value: unknown): ViewerId | undefined {
   return typeof value === 'string' && VIEWER_ID.test(value) ? value as ViewerId : undefined
@@ -312,6 +347,7 @@ export function botComputerRoutesWithLegacy(
         permissionScope: target.permissionScope,
         ...(navigate === undefined ? {} : { browser: true }),
         ...(target.terminal === true ? { terminal: true } : {}),
+        ...(target.files === true ? { files: true } : {}),
       },
       ...(navigate === undefined ? {} : {
         navigate: (viewer, url, signal) => target.computer.navigateAsViewer(viewer, url, signal, navigate),

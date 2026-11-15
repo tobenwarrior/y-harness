@@ -15,7 +15,7 @@ import { ComputerPanel } from './ComputerPanel.tsx'
 import { MacComputerPanel } from './MacComputerPanel.tsx'
 import type { AvailabilityState } from './computer-availability.ts'
 import type { ComputerClient, ComputerIdentity } from './computer-client.ts'
-import { Button, PluginArtworkTerminal, Tooltip } from '@yharness/client-ui-primitives'
+import { Button, IconFolderOpenOutlineRegular, PluginArtworkTerminal, Tooltip } from '@yharness/client-ui-primitives'
 import css from './BotWorkspace.module.css'
 
 /** Selected sign-in request and its Computer panel. */
@@ -45,13 +45,14 @@ export type BotsPanelProps =
   & InjectFace<BotWorkspaceFace & {
     readonly computer: ComputerClient
     readonly setComputerTarget: (sessionId: string | null) => void
-    readonly openTerminal: () => void
+    readonly openWorkspaceTab: (kind: 'terminal' | 'computer-files') => void
     readonly hooks: {
       readonly computerAvailability: HostObservable<AvailabilityState>
       readonly computerIdentity: HostObservable<ComputerIdentity | undefined>
       readonly computerTarget: HostObservable<string | null>
       readonly computerSignIn: HostObservable<ComputerSignInTarget | undefined>
       readonly terminalAvailable: HostObservable<boolean>
+      readonly filesAvailable: HostObservable<boolean>
     }
   }>
 
@@ -156,7 +157,7 @@ export function BotsPanel({
   sendGroupMessageWithAttachments, reactGroupMessage, groupsAvailable, loadAvatar,
   rename, updateProfile, memoryManager, readGrokHistory,
   routineManager, skillManager, SessionProvider, renderSlot, t, share, computer, useComputerAvailability,
-  setComputerTarget, useComputerTarget, useComputerIdentity, useComputerSignIn, openTerminal, useTerminalAvailable,
+  setComputerTarget, useComputerTarget, useComputerIdentity, useComputerSignIn, openWorkspaceTab, useTerminalAvailable, useFilesAvailable,
 }: BotsPanelProps): ReactNode {
   const state: BotWorkspaceState = useWorkspace(value => value)
   const statuses = useSessionStatus(value => value)
@@ -166,6 +167,7 @@ export function BotsPanel({
   const computerTarget = useComputerTarget(value => value)
   const signIn = useComputerSignIn(value => value)
   const showTerminalAction = useTerminalAvailable(value => value)
+  const showFilesAction = useFilesAvailable(value => value)
   const selectedBot = bots.find(bot => bot.id === state.selectedBotId)
   const selectedReference = reference()
   const canShowComputer = (availability === 'available' || availability === 'mac') && selectedReference !== undefined
@@ -209,7 +211,17 @@ export function BotsPanel({
           {showTerminalAction && (
             <Tooltip label={t('terminalOpen')} side="bottom" delayMs={500}>
               <Button variant="toolbar" size="sm" icon={<PluginArtworkTerminal size={16} />}
-                aria-label={t('terminalOpen')} onClick={openTerminal}>{t('terminalLabel')}</Button>
+                aria-label={t('terminalOpen')} onClick={() => { openWorkspaceTab('terminal') }}>
+                <span className={css.workspaceToolLabel}>{t('terminalLabel')}</span>
+              </Button>
+            </Tooltip>
+          )}
+          {showFilesAction && (
+            <Tooltip label={t('filesOpen')} side="bottom" delayMs={500}>
+              <Button variant="toolbar" size="sm" icon={<IconFolderOpenOutlineRegular size={16} />}
+                aria-label={t('filesOpen')} onClick={() => { openWorkspaceTab('computer-files') }}>
+                <span className={css.workspaceToolLabel}>{t('filesLabel')}</span>
+              </Button>
             </Tooltip>
           )}
           {readGrokHistory !== undefined && selectedBot !== undefined && (

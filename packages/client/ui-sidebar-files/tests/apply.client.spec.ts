@@ -11,7 +11,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { Context } from '@yharness/cordis'
 import type { ShortcutCommand } from '@yharness/client-shortcuts/client'
 import { SidebarRightTabRegistry } from '@yharness/client-ui-sidebar-right/src/client/tab-registry.ts'
-import { FILES_ID, FILES_KIND } from '../src/client/definition.tsx'
+import { COMPUTER_FILES_KIND, FILES_ID, FILES_KIND } from '../src/client/definition.tsx'
 import { apply, inject } from '../src/client/index.ts'
 import { apply as hostApply } from '../src/index.ts'
 import { FilesBody } from '../src/client/FilesBody.tsx'
@@ -94,12 +94,15 @@ describe('ui-sidebar-files apply', () => {
     expect(definition?.title('sidebar://files')).toBe('type.label')
     expect(definition?.guide?.map(entry => [entry.order, entry.title(), entry.description?.()]))
       .toEqual([[10, 'guide.title', 'guide.description']])
+    expect(tabs.get(COMPUTER_FILES_KIND)?.guide).toEqual([])
     expect(dictionaries.get('sidebarFiles')).toEqual({ en })
     // The seat key is the implementation's id, not the kind: an extension may
     // take the kind over, and the seat must still find this body.
     expect(registered.map(entry => [entry.name, entry.key, entry.locale, entry.component])).toEqual([
       ['sidebar.right.pane.tab', FILES_ID, 'sidebarFiles', FilesBody],
       ['sidebar.right.pane.tab.title', FILES_ID, undefined, FilesTitle],
+      ['sidebar.right.pane.tab', `${FILES_ID}/computer`, 'sidebarFiles', FilesBody],
+      ['sidebar.right.pane.tab.title', `${FILES_ID}/computer`, undefined, FilesTitle],
     ])
     expect(registered[0]?.store).toBeDefined()
     expect(typeof registered[0]?.inject).toBe('function')
@@ -109,6 +112,7 @@ describe('ui-sidebar-files apply', () => {
     const { tabs, registered, dictionaries, fiber } = await boot()
     await fiber.dispose()
     expect(tabs.get(FILES_KIND)).toBeUndefined()
+    expect(tabs.get(COMPUTER_FILES_KIND)).toBeUndefined()
     expect(registered).toEqual([])
     expect(dictionaries.size).toBe(0)
   })

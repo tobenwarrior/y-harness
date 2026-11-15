@@ -94,6 +94,8 @@ Reads through `ctx.fs` use the backend's read authority; the sandboxing backend 
 
 Complete-file reads delegate size enforcement to `fs.readBytes` and return raw bytes through the binary Remote. The Host also provides `readWorkspaceBytes` for downloads from a recorded declaration and confines that path to the Session workspace. The optional `workspaceFileAccess` service supplies the managed filesystem and root for an exact Session. Managed workspaces support direct reads and listings. Their previews refresh when reopened.
 
+An explicit `{ computer: path }` selects the owner Bot's private Computer for listing, metadata, and content reads. The matching provider must authorize the exact Session and confine the path to that workspace. `readVerifiedBytes` checks file identity before a reserved read. Computer downloads stream version-checked windows and use the same attachment response headers as declared downloads.
+
 ### Source map
 
 | File | Role |

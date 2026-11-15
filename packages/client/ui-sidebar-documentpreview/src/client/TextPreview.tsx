@@ -15,7 +15,7 @@ import clsx from 'clsx'
 import type { ObservableSnapshot } from '@yharness/client-store'
 import type { InjectFace, PropsLocale, PropsRenderSlots, PropsRuntime, PropsStore } from '@yharness/client-ui-slots'
 import {
-  FileTypeIcon, IconNowrapFillRegular, IconPauseOutlineRegular, IconPlayOutlineRegular,
+  FileTypeIcon, IconDownloadOutlineRegular, IconNowrapFillRegular, IconPauseOutlineRegular, IconPlayOutlineRegular,
   IconRefreshOutlineRegular, IconWrapFillRegular, Menu, PathLabel, Tooltip, classifyFileType,
 } from '@yharness/client-ui-primitives'
 import { pathPartsOf } from '@yharness/util-workspace-path'
@@ -91,9 +91,16 @@ export function TextPreview({
   const storedScrollTopRef = useRef(0)
   const [menuOpen, setMenuOpen] = useState(false)
   const absolutePath = meta.value?.absolutePath ?? current?.complete?.absolutePath
-  const displayPath = absolutePath ?? file.path
+  const displayPath = file.computer === true ? file.path : absolutePath ?? file.path
   // Contributions that hand the file to the Host wait for its Host path.
-  const fileOwner = absolutePath === undefined ? undefined : { absolutePath }
+  const fileOwner = file.computer === true || absolutePath === undefined ? undefined : { absolutePath }
+  const computerDownload = file.computer === true && meta.value !== undefined ? (
+    <Tooltip label={t('download')} side="bottom" delayMs={500}>
+      <a className={css.tool} aria-label={t('download')}
+        href={`/api/computer/files/download?${new URLSearchParams({ sessionId: file.sessionId, path: file.path })}`}
+        download><IconDownloadOutlineRegular /></a>
+    </Tooltip>
+  ) : null
   // Every tab of this type is a `file` resource address, so its params are the
   // `file` type's; the union is narrowed on the one field read, not validated.
   const line = navigation.params !== undefined && 'line' in navigation.params ? navigation.params.line : undefined
@@ -202,6 +209,7 @@ export function TextPreview({
       <div className={css.preview} data-textpreview-state="unsupported" data-textpreview-url={tab.contentId}>
         <div className={css.header}>
           <PathLabel path={displayPath} className={css.path} data-textpreview-path />
+          {computerDownload}
           {fileOwner !== undefined && renderSlot('sidebar.right.tab.document.actions', fileOwner)}
         </div>
         <div className={css.body} data-textpreview-body>
@@ -323,6 +331,7 @@ export function TextPreview({
           </button>
         </Tooltip>
         {/* jscpd:ignore-end */}
+        {computerDownload}
         {fileOwner !== undefined && renderSlot('sidebar.right.tab.document.actions', fileOwner)}
       </div>
       <div

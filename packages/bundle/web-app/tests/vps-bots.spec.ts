@@ -147,6 +147,11 @@ describe('managed VPS Bot composition', () => {
       expect(files?.fs).toBeInstanceOf(VpsBotFileSystem)
       await expect(ctx.workspaceFileAccess.forSession(DESKTOP_SESSION, new AbortController().signal)).resolves.toBeUndefined()
       await expect(ctx.workspaceFileAccess.forSession(LEGACY_SESSION, new AbortController().signal)).resolves.toBeUndefined()
+      const desktopFiles = await ctx.workspaceFileAccess.forComputer?.(DESKTOP_SESSION, new AbortController().signal)
+      expect(desktopFiles?.workspaceRoot).toBe(`/yharness-test-bots/${DESKTOP_SESSION}`)
+      expect(desktopFiles?.fs).toBeInstanceOf(VpsBotFileSystem)
+      await expect(ctx.workspaceFileAccess.forComputer?.(LEGACY_SESSION, new AbortController().signal)).resolves.toBeUndefined()
+      await expect(ctx.workspaceFileAccess.forComputer?.(BOT_SESSION, new AbortController().signal)).resolves.toEqual(files)
       const injections: IndexInjection[] = []
       ctx.emit('webserver/index-inject', injections)
       expect(injections).toContainEqual({ kind: 'global', name: '__YH_BOT_WEBSITE_LOGIN__', value: true })

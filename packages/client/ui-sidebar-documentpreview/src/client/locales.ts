@@ -18,6 +18,7 @@ export const en = {
   changed: 'The file has changed, showing the previous content.',
   reloadNow: 'Reload',
   reload: 'Read the file again',
+  download: 'Download file',
   autoRefresh: 'Auto refresh',
   'autoRefresh.enable': 'Enable auto refresh',
   'autoRefresh.disable': 'Disable auto refresh',

@@ -311,5 +311,6 @@ describe('childPath', () => {
     expect(childPath('/work/app/', 'src')).toBe('/work/app/src')
     expect(childPath('/', 'etc')).toBe('/etc')
     expect(childPath('C:\\work\\', 'src')).toBe('C:\\work/src')
+    expect(childPath('./notes\\', 'draft.txt')).toBe('./notes\\/draft.txt')
   })
 })

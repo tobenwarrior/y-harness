@@ -610,6 +610,8 @@ export const en = {
   computerLabel: 'Computer',
   terminalLabel: 'Terminal',
   terminalOpen: 'Open VPS terminal',
+  filesLabel: 'Files',
+  filesOpen: 'Open VPS files',
   computerScopeBotChip: 'Dedicated VPS desktop',
   computerScopeWorkspaceChip: 'Shared VPS desktop',
   computerScopeBotMeta: 'Display and input are dedicated to this Bot',

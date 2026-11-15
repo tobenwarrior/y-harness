@@ -2178,9 +2178,9 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         throws: ['{OfficeToPdfError} Invalid input, unusable output, or engine failure; cancellation rejects with its reason.'],
       },
       {
-        signature: '@Remote async render( workspaceFileScope: WorkspaceFileScope, path: string, priority: OfficeToPdfPriority, signal: AbortSignal, ): Promise<RenderedDocumentBytes>',
-        description: 'Read and convert one Office file using the Session\'s ordinary filesystem authorization.',
-        parameters: [{ name: 'workspaceFileScope', description: 'Session header lookup shared with workspaceFiles.' }, { name: 'path', description: 'absolute or workspace-relative Office path.' }, { name: 'priority', description: 'foreground preview or speculative background work.' }, { name: 'signal', description: 'Remote cancellation; disposal also cancels outstanding reads and conversions.' }],
+        signature: '@Remote async render( workspaceFileScope: WorkspaceFileScope, path: WorkspaceFilePath, priority: OfficeToPdfPriority, signal: AbortSignal, ): Promise<RenderedDocumentBytes>',
+        description: 'Read and convert one Office file using the selected workspace\'s filesystem authorization.',
+        parameters: [{ name: 'workspaceFileScope', description: 'Session header lookup shared with workspaceFiles.' }, { name: 'path', description: 'Office file in the Session or its private Computer workspace.' }, { name: 'priority', description: 'foreground preview or speculative background work.' }, { name: 'signal', description: 'Remote cancellation; disposal also cancels outstanding reads and conversions.' }],
         returns: 'complete PDF bytes with original source identity and missing font families.',
       },
       {
@@ -4580,6 +4580,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         parameters: [{ name: 'sessionId', description: 'exact Session identity.' }, { name: 'signal', description: 'caller cancellation.' }],
         returns: 'the managed workspace, or undefined for Sessions using the Host filesystem.',
       },
+      {
+        signature: 'forComputer?(sessionId: SessionId, signal: AbortSignal): Promise<WorkspaceFileAccess | undefined>',
+        description: 'Select the owner Bot\'s private Computer files.',
+        parameters: [{ name: 'sessionId', description: 'exact Session identity.' }, { name: 'signal', description: 'caller cancellation.' }],
+        returns: 'the Computer workspace, or undefined when it is unavailable for this Session.',
+      },
     ],
   },
   {
@@ -4588,15 +4594,15 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     description: 'Host Remote file reads and workspace directory observations over the composed filesystem.',
     methods: [
       {
-        signature: '@Remote async read( workspaceFileScope: WorkspaceFileScope, path: string, range: WorkspaceFileRange, signal: AbortSignal, ): Promise<WorkspaceFileText>',
+        signature: '@Remote async read( workspaceFileScope: WorkspaceFileScope, path: WorkspaceFilePath, range: WorkspaceFileRange, signal: AbortSignal, ): Promise<WorkspaceFileText>',
         description: 'Read one page of lines from a UTF-8 file readable by the filesystem backend.',
-        parameters: [{ name: 'workspaceFileScope', description: 'header-derived workspace root for the Session identity on the wire.' }, { name: 'path', description: 'absolute path or path relative to the workspace root; files outside it are allowed.' }, { name: 'range', description: 'the line window; omitted fields take the page defaults.' }, { name: 'signal', description: 'caller cancellation.' }],
+        parameters: [{ name: 'workspaceFileScope', description: 'header-derived workspace root for the Session identity on the wire.' }, { name: 'path', description: 'Session path or a path confined to its private Computer workspace.' }, { name: 'range', description: 'the line window; omitted fields take the page defaults.' }, { name: 'signal', description: 'caller cancellation.' }],
         returns: 'the page, the file\'s version at the stat before it, and whether it reaches the last line.',
       },
       {
-        signature: '@Remote async readBytes( workspaceFileScope: WorkspaceFileScope, path: string, options: WorkspaceByteReadOptions, signal: AbortSignal, ): Promise<WorkspaceFileBytes>',
+        signature: '@Remote async readBytes( workspaceFileScope: WorkspaceFileScope, path: WorkspaceFilePath, options: WorkspaceByteReadOptions, signal: AbortSignal, ): Promise<WorkspaceFileBytes>',
         description: 'Read a complete regular file or one byte range without text decoding.',
-        parameters: [{ name: 'workspaceFileScope', description: 'header-derived workspace root for the Session identity on the wire.' }, { name: 'path', description: 'target path, absolute or workspace-relative; relative to the base file\'s directory when provided.' }, { name: 'options', description: 'optional base file and range; without a range the complete-file cap applies.' }, { name: 'signal', description: 'caller cancellation.' }],
+        parameters: [{ name: 'workspaceFileScope', description: 'header-derived workspace root for the Session identity on the wire.' }, { name: 'path', description: 'Session or private Computer path, relative to the base file\'s directory when provided.' }, { name: 'options', description: 'optional base file and range; without a range the complete-file cap applies.' }, { name: 'signal', description: 'caller cancellation.' }],
         returns: 'native bytes with the file\'s version and size at the preceding stat, byte offset, and EOF marker.',
       },
       {
@@ -4606,9 +4612,21 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'the current bytes, subject to the configured complete-file cap.',
       },
       {
-        signature: '@Remote async stat(workspaceFileScope: WorkspaceFileScope, path: string, signal: AbortSignal): Promise<WorkspaceFileStat>',
+        signature: 'async readVerifiedBytes( scope: WorkspaceFileScope, path: WorkspaceFilePath, expected: WorkspaceFileStat, maxBytes: number, signal: AbortSignal, ): Promise<Uint8Array>',
+        description: 'Read an authorized file after checking the reserved source identity.',
+        parameters: [{ name: 'scope', description: 'authorization Session and its working directory.' }, { name: 'path', description: 'Session path or a path confined to its private Computer workspace.' }, { name: 'expected', description: 'source identity observed before the reservation.' }, { name: 'maxBytes', description: 'the consumer\'s reserved byte capacity.' }, { name: 'signal', description: 'caller cancellation.' }],
+        returns: 'native bytes within the reservation.',
+      },
+      {
+        signature: 'async downloadComputer(sessionId: SessionId, path: string, signal: AbortSignal): Promise<Response>',
+        description: 'Stream one private Computer file using bounded byte windows from one version.',
+        parameters: [{ name: 'sessionId', description: 'the Session that owns the Computer.' }, { name: 'path', description: 'file inside that Computer\'s workspace.' }, { name: 'signal', description: 'download request lifetime.' }],
+        returns: 'an attachment response with a backpressured body.',
+      },
+      {
+        signature: '@Remote async stat(workspaceFileScope: WorkspaceFileScope, path: WorkspaceFilePath, signal: AbortSignal): Promise<WorkspaceFileStat>',
         description: 'Report one regular file\'s identity, version, and size without its content.',
-        parameters: [{ name: 'workspaceFileScope', description: 'header-derived workspace root for the Session identity on the wire.' }, { name: 'path', description: 'absolute path or path relative to the workspace root; files outside it are allowed.' }, { name: 'signal', description: 'caller cancellation.' }],
+        parameters: [{ name: 'workspaceFileScope', description: 'header-derived workspace root for the Session identity on the wire.' }, { name: 'path', description: 'Session path or a path confined to its private Computer workspace.' }, { name: 'signal', description: 'caller cancellation.' }],
         returns: 'the file\'s absolute path, current version, and byte size.',
       },
       {
@@ -4618,9 +4636,9 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'the verified regular file\'s Host path, or undefined for a managed workspace.',
       },
       {
-        signature: '@Remote async list(workspaceFileScope: WorkspaceFileScope, path: string, signal: AbortSignal): Promise<WorkspaceDirectoryListing>',
+        signature: '@Remote async list(workspaceFileScope: WorkspaceFileScope, path: WorkspaceFilePath, signal: AbortSignal): Promise<WorkspaceDirectoryListing>',
         description: 'List the direct children of one directory inside the Session\'s workspace.',
-        parameters: [{ name: 'workspaceFileScope', description: 'header-derived workspace root for the Session identity on the wire.' }, { name: 'path', description: 'workspace path, absolute or relative to the workspace root.' }, { name: 'signal', description: 'caller cancellation.' }],
+        parameters: [{ name: 'workspaceFileScope', description: 'header-derived workspace root for the Session identity on the wire.' }, { name: 'path', description: 'directory inside the Session or private Computer workspace.' }, { name: 'signal', description: 'caller cancellation.' }],
         returns: 'the directory\'s children in the backend\'s stable name order, bounded by the entry cap.',
       },
       {
@@ -10657,6 +10675,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'WorkspaceFileDiff',
     declaration: 'export type WorkspaceFileDiff = {\n    kind: \'text\';\n    path: string;\n    display: string;\n    before: boolean;\n    after: boolean;\n    hunks: WorkspaceDiffHunk[];\n    coarse: boolean;\n} | {\n    kind: \'binary\';\n    path: string;\n    display: string;\n} | {\n    kind: \'oversized\';\n    path: string;\n    display: string;\n};',
+  },
+  {
+    name: 'WorkspaceFilePath',
+    declaration: 'export type WorkspaceFilePath = string | {\n    readonly computer: string;\n};',
   },
   {
     name: 'WorkspaceFileRange',

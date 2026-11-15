@@ -2991,6 +2991,13 @@
   isolation: isolate;
 }
 
+@container bot-detail (max-width: 640px) {
+  .workspaceToolLabel,
+  .computerScope {
+    display: none;
+  }
+}
+
 @container bot-detail (max-width: 500px) {
   .detailHeader {
     flex-wrap: wrap;

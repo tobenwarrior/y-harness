@@ -3808,7 +3808,7 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
     keyDomain: '',
     hookContext: '',
     slotInject: '',
-    declaredBy: 'an entry in \'sidebar.right.pane.tab\' (client-ui-sidebar-files), so it exists while that entry is mounted',
+    declaredBy: 'the runtime itself (built in; always present)',
     occupants: [
       'client-ui-open-in-app OpenInAppAction id \'open-in-app\'',
     ],

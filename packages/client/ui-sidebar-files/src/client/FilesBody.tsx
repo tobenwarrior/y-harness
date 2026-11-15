@@ -19,7 +19,8 @@ import {
   FileTypeIcon, IconFolderCloseRegular, IconFolderOpenRegular, IconRefreshOutlineRegular, Tooltip, classifyFileType,
   IconPauseOutlineRegular, IconPlayOutlineRegular, PathLabel,
 } from '@yharness/client-ui-primitives'
-import { fileAddressFor } from '@yharness/util-workspace-path'
+import { computerFileAddress, fileAddressFor } from '@yharness/util-workspace-path'
+import { COMPUTER_FILES_KIND } from './definition.tsx'
 import type { WorkspaceDirectoryEntry } from '@yharness/api-workspace-files/types'
 import { childPath } from './face.ts'
 import type { FilesInjected } from './face.ts'
@@ -144,7 +145,9 @@ export function FilesBody({
   const { tab } = useTabInfo()
   useEffect(() => tab.actions.bindCommands({ refresh: () => { refresh(tab.id) } }), [tab.actions, tab.id, refresh])
   const { signal, actions: tabActions } = tab
-  const cwd = useSessions(sessions => sessions.byId[sessionId]?.cwd)
+  const computer = tab.kind === COMPUTER_FILES_KIND
+  const sessionRoot = useSessions(sessions => sessions.byId[sessionId]?.cwd)
+  const cwd = computer ? '.' : sessionRoot
   const state = useStore(store => store.byTab[tab.id])
   const bodyRef = useRef<HTMLDivElement>(null)
   const scrollTopRef = useRef(0)
@@ -184,7 +187,9 @@ export function FilesBody({
     state,
     onToggle: (parent, path) => { toggle(tab.id, parent, path, state.expanded, signal) },
     // Every row is under the tree's root, so its address is session-relative.
-    onOpen: (path) => { tabActions.openResource(fileAddressFor(sessionId, state.root, path)) },
+    onOpen: (path) => {
+      tabActions.openResource(computer ? computerFileAddress(sessionId, path) : fileAddressFor(sessionId, state.root, path))
+    },
     t,
   }
   const reload = (): void => {
@@ -193,7 +198,9 @@ export function FilesBody({
   return (
     <div className={css.root} data-files-state="tree" data-files-root={state.root}>
       <div className={css.header} data-yh-terminal="toolbar">
-        <PathLabel path={state.root} className={css.path} data-files-path />
+        {computer
+          ? <span className={css.path} data-files-path>{t('computerWorkspace')}</span>
+          : <PathLabel path={state.root} className={css.path} data-files-path />}
         <span hidden>
           <button type="button" className={css.tool} aria-label={t('autoRefresh')}
             aria-pressed={state.autoRefresh} data-files-auto-refresh
@@ -214,7 +221,7 @@ export function FilesBody({
             <IconRefreshOutlineRegular />
           </button>
         </Tooltip>
-        {renderSlot('sidebar.right.tab.files.actions', {
+        {!computer && renderSlot('sidebar.right.tab.files.actions', {
           absolutePath: state.root,
         })}
       </div>

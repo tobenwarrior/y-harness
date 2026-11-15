@@ -7,12 +7,13 @@ import { bindManagedBotExecution, createManagedBotExecution, managedBotExecution
 import { VpsBotSubprocess } from './vps-bot-process.ts'
 import { VpsBotFileSystem } from './vps-bot-files.ts'
 import type {} from '@yharness/bots'
-import type {} from '@yharness/api-workspace-files'
+import type { WorkspaceFileAccessProvider } from '@yharness/api-workspace-files'
 import type {} from '@yharness/client-connection'
 import type {} from '@yharness/system-prompt'
 import { containerComputer, type VpsComputer } from './computer.ts'
 import * as ComputerTool from './computer-tool.ts'
-import { botComputerRoutesWithLegacy, computerSignInRoute } from './computer-api.ts'
+import { botComputerRoutesWithLegacy, computerFileDownloadRoute, computerSignInRoute } from './computer-api.ts'
+import { SessionId } from '@yharness/session/types'
 import { VpsRuntime, type VpsBrowserOptions } from './vps-runtime.ts'
 import { VpsIsolatedBrowser, type VpsIsolatedBrowserConfig } from './vps-isolated-browser.ts'
 import { VpsBrowserLogin, vpsBrowserLoginRoute } from './vps-browser-login.ts'
@@ -155,12 +156,12 @@ export function mountVpsBots(
   }
 
   ctx.inject(['bots'], (scope) => {
-    scope.provide('workspaceFileAccess', {
-      async forSession(sessionId, signal) {
+    const filesFor = (allowed: (botId: string) => boolean): WorkspaceFileAccessProvider['forSession'] =>
+      async (sessionId, signal) => {
         signal.throwIfAborted()
         const bot = await scope.bots.ownerBotForSession(sessionId)
         signal.throwIfAborted()
-        if (bot === undefined || !isManagedBot(bot.id)) return undefined
+        if (bot === undefined || !allowed(bot.id)) return undefined
         if (bot.state !== 'active') throw new Error('The Bot workspace is not ready.')
         const runtime = runtimeFor(bot.id)
         let fs = previewFiles.get(sessionId)
@@ -169,11 +170,19 @@ export function mountVpsBots(
           previewFiles.set(sessionId, fs)
         }
         return { fs, workspaceRoot: runtime.workspace(sessionId) }
-      },
+      }
+    scope.provide('workspaceFileAccess', {
+      forSession: filesFor(isManagedBot),
+      forComputer: filesFor(isDesktopBot),
     })
   })
 
   ctx.inject(['bots', 'connection'], (scope) => {
+    scope.inject(['workspaceFiles'], (filesScope) => {
+      filesScope.effect(() => filesScope.connection.fetch.register(computerFileDownloadRoute(
+        (sessionId, path, signal) => filesScope.workspaceFiles.downloadComputer(SessionId(sessionId), path, signal),
+      )), 'vps-bots: owner file downloads')
+    })
     if (browserLogin !== undefined) {
       scope.effect(() => scope.connection.fetch.register(vpsBrowserLoginRoute(scope, browserLogin)), 'vps-bots: owner saved-login metadata')
     }
@@ -202,6 +211,7 @@ export function mountVpsBots(
           id: bot.id,
           permissionScope: 'bot' as const,
           ...(scope.get('terminalController') === undefined ? {} : { terminal: true as const }),
+          ...(scope.get('workspaceFiles') === undefined ? {} : { files: true as const }),
           ...(navigate === undefined ? {} : { navigate }),
         }
       }

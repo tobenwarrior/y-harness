@@ -61,6 +61,7 @@ export function apply(ctx: Context): void {
     return selected?.sessionId
   }
   const terminalAvailable = createSnapshotStore(false)
+  const filesAvailable = createSnapshotStore(false)
   const setComputerTarget = (sessionId: string | null, request?: ComputerSignInTarget): void => {
     const sidebar = ctx.get('sidebarRight')
     if (sessionId !== null && sidebar !== undefined && sidebar.mounted.getSnapshot() === sessionId && sidebar.isExpanded()) {
@@ -69,17 +70,18 @@ export function apply(ctx: Context): void {
     computerSignIn.set(request)
     computerTarget.set(sessionId)
   }
-  const openTerminal = (): void => {
+  const openWorkspaceTab = (kind: 'terminal' | 'computer-files'): void => {
     const sidebar = ctx.get('sidebarRight')
     const sessionId = controller.face().reference()?.sessionId
     if (sidebar === undefined || sessionId === undefined || sidebar.mounted.getSnapshot() !== sessionId) return
     const target = sidebar.commandTarget(null)
-    if (target === undefined || !terminalAvailable.getSnapshot()) return
+    const available = kind === 'terminal' ? terminalAvailable : filesAvailable
+    if (target === undefined || !available.getSnapshot()) return
     setComputerTarget(null)
     const active = sidebar.active()
-    const existing = active?.kind === 'terminal' ? active : sidebar.tabsIn(sessionId).find(tab => tab.kind === 'terminal')
+    const existing = active?.kind === kind ? active : sidebar.tabsIn(sessionId).find(tab => tab.kind === kind)
     if (existing === undefined) {
-      sidebar.openTabFromTarget('terminal', target)
+      sidebar.openTabFromTarget(kind, target)
       return
     }
     sidebar.focus(existing.id)
@@ -91,10 +93,12 @@ export function apply(ctx: Context): void {
         const sessionId = controller.face().reference()?.sessionId
         const selection = workspace.getSnapshot().selectedBotId
         const identity = computerAvailability.identity.getSnapshot()
-        const available = sessionId !== undefined && identity?.id === selection && identity.terminal === true
-          && scope.sidebarRightTabs.get('terminal') !== undefined
-        scope.sidebarRight.selectPanelSession(PANEL_ID, available ? sessionId : undefined)
-        terminalAvailable.set(available)
+        const selected = sessionId !== undefined && identity?.id === selection ? identity : undefined
+        const terminal = selected?.terminal === true && scope.sidebarRightTabs.get('terminal') !== undefined
+        const files = selected?.files === true && scope.sidebarRightTabs.get('computer-files') !== undefined
+        scope.sidebarRight.selectPanelSession(PANEL_ID, terminal || files ? sessionId : undefined)
+        terminalAvailable.set(terminal)
+        filesAvailable.set(files)
       }
       const stops = [workspace.subscribe(sync), computerAvailability.identity.subscribe(sync), scope.sidebarRightTabs.subscribe(sync)]
       sync()
@@ -102,8 +106,9 @@ export function apply(ctx: Context): void {
         for (const stop of stops) stop()
         scope.sidebarRight.selectPanelSession(PANEL_ID, undefined)
         terminalAvailable.set(false)
+        filesAvailable.set(false)
       }
-    }, 'ui-bots: selected terminal Session')
+    }, 'ui-bots: selected VPS workspace')
   })
   const rosterReady = controller.load()
   ctx.inject(['inputTriggers'], (scope) => {
@@ -176,7 +181,7 @@ export function apply(ctx: Context): void {
       inject: () => {
         const face = controller.face()
         return {
-          ...face, computer, setComputerTarget, openTerminal,
+          ...face, computer, setComputerTarget, openWorkspaceTab,
           hooks: {
             ...face.hooks,
             computerAvailability: computerAvailability.source,
@@ -184,6 +189,7 @@ export function apply(ctx: Context): void {
             computerTarget,
             computerSignIn,
             terminalAvailable,
+            filesAvailable,
           },
         }
       },

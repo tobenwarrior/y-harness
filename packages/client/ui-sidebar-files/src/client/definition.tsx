@@ -17,18 +17,22 @@ export const FILES_KIND = 'files'
 /** This implementation's identity in the tab system, and the key its body registers under. */
 export const FILES_ID = '@yharness/client-ui-sidebar-files'
 
+/** The tab kind for a private Bot Computer workspace. */
+export const COMPUTER_FILES_KIND = 'computer-files'
+
 /**
  * The files type's registry definition.
  * @param t - namespace-bound translate, read fresh on every label call.
+ * @param computer - register the private Computer file tree.
  * @returns the definition to register.
  */
-export function filesDefinition(t: TranslateNS<'sidebarFiles'>): SidebarRightTabDefinition {
+export function filesDefinition(t: TranslateNS<'sidebarFiles'>, computer = false): SidebarRightTabDefinition {
   return {
-    id: FILES_ID,
-    kind: FILES_KIND,
+    id: computer ? `${FILES_ID}/computer` : FILES_ID,
+    kind: computer ? COMPUTER_FILES_KIND : FILES_KIND,
     priority: 'builtin',
     title: () => t('type.label'),
-    guide: [{
+    guide: computer ? [] : [{
       id: 'workspace',
       commandId: 'workspace.files' as ShortcutCommandId,
       order: 10,

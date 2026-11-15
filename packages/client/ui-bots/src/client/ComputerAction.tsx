@@ -37,7 +37,7 @@ export function ComputerAction({ expanded, identity, toggle, t }: ComputerAction
         aria-pressed={expanded}
         onClick={toggle}
       >
-        {t('computerLabel')}
+        <span className={css.workspaceToolLabel}>{t('computerLabel')}</span>
         {scope === 'bot' && <span className={css.computerScope}>{t('computerScopeBotChip')}</span>}
         {scope === 'workspace' && <span className={css.computerScope}>{t('computerScopeWorkspaceChip')}</span>}
       </Button>

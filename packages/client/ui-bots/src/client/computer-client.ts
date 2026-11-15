@@ -15,6 +15,7 @@ export interface ComputerIdentity {
   readonly permissionScope: ComputerPermissionScope
   readonly browser?: true
   readonly terminal?: true
+  readonly files?: true
 }
 
 /** Direct response from the Computer status route. */
@@ -137,7 +138,8 @@ function identityOf(value: unknown): ComputerIdentity | undefined {
   const dedicated = location === 'vps' && permissionScope === 'bot'
   return { ...(id === undefined ? {} : { id }), location, permissionScope,
     ...(dedicated && value.browser === true ? { browser: true } : {}),
-    ...(dedicated && value.terminal === true ? { terminal: true } : {}) }
+    ...(dedicated && value.terminal === true ? { terminal: true } : {}),
+    ...(dedicated && value.files === true ? { files: true } : {}) }
 }
 
 function modeOf(value: unknown): ComputerMode | undefined {
