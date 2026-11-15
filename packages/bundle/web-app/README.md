@@ -83,7 +83,7 @@ The optional `computer` configuration supplies one shared X11 display for a cust
 
 `botComputers.isolatedBrowser` routes selected Bots’ Computer input and screenshots to a separate browser service over a private Unix socket. The Bot’s shell and file providers stay in their current runtime. In a direct owner turn, the Bot can hand the browser to the owner for sign-in. Only the viewer holding that handoff receives frames and can send input or navigate. See [Enable an isolated browser for selected Bots](../../../docs/user/guide/vps.md#enable-an-isolated-browser-for-selected-bots).
 
-`botComputers.isolatedBrowser.savedLogins` enables the [owner approval flow](../../../docs/user/guide/vps.md#approve-a-saved-website-login) for direct Bot chats. Cloud handles request metadata and a fixed outcome. The installed Vault submits an owner-entered or saved login to the browser worker over its root-owned socket.
+`botComputers.isolatedBrowser.savedLogins` enables the [owner approval flow](../../../docs/user/guide/vps.md#approve-a-saved-website-login) for direct Bot chats. Cloud handles request metadata and a fixed outcome. The installed Vault submits an owner-entered or saved login to the browser worker over its root-owned socket. For a dedicated login, the worker verifies the approved account belongs to the Bot bound to the browser request.
 
 The private `vpsJournal` configuration grants selected owner Bots with a dedicated VPS desktop read access to a host-operated Unix socket. The Web Host supplies the reader to both the scoped tool and the native Codex Bot action. The socket stays in the Host process.
 

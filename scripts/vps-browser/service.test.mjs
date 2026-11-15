@@ -109,9 +109,12 @@ test('reserves the exact browser for one owner-approved login and consumes it on
   const use = { action: 'use-login', id: pending.id, origin, username: 'fixture-user', password: 'fixture-password' }
   assert.deepEqual(await controlResponse(control, { ...request, ...use }), { error: 'unavailable' })
   assert.deepEqual(await controlResponse(vault, { action: 'inspect-login', id: pending.id }), pending)
+  assert.deepEqual(await controlResponse(vault, { action: 'inspect-login-bot', id: pending.id }), { bot: request.bot })
+  assert.deepEqual(await controlResponse(control, { ...request, action: 'inspect-login-bot', id: pending.id }), { error: 'unavailable' })
   assert.deepEqual(await controlResponse(control, { ...request, action: 'frame' }), { error: 'unavailable' })
   assert.deepEqual(await controlResponse(vault, { ...use, origin: 'https://different.example.test' }), { error: 'unavailable' })
-  assert.deepEqual(await controlResponse(vault, use), { state: 'submitted' })
+  assert.deepEqual(await controlResponse(vault, { ...use, bot: 'bot-other' }), { error: 'unavailable' })
+  assert.deepEqual(await controlResponse(vault, { ...use, bot: request.bot }), { state: 'submitted' })
   assert.deepEqual(await controlResponse(vault, use), { error: 'unavailable' })
   assert.deepEqual(await controlResponse(control, { ...request, action: 'login-status', id: pending.id }), { state: 'submitted' })
   assert.deepEqual(submitted, [{ document, username: use.username, password: use.password }])

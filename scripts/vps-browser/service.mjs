@@ -58,7 +58,7 @@ function parseControl(value, grants) {
   } else if (value.action === 'navigate' && fields(value, [...base, 'url'])) {
     return { session: value.session, action: 'navigate', url: parseWebsite(value.url) }
   } else if (value.action === 'request-login' && fields(value, base)) {
-    return { session: value.session, action: value.action }
+    return { bot: value.bot, session: value.session, action: value.action }
   } else if ((value.action === 'login-status' || value.action === 'cancel-login') && fields(value, [...base, 'id'])
     && typeof value.id === 'string' && LOGIN_ID.test(value.id)) {
     return { session: value.session, action: value.action, id: value.id }
@@ -207,7 +207,7 @@ function browserLogins(pool, enabled) {
   }
   return {
     reserved: session => bySession.has(session),
-    async control({ session, action, id }, signal) {
+    async control({ bot, session, action, id }, signal) {
       if (!enabled) return UNAVAILABLE
       if (action === 'request-login') {
         return pool.run(session, async page => {
@@ -216,7 +216,7 @@ function browserLogins(pool, enabled) {
           const reviewed = await page.captureLogin(id)
           signal.throwIfAborted()
           if (!loginDestination(reviewed.origin, reviewed.destination)) return UNAVAILABLE
-          const record = { id, session, page, reviewed, state: 'pending', deadline: performance.now() + LOGIN_TTL }
+          const record = { id, bot, session, page, reviewed, state: 'pending', deadline: performance.now() + LOGIN_TTL }
           record.timeout = setTimeout(() => finish(record, 'unavailable'), LOGIN_TTL).unref()
           bySession.set(session, record)
           byId.set(id, record)
@@ -235,9 +235,11 @@ function browserLogins(pool, enabled) {
       if (record?.state !== 'pending') return UNAVAILABLE
       if (fields(body, ['action', 'id'])) {
         if (body.action === 'inspect-login') return view(record)
+        if (body.action === 'inspect-login-bot') return { bot: record.bot }
         if (body.action === 'cancel-login') return finish(record, 'unavailable')
       }
-      if (body.action !== 'use-login' || !fields(body, ['action', 'id', 'origin', 'username', 'password'])
+      const useFields = ['action', 'id', 'origin', 'username', 'password']
+      if (body.action !== 'use-login' || !(fields(body, useFields) || (fields(body, [...useFields, 'bot']) && body.bot === record.bot))
         || body.origin !== record.reviewed.origin || !credential(body.username, 512) || !credential(body.password, 8192)) return UNAVAILABLE
       return pool.run(record.session, async page => {
         if (record.state !== 'pending') return UNAVAILABLE

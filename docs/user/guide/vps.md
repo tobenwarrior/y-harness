@@ -239,6 +239,8 @@ Install the current VPS Vault command and update the Mac app. In **Cloud → Vau
 
 Website logins are encrypted on the VPS. You can [approve a saved login](#approve-a-saved-website-login) from a direct Bot chat with the isolated browser enabled.
 
+To assign an account to a particular Bot, select it under **Saved for** when adding the login. Update the isolated browser worker to use these accounts. When the assigned Bot asks for sign-in on that website in your private chat, Vault shows its matching accounts. **Replace** and **Remove** take effect for future sign-in requests. Sign out of the website to clear an existing signed-in session.
+
 ### Let a Bot request a key in chat
 
 Update the Mac app and Cloud. Once the service is available in Desktop Vault, open **Cloud → Vault → Bot access**. Choose **Grant access**, then select the bot and service and enter the key name. Grant changes take effect while Cloud is running.

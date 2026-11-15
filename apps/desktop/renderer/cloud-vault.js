@@ -42,6 +42,8 @@ const loginList = element('logins')
 const loginEditor = element('login-editor')
 const loginOriginInput = element('login-origin')
 const loginLabelInput = element('login-label')
+const loginBot = element('login-bot')
+const loginBotField = element('login-bot-field')
 const loginUsernameInput = element('login-username')
 const loginPasswordInput = element('login-password')
 
@@ -53,6 +55,8 @@ let loginUseRequest
 let enteringLogin = false
 let services = []
 let logins = []
+let botLogins = []
+let loginBots = []
 let grantAccess
 let grantBots
 let grantAccessReason
@@ -64,6 +68,7 @@ let removingGrant
 let busy = false
 let ready = false
 let websitesReady = false
+let botLoginsReady = false
 let grantsReady = false
 let activeSection = 'api-keys'
 
@@ -157,8 +162,9 @@ function requestMetadata(value) {
   return item
 }
 
-function loginMetadata(value) {
-  if (!record(value) || Object.keys(value).length !== 3 || typeof value.id !== 'string'
+function loginMetadata(value, scoped) {
+  if (!record(value) || Object.keys(value).length !== (scoped ? 4 : 3) || typeof value.id !== 'string'
+    || (scoped && (typeof value.bot !== 'string' || !/^bot-[A-Za-z0-9][A-Za-z0-9-]{0,245}$/.test(value.bot)))
     || !/^[a-f0-9]{32}$/.test(value.id) || typeof value.origin !== 'string'
     || !/^https:\/\/[^/?#]+(?::\d+)?$/.test(value.origin) || typeof value.label !== 'string'
     || value.label.trim() !== value.label || value.label.length === 0 || [...value.label].length > 80) return
@@ -223,8 +229,11 @@ function availability() {
   for (const button of secretList.querySelectorAll('button')) button.disabled = busy || !ready
   for (const input of editor.querySelectorAll('input, button')) input.disabled = busy || !ready
   element('add-login').disabled = busy || !websitesReady
-  for (const button of loginList.querySelectorAll('button')) button.disabled = busy || !websitesReady
+  for (const button of loginList.querySelectorAll('button')) {
+    button.disabled = busy || !websitesReady || (button.dataset.botLogin === 'true' && !botLoginsReady)
+  }
   for (const input of loginEditor.querySelectorAll('input, button')) input.disabled = busy || !websitesReady
+  loginBot.disabled = busy || !botLoginsReady || editingLogin?.action === 'replace'
   element('add-grant').disabled = busy || !canGrantAccess()
   for (const button of grantList.querySelectorAll('button')) button.disabled = busy || !grantsReady
   for (const input of grantEditor.querySelectorAll('input, select, button')) input.disabled = busy || !canGrantAccess()
@@ -261,17 +270,22 @@ function closeLoginEditor() {
   loginEditor.reset()
   loginOriginInput.readOnly = false
   loginEditor.hidden = true
-  element('logins-empty').hidden = logins.length > 0 || !websitesReady
+  element('logins-empty').hidden = logins.length + botLogins.length > 0 || !websitesReady
 }
 
 function openLoginEditor(action, login) {
   if (busy || !websitesReady) return
-  editingLogin = action === 'add' ? { action } : { action, id: login.id }
+  editingLogin = action === 'add' ? { action } : { action, id: login.id, bot: login.bot }
   element('login-editor-title').textContent = messages[action === 'add'
     ? 'cloudVaultWebsiteEditorAdd' : 'cloudVaultWebsiteEditorReplace']
   loginOriginInput.value = action === 'add' ? '' : login.origin
   loginOriginInput.readOnly = action === 'replace'
   loginLabelInput.value = action === 'add' ? '' : login.label
+  loginBotField.hidden = action === 'add' ? loginBots.length === 0 : login.bot === undefined
+  loginBot.replaceChildren(...(action === 'add'
+    ? [new Option(messages.cloudVaultWebsitePersonal, ''), ...loginBots.map(bot => new Option(bot.name, bot.id))]
+    : [new Option(loginAssignee(login), login.bot ?? '')]))
+  loginBot.disabled = action === 'replace'
   // Rotation intentionally starts with blank credentials; the Vault never reads them back.
   loginUsernameInput.value = ''
   loginPasswordInput.value = ''
@@ -280,7 +294,7 @@ function openLoginEditor(action, login) {
   setWebsitesNotice()
   const input = action === 'add' ? loginOriginInput : loginLabelInput
   input.focus({ preventScroll: true })
-  loginEditor.scrollIntoView({ block: 'nearest' })
+  loginEditor.scrollIntoView?.({ block: 'nearest' })
 }
 
 function revoke(unit, name) {
@@ -305,6 +319,11 @@ function removeLogin(login) {
   element('confirm-detail').textContent = messages.cloudVaultWebsiteConfirmDetail
   element('confirm-revoke').textContent = messages.cloudVaultWebsiteRemove
   confirmation.showModal()
+}
+
+function loginAssignee(login) {
+  if (login.bot === undefined) return messages.cloudVaultWebsitePersonal
+  return loginBots.find(bot => bot.id === login.bot)?.name ?? messages.cloudVaultWebsiteUnknownBot
 }
 
 function actionButton(key, name, callback, className = '') {
@@ -375,20 +394,24 @@ function renderNames() {
 }
 
 function renderLogins() {
-  const rows = logins.map(login => {
+  const rows = [...logins, ...botLogins].map(login => {
     const row = document.createElement('li')
     const details = document.createElement('span')
     details.className = 'login-details'
     const label = document.createElement('span')
     label.textContent = login.label
     const origin = document.createElement('span')
-    origin.textContent = login.origin
+    origin.textContent = login.bot === undefined ? login.origin : [login.origin, loginAssignee(login)].join(' · ')
     details.append(label, origin)
     const actions = document.createElement('div')
     actions.className = 'actions'
-    actions.append(actionButton('cloudVaultWebsiteReplace', login.label,
-      () => openLoginEditor('replace', login)),
-    actionButton('cloudVaultWebsiteRemove', login.label, () => removeLogin(login), 'danger'))
+    const replace = actionButton('cloudVaultWebsiteReplace', login.label, () => openLoginEditor('replace', login))
+    const remove = actionButton('cloudVaultWebsiteRemove', login.label, () => removeLogin(login), 'danger')
+    if (login.bot !== undefined) {
+      replace.dataset.botLogin = 'true'
+      remove.dataset.botLogin = 'true'
+    }
+    actions.append(replace, remove)
     row.append(details, actions)
     return row
   })
@@ -442,14 +465,22 @@ async function readInventory() {
 
 async function readLogins() {
   const reply = await send({ action: 'list-logins' })
-  if (!reply.ok || !Array.isArray(reply.logins) || !reply.logins.every(loginMetadata)) {
+  if (!reply.ok || !Array.isArray(reply.logins) || !reply.logins.every(login => loginMetadata(login, false))) {
     websitesReady = false
+    botLoginsReady = false
     logins = []
+    botLogins = []
+    loginBots = []
     renderLogins()
     return false
   }
   websitesReady = true
   logins = reply.logins
+  const assigned = await send({ action: 'list-bot-logins' })
+  botLoginsReady = assigned.ok === true && Array.isArray(assigned.botLogins)
+    && assigned.botLogins.every(login => loginMetadata(login, true))
+  if (botLoginsReady) botLogins = assigned.botLogins
+  loginBots = botLoginsReady && Array.isArray(assigned.bots) ? assigned.bots : []
   renderLogins()
   return true
 }
@@ -571,7 +602,7 @@ async function changeLogin(request) {
     return
   }
   closeLoginEditor()
-  const loaded = await readLogins()
+  const loaded = await readLogins() && (request.bot === undefined || botLoginsReady)
   busy = false
   availability()
   setWebsitesNotice(loaded ? 'cloudVaultWebsiteSaved' : 'cloudVaultWebsitesUnavailable', loaded ? '' : 'error')
@@ -583,7 +614,7 @@ async function removeLoginRequest(login) {
   busy = true
   availability()
   setWebsitesNotice('cloudVaultSaving')
-  const result = await send({ action: 'remove-login', id: login.id })
+  const result = await send({ action: 'remove-login', id: login.id, ...(login.bot === undefined ? {} : { bot: login.bot }) })
   if (!acknowledged(result)) {
     if (result.reason !== 'invalid') websitesReady = false
     busy = false
@@ -592,7 +623,7 @@ async function removeLoginRequest(login) {
     element('websites-tab').focus()
     return
   }
-  const loaded = await readLogins()
+  const loaded = await readLogins() && (login.bot === undefined || botLoginsReady)
   busy = false
   availability()
   setWebsitesNotice(loaded ? 'cloudVaultWebsiteRemoved' : 'cloudVaultWebsitesUnavailable', loaded ? '' : 'error')
@@ -822,6 +853,10 @@ loginEditor.addEventListener('submit', event => {
   const request = editingLogin.action === 'add'
     ? { action: 'add-login', origin: loginOriginInput.value, label: loginLabelInput.value.trim(), username: loginUsernameInput.value, password: loginPasswordInput.value }
     : { action: 'replace-login', id: editingLogin.id, label: loginLabelInput.value.trim(), username: loginUsernameInput.value, password: loginPasswordInput.value }
+  const bot = editingLogin.action === 'add'
+    ? loginBots.find(item => item.id === loginBot.value)?.id
+    : editingLogin.bot
+  if (bot !== undefined) request.bot = bot
   loginPasswordInput.value = ''
   void changeLogin(request)
 })
@@ -892,6 +927,7 @@ void Promise.all([api.messages(), api.mode()]).then(([copy, presentation]) => {
     ['grant-name-label', 'cloudVaultRequestName'], ['grant-editor-cancel', 'cancel'], ['grant-save', 'cloudVaultBotAccessAdd'],
     ['websites-hint', 'cloudVaultWebsitesHint'], ['logins-title', 'cloudVaultWebsites'], ['add-login-label', 'cloudVaultWebsiteAdd'],
     ['logins-empty', 'cloudVaultWebsitesEmpty'], ['login-origin-label', 'cloudVaultWebsiteOrigin'], ['login-label-label', 'cloudVaultWebsiteLabel'],
+    ['login-bot-label', 'cloudVaultWebsiteBot'],
     ['login-username-label', 'cloudVaultWebsiteUsername'], ['login-password-label', 'cloudVaultWebsitePassword'],
     ['login-save', 'cloudVaultWebsiteSave'], ['login-editor-cancel', 'cancel'],
     ['service-label', 'cloudVaultService'], ['names', 'cloudVaultNames'], ['empty', 'cloudVaultEmpty'], ['add-label', 'cloudVaultAdd'],

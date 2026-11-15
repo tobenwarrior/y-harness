@@ -595,6 +595,110 @@ class VaultTest(unittest.TestCase):
         self.assertEqual(calls, [{'action': 'inspect-login', 'id': request_id}] * 2)
         self.assertNotIn('private', json.dumps(result))
 
+    def test_owner_can_manage_bot_logins_independently_of_personal_logins(self):
+        self.store.allow_desktop(OWNER_UID, CLOUD_UID, [])
+        site = {
+            'action': 'add-login', 'origin': 'https://example.com', 'label': 'Personal',
+            'username': 'fixture-personal', 'password': 'fixture-personal-secret',
+        }
+        scoped = {**site, 'bot': 'bot-scout', 'label': 'Research', 'username': 'fixture-team'}
+        self.store.desktop(site, OWNER_UID)
+        self.assertEqual(self.store.desktop(vault.desktop_request(json.dumps(scoped).encode()), OWNER_UID), {'ok': True})
+        personal = self.store.desktop({'action': 'list-logins'}, OWNER_UID)['logins']
+        assigned = self.store.desktop({'action': 'list-bot-logins'}, OWNER_UID)['botLogins']
+        self.assertEqual([(item['label'], item['origin']) for item in personal], [('Personal', site['origin'])])
+        self.assertEqual([(item['label'], item['bot']) for item in assigned], [('Research', 'bot-scout')])
+        [login] = assigned
+        self.assertEqual(set(login), {'id', 'origin', 'label', 'bot'})
+        self.assertNotIn('fixture-', json.dumps(assigned))
+        self.assertNotEqual(self.sealed_names[0], self.sealed_names[1])
+        update = {'action': 'replace-login', 'id': login['id'], 'label': 'Rotated',
+                  'username': 'fixture-rotated', 'password': 'fixture-rotated-secret'}
+        for scope in ({}, {'bot': 'bot-other'}):
+            with self.subTest(scope=scope), self.assertRaises(vault.VaultError):
+                self.store.desktop({**update, **scope}, OWNER_UID)
+        self.assertEqual(self.store.desktop({**update, 'bot': 'bot-scout'}, OWNER_UID), {'ok': True})
+        self.assertEqual(self.sealed_names[1], self.sealed_names[2])
+        self.assertEqual(self.store.desktop({'action': 'list-bot-logins'}, OWNER_UID)['botLogins'],
+                         [{**login, 'label': 'Rotated'}])
+        remove = {'action': 'remove-login', 'id': login['id'], 'bot': 'bot-scout'}
+        with self.assertRaises(vault.VaultError):
+            self.store.desktop(remove, CLOUD_UID)
+        with self.assertRaises(vault.VaultError):
+            self.store.desktop({'action': 'list-bot-logins'}, CLOUD_UID)
+        self.assertEqual(self.store.desktop(remove, OWNER_UID), {'ok': True})
+        self.assertEqual(self.store.desktop({'action': 'list-bot-logins'}, OWNER_UID), {'botLogins': []})
+        self.assertEqual(self.store.desktop({'action': 'list-logins'}, OWNER_UID)['logins'], personal)
+
+    def test_approval_matches_the_worker_bound_bot_and_exact_website(self):
+        self.store.allow_desktop(OWNER_UID, CLOUD_UID, [])
+        site = 'https://example.com'
+        request_id = 'a' * 32
+        personal = {'action': 'add-login', 'origin': site, 'label': 'Personal',
+                    'username': 'fixture-personal', 'password': 'fixture-secret'}
+        self.store.desktop(personal, OWNER_UID)
+        self.store.desktop({**personal, 'bot': 'bot-scout', 'label': 'Scout', 'username': 'fixture-scout'}, OWNER_UID)
+        self.store.desktop({**personal, 'bot': 'bot-other', 'label': 'Other', 'username': 'fixture-other'}, OWNER_UID)
+        worker_bot = 'bot-scout'
+        worker_origin = site
+        submissions = []
+
+        def browser(payload):
+            command = json.loads(payload)
+            if command['action'] == 'inspect-login-bot':
+                return json.dumps({'bot': worker_bot}).encode()
+            if command['action'] == 'use-login':
+                submissions.append(command)
+                return b'{"state":"submitted"}'
+            return json.dumps({'id': request_id, 'origin': worker_origin,
+                               'destination': worker_origin + '/login', 'state': 'pending'}).encode()
+
+        with patch.object(vault, 'browser_client', side_effect=browser):
+            inspect = {'action': 'inspect-login-use', 'id': request_id}
+            reply = self.store.desktop(inspect, OWNER_UID)['request']
+            [choice] = reply['logins']
+            self.assertEqual(choice['label'], 'Scout')
+            approve = {'action': 'approve-login-use', 'id': request_id,
+                       'loginId': choice['id'], 'generation': choice['generation']}
+            worker_bot = 'bot-other'
+            self.assertEqual(self.store.desktop(approve, OWNER_UID), {'state': 'unavailable'})
+            worker_bot = 'bot-scout'
+            worker_origin = 'https://other.example'
+            self.assertEqual(self.store.desktop(approve, OWNER_UID), {'state': 'unavailable'})
+            self.assertEqual(self.decrypt_calls, [])
+            worker_origin = site
+            self.assertEqual(self.store.desktop(approve, OWNER_UID), {'state': 'submitted'})
+            self.assertEqual(len(submissions), 1)
+            self.assertEqual((submissions[0]['bot'], submissions[0]['username']), ('bot-scout', 'fixture-scout'))
+            self.store.desktop({
+                'action': 'replace-login', 'id': choice['id'], 'bot': 'bot-scout',
+                'label': 'Updated', 'username': 'fixture-rotated', 'password': 'fixture-rotated-secret',
+            }, OWNER_UID)
+            self.assertEqual(self.store.desktop(approve, OWNER_UID), {'state': 'unavailable'})
+            self.assertEqual(len(submissions), 1)
+            [current] = self.store.desktop(inspect, OWNER_UID)['request']['logins']
+            approve['generation'] = current['generation']
+            self.assertEqual(self.store.desktop(approve, OWNER_UID), {'state': 'submitted'})
+            self.assertEqual(submissions[-1]['username'], 'fixture-rotated')
+            self.store.desktop({'action': 'remove-login', 'id': choice['id'], 'bot': 'bot-scout'}, OWNER_UID)
+            self.assertEqual(self.store.desktop(approve, OWNER_UID), {'state': 'unavailable'})
+            self.assertEqual(len(submissions), 2)
+
+    def test_site_with_bot_accounts_requires_an_identifiable_browser_request(self):
+        self.store.allow_desktop(OWNER_UID, CLOUD_UID, [])
+        origin = 'https://example.com'
+        login = {'action': 'add-login', 'origin': origin, 'label': 'Personal',
+                 'username': 'fixture-personal', 'password': 'fixture-password'}
+        self.store.desktop(login, OWNER_UID)
+        self.store.desktop({**login, 'bot': 'bot-scout', 'label': 'Scout'}, OWNER_UID)
+        request_id = 'a' * 32
+        with patch.object(vault, 'browser_client', side_effect=[
+            json.dumps({'id': request_id, 'origin': origin, 'destination': origin + '/login', 'state': 'pending'}).encode(),
+            b'{"error":"unavailable"}',
+        ]):
+            shown = self.store.desktop({'action': 'inspect-login-use', 'id': request_id}, OWNER_UID)
+        self.assertEqual(shown['request']['logins'], [])
+
     def test_entered_login_requires_the_owner_and_the_reviewed_destination(self):
         self.store.allow_desktop(OWNER_UID, CLOUD_UID, [])
         request = {'action': 'enter-login-use', 'id': 'a' * 32, 'origin': 'https://example.com',

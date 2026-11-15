@@ -131,6 +131,38 @@ describe('Desktop Vault SSH transport', () => {
     await expect(readCloudVaultBots('https://example.com', fetcher, signal)).resolves.toBeUndefined()
   })
 
+  it('binds an assigned website login to one Bot in the connected roster', async () => {
+    const workspace = managedWorkspace()
+    const login = {
+      action: 'add-login', origin: 'https://example.com', label: 'Scout account',
+      username: 'fixture-user', password: 'fixture-password',
+    }
+    const execute = vi.fn(fixture(
+      'let text=""; process.stdin.on("data", chunk => text+=chunk); process.stdin.on("end", () => {'
+      + 'if(JSON.parse(text).bot!=="bot-scout") process.exit(2); process.stdout.write(\'{"ok":true}\')})',
+    ))
+    await expect(cloudVaultRequest('fixture-vps', { ...login, bot: 'bot-other' }, signal, execute, workspace))
+      .resolves.toEqual({ ok: false, reason: 'unavailable' })
+    expect(execute).not.toHaveBeenCalled()
+    await expect(cloudVaultRequest('fixture-vps', { ...login, bot: 'bot-scout' }, signal, execute, workspace))
+      .resolves.toEqual({ ok: true })
+    expect(execute).toHaveBeenCalledOnce()
+  })
+
+  it('returns only scoped website metadata and named Bot choices', async () => {
+    const scoped = { id: 'b'.repeat(32), bot: 'bot-scout', origin: 'https://example.com', label: 'Scout' }
+    const workspace = managedWorkspace()
+    const action = { action: 'list-bot-logins' }
+    const output = { botLogins: [scoped] }
+    await expect(cloudVaultRequest('fixture-vps', action, signal,
+      fixture('process.stdout.write(' + JSON.stringify(JSON.stringify(output)) + ')'), workspace))
+      .resolves.toEqual({ ok: true, ...output, bots: [{ id: 'bot-scout', name: 'Scout' }] })
+    const hasPassword = { botLogins: [{ ...scoped, password: value }] }
+    await expect(cloudVaultRequest('fixture-vps', action, signal,
+      fixture('process.stdout.write(' + JSON.stringify(JSON.stringify(hasPassword)) + ')'), workspace))
+      .resolves.toEqual({ ok: false, reason: 'unavailable' })
+  })
+
   it('inspects a request and returns only its validated metadata', async () => {
     const id = 'a'.repeat(32)
     const execute: VaultExec = (_file, _args, options, callback) => fixture(`

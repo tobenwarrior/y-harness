@@ -63,6 +63,7 @@ COMMAND_ENV = {'PATH': '/usr/bin:/bin', 'LC_ALL': 'C'}
 REQUEST_UNAVAILABLE = 'The Vault request is unavailable.'
 BROWSER_UNAVAILABLE = 'The browser Vault is unavailable.'
 WEBSITE_LOGIN_DIRECTORY = 'website-logins'
+BOT_WEBSITE_LOGIN_DIRECTORY = 'bot-website-logins'
 WEBSITE_LOGIN_LIMIT = 64
 WEBSITE_LOGIN_FILE_LIMIT = 64 * 1024
 WEBSITE_LOGIN_ID = re.compile(r'[0-9a-f]{32}')
@@ -197,6 +198,14 @@ def website_login_generation(record):
     return hashlib.sha256(record['credential'].encode('ascii')).hexdigest()
 
 
+def website_login_credential_name(record):
+    """Bind a Bot credential to its exact Bot, origin, and record id."""
+    if 'bot' not in record:
+        return f'{PREFIX}_website_login_{record["id"]}'
+    scope = hashlib.sha256(f'{record["bot"]}\0{record["origin"]}'.encode('ascii')).hexdigest()
+    return f'{PREFIX}_bot_website_login_{scope}_{record["id"]}'
+
+
 def valid_login_origin(value):
     """Accept one canonical, lower-case HTTPS DNS origin without a path."""
     if type(value) is not str or not value.isascii():
@@ -256,21 +265,24 @@ def login_text(value, limit, *, trim=False):
 def website_login_request(request):
     """Validate one exact Desktop website-login request and normalize its label."""
     action = request.get('action')
-    if action == 'list-logins':
+    if action in ('list-logins', 'list-bot-logins'):
         if set(request) != {'action'}:
             raise VaultError('Invalid website login request.')
         return request
+    scope = {'bot'} if 'bot' in request else set()
+    if scope and not valid_bot(request['bot']):
+        raise VaultError('Invalid website login request.')
     if action == 'add-login':
         fields = {'action', 'origin', 'label', 'username', 'password'}
     elif action == 'replace-login':
         fields = {'action', 'id', 'label', 'username', 'password'}
     elif action == 'remove-login':
-        if set(request) != {'action', 'id'} or not valid_login_id(request.get('id')):
+        if set(request) != {'action', 'id'} | scope or not valid_login_id(request.get('id')):
             raise VaultError('Invalid website login request.')
         return request
     else:
         raise VaultError('Invalid website login request.')
-    if set(request) != fields:
+    if set(request) != fields | scope:
         raise VaultError('Invalid website login request.')
     if action == 'replace-login' and not valid_login_id(request.get('id')):
         raise VaultError('Invalid website login request.')
@@ -376,7 +388,7 @@ def desktop_request(payload):
                     or not valid_request_grant((request['bot'], request['unit'], request['name']))):
                 raise VaultError('Invalid Vault request.')
             return request
-        if action in ('list-logins', 'add-login', 'replace-login', 'remove-login'):
+        if action in ('list-logins', 'list-bot-logins', 'add-login', 'replace-login', 'remove-login'):
             return website_login_request(request)
         if action == 'enter-login-use':
             return entered_website_login_request(request)
@@ -814,16 +826,16 @@ class Vault:
         sync_directory(target.parent)
         return True
 
-    def website_login_directory(self, *, create=False):
+    def website_login_directory(self, *, create=False, scoped=False):
         """Resolve the private root-owned directory for website-login records."""
         if not directory(self.root):
             raise VaultError('The Vault storage is unavailable.')
-        path = self.root / WEBSITE_LOGIN_DIRECTORY
+        path = self.root / (BOT_WEBSITE_LOGIN_DIRECTORY if scoped else WEBSITE_LOGIN_DIRECTORY)
         if create:
             directory(path, create=True)
         return path
 
-    def read_website_login(self, path, expected_id=None):
+    def read_website_login(self, path, expected_id=None, *, scoped=False):
         """Read one public website-login record without decrypting its credential."""
         try:
             if not directory(self.root) or not directory(path.parent):
@@ -834,8 +846,11 @@ class Vault:
                 payload = source.read(WEBSITE_LOGIN_FILE_LIMIT + 1)
             data = json.loads(payload.decode('utf-8'), object_pairs_hook=exact_object)
             credential = data.get('credential') if type(data) is dict else None
+            fields = {'id', 'origin', 'label', 'credential'}
+            if scoped:
+                fields.add('bot')
             if (len(payload) > WEBSITE_LOGIN_FILE_LIMIT or type(data) is not dict
-                    or set(data) != {'id', 'origin', 'label', 'credential'}
+                    or set(data) != fields or (scoped and not valid_bot(data['bot']))
                     or not valid_login_id(data.get('id'))
                     or (expected_id is not None and data['id'] != expected_id)
                     or not valid_login_origin(data.get('origin'))
@@ -847,17 +862,15 @@ class Vault:
             cipher = base64.b64decode(encoded, validate=True)
             if not cipher or base64.b64encode(cipher) != encoded:
                 raise VaultError('The website login record is invalid.')
-            return {
-                'id': data['id'], 'origin': data['origin'], 'label': data['label'], 'credential': credential,
-            }
+            return data
         except VaultError:
             raise
         except (OSError, UnicodeError, ValueError, RecursionError):
             raise VaultError('The website login record is invalid.') from None
 
-    def website_login_records(self):
+    def website_login_records(self, *, scoped=False):
         """List bounded public website-login metadata without exposing credentials."""
-        path = self.website_login_directory()
+        path = self.website_login_directory(scoped=scoped)
         if not directory(path):
             return []
         entries = list(path.iterdir())
@@ -867,11 +880,11 @@ class Vault:
         for entry in entries:
             if not valid_login_id(entry.name):
                 raise VaultError('The website login record is invalid.')
-            records.append(self.read_website_login(entry, entry.name))
+            records.append(self.read_website_login(entry, entry.name, scoped=scoped))
         return sorted(records, key=lambda record: record['id'])
 
-    def website_login_cipher(self, login_id, username, password):
-        """Encrypt exact website-login values under a credential name bound to its id."""
+    def website_login_cipher(self, record, username, password):
+        """Encrypt exact website-login values under their record's credential name."""
         try:
             value = json.dumps(
                 {'username': username, 'password': password}, ensure_ascii=False, separators=(',', ':'),
@@ -881,7 +894,7 @@ class Vault:
         encrypted = self.command(
             [
                 '/usr/bin/systemd-creds', '--with-key=host',
-                f'--name={PREFIX}_website_login_{login_id}', 'encrypt', '-', '-',
+                f'--name={website_login_credential_name(record)}', 'encrypt', '-', '-',
             ],
             'The website login could not be encrypted.', input=value, stdout=subprocess.PIPE,
         )
@@ -909,16 +922,16 @@ class Vault:
         except (UnicodeError, ValueError, RecursionError, TypeError):
             raise VaultError(WEBSITE_LOGIN_UNAVAILABLE) from None
 
-    def _use_website_login_locked(self, login_id, origin, deliver):
+    def _use_website_login_locked(self, login_id, origin, deliver, *, bot=None):
         """Decrypt and deliver one login while the caller owns the Vault lock."""
-        path = self.website_login_directory()
-        record = self.read_website_login(path / login_id, login_id)
-        if record['origin'] != origin:
+        path = self.website_login_directory(scoped=bot is not None)
+        record = self.read_website_login(path / login_id, login_id, scoped=bot is not None)
+        if record['origin'] != origin or record.get('bot') != bot:
             raise VaultError(WEBSITE_LOGIN_UNAVAILABLE)
         decrypted = self.command(
             [
                 '/usr/bin/systemd-creds', '--with-key=host',
-                f'--name={PREFIX}_website_login_{login_id}', 'decrypt', '-', '-',
+                f'--name={website_login_credential_name(record)}', 'decrypt', '-', '-',
             ],
             WEBSITE_LOGIN_UNAVAILABLE,
             input=record['credential'].encode('ascii'), stdout=subprocess.PIPE,
@@ -961,7 +974,7 @@ class Vault:
         exists = file_exists(target)
         if (action == 'add' and exists) or (action == 'replace' and not exists):
             raise VaultError('The website login changed. Refresh and try again.')
-        credential = self.website_login_cipher(record['id'], username, password)
+        credential = self.website_login_cipher(record, username, password)
         payload = (json.dumps(
             {**record, 'credential': credential}, ensure_ascii=False, separators=(',', ':')
         ) + '\n').encode('utf-8')
@@ -969,30 +982,37 @@ class Vault:
 
     def add_website_login(self, request):
         """Encrypt and add one owner-authorized website-login record."""
-        path = self.website_login_directory(create=True)
-        if len(self.website_login_records()) >= WEBSITE_LOGIN_LIMIT:
+        scoped = 'bot' in request
+        path = self.website_login_directory(create=True, scoped=scoped)
+        if len(self.website_login_records(scoped=scoped)) >= WEBSITE_LOGIN_LIMIT:
             raise VaultError('The Vault has too many website login records.')
         login_id = self.new_website_login_id(path)
-        self.write_website_login(
-            path,
-            {'id': login_id, 'origin': request['origin'], 'label': request['label']},
-            request['username'], request['password'], 'add',
-        )
+        record = {'id': login_id, 'origin': request['origin'], 'label': request['label']}
+        if scoped:
+            record['bot'] = request['bot']
+        self.write_website_login(path, record, request['username'], request['password'], 'add')
+
+    def _website_login_for_edit(self, request):
+        """Resolve a record only in the exact management scope supplied by the owner."""
+        scoped = 'bot' in request
+        path = self.website_login_directory(scoped=scoped)
+        record = self.read_website_login(path / request['id'], request['id'], scoped=scoped)
+        if record.get('bot') != request.get('bot'):
+            raise VaultError('The website login changed. Refresh and try again.')
+        return path, record
 
     def replace_website_login(self, request):
         """Encrypt and replace one existing owner-authorized website-login record."""
-        path = self.website_login_directory()
-        record = self.read_website_login(path / request['id'], request['id'])
+        path, record = self._website_login_for_edit(request)
+        del record['credential']
+        record['label'] = request['label']
         self.write_website_login(
-            path,
-            {'id': record['id'], 'origin': record['origin'], 'label': request['label']},
-            request['username'], request['password'], 'replace',
+            path, record, request['username'], request['password'], 'replace',
         )
 
     def remove_website_login(self, request):
         """Remove one existing website-login record without decrypting its credential."""
-        path = self.website_login_directory()
-        self.read_website_login(path / request['id'], request['id'])
+        path, _record = self._website_login_for_edit(request)
         if not self.remove_value(path / request['id']):
             raise VaultError('The website login changed. Refresh and try again.')
 
@@ -1338,29 +1358,46 @@ class Vault:
         payload = json.dumps({'action': 'inspect-login', 'id': request_id}, separators=(',', ':')).encode('ascii')
         return browser_login_inspection(browser_client(payload), request_id)
 
-    def _browser_login_views(self, origin):
-        """List saved login metadata and encrypted-record generations for one origin."""
-        return [
-            {'id': record['id'], 'label': record['label'], 'generation': website_login_generation(record)}
-            for record in self.website_login_records() if record['origin'] == origin
-        ]
+    def _browser_login_records(self, inspected):
+        """Choose the matching Bot accounts or the owner's matching personal accounts."""
+        origin = inspected['origin']
+        assigned = [record for record in self.website_login_records(scoped=True) if record['origin'] == origin]
+        if assigned:
+            query = json.dumps({'action': 'inspect-login-bot', 'id': inspected['id']},
+                               separators=(',', ':')).encode('ascii')
+            try:
+                reply = json.loads(browser_client(query).decode('utf-8'), object_pairs_hook=exact_object)
+            except (UnicodeError, ValueError, RecursionError):
+                raise VaultError(BROWSER_UNAVAILABLE) from None
+            if reply == {'error': 'unavailable'}:
+                return []
+            if type(reply) is not dict or set(reply) != {'bot'} or not valid_bot(reply['bot']):
+                raise VaultError(BROWSER_UNAVAILABLE)
+            scoped = [record for record in assigned if record['bot'] == reply['bot']]
+            if scoped:
+                return scoped
+        return [record for record in self.website_login_records() if record['origin'] == origin]
 
     def _inspect_browser_login(self, request):
         """Return pending browser metadata and matching owner-visible login choices."""
         inspected = self._browser_login_metadata(request['id'])
         visible = {
             'id': inspected['id'], 'origin': inspected['origin'], 'destination': inspected['destination'],
-            'logins': self._browser_login_views(inspected['origin']),
+            'logins': [
+                {'id': record['id'], 'label': record['label'], 'generation': website_login_generation(record)}
+                for record in self._browser_login_records(inspected)
+            ],
         }
         if request.get('form') == 'entry':
             visible['acceptsCredentials'] = True
         return {'request': visible}
 
-    def _deliver_browser_login(self, inspected, username, password):
+    def _deliver_browser_login(self, inspected, username, password, *, bot=None):
         """Send the values for one pending login to the dedicated browser worker."""
         payload = json.dumps({
             'action': 'use-login', 'id': inspected['id'], 'origin': inspected['origin'],
             'username': username, 'password': password,
+            **({} if bot is None else {'bot': bot}),
         }, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
         return browser_login_state(browser_client(payload))
 
@@ -1368,14 +1405,15 @@ class Vault:
         """Deliver an owner-selected login while policy, generation, and delivery share one lock."""
         try:
             inspected = self._browser_login_metadata(request['id'])
-            records = self.website_login_records()
-            record = next((candidate for candidate in records
-                           if candidate['id'] == request['loginId'] and candidate['origin'] == inspected['origin']), None)
+            record = next((candidate for candidate in self._browser_login_records(inspected)
+                           if candidate['id'] == request['loginId']), None)
             if record is None or website_login_generation(record) != request['generation']:
                 return {'state': 'unavailable'}
+            bot = record.get('bot')
             return self._use_website_login_locked(
                 record['id'], inspected['origin'],
-                lambda username, password: self._deliver_browser_login(inspected, username, password),
+                lambda username, password: self._deliver_browser_login(inspected, username, password, bot=bot),
+                bot=bot,
             )
         except (AttributeError, VaultError, OSError, OverflowError, TypeError, ValueError, UnicodeError, RecursionError):
             return {'state': 'unavailable'}
@@ -1440,12 +1478,17 @@ class Vault:
             action = request['action']
             if action in ('list-grants', 'add-grant', 'remove-grant'):
                 return self.desktop_grants(policy, request)
-            if action in ('list-logins', 'add-login', 'replace-login', 'remove-login'):
+            if action in ('list-logins', 'list-bot-logins', 'add-login', 'replace-login', 'remove-login'):
                 request = website_login_request(request)
                 if action == 'list-logins':
                     return {'logins': [
                         {key: record[key] for key in ('id', 'origin', 'label')}
                         for record in self.website_login_records()
+                    ]}
+                if action == 'list-bot-logins':
+                    return {'botLogins': [
+                        {key: record[key] for key in ('id', 'origin', 'label', 'bot')}
+                        for record in self.website_login_records(scoped=True)
                     ]}
                 if action == 'add-login':
                     self.add_website_login(request)

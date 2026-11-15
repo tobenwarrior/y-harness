@@ -146,7 +146,7 @@ test('submits a reviewed HTTPS form without typing credentials or forwarding the
   browser = browserServers({ root, executable: process.env.YH_ISOLATED_TEST_CHROMIUM, grants: parseGrants([BOT]), savedLogins: true })
   await Promise.all([listen(browser.control, controlPath), listen(browser.vault, vaultPath)])
   const control = (action, parameters) => exchange(controlPath, { ...BOT, action, ...parameters })
-  const use = id => exchange(vaultPath, { action: 'use-login', id, origin, ...CREDENTIAL })
+  const use = id => exchange(vaultPath, { action: 'use-login', id, origin, bot: BOT.bot, ...CREDENTIAL })
 
   assert.deepEqual(await control('navigate', { url: `${origin}/other-origin` }), { ok: true })
   assert.deepEqual(await control('request-login'), { error: 'unavailable' })
@@ -168,6 +168,10 @@ test('submits a reviewed HTTPS form without typing credentials or forwarding the
   await workerReady.promise
   const selected = await control('request-login')
   assert.equal(selected.destination, `${origin}/session`)
+  assert.deepEqual(await exchange(vaultPath, { action: 'inspect-login-bot', id: selected.id }), { bot: BOT.bot })
+  assert.deepEqual(await exchange(vaultPath, {
+    action: 'use-login', id: selected.id, origin, bot: 'bot-other', ...CREDENTIAL,
+  }), { error: 'unavailable' })
   assert.deepEqual(await use(selected.id), { state: 'submitted' })
   assert.deepEqual(await use(selected.id), { error: 'unavailable' })
   assert.deepEqual(posts, [
