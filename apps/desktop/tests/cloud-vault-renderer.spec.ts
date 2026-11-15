@@ -26,6 +26,50 @@ function page(mode: { readonly kind: 'request'; readonly id: string } | { readon
   return { dom, close, element, run }
 }
 
+it('grants and withdraws one named Bot’s request access', async () => {
+  const unit = 'fixture-worker.service'
+  const grant = { bot: 'bot-scout', unit, name: 'SCOUT_API_KEY' }
+  let permitted = false
+  const request = vi.fn(async (value: unknown) => {
+    if (value && typeof value === 'object' && 'action' in value) {
+      switch (value.action) {
+        case 'list': return { ok: true, services: [{ unit, names: [] }] }
+        case 'list-logins': return { ok: true, logins: [] }
+        case 'list-grants': return { ok: true, access: { services: [unit], grants: permitted ? [grant] : [] }, bots: [
+          { id: 'bot-scout', name: 'Scout' }, { id: 'bot-orbit', name: 'Orbit' },
+        ] }
+        case 'add-grant': permitted = true; return { ok: true }
+        case 'remove-grant': permitted = false; return { ok: true }
+      }
+    }
+    return { ok: false }
+  })
+  const p = page({ kind: 'manage' }, request)
+  p.run()
+  await expect.poll(() => p.element('management').hidden).toBe(false)
+  await expect.poll(() => p.dom.window.document.querySelector('main')?.getAttribute('aria-busy')).toBe('false')
+  p.element('bot-access-tab').click()
+  const add = p.element('add-grant') as HTMLButtonElement
+  await expect.poll(() => add.disabled).toBe(false)
+  add.click()
+  const bot = p.element('grant-bot') as HTMLSelectElement
+  bot.value = grant.bot
+  expect(bot.selectedOptions[0]?.textContent).toBe('Scout')
+  const service = p.element('grant-service') as HTMLSelectElement
+  const name = p.element('grant-name') as HTMLInputElement
+  service.value = unit
+  name.value = grant.name
+  p.element('grant-editor').dispatchEvent(new p.dom.window.Event('submit', { bubbles: true, cancelable: true }))
+  await expect.poll(() => p.element('grants').textContent).toContain('Scout')
+  expect(request).toHaveBeenCalledWith({ action: 'add-grant', ...grant })
+  const remove = p.element('grants').querySelector('button')
+  remove?.click()
+  expect((p.element('confirmation') as HTMLDialogElement).open).toBe(true)
+  p.element('confirm-revoke').click()
+  await expect.poll(() => p.element('grants').children.length).toBe(0)
+  expect(request).toHaveBeenCalledWith({ action: 'remove-grant', ...grant })
+})
+
 it('renders request mode without generic Vault controls and saves only after a trusted acknowledgment', async () => {
   const id = 'a'.repeat(32)
   const requests: unknown[] = []

@@ -369,7 +369,12 @@ def desktop_request(payload):
         if type(request) is not dict:
             raise VaultError('Invalid Vault request.')
         action = request.get('action')
-        if action == 'list' and set(request) == {'action'}:
+        if action in ('list', 'list-grants') and set(request) == {'action'}:
+            return request
+        if action in ('add-grant', 'remove-grant'):
+            if (set(request) != {'action', 'bot', 'unit', 'name'}
+                    or not valid_request_grant((request['bot'], request['unit'], request['name']))):
+                raise VaultError('Invalid Vault request.')
             return request
         if action in ('list-logins', 'add-login', 'replace-login', 'remove-login'):
             return website_login_request(request)
@@ -1081,33 +1086,38 @@ class Vault:
             raise VaultError('Enable Desktop Vault access before enabling Cloud requests.')
         with self.locked():
             policy = self.root_policy()
-            marker = self.root / CLOUD_REQUESTS_ENABLED
-            if not 0 < len(grants) <= REQUEST_RECORD_LIMIT:
+            if not grants or len(grants) > REQUEST_RECORD_LIMIT:
                 raise VaultError('Select 1 to 64 exact Cloud Vault request grants.')
             for grant in grants:
                 if not valid_request_grant(grant) or grant[-2] not in policy['services']:
                     raise VaultError('Every request grant needs a key name and a service enabled for Desktop Vault.')
                 self.enabled_credentials(grant[-2], policy['cloud'])
-            allowed = set(map(tuple, grants))
-            configured = {'cloud': policy['cloud'], 'grants': sorted(allowed)}
-            payload = (json.dumps(configured, separators=(',', ':')) + '\n').encode()
-            previous = marker.read_bytes() if file_exists(marker) else None
-            prepared = self.prepare_cloud_requests(policy['cloud']) if start else None
-            created = set() if prepared is None else {path for path in prepared if not path.exists()}
-            try:
-                if prepared is not None:
-                    self.activate_cloud_requests(prepared)
-                if previous != payload:
-                    records, expired = self.clean_request_records(self.read_request_records() if previous is not None else [])
-                    kept = [record for record in records
-                            if grant_key(record['unit'], record['name'], record.get('bot')) in allowed]
-                    if previous is None or expired or len(kept) != len(records):
-                        self.write_request_records(kept)
-                    replace_file(marker, payload, self.root, 0o600)
-            except (VaultError, OSError, KeyboardInterrupt):
-                if any(path.exists() for path in created):
-                    self.stop_cloud_requests()
-                raise
+            self.write_request_grants(policy, set(map(tuple, grants)), start=start)
+
+    def write_request_grants(self, policy, grants, *, start=False):
+        """Publish a grant set and discard withdrawn requests under the Vault lock."""
+        if len(grants) > REQUEST_RECORD_LIMIT:
+            raise VaultError('The Vault supports at most 64 request grants.')
+        marker = self.root / CLOUD_REQUESTS_ENABLED
+        configured = {'cloud': policy['cloud'], 'grants': sorted(grants)}
+        payload = (json.dumps(configured, separators=(',', ':')) + '\n').encode()
+        previous = marker.read_bytes() if file_exists(marker) else None
+        prepared = self.prepare_cloud_requests(policy['cloud']) if start else None
+        created = set() if prepared is None else {path for path in prepared if not path.exists()}
+        try:
+            if prepared is not None:
+                self.activate_cloud_requests(prepared)
+            if previous != payload:
+                records, expired = self.clean_request_records(self.read_request_records() if previous is not None else [])
+                kept = [record for record in records
+                        if grant_key(record['unit'], record['name'], record.get('bot')) in grants]
+                if previous is None or expired or len(kept) != len(records):
+                    self.write_request_records(kept)
+                replace_file(marker, payload, self.root, 0o600)
+        except (VaultError, OSError, KeyboardInterrupt):
+            if any(path.exists() for path in created):
+                self.stop_cloud_requests()
+            raise
 
     def stop_cloud_requests(self):
         """Stop and remove only Vault's exact generated Cloud broker units."""
@@ -1217,10 +1227,12 @@ class Vault:
         """Resolve the root-owned metadata file for Cloud credential requests."""
         return self.root / CLOUD_REQUESTS_FILE
 
-    def require_requests(self, policy):
+    def require_requests(self, policy, *, allow_disabled=False):
         """Resolve the root-approved exact service and key grants for the current Cloud account."""
         marker = self.root / CLOUD_REQUESTS_ENABLED
         if not file_exists(marker):
+            if allow_disabled:
+                return set()
             raise VaultError(REQUEST_UNAVAILABLE)
         try:
             with marker.open('rb') as source:
@@ -1228,7 +1240,7 @@ class Vault:
             data = json.loads(payload.decode('utf-8'), object_pairs_hook=exact_object)
             if (len(payload) > DESKTOP_REQUEST_LIMIT or type(data) is not dict or set(data) != {'cloud', 'grants'}
                     or type(data['cloud']) is not int or data['cloud'] != policy['cloud']
-                    or type(data['grants']) is not list or not 0 < len(data['grants']) <= REQUEST_RECORD_LIMIT
+                    or type(data['grants']) is not list or len(data['grants']) > REQUEST_RECORD_LIMIT
                     or any(not valid_request_grant(grant) for grant in data['grants'])):
                 raise VaultError(REQUEST_UNAVAILABLE)
             return set(map(tuple, data['grants']))
@@ -1397,6 +1409,28 @@ class Vault:
             pass
         return {'state': 'unavailable'}
 
+    def desktop_grants(self, policy, request):
+        """Read or update Bot request permissions for the authenticated Desktop owner."""
+        grants = self.require_requests(policy, allow_disabled=True)
+        action = request['action']
+        if action == 'list-grants':
+            return {'access': {'services': policy['services'], 'grants': [
+                {'bot': grant[0], 'unit': grant[1], 'name': grant[2]}
+                for grant in sorted(grants) if len(grant) == 3
+            ]}}
+        grant = (request['bot'], request['unit'], request['name'])
+        if action == 'remove-grant':
+            if grant in grants:
+                grants.remove(grant)
+                self.write_request_grants(policy, grants)
+        else:
+            if grant[1] not in policy['services']:
+                raise VaultError('This service is not enabled for Desktop Vault.')
+            self.enabled_credentials(grant[1], policy['cloud'])
+            grants.add(grant)
+            self.write_request_grants(policy, grants, start=True)
+        return {'ok': True}
+
     def desktop(self, request, requester_uid):
         """Apply a validated Desktop request and return metadata or an acknowledgment."""
         if not directory(self.root):
@@ -1404,6 +1438,8 @@ class Vault:
         with self.locked():
             policy = self.desktop_policy(requester_uid)
             action = request['action']
+            if action in ('list-grants', 'add-grant', 'remove-grant'):
+                return self.desktop_grants(policy, request)
             if action in ('list-logins', 'add-login', 'replace-login', 'remove-login'):
                 request = website_login_request(request)
                 if action == 'list-logins':

@@ -847,6 +847,50 @@ class VaultTest(unittest.TestCase):
             with self.subTest(fields=list(overrides)), self.assertRaises(vault.VaultError):
                 vault.cloud_request(json.dumps(bad).encode())
 
+    def test_desktop_manages_bot_grants_for_administrator_enabled_services(self):
+        self.store.enable(FIRST_UNIT, CLOUD_UID)
+        self.store.allow_desktop(OWNER_UID, CLOUD_UID, [FIRST_UNIT])
+        self.assertEqual(self.store.desktop({'action': 'list-grants'}, OWNER_UID), {
+            'access': {'services': [FIRST_UNIT], 'grants': []},
+        })
+        grant = {'bot': 'bot-research', 'unit': FIRST_UNIT, 'name': 'EXAMPLE_KEY'}
+        add = {'action': 'add-grant', **grant}
+        self.assertEqual(vault.desktop_request(json.dumps(add).encode()), add)
+        with self.assertRaises(vault.VaultError):
+            vault.desktop_request(json.dumps({**add, 'value': FIRST_VALUE.decode()}).encode())
+        with self.assertRaises(vault.VaultError):
+            self.store.desktop(add, CLOUD_UID)
+        with self.assertRaises(vault.VaultError):
+            self.store.desktop({**add, 'unit': SECOND_UNIT}, OWNER_UID)
+
+        self.store.enable_requests(REQUEST_KEYS)
+        with patch.object(vault, 'trusted_file'):
+            self.assertEqual(self.store.desktop(add, OWNER_UID), {'ok': True})
+            self.assertEqual(self.store.desktop(add, OWNER_UID), {'ok': True})
+        self.assertTrue(self.cloud_listener_active)
+        self.assertEqual(self.store.desktop({'action': 'list-grants'}, OWNER_UID), {
+            'access': {'services': [FIRST_UNIT], 'grants': [grant]},
+        })
+        pending = {'action': 'create', 'id': 'a' * 32, **grant}
+        self.assertEqual(self.store.cloud(pending, CLOUD_UID), {'state': 'pending'})
+        self.assertEqual(self.store.desktop({**grant, 'action': 'remove-grant'}, OWNER_UID), {'ok': True})
+        with self.assertRaises(vault.VaultError):
+            self.store.desktop({'action': 'save-request', 'id': pending['id'], 'value': FIRST_VALUE.decode()}, OWNER_UID)
+        legacy = {'action': 'create', 'id': 'b' * 32, 'unit': FIRST_UNIT, 'name': 'EXAMPLE_KEY'}
+        self.assertEqual(self.store.cloud(legacy, CLOUD_UID), {'state': 'pending'})
+
+    def test_desktop_removing_the_only_grant_retains_the_vault_service(self):
+        self.store.enable(FIRST_UNIT, CLOUD_UID)
+        self.store.allow_desktop(OWNER_UID, CLOUD_UID, [FIRST_UNIT])
+        self.store.save(FIRST_UNIT, 'EXAMPLE_KEY', FIRST_VALUE, CLOUD_UID)
+        grant = {'bot': 'bot-research', 'unit': FIRST_UNIT, 'name': 'EXAMPLE_KEY'}
+        with patch.object(vault, 'trusted_file'):
+            self.store.desktop({'action': 'add-grant', **grant}, OWNER_UID)
+        self.store.desktop({'action': 'remove-grant', **grant}, OWNER_UID)
+        self.assertTrue(self.cloud_listener_active)
+        self.assertEqual(self.store.cloud({'action': 'list', 'bot': 'bot-research'}, CLOUD_UID), {'credentials': []})
+        self.assertEqual(self.store.names(FIRST_UNIT), ['EXAMPLE_KEY'])
+
     def test_a_vault_grant_applies_to_one_bot_and_is_rechecked_on_save(self):
         self.store.enable(FIRST_UNIT, CLOUD_UID)
         self.store.allow_desktop(OWNER_UID, CLOUD_UID, [FIRST_UNIT])

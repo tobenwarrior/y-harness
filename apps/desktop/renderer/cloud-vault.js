@@ -3,8 +3,12 @@ const api = window.yhCloudVault
 const element = id => document.getElementById(id)
 const main = document.querySelector('main')
 const management = element('management')
-const apiKeysPanel = element('api-keys-panel')
-const websitesPanel = element('websites-panel')
+const sections = ['api-keys', 'bot-access', 'websites']
+const grantList = element('grants')
+const grantEditor = element('grant-editor')
+const grantBot = element('grant-bot')
+const grantService = element('grant-service')
+const grantName = element('grant-name')
 const service = element('service')
 const secretList = element('secrets')
 const editor = element('editor')
@@ -32,6 +36,7 @@ const loginUseClose = element('login-use-close')
 const loginUseOutcome = element('login-use-outcome')
 const confirmation = element('confirmation')
 const notice = element('notice')
+const grantNotice = element('grant-notice')
 const websitesNotice = element('websites-notice')
 const loginList = element('logins')
 const loginEditor = element('login-editor')
@@ -48,18 +53,23 @@ let loginUseRequest
 let enteringLogin = false
 let services = []
 let logins = []
+let grantAccess
+let grantBots
 let editing
 let editingLogin
 let revoking
 let removingLogin
+let removingGrant
 let busy = false
 let ready = false
 let websitesReady = false
+let grantsReady = false
 let activeSection = 'api-keys'
 
 function setNotice(key, tone = '') {
-  notice.textContent = key === undefined ? '' : messages[key]
-  notice.dataset.tone = tone
+  const target = activeSection === 'bot-access' ? grantNotice : notice
+  target.textContent = key === undefined ? '' : messages[key]
+  target.dataset.tone = tone
 }
 
 function setWebsitesNotice(key, tone = '') {
@@ -160,11 +170,31 @@ function acknowledged(value) {
 
 function selectSection(section) {
   activeSection = section
-  const apiActive = section === 'api-keys'
-  element('api-keys-tab').setAttribute('aria-selected', String(apiActive))
-  element('websites-tab').setAttribute('aria-selected', String(!apiActive))
-  apiKeysPanel.hidden = !apiActive
-  websitesPanel.hidden = apiActive
+  for (const item of sections) {
+    const active = item === section
+    const tab = element(`${item}-tab`)
+    tab.setAttribute('aria-selected', String(active))
+    tab.tabIndex = active ? 0 : -1
+    element(`${item}-panel`).hidden = !active
+  }
+  element('apply').hidden = section !== 'api-keys'
+  notice.hidden = section === 'bot-access'
+  grantNotice.hidden = section !== 'bot-access'
+}
+
+function activateSection(section) {
+  if (busy || section === activeSection) return
+  closeEditor()
+  closeLoginEditor()
+  closeGrantEditor()
+  selectSection(section)
+  if (section === 'bot-access') void refreshGrants()
+  else if (section === 'websites') setNotice()
+  else setNotice(!ready ? 'cloudVaultUnavailable' : services.length === 0 ? 'cloudVaultNoServices' : undefined, ready ? '' : 'error')
+}
+
+function canGrantAccess() {
+  return grantsReady && grantAccess.services.length > 0 && (grantBots?.length ?? 0) > 0
 }
 
 function availability() {
@@ -194,6 +224,9 @@ function availability() {
   element('add-login').disabled = busy || !websitesReady
   for (const button of loginList.querySelectorAll('button')) button.disabled = busy || !websitesReady
   for (const input of loginEditor.querySelectorAll('input, button')) input.disabled = busy || !websitesReady
+  element('add-grant').disabled = busy || !canGrantAccess()
+  for (const button of grantList.querySelectorAll('button')) button.disabled = busy || !grantsReady
+  for (const input of grantEditor.querySelectorAll('input, select, button')) input.disabled = busy || !canGrantAccess()
 }
 
 function selectedService() {
@@ -253,6 +286,7 @@ function revoke(unit, name) {
   if (busy || !ready) return
   revoking = { action: 'revoke', unit, name }
   removingLogin = undefined
+  removingGrant = undefined
   setNotice()
   element('confirm-title').textContent = messages.cloudVaultConfirm.replace('{name}', () => name)
   element('confirm-detail').textContent = messages.cloudVaultApply
@@ -264,6 +298,7 @@ function removeLogin(login) {
   if (busy || !websitesReady) return
   removingLogin = login
   revoking = undefined
+  removingGrant = undefined
   setWebsitesNotice()
   element('confirm-title').textContent = messages.cloudVaultWebsiteConfirm.replace('{origin}', () => login.origin)
   element('confirm-detail').textContent = messages.cloudVaultWebsiteConfirmDetail
@@ -279,6 +314,45 @@ function actionButton(key, name, callback, className = '') {
   button.className = className
   button.addEventListener('click', callback)
   return button
+}
+
+function botName(id) {
+  return grantBots?.find(bot => bot.id === id)?.name ?? id
+}
+
+function closeGrantEditor() {
+  grantEditor.reset()
+  grantEditor.hidden = true
+  element('add-grant').hidden = false
+}
+
+function openGrantEditor() {
+  if (busy || !canGrantAccess()) return
+  closeGrantEditor()
+  const names = new Map()
+  for (const bot of grantBots) names.set(bot.name, (names.get(bot.name) ?? 0) + 1)
+  grantBot.replaceChildren(...grantBots.map(bot => new Option(
+    names.get(bot.name) > 1 ? `${bot.name} (${bot.id})` : bot.name, bot.id,
+  )))
+  grantService.replaceChildren(...grantAccess.services.map(unit => new Option(unit, unit)))
+  grantEditor.hidden = false
+  element('add-grant').hidden = true
+  element('grants-empty').hidden = true
+  setNotice()
+  grantBot.focus({ preventScroll: true })
+  grantEditor.scrollIntoView?.({ block: 'nearest' })
+}
+
+function confirmGrantRemoval(grant) {
+  if (busy || !grantsReady) return
+  removingGrant = grant
+  revoking = undefined
+  removingLogin = undefined
+  setNotice()
+  element('confirm-title').textContent = messages.cloudVaultBotAccessConfirm.replace('{bot}', () => botName(grant.bot))
+  element('confirm-detail').textContent = messages.cloudVaultBotAccessConfirmDetail
+  element('confirm-revoke').textContent = messages.cloudVaultBotAccessRemove
+  confirmation.showModal()
 }
 
 function renderNames() {
@@ -322,6 +396,27 @@ function renderLogins() {
   availability()
 }
 
+function renderGrants() {
+  const rows = grantAccess?.grants.map(grant => {
+    const row = document.createElement('li')
+    const details = document.createElement('span')
+    details.className = 'grant-details'
+    const bot = document.createElement('span')
+    const key = document.createElement('span')
+    bot.textContent = botName(grant.bot)
+    key.textContent = `${grant.unit} · ${grant.name}`
+    details.append(bot, key)
+    row.append(details, actionButton('cloudVaultBotAccessRemove', `${bot.textContent} ${grant.name}`,
+      () => confirmGrantRemoval(grant), 'subtle'))
+    return row
+  }) ?? []
+  grantList.replaceChildren(...rows)
+  const empty = element('grants-empty')
+  empty.hidden = !grantsReady || rows.length > 0 || !grantEditor.hidden
+  empty.textContent = messages[grantAccess?.services.length === 0 ? 'cloudVaultNoServices' : 'cloudVaultBotAccessEmpty']
+  availability()
+}
+
 async function send(request) {
   try { return await api.request(request) }
   catch { return { ok: false, reason: 'unavailable' } }
@@ -354,8 +449,38 @@ async function readLogins() {
   return true
 }
 
+async function readGrantAccess() {
+  const reply = await send({ action: 'list-grants' })
+  grantsReady = reply.ok === true && record(reply.access)
+  if (grantsReady) {
+    grantAccess = reply.access
+    grantBots = reply.bots
+  }
+  renderGrants()
+}
+
+function grantInventoryNotice(success) {
+  if (!grantsReady) setNotice('cloudVaultBotAccessUnavailable', 'error')
+  else if (success !== undefined) setNotice(success)
+  else if (grantBots === undefined) setNotice('cloudVaultBotAccessRosterUnavailable', 'error')
+  else setNotice(grantBots.length === 0 && grantAccess.services.length > 0 ? 'cloudVaultBotAccessNoBots' : undefined)
+}
+
+async function refreshGrants() {
+  if (busy) return
+  closeGrantEditor()
+  busy = true
+  availability()
+  setNotice('cloudVaultLoading')
+  await readGrantAccess()
+  busy = false
+  availability()
+  grantInventoryNotice()
+}
+
 async function refresh() {
   if (busy) return
+  if (activeSection === 'bot-access') return refreshGrants()
   closeEditor()
   closeLoginEditor()
   busy = true
@@ -370,6 +495,26 @@ async function refresh() {
   if (!loaded) setNotice('cloudVaultUnavailable', 'error')
   else setNotice(services.length === 0 ? 'cloudVaultNoServices' : undefined)
   setWebsitesNotice(websitesLoaded ? undefined : 'cloudVaultWebsitesUnavailable', websitesLoaded ? '' : 'error')
+}
+
+async function changeGrant(request) {
+  if (busy || !grantsReady) return
+  busy = true
+  availability()
+  setNotice('cloudVaultSaving')
+  const result = await send(request)
+  if (acknowledged(result)) {
+    closeGrantEditor()
+    await readGrantAccess()
+    grantInventoryNotice(request.action === 'add-grant' ? 'cloudVaultBotAccessGranted' : 'cloudVaultBotAccessRemoved')
+  } else {
+    if (result.reason !== 'invalid') grantsReady = false
+    setNotice(result.reason === 'invalid' ? 'cloudVaultBotAccessInvalid' : 'cloudVaultFailed', 'error')
+  }
+  busy = false
+  availability()
+  if (canGrantAccess() && !grantEditor.hidden) grantName.focus()
+  else element(canGrantAccess() ? 'add-grant' : 'refresh').focus()
 }
 
 async function change(request) {
@@ -624,8 +769,28 @@ async function dismissRequest() {
 }
 
 element('refresh').addEventListener('click', () => { void refresh() })
-element('api-keys-tab').addEventListener('click', () => { if (!busy) selectSection('api-keys') })
-element('websites-tab').addEventListener('click', () => { if (!busy) selectSection('websites') })
+for (const [index, section] of sections.entries()) {
+  const tab = element(`${section}-tab`)
+  tab.addEventListener('click', () => activateSection(section))
+  tab.addEventListener('keydown', event => {
+    const to = { ArrowRight: (index + 1) % sections.length, ArrowLeft: (index + sections.length - 1) % sections.length,
+      Home: 0, End: sections.length - 1 }[event.key]
+    if (busy || to === undefined) return
+    event.preventDefault()
+    activateSection(sections[to])
+    element(`${sections[to]}-tab`).focus()
+  })
+}
+element('add-grant').addEventListener('click', openGrantEditor)
+element('grant-editor-cancel').addEventListener('click', () => { closeGrantEditor(); renderGrants(); element('add-grant').focus() })
+grantEditor.addEventListener('submit', event => {
+  event.preventDefault()
+  if (busy || !canGrantAccess() || grantEditor.hidden) return
+  const request = { action: 'add-grant', bot: grantBot.value, unit: grantService.value, name: grantName.value.trim() }
+  if (!/^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(request.name) || !grantBots.some(bot => bot.id === request.bot)
+    || !grantAccess.services.includes(request.unit)) { setNotice('cloudVaultBotAccessInvalid', 'error'); return }
+  void changeGrant(request)
+})
 service.addEventListener('change', () => { closeEditor(); setNotice(); renderNames() })
 element('add').addEventListener('click', () => openEditor('add'))
 element('editor-cancel').addEventListener('click', () => { closeEditor(); element('add').focus() })
@@ -648,13 +813,15 @@ loginEditor.addEventListener('submit', event => {
   void changeLogin(request)
 })
 element('confirm-cancel').addEventListener('click', () => { confirmation.close() })
-confirmation.addEventListener('close', () => { revoking = undefined; removingLogin = undefined })
+confirmation.addEventListener('close', () => { revoking = undefined; removingLogin = undefined; removingGrant = undefined })
 element('confirm-revoke').addEventListener('click', () => {
   const request = revoking
   const login = removingLogin
+  const grant = removingGrant
   confirmation.close()
   if (request !== undefined) void change(request)
   else if (login !== undefined) void removeLoginRequest(login)
+  else if (grant !== undefined) void changeGrant({ action: 'remove-grant', ...grant })
 })
 requestEditor.addEventListener('submit', event => {
   event.preventDefault()
@@ -686,13 +853,15 @@ document.addEventListener('keydown', event => {
   if (event.key !== 'Escape' || confirmation.open) return
   event.preventDefault()
   if (mode?.kind === 'request' || mode?.kind === 'login-use') { void api.close().catch(() => {}); return }
-  if (editor.hidden && loginEditor.hidden || busy) void api.close().catch(() => {})
+  if ((editor.hidden && loginEditor.hidden && grantEditor.hidden) || busy) void api.close().catch(() => {})
   else if (activeSection === 'websites') { closeLoginEditor(); element('add-login').focus() }
+  else if (activeSection === 'bot-access') { closeGrantEditor(); renderGrants(); element('add-grant').focus() }
   else { closeEditor(); element('add').focus() }
 })
 window.addEventListener('pagehide', () => {
   closeEditor()
   closeLoginEditor()
+  closeGrantEditor()
   requestValue.value = ''
   loginChoice.replaceChildren()
   loginUseEntry.reset()
@@ -705,6 +874,9 @@ void Promise.all([api.messages(), api.mode()]).then(([copy, presentation]) => {
   document.title = copy.cloudVault
   for (const [id, key] of [
     ['title', 'cloudVault'], ['hint', 'cloudVaultHint'], ['api-keys-tab', 'cloudVaultApiKeys'], ['websites-tab', 'cloudVaultWebsites'],
+    ['bot-access-tab', 'cloudVaultBotAccess'], ['grants-hint', 'cloudVaultBotAccessHint'], ['grants-title', 'cloudVaultBotAccessTitle'],
+    ['add-grant-label', 'cloudVaultBotAccessAdd'], ['grant-bot-label', 'cloudVaultBotAccessBot'], ['grant-service-label', 'cloudVaultService'],
+    ['grant-name-label', 'cloudVaultRequestName'], ['grant-editor-cancel', 'cancel'], ['grant-save', 'cloudVaultBotAccessAdd'],
     ['websites-hint', 'cloudVaultWebsitesHint'], ['logins-title', 'cloudVaultWebsites'], ['add-login-label', 'cloudVaultWebsiteAdd'],
     ['logins-empty', 'cloudVaultWebsitesEmpty'], ['login-origin-label', 'cloudVaultWebsiteOrigin'], ['login-label-label', 'cloudVaultWebsiteLabel'],
     ['login-username-label', 'cloudVaultWebsiteUsername'], ['login-password-label', 'cloudVaultWebsitePassword'],
