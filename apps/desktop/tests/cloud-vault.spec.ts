@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { afterEach, describe, expect, it } from 'vitest'
-import { cloudVaultRequest, isVaultRequestId, vaultRequestAllowed, type VaultExec } from '../src/cloud-vault.ts'
+import { cloudVaultRequest, isVaultLoginUseRequestId, isVaultRequestId, vaultRequestAllowed, type VaultExec } from '../src/cloud-vault.ts'
 
 const unit = 'fixture-worker.service'
 const value = 'a synthetic value with spaces, quotes and \n a second line'
@@ -42,6 +42,62 @@ describe('Desktop Vault SSH transport', () => {
       .resolves.toEqual({ request: { id, unit, name: 'FIXTURE_KEY', state: 'pending' } })
   })
 
+  it('inspects a website login request without returning credential values', async () => {
+    const id = 'f'.repeat(32)
+    const loginId = 'e'.repeat(32)
+    const generation = '1'.repeat(64)
+    const execute: VaultExec = (_file, _args, options, callback) => fixture(`
+      let body = '';
+      process.stdin.setEncoding('utf8');
+      process.stdin.on('data', chunk => { body += chunk });
+      process.stdin.on('end', () => {
+        const request = JSON.parse(body);
+        if (request.action !== 'inspect-login-use' || request.id !== ${JSON.stringify(id)}) process.exit(2);
+        process.stdout.write(JSON.stringify({ request: {
+          id: ${JSON.stringify(id)}, origin: 'https://example.com',
+          destination: 'https://example.com/sign-in',
+          logins: [{ id: ${JSON.stringify(loginId)}, label: 'Example', generation: ${JSON.stringify(generation)} }]
+        } }));
+      });
+    `)(_file, _args, options, callback)
+    await expect(cloudVaultRequest('fixture-vps', { action: 'inspect-login-use', id }, signal, execute))
+      .resolves.toEqual({ request: {
+        id, origin: 'https://example.com', destination: 'https://example.com/sign-in',
+        logins: [{ id: loginId, label: 'Example', generation }],
+      } })
+  })
+
+  it.each(['submitted', 'needs-owner', 'unavailable'] as const)('returns website login approval state %s', async (state) => {
+    const id = 'f'.repeat(32)
+    const loginId = 'e'.repeat(32)
+    const generation = '1'.repeat(64)
+    await expect(cloudVaultRequest('fixture-vps', { action: 'approve-login-use', id, loginId, generation }, signal,
+      fixture(`process.stdout.write(JSON.stringify({ state: ${JSON.stringify(state)} }));`)))
+      .resolves.toEqual({ state })
+  })
+
+  it('sends an exact website login decline and returns the fixed unavailable state', async () => {
+    const id = 'f'.repeat(32)
+    await expect(cloudVaultRequest('fixture-vps', { action: 'decline-login-use', id }, signal,
+      fixture('process.stdout.write(JSON.stringify({ state: "unavailable" }));')))
+      .resolves.toEqual({ state: 'unavailable' })
+  })
+
+  it('rejects website login replies with a non-canonical destination, duplicate choices, or credential fields', async () => {
+    const id = 'f'.repeat(32)
+    const loginId = 'e'.repeat(32)
+    const generation = '1'.repeat(64)
+    const malformed = [
+      { request: { id, origin: 'https://example.com', destination: 'https://example.com/sign-in?next=1', logins: [] } },
+      { request: { id, origin: 'https://example.com', destination: 'https://example.com/sign-in', logins: [{ id: loginId, label: 'Example', generation }, { id: loginId, label: 'Again', generation }] } },
+      { request: { id, origin: 'https://example.com', destination: 'https://example.com/sign-in', logins: [{ id: loginId, label: 'Example', generation, password: 'secret' }] } },
+    ]
+    for (const reply of malformed) {
+      await expect(cloudVaultRequest('fixture-vps', { action: 'inspect-login-use', id }, signal,
+        fixture(`process.stdout.write(${JSON.stringify(JSON.stringify(reply))});`))).resolves.toEqual({ ok: false, reason: 'unavailable' })
+    }
+  })
+
   it('accepts a save acknowledgment', async () => {
     const id = 'b'.repeat(32)
     await expect(cloudVaultRequest('fixture-vps', { action: 'save-request', id, value }, signal,
@@ -63,6 +119,23 @@ describe('Desktop Vault SSH transport', () => {
     expect(vaultRequestAllowed({ action: 'add', unit, name: 'FIXTURE_KEY', value }, id)).toBe(false)
     expect(vaultRequestAllowed({ action: 'inspect-request', id }, undefined)).toBe(false)
     expect(vaultRequestAllowed({ action: 'list' }, undefined)).toBe(true)
+    expect(vaultRequestAllowed({ action: 'replace-login', id, label: 'Site', username: 'fixture', password: 'dummy' }, undefined)).toBe(true)
+    expect(vaultRequestAllowed({ action: 'remove-login', id }, undefined)).toBe(true)
+    expect(vaultRequestAllowed({ action: 'remove-login', id }, id)).toBe(false)
+  })
+
+  it('binds website login approval to its exact native request mode', () => {
+    const id = 'f'.repeat(32)
+    const loginId = 'e'.repeat(32)
+    const generation = '1'.repeat(64)
+    const otherId = 'd'.repeat(32)
+    if (!isVaultLoginUseRequestId(id) || !isVaultLoginUseRequestId(otherId)) throw new Error('Fixture id is invalid.')
+    expect(vaultRequestAllowed({ action: 'approve-login-use', id, loginId, generation }, { kind: 'login-use', id })).toBe(true)
+    expect(vaultRequestAllowed({ action: 'inspect-login-use', id }, { kind: 'login-use', id })).toBe(true)
+    expect(vaultRequestAllowed({ action: 'approve-login-use', id, loginId, generation }, { kind: 'login-use', id: otherId })).toBe(false)
+    expect(vaultRequestAllowed({ action: 'approve-login-use', id, loginId, generation }, { kind: 'manage' })).toBe(false)
+    expect(vaultRequestAllowed({ action: 'decline-login-use', id }, { kind: 'login-use', id })).toBe(true)
+    expect(vaultRequestAllowed({ action: 'approve-login-use', id, loginId: 'A'.repeat(32), generation }, { kind: 'login-use', id })).toBe(false)
   })
 
   it('sends secret bytes on stdin to the fixed command and returns an acknowledgment', async () => {
@@ -95,6 +168,70 @@ describe('Desktop Vault SSH transport', () => {
     await expect(cloudVaultRequest('fixture-vps', { action: 'list' }, signal,
       fixture(`process.stdin.resume(); process.stdin.on('end', () => process.stdout.write(${JSON.stringify(response)}));`)))
       .resolves.toEqual({ ok: true, services: [{ unit, names: ['FIXTURE_KEY'] }] })
+  })
+
+  it('normalizes website login origins and returns only login metadata', async () => {
+    const id = 'e'.repeat(32)
+    const requests: unknown[] = []
+    const execute: VaultExec = (_file, _args, options, callback) => fixture(`
+      let body = '';
+      process.stdin.setEncoding('utf8');
+      process.stdin.on('data', chunk => { body += chunk });
+      process.stdin.on('end', () => {
+        const request = JSON.parse(body);
+        if (request.action === 'add-login') {
+          if (request.origin !== 'https://xn--bcher-kva.example:8443'
+              || request.label !== 'My site' || request.username !== 'alice@example.com'
+              || request.password !== 'fixture password') process.exit(2);
+          process.stdout.write(JSON.stringify({ ok: true }));
+          return;
+        }
+        if (request.action === 'list-logins') {
+          process.stdout.write(JSON.stringify({ logins: [{
+            id: ${JSON.stringify(id)}, origin: 'https://xn--bcher-kva.example:8443', label: 'My site'
+          }] }));
+          return;
+        }
+        process.exit(3);
+      });
+    `)(_file, _args, options, (error, stdout) => {
+      if (error === null) requests.push(JSON.parse(stdout))
+      callback(error, stdout)
+    })
+    await expect(cloudVaultRequest('fixture-vps', {
+      action: 'add-login', origin: 'https://Bücher.Example:8443/', label: '  My site  ',
+      username: 'alice@example.com', password: 'fixture password',
+    }, signal, execute)).resolves.toEqual({ ok: true })
+    await expect(cloudVaultRequest('fixture-vps', { action: 'list-logins' }, signal, execute))
+      .resolves.toEqual({ ok: true, logins: [{ id, origin: 'https://xn--bcher-kva.example:8443', label: 'My site' }] })
+    expect(requests).toEqual([{ ok: true }, { logins: [{ id, origin: 'https://xn--bcher-kva.example:8443', label: 'My site' }] }])
+  })
+
+  it('keeps website login ids and origins out of malformed or secret replies', async () => {
+    const mustNotOpen: VaultExec = () => { throw new Error('SSH was started') }
+    for (const request of [
+      { action: 'add-login', origin: 'http://example.com', label: 'Site', username: 'alice', password: 'secret' },
+      { action: 'add-login', origin: 'https://127.0.0.1', label: 'Site', username: 'alice', password: 'secret' },
+      { action: 'add-login', origin: 'https://example', label: 'Site', username: 'alice', password: 'secret' },
+      { action: 'add-login', origin: 'https://example.123', label: 'Site', username: 'alice', password: 'secret' },
+      { action: 'add-login', origin: 'https://example.com/path', label: 'Site', username: 'alice', password: 'secret' },
+      { action: 'add-login', origin: 'https://example.com', label: ' ', username: 'alice', password: 'secret' },
+      { action: 'add-login', origin: 'https://example.com', label: 'Site', username: 'a\u0000lice', password: 'secret' },
+      { action: 'add-login', origin: 'https://example.com', label: 'Site', username: 'alice', password: 'secret\u0085' },
+      { action: 'add-login', origin: 'https://example.com', label: 'Site', username: 'alice', password: 'secret\u2028' },
+      { action: 'replace-login', id: 'A'.repeat(32), label: 'Site', username: 'alice', password: 'secret' },
+      { action: 'remove-login', id: 'a'.repeat(31) },
+      { action: 'list-logins', value },
+    ]) {
+      await expect(cloudVaultRequest('fixture-vps', request, signal, mustNotOpen))
+        .resolves.toEqual({ ok: false, reason: 'invalid' })
+    }
+    await expect(cloudVaultRequest('fixture-vps', { action: 'list-logins' }, signal,
+      fixture('process.stdout.write(JSON.stringify({ logins: [{ id: \'A\'.repeat(32), origin: \'https://example.com\', label: \'Site\' }] }));')))
+      .resolves.toEqual({ ok: false, reason: 'unavailable' })
+    await expect(cloudVaultRequest('fixture-vps', { action: 'list-logins' }, signal,
+      fixture('process.stdout.write(JSON.stringify({ logins: [{ id: \'a\'.repeat(32), origin: \'https://example.com/\', label: \'Site\' }] }));')))
+      .resolves.toEqual({ ok: false, reason: 'unavailable' })
   })
 
   it('keeps remote output and errors out of the renderer', async () => {

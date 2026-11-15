@@ -43,6 +43,7 @@ class VaultTest(unittest.TestCase):
         self.cloud_listener_active = False
         self.now = 1_000.0
         self.sealed = []
+        self.sealed_names = []
         self.store = vault.Vault(self.root, self.units, self.run_systemd)
         self.store.clock = lambda: self.now
 
@@ -66,8 +67,13 @@ class VaultTest(unittest.TestCase):
             else:
                 self.cloud_listener_active = active
             return subprocess.CompletedProcess(args, int(active and self.failed_listener_start))
-        self.assertEqual(args, ['/usr/bin/systemd-creds', '--with-key=host', '--name=yharness_EXAMPLE_KEY', 'encrypt', '-', '-'])
+        self.assertIn(args[:2], [
+            ['/usr/bin/systemd-creds', '--with-key=host'],
+        ])
+        self.assertEqual(args[-3:], ['encrypt', '-', '-'])
+        self.assertTrue(args[2].startswith('--name=yharness_'))
         self.assertEqual(options['stderr'], subprocess.DEVNULL)
+        self.sealed_names.append(args[2])
         self.sealed.append(options['input'])
         if self.failed_encryption:
             return subprocess.CompletedProcess(args, 1, stdout=options['input'])
@@ -237,6 +243,140 @@ class VaultTest(unittest.TestCase):
                 vault.desktop_request(json.dumps(bad).encode())
         with self.assertRaises(vault.VaultError):
             vault.desktop_body(io.BytesIO(b'a' * (vault.DESKTOP_REQUEST_LIMIT + 1)))
+
+    def test_desktop_login_wire_is_exact_and_canonical(self):
+        valid = {
+            'action': 'add-login',
+            'origin': 'https://example.com:8443',
+            'label': 'Example account',
+            'username': 'owner@example.com',
+            'password': 'private-password',
+        }
+        self.assertEqual(vault.desktop_request(json.dumps(valid).encode()), valid)
+        self.assertEqual(vault.desktop_request(b'{"action":"list-logins"}'), {'action': 'list-logins'})
+        replace = {key: valid[key] for key in ('label', 'username', 'password')}
+        replace.update({'action': 'replace-login', 'id': 'a' * 32})
+        self.assertEqual(vault.desktop_request(json.dumps(replace).encode()), replace)
+        remove = {'action': 'remove-login', 'id': 'a' * 32}
+        self.assertEqual(vault.desktop_request(json.dumps(remove).encode()), remove)
+        for origin in (
+            'http://example.com', 'HTTPS://example.com', 'https://Example.com', 'https://example.com/',
+            'https://example.com:443', 'https://example.com:0', 'https://example.com:65536',
+            'https://user:password@example.com', 'https://example.com/path', 'https://example.com?x=1',
+            'https://127.0.0.1', 'https://localhost', 'https://foo.localhost', 'https://foo.local',
+            'https://foo.localdomain', 'https://example', 'https://example.123', 'https://0x7f.1',
+            'https://例え.テスト',
+        ):
+            with self.subTest(origin=origin), self.assertRaises(vault.VaultError):
+                vault.desktop_request(json.dumps({**valid, 'origin': origin}).encode())
+        for overrides in (
+            {'action': 'list-logins', 'extra': 1},
+            {'label': ''}, {'label': ' '}, {'label': ' a\n'}, {'label': 'a\x00b'},
+            {'username': ''}, {'username': 'a\n'}, {'username': 'a\x7f'},
+            {'password': ''}, {'password': 'a\r'}, {'password': 'a\u2028b'},
+            {'id': 'A' * 32}, {'id': 'a' * 31}, {'extra': True},
+        ):
+            bad = {**(remove if 'id' in overrides else valid), **overrides}
+            with self.subTest(fields=list(overrides)), self.assertRaises(vault.VaultError):
+                vault.desktop_request(json.dumps(bad).encode())
+        duplicate = b'{"action":"list-logins","action":"add-login"}'
+        with self.assertRaises(vault.VaultError):
+            vault.desktop_request(duplicate)
+
+    def test_cloud_wire_rejects_website_login_actions(self):
+        for request in (
+            {'action': 'list-logins'},
+            {'action': 'add-login', 'origin': 'https://example.com', 'label': 'Example',
+             'username': 'owner', 'password': 'private'},
+            {'action': 'replace-login', 'id': 'a' * 32, 'label': 'Example',
+             'username': 'owner', 'password': 'private'},
+            {'action': 'remove-login', 'id': 'a' * 32},
+        ):
+            with self.subTest(action=request['action']), self.assertRaises(vault.VaultError):
+                vault.cloud_request(json.dumps(request).encode())
+
+    def test_owner_desktop_can_manage_website_logins_without_secret_output(self):
+        self.store.allow_desktop(OWNER_UID, CLOUD_UID, [])
+        add = {
+            'action': 'add-login', 'origin': 'https://example.com', 'label': '  Example  ',
+            'username': 'owner@example.com', 'password': 'private-password',
+        }
+        self.assertEqual(self.store.desktop(add, OWNER_UID), {'ok': True})
+        inventory = self.store.desktop({'action': 'list-logins'}, OWNER_UID)
+        self.assertEqual(set(inventory), {'logins'})
+        self.assertEqual(len(inventory['logins']), 1)
+        listed = inventory['logins'][0]
+        self.assertEqual(set(listed), {'id', 'origin', 'label'})
+        self.assertRegex(listed['id'], r'^[0-9a-f]{32}$')
+        self.assertEqual(listed['origin'], 'https://example.com')
+        self.assertEqual(listed['label'], 'Example')
+        path = self.root / vault.WEBSITE_LOGIN_DIRECTORY / listed['id']
+        self.assertEqual((self.root / vault.WEBSITE_LOGIN_DIRECTORY).stat().st_mode & 0o777, 0o700)
+        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+        stored = json.loads(path.read_text())
+        self.assertEqual(set(stored), {'id', 'origin', 'label', 'credential'})
+        self.assertEqual(self.sealed_names[0], f'--name=yharness_website_login_{listed["id"]}')
+        self.assertEqual(self.sealed[0], b'{"username":"owner@example.com","password":"private-password"}')
+        self.assertNotIn('owner@example.com', path.read_text())
+        self.assertNotIn('private-password', path.read_text())
+        self.assertNotIn('owner@example.com', json.dumps(inventory))
+        self.assertNotIn('private-password', json.dumps(inventory))
+
+        replace = {
+            'action': 'replace-login', 'id': listed['id'], 'label': 'Updated',
+            'username': 'new-owner@example.com', 'password': 'new-private-password',
+        }
+        self.assertEqual(self.store.desktop(replace, OWNER_UID), {'ok': True})
+        updated = self.store.desktop({'action': 'list-logins'}, OWNER_UID)['logins']
+        self.assertEqual(updated, [{'id': listed['id'], 'origin': 'https://example.com', 'label': 'Updated'}])
+        self.assertEqual(self.store.desktop({'action': 'remove-login', 'id': listed['id']}, OWNER_UID), {'ok': True})
+        self.assertEqual(self.store.desktop({'action': 'list-logins'}, OWNER_UID), {'logins': []})
+
+    def test_website_login_encryption_failure_preserves_the_prior_record(self):
+        self.store.allow_desktop(OWNER_UID, CLOUD_UID, [])
+        add = {
+            'action': 'add-login', 'origin': 'https://example.com', 'label': 'Example',
+            'username': 'owner', 'password': 'private',
+        }
+        self.store.desktop(add, OWNER_UID)
+        login = self.store.desktop({'action': 'list-logins'}, OWNER_UID)['logins'][0]
+        path = self.root / vault.WEBSITE_LOGIN_DIRECTORY / login['id']
+        previous = path.read_bytes()
+        self.failed_encryption = True
+        with self.assertRaises(vault.VaultError):
+            self.store.desktop({
+                'action': 'replace-login', 'id': login['id'], 'label': 'Changed',
+                'username': 'new-owner', 'password': 'new-private',
+            }, OWNER_UID)
+        self.assertEqual(path.read_bytes(), previous)
+        self.assertEqual(self.store.desktop({'action': 'list-logins'}, OWNER_UID)['logins'], [login])
+
+    def test_website_login_rejects_stale_unknown_and_cloud_requests(self):
+        self.store.allow_desktop(OWNER_UID, CLOUD_UID, [])
+        with self.assertRaises(vault.VaultError):
+            self.store.desktop({'action': 'replace-login', 'id': 'a' * 32, 'label': 'Example',
+                                'username': 'owner', 'password': 'private'}, OWNER_UID)
+        with self.assertRaises(vault.VaultError):
+            self.store.desktop({'action': 'remove-login', 'id': 'a' * 32}, OWNER_UID)
+        with self.assertRaises(vault.VaultError):
+            self.store.desktop({'action': 'list-logins'}, CLOUD_UID)
+        with self.assertRaises(vault.VaultError):
+            self.store.cloud({'action': 'list-logins'}, CLOUD_UID)
+
+    def test_website_login_replace_revalidates_the_private_record_directory(self):
+        self.store.allow_desktop(OWNER_UID, CLOUD_UID, [])
+        self.store.desktop({
+            'action': 'add-login', 'origin': 'https://example.com', 'label': 'Example',
+            'username': 'owner', 'password': 'private',
+        }, OWNER_UID)
+        login = self.store.desktop({'action': 'list-logins'}, OWNER_UID)['logins'][0]
+        directory = self.root / vault.WEBSITE_LOGIN_DIRECTORY
+        directory.chmod(0o755)
+        with self.assertRaises(vault.VaultError):
+            self.store.desktop({
+                'action': 'replace-login', 'id': login['id'], 'label': 'Changed',
+                'username': 'new-owner', 'password': 'new-private',
+            }, OWNER_UID)
 
     @unittest.skipUnless(hasattr(socket, 'SO_PEERCRED'), 'Linux UNIX peer credentials')
     def test_desktop_peer_identity_comes_from_the_connected_socket(self):

@@ -5,11 +5,13 @@ import argparse
 import base64
 import fcntl
 import getpass
+import ipaddress
 import json
 import math
 import os
 import pwd
 import re
+import secrets
 import socket
 import stat
 import struct
@@ -51,6 +53,19 @@ INSTALLED_VAULT = Path('/usr/local/sbin/yharness-vault')
 SYSTEMCTL = ['/usr/bin/systemctl', '--system', '--no-pager', '--no-ask-password']
 COMMAND_ENV = {'PATH': '/usr/bin:/bin', 'LC_ALL': 'C'}
 REQUEST_UNAVAILABLE = 'The Vault request is unavailable.'
+WEBSITE_LOGIN_DIRECTORY = 'website-logins'
+WEBSITE_LOGIN_LIMIT = 64
+WEBSITE_LOGIN_FILE_LIMIT = 64 * 1024
+WEBSITE_LOGIN_ID = re.compile(r'[0-9a-f]{32}')
+WEBSITE_LOGIN_LABEL_LIMIT = 80
+WEBSITE_LOGIN_USERNAME_LIMIT = 512
+WEBSITE_LOGIN_PASSWORD_LIMIT = 8192
+WEBSITE_LOGIN_HOST_LABEL = r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?'
+WEBSITE_LOGIN_LOCAL_SUFFIXES = ('localhost', 'local', 'localdomain')
+WEBSITE_LOGIN_ORIGIN = re.compile(
+    rf'https://(?P<host>{WEBSITE_LOGIN_HOST_LABEL}(?:\.{WEBSITE_LOGIN_HOST_LABEL})*)'
+    r'(?::(?P<port>[1-9][0-9]{0,4}))?\Z'
+)
 
 
 class VaultError(Exception):
@@ -150,6 +165,82 @@ def valid_request_id(value):
     return type(value) is str and REQUEST_ID.fullmatch(value) is not None
 
 
+def valid_login_id(value):
+    """Accept the opaque identifier generated for one website login."""
+    return type(value) is str and WEBSITE_LOGIN_ID.fullmatch(value) is not None
+
+
+def valid_login_origin(value):
+    """Accept one canonical, lower-case HTTPS DNS origin without a path."""
+    if type(value) is not str or not value.isascii():
+        return False
+    match = WEBSITE_LOGIN_ORIGIN.fullmatch(value)
+    if match is None:
+        return False
+    host = match['host']
+    labels = host.split('.')
+    if len(labels) < 2 or len(host) > 253 or labels[-1].isdecimal():
+        return False
+    if any(host == suffix or host.endswith(f'.{suffix}') for suffix in WEBSITE_LOGIN_LOCAL_SUFFIXES):
+        return False
+    if all(label.isdecimal() for label in labels):
+        return False
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        pass
+    else:
+        return False
+    port = match['port']
+    return port is None or int(port) <= 65535 and int(port) != 443
+
+
+def login_text(value, limit, *, trim=False):
+    """Validate one single-line website-login field and return its stored text."""
+    if type(value) is not str or any(ord(character) < 0x20 or 0x7f <= ord(character) <= 0x9f
+                                    for character in value) or any(character in value for character in '\u2028\u2029'):
+        raise VaultError('Invalid website login request.')
+    stored = value.strip() if trim else value
+    try:
+        size = len(stored.encode('utf-8'))
+    except UnicodeError:
+        raise VaultError('Invalid website login request.') from None
+    if not 0 < size <= limit:
+        raise VaultError('Invalid website login request.')
+    return stored
+
+
+def website_login_request(request):
+    """Validate one exact Desktop website-login request and normalize its label."""
+    action = request.get('action')
+    if action == 'list-logins':
+        if set(request) != {'action'}:
+            raise VaultError('Invalid website login request.')
+        return request
+    if action == 'add-login':
+        fields = {'action', 'origin', 'label', 'username', 'password'}
+    elif action == 'replace-login':
+        fields = {'action', 'id', 'label', 'username', 'password'}
+    elif action == 'remove-login':
+        if set(request) != {'action', 'id'} or not valid_login_id(request.get('id')):
+            raise VaultError('Invalid website login request.')
+        return request
+    else:
+        raise VaultError('Invalid website login request.')
+    if set(request) != fields:
+        raise VaultError('Invalid website login request.')
+    if action == 'replace-login' and not valid_login_id(request.get('id')):
+        raise VaultError('Invalid website login request.')
+    if action == 'add-login' and not valid_login_origin(request.get('origin')):
+        raise VaultError('Invalid website login request.')
+    return {
+        **request,
+        'label': login_text(request.get('label'), WEBSITE_LOGIN_LABEL_LIMIT, trim=True),
+        'username': login_text(request.get('username'), WEBSITE_LOGIN_USERNAME_LIMIT),
+        'password': login_text(request.get('password'), WEBSITE_LOGIN_PASSWORD_LIMIT),
+    }
+
+
 def request_grant(value):
     """Decode an exact service and key from the administrator's grant argument."""
     unit, _, name = value.partition('=')
@@ -169,6 +260,8 @@ def desktop_request(payload):
         action = request.get('action')
         if action == 'list' and set(request) == {'action'}:
             return request
+        if action in ('list-logins', 'add-login', 'replace-login', 'remove-login'):
+            return website_login_request(request)
         if action in ('inspect-request', 'dismiss-request'):
             if set(request) != {'action', 'id'} or not valid_request_id(request.get('id')):
                 raise VaultError('Invalid Vault request.')
@@ -540,6 +633,136 @@ class Vault:
         sync_directory(target.parent)
         return True
 
+    def website_login_directory(self, *, create=False):
+        """Resolve the private root-owned directory for website-login records."""
+        if not directory(self.root):
+            raise VaultError('The Vault storage is unavailable.')
+        path = self.root / WEBSITE_LOGIN_DIRECTORY
+        if create:
+            directory(path, create=True)
+        return path
+
+    def read_website_login(self, path, expected_id=None):
+        """Read one public website-login record without decrypting its credential."""
+        try:
+            if not directory(self.root) or not directory(path.parent):
+                raise VaultError('The website login record is unavailable.')
+            if not file_exists(path):
+                raise VaultError('The website login record changed. Refresh and try again.')
+            with path.open('rb') as source:
+                payload = source.read(WEBSITE_LOGIN_FILE_LIMIT + 1)
+            data = json.loads(payload.decode('utf-8'), object_pairs_hook=exact_object)
+            credential = data.get('credential') if type(data) is dict else None
+            if (len(payload) > WEBSITE_LOGIN_FILE_LIMIT or type(data) is not dict
+                    or set(data) != {'id', 'origin', 'label', 'credential'}
+                    or not valid_login_id(data.get('id'))
+                    or (expected_id is not None and data['id'] != expected_id)
+                    or not valid_login_origin(data.get('origin'))
+                    or type(data.get('label')) is not str
+                    or login_text(data['label'], WEBSITE_LOGIN_LABEL_LIMIT) != data['label']
+                    or type(credential) is not str):
+                raise VaultError('The website login record is invalid.')
+            encoded = credential.encode('ascii')
+            cipher = base64.b64decode(encoded, validate=True)
+            if not cipher or base64.b64encode(cipher) != encoded:
+                raise VaultError('The website login record is invalid.')
+            return {
+                'id': data['id'], 'origin': data['origin'], 'label': data['label'], 'credential': credential,
+            }
+        except VaultError:
+            raise
+        except (OSError, UnicodeError, ValueError, RecursionError):
+            raise VaultError('The website login record is invalid.') from None
+
+    def website_login_records(self):
+        """List bounded public website-login metadata without exposing credentials."""
+        path = self.website_login_directory()
+        if not directory(path):
+            return []
+        entries = list(path.iterdir())
+        if len(entries) > WEBSITE_LOGIN_LIMIT:
+            raise VaultError('The Vault has too many website login records.')
+        records = []
+        for entry in entries:
+            if not valid_login_id(entry.name):
+                raise VaultError('The website login record is invalid.')
+            records.append(self.read_website_login(entry, entry.name))
+        return sorted(records, key=lambda record: record['id'])
+
+    def website_login_cipher(self, login_id, username, password):
+        """Encrypt exact website-login values under a credential name bound to its id."""
+        try:
+            value = json.dumps(
+                {'username': username, 'password': password}, ensure_ascii=False, separators=(',', ':'),
+            ).encode('utf-8')
+        except (UnicodeError, TypeError, ValueError):
+            raise VaultError('The website login could not be encrypted.') from None
+        encrypted = self.command(
+            [
+                '/usr/bin/systemd-creds', '--with-key=host',
+                f'--name={PREFIX}_website_login_{login_id}', 'encrypt', '-', '-',
+            ],
+            'The website login could not be encrypted.', input=value, stdout=subprocess.PIPE,
+        )
+        try:
+            cipher = base64.b64decode(b''.join(encrypted.split()), validate=True)
+        except (AttributeError, ValueError):
+            raise VaultError('Systemd returned an invalid encrypted website login.') from None
+        if not cipher:
+            raise VaultError('Systemd returned an empty encrypted website login.')
+        return base64.b64encode(cipher).decode('ascii')
+
+    def new_website_login_id(self, path):
+        """Allocate a lower-case opaque id that is absent from the login directory."""
+        for _attempt in range(32):
+            login_id = secrets.token_hex(16)
+            if not valid_login_id(login_id):
+                continue
+            if not file_exists(path / login_id):
+                return login_id
+        raise VaultError('The Vault could not allocate a website login id.')
+
+    def write_website_login(self, path, record, username, password, action=None):
+        """Encrypt and atomically commit one website-login record after stale checks."""
+        target = path / record['id']
+        exists = file_exists(target)
+        if (action == 'add' and exists) or (action == 'replace' and not exists):
+            raise VaultError('The website login changed. Refresh and try again.')
+        credential = self.website_login_cipher(record['id'], username, password)
+        payload = (json.dumps(
+            {**record, 'credential': credential}, ensure_ascii=False, separators=(',', ':')
+        ) + '\n').encode('utf-8')
+        replace_file(target, payload, path, 0o600)
+
+    def add_website_login(self, request):
+        """Encrypt and add one owner-authorized website-login record."""
+        path = self.website_login_directory(create=True)
+        if len(self.website_login_records()) >= WEBSITE_LOGIN_LIMIT:
+            raise VaultError('The Vault has too many website login records.')
+        login_id = self.new_website_login_id(path)
+        self.write_website_login(
+            path,
+            {'id': login_id, 'origin': request['origin'], 'label': request['label']},
+            request['username'], request['password'], 'add',
+        )
+
+    def replace_website_login(self, request):
+        """Encrypt and replace one existing owner-authorized website-login record."""
+        path = self.website_login_directory()
+        record = self.read_website_login(path / request['id'], request['id'])
+        self.write_website_login(
+            path,
+            {'id': record['id'], 'origin': record['origin'], 'label': request['label']},
+            request['username'], request['password'], 'replace',
+        )
+
+    def remove_website_login(self, request):
+        """Remove one existing website-login record without decrypting its credential."""
+        path = self.website_login_directory()
+        self.read_website_login(path / request['id'], request['id'])
+        if not self.remove_value(path / request['id']):
+            raise VaultError('The website login changed. Refresh and try again.')
+
     def allow_desktop(self, owner_uid, cloud_uid, units, *, start=False):
         """Authorize one SSH owner for an explicit list of enabled services."""
         if owner_uid <= 0 or cloud_uid <= 0 or owner_uid == cloud_uid:
@@ -872,6 +1095,20 @@ class Vault:
         with self.locked():
             policy = self.desktop_policy(requester_uid)
             action = request['action']
+            if action in ('list-logins', 'add-login', 'replace-login', 'remove-login'):
+                request = website_login_request(request)
+                if action == 'list-logins':
+                    return {'logins': [
+                        {key: record[key] for key in ('id', 'origin', 'label')}
+                        for record in self.website_login_records()
+                    ]}
+                if action == 'add-login':
+                    self.add_website_login(request)
+                elif action == 'replace-login':
+                    self.replace_website_login(request)
+                else:
+                    self.remove_website_login(request)
+                return {'ok': True}
             if action in ('inspect-request', 'save-request', 'dismiss-request'):
                 grants = self.require_requests(policy)
                 records, changed = self.clean_request_records(self.read_request_records())
@@ -937,6 +1174,8 @@ class Vault:
             try:
                 policy = self.root_policy()
                 if requester_uid != policy['cloud']:
+                    raise VaultError(REQUEST_UNAVAILABLE)
+                if request.get('action') not in ('create', 'status', 'cancel'):
                     raise VaultError(REQUEST_UNAVAILABLE)
                 grants = self.require_requests(policy)
                 records, changed = self.clean_request_records(self.read_request_records())

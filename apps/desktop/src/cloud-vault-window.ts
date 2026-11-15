@@ -1,7 +1,7 @@
 /** Shell-owned, isolated Vault window for one connected Cloud workspace. */
 import { randomUUID } from 'node:crypto'
 import { BrowserWindow, type IpcMainInvokeEvent } from 'electron'
-import { cloudVaultRequest, isVaultRequestId, vaultRequestAllowed, type VaultRequestId } from './cloud-vault.ts'
+import { cloudVaultRequest, isVaultLoginUseRequestId, isVaultRequestId, vaultRequestAllowed } from './cloud-vault.ts'
 import { VAULT_IPC, VAULT_PAGE, type CloudVaultMode } from './cloud-vault-ipc.ts'
 import type { DesktopMessages } from './locale.ts'
 import { serveWebDocument } from './web-document.ts'
@@ -23,22 +23,29 @@ export class DesktopCloudVault {
   /**
    * @param parent - Window holding the connected Cloud workspace.
    * @param target - Verified SSH destination of the current connection.
-   * @param requestId - Optional Cloud-issued request id; omission opens ordinary Vault management.
+   * @param mode - Owner-selected presentation; management is the default.
    */
-  open(parent: BrowserWindow, target: string, requestId?: VaultRequestId): void {
+  open(parent: BrowserWindow, target: string, mode: CloudVaultMode = { kind: 'manage' }): void {
     if (parent.isDestroyed() || !parent.isVisible()) return
-    if (requestId !== undefined && !isVaultRequestId(requestId)) return
+    if (mode.kind === 'request' && !isVaultRequestId(mode.id)) return
+    if (mode.kind === 'login-use' && !isVaultLoginUseRequestId(mode.id)) return
     if (this.window !== undefined) {
-      if (this.mode.kind === 'request' && this.mode.id === requestId) { this.window.focus(); return }
-      if (this.mode.kind === 'manage' && requestId === undefined) { this.window.focus(); return }
+      const sameMode = (this.mode.kind === 'manage' && mode.kind === 'manage')
+        || (this.mode.kind === 'request' && mode.kind === 'request' && this.mode.id === mode.id)
+        || (this.mode.kind === 'login-use' && mode.kind === 'login-use' && this.mode.id === mode.id)
+      if (sameMode) {
+        this.window.focus()
+        return
+      }
       this.close()
     }
-    this.mode = requestId === undefined ? { kind: 'manage' } : { kind: 'request', id: requestId }
+    this.mode = mode
     const messages = this.messages()
     const window = new BrowserWindow({
-      parent, modal: true, show: false, width: 550, height: requestId === undefined ? 565 : 370, minWidth: 400, minHeight: 345,
+      parent, modal: true, show: false, width: 550, height: mode.kind === 'manage' ? 565 : mode.kind === 'request' ? 370 : 430, minWidth: 400, minHeight: 345,
       resizable: true, minimizable: false, maximizable: false,
-      title: requestId === undefined ? messages.cloudVault : messages.cloudVaultRequestTitle,
+      title: mode.kind === 'manage' ? messages.cloudVault
+        : mode.kind === 'request' ? messages.cloudVaultRequestTitle : messages.cloudVaultLoginUseTitle,
       webPreferences: {
         partition: `cloud-vault-${randomUUID()}`, preload: this.preload, contextIsolation: true,
         sandbox: true, nodeIntegration: false, webSecurity: true, devTools: false,
@@ -69,7 +76,7 @@ export class DesktopCloudVault {
     contents.ipc.handle(VAULT_IPC.mode, (event) => { owned(event); return this.mode })
     contents.ipc.handle(VAULT_IPC.request, async (event, request: unknown) => {
       owned(event)
-      if (!vaultRequestAllowed(request, requestId)) return { ok: false, reason: 'invalid' }
+      if (!vaultRequestAllowed(request, mode)) return { ok: false, reason: 'invalid' }
       if (this.pending !== undefined) return { ok: false, reason: 'unavailable' }
       const pending = new AbortController()
       this.pending = pending

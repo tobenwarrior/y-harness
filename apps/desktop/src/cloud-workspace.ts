@@ -10,6 +10,7 @@ import {
   cloudDocument,
   cloudRequestAllowed,
   cloudSignInCookie,
+  cloudWebsiteLoginUseRequestId,
   cloudVaultRequestId,
   type CloudWorkspaceStatus,
 } from './cloud-workspace-document.ts'
@@ -288,10 +289,16 @@ export class DesktopCloudWorkspace {
       }
       contents.on('will-navigate', (event, url) => {
         if (!this.selected || this.connection !== connection || this.remote?.webContents !== contents) return
+        const loginUseRequestId = cloudWebsiteLoginUseRequestId(connection.origin, url)
+        if (loginUseRequestId !== undefined && this.owner !== undefined) {
+          event.preventDefault()
+          this.vault.open(this.owner, target, { kind: 'login-use', id: loginUseRequestId })
+          return
+        }
         const requestId = cloudVaultRequestId(connection.origin, url)
         if (requestId === undefined || this.owner === undefined) return
         event.preventDefault()
-        this.vault.open(this.owner, target, requestId)
+        this.vault.open(this.owner, target, { kind: 'request', id: requestId })
       })
       const responseStatus = new Promise<number>((resolve) => {
         contents.once('did-navigate', (_event, _url, status) => { resolve(status) })
