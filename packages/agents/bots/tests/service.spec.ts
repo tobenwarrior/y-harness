@@ -1054,7 +1054,7 @@ describe('durable Bot roster', () => {
     }
   })
 
-  it('does not hold the profile credential queue while shared authority commits', async () => {
+  it('does not hold the profile credential queue while shared authority commits', async (test) => {
     const root = await mkdtemp(join(tmpdir(), 'yh-bot-roster-fence-'))
     const h = await harness(
       undefined,
@@ -1069,6 +1069,7 @@ describe('durable Bot roster', () => {
       { credentialPath: join(root, 'credentials.yaml') },
     )
     let authority: SharedAccessAuthority | undefined
+    let watchdog: NodeJS.Timeout | undefined
     try {
       await h.service.create({ name: 'Roster fence deadlock', cwd: '/tmp' })
       authority = await SharedAccessAuthority.create(h.ctx, h.credentials, {
@@ -1083,10 +1084,12 @@ describe('durable Bot roster', () => {
         () => authority!.mutateExtension('test/shared-roster-fence', current => ({ value: undefined, next: current ?? null })),
       )
       const timeout = new Promise<'timed-out'>((resolve) => {
-        setTimeout(() => { resolve('timed-out') }, 250).unref()
+        // Reserve time for cleanup if the nested credential write deadlocks.
+        watchdog = setTimeout(() => { resolve('timed-out') }, (test.task.timeout ?? 5_000) / 2).unref()
       })
-      await expect(Promise.race([operation.then(() => 'completed' as const), timeout])).resolves.toBe('completed')
+      await expect(Promise.race([operation, timeout])).resolves.toEqual({ valid: true, value: undefined })
     } finally {
+      clearTimeout(watchdog)
       await authority?.dispose()
       await close(h.ctx)
       await rm(root, { recursive: true, force: true })
