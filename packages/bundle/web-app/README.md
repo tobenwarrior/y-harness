@@ -89,7 +89,7 @@ The private `vpsJournal` configuration grants selected owner Bots with a dedicat
 
 Firefox-enabled desktop-only Bots can request a sign-in handoff in a direct owner chat. The authenticated Computer route pairs each request with its Bot Session and the viewer's control lease. It withholds frames from other viewers, and sends private keyboard input through a pipe to the Computer. See [Firefox setup and sign-in](../../../docs/user/guide/vps.md#enable-firefox-for-selected-bots).
 
-The private Computer reports workspace file access when Workspace Files is installed. Its authenticated download route resolves the exact owner Bot before streaming a file. Desktop-only Bots retain their existing Session filesystem for ordinary file operations.
+The private Computer reports workspace file access when Workspace Files is installed. Its authenticated file transfer routes resolve the exact owner Bot. Uploads stream to the private volume and create the destination only after receiving the declared bytes. The upload worker checks space on that volume. `botComputers.uploads` configures the file limit, retained free space, and transfer timeout. Desktop-only Bots use their existing Session filesystem for ordinary file operations.
 
 The native macOS Desktop Host registers `mac_computer` on operator presets. It relays actions over its private Electron IPC channel with the invoking Session ID. The Electron main process authorizes the currently shared Bot before capturing the primary display or delivering input.
 

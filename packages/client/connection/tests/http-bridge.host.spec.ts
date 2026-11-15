@@ -1,6 +1,7 @@
-import { EventEmitter } from 'node:events'
+import { EventEmitter, once } from 'node:events'
 import { Readable } from 'node:stream'
-import { ServerResponse, type IncomingMessage } from 'node:http'
+import { createServer, request as httpRequest, ServerResponse, type IncomingMessage } from 'node:http'
+import { text } from 'node:stream/consumers'
 import { describe, expect, it, vi } from 'vitest'
 import { bridge } from '../src/http-bridge.ts'
 
@@ -223,30 +224,41 @@ describe('HTTP bridge abort', () => {
     expect(Buffer.concat(responseBytes).toString()).toBe('stored')
   })
 
-  it('closes an unread streaming request after returning an early validation response', async () => {
-    const destroyed: true[] = []
-    const request = new Readable({ read() {} }) as IncomingMessage
-    Object.assign(request, {
-      url: '/api/session/uploadFileBinary',
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      destroy: () => { destroyed.push(true) },
+  it.each([false, true])('returns the early response while bytes are still outstanding (cancel: %s)', async (cancel) => {
+    const requestStillOpen = Promise.withResolvers<boolean>()
+    const server = createServer((request, response) => {
+      void bridge(request, response, {
+        requestBodyMode: () => 'streaming',
+        fetch: async (input) => {
+          if (cancel) await input.body?.cancel()
+          requestStillOpen.resolve(!request.destroyed)
+          return new Response('Upload rejected', { status: 415 })
+        },
+      }, 1).catch((error: Error) => { response.destroy(error) })
     })
-    let status: number | undefined
-    let headers: unknown
-    const response = Object.assign(new EventEmitter(), {
-      writableEnded: false,
-      writeHead(code: number, values?: unknown) { status = code; headers = values; return this },
-      write() { return true },
-      end(this: { writableEnded: boolean }) { this.writableEnded = true; return this },
-    }) as unknown as ServerResponse
-
-    await bridge(request, response, {
-      requestBodyMode: () => 'streaming',
-      fetch: () => Promise.resolve(new Response(null, { status: 415 })),
-    }, 1)
-    expect(status).toBe(415)
-    expect(headers).toMatchObject({ connection: 'close' })
-    expect(destroyed).toEqual([true])
+    try {
+      server.listen(0, '127.0.0.1')
+      await once(server, 'listening')
+      const address = server.address()
+      if (address === null || typeof address === 'string') throw new Error('HTTP test server has no port')
+      const result = await new Promise<{ status: number | undefined; close: string | undefined; body: string }>((resolve, reject) => {
+        const client = httpRequest({
+          host: '127.0.0.1', port: address.port, path: '/api/test-upload', method: 'POST',
+          headers: { 'content-type': 'application/octet-stream', 'content-length': '1024' },
+          signal: AbortSignal.timeout(4000),
+        }, (response) => {
+          void text(response).then(body => resolve({
+            status: response.statusCode, close: response.headers.connection, body,
+          }), reject)
+        })
+        client.on('error', reject)
+        client.write(Buffer.alloc(1))
+      })
+      expect(result).toEqual({ status: 415, close: 'close', body: 'Upload rejected' })
+      await expect(requestStillOpen.promise).resolves.toBe(true)
+    } finally {
+      server.closeAllConnections()
+      await new Promise<void>((resolve) => { server.close(() => { resolve() }) })
+    }
   })
 })

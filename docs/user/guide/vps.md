@@ -69,9 +69,9 @@ Choose **Take control** to use your mouse and keyboard in the panel. Bot input t
 
 Choose **Terminal** beside **Computer** in the chat of a Bot with a private VPS computer. The shell starts in that computer’s workspace. Switch back to **Computer** to watch or take control while the terminal stays open. Close the terminal tab to end its shell.
 
-### Save results from Cloud
+### Move files to and from Cloud
 
-Choose **Files** in a private VPS Bot chat to browse the same workspace that opens in **Terminal**. Open a file to preview it, or use **Download file** to save a copy on your device. Use **Reload** after work in the terminal or the Bot changes a folder.
+Choose **Files** in a private VPS Bot chat to browse the same workspace that opens in **Terminal**. Choose **Upload** to copy files from your device to the workspace root, or use the upload icon on a folder to save them there. Cloud keeps the existing file when a name is already in use. Open a file to preview it, or use **Download file** to save a copy on your device. Use **Reload** after work in Terminal or the Bot changes a folder.
 
 Ask the Bot to deliver the file in chat and use the download icon on the result card. Save the result inside the Bot's workspace before delivering it so Cloud can serve it to your device.
 

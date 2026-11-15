@@ -12,7 +12,8 @@ import type {} from '@yharness/client-connection'
 import type {} from '@yharness/system-prompt'
 import { containerComputer, type VpsComputer } from './computer.ts'
 import * as ComputerTool from './computer-tool.ts'
-import { botComputerRoutesWithLegacy, computerFileDownloadRoute, computerSignInRoute } from './computer-api.ts'
+import { botComputerRoutesWithLegacy, computerFileDownloadRoute, computerFileUploadRoute, computerSignInRoute } from './computer-api.ts'
+import { resolveVpsFileUploadLimits, uploadComputerFile, type VpsFileUploadConfig } from './vps-bot-upload.ts'
 import { SessionId } from '@yharness/session/types'
 import { VpsRuntime, type VpsBrowserOptions } from './vps-runtime.ts'
 import { VpsIsolatedBrowser, type VpsIsolatedBrowserConfig } from './vps-isolated-browser.ts'
@@ -48,6 +49,7 @@ export function mountVpsBots(
     readonly image: string
     readonly bots?: readonly string[] | null
     readonly desktopOnlyBots?: readonly string[]
+    readonly uploads?: VpsFileUploadConfig
     readonly browser?: (VpsBrowserOptions & { readonly bots: readonly string[] }) | null
     readonly isolatedBrowser?: VpsIsolatedBrowserConfig | null
   },
@@ -55,6 +57,7 @@ export function mountVpsBots(
   legacyComputer?: VpsComputer,
   journalConfig?: VpsJournalConfig,
 ): void {
+  const uploadLimits = resolveVpsFileUploadLimits(config.uploads)
   const defaultRuntime = new VpsRuntime(config.root, config.image)
   const services = new VpsServices(grants)
   const computers = new Map<string, VpsComputer>()
@@ -182,6 +185,14 @@ export function mountVpsBots(
       filesScope.effect(() => filesScope.connection.fetch.register(computerFileDownloadRoute(
         (sessionId, path, signal) => filesScope.workspaceFiles.downloadComputer(SessionId(sessionId), path, signal),
       )), 'vps-bots: owner file downloads')
+      filesScope.effect(() => filesScope.connection.fetch.register(computerFileUploadRoute(
+        async (sessionId, file, signal) => {
+          signal.throwIfAborted()
+          const bot = await filesScope.bots.ownerBotForSession(SessionId(sessionId))
+          if (bot?.state !== 'active' || !isDesktopBot(bot.id)) return undefined
+          return uploadComputerFile(runtimeFor(bot.id), sessionId, file, uploadLimits, signal)
+        }, uploadLimits.maxBytes,
+      )), 'vps-bots: owner file uploads')
     })
     if (browserLogin !== undefined) {
       scope.effect(() => scope.connection.fetch.register(vpsBrowserLoginRoute(scope, browserLogin)), 'vps-bots: owner saved-login metadata')

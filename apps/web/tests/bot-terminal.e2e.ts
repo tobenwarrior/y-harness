@@ -11,6 +11,7 @@ import { compareOrRefreshGolden, launchWebScaffold, watchConsole, webSnapshotMod
 const FIXTURE = fileURLToPath(new URL('../../../snapshots/web/bot-workspace/session.v3.jsonl', import.meta.url))
 const GOLDEN = fileURLToPath(new URL('./expected/bot-terminal/action.expected.md', import.meta.url))
 const FILES_GOLDEN = fileURLToPath(new URL('./expected/bot-terminal/files-action.expected.md', import.meta.url))
+const UPLOAD_GOLDEN = fileURLToPath(new URL('./expected/bot-terminal/upload-action.expected.md', import.meta.url))
 const RUNTIME = new URL('../../../packages/bundle/web-app/lib/types/vps-runtime.js', import.meta.url).href
 const BOTS = new URL('../../../packages/bundle/web-app/lib/types/vps-bots.js', import.meta.url).href
 const PROCESS = new URL('../../../packages/bundle/web-app/lib/types/vps-bot-process.js', import.meta.url).href
@@ -61,9 +62,11 @@ it.skipIf(process.platform === 'win32')('switches between a Bot’s Computer and
           }
           VpsRuntime.prototype.desktopCommand = async () => Buffer.from(${JSON.stringify(image)}, 'base64')
           VpsRuntime.prototype.execArgv = function (sessionId, argv, options) {
-            return argv[2] === '/usr/local/lib/yharness/files.py'
-              ? ['python3', argv[1], ${JSON.stringify(FILE_WORKER)}, ...argv.slice(3)]
-              : original.execArgv.call(this, sessionId, argv, options)
+            if (argv[2] === '/usr/local/lib/yharness/files.py') {
+              return ['python3', argv[1], ${JSON.stringify(FILE_WORKER)}, ...argv.slice(3)]
+            }
+            if (argv[0] === '/usr/bin/python3' && argv[2] === '-c') return ['python3', ...argv.slice(1)]
+            return original.execArgv.call(this, sessionId, argv, options)
           }
           VpsBotSubprocess.prototype.resolveExecutable = (command, env, signal) => ctx.subprocess.resolveExecutable(command, env, signal)
           VpsBotSubprocess.prototype.spawnTerminal = async (spec) => {
@@ -159,6 +162,31 @@ it.skipIf(process.platform === 'win32')('switches between a Bot’s Computer and
     expect((await fetch(url)).status).toBe(401)
     url.searchParams.set('sessionId', legacy.sessionId)
     expect((await page.request.get(url.href)).status()).toBe(404)
+    const uploadUrl = new URL('/api/computer/files/upload', web.authenticatedUrl)
+    const uploadBytes = Buffer.from('Bot work only')
+    uploadUrl.search = new URLSearchParams({
+      sessionId: first.sessionId, directory: 'reports', name: 'Source #2.txt', bytes: String(uploadBytes.length),
+    }).toString()
+    const uploadInit = { method: 'POST', headers: { 'content-type': 'application/octet-stream' }, body: uploadBytes }
+    expect((await fetch(uploadUrl, uploadInit)).status).toBe(401)
+    expect((await page.request.post(uploadUrl.href, { data: uploadBytes })).status()).toBe(201)
+    expect(await readFile(join(scope, 'bots', first.sessionId, 'reports', 'Source #2.txt'), 'utf8')).toBe('Bot work only')
+    expect((await page.request.post(uploadUrl.href, { data: uploadBytes })).status()).toBe(409)
+    uploadUrl.searchParams.set('sessionId', legacy.sessionId)
+    expect((await page.request.post(uploadUrl.href, { data: uploadBytes })).status()).toBe(404)
+
+    await filesAction.click()
+    const upload = fileTree.getByRole('button', { name: 'Upload files', exact: true })
+    await compareOrRefreshGolden(UPLOAD_GOLDEN, (await upload.ariaSnapshot()).trimEnd(), webSnapshotMode())
+    const [folderPicker] = await Promise.all([
+      page.waitForEvent('filechooser'), fileTree.getByRole('button', { name: 'Upload files to reports' }).click(),
+    ])
+    const planned = 'Screenshot notes from the owner'
+    await folderPicker.setFiles({ name: 'Owner Report.txt', mimeType: 'text/plain', buffer: Buffer.from(planned) })
+    await fileTree.getByRole('button', { name: 'Owner Report.txt', exact: true }).waitFor()
+    await fileTree.getByRole('button', { name: 'Owner Report.txt', exact: true }).click()
+    await preview.getByText(planned, { exact: true }).waitFor()
+    expect(await readFile(join(scope, 'bots', first.sessionId, 'reports', 'Owner Report.txt'), 'utf8')).toBe(planned)
     await page.getByRole('button', { name: 'Open computer panel', exact: true }).click()
     await computer.waitFor()
     await terminal.waitFor({ state: 'hidden' })
@@ -176,6 +204,8 @@ it.skipIf(process.platform === 'win32')('switches between a Bot’s Computer and
     expect(await readPid(second.sessionId, 'second.pid')).not.toBe(firstPid)
     await openBrief()
     await preview.getByText('Orbit workspace', { exact: true }).waitFor()
+    expect(await processId(second.sessionId, 'reports/Owner Report.txt')).toBe('')
+    expect(await processId(second.sessionId, 'reports/Source #2.txt')).toBe('')
 
     await select(LEGACY)
     await sidebar.locator('[data-bot-id="' + LEGACY + '"][aria-current="page"]').waitFor()

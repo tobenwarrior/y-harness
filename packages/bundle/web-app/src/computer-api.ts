@@ -65,6 +65,8 @@ export interface BotComputerRouteTarget {
   readonly navigate?: (url: string, signal: AbortSignal) => Promise<void>
 }
 
+import type { ComputerFileUpload, ComputerFileUploadOutcome } from './vps-bot-upload.ts'
+
 const BODY_LIMIT = 16_384
 const VIEWER_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu
 const SESSION_ID = /^(?=.{1,256}$)[^\u0000-\u001f\u007f]+$/u
@@ -95,6 +97,61 @@ export function computerFileDownloadRoute(
         void error
         request.signal.throwIfAborted()
         return new Response(null, { status: 404 })
+      }
+    },
+  }
+}
+
+function fileSegment(value: string): boolean {
+  return value !== '' && value !== '.' && value !== '..'
+    && Buffer.byteLength(value) <= 255 && !/[/\u0000-\u001f\u007f]/u.test(value)
+}
+
+const uploadStatus: Readonly<Record<ComputerFileUploadOutcome, number>> = {
+  stored: 201, exists: 409, 'folder-unavailable': 404, 'no-space': 507, incomplete: 400, unavailable: 503,
+}
+
+/**
+ * Admit one raw file copy through the authenticated owner connection.
+ * @param upload - receiver that resolves the exact private owner Bot or rejects it.
+ * @param maxBytes - configured maximum per file.
+ * @returns the streaming upload route.
+ */
+export function computerFileUploadRoute(
+  upload: (sessionId: string, file: ComputerFileUpload, signal: AbortSignal) => Promise<ComputerFileUploadOutcome | undefined>,
+  maxBytes: number,
+): ConnectionFetchRoute {
+  return {
+    path: '/api/computer/files/upload',
+    methods: ['POST'],
+    requestBody: 'streaming',
+    async fetch(request) {
+      if (request.headers.get('content-type') !== 'application/octet-stream') {
+        return json({ error: 'unsupported-content-type' }, 415)
+      }
+      const params = new URL(request.url).searchParams
+      const sessionId = params.get('sessionId')
+      const directory = params.get('directory')
+      const name = params.get('name')
+      const length = params.get('bytes')
+      const contentLength = request.headers.get('content-length')
+      if (sessionId === null || !SESSION_ID.test(sessionId) || name === null || !fileSegment(name)
+        || directory === null || Buffer.byteLength(directory) > 4096
+        || (directory !== '.' && !directory.split('/').every(fileSegment))
+        || length === null || !/^(0|[1-9][0-9]{0,15})$/u.test(length)
+        || (contentLength !== null && contentLength !== length)) {
+        return json({ error: 'invalid-request' }, 400)
+      }
+      const bytes = Number(length)
+      if (bytes > maxBytes) return json({ error: 'file-too-large' }, 413)
+      try {
+        const outcome = await upload(sessionId, { directory, name, bytes, body: request.body }, request.signal)
+        if (outcome === undefined) return json({ error: 'computer-unavailable' }, 404)
+        return outcome === 'stored' ? json({ name }, 201) : json({ error: outcome }, uploadStatus[outcome])
+      } catch (error) {
+        void error
+        request.signal.throwIfAborted()
+        return json({ error: 'unavailable' }, 503)
       }
     },
   }

@@ -43,7 +43,7 @@ The root is the session's working directory, read from `useSessions().byId[sessi
 
 A level cut by the endpoint's entry cap ends with a marker; an empty level says so; a level that failed shows one line per code — `workspace-file/not-found`, `outside-workspace`, `not-directory` — and the transport's own message otherwise. Reload refreshes the root and expanded levels in place, retaining displayed entries during reads instead of resetting the whole tree; collapsed levels are fetched again when they next open. A session without a working directory shows a single line instead of a tree.
 
-The private Computer tree uses workspace-relative entries and Computer file addresses. It reads directories on open and reload. Its parent folder actions stay inside Cloud.
+The private Computer tree uses workspace-relative entries and Computer file addresses. Upload selects files for the root or an individual folder. The tab displays progress or a file-specific failure, and refreshes open directories after a successful upload.
 
 State lives in the type's own store, bucketed by tab id: `root`, `levels` (loading / ready / failed per absolute path), `expanded`, `autoRefresh`, and `scrollTop`, which the body tracks locally while scrolling and commits once when it unmounts. Because the store outlives the body, switching to another sidebar tab and back remounts the tree with its levels intact and its scroll offset restored. The owner's `signal` ends a bucket: on abort the tab is forgotten, and neither a listing that settles afterwards nor the unmount's offset commit writes anything.
 
