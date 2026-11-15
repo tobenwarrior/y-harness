@@ -23,6 +23,21 @@ const endpoint = (caps?: { maxBytes?: number; maxFileBytes?: number }): ReturnTy
 const RAMP = Buffer.from(Array.from({ length: 256 }, (_, i) => i))
 
 describe('workspaceFiles.readBytes — the window', () => {
+  it('opens previews in the exact Session execution workspace', async () => {
+    await writeFile(join(workspace, 'report.txt'), 'host copy')
+    await writeFile(join(harness.outside, 'report.txt'), 'managed copy')
+    harness.ctx.provide('workspaceFileAccess', {
+      forSession: async sessionId => sessionId === harness.scope.sessionId
+        ? { fs: harness.ctx.fs, workspaceRoot: harness.outside }
+        : undefined,
+    })
+    const files = endpoint()
+    expect((await files.read(harness.scope, 'report.txt', {}, signal())).text).toBe('managed copy')
+    expect(Buffer.from((await files.readBytes(harness.scope, 'report.txt', {}, signal())).data).toString()).toBe('managed copy')
+    await expect(files.stat(harness.scope, 'report.txt', signal())).resolves.toMatchObject({ bytes: 12 })
+    await expect(files.list(harness.scope, '.', signal())).resolves.toMatchObject({ entries: [expect.objectContaining({ name: 'report.txt' })] })
+  })
+
   it('returns the whole file as one window by default, with its absolute path, version, and size', async () => {
     await writeFile(join(workspace, 'ramp.bin'), RAMP)
     const result = await endpoint().readBytes(harness.scope, 'ramp.bin', { range: {} }, signal())

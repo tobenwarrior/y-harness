@@ -4564,6 +4564,19 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     ],
   },
   {
+    key: 'workspaceFileAccess',
+    summary: 'Resolve a managed Session without opening its Agent or consulting the Host filesystem.',
+    description: 'Resolve a managed Session without opening its Agent or consulting the Host filesystem.',
+    methods: [
+      {
+        signature: 'forSession(sessionId: SessionId, signal: AbortSignal): Promise<WorkspaceFileAccess | undefined>',
+        description: 'Select the filesystem for the given managed Session.',
+        parameters: [{ name: 'sessionId', description: 'exact Session identity.' }, { name: 'signal', description: 'caller cancellation.' }],
+        returns: 'the managed workspace, or undefined for Sessions using the Host filesystem.',
+      },
+    ],
+  },
+  {
     key: 'workspaceFiles',
     summary: 'Host Remote file reads and workspace directory observations over the composed filesystem.',
     description: 'Host Remote file reads and workspace directory observations over the composed filesystem.',
@@ -4581,10 +4594,22 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'native bytes with the file\'s version and size at the preceding stat, byte offset, and EOF marker.',
       },
       {
+        signature: 'async readWorkspaceBytes(scope: WorkspaceFileScope, path: string, signal: AbortSignal): Promise<Uint8Array>',
+        description: 'Read a complete regular file that resolves inside its Session workspace.',
+        parameters: [{ name: 'scope', description: 'Session and the workspace root from its header.' }, { name: 'path', description: 'declared path inside the workspace.' }, { name: 'signal', description: 'caller cancellation.' }],
+        returns: 'the current bytes, subject to the configured complete-file cap.',
+      },
+      {
         signature: '@Remote async stat(workspaceFileScope: WorkspaceFileScope, path: string, signal: AbortSignal): Promise<WorkspaceFileStat>',
         description: 'Report one regular file\'s identity, version, and size without its content.',
         parameters: [{ name: 'workspaceFileScope', description: 'header-derived workspace root for the Session identity on the wire.' }, { name: 'path', description: 'absolute path or path relative to the workspace root; files outside it are allowed.' }, { name: 'signal', description: 'caller cancellation.' }],
         returns: 'the file\'s absolute path, current version, and byte size.',
+      },
+      {
+        signature: 'async hostFilePath(scope: WorkspaceFileScope, path: string, signal: AbortSignal): Promise<string | undefined>',
+        description: 'Resolve one file for an action that runs on the Host desktop.',
+        parameters: [{ name: 'scope', description: 'viewed Session and its header-derived root.' }, { name: 'path', description: 'declared file path.' }, { name: 'signal', description: 'caller cancellation.' }],
+        returns: 'the verified regular file\'s Host path, or undefined for a managed workspace.',
       },
       {
         signature: '@Remote async list(workspaceFileScope: WorkspaceFileScope, path: string, signal: AbortSignal): Promise<WorkspaceDirectoryListing>',
@@ -4593,7 +4618,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'the directory\'s children in the backend\'s stable name order, bounded by the entry cap.',
       },
       {
-        signature: '@Remote({ mode: \'stream\' }) changes(workspaceFileScope: WorkspaceFileScope, path: string, signal: AbortSignal): AsyncIterable<WorkspaceFileWatchFrame>',
+        signature: '@Remote({ mode: \'stream\' }) async *changes(workspaceFileScope: WorkspaceFileScope, path: string, signal: AbortSignal): AsyncIterable<WorkspaceFileWatchFrame>',
         description: 'Watch one file or a directory\'s direct entries in the Session\'s filesystem. Files use the backend\'s read authority; directories remain workspace-scoped.',
         parameters: [{ name: 'workspaceFileScope', description: 'header-derived workspace root for the Session identity on the wire.' }, { name: 'path', description: 'target path; the Host determines its type and confines directories to the workspace.' }, { name: 'signal', description: 'generation cancellation.' }],
         returns: '`ready` once the target watch is active, then current metadata for queued and live invalidations.',
@@ -7070,6 +7095,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'FileReferenceCandidate',
     declaration: 'export interface FileReferenceCandidate {\n    path: string;\n    kind: \'file\' | \'directory\';\n}',
+  },
+  {
+    name: 'FileSystem',
+    declaration: 'export abstract class FileSystem extends Service {\n    constructor(ctx: Context);\n    watch(target: FsTarget, changed: (error?: Error) => void, signal: AbortSignal): Promise<() => Promise<void>>;\n    get sandboxMode(): SandboxMode | undefined;\n    abstract resolve(path: string, opts?: {\n        cwd?: string;\n        signal?: AbortSignal;\n    }): Promise<FsTarget>;\n    abstract processPath(target: FsTarget): string;\n    processPathFromHostPath(hostPath: string): string | undefined;\n    abstract fileUrl(target: FsTarget): string;\n    abstract contains(parent: FsTarget, child: FsTarget): boolean;\n    abstract stat(target: FsTarget, signal?: AbortSignal): Promise<FsInfo | undefined>;\n    abstract lstat(path: string, opts?: {\n        cwd?: string;\n    }, signal?: AbortSignal): Promise<FsPathInfo | undefined>;\n    abstract readText(target: FsTarget, signal?: AbortSignal): Promise<string>;\n    abstract streamText(target: FsTarget, signal?: AbortSignal): Promise<AsyncIterable<string>>;\n    abstract readBytes(target: FsTarget, signal: AbortSignal | undefined, maxBytes: number): Promise<Uint8Array>;\n    abstract readByteRange(target: FsTarget, range: {\n        offset: number;\n        length: number;\n    }, signal?: AbortSignal): Promise<Uint8Array>;\n    abstract listDir(target: FsTarget, signal?: AbortSignal): Promise<FsDirEntry[]>;\n    abstract writeText(target: FsTarget, content: string, expected?: FsWriteIntent, signal?: AbortSignal, sandboxPolicy?: SandboxExecutionPolicy): Promise< /* …truncated — full shape in source */',
   },
   {
     name: 'FileUploadReceiptId',
@@ -10602,6 +10631,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'WorkspaceDirectoryListing',
     declaration: 'export interface WorkspaceDirectoryListing {\n    readonly path: string;\n    readonly entries: readonly WorkspaceDirectoryEntry[];\n    readonly truncated: boolean;\n}',
+  },
+  {
+    name: 'WorkspaceFileAccess',
+    declaration: 'export interface WorkspaceFileAccess {\n    readonly fs: FileSystem;\n    readonly workspaceRoot: string;\n}',
   },
   {
     name: 'WorkspaceFileBytes',

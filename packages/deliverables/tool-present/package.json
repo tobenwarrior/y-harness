@@ -39,6 +39,7 @@
     "@yharness/agent": "workspace:*",
     "@yharness/fs": "workspace:*",
     "@yharness/llm": "workspace:*",
+    "@yharness/sandbox-policy": "workspace:*",
     "@yharness/session": "workspace:*",
     "@yharness/session-projection": "workspace:*",
     "@yharness/tools": "workspace:*"
@@ -48,6 +49,7 @@
     "@yharness/agent": "workspace:*",
     "@yharness/fs": "workspace:*",
     "@yharness/llm": "workspace:*",
+    "@yharness/sandbox-policy": "workspace:*",
     "@yharness/session": "workspace:*",
     "@yharness/session-projection": "workspace:*",
     "@yharness/tools": "workspace:*",

@@ -2,6 +2,7 @@
 import type { Context } from '@yharness/cordis'
 import z from '@yharness/schemastery'
 import { FsError } from '@yharness/fs'
+import { managedBotExecutionFor } from '@yharness/sandbox-policy'
 import { defineTool, type ToolExecution } from '@yharness/tools'
 import type {} from '@yharness/agent'
 import type {} from '@yharness/session-projection'
@@ -78,16 +79,18 @@ export function apply(ctx: Context, config: Config): void {
       const boundary = ctx.sessionProjections.stateOf(exec.agent.session, 'turnBoundary')
       if (boundary === undefined || boundary.openTurnStartSeq === null) throw new Error('present requires an open turn')
       if (args.files.length === 0 || args.files.length > config.maxFiles) throw new Error(`present accepts 1 to ${config.maxFiles} files`)
-      const cwd = exec.agent.session.header.cwd
+      const managed = managedBotExecutionFor(exec)
+      const cwd = managed?.workspaceRoot ?? exec.agent.session.header.cwd
       if (cwd === undefined) throw new Error('present requires a workspace')
+      const fs = managed?.fs ?? ctx.fs
       const options = { cwd, signal: exec.signal }
       const files: PresentedFile[] = []
       for (const file of args.files) {
         if (file.path.trim().length === 0) throw new Error('present requires a non-empty file path')
-        const entry = await ctx.fs.lstat(file.path, { cwd }, exec.signal)
+        const entry = await fs.lstat(file.path, { cwd }, exec.signal)
         if (entry !== undefined && entry.type !== 'file') throw new Error(`Cannot present ${file.path}: not a regular file`)
-        const target = await ctx.fs.resolve(file.path, options)
-        const info = await ctx.fs.stat(target, exec.signal)
+        const target = await fs.resolve(file.path, options)
+        const info = await fs.stat(target, exec.signal)
         if (info === undefined) throw new FsError(`Cannot present ${file.path}: file not found. Check the path, create the file if needed, and retry.`, 'FS_NOT_FOUND')
         if (info.type !== 'file') throw new Error(`Cannot present ${file.path}: not a regular file`)
         files.push({ ...file })

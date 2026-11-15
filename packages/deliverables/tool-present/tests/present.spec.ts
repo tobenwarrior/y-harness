@@ -13,6 +13,7 @@ import { SESSION_FORMAT_VERSION, Session, SessionId } from '@yharness/session'
 import SessionProjectionRegistry from '@yharness/session-projection'
 import { turnBoundaryProjectionDefinition } from '@yharness/agent-loop'
 import SystemPrompt from '@yharness/system-prompt'
+import { bindManagedBotExecution } from '@yharness/sandbox-policy'
 import ToolRuntime, { defineTool } from '@yharness/tools'
 import type { PresentedFile } from '../src/types.ts'
 import * as Present from '../src/index.ts'
@@ -90,6 +91,26 @@ describe('present', () => {
     expect(ctx.get('attachments')).toBeUndefined()
     await fiber.dispose()
     expect(ctx.tools.get('present', owner)).toBeUndefined()
+  })
+
+  it('declares a managed Bot result from its workspace even with an older Host cwd', async () => {
+    const { ctx, owner, root, execute } = await setup()
+    const managed = await mkdtemp(join(tmpdir(), 'yh-present-managed-'))
+    cleanups.push(() => rm(managed, { recursive: true, force: true }))
+    const fs = new LocalFileSystem(new Context(), LocalFileSystem.Config({ cwd: managed }))
+    const stop = bindManagedBotExecution(owner.ctx, {
+      context: owner.ctx, workspaceRoot: managed, fs,
+      shell: ctx.shell, subprocess: ctx.subprocess,
+      sandboxPolicy: { defaultMode: 'read-only', resolve: () => ({ mode: 'read-only', workspaceRoot: managed }) },
+    })
+    const hostRead = vi.spyOn(ctx.fs, 'lstat')
+    try {
+      await writeFile(join(root, 'host-only.txt'), 'host')
+      await writeFile(join(managed, 'report.txt'), 'managed')
+      await expect(execute([{ path: 'report.txt' }])).resolves.toMatchObject({ isError: false })
+      await expect(execute([{ path: 'host-only.txt' }])).resolves.toMatchObject({ isError: true })
+      expect(hostRead).not.toHaveBeenCalled()
+    } finally { stop() }
   })
 
   it('ignores a different present definition in the calling agent scope', async () => {

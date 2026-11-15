@@ -21,6 +21,9 @@
       "path": "../../agents/bots"
     },
     {
+      "path": "../../api/workspace-files/tsconfig.host.json"
+    },
+    {
       "path": "../../boot/app-boot"
     },
     {

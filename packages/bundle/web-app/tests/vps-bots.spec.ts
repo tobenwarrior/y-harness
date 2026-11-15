@@ -12,6 +12,7 @@ import { LocalSubprocessRuntime } from '@yharness/subprocess-local'
 import type { ConnectionFetchRoute } from '@yharness/client-connection'
 import type { IndexInjection } from '@yharness/host-webserver'
 import { describe, expect, it, vi } from 'vitest'
+import { VpsBotFileSystem } from '../src/vps-bot-files.ts'
 import { mountVpsBots } from '../src/vps-bots.ts'
 import { VpsJournal } from '../src/vps-journal.ts'
 import { VpsBrowserLogin } from '../src/vps-browser-login.ts'
@@ -24,41 +25,41 @@ const LEGACY_SESSION = SessionId('bot-session-37888424-5b3d-4a8c-81f5-751ed2d24f
 
 describe('managed VPS Bot composition', () => {
   it('rejects desktop-only Bots outside the selected Bot allowlist', () => {
-    expect(() => mountVpsBots(new Context(), {
+    expect(() => { mountVpsBots(new Context(), {
       root: '/yharness-test-bots', image: 'localhost/yharness-test', bots: ['bot-selected'], desktopOnlyBots: ['bot-other'],
-    }, [])).toThrow('Desktop-only VPS Bots must be selected by botComputers.bots.')
+    }, []) }).toThrow('Desktop-only VPS Bots must be selected by botComputers.bots.')
   })
 
   it('limits browser access to Bots with private Computers', () => {
-    expect(() => mountVpsBots(new Context(), {
+    expect(() => { mountVpsBots(new Context(), {
       root: '/yharness-test-bots', image: 'localhost/yharness-test', bots: ['bot-private'],
       browser: { bots: ['bot-shared-desktop'], image: 'localhost/yharness-browser', seccompProfile: '/yharness-browser.json' },
-    }, [])).toThrow('VPS browser access must select private Computer Bots.')
+    }, []) }).toThrow('VPS browser access must select private Computer Bots.')
   })
 
   it('requires isolated browser Bots to have private Computers', () => {
-    expect(() => mountVpsBots(new Context(), {
+    expect(() => { mountVpsBots(new Context(), {
       root: '/yharness-test-bots', image: 'localhost/yharness-test', bots: ['bot-private'],
       isolatedBrowser: { socketPath: '/run/yharness-browser.sock', bots: ['bot-shared-desktop'] },
-    }, [])).toThrow('VPS isolated browser access must select private Computer Bots.')
+    }, []) }).toThrow('VPS isolated browser access must select private Computer Bots.')
   })
 
   it('rejects overlapping Podman and isolated browser selections', () => {
-    expect(() => mountVpsBots(new Context(), {
+    expect(() => { mountVpsBots(new Context(), {
       root: '/yharness-test-bots', image: 'localhost/yharness-test', bots: ['bot-browser'],
       browser: { bots: ['bot-browser'], image: 'localhost/yharness-browser', seccompProfile: '/yharness-browser.json' },
       isolatedBrowser: { socketPath: '/run/yharness-browser.sock', bots: ['bot-browser'] },
-    }, [])).toThrow('VPS browser and isolated browser Bots must not overlap.')
+    }, []) }).toThrow('VPS browser and isolated browser Bots must not overlap.')
   })
 
   it('keeps isolated browser Bots on their existing workspace runtime', async () => {
     const ctx = new Context()
     const ensure = vi.spyOn(VpsRuntime.prototype, 'ensure').mockResolvedValue(undefined)
     try {
-      await ctx.plugin(scope => mountVpsBots(scope, {
+      await ctx.plugin((scope) => { mountVpsBots(scope, {
         root: '/yharness-test-bots', image: 'localhost/yharness-test',
         isolatedBrowser: { socketPath: '/run/yharness-browser.sock', bots: ['bot-isolated'] },
-      }, []))
+      }, []) })
       const workspaces = ctx.get('botWorkspaces')
       if (workspaces === undefined) throw new Error('VPS Bot workspaces were not registered')
       await workspaces.prepare(BOT_SESSION, BotId('bot-isolated'))
@@ -74,10 +75,10 @@ describe('managed VPS Bot composition', () => {
     const ctx = new Context()
     const ensure = vi.spyOn(VpsRuntime.prototype, 'ensure').mockResolvedValue(undefined)
     try {
-      await ctx.plugin(scope => mountVpsBots(scope, {
+      await ctx.plugin((scope) => { mountVpsBots(scope, {
         root: '/yharness-test-bots', image: 'localhost/yharness-test',
         browser: { bots: ['bot-browser'], image: 'localhost/yharness-browser', seccompProfile: '/yharness-browser.json' },
-      }, []))
+      }, []) })
       const workspaces = ctx.get('botWorkspaces')
       if (workspaces === undefined) throw new Error('VPS Bot workspaces were not registered')
       await workspaces.prepare(BOT_SESSION, BotId('bot-browser'))
@@ -139,6 +140,11 @@ describe('managed VPS Bot composition', () => {
           socketPath: '/run/yharness-test.sock', bots: ['bot-test', 'bot-desktop'],
         })
       })
+      const files = await ctx.workspaceFileAccess.forSession(BOT_SESSION, new AbortController().signal)
+      expect(files?.workspaceRoot).toBe(`/yharness-test-bots/${BOT_SESSION}`)
+      expect(files?.fs).toBeInstanceOf(VpsBotFileSystem)
+      await expect(ctx.workspaceFileAccess.forSession(DESKTOP_SESSION, new AbortController().signal)).resolves.toBeUndefined()
+      await expect(ctx.workspaceFileAccess.forSession(LEGACY_SESSION, new AbortController().signal)).resolves.toBeUndefined()
       const injections: IndexInjection[] = []
       ctx.emit('webserver/index-inject', injections)
       expect(injections).toContainEqual({ kind: 'global', name: '__YH_BOT_WEBSITE_LOGIN__', value: true })
@@ -182,7 +188,7 @@ describe('managed VPS Bot composition', () => {
       }))
       for (const agent of [bot, desktop]) {
         expect(ctx.tools.get('vps_computer', agent)?.parameters).toMatchObject({
-          properties: { action: { enum: expect.arrayContaining(['navigate', 'request_saved_login', 'request_sign_in']) } },
+          properties: { action: { enum: expect.arrayContaining(['navigate', 'request_saved_login', 'request_sign_in']) as object } },
         })
         const sessionId = agent.session.id
         const controller = new AbortController()
@@ -192,8 +198,10 @@ describe('managed VPS Bot composition', () => {
         })
         try {
           const status = { action: 'status', sessionId }
-          await expect.poll(async () => (await send(status)).json()).toMatchObject({ request: { id: expect.any(String) } })
-          const { request }: { request: { id: string } } = await (await send(status)).json()
+          const readStatus = async () => (await (await send(status)).json()) as { request: { id: string } | null }
+          await expect.poll(async () => (await readStatus()).request?.id ?? '').not.toBe('')
+          const { request } = await readStatus()
+          if (request === null) throw new Error('Owner handoff request expired')
           await expect((await send({ ...status, sessionId: LEGACY_SESSION })).json()).resolves.toEqual({ request: null })
           const answer = { sessionId, requestId: request.id, viewerId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' }
           expect((await send({ ...answer, action: 'take', sessionId: LEGACY_SESSION })).status).toBe(409)

@@ -7713,6 +7713,9 @@ importers:
       '@yharness/llm':
         specifier: workspace:*
         version: link:../../llm/llm
+      '@yharness/sandbox-policy':
+        specifier: workspace:*
+        version: link:../../sandbox/sandbox-policy
       '@yharness/scope':
         specifier: workspace:*
         version: link:../../core/scope

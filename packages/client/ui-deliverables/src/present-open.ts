@@ -1,7 +1,7 @@
 /** Serve change summaries and comparisons, and open declared or changed workspace files verified by the viewed Session's filesystem. */
 import type { Context } from '@yharness/cordis'
 import type {} from '@yharness/api-session-controller'
-import type {} from '@yharness/api-workspace-files'
+import type { WorkspaceFileScope } from '@yharness/api-workspace-files'
 import type {} from '@yharness/fs'
 import type {} from '@yharness/sandbox-policy'
 import { remoteErrorOf } from '@yharness/typert-protocol'
@@ -9,12 +9,12 @@ import type {} from '@yharness/client-connection'
 import type {} from '@yharness/session-query'
 import type { SessionId, SessionSeq } from '@yharness/session'
 import { CHANGES_DIFF_PATH, CHANGES_OPEN_PATH, CHANGED_FILES_PATH, type ChangesSummary } from './changes.ts'
-import { isPresentedData, isPresentedFile, PRESENT_OPEN_PATH, PRESENT_HOST_PATH, type PresentedHost } from './presented.ts'
+import { basename, isPresentedData, isPresentedFile, PRESENT_DOWNLOAD_PATH, PRESENT_OPEN_PATH, PRESENT_HOST_PATH, type PresentedHost } from './presented.ts'
 
 /**
  * Register the deliverables routes inside Connection's authentication fence:
  * desktop metadata, change summaries and comparisons, declared-file actions,
- * and changed-file opening.
+ * file downloads, and changed-file opening.
  * @param ctx - Session lookup, change summaries, native opener, and route lifetime.
  */
 export function registerPresentOpen(ctx: Context): void {
@@ -34,7 +34,10 @@ export function registerPresentOpen(ctx: Context): void {
     await Promise.allSettled(pending)
   })
   const routes = [
-    [PRESENT_OPEN_PATH, ['GET', 'POST'], handlePresentOpen], [CHANGES_OPEN_PATH, ['GET', 'POST'], handleChangesOpen], [CHANGES_DIFF_PATH, ['GET'], handleChangesDiff],
+    [PRESENT_OPEN_PATH, ['GET', 'POST'], handlePresentOpen],
+    [PRESENT_DOWNLOAD_PATH, ['GET'], handlePresentDownload],
+    [CHANGES_OPEN_PATH, ['GET', 'POST'], handleChangesOpen],
+    [CHANGES_DIFF_PATH, ['GET'], handleChangesDiff],
   ] as const
   for (const [path, methods, handler] of routes) {
     ctx.connection.fetch.register({
@@ -69,14 +72,23 @@ function failureStatus(error: unknown): number {
   return missing ? 404 : 500
 }
 
-/**
- * Read the addressed event once the Host desktop is known to be available.
- * @returns the event with its Session header, or the refusal to answer with.
- */
-async function readTarget(ctx: Context, request: Request, id: string, seq: number): Promise<Awaited<ReturnType<Context['sessionQuery']['readEvent']>> | Response> {
-  request.signal.throwIfAborted()
-  if (!ctx.sessionController.workspaceDesktop().available) return new Response('Host desktop unavailable.', { status: 409 })
-  return ctx.sessionQuery.readEvent({ sessionId: id as SessionId, seq: seq as SessionSeq, before: 0, after: 0 }, request.signal)
+function presentationCoordinates(query: URLSearchParams): { id: SessionId; seq: SessionSeq; index: number } | Response {
+  const id = query.get('sessionId')
+  const seq = coordinate(query.get('seq'))
+  const index = coordinate(query.get('index'))
+  return !id || seq === undefined || index === undefined
+    ? new Response('Invalid Presented file coordinates.', { status: 400 })
+    : { id: id as SessionId, seq: seq as SessionSeq, index }
+}
+
+async function readPresentation(
+  ctx: Context, { id, seq, index }: { id: SessionId; seq: SessionSeq; index: number }, signal: AbortSignal,
+): Promise<{ scope: WorkspaceFileScope; path: string } | Response> {
+  signal.throwIfAborted()
+  const { target, session } = await ctx.sessionQuery.readEvent({ sessionId: id, seq, before: 0, after: 0 }, signal)
+  const file = target.type === 'deliverables/presented' && isPresentedData(target.data) ? target.data.files[index] : undefined
+  if (!isPresentedFile(file)) return new Response('Presented file not found in this Session result.', { status: 404 })
+  return { scope: { sessionId: id, workspaceRoot: session.cwd ?? ctx.sandboxPolicy.workspaceRoot }, path: file.path }
 }
 
 /**
@@ -105,25 +117,51 @@ async function handlePresentOpen(ctx: Context, request: Request): Promise<Respon
   const query = new URL(request.url).searchParams
   const action = query.get('action') ?? 'open'
   if (action !== 'open' && action !== 'reveal') return new Response('Invalid file action.', { status: 400 })
-  const id = query.get('sessionId')
-  const seq = coordinate(query.get('seq'))
-  const index = coordinate(query.get('index'))
-  if (!id || seq === undefined || index === undefined) return new Response('Invalid Presented file coordinates.', { status: 400 })
+  const coordinates = presentationCoordinates(query)
+  if (coordinates instanceof Response) return coordinates
   try {
-    const read = await readTarget(ctx, request, id, seq)
-    if (read instanceof Response) return read
-    const { target, session } = read
-    const file = target.type === 'deliverables/presented' && isPresentedData(target.data) ? target.data.files[index] : undefined
-    if (!isPresentedFile(file)) return new Response('Presented file not found in this Session result.', { status: 404 })
     request.signal.throwIfAborted()
-    const { absolutePath: path } = await ctx.workspaceFiles.stat({
-      sessionId: id as SessionId,
-      workspaceRoot: session.cwd ?? ctx.sandboxPolicy.workspaceRoot,
-    }, file.path, request.signal)
-    return await openVerified(ctx, request, path, action)
+    if (!ctx.sessionController.workspaceDesktop().available) return new Response('Host desktop unavailable.', { status: 409 })
+    const read = await readPresentation(ctx, coordinates, request.signal)
+    if (read instanceof Response) return read
+    return await openWorkspaceFile(ctx, request, read.scope, read.path, action)
   } catch (error: unknown) {
     request.signal.throwIfAborted()
     return new Response('Presented file unavailable.', { status: failureStatus(error) })
+  }
+}
+
+async function openWorkspaceFile(
+  ctx: Context, request: Request, scope: WorkspaceFileScope, file: string, action: 'open' | 'reveal',
+): Promise<Response> {
+  const path = await ctx.workspaceFiles.hostFilePath(scope, file, request.signal)
+  if (path === undefined) return new Response('Path has no verified Host path.', { status: 422 })
+  return openVerified(ctx, request, path, action)
+}
+
+async function handlePresentDownload(ctx: Context, request: Request): Promise<Response> {
+  const coordinates = presentationCoordinates(new URL(request.url).searchParams)
+  if (coordinates instanceof Response) return coordinates
+  try {
+    const read = await readPresentation(ctx, coordinates, request.signal)
+    if (read instanceof Response) return read
+    const bytes = await ctx.workspaceFiles.readWorkspaceBytes(read.scope, read.path, request.signal)
+    const name = encodeURIComponent(basename(read.path).toWellFormed().replace(/[\u0000-\u001f\u007f]/gu, '_'))
+      .replace(/['()*]/gu, char => `%${char.charCodeAt(0).toString(16)}`)
+    request.signal.throwIfAborted()
+    return new Response(new Uint8Array(bytes), { headers: {
+      'content-type': 'application/octet-stream',
+      'content-disposition': `attachment; filename="download"; filename*=UTF-8''${name}`,
+      'content-length': String(bytes.byteLength),
+      'cache-control': 'no-store',
+      'x-content-type-options': 'nosniff',
+    } })
+  } catch (error: unknown) {
+    request.signal.throwIfAborted()
+    const code = remoteErrorOf(error)?.code
+    if (code === 'workspace-file/too-large') return new Response('Presented file exceeds the download limit.', { status: 413 })
+    const status = code === 'workspace-file/outside-workspace' ? 404 : failureStatus(error)
+    return new Response('Presented file unavailable.', { status })
   }
 }
 
@@ -178,8 +216,7 @@ async function handleChangesOpen(ctx: Context, request: Request): Promise<Respon
     const workspaceRoot = changes.cwd
     const file = changes.files[index]
     if (file === undefined) return new Response('Changed file not found in this summary.', { status: 404 })
-    const { absolutePath: path } = await ctx.workspaceFiles.stat({ sessionId: id, workspaceRoot }, file.path, request.signal)
-    return await openVerified(ctx, request, path, action)
+    return await openWorkspaceFile(ctx, request, { sessionId: id, workspaceRoot }, file.path, action)
   } catch (error: unknown) {
     request.signal.throwIfAborted()
     return new Response('Changed file unavailable.', { status: failureStatus(error) })

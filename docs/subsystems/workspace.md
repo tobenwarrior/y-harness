@@ -412,6 +412,26 @@ Host service backing the generated `ctx.remote.workspace` namespace.
 
 Source: [`packages/api/workspace-controller/src/index.ts`](../../packages/api/workspace-controller/src/index.ts)
 
+<a id="ctxworkspacefileaccess--workspacefileaccessprovider"></a>
+
+### `ctx.workspaceFileAccess` — `WorkspaceFileAccessProvider`
+
+Resolve a managed Session without opening its Agent or consulting the Host filesystem.
+
+```ts cordis-catalog
+/**
+ * Select the filesystem for the given managed Session.
+ * @param sessionId - exact Session identity.
+ * @param signal - caller cancellation.
+ * @returns the managed workspace, or undefined for Sessions using the Host filesystem.
+ */
+forSession(sessionId: SessionId, signal: AbortSignal): Promise<WorkspaceFileAccess | undefined>
+```
+
+Types: [SessionId](core.md)
+
+Source: [`packages/api/workspace-files/src/index.ts`](../../packages/api/workspace-files/src/index.ts)
+
 <a id="ctxworkspacefiles--workspacefiles"></a>
 
 ### `ctx.workspaceFiles` — `WorkspaceFiles`
@@ -440,6 +460,15 @@ Host Remote file reads and workspace directory observations over the composed fi
 @Remote async readBytes( workspaceFileScope: WorkspaceFileScope, path: string, options: WorkspaceByteReadOptions, signal: AbortSignal, ): Promise<WorkspaceFileBytes>
 
 /**
+ * Read a complete regular file that resolves inside its Session workspace.
+ * @param scope - Session and the workspace root from its header.
+ * @param path - declared path inside the workspace.
+ * @param signal - caller cancellation.
+ * @returns the current bytes, subject to the configured complete-file cap.
+ */
+async readWorkspaceBytes(scope: WorkspaceFileScope, path: string, signal: AbortSignal): Promise<Uint8Array>
+
+/**
  * Report one regular file's identity, version, and size without its content.
  * @param workspaceFileScope - header-derived workspace root for the Session identity on the wire.
  * @param path - absolute path or path relative to the workspace root; files outside it are allowed.
@@ -447,6 +476,15 @@ Host Remote file reads and workspace directory observations over the composed fi
  * @returns the file's absolute path, current version, and byte size.
  */
 @Remote async stat(workspaceFileScope: WorkspaceFileScope, path: string, signal: AbortSignal): Promise<WorkspaceFileStat>
+
+/**
+ * Resolve one file for an action that runs on the Host desktop.
+ * @param scope - viewed Session and its header-derived root.
+ * @param path - declared file path.
+ * @param signal - caller cancellation.
+ * @returns the verified regular file's Host path, or undefined for a managed workspace.
+ */
+async hostFilePath(scope: WorkspaceFileScope, path: string, signal: AbortSignal): Promise<string | undefined>
 
 /**
  * List the direct children of one directory inside the Session's workspace.
@@ -466,7 +504,7 @@ Host Remote file reads and workspace directory observations over the composed fi
  * @returns `ready` once the target watch is active, then current metadata for queued and live invalidations.
  * @throws RemoteError when watching is unavailable or a directory is outside the workspace.
  */
-@Remote({ mode: 'stream' }) changes(workspaceFileScope: WorkspaceFileScope, path: string, signal: AbortSignal): AsyncIterable<WorkspaceFileWatchFrame>
+@Remote({ mode: 'stream' }) async *changes(workspaceFileScope: WorkspaceFileScope, path: string, signal: AbortSignal): AsyncIterable<WorkspaceFileWatchFrame>
 ```
 
 Source: [`packages/api/workspace-files/src/index.ts`](../../packages/api/workspace-files/src/index.ts)

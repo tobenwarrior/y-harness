@@ -6,6 +6,7 @@ import { bindManagedBotExecution, createManagedBotExecution, managedBotExecution
 import { VpsBotSubprocess } from './vps-bot-process.ts'
 import { VpsBotFileSystem } from './vps-bot-files.ts'
 import type {} from '@yharness/bots'
+import type {} from '@yharness/api-workspace-files'
 import type {} from '@yharness/client-connection'
 import type {} from '@yharness/system-prompt'
 import { containerComputer, type VpsComputer } from './computer.ts'
@@ -18,7 +19,7 @@ import { registerVpsServiceTools, VpsServices, type VpsServiceAccess } from './v
 import { registerVpsJournalTool, VpsJournal, type VpsJournalConfig } from './vps-journal.ts'
 
 const BOT_TOOLS = new Set([
-  'bash', 'read', 'write', 'edit', 'apply_patch', 'glob', 'grep', 'job_output', 'job_list', 'job_kill',
+  'bash', 'read', 'write', 'edit', 'apply_patch', 'glob', 'grep', 'present', 'job_output', 'job_list', 'job_kill',
   'vps_computer', 'vps_service_status', 'vps_service_restart', 'vps_service_journal', 'skill', 'search_skills',
   'request_vps_secret',
   'schedule_create', 'schedule_list', 'schedule_delete', 'schedule_update', 'schedule_pause', 'schedule_resume', 'schedule_history',
@@ -55,6 +56,7 @@ export function mountVpsBots(
   const defaultRuntime = new VpsRuntime(config.root, config.image)
   const services = new VpsServices(grants)
   const computers = new Map<string, VpsComputer>()
+  const previewFiles = new Map<string, VpsBotFileSystem>()
   const managedBotIds = config.bots == null ? undefined : new Set(config.bots)
   const desktopOnlyBotIds = new Set(config.desktopOnlyBots ?? [])
   const isManagedBot = (botId: string): boolean => !desktopOnlyBotIds.has(botId)
@@ -115,6 +117,7 @@ export function mountVpsBots(
   ctx.effect(() => async () => {
     const active = [...computers.values()]
     computers.clear()
+    previewFiles.clear()
     await browserLogin?.dispose()
     await Promise.all(active.map(computer => computer.dispose()))
   }, 'vps-bots: dispose desktop controllers')
@@ -149,6 +152,25 @@ export function mountVpsBots(
     if (isolatedBrowser === undefined || !isolatedBrowserBotIds.has(botId)) return undefined
     return (url, signal) => isolatedBrowser.navigate(botId, sessionId, url, signal)
   }
+
+  ctx.inject(['bots'], (scope) => {
+    scope.provide('workspaceFileAccess', {
+      async forSession(sessionId, signal) {
+        signal.throwIfAborted()
+        const bot = await scope.bots.ownerBotForSession(sessionId)
+        signal.throwIfAborted()
+        if (bot === undefined || !isManagedBot(bot.id)) return undefined
+        if (bot.state !== 'active') throw new Error('The Bot workspace is not ready.')
+        const runtime = runtimeFor(bot.id)
+        let fs = previewFiles.get(sessionId)
+        if (fs === undefined) {
+          fs = new VpsBotFileSystem(scope.isolate('fs'), runtime, sessionId)
+          previewFiles.set(sessionId, fs)
+        }
+        return { fs, workspaceRoot: runtime.workspace(sessionId) }
+      },
+    })
+  })
 
   ctx.inject(['bots', 'connection'], (scope) => {
     if (browserLogin !== undefined) {
@@ -251,7 +273,7 @@ export function mountVpsBots(
         })
         return
       }
-      await agent.ctx.inject(['tools', 'attachments', 'llm', 'systemPrompt', 'subprocess', 'sandboxPolicy'], async (agentCtx) => {
+      await agent.ctx.inject(['tools', 'attachments', 'llm', 'systemPrompt', 'subprocess', 'sandboxPolicy'], (agentCtx) => {
         const runtime = runtimeFor(bot.id)
         const workspace = runtime.workspace(bot.sessionId)
         const managedContext = agentCtx.isolate('fs').isolate('subprocess').isolate('shell')
