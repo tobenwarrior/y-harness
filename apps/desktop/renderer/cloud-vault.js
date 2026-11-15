@@ -21,6 +21,14 @@ const loginChoice = element('login-choice')
 const loginUseEmpty = element('login-use-empty')
 const loginUseApprove = element('login-use-approve')
 const loginUseDecline = element('login-use-decline')
+const loginUseEntry = element('login-use-entry')
+const loginUseUsername = element('login-use-username')
+const loginUsePassword = element('login-use-password')
+const loginUseSave = element('login-use-save')
+const loginUseSaveLabel = element('login-use-save-label')
+const loginUseSubmit = element('login-use-submit')
+const loginUseToggle = element('login-use-toggle')
+const loginUseClose = element('login-use-close')
 const loginUseOutcome = element('login-use-outcome')
 const confirmation = element('confirmation')
 const notice = element('notice')
@@ -36,8 +44,8 @@ let messages
 let mode
 let requestId
 let requestState
-let loginUseLogins = []
-let loginUseReady = false
+let loginUseRequest
+let enteringLogin = false
 let services = []
 let logins = []
 let editing
@@ -109,7 +117,8 @@ function loginUseDestination(value, origin) {
 function loginUseMetadata(value) {
   if (!record(value) || Object.keys(value).length !== 1 || !record(value.request)) return
   const item = value.request
-  if (Object.keys(item).length !== 4 || typeof item.id !== 'string' || item.id !== requestId) return
+  const acceptsCredentials = item.acceptsCredentials === true
+  if (Object.keys(item).length !== (acceptsCredentials ? 5 : 4) || item.id !== requestId) return
   const origin = loginUseOrigin(item.origin)
   const destination = loginUseDestination(item.destination, origin)
   if (origin === undefined || destination === undefined || !Array.isArray(item.logins) || item.logins.length > 64) return
@@ -124,7 +133,7 @@ function loginUseMetadata(value) {
     ids.add(login.id)
     logins.push({ id: login.id, label: login.label, generation: login.generation })
   }
-  return { id: item.id, origin, destination, logins }
+  return { origin, destination, logins, acceptsCredentials }
 }
 
 function requestMetadata(value) {
@@ -168,10 +177,13 @@ function availability() {
     return
   }
   if (mode?.kind === 'login-use') {
-    const active = loginUseReady && loginUseLogins.length > 0
-    loginChoice.disabled = busy || !active
-    loginUseApprove.disabled = busy || !active
-    loginUseDecline.disabled = busy
+    const active = !busy && loginUseRequest !== undefined
+    loginChoice.disabled = !active || loginUseApprove.hidden
+    loginUseApprove.disabled = loginChoice.disabled
+    loginUseDecline.disabled = !active
+    loginUseToggle.disabled = !active
+    loginUseSubmit.disabled = !active || loginUseSubmit.hidden
+    for (const input of loginUseEntry.querySelectorAll('input')) input.disabled = loginUseSubmit.disabled || input.hidden
     return
   }
   service.disabled = busy || !ready
@@ -461,76 +473,108 @@ async function loadRequest() {
   availability()
 }
 
-function renderLoginUseChoices() {
-  loginChoice.replaceChildren(...loginUseLogins.map(login => new Option(login.label, login.id)))
-  loginChoice.hidden = loginUseLogins.length === 0
-  loginUseEmpty.hidden = loginUseLogins.length > 0
+function showLoginUseSaveLabel() {
+  const save = loginUseSave.checked
+  element('login-use-save-label-text').hidden = !save
+  loginUseSaveLabel.hidden = !save
+  loginUseSaveLabel.required = save
   availability()
+}
+
+function renderLoginUseForm() {
+  const hasSaved = (loginUseRequest?.logins.length ?? 0) > 0
+  const canEnter = loginUseRequest?.acceptsCredentials === true
+  element('login-use-saved').hidden = !hasSaved || enteringLogin
+  loginUseEmpty.hidden = loginUseRequest === undefined || hasSaved || canEnter
+  loginUseEntry.hidden = !canEnter || !enteringLogin
+  loginUseDecline.hidden = loginUseRequest === undefined
+  loginUseApprove.hidden = !hasSaved || enteringLogin
+  loginUseSubmit.hidden = loginUseEntry.hidden
+  loginUseToggle.hidden = !hasSaved || !canEnter
+  loginUseToggle.textContent = messages[enteringLogin ? 'cloudVaultLoginUseChoose' : 'cloudVaultLoginUseEnter']
+  loginUseClose.hidden = busy || loginUseRequest !== undefined
+  showLoginUseSaveLabel()
+}
+
+function focusLoginUseForm() {
+  if (!loginUseEntry.hidden) loginUseUsername.focus({ preventScroll: true })
+  else if (!loginUseApprove.hidden) loginChoice.focus({ preventScroll: true })
+  else if (!loginUseDecline.hidden) loginUseDecline.focus({ preventScroll: true })
+  else loginUseClose.focus({ preventScroll: true })
 }
 
 async function loadLoginUse() {
   busy = true
   setLoginUseOutcome('cloudVaultLoginUseInspecting')
-  availability()
-  const reply = await send({ action: 'inspect-login-use', id: requestId })
-  const item = loginUseMetadata(reply)
-  if (item === undefined) {
-    busy = false
-    loginUseReady = false
+  renderLoginUseForm()
+  loginUseRequest = loginUseMetadata(await send({ action: 'inspect-login-use', id: requestId, form: 'entry' }))
+    ?? loginUseMetadata(await send({ action: 'inspect-login-use', id: requestId }))
+  if (loginUseRequest === undefined) {
     setLoginUseOutcome('cloudVaultLoginUseUnavailable', 'error')
-    availability()
-    return
+  } else {
+    loginUseOriginValue.textContent = loginUseRequest.origin
+    loginUseDestinationValue.textContent = loginUseRequest.destination
+    loginChoice.replaceChildren(...loginUseRequest.logins.map(login => new Option(login.label, login.id)))
+    enteringLogin = loginUseRequest.acceptsCredentials && loginUseRequest.logins.length === 0
+    setLoginUseOutcome()
   }
-  loginUseOriginValue.textContent = item.origin
-  loginUseDestinationValue.textContent = item.destination
-  loginUseLogins = item.logins
-  renderLoginUseChoices()
-  loginUseReady = true
   busy = false
-  setLoginUseOutcome()
-  availability()
-  if (loginUseLogins.length > 0) loginChoice.focus({ preventScroll: true })
+  renderLoginUseForm()
+  focusLoginUseForm()
 }
 
-async function approveLoginUse() {
-  if (busy || !loginUseReady || loginUseLogins.length === 0 || loginChoice.value === '') return
+function toggleLoginUseEntry() {
+  if (busy || loginUseRequest?.acceptsCredentials !== true || loginUseRequest.logins.length === 0) return
+  enteringLogin = !enteringLogin
+  loginUseEntry.reset()
+  setLoginUseOutcome()
+  renderLoginUseForm()
+  focusLoginUseForm()
+}
+
+async function submitLoginUse(request) {
   busy = true
   availability()
   setLoginUseOutcome('cloudVaultLoginUseApproving')
-  const selected = loginUseLogins.find(login => login.id === loginChoice.value)
-  if (selected === undefined) {
-    busy = false
-    availability()
-    setLoginUseOutcome('cloudVaultLoginUseUnavailable', 'error')
+  loginUseEntry.reset()
+  const result = await send(request)
+  busy = false
+  if (request.action === 'enter-login-use' && record(result) && result.ok === false && result.reason === 'invalid') {
+    setLoginUseOutcome('cloudVaultLoginUseInvalid', 'error')
+    renderLoginUseForm()
+    focusLoginUseForm()
     return
   }
-  const result = await send({ action: 'approve-login-use', id: requestId, loginId: selected.id, generation: selected.generation })
-  loginUseReady = false
-  busy = false
-  if (record(result) && Object.keys(result).length === 1 && result.state === 'submitted') {
-    setLoginUseOutcome('cloudVaultLoginUseSubmitted')
-  } else if (record(result) && Object.keys(result).length === 1 && result.state === 'needs-owner') {
+  loginUseRequest = undefined
+  if (record(result) && result.state === 'submitted') {
+    if (request.saveLabel === undefined) setLoginUseOutcome('cloudVaultLoginUseSubmitted')
+    else if (result.saved === true) setLoginUseOutcome('cloudVaultLoginUseSubmittedSaved')
+    else setLoginUseOutcome('cloudVaultLoginUseSaveFailed', 'error')
+  } else if (record(result) && result.state === 'needs-owner') {
     setLoginUseOutcome('cloudVaultLoginUseNeedsOwner', 'error')
   } else {
     setLoginUseOutcome('cloudVaultLoginUseUnavailable', 'error')
   }
-  availability()
+  renderLoginUseForm()
+  focusLoginUseForm()
 }
 
 async function declineLoginUse() {
-  if (busy || !loginUseReady) return
+  if (busy || loginUseRequest === undefined) return
   busy = true
   availability()
   setLoginUseOutcome('cloudVaultLoginUseDeclining')
+  loginUseEntry.reset()
   const result = await send({ action: 'decline-login-use', id: requestId })
-  loginUseReady = false
+  loginUseRequest = undefined
   busy = false
   if (record(result) && Object.keys(result).length === 1 && result.state === 'unavailable') {
     setLoginUseOutcome('cloudVaultLoginUseUnavailable')
   } else {
     setLoginUseOutcome('cloudVaultLoginUseFailed', 'error')
   }
-  availability()
+  renderLoginUseForm()
+  focusLoginUseForm()
 }
 
 async function saveRequest(value) {
@@ -618,8 +662,26 @@ requestEditor.addEventListener('submit', event => {
   void saveRequest(requestValue.value)
 })
 element('request-cancel').addEventListener('click', () => { void dismissRequest() })
-loginUseApprove.addEventListener('click', () => { void approveLoginUse() })
+loginUseApprove.addEventListener('click', () => {
+  if (busy || enteringLogin) return
+  const selected = loginUseRequest?.logins.find(login => login.id === loginChoice.value)
+  if (selected !== undefined) {
+    void submitLoginUse({ action: 'approve-login-use', id: requestId, loginId: selected.id, generation: selected.generation })
+  }
+})
+loginUseToggle.addEventListener('click', toggleLoginUseEntry)
+loginUseSave.addEventListener('change', showLoginUseSaveLabel)
+loginUseEntry.addEventListener('submit', event => {
+  event.preventDefault()
+  if (busy || !enteringLogin || loginUseRequest?.acceptsCredentials !== true) return
+  void submitLoginUse({
+    action: 'enter-login-use', id: requestId, origin: loginUseRequest.origin, destination: loginUseRequest.destination,
+    username: loginUseUsername.value, password: loginUsePassword.value,
+    ...(loginUseSave.checked ? { saveLabel: loginUseSaveLabel.value.trim() } : {}),
+  })
+})
 loginUseDecline.addEventListener('click', () => { void declineLoginUse() })
+loginUseClose.addEventListener('click', () => { void api.close().catch(() => {}) })
 document.addEventListener('keydown', event => {
   if (event.key !== 'Escape' || confirmation.open) return
   event.preventDefault()
@@ -633,6 +695,7 @@ window.addEventListener('pagehide', () => {
   closeLoginEditor()
   requestValue.value = ''
   loginChoice.replaceChildren()
+  loginUseEntry.reset()
   loginPasswordInput.value = ''
 }, { once: true })
 
@@ -654,6 +717,9 @@ void Promise.all([api.messages(), api.mode()]).then(([copy, presentation]) => {
     ['login-use-origin-label', 'cloudVaultLoginUseOrigin'], ['login-use-destination-label', 'cloudVaultLoginUseDestination'],
     ['login-use-login-label', 'cloudVaultLoginUseLogin'], ['login-use-empty', 'cloudVaultLoginUseEmpty'],
     ['login-use-approve', 'cloudVaultLoginUseApprove'], ['login-use-decline', 'cloudVaultLoginUseDecline'],
+    ['login-use-username-label', 'cloudVaultWebsiteUsername'], ['login-use-password-label', 'cloudVaultWebsitePassword'],
+    ['login-use-save-text', 'cloudVaultLoginUseSave'], ['login-use-save-label-text', 'cloudVaultWebsiteLabel'],
+    ['login-use-submit', 'cloudVaultLoginUseSignIn'], ['login-use-close', 'cloudVaultLoginUseDone'],
   ]) element(id).textContent = copy[key]
   if (validRequestMode(mode)) {
     requestId = mode.id
