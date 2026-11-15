@@ -76,6 +76,34 @@ describe('Desktop Vault SSH transport', () => {
       .resolves.toEqual({ state })
   })
 
+  it('validates secure entry for the reviewed URL and returns a separate saving result', async () => {
+    const id = 'f'.repeat(32)
+    const origin = 'https://example.com'
+    const request = {
+      action: 'enter-login-use', id, origin, destination: origin + '/login',
+      username: 'fixture-user', password: 'fixture-password', saveLabel: ' Work ',
+    }
+    const execute: VaultExec = (file, args, options, callback) => {
+      expect(file).toBe('/usr/bin/ssh')
+      expect(args).not.toContain(request.password)
+      return fixture(`
+        let body = '';
+        process.stdin.setEncoding('utf8');
+        process.stdin.on('data', chunk => { body += chunk; });
+        process.stdin.on('end', () => {
+          if (body !== ${JSON.stringify(JSON.stringify({ ...request, saveLabel: 'Work' }))}) process.exit(2);
+          process.stdout.write(JSON.stringify({ state: 'submitted', saved: false }));
+        });
+      `)(file, args, options, callback)
+    }
+    await expect(cloudVaultRequest('fixture-vps', request, signal, execute)).resolves.toEqual({ state: 'submitted', saved: false })
+    await expect(cloudVaultRequest('fixture-vps', { ...request, destination: 'https://other.example/login' }, signal, execute))
+      .resolves.toEqual({ ok: false, reason: 'invalid' })
+    await expect(cloudVaultRequest('fixture-vps', request, signal,
+      fixture('process.stdout.write(JSON.stringify({ state: "submitted", password: "fixture-password" }));')))
+      .resolves.toEqual({ ok: false, reason: 'unavailable' })
+  })
+
   it('sends an exact website login decline and returns the fixed unavailable state', async () => {
     const id = 'f'.repeat(32)
     await expect(cloudVaultRequest('fixture-vps', { action: 'decline-login-use', id }, signal,
@@ -132,10 +160,16 @@ describe('Desktop Vault SSH transport', () => {
     if (!isVaultLoginUseRequestId(id) || !isVaultLoginUseRequestId(otherId)) throw new Error('Fixture id is invalid.')
     expect(vaultRequestAllowed({ action: 'approve-login-use', id, loginId, generation }, { kind: 'login-use', id })).toBe(true)
     expect(vaultRequestAllowed({ action: 'inspect-login-use', id }, { kind: 'login-use', id })).toBe(true)
+    expect(vaultRequestAllowed({ action: 'inspect-login-use', id, form: 'entry' }, { kind: 'login-use', id })).toBe(true)
     expect(vaultRequestAllowed({ action: 'approve-login-use', id, loginId, generation }, { kind: 'login-use', id: otherId })).toBe(false)
     expect(vaultRequestAllowed({ action: 'approve-login-use', id, loginId, generation }, { kind: 'manage' })).toBe(false)
     expect(vaultRequestAllowed({ action: 'decline-login-use', id }, { kind: 'login-use', id })).toBe(true)
     expect(vaultRequestAllowed({ action: 'approve-login-use', id, loginId: 'A'.repeat(32), generation }, { kind: 'login-use', id })).toBe(false)
+    const entry = { action: 'enter-login-use', id, origin: 'https://example.com', destination: 'https://example.com/login',
+      username: 'fixture', password: 'dummy' }
+    expect(vaultRequestAllowed(entry, { kind: 'login-use', id })).toBe(true)
+    expect(vaultRequestAllowed(entry, { kind: 'login-use', id: otherId })).toBe(false)
+    expect(vaultRequestAllowed(entry, { kind: 'manage' })).toBe(false)
   })
 
   it('sends secret bytes on stdin to the fixed command and returns an acknowledgment', async () => {

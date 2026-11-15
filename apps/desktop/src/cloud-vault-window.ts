@@ -42,7 +42,8 @@ export class DesktopCloudVault {
     this.mode = mode
     const messages = this.messages()
     const window = new BrowserWindow({
-      parent, modal: true, show: false, width: 550, height: mode.kind === 'manage' ? 565 : mode.kind === 'request' ? 370 : 430, minWidth: 400, minHeight: 345,
+      parent, modal: true, show: false, width: 550, height: mode.kind === 'manage' ? 565 : mode.kind === 'request' ? 370 : 490,
+      minWidth: 400, minHeight: 345,
       resizable: true, minimizable: false, maximizable: false,
       title: mode.kind === 'manage' ? messages.cloudVault
         : mode.kind === 'request' ? messages.cloudVaultRequestTitle : messages.cloudVaultLoginUseTitle,

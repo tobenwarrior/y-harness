@@ -52,7 +52,7 @@ it('renders request mode without generic Vault controls and saves only after a t
   expect((p.element('request-save') as HTMLButtonElement).disabled).toBe(true)
 })
 
-it('renders website login approval metadata, lets the owner choose one login, and never asks for a secret', async () => {
+it('lets the owner choose a saved login and falls back to the legacy inspection', async () => {
   const id = 'f'.repeat(32)
   const loginId = 'e'.repeat(32)
   const generation = '1'.repeat(64)
@@ -60,6 +60,7 @@ it('renders website login approval metadata, lets the owner choose one login, an
   const request = vi.fn(async (value: unknown) => {
     requests.push(value)
     if (value && typeof value === 'object' && 'action' in value && value.action === 'inspect-login-use') {
+      if ('form' in value) return { ok: false, reason: 'unavailable' }
       return { request: {
         id, origin: 'https://example.com', destination: 'https://example.com/sign-in',
         logins: [{ id: loginId, label: 'Example', generation }],
@@ -69,20 +70,78 @@ it('renders website login approval metadata, lets the owner choose one login, an
   })
   const p = page({ kind: 'login-use', id }, request)
   p.run()
-  await expect.poll(() => p.element('login-use').hidden).toBe(false)
+  await expect.poll(() => (p.element('login-choice') as HTMLSelectElement).options.length).toBe(1)
   expect(p.element('request').hidden).toBe(true)
   expect(p.element('management').hidden).toBe(true)
   expect(p.element('login-use-origin').textContent).toBe('https://example.com')
   expect(p.element('login-use-destination').textContent).toBe('https://example.com/sign-in')
   expect((p.element('login-choice') as HTMLSelectElement).options[0]?.textContent).toBe('Example')
-  expect(p.element('login-use').querySelectorAll('input')).toHaveLength(0)
+  expect(p.element('login-use-entry').hidden).toBe(true)
   p.element('login-use-approve').click()
   expect((p.element('login-use-approve') as HTMLButtonElement).disabled).toBe(true)
   await expect.poll(() => p.element('login-use-outcome').textContent).toBe(en.cloudVaultLoginUseSubmitted)
   expect(requests).toEqual([
+    { action: 'inspect-login-use', id, form: 'entry' },
     { action: 'inspect-login-use', id },
     { action: 'approve-login-use', id, loginId, generation },
   ])
+})
+
+it.each([false, true])('enters a login for the reviewed website with saving set to %s', async (save) => {
+  const id = 'a'.repeat(32)
+  const origin = 'https://example.com'
+  const destination = origin + '/sign-in'
+  const request = vi.fn<(value: unknown) => Promise<unknown>>()
+    .mockResolvedValueOnce({ request: { id, origin, destination, logins: [], acceptsCredentials: true } })
+    .mockResolvedValue({ state: 'submitted', ...(save ? { saved: true } : {}) })
+  const p = page({ kind: 'login-use', id }, request)
+  p.run()
+  await expect.poll(() => p.element('login-use-entry').hidden).toBe(false)
+  expect(p.element('login-use-empty').hidden).toBe(true)
+  expect(p.element('login-use-saved').hidden).toBe(true)
+  const username = p.element('login-use-username') as HTMLInputElement
+  const password = p.element('login-use-password') as HTMLInputElement
+  const remember = p.element('login-use-save') as HTMLInputElement
+  expect(p.dom.window.document.activeElement).toBe(username)
+  expect(password.type).toBe('password')
+  expect(remember.checked).toBe(false)
+  username.value = 'fixture-user'
+  password.value = 'fixture-password'
+  if (save) {
+    remember.click()
+    const label = p.element('login-use-save-label') as HTMLInputElement
+    label.value = 'Work'
+  }
+  p.element('login-use-entry').dispatchEvent(new p.dom.window.Event('submit', { bubbles: true, cancelable: true }))
+  await expect.poll(() => request.mock.calls.length).toBe(2)
+  expect(request).toHaveBeenLastCalledWith({
+    action: 'enter-login-use', id, origin, destination, username: 'fixture-user', password: 'fixture-password',
+    ...(save ? { saveLabel: 'Work' } : {}),
+  })
+  expect(password.value).toBe('')
+  await expect.poll(() => p.element('login-use-outcome').textContent)
+    .toBe(save ? en.cloudVaultLoginUseSubmittedSaved : en.cloudVaultLoginUseSubmitted)
+})
+
+it('clears entered credentials when the owner returns to a saved login', async () => {
+  const id = 'a'.repeat(32)
+  const origin = 'https://example.com'
+  const request = vi.fn(async () => ({ request: {
+    id, origin, destination: origin + '/sign-in', acceptsCredentials: true,
+    logins: [{ id: 'f'.repeat(32), label: 'Work', generation: '1'.repeat(64) }],
+  } }))
+  const p = page({ kind: 'login-use', id }, request)
+  p.run()
+  await expect.poll(() => p.element('login-use-saved').hidden).toBe(false)
+  expect(p.element('login-use-entry').hidden).toBe(true)
+  p.element('login-use-toggle').click()
+  expect(p.element('login-use-entry').hidden).toBe(false)
+  const password = p.element('login-use-password') as HTMLInputElement
+  password.value = 'fixture-password'
+  p.element('login-use-toggle').click()
+  expect(p.element('login-use-entry').hidden).toBe(true)
+  expect(password.value).toBe('')
+  expect(request).toHaveBeenCalledOnce()
 })
 
 it('keeps website login approval disabled when inspection returns no saved logins', async () => {

@@ -36,14 +36,31 @@
           <div><dt id="login-use-origin-label"></dt><dd id="login-use-origin"></dd></div>
           <div><dt id="login-use-destination-label"></dt><dd id="login-use-destination"></dd></div>
         </dl>
-        <label for="login-choice" id="login-use-login-label"></label>
-        <select id="login-choice"></select>
+        <div id="login-use-saved" hidden>
+          <label for="login-choice" id="login-use-login-label"></label>
+          <select id="login-choice"></select>
+        </div>
         <p id="login-use-empty" class="empty" hidden></p>
+        <form id="login-use-entry" autocomplete="off" hidden>
+          <label for="login-use-username" id="login-use-username-label"></label>
+          <input id="login-use-username" type="text" maxlength="512" autocomplete="off" autocapitalize="off" spellcheck="false" required>
+          <label for="login-use-password" id="login-use-password-label"></label>
+          <input id="login-use-password" type="password" maxlength="8192" autocomplete="new-password" autocapitalize="off" spellcheck="false" required>
+          <label class="check-option">
+            <input id="login-use-save" type="checkbox">
+            <span id="login-use-save-text"></span>
+          </label>
+          <label for="login-use-save-label" id="login-use-save-label-text" hidden></label>
+          <input id="login-use-save-label" type="text" maxlength="80" autocomplete="off" spellcheck="false" hidden>
+        </form>
+        <button id="login-use-toggle" class="subtle" type="button" hidden></button>
+        <p id="login-use-outcome" role="status" aria-live="polite"></p>
         <div class="actions">
           <button id="login-use-decline" type="button"></button>
-          <button id="login-use-approve" class="primary" type="button"></button>
+          <button id="login-use-approve" class="primary" type="button" hidden></button>
+          <button id="login-use-submit" class="primary" form="login-use-entry" type="submit" hidden></button>
+          <button id="login-use-close" class="primary" type="button" hidden></button>
         </div>
-        <p id="login-use-outcome" role="status" aria-live="polite"></p>
       </section>
       <div id="management" hidden>
         <nav class="segments" role="tablist" aria-labelledby="title">
