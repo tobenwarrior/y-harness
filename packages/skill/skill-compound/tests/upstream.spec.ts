@@ -1,5 +1,5 @@
-import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { delimiter, join } from 'node:path'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { Context } from '@yharness/cordis'
 import type { ConnectionFetchRoute } from '@yharness/client-connection'
@@ -9,7 +9,14 @@ import {
 } from '../src/upstream.ts'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals() })
+const fakeGit = await vi.hoisted(async () => (await import('./fake-git.ts')).createFakeGitHarness())
+
+vi.mock('node:child_process', async importOriginal => ({
+  ...await importOriginal<typeof import('node:child_process')>(),
+  spawn: fakeGit.spawn,
+}))
+
+afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); fakeGit.reset() })
 
 describe('release comparison', () => {
   it('orders plain releases by each component', () => {
@@ -157,13 +164,8 @@ describe('upstream release tracker', () => {
 
   it.each([403, 429])('uses noninteractive git head fallback for GitHub HTTP %s rate limits', async (statusCode) => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-compound-git-head-'))
-    const git = join(root, 'git')
-    const marker = join(root, 'environment')
     const commit = 'b'.repeat(40)
-    const previousPath = process.env.PATH
-    await writeFile(git, `#!/bin/sh\nprintf '%s\\n' "$GIT_TERMINAL_PROMPT|$GIT_ASKPASS|$SSH_ASKPASS|$SSH_ASKPASS_REQUIRE" > ${JSON.stringify(marker)}\nprintf '%s\\n' '${commit} refs/heads/main'\n`)
-    await chmod(git, 0o755)
-    process.env.PATH = `${root}${delimiter}${previousPath ?? ''}`
+    fakeGit.configure({ commit })
     const requested: string[] = []
     vi.stubGlobal('fetch', (url: string) => {
       requested.push(url)
@@ -174,9 +176,8 @@ describe('upstream release tracker', () => {
       const result = await new UpstreamReleaseTracker().status()
       expect(result).toMatchObject({ upstream: '0.13.0', updateAvailable: true, error: null })
       expect(requested).toEqual([`https://api.github.com/repos/${UPSTREAM_REPOSITORY}/commits/main`, `https://raw.githubusercontent.com/${UPSTREAM_REPOSITORY}/${commit}/.codex-plugin/plugin.json`])
-      expect(await readFile(marker, 'utf8')).toBe('0|||' + 'never\n')
+      expect(fakeGit.calls[0]?.env).toMatchObject({ GIT_TERMINAL_PROMPT: '0', GIT_ASKPASS: '', SSH_ASKPASS: '', SSH_ASKPASS_REQUIRE: 'never' })
     } finally {
-      process.env.PATH = previousPath
       await rm(root, { recursive: true, force: true })
     }
   })
