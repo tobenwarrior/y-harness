@@ -911,6 +911,42 @@ describe('durable Bot roster', () => {
     }
   })
 
+  it('withholds the VPS journal without a live owner Bot and revokes it when the roster row disappears', async () => {
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const { bot } = await seed.service.create({ name: 'Journal owner', cwd: tmpdir() })
+      .finally(() => close(seed.ctx))
+    const unrelated = SessionId('unrelated-journal-session')
+    const read = vi.fn(async () => ({ version: 1, recovery: [], primaryAudit: [] }))
+    const forBot = vi.fn((botId: BotId) => botId === bot.id ? read : undefined)
+    const h = await harness(pool, undefined, undefined, [String(bot.sessionId), String(unrelated)], new Map(), new Map(), true, 'native', false, {
+      beforeService: ctx => ctx.provide('botVpsJournal', { forBot }),
+    })
+    try {
+      const provider = h.ctx.get('codexDynamicTools') as BotNativeToolProvider | undefined
+      if (provider === undefined) throw new Error('native Bot provider was not mounted')
+      const invocation = {
+        phase: 'started' as const, name: 'vps_service_journal', callId: 'journal-read',
+        threadId: 'journal-thread', turnId: 'journal-turn', arguments: {},
+      }
+      for (const sessionId of [SessionId('unmounted-journal-session'), unrelated]) {
+        await expect(provider.observe({ ...invocation, sessionId })).rejects.toThrow('grant is unavailable')
+      }
+      expect(forBot).not.toHaveBeenCalled()
+      expect(await provider.resolve({ sessionId: bot.sessionId })).toEqual(expect.arrayContaining([
+        expect.objectContaining({ name: invocation.name }),
+      ]))
+      expect(forBot).toHaveBeenCalledWith(bot.id)
+      const rows = h.ctx.storageDomain.get('agent_bots')?.table('bots')
+      expect(await rows?.delete(bot.id)).toBe(true)
+      await expect(h.service.ownerBotForSession(bot.sessionId)).resolves.toBeUndefined()
+      await expect(provider.observe({ ...invocation, sessionId: bot.sessionId })).rejects.toThrow('grant is unavailable')
+      expect(read).not.toHaveBeenCalled()
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
   it('waits for an in-flight local attachment upload before closing its attachment domain', async () => {
     let route: ConnectionFetchRoute | undefined
     let enteredResolve: (() => void) | undefined
@@ -12147,6 +12183,36 @@ describe('durable Bot roster', () => {
       await expect(h.service.listMemory({ botId: bot.id })).resolves.toEqual({ memories: memories.slice(1) })
     } finally {
       await close(h.ctx)
+    }
+  })
+
+  it.each([true, false])('imports Grok skills into the assigned workspace with VPS management set to %s', async (managed) => {
+    const root = await mkdtemp(join(tmpdir(), 'yh-grok-skill-workspace-'))
+    const workspace = (sessionId: SessionId) => join(root, sessionId)
+    const prepare = vi.fn(async (sessionId: SessionId) => { await mkdir(workspace(sessionId), { mode: 0o700 }) })
+    const h = await harness(undefined, undefined, undefined, [], new Map(), new Map(), true, 'native', false, {
+      beforeService: ctx => ctx.provide('botWorkspaces', { workspace, prepare, managed: () => managed }),
+    })
+    try {
+      const { bot } = await h.service.create({ name: 'Skill import destination', ...(managed ? {} : { cwd: root }) })
+      if (managed) await rm(workspace(bot.sessionId), { recursive: true })
+      prepare.mockClear()
+      const destination = managed ? workspace(bot.sessionId) : root
+      const installed = join(destination, '.agents', 'skills', 'daily-brief', 'SKILL.md')
+      const request = { botId: bot.id, document: JSON.stringify({
+        format: 'grok-bot-export', version: 1, bots: [{
+          name: 'Source Bot', skills: [{ name: 'Daily Brief', instructions: 'Summarize the written notes.' }],
+        }],
+      }) }
+      await expect(h.service.importGrokBot({ ...request, preview: true })).resolves.toMatchObject({ skills: 1 })
+      expect(prepare).not.toHaveBeenCalled()
+      await expect(readFile(installed, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+      await expect(h.service.importGrokBot(request)).resolves.toMatchObject({ skills: 1 })
+      expect(prepare.mock.calls).toEqual(managed ? [[bot.sessionId]] : [])
+      await expect(readFile(installed, 'utf8')).resolves.toContain('Summarize the written notes.')
+    } finally {
+      await close(h.ctx)
+      await rm(root, { recursive: true, force: true })
     }
   })
 

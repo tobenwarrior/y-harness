@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { lstat, mkdir, readdir, readFile, realpath, rename, rm, stat, symlink, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { dirname, join, toNamespacedPath } from 'node:path'
 import { tmpdir } from 'node:os'
 import { Context } from '@yharness/cordis'
 import { bindManagedBotExecution, createManagedBotExecution } from '@yharness/sandbox-policy'
@@ -185,11 +185,12 @@ describe('dsh-skill-filesystem plugin exports', () => {
 })
 
 describe('FileSystemSkillProvider', () => {
-  // The Host scans the Podman workspace placeholder at a real Linux filesystem path.
-  it.skipIf(process.platform === 'win32')('restricts managed Bot lookups to the owner-controlled workspace placeholder', async () => {
+  it('restricts managed Bot lookups to the owner-controlled workspace placeholder', async () => {
     const home = await tempDir('skill-managed-home')
     const project = await tempDir('skill-managed-project')
     const managedRoot = await tempDir('skill-managed-workspace')
+    // A Windows namespaced path retains the temp directory's drive and accepts the execution world's leading slash.
+    const workspaceRoot = process.platform === 'win32' ? toNamespacedPath(managedRoot).replaceAll('\\', '/') : managedRoot
     await writeSkill(join(project, '.agents/skills'), 'host-project', 'Host project skill')
     await writeSkill(join(home, '.agents/skills'), 'host-user', 'Host user skill')
     await writeSkill(join(managedRoot, '.agents/skills'), 'managed-only', 'Managed skill')
@@ -204,9 +205,9 @@ describe('FileSystemSkillProvider', () => {
       subprocess: {} as never,
       sandboxPolicy: {
         defaultMode: 'workspace-write',
-        resolve: () => ({ mode: 'workspace-write', workspaceRoot: managedRoot }),
+        resolve: () => ({ mode: 'workspace-write', workspaceRoot }),
       },
-      workspaceRoot: managedRoot,
+      workspaceRoot,
     })
     const unbind = bindManagedBotExecution(agentContext, execution)
     const scope = { ctx: agentContext }
@@ -219,6 +220,7 @@ describe('FileSystemSkillProvider', () => {
     } finally {
       unbind()
       await agentFiber.dispose()
+      await ctx.fiber.dispose()
     }
   })
 
