@@ -76,11 +76,20 @@ export type VaultRequest = { readonly action: 'list' } | {
 } | {
   readonly action: 'inspect-login-use'
   readonly id: VaultLoginUseRequestId
+  readonly form?: 'entry'
 } | {
   readonly action: 'approve-login-use'
   readonly id: VaultLoginUseRequestId
   readonly loginId: VaultLoginId
   readonly generation: VaultLoginGeneration
+} | {
+  readonly action: 'enter-login-use'
+  readonly id: VaultLoginUseRequestId
+  readonly origin: string
+  readonly destination: string
+  readonly username: string
+  readonly password: string
+  readonly saveLabel?: string
 } | {
   readonly action: 'decline-login-use'
   readonly id: VaultLoginUseRequestId
@@ -113,6 +122,7 @@ export interface VaultLoginUseRequestMetadata {
   readonly origin: string
   readonly destination: string
   readonly logins: readonly VaultLoginUseChoice[]
+  readonly acceptsCredentials?: true
 }
 
 /** Non-secret saved-login choice bound to its current record revision. */
@@ -139,7 +149,10 @@ export type VaultReply = {
 } | {
   readonly request: VaultRequestMetadata | VaultLoginUseRequestMetadata
 } | {
-  readonly state: 'saved' | 'cancelled' | 'submitted' | 'needs-owner' | 'unavailable'
+  readonly state: 'saved' | 'cancelled' | 'needs-owner' | 'unavailable'
+} | {
+  readonly state: 'submitted'
+  readonly saved?: boolean
 } | {
   readonly ok: false
   readonly reason: 'invalid' | 'unavailable'
@@ -245,8 +258,10 @@ function requestBody(value: unknown): VaultRequest | undefined {
   if (action === 'list' && fields === 1) return { action }
   if (action === 'inspect-request' && fields === 2 && isVaultRequestId(value.id)) return { action, id: value.id }
   if (action === 'dismiss-request' && fields === 2 && isVaultRequestId(value.id)) return { action, id: value.id }
-  if (action === 'inspect-login-use' && fields === 2 && isVaultLoginUseRequestId(value.id)) {
-    return { action, id: value.id }
+  if (action === 'inspect-login-use' && isVaultLoginUseRequestId(value.id)) {
+    if (fields === 2) return { action, id: value.id }
+    if (fields === 3 && value.form === 'entry') return { action, id: value.id, form: value.form }
+    return undefined
   }
   if (action === 'decline-login-use' && fields === 2 && isVaultLoginUseRequestId(value.id)) {
     return { action, id: value.id }
@@ -254,6 +269,17 @@ function requestBody(value: unknown): VaultRequest | undefined {
   if (action === 'approve-login-use' && fields === 4 && isVaultLoginUseRequestId(value.id)
     && isVaultLoginId(value.loginId) && isVaultLoginGeneration(value.generation)) {
     return { action, id: value.id, loginId: value.loginId, generation: value.generation }
+  }
+  if (action === 'enter-login-use' && isVaultLoginUseRequestId(value.id)) {
+    const origin = loginOrigin(value.origin, true)
+    const destination = origin === undefined ? undefined : loginDestination(value.destination, origin)
+    const username = boundedLoginText(value.username, LOGIN_USERNAME_LIMIT, false)
+    const password = boundedLoginText(value.password, LOGIN_PASSWORD_LIMIT, false)
+    if (origin === undefined || destination === undefined || username === undefined || password === undefined) return undefined
+    const entry = { action, id: value.id, origin, destination, username, password } as const
+    if (fields === 6) return entry
+    const saveLabel = boundedLoginText(value.saveLabel, LOGIN_LABEL_LIMIT, true)
+    return fields === 7 && saveLabel !== undefined ? { ...entry, saveLabel } : undefined
   }
   if (action === 'save-request' && fields === 3 && isVaultRequestId(value.id)
     && typeof value.value === 'string' && value.value.length > 0 && !value.value.includes('\0')
@@ -321,8 +347,10 @@ function loginDestination(value: unknown, origin: string): string | undefined {
 }
 
 function loginUseMetadata(value: unknown, expectedId?: VaultLoginUseRequestId): VaultLoginUseRequestMetadata | undefined {
-  if (!record(value) || Object.keys(value).length !== 4 || !isVaultLoginUseRequestId(value.id)
-    || value.id !== expectedId) return undefined
+  if (!record(value) || !isVaultLoginUseRequestId(value.id) || value.id !== expectedId) return undefined
+  const fields = Object.keys(value).length
+  const acceptsCredentials = value.acceptsCredentials === true
+  if (fields !== (acceptsCredentials ? 5 : 4)) return undefined
   const origin = loginOrigin(value.origin, true)
   const destination = origin === undefined ? undefined : loginDestination(value.destination, origin)
   if (origin === undefined || destination === undefined || !Array.isArray(value.logins)
@@ -335,7 +363,7 @@ function loginUseMetadata(value: unknown, expectedId?: VaultLoginUseRequestId): 
     ids.add(metadata.id)
     logins.push(metadata)
   }
-  return { id: value.id, origin, destination, logins }
+  return { id: value.id, origin, destination, logins, ...(acceptsCredentials ? { acceptsCredentials: true } : {}) }
 }
 
 function replyBody(
@@ -343,7 +371,12 @@ function replyBody(
   expectedId?: VaultRequestId | VaultLoginUseRequestId,
 ): VaultReply | undefined {
   const value: unknown = JSON.parse(stdout)
-  if (!record(value) || Object.keys(value).length !== 1) return undefined
+  if (!record(value)) return undefined
+  const fields = Object.keys(value).length
+  if (action === 'enter-login-use' && fields === 2 && value.state === 'submitted' && typeof value.saved === 'boolean') {
+    return { state: value.state, saved: value.saved }
+  }
+  if (fields !== 1) return undefined
   if (action === 'inspect-request') {
     const request = value.request
     if (!record(request) || Object.keys(request).length !== 4 || !isVaultRequestId(request.id)
@@ -358,7 +391,7 @@ function replyBody(
     const request = loginUseMetadata(value.request, expectedId as VaultLoginUseRequestId | undefined)
     return request === undefined ? undefined : { request }
   }
-  if (action === 'approve-login-use') {
+  if (action === 'approve-login-use' || action === 'enter-login-use') {
     return value.state === 'submitted' || value.state === 'needs-owner' || value.state === 'unavailable'
       ? { state: value.state } : undefined
   }
@@ -408,7 +441,8 @@ export function vaultRequestAllowed(value: unknown, scope: VaultRequestMode | Va
   if (request.action === 'inspect-request' || request.action === 'save-request' || request.action === 'dismiss-request') {
     return typeof scope === 'string' ? request.id === scope : scope?.kind === 'request' && request.id === scope.id
   }
-  if (request.action === 'inspect-login-use' || request.action === 'approve-login-use' || request.action === 'decline-login-use') {
+  if (request.action === 'inspect-login-use' || request.action === 'approve-login-use'
+    || request.action === 'enter-login-use' || request.action === 'decline-login-use') {
     return typeof scope !== 'string' && scope?.kind === 'login-use' && request.id === scope.id
   }
   return scope === undefined || (typeof scope !== 'string' && scope.kind === 'manage')
