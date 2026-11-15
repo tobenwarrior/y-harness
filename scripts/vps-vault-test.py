@@ -847,6 +847,77 @@ class VaultTest(unittest.TestCase):
             with self.subTest(fields=list(overrides)), self.assertRaises(vault.VaultError):
                 vault.cloud_request(json.dumps(bad).encode())
 
+    def test_a_vault_grant_applies_to_one_bot_and_is_rechecked_on_save(self):
+        self.store.enable(FIRST_UNIT, CLOUD_UID)
+        self.store.allow_desktop(OWNER_UID, CLOUD_UID, [FIRST_UNIT])
+        first = vault.request_grant(f'bot-research/{FIRST_UNIT}=EXAMPLE_KEY')
+        self.store.enable_requests([first, ('bot-other', FIRST_UNIT, 'OTHER_KEY')])
+        discover = {'action': 'list', 'bot': 'bot-research'}
+        self.assertEqual(vault.cloud_request(json.dumps(discover).encode()), discover)
+        self.assertEqual(self.store.cloud(discover, CLOUD_UID), {
+            'credentials': [{'unit': FIRST_UNIT, 'name': 'EXAMPLE_KEY'}],
+        })
+        self.assertEqual(self.store.cloud({**discover, 'bot': 'bot-visitor'}, CLOUD_UID), {'credentials': []})
+        with self.assertRaises(vault.VaultError):
+            self.store.cloud(discover, OWNER_UID)
+
+        legacy = {'action': 'create', 'id': 'd' * 32, 'unit': FIRST_UNIT, 'name': 'EXAMPLE_KEY'}
+        for request in (legacy, {**legacy, 'bot': 'bot-other'}):
+            with self.assertRaises(vault.VaultError):
+                self.store.cloud(request, CLOUD_UID)
+        request = {**legacy, 'bot': 'bot-research'}
+        self.assertEqual(vault.cloud_request(json.dumps(request).encode()), request)
+        self.assertEqual(self.store.cloud(request, CLOUD_UID), {'state': 'pending'})
+        other = {**request, 'bot': 'bot-other', 'id': 'f' * 32, 'name': 'OTHER_KEY'}
+        self.assertEqual(self.store.cloud(other, CLOUD_UID), {'state': 'pending'})
+        for bot in ('bot-other', None):
+            actor = {} if bot is None else {'bot': bot}
+            with self.assertRaises(vault.VaultError):
+                self.store.cloud({'action': 'cancel', 'id': request['id'], **actor}, CLOUD_UID)
+        save = {'action': 'save-request', 'id': request['id'], 'value': FIRST_VALUE.decode()}
+        self.store.enable_requests([('bot-other', FIRST_UNIT, 'OTHER_KEY')])
+        with self.assertRaises(vault.VaultError):
+            self.store.desktop(save, OWNER_UID)
+        self.assertEqual(self.store.cloud(discover, CLOUD_UID), {'credentials': []})
+        self.assertEqual(self.store.cloud({
+            'action': 'status', 'bot': 'bot-other', 'id': other['id'],
+        }, CLOUD_UID), {'state': 'pending'})
+        self.store.enable_requests([first, ('bot-other', FIRST_UNIT, 'OTHER_KEY')])
+        with self.assertRaises(vault.VaultError):
+            self.store.desktop(save, OWNER_UID)
+        self.assertEqual(self.sealed, [])
+
+    def test_a_bot_grant_uses_the_same_secure_entry_and_receipt(self):
+        self.store.enable(FIRST_UNIT, CLOUD_UID)
+        self.store.allow_desktop(OWNER_UID, CLOUD_UID, [FIRST_UNIT])
+        self.store.enable_requests([('bot-research', FIRST_UNIT, 'EXAMPLE_KEY')])
+        actor = {'id': 'e' * 32, 'bot': 'bot-research'}
+        request = {'action': 'create', 'unit': FIRST_UNIT, 'name': 'EXAMPLE_KEY', **actor}
+        self.assertEqual(self.store.cloud(request, CLOUD_UID), {'state': 'pending'})
+        reply = self.store.desktop({'action': 'inspect-request', 'id': actor['id']}, OWNER_UID)
+        self.assertEqual(reply, {
+            'request': {'id': actor['id'], 'unit': FIRST_UNIT, 'name': 'EXAMPLE_KEY', 'state': 'pending'},
+        })
+        self.assertEqual(self.store.desktop({
+            'action': 'save-request', 'id': actor['id'], 'value': FIRST_VALUE.decode(),
+        }, OWNER_UID), {'ok': True})
+        self.assertEqual(self.store.cloud({'action': 'status', **actor}, CLOUD_UID), {'state': 'saved'})
+        self.assertEqual(self.sealed, [FIRST_VALUE])
+
+    def test_reenabling_after_interrupted_withdrawal_does_not_restore_old_requests(self):
+        self.store.enable(FIRST_UNIT, CLOUD_UID)
+        self.store.allow_desktop(OWNER_UID, CLOUD_UID, [FIRST_UNIT])
+        grants = [('bot-research', FIRST_UNIT, 'EXAMPLE_KEY')]
+        self.store.enable_requests(grants)
+        actor = {'id': 'f' * 32, 'bot': 'bot-research'}
+        self.assertEqual(self.store.cloud({
+            'action': 'create', 'unit': FIRST_UNIT, 'name': 'EXAMPLE_KEY', **actor,
+        }, CLOUD_UID), {'state': 'pending'})
+        (self.root / vault.CLOUD_REQUESTS_ENABLED).unlink()
+        self.store.enable_requests(grants)
+        with self.assertRaises(vault.VaultError):
+            self.store.desktop({'action': 'inspect-request', 'id': actor['id']}, OWNER_UID)
+
     def test_cloud_request_round_trip_is_add_only_and_returns_no_secret(self):
         self.store.enable(FIRST_UNIT, CLOUD_UID)
         self.store.allow_desktop(OWNER_UID, CLOUD_UID, [FIRST_UNIT])

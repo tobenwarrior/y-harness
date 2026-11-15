@@ -814,7 +814,7 @@ describe('durable Bot roster', () => {
   it('provisions one managed workspace per Bot and retains it across a failed setup retry', async () => {
     const root = await mkdtemp(join(tmpdir(), 'yh-managed-bot-'))
     const workspace = (sessionId: SessionId) => join(root, sessionId)
-    const prepare = vi.fn(async (sessionId: SessionId) => { await mkdir(workspace(sessionId), { mode: 0o700 }) })
+    const prepare = vi.fn(async (sessionId: SessionId, _botId: BotId) => { await mkdir(workspace(sessionId), { mode: 0o700 }) })
     prepare.mockRejectedValueOnce(new Error('Computer unavailable'))
     const h = await harness(undefined, undefined, undefined, [], new Map(), new Map(), true, 'native', false, {
       beforeService: (ctx) => { ctx.provide('botWorkspaces', { workspace, prepare }) },
@@ -827,8 +827,7 @@ describe('durable Bot roster', () => {
       const second = (await h.service.create({ name: 'Second Bot' })).bot
       expect(first.cwd).toBe(workspace(first.sessionId))
       expect(second.cwd).not.toBe(first.cwd)
-      expect(prepare.mock.calls[0]).toEqual([first.sessionId])
-      expect(prepare.mock.calls[1]).toEqual([first.sessionId])
+      expect(prepare.mock.calls).toEqual([[first.sessionId, first.id], [first.sessionId, first.id], [second.sessionId, second.id]])
       await expect(h.service.create(request)).resolves.toMatchObject({ bot: { sessionId: first.sessionId } })
       expect(h.create).toHaveBeenCalledWith(expect.objectContaining({ sessionId: first.sessionId, cwd: first.cwd }), expect.anything())
       await expect(h.service.ownerBotForSession(first.sessionId)).resolves.toMatchObject({ id: first.id, state: 'active' })
@@ -843,7 +842,7 @@ describe('durable Bot roster', () => {
   it('keeps non-allowlisted Bot creation on the legacy cwd and skips VPS preparation', async () => {
     const root = await mkdtemp(join(tmpdir(), 'yh-allowlisted-bot-'))
     const workspace = (sessionId: SessionId) => join(root, sessionId)
-    const prepare = vi.fn(async (sessionId: SessionId) => { await mkdir(workspace(sessionId), { mode: 0o700 }) })
+    const prepare = vi.fn(async (sessionId: SessionId, _botId: BotId) => { await mkdir(workspace(sessionId), { mode: 0o700 }) })
     const h = await harness(undefined, undefined, undefined, [], new Map(), new Map(), true, 'native', false, {
       beforeService: (ctx) => {
         ctx.provide('botWorkspaces', {
@@ -860,8 +859,7 @@ describe('durable Bot roster', () => {
       expect(legacy.cwd).toBe(resolve(root))
       await expect(h.service.create({ id: BotId('bot-legacy'), name: 'Legacy', cwd: root }))
         .resolves.toMatchObject({ bot: { cwd: resolve(root), sessionId: legacy.sessionId } })
-      expect(prepare).toHaveBeenCalledWith(managed.sessionId)
-      expect(prepare).not.toHaveBeenCalledWith(legacy.sessionId)
+      expect(prepare).toHaveBeenCalledExactlyOnceWith(managed.sessionId, managed.id)
     } finally {
       await close(h.ctx)
       await rm(root, { recursive: true, force: true })

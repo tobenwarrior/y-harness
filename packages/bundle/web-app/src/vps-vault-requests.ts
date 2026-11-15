@@ -17,11 +17,15 @@ const REQUEST_MS = 10 * 60_000
 const RECEIPT_MS = 2 * 60_000
 const MAX_REQUESTS = 64
 const MAX_REPLY_BYTES = 128
+const MAX_LIST_BYTES = 24 * 1024
 const SERVICE = /^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,220}\.service$/u
 const KEY = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/u
 const BOT = /^bot-[A-Za-z0-9][A-Za-z0-9-]{0,245}$/u
 const UNAVAILABLE = 'The VPS Vault could not confirm the secure request.'
 const VAULT_CHAT_FLAG = '__YH_BOT_VAULT_REQUESTS__'
+
+/** Local socket installed by the VPS Vault command. */
+export const VPS_VAULT_REQUEST_SOCKET = '/run/yharness-vault/cloud-requests.sock'
 
 /** One exact service and key a Bot can ask its owner to enter. */
 export interface VpsVaultCredential {
@@ -41,15 +45,16 @@ export interface VpsVaultGrant extends VpsVaultCredential {
 export interface VpsVaultRequestsConfig {
   /** Absolute path to the local, Cloud-account-only broker socket. */
   readonly socketPath: string
-  /** Exact Bot, system service and key combinations that may be requested. */
-  readonly grants: VpsVaultGrant[]
+  /** Explicit Web profile grants. Omit or set to null to use the Vault's current Bot-specific grants. */
+  readonly grants?: VpsVaultGrant[] | null
 }
 
 type RequestId = Branded<'VpsVaultRequestId'>
 type Receipt = 'saved' | 'cancelled'
 type State = 'pending' | Receipt
-type Command = ({ readonly action: 'create'; readonly id: RequestId } & VpsVaultCredential)
+type RequestCommand = ({ readonly action: 'create'; readonly id: RequestId } & VpsVaultCredential)
   | { readonly action: 'status' | 'cancel'; readonly id: RequestId }
+type Command = (RequestCommand & { readonly bot?: string }) | { readonly action: 'list'; readonly bot: string }
 
 /** Metadata shown to the owner of the live Bot conversation. */
 export interface VpsVaultRequestView extends VpsVaultCredential {
@@ -67,7 +72,7 @@ interface Entry {
 /**
  * Install the owner request tool and its read-only chat route.
  * @param ctx - Web Host context.
- * @param config - Owner-managed broker address and exact credential grants.
+ * @param config - Vault broker address and optional Web profile grants.
  */
 export function mountVpsVaultRequests(ctx: Context, config: VpsVaultRequestsConfig): void {
   const requests = new VpsVaultRequests(config)
@@ -93,37 +98,60 @@ function registerVpsVaultRequestTool(
   ctx: Context, bots: BotService, requests: VpsVaultRequests, bot: string, session: SessionId,
 ): void {
   const grants = requests.credentialsFor(bot)
-  if (grants.length === 0) return
+  const managed = requests.brokerManaged
+  if (!managed && grants.length === 0) return
+  const receipt = {
+    type: 'object',
+    additionalProperties: false,
+    properties: { state: { type: 'string', enum: ['saved', 'cancelled'], required: true } },
+  } as const
+  const discovery = {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      credentials: {
+        type: 'array', required: true,
+        items: {
+          type: 'object', additionalProperties: false,
+          properties: { unit: { type: 'string', required: true }, name: { type: 'string', required: true } },
+        },
+      },
+    },
+  } as const
   const tool = defineTool({
     name: 'request_vps_secret',
     description: 'Ask the owner to enter an API key in the secure Y Harness Vault. '
       + 'The owner enters the value in the Mac app. You receive only the outcome. '
       + 'Never ask the owner to paste a credential into chat. '
-      + `Allowed service and key pairs: ${grants.map(({ unit, name }) => `${unit} / ${name}`).join(', ')}.`,
+      + (managed
+        ? 'Call with no arguments to see the allowed service and key pairs. Pass both unit and name to request a key.'
+        : `Allowed service and key pairs: ${grants.map(({ unit, name }) => `${unit} / ${name}`).join(', ')}.`),
     parameters: {
-      unit: { type: 'string', required: true, enum: [...new Set(grants.map(grant => grant.unit))] },
-      name: { type: 'string', required: true, enum: [...new Set(grants.map(grant => grant.name))] },
+      unit: managed ? { type: 'string' } : { type: 'string', required: true, enum: [...new Set(grants.map(grant => grant.unit))] },
+      name: managed ? { type: 'string' } : { type: 'string', required: true, enum: [...new Set(grants.map(grant => grant.name))] },
     },
     output: {
-      schema: {
-        type: 'object',
-        additionalProperties: false,
-        properties: { state: { type: 'string', enum: ['saved', 'cancelled'], required: true } },
-      },
+      schema: { oneOf: [receipt, discovery] },
       render: (_args, result) => [{
         type: 'text',
-        text: result.state === 'saved'
-          ? 'The key is saved in the VPS Vault. The service loads it on its next start.'
-          : 'The owner did not save a key through this request.',
+        text: 'credentials' in result
+          ? renderCredentials(result.credentials)
+          : result.state === 'saved'
+            ? 'The key is saved in the VPS Vault. The service loads it on its next start.'
+            : 'The owner did not save a key through this request.',
       }],
     },
     async execute(args, call) {
-      if (Object.keys(args).length !== 2) throw new Error('A secure request accepts only the service and key name.')
       const agent = call.agent
       if (agent?.id !== session || !await bots.isDirectOwnerTurn(agent, call.signal)) {
         throw new Error('A secure request requires a direct owner Bot turn.')
       }
-      return requests.request(bot, session, args, call.signal)
+      const fields = Object.keys(args).length
+      if (managed && fields === 0) return { credentials: await requests.discover(bot, call.signal) }
+      if (fields !== 2 || args.unit === undefined || args.name === undefined) {
+        throw new Error('A secure request accepts only the service and key name.')
+      }
+      return requests.request(bot, session, { unit: args.unit, name: args.name }, call.signal)
     },
   })
   ctx.effect(() => ctx.tools.register({
@@ -150,7 +178,7 @@ export function vpsVaultRequestRoute(ctx: Context, requests: VpsVaultRequests): 
       const bot = id !== undefined && /^(?=.{1,256}$)[^\u0000-\u001f\u007f]+$/u.test(id)
         ? await ctx.bots.ownerBotForSession(id) : undefined
       return Response.json({
-        request: bot?.state === 'active' && requests.authorized(bot.id) ? requests.current(bot.sessionId) ?? null : null,
+        request: bot?.state === 'active' ? requests.current(bot.sessionId) ?? null : null,
       }, { headers: { 'Cache-Control': 'no-store' } })
     },
   }
@@ -159,6 +187,15 @@ export function vpsVaultRequestRoute(ctx: Context, requests: VpsVaultRequests): 
 function credentialIsValid({ unit, name }: VpsVaultCredential): boolean {
   return unit === unit.trim() && name === name.trim()
     && SERVICE.test(unit) && !unit.endsWith('@.service') && KEY.test(name)
+}
+
+function validBot(bot: string): boolean {
+  return bot === bot.trim() && BOT.test(bot)
+}
+
+function renderCredentials(credentials: readonly VpsVaultCredential[]): string {
+  if (credentials.length === 0) return 'This Bot has no VPS Vault grants.'
+  return `Allowed service and key pairs:\n${credentials.map(({ unit, name }) => `${unit} / ${name}`).join('\n')}`
 }
 
 function decodedState(data: string): State {
@@ -170,14 +207,31 @@ function decodedState(data: string): State {
   return reply.state
 }
 
-function exchange(path: string, command: Command, signal: AbortSignal): Promise<State> {
+function decodedCredentials(data: string): VpsVaultCredential[] {
+  const reply: unknown = JSON.parse(data)
+  if (reply === null || typeof reply !== 'object' || Object.keys(reply).length !== 1 || !('credentials' in reply)
+    || !Array.isArray(reply.credentials) || reply.credentials.length > MAX_REQUESTS) throw new Error(UNAVAILABLE)
+  return reply.credentials.map((entry: unknown) => {
+    if (entry === null || typeof entry !== 'object' || Object.keys(entry).length !== 2
+      || !('unit' in entry) || !('name' in entry) || typeof entry.unit !== 'string' || typeof entry.name !== 'string') {
+      throw new Error(UNAVAILABLE)
+    }
+    const credential = { unit: entry.unit, name: entry.name }
+    if (!credentialIsValid(credential)) throw new Error(UNAVAILABLE)
+    return credential
+  })
+}
+
+function exchange<T>(
+  path: string, command: Command, signal: AbortSignal, decode: (reply: string) => T, maxBytes: number,
+): Promise<T> {
   return new Promise((resolve, reject) => {
     signal.throwIfAborted()
     const socket = createConnection({ path })
     const deadline = setTimeout(fail, SOCKET_TIMEOUT_MS)
     const buffer: Buffer[] = []
     let length = 0
-    let received: State | undefined
+    let received: T | undefined
     let failed = false
     function fail(): void {
       failed = true
@@ -188,12 +242,12 @@ function exchange(path: string, command: Command, signal: AbortSignal): Promise<
     socket.once('connect', () => { socket.end(JSON.stringify(command)) })
     socket.on('data', (chunk: Buffer) => {
       length += chunk.byteLength
-      if (length > MAX_REPLY_BYTES) fail()
+      if (length > maxBytes) fail()
       else buffer.push(chunk)
     })
     socket.once('end', () => {
       if (failed) return
-      try { received = decodedState(Buffer.concat(buffer).toString('utf8')) }
+      try { received = decode(Buffer.concat(buffer).toString('utf8')) }
       catch (_error) { /* The broker's raw response never leaves this transport. */ }
     })
     socket.once('close', () => {
@@ -212,41 +266,47 @@ export class VpsVaultRequests {
   private readonly closed = new AbortController()
   private readonly flights = new Set<Promise<{ readonly state: Receipt }>>()
   private readonly socketPath: string
-  private readonly grants: readonly VpsVaultGrant[]
+  private readonly grants: readonly VpsVaultGrant[] | undefined
 
-  /** @param config - Owner-managed broker address and exact request grants. */
+  /** @param config - Vault broker address and optional Web profile grants. */
   constructor(config: VpsVaultRequestsConfig) {
     if (process.platform === 'win32' || !isAbsolute(config.socketPath)
       || !config.socketPath.startsWith('/') || config.socketPath.includes('\0')) {
       throw new Error('VPS Vault request socketPath must be an absolute Unix path.')
     }
-    if (config.grants.length === 0 || config.grants.length > MAX_REQUESTS || config.grants.some(grant =>
-      !BOT.test(grant.bot) || grant.bot !== grant.bot.trim() || !credentialIsValid(grant))) {
+    if (config.grants != null && (config.grants.length === 0 || config.grants.length > MAX_REQUESTS
+      || config.grants.some(grant => !validBot(grant.bot) || !credentialIsValid(grant)))) {
       throw new Error('VPS Vault requests require exact Bot, service and key grants.')
     }
     this.socketPath = config.socketPath
-    this.grants = config.grants.map(grant => ({ ...grant }))
+    this.grants = config.grants?.map(grant => ({ ...grant }))
+  }
+
+  /** Whether the Vault owns the Bot grants. */
+  get brokerManaged(): boolean {
+    return this.grants === undefined
   }
 
   /**
-   * Check the configured Bot and exact credential grant.
-   * @param bot - Bot identity assigned by the owner roster.
-   * @param credential - Optional exact service and name, required at execution.
-   * @returns Whether the Bot has the requested grant.
-   */
-  authorized(bot: string, credential?: VpsVaultCredential): boolean {
-    return this.grants.some(grant => grant.bot === bot
-      && (credential === undefined || (grant.unit === credential.unit && grant.name === credential.name)))
-  }
-
-  /**
-   * List the metadata the selected Bot can use to request a credential.
+   * List grants from the explicit Web profile.
    * @param bot - Bot identity assigned by the owner roster.
    * @returns Exact service and key combinations for that Bot.
    */
   credentialsFor(bot: string): readonly VpsVaultCredential[] {
-    return this.grants.filter(grant => grant.bot === bot)
+    return (this.grants ?? []).filter(grant => grant.bot === bot)
       .map(({ unit, name }) => ({ unit, name }))
+  }
+
+  /**
+   * List the Vault's current request grants for one Bot.
+   * @param bot - Bot identity assigned by the owner roster.
+   * @param signal - Calling turn cancellation.
+   * @returns Exact service and key names available to the selected Bot.
+   */
+  async discover(bot: string, signal: AbortSignal): Promise<VpsVaultCredential[]> {
+    if (!this.brokerManaged || !validBot(bot)) throw new Error(UNAVAILABLE)
+    return exchange(this.socketPath, { action: 'list', bot }, AbortSignal.any([signal, this.closed.signal]),
+      decodedCredentials, MAX_LIST_BYTES)
   }
 
   /**
@@ -274,14 +334,17 @@ export class VpsVaultRequests {
   async request(
     bot: string, session: SessionId, credential: VpsVaultCredential, signal: AbortSignal,
   ): Promise<{ readonly state: Receipt }> {
-    if (!this.authorized(bot, credential)) throw new Error('This Bot has no Vault grant for that credential.')
+    if (!validBot(bot) || !credentialIsValid(credential) || (this.grants !== undefined && !this.grants.some(grant =>
+      grant.bot === bot && grant.unit === credential.unit && grant.name === credential.name))) {
+      throw new Error('This Bot has no Vault grant for that credential.')
+    }
     signal.throwIfAborted()
     this.closed.signal.throwIfAborted()
     if (this.pending.has(session)) throw new Error('A secure request is already pending in this chat.')
     if (this.pending.size >= MAX_REQUESTS) throw new Error(UNAVAILABLE)
     this.pending.add(session)
     this.entries.delete(session)
-    const running = this.waitForReceipt(session, credential, AbortSignal.any([signal, this.closed.signal]))
+    const running = this.waitForReceipt(bot, session, credential, AbortSignal.any([signal, this.closed.signal]))
     this.flights.add(running)
     try { return await running }
     finally {
@@ -309,22 +372,25 @@ export class VpsVaultRequests {
   }
 
   private async waitForReceipt(
-    session: SessionId, credential: VpsVaultCredential, signal: AbortSignal,
+    bot: string, session: SessionId, credential: VpsVaultCredential, signal: AbortSignal,
   ): Promise<{ readonly state: Receipt }> {
     const id = randomBytes(16).toString('hex') as RequestId
     const expires = Date.now() + REQUEST_MS
     const bounded = AbortSignal.any([signal, AbortSignal.timeout(REQUEST_MS)])
+    const send = (command: RequestCommand, requestSignal: AbortSignal) => exchange(
+      this.socketPath, this.brokerManaged ? { ...command, bot } : command, requestSignal, decodedState, MAX_REPLY_BYTES,
+    )
     let state: State
     try {
-      state = await exchange(this.socketPath, { action: 'create', id, unit: credential.unit, name: credential.name }, bounded)
+      state = await send({ action: 'create', id, unit: credential.unit, name: credential.name }, bounded)
       if (state === 'pending') this.publish(session, { id, ...credential, state }, expires)
       while (state === 'pending') {
         await delay(POLL_MS, undefined, { signal: bounded })
-        state = await exchange(this.socketPath, { action: 'status', id }, bounded)
+        state = await send({ action: 'status', id }, bounded)
       }
     } catch (_error) {
       try {
-        state = await exchange(this.socketPath, { action: 'cancel', id }, AbortSignal.timeout(SOCKET_TIMEOUT_MS))
+        state = await send({ action: 'cancel', id }, AbortSignal.timeout(SOCKET_TIMEOUT_MS))
       } catch (_cancelError) {
         // The broker also expires pending requests whose live Host stops renewing the lease.
         this.entries.delete(session)

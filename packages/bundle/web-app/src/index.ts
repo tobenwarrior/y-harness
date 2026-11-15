@@ -36,7 +36,7 @@ import { MacComputerBridge } from './mac-computer.ts'
 import { mountVpsBots } from './vps-bots.ts'
 import type { VpsServiceAccess } from './vps-services.ts'
 import type { VpsJournalConfig } from './vps-journal.ts'
-import { mountVpsVaultRequests } from './vps-vault-requests.ts'
+import { mountVpsVaultRequests, VPS_VAULT_REQUEST_SOCKET } from './vps-vault-requests.ts'
 import type { VpsVaultRequestsConfig } from './vps-vault-requests.ts'
 import type { VpsIsolatedBrowserConfig } from './vps-isolated-browser.ts'
 
@@ -122,7 +122,7 @@ export interface Config {
   vpsServices?: VpsServiceAccess[]
   /** Private read-only journal socket and its owner Bot allowlist. */
   vpsJournal?: VpsJournalConfig | null
-  /** Allow exact owner Bots to request service credentials through the Desktop Vault. */
+  /** Vault request broker configuration. Linux with managed Bot computers uses the local Vault unless explicitly disabled. */
   vpsVaultRequests?: VpsVaultRequestsConfig | null
   /** Opt in to the private Linux desktop using its X display and owner-only authority file. */
   computer?: {
@@ -176,11 +176,14 @@ export const Config: z<Config> = z.object({
   vpsVaultRequests: z.union([
     z.object({
       socketPath: z.string().required(),
-      grants: z.array(z.object({
-        bot: z.string().required(),
-        unit: z.string().required(),
-        name: z.string().required(),
-      })).required(),
+      grants: z.union([
+        z.array(z.object({
+          bot: z.string().required(),
+          unit: z.string().required(),
+          name: z.string().required(),
+        })),
+        z.const(null),
+      ]).default(null),
     }),
     z.const(null),
   ]),
@@ -398,7 +401,10 @@ export function apply(ctx: Context, config: Config): void {
   const legacyComputer = config.computer === undefined || config.computer === null
     ? undefined
     : new VpsComputer(config.computer)
-  if (config.vpsVaultRequests != null) mountVpsVaultRequests(ctx, config.vpsVaultRequests)
+  const vaultRequests = config.vpsVaultRequests === undefined && config.botComputers != null && process.platform === 'linux'
+    ? { socketPath: VPS_VAULT_REQUEST_SOCKET }
+    : config.vpsVaultRequests
+  if (vaultRequests != null) mountVpsVaultRequests(ctx, vaultRequests)
   if (config.vpsJournal !== undefined && config.vpsJournal !== null && config.botComputers == null) {
     throw new Error('VPS journal grants require managed Bot computers.')
   }

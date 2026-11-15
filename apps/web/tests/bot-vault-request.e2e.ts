@@ -19,10 +19,14 @@ const KEY = 'EXAMPLE_API_KEY'
 const PROVIDER = 'vault-request-fixture'
 const MODEL = 'reply'
 const REPLY = 'The service key is saved.'
+const NO_GRANTS = 'This Bot has no VPS Vault grants.'
 
 class RequestAdapter extends LlmAdapter {
   readonly requests: GenerateOptions[] = []
   sawReceipt = false
+  sawNoGrants = false
+
+  constructor(private readonly managed: boolean) { super() }
 
   override async listModels(provider: string) {
     return [{ provider, id: MODEL, name: `${provider}/${MODEL}` }]
@@ -30,11 +34,15 @@ class RequestAdapter extends LlmAdapter {
 
   override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     this.requests.push(options)
-    const result = options.messages.findLast(message => message.role === 'tool')
-    if (result === undefined) {
-      const id = ToolCallId('vault-request')
+    const input = options.messages.findLastIndex(message => message.role === 'user')
+    const result = options.messages.slice(input + 1).findLast(message => message.role === 'tool')
+    const discover = this.managed && result === undefined
+    const allowed = result?.content.some(block => block.type === 'text'
+      && block.text === `Allowed service and key pairs:\n${SERVICE} / ${KEY}`) === true
+    if (result === undefined || allowed) {
+      const id = ToolCallId(discover ? 'vault-discovery' : 'vault-request')
       const name = 'request_vps_secret'
-      const args = JSON.stringify({ unit: SERVICE, name: KEY })
+      const args = JSON.stringify(discover ? {} : { unit: SERVICE, name: KEY })
       yield { type: 'block-start', index: 0, blockType: 'tool-call' }
       yield { type: 'tool-call-delta', index: 0, id, name, argumentsDelta: args }
       yield { type: 'block-end', index: 0, block: { type: 'tool-call', id, name, arguments: args } }
@@ -42,18 +50,24 @@ class RequestAdapter extends LlmAdapter {
       return
     }
     this.sawReceipt = result.content.some(block => block.type === 'text' && block.text.includes('saved in the VPS Vault'))
+    this.sawNoGrants = result.content.some(block => block.type === 'text' && block.text === NO_GRANTS)
+    const reply = this.sawReceipt ? REPLY : this.sawNoGrants ? NO_GRANTS : 'The request failed.'
     yield { type: 'block-start', index: 0, blockType: 'text' }
-    yield { type: 'text-delta', index: 0, text: REPLY }
-    yield { type: 'block-end', index: 0, block: { type: 'text', text: REPLY } }
+    yield { type: 'text-delta', index: 0, text: reply }
+    yield { type: 'block-end', index: 0, block: { type: 'text', text: reply } }
     yield { type: 'finish', reason: { kind: 'stop' } }
   }
 }
 
-it.skipIf(MODE === 'record' || process.platform === 'win32')('offers a secure key form handoff and returns only the owner receipt', async () => {
+it.skipIf(MODE === 'record' || process.platform === 'win32').each([
+  { policy: 'Web profile', managed: false },
+  { policy: 'live Vault', managed: true },
+])('offers a secure handoff and returns a receipt with $policy grants', async ({ managed }) => {
   const root = await mkdtemp('/tmp/yh-vault-web-')
   const socketPath = join(root, 'r')
   const overlay = join(root, 'vault.yml')
   let ownerSaved = false
+  let allowed = !managed
   const commands: Array<Record<string, unknown>> = []
   const server = createServer({ allowHalfOpen: true }, (socket) => {
     let payload = ''
@@ -62,6 +76,11 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('offers a secure ke
     socket.once('end', () => {
       const command = JSON.parse(payload) as Record<string, unknown>
       commands.push(command)
+      if (command.action === 'list') {
+        const credentials = allowed && command.bot === BOT ? [{ unit: SERVICE, name: KEY }] : []
+        socket.end(JSON.stringify({ credentials }))
+        return
+      }
       const state = command.action === 'cancel' ? 'cancelled' : ownerSaved ? 'saved' : 'pending'
       socket.end(JSON.stringify({ state }))
     })
@@ -73,12 +92,14 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('offers a secure ke
       server.once('error', reject)
       server.listen(socketPath, resolve)
     })
-    const config = { vpsVaultRequests: { socketPath, grants: [{ bot: BOT, unit: SERVICE, name: KEY }] } }
+    const config = {
+      vpsVaultRequests: managed ? { socketPath } : { socketPath, grants: [{ bot: BOT, unit: SERVICE, name: KEY }] },
+    }
     await writeFile(overlay, JSON.stringify([{ id: 'web-runtime', config }]))
     const web = scaffold = await launchWebScaffold({
       extraOverlayPath: overlay, replayFixture: FIXTURE, replayProvidersOnly: true, toolsMode: 'native',
     })
-    const adapter = new RequestAdapter()
+    const adapter = new RequestAdapter(managed)
     web.ctx.effect(() => web.ctx.llm.registerAdapter([PROVIDER], adapter), 'Vault request fixture model')
     await web.ctx.agentDefaultModel.saveSelection({ provider: PROVIDER, model: MODEL })
     const { bot } = await web.ctx.bots.create({ id: BOT, name: 'Scout', cwd: web.workspaceCwd })
@@ -97,8 +118,18 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('offers a secure ke
     await page.locator('[data-yh-part="sidebar"]').getByRole('button', { name: 'Bots', exact: true }).click()
     await page.locator(`[data-bot-id="${BOT}"]`).click()
     const conversation = page.locator('[data-conversation-surface="bots"]')
-    await conversation.locator('[data-composer-input][contenteditable="true"]').fill('Request the service key.')
-    await conversation.getByRole('button', { name: 'Send message', exact: true }).click()
+    const send = async (text: string) => {
+      await conversation.locator('[data-composer-input][contenteditable="true"]').fill(text)
+      await conversation.getByRole('button', { name: 'Send message', exact: true }).click()
+    }
+    if (managed) {
+      await send('Check my Vault permissions.')
+      await conversation.getByText(NO_GRANTS, { exact: true }).waitFor()
+      expect(adapter.sawNoGrants).toBe(true)
+      expect(commands).toEqual([{ action: 'list', bot: BOT }])
+      allowed = true
+    }
+    await send('Request the service key.')
     const pendingSelector = '[data-bot-vault-request-state="pending"]'
     const pending = page.locator(pendingSelector)
     await expect.poll(() => adapter.requests.length, { timeout: 5_000 }).toBeGreaterThan(0)
@@ -111,7 +142,10 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('offers a secure ke
     const handoff = await pending.getByRole('link', { name: 'Enter key securely' }).getAttribute('href')
     expect(handoff).toMatch(/^\/__yharness\/vault-request\/[0-9a-f]{32}$/u)
     const id = handoff?.split('/').at(-1)
-    expect(commands[0]).toEqual({ action: 'create', id, unit: SERVICE, name: KEY })
+    if (managed) expect(commands.slice(0, 2)).toEqual([{ action: 'list', bot: BOT }, { action: 'list', bot: BOT }])
+    expect(commands.find(command => command.action === 'create')).toEqual({
+      action: 'create', id, unit: SERVICE, name: KEY, ...(managed ? { bot: BOT } : {}),
+    })
     expect(await pending.locator('input').count()).toBe(0)
     expect((await fetch(new URL(ownRoute, web.baseUrl))).status).toBe(401)
     expect(await (await web.hostFetch(ownRoute)).json()).toEqual({

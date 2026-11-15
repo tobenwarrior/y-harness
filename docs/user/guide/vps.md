@@ -241,26 +241,17 @@ Website logins are encrypted on the VPS. You can [approve a saved login](#approv
 
 ### Let a Bot request a key in chat
 
-Use the current Vault command from your administrator checkout. Once the service is available in Desktop Vault, authorize the exact service and key name for requests. Pass the complete list of service and key pairs each time you change the allowlist.
+Use the current Vault command from your administrator checkout. Once the service is available in Desktop Vault, authorize the exact Bot roster ID, service, and key name. Cloud with managed Bot computers reads these grants directly from the Vault. Changes take effect without restarting Cloud. Pass the complete list of grants each time you change it.
 
 ```sh
-sudo /usr/local/sbin/yharness-vault enable-requests example-worker.service=EXAMPLE_API_KEY
-```
-
-In the private `web-runtime` configuration, grant the same pair to the exact Bot roster ID. Restart Cloud when it is idle.
-
-```yaml
-vpsVaultRequests:
-  socketPath: /run/yharness-vault/cloud-requests.sock
-  grants:
-    - bot: bot-worker
-      unit: example-worker.service
-      name: EXAMPLE_API_KEY
+sudo /usr/local/sbin/yharness-vault enable-requests bot-worker/example-worker.service=EXAMPLE_API_KEY
 ```
 
 Open that Bot's Cloud chat and ask it to request the key. Choose **Enter key securely** on the card and enter the value in the Mac Vault window. The Bot receives the result of the request. The service loads the key on its next start. Use the Vault in the Cloud title bar to replace or revoke an existing key.
 
-To stop accepting requests, run `sudo /usr/local/sbin/yharness-vault disable-requests`. This cancels open requests and keeps saved credentials available for their services.
+To withdraw a Bot grant, omit it when running `enable-requests` again. To withdraw all request grants, run `sudo /usr/local/sbin/yharness-vault disable-requests`. Withdrawing a grant cancels that Bot's pending requests for the key. To remove a saved credential for future starts of its service, revoke the key in Vault separately.
+
+Profiles with explicit `web-runtime.vpsVaultRequests.grants` use their configured Bot grants and the matching `UNIT.service=KEY_NAME` Vault entries. To use Vault-managed Bot grants, remove the explicit profile `grants` and restart Cloud once when it is idle.
 
 ### Read a filtered journal feed
 

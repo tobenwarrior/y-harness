@@ -4480,7 +4480,7 @@ export interface Config {
   vpsServices?: VpsServiceAccess[]
   /** Private read-only journal socket and its owner Bot allowlist. */
   vpsJournal?: VpsJournalConfig | null
-  /** Allow exact owner Bots to request service credentials through the Desktop Vault. */
+  /** Vault request broker configuration. Linux with managed Bot computers uses the local Vault unless explicitly disabled. */
   vpsVaultRequests?: VpsVaultRequestsConfig | null
   /** Opt in to the private Linux desktop using its X display and owner-only authority file. */
   computer?: {
@@ -4531,8 +4531,8 @@ export interface VpsJournalConfig {
 export interface VpsVaultRequestsConfig {
   /** Absolute path to the local, Cloud-account-only broker socket. */
   readonly socketPath: string
-  /** Exact Bot, system service and key combinations that may be requested. */
-  readonly grants: VpsVaultGrant[]
+  /** Explicit Web profile grants. Omit or set to null to use the Vault's current Bot-specific grants. */
+  readonly grants?: VpsVaultGrant[] | null
 }
 
 /** A credential request grant for a single owner Bot. */

@@ -49,6 +49,34 @@ async function withBroker<T>(
 
 const unixTest = it.skipIf(process.platform === 'win32')
 
+unixTest('uses the Vault’s latest grant for a Bot without recreating the request registry', async () => {
+  let allowed = false
+  await withBroker((request) => {
+    if (request.action === 'list') return { credentials: allowed && request.bot === bot ? [credential] : [] }
+    return { state: request.bot === bot && allowed ? 'saved' : 'cancelled' }
+  }, async (socketPath, calls) => {
+    const requests = new VpsVaultRequests({ socketPath })
+    const signal = new AbortController().signal
+    await expect(requests.discover(bot, signal)).resolves.toEqual([])
+    allowed = true
+    await expect(requests.discover(bot, signal)).resolves.toEqual([credential])
+    await expect(requests.discover('bot-other', signal)).resolves.toEqual([])
+    await expect(requests.request(bot, session, credential, signal)).resolves.toEqual({ state: 'saved' })
+    expect(calls.at(-1)).toMatchObject({ action: 'create', bot, ...credential })
+    allowed = false
+    await expect(requests.discover(bot, signal)).resolves.toEqual([])
+    await requests.dispose()
+  })
+})
+
+unixTest('rejects unexpected fields in the Vault’s credential list', async () => {
+  await withBroker(() => ({ credentials: [{ ...credential, value: 'synthetic key' }] }), async (socketPath) => {
+    const requests = new VpsVaultRequests({ socketPath })
+    await expect(requests.discover(bot, new AbortController().signal)).rejects.toThrow('could not confirm')
+    await requests.dispose()
+  })
+})
+
 unixTest('shows the pending request in its owning Session and returns only the owner’s receipt', async () => {
   let saved = false
   await withBroker(({ action }) => ({ state: action === 'status' && saved ? 'saved' : 'pending' }), async (socketPath, calls) => {
