@@ -1,5 +1,6 @@
 /** Write-only VPS Vault management over the owner's existing SSH login. */
 import { execFile, type ChildProcess, type ExecFileOptions } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { isIP } from 'node:net'
 import { isCloudTarget } from './cloud-connection.ts'
 
@@ -7,6 +8,7 @@ const SSH = '/usr/bin/ssh'
 const COMMAND = '/usr/local/sbin/yharness-vault desktop-client'
 const UNIT = /^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,220}\.service$/u
 const NAME = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/u
+const BOT = /^bot-[A-Za-z0-9][A-Za-z0-9-]{0,245}$/u
 const REQUEST_ID = /^[a-f0-9]{32}$/u
 const LOGIN_ID = /^[a-f0-9]{32}$/u
 const DNS_LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u
@@ -18,11 +20,13 @@ const LOGIN_USERNAME_LIMIT = 512
 const LOGIN_PASSWORD_LIMIT = 8192
 const MAX_LOGINS = 64
 const MAX_OUTPUT = 160 * 1024
+const MAX_ROSTER_BYTES = 4 * 1024 * 1024
 
 declare const VAULT_REQUEST_ID: unique symbol
 declare const VAULT_LOGIN_USE_REQUEST_ID: unique symbol
 declare const VAULT_LOGIN_ID: unique symbol
 declare const VAULT_LOGIN_GENERATION: unique symbol
+declare const VAULT_BOT_ID: unique symbol
 
 /** Opaque request identifier issued by the connected Cloud workspace. */
 export type VaultRequestId = string & { readonly [VAULT_REQUEST_ID]: true }
@@ -36,8 +40,13 @@ export type VaultLoginId = string & { readonly [VAULT_LOGIN_ID]: true }
 /** Revision identifier bound to one saved website-login record. */
 export type VaultLoginGeneration = string & { readonly [VAULT_LOGIN_GENERATION]: true }
 
+/** Exact Bot identity from the connected Cloud roster. */
+export type VaultBotId = string & { readonly [VAULT_BOT_ID]: true }
+
 /** Request from the dedicated Vault window. No operation reads a saved value. */
-export type VaultRequest = { readonly action: 'list' } | {
+export type VaultRequest = { readonly action: 'list' | 'list-grants' } | ({
+  readonly action: 'add-grant' | 'remove-grant'
+} & VaultBotGrant) | {
   readonly action: 'revoke'
   readonly unit: string
   readonly name: string
@@ -101,6 +110,25 @@ export interface VaultService {
   readonly names: readonly string[]
 }
 
+/** One Bot and service key whose use the owner can approve from chat. */
+export interface VaultBotGrant {
+  readonly bot: VaultBotId
+  readonly unit: string
+  readonly name: string
+}
+
+/** Service choices and current Bot permissions returned by the VPS Vault. */
+export interface VaultBotAccess {
+  readonly services: readonly string[]
+  readonly grants: readonly VaultBotGrant[]
+}
+
+/** Bot identity and name presented to the owner in the grant form. */
+export interface VaultBotChoice {
+  readonly id: VaultBotId
+  readonly name: string
+}
+
 /** Metadata for one Cloud-to-Vault key request; no secret value is returned. */
 export interface VaultRequestMetadata {
   readonly id: VaultRequestId
@@ -147,6 +175,10 @@ export type VaultReply = {
   readonly services?: readonly VaultService[]
   readonly logins?: readonly VaultLogin[]
 } | {
+  readonly ok: true
+  readonly access: VaultBotAccess
+  readonly bots?: readonly VaultBotChoice[]
+} | {
   readonly request: VaultRequestMetadata | VaultLoginUseRequestMetadata
 } | {
   readonly state: 'saved' | 'cancelled' | 'needs-owner' | 'unavailable'
@@ -174,6 +206,10 @@ function unitName(value: unknown): value is string {
 
 function keyName(value: unknown): value is string {
   return typeof value === 'string' && value === value.trim() && NAME.test(value)
+}
+
+function botId(value: unknown): value is VaultBotId {
+  return typeof value === 'string' && value === value.trim() && BOT.test(value)
 }
 
 function requestState(value: unknown): value is VaultRequestMetadata['state'] {
@@ -255,7 +291,9 @@ function requestBody(value: unknown): VaultRequest | undefined {
   if (!record(value)) return undefined
   const { action, unit, name } = value
   const fields = Object.keys(value).length
-  if (action === 'list' && fields === 1) return { action }
+  if ((action === 'list' || action === 'list-grants') && fields === 1) return { action }
+  if ((action === 'add-grant' || action === 'remove-grant') && fields === 4
+    && botId(value.bot) && unitName(unit) && keyName(name)) return { action, bot: value.bot, unit, name }
   if (action === 'inspect-request' && fields === 2 && isVaultRequestId(value.id)) return { action, id: value.id }
   if (action === 'dismiss-request' && fields === 2 && isVaultRequestId(value.id)) return { action, id: value.id }
   if (action === 'inspect-login-use' && isVaultLoginUseRequestId(value.id)) {
@@ -366,6 +404,22 @@ function loginUseMetadata(value: unknown, expectedId?: VaultLoginUseRequestId): 
   return { id: value.id, origin, destination, logins, ...(acceptsCredentials ? { acceptsCredentials: true } : {}) }
 }
 
+function botAccess(value: unknown): VaultBotAccess | undefined {
+  if (!record(value) || Object.keys(value).length !== 2 || !Array.isArray(value.services) || value.services.length > 16
+    || !value.services.every(unitName) || new Set(value.services).size !== value.services.length
+    || !Array.isArray(value.grants) || value.grants.length > 64) return undefined
+  const grants: VaultBotGrant[] = []
+  const identities = new Set<string>()
+  for (const item of value.grants) {
+    if (!record(item) || Object.keys(item).length !== 3 || !botId(item.bot) || !unitName(item.unit) || !keyName(item.name)) return undefined
+    const key = JSON.stringify([item.bot, item.unit, item.name])
+    if (identities.has(key)) return undefined
+    identities.add(key)
+    grants.push({ bot: item.bot, unit: item.unit, name: item.name })
+  }
+  return { services: value.services, grants }
+}
+
 function replyBody(
   action: VaultRequest['action'], stdout: string,
   expectedId?: VaultRequestId | VaultLoginUseRequestId,
@@ -377,6 +431,10 @@ function replyBody(
     return { state: value.state, saved: value.saved }
   }
   if (fields !== 1) return undefined
+  if (action === 'list-grants') {
+    const access = botAccess(value.access)
+    return access === undefined ? undefined : { ok: true, access }
+  }
   if (action === 'inspect-request') {
     const request = value.request
     if (!record(request) || Object.keys(request).length !== 4 || !isVaultRequestId(request.id)
@@ -435,7 +493,7 @@ const unavailable: VaultReply = { ok: false, reason: 'unavailable' }
  * @param scope - Owner-selected presentation, legacy request id, or undefined for Vault management.
  * @returns Whether the operation belongs to the window's current mode.
  */
-export function vaultRequestAllowed(value: unknown, scope: VaultRequestMode | VaultRequestId | undefined): boolean {
+export function vaultRequestAllowed(value: unknown, scope: VaultRequestMode | VaultRequestId | undefined): value is VaultRequest {
   const request = requestBody(value)
   if (request === undefined) return false
   if (request.action === 'inspect-request' || request.action === 'save-request' || request.action === 'dismiss-request') {
@@ -446,6 +504,66 @@ export function vaultRequestAllowed(value: unknown, scope: VaultRequestMode | Va
     return typeof scope !== 'string' && scope?.kind === 'login-use' && request.id === scope.id
   }
   return scope === undefined || (typeof scope !== 'string' && scope.kind === 'manage')
+}
+
+async function readRosterReply(response: Response): Promise<unknown> {
+  if (!response.ok || response.body === null) return undefined
+  const reader = response.body.getReader()
+  const chunks: Uint8Array[] = []
+  let remaining = MAX_ROSTER_BYTES
+  try {
+    for (;;) {
+      const next = await reader.read()
+      if (next.done) return JSON.parse(Buffer.concat(chunks).toString('utf8'))
+      remaining -= next.value.byteLength
+      if (remaining < 0) {
+        await reader.cancel()
+        return undefined
+      }
+      chunks.push(next.value)
+    }
+  } finally {
+    reader.releaseLock()
+  }
+}
+
+/**
+ * Fetch only the owner-visible Bot choices for Vault from the private workspace.
+ * @param origin - Origin of the connected loopback SSH forward.
+ * @param fetcher - Fetch function scoped to the authenticated Cloud session partition.
+ * @param signal - Cancel when the owner closes Vault or disconnects Cloud.
+ * @returns Names and opaque IDs, or undefined when the app cannot confirm the roster.
+ */
+export async function readCloudVaultBots(
+  origin: string, fetcher: (url: string, options: RequestInit) => Promise<Response>, signal: AbortSignal,
+): Promise<readonly VaultBotChoice[] | undefined> {
+  if (signal.aborted || !/^http:\/\/127\.0\.0\.1:[1-9][0-9]{0,4}$/u.test(origin)) return undefined
+  const rpcId = randomUUID()
+  try {
+    const response = await fetcher(`${origin}/api/bots/list`, {
+      method: 'POST', redirect: 'error', credentials: 'include', cache: 'no-store',
+      headers: { 'Content-Type': 'application/json', Origin: origin },
+      body: JSON.stringify({ type: 'client-request', rpcId, method: 'bots/list', payload: { args: { request: { includeHidden: true } } } }),
+      signal: AbortSignal.any([signal, AbortSignal.timeout(5_000)]),
+    })
+    const reply = await readRosterReply(response)
+    if (signal.aborted || !record(reply) || reply.type !== 'server-response' || reply.rpcId !== rpcId
+      || !record(reply.result) || reply.result.ok !== true || !record(reply.result.value)
+      || !Array.isArray(reply.result.value.bots)) return undefined
+    const bots: VaultBotChoice[] = []
+    const ids = new Set<VaultBotId>()
+    for (const row of reply.result.value.bots) {
+      if (!record(row) || row.state !== 'active') continue
+      if (!botId(row.id) || ids.has(row.id) || typeof row.name !== 'string' || row.name.trim() !== row.name
+        || row.name.length === 0 || row.name.length > 255 || CONTROL.test(row.name)) return undefined
+      ids.add(row.id)
+      bots.push({ id: row.id, name: row.name })
+    }
+    return bots
+  } catch (_error) {
+    // Cloud network errors and response bodies stay outside the Vault window.
+    return undefined
+  }
 }
 
 /**

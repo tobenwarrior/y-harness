@@ -65,8 +65,32 @@
       <div id="management" hidden>
         <nav class="segments" role="tablist" aria-labelledby="title">
           <button id="api-keys-tab" type="button" role="tab" aria-controls="api-keys-panel" aria-selected="true"></button>
-          <button id="websites-tab" type="button" role="tab" aria-controls="websites-panel" aria-selected="false"></button>
+          <button id="bot-access-tab" type="button" role="tab" aria-controls="bot-access-panel" aria-selected="false" tabindex="-1"></button>
+          <button id="websites-tab" type="button" role="tab" aria-controls="websites-panel" aria-selected="false" tabindex="-1"></button>
         </nav>
+        <section id="bot-access-panel" role="tabpanel" aria-labelledby="bot-access-tab" hidden>
+          <p id="grants-hint" class="panel-hint"></p>
+          <div class="list-title">
+            <h2 id="grants-title"></h2>
+            <button id="add-grant" class="subtle" type="button" disabled>
+              <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4.5v11m-5.5-5.5h11"/></svg><span id="add-grant-label"></span>
+            </button>
+          </div>
+          <p id="grants-empty" class="empty" hidden></p>
+          <ul id="grants" aria-labelledby="grants-title"></ul>
+          <form id="grant-editor" autocomplete="off" hidden>
+            <label for="grant-bot" id="grant-bot-label"></label>
+            <select id="grant-bot" required></select>
+            <label for="grant-service" id="grant-service-label"></label>
+            <select id="grant-service" required></select>
+            <label for="grant-name" id="grant-name-label"></label>
+            <input id="grant-name" type="text" maxlength="64" pattern="[A-Za-z_][A-Za-z0-9_]{0,63}" spellcheck="false" required>
+            <div class="actions">
+              <button id="grant-editor-cancel" type="button"></button>
+              <button id="grant-save" class="primary" type="submit"></button>
+            </div>
+          </form>
+        </section>
         <section id="websites-panel" role="tabpanel" aria-labelledby="websites-tab" hidden>
           <p id="websites-hint" class="panel-hint"></p>
           <div id="websites-notice" role="status" aria-live="polite"></div>
@@ -120,7 +144,7 @@
           </section>
         </section>
       </div>
-      <footer><p id="apply"></p><button id="refresh" type="button"></button></footer>
+      <footer><p id="apply"></p><p id="grant-notice" role="status" aria-live="polite" hidden></p><button id="refresh" type="button"></button></footer>
     </main>
     <dialog id="confirmation" aria-labelledby="confirm-title" aria-describedby="confirm-detail">
       <h2 id="confirm-title"></h2>

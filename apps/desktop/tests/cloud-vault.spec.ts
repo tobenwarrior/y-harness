@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { afterEach, describe, expect, it } from 'vitest'
-import { cloudVaultRequest, isVaultLoginUseRequestId, isVaultRequestId, vaultRequestAllowed, type VaultExec } from '../src/cloud-vault.ts'
+import { cloudVaultRequest, isVaultLoginUseRequestId, isVaultRequestId, readCloudVaultBots, vaultRequestAllowed, type VaultExec } from '../src/cloud-vault.ts'
 
 const unit = 'fixture-worker.service'
 const value = 'a synthetic value with spaces, quotes and \n a second line'
@@ -24,6 +24,42 @@ afterEach(async () => {
 })
 
 describe('Desktop Vault SSH transport', () => {
+  it('accepts grant metadata only in the management window', async () => {
+    const grant = { bot: 'bot-scout', unit, name: 'FIXTURE_KEY' }
+    const add = { action: 'add-grant', ...grant }
+    const id = 'a'.repeat(32)
+    if (!isVaultRequestId(id)) throw new Error('Invalid fixture id')
+    expect(vaultRequestAllowed(add, { kind: 'manage' })).toBe(true)
+    expect(vaultRequestAllowed(add, { kind: 'request', id })).toBe(false)
+    expect(vaultRequestAllowed({ ...add, bot: '../other' }, { kind: 'manage' })).toBe(false)
+    expect(vaultRequestAllowed({ ...add, value }, { kind: 'manage' })).toBe(false)
+    const valid = { access: { services: [unit], grants: [grant] } }
+    await expect(cloudVaultRequest('fixture-vps', { action: 'list-grants' }, signal,
+      fixture(`process.stdout.write(${JSON.stringify(JSON.stringify(valid))});`)))
+      .resolves.toEqual({ ok: true, ...valid })
+    const invalid = { access: { services: [unit], grants: [{ ...grant, value }] } }
+    await expect(cloudVaultRequest('fixture-vps', { action: 'list-grants' }, signal,
+      fixture(`process.stdout.write(${JSON.stringify(JSON.stringify(invalid))});`)))
+      .resolves.toEqual({ ok: false, reason: 'unavailable' })
+  })
+
+  it('loads only the named Bot choices from the connected owner workspace', async () => {
+    const origin = 'http://127.0.0.1:28634'
+    const fetcher = async (url: string, init: RequestInit) => {
+      expect(url).toBe(`${origin}/api/bots/list`)
+      expect(init.credentials).toBe('include')
+      expect(init.redirect).toBe('error')
+      const body = JSON.parse(String(init.body))
+      expect(body).toMatchObject({ type: 'client-request', method: 'bots/list', payload: { args: { request: { includeHidden: true } } } })
+      return Response.json({ type: 'server-response', rpcId: body.rpcId, result: { ok: true, value: { bots: [
+        { id: 'bot-scout', state: 'active', name: 'Scout', fixtureOtherField: value },
+        { id: 'bot-preparing', state: 'provisioning', name: 'Preparing' },
+      ] } } })
+    }
+    await expect(readCloudVaultBots(origin, fetcher, signal)).resolves.toEqual([{ id: 'bot-scout', name: 'Scout' }])
+    await expect(readCloudVaultBots('https://example.com', fetcher, signal)).resolves.toBeUndefined()
+  })
+
   it('inspects a request and returns only its validated metadata', async () => {
     const id = 'a'.repeat(32)
     const execute: VaultExec = (_file, _args, options, callback) => fixture(`
