@@ -4,14 +4,16 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { BotId } from '@yharness/bots'
+import { ToolCallId } from '@yharness/llm'
 import { chromium } from 'playwright'
-import { expect, it } from 'vitest'
+import { expect, it, vi } from 'vitest'
 import { compareOrRefreshGolden, launchWebScaffold, watchConsole, webSnapshotMode } from './scaffold.ts'
 
 const FIXTURE = fileURLToPath(new URL('../../../snapshots/web/bot-workspace/session.v3.jsonl', import.meta.url))
 const GOLDEN = fileURLToPath(new URL('./expected/bot-terminal/action.expected.md', import.meta.url))
 const FILES_GOLDEN = fileURLToPath(new URL('./expected/bot-terminal/files-action.expected.md', import.meta.url))
 const UPLOAD_GOLDEN = fileURLToPath(new URL('./expected/bot-terminal/upload-action.expected.md', import.meta.url))
+const COPY_GOLDEN = fileURLToPath(new URL('./expected/bot-terminal/copy-action.expected.md', import.meta.url))
 const RUNTIME = new URL('../../../packages/bundle/web-app/lib/types/vps-runtime.js', import.meta.url).href
 const BOTS = new URL('../../../packages/bundle/web-app/lib/types/vps-bots.js', import.meta.url).href
 const PROCESS = new URL('../../../packages/bundle/web-app/lib/types/vps-bot-process.js', import.meta.url).href
@@ -206,6 +208,57 @@ it.skipIf(process.platform === 'win32')('switches between a Bot’s Computer and
     await preview.getByText('Orbit workspace', { exact: true }).waitFor()
     expect(await processId(second.sessionId, 'reports/Owner Report.txt')).toBe('')
     expect(await processId(second.sessionId, 'reports/Source #2.txt')).toBe('')
+    const copyPath = new URL('/api/computer/files/copy', web.authenticatedUrl)
+    const copy = { sessionId: first.sessionId, path: 'reports/Owner Report.txt', targetBotId: second.id }
+    expect((await fetch(copyPath, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(copy),
+    })).status).toBe(401)
+    expect((await page.request.post(copyPath.href, { data: { ...copy, version: 'older-revision' } })).status()).toBe(409)
+    expect((await page.request.post(copyPath.href, { data: { ...copy, targetBotId: LEGACY } })).status()).toBe(404)
+
+    await select(FIRST)
+    await filesAction.click()
+    const reportsFolder = fileTree.getByRole('button', { name: 'reports', exact: true })
+    await reportsFolder.waitFor()
+    if (await reportsFolder.getAttribute('aria-expanded') !== 'true') await reportsFolder.click()
+    await fileTree.getByRole('button', { name: 'Owner Report.txt', exact: true }).click()
+    const copyButton = page.getByRole('button', { name: 'Copy to bot', exact: true })
+    await compareOrRefreshGolden(COPY_GOLDEN, (await copyButton.ariaSnapshot()).trimEnd(), webSnapshotMode())
+    await copyButton.click()
+    const picker = page.getByRole('dialog', { name: 'Copy to bot', exact: true })
+    await expect.poll(async () => picker.getByRole('radio').allTextContents()).toHaveLength(1)
+    await picker.getByRole('radio', { name: 'Orbit', exact: true }).check()
+    await picker.getByRole('button', { name: 'Copy file', exact: true }).click()
+    await picker.getByText('Copied to Orbit’s VPS workspace.', { exact: true }).waitFor()
+    await picker.getByRole('button', { name: 'Done', exact: true }).click()
+    expect(await readFile(join(scope, 'bots', second.sessionId, 'Owner Report.txt'), 'utf8')).toBe(planned)
+    expect(await readFile(join(scope, 'bots', first.sessionId, 'reports', 'Owner Report.txt'), 'utf8')).toBe(planned)
+    expect((await page.request.post(copyPath.href, { data: copy })).status()).toBe(409)
+
+    const sender = web.ctx.agents.get(first.sessionId)
+    const receiver = web.ctx.agents.get(second.sessionId)
+    if (sender === undefined || receiver === undefined) throw new Error('A test Bot Agent is unavailable')
+    expect(web.ctx.tools.get('copy_vps_file', sender)).toBeDefined()
+    expect(web.ctx.tools.get('read_vps_file', receiver)).toBeDefined()
+    const readCopy = await web.ctx.tools.execute({
+      name: 'read_vps_file', callId: ToolCallId('read-forwarded-file'), agent: receiver, signal: AbortSignal.timeout(5000),
+      arguments: { path: 'Owner Report.txt' },
+    })
+    expect(readCopy).toMatchObject({ isError: false, content: [{ type: 'text', text: planned }] })
+    const approval = vi.spyOn(web.ctx.approval, 'request').mockResolvedValueOnce('rejected').mockResolvedValueOnce('allowed-once')
+    const toolCopy = (id: string) => web.ctx.tools.execute({
+      name: 'copy_vps_file', callId: ToolCallId(id), agent: sender, signal: AbortSignal.timeout(5000),
+      arguments: { path: 'reports/Source #2.txt', targetBotId: SECOND },
+    })
+    try {
+      await expect(toolCopy('reject-file-copy')).resolves.toMatchObject({ isError: true })
+      expect(await processId(second.sessionId, 'Source #2.txt')).toBe('')
+      await expect(toolCopy('approve-file-copy')).resolves.toMatchObject({ isError: false })
+      expect(await readFile(join(scope, 'bots', second.sessionId, 'Source #2.txt'), 'utf8')).toBe('Bot work only')
+      expect(approval).toHaveBeenCalledTimes(2)
+    } finally {
+      approval.mockRestore()
+    }
 
     await select(LEGACY)
     await sidebar.locator('[data-bot-id="' + LEGACY + '"][aria-current="page"]').waitFor()
@@ -214,6 +267,7 @@ it.skipIf(process.platform === 'win32')('switches between a Bot’s Computer and
     await terminal.waitFor({ state: 'hidden' })
     await select(FIRST)
     await action.waitFor()
+    if (!await terminal.isVisible()) await action.click()
     await terminal.waitFor()
     await send('printf "%s" "$$" > reselected.pid')
     expect(await readPid(first.sessionId, 'reselected.pid')).toBe(firstPid)

@@ -71,6 +71,16 @@ export interface WorkspaceFileAccess {
   readonly workspaceRoot: string
 }
 
+/** Backpressured read of an exact private Computer file version. */
+export interface ComputerFileTransfer {
+  /** Final component of the resolved Computer path. */
+  readonly name: string
+  /** Complete file byte count, when the filesystem supplies it. */
+  readonly bytes: number | undefined
+  /** Byte stream that fails if the selected file changes. */
+  readonly body: ReadableStream<Uint8Array<ArrayBuffer>>
+}
+
 /** Resolve a managed Session without opening its Agent or consulting the Host filesystem. */
 export interface WorkspaceFileAccessProvider {
   /**
@@ -351,10 +361,28 @@ export class WorkspaceFiles extends TypertRemoteService {
    * @returns an attachment response with a backpressured body.
    */
   async downloadComputer(sessionId: SessionId, path: string, signal: AbortSignal): Promise<Response> {
+    const { body, name, bytes } = await this.openComputerFile(sessionId, path, signal)
+    return fileDownloadResponse(body, name, bytes)
+  }
+
+  /**
+   * Open a private Computer file for a byte-preserving transfer.
+   * @param sessionId - exact owner Bot Session.
+   * @param path - workspace-relative or absolute private Computer path.
+   * @param signal - transfer lifetime.
+   * @param expectedVersion - file version shown to the owner, when available.
+   * @returns the file name, size, and a version-checked byte stream.
+   */
+  async openComputerFile(
+    sessionId: SessionId, path: string, signal: AbortSignal, expectedVersion?: string,
+  ): Promise<ComputerFileTransfer> {
     const access = await this.computerAccess(sessionId, signal)
     const { target, info } = await this.locateFile(access, path, signal, true)
     const { fs } = access
     const { size, version } = info
+    if (expectedVersion !== undefined && expectedVersion !== version) {
+      throw new RemoteError('workspace-file/changed', 'The file changed before copying.', { path })
+    }
     const chunkSize = this.config.maxBytes
     const cancel = new AbortController()
     const lifetime = AbortSignal.any([signal, cancel.signal])
@@ -388,7 +416,7 @@ export class WorkspaceFiles extends TypertRemoteService {
         await Promise.allSettled([pending])
       },
     }, { highWaterMark: 0 })
-    return fileDownloadResponse(body, name, size)
+    return { body, name, bytes: size }
   }
 
   private readComplete(fs: FileSystem, target: FsTarget, path: string, signal: AbortSignal): Promise<Uint8Array> {

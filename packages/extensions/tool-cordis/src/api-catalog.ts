@@ -4624,6 +4624,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'an attachment response with a backpressured body.',
       },
       {
+        signature: 'async openComputerFile( sessionId: SessionId, path: string, signal: AbortSignal, expectedVersion?: string, ): Promise<ComputerFileTransfer>',
+        description: 'Open a private Computer file for a byte-preserving transfer.',
+        parameters: [{ name: 'sessionId', description: 'exact owner Bot Session.' }, { name: 'path', description: 'workspace-relative or absolute private Computer path.' }, { name: 'signal', description: 'transfer lifetime.' }, { name: 'expectedVersion', description: 'file version shown to the owner, when available.' }],
+        returns: 'the file name, size, and a version-checked byte stream.',
+      },
+      {
         signature: '@Remote async stat(workspaceFileScope: WorkspaceFileScope, path: WorkspaceFilePath, signal: AbortSignal): Promise<WorkspaceFileStat>',
         description: 'Report one regular file\'s identity, version, and size without its content.',
         parameters: [{ name: 'workspaceFileScope', description: 'header-derived workspace root for the Session identity on the wire.' }, { name: 'path', description: 'Session path or a path confined to its private Computer workspace.' }, { name: 'signal', description: 'caller cancellation.' }],
@@ -6683,6 +6689,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'CompositionRowEnablement',
     declaration: 'export type CompositionRowEnablement = boolean | \'conditional\';',
+  },
+  {
+    name: 'ComputerFileTransfer',
+    declaration: 'export interface ComputerFileTransfer {\n    readonly name: string;\n    readonly bytes: number | undefined;\n    readonly body: ReadableStream<Uint8Array<ArrayBuffer>>;\n}',
   },
   {
     name: 'ComputerUseProviderName',

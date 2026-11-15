@@ -12,7 +12,10 @@ import type {} from '@yharness/client-connection'
 import type {} from '@yharness/system-prompt'
 import { containerComputer, type VpsComputer } from './computer.ts'
 import * as ComputerTool from './computer-tool.ts'
-import { botComputerRoutesWithLegacy, computerFileDownloadRoute, computerFileUploadRoute, computerSignInRoute } from './computer-api.ts'
+import {
+  botComputerRoutesWithLegacy, computerFileDownloadRoute, computerFileHandoffRoutes, computerFileUploadRoute, computerSignInRoute,
+} from './computer-api.ts'
+import { registerVpsBotFileTools, VpsBotFileHandoffs } from './vps-bot-file-handoffs.ts'
 import { resolveVpsFileUploadLimits, uploadComputerFile, type VpsFileUploadConfig } from './vps-bot-upload.ts'
 import { SessionId } from '@yharness/session/types'
 import { VpsRuntime, type VpsBrowserOptions } from './vps-runtime.ts'
@@ -23,7 +26,7 @@ import { registerVpsJournalTool, VpsJournal, type VpsJournalConfig } from './vps
 
 const BOT_TOOLS = new Set([
   'bash', 'read', 'write', 'edit', 'apply_patch', 'glob', 'grep', 'present', 'job_output', 'job_list', 'job_kill',
-  'vps_computer', 'vps_service_status', 'vps_service_restart', 'vps_service_journal', 'skill', 'search_skills',
+  'vps_computer', 'copy_vps_file', 'read_vps_file', 'vps_service_status', 'vps_service_restart', 'vps_service_journal', 'skill', 'search_skills',
   'request_vps_secret',
   'schedule_create', 'schedule_list', 'schedule_delete', 'schedule_update', 'schedule_pause', 'schedule_resume', 'schedule_history',
   'schedule_event_create', 'schedule_event_list', 'schedule_event_delete', 'schedule_event_update',
@@ -193,6 +196,10 @@ export function mountVpsBots(
           return uploadComputerFile(runtimeFor(bot.id), sessionId, file, uploadLimits, signal)
         }, uploadLimits.maxBytes,
       )), 'vps-bots: owner file uploads')
+      const handoffs = new VpsBotFileHandoffs(filesScope, runtimeFor, isDesktopBot, uploadLimits)
+      for (const route of computerFileHandoffRoutes(handoffs)) {
+        filesScope.effect(() => filesScope.connection.fetch.register(route), 'vps-bots: owner file handoffs')
+      }
     })
     if (browserLogin !== undefined) {
       scope.effect(() => scope.connection.fetch.register(vpsBrowserLoginRoute(scope, browserLogin)), 'vps-bots: owner saved-login metadata')
@@ -259,6 +266,12 @@ export function mountVpsBots(
         return
       }
       const installComputerTool = (agentCtx: Context): void => {
+        const workspaceFiles = scope.get('workspaceFiles')
+        if (workspaceFiles !== undefined) {
+          registerVpsBotFileTools(agentCtx, agent,
+            new VpsBotFileHandoffs({ bots: scope.bots, workspaceFiles }, runtimeFor, isDesktopBot, uploadLimits),
+            !isManagedBot(bot.id))
+        }
         ComputerTool.applyVpsBotComputer(agentCtx, async (sessionId) => {
           if (sessionId !== bot.sessionId) throw new Error('VPS Computer requires the owning Bot Session.')
           return computerFor(sessionId, bot.id)

@@ -505,6 +505,16 @@ async readVerifiedBytes( scope: WorkspaceFileScope, path: WorkspaceFilePath, exp
 async downloadComputer(sessionId: SessionId, path: string, signal: AbortSignal): Promise<Response>
 
 /**
+ * Open a private Computer file for a byte-preserving transfer.
+ * @param sessionId - exact owner Bot Session.
+ * @param path - workspace-relative or absolute private Computer path.
+ * @param signal - transfer lifetime.
+ * @param expectedVersion - file version shown to the owner, when available.
+ * @returns the file name, size, and a version-checked byte stream.
+ */
+async openComputerFile( sessionId: SessionId, path: string, signal: AbortSignal, expectedVersion?: string, ): Promise<ComputerFileTransfer>
+
+/**
  * Report one regular file's identity, version, and size without its content.
  * @param workspaceFileScope - header-derived workspace root for the Session identity on the wire.
  * @param path - Session path or a path confined to its private Computer workspace.

@@ -65,7 +65,11 @@ export interface BotComputerRouteTarget {
   readonly navigate?: (url: string, signal: AbortSignal) => Promise<void>
 }
 
+import type { BotId } from '@yharness/bots'
+import { brandString } from '@yharness/brand'
+import { SessionId } from '@yharness/session/types'
 import type { ComputerFileUpload, ComputerFileUploadOutcome } from './vps-bot-upload.ts'
+import type { ComputerFileCopyResult, VpsBotFileHandoffs } from './vps-bot-file-handoffs.ts'
 
 const BODY_LIMIT = 16_384
 const VIEWER_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu
@@ -155,6 +159,72 @@ export function computerFileUploadRoute(
       }
     },
   }
+}
+
+const copyStatus: Readonly<Record<ComputerFileCopyResult['status'], number>> = {
+  copied: 201, 'source-unavailable': 404, 'source-changed': 409, 'target-unavailable': 404,
+  exists: 409, 'too-large': 413, 'no-space': 507, unavailable: 503,
+}
+
+/**
+ * Give the authenticated owner recipient choices and a private workspace copy.
+ * @param handoffs - operations that revalidate both owner Bot identities.
+ * @returns routes for choosing a recipient and copying a file.
+ */
+export function computerFileHandoffRoutes(
+  handoffs: Pick<VpsBotFileHandoffs, 'recipients' | 'copy'>,
+): readonly ConnectionFetchRoute[] {
+  return [
+    {
+      path: '/api/computer/files/recipients',
+      methods: ['GET'],
+      requestBody: 'buffered',
+      async fetch(request) {
+        const sessionId = new URL(request.url).searchParams.get('sessionId')
+        if (sessionId === null || !SESSION_ID.test(sessionId)) return json({ status: 'invalid-request' }, 400)
+        try {
+          const recipients = await handoffs.recipients(SessionId(sessionId), request.signal)
+          return recipients === undefined ? json({ status: 'source-unavailable' }, 404) : json({ recipients })
+        } catch (error) {
+          void error
+          request.signal.throwIfAborted()
+          return json({ status: 'unavailable' }, 503)
+        }
+      },
+    },
+    {
+      path: '/api/computer/files/copy',
+      methods: ['POST'],
+      requestBody: 'streaming',
+      async fetch(request) {
+        let body: unknown
+        try {
+          body = await readPayload(request)
+        } catch (error) {
+          void error
+          return json({ status: 'invalid-request' }, 400)
+        }
+        if (!isRecord(body)
+          || typeof body.sessionId !== 'string' || !SESSION_ID.test(body.sessionId)
+          || typeof body.targetBotId !== 'string' || !SESSION_ID.test(body.targetBotId)
+          || typeof body.path !== 'string' || body.path === '' || body.path.length > 4096 || body.path.includes('\u0000')
+          || (body.version !== undefined && (typeof body.version !== 'string' || !SESSION_ID.test(body.version)))) {
+          return json({ status: 'invalid-request' }, 400)
+        }
+        try {
+          const result = await handoffs.copy({
+            sessionId: SessionId(body.sessionId), targetBotId: brandString<BotId>(body.targetBotId), path: body.path,
+            ...(body.version === undefined ? {} : { version: body.version }),
+          }, request.signal)
+          return json(result, copyStatus[result.status])
+        } catch (error) {
+          void error
+          request.signal.throwIfAborted()
+          return json({ status: 'unavailable' }, 503)
+        }
+      },
+    },
+  ]
 }
 
 function viewerId(value: unknown): ViewerId | undefined {

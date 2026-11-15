@@ -21,6 +21,7 @@ import {
 import { pathPartsOf } from '@yharness/util-workspace-path'
 import type { TextInjected } from './face.ts'
 import { emptyFailureRecourse, failureLine } from './failure-line.ts'
+import { ComputerFileCopy } from './ComputerFileCopy.tsx'
 import { LoadingIndicator } from './LoadingIndicator.tsx'
 import { hostFileOf } from './rpc.ts'
 import type { TextStore } from './store.ts'
@@ -94,12 +95,16 @@ export function TextPreview({
   const displayPath = file.computer === true ? file.path : absolutePath ?? file.path
   // Contributions that hand the file to the Host wait for its Host path.
   const fileOwner = file.computer === true || absolutePath === undefined ? undefined : { absolutePath }
-  const computerDownload = file.computer === true && meta.value !== undefined ? (
-    <Tooltip label={t('download')} side="bottom" delayMs={500}>
-      <a className={css.tool} aria-label={t('download')}
-        href={`/api/computer/files/download?${new URLSearchParams({ sessionId: file.sessionId, path: file.path })}`}
-        download><IconDownloadOutlineRegular /></a>
-    </Tooltip>
+  const computerActions = file.computer === true && meta.value !== undefined ? (
+    <>
+      <ComputerFileCopy key={file.sessionId + '/' + file.path} sessionId={file.sessionId} path={file.path}
+        version={meta.value.version} lifetime={signal} t={t} className={css.tool} />
+      <Tooltip label={t('download')} side="bottom" delayMs={500}>
+        <a className={css.tool} aria-label={t('download')}
+          href={`/api/computer/files/download?${new URLSearchParams({ sessionId: file.sessionId, path: file.path })}`}
+          download><IconDownloadOutlineRegular /></a>
+      </Tooltip>
+    </>
   ) : null
   // Every tab of this type is a `file` resource address, so its params are the
   // `file` type's; the union is narrowed on the one field read, not validated.
@@ -209,7 +214,7 @@ export function TextPreview({
       <div className={css.preview} data-textpreview-state="unsupported" data-textpreview-url={tab.contentId}>
         <div className={css.header}>
           <PathLabel path={displayPath} className={css.path} data-textpreview-path />
-          {computerDownload}
+          {computerActions}
           {fileOwner !== undefined && renderSlot('sidebar.right.tab.document.actions', fileOwner)}
         </div>
         <div className={css.body} data-textpreview-body>
@@ -331,7 +336,7 @@ export function TextPreview({
           </button>
         </Tooltip>
         {/* jscpd:ignore-end */}
-        {computerDownload}
+        {computerActions}
         {fileOwner !== undefined && renderSlot('sidebar.right.tab.document.actions', fileOwner)}
       </div>
       <div
