@@ -144,7 +144,9 @@ To update the worker, stop its service and both sockets, then run the install an
 
 Use the Mac app's **Cloud → Vault → Websites** to save a login. Enable `--saved-logins` when installing the isolated browser worker and set `botComputers.isolatedBrowser.savedLogins` to `true` in the private Web profile. Both options default to off. The Mac app, Web release, and installed VPS Vault script all need to support saved login approvals.
 
-In a direct Bot chat, ask the Bot to sign in with your saved login. Open **Approve sign-in**, check the website and destination, select the login, and approve. The Bot receives the outcome and can check whether the website signed in. The request expires after five minutes. Declining or stopping the turn releases the browser.
+In a direct Bot chat, ask the Bot to sign in. Open **Approve sign-in** and check the website and destination. Choose a saved login or enter one in the secure form. The request expires after five minutes. Declining or stopping the turn releases the browser.
+
+Select **Save this login to Vault** and add a label to keep an entered login after the form is submitted. Leave the option unchecked for a single submission. The Bot receives the outcome and can check the website. Secure entry requires an updated Mac app and VPS Vault command.
 
 Saved login approval supports a single HTTPS sign-in form that submits to the same website. Sites using single sign-on, passkeys, or a separate verification step may require manual sign-in. Removing or replacing a Vault entry prevents use of the old value. Sign out at the website to end an existing browser session.
 

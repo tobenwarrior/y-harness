@@ -41,7 +41,7 @@ DESKTOP_NAME_LIMIT = 100
 DESKTOP_RESPONSE_LIMIT = 160 * 1024
 BROWSER_SOCKET = Path('/run/yharness-browser/vault.sock')
 BROWSER_ACCOUNT = 'yharness-browser'
-BROWSER_REQUEST_LIMIT = 16 * 1024
+BROWSER_REQUEST_LIMIT = 24 * 1024
 BROWSER_RESPONSE_LIMIT = 64 * 1024
 BROWSER_TIMEOUT = 25
 CLOUD_REQUEST_LIMIT = 4 * 1024
@@ -278,6 +278,23 @@ def website_login_request(request):
     }
 
 
+def entered_website_login_request(request):
+    """Validate a login entered for the reviewed browser request."""
+    fields = {'action', 'id', 'origin', 'destination', 'username', 'password'}
+    if (set(request) not in (fields, fields | {'saveLabel'})
+            or not valid_request_id(request.get('id'))
+            or not valid_login_destination(request.get('origin'), request.get('destination'))):
+        raise VaultError('Invalid website login request.')
+    validated = {
+        **request,
+        'username': login_text(request.get('username'), WEBSITE_LOGIN_USERNAME_LIMIT),
+        'password': login_text(request.get('password'), WEBSITE_LOGIN_PASSWORD_LIMIT),
+    }
+    if 'saveLabel' in request:
+        validated['saveLabel'] = login_text(request['saveLabel'], WEBSITE_LOGIN_LABEL_LIMIT, trim=True)
+    return validated
+
+
 def browser_login_inspection(payload, expected_id):
     """Decode one bounded browser inspection without returning browser diagnostics."""
     try:
@@ -337,7 +354,13 @@ def desktop_request(payload):
             return request
         if action in ('list-logins', 'add-login', 'replace-login', 'remove-login'):
             return website_login_request(request)
-        if action == 'inspect-login-use' or action == 'decline-login-use':
+        if action == 'enter-login-use':
+            return entered_website_login_request(request)
+        if action == 'inspect-login-use' and set(request) == {'action', 'id', 'form'}:
+            if not valid_request_id(request.get('id')) or request['form'] != 'entry':
+                raise VaultError('Invalid Vault request.')
+            return request
+        if action in ('inspect-login-use', 'decline-login-use'):
             if set(request) != {'action', 'id'} or not valid_request_id(request.get('id')):
                 raise VaultError('Invalid Vault request.')
             return request
@@ -1282,10 +1305,21 @@ class Vault:
     def _inspect_browser_login(self, request):
         """Return pending browser metadata and matching owner-visible login choices."""
         inspected = self._browser_login_metadata(request['id'])
-        return {'request': {
+        visible = {
             'id': inspected['id'], 'origin': inspected['origin'], 'destination': inspected['destination'],
             'logins': self._browser_login_views(inspected['origin']),
-        }}
+        }
+        if request.get('form') == 'entry':
+            visible['acceptsCredentials'] = True
+        return {'request': visible}
+
+    def _deliver_browser_login(self, inspected, username, password):
+        """Send the values for one pending login to the dedicated browser worker."""
+        payload = json.dumps({
+            'action': 'use-login', 'id': inspected['id'], 'origin': inspected['origin'],
+            'username': username, 'password': password,
+        }, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
+        return browser_login_state(browser_client(payload))
 
     def _approve_browser_login(self, request):
         """Deliver an owner-selected login while policy, generation, and delivery share one lock."""
@@ -1296,19 +1330,32 @@ class Vault:
                            if candidate['id'] == request['loginId'] and candidate['origin'] == inspected['origin']), None)
             if record is None or website_login_generation(record) != request['generation']:
                 return {'state': 'unavailable'}
-            result = {}
-
-            def deliver(username, password):
-                payload = json.dumps({
-                    'action': 'use-login', 'id': inspected['id'], 'origin': inspected['origin'],
-                    'username': username, 'password': password,
-                }, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
-                result.update(browser_login_state(browser_client(payload)))
-
-            self._use_website_login_locked(record['id'], inspected['origin'], deliver)
-            return result if result else {'state': 'unavailable'}
+            return self._use_website_login_locked(
+                record['id'], inspected['origin'],
+                lambda username, password: self._deliver_browser_login(inspected, username, password),
+            )
         except (AttributeError, VaultError, OSError, OverflowError, TypeError, ValueError, UnicodeError, RecursionError):
             return {'state': 'unavailable'}
+
+    def _enter_browser_login(self, request):
+        """Submit a one-time login and save it only after submission and explicit consent."""
+        try:
+            inspected = self._browser_login_metadata(request['id'])
+            if inspected['origin'] != request['origin'] or inspected['destination'] != request['destination']:
+                return {'state': 'unavailable'}
+            result = self._deliver_browser_login(inspected, request['username'], request['password'])
+        except (VaultError, OSError):
+            return {'state': 'unavailable'}
+        if result['state'] == 'submitted' and 'saveLabel' in request:
+            try:
+                self.add_website_login({
+                    'origin': inspected['origin'], 'label': request['saveLabel'],
+                    'username': request['username'], 'password': request['password'],
+                })
+                result['saved'] = True
+            except (VaultError, OSError):
+                result['saved'] = False
+        return result
 
     def _decline_browser_login(self, request):
         """Release one pending browser request without returning browser diagnostics."""
@@ -1344,6 +1391,8 @@ class Vault:
                 return self._inspect_browser_login(request)
             if action == 'approve-login-use':
                 return self._approve_browser_login(request)
+            if action == 'enter-login-use':
+                return self._enter_browser_login(entered_website_login_request(request))
             if action == 'decline-login-use':
                 return self._decline_browser_login(request)
             if action in ('inspect-request', 'save-request', 'dismiss-request'):

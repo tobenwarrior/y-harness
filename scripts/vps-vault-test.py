@@ -490,21 +490,35 @@ class VaultTest(unittest.TestCase):
         inspect = {'action': 'inspect-login-use', 'id': 'a' * 32}
         approve = {'action': 'approve-login-use', 'id': 'a' * 32, 'loginId': 'b' * 32,
                    'generation': 'c' * 64}
+        enter = {'action': 'enter-login-use', 'id': 'a' * 32, 'origin': 'https://example.com',
+                 'destination': 'https://example.com/login', 'username': 'fixture-user', 'password': 'fixture-password'}
         self.assertEqual(vault.desktop_request(json.dumps(inspect).encode()), inspect)
+        self.assertEqual(vault.desktop_request(json.dumps({**inspect, 'form': 'entry'}).encode()),
+                         {**inspect, 'form': 'entry'})
         self.assertEqual(vault.desktop_request(json.dumps(approve).encode()), approve)
+        self.assertEqual(vault.desktop_request(json.dumps(enter).encode()), enter)
+        self.assertEqual(vault.desktop_request(json.dumps({**enter, 'saveLabel': ' Work '}).encode()),
+                         {**enter, 'saveLabel': 'Work'})
         decline = {'action': 'decline-login-use', 'id': 'a' * 32}
         self.assertEqual(vault.desktop_request(json.dumps(decline).encode()), decline)
         for malformed in (
             {'action': 'inspect-login-use', 'id': 'A' * 32},
             {'action': 'inspect-login-use', 'id': 'a' * 32, 'extra': 1},
+            {**inspect, 'form': 'unknown'},
             {'action': 'approve-login-use', 'id': 'a' * 32, 'loginId': 'b' * 31, 'generation': 'c' * 64},
             {'action': 'approve-login-use', 'id': 'a' * 32, 'loginId': 'b' * 32, 'generation': 'c' * 63},
             {'action': 'approve-login-use', 'id': 'a' * 32, 'loginId': 'b' * 32, 'generation': 'c' * 64, 'extra': 1},
             {'action': 'decline-login-use', 'id': 'a' * 32, 'extra': 1},
+            {**enter, 'destination': 'https://other.example/login'},
+            {**enter, 'saveLabel': ''},
+            {**enter, 'saveLabel': None},
+            {**enter, 'password': 'é' * vault.WEBSITE_LOGIN_PASSWORD_LIMIT},
+            {**enter, 'username': ''},
+            {**enter, 'extra': True},
         ):
             with self.subTest(request=malformed), self.assertRaises(vault.VaultError):
                 vault.desktop_request(json.dumps(malformed).encode())
-        for request in (inspect, approve, decline):
+        for request in (inspect, approve, enter, decline):
             with self.subTest(action=request['action']), self.assertRaises(vault.VaultError):
                 vault.cloud_request(json.dumps(request).encode())
 
@@ -569,14 +583,85 @@ class VaultTest(unittest.TestCase):
             }).encode()
 
         with patch.object(vault, 'browser_client', side_effect=browser):
-            result = self.store.desktop({'action': 'inspect-login-use', 'id': request_id}, OWNER_UID)
+            old = self.store.desktop({'action': 'inspect-login-use', 'id': request_id}, OWNER_UID)
+            result = self.store.desktop({'action': 'inspect-login-use', 'id': request_id, 'form': 'entry'}, OWNER_UID)
 
         self.assertEqual(result, {'request': {
             'id': request_id, 'origin': 'https://example.com', 'destination': destination,
             'logins': [{'id': example_login['id'], 'label': 'Example', 'generation': generation}],
+            'acceptsCredentials': True,
         }})
-        self.assertEqual(calls, [{'action': 'inspect-login', 'id': request_id}])
+        self.assertEqual(old, {'request': {key: value for key, value in result['request'].items() if key != 'acceptsCredentials'}})
+        self.assertEqual(calls, [{'action': 'inspect-login', 'id': request_id}] * 2)
         self.assertNotIn('private', json.dumps(result))
+
+    def test_entered_login_requires_the_owner_and_the_reviewed_destination(self):
+        self.store.allow_desktop(OWNER_UID, CLOUD_UID, [])
+        request = {'action': 'enter-login-use', 'id': 'a' * 32, 'origin': 'https://example.com',
+                   'destination': 'https://example.com/login', 'username': 'fixture-user', 'password': 'fixture-password'}
+        with patch.object(vault, 'browser_client') as browser:
+            with self.assertRaises(vault.VaultError):
+                self.store.desktop(request, CLOUD_UID)
+            browser.assert_not_called()
+            browser.return_value = json.dumps({
+                'id': request['id'], 'origin': request['origin'], 'destination': 'https://example.com/alternate',
+                'state': 'pending',
+            }).encode()
+            self.assertEqual(self.store.desktop(request, OWNER_UID), {'state': 'unavailable'})
+            browser.assert_called_once_with(json.dumps(
+                {'action': 'inspect-login', 'id': request['id']}, separators=(',', ':'),
+            ).encode())
+        self.assertEqual(self.sealed, [])
+
+    def test_entered_login_is_saved_only_after_submission_and_with_consent(self):
+        self.store.allow_desktop(OWNER_UID, CLOUD_UID, [])
+        request = {'action': 'enter-login-use', 'id': 'a' * 32, 'origin': 'https://example.com',
+                   'destination': 'https://example.com/login', 'username': 'fixture-user', 'password': 'fixture-password'}
+        metadata = {key: request[key] for key in ('id', 'origin', 'destination')}
+        use = {'action': 'use-login', **{key: request[key] for key in ('id', 'origin', 'username', 'password')}}
+        for state, save, failed in (
+            ('submitted', False, False), ('needs-owner', True, False),
+            ('submitted', True, True), ('submitted', True, False),
+        ):
+            with self.subTest(state=state, save=save, failed=failed):
+                self.failed_encryption = failed
+                entered = {**request, 'saveLabel': 'Work'} if save else request
+                with patch.object(vault, 'browser_client', side_effect=[
+                    json.dumps({**metadata, 'state': 'pending'}).encode(), json.dumps({'state': state}).encode(),
+                ]) as browser:
+                    result = self.store.desktop(entered, OWNER_UID)
+                expected = {'state': state}
+                if save and state == 'submitted':
+                    expected['saved'] = not failed
+                self.assertEqual(result, expected)
+                self.assertEqual([json.loads(call.args[0]) for call in browser.call_args_list],
+                                 [{'action': 'inspect-login', 'id': request['id']}, use])
+                logins = self.store.desktop({'action': 'list-logins'}, OWNER_UID)['logins']
+                self.assertEqual(len(logins), int(result.get('saved', False)))
+        self.assertEqual(logins[0]['label'], 'Work')
+        self.assertEqual(logins[0]['origin'], request['origin'])
+        self.assertNotIn(request['password'], (self.store.website_login_directory() / logins[0]['id']).read_text())
+
+    def test_entered_login_supports_maximum_fields_with_json_escaping(self):
+        self.store.allow_desktop(OWNER_UID, CLOUD_UID, [])
+        request_id = 'a' * 32
+        origin = 'https://example.com'
+        destination = origin + '/login'
+        password = '"' * vault.WEBSITE_LOGIN_PASSWORD_LIMIT
+
+        def browser(payload):
+            self.assertLessEqual(len(payload), vault.BROWSER_REQUEST_LIMIT)
+            body = json.loads(payload)
+            if body['action'] == 'inspect-login':
+                return json.dumps({'id': request_id, 'origin': origin, 'destination': destination, 'state': 'pending'}).encode()
+            self.assertEqual(body['password'], password)
+            return b'{"state":"submitted"}'
+
+        with patch.object(vault, 'browser_client', side_effect=browser):
+            self.assertEqual(self.store.desktop({
+                'action': 'enter-login-use', 'id': request_id, 'origin': origin, 'destination': destination,
+                'username': '"' * vault.WEBSITE_LOGIN_USERNAME_LIMIT, 'password': password,
+            }, OWNER_UID), {'state': 'submitted'})
 
     def test_desktop_login_use_approves_after_reinspection_and_delivers_only_to_browser(self):
         self.store.allow_desktop(OWNER_UID, CLOUD_UID, [])
@@ -635,15 +720,29 @@ class VaultTest(unittest.TestCase):
         self.assertEqual(result, {'state': 'unavailable'})
         self.assertEqual(self.decrypt_calls, [])
 
+        pending = json.dumps({
+            'id': request_id, 'origin': 'https://example.com',
+            'destination': 'https://example.com/login', 'state': 'pending',
+        }).encode()
         self.store.desktop({
             'action': 'replace-login', 'id': login['id'], 'label': 'Rotated',
             'username': 'new-owner', 'password': 'new-private',
         }, OWNER_UID)
-        with patch.object(vault, 'browser_client', return_value=b'{"id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","origin":"https://example.com","destination":"https://example.com/login","state":"pending"}'):
+        with patch.object(vault, 'browser_client', return_value=pending):
             result = self.store.desktop({
                 'action': 'approve-login-use', 'id': request_id, 'loginId': login['id'], 'generation': generation,
             }, OWNER_UID)
         self.assertEqual(result, {'state': 'unavailable'})
+        self.assertEqual(self.decrypt_calls, [])
+
+        current = next(record for record in self.store.website_login_records() if record['id'] == login['id'])
+        latest_generation = vault.website_login_generation(current)
+        self.store.desktop({'action': 'remove-login', 'id': login['id']}, OWNER_UID)
+        with patch.object(vault, 'browser_client', return_value=pending) as browser:
+            self.assertEqual(self.store.desktop({
+                'action': 'approve-login-use', 'id': request_id, 'loginId': login['id'], 'generation': latest_generation,
+            }, OWNER_UID), {'state': 'unavailable'})
+            browser.assert_called_once()
         self.assertEqual(self.decrypt_calls, [])
 
     def test_desktop_login_use_decline_cancels_the_browser_request_without_diagnostics(self):

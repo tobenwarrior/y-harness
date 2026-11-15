@@ -53,7 +53,7 @@ export function apply(ctx: Context): void {
  * @param resolve - Resolves the current owner Bot's desktop from the calling Session.
  * @param signIn - Optional handoff restricted to a direct owner turn.
  * @param navigate - Optional website navigation through the calling Bot's browser.
- * @param savedLogin - Optional saved-login request restricted to a direct owner turn.
+ * @param savedLogin - Optional secure website login request restricted to a direct owner turn.
  */
 export function applyVpsBotComputer(
   ctx: Context,
@@ -80,7 +80,8 @@ function registerVpsComputer(
       + (signIn === undefined ? '' : ' For a website sign-in or verification that needs the owner, use request_sign_in. '
         + 'The owner uses the Computer directly. Never ask for a password or code in chat.')
       + (navigate === undefined ? '' : ' Use navigate for an HTTP(S) website URL without credentials.')
-      + (savedLogin === undefined ? '' : ' Use request_saved_login only in a direct owner Bot turn; verify the page after the request.'),
+      + (savedLogin === undefined ? '' : ' In a direct owner Bot turn, use request_saved_login for a website login. '
+        + 'The owner can select a saved login or enter one securely. Verify the page after the request.'),
     keyDescription: 'X11 key or chord, for example Return or ctrl+a.',
     observe: async (sessionId, signal) => (await resolve(sessionId)).observe(signal),
     act: async (sessionId, action, signal) => (await resolve(sessionId)).actAsBot(action, signal),
@@ -133,7 +134,7 @@ function registerComputerTool(ctx: Context, target: ComputerToolTarget): void {
         description: 'Observe the screen or send one pointer, keyboard, or text action.'
           + (target.signIn === undefined ? '' : ' Request sign-in with no other arguments.')
           + (target.navigate === undefined ? '' : ' Navigate with an HTTP(S) URL without credentials.')
-          + (target.savedLogin === undefined ? '' : ' Request saved website login with no other arguments.'),
+          + (target.savedLogin === undefined ? '' : ' Request secure website sign-in with no other arguments.'),
       },
       x: { type: 'integer', description: 'Horizontal pixel for move, click, drag, or scroll.' },
       y: { type: 'integer', description: 'Vertical pixel for move, click, drag, or scroll.' },
@@ -191,7 +192,7 @@ function registerComputerTool(ctx: Context, target: ComputerToolTarget): void {
       }
       if (action === 'request_saved_login') {
         if (exec.agent === undefined || target.savedLogin === undefined || Object.keys(values).length !== 0) {
-          throw new Error('Saved website login takes no arguments and requires the owner Bot chat.')
+          throw new Error('Secure website sign-in takes no arguments and requires the owner Bot chat.')
         }
         const result = await target.savedLogin(exec.agent, exec.signal)
         switch (result.state) {
@@ -200,7 +201,7 @@ function registerComputerTool(ctx: Context, target: ComputerToolTarget): void {
           case 'needs-owner':
             return { message: 'The website needs a manual sign-in or verification step.' }
           case 'unavailable':
-            return { message: 'The saved login request ended. Ask the owner before trying again.' }
+            return { message: 'The website sign-in request ended. Ask the owner before trying again.' }
         }
       }
       if (action !== 'observe') {
