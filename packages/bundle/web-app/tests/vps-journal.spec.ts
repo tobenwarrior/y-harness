@@ -172,6 +172,10 @@ describe('VPS Bot journal', () => {
     const incrementalServer = createServer((socket) => {
       socket.write('{"version":1,"generatedAt":"now","recovery":[')
       const heartbeat = setInterval(() => socket.write(' '), 5)
+      socket.once('error', (error: NodeJS.ErrnoException) => {
+        clearInterval(heartbeat)
+        if (error.code !== 'EPIPE' && error.code !== 'ECONNRESET') throw error
+      })
       socket.once('close', () => clearInterval(heartbeat))
     })
     await listen(incrementalServer, path)
