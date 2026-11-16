@@ -1,4 +1,4 @@
-/** Models use an exact Bot's shared project mount through the ordinary file policies. */
+/** An owner Bot uses its shared project mount through the Computer file policies. */
 
 import { resolve } from 'node:path/posix'
 import type { WorkspaceFileAccess } from '@yharness/api-workspace-files'
@@ -9,19 +9,20 @@ import { defineTool, type ToolExecution } from '@yharness/tools'
 import { isVpsSharedPath } from './vps-runtime.ts'
 
 /**
- * Mount shared project files on one participating owner Bot.
+ * Expose shared project files to one Bot while its owner grants access.
  * @param ctx - Scoped services used to register and execute the tool.
  * @param agent - Exact Agent that owns the selected Bot.
  * @param workspaceFiles - Existing Computer file reader and listing service.
  * @param access - Revalidate and select the shared filesystem for this Bot.
+ * @returns An updater for the Bot's registration after its owner changes access.
  */
 export function registerVpsProjectTool(
   ctx: Context,
   agent: NonNullable<ToolExecution['agent']>,
   workspaceFiles: Context['workspaceFiles'],
   access: (signal: AbortSignal) => Promise<WorkspaceFileAccess | undefined>,
-): void {
-  ctx.effect(() => ctx.tools.register(defineTool({
+): (granted: boolean) => Promise<void> {
+  const definition = defineTool({
     name: 'vps_project_files',
     description: 'List, read, or save text in /workspace, the shared project folder for participating VPS Bots. '
       + 'Read returns a version. Use that exact version to update an existing file. A write without a version creates a new file only.',
@@ -66,5 +67,15 @@ export function registerVpsProjectTool(
         }
       }
     },
-  })), 'vps-bots: shared project files')
+  })
+  let dispose: (() => Promise<void>) | undefined
+  return async (granted) => {
+    if (granted) {
+      dispose ??= ctx.effect(() => ctx.tools.register(definition), 'vps-bots: shared project files')
+    } else {
+      const registered = dispose
+      dispose = undefined
+      await registered?.()
+    }
+  }
 }

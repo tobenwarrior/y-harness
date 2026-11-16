@@ -16,7 +16,7 @@ import { accessSync, constants, readFileSync } from 'node:fs'
 import { mkdir, lstat } from 'node:fs/promises'
 import { isAbsolute, relative, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
-import type { VpsBotNetworkPolicy } from './vps-bot-network-policy.ts'
+import type { VpsBotComputerSetting } from './vps-bot-computer-setting.ts'
 
 const PODMAN = '/usr/bin/podman'
 const USER_COMPUTER_SCOPE = [
@@ -73,12 +73,14 @@ export interface VpsBrowserOptions {
 export interface VpsRuntimeOptions {
   /** Local Firefox image and its syscall policy. */
   readonly browser?: VpsBrowserOptions
-  /** Mount the installation's shared project volume alongside the private workspace. */
+  /** Default access to the installation's shared project volume. */
   readonly sharedWorkspace?: boolean
   /** Allow outbound traffic. By default only the provisioned Firefox desktop has internet access. */
   readonly internet?: boolean
   /** Host-owned network choices keyed by the exact private Computer Session. */
-  readonly networkPolicy?: Pick<VpsBotNetworkPolicy, 'get' | 'set'>
+  readonly networkPolicy?: Pick<VpsBotComputerSetting, 'get' | 'set'>
+  /** Host-owned choices for mounting the shared project in an exact Session. */
+  readonly sharedWorkspacePolicy?: Pick<VpsBotComputerSetting, 'get' | 'set'>
 }
 
 /**
@@ -128,16 +130,19 @@ export class VpsRuntime {
   private readonly internals: VpsRuntimeInternals
   private readonly browserPolicy?: string
   private readonly projectVolume?: string
+  private readonly sharedWorkspace: boolean
+  private readonly sharedWorkspacePolicy: VpsRuntimeOptions['sharedWorkspacePolicy']
   private readonly networkPolicy: VpsRuntimeOptions['networkPolicy']
   private readonly scopedLaunch: boolean
   /** Whether the Bot's private computer and terminal have outbound internet access. */
   readonly internet: boolean
-  /** Absolute mount point inside participating Bot containers. */
+  /** Project mount point for this runtime when a Session has access. */
   readonly sharedRoot?: string
   private readonly pending = new Map<string, Promise<void>>()
   private readonly healthyUntil = new Map<string, number>()
   private readonly active = new Map<string, number>()
   private readonly replacing = new Set<string>()
+  private readonly mountedProjects = new Set<string>()
 
   /**
    * @param root - Absolute owner-only directory containing all Bot workspaces.
@@ -157,8 +162,11 @@ export class VpsRuntime {
     this.scopedLaunch = internals.userService ?? inSystemdUserService()
     this.internet = options.internet ?? (browser !== undefined)
     this.networkPolicy = options.networkPolicy
-    if (sharedWorkspace) {
-      if (isVpsSharedPath(this.rootPath)) throw new VpsRuntimeError('Private and shared Bot workspaces must be distinct')
+    this.sharedWorkspace = sharedWorkspace === true
+    this.sharedWorkspacePolicy = options.sharedWorkspacePolicy
+    const overlapping = isVpsSharedPath(this.rootPath)
+    if (this.sharedWorkspace && overlapping) throw new VpsRuntimeError('Private and shared Bot workspaces must be distinct')
+    if (!overlapping && (this.sharedWorkspace || this.sharedWorkspacePolicy !== undefined)) {
       this.sharedRoot = SHARED_PROJECT
       this.projectVolume = 'yharness-bot-project-' + rootDigest(this.rootPath)
     }
@@ -182,6 +190,26 @@ export class VpsRuntime {
   async internetFor(sessionId: string): Promise<boolean> {
     validateSessionId(sessionId)
     return await this.networkPolicy?.get(sessionId) ?? this.internet
+  }
+
+  /**
+   * Resolve current access without opening the private Computer.
+   * @param sessionId - Exact private Bot Session.
+   * @returns The shared project root when the Session has access.
+   */
+  async sharedWorkspaceFor(sessionId: string): Promise<string | undefined> {
+    validateSessionId(sessionId)
+    if (this.sharedRoot === undefined) return undefined
+    const enabled = await this.sharedWorkspacePolicy?.get(sessionId) ?? this.sharedWorkspace
+    return enabled ? this.sharedRoot : undefined
+  }
+
+  /**
+   * Report availability of the owner switch without opening the Computer.
+   * @returns Whether this runtime supports per-Session shared workspace changes.
+   */
+  supportsSharedWorkspaceControl(): boolean {
+    return this.sharedWorkspacePolicy !== undefined && this.sharedRoot !== undefined
   }
 
   /**
@@ -236,6 +264,28 @@ export class VpsRuntime {
   }
 
   /**
+   * Change one idle Computer's project mount while preserving the named volumes.
+   * @param sessionId - Exact private Bot Session.
+   * @param enabled - Owner-selected project access.
+   * @param signal - Cancel before removing the existing container.
+   * @returns Whether the owner choice was saved or the Computer is busy.
+   */
+  async setSharedWorkspaceAccess(sessionId: string, enabled: boolean, signal: AbortSignal): Promise<'applied' | 'busy'> {
+    const policy = this.sharedWorkspacePolicy
+    const volume = this.projectVolume
+    return this.changeWhileIdle<'applied'>(sessionId, signal, async () => {
+      if (policy === undefined || volume === undefined) throw new VpsRuntimeError('Shared workspace settings are unavailable.')
+      const current = await this.sharedWorkspaceFor(sessionId)
+      if ((current !== undefined) === enabled) return 'applied'
+      await ensurePrivateDirectory(this.rootPath, this.internals.uid)
+      if (enabled) await this.ensureSharedVolume(volume)
+      if (!await this.removeIdleContainer(sessionId, await this.internetFor(sessionId), signal)) return 'busy'
+      await policy.set(sessionId, enabled)
+      return 'applied'
+    })
+  }
+
+  /**
    * Recreate an idle Computer with its saved workspace, browser profile and network choice.
    * @param sessionId - Exact private Bot Session.
    * @param signal - Cancel before stopping the existing Computer.
@@ -268,10 +318,12 @@ export class VpsRuntime {
     signal.throwIfAborted()
     if (exists.code === 1) {
       this.healthyUntil.delete(sessionId)
+      this.mountedProjects.delete(sessionId)
       return true
     }
     if (exists.code !== 0) throw new VpsRuntimeError('VPS Bot container lookup failed')
-    const metadata = await this.inspectCurrent(sessionId, internet)
+    const projectVolume = await this.sharedWorkspaceFor(sessionId) === undefined ? undefined : this.projectVolume
+    const metadata = await this.inspectCurrent(sessionId, internet, projectVolume)
     if (metadata.running) {
       const processes = await this.runPodman(['top', name, 'pid', 'ppid', 'comm', 'args'])
       if (processes.code !== 0 || !idleDesktop(processes.stdout, recovering)) return false
@@ -281,6 +333,7 @@ export class VpsRuntime {
     await this.checkBrowserPolicy()
     signal.throwIfAborted()
     this.healthyUntil.delete(sessionId)
+    this.mountedProjects.delete(sessionId)
     if (metadata.running && (await this.runPodman(['stop', '--time', '10', name])).code !== 0) {
       throw new VpsRuntimeError('The private Computer could not stop.')
     }
@@ -305,6 +358,7 @@ export class VpsRuntime {
     const now = Date.now()
     if ((this.healthyUntil.get(sessionId) ?? 0) > now) return
     const task = Promise.resolve().then(async () => {
+      this.mountedProjects.delete(sessionId)
       await this.ensureOne(sessionId)
       this.healthyUntil.set(sessionId, Date.now() + DESKTOP_HEALTH_CACHE_MS)
     })
@@ -337,7 +391,8 @@ export class VpsRuntime {
     }
     const workspace = this.workspace(sessionId)
     const directory = options.workdir
-    const root = directory !== undefined && this.sharedRoot !== undefined && isVpsSharedPath(directory)
+    const shared = this.sharedWorkspacePolicy === undefined ? this.sharedWorkspace : this.mountedProjects.has(sessionId)
+    const root = directory !== undefined && shared && this.sharedRoot !== undefined && isVpsSharedPath(directory)
       ? this.sharedRoot : workspace
     const workdir = directory === undefined ? workspace : scopedWorkdir(root, directory)
     if (options.stdin !== undefined && typeof options.stdin !== 'boolean') {
@@ -387,14 +442,14 @@ export class VpsRuntime {
     await ensurePrivateDirectory(workspace, this.internals.uid)
     const name = containerName(this.rootPath, sessionId)
     const volume = volumeName(this.rootPath, sessionId)
-    const projectVolume = this.projectVolume
+    const projectVolume = await this.sharedWorkspaceFor(sessionId) === undefined ? undefined : this.projectVolume
     const browserPolicy = this.browserPolicy
     const browserVolume = browserPolicy === undefined ? undefined : `${volume}-browser`
     const internet = await this.internetFor(sessionId)
     await this.checkBrowserPolicy()
     const exists = await this.runPodman(['container', 'exists', name])
     if (exists.code === 0) {
-      const metadata = await this.inspectCurrent(sessionId, internet)
+      const metadata = await this.inspectCurrent(sessionId, internet, projectVolume)
       await this.ensureVolume(volume, sessionId, workspace)
       if (browserVolume !== undefined) await this.ensureVolume(browserVolume, sessionId, workspace, 'browser')
       if (projectVolume !== undefined) await this.ensureSharedVolume(projectVolume)
@@ -403,6 +458,7 @@ export class VpsRuntime {
         if (started.code !== 0) throw new VpsRuntimeError('VPS Bot container could not be restarted')
       }
       await this.waitForDesktop(name, workspace)
+      if (projectVolume !== undefined) this.mountedProjects.add(sessionId)
       return
     }
     if (exists.code !== 1) throw new VpsRuntimeError('VPS Bot container lookup failed')
@@ -440,15 +496,16 @@ export class VpsRuntime {
     ])
     if (launched.code !== 0) throw new VpsRuntimeError('VPS Bot container could not be launched')
     await this.waitForDesktop(name, workspace)
+    if (projectVolume !== undefined) this.mountedProjects.add(sessionId)
   }
 
-  private async inspectCurrent(sessionId: string, internet: boolean): Promise<ContainerMetadata> {
+  private async inspectCurrent(sessionId: string, internet: boolean, projectVolume: string | undefined): Promise<ContainerMetadata> {
     const name = containerName(this.rootPath, sessionId)
     const inspected = await this.runPodman(['inspect', '--format', '{{json .}}', name])
     if (inspected.code !== 0) throw new VpsRuntimeError('VPS Bot container inspection failed')
     return inspectContainer(inspected.stdout, this.rootPath, this.imageName, sessionId,
       this.workspace(sessionId), volumeName(this.rootPath, sessionId), {
-        browserPolicy: this.browserPolicy, projectVolume: this.projectVolume, networkMode: modeFor(internet),
+        browserPolicy: this.browserPolicy, projectVolume, networkMode: modeFor(internet),
       })
   }
 

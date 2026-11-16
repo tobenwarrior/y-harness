@@ -7,6 +7,22 @@ import { VpsBotFileSystem } from '../src/vps-bot-files.ts'
 import { VpsRuntime } from '../src/vps-runtime.ts'
 
 describe('VPS Bot file provider', () => {
+  it('rejects retained shared file access after the owner revokes the grant', async () => {
+    const ctx = new Context()
+    const sessionId = 'bot-session-0e9beecd-b6f5-40b1-8d52-f97259bdcf76'
+    const policy = { get: vi.fn().mockResolvedValue(false), set: vi.fn() }
+    const runtime = new VpsRuntime('/yharness-test', 'localhost/test', undefined, { sharedWorkspacePolicy: policy })
+    const ensure = vi.spyOn(runtime, 'ensure').mockResolvedValue()
+    try {
+      const shared = new VpsBotFileSystem(ctx, runtime, sessionId, 'shared')
+      await expect(shared.resolve('notes.txt')).rejects.toThrow('This Bot does not have shared workspace access.')
+      expect(policy.get).toHaveBeenCalledExactlyOnceWith(sessionId)
+      expect(ensure).not.toHaveBeenCalled()
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
   it('uses its computer for guarded writes, edits, reads and moves', async () => {
     const root = await mkdtemp(join(tmpdir(), 'yh-bot-files-'))
     const runtime = new VpsRuntime(root, 'localhost/test')

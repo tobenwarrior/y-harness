@@ -1,4 +1,4 @@
-/** Durable owner overrides for one VPS Bot's outbound network access. */
+/** Durable owner choices for a private VPS Bot Computer. */
 
 import { constants } from 'node:fs'
 import { randomUUID } from 'node:crypto'
@@ -7,10 +7,10 @@ import { isAbsolute, join, resolve } from 'node:path'
 
 const SESSION_ID = /^bot-session-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u
 const CONTROL = /[\u0000-\u001f\u007f]/u
-const POLICY_DIRECTORY = '.network-access'
+const POLICY_DIRECTORIES = { network: '.network-access', 'shared-workspace': '.shared-workspace-access' } as const
 const POLICY_VERSION = 1
 const POLICY_MAX_BYTES = 128
-const POLICY_ERROR = 'VPS Bot network policy is invalid.'
+const POLICY_ERROR = 'VPS Bot computer setting is invalid.'
 const NOFOLLOW = process.platform === 'win32' ? 0 : constants.O_NOFOLLOW
 const pending = new Map<string, Promise<void>>()
 
@@ -20,18 +20,19 @@ const pending = new Map<string, Promise<void>>()
  * The constructor does not touch the filesystem. Missing policy files are
  * represented by `undefined`; an existing damaged or unsafe policy rejects.
  */
-export class VpsBotNetworkPolicy {
+export class VpsBotComputerSetting {
   private readonly root: string
   private readonly directory: string
   private readonly queueKey: string
 
   /**
    * @param root - Existing owner-controlled private root for Bot state.
+   * @param setting - Selects a host-only record directory for this setting.
    */
-  constructor(root: string) {
+  constructor(root: string, setting: keyof typeof POLICY_DIRECTORIES) {
     if (typeof root !== 'string' || root.length === 0 || !isAbsolute(root) || CONTROL.test(root)) throw invalidPolicy()
     this.root = resolve(root)
-    this.directory = join(this.root, POLICY_DIRECTORY)
+    this.directory = join(this.root, POLICY_DIRECTORIES[setting])
     this.queueKey = this.directory
   }
 
@@ -51,7 +52,7 @@ export class VpsBotNetworkPolicy {
   /**
    * Store one owner-selected override with an atomic, durable replacement.
    * @param sessionId - Canonical Bot Session UUIDv4 used as the exact filename.
-   * @param enabled - Whether outbound network access is enabled.
+   * @param enabled - Whether the owner enabled this setting.
    * @returns A promise settled after the file and containing directory are synced.
    */
   async set(sessionId: string, enabled: boolean): Promise<void> {

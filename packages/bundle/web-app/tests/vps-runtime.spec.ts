@@ -33,13 +33,17 @@ function result(code = 0, stdout = ''): VpsCommandResult {
 function fixture(run: (argv: readonly string[]) => Promise<VpsCommandResult> | VpsCommandResult = async (argv) => {
   if (argv[1] === 'container' && argv[2] === 'exists') return result(1)
   return result()
-}, { browser = false, sharedWorkspace = false, hostileSharedVolume = false, internet, userService = false, networkPolicy }: {
+}, {
+  browser = false, sharedWorkspace = false, hostileSharedVolume = false, internet,
+  userService = false, networkPolicy, sharedWorkspacePolicy,
+}: {
   browser?: boolean
   sharedWorkspace?: boolean
   hostileSharedVolume?: boolean
   internet?: boolean
   userService?: boolean
   networkPolicy?: { get(session: string): Promise<boolean | undefined>; set(session: string, enabled: boolean): Promise<void> }
+  sharedWorkspacePolicy?: { get(session: string): Promise<boolean | undefined>; set(session: string, enabled: boolean): Promise<void> }
 } = {}): Fixture {
   const root = mkdtempSync(join(tmpdir(), 'dsh-vps-runtime-'))
   roots.push(root)
@@ -90,6 +94,7 @@ function fixture(run: (argv: readonly string[]) => Promise<VpsCommandResult> | V
     sharedWorkspace,
     ...(internet === undefined ? {} : { internet }),
     ...(networkPolicy === undefined ? {} : { networkPolicy }),
+    ...(sharedWorkspacePolicy === undefined ? {} : { sharedWorkspacePolicy }),
   })
   return { root, calls, runtime }
 }
@@ -299,6 +304,59 @@ describe('VpsRuntime', () => {
       .toThrow('workspace')
     const privateMounts = runs.map(argv => argv[argv.indexOf('--volume') + 1])
     expect(new Set(privateMounts).size).toBe(2)
+  })
+
+  it('grants and revokes the shared mount for one Bot while preserving both volumes', async () => {
+    const saved = new Map<string, boolean>()
+    let launch: readonly string[] | undefined
+    const f = fixture((argv) => {
+      if (argv[1] === 'run') launch = argv
+      if (argv[1] === 'container' && argv[2] === 'exists') return result(launch === undefined ? 1 : 0)
+      if (argv[1] === 'rm') launch = undefined
+      if (argv[1] !== 'inspect' || launch === undefined) return result()
+      const workspace = f.runtime.workspace(sessions.alice)
+      const image = 'localhost/yharness-vps-bot:24.04'
+      const mounts = launch.filter((_, index) => launch?.[index - 1] === '--volume').map((mount) => {
+        const [Name, Destination, mode] = mount.split(':')
+        return { Name, Destination, Type: 'volume', RW: true, Options: mode?.split(',') }
+      })
+      return result(0, JSON.stringify({
+        ImageName: image,
+        Config: { User: '1000:1000', Labels: {
+          'io.yharness.vps.root': f.root,
+          'io.yharness.vps.image': image,
+          'io.yharness.vps.session': sessions.alice,
+          'io.yharness.vps.workspace': workspace,
+          'io.yharness.vps.volume': mounts[0]?.Name,
+        } },
+        State: { Running: false }, Mounts: mounts,
+        HostConfig: { NetworkMode: 'none', SecurityOpt: ['no-new-privileges'], CapDrop: ['ALL'],
+          UsernsMode: 'keep-id', Tmpfs: { '/tmp': 'rw,noexec,nosuid,nodev' } },
+      }))
+    }, { sharedWorkspacePolicy: {
+      get: async id => saved.get(id), set: async (id, enabled) => { saved.set(id, enabled) },
+    } })
+    const signal = new AbortController().signal
+    expect(await f.runtime.sharedWorkspaceFor(sessions.alice)).toBeUndefined()
+    await expect(f.runtime.setSharedWorkspaceAccess(sessions.alice, true, signal)).resolves.toBe('applied')
+    expect(await f.runtime.sharedWorkspaceFor(sessions.alice)).toBe('/workspace')
+    expect(await f.runtime.sharedWorkspaceFor(sessions.bob)).toBeUndefined()
+    await f.runtime.ensure(sessions.alice)
+    expect(f.runtime.execArgv(sessions.alice, ['pwd'], { workdir: '/workspace' })).toContain('/workspace')
+    const finish = f.runtime.beginUse(sessions.alice)
+    try {
+      await expect(f.runtime.setSharedWorkspaceAccess(sessions.alice, false, signal)).resolves.toBe('busy')
+    } finally {
+      finish()
+    }
+    await expect(f.runtime.setSharedWorkspaceAccess(sessions.alice, false, signal)).resolves.toBe('applied')
+    expect(await f.runtime.sharedWorkspaceFor(sessions.alice)).toBeUndefined()
+    await f.runtime.ensure(sessions.alice)
+    expect(() => f.runtime.execArgv(sessions.alice, ['pwd'], { workdir: '/workspace' })).toThrow('workspace')
+    const runs = f.calls.filter(argv => argv[1] === 'run')
+    expect(runs.map(argv => argv.some(argument => argument.endsWith(':/workspace:rw,nodev,nosuid,nocopy')))).toEqual([true, false])
+    expect(runs[0]?.[runs[0].indexOf('--volume') + 1]).toBe(runs[1]?.[runs[1].indexOf('--volume') + 1])
+    expect(f.calls.filter(argv => argv.includes('rm')).map(argv => argv.slice(1, -1))).toEqual([['rm']])
   })
 
   it('refuses a pre-existing project volume backed by a host path', async () => {

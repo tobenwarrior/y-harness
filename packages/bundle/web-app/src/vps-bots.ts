@@ -14,13 +14,13 @@ import { ComputerLeaseError, containerComputer, type VpsComputer } from './compu
 import * as ComputerTool from './computer-tool.ts'
 import {
   botComputerRoutesWithLegacy, computerFileDownloadRoute, computerFileHandoffRoutes, computerFileUploadRoute,
-  computerNetworkRoute, computerRestartRoute, computerSignInRoute,
+  computerRestartRoute, computerSettingRoute, computerSignInRoute,
 } from './computer-api.ts'
 import { registerVpsBotFileTools, VpsBotFileHandoffs } from './vps-bot-file-handoffs.ts'
 import { resolveVpsFileUploadLimits, uploadComputerFile, type VpsFileUploadConfig } from './vps-bot-upload.ts'
 import { SessionId } from '@yharness/session/types'
 import { isVpsSharedPath, VpsRuntime, type VpsBrowserOptions } from './vps-runtime.ts'
-import { VpsBotNetworkPolicy } from './vps-bot-network-policy.ts'
+import { VpsBotComputerSetting } from './vps-bot-computer-setting.ts'
 import { registerVpsProjectTool } from './vps-project-tool.ts'
 import { isSharedBrowserSession, runAuthorizedBrowserOperation, VpsIsolatedBrowser, type VpsIsolatedBrowserConfig } from './vps-isolated-browser.ts'
 import { VpsBrowserHandoffs } from './vps-browser-handoffs.ts'
@@ -106,7 +106,9 @@ export function mountVpsBots(
   if ([...browserBotIds].some(botId => isolatedBrowserBotIds.has(botId))) {
     throw new Error('VPS browser and isolated browser Bots must not overlap.')
   }
-  const networkPolicy = new VpsBotNetworkPolicy(config.root)
+  const networkPolicy = new VpsBotComputerSetting(config.root, 'network')
+  const sharedWorkspacePolicy = config.sharedWorkspace === null ? undefined : new VpsBotComputerSetting(config.root, 'shared-workspace')
+  const projectToolGrants = new Map<SessionId, (granted: boolean) => Promise<void>>()
   const runtimes = new Map<string, VpsRuntime>()
   const runtimeWith = (browser: VpsBrowserOptions | undefined, sharedWorkspace: boolean, internet: boolean): VpsRuntime => {
     const key = `${browser !== undefined}/${sharedWorkspace}/${internet}`
@@ -115,6 +117,7 @@ export function mountVpsBots(
       runtime = new VpsRuntime(config.root, config.image, undefined, {
         ...(browser === undefined ? {} : { browser }),
         sharedWorkspace, internet, networkPolicy,
+        ...(sharedWorkspacePolicy === undefined ? {} : { sharedWorkspacePolicy }),
       })
       runtimes.set(key, runtime)
     }
@@ -250,7 +253,7 @@ export function mountVpsBots(
     const runtime = runtimeFor(bot.id)
     const privateRoot = runtime.workspace(sessionId)
     const shared = path !== undefined && isVpsSharedPath(path, privateRoot)
-    const workspaceRoot = shared ? runtime.sharedRoot : privateRoot
+    const workspaceRoot = shared ? await runtime.sharedWorkspaceFor(sessionId) : privateRoot
     if (workspaceRoot === undefined) return undefined
     const files = shared ? projectFiles : previewFiles
     let fs = files.get(sessionId)
@@ -269,11 +272,11 @@ export function mountVpsBots(
 
   ctx.inject(['bots', 'connection'], (scope) => {
     const maintain = async <T extends 'applied' | 'restarted'>(
-      sessionId: SessionId, signal: AbortSignal, work: (botId: string) => Promise<T | 'busy'>,
+      sessionId: SessionId, signal: AbortSignal, work: (botId: string) => Promise<T | 'busy' | undefined>,
     ): Promise<T | 'busy' | undefined> => {
       const bot = await scope.bots.ownerBotForSession(sessionId)
       if (bot?.state !== 'active' || bot.sessionId !== sessionId || !isDesktopBot(bot.id)) return undefined
-      const apply = async (): Promise<T | 'busy'> => {
+      const apply = async (): Promise<T | 'busy' | undefined> => {
         if (scope.get('agents')?.get(sessionId)?.status === 'running'
           || scope.get('terminalController')?.list(sessionId).some(terminal => terminal.state === 'running')
           || browserLogin?.hasPending(sessionId) === true) return 'busy'
@@ -287,7 +290,7 @@ export function mountVpsBots(
         throw error
       }
     }
-    scope.effect(() => scope.connection.fetch.register(computerNetworkRoute((sessionId, enabled, signal) =>
+    scope.effect(() => scope.connection.fetch.register(computerSettingRoute('network', (sessionId, enabled, signal) =>
       maintain(sessionId, signal, botId => runtimeFor(botId).setInternetAccess(sessionId, enabled, signal)),
     )), 'vps-bots: owner Computer internet setting')
     scope.effect(() => scope.connection.fetch.register(computerRestartRoute((sessionId, signal) =>
@@ -298,6 +301,17 @@ export function mountVpsBots(
       scope.effect(() => scope.connection.fetch.register(vpsBrowserAccessRoute(scope, isolatedBrowser)), 'vps-bots: owner browser access')
     }
     scope.inject(['workspaceFiles'], (filesScope) => {
+      if (sharedWorkspacePolicy !== undefined) {
+        filesScope.effect(() => filesScope.connection.fetch.register(computerSettingRoute('shared-workspace', (sessionId, enabled, signal) =>
+          maintain(sessionId, signal, async (botId) => {
+            const runtime = runtimeFor(botId)
+            if (!runtime.supportsSharedWorkspaceControl()) return undefined
+            const result = await runtime.setSharedWorkspaceAccess(sessionId, enabled, signal)
+            if (result === 'applied') await projectToolGrants.get(sessionId)?.(enabled)
+            return result
+          }),
+        )), 'vps-bots: owner shared workspace setting')
+      }
       filesScope.effect(() => filesScope.connection.fetch.register(computerFileDownloadRoute(
         (sessionId, path, signal) => filesScope.workspaceFiles.downloadComputer(SessionId(sessionId), path, signal),
       )), 'vps-bots: owner file downloads')
@@ -360,6 +374,8 @@ export function mountVpsBots(
         const isolated = isolatedBrowser !== undefined && isolatedBrowserBotIds.has(bot.id) ? isolatedBrowser : undefined
         const runtime = runtimeFor(bot.id)
         const internet = await runtime.internetFor(bot.sessionId)
+        const files = scope.get('workspaceFiles') !== undefined
+        const sharedFiles = files && await runtime.sharedWorkspaceFor(bot.sessionId) !== undefined
         return {
           computer: (signal: AbortSignal) => computerFor(bot.sessionId, bot.id, signal),
           id: bot.id,
@@ -370,8 +386,11 @@ export function mountVpsBots(
             terminal: true as const, terminalInternet: internet,
             ...(runtime.supportsNetworkControl(internet) ? { networkControl: true as const } : {}),
           }),
-          ...(scope.get('workspaceFiles') === undefined ? {}
-            : { files: true as const, ...(sharesProject(bot.id) ? { sharedFiles: true as const } : {}) }),
+          ...(files ? {
+            files: true as const,
+            ...(sharedFiles ? { sharedFiles: true as const } : {}),
+            ...(runtime.supportsSharedWorkspaceControl() ? { sharedWorkspaceControl: true as const } : {}),
+          } : {}),
           ...(navigate === undefined ? {} : { navigate }),
         }
       }
@@ -390,7 +409,7 @@ export function mountVpsBots(
       }
       return next()
     }, { prepend: true })
-    scope.on('agent/created', async ({ agent }) => {
+    scope.on('agent/created', async ({ agent, signal }) => {
       const bot = await scope.bots.ownerBotForSession(agent.id)
       if (bot === undefined || !isDesktopBot(bot.id)) {
         if (managedBotIds === undefined || legacyComputer === undefined) return
@@ -407,15 +426,25 @@ export function mountVpsBots(
         })
         return
       }
-      const installComputerTool = (agentCtx: Context): void => {
+      const installComputerTool = async (agentCtx: Context): Promise<void> => {
         const workspaceFiles = scope.get('workspaceFiles')
         if (workspaceFiles !== undefined) {
           registerVpsBotFileTools(agentCtx, agent,
             new VpsBotFileHandoffs({ bots: scope.bots, workspaceFiles }, runtimeFor, isDesktopBot, uploadLimits),
             !isManagedBot(bot.id))
-          if (sharesProject(bot.id)) {
-            registerVpsProjectTool(agentCtx, agent, workspaceFiles,
-              signal => filesFor(scope, isDesktopBot)(bot.sessionId, signal, runtimeFor(bot.id).sharedRoot))
+          const runtime = runtimeFor(bot.id)
+          const { sharedRoot } = runtime
+          if (sharedRoot !== undefined) {
+            const findFiles = filesFor(scope, isDesktopBot)
+            const access = (requestSignal: AbortSignal) => findFiles(bot.sessionId, requestSignal, sharedRoot)
+            const setAccess = registerVpsProjectTool(agentCtx, agent, workspaceFiles, access)
+            agentCtx.effect(() => {
+              projectToolGrants.set(bot.sessionId, setAccess)
+              return () => { if (projectToolGrants.get(bot.sessionId) === setAccess) projectToolGrants.delete(bot.sessionId) }
+            }, 'vps-bots: update the Bot project tool when access changes')
+            const granted = await runtime.sharedWorkspaceFor(bot.sessionId) !== undefined
+            signal?.throwIfAborted()
+            await setAccess(granted)
           }
         }
         ComputerTool.applyVpsBotComputer(agentCtx, async (sessionId) => {
@@ -452,19 +481,19 @@ export function mountVpsBots(
             cwd: runtime.workspace(bot.sessionId), subprocess,
           }), 'vps-bots: bind owner terminal')
         })
-        await agent.ctx.inject(['tools', 'attachments', 'llm', 'systemPrompt'], (agentCtx) => {
+        await agent.ctx.inject(['tools', 'attachments', 'llm', 'systemPrompt'], async (agentCtx) => {
           agentCtx.systemPrompt.section({
             name: 'app:vps-bot-desktop',
             order: agentCtx.systemPrompt.getSectionOrder('WEB_SURFACE'),
             text: () => 'Use vps_computer for visual interaction on your private VPS desktop. '
               + 'Bash and file tools use your existing Session workspace and permissions.',
           })
-          installComputerTool(agentCtx)
+          await installComputerTool(agentCtx)
           if (journal !== undefined) registerVpsJournalTool(agentCtx, bot.id, bot.sessionId, journal, agent.ctx)
         })
         return
       }
-      await agent.ctx.inject(['tools', 'attachments', 'llm', 'systemPrompt', 'subprocess', 'sandboxPolicy'], (agentCtx) => {
+      await agent.ctx.inject(['tools', 'attachments', 'llm', 'systemPrompt', 'subprocess', 'sandboxPolicy'], async (agentCtx) => {
         const runtime = runtimeFor(bot.id)
         const workspace = runtime.workspace(bot.sessionId)
         const managedContext = agentCtx.isolate('fs').isolate('subprocess').isolate('shell')
@@ -515,7 +544,7 @@ export function mountVpsBots(
             + 'Use Bash, file tools and vps_computer there; do not use the Chat session cwd. '
             + 'Host service access requires a separate grant. Mac permissions do not apply here.',
         })
-        installComputerTool(agentCtx)
+        await installComputerTool(agentCtx)
         registerVpsServiceTools(agentCtx, bot.id, services)
         if (journal !== undefined) registerVpsJournalTool(agentCtx, bot.id, bot.sessionId, journal, agent.ctx)
       })

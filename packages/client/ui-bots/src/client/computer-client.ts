@@ -21,6 +21,8 @@ export interface ComputerIdentity {
   readonly networkControl?: true
   /** Whether this private Bot exposes owner Computer restart control. */
   readonly restart?: true
+  /** Whether this private Bot exposes owner Shared workspace access control. */
+  readonly sharedWorkspaceControl?: true
   readonly files?: true
   readonly sharedFiles?: true
 }
@@ -41,6 +43,12 @@ export interface ComputerNetworkResult {
 /** Result from restarting one private Bot's Computer. */
 export interface ComputerRestartResult {
   readonly status: 'restarted'
+}
+
+/** Result from changing one private Bot's Shared workspace access policy. */
+export interface ComputerSharedWorkspaceResult {
+  readonly status: 'applied'
+  readonly enabled: boolean
 }
 
 /** Direct response from a Computer frame request. */
@@ -130,6 +138,8 @@ export interface ComputerClient {
   readonly network?: (sessionId: string, enabled: boolean, signal?: AbortSignal) => Promise<ComputerNetworkResult>
   /** Restart the selected private Bot's Computer when supported. */
   readonly restart?: (sessionId: string, signal?: AbortSignal) => Promise<ComputerRestartResult>
+  /** Change the selected private Bot's Shared workspace access when supported. */
+  readonly sharedWorkspace?: (sessionId: string, enabled: boolean, signal?: AbortSignal) => Promise<ComputerSharedWorkspaceResult>
   /** Open a URL while the viewer controls the selected isolated browser. */
   readonly navigate?: (viewerId: string, url: string, sessionId: string, signal?: AbortSignal) => Promise<ComputerControlResult>
   /** Read or respond to sign-in requests on a VPS Bot's Computer. */
@@ -150,6 +160,7 @@ const NAVIGATE_PATH = 'api/computer/navigate'
 const SIGN_IN_PATH = 'api/computer/sign-in'
 const NETWORK_PATH = 'api/computer/network'
 const RESTART_PATH = 'api/computer/restart'
+const SHARED_WORKSPACE_PATH = 'api/computer/shared-workspace'
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu
 const HANDOFF_TARGET = /^handoff-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u
 
@@ -178,6 +189,7 @@ function identityOf(value: unknown): ComputerIdentity | undefined {
     } : {}),
     ...(dedicated && value.networkControl === true ? { networkControl: true } : {}),
     ...(dedicated && value.restart === true ? { restart: true } : {}),
+    ...(dedicated && value.sharedWorkspaceControl === true ? { sharedWorkspaceControl: true } : {}),
     ...(dedicated && value.files === true ? {
       files: true,
       ...(value.sharedFiles === true ? { sharedFiles: true } : {}),
@@ -265,6 +277,10 @@ function restartOf(value: unknown): ComputerRestartResult | undefined {
   return { status: value.status }
 }
 
+function sharedWorkspaceOf(value: unknown): ComputerSharedWorkspaceResult | undefined {
+  return networkOf(value)
+}
+
 function withSession(payload: Record<string, unknown>, sessionId: string | undefined): Record<string, unknown> {
   return sessionId === undefined || sessionId === '' ? payload : { ...payload, sessionId }
 }
@@ -320,6 +336,9 @@ export function createComputerClient(): ComputerClient {
     ),
     restart: (sessionId, signal) => post(
       RESTART_PATH, { sessionId }, restartOf, requestOptions(signal),
+    ),
+    sharedWorkspace: (sessionId, enabled, signal) => post(
+      SHARED_WORKSPACE_PATH, { sessionId, enabled }, sharedWorkspaceOf, requestOptions(signal),
     ),
     navigate: (viewerId, url, sessionId, signal) => post(
       NAVIGATE_PATH, { viewerId, url, sessionId }, controlOf, requestOptions(signal),

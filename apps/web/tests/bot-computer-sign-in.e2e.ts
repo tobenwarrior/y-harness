@@ -19,6 +19,9 @@ const IMPORTED_BOT = BotId('bot-imported-desktop-fixture')
 const PROVIDER = 'sign-in-fixture'
 const MODEL = 'reply'
 const REPLY = 'I’m back on the Computer.'
+const PROJECT_PROMPT = 'Check access to the shared workspace.'
+const PROJECT_AVAILABLE = 'I can use the shared workspace.'
+const PROJECT_UNAVAILABLE = 'My shared workspace access is off.'
 
 class HandoffAdapter extends LlmAdapter {
   sawReceipt = false
@@ -30,6 +33,15 @@ class HandoffAdapter extends LlmAdapter {
 
   override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     this.requestCount++
+    if (options.messages.some(message => message.role === 'user'
+      && message.content.some(block => block.type === 'text' && block.text === PROJECT_PROMPT))) {
+      const text = options.tools?.some(tool => tool.name === 'vps_project_files') ? PROJECT_AVAILABLE : PROJECT_UNAVAILABLE
+      yield { type: 'block-start', index: 0, blockType: 'text' }
+      yield { type: 'text-delta', index: 0, text }
+      yield { type: 'block-end', index: 0, block: { type: 'text', text } }
+      yield { type: 'finish', reason: { kind: 'stop' } }
+      return
+    }
     const result = options.messages.findLast(message => message.role === 'tool')
     if (result === undefined) {
       const id = ToolCallId('sign-in-request')
@@ -50,7 +62,7 @@ class HandoffAdapter extends LlmAdapter {
   }
 }
 
-it.skipIf(MODE === 'record' || process.platform === 'win32')('recovers a private Computer while preserving Internet access and sign-in handback', async () => {
+it.skipIf(MODE === 'record' || process.platform === 'win32')('changes a private Computer’s workspace access and preserves Internet and sign-in handback', async () => {
   const root = await mkdtemp('/tmp/yh-sign-in-web-')
   const runtimePath = join(root, 'computer.mjs')
   const overlay = join(root, 'computer.yml')
@@ -100,6 +112,11 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('recovers a private
           VpsRuntime.prototype.supportsNetworkControl = () => true
           VpsRuntime.prototype.runPodman = async args => {
             if (args[0] === 'container' && args[1] === 'exists') return { code: 1, stdout: '', stderr: '' }
+            if (args[0] === 'volume' && args[1] === 'exists') return { code: 0, stdout: '', stderr: '' }
+            if (args[0] === 'volume' && args[1] === 'inspect') return { code: 0, stderr: '', stdout: JSON.stringify({
+              Name: args.at(-1), Driver: 'local', Options: {},
+              Labels: { 'io.yharness.vps.root': config.root, 'io.yharness.vps.purpose': 'shared-project' },
+            }) }
             throw new Error('Unexpected Podman command in Computer fixture.')
           }
           return () => {
@@ -143,7 +160,9 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('recovers a private
     const opened = (await readFile(startedComputers, 'utf8')).trim().split('\n')
     expect(new Set(opened)).toEqual(new Set([imported.sessionId]))
     const network = panel.locator('[data-computer-network-control]').getByRole('switch')
+    const sharedWorkspace = panel.getByRole('switch', { name: 'Allow access to common project files', exact: true })
     await expect.poll(() => network.getAttribute('aria-checked')).toBe('false')
+    await expect.poll(() => sharedWorkspace.getAttribute('aria-checked')).toBe('false')
     const request = (payload: object) => ({ method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify(payload) })
     const target = { sessionId: imported.sessionId }
@@ -151,6 +170,7 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('recovers a private
     const restart = request(target)
     expect((await fetch(new URL('/api/computer/network', web.baseUrl), enable)).status).toBe(401)
     expect((await fetch(new URL('/api/computer/restart', web.baseUrl), restart)).status).toBe(401)
+    expect((await fetch(new URL('/api/computer/shared-workspace', web.baseUrl), enable)).status).toBe(401)
     const other = await web.hostFetch('/api/computer/network', request({ ...target, sessionId: 'bot-session-11111111-1111-4111-8111-111111111111', enabled: true }))
     expect(other.status).toBe(404)
     const invalid = await web.hostFetch('/api/computer/network', request({ ...target, enabled: 'true' }))
@@ -159,6 +179,7 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('recovers a private
     await panel.getByRole('button', { name: 'Hand back', exact: true }).waitFor()
     expect((await web.hostFetch('/api/computer/network', enable)).status).toBe(409)
     expect((await web.hostFetch('/api/computer/restart', restart)).status).toBe(409)
+    expect((await web.hostFetch('/api/computer/shared-workspace', enable)).status).toBe(409)
     expect(await network.getAttribute('aria-checked')).toBe('false')
     await panel.getByRole('button', { name: 'Hand back', exact: true }).click()
     await panel.getByRole('button', { name: 'Take control', exact: true }).waitFor()
@@ -166,9 +187,29 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('recovers a private
     await expect.poll(() => network.getAttribute('aria-checked')).toBe('true')
     const status = await web.hostFetch('/api/computer/status', request(target))
     expect(await status.json()).toMatchObject({
-      computer: { id: imported.id, terminalInternet: true, networkControl: true, restart: true },
+      computer: { id: imported.id, terminalInternet: true, networkControl: true, restart: true, sharedWorkspaceControl: true },
     })
-    const networkView = await captureStableAria(page, panelSelector, web.workspaceCwd)
+    const conversation = page.locator('[data-conversation-surface="bots"]')
+    const checkProjectAccess = async (reply: string, count: number): Promise<void> => {
+      await conversation.locator('[data-composer-input][contenteditable="true"]').fill(PROJECT_PROMPT)
+      await conversation.getByRole('button', { name: 'Send message', exact: true }).click()
+      await expect.poll(() => conversation.getByText(reply, { exact: true }).count()).toBe(count)
+      await expect.poll(() => sharedWorkspace.isEnabled()).toBe(true)
+    }
+    await checkProjectAccess(PROJECT_UNAVAILABLE, 1)
+    await sharedWorkspace.click()
+    await expect.poll(() => sharedWorkspace.getAttribute('aria-checked')).toBe('true')
+    const files = page.getByRole('button', { name: 'Open VPS files', exact: true })
+    await expect.poll(() => files.getAttribute('aria-haspopup')).toBe('menu')
+    await files.click()
+    await page.getByRole('menuitem', { name: 'Shared workspace', exact: true }).waitFor()
+    await page.keyboard.press('Escape')
+    const workspaceView = await captureStableAria(page, panelSelector, web.workspaceCwd)
+    await checkProjectAccess(PROJECT_AVAILABLE, 1)
+    await sharedWorkspace.click()
+    await expect.poll(() => sharedWorkspace.getAttribute('aria-checked')).toBe('false')
+    await expect.poll(() => files.getAttribute('aria-haspopup')).toBeNull()
+    await checkProjectAccess(PROJECT_UNAVAILABLE, 2)
     await writeFile(disconnectedComputer, imported.sessionId)
     await panel.getByRole('status').getByText('Computer connection lost', { exact: true }).waitFor()
     await panel.getByRole('button', { name: 'Restart computer', exact: true }).click()
@@ -179,7 +220,6 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('recovers a private
     expect(await network.getAttribute('aria-checked')).toBe('true')
     await panel.getByRole('button', { name: 'Close computer panel' }).click()
     await page.locator(`[data-bot-id="${BOT}"]`).click()
-    const conversation = page.locator('[data-conversation-surface="bots"]')
     await conversation.locator('[data-composer-input][contenteditable="true"]').fill('Ask me to sign in on your Computer.')
     await conversation.getByRole('button', { name: 'Send message', exact: true }).click()
     const cardSelector = '[data-computer-sign-in-card]'
@@ -206,7 +246,7 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('recovers a private
     await card.waitFor({ state: 'hidden' })
     expect(consoleLog.pageErrors).toEqual([])
     await compareOrRefreshGolden(GOLDEN, [
-      `## Internet enabled\n\n${networkView}`, `## Restart confirmation\n\n${confirmation}`,
+      `## Shared workspace and Internet enabled\n\n${workspaceView}`, `## Restart confirmation\n\n${confirmation}`,
       `## Waiting in chat\n\n${pending}`, `## In control\n\n${privateView}`,
     ].join('\n\n'), MODE)
   } finally {

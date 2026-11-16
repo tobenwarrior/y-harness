@@ -103,6 +103,28 @@ describe('Computer HTTP client', () => {
     await expect(restart('bot-session-owner')).rejects.toMatchObject({ status: 409 })
   })
 
+  it('reads shared workspace capability and posts the selected Session', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response({ available: true, kind: 'vps',
+        computer: { id: 'bot-id-owner', location: 'vps', permissionScope: 'bot', sharedWorkspaceControl: true } }))
+      .mockResolvedValueOnce(response({ status: 'applied', enabled: true }))
+      .mockResolvedValueOnce(response({ status: 'busy' }, 409))
+    vi.stubGlobal('fetch', fetchMock)
+    const client = createComputerClient()
+
+    await expect(client.status(undefined, 'bot-session-owner')).resolves.toMatchObject({
+      computer: { id: 'bot-id-owner', sharedWorkspaceControl: true },
+    })
+    const sharedWorkspace = client.sharedWorkspace
+    expect(sharedWorkspace).toBeTypeOf('function')
+    if (sharedWorkspace === undefined) return
+    await expect(sharedWorkspace('bot-session-owner', true)).resolves.toEqual({ status: 'applied', enabled: true })
+    expect(fetchMock).toHaveBeenNthCalledWith(2, 'api/computer/shared-workspace', expect.objectContaining({
+      method: 'POST', body: JSON.stringify({ sessionId: 'bot-session-owner', enabled: true }),
+    }))
+    await expect(sharedWorkspace('bot-session-owner', false)).rejects.toMatchObject({ status: 409 })
+  })
+
   it('posts the exact private-session Internet toggle and preserves the busy response', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(response({ status: 'applied', enabled: true }))

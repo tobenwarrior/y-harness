@@ -4447,9 +4447,9 @@ export interface Config {
     desktopOnlyBots?: string[]
     /** Give Bots outside an explicit allowlist a private desktop, terminal, and file panel while preserving their Session workspace. */
     desktopForUnlistedBots?: boolean
-    /** Owner project volume shared by the selected private Computer Bots. */
+    /** Default shared workspace access. Omit to default off, or set null to disable sharing and owner changes. */
     sharedWorkspace?: {
-      /** Exact participants. Omit or use null for every private Computer Bot. */
+      /** Exact default participants. Omit or use null for the Bots selected by botComputers.bots. */
       bots?: string[] | null
     } | null
     /** Direct file transfer limits for Bot workspaces. */

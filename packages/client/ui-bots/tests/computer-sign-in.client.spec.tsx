@@ -23,6 +23,7 @@ const targetSessionId = 'handoff-bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
 const origin = 'https://example.test'
 const networkLabel = en.computerNetworkToggle
 const restartLabel = en.computerRestart
+const sharedWorkspaceLabel = en.computerSharedWorkspaceToggle
 
 type NetworkOperation = (sessionId: string, enabled: boolean, signal?: AbortSignal) => Promise<{
   readonly status: 'applied'
@@ -31,6 +32,11 @@ type NetworkOperation = (sessionId: string, enabled: boolean, signal?: AbortSign
 
 type RestartOperation = (sessionId: string, signal?: AbortSignal) => Promise<{
   readonly status: 'restarted'
+}>
+
+type SharedWorkspaceOperation = (sessionId: string, enabled: boolean, signal?: AbortSignal) => Promise<{
+  readonly status: 'applied'
+  readonly enabled: boolean
 }>
 
 function computer(): ComputerClient {
@@ -183,6 +189,84 @@ describe('ComputerSignInCard shared handoff', () => {
     await waitFor(() => { expect(network).toHaveBeenCalledWith(ownerSessionId, true, expect.any(AbortSignal)) })
     await waitFor(() => { expect(toggle.getAttribute('aria-checked')).toBe('true') })
     expect(refreshAvailability).toHaveBeenCalledWith(ownerSessionId)
+  })
+
+  it('shows the Shared workspace switch, pauses frames, and refreshes Files availability', async () => {
+    let resolveSharedWorkspace: ((value: { readonly status: 'applied'; readonly enabled: boolean }) => void) | undefined
+    const sharedWorkspace = vi.fn<SharedWorkspaceOperation>((_sessionId, enabled, _signal) =>
+      new Promise((resolve) => { resolveSharedWorkspace = () => { resolve({ status: 'applied', enabled }) } }))
+    const refreshAvailability = vi.fn()
+    const frame = vi.fn(async () => ({ jpeg: '', width: 1280, height: 800, mode: 'watching' as const, botActive: false }))
+    const client = {
+      status: async () => ({ available: true, kind: 'vps' as const,
+        computer: { id: ownerBotId, location: 'vps' as const, permissionScope: 'bot' as const,
+          sharedWorkspaceControl: true as const } }),
+      frame,
+      takeControl: async () => ({ mode: 'watching' as const }),
+      releaseControl: async () => ({ mode: 'watching' as const }),
+      input: async () => ({ mode: 'watching' as const }),
+      sharedWorkspace,
+    } as ComputerClient & { readonly sharedWorkspace: SharedWorkspaceOperation }
+    render(<ComputerPanel computer={client} botId={ownerBotId} sessionId={ownerSessionId}
+      close={vi.fn()} t={t} refreshAvailability={refreshAvailability} />)
+
+    const toggle = await screen.findByRole('switch', { name: sharedWorkspaceLabel })
+    expect(toggle.getAttribute('aria-checked')).toBe('false')
+    fireEvent.click(toggle)
+    await waitFor(() => { expect(sharedWorkspace).toHaveBeenCalledWith(ownerSessionId, true, expect.any(AbortSignal)) })
+    const frameCallsDuringUpdate = frame.mock.calls.length
+    await new Promise(resolve => setTimeout(resolve, 350))
+    expect(frame.mock.calls.length).toBe(frameCallsDuringUpdate)
+
+    resolveSharedWorkspace?.({ status: 'applied', enabled: true })
+    await waitFor(() => { expect(toggle.getAttribute('aria-checked')).toBe('true') })
+    expect(refreshAvailability).toHaveBeenCalledWith(ownerSessionId)
+
+    fireEvent.click(toggle)
+    await waitFor(() => { expect(sharedWorkspace).toHaveBeenLastCalledWith(ownerSessionId, false, expect.any(AbortSignal)) })
+    resolveSharedWorkspace?.({ status: 'applied', enabled: false })
+    await waitFor(() => { expect(toggle.getAttribute('aria-checked')).toBe('false') })
+    expect(refreshAvailability).toHaveBeenCalledTimes(2)
+  })
+
+  it.each([
+    ['legacy status', { id: ownerBotId, location: 'vps' as const, permissionScope: 'bot' as const }],
+    ['different Bot', { id: 'other-bot', location: 'vps' as const, permissionScope: 'bot' as const, sharedWorkspaceControl: true as const }],
+    ['workspace computer', { id: ownerBotId, location: 'vps' as const, permissionScope: 'workspace' as const, sharedWorkspaceControl: true as const }],
+    ['Mac computer', { id: ownerBotId, location: 'mac' as const, permissionScope: 'workspace' as const, sharedWorkspaceControl: true as const }],
+  ])('hides Shared workspace for %s', async (_name, identity) => {
+    const client: ComputerClient = {
+      status: async () => ({ available: true, kind: identity.location, computer: identity }),
+      frame: async () => ({ jpeg: '', width: 1280, height: 800, mode: 'watching' as const, botActive: false }),
+      takeControl: async () => ({ mode: 'watching' as const }),
+      releaseControl: async () => ({ mode: 'watching' as const }),
+      input: async () => ({ mode: 'watching' as const }),
+    }
+    render(<ComputerPanel computer={client} botId={ownerBotId} sessionId={ownerSessionId} close={vi.fn()} t={t} />)
+    await waitFor(() => { expect(screen.queryByRole('switch', { name: sharedWorkspaceLabel })).toBeNull() })
+  })
+
+  it.each([
+    [409, en.computerSharedWorkspaceBusy],
+    [500, en.computerSharedWorkspaceError],
+  ] as const)('keeps Shared workspace selection when the write fails with HTTP %s', async (status, message) => {
+    const sharedWorkspace = vi.fn<SharedWorkspaceOperation>(async () => { throw new ComputerApiError(status, 'failed') })
+    const client = {
+      status: async () => ({ available: true, kind: 'vps' as const,
+        computer: { id: ownerBotId, location: 'vps' as const, permissionScope: 'bot' as const,
+          sharedWorkspaceControl: true as const, sharedFiles: true as const } }),
+      frame: async () => ({ jpeg: '', width: 1280, height: 800, mode: 'watching' as const, botActive: false }),
+      takeControl: async () => ({ mode: 'watching' as const }),
+      releaseControl: async () => ({ mode: 'watching' as const }),
+      input: async () => ({ mode: 'watching' as const }),
+      sharedWorkspace,
+    } as ComputerClient & { readonly sharedWorkspace: SharedWorkspaceOperation }
+    render(<ComputerPanel computer={client} botId={ownerBotId} sessionId={ownerSessionId} close={vi.fn()} t={t} />)
+    const toggle = await screen.findByRole('switch', { name: sharedWorkspaceLabel })
+    expect(toggle.getAttribute('aria-checked')).toBe('true')
+    fireEvent.click(toggle)
+    await waitFor(() => { expect(screen.getByRole('alert').textContent).toBe(message) })
+    expect(toggle.getAttribute('aria-checked')).toBe('true')
   })
 
   it('aborts an Internet write when the Computer panel is unmounted', async () => {

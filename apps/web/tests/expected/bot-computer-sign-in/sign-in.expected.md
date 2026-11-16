@@ -1,4 +1,4 @@
-## Internet enabled
+## Shared workspace and Internet enabled
 
 - region "Computer":
   - status: Watching Display and input are dedicated to this Bot
@@ -6,6 +6,8 @@
   - button "Close computer panel"
   - text: Internet for Terminal & apps Controls Internet access for this Bot’s terminal and apps.
   - switch "Allow Internet for Terminal & apps" [checked]
+  - text: Shared workspace Grants this Bot access to common project files.
+  - switch "Allow access to common project files" [checked]
   - img "Live computer screen"
   - text: Watching only
   - button "Restart computer"
@@ -20,6 +22,8 @@
   - button "Close computer panel"
   - text: Internet for Terminal & apps Controls Internet access for this Bot’s terminal and apps.
   - switch "Allow Internet for Terminal & apps" [checked]
+  - text: Shared workspace Grants this Bot access to common project files.
+  - switch "Allow access to common project files"
   - paragraph: Running apps will close. Saved files and your browser profile will persist.
   - button "Cancel"
   - button "Restart"
@@ -43,6 +47,8 @@
   - button "Close computer panel"
   - text: Internet for Terminal & apps Controls Internet access for this Bot’s terminal and apps.
   - switch "Allow Internet for Terminal & apps" [checked]
+  - text: Shared workspace Grants this Bot access to common project files.
+  - switch "Allow access to common project files" [disabled]
   - text: Check the website address before entering details. Finish or clear the sign-in form before returning control.
   - img "Live computer screen"
   - text: Click, scroll, or type in the screen

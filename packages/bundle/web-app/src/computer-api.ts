@@ -68,6 +68,8 @@ export interface ComputerStatusMetadata {
   readonly files?: true
   /** Whether the owner can browse this Bot's shared project files. */
   readonly sharedFiles?: true
+  /** Whether the owner can grant this Bot shared project access. */
+  readonly sharedWorkspaceControl?: true
 }
 
 /** Server-selected Computer target for a Bot Session route. */
@@ -90,6 +92,8 @@ export interface BotComputerRouteTarget {
   readonly files?: true
   /** Whether the owner can browse this Bot's shared project files. */
   readonly sharedFiles?: true
+  /** Whether the owner can change the shared project mount. */
+  readonly sharedWorkspaceControl?: true
   /** Network navigation for an isolated browser, admitted by this Computer's viewer lease. */
   readonly navigate?: (url: string, signal: AbortSignal) => Promise<void>
 }
@@ -516,6 +520,8 @@ export function botComputerRoutesWithLegacy(
         ...(restart ? { restart: true } : {}),
         ...(target.files === true ? { files: true } : {}),
         ...(target.files === true && target.sharedFiles === true ? { sharedFiles: true } : {}),
+        ...(target.permissionScope === 'bot' && target.files === true && target.sharedWorkspaceControl === true
+          ? { sharedWorkspaceControl: true } : {}),
       },
       ...(navigate === undefined ? {} : {
         navigate: async (viewer, url, signal) => (await open(signal)).navigateAsViewer(viewer, url, signal, navigate),
@@ -541,15 +547,17 @@ export function botComputerRoutesWithLegacy(
 }
 
 /**
- * Accept one network choice for an exact owner Bot without exposing the VPS runtime.
+ * Accept one Computer setting for an exact owner Bot without exposing the VPS runtime.
+ * @param setting - Selects the owner-only setting route.
  * @param apply - Resolve and update the selected private Computer. Undefined means it is unavailable.
- * @returns The authenticated private Computer network route.
+ * @returns The authenticated private Computer setting route.
  */
-export function computerNetworkRoute(
+export function computerSettingRoute(
+  setting: 'network' | 'shared-workspace',
   apply: (sessionId: SessionId, enabled: boolean, signal: AbortSignal) => Promise<'applied' | 'busy' | undefined>,
 ): ConnectionFetchRoute {
   return {
-    path: '/api/computer/network', methods: ['POST'], requestBody: 'streaming',
+    path: `/api/computer/${setting}`, methods: ['POST'], requestBody: 'streaming',
     async fetch(request) {
       let payload: unknown
       try {

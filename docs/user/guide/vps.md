@@ -107,17 +107,17 @@ Bots outside the list continue using their existing working directories and shar
 
 For a selected Bot that still needs its host working directory or existing routine tools, add its roster ID to `botComputers.desktopOnlyBots`. Its **Computer** panel and `vps_computer` tool use the private desktop, including with an image-capable native Codex model. Its shell and file tools keep their existing permissions and working directory.
 
-Set `botComputers.desktopForUnlistedBots: true` to give every remaining Bot a private **Computer**, **Terminal**, and **Files** panel in the same chat. These Bots keep their existing working directories and routine permissions. Their private computers start when used. To give one of these Bots shared project files, include its ID in an explicit `sharedWorkspace.bots` list.
+Set `botComputers.desktopForUnlistedBots: true` to give every remaining Bot a private **Computer**, **Terminal**, and **Files** panel in the same chat. These Bots keep their existing working directories and routine permissions. Their private computers start when used.
 
 When the Cloud user service starts a private desktop, that desktop and its network processes run independently. The desktop can stay connected through a Cloud restart.
 
 ### Share project files between Bots
 
-Use **Files → Shared workspace** from a participating Bot. Upload or open files there, then switch to another participating Bot to work on those same files. In the VPS Terminal the folder is at `/workspace`. Ask a Bot to save its work there by name, such as `/workspace/research/notes.md`.
+Open a Bot’s **Computer** panel and turn on **Shared workspace**. Use **Files → Shared workspace** to upload or open files, then switch to another Bot with access to work on those same files. In the VPS Terminal the folder is at `/workspace`. You can ask a Bot to save its work there by name, such as `/workspace/research/notes.md`.
 
-Add `sharedWorkspace: {}` under the existing `botComputers` entry in the private Web profile to enroll all private Computer Bots. Use `sharedWorkspace: { bots: [bot-first, bot-second] }` to select individual Bots by their roster IDs. The share starts empty. Each participant can read and write its contents. Use the private workspace or the Vault for material you want to limit to one Bot or service.
+Turn the switch off to remove that Bot’s access. Finish running Bot and terminal work, close desktop apps, and hand back control before changing access. The change replaces the idle Computer on its next use and keeps its private files, browser profile, and shared project files. Each participant can read and write the shared files. Keep material for one Bot or service in its private workspace or the Vault.
 
-The share attaches when a private Computer is created. To enroll or remove an existing Computer, wait until Cloud and that Computer are idle. Preserve its named volumes and replace its container using the same procedure as [enabling Firefox](#enable-firefox-for-selected-bots). Restart Cloud with the new settings. Opening the Computer reconnects its private workspace and any Firefox profile. The shared project volume persists across restarts and can be mounted again by enrolling a private Computer.
+In the private Web profile, use `sharedWorkspace: { bots: [bot-first, bot-second] }` to set the defaults by roster ID. `sharedWorkspace: {}` defaults on for the Bots selected by `botComputers.bots`. An omitted setting defaults off, and `sharedWorkspace: null` disables shared workspace access and its switch. Each saved owner choice overrides the defaults when sharing is enabled.
 
 ### Give a Bot's VPS terminal internet access
 

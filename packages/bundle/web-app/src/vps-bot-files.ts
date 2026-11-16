@@ -256,6 +256,9 @@ export class VpsBotFileSystem extends FileSystem {
     signal?.throwIfAborted()
     const finished = this.runtime.beginUse(this.sessionId)
     try {
+      if (this.workspace === 'shared' && await this.runtime.sharedWorkspaceFor(this.sessionId) === undefined) {
+        throw new VpsRuntimeError('This Bot does not have shared workspace access.')
+      }
       await this.runtime.ensure(this.sessionId)
       signal?.throwIfAborted()
       const worker = this.workspace === 'shared' ? ['-c', vpsProjectWorker] : ['/usr/local/lib/yharness/files.py']

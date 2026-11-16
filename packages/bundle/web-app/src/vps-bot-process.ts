@@ -87,9 +87,6 @@ export class VpsBotSubprocess extends SubprocessRuntime {
     const { runtime, sessionId, host } = this.config
     const scope = randomUUID().replaceAll('-', '')
     const control = ['/usr/bin/python3', '-I', '-c', TERMINAL_SCOPE_SCRIPT]
-    const argv = runtime.execArgv(sessionId, [...control, 'start', scope, spec.terminalType, ...spec.argv], {
-      workdir: spec.cwd, interactive: true,
-    })
     const stop = async (): Promise<void> => {
       try {
         await runtime.desktopCommand(sessionId, [...control, 'stop', scope, String(spec.graceMs)], new AbortController().signal)
@@ -102,6 +99,9 @@ export class VpsBotSubprocess extends SubprocessRuntime {
     try {
       await runtime.ensure(sessionId)
       spec.signal?.throwIfAborted()
+      const argv = runtime.execArgv(sessionId, [...control, 'start', scope, spec.terminalType, ...spec.argv], {
+        workdir: spec.cwd, interactive: true,
+      })
       try {
         const terminal = scopedBotTerminal(await host.spawnTerminal({ ...spec, argv, cwd: '/', env: undefined }), stop)
         void terminal.done.then(finished, finished)

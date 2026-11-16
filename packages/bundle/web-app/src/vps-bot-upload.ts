@@ -185,11 +185,11 @@ export async function uploadComputerFile(
 ): Promise<ComputerFileUploadOutcome> {
   signal.throwIfAborted()
   const shared = isVpsSharedPath(file.directory)
-  const root = shared ? runtime.sharedRoot : runtime.workspace(sessionId)
-  if (root === undefined) return 'folder-unavailable'
-  const directory = shared ? file.directory.slice(root.length + 1) || '.' : file.directory
   const release = runtime.beginUse(sessionId)
   try {
+    const root = shared ? await runtime.sharedWorkspaceFor(sessionId) : runtime.workspace(sessionId)
+    if (root === undefined) return 'folder-unavailable'
+    const directory = shared ? file.directory.slice(root.length + 1) || '.' : file.directory
     await runtime.ensure(sessionId)
     signal.throwIfAborted()
     const seconds = Math.ceil(limits.timeoutMs / 1000)

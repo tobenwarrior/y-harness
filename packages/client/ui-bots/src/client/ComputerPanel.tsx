@@ -31,7 +31,7 @@ interface ComputerPanelProps extends PropsLocale<'bots'> {
 
 type PanelPhase = 'loading' | 'ready' | 'disconnected' | 'unavailable'
 type BusyAction = 'take' | 'release' | undefined
-type FeedbackKey = 'computerControlBusy' | 'computerInputRejected' | 'computerPasteFailed' | 'computerTextTrimmed' | 'computerSignInError' | 'computerNavigationFailed' | 'computerNetworkBusy' | 'computerNetworkError' | 'computerRestartBusy' | 'computerRestartError'
+type FeedbackKey = 'computerControlBusy' | 'computerInputRejected' | 'computerPasteFailed' | 'computerTextTrimmed' | 'computerSignInError' | 'computerNavigationFailed' | 'computerNetworkBusy' | 'computerNetworkError' | 'computerRestartBusy' | 'computerRestartError' | 'computerSharedWorkspaceBusy' | 'computerSharedWorkspaceError'
 
 const FRAME_POLL_MS = 300
 const MAX_TEXT_LENGTH = 4_096
@@ -168,12 +168,15 @@ export function ComputerPanel({ computer, sessionId, botId, close, refreshAvaila
   const [navigating, setNavigating] = useState(false)
   const [networkBusy, setNetworkBusy] = useState(false)
   const [restartBusy, setRestartBusy] = useState(false)
+  const [sharedWorkspaceBusy, setSharedWorkspaceBusy] = useState(false)
   const [restartConfirmOpen, setRestartConfirmOpen] = useState(false)
   const navigation = useRef<AbortController>()
   const networkController = useRef<AbortController>()
   const networkOperationRef = useRef(0)
   const restartController = useRef<AbortController>()
   const restartOperationRef = useRef(0)
+  const sharedWorkspaceController = useRef<AbortController>()
+  const sharedWorkspaceOperationRef = useRef(0)
   const signInApi = computer.signIn
   const frameSessionId = signIn?.targetSessionId ?? sessionId
   const sharedSignIn = signIn?.targetSessionId !== undefined
@@ -191,6 +194,7 @@ export function ComputerPanel({ computer, sessionId, botId, close, refreshAvaila
     setNavigating(false)
     setNetworkBusy(false)
     setRestartBusy(false)
+    setSharedWorkspaceBusy(false)
     setRestartConfirmOpen(false)
     networkController.current?.abort()
     networkController.current = undefined
@@ -198,6 +202,9 @@ export function ComputerPanel({ computer, sessionId, botId, close, refreshAvaila
     restartController.current?.abort()
     restartController.current = undefined
     ++restartOperationRef.current
+    sharedWorkspaceController.current?.abort()
+    sharedWorkspaceController.current = undefined
+    ++sharedWorkspaceOperationRef.current
     return () => {
       navigation.current?.abort()
       navigation.current = undefined
@@ -207,6 +214,9 @@ export function ComputerPanel({ computer, sessionId, botId, close, refreshAvaila
       restartController.current?.abort()
       restartController.current = undefined
       ++restartOperationRef.current
+      sharedWorkspaceController.current?.abort()
+      sharedWorkspaceController.current = undefined
+      ++sharedWorkspaceOperationRef.current
     }
   }, [botId, frameSessionId, sessionId])
 
@@ -245,7 +255,7 @@ export function ComputerPanel({ computer, sessionId, botId, close, refreshAvaila
   }, [computer, frameSessionId, viewerId])
 
   useEffect(() => {
-    if (networkBusy || restartBusy) return
+    if (networkBusy || restartBusy || sharedWorkspaceBusy) return
     let disposed = false
     const controller = new AbortController()
     const poll = async (): Promise<void> => {
@@ -277,11 +287,12 @@ export function ComputerPanel({ computer, sessionId, botId, close, refreshAvaila
     }
     void poll()
     return () => { disposed = true; controller.abort() }
-  }, [applyMode, computer, frameSessionId, local, networkBusy, restartBusy, retryNonce, sharedSignIn, viewerId])
+  }, [applyMode, computer, frameSessionId, local, networkBusy, restartBusy, retryNonce, sharedSignIn, sharedWorkspaceBusy, viewerId])
 
   const alive = (operation: number): boolean => !disposedRef.current && operation === operationRef.current
 
   const networkIdentity = computerStatus?.computer
+  const networkActionDisabled = networkBusy || restartBusy || sharedWorkspaceBusy
   const networkControlAvailable = local === undefined && !sharedSignIn && sessionId !== undefined && botId !== undefined
     && computer.network !== undefined && networkIdentity?.id === botId
     && networkIdentity.location === 'vps' && networkIdentity.permissionScope === 'bot'
@@ -289,7 +300,7 @@ export function ComputerPanel({ computer, sessionId, botId, close, refreshAvaila
     && typeof networkIdentity.terminalInternet === 'boolean'
 
   const changeNetworkAccess = useCallback((enabled: boolean): void => {
-    if (!networkControlAvailable || networkBusy) return
+    if (!networkControlAvailable || networkActionDisabled) return
     const targetSessionId = sessionId
     const operation = ++networkOperationRef.current
     const controller = new AbortController()
@@ -313,9 +324,49 @@ export function ComputerPanel({ computer, sessionId, botId, close, refreshAvaila
       setFeedback(error instanceof ComputerApiError && error.status === 409
         ? 'computerNetworkBusy' : 'computerNetworkError')
     })
-  }, [botId, computer, networkBusy, networkControlAvailable, refreshAvailability, sessionId])
+  }, [botId, computer, networkActionDisabled, networkControlAvailable, refreshAvailability, sessionId])
 
   const privateSignIn = frame?.signIn ?? claimedSignIn.current
+  const sharedWorkspaceIdentity = computerStatus?.computer
+  const sharedWorkspaceControlAvailable = computerStatus?.available === true && local === undefined && !sharedSignIn
+    && sessionId !== undefined && botId !== undefined
+    && computer.sharedWorkspace !== undefined && sharedWorkspaceIdentity?.id === botId
+    && sharedWorkspaceIdentity.location === 'vps' && sharedWorkspaceIdentity.permissionScope === 'bot'
+    && sharedWorkspaceIdentity.sharedWorkspaceControl === true
+  const sharedWorkspaceActionDisabled = sharedWorkspaceBusy || networkBusy || restartBusy
+    || mode !== 'watching' || botActive || signIn !== undefined || privateSignIn !== undefined
+
+  const changeSharedWorkspace = useCallback((enabled: boolean): void => {
+    if (!sharedWorkspaceControlAvailable || sharedWorkspaceActionDisabled) return
+    const targetSessionId = sessionId
+    const operation = ++sharedWorkspaceOperationRef.current
+    ++requestEpochRef.current
+    const controller = new AbortController()
+    sharedWorkspaceController.current?.abort()
+    sharedWorkspaceController.current = controller
+    setSharedWorkspaceBusy(true)
+    setFeedback(undefined)
+    void computer.sharedWorkspace(targetSessionId, enabled, controller.signal).then((result) => {
+      if (disposedRef.current || operation !== sharedWorkspaceOperationRef.current || controller.signal.aborted) return
+      setComputerStatus((current) => {
+        if (current?.computer?.id !== botId) return current
+        if (result.enabled) return { ...current, computer: { ...current.computer, sharedFiles: true } }
+        const { sharedFiles: ignoredSharedFiles, ...withoutSharedFiles } = current.computer
+        void ignoredSharedFiles
+        return { ...current, computer: withoutSharedFiles }
+      })
+      setSharedWorkspaceBusy(false)
+      if (sharedWorkspaceController.current === controller) sharedWorkspaceController.current = undefined
+      refreshAvailability?.(targetSessionId)
+    }).catch((error: unknown) => {
+      if (disposedRef.current || operation !== sharedWorkspaceOperationRef.current || controller.signal.aborted) return
+      setSharedWorkspaceBusy(false)
+      if (sharedWorkspaceController.current === controller) sharedWorkspaceController.current = undefined
+      setFeedback(error instanceof ComputerApiError && error.status === 409
+        ? 'computerSharedWorkspaceBusy' : 'computerSharedWorkspaceError')
+    })
+  }, [botId, computer, refreshAvailability, sessionId, sharedWorkspaceActionDisabled, sharedWorkspaceControlAvailable])
+
   const restartIdentity = computerStatus?.computer
   const restartControlAvailable = computerStatus?.available === true && local === undefined && !sharedSignIn
     && sessionId !== undefined && botId !== undefined
@@ -324,7 +375,7 @@ export function ComputerPanel({ computer, sessionId, botId, close, refreshAvaila
     && restartIdentity.restart === true
   const restartActionAvailable = restartControlAvailable && (phase === 'ready' || phase === 'disconnected')
     && signIn === undefined && privateSignIn === undefined
-  const restartActionDisabled = restartBusy || networkBusy || mode !== 'watching' || botActive
+  const restartActionDisabled = restartBusy || networkBusy || sharedWorkspaceBusy || mode !== 'watching' || botActive
 
   const restartComputer = useCallback((): void => {
     if (!restartActionAvailable || restartActionDisabled) return
@@ -351,7 +402,7 @@ export function ComputerPanel({ computer, sessionId, botId, close, refreshAvaila
       setFeedback(error instanceof ComputerApiError && error.status === 409
         ? 'computerRestartBusy' : 'computerRestartError')
     })
-  }, [computer, networkBusy, restartActionAvailable, restartActionDisabled, restartBusy, sessionId])
+  }, [computer, networkBusy, restartActionAvailable, restartActionDisabled, restartBusy, sessionId, sharedWorkspaceBusy])
 
   const takeControl = useCallback((requestId?: string): void => {
     if (requestId !== undefined && (signInApi === undefined || frameSessionId === undefined)) return
@@ -631,7 +682,17 @@ export function ComputerPanel({ computer, sessionId, botId, close, refreshAvaila
             <span className={css.networkHint}>{t('computerNetworkHint')}</span>
           </span>
           <Switch checked={networkIdentity.terminalInternet} onChange={changeNetworkAccess}
-            disabled={networkBusy} label={t('computerNetworkToggle')} />
+            disabled={networkActionDisabled} label={t('computerNetworkToggle')} />
+        </div>
+      )}
+      {sharedWorkspaceControlAvailable && (
+        <div className={css.networkControl} data-computer-shared-workspace-control>
+          <span className={css.networkCopy}>
+            <span className={css.networkLabel}>{t('computerSharedWorkspaceLabel')}</span>
+            <span className={css.networkHint}>{t('computerSharedWorkspaceHint')}</span>
+          </span>
+          <Switch checked={sharedWorkspaceIdentity.sharedFiles === true} onChange={changeSharedWorkspace}
+            disabled={sharedWorkspaceActionDisabled} label={t('computerSharedWorkspaceToggle')} />
         </div>
       )}
       {computerStatus?.computer?.browser === true && mode === 'controlling' && (
