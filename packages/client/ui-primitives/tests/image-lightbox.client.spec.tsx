@@ -46,7 +46,7 @@ describe('ImageLightbox', () => {
 
   it('closes on a mask press but not on a press over the image', () => {
     const onClose = vi.fn()
-      const view = render(<ImageLightbox src="blob:original" alt="Original image" labels={labels} onClose={onClose} />)
+    const view = render(<ImageLightbox src="blob:original" alt="Original image" labels={labels} onClose={onClose} />)
     fireEvent.mouseDown(view.getByRole('img'))
     expect(onClose).not.toHaveBeenCalled()
     const mask = document.querySelector('[aria-hidden="true"]') as HTMLElement

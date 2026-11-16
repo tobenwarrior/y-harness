@@ -53,7 +53,7 @@ function operationsOf(state: Omit<AccountView, 'links'>, details?: Partial<Accou
   }
 }
 
-function mount(state: Omit<AccountView, 'links'>, copy: typeof en | typeof zh = en, details?: Partial<AccountDetails>, platform?: PlatformBridge) {
+function mount(state: Omit<AccountView, 'links'>, copy: typeof en = en, details?: Partial<AccountDetails>, platform?: PlatformBridge) {
   const pages = platform === undefined ? undefined : createPlatformPages()
   const operations = operationsOf(state, details, pages)
   // AccountSection consumes no global hooks; the slot supplies them in the application.
@@ -76,7 +76,7 @@ function SharedPlatformHost({ Globals, pages, platform, copy, refreshAccount }: 
   Globals: GlobalStandardProps
   pages: PlatformPages
   platform: PlatformBridge
-  copy: typeof en | typeof zh
+  copy: typeof en
   refreshAccount: () => Promise<void>
 }) {
   const subscribe = useMemo(() => (listener: () => void) => pages.subscribe(listener), [pages])

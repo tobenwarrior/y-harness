@@ -363,7 +363,7 @@ describe('TeamAction', () => {
     const clientHeight = vi.spyOn(Element.prototype, 'clientHeight', 'get').mockReturnValue(60)
     try {
       render(<TeamAction {...bench().props} />)
-    fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
+      fireEvent.click(screen.getByRole('button', { name: /Agent Team/u }))
       const expand = await screen.findByRole('button', { name: zh['task.expand'] })
       const description = screen.getByText('Build the Team runtime')
       expect(expand.getAttribute('aria-expanded')).toBe('false')

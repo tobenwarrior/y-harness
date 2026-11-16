@@ -8,7 +8,7 @@ import { en, zh } from '../src/client/locales.ts'
 
 afterEach(cleanup)
 const id = 'login-attempt' as SignInAttemptId
-function dialogProps(attempt: AccountView['attempt'], copy: typeof en | typeof zh = en, colorScheme: 'light' | 'dark' = 'dark') {
+function dialogProps(attempt: AccountView['attempt'], copy: typeof en = en, colorScheme: 'light' | 'dark' = 'dark') {
   const start = vi.fn(async () => {})
   const cancel = vi.fn(async () => {})
   const close = vi.fn()
@@ -16,7 +16,7 @@ function dialogProps(attempt: AccountView['attempt'], copy: typeof en | typeof z
   return { start, cancel, close, useApiKey, colorScheme, t: (key: keyof typeof en) => copy[key],
     account: { view: { status: 'signed-out' as const, attempt, links: { usageUrl: 'https://platform.deepseek.com/usage', topUpUrl: 'https://platform.deepseek.com/top_up' } }, details: undefined, failed: false } }
 }
-function mount(attempt: AccountView['attempt'], copy: typeof en | typeof zh = en, colorScheme: 'light' | 'dark' = 'dark') {
+function mount(attempt: AccountView['attempt'], copy: typeof en = en, colorScheme: 'light' | 'dark' = 'dark') {
   const props = dialogProps(attempt, copy, colorScheme)
   render(<SignInDialog {...props} />)
   return props

@@ -34,7 +34,7 @@ function noPendingInteraction() {
 // The resource hook the resources plugin merges into GlobalStandardProps; this row reads no address.
 const useResource = (() => ({ status: 'none' as const, value: undefined, failure: undefined })) as GlobalStandardProps['useResource']
 
-function mount(mode: TranscriptViewMode = 'standard', dictionary: typeof en | typeof zh = en) {
+function mount(mode: TranscriptViewMode = 'standard', dictionary: typeof en = en) {
   const source = createSnapshotStore<TranscriptViewMode>(mode)
   const setTranscriptView = vi.fn((next: TranscriptViewMode) => { source.set(next) })
   const props: TranscriptViewRowProps = {
