@@ -113,8 +113,7 @@ function waitForNextFrame(signal: AbortSignal): Promise<boolean> {
     }
     const onAbort = (): void => { finish(false) }
     const timer = setTimeout(() => { finish(true) }, FRAME_POLL_MS)
-    if (signal.aborted) finish(false)
-    else signal.addEventListener('abort', onAbort, { once: true })
+    signal.addEventListener('abort', onAbort, { once: true })
   })
 }
 
@@ -134,13 +133,19 @@ function imageErrorPhase(error: unknown): PanelPhase {
   return error instanceof ComputerApiError && error.status === 404 ? 'unavailable' : 'disconnected'
 }
 
-/** Render the Computer tab's image, lease controls, and bounded input affordances. */
+/**
+ * Render the live Computer with input scoped to its current client and Session.
+ * @param props - The Computer client, selected Session, and localized controls.
+ * @returns The Computer panel.
+ */
 export function ComputerPanel({ computer, signIn, ...props }: ComputerPanelProps): ReactNode {
   const [view, setView] = useState<ComputerView>()
   const desktop = view === 'desktop' && signIn === undefined ? computer.desktop : undefined
   const select = computer.desktop === undefined || signIn !== undefined ? undefined : setView
-  return <ComputerViewer key={desktop === undefined ? 'primary' : 'desktop'} {...props}
-    computer={desktop ?? computer} signIn={signIn} view={desktop === undefined ? 'browser' : 'desktop'}
+  const surface = desktop === undefined ? 'browser' : 'desktop'
+  const sessionId = signIn?.targetSessionId ?? props.sessionId
+  return <ComputerViewer key={`${surface}:${sessionId ?? ''}`} {...props}
+    computer={desktop ?? computer} signIn={signIn} view={surface}
     restoreFocus={view !== undefined}
     {...(select === undefined ? {} : { select })} />
 }
@@ -165,8 +170,7 @@ function ComputerViewer({
   const requestEpochRef = useRef(0)
   const operationRef = useRef(0)
   const claimedSignIn = useRef<string>()
-  const inputQueue = useRef(Promise.resolve())
-  const queuedInputs = useRef(0)
+  const inputQueue = useRef({ tail: Promise.resolve(), pending: 0 })
   const imageRef = useRef<HTMLImageElement | null>(null)
   const pointerRef = useRef<{
     readonly pointerId: number
@@ -204,12 +208,6 @@ function ComputerViewer({
   frameRef.current = frame
 
   useEffect(() => {
-    frameRef.current = undefined
-    modeRef.current = 'watching'
-    setFrame(undefined)
-    setMode('watching')
-    setBotActive(false)
-    setPhase('loading')
     setWebsite('')
     setNavigating(false)
     setNetworkBusy(false)
@@ -238,7 +236,7 @@ function ComputerViewer({
       sharedWorkspaceController.current = undefined
       ++sharedWorkspaceOperationRef.current
     }
-  }, [botId, frameSessionId, sessionId])
+  }, [botId, computer, frameSessionId, sessionId])
 
   useEffect(() => {
     if (local !== undefined) return
@@ -261,10 +259,20 @@ function ComputerViewer({
 
   useEffect(() => {
     disposedRef.current = false
+    frameRef.current = undefined
+    pointerRef.current = undefined
+    claimedSignIn.current = undefined
+    applyMode('watching')
+    setFrame(undefined)
+    setBotActive(false)
+    setPhase('loading')
+    setBusy(undefined)
+    setFeedback(undefined)
     const release = (): void => {
       disposedRef.current = true
       ++requestEpochRef.current
       ++operationRef.current
+      inputQueue.current = { tail: Promise.resolve(), pending: 0 }
       if (modeRef.current !== 'controlling') return
       modeRef.current = 'watching'
       void computer.releaseControl(viewerId, { keepalive: true }, frameSessionId).catch((error: unknown) => {
@@ -272,27 +280,32 @@ function ComputerViewer({
       })
     }
     return release
-  }, [computer, frameSessionId, viewerId])
+  }, [applyMode, computer, frameSessionId, viewerId])
 
   useEffect(() => {
     if (networkBusy || restartBusy || sharedWorkspaceBusy) return
-    let disposed = false
     const controller = new AbortController()
+    const { signal } = controller
     const poll = async (): Promise<void> => {
       if (frameRef.current === undefined) setPhase('loading')
-      while (!disposed && !controller.signal.aborted) {
+      while (true) {
         const requestEpoch = requestEpochRef.current
         try {
-          const next = await computer.frame(viewerId, controller.signal, frameSessionId)
-          if (disposed || controller.signal.aborted || requestEpoch !== requestEpochRef.current) continue
+          signal.throwIfAborted()
+          const next = await computer.frame(viewerId, signal, frameSessionId)
+          signal.throwIfAborted()
+          if (requestEpoch !== requestEpochRef.current) continue
+          // Arm the delay before publishing a frame so a synchronous cleanup can cancel it.
+          const nextFrame = waitForNextFrame(signal)
           setFrame(next)
           frameRef.current = next
           if (next.signIn === undefined || next.mode !== 'controlling') claimedSignIn.current = undefined
           applyMode(next.mode)
           setBotActive(next.botActive)
           setPhase('ready')
+          if (!await nextFrame) return
         } catch (error: unknown) {
-          if (disposed || controller.signal.aborted || isAbortError(error)) return
+          if (signal.aborted || isAbortError(error)) return
           if (requestEpoch !== requestEpochRef.current) continue
           if (sharedSignIn || frameRef.current?.signIn !== undefined || claimedSignIn.current !== undefined) {
             setFrame(undefined)
@@ -302,11 +315,10 @@ function ComputerViewer({
           local?.checkSharing()
           return
         }
-        if (!await waitForNextFrame(controller.signal)) return
       }
     }
     void poll()
-    return () => { disposed = true; controller.abort() }
+    return () => { controller.abort() }
   }, [applyMode, computer, frameSessionId, local, networkBusy, restartBusy, retryNonce, sharedSignIn, sharedWorkspaceBusy, viewerId])
 
   const alive = (operation: number): boolean => !disposedRef.current && operation === operationRef.current
@@ -479,13 +491,15 @@ function ComputerViewer({
     setBusy('release')
     setFeedback(undefined)
     const requestId = claimedSignIn.current
-    void inputQueue.current.then(() => {
+    const queue = inputQueue.current
+    void queue.tail.then(async () => {
+      if (inputQueue.current !== queue || !alive(operation)) return undefined
       if (requestId !== undefined && signInApi !== undefined && frameSessionId !== undefined) {
         return cancel ? signInApi.cancel(frameSessionId, requestId, viewerId) : signInApi.complete(frameSessionId, requestId, viewerId)
       }
       return computer.releaseControl(viewerId, undefined, frameSessionId)
     }).then((result) => {
-      if (!alive(operation)) return
+      if (result === undefined || !alive(operation)) return
       ++requestEpochRef.current
       claimedSignIn.current = undefined
       if (requestId !== undefined) {
@@ -510,17 +524,18 @@ function ComputerViewer({
   }
 
   const sendAction = (action: ComputerInputAction): void => {
-    const browserOrigin = sharedSignIn && frame?.browserOrigin !== null ? frame?.browserOrigin : undefined
+    const queue = inputQueue.current
+    const browserOrigin = sharedSignIn ? frame?.browserOrigin ?? undefined : undefined
     if (local !== undefined || busy !== undefined || modeRef.current !== 'controlling' || phase !== 'ready'
-      || queuedInputs.current >= MAX_QUEUED_INPUTS || (sharedSignIn && browserOrigin === undefined)) return
+      || queue.pending >= MAX_QUEUED_INPUTS || (sharedSignIn && browserOrigin === undefined)) return
     setFeedback(undefined)
-    queuedInputs.current++
-    inputQueue.current = inputQueue.current.then(async () => {
-      if (disposedRef.current || modeRef.current !== 'controlling') return
+    queue.pending++
+    queue.tail = queue.tail.then(async () => {
+      if (inputQueue.current !== queue || modeRef.current !== 'controlling') return
       try {
         await computer.input(viewerId, action, undefined, frameSessionId, browserOrigin)
       } catch (error: unknown) {
-        if (disposedRef.current) return
+        if (inputQueue.current !== queue) return
         if (error instanceof ComputerApiError && error.status === 409) {
           applyMode('other')
           setFeedback('computerControlBusy')
@@ -538,7 +553,7 @@ function ComputerViewer({
           setFeedback('computerInputRejected')
         }
       }
-    }).finally(() => { queuedInputs.current-- })
+    }).finally(() => { queue.pending-- })
   }
 
   const sendText = (value: string): void => {
@@ -557,8 +572,9 @@ function ComputerViewer({
     navigation.current = controller
     setFeedback(undefined)
     setNavigating(true)
-    inputQueue.current = inputQueue.current.then(async () => {
-      if (controller.signal.aborted || disposedRef.current || modeRef.current !== 'controlling') return
+    const queue = inputQueue.current
+    queue.tail = queue.tail.then(async () => {
+      if (controller.signal.aborted || inputQueue.current !== queue || modeRef.current !== 'controlling') return
       try {
         await navigate(viewerId, address, frameSessionId, controller.signal)
         if (!controller.signal.aborted && !disposedRef.current) imageRef.current?.focus()
@@ -582,11 +598,17 @@ function ComputerViewer({
   }
 
   const paste = (): void => {
-    if (modeRef.current !== 'controlling' || navigator.clipboard === undefined) {
+    const source: { readonly clipboard?: Clipboard } = navigator
+    const { clipboard } = source
+    if (modeRef.current !== 'controlling' || clipboard === undefined) {
       setFeedback('computerPasteFailed')
       return
     }
-    void navigator.clipboard.readText().then(sendText).catch((error: unknown) => {
+    const operation = operationRef.current
+    void clipboard.readText().then((text) => {
+      if (alive(operation)) sendText(text)
+    }).catch((error: unknown) => {
+      if (!alive(operation)) return
       console.warn('Computer clipboard read failed:', error)
       setFeedback('computerPasteFailed')
     })
