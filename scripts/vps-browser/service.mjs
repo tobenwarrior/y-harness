@@ -30,6 +30,8 @@ const HANDOFF_TTL = 10 * 60_000
 const SHARING_REVISION = /^[a-f0-9]{32}$/u
 const SHARED_POLICY_MODE = 0o640
 const UNAVAILABLE = Object.freeze({ error: 'unavailable' })
+const RESTARTED = Object.freeze({ status: 'restarted' })
+const BUSY = Object.freeze({ status: 'busy' })
 
 function object(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -192,9 +194,15 @@ function parseControl(value, grants) {
   } else if (value.action === 'end-handoff' && shared && fields(value, [...base, 'lease', 'outcome'])
     && validLease(value.lease) && (value.outcome === 'complete' || value.outcome === 'discard')) {
     return request({ action: value.action, lease: value.lease, outcome: value.outcome })
+  } else if (value.action === 'restart' && !shared && fields(value, base)) {
+    return request({ action: value.action })
   } else if (value.action === 'frame' || value.action === 'status') {
     if (value.action === 'frame' && shared && fields(value, [...base, 'lease']) && validLease(value.lease)) {
       return request({ action: value.action, lease: value.lease })
+    }
+    if (value.action === 'status' && !shared && fields(value, [...base, 'capability'])
+      && value.capability === 'restart') {
+      return request({ action: value.action, capability: value.capability })
     }
     if (fields(value, base)) return request({ action: value.action })
   } else if (value.action === 'sharing-status' && !shared && fields(value, base)) {
@@ -304,14 +312,16 @@ function browserPool({ root, executable, createPage = createBrowserPage, handoff
       if (closed) throw new Error('Browser unavailable')
       entry = pages.get(session)
     }
-    if (entry?.retired) throw new Error('Browser unavailable')
+    if (entry?.retired || entry?.restarting) throw new Error('Browser unavailable')
     if (entry === undefined) {
       if (!create) throw new Error('Browser unavailable')
       if (pages.size >= MAX_PAGES) throw new Error('Too many active browsers')
       const next = { page: profileDirectory(root, session).then(path => createPage(executable, path)),
         queue: Promise.resolve(), pending: 0, idle: undefined, disposal: undefined,
-        handoff: undefined, discardTask: undefined, disposed: false, retired: false, identity }
+        handoff: undefined, discardTask: undefined, disposed: false, retired: false,
+        starting: true, restarting: false, identity }
       pages.set(session, next)
+      void next.page.then(() => { next.starting = false }, () => { next.starting = false })
       void next.page.then(page => page.closed).catch(() => undefined).then(() => {
         if (pages.get(session) === next) pages.delete(session)
         clearTimeout(next.idle)
@@ -324,6 +334,7 @@ function browserPool({ root, executable, createPage = createBrowserPage, handoff
   function checkAdmission(session, entry, admission) {
     if (pages.get(session) !== entry || entry.disposed) throw new Error('Browser unavailable')
     if (admission.kind !== 'retire' && entry.retired) throw new Error('Browser unavailable')
+    if (admission.kind !== 'retire' && entry.restarting) throw new Error('Browser unavailable')
     if (admission.kind === 'retire') return
     if (admission.kind === 'begin') {
       if (entry.handoff !== undefined) throw new Error('Browser unavailable')
@@ -391,6 +402,22 @@ function browserPool({ root, executable, createPage = createBrowserPage, handoff
         lease === undefined
           ? { kind: 'ordinary', authorize, after: releaseAuthorize }
           : { kind: 'owner', lease, authorize, after: releaseAuthorize })
+    },
+    async restart(session, signal, reserved = () => false) {
+      signal?.throwIfAborted()
+      if (reserved()) return BUSY
+      const active = pages.get(session)
+      if (active === undefined) return RESTARTED
+      if (active.starting || active.pending > 0 || active.disposal !== undefined
+        || active.handoff !== undefined || active.restarting) return BUSY
+      active.restarting = true
+      try {
+        if (reserved()) return BUSY
+        await disposePage(session, active)
+        return RESTARTED
+      } finally {
+        active.restarting = false
+      }
     },
     async begin(
       session, lease, operation, signal, identity = undefined,
@@ -680,6 +707,7 @@ export function browserServers(options) {
     }
     await prepare(request)
     if (request.action === 'status') return { available: true }
+    if (request.action === 'restart') return pool.restart(request.session, signal, () => logins.reserved(request.session))
     if (request.action === 'begin-handoff') {
       return pool.begin(request.session, request.lease, async page => {
         if (logins.reserved(request.session)) throw new Error('Browser unavailable')

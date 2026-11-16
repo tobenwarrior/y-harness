@@ -62,6 +62,8 @@ export interface ComputerStatusMetadata {
   readonly terminalInternet?: boolean
   /** Whether this exact owner Computer offers a network setting. */
   readonly networkControl?: true
+  /** Whether the owner can restart this exact private Computer. */
+  readonly restart?: true
   /** Whether the owner's file browser uses this Bot's private workspace. */
   readonly files?: true
   /** Whether the owner can browse this Bot's shared project files. */
@@ -82,6 +84,8 @@ export interface BotComputerRouteTarget {
   readonly terminalInternet?: boolean
   /** Whether the owner may change outbound access from the Computer panel. */
   readonly networkControl?: true
+  /** Restart support for the local runtime or a read-only browser worker probe. */
+  readonly restart?: true | ((signal: AbortSignal) => Promise<boolean>)
   /** Whether the owner's file browser uses this Bot's private workspace. */
   readonly files?: true
   /** Whether the owner can browse this Bot's shared project files. */
@@ -315,7 +319,7 @@ interface RouteOptions {
 }
 
 function routesFor(
-  resolveComputer: (sessionId: string) => Promise<ResolvedComputer | undefined>,
+  resolveComputer: (sessionId: string, statusSignal?: AbortSignal) => Promise<ResolvedComputer | undefined>,
   options: RouteOptions,
 ): readonly ConnectionFetchRoute[] {
   const action = (computer: ComputerRouteController, endpoint: string) => {
@@ -347,7 +351,7 @@ function routesFor(
         const target = sessionTarget(payload, options.managed && options.allowMissingSession !== true)
         if (target === undefined) return json({ error: 'invalid-request' }, 400)
         try {
-          return options.status(await resolveComputer(target.id), target)
+          return options.status(await resolveComputer(target.id, request.signal), target)
         } catch (error) {
           // Lazy startup and provider diagnostics stay private to the Host.
           void error
@@ -489,12 +493,14 @@ export function botComputerRoutesWithLegacy(
   resolveTarget: (sessionId: string) => Promise<BotComputerRouteTarget | undefined>,
   options: { readonly allowMissingSession?: boolean } = {},
 ): readonly ConnectionFetchRoute[] {
-  const resolveComputer = async (sessionId: string): Promise<ResolvedComputer | undefined> => {
+  const resolveComputer = async (sessionId: string, statusSignal?: AbortSignal): Promise<ResolvedComputer | undefined> => {
     const target = await resolveTarget(sessionId)
     if (target === undefined) return undefined
     const navigate = target.navigate
     const computer = target.computer
     const open = typeof computer === 'function' ? computer : () => computer
+    const restart = target.permissionScope === 'bot' && (target.restart === true
+      || (statusSignal !== undefined && target.restart !== undefined && await target.restart(statusSignal)))
     return {
       open,
       available: typeof computer === 'function' || computer.status().available,
@@ -507,6 +513,7 @@ export function botComputerRoutesWithLegacy(
         ...(target.permissionScope === 'bot' && target.terminal === true && target.terminalInternet !== undefined
           ? { terminalInternet: target.terminalInternet } : {}),
         ...(target.permissionScope === 'bot' && target.networkControl === true ? { networkControl: true } : {}),
+        ...(restart ? { restart: true } : {}),
         ...(target.files === true ? { files: true } : {}),
         ...(target.files === true && target.sharedFiles === true ? { sharedFiles: true } : {}),
       },
@@ -561,6 +568,41 @@ export function computerNetworkRoute(
         const outcome = await apply(SessionId(target.id), payload.enabled, request.signal)
         if (outcome === 'applied') return json({ status: 'applied', enabled: payload.enabled })
         if (outcome === 'busy') return json({ status: 'busy' }, 409)
+        return json({ status: 'unavailable' }, 404)
+      } catch (error) {
+        void error
+        return json({ status: 'unavailable' }, 503)
+      }
+    },
+  }
+}
+
+/**
+ * Restart one private owner Computer through its idle checks.
+ * @param restart - Resolve and restart the exact owner Session. Undefined means no eligible Computer.
+ * @returns The authenticated, no-store restart route.
+ */
+export function computerRestartRoute(
+  restart: (sessionId: SessionId, signal: AbortSignal) => Promise<'restarted' | 'busy' | undefined>,
+): ConnectionFetchRoute {
+  return {
+    path: '/api/computer/restart', methods: ['POST'], requestBody: 'streaming',
+    async fetch(request) {
+      let payload: unknown
+      try {
+        payload = await readPayload(request)
+      } catch (error) {
+        void error
+        return json({ status: 'invalid-request' }, 400)
+      }
+      if (!isRecord(payload) || Object.keys(payload).length !== 1) return json({ status: 'invalid-request' }, 400)
+      const target = sessionTarget(payload, true)
+      if (target === undefined) return json({ status: 'invalid-request' }, 400)
+      try {
+        request.signal.throwIfAborted()
+        const status = await restart(SessionId(target.id), request.signal)
+        if (status === 'restarted') return json({ status })
+        if (status === 'busy') return json({ status }, 409)
         return json({ status: 'unavailable' }, 404)
       } catch (error) {
         void error

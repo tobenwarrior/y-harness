@@ -50,11 +50,13 @@ class HandoffAdapter extends LlmAdapter {
   }
 }
 
-it.skipIf(MODE === 'record' || process.platform === 'win32')('changes Internet access and returns a private Computer to the Bot in the same chat turn', async () => {
+it.skipIf(MODE === 'record' || process.platform === 'win32')('recovers a private Computer while preserving Internet access and sign-in handback', async () => {
   const root = await mkdtemp('/tmp/yh-sign-in-web-')
   const runtimePath = join(root, 'computer.mjs')
   const overlay = join(root, 'computer.yml')
   const startedComputers = join(root, 'started-computers')
+  const restartedComputers = join(root, 'restarted-computers')
+  const disconnectedComputer = join(root, 'disconnected-computer')
   let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined
   let scaffold: Awaited<ReturnType<typeof launchWebScaffold>> | undefined
   try {
@@ -73,20 +75,28 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('changes Internet a
       canvas.fillText('Browser sign-in fixture', 450, 400)
       return image.toDataURL('image/jpeg').split(',')[1]
     })
-    await writeFile(startedComputers, '')
+    await Promise.all([startedComputers, restartedComputers, disconnectedComputer].map(path => writeFile(path, '')))
     await writeFile(runtimePath, `
-      import { appendFile } from 'node:fs/promises'
+      import { appendFile, readFile, writeFile } from 'node:fs/promises'
       import { VpsRuntime } from ${JSON.stringify(RUNTIME_SOURCE)}
       import { mountVpsBots } from ${JSON.stringify(BOTS_SOURCE)}
       export const name = 'computer-sign-in-fixture'
       export function apply(ctx, config) {
         const ensure = VpsRuntime.prototype.ensure
+        const ensureOne = VpsRuntime.prototype.ensureOne
         const desktopCommand = VpsRuntime.prototype.desktopCommand
         const runPodman = VpsRuntime.prototype.runPodman
         const supportsNetworkControl = VpsRuntime.prototype.supportsNetworkControl
         ctx.effect(() => {
           VpsRuntime.prototype.ensure = sessionId => appendFile(${JSON.stringify(startedComputers)}, sessionId + '\\n')
-          VpsRuntime.prototype.desktopCommand = async () => Buffer.from(${JSON.stringify(jpeg)}, 'base64')
+          VpsRuntime.prototype.ensureOne = async sessionId => {
+            await appendFile(${JSON.stringify(restartedComputers)}, sessionId + '\\n')
+            await writeFile(${JSON.stringify(disconnectedComputer)}, '')
+          }
+          VpsRuntime.prototype.desktopCommand = async sessionId => {
+            if (await readFile(${JSON.stringify(disconnectedComputer)}, 'utf8') === sessionId) throw new Error('Fixture display failed.')
+            return Buffer.from(${JSON.stringify(jpeg)}, 'base64')
+          }
           VpsRuntime.prototype.supportsNetworkControl = () => true
           VpsRuntime.prototype.runPodman = async args => {
             if (args[0] === 'container' && args[1] === 'exists') return { code: 1, stdout: '', stderr: '' }
@@ -94,6 +104,7 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('changes Internet a
           }
           return () => {
             VpsRuntime.prototype.ensure = ensure
+            VpsRuntime.prototype.ensureOne = ensureOne
             VpsRuntime.prototype.desktopCommand = desktopCommand
             VpsRuntime.prototype.runPodman = runPodman
             VpsRuntime.prototype.supportsNetworkControl = supportsNetworkControl
@@ -137,7 +148,9 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('changes Internet a
       body: JSON.stringify(payload) })
     const target = { sessionId: imported.sessionId }
     const enable = request({ ...target, enabled: true })
+    const restart = request(target)
     expect((await fetch(new URL('/api/computer/network', web.baseUrl), enable)).status).toBe(401)
+    expect((await fetch(new URL('/api/computer/restart', web.baseUrl), restart)).status).toBe(401)
     const other = await web.hostFetch('/api/computer/network', request({ ...target, sessionId: 'bot-session-11111111-1111-4111-8111-111111111111', enabled: true }))
     expect(other.status).toBe(404)
     const invalid = await web.hostFetch('/api/computer/network', request({ ...target, enabled: 'true' }))
@@ -145,14 +158,25 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('changes Internet a
     await panel.getByRole('button', { name: 'Take control', exact: true }).click()
     await panel.getByRole('button', { name: 'Hand back', exact: true }).waitFor()
     expect((await web.hostFetch('/api/computer/network', enable)).status).toBe(409)
+    expect((await web.hostFetch('/api/computer/restart', restart)).status).toBe(409)
     expect(await network.getAttribute('aria-checked')).toBe('false')
     await panel.getByRole('button', { name: 'Hand back', exact: true }).click()
     await panel.getByRole('button', { name: 'Take control', exact: true }).waitFor()
     await network.click()
     await expect.poll(() => network.getAttribute('aria-checked')).toBe('true')
     const status = await web.hostFetch('/api/computer/status', request(target))
-    expect(await status.json()).toMatchObject({ computer: { id: imported.id, terminalInternet: true, networkControl: true } })
+    expect(await status.json()).toMatchObject({
+      computer: { id: imported.id, terminalInternet: true, networkControl: true, restart: true },
+    })
     const networkView = await captureStableAria(page, panelSelector, web.workspaceCwd)
+    await writeFile(disconnectedComputer, imported.sessionId)
+    await panel.getByRole('status').getByText('Computer connection lost', { exact: true }).waitFor()
+    await panel.getByRole('button', { name: 'Restart computer', exact: true }).click()
+    const confirmation = await captureStableAria(page, panelSelector, web.workspaceCwd)
+    await panel.getByRole('button', { name: 'Restart', exact: true }).click()
+    await panel.getByRole('status').getByText('Watching', { exact: true }).waitFor()
+    expect(await readFile(restartedComputers, 'utf8')).toBe(`${imported.sessionId}\n`)
+    expect(await network.getAttribute('aria-checked')).toBe('true')
     await panel.getByRole('button', { name: 'Close computer panel' }).click()
     await page.locator(`[data-bot-id="${BOT}"]`).click()
     const conversation = page.locator('[data-conversation-surface="bots"]')
@@ -181,7 +205,10 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('changes Internet a
     expect(adapter.sawReceipt).toBe(true)
     await card.waitFor({ state: 'hidden' })
     expect(consoleLog.pageErrors).toEqual([])
-    await compareOrRefreshGolden(GOLDEN, `## Internet enabled\n\n${networkView}\n\n## Waiting in chat\n\n${pending}\n\n## In control\n\n${privateView}`, MODE)
+    await compareOrRefreshGolden(GOLDEN, [
+      `## Internet enabled\n\n${networkView}`, `## Restart confirmation\n\n${confirmation}`,
+      `## Waiting in chat\n\n${pending}`, `## In control\n\n${privateView}`,
+    ].join('\n\n'), MODE)
   } finally {
     try { await browser?.close() }
     finally {

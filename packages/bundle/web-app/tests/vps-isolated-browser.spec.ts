@@ -62,6 +62,24 @@ async function listenRaw(response: string | Buffer, onRequest?: (request: Record
 }
 
 describe('isolated browser broker client', () => {
+  it('probes and restarts only the configured owner browser', async () => {
+    const requests: Record<string, unknown>[] = []
+    const socketPath = await listen((request) => {
+      requests.push(request)
+      if (request.action === 'status') return { available: true }
+      return { status: 'restarted' }
+    })
+    const browser = new VpsIsolatedBrowser({ socketPath, bots: [BOT], sharedBots: [BOT] })
+    const signal = new AbortController().signal
+    await expect(browser.restartAvailable(BOT, SESSION, signal)).resolves.toBe(true)
+    await expect(browser.restart(BOT, SESSION, signal)).resolves.toBe('restarted')
+    await expect(browser.restart(BOT, 'shared-session-0e9beecd-b6f5-40b1-8d52-f97259bdcf76', signal)).rejects.toThrow()
+    expect(requests).toEqual([
+      { action: 'status', bot: BOT, session: SESSION, capability: 'restart' },
+      { action: 'restart', bot: BOT, session: SESSION },
+    ])
+  })
+
   it('sends one request with the Bot and canonical Session and decodes each operation', async () => {
     const requests: Record<string, unknown>[] = []
     const socketPath = await listen((request) => {

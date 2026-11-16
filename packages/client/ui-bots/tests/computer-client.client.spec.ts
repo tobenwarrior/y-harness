@@ -81,6 +81,28 @@ describe('Computer HTTP client', () => {
     await expect(client.status()).resolves.toEqual({ ...base, computer: { id: bot.id, location: 'vps', permissionScope: 'workspace' } })
   })
 
+  it('reads the private Bot restart capability and posts the selected Session', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response({ available: true, kind: 'vps',
+        computer: { id: 'bot-id-owner', location: 'vps', permissionScope: 'bot', restart: true } }))
+      .mockResolvedValueOnce(response({ status: 'restarted' }))
+      .mockResolvedValueOnce(response({ status: 'busy' }, 409))
+    vi.stubGlobal('fetch', fetchMock)
+    const client = createComputerClient()
+
+    await expect(client.status(undefined, 'bot-session-owner')).resolves.toMatchObject({
+      computer: { id: 'bot-id-owner', restart: true },
+    })
+    const restart = client.restart
+    expect(restart).toBeTypeOf('function')
+    if (restart === undefined) return
+    await expect(restart('bot-session-owner')).resolves.toEqual({ status: 'restarted' })
+    expect(fetchMock).toHaveBeenNthCalledWith(2, 'api/computer/restart', expect.objectContaining({
+      method: 'POST', body: JSON.stringify({ sessionId: 'bot-session-owner' }),
+    }))
+    await expect(restart('bot-session-owner')).rejects.toMatchObject({ status: 409 })
+  })
+
   it('posts the exact private-session Internet toggle and preserves the busy response', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(response({ status: 'applied', enabled: true }))

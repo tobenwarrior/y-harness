@@ -71,9 +71,121 @@ async function setup(t, options = {}) {
 test('checks the exact Bot and Session without launching a browser', async t => {
   const { control } = await setup(t)
   assert.deepEqual(await controlResponse(control, { ...request, action: 'status' }), { available: true })
+  assert.deepEqual(await controlResponse(control, { ...request, action: 'status', capability: 'restart' }), {
+    available: true,
+  })
+  assert.deepEqual(await controlResponse(control, { ...request, action: 'status', capability: 'other' }), {
+    error: 'unavailable',
+  })
   assert.deepEqual(await controlResponse(control, { ...request, action: 'status', session: otherSession }), { error: 'unavailable' })
   assert.deepEqual(await controlResponse(control, { ...request, action: 'status', bot: 'bot-other' }), { error: 'unavailable' })
   assert.throws(() => parseGrants([request, { bot: 'bot-duplicate', session: SESSION }]))
+})
+
+test('restarts only the exact private owner browser and preserves the profile', async t => {
+  const profiles = []
+  const closeCalls = []
+  const { control } = await setup(t, {
+    createPage: async (_executable, profile) => {
+      profiles.push(profile)
+      return {
+        frame: async () => '/9j/2Q==',
+        close: async () => { closeCalls.push(profile) },
+        closed: new Promise(() => {}),
+      }
+    },
+  })
+  assert.deepEqual(await controlResponse(control, { ...request, action: 'restart' }), { status: 'restarted' })
+  assert.deepEqual(await controlResponse(control, { ...request, action: 'status' }), { available: true })
+  assert.deepEqual(await controlResponse(control, { bot: BOT, session: sharedSession, action: 'restart' }), {
+    error: 'unavailable',
+  })
+  assert.deepEqual(await controlResponse(control, {
+    bot: BOT, session: 'shared-session-group-c3c3c3c3-c3c3-43c3-83c3-c3c3c3c3c3c3', action: 'restart',
+  }), { error: 'unavailable' })
+  assert.deepEqual(await controlResponse(control, { bot: BOT, session: otherSession, action: 'restart' }), {
+    error: 'unavailable',
+  })
+  await controlResponse(control, { ...request, action: 'frame' })
+  assert.deepEqual(await controlResponse(control, { ...request, action: 'restart' }), { status: 'restarted' })
+  await controlResponse(control, { ...request, action: 'frame' })
+  assert.equal(profiles.length, 2)
+  assert.equal(profiles[0], profiles[1])
+  assert.deepEqual(closeCalls, [profiles[0]])
+})
+
+test('reports restart busy during an operation, browser start, and disposal', async t => {
+  const operationStarted = Promise.withResolvers()
+  const operationRelease = Promise.withResolvers()
+  const createStarted = Promise.withResolvers()
+  const createRelease = Promise.withResolvers()
+  const closeStarted = Promise.withResolvers()
+  const closeRelease = Promise.withResolvers()
+  let pageNumber = 0
+  const { control } = await setup(t, {
+    createPage: async () => {
+      const currentPage = ++pageNumber
+      if (currentPage === 2) {
+        createStarted.resolve()
+        await createRelease.promise
+      }
+      return {
+        frame: async () => {
+          if (currentPage === 1) {
+            operationStarted.resolve()
+            await operationRelease.promise
+          }
+          return '/9j/2Q=='
+        },
+        close: async () => {
+          if (currentPage === 2) {
+            closeStarted.resolve()
+            await closeRelease.promise
+          }
+        },
+        closed: new Promise(() => {}),
+      }
+    },
+  })
+  const frame = controlResponse(control, { ...request, action: 'frame' })
+  await operationStarted.promise
+  assert.deepEqual(await controlResponse(control, { ...request, action: 'restart' }), { status: 'busy' })
+  operationRelease.resolve()
+  assert.deepEqual(await frame, { jpeg: '/9j/2Q==', width: 1280, height: 800 })
+
+  assert.deepEqual(await controlResponse(control, { ...request, action: 'restart' }), { status: 'restarted' })
+  const starting = controlResponse(control, { ...request, action: 'frame' })
+  await createStarted.promise
+  assert.deepEqual(await controlResponse(control, { ...request, action: 'restart' }), { status: 'busy' })
+  createRelease.resolve()
+  assert.deepEqual(await starting, { jpeg: '/9j/2Q==', width: 1280, height: 800 })
+
+  const firstRestart = controlResponse(control, { ...request, action: 'restart' })
+  await closeStarted.promise
+  assert.deepEqual(await controlResponse(control, { ...request, action: 'restart' }), { status: 'busy' })
+  closeRelease.resolve()
+  assert.deepEqual(await firstRestart, { status: 'restarted' })
+})
+
+test('reports restart busy while the exact owner saved login is reserved', async t => {
+  const origin = 'https://login.example.test'
+  const destination = origin + '/session'
+  const { control } = await setup(t, {
+    savedLogins: true,
+    createPage: async () => ({
+      captureLogin: async () => ({ origin, destination }),
+      frame: async () => '/9j/2Q==',
+      close: async () => {},
+      closed: new Promise(() => {}),
+    }),
+  })
+  const pending = await controlResponse(control, { ...request, action: 'request-login' })
+  assert.match(pending.id, /^[a-f0-9]{32}$/u)
+  assert.deepEqual(await controlResponse(control, { ...request, action: 'restart' }), { status: 'busy' })
+  assert.deepEqual(await controlResponse(control, { ...request, action: 'cancel-login', id: pending.id }), {
+    state: 'unavailable',
+  })
+  assert.deepEqual(await controlResponse(control, { ...request, action: 'restart' }), { status: 'restarted' })
 })
 
 test('opens only explicitly enabled shared chats in their own browser profiles', async t => {
@@ -93,6 +205,12 @@ test('opens only explicitly enabled shared chats in their own browser profiles',
   assert.equal(new Set(profiles).size, 3)
   assert.equal(profiles.filter(profile => profile.endsWith('/' + SESSION)).length, 1)
   assert.equal(profiles.some(profile => profile.includes(sharedSession)), false)
+  assert.deepEqual(await controlResponse(control, { bot: BOT, session: sharedSession, action: 'status' }), {
+    available: true,
+  })
+  assert.deepEqual(await controlResponse(control, {
+    bot: BOT, session: sharedSession, action: 'status', capability: 'restart',
+  }), { error: 'unavailable' })
   assert.deepEqual(await controlResponse(control, { bot: 'bot-other', session: sharedSession, action: 'status' }),
     { error: 'unavailable' })
   assert.deepEqual(await controlResponse(control, { bot: BOT, session: 'shared-session-incorrect', action: 'status' }),

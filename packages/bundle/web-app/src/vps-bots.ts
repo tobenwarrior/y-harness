@@ -14,7 +14,7 @@ import { ComputerLeaseError, containerComputer, type VpsComputer } from './compu
 import * as ComputerTool from './computer-tool.ts'
 import {
   botComputerRoutesWithLegacy, computerFileDownloadRoute, computerFileHandoffRoutes, computerFileUploadRoute,
-  computerNetworkRoute, computerSignInRoute,
+  computerNetworkRoute, computerRestartRoute, computerSignInRoute,
 } from './computer-api.ts'
 import { registerVpsBotFileTools, VpsBotFileHandoffs } from './vps-bot-file-handoffs.ts'
 import { resolveVpsFileUploadLimits, uploadComputerFile, type VpsFileUploadConfig } from './vps-bot-upload.ts'
@@ -268,13 +268,16 @@ export function mountVpsBots(
   })
 
   ctx.inject(['bots', 'connection'], (scope) => {
-    scope.effect(() => scope.connection.fetch.register(computerNetworkRoute(async (sessionId, enabled, signal) => {
+    const maintain = async <T extends 'applied' | 'restarted'>(
+      sessionId: SessionId, signal: AbortSignal, work: (botId: string) => Promise<T | 'busy'>,
+    ): Promise<T | 'busy' | undefined> => {
       const bot = await scope.bots.ownerBotForSession(sessionId)
       if (bot?.state !== 'active' || bot.sessionId !== sessionId || !isDesktopBot(bot.id)) return undefined
-      const apply = async () => {
+      const apply = async (): Promise<T | 'busy'> => {
         if (scope.get('agents')?.get(sessionId)?.status === 'running'
-          || scope.get('terminalController')?.list(sessionId).some(terminal => terminal.state === 'running')) return 'busy' as const
-        return runtimeFor(bot.id).setInternetAccess(sessionId, enabled, signal)
+          || scope.get('terminalController')?.list(sessionId).some(terminal => terminal.state === 'running')
+          || browserLogin?.hasPending(sessionId) === true) return 'busy'
+        return work(bot.id)
       }
       const computer = computers.get(sessionId)
       try {
@@ -283,7 +286,14 @@ export function mountVpsBots(
         if (error instanceof ComputerLeaseError) return 'busy'
         throw error
       }
-    })), 'vps-bots: owner Computer internet setting')
+    }
+    scope.effect(() => scope.connection.fetch.register(computerNetworkRoute((sessionId, enabled, signal) =>
+      maintain(sessionId, signal, botId => runtimeFor(botId).setInternetAccess(sessionId, enabled, signal)),
+    )), 'vps-bots: owner Computer internet setting')
+    scope.effect(() => scope.connection.fetch.register(computerRestartRoute((sessionId, signal) =>
+      maintain(sessionId, signal, botId => isolatedBrowser !== undefined && isolatedBrowserBotIds.has(botId)
+        ? isolatedBrowser.restart(botId, sessionId, signal) : runtimeFor(botId).restart(sessionId, signal)),
+    )), 'vps-bots: owner Computer restart')
     if (isolatedBrowser?.usesManagedSharing() === true) {
       scope.effect(() => scope.connection.fetch.register(vpsBrowserAccessRoute(scope, isolatedBrowser)), 'vps-bots: owner browser access')
     }
@@ -347,12 +357,15 @@ export function mountVpsBots(
       if (bot?.state !== 'active') return undefined
       if (isDesktopBot(bot.id)) {
         const navigate = browserNavigateFor(bot.id, bot.sessionId)
+        const isolated = isolatedBrowser !== undefined && isolatedBrowserBotIds.has(bot.id) ? isolatedBrowser : undefined
         const runtime = runtimeFor(bot.id)
         const internet = await runtime.internetFor(bot.sessionId)
         return {
           computer: (signal: AbortSignal) => computerFor(bot.sessionId, bot.id, signal),
           id: bot.id,
           permissionScope: 'bot' as const,
+          restart: isolated === undefined ? true as const
+            : (signal: AbortSignal) => isolated.restartAvailable(bot.id, bot.sessionId, signal),
           ...(scope.get('terminalController') === undefined ? {} : {
             terminal: true as const, terminalInternet: internet,
             ...(runtime.supportsNetworkControl(internet) ? { networkControl: true as const } : {}),

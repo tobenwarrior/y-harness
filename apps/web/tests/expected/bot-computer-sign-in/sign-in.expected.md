@@ -8,6 +8,23 @@
   - switch "Allow Internet for Terminal & apps" [checked]
   - img "Live computer screen"
   - text: Watching only
+  - button "Restart computer"
+  - button "Paste" [disabled]
+
+## Restart confirmation
+
+- region "Computer":
+  - status: Computer connection lost Display and input are dedicated to this Bot
+  - button "Retry"
+  - button "Take control"
+  - button "Close computer panel"
+  - text: Internet for Terminal & apps Controls Internet access for this Bot’s terminal and apps.
+  - switch "Allow Internet for Terminal & apps" [checked]
+  - paragraph: Running apps will close. Saved files and your browser profile will persist.
+  - button "Cancel"
+  - button "Restart"
+  - img "Live computer screen"
+  - text: Watching only
   - button "Paste" [disabled]
 
 ## Waiting in chat

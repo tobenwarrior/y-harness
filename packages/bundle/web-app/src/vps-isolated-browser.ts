@@ -101,6 +101,8 @@ export interface VpsBrowserHandoff {
 
 type Request =
   | { readonly action: 'status' | 'frame' | 'sharing-status'; readonly bot: string; readonly session: string }
+  | { readonly action: 'status'; readonly bot: string; readonly session: string; readonly capability: 'restart' }
+  | { readonly action: 'restart'; readonly bot: string; readonly session: string }
   | { readonly action: 'input'; readonly bot: string; readonly session: string; readonly input: ComputerAction }
   | { readonly action: 'navigate'; readonly bot: string; readonly session: string; readonly url: string }
   | { readonly action: 'request-login'; readonly bot: string; readonly session: string }
@@ -154,6 +156,11 @@ function decodeJson(bytes: Buffer): unknown {
 
 function decodeStatus(value: unknown): StatusResponse {
   if (isRecord(value) && value.available === true) return { available: true }
+  throw new Error(INVALID_RESPONSE)
+}
+
+function decodeRestart(value: unknown): 'restarted' | 'busy' {
+  if (isRecord(value) && Object.keys(value).length === 1 && (value.status === 'restarted' || value.status === 'busy')) return value.status
   throw new Error(INVALID_RESPONSE)
 }
 
@@ -402,6 +409,37 @@ export class VpsIsolatedBrowser {
    */
   async status(bot: string, session: string, signal: AbortSignal): Promise<StatusResponse> {
     return this.request({ action: 'status', bot, session: validateSession(session) }, decodeStatus, signal)
+  }
+
+  /**
+   * Check support for reopening a private browser without launching a page.
+   * @param bot - Exact Bot roster id.
+   * @param session - Canonical owner Session id.
+   * @param signal - Status request cancellation.
+   * @returns Whether the installed worker offers recovery for the selected Bot.
+   */
+  async restartAvailable(bot: string, session: string, signal: AbortSignal): Promise<boolean> {
+    if (isSharedBrowserSession(session)) return false
+    const bounded = AbortSignal.any([signal, AbortSignal.timeout(POLICY_PROBE_MS)])
+    try {
+      await this.request({ action: 'status', bot, session: validateSession(session), capability: 'restart' }, decodeStatus, bounded)
+      return true
+    } catch (error) {
+      void error
+      return false
+    }
+  }
+
+  /**
+   * Close the selected idle browser so the next frame opens its saved profile.
+   * @param bot - Exact Bot roster id.
+   * @param session - Canonical owner Session id.
+   * @param signal - Cancellation for this restart request.
+   * @returns Whether the private browser closed or is in use.
+   */
+  async restart(bot: string, session: string, signal: AbortSignal): Promise<'restarted' | 'busy'> {
+    if (isSharedBrowserSession(session)) throw new Error(UNAUTHORIZED)
+    return this.request({ action: 'restart', bot, session: validateSession(session) }, decodeRestart, signal)
   }
 
   /**

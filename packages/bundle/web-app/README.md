@@ -75,6 +75,8 @@ The VPS installer enables `botComputers` and provisions a separate rootless Podm
 
 The Web systemd user service starts each private Computer in a separate scope. Its runtime and network processes can continue across a Web service restart. Interactive Web launches use Podman directly.
 
+The authenticated owner can restart an idle private Computer. The desktop runtime reuses its named volumes and saved network policy. An isolated browser worker that advertises recovery closes only the selected private browser and reuses its profile on the next frame. Running turns, terminals, viewer leases and sign-in requests block recovery.
+
 The optional `computer` configuration supplies one shared X11 display for a custom Web deployment. It uses `YH_VPS_DISPLAY` and `YH_VPS_XAUTHORITY`. Set `botComputers.bots` to select owner Bots for private computers while keeping the shared display for other Bots. See [VPS setup and service grants](../../../docs/user/guide/vps.md#give-a-bot-access-to-service-diagnostics).
 
 `botComputers.desktopOnlyBots` selects Bots whose private Computer should use the isolated desktop while their shell and file tools retain the existing Host workspace and policy. The list contains only Bots selected by `botComputers`.

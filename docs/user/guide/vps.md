@@ -65,6 +65,10 @@ Each owner Bot has its own Linux workspace and desktop. The Bot’s shell and fi
 
 Choose **Take control** to use your mouse and keyboard in the panel. Bot input through the Computer tool pauses while you hold control. Choose **Hand back** to let the Bot use it again. Closing the panel releases control, and a lost connection releases it after a short timeout. The Bot computer stays on the VPS when you disconnect.
 
+### Restart an unresponsive Bot computer
+
+Open **Computer** in the affected Bot's chat and choose **Restart computer**. Finish any Bot or terminal work, close open desktop apps, and return control before confirming. Y Harness reconnects to the same private files, shared project, and saved network setting. The isolated browser reopens its existing profile. Restarting a Bot computer leaves the Cloud service running.
+
 ### Open a Bot terminal
 
 Choose **Terminal** beside **Computer** in the chat of a Bot with a private VPS computer. The shell starts in that computer’s workspace. Switch back to **Computer** to watch or take control while the terminal stays open. Close the terminal tab to end its shell.

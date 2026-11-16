@@ -137,7 +137,7 @@ export class VpsRuntime {
   private readonly pending = new Map<string, Promise<void>>()
   private readonly healthyUntil = new Map<string, number>()
   private readonly active = new Map<string, number>()
-  private readonly changingNetwork = new Set<string>()
+  private readonly replacing = new Set<string>()
 
   /**
    * @param root - Absolute owner-only directory containing all Bot workspaces.
@@ -200,7 +200,7 @@ export class VpsRuntime {
    */
   beginUse(sessionId: string): () => void {
     validateSessionId(sessionId)
-    this.requireStableNetwork(sessionId)
+    this.requireStableComputer(sessionId)
     this.active.set(sessionId, (this.active.get(sessionId) ?? 0) + 1)
     let released = false
     return () => {
@@ -221,50 +221,75 @@ export class VpsRuntime {
    * @returns Whether the choice took effect or the existing Computer is busy.
    */
   async setInternetAccess(sessionId: string, enabled: boolean, signal: AbortSignal): Promise<'applied' | 'busy'> {
-    validateSessionId(sessionId)
     const policy = this.networkPolicy
-    signal.throwIfAborted()
-    if (policy === undefined || !this.supportsNetworkControl(!enabled)) throw new VpsRuntimeError('VPS Computer internet settings are unavailable.')
-    if (this.changingNetwork.has(sessionId) || this.pending.has(sessionId) || this.active.has(sessionId)) return 'busy'
-    this.changingNetwork.add(sessionId)
-    try {
+    return this.changeWhileIdle<'applied'>(sessionId, signal, async () => {
+      if (policy === undefined || !this.supportsNetworkControl(!enabled)) {
+        throw new VpsRuntimeError('VPS Computer internet settings are unavailable.')
+      }
       const current = await this.internetFor(sessionId)
       if (current === enabled) return 'applied'
       await ensurePrivateDirectory(this.rootPath, this.internals.uid)
-      const name = containerName(this.rootPath, sessionId)
-      const exists = await this.runPodman(['container', 'exists', name])
-      signal.throwIfAborted()
-      if (exists.code === 0) {
-        const metadata = await this.inspectCurrent(sessionId, current)
-        if (metadata.running) {
-          const processes = await this.runPodman(['top', name, 'pid', 'ppid', 'comm', 'args'])
-          if (processes.code !== 0 || !idleDesktop(processes.stdout)) return 'busy'
-        }
-        const image = await this.runPodman(['image', 'exists', this.imageName])
-        if (image.code !== 0) throw new VpsRuntimeError('The private desktop image is unavailable.')
-        await this.checkBrowserPolicy()
-        signal.throwIfAborted()
-        this.healthyUntil.delete(sessionId)
-        if (metadata.running && (await this.runPodman(['stop', '--time', '10', name])).code !== 0) {
-          throw new VpsRuntimeError('The private Computer could not stop for its network change.')
-        }
-        if ((await this.runPodman(['rm', name])).code !== 0) {
-          throw new VpsRuntimeError('The private Computer could not be replaced for its network change.')
-        }
-      } else if (exists.code !== 1) {
-        throw new VpsRuntimeError('VPS Bot container lookup failed')
-      } else {
-        this.healthyUntil.delete(sessionId)
-      }
+      if (!await this.removeIdleContainer(sessionId, current, signal)) return 'busy'
       await policy.set(sessionId, enabled)
       return 'applied'
+    })
+  }
+
+  /**
+   * Recreate an idle Computer with its saved workspace, browser profile and network choice.
+   * @param sessionId - Exact private Bot Session.
+   * @param signal - Cancel before stopping the existing Computer.
+   * @returns Whether the replacement is ready or the existing Computer is busy.
+   */
+  async restart(sessionId: string, signal: AbortSignal): Promise<'restarted' | 'busy'> {
+    return this.changeWhileIdle<'restarted'>(sessionId, signal, async () => {
+      if (!await this.removeIdleContainer(sessionId, await this.internetFor(sessionId), signal, true)) return 'busy'
+      await this.ensureOne(sessionId)
+      this.healthyUntil.set(sessionId, Date.now() + DESKTOP_HEALTH_CACHE_MS)
+      return 'restarted'
+    })
+  }
+
+  private async changeWhileIdle<T>(sessionId: string, signal: AbortSignal, change: () => Promise<T | 'busy'>): Promise<T | 'busy'> {
+    validateSessionId(sessionId)
+    signal.throwIfAborted()
+    if (this.replacing.has(sessionId) || this.pending.has(sessionId) || this.active.has(sessionId)) return 'busy'
+    this.replacing.add(sessionId)
+    try {
+      return await change()
     } finally {
-      this.changingNetwork.delete(sessionId)
+      this.replacing.delete(sessionId)
     }
   }
 
-  private requireStableNetwork(sessionId: string): void {
-    if (this.changingNetwork.has(sessionId)) throw new VpsRuntimeError('The private Computer is applying its internet setting.')
+  private async removeIdleContainer(sessionId: string, internet: boolean, signal: AbortSignal, recovering = false): Promise<boolean> {
+    const name = containerName(this.rootPath, sessionId)
+    const exists = await this.runPodman(['container', 'exists', name])
+    signal.throwIfAborted()
+    if (exists.code === 1) {
+      this.healthyUntil.delete(sessionId)
+      return true
+    }
+    if (exists.code !== 0) throw new VpsRuntimeError('VPS Bot container lookup failed')
+    const metadata = await this.inspectCurrent(sessionId, internet)
+    if (metadata.running) {
+      const processes = await this.runPodman(['top', name, 'pid', 'ppid', 'comm', 'args'])
+      if (processes.code !== 0 || !idleDesktop(processes.stdout, recovering)) return false
+    }
+    const image = await this.runPodman(['image', 'exists', this.imageName])
+    if (image.code !== 0) throw new VpsRuntimeError('The private desktop image is unavailable.')
+    await this.checkBrowserPolicy()
+    signal.throwIfAborted()
+    this.healthyUntil.delete(sessionId)
+    if (metadata.running && (await this.runPodman(['stop', '--time', '10', name])).code !== 0) {
+      throw new VpsRuntimeError('The private Computer could not stop.')
+    }
+    if ((await this.runPodman(['rm', name])).code !== 0) throw new VpsRuntimeError('The private Computer could not be replaced.')
+    return true
+  }
+
+  private requireStableComputer(sessionId: string): void {
+    if (this.replacing.has(sessionId)) throw new VpsRuntimeError('The private Computer is being replaced.')
   }
 
   /**
@@ -274,7 +299,7 @@ export class VpsRuntime {
    */
   async ensure(sessionId: string): Promise<void> {
     validateSessionId(sessionId)
-    this.requireStableNetwork(sessionId)
+    this.requireStableComputer(sessionId)
     const existing = this.pending.get(sessionId)
     if (existing !== undefined) return existing
     const now = Date.now()
@@ -520,7 +545,7 @@ function networkHelperAvailable(): boolean {
   }
 }
 
-function idleDesktop(output: string): boolean {
+function idleDesktop(output: string, recovering: boolean): boolean {
   const [heading, ...entries] = output.trim().split('\n')
   if (heading?.trim().replace(/\s+/gu, ' ') !== 'PID PPID COMMAND COMMAND') return false
   const observed = new Set<string>()
@@ -539,7 +564,7 @@ function idleDesktop(output: string): boolean {
     }
     observed.add(name)
   }
-  return observed.has('bash') && observed.has('Xvfb') && observed.has('openbox')
+  return observed.has('bash') && (recovering || (observed.has('Xvfb') && observed.has('openbox')))
 }
 
 function inSystemdUserService(): boolean {

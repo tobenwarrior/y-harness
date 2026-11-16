@@ -124,15 +124,18 @@ describe('VpsRuntime', () => {
     }
   })
 
-  it.each(['idle', 'busy', 'stop failed'])('changes network access only when the existing Computer is %s and can stop', async (state) => {
+  it.each([
+    { action: 'network', state: 'idle' }, { action: 'network', state: 'busy' }, { action: 'network', state: 'stop failed' },
+    { action: 'restart', state: 'idle' }, { action: 'restart', state: 'busy' }, { action: 'restart', state: 'stop failed' },
+  ])('protects the existing Computer during $action when it is $state', async ({ action, state }) => {
     const saved = new Map<string, boolean>()
     const processes = [
       'PID   PPID  COMMAND     COMMAND',
       '1     0     bash        bash /usr/local/bin/yharness-vps-bot-start',
       '24    1     Xvfb        Xvfb :99 -screen 0 1280x800x24 -nolisten tcp -auth /tmp/yharness-xauthority',
-      '28    1     openbox     openbox',
       '144   1     sleep       sleep 1',
     ]
+    if (action === 'network') processes.push('28    1     openbox     openbox')
     if (state === 'busy') processes.push('145   1     sleep       sleep 300')
     let present = false
     const f = fixture(async (argv) => {
@@ -166,19 +169,22 @@ describe('VpsRuntime', () => {
       get: async id => saved.get(id), set: async (id, enabled) => { saved.set(id, enabled) },
     } })
     await f.runtime.ensure(sessions.alice)
-    const change = f.runtime.setInternetAccess(sessions.alice, true, new AbortController().signal)
+    const signal = new AbortController().signal
+    const change = action === 'network'
+      ? f.runtime.setInternetAccess(sessions.alice, true, signal)
+      : f.runtime.restart(sessions.alice, signal)
     if (state === 'stop failed') await expect(change).rejects.toThrow('could not stop')
-    else await expect(change).resolves.toBe(state === 'busy' ? 'busy' : 'applied')
+    else await expect(change).resolves.toBe(state === 'busy' ? 'busy' : action === 'network' ? 'applied' : 'restarted')
     expect(f.calls.some(argv => argv[1] === 'stop')).toBe(state !== 'busy')
     expect(f.calls.some(argv => argv[1] === 'rm')).toBe(state === 'idle')
-    expect(saved.has(sessions.alice)).toBe(state === 'idle')
+    expect(saved.has(sessions.alice)).toBe(state === 'idle' && action === 'network')
     if (state === 'idle') {
       const removed = f.calls.find(argv => argv[1] === 'rm')
       expect(removed).toHaveLength(3)
-      await f.runtime.ensure(sessions.alice)
+      if (action === 'network') await f.runtime.ensure(sessions.alice)
       const launches = f.calls.filter(argv => argv[1] === 'run')
       expect(launches[0]).toContain('--network=none')
-      expect(launches[1]).toContain('--network=slirp4netns:allow_host_loopback=false')
+      expect(launches[1]).toContain(action === 'network' ? '--network=slirp4netns:allow_host_loopback=false' : '--network=none')
       expect(launches[0]?.find(arg => arg.includes(':rw,nodev,nosuid')))
         .toBe(launches[1]?.find(arg => arg.includes(':rw,nodev,nosuid')))
     }

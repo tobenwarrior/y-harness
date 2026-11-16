@@ -22,10 +22,15 @@ const requestId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
 const targetSessionId = 'handoff-bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
 const origin = 'https://example.test'
 const networkLabel = en.computerNetworkToggle
+const restartLabel = en.computerRestart
 
 type NetworkOperation = (sessionId: string, enabled: boolean, signal?: AbortSignal) => Promise<{
   readonly status: 'applied'
   readonly enabled: boolean
+}>
+
+type RestartOperation = (sessionId: string, signal?: AbortSignal) => Promise<{
+  readonly status: 'restarted'
 }>
 
 function computer(): ComputerClient {
@@ -220,6 +225,145 @@ describe('ComputerSignInCard shared handoff', () => {
     }
     render(<ComputerPanel computer={client} botId={ownerBotId} sessionId={ownerSessionId} close={vi.fn()} t={t} />)
     await waitFor(() => { expect(screen.queryByRole('switch', { name: networkLabel })).toBeNull() })
+  })
+
+  it('confirms a private Bot restart, pauses frames, and refreshes the same target', async () => {
+    let resolveRestart: ((value: { readonly status: 'restarted' }) => void) | undefined
+    const restart = vi.fn<RestartOperation>((_sessionId, _signal) => new Promise((resolve) => { resolveRestart = resolve }))
+    const frame = vi.fn(async () => ({ jpeg: '', width: 1280, height: 800, mode: 'watching' as const, botActive: false }))
+    const client = {
+      status: async () => ({ available: true, kind: 'vps' as const,
+        computer: { id: ownerBotId, location: 'vps' as const, permissionScope: 'bot' as const, restart: true as const } }),
+      frame,
+      takeControl: async () => ({ mode: 'watching' as const }),
+      releaseControl: async () => ({ mode: 'watching' as const }),
+      input: async () => ({ mode: 'watching' as const }),
+      restart,
+    } as ComputerClient & { readonly restart: RestartOperation }
+    render(<ComputerPanel computer={client} botId={ownerBotId} sessionId={ownerSessionId} close={vi.fn()} t={t} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: restartLabel }))
+    expect(screen.getByText(en.computerRestartConfirm)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: en.computerRestartAction }))
+    await waitFor(() => { expect(restart).toHaveBeenCalledWith(ownerSessionId, expect.any(AbortSignal)) })
+    const frameCallsDuringRestart = frame.mock.calls.length
+    await new Promise(resolve => setTimeout(resolve, 350))
+    expect(frame.mock.calls.length).toBe(frameCallsDuringRestart)
+
+    resolveRestart?.({ status: 'restarted' })
+    await waitFor(() => { expect(frame.mock.calls.length).toBeGreaterThan(frameCallsDuringRestart) })
+    expect(screen.queryByText(en.computerRestartConfirm)).toBeNull()
+  })
+
+  it.each([
+    ['legacy status', { id: ownerBotId, location: 'vps' as const, permissionScope: 'bot' as const }],
+    ['different Bot', { id: 'other-bot', location: 'vps' as const, permissionScope: 'bot' as const, restart: true as const }],
+    ['workspace computer', { id: ownerBotId, location: 'vps' as const, permissionScope: 'workspace' as const, restart: true as const }],
+    ['Mac computer', { id: ownerBotId, location: 'mac' as const, permissionScope: 'workspace' as const, restart: true as const }],
+  ])('hides restart for %s', async (_name, identity) => {
+    const client: ComputerClient = {
+      status: async () => ({ available: true, kind: identity.location, computer: identity }),
+      frame: async () => ({ jpeg: '', width: 1280, height: 800, mode: 'watching' as const, botActive: false }),
+      takeControl: async () => ({ mode: 'watching' as const }),
+      releaseControl: async () => ({ mode: 'watching' as const }),
+      input: async () => ({ mode: 'watching' as const }),
+    }
+    render(<ComputerPanel computer={client} botId={ownerBotId} sessionId={ownerSessionId} close={vi.fn()} t={t} />)
+    await waitFor(() => { expect(screen.queryByRole('button', { name: restartLabel })).toBeNull() })
+  })
+
+  it('disables restart while the Bot is controlling the Computer', async () => {
+    const client: ComputerClient = {
+      status: async () => ({ available: true, kind: 'vps' as const,
+        computer: { id: ownerBotId, location: 'vps' as const, permissionScope: 'bot' as const, restart: true as const } }),
+      frame: async () => ({ jpeg: '', width: 1280, height: 800, mode: 'controlling' as const, botActive: true }),
+      takeControl: async () => ({ mode: 'watching' as const }),
+      releaseControl: async () => ({ mode: 'watching' as const }),
+      input: async () => ({ mode: 'watching' as const }),
+      restart: vi.fn<RestartOperation>(async () => ({ status: 'restarted' })),
+    }
+    render(<ComputerPanel computer={client} botId={ownerBotId} sessionId={ownerSessionId} close={vi.fn()} t={t} />)
+    const restart = await screen.findByRole('button', { name: restartLabel })
+    expect((restart as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('keeps restart available after a disconnected frame', async () => {
+    const client: ComputerClient = {
+      status: async () => ({ available: true, kind: 'vps' as const,
+        computer: { id: ownerBotId, location: 'vps' as const, permissionScope: 'bot' as const, restart: true as const } }),
+      frame: async () => { throw new ComputerApiError(500, 'disconnected') },
+      takeControl: async () => ({ mode: 'watching' as const }),
+      releaseControl: async () => ({ mode: 'watching' as const }),
+      input: async () => ({ mode: 'watching' as const }),
+      restart: vi.fn<RestartOperation>(async () => ({ status: 'restarted' })),
+    }
+    render(<ComputerPanel computer={client} botId={ownerBotId} sessionId={ownerSessionId} close={vi.fn()} t={t} />)
+    expect(await screen.findByRole('button', { name: restartLabel })).toBeTruthy()
+  })
+
+  it('hides restart for a shared handoff target', async () => {
+    const client: ComputerClient = {
+      status: async () => ({ available: true, kind: 'vps' as const,
+        computer: { id: ownerBotId, location: 'vps' as const, permissionScope: 'bot' as const, restart: true as const } }),
+      frame: async () => ({ jpeg: '', width: 1280, height: 800, mode: 'watching' as const, botActive: false }),
+      takeControl: async () => ({ mode: 'watching' as const }),
+      releaseControl: async () => ({ mode: 'watching' as const }),
+      input: async () => ({ mode: 'watching' as const }),
+      restart: vi.fn<RestartOperation>(async () => ({ status: 'restarted' })),
+    }
+    render(<ComputerPanel computer={client} botId={ownerBotId} sessionId={ownerSessionId}
+      signIn={{ requestId, attempt: 1, targetSessionId, origin }} close={vi.fn()} t={t} />)
+    await waitFor(() => { expect(screen.queryByRole('button', { name: restartLabel })).toBeNull() })
+  })
+
+  it('hides restart when the Computer status is unavailable', async () => {
+    const client: ComputerClient = {
+      status: async () => ({ available: false, kind: 'vps' as const,
+        computer: { id: ownerBotId, location: 'vps' as const, permissionScope: 'bot' as const, restart: true as const } }),
+      frame: async () => ({ jpeg: '', width: 1280, height: 800, mode: 'watching' as const, botActive: false }),
+      takeControl: async () => ({ mode: 'watching' as const }),
+      releaseControl: async () => ({ mode: 'watching' as const }),
+      input: async () => ({ mode: 'watching' as const }),
+      restart: vi.fn<RestartOperation>(async () => ({ status: 'restarted' })),
+    }
+    render(<ComputerPanel computer={client} botId={ownerBotId} sessionId={ownerSessionId} close={vi.fn()} t={t} />)
+    await waitFor(() => { expect(screen.queryByRole('button', { name: restartLabel })).toBeNull() })
+  })
+
+  it('hides restart while a private sign-in request is confirmed', async () => {
+    const client: ComputerClient = {
+      status: async () => ({ available: true, kind: 'vps' as const,
+        computer: { id: ownerBotId, location: 'vps' as const, permissionScope: 'bot' as const, restart: true as const } }),
+      frame: async () => ({ jpeg: '', width: 1280, height: 800, mode: 'watching' as const, botActive: false }),
+      takeControl: async () => ({ mode: 'watching' as const }),
+      releaseControl: async () => ({ mode: 'watching' as const }),
+      input: async () => ({ mode: 'watching' as const }),
+      restart: vi.fn<RestartOperation>(async () => ({ status: 'restarted' })),
+    }
+    render(<ComputerPanel computer={client} botId={ownerBotId} sessionId={ownerSessionId}
+      signIn={{ requestId, attempt: 1 }} close={vi.fn()} t={t} />)
+    await waitFor(() => { expect(screen.queryByRole('button', { name: restartLabel })).toBeNull() })
+  })
+
+  it.each([
+    [409, en.computerRestartBusy],
+    [500, en.computerRestartError],
+  ] as const)('surfaces restart failure %s without changing the target', async (status, message) => {
+    const restart = vi.fn<RestartOperation>(async () => { throw new ComputerApiError(status, 'failed') })
+    const client: ComputerClient = {
+      status: async () => ({ available: true, kind: 'vps' as const,
+        computer: { id: ownerBotId, location: 'vps' as const, permissionScope: 'bot' as const, restart: true as const } }),
+      frame: async () => ({ jpeg: '', width: 1280, height: 800, mode: 'watching' as const, botActive: false }),
+      takeControl: async () => ({ mode: 'watching' as const }),
+      releaseControl: async () => ({ mode: 'watching' as const }),
+      input: async () => ({ mode: 'watching' as const }),
+      restart,
+    }
+    render(<ComputerPanel computer={client} botId={ownerBotId} sessionId={ownerSessionId} close={vi.fn()} t={t} />)
+    fireEvent.click(await screen.findByRole('button', { name: restartLabel }))
+    fireEvent.click(screen.getByRole('button', { name: en.computerRestartAction }))
+    await waitFor(() => { expect(screen.getByRole('alert').textContent).toBe(message) })
+    expect(screen.getByRole('region', { name: en.computerTitle })).toBeTruthy()
   })
 
   it('hides the Internet switch for shared handoff viewers', async () => {

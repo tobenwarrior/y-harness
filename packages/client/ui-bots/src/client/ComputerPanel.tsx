@@ -31,7 +31,7 @@ interface ComputerPanelProps extends PropsLocale<'bots'> {
 
 type PanelPhase = 'loading' | 'ready' | 'disconnected' | 'unavailable'
 type BusyAction = 'take' | 'release' | undefined
-type FeedbackKey = 'computerControlBusy' | 'computerInputRejected' | 'computerPasteFailed' | 'computerTextTrimmed' | 'computerSignInError' | 'computerNavigationFailed' | 'computerNetworkBusy' | 'computerNetworkError'
+type FeedbackKey = 'computerControlBusy' | 'computerInputRejected' | 'computerPasteFailed' | 'computerTextTrimmed' | 'computerSignInError' | 'computerNavigationFailed' | 'computerNetworkBusy' | 'computerNetworkError' | 'computerRestartBusy' | 'computerRestartError'
 
 const FRAME_POLL_MS = 300
 const MAX_TEXT_LENGTH = 4_096
@@ -167,9 +167,13 @@ export function ComputerPanel({ computer, sessionId, botId, close, refreshAvaila
   const [website, setWebsite] = useState('')
   const [navigating, setNavigating] = useState(false)
   const [networkBusy, setNetworkBusy] = useState(false)
+  const [restartBusy, setRestartBusy] = useState(false)
+  const [restartConfirmOpen, setRestartConfirmOpen] = useState(false)
   const navigation = useRef<AbortController>()
   const networkController = useRef<AbortController>()
   const networkOperationRef = useRef(0)
+  const restartController = useRef<AbortController>()
+  const restartOperationRef = useRef(0)
   const signInApi = computer.signIn
   const frameSessionId = signIn?.targetSessionId ?? sessionId
   const sharedSignIn = signIn?.targetSessionId !== undefined
@@ -186,15 +190,23 @@ export function ComputerPanel({ computer, sessionId, botId, close, refreshAvaila
     setWebsite('')
     setNavigating(false)
     setNetworkBusy(false)
+    setRestartBusy(false)
+    setRestartConfirmOpen(false)
     networkController.current?.abort()
     networkController.current = undefined
     ++networkOperationRef.current
+    restartController.current?.abort()
+    restartController.current = undefined
+    ++restartOperationRef.current
     return () => {
       navigation.current?.abort()
       navigation.current = undefined
       networkController.current?.abort()
       networkController.current = undefined
       ++networkOperationRef.current
+      restartController.current?.abort()
+      restartController.current = undefined
+      ++restartOperationRef.current
     }
   }, [botId, frameSessionId, sessionId])
 
@@ -233,7 +245,7 @@ export function ComputerPanel({ computer, sessionId, botId, close, refreshAvaila
   }, [computer, frameSessionId, viewerId])
 
   useEffect(() => {
-    if (networkBusy) return
+    if (networkBusy || restartBusy) return
     let disposed = false
     const controller = new AbortController()
     const poll = async (): Promise<void> => {
@@ -265,7 +277,7 @@ export function ComputerPanel({ computer, sessionId, botId, close, refreshAvaila
     }
     void poll()
     return () => { disposed = true; controller.abort() }
-  }, [applyMode, computer, frameSessionId, local, networkBusy, retryNonce, sharedSignIn, viewerId])
+  }, [applyMode, computer, frameSessionId, local, networkBusy, restartBusy, retryNonce, sharedSignIn, viewerId])
 
   const alive = (operation: number): boolean => !disposedRef.current && operation === operationRef.current
 
@@ -302,6 +314,44 @@ export function ComputerPanel({ computer, sessionId, botId, close, refreshAvaila
         ? 'computerNetworkBusy' : 'computerNetworkError')
     })
   }, [botId, computer, networkBusy, networkControlAvailable, refreshAvailability, sessionId])
+
+  const privateSignIn = frame?.signIn ?? claimedSignIn.current
+  const restartIdentity = computerStatus?.computer
+  const restartControlAvailable = computerStatus?.available === true && local === undefined && !sharedSignIn
+    && sessionId !== undefined && botId !== undefined
+    && computer.restart !== undefined && restartIdentity?.id === botId
+    && restartIdentity.location === 'vps' && restartIdentity.permissionScope === 'bot'
+    && restartIdentity.restart === true
+  const restartActionAvailable = restartControlAvailable && (phase === 'ready' || phase === 'disconnected')
+    && signIn === undefined && privateSignIn === undefined
+  const restartActionDisabled = restartBusy || networkBusy || mode !== 'watching' || botActive
+
+  const restartComputer = useCallback((): void => {
+    if (!restartActionAvailable || restartActionDisabled) return
+    const targetSessionId = sessionId
+    const operation = ++restartOperationRef.current
+    ++requestEpochRef.current
+    const controller = new AbortController()
+    restartController.current?.abort()
+    restartController.current = controller
+    setRestartBusy(true)
+    setRestartConfirmOpen(false)
+    setFeedback(undefined)
+    void computer.restart(targetSessionId, controller.signal).then(() => {
+      if (disposedRef.current || operation !== restartOperationRef.current || controller.signal.aborted) return
+      frameRef.current = undefined
+      setFrame(undefined)
+      setPhase('loading')
+      setRestartBusy(false)
+      if (restartController.current === controller) restartController.current = undefined
+    }).catch((error: unknown) => {
+      if (disposedRef.current || operation !== restartOperationRef.current || controller.signal.aborted) return
+      setRestartBusy(false)
+      if (restartController.current === controller) restartController.current = undefined
+      setFeedback(error instanceof ComputerApiError && error.status === 409
+        ? 'computerRestartBusy' : 'computerRestartError')
+    })
+  }, [computer, networkBusy, restartActionAvailable, restartActionDisabled, restartBusy, sessionId])
 
   const takeControl = useCallback((requestId?: string): void => {
     if (requestId !== undefined && (signInApi === undefined || frameSessionId === undefined)) return
@@ -524,7 +574,6 @@ export function ComputerPanel({ computer, sessionId, botId, close, refreshAvaila
     sendAction({ kind: 'scroll', x: point.x, y: point.y, delta })
   }
 
-  const privateSignIn = frame?.signIn ?? claimedSignIn.current
   const status = privateSignIn !== undefined && phase === 'ready'
     ? t('computerSignInPrivate')
     : phase === 'loading'
@@ -605,6 +654,19 @@ export function ComputerPanel({ computer, sessionId, botId, close, refreshAvaila
         <div className={css.signInNotice}>{t('computerSignInHint')} {t('computerSignInReturn')}</div>
       )}
       {feedback !== undefined && <div className={css.notice} role="alert">{t(feedback)}</div>}
+      {restartConfirmOpen && restartActionAvailable && (
+        <div className={css.restartConfirm} data-computer-restart-confirm>
+          <p>{t('computerRestartConfirm')}</p>
+          <div className={css.restartConfirmActions}>
+            <Button variant="ghost" size="sm" disabled={restartBusy} onClick={() => { setRestartConfirmOpen(false) }}>
+              {t('cancel')}
+            </Button>
+            <Button variant="primary" size="sm" disabled={restartActionDisabled} onClick={restartComputer}>
+              {t('computerRestartAction')}
+            </Button>
+          </div>
+        </div>
+      )}
       <div className={css.viewport} data-computer-viewport>
         {frameSource !== undefined
           ? <img
@@ -631,9 +693,17 @@ export function ComputerPanel({ computer, sessionId, botId, close, refreshAvaila
         <span>{local !== undefined
           ? t(mode === 'controlling' ? 'macComputerPaused' : 'macComputerShared')
           : t(mode === 'controlling' ? 'computerInputHint' : 'computerWatchHint')}</span>
-        {local === undefined && <Tooltip label={t('computerPaste')} side="top" delayMs={500}>
-          <Button variant="ghost" size="sm" disabled={!inputReady} onClick={paste}>{t('computerPaste')}</Button>
-        </Tooltip>}
+        <div className={css.footerActions}>
+          {restartActionAvailable && !restartConfirmOpen && (
+            <Button data-computer-restart variant="ghost" size="sm" icon={<IconRefreshOutlineRegular size={14} />}
+              disabled={restartActionDisabled} onClick={() => { setRestartConfirmOpen(true) }}>
+              {t(restartBusy ? 'computerRestarting' : 'computerRestart')}
+            </Button>
+          )}
+          {local === undefined && <Tooltip label={t('computerPaste')} side="top" delayMs={500}>
+            <Button variant="ghost" size="sm" disabled={!inputReady} onClick={paste}>{t('computerPaste')}</Button>
+          </Tooltip>}
+        </div>
       </footer>
     </section>
   )

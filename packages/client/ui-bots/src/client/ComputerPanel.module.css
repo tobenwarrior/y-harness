@@ -38,6 +38,35 @@
   white-space: nowrap;
 }
 
+.footerActions {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+}
+
+.restartConfirm {
+  display: grid;
+  flex: none;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 0.5px solid var(--yh-alias-border-l2);
+  background: var(--yh-alias-bg-layer-2);
+  color: var(--yh-alias-label-secondary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.restartConfirm p {
+  margin: 0;
+}
+
+.restartConfirmActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
 .status,
 .controls {
   display: inline-flex;

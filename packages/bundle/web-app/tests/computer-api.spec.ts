@@ -1,7 +1,7 @@
 import { writeFile } from 'node:fs/promises'
 import type { ConnectionFetchRoute } from '@yharness/client-connection'
 import { describe, expect, it, vi } from 'vitest'
-import { botComputerRoutes, botComputerRoutesWithLegacy, computerRoutes, computerSignInRoute } from '../src/computer-api.ts'
+import { botComputerRoutes, botComputerRoutesWithLegacy, computerRestartRoute, computerRoutes, computerSignInRoute } from '../src/computer-api.ts'
 import { ComputerHost } from '../src/computer.ts'
 
 const viewerId = '11111111-1111-4111-8111-111111111111'
@@ -30,6 +30,26 @@ function harness() {
 }
 
 describe('Computer HTTP routes', () => {
+  it('reports recovery without exposing provider errors or accepting extra fields', async () => {
+    const apply = vi.fn(async (session: string) => {
+      if (session === 'ready') return 'restarted' as const
+      if (session === 'busy') return 'busy' as const
+      if (session === 'error') throw new Error('Fixture provider detail')
+      return undefined
+    })
+    const send = sender([computerRestartRoute(apply)])
+    expect((await send('restart', {})).status).toBe(400)
+    expect((await send('restart', { sessionId: 'ready', extra: true })).status).toBe(400)
+    const valid = await send('restart', { sessionId: 'ready' })
+    expect(valid.headers.get('cache-control')).toBe('no-store')
+    await expect(valid.json()).resolves.toEqual({ status: 'restarted' })
+    expect((await send('restart', { sessionId: 'busy' })).status).toBe(409)
+    expect((await send('restart', { sessionId: 'unknown' })).status).toBe(404)
+    const failure = await send('restart', { sessionId: 'error' })
+    expect(failure.status).toBe(503)
+    await expect(failure.json()).resolves.toEqual({ status: 'unavailable' })
+  })
+
   it('scopes sign-in metadata and answers to the exact Bot and rejects extra values', async () => {
     const computer = new ComputerHost({ display: ':fixture', authorityPath: '/private/fixture' }, { run: async () => {} })
     const send = sender([computerSignInRoute(async sessionId => sessionId === 'bot-session' ? {
