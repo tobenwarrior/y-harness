@@ -75,6 +75,8 @@ export function mountVpsBots(
   const services = new VpsServices(grants)
   const browsers = new Map<string, VpsComputer>()
   const desktops = new Map<string, VpsComputer>()
+  const pendingComputerStarts = new Set<Promise<unknown>>()
+  let closingComputers = false
   const previewFiles = new Map<string, VpsBotFileSystem>()
   const projectFiles = new Map<string, VpsBotFileSystem>()
   const managedBotIds = config.bots == null ? undefined : new Set(config.bots)
@@ -247,36 +249,57 @@ export function mountVpsBots(
     desktopOnly: isDesktopOnly,
   })
   ctx.effect(() => async () => {
+    closingComputers = true
     const active = [...browsers.values(), ...desktops.values()]
     browsers.clear()
     desktops.clear()
     previewFiles.clear()
     projectFiles.clear()
+    const preparations = Promise.allSettled(pendingComputerStarts)
     await Promise.all([browserLogin?.dispose(), browserHandoffs?.dispose()])
-    await Promise.all(active.map(computer => computer.dispose()))
+    await Promise.all([preparations, ...active.map(computer => computer.dispose())])
   }, 'vps-bots: dispose desktop controllers')
 
-  const desktopFor = async (sessionId: string, botId: string, signal: AbortSignal): Promise<VpsComputer> => {
+  const requireOpenComputerScope = (signal: AbortSignal): void => {
     signal.throwIfAborted()
-    const runtime = runtimeFor(botId)
-    await runtime.ensure(sessionId)
-    signal.throwIfAborted()
-    const existing = desktops.get(sessionId)
-    if (existing !== undefined) return existing
-    const computer = containerComputer((argv, requestSignal, stdin) => runtime.desktopCommand(sessionId, argv, requestSignal, stdin))
-    desktops.set(sessionId, computer)
-    return computer
+    if (closingComputers) throw new ComputerLeaseError('The Bot Computer is closing.')
   }
-  const computerFor = async (sessionId: string, botId: string, signal: AbortSignal): Promise<VpsComputer> => {
+
+  const openComputer = async (
+    controllers: Map<string, VpsComputer>,
+    sessionId: string,
+    signal: AbortSignal,
+    prepare: () => Promise<unknown>,
+    create: () => VpsComputer,
+  ): Promise<VpsComputer> => {
+    requireOpenComputerScope(signal)
+    const preparation = prepare()
+    pendingComputerStarts.add(preparation)
+    try {
+      await preparation
+      requireOpenComputerScope(signal)
+      const existing = controllers.get(sessionId)
+      if (existing !== undefined) return existing
+      const controller = create()
+      controllers.set(sessionId, controller)
+      return controller
+    } finally {
+      pendingComputerStarts.delete(preparation)
+    }
+  }
+
+  const desktopFor = (sessionId: string, botId: string, signal: AbortSignal): Promise<VpsComputer> => {
+    const runtime = runtimeFor(botId)
+    return openComputer(desktops, sessionId, signal,
+      () => runtime.ensure(sessionId),
+      () => containerComputer((argv, requestSignal, stdin) => runtime.desktopCommand(sessionId, argv, requestSignal, stdin)))
+  }
+
+  const computerFor = (sessionId: string, botId: string, signal: AbortSignal): Promise<VpsComputer> => {
     if (isolatedBrowser === undefined || !isIsolatedBrowserBot(botId)) return desktopFor(sessionId, botId, signal)
-    signal.throwIfAborted()
-    await isolatedBrowser.status(botId, sessionId, signal)
-    signal.throwIfAborted()
-    const existing = browsers.get(sessionId)
-    if (existing !== undefined) return existing
-    const computer = isolatedBrowser.computer(botId, sessionId)
-    browsers.set(sessionId, computer)
-    return computer
+    return openComputer(browsers, sessionId, signal,
+      () => isolatedBrowser.status(botId, sessionId, signal),
+      () => isolatedBrowser.computer(botId, sessionId))
   }
   const navigateFor = async (botId: string, sessionId: string, url: string, signal: AbortSignal): Promise<void> => {
     if (isolatedBrowser === undefined || !isIsolatedBrowserBot(botId)) {

@@ -1,3 +1,4 @@
+import { setImmediate } from 'node:timers/promises'
 import { Context } from '@yharness/cordis'
 import AgentRegistry from '@yharness/agent'
 import AgentLoop from '@yharness/agent-loop'
@@ -130,6 +131,63 @@ describe('managed VPS Bot composition', () => {
       browserRestart.mockRestore()
       desktopRestart.mockRestore()
       await ctx.fiber.dispose()
+    }
+  })
+
+  it.each(['desktop', 'browser'] as const)('finishes pending %s startup before disposing its controllers', async (surface) => {
+    const ctx = new Context()
+    const routes: ConnectionFetchRoute[] = []
+    const bot = { id: BotId('bot-managed'), sessionId: BOT_SESSION, state: 'active' }
+    const entered = Promise.withResolvers<undefined>()
+    const proceed = Promise.withResolvers<undefined>()
+    const prepare = async (): Promise<void> => {
+      entered.resolve(undefined)
+      await proceed.promise
+    }
+    const ensure = vi.spyOn(VpsRuntime.prototype, 'ensure').mockImplementation(prepare)
+    const status = vi.spyOn(VpsIsolatedBrowser.prototype, 'status').mockImplementation(async () => {
+      await prepare()
+      return { available: true }
+    })
+    const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xd9])
+    const desktop = vi.spyOn(VpsRuntime.prototype, 'desktopCommand').mockResolvedValue(jpeg)
+    const browser = vi.spyOn(VpsIsolatedBrowser.prototype, 'frame').mockResolvedValue(jpeg)
+    let disposal: Promise<void> | undefined
+    try {
+      ctx.provide('connection', { fetch: { register: (route: ConnectionFetchRoute) => {
+        routes.push(route)
+        return () => { routes.splice(routes.indexOf(route), 1) }
+      } } } as never)
+      ctx.provide('bots', { ownerBotForSession: async (id: string) => id === BOT_SESSION ? bot : undefined } as never)
+      const isolatedBrowser = surface === 'browser' ? { bots: [bot.id], socketPath: '/run/yharness-browser.sock' } : undefined
+      await ctx.plugin((scope) => {
+        mountVpsBots(scope, {
+          root: '/yharness-test-bots', image: 'localhost/yharness-test',
+          ...(isolatedBrowser === undefined ? {} : { isolatedBrowser }),
+        }, [])
+      })
+      const route = routes.find(item => item.path === '/api/computer/frame')
+      if (route === undefined) throw new Error('Computer frame route was not registered')
+      const frame = route.fetch(new Request('http://127.0.0.1/api/computer/frame', {
+        method: 'POST',
+        body: JSON.stringify({ sessionId: BOT_SESSION, viewerId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' }),
+      }))
+      await entered.promise
+      let disposed = false
+      disposal = ctx.fiber.dispose().then(() => { disposed = true })
+      await setImmediate()
+      expect(disposed).toBe(false)
+      proceed.resolve(undefined)
+      expect((await frame).status).toBe(409)
+      expect(desktop).not.toHaveBeenCalled()
+      expect(browser).not.toHaveBeenCalled()
+    } finally {
+      proceed.resolve(undefined)
+      await (disposal ?? ctx.fiber.dispose())
+      ensure.mockRestore()
+      status.mockRestore()
+      desktop.mockRestore()
+      browser.mockRestore()
     }
   })
 

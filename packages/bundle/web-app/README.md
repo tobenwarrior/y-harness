@@ -75,7 +75,7 @@ The VPS installer enables `botComputers` and provisions a separate rootless Podm
 
 The dedicated VPS installer prepares the isolated browser worker and owner Vault when Chromium is selected. The Web profile uses the managed owner roster supplied by the service environment and enables owner-approved website login requests. A deployment can set its own Computer configuration in the Web profile patch.
 
-The Web systemd user service starts each private Computer in a separate scope. Its runtime and network processes can continue across a Web service restart. Interactive Web launches use Podman directly.
+The Web systemd user service starts each private Computer in a separate scope. Its runtime and network processes can continue across a Web service restart. Interactive Web launches use Podman directly. Web waits for pending Computer startup before disposing its controllers and rejects new controls during disposal.
 
 The authenticated owner can restart an idle private Computer. The desktop runtime reuses its named volumes and saved network policy. On a Bot with an isolated browser, Desktop restarts the Linux desktop and Browser recovery closes the isolated browser until the next frame. Browser recovery keeps its profile and requires worker support. Running turns, terminals, viewer leases and sign-in requests block recovery.
 
