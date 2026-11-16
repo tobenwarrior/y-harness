@@ -62,6 +62,7 @@ const SAFE_HOST_DEPENDENCY_EXPORTS = {
 /** Runtime exports that require every consumer to resolve the provider's shared peer instance. */
 const PEER_REQUIRED_HOST_EXPORTS = {
   '@yharness/client-connection': ['OperatorPeer'],
+  '@yharness/sandbox-policy': ['managedBotExecutionFor'],
   '@yharness/scope': ['carrierKeyOf', 'createScope', 'scopeOf', 'scopeTarget'],
   '@yharness/session': ['SESSION_FORMAT_VERSION'],
   '@yharness/session-persistence': ['SessionPersistenceNotFoundError'],
