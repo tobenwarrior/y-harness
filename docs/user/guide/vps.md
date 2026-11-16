@@ -197,7 +197,9 @@ Saved login approval supports a single HTTPS sign-in form that submits to the sa
 
 ### Let a private routine sign in automatically
 
-In **Cloud → Vault → Websites**, save the website login for the Bot that should use it and turn on **Automatic sign-in** for that account. This requires the standard Cloud Vault broker and updated versions of the Mac app, Cloud, and isolated browser worker. The Bot can use the account on the saved HTTPS website in its direct owner chat and time-based routines, including while the Mac is off.
+In **Cloud → Vault → Websites**, save the website login for the Bot that should use it and turn on **Use automatically** for that account. This requires the standard Cloud Vault broker and updated versions of the Mac app, Cloud, and isolated browser worker. The Bot can use the account on the saved HTTPS website in its direct owner chat and time-based routines, including while the Mac is off.
+
+After setting up Desktop Vault and the isolated browser, run `sudo /usr/local/sbin/yharness-vault enable-login-automation` on the VPS to start the standard broker. Website sign-in setup preserves the existing service key grants.
 
 Vault accepts one automatic account per Bot and website. It sends credentials directly to the private browser. Routines without access report that the owner is needed. Shared chats use the existing owner approval flow.
 
