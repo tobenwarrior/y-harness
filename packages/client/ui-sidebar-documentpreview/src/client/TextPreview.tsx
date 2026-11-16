@@ -102,7 +102,7 @@ export function TextPreview({
         version={meta.value.version} lifetime={signal} t={t} className={css.tool} />}
       <Tooltip label={t('download')} side="bottom" delayMs={500}>
         <a className={css.tool} aria-label={t('download')}
-          href={`/api/computer/files/download?${new URLSearchParams({ sessionId: file.sessionId, path: file.path })}`}
+          href={`api/computer/files/download?${new URLSearchParams({ sessionId: file.sessionId, path: file.path })}`}
           download><IconDownloadOutlineRegular /></a>
       </Tooltip>
     </>

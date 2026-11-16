@@ -78,7 +78,7 @@ export function parseBotVaultRequestResponse(value: unknown): BotVaultRequest | 
 }
 
 /**
- * Read one request from the same-origin broker without caching or exposing a value.
+ * Read one request from the document-relative broker without caching or exposing a value.
  * @param sessionId - exact direct Bot Session selected by the owner.
  * @param signal - cancellation signal for selection changes and disposal.
  * @param fetcher - browser or test HTTP carrier.
@@ -89,7 +89,7 @@ export async function fetchBotVaultRequest(
   signal: AbortSignal,
   fetcher: typeof fetch = globalThis.fetch,
 ): Promise<BotVaultRequest | null> {
-  const response = await fetcher(`/api/bot-vault-request?sessionId=${encodeURIComponent(sessionId)}`, {
+  const response = await fetcher(`api/bot-vault-request?sessionId=${encodeURIComponent(sessionId)}`, {
     method: 'GET',
     credentials: 'same-origin',
     cache: 'no-store',

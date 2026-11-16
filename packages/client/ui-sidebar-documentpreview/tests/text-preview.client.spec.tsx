@@ -9,11 +9,12 @@
  * set to. Both are the browser's job; the specs assert the body's arithmetic
  * over them.
  */
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react'
 import { RemoteError } from '@yharness/client-test-runtime'
 import type { TabId } from '@yharness/client-ui-dockkit'
 import type { OwnerOf } from '@yharness/client-ui-slots'
+import { computerFileAddress } from '@yharness/util-workspace-path'
 import { TextPreview } from '../src/client/TextPreview.tsx'
 import type { TextPreviewProps } from '../src/client/TextPreview.tsx'
 import { CodeBody } from '../src/client/code/CodeBody.tsx'
@@ -117,6 +118,27 @@ function click(container: HTMLElement, selector: string): void {
 }
 
 describe('TextPreview — pages', () => {
+  it('downloads the selected Computer file under the app mount', async () => {
+    const base = document.createElement('base')
+    base.href = 'https://fixture.example/workspace/'
+    document.head.append(base)
+    onTestFinished(() => { base.remove() })
+
+    const path = '/workspace/reports/a #1.md'
+    const props = harness({ 1: page(1, ['one'], true) }).props()
+    const info = props.useTabInfo()
+    const contentId = computerFileAddress(SESSION, path)
+    const view = render(<TextPreview {...props} useTabInfo={() => ({
+      ...info, tab: { ...info.tab, contentId },
+    })} />)
+    await settle()
+    const link = view.getByRole('link', { name: 'download' })
+    if (!(link instanceof HTMLAnchorElement)) throw new TypeError('expected a download link')
+    const url = new URL(link.href)
+    expect(url.origin + url.pathname).toBe('https://fixture.example/workspace/api/computer/files/download')
+    expect([...url.searchParams]).toEqual([['sessionId', SESSION], ['path', path]])
+  })
+
   it.each([ABSOLUTE_PATH, 'C:\\work\\project\\notes.md', '\\\\host\\share\\notes.md'])(
     'shows the Host path %s in the header and tooltip even when text cannot be read',
     async (absolutePath) => {
