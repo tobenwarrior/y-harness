@@ -1,7 +1,7 @@
-import { closeSync, fstatSync, lstatSync, openSync, renameSync, symlinkSync, writeFileSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { closeSync, constants as fsConstants, fstatSync, lstatSync, openSync, renameSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join, resolve, toNamespacedPath } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const state = {
@@ -33,8 +33,8 @@ const fakeKoffi = {
             if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
           }
           const fd = isSymbolicLink
-            ? openSync(state.fakeFilePath ?? `${canonical}.fake-native-file`, 'a+')
-            : openSync(canonical, 'a+')
+            ? openSync(state.fakeFilePath ?? `${canonical}.fake-native-file`, fsConstants.O_RDWR | fsConstants.O_CREAT)
+            : openSync(canonical, fsConstants.O_RDWR | fsConstants.O_CREAT)
           state.handles.set(handle, { path: canonical, fd })
           state.fds.add(fd)
           state.paths.push(canonical)
@@ -122,14 +122,10 @@ function fdIsClosed(fd: number): boolean {
   }
 }
 
-async function waitForLock(lockPath: string): Promise<void> {
+async function waitForLock(): Promise<void> {
   for (;;) {
-    try {
-      await stat(lockPath)
-      return
-    } catch {
-      await new Promise(resolveDelay => setTimeout(resolveDelay, 5))
-    }
+    if (state.active.size > 0) return
+    await new Promise(resolveDelay => setTimeout(resolveDelay, 5))
   }
 }
 
@@ -148,14 +144,14 @@ describe('Windows lock handle', () => {
     await writeFile(`${canonical}.lock`, '')
     let release = (): void => {}
     const holder = withFileLock(alias, () => new Promise<void>((resolveRelease) => { release = resolveRelease }))
-    await waitForLock(`${alias}.lock`)
+    await waitForLock()
 
     const contender = withFileLock(canonical, async () => 'unexpected', { waitMs: 50 })
     await expect(contender).rejects.toThrow(/timed out waiting for the writer lock/)
     release()
     await holder
     await expect(withFileLock(canonical, async () => 'acquired', { waitMs: 0 })).resolves.toBe('acquired')
-    expect(new Set(state.paths)).toEqual(new Set([resolve(`${canonical}.lock`)]))
+    expect(new Set(state.paths)).toEqual(new Set([toNamespacedPath(resolve(`${canonical}.lock`))]))
     expect(await readFile(`${canonical}.lock`, 'utf8')).toContain('dsh-atomic-write-kernel-lock-v1')
     expect(Array.from(state.fds).every(fdIsClosed)).toBe(true)
   })

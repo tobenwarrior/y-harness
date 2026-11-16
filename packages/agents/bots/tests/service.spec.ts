@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { createHash, randomUUID } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { Context, Service } from '@yharness/cordis'
 import { SharedAccessAuthority, sharedPrincipalOf, type ConnectionFetchRoute } from '@yharness/client-connection'
@@ -1591,11 +1591,8 @@ describe('durable Bot roster', () => {
       })
       child.kill('SIGKILL')
       const [exitCode, signal] = await closePromise
-      // Windows terminates through taskkill and reports an exit code instead
-      // of the POSIX signal; both forms prove the child was stopped.
-      if (process.platform === 'win32') {
+      if (process.platform === 'win32' && signal === null) {
         expect(exitCode).not.toBeNull()
-        expect(signal).toBeNull()
       } else {
         expect(exitCode).toBeNull()
         expect(signal).toBe('SIGKILL')
@@ -4864,7 +4861,7 @@ describe('durable Bot roster', () => {
       expect((await create.execute({ name: 'Research', identity: 'heart', accent: 'rose' }, context)).success).toBe(true)
       const bots = (await h.service.list({})).bots
       const research = bots.find(bot => bot.name === 'Research')!
-      expect(research).toMatchObject({ identity: 'heart', accent: 'rose', cwd: '/tmp' })
+      expect(research).toMatchObject({ identity: 'heart', accent: 'rose', cwd: resolve('/tmp') })
       expect((await create.execute({ name: 'Research', identity: 'heart', accent: 'rose' }, context)).success).toBe(true)
       expect((await h.service.list({})).bots.filter(bot => bot.name === 'Research')).toHaveLength(1)
       const edit = tools.find(tool => tool.name === 'edit_bot_profile')!
@@ -9015,7 +9012,7 @@ describe('durable Bot roster', () => {
       expect(created.bot.accent).toBe('blue')
       expect(created.bot.sessionId).toMatch(/^bot-session-/)
       expect(h.create).toHaveBeenCalledWith(
-        { sessionId: created.bot.sessionId, cwd: '/tmp' },
+        { sessionId: created.bot.sessionId, cwd: resolve('/tmp') },
         expect.any(AbortSignal),
       )
 
@@ -14004,7 +14001,7 @@ describe('durable Bot roster', () => {
       expect(retried.bot.state).toBe('active')
       expect(create).toHaveBeenNthCalledWith(
         2,
-        { sessionId: firstSessionId, cwd: '/tmp' },
+        { sessionId: firstSessionId, cwd: resolve('/tmp') },
         expect.any(AbortSignal),
       )
     } finally {
