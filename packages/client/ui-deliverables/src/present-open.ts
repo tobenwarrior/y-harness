@@ -1,7 +1,7 @@
 /** Serve change summaries and comparisons, and open declared or changed workspace files verified by the viewed Session's filesystem. */
 import type { Context } from '@yharness/cordis'
 import type {} from '@yharness/api-session-controller'
-import { fileDownloadResponse, type WorkspaceFileScope } from '@yharness/api-workspace-files'
+import type { WorkspaceFileScope } from '@yharness/api-workspace-files'
 import type {} from '@yharness/fs'
 import type {} from '@yharness/sandbox-policy'
 import { remoteErrorOf } from '@yharness/typert-protocol'
@@ -145,9 +145,7 @@ async function handlePresentDownload(ctx: Context, request: Request): Promise<Re
   try {
     const read = await readPresentation(ctx, coordinates, request.signal)
     if (read instanceof Response) return read
-    const bytes = await ctx.workspaceFiles.readWorkspaceBytes(read.scope, read.path, request.signal)
-    request.signal.throwIfAborted()
-    return fileDownloadResponse(new Uint8Array(bytes), basename(read.path), bytes.byteLength)
+    return await ctx.workspaceFiles.downloadWorkspaceFile(read.scope, read.path, basename(read.path), request.signal)
   } catch (error: unknown) {
     request.signal.throwIfAborted()
     const code = remoteErrorOf(error)?.code

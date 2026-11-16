@@ -339,6 +339,20 @@ export class WorkspaceFiles extends TypertRemoteService {
   }
 
   /**
+   * Download a regular file confined to its authorized Session workspace.
+   * @param scope - Session and the workspace root from its header.
+   * @param path - declared path inside the workspace.
+   * @param filename - suggested attachment name.
+   * @param signal - download request lifetime.
+   * @returns an uncacheable attachment response subject to the complete-file cap.
+   */
+  async downloadWorkspaceFile(scope: WorkspaceFileScope, path: string, filename: string, signal: AbortSignal): Promise<Response> {
+    const bytes = await this.readWorkspaceBytes(scope, path, signal)
+    signal.throwIfAborted()
+    return fileDownloadResponse(new Uint8Array(bytes), filename, bytes.byteLength)
+  }
+
+  /**
    * Read an authorized file after checking the reserved source identity.
    * @param scope - authorization Session and its working directory.
    * @param path - Session path or a path confined to its private Computer workspace.
