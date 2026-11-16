@@ -101,7 +101,7 @@ async function readRpcResponse(iterator: AsyncIterator<string>, id: number): Pro
       const result = await Promise.race([
         next,
         new Promise<never>((_, reject) => {
-          timer = setTimeout(() => reject(new Error(`Timed out waiting for Codex JSON-RPC response ${id}.`)), remaining)
+          timer = setTimeout(() => { reject(new Error(`Timed out waiting for Codex JSON-RPC response ${id}.`)) }, remaining)
         }),
       ])
       if (result.done) throw new Error('Codex app-server closed its protocol stream before replying.')
@@ -121,7 +121,7 @@ function sendRpcRequest(child: ChildProcess, id: number, method: string, params:
 
 async function stopChild(child: ChildProcess): Promise<void> {
   if (child.exitCode !== null || child.signalCode !== null) return
-  const closed = new Promise<void>(resolve => child.once('close', () => resolve()))
+  const closed = new Promise<void>((resolve) => { child.once('close', () => { resolve() }) })
   child.kill('SIGTERM')
   const timeout = setTimeout(() => {
     if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
@@ -156,10 +156,12 @@ describe('packaged Codex runtime', () => {
     const unpackedRuntime = join(`${archive}.unpacked`, 'dsh')
     const unpackedWrapper = join(unpackedRuntime, 'node_modules', '@yharness', 'llm-pi-ai', 'node_modules', '@openai', 'codex', 'bin', 'codex.js')
     const unpackedNative = join(unpackedRuntime, 'node_modules', '@yharness', 'llm-pi-ai', 'node_modules', '@openai', target!.packageName.slice('@openai/'.length), 'vendor', target!.triple, 'bin', target!.executable)
-    const archiveEntries = asarTools().listPackage(archive)
+    const archiveEntries = asarTools().listPackage(archive).map(entry => entry.replaceAll('\\', '/'))
     expect(archiveEntries).toContain('/dsh/node_modules/@yharness/llm-pi-ai/node_modules/@openai/codex/bin/codex.js')
-    expect(asarTools().statFile(archive, 'dsh/node_modules/@yharness/llm-pi-ai/node_modules/@openai/codex/bin/codex.js').unpacked).toBe(true)
-    expect(asarTools().statFile(archive, `dsh/node_modules/@yharness/llm-pi-ai/node_modules/@openai/${target!.packageName.slice('@openai/'.length)}/vendor/${target!.triple}/bin/${target!.executable}`).unpacked).toBe(true)
+    const archivePackages = join('dsh', 'node_modules', '@yharness', 'llm-pi-ai', 'node_modules', '@openai')
+    expect(asarTools().statFile(archive, join(archivePackages, 'codex', 'bin', 'codex.js')).unpacked).toBe(true)
+    const nativeEntry = join(archivePackages, target!.packageName.slice('@openai/'.length), 'vendor', target!.triple, 'bin', target!.executable)
+    expect(asarTools().statFile(archive, nativeEntry).unpacked).toBe(true)
     await expect(stat(unpackedWrapper)).resolves.toBeDefined()
     await expect(stat(unpackedNative)).resolves.toBeDefined()
     expect(prepared.wrapper).not.toBe(unpackedWrapper)
@@ -222,7 +224,9 @@ describe('packaged Codex runtime', () => {
       })
       const initialized = await readRpcResponse(lines[Symbol.asyncIterator](), 1)
       expect(initialized.error).toBeUndefined()
-      expect(initialized.result).toMatchObject({ codexHome: realpathSync(codexHome) })
+      const initializedHome = isRecord(initialized.result) ? initialized.result.codexHome : undefined
+      if (typeof initializedHome !== 'string') throw new Error('Packaged Codex did not report its home directory.')
+      expect(realpathSync.native(initializedHome)).toBe(realpathSync.native(codexHome))
       child.stdin.write('{"jsonrpc":"2.0","method":"initialized","params":{}}\n')
       sendRpcRequest(child, 2, 'account/read', { refreshToken: false })
       const account = await readRpcResponse(lines[Symbol.asyncIterator](), 2)

@@ -2,13 +2,13 @@
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { describe, expect, it, onTestFinished } from 'vitest'
+import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { Context } from '@yharness/cordis'
 import { ToolCallId } from '@yharness/llm'
 import SystemPrompt from '@yharness/system-prompt'
 import ToolRuntime from '@yharness/tools'
 import LocalFileSystem from '@yharness/fs-local'
-import { FileSystem, FsTargetKey, FsVersion } from '@yharness/fs'
+import { FileSystem, FsError, FsTargetKey, FsVersion } from '@yharness/fs'
 import type { FsDirEntry, FsInfo, FsPathInfo, FsTarget, FsWriteIntent, FsWriteOutcome, FsEditOutcome, FsEditRequest, FsDeleteOutcome, FsMoveOutcome } from '@yharness/fs'
 import SandboxPolicyService from '@yharness/sandbox-policy'
 import SessionProjectionRegistry from '@yharness/session-projection'
@@ -125,6 +125,23 @@ describe('apply_patch execution', () => {
     })
     expect(result.isError).toBe(true)
     expect(await readFile(target, 'utf8')).toBe('old\n')
+  })
+
+  it('reports an I/O failure as unchanged when the provider retains the original version', async () => {
+    const { ctx, root } = await setup()
+    const target = join(root, 'target.txt')
+    await writeFile(target, 'old\n')
+    vi.spyOn(ctx.fs, 'patchText').mockRejectedValueOnce(new FsError('Provider refused the write.', 'FS_IO_ERROR'))
+
+    const result = await ctx.tools.execute({
+      signal, callId: ToolCallId(`apply-patch-${++callId}`), name: 'apply_patch',
+      arguments: { input: [
+        '*** Begin Patch', `*** Update File: ${target}`, '@@', '-old', '+new', '*** End Patch',
+      ].join('\n') },
+    })
+    expect(result).toMatchObject({ isError: true, error: { info: { code: 'FS_IO_ERROR' } } })
+    expect(result.content.some(block => block.type === 'text' && block.text.includes('Provider refused the write.'))).toBe(true)
+    await expect(readFile(target, 'utf8')).resolves.toBe('old\n')
   })
 
   it('uses the agentless sandbox workspace root when planning a relative patch', async () => {

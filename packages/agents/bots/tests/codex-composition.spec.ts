@@ -94,6 +94,7 @@ function nativePeer(): PeerFixture {
                 { name: 'send_bot_message', callId: 'send-call', arguments: JSON.stringify({
                   targetBotId: 'bot-target', text: 'Please report your status.', messageId: 'relay-1',
                 }) },
+                { name: 'vps_service_journal', callId: 'journal-call', arguments: '{}' },
               ]
               for (const call of calls) {
                 const result = await handler('item/tool/call', {
@@ -150,6 +151,12 @@ it('composes Bot identity and Codex dynamic collaboration with sender-bound deli
   ctx.provide('subprocess', { spawn: vi.fn() } as never)
   ctx.provide('skillLibrary', { registerNativeProvider: vi.fn(() => () => {}) } as never)
   ctx.provide('codingSessions', { registerProvider: vi.fn(() => () => {}) } as never)
+  const journal = {
+    version: 1, generatedAt: '2026-01-01T00:00:00Z',
+    recovery: [{ MESSAGE: 'Fixture recovery entry' }], primaryAudit: [{ MESSAGE: 'Fixture audit entry' }],
+  }
+  const readJournal = vi.fn(async (_signal: AbortSignal) => journal)
+  ctx.provide('botVpsJournal', { forBot: (botId: BotId) => botId === BotId('bot-sender') ? readJournal : undefined })
 
   const pool = new MemoryMediaPool()
   const createdAgents = new Map<SessionId, Agent>()
@@ -279,11 +286,19 @@ it('composes Bot identity and Codex dynamic collaboration with sender-bound deli
   expect(ctx.tools.get('schedule_create', senderAgent)).not.toBe(ctx.tools.get('schedule_create'))
   expect(scopeOf(senderAgent.ctx)).toBeDefined()
   expect(ctx.tools.get('schedule_create', minimalAgent)).toBeUndefined()
-  const dynamicToolsForMinimal = await (ctx.get('codexDynamicTools') as BotNativeToolProvider).resolve({ sessionId: minimal.bot.sessionId })
+  const dynamicTools = ctx.get('codexDynamicTools') as BotNativeToolProvider
+  const dynamicToolsForMinimal = await dynamicTools.resolve({ sessionId: minimal.bot.sessionId })
+  expect(dynamicToolsForMinimal.map(tool => tool.name)).not.toContain('vps_service_journal')
   expect(dynamicToolsForMinimal.map(tool => tool.name)).not.toEqual(expect.arrayContaining([
     'schedule_create', 'schedule_list', 'schedule_update', 'schedule_delete',
     'schedule_pause', 'schedule_resume', 'schedule_history',
   ]))
+  ctx.provide('botWorkspaces', {
+    workspace: () => '/fixture/vps-workspace',
+    managed: (botId: string) => botId === minimal.bot.id,
+  })
+  await expect(dynamicTools.resolve({ sessionId: minimal.bot.sessionId }))
+    .rejects.toThrow('Native Codex requires desktop-only mode for a VPS Bot.')
   expect(senderPrompt).toContain('Your Bot id is "bot-sender".')
 
   const targetFollowup = vi.spyOn(targetAgent, 'followup').mockImplementation((message) => {
@@ -302,12 +317,13 @@ it('composes Bot identity and Codex dynamic collaboration with sender-bound deli
   if (threadStart === undefined) throw new Error(`Codex stream did not reach turn: ${JSON.stringify(chunks)}`)
   expect(threadStart?.params.dynamicTools, JSON.stringify(peerFixture.requests)).toEqual(expect.arrayContaining([
     expect.objectContaining({ name: 'list_bots' }), expect.objectContaining({ name: 'inspect_bot' }), expect.objectContaining({ name: 'send_bot_message' }),
+    expect.objectContaining({ name: 'vps_service_journal', inputSchema: { type: 'object', properties: {}, additionalProperties: false } }),
     expect.objectContaining({ name: 'schedule_create' }), expect.objectContaining({ name: 'schedule_list' }),
     expect.objectContaining({ name: 'schedule_update' }), expect.objectContaining({ name: 'schedule_delete' }),
     expect.objectContaining({ name: 'schedule_pause' }), expect.objectContaining({ name: 'schedule_resume' }),
     expect.objectContaining({ name: 'schedule_history' }),
   ]))
-  if (peerFixture.toolResults.length !== 3) throw new Error(`Native tool calls failed: requests=${JSON.stringify(peerFixture.requests)} chunks=${JSON.stringify(chunks)}`)
+  if (peerFixture.toolResults.length !== 4) throw new Error(`Native tool calls failed: requests=${JSON.stringify(peerFixture.requests)} chunks=${JSON.stringify(chunks)}`)
   expect(output(peerFixture.toolResults[0]?.result)).toMatchObject({ success: true })
   const listedBots = JSON.parse(output(peerFixture.toolResults[0]?.result).contentItems[0]!.text)
   expect(listedBots).toHaveLength(2)
@@ -318,12 +334,20 @@ it('composes Bot identity and Codex dynamic collaboration with sender-bound deli
   expect(output(peerFixture.toolResults[1]?.result)).toMatchObject({ success: true })
   expect(output(peerFixture.toolResults[2]?.result), JSON.stringify(peerFixture.toolResults[2])).toMatchObject({ success: true })
   expect(JSON.parse(output(peerFixture.toolResults[2]?.result).contentItems[0]!.text)).toMatchObject({ status: 'accepted', sender: { id: 'bot-sender' }, target: { id: 'bot-target' } })
+  const journalResult = output(peerFixture.toolResults[3]?.result)
+  expect(journalResult.success).toBe(true)
+  expect(JSON.parse(journalResult.contentItems[0]!.text)).toEqual(journal)
+  expect(readJournal).toHaveBeenCalledExactlyOnceWith(expect.any(AbortSignal))
   expect(targetFollowup).toHaveBeenCalledOnce()
   expect(targetFollowup.mock.calls[0]?.[0].source).toMatchObject({ kind: 'agent-message', senderSessionId: senderAgent.id })
   expect(approval).toHaveBeenCalledOnce()
   expect(chunks.some(chunk => typeof chunk === 'object' && chunk !== null && 'type' in chunk && chunk.type === 'finish')).toBe(true)
 
   const senderEvents = senderAgent.session.snapshotEvents().filter(event => event.type === 'bot/dynamic-tool')
-  expect(senderEvents).toHaveLength(6)
+  expect(senderEvents).toHaveLength(8)
   expect(senderEvents.every(event => event.ignorable === undefined && event.data.sessionId === senderAgent.id)).toBe(true)
+  expect(senderEvents.filter(event => event.data.name === 'vps_service_journal').map(event => event.data)).toEqual([
+    expect.objectContaining({ phase: 'started', callId: 'journal-call', arguments: {} }),
+    expect.objectContaining({ phase: 'settled', callId: 'journal-call', result: journalResult }),
+  ])
 })

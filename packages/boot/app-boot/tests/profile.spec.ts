@@ -327,6 +327,13 @@ describe('resolveBundleDir', () => {
       '@yharness/llm-deepseek/subpath',
       '@deepseek-ai/dsh-llm-deepseek/subpath',
     ])
+    expect(bundlePackageNameCandidates('external-plugin/subpath')).toEqual(['external-plugin/subpath'])
+  })
+
+  it('reports a Node builtin as an unavailable profile bundle', () => {
+    const anchor = stageInstallation({})
+    const profileDir = tmp()
+    expect(() => resolveBundleDir('t', 'node:fs', anchor, profileDir)).toThrow('cannot resolve profile bundle')
   })
 
   it('loads a profile whose persisted bundle name predates the namespace rebrand', () => {

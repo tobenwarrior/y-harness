@@ -14,6 +14,18 @@ vi.mock('node:fs/promises', async (importOriginal) => {
     return info
   } }
 })
+vi.mock('@yharness/node-addon-system/flock', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@yharness/node-addon-system/flock')>()
+  return {
+    ...actual,
+    tryLockExclusive: async (fd: number): Promise<void> => {
+      // The POSIX metadata branch is host-independent, but its real addon is
+      // unavailable on a Windows test runner after the platform probe below.
+      if (reads.unsafeModePath !== undefined && process.platform === 'linux') return
+      return actual.tryLockExclusive(fd)
+    },
+  }
+})
 
 const homes: string[] = []
 afterEach(async () => {

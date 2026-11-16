@@ -16,6 +16,11 @@
     root: !!js process.env.DSH_SNAPSHOT_SESSIONS_ROOT ?? './.sessions'
     compression: none
 
+- id: permission
+  name: '@deepseek-ai/dsh-permission-presets'
+  config:
+    defaultPreset: !!js "process.env.DSH_PERMISSION_MODE ?? (process.env.DSH_SNAPSHOT === undefined ? 'workspace-write' : 'danger-full-access')"
+
 - id: agent-instructions
   name: '@deepseek-ai/dsh-agent-instructions'
   config:

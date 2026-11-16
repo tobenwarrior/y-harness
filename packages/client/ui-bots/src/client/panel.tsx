@@ -13,7 +13,7 @@ import { GrokHistoryAction } from './GrokHistoryAction.tsx'
 import { ComputerPanel } from './ComputerPanel.tsx'
 import { MacComputerPanel } from './MacComputerPanel.tsx'
 import type { AvailabilityState } from './computer-availability.ts'
-import type { ComputerClient } from './computer-client.ts'
+import type { ComputerClient, ComputerIdentity } from './computer-client.ts'
 import css from './BotWorkspace.module.css'
 
 /** Main panel child slot that owns the selected Bot's Session binding. */
@@ -34,6 +34,7 @@ export type BotsPanelProps =
     readonly setComputerTarget: (sessionId: string | null) => void
     readonly hooks: {
       readonly computerAvailability: HostObservable<AvailabilityState>
+      readonly computerIdentity: HostObservable<ComputerIdentity | undefined>
       readonly computerTarget: HostObservable<string | null>
     }
   }>
@@ -126,12 +127,13 @@ export function BotsPanel({
   sendGroupMessageWithAttachments, reactGroupMessage, groupsAvailable, loadAvatar,
   rename, updateProfile, memoryManager, readGrokHistory,
   routineManager, skillManager, SessionProvider, renderSlot, t, share, computer, useComputerAvailability,
-  setComputerTarget, useComputerTarget,
+  setComputerTarget, useComputerTarget, useComputerIdentity,
 }: BotsPanelProps): ReactNode {
   const state: BotWorkspaceState = useWorkspace(value => value)
   const statuses = useSessionStatus(value => value)
   const bots = state.bots.map(bot => summaryOf(bot, statuses))
   const availability = useComputerAvailability(value => value)
+  const computerIdentity = useComputerIdentity(value => value)
   const computerTarget = useComputerTarget(value => value)
   const selectedBot = bots.find(bot => bot.id === state.selectedBotId)
   const selectedReference = reference()
@@ -170,6 +172,7 @@ export function BotsPanel({
         headerActions={<>
           {canShowComputer && (
             <ComputerAction expanded={showComputer}
+              {...(computerIdentity === undefined ? {} : { identity: computerIdentity })}
               toggle={() => { setComputerTarget(showComputer ? null : selectedReference.sessionId) }} t={t} />
           )}
           {readGrokHistory !== undefined && selectedBot !== undefined && (
@@ -192,7 +195,8 @@ export function BotsPanel({
           {availability === 'mac' && selectedReference !== undefined
             ? <MacComputerPanel key={selectedReference.sessionId} sessionId={selectedReference.sessionId}
               close={closeComputer} t={t} />
-            : <ComputerPanel computer={computer} close={closeComputer} t={t} />}
+            : <ComputerPanel key={selectedReference.sessionId} computer={computer} sessionId={selectedReference.sessionId}
+              close={closeComputer} t={t} />}
         </div>
       )}
     </div>

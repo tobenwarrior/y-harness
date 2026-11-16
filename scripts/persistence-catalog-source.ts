@@ -1,7 +1,7 @@
 /** Source discovery and declaration validation shared by persistence documentation and schemas. */
 
 import { globSync, readFileSync } from 'node:fs'
-import { resolve, sep } from 'node:path'
+import { basename, resolve, sep } from 'node:path'
 import ts from 'typescript'
 import { parseJsDoc, pointer, rawJsDoc, reportViolations } from './jsdoc.ts'
 
@@ -22,6 +22,21 @@ const EVENT_ENVELOPE_TYPE_NAMES = [
 ] as const
 
 type EventEnvelopeTypeName = typeof EVENT_ENVELOPE_TYPE_NAMES[number]
+
+/**
+ * Identify temporary TypeScript files written beside product sources by the lint contract suite.
+ * @param file - absolute or repository-relative source path.
+ * @returns whether the source belongs to the lint fixture rather than the workspace.
+ */
+export function isLintContractProbe(file: string): boolean {
+  return /^oxlint-contract-[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\.ts$/u.test(basename(file))
+}
+
+function persistenceSourcePaths(scanRoot: string): string[] {
+  return globSync('packages/*/*/src/**/*.{ts,tsx}', { cwd: scanRoot })
+    .filter(file => !isLintContractProbe(file))
+    .map(file => file.split(sep).join('/')).sort()
+}
 
 /** One log event, extracted from a `SessionEventMap` declaration. */
 export interface LogEventEntry {
@@ -139,7 +154,7 @@ export function collectLogEvents(scanRoot: string = root): LogEventEntry[] {
   const violations: string[] = []
   const seen = new Map<string, string>()
   let owningDecl: string | null = null
-  for (const rel of globSync('packages/*/*/src/**/*.{ts,tsx}', { cwd: scanRoot }).map(s => s.split(sep).join('/')).sort()) {
+  for (const rel of persistenceSourcePaths(scanRoot)) {
     const abs = resolve(scanRoot, rel)
     const text = readFileSync(abs, 'utf8')
     if (!text.includes('SessionEventMap')) continue
@@ -217,7 +232,7 @@ export function collectEventEnvelopeTypes(scanRoot: string = root): EventEnvelop
   const found = new Map<EventEnvelopeTypeName, EventEnvelopeTypeEntry>()
   const violations: string[] = []
   const wanted = new Set<string>(EVENT_ENVELOPE_TYPE_NAMES)
-  for (const rel of globSync('packages/*/*/src/**/*.{ts,tsx}', { cwd: scanRoot }).map(s => s.split(sep).join('/')).sort()) {
+  for (const rel of persistenceSourcePaths(scanRoot)) {
     const abs = resolve(scanRoot, rel)
     const text = readFileSync(abs, 'utf8')
     if (!EVENT_ENVELOPE_TYPE_NAMES.some(name => text.includes(name))) continue
@@ -263,7 +278,7 @@ export function collectEventEnvelopeTypes(scanRoot: string = root): EventEnvelop
  */
 export function collectSurfaceEventTypes(scanRoot: string = root): string[] {
   const found: { names: string[]; source: string }[] = []
-  for (const rel of globSync('packages/*/*/src/**/*.{ts,tsx}', { cwd: scanRoot }).map(s => s.split(sep).join('/')).sort()) {
+  for (const rel of persistenceSourcePaths(scanRoot)) {
     const abs = resolve(scanRoot, rel)
     const text = readFileSync(abs, 'utf8')
     if (!text.includes('SurfaceEventType')) continue

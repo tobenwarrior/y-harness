@@ -33,6 +33,7 @@ describe('web e2e: PTC program sandbox escalation', () => {
   beforeAll(async () => {
     scaffold = await launchWebScaffold({
       agentPresets: { default: 'ptc' },
+      extraOverlayPath: fileURLToPath(new URL('./fixtures/permission-presets.patch.yml', import.meta.url)),
       compareReplaySession: true,
       ...(MODE === 'record' ? {} : { replayFixture: FIXTURE, paceMs: 15 }),
     })

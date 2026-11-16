@@ -9,6 +9,7 @@ import { applyEntryPatches, entryListSchema, type PatchOptions } from '@yharness
 import { load } from 'js-yaml'
 import { resolvePluginResource } from './package-meta.ts'
 import { barePackageName } from './profile-resolution/resolver.ts'
+import { samePackageName } from './profile-resolution/package-aliases.ts'
 import type {} from './profile-resolution/service.ts'
 import type {} from './profile-context.ts'
 import { evaluatePluginCompatibility, pluginCompatibilityWarning } from './plugin-compatibility.ts'
@@ -181,7 +182,7 @@ export function prepareProfilePatches(
   ctx: Context, patches: PatchOptions[], parentURL: string, binName = 'dsh',
 ): PatchOptions[] {
   if (ctx.get('profileContext') === undefined) return patches
-  const entries = applyEntryPatches([], patches, patchWarning(ctx))
+  const entries = applyEntryPatches([], structuredClone(patches), patchWarning(ctx), samePackageName)
   const rows = prepareProfileEntries(ctx, entries, parentURL, binName)
   return rows.length === 0 ? [] : [{ insert: rows }]
 }

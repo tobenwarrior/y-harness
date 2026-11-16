@@ -305,19 +305,23 @@ describe('web e2e: shipped default web search', () => {
     await expandOwningTurnProcess(page, page.locator('[data-tool="web_search"]'))
     // `overflow-y: auto` clips inline-start overflow with no way to scroll it
     // back, and markers are right-aligned to the content edge, so a marker wider
-    // than `padding-left` silently loses its leading digits. `searchMaxResults`
+    // than `padding-inline-start` silently loses its leading digits. `searchMaxResults`
     // is an unbounded positive integer, so measure the widest three-digit marker
     // in the list's own font and require the shipped padding to hold it.
     const marker = await page.locator('[data-web="search"] ol').evaluate((element) => {
       const probe = document.createElement('span')
-      probe.style.cssText = 'position:absolute;visibility:hidden;white-space:pre;font:inherit'
+      const first = element.querySelector('li')
+      if (first === null) throw new Error('Search results contain no list item')
+      const style = getComputedStyle(first, '::marker')
+      probe.style.cssText = 'position:absolute;visibility:hidden;white-space:pre'
+      probe.style.font = style.font
       probe.textContent = '999. '
       element.append(probe)
       const widest = probe.getBoundingClientRect().width
       probe.remove()
-      return { widest, paddingLeft: parseFloat(getComputedStyle(element).paddingLeft) }
+      return { widest, padding: parseFloat(getComputedStyle(element).paddingInlineStart) }
     })
-    expect(marker.paddingLeft).toBeGreaterThanOrEqual(marker.widest)
+    expect(marker.padding).toBeGreaterThanOrEqual(marker.widest)
   })
 
   it.skipIf(MODE === 'record')('stayed clean and kept the exact fixture inventory', async () => {

@@ -12,6 +12,7 @@ import { encodeSegment, generationLogFilename, type JsonlCompression } from '../
 import { compressZstdFrame, decompressZstdFrame, scanZstdFrames } from '../packages/session/session-persistence-jsonl/src/zstd.ts'
 import { runMigrationJobs } from './migrate-sessions-to-v4.ts'
 import { removeFixtureSafely } from './test-fixture-cleanup.ts'
+import { COVERAGE_TEST_TIMEOUT_ENV, parseCoverageTestTimeout } from './coverage-partitions.ts'
 
 const repository = resolve(import.meta.dirname, '..')
 /** Committed adjacent format deltas, reversed in order without requiring Git history. */
@@ -19,7 +20,19 @@ const FORMAT_REVERSALS = [
   'scripts/fixtures/migrate-sessions-to-v4/v5-to-v6-format.patch',
   'scripts/fixtures/migrate-sessions-to-v4/v4-to-v5-format.patch',
 ] as const
-const MIGRATION_TEST_TIMEOUT = 60_000
+/** Source graph and configs needed by the V4 subprocess, excluding unrelated repository trees. */
+const V4_ARCHIVE_PATHS = [
+  'packages',
+  'vendor',
+  'native',
+  'scripts/migrate-sessions-to-v4.ts',
+  'scripts/migration-failure-summary.ts',
+  'scripts/fixtures/migrate-sessions-to-v4',
+  'package.json',
+  'tsconfig.json',
+  'tsconfig.base.json',
+] as const
+const MIGRATION_TEST_TIMEOUT = Math.max(60_000, parseCoverageTestTimeout(process.env[COVERAGE_TEST_TIMEOUT_ENV]) ?? 0)
 const directories = new Set<string>()
 const stopProcesses: Array<() => Promise<void>> = []
 let v4Checkout = ''
@@ -53,8 +66,8 @@ function run(...args: string[]) {
 beforeAll(async () => {
   v4Checkout = mkdtempSync(join(tmpdir(), 'dsh-migrate-v4-checkout-'))
   const archive = join(v4Checkout, 'source.tar')
-  await execa('git', ['archive', '--format=tar', '--output', archive, 'HEAD'], { cwd: repository })
-  await extractTar({ file: archive, cwd: v4Checkout })
+  await execa('git', ['archive', '--format=tar', '--output', archive, 'HEAD', ...V4_ARCHIVE_PATHS], { cwd: repository })
+  await extractTar({ file: archive, cwd: v4Checkout, filter: path => !path.split('/').includes('tests') })
   await unlink(archive)
   for (const relativePatch of FORMAT_REVERSALS) {
     const reversal = join(v4Checkout, relativePatch)
@@ -64,12 +77,11 @@ beforeAll(async () => {
     await unlink(reversal)
   }
   const linkType = process.platform === 'win32' ? 'junction' : 'dir'
-  await symlink(join(repository, 'node_modules'), join(v4Checkout, 'node_modules'), linkType)
-  await symlink(
-    join(repository, 'native/system/packages/entry/node_modules'),
-    join(v4Checkout, 'native/system/packages/entry/node_modules'),
-    linkType,
-  )
+  // Native imports resolve from their owning workspace's pnpm installation.
+  for (const directory of ['', 'native/system/packages/entry', 'packages/session/session-persistence-jsonl']) {
+    const modules = join(directory, 'node_modules')
+    await symlink(join(repository, modules), join(v4Checkout, modules), linkType)
+  }
   await symlink(join(repository, '.git'), join(v4Checkout, '.git'), linkType)
   v4Script = join(v4Checkout, 'scripts/migrate-sessions-to-v4.ts')
 }, MIGRATION_TEST_TIMEOUT)

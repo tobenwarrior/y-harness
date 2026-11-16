@@ -46,6 +46,12 @@ export function apply(ctx: Context): void {
   const computer = createComputerClient()
   const computerAvailability = createComputerAvailability(computer)
   const computerTarget = createSnapshotStore<string | null>(null)
+  const workspace = controller.face().hooks.workspace
+  const selectedSessionId = (): string | undefined => {
+    const snapshot = workspace.getSnapshot()
+    const selected = snapshot.bots.find(bot => bot.id === snapshot.selectedBotId)
+    return selected?.sessionId
+  }
   ctx.inject(['inputTriggers'], (scope) => {
     const availableFor = (sessionId: string): boolean => {
       const availability = computerAvailability.source.getSnapshot()
@@ -79,10 +85,19 @@ export function apply(ctx: Context): void {
   })
 
   ctx.effect(() => {
-    const stopGeneration = connection.generation.subscribe(() => { computerAvailability.refresh() })
-    computerAvailability.refresh()
+    let refreshedSession = selectedSessionId()
+    const refresh = (force = false): void => {
+      const nextSession = selectedSessionId()
+      if (!force && nextSession === refreshedSession) return
+      refreshedSession = nextSession
+      computerAvailability.refresh(nextSession)
+    }
+    const stopGeneration = connection.generation.subscribe(() => { refresh(true) })
+    const stopWorkspace = workspace.subscribe(() => { refresh() })
+    refresh(true)
     return () => {
       stopGeneration()
+      stopWorkspace()
       computerAvailability.dispose()
     }
   }, 'ui-bots: computer availability')
@@ -97,7 +112,12 @@ export function apply(ctx: Context): void {
         const face = controller.face()
         return {
           ...face, computer, setComputerTarget: (sessionId: string | null) => { computerTarget.set(sessionId) },
-          hooks: { ...face.hooks, computerAvailability: computerAvailability.source, computerTarget },
+          hooks: {
+            ...face.hooks,
+            computerAvailability: computerAvailability.source,
+            computerIdentity: computerAvailability.identity,
+            computerTarget,
+          },
         }
       },
     }, BotsPanel))

@@ -558,7 +558,7 @@ export interface BotCreateRequest {
   readonly identity?: BotIdentity
   /** Stable product accent family. */
   readonly accent?: BotAccent
-  /** Absolute working directory; defaults to the Host process directory. */
+  /** Absolute working directory on unmanaged Hosts. Managed Hosts assign the directory. */
   readonly cwd?: string
   /** Optional Agent preset passed to Session creation. */
   readonly agentPreset?: string

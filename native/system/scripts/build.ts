@@ -9,8 +9,13 @@ import { basename, dirname, join, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
 
 const root = resolve(import.meta.dirname, '..')
-const { values } = parseArgs({ options: { 'host-addon-only': { type: 'boolean' } }, allowPositionals: false })
+const { values } = parseArgs({
+  options: { 'host-addon-only': { type: 'boolean' }, 'landlock-only': { type: 'boolean' } },
+  allowPositionals: false,
+})
 const hostAddonOnly = values['host-addon-only'] === true
+const landlockOnly = values['landlock-only'] === true
+if (hostAddonOnly && landlockOnly) throw new Error('build: select at most one binary filter')
 const sources: Record<string, string> = {
   'landlock-run': 'packages/entry/src/main.c',
   flock: 'packages/entry/src/flock.c',
@@ -44,6 +49,7 @@ for (const name of readdirSync(join(root, 'packages')).sort()) {
 
   for (const binary of spec.binaries) {
     if (hostAddonOnly && (binary.kind !== 'node-api' || (binary.libc !== undefined && binary.libc !== libc))) continue
+    if (landlockOnly && binary.tool !== 'landlock-run') continue
     const source = sources[binary.tool]
     if (source === undefined) throw new Error(`build: unknown tool ${binary.tool}`)
     const output = join(dir, binary.path)

@@ -858,6 +858,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'the active row or a retryable provisioning row.',
       },
       {
+        signature: 'async ownerBotForSession(sessionId: string): Promise<{ readonly id: BotId readonly sessionId: SessionId readonly state: \'active\' | \'provisioning\' } | undefined>',
+        description: 'Resolve a server-owned Bot by its exact backing Session.',
+        parameters: [{ name: 'sessionId', description: 'Session identity from the live Agent or authenticated UI.' }],
+        returns: 'The owner Bot, including provisioning state, or undefined for other Sessions.',
+      },
+      {
         signature: '@Remote(\'rename\') async rename(request: BotRenameRequest): Promise<BotRenameValue>',
         description: 'Rename one Bot while preserving its one Session mapping and visual identity.',
         parameters: [{ name: 'request', description: 'Bot id and new display name.' }],

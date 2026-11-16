@@ -1,0 +1,8 @@
+version: 1
+scenario: vps-bot-computer
+profile: headless
+composition: vps-bot-computer
+recording: authored
+header:
+  class: vps-bot-computer
+  pin: true

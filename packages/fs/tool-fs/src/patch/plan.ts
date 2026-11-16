@@ -22,10 +22,12 @@ import type { PatchExecutionRequest, PatchFailure, PatchOperationRecord, PatchPl
 export async function planPatch(
   ctx: Context, sandbox: FsSandboxController, exec: ToolExecution, request: PatchExecutionRequest,
 ): Promise<PatchPlan> {
+  void ctx
   const parsed = parsePatch(request.patch)
+  const fs = sandbox.filesystem(exec)
   const targets = new Map<FsTargetKey, FsTarget>()
   const resolve = async (path: string): Promise<FsTarget> => {
-    const target = await ctx.fs.resolve(path, sessionResolveOptions(exec, request.sandboxPolicy?.workspaceRoot))
+    const target = await fs.resolve(path, sessionResolveOptions(exec, request.sandboxPolicy?.workspaceRoot))
     const prior = targets.get(target.targetKey)
     if (prior) return prior
     targets.set(target.targetKey, target)

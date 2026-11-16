@@ -33,6 +33,9 @@ import { computerRoutes } from './computer-api.ts'
 import * as ComputerTool from './computer-tool.ts'
 import { VpsComputer } from './computer.ts'
 import { MacComputerBridge } from './mac-computer.ts'
+import { mountVpsBots } from './vps-bots.ts'
+import type { VpsServiceAccess } from './vps-services.ts'
+import type { VpsJournalConfig } from './vps-journal.ts'
 
 /** Stable Cordis plugin name. */
 export const name = 'web-app'
@@ -71,6 +74,21 @@ export interface Config {
   publicUrl?: string
   /** Explicit `--trusted-host` authorities from this invocation. */
   trustedHosts: string[]
+  /** Rootless computers assigned to Bots by the private VPS installation. */
+  botComputers?: {
+    /** Owner-only runtime root for the installation. */
+    root: string
+    /** Locally built desktop image. */
+    image: string
+    /** Exact Bot ids assigned isolated VPS Computers; absent assigns every Bot. */
+    bots?: string[]
+    /** Exact selected Bot ids that receive only a private Computer, not a VPS workspace. */
+    desktopOnlyBots?: string[]
+  } | null
+  /** Exact Linux service grants, selected by the VPS owner. */
+  vpsServices?: VpsServiceAccess[]
+  /** Private read-only journal socket and its owner Bot allowlist. */
+  vpsJournal?: VpsJournalConfig | null
   /** Opt in to the private Linux desktop using its X display and owner-only authority file. */
   computer?: {
     /** Local X11 display identifier for the private desktop. */
@@ -86,6 +104,31 @@ export const Config: z<Config> = z.object({
   surfaceContext: z.boolean().default(true),
   publicUrl: z.transform(z.string(), value => parsePublicUrl(value).href),
   trustedHosts: z.array(String).default([]),
+  botComputers: z.union([
+    z.object({
+      root: z.string().required(),
+      image: z.string().required(),
+      bots: z.array(String),
+      desktopOnlyBots: z.array(String),
+    }),
+    z.const(null),
+  ]),
+  vpsServices: z.array(z.object({
+    unit: z.string().required(),
+    scope: z.union(['system', 'user'] as const).required(),
+    bots: z.array(String).required(),
+    restart: z.boolean(),
+  })),
+  vpsJournal: z.union([
+    z.object({
+      socketPath: z.string().required(),
+      bots: z.array(String).required(),
+      timeoutMs: z.number(),
+      maxBytes: z.number(),
+      maxEntries: z.number(),
+    }),
+    z.const(null),
+  ]),
   computer: z.union([
     z.object({
       display: z.string().required(),
@@ -266,40 +309,47 @@ export function apply(ctx: Context, config: Config): void {
   // The loopback URL belongs to this host. Under SSH, the operator reaches it
   // through a local forwarding address that this process cannot derive.
   const handoffBrowser = config.openBrowser && !launchedThroughSsh(launchEnvironmentOf(ctx))
+  const canUseComputer = (agentContext: Context): boolean => {
+    const preset = ctx.get('agentPresets')?.composedPreset(agentContext)
+    return preset !== undefined && COMPUTER_PRESETS.test(preset)
+  }
   // Release dependent rows only after bind-dependent trust has been sampled once.
   ctx.provide(WEB_RUNTIME_SERVICE, runtime)
   ctx.plugin(FrontendStatic, { distIndex: internals.resolveDistIndex() })
   if (process.platform === 'darwin' && process.connected && process.env.YH_MAC_COMPUTER === '1'
     && ctx.get('profileContext')?.name === 'desktop') {
     const computer = new MacComputerBridge()
-    ctx.effect(() => () => computer.dispose(), 'mac-computer: local desktop')
+    ctx.effect(() => () => { computer.dispose() }, 'mac-computer: local desktop')
     ctx.on('agent/created', ({ agent }) => {
-      const canUseComputer = (): boolean => {
-        const preset = ctx.get('agentPresets')?.composedPreset(agent.ctx)
-        return preset !== undefined && COMPUTER_PRESETS.test(preset)
-      }
-      if (!canUseComputer()) return
+      if (!canUseComputer(agent.ctx)) return
       agent.ctx.inject(['tools', 'attachments', 'llm'], (scope) => {
         ComputerTool.applyMacComputer(scope, computer)
-        scope.effect(() => scope.tools.guard(exec => exec.name === 'mac_computer' && !canUseComputer()
+        scope.effect(() => scope.tools.guard(exec => exec.name === 'mac_computer' && !canUseComputer(agent.ctx)
           ? 'This Agent preset cannot access the Mac Computer.'
           : undefined))
       })
     })
   }
-  if (config.computer !== undefined && config.computer !== null) {
-    const computer = new VpsComputer(config.computer)
-    ctx.provide('vpsComputer', computer)
-    ctx.effect(() => () => computer.dispose(), 'vps-computer: private desktop')
+  const legacyComputer = config.computer === undefined || config.computer === null
+    ? undefined
+    : new VpsComputer(config.computer)
+  if (config.vpsJournal !== undefined && config.vpsJournal !== null && config.botComputers == null) {
+    throw new Error('VPS journal grants require managed Bot computers.')
+  }
+  if (legacyComputer !== undefined) {
+    ctx.provide('vpsComputer', legacyComputer)
+    ctx.effect(() => () => legacyComputer.dispose(), 'vps-computer: private desktop')
+  }
+  if (config.botComputers !== undefined && config.botComputers !== null) {
+    if (process.platform !== 'linux') throw new Error('Managed VPS Bot computers require Linux.')
+    mountVpsBots(ctx, config.botComputers, config.vpsServices ?? [], legacyComputer, config.vpsJournal ?? undefined)
+  } else if (legacyComputer !== undefined) {
+    const computer = legacyComputer
     ctx.on('agent/created', ({ agent }) => {
-      const canUseComputer = (): boolean => {
-        const preset = ctx.get('agentPresets')?.composedPreset(agent.ctx)
-        return preset !== undefined && COMPUTER_PRESETS.test(preset)
-      }
-      if (!canUseComputer()) return
+      if (!canUseComputer(agent.ctx)) return
       agent.ctx.inject(ComputerTool.inject, (scope) => {
         ComputerTool.apply(scope)
-        scope.effect(() => scope.tools.guard(exec => exec.name === 'vps_computer' && !canUseComputer()
+        scope.effect(() => scope.tools.guard(exec => exec.name === 'vps_computer' && !canUseComputer(agent.ctx)
           ? 'This Agent preset cannot access the private Computer.'
           : undefined))
       })

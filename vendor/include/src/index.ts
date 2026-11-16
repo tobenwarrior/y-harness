@@ -52,12 +52,14 @@ function retryableWriteError(error: unknown): boolean {
  * @param data - the parsed entry list (JSON-safe plain data).
  * @param patches - the patch list to apply, in order.
  * @param warn - sink for skipped-patch diagnostics (printf-style, `%C` = code).
+ * @param matchesName - comparison for a patch's asserted module name against the row's module name; defaults to exact equality.
  * @returns a detached entry list with every applicable patch applied.
  */
 export function applyEntryPatches(
   data: EntryOptions[],
   patches: PatchOptions[] | undefined,
   warn: (message: string, ...args: any[]) => void,
+  matchesName: (asserted: string, actual: string) => boolean = (asserted, actual) => asserted === actual,
 ): EntryOptions[] {
   if (!patches?.length) return [...data]
   data = structuredClone(data)
@@ -112,7 +114,7 @@ export function applyEntryPatches(
       continue
     }
 
-    if (name && name !== target.name) {
+    if (name && !matchesName(name, target.name)) {
       warn('patch: name mismatch for %C (expected %C, got %C), skipping', id, target.name, name)
       continue
     }

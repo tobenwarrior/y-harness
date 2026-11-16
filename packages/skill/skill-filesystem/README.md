@@ -87,6 +87,8 @@ A valid skill under any scanned root appears in the session catalog sorted by na
 <a id="understand-the-implementation"></a>
 ## Understand the implementation
 
+The provider scans only the owner-maintained `.agents/skills` directory assigned to a managed VPS Bot.
+
 <details>
 <summary>Implementation internals — click to expand</summary>
 

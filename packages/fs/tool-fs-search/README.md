@@ -68,7 +68,7 @@ The generated [configuration catalog](../../../docs/config-catalog.md#yharnessto
 
 ### Deployment requirement
 
-Node deployments receive the `@vscode/ripgrep` platform package on supported macOS, Linux, and Windows targets; Python SDK wheels copy the target-native binary beside the single-file runtime as a `-rg` sidecar. No carrier requires a host `rg`. Returned paths are displayed relative to the resolved workdir (the calling session's cwd when present) and are follow-up-readable with `read` only when that workdir and the filesystem root are the same workspace.
+Node deployments receive the `@vscode/ripgrep` platform package on supported macOS, Linux, and Windows targets. Python SDK wheels copy the target-native binary beside the single-file runtime as a `-rg` sidecar. Managed VPS Bots use the `rg` executable from their Computer image and resolve search paths inside their private workspace. Returned paths are relative to the resolved workdir and can be used with `read` when the workdir and filesystem root are the same workspace.
 
 ### Failures and recovery
 
@@ -101,7 +101,7 @@ Local workspace discovery is naturally a process-backed `rg` workflow, and putti
 
 ### How a search runs
 
-Each call resolves the packaged binary (`@vscode/ripgrep`, or the executable's `-rg` sidecar in a pkg single-file runtime), prepends `--no-config` so a host `RIPGREP_CONFIG_PATH` cannot inject a `--pre` preprocessor into the unconfined spawn, and passes every model-controlled value as a plain argv element — no shell layer exists, so no quoting applies. Collect-mode budgets bound complete stdout and a stderr tail; a lossy stdout read fails as `SEARCH_RAW_OUTPUT_OVERFLOW` rather than parsing a silently-partial stream. The tools never read a raw spill path.
+Both tools pass model-controlled values as argv elements and use `--no-config` to prevent `RIPGREP_CONFIG_PATH` from supplying a preprocessor. Collect-mode budgets bound complete stdout and a stderr tail. A truncated stdout read fails as `SEARCH_RAW_OUTPUT_OVERFLOW`.
 
 ### Two budgets, two artifacts
 

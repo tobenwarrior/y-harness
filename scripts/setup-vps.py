@@ -18,6 +18,10 @@ from pathlib import Path
 REPOSITORY = 'https://github.com/tobenwarrior/y-harness.git'
 SERVICE = 'yharness-vps.service'
 CLI = Path('apps/cli/lib/bin.js')
+BOT_IMAGE = 'localhost/yharness-vps-bot:24.04'
+BOT_BASE_IMAGE = 'docker.io/library/ubuntu:24.04'
+BOT_CONTAINERFILE = Path('scripts/vps-bot/Containerfile')
+BOT_ROOT = Path('bots')
 NATIVE_PACKAGES = Path('native/system/packages')
 SANDBOX_SCRIPT = 'sandbox-setup.py'
 BUBBLEWRAP_BIN = Path('/usr/bin/bwrap')
@@ -96,6 +100,129 @@ def require_linux_user():
     for name in ('git', 'loginctl', 'systemctl'):
         if shutil.which(name) is None:
             raise SetupError(f'Setup needs {name}. Install it on the server and retry.')
+
+
+def podman_environment():
+    """Pass only non-sensitive owner paths to the local Podman client."""
+    environment = {
+        'PATH': '/usr/local/bin:/usr/bin:/bin',
+        'LC_ALL': 'C',
+    }
+    for name in ('HOME', 'XDG_RUNTIME_DIR'):
+        value = os.environ.get(name)
+        if value is not None and not re.search(r'[\x00-\x1f\x7f]', value):
+            environment[name] = value
+    return environment
+
+
+def podman_executable(root):
+    """Find Podman or install it through the owner's interactive sudo prompt."""
+    executable = shutil.which('podman')
+    if executable is not None:
+        path = Path(executable).resolve()
+        if path == Path('/usr/bin/podman'):
+            ensure_rootless_podman(path)
+            return path
+        raise SetupError('Podman must be installed at /usr/bin/podman for the rootless VPS Bot runtime.')
+    print('Podman is not installed. Setup may ask for your sudo password.', flush=True)
+    environment = build_environment()
+    environment.update(podman_environment())
+    with os.fdopen(private_file(root / 'podman.log', os.O_WRONLY | os.O_CREAT), 'w') as log:
+        log.truncate()
+        try:
+            # Keep sudo interactive: the owner sees and authorizes every package
+            # installation; setup never attempts a hidden or cached root shell.
+            apt = ['/usr/bin/sudo', '/usr/bin/apt-get', '-o', 'DPkg::Lock::Timeout=30', '-o', 'Acquire::Retries=1']
+            run([*apt, 'update'], env=environment, stdout=log, stderr=subprocess.STDOUT, timeout=180)
+            run(
+                [*apt, 'install', '--no-install-recommends', '--no-upgrade', '--no-remove', '--yes', 'podman', 'uidmap'],
+                env=environment, stdout=log, stderr=subprocess.STDOUT, timeout=180,
+            )
+        except (OSError, subprocess.SubprocessError) as error:
+            raise SetupError('Could not install Podman through interactive sudo. Check the private podman.log.') from error
+    executable = shutil.which('podman')
+    if executable is None or Path(executable).resolve() != Path('/usr/bin/podman'):
+        raise SetupError('Podman is still unavailable after installation. Check the private podman.log.')
+    path = Path('/usr/bin/podman')
+    ensure_rootless_podman(path)
+    return path
+
+
+def subid_mapping(path, account):
+    """Return whether an owner has a sufficiently large subordinate-id range."""
+    try:
+        lines = path.read_text().splitlines()
+    except (OSError, UnicodeError):
+        return False
+    for line in lines:
+        fields = line.split(':')
+        if len(fields) != 3 or fields[0] not in (account, str(os.getuid())):
+            continue
+        try:
+            int(fields[1])
+            if int(fields[2]) >= 65_536:
+                return True
+        except ValueError:
+            continue
+    return False
+
+
+def ensure_rootless_podman(podman):
+    """Require subordinate ids and prove Podman can enter an owner namespace."""
+    account = pwd.getpwuid(os.getuid()).pw_name
+    if not subid_mapping(Path('/etc/subuid'), account) or not subid_mapping(Path('/etc/subgid'), account):
+        raise SetupError('The VPS account needs 65,536-entry /etc/subuid and /etc/subgid mappings for rootless Podman.')
+    try:
+        run(
+            [str(podman), 'unshare', '/usr/bin/true'], env=podman_environment(),
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        raise SetupError('Rootless Podman is not functional for this VPS account. Check uidmap and subordinate ids.') from error
+
+
+def ensure_bot_image(root, source):
+    """Build the audited local Bot desktop image once, without restarting Web."""
+    podman = podman_executable(root)
+    containerfile = source / BOT_CONTAINERFILE
+    if containerfile.is_symlink() or not containerfile.is_file():
+        raise SetupError('The installed source is missing the audited VPS Bot Containerfile.')
+    environment = podman_environment()
+    ensure_bot_base(root, podman, environment)
+    try:
+        run([str(podman), 'image', 'exists', BOT_IMAGE], env=environment, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except subprocess.CalledProcessError:
+        descriptor = private_file(root / 'podman-build.log', os.O_WRONLY | os.O_CREAT)
+        with os.fdopen(descriptor, 'w') as log:
+            log.truncate()
+            try:
+                run(
+                    [str(podman), 'build', '--pull=never', '--network=host', '--tag', BOT_IMAGE,
+                     '--file', str(containerfile), str(containerfile.parent)],
+                    cwd=source, env=environment, stdout=log, stderr=subprocess.STDOUT, timeout=600,
+                )
+            except (OSError, subprocess.SubprocessError) as error:
+                raise SetupError('The audited VPS Bot image build failed. Check the private podman-build.log.') from error
+    return podman
+
+
+def ensure_bot_base(root, podman, environment):
+    """Pull the pinned Ubuntu base explicitly before the offline image build."""
+    try:
+        run([str(podman), 'image', 'exists', BOT_BASE_IMAGE], env=environment,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return
+    except subprocess.CalledProcessError:
+        descriptor = private_file(root / 'podman-base.log', os.O_WRONLY | os.O_CREAT)
+        with os.fdopen(descriptor, 'w') as log:
+            log.truncate()
+            try:
+                run(
+                    [str(podman), 'pull', '--quiet', BOT_BASE_IMAGE],
+                    env=environment, stdout=log, stderr=subprocess.STDOUT, timeout=300,
+                )
+            except (OSError, subprocess.SubprocessError) as error:
+                raise SetupError('The pinned Ubuntu Bot base could not be pulled. Check the private podman-base.log.') from error
 
 
 def node_executable():
@@ -339,6 +466,35 @@ def install_sandbox_start_check(root, unit_dir):
     write_private_copy(dropin_dir / 'sandbox.conf', check.encode())
 
 
+def bot_resources(source):
+    """Report whether this checkout carries the complete Bot runtime payload."""
+    resources = (
+        source / BOT_CONTAINERFILE,
+        source / BOT_CONTAINERFILE.parent / 'start.sh',
+        source / BOT_CONTAINERFILE.parent / 'capture.sh',
+        source / BOT_CONTAINERFILE.parent / 'files.py',
+        source / 'packages/bundle/web-app/src/vps-runtime.ts',
+    )
+    present = [path for path in resources if path.exists() or path.is_symlink()]
+    if not present:
+        return False
+    if any(path.is_symlink() or not path.is_file() for path in resources):
+        raise SetupError('The installed source has an incomplete VPS Bot runtime payload.')
+    return True
+
+
+def install_bot_dropin(unit_dir):
+    """Install owner-only Web environment values without restarting the service."""
+    dropin_dir = unit_dir / (SERVICE + '.d')
+    private_directory(dropin_dir)
+    dropin = (
+        '[Service]\n'
+        'Environment="YH_VPS_BOT_ROOT=%h/.yharness-vps/bots"\n'
+        f'Environment="YH_VPS_BOT_IMAGE={BOT_IMAGE}"\n'
+    )
+    write_private_copy(dropin_dir / 'vps-bot.conf', dropin.encode())
+
+
 def build_source(root, node):
     """Build and check a staged public checkout before making it the installed source."""
     for name in ('npm', 'cc'):
@@ -388,6 +544,7 @@ def setup(root, unit_dir):
         fcntl.flock(lock, fcntl.LOCK_EX)
         private_directory(root / 'state')
         private_directory(root / 'workspace')
+        private_directory(root / BOT_ROOT)
         os.close(private_file(root / 'host.log', os.O_WRONLY | os.O_CREAT))
         source = root / 'source'
         if source.is_symlink() or (source.exists() and not (source / CLI).is_file()):
@@ -405,8 +562,12 @@ def setup(root, unit_dir):
             build_source(root, node)
         else:
             ensure_sandbox(root, source, node)
+        unit_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        if bot_resources(source):
+            ensure_bot_image(root, source)
+            if not has_unit:
+                install_bot_dropin(unit_dir)
         if not has_unit:
-            unit_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
             with tempfile.NamedTemporaryFile(mode='w', dir=unit_dir) as output:
                 output.write(unit)
                 output.flush()

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import { join, relative } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createHash } from 'node:crypto'
 import { brandString } from '@yharness/brand'
@@ -479,21 +479,28 @@ describe('evidence-backed skill proposals', () => {
   it('expires provider admission and ignores a late generated proposal', async () => {
     const f = await fixture(); const item = await f.skill(); await f.library.adopt({ id: item.id, expectedHash: item.contentHash })
     const learning = new SkillLearning({ ...f.options, operationTimeoutMs: 5 })
-    let release: () => void = () => {}; let providerSignal: AbortSignal | undefined
-    const gate = new Promise<void>((resolve) => { release = resolve })
+    const admitted = Promise.withResolvers<AbortSignal>()
+    const gate = Promise.withResolvers<undefined>()
     learning.registerGenerator({ id: 'late', generate: async (_input, signal) => {
-      providerSignal = signal; await gate; return { drafts: [{ kind: 'compress', id: item.id,
+      admitted.resolve(signal); await gate.promise; return { drafts: [{ kind: 'compress', id: item.id,
         name: item.name, description: item.description,
         content: 'You MUST request deployment approval.\n\n[Checklist](reference.txt)' }], uncertainty: [] } } })
     const result = learning.propose({ projectId: 'p', operation: 'compress', targetIds: [item.id],
       evidenceIds: [f.evidence.id] }).catch((error: unknown) => String(error))
-    const outcome = await Promise.race([result, new Promise<string>((resolve) => { setTimeout(() => { resolve('still running') }, 50) })])
-    let disposed = false; const disposal = learning.dispose().then(() => { disposed = true })
+    let disposed = false
+    let disposal: Promise<void> | undefined
     try {
-      await new Promise<void>((resolve) => { setTimeout(resolve, 0) }); expect(disposed).toBe(false)
-    } finally { release(); await result; await disposal }
+      expect(await result).toMatch(/time budget/)
+      expect((await admitted.promise).aborted).toBe(true)
+      disposal = learning.dispose().then(() => { disposed = true })
+      await new Promise<void>((resolve) => { setImmediate(resolve) })
+      expect(disposed).toBe(false)
+    } finally {
+      gate.resolve(undefined)
+      await result
+      await (disposal ?? learning.dispose())
+    }
     expect(disposed).toBe(true)
-    expect(outcome).toMatch(/time budget/); expect(providerSignal?.aborted).toBe(true)
     expect(learning.list({})).toEqual([]); expect((await f.library.detail({ id: item.id })).revisions).toHaveLength(0)
   })
   it.each(['cleanup', 'native-learning'] as const)('drains direct %s paused in inventory inspection during disposal', async (operation) => {
@@ -749,9 +756,14 @@ describe('evidence-backed skill proposals', () => {
     survivor = (await f.library.list({})).items.find(item => item.name === 'shared-new')!
     const secondProject = join(f.root, 'second'); await mkdir(join(secondProject, '.git'), {
       recursive: true }); f.projects.push({ id: 'other', title: 'Other', path: secondProject })
-    const consumer = join(secondProject, '.dsh/skills/consumer'); await mkdir(consumer, {
-      recursive: true }); await writeFile(join(consumer, 'SKILL.md'),
-      '---\nname: consumer\ndescription: Consume shared workflow\n---\n[Shared](' + source.path + ')\n')
+    const consumer = join(secondProject, '.dsh/skills/consumer')
+    await mkdir(consumer, { recursive: true })
+    const reference = relative(await realpath(consumer), source.path).replaceAll('\\', '/')
+    await writeFile(join(consumer, 'SKILL.md'),
+      '---\nname: consumer\ndescription: Consume shared workflow\n---\n[Shared]('
+      + reference + ')\n')
+    const consumerItem = (await f.library.list({})).items.find(item => item.name === 'consumer')
+    expect(consumerItem?.references).toContainEqual({ kind: 'file', target: source.path, resolvedId: source.id })
     const referenced = await f.learning.propose({ projectId: 'p', operation: 'deduplicate',
       targetIds: [source.id, survivor.id], evidenceIds: [f.evidence.id] })
     await expect(f.learning.apply({ proposalId: referenced.id, mode: 'reviewed' })).rejects.toThrow(/incoming references/)

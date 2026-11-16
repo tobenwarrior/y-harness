@@ -96,7 +96,7 @@ This section explains the design decisions behind the tool and points at the cod
 
 ### Request resolution
 
-The tool resolves the workdir before `ctx.shell.resolve()` runs: an explicit relative `workdir` is resolved against the session cwd, and a sandbox policy's canonical workspace root wins so confinement and launch use the same identity. Sandbox policy resolves per call through `ctx.sandboxPolicy`; an escalation request goes through `ctx.approval` before anything executes, and the tool fails at load if the executor confines but no policy service is mounted.
+For ordinary Sessions, an explicit relative `workdir` resolves against the Session cwd. The sandbox policy's canonical workspace root takes precedence. Fully managed VPS Bots use their private shell, workspace, policy, and environment. The tool rejects working directories outside that private workspace. An escalation request goes through `ctx.approval` before execution, and a confining executor requires a sandbox policy service at load.
 
 ### Rendering story
 

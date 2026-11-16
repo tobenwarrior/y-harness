@@ -43,3 +43,12 @@
             models:
               - id: deepseek-v4-flash
               - id: deepseek-v4-pro
+
+# Authored skill scenarios seed their project workspace after the launcher
+# starts. Keep the replay composition catalog-free for ordinary scenarios while
+# making that explicit workspace root visible to those scenarios.
+- id: skill-filesystem
+  config:
+    includeDefaultRoots: false
+    customSkillDirs:
+      - !!js process.getBuiltinModule('node:path').join(process.cwd(), '.dsh', 'skills')

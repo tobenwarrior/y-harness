@@ -4,7 +4,7 @@ import type { Browser, Locator, Page } from 'playwright'
 import { chromium, webkit } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it, onTestFailed } from 'vitest'
 import { launchWebScaffold, watchConsole, webSnapshotMode, type WebScaffold } from './scaffold.ts'
-import { ZH_BROWSER_LOCALE, connectFreshWorkspaceZh, saveFailureShot } from './support.ts'
+import { connectFreshWorkspace, newEnglishPage, saveFailureShot } from './support.ts'
 
 declare global {
   interface Window {
@@ -114,7 +114,7 @@ describe.skipIf(webSnapshotMode() === 'record').each([
       }])),
     })
     browser = await engine.launch()
-    page = await browser.newPage({ viewport: { width: 1680, height: 1000 }, locale: ZH_BROWSER_LOCALE })
+    page = await newEnglishPage(browser)
     await page.addInitScript(() => {
       window.__modelMenuRectReads = 0
       const descriptor: TypedPropertyDescriptor<(this: Element) => DOMRect> | undefined =
@@ -132,7 +132,7 @@ describe.skipIf(webSnapshotMode() === 'record').each([
     tripwire = watchConsole(page)
     await page.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
     await page.waitForSelector('[class*="frame"]', { timeout: 30_000 })
-    await connectFreshWorkspaceZh(page, scaffold.workspaceCwd)
+    await connectFreshWorkspace(page, scaffold.workspaceCwd)
   })
 
   afterAll(async () => {
@@ -145,14 +145,14 @@ describe.skipIf(webSnapshotMode() === 'record').each([
 
   it('browses one provider at a time and cancels without changing the saved route', async () => {
     onTestFailed(() => saveFailureShot(page, `web-e2e-provider-first-${engine.name()}`))
-    const trigger = page.getByRole('button', { name: /^\u9009\u62E9\u6A21\u578B/ })
-    const rootProvider = page.getByRole('menuitem', { name: '\u{63D0}\u{4F9B}\u{65B9}', exact: true })
-    const search = page.getByRole('searchbox', { name: '\u{641C}\u{7D22}\u{6A21}\u{578B}…', exact: true })
+    const trigger = page.getByRole('button', { name: /^Select model/ })
+    const rootProvider = page.getByRole('menuitem', { name: 'Provider', exact: true })
+    const search = page.getByRole('searchbox', { name: 'Search models…', exact: true })
     const rows = page.getByRole('menuitemradio')
     await trigger.click()
-    await page.getByRole('menuitem', { name: /^\u6A21\u578B/ }).click()
+    await page.getByRole('menuitem', { name: /^Model/ }).click()
     await expect.poll(() => rows.allTextContents()).toEqual(PROVIDERS[0]!.models.map(model => model.name))
-    const viewport = page.getByRole('menu', { name: '\u{6A21}\u{578B}', exact: true })
+    const viewport = page.getByRole('menu', { name: 'Model', exact: true })
     expect(await viewport.locator('[data-menu-group-heading]').count()).toBe(0)
     await viewport.evaluate((node) => { node.style.maxHeight = '80px' })
     const ids = await rows.evaluateAll(nodes => nodes.map(node => node.id))
@@ -164,7 +164,7 @@ describe.skipIf(webSnapshotMode() === 'record').each([
       await assertNoRectReads(page)
     }
     await search.fill('Quartz')
-    await page.getByText('\u{6CA1}\u{6709}\u{5339}\u{914D}\u{7684}\u{6A21}\u{578B}。', { exact: true }).waitFor()
+    await page.getByText('No matching models.', { exact: true }).waitFor()
     await search.press('Escape')
     await rootProvider.click()
     await expect.poll(() => rows.allTextContents()).toEqual(['DeepSeek', ...PROVIDERS.map(provider => provider.name)])
@@ -193,12 +193,12 @@ describe.skipIf(webSnapshotMode() === 'record').each([
     onTestFailed(() => saveFailureShot(page, `web-e2e-model-menu-observer-${engine.name()}`))
     {
       const composer = page.locator('[data-composer-input]').first()
-      const surface = page.locator('[aria-label="/model \u{9009}\u{9879}"]')
+      const surface = page.locator('[aria-label="/model options"]')
       const viewport = surface.getByRole('listbox')
-      const search = page.getByRole('textbox', { name: '\u{7B5B}\u{9009}\u{9009}\u{9879}', exact: true })
+      const search = page.getByRole('textbox', { name: 'Filter options', exact: true })
       const open = async (): Promise<void> => {
-        await page.getByRole('button', { name: '\u{6DFB}\u{52A0}\u{6587}\u{4EF6}\u{6216}\u{8C03}\u{7528}\u{6307}\u{4EE4}', exact: true }).click()
-        await page.getByRole('option', { name: /^\u6A21\u578B/ }).click()
+        await page.getByRole('button', { name: 'Add files or run commands', exact: true }).click()
+        await page.getByRole('option', { name: /^Model/ }).click()
         await expect.poll(() => readGroups(viewport)).toEqual(EXPECTED_GROUPS)
         await expect.poll(() => search.evaluate(node => node === node.ownerDocument.activeElement)).toBe(true)
         await assertNoRectReads(page)

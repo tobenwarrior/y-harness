@@ -7,12 +7,15 @@ import {
 } from '@yharness/client-ui-primitives'
 import type { PropsLocale } from '@yharness/client-ui-slots'
 import { randomUUID } from '@yharness/util-crypto'
-import { ComputerApiError, type ComputerClient, type ComputerFrame, type ComputerInputAction, type ComputerMode } from './computer-client.ts'
+import {
+  ComputerApiError, type ComputerClient, type ComputerFrame, type ComputerInputAction, type ComputerMode, type ComputerStatus,
+} from './computer-client.ts'
 import css from './ComputerPanel.module.css'
 
 /** Private desktop client and panel dismissal. */
 interface ComputerPanelProps extends PropsLocale<'bots'> {
   readonly computer: ComputerClient
+  readonly sessionId?: string
   readonly close: () => void
   readonly local?: { readonly checkSharing: () => void }
 }
@@ -119,7 +122,7 @@ function imageErrorPhase(error: unknown): PanelPhase {
 }
 
 /** Render the Computer tab's image, lease controls, and bounded input affordances. */
-export function ComputerPanel({ computer, close, local, t }: ComputerPanelProps): ReactNode {
+export function ComputerPanel({ computer, sessionId, close, local, t }: ComputerPanelProps): ReactNode {
   const viewerIdRef = useRef<string>()
   if (viewerIdRef.current === undefined) viewerIdRef.current = randomUUID()
   const viewerId = viewerIdRef.current
@@ -143,11 +146,35 @@ export function ComputerPanel({ computer, close, local, t }: ComputerPanelProps)
   const [mode, setMode] = useState<ComputerMode>('watching')
   const [botActive, setBotActive] = useState(false)
   const [phase, setPhase] = useState<PanelPhase>('loading')
+  const [computerStatus, setComputerStatus] = useState<ComputerStatus>()
   const [busy, setBusy] = useState<BusyAction>()
   const [feedback, setFeedback] = useState<FeedbackKey>()
   const [retryNonce, setRetryNonce] = useState(0)
 
   frameRef.current = frame
+
+  useEffect(() => {
+    frameRef.current = undefined
+    modeRef.current = 'watching'
+    setFrame(undefined)
+    setMode('watching')
+    setBotActive(false)
+    setPhase('loading')
+  }, [sessionId])
+
+  useEffect(() => {
+    if (local !== undefined) return
+    let disposed = false
+    const controller = new AbortController()
+    setComputerStatus(undefined)
+    void computer.status(controller.signal, sessionId).then((status) => {
+      if (!disposed && !controller.signal.aborted) setComputerStatus(status)
+    }).catch((error: unknown) => {
+      if (!disposed && !controller.signal.aborted) setComputerStatus(undefined)
+      void error
+    })
+    return () => { disposed = true; controller.abort() }
+  }, [computer, local, sessionId])
 
   const applyMode = (next: ComputerMode): void => {
     modeRef.current = next
@@ -162,12 +189,12 @@ export function ComputerPanel({ computer, close, local, t }: ComputerPanelProps)
       ++operationRef.current
       if (modeRef.current !== 'controlling') return
       modeRef.current = 'watching'
-      void computer.releaseControl(viewerId, { keepalive: true }).catch((error: unknown) => {
+      void computer.releaseControl(viewerId, { keepalive: true }, sessionId).catch((error: unknown) => {
         console.warn('Computer lease release failed:', error)
       })
     }
     return release
-  }, [computer, viewerId])
+  }, [computer, sessionId, viewerId])
 
   useEffect(() => {
     let disposed = false
@@ -177,7 +204,7 @@ export function ComputerPanel({ computer, close, local, t }: ComputerPanelProps)
       while (!disposed && !controller.signal.aborted) {
         const requestEpoch = requestEpochRef.current
         try {
-          const next = await computer.frame(viewerId, controller.signal)
+          const next = await computer.frame(viewerId, controller.signal, sessionId)
           if (disposed || controller.signal.aborted || requestEpoch !== requestEpochRef.current) continue
           setFrame(next)
           frameRef.current = next
@@ -197,7 +224,7 @@ export function ComputerPanel({ computer, close, local, t }: ComputerPanelProps)
     }
     void poll()
     return () => { disposed = true; controller.abort() }
-  }, [computer, local, retryNonce, viewerId])
+  }, [computer, local, retryNonce, sessionId, viewerId])
 
   const alive = (operation: number): boolean => !disposedRef.current && operation === operationRef.current
 
@@ -207,9 +234,9 @@ export function ComputerPanel({ computer, close, local, t }: ComputerPanelProps)
     ++requestEpochRef.current
     setBusy('take')
     setFeedback(undefined)
-    void computer.takeControl(viewerId).then((result) => {
+    void computer.takeControl(viewerId, undefined, sessionId).then((result) => {
       if (!alive(operation)) {
-        if (result.mode === 'controlling') void computer.releaseControl(viewerId, { keepalive: true }).catch((error: unknown) => { void error })
+        if (result.mode === 'controlling') void computer.releaseControl(viewerId, { keepalive: true }, sessionId).catch((error: unknown) => { void error })
         return
       }
       applyMode(result.mode)
@@ -235,7 +262,7 @@ export function ComputerPanel({ computer, close, local, t }: ComputerPanelProps)
     ++requestEpochRef.current
     setBusy('release')
     setFeedback(undefined)
-    void inputQueue.current.then(() => computer.releaseControl(viewerId)).then((result) => {
+    void inputQueue.current.then(() => computer.releaseControl(viewerId, undefined, sessionId)).then((result) => {
       if (!alive(operation)) return
       applyMode(result.mode)
       setBusy(undefined)
@@ -253,7 +280,7 @@ export function ComputerPanel({ computer, close, local, t }: ComputerPanelProps)
     inputQueue.current = inputQueue.current.then(async () => {
       if (disposedRef.current || modeRef.current !== 'controlling') return
       try {
-        await computer.input(viewerId, action)
+        await computer.input(viewerId, action, undefined, sessionId)
       } catch (error: unknown) {
         if (disposedRef.current) return
         if (error instanceof ComputerApiError && error.status === 409) {
@@ -354,13 +381,21 @@ export function ComputerPanel({ computer, close, local, t }: ComputerPanelProps)
               : t('computerWatching')
   const hasFrame = frame !== undefined
   const frameSource = frame === undefined ? undefined : `data:image/jpeg;base64,${frame.jpeg}`
+  const scopeMeta = computerStatus?.computer?.permissionScope === 'bot'
+    ? t('computerScopeBotMeta')
+    : computerStatus?.computer?.permissionScope === 'workspace'
+      ? t('computerScopeWorkspaceMeta')
+      : undefined
 
   return (
     <section className={css.root} aria-label={t('computerTitle')} data-computer-panel>
       <header className={css.toolbar}>
         <div className={css.status} role="status" aria-live="polite">
           <StateDot state={stateFor(phase, mode, botActive)} size={8} />
-          <span>{status}</span>
+          <span className={css.statusCopy}>
+            <span>{status}</span>
+            {scopeMeta !== undefined && <span className={css.statusMeta}>{scopeMeta}</span>}
+          </span>
         </div>
         <div className={css.controls}>
           {phase === 'disconnected' && <Button variant="ghost" size="sm" icon={<IconRefreshOutlineRegular size={14} />} onClick={() => { setRetryNonce(value => value + 1) }}>{t('computerRetry')}</Button>}

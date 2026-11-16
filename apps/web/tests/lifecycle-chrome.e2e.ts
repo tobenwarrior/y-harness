@@ -23,7 +23,7 @@ import {
   launchWebScaffold, recordFixture, watchConsole, webSnapshotMode, type WebScaffold,
 } from './scaffold.ts'
 import {
-  connectFreshWorkspace, connectFreshWorkspaceZh, expandOwningTurnProcess, newEnglishPage, saveFailureShot,
+  connectFreshWorkspace, expandOwningTurnProcess, newEnglishPage, saveFailureShot,
   writeComposerDraft, ZH_BROWSER_LOCALE,
 } from './support.ts'
 
@@ -32,10 +32,8 @@ const FIXTURE = join(SNAPSHOT_DIR, 'session.v3.jsonl')
 const REPLAY_OVERRIDE = join(SNAPSHOT_DIR, 'replay.override.json')
 const HERO_EXPECTED = join(SNAPSHOT_DIR, 'hero.expected.md')
 const COMMAND_MENU_EXPECTED = join(SNAPSHOT_DIR, 'command-menu.expected.md')
-const COMMAND_MENU_ZH_EXPECTED = join(SNAPSHOT_DIR, 'command-menu-zh.expected.md')
 const FUZZY_COMMAND_MENU_EXPECTED = join(SNAPSHOT_DIR, 'command-menu-fuzzy.expected.md')
 const PLAN_ACTIVE_EXPECTED = join(SNAPSHOT_DIR, 'plan-active.expected.md')
-const PLAN_ACTIVE_ZH_EXPECTED = join(SNAPSHOT_DIR, 'plan-active-zh.expected.md')
 const CONNECTION_ERROR_EXPECTED = join(SNAPSHOT_DIR, 'connection-error.expected.md')
 // Post-reload golden: the same settled conversation rebuilt purely from
 // persistence + history — byte-equal rendering is exactly the recovery claim.
@@ -114,20 +112,20 @@ describe('web e2e: lifecycle & chrome (workspace flow / reload / dark mode)', ()
     await expect.poll(() => menu.count()).toBe(0)
   })
 
-  it.skipIf(MODE === 'record')('localizes slash-command descriptions from the browser language', async () => {
+  it.skipIf(MODE === 'record')('uses the English fallback for a retired browser language', async () => {
     const zhPage = await browser.newPage({ viewport: { width: 1680, height: 1000 }, locale: ZH_BROWSER_LOCALE })
     const zhTripwire = watchConsole(zhPage)
     onTestFailed(() => saveFailureShot(zhPage, 'web-e2e-command-menu-zh'))
     try {
       await zhPage.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
       await zhPage.waitForSelector('[class*="frame"]', { timeout: 30_000 })
-      const launcher = zhPage.getByRole('button', { name: '\u{6DFB}\u{52A0}\u{6587}\u{4EF6}\u{6216}\u{8C03}\u{7528}\u{6307}\u{4EE4}' })
+      const launcher = zhPage.getByRole('button', { name: 'Add files or run commands' })
       await launcher.click()
-      const menu = zhPage.getByRole('listbox', { name: '\u{89E6}\u{53D1}\u{5019}\u{9009}\u{5EFA}\u{8BAE}' })
+      const menu = zhPage.getByRole('listbox', { name: 'Trigger suggestions' })
       await menu.getByRole('option').first().waitFor({ timeout: 10_000 })
       await menu.getByRole('status').waitFor({ state: 'hidden', timeout: 10_000 })
       const snapshot = await captureStableAria(zhPage, '[role="listbox"]', scaffold.workspaceCwd)
-      await compareOrRefreshGolden(COMMAND_MENU_ZH_EXPECTED, snapshot, MODE)
+      await compareOrRefreshGolden(COMMAND_MENU_EXPECTED, snapshot, MODE)
       expect(zhTripwire.pageErrors).toEqual([])
       expect(zhTripwire.warnings).toEqual([])
     } finally {
@@ -138,8 +136,8 @@ describe('web e2e: lifecycle & chrome (workspace flow / reload / dark mode)', ()
   it.skipIf(MODE === 'record').each([
     { locale: 'en-US', token: '/goal', row: 'Goal Set or view the goal for a long-running task', hint: 'describe the objective for a long-running task' },
     { locale: 'en-US', token: '/plan', row: 'Plan Enter or leave plan mode', hint: 'describe your task to generate plan' },
-    { locale: ZH_BROWSER_LOCALE, token: '/\u{76EE}\u{6807}', row: '\u{76EE}\u{6807} goal \u{8BBE}\u{7F6E}\u{6216}\u{67E5}\u{770B}\u{957F}\u{671F}\u{4EFB}\u{52A1}\u{76EE}\u{6807}', hint: '\u{8F93}\u{5165}\u{76EE}\u{6807}，\u{667A}\u{80FD}\u{4F53}\u{5C06}\u{6301}\u{7EED}\u{6267}\u{884C}' },
-    { locale: ZH_BROWSER_LOCALE, token: '/\u{8BA1}\u{5212}', row: '\u{8BA1}\u{5212} plan \u{8FDB}\u{5165}\u{6216}\u{9000}\u{51FA}\u{8BA1}\u{5212}\u{6A21}\u{5F0F}', hint: '\u{63CF}\u{8FF0}\u{4F60}\u{7684}\u{4EFB}\u{52A1}\u{4EE5}\u{751F}\u{6210}\u{8BA1}\u{5212}' },
+    { locale: ZH_BROWSER_LOCALE, token: '/goal', row: 'Goal Set or view the goal for a long-running task', hint: 'describe the objective for a long-running task' },
+    { locale: ZH_BROWSER_LOCALE, token: '/plan', row: 'Plan Enter or leave plan mode', hint: 'describe your task to generate plan' },
   ])('keeps $token claimed across separator edits and hides hints during IME composition', async ({ locale, token, row, hint }) => {
     const inputPage = await browser.newPage({ viewport: { width: 1680, height: 1000 }, locale })
     const inputTripwire = watchConsole(inputPage)
@@ -266,26 +264,26 @@ describe('web e2e: lifecycle & chrome (workspace flow / reload / dark mode)', ()
     }
   })
 
-  it.skipIf(MODE === 'record')('shows the active Plan chip with the Chinese copy', async () => {
+  it.skipIf(MODE === 'record')('shows the active Plan chip with the English fallback copy', async () => {
     const zhScaffold = await launchWebScaffold()
     const zhPage = await browser.newPage({ viewport: { width: 1680, height: 1000 }, locale: ZH_BROWSER_LOCALE })
     const zhTripwire = watchConsole(zhPage)
     try {
       await zhPage.goto(zhScaffold.authenticatedUrl, { waitUntil: 'load' })
       await zhPage.waitForSelector('[class*="frame"]', { timeout: 30_000 })
-      await connectFreshWorkspaceZh(zhPage, zhScaffold.workspaceCwd)
+      await connectFreshWorkspace(zhPage, zhScaffold.workspaceCwd)
       const input = zhPage.locator('[data-composer-input]').first()
-      await zhPage.getByRole('button', { name: '\u{6DFB}\u{52A0}\u{6587}\u{4EF6}\u{6216}\u{8C03}\u{7528}\u{6307}\u{4EE4}' }).click()
-      const menu = zhPage.getByRole('listbox', { name: '\u{89E6}\u{53D1}\u{5019}\u{9009}\u{5EFA}\u{8BAE}' })
+      await zhPage.getByRole('button', { name: 'Add files or run commands' }).click()
+      const menu = zhPage.getByRole('listbox', { name: 'Trigger suggestions' })
       await menu.waitFor({ timeout: 10_000 })
-      await menu.getByRole('option', { name: '\u{8BA1}\u{5212} plan \u{8FDB}\u{5165}\u{6216}\u{9000}\u{51FA}\u{8BA1}\u{5212}\u{6A21}\u{5F0F}', exact: true }).click()
-      await expect.poll(() => input.textContent()).toBe('/\u{8BA1}\u{5212} ')
+      await menu.getByRole('option', { name: 'Plan Enter or leave plan mode', exact: true }).click()
+      await expect.poll(() => input.textContent()).toBe('/plan ')
       await input.press('Enter')
-      const planButton = zhPage.getByRole('button', { name: '\u{8BA1}\u{5212}\u{6A21}\u{5F0F}\u{5DF2}\u{5F00}\u{542F}，\u{6309}\u{4E0B}\u{5173}\u{95ED}' })
+      const planButton = zhPage.getByRole('button', { name: 'Plan mode on, press to turn off' })
       await planButton.waitFor({ timeout: 10_000 })
       await expect.poll(() => input.textContent(), { timeout: 10_000 }).toBe('')
       const planSnapshot = await captureStableAria(zhPage, '[class*="frame"]', zhScaffold.workspaceCwd)
-      await compareOrRefreshGolden(PLAN_ACTIVE_ZH_EXPECTED, planSnapshot, MODE)
+      await compareOrRefreshGolden(PLAN_ACTIVE_EXPECTED, planSnapshot, MODE)
       await planButton.click()
       await expect.poll(() => planButton.count()).toBe(0)
       expect(zhTripwire.pageErrors).toEqual([])

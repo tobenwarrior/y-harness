@@ -1,0 +1,14 @@
+# Live composition for the scoped VPS Bot Computer snapshot owner.
+
+- id: headless-runner
+  config:
+    task: !!js ctx.headlessStartup.task
+    sessionId: bot-session-sender
+    json: !!js ctx.headlessStartup.json
+
+- insert:
+    - id: agent-bots
+      name: '@yharness/bots'
+
+    - id: vps-bot-computer-fixture
+      name: './vps-bot-computer-fixture.mjs'

@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { lstat, mkdir, readdir, readFile, realpath, rename, rm, stat, symlink, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { dirname, join, toNamespacedPath } from 'node:path'
 import { tmpdir } from 'node:os'
 import { Context } from '@yharness/cordis'
+import { bindManagedBotExecution, createManagedBotExecution } from '@yharness/sandbox-policy'
 import SkillRegistry from '@yharness/skill'
 import { FileSystem, FsError, FsVersion, type FsDirEntry, type FsEditOutcome, type FsEditRequest, type FsInfo, type FsPathInfo, type FsTarget, type FsWriteOutcome } from '@yharness/fs'
 import * as SkillFileSystem from '../src/index.ts'
@@ -184,6 +185,45 @@ describe('dsh-skill-filesystem plugin exports', () => {
 })
 
 describe('FileSystemSkillProvider', () => {
+  it('restricts managed Bot lookups to the owner-controlled workspace placeholder', async () => {
+    const home = await tempDir('skill-managed-home')
+    const project = await tempDir('skill-managed-project')
+    const managedRoot = await tempDir('skill-managed-workspace')
+    // A Windows namespaced path retains the temp directory's drive and accepts the execution world's leading slash.
+    const workspaceRoot = process.platform === 'win32' ? toNamespacedPath(managedRoot).replaceAll('\\', '/') : managedRoot
+    await writeSkill(join(project, '.agents/skills'), 'host-project', 'Host project skill')
+    await writeSkill(join(home, '.agents/skills'), 'host-user', 'Host user skill')
+    await writeSkill(join(managedRoot, '.agents/skills'), 'managed-only', 'Managed skill')
+
+    const ctx = await setupLocal(home)
+    const agentFiber = ctx.plugin(() => {})
+    const agentContext = agentFiber.ctx
+    const execution = createManagedBotExecution({
+      context: agentContext,
+      shell: {} as never,
+      fs: {} as never,
+      subprocess: {} as never,
+      sandboxPolicy: {
+        defaultMode: 'workspace-write',
+        resolve: () => ({ mode: 'workspace-write', workspaceRoot }),
+      },
+      workspaceRoot,
+    })
+    const unbind = bindManagedBotExecution(agentContext, execution)
+    const scope = { ctx: agentContext }
+    try {
+      const options = { cwd: project, scope }
+      expect((await ctx.skills.list(options)).map(skill => skill.name)).toEqual(['managed-only'])
+      expect(await ctx.skills.get('host-project', options)).toBeUndefined()
+      expect(await ctx.skills.get('host-user', options)).toBeUndefined()
+      expect((await ctx.skills.get('managed-only', options))?.content).toBe('Use the skill.')
+    } finally {
+      unbind()
+      await agentFiber.dispose()
+      await ctx.fiber.dispose()
+    }
+  })
+
   it('discovers project, custom, user, and agents skill roots in priority order', async () => {
     const home = await tempDir('skill-home')
     const project = await tempDir('skill-project')

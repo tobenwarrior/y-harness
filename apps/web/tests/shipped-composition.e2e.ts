@@ -475,6 +475,7 @@ function assertLeanChildRecord(agent: Agent, mode: 'one-shot' | 'continuable'): 
  * Agent Note owns the rationale and its sources.
  */
 const EXPECTED_TOOLS = [
+  'apply_patch',
   'ask_user_question',
   'bash',
   'create_goal',
@@ -491,8 +492,12 @@ const EXPECTED_TOOLS = [
   'read_image',
   'schedule_create',
   'schedule_delete',
+  'schedule_history',
   'schedule_list',
+  'schedule_pause',
+  'schedule_resume',
   'schedule_update',
+  'search_skills',
   'send_message',
   'skill',
   'subagent',
@@ -626,10 +631,10 @@ it('assembles the shipped Web transport, catalog, guidance, and defaults', async
   )
   expect(scaffold.ctx.sandboxPolicy.defaultMode).toBe('workspace-write')
   expect(scaffold.ctx.approval.config.policy).toBe('ask')
-  expect(scaffold.ctx.permissionPresets.defaultPreset).toBe('workspace-write')
+  expect(scaffold.ctx.permissionPresets.defaultPreset).toBe('approve-for-me')
   expect(scaffold.ctx.permissionPresets.names).toEqual([
-    'read-only',
     'workspace-write',
+    'approve-for-me',
     'danger-full-access',
   ])
   const headlessRows = composeEntries([

@@ -418,13 +418,8 @@ export interface LaunchOptions {
     default: string
     definitions?: import('@yharness/agent-preset-registry').PresetDefinition[]
   }
-  /**
-   * Patch the telemetry exporter URL while preserving the shipped enabled
-   * setting. A scenario-owned loopback collector contains all fixture uploads.
-   */
-  telemetryUrl?: string
-  /** Mode when telemetryUrl is supplied; defaults to FEEDBACK_ONLY without enabling a disabled row. */
-  telemetryMode?: 'FEEDBACK_ONLY'
+  /** Enable feedback exports to a scenario-owned collector bound to 127.0.0.1. */
+  feedbackCollectorPort?: number
   /** SDK batch cadence for a scenario-owned collector; omitted to retain the SDK default. */
   telemetryScheduledDelayMillis?: number
   /**
@@ -636,17 +631,15 @@ export async function launchWebScaffold(options: LaunchOptions = {}): Promise<We
     // workspace, keeping the composition untouched.
     { id: 'agent-instructions', disabled: true },
     { id: 'session-title-llm', disabled: true },
-    // Fixture sessions must never leave the process: the shipped row defaults
-    // to the production OTLP endpoint (or whatever DSH_TELEMETRY_OTLP_URL
-    // names in the ambient environment). A scenario with a local collector
-    // preserves the shipped disabled setting instead of overriding it.
-    options.telemetryUrl === undefined
+    // Only feedback scenarios can export Session data, to their own loopback collector.
+    options.feedbackCollectorPort === undefined
       ? { id: 'session-telemetry-otel', disabled: true }
       : {
         id: 'session-telemetry-otel',
+        disabled: false,
         config: {
-          mode: options.telemetryMode ?? 'FEEDBACK_ONLY',
-          exporter: { url: options.telemetryUrl },
+          mode: 'FEEDBACK_ONLY',
+          exporter: { url: `http://127.0.0.1:${String(options.feedbackCollectorPort)}/v1/logs` },
           ...(options.telemetryScheduledDelayMillis === undefined ? {} : {
             processor: { scheduledDelayMillis: options.telemetryScheduledDelayMillis },
           }),

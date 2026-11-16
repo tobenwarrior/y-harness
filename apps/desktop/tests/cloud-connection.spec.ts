@@ -85,7 +85,8 @@ describe('cloud connection', () => {
     await expect(connection.closed).resolves.toBeUndefined()
   })
 
-  it('proxies loopback HTTP bytes through the owned Unix forward', async () => {
+  // The native Cloud workspace uses a Unix-domain SSH listener on macOS.
+  it.skipIf(process.platform === 'win32')('proxies loopback HTTP bytes through the owned Unix forward', async () => {
     script = `const net = require('node:net'); const server = net.createServer(socket => socket.end('HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\n\\r\\nok')); server.listen(__SOCKET_PATH__, () => process.stdout.write('http://127.0.0.1:3080/?token=${TOKEN}\\n')); process.on('SIGTERM', () => server.close(() => process.exit(0)))`
     const connection = await openCloudConnection('fixture-host', new AbortController().signal, options())
     await expect(fetch(connection.loginUrl).then(response => response.text())).resolves.toBe('ok')

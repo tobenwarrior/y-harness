@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -24,6 +25,14 @@ const names = ['compound', 'map', 'setup', 'setup-global', 'status-global']
  * @returns the absolute script path.
  */
 async function fakePython(root: string, version: string): Promise<string> {
+  if (process.platform === 'win32') {
+    const probe = ['python', 'python3'].map(command => spawnSync(command, [
+      '-c', 'import sys;\nif sys.version_info < (3, 11): sys.exit(1)\nprint(sys.executable)',
+    ], { encoding: 'utf8' })).find(result => result.status === 0)
+    const executable = probe?.stdout.trim()
+    if (executable) return executable
+    throw new Error('Windows test requires a Python 3.11+ interpreter')
+  }
   const path = join(root, `python-${version}`)
   await writeFile(path, `#!/bin/sh\necho "Python ${version}"\n`)
   await chmod(path, 0o755)

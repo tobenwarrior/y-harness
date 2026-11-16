@@ -1,7 +1,7 @@
 /** The CLI and manager share package reconciliation, path anchoring and diagnostics. */
 import { EventEmitter } from 'node:events'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { basename, join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { PassThrough } from 'node:stream'
 import { expect, it, onTestFinished, vi } from 'vitest'
@@ -49,7 +49,7 @@ vi.mock('node:fs/promises', async (importOriginal) => {
     ...actual,
     open: async (...args: Parameters<typeof actual.open>) => {
       const handle = await actual.open(...args)
-      if (typeof args[0] !== 'string' || !args[0].endsWith('/pnpm.log')) return handle
+      if (typeof args[0] !== 'string' || basename(args[0]) !== 'pnpm.log') return handle
       return new Proxy(handle, {
         get(target, property, receiver) {
           if (property === 'close') return async () => { logHandle.close(); return target.close() }

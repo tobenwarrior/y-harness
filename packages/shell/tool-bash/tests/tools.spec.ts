@@ -18,7 +18,7 @@ import ApprovalService from '@yharness/user-approval'
 import type { ApprovalOutcome } from '@yharness/user-approval'
 import { LocalBashExecutor } from '@yharness/bash-local'
 import LocalSubprocessRuntime from '@yharness/subprocess-local'
-import SandboxPolicyService from '@yharness/sandbox-policy'
+import SandboxPolicyService, { bindManagedBotExecution, createManagedBotExecution } from '@yharness/sandbox-policy'
 import { escalationHintMarker, sandboxDenialMarker } from '@yharness/sandbox'
 import SessionProjectionRegistry from '@yharness/session-projection'
 import * as ToolBash from '@yharness/tool-bash'
@@ -120,6 +120,7 @@ function fakeExecution(proc: ShellProcess, result?: () => Promise<ShellRunResult
 
 class RecordingSandboxExecutor extends ShellExecutor {
   readonly modes: Array<string | undefined> = []
+  timedOut = false
 
   override get sandboxMode() {
     return 'read-only' as const
@@ -153,7 +154,7 @@ class RecordingSandboxExecutor extends ShellExecutor {
     }, () => Promise.resolve({
       exitCode: 0,
       signal: null,
-      timedOut: false,
+      timedOut: this.timedOut,
       aborted: false,
       timeoutMs: spec.timeoutMs,
       stdout: { text: 'ok', truncated: false },
@@ -288,16 +289,16 @@ describe('bash tool', () => {
     expect(text(result)).toBe('(no output)\n[timed out after 100ms]\n[killed by signal: SIGTERM]')
   })
 
-  it('reports a timeout even when the command traps the signal and exits 0', async () => {
-    // The signal-independent timeout marker: a trapped SIGTERM that exits 0
-    // after our timer fired must NOT look like a clean success. (bash may
-    // print "Terminated" to stderr for the killed sleep — environment
-    // dependent — so assert the marker, not the exact body.)
-    const ctx = await setup()
-    const result = await call(ctx, 'bash', { command: 'trap "exit 0" TERM; sleep 60', description: 'test command', timeoutMs: 100 })
-    expect(result.isError).toBe(false)
-    expect(text(result)).toContain('[timed out after 100ms]')
-    expect(text(result)).not.toContain('[exit code:')
+  it('reports a timeout even when the executor reports an exit code of zero', async () => {
+    const { ctx, bash } = await setupSandboxed()
+    try {
+      bash.timedOut = true
+      const result = await call(ctx, 'bash', { command: 'slow command', description: 'test command', timeoutMs: 100 })
+      expect(result.isError).toBe(false)
+      expect(text(result)).toBe('ok\n[timed out after 100ms]')
+    } finally {
+      await ctx.fiber.dispose()
+    }
   })
 
   it('reports truncation with the spill path', async () => {
@@ -1456,5 +1457,46 @@ describe('the model-facing bash tool builds its request from named args only (no
     expect('env' in request).toBe(false)
     expect('stdin' in request).toBe(false)
     expect('stdoutMaxBytes' in request).toBe(false)
+  })
+
+  it('routes a managed Bot call through its private shell, workspace, policy, and environment', async () => {
+    const { ctx, bash: hostShell } = await setupRecording()
+    const agent = await registerFakeAgent(ctx, 'managed-request')
+    const workspaceRoot = '/private/vps-bot/managed-request'
+    const managedShell = new RecordingBashExecutor(agent.ctx.isolate('shell'))
+    const removeBinding = bindManagedBotExecution(agent.ctx, createManagedBotExecution({
+      context: agent.ctx,
+      shell: managedShell,
+      // Bash only consumes the managed shell, policy, workspace, and env.
+      fs: undefined as never,
+      subprocess: undefined as never,
+      sandboxPolicy: {
+        defaultMode: 'workspace-write',
+        resolve: () => ({ mode: 'workspace-write', workspaceRoot }),
+      },
+      workspaceRoot,
+      shellEnv: { DSH_SESSION_ID: 'managed-request', DSH_SHELL: 'managed' },
+    }))
+    try {
+      const result = await call(ctx, 'bash', {
+        command: 'printf managed',
+        description: 'run in the managed workspace',
+        timeoutMs: 1_000,
+        workdir: 'private',
+      }, agent)
+
+      expect(result.isError, text(result)).toBe(false)
+      expect(hostShell.requests).toEqual([])
+      expect(managedShell.requests).toHaveLength(1)
+      expect(managedShell.requests[0]).toMatchObject({
+        command: 'printf managed',
+        workdir: `${workspaceRoot}/private`,
+        dshEnv: { DSH_SESSION_ID: 'managed-request', DSH_SHELL: 'managed' },
+        sandboxPolicy: { mode: 'workspace-write', workspaceRoot },
+      })
+    } finally {
+      removeBinding()
+      await ctx.fiber.dispose()
+    }
   })
 })

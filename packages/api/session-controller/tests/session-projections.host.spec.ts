@@ -16,7 +16,7 @@ import { z } from 'zod'
 import AgentRegistry from '@yharness/agent'
 import { AttachmentStore } from '@yharness/attachment'
 import { agentPresetProjectionDefinition } from '@yharness/agent-preset-registry'
-import { createUserMessage } from '@yharness/llm'
+import { createUserMessage, ReasoningEffortId, ServiceTierId } from '@yharness/llm'
 import SessionStore, { SESSION_FORMAT_VERSION, SessionId, SessionLogOffset, SessionSeq } from '@yharness/session'
 import type { Session, SessionEvent, SessionHeader, UserMessage } from '@yharness/session'
 import SessionProjectionRegistry from '@yharness/session-projection'
@@ -199,7 +199,9 @@ describe('session.history projections block', () => {
     const { ctx, session } = await harness(true)
     remote(ctx)
     await new Promise(resolve => setTimeout(resolve, 0))
-    const selected = { provider: 'p', model: 'next' }
+    const selected = {
+      provider: 'p', model: 'next', reasoningEffort: ReasoningEffortId('high'), serviceTier: ServiceTierId('priority'),
+    }
     session.append('model/selection', selected)
     session.append('model/selection', selected)
     session.append('request/header', {

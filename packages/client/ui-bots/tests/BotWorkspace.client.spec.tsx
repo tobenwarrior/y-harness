@@ -13,6 +13,7 @@ import { BotSkillsManager } from '../src/client/BotSkillsManager.tsx'
 import { BotDetail, BotGroupDetail, BotRoster } from '../src/client/BotWorkspace.tsx'
 import { BotRoutineManager } from '../src/client/BotRoutineManager.tsx'
 import { BotTemplatesPanel } from '../src/client/BotTemplatesPanel.tsx'
+import { ComputerAction } from '../src/client/ComputerAction.tsx'
 import { en } from '../src/client/locales.ts'
 import { MessageId } from '@yharness/llm/brand'
 import { createSharedBotsClient, type SharedBotsClient } from '../src/client/shared-client.ts'
@@ -28,6 +29,21 @@ afterEach(() => {
 })
 
 const t = makeTranslate(en)
+
+it('shows the active VPS desktop scope beside the Computer action', () => {
+  const toggle = vi.fn()
+  const { rerender } = render(<ComputerAction expanded={false} toggle={toggle} t={t}
+    identity={{ id: 'research', location: 'vps', permissionScope: 'bot' }} />)
+  const opener = screen.getByRole('button', { name: 'Open computer panel' })
+  expect(within(opener).getByText('Dedicated VPS desktop')).toBeTruthy()
+  fireEvent.click(opener)
+  expect(toggle).toHaveBeenCalledOnce()
+  rerender(<ComputerAction expanded toggle={toggle} t={t}
+    identity={{ id: 'shared-vps', location: 'vps', permissionScope: 'workspace' }} />)
+  const closer = screen.getByRole('button', { name: 'Close computer panel' })
+  expect(within(closer).getByText('Shared VPS desktop')).toBeTruthy()
+  expect(closer.getAttribute('aria-pressed')).toBe('true')
+})
 
 const bots: readonly BotSummary[] = [
   {
