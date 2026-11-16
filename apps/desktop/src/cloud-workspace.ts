@@ -119,12 +119,14 @@ export class DesktopCloudWorkspace {
   }
 
   /** @returns The selected owner's current Cloud connection for native settings operations. */
-  ownerCloudWorkspace(): VaultCloudWorkspace | undefined {
-    const { connection, remote } = this
-    if (!this.selected || this.status !== 'online' || connection === undefined || remote === undefined) return undefined
+  ownerCloudWorkspace(): (VaultCloudWorkspace & { readonly target: string }) | undefined {
+    const { connection, remote, target } = this
+    if (!this.selected || this.status !== 'online' || connection === undefined
+      || remote === undefined || target === undefined) return undefined
     const contents = remote.webContents
     return {
       origin: connection.origin,
+      target,
       fetch: (url, options) => {
         if (!this.selected || this.status !== 'online' || this.connection !== connection || contents.isDestroyed()) {
           throw new Error('Cloud workspace disconnected')

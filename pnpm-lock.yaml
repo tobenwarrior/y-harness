@@ -2851,6 +2851,9 @@ importers:
       '@yharness/cordis-host-runner':
         specifier: workspace:*
         version: link:../../extensions/cordis-host-runner
+      '@yharness/credentials':
+        specifier: workspace:*
+        version: link:../../credentials/credentials
       '@yharness/file-reference':
         specifier: workspace:*
         version: link:../../context/file-reference
@@ -2893,6 +2896,9 @@ importers:
       '@yharness/llm':
         specifier: workspace:*
         version: link:../../llm/llm
+      '@yharness/llm-pi-ai':
+        specifier: workspace:*
+        version: link:../../llm/llm-pi-ai
       '@yharness/message-feedback':
         specifier: workspace:*
         version: link:../../feedback/message-feedback
@@ -2908,6 +2914,9 @@ importers:
       '@yharness/plugin-manager':
         specifier: workspace:*
         version: link:../../boot/plugin-manager
+      '@yharness/provider-config-sync':
+        specifier: workspace:*
+        version: link:../../settings/provider-config-sync
       '@yharness/sandbox':
         specifier: workspace:*
         version: link:../../sandbox/sandbox
@@ -2932,6 +2941,9 @@ importers:
       '@yharness/session-turn-outline':
         specifier: workspace:*
         version: link:../../session/session-turn-outline
+      '@yharness/settings':
+        specifier: workspace:*
+        version: link:../../settings/settings
       '@yharness/skill-filesystem':
         specifier: workspace:*
         version: link:../../skill/skill-filesystem

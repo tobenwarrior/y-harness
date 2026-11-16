@@ -41,6 +41,8 @@ import { createCheckoutProbe, detectCheckoutUpdate, detectManagedGithubUpdate, f
 import { DesktopCommandManager } from './command-management.ts'
 import { serveWebDocument, authenticateWebHost, forwardWebRequest } from './web-document.ts'
 import { prepareCloudProviderCatalogCopy } from './cloud-provider-catalog.ts'
+import { prepareCloudProviderKeyCopy } from './cloud-provider-keys.ts'
+import type { ProviderKeySourceRequest } from '@yharness/provider-config-sync'
 import { DesktopFatalRecovery } from './fatal-recovery.ts'
 import { pruneCrashReports, RendererConsoleTail, writeCrashReport, type CrashReportSource } from './crash-report.ts'
 import { connectDesktopWelcome, type DesktopWelcomeBackend } from './welcome-backend.ts'
@@ -559,6 +561,7 @@ async function main(): Promise<void> {
       updateTasks: (action: 'inspect' | 'lock' | 'unlock') => host.updateTasks(action),
       inspectQuit: () => host.inspectQuit(),
       bootInjections: () => host.bootInjections(),
+      providerKeyRequest: (request: ProviderKeySourceRequest) => host.providerKeyRequest(request),
     }
   }, (state) => {
     if (state.phase === 'error') reportFatal(state.failure, 'host')
@@ -745,14 +748,15 @@ async function main(): Promise<void> {
         const operation = /^\/api\/computer\/mac\/([a-z-]+)$/u.exec(url.pathname)?.[1]
         if (operation !== undefined) {
           return (async () => {
+            const canUseMacPanel = (): boolean => cloudWorkspace?.isCloudSelected() !== true && mainWindow?.isVisible() === true
             const origin = request.headers.get('origin')
             if ((origin !== null && origin !== 'dsh-app://app') || request.headers.get('content-type') !== 'application/json'
-              || cloudWorkspace?.isCloudSelected() === true || mainWindow?.isVisible() !== true) {
+              || !canUseMacPanel()) {
               return Response.json({ error: 'mac-workspace-inactive' }, { status: 403 })
             }
             try {
               const body: unknown = await request.json()
-              if (cloudWorkspace?.isCloudSelected() === true || mainWindow?.isVisible() !== true) {
+              if (!canUseMacPanel()) {
                 return Response.json({ error: 'mac-workspace-inactive' }, { status: 403 })
               }
               return Response.json(await macComputer.panel(operation, body), { headers: { 'cache-control': 'no-store' } })
@@ -1066,27 +1070,28 @@ async function main(): Promise<void> {
         join(app.getAppPath(), 'renderer'), () => currentDesktopLocale().messages), () => { macComputer?.revoke() })
     : undefined
 
-  let copyingProviderCatalogs = false
+  let transferringProviders = false
   const copyProviderCatalogs = async (): Promise<void> => {
-    if (copyingProviderCatalogs || isQuitting()) return
-    copyingProviderCatalogs = true
+    if (transferringProviders || isQuitting()) return
+    transferringProviders = true
     const messages = currentDesktopLocale().messages
     const title = messages.cloudCopyCatalogsReview
     const notice = async (message: string): Promise<void> => {
       if (!isQuitting()) await ordinaryMessageBox({ type: 'info', title, message, buttons: [messages.updateAcknowledge] })
     }
     try {
+      const macHost = backend.host
       const macUrl = hostUrl
       const macCookie = hostCookie
       const destination = cloudWorkspace?.ownerCloudWorkspace()
-      if (backend.state.phase !== 'ready' || macUrl === undefined || macCookie === undefined || destination === undefined) {
+      if (macHost === undefined || macUrl === undefined || macCookie === undefined || destination === undefined) {
         await notice(messages.cloudCopyCatalogsReady)
         return
       }
       const transfer = await prepareCloudProviderCatalogCopy({
         origin: new URL(macUrl).origin,
         fetch: (url, options) => {
-          if (hostUrl !== macUrl || hostCookie !== macCookie || backend.state.phase !== 'ready') {
+          if (hostUrl !== macUrl || hostCookie !== macCookie || backend.host !== macHost) {
             throw new Error('Mac workspace disconnected')
           }
           const headers = new Headers(options.headers)
@@ -1109,7 +1114,7 @@ async function main(): Promise<void> {
         buttons: [messages.cloudCopyCatalogsConfirm, messages.cancel], cancelId: 1, defaultId: 1,
       })
       if (consent.response !== 0 || isQuitting()) return
-      if (hostUrl !== macUrl || hostCookie !== macCookie || backend.state.phase !== 'ready') {
+      if (hostUrl !== macUrl || hostCookie !== macCookie || backend.host !== macHost) {
         throw new Error('Mac workspace disconnected')
       }
       await transfer.apply()
@@ -1117,7 +1122,48 @@ async function main(): Promise<void> {
     } catch (_error) {
       await notice(messages.cloudCopyCatalogsFailed)
     } finally {
-      copyingProviderCatalogs = false
+      transferringProviders = false
+    }
+  }
+
+  const copyProviderKeys = async (): Promise<void> => {
+    if (transferringProviders || isQuitting()) return
+    transferringProviders = true
+    const messages = currentDesktopLocale().messages
+    const title = messages.cloudCopyProviderKeys
+    const notice = async (message: string): Promise<void> => {
+      if (!isQuitting()) await ordinaryMessageBox({ type: 'info', title, message, buttons: [messages.updateAcknowledge] })
+    }
+    try {
+      const host = backend.host
+      const destination = cloudWorkspace?.ownerCloudWorkspace()
+      if (host === undefined || destination === undefined) {
+        await notice(messages.cloudCopyCatalogsReady)
+        return
+      }
+      const preview = await prepareCloudProviderKeyCopy((command) => {
+        if (backend.host !== host || isQuitting()) throw new Error('Mac workspace disconnected')
+        return host.providerKeyRequest(command)
+      }, destination)
+      if (preview.providers.length === 0) {
+        await notice(messages.cloudCopyProviderKeysEmpty)
+        return
+      }
+      if (isQuitting()) return
+      const result = await ordinaryMessageBox({
+        type: 'info', title, message: messages.cloudCopyProviderKeysReview,
+        detail: messages.cloudCopyProviderKeysDetail.replace('{target}', destination.target)
+          .replace('{providers}', preview.providers.join(', ')),
+        buttons: [messages.cloudCopyProviderKeysConfirm, messages.cancel], cancelId: 1, defaultId: 1,
+      })
+      if (result.response !== 0 || isQuitting()) return
+      const copy = await preview.apply()
+      await notice(messages.cloudCopyProviderKeysDone
+        .replace('{copied}', String(copy.copied)).replace('{skipped}', String(copy.skipped)))
+    } catch (_error) {
+      await notice(messages.cloudCopyProviderKeysFailed)
+    } finally {
+      transferringProviders = false
     }
   }
 
@@ -1157,6 +1203,8 @@ async function main(): Promise<void> {
         { type: 'separator' },
         { label: currentDesktopLocale().messages.cloudCopyCatalogs,
           click: () => { void copyProviderCatalogs().catch((_error: unknown) => undefined) } },
+        { label: currentDesktopLocale().messages.cloudCopyProviderKeys,
+          click: () => { void copyProviderKeys().catch((_error: unknown) => undefined) } },
       ],
     }, { role: 'windowMenu' }]
     : [{ role: 'editMenu' }]

@@ -637,6 +637,11 @@ export class LocalCredentialProvider extends CredentialProvider {
     await this.write(ref, value)
   }
 
+  override setIfAbsent(ref: CredentialRef, value: string): Promise<boolean> {
+    if (value.length === 0) return Promise.reject(new Error('credentials-local: cannot store an empty value'))
+    return this.write(ref, value, true)
+  }
+
   override async unset(ref: CredentialRef): Promise<void> {
     await this.write(ref, undefined)
   }
@@ -730,29 +735,33 @@ export class LocalCredentialProvider extends CredentialProvider {
   }
 
   /** Queue one line edit; entry checks reject early, the queue re-judges them at run time. */
-  private async write(ref: CredentialRef, value: string | undefined): Promise<void> {
+  private async write(ref: CredentialRef, value: string | undefined, onlyIfAbsent = false): Promise<boolean> {
     const verb = value === undefined ? 'unset' : 'set'
     if (this.isClosed()) {
       throw new Error(`credentials-local is disposed: cannot ${verb} "${ref}"`)
     }
-    this.assertUnshadowed(ref, verb)
+    if (onlyIfAbsent) {
+      if (this.inherited(ref) !== undefined) return false
+    } else this.assertUnshadowed(ref, verb)
     return this.enqueue(async () => {
       if (this.isClosed()) {
         throw new Error(`credentials-local was disposed before the queued "${ref}" ${verb} ran`)
       }
       // Re-judged at run time: the environment may have changed while queued.
-      this.assertUnshadowed(ref, verb)
+      if (!onlyIfAbsent) this.assertUnshadowed(ref, verb)
       // The writer lock's exclusive create needs the parent to exist; 0700
       // because the harness home holds user-private data.
       await mkdir(dirname(this.spec.filename), { recursive: true, mode: 0o700 })
-      await withFileLock(this.spec.filename, async () => {
+      return withFileLock(this.spec.filename, async () => {
         // Read-modify-write: fold in any on-disk state this process has not
         // observed yet — an external edit still inside the watcher debounce
         // window, a change the watcher missed, or another process's write —
         // so the line edit below can never resurrect a stale document.
         await this.reconcileFromDisk()
         const existing = this.values.get(ref)
-        if (value === undefined && existing === undefined) return
+        if (onlyIfAbsent && (existing !== undefined || this.inherited(ref) !== undefined
+          || this.dotenvFallback(ref) !== undefined)) return false
+        if (value === undefined && existing === undefined) return false
         const nextText = renderRef(this.text, ref, value)
         // 0600: a document holding secrets is never world-readable.
         await writeFileAtomic(this.spec.filename, nextText, { mode: 0o600, dirMode: 0o700 })
@@ -762,6 +771,7 @@ export class LocalCredentialProvider extends CredentialProvider {
         // After the commit: a broken observer must never make the durable
         // write look failed.
         this.notifyUpdated(ref)
+        return true
       }, { waitMs: DOCUMENT_LOCK_WAIT_MS })
     })
   }

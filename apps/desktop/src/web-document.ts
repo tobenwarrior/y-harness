@@ -93,6 +93,19 @@ export async function forwardWebRequest(request: Request, host: string, cookie: 
 }
 
 /**
+ * Validate the loopback authority owned by a Desktop workspace connection.
+ * @param value - Expected origin with its assigned port.
+ * @returns The verified private HTTP origin.
+ */
+export function privateHostOrigin(value: string): string {
+  const url = new URL(value)
+  if (url.origin !== value || url.protocol !== 'http:' || url.hostname !== '127.0.0.1' || url.port === '') {
+    throw new Error('This operation requires a private local connection.')
+  }
+  return url.origin
+}
+
+/**
  * Read a successful JSON response within the caller's byte budget.
  * @param response - Response from an authenticated Host.
  * @param maxBytes - Maximum decoded response bytes.

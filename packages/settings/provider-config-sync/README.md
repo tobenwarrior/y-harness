@@ -50,9 +50,9 @@ In the Mac app, choose **Workspace → Copy Model Catalogs to Cloud** while both
 
 ### Authentication consent
 
-Ordinary configuration synchronization does not avoid separate authentication. The supported route today is user entry in the target application's masked key form, or an explicit target-app sign-in. The user chooses whether to persist the credential locally; the assistant does not inspect or transfer its value.
+**Copy Saved Provider Keys to Cloud** is a separate native action. It approves an explicit list of providers, bound to the selected Cloud connection and the resolved model endpoints. The private Desktop IPC carries one key at a time to the shell, which submits it through the authenticated SSH forward. The Cloud owner endpoint only writes to unconfigured references created by the catalog copy. Key values stay out of the shared catalog, web responses, chats, and logs.
 
-A future secure transfer requires separate, specific consent identifying the source and destination applications, the provider/account, the exact key or grant scope, whether access persists, and how to revoke it. The handoff must run directly between trusted Host processes or an approved OS credential store with destination identity checks, owner-only access, and a provider-scoped record; it must not pass through chat, the ordinary shared file, screenshots, logs, or Library. OAuth transfer additionally requires provider support for that destination and grant audience. No such transfer or new authorization grant is initiated by this plugin. Pointing both apps at one whole credentials file would share unrelated access and is outside this route.
+Cloud stores copied keys independently. Replace or remove them in Cloud Models settings. OAuth grants, environment-only keys, and credential records that require extra environment values use the target application's normal setup.
 
 <a id="understand-the-implementation"></a>
 ## Understand the implementation

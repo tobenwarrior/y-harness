@@ -37,6 +37,7 @@ import { mountVpsBots } from './vps-bots.ts'
 import type { VpsServiceAccess } from './vps-services.ts'
 import type { VpsJournalConfig } from './vps-journal.ts'
 import { mountVpsVaultRequests, submitAutomaticVpsLogin, VPS_VAULT_REQUEST_SOCKET, vpsVaultAccessRoute } from './vps-vault-requests.ts'
+import { mountProviderKeyCopy } from './provider-key-copy.ts'
 import type { VpsVaultRequestsConfig } from './vps-vault-requests.ts'
 import type { VpsIsolatedBrowserConfig } from './vps-isolated-browser.ts'
 import type { AutomaticVpsBrowserLogin } from './vps-browser-login.ts'
@@ -387,6 +388,7 @@ export function apply(ctx: Context, config: Config): void {
   // Release dependent rows only after bind-dependent trust has been sampled once.
   ctx.provide(WEB_RUNTIME_SERVICE, runtime)
   ctx.plugin(FrontendStatic, { distIndex: internals.resolveDistIndex() })
+  mountProviderKeyCopy(ctx)
   if (process.platform === 'darwin' && process.connected && process.env.YH_MAC_COMPUTER === '1'
     && ctx.get('profileContext')?.name === 'desktop') {
     const computer = new MacComputerBridge()

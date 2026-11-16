@@ -12,6 +12,10 @@ import { schemaFingerprint } from './profile.ts'
 
 export { planProviderCatalogCopy } from './transfer.ts'
 export type { ProviderCatalogCopyPlan } from './transfer.ts'
+export {
+  PROVIDER_KEY_IMPORT_PATH, providerKeyImportRequest, providerKeyOffer, providerKeyRoute, providerKeySourceRequest, providerKeyValue,
+} from './key-copy.ts'
+export type { ProviderKeyImportRequest, ProviderKeyOffer, ProviderKeyRoute, ProviderKeySourceRequest } from './key-copy.ts'
 
 declare module '@yharness/cordis' {
   interface Context {

@@ -1371,6 +1371,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         parameters: [{ name: 'ref', description: 'the reference to store.' }, { name: 'value', description: 'the non-empty secret value.' }],
       },
       {
+        signature: 'setIfAbsent?(ref: CredentialRef, value: string): Promise<boolean>',
+        description: 'Store a nonempty value only while no source supplies the reference. A provider offering this operation checks and writes under the same lock.',
+        parameters: [{ name: 'ref', description: 'the reference to populate.' }, { name: 'value', description: 'the nonempty secret value.' }],
+        returns: 'Whether the value was inserted.',
+      },
+      {
         signature: 'abstract unset(ref: CredentialRef): Promise<void>',
         description: 'Remove one reference from the provider-managed writable source; removing an absent reference is a no-op. Rejects while a read-only source shadows the reference, like set.',
         parameters: [{ name: 'ref', description: 'the reference to remove.' }],

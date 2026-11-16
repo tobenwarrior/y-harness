@@ -2436,7 +2436,7 @@ export interface Config {
 ## `@yharness/provider-config-sync`
 
 - `inject`: `settings` · `profileContext`
-- `source`: [`packages/settings/provider-config-sync/src/index.ts:24`](../packages/settings/provider-config-sync/src/index.ts)
+- `source`: [`packages/settings/provider-config-sync/src/index.ts:28`](../packages/settings/provider-config-sync/src/index.ts)
 
 ```ts config-catalog
 /** Pairing is explicit; no shared location is selected by default. */
@@ -4409,7 +4409,7 @@ export interface WebRuntimeConfig {
 ## `@yharness/web-app`
 
 - `inject`: `webServer`
-- `source`: [`packages/bundle/web-app/src/index.ts:59`](../packages/bundle/web-app/src/index.ts)
+- `source`: [`packages/bundle/web-app/src/index.ts:60`](../packages/bundle/web-app/src/index.ts)
 
 ```ts config-catalog
 /** Plugin config: composed deployment settings plus per-invocation command-line values. */

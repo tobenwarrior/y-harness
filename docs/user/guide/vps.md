@@ -67,7 +67,11 @@ Open the printed sign-in link in your browser and keep it private. Leave the com
 
 Open Cloud, then choose **Workspace → Copy Model Catalogs to Cloud**. Review how many provider catalogs can be added and confirm the copy. The action adds model definitions for missing routes. Cloud keeps the routes it already has, including provider defaults inherited from its settings.
 
-In Cloud **Settings → Models**, enter a key or sign in for each newly copied provider you want to use. Only ordinary catalog fields cross the connection. Your Mac and Cloud each keep their own credentials and account sign-ins.
+### Copy saved provider keys
+
+After copying the catalogs, choose **Workspace → Copy Saved Provider Keys to Cloud**. The app lists the eligible providers and the Cloud connection that will receive them. Confirm to save a separate copy of each listed key. Y Harness matches the provider's HTTPS endpoints and checks that the Cloud credential is still empty. This keeps any key you already saved in Cloud.
+
+Use **Settings → Models** in Cloud to replace or remove a copied key. Account sign-ins and keys supplied by a launch environment or a .env file are set up separately in that workspace. The key copy requires an up-to-date Mac app and Cloud server.
 
 ## Watch and control the Computer
 

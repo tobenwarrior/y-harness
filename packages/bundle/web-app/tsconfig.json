@@ -42,6 +42,18 @@
       "path": "../../llm/llm"
     },
     {
+      "path": "../../credentials/credentials"
+    },
+    {
+      "path": "../../llm/llm-pi-ai"
+    },
+    {
+      "path": "../../settings/provider-config-sync"
+    },
+    {
+      "path": "../../settings/settings"
+    },
+    {
       "path": "../../core/tools"
     },
     {
