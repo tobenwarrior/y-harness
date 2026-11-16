@@ -50,7 +50,7 @@ class HandoffAdapter extends LlmAdapter {
   }
 }
 
-it.skipIf(MODE === 'record' || process.platform === 'win32')('returns a private Computer to the Bot in the same chat turn', async () => {
+it.skipIf(MODE === 'record' || process.platform === 'win32')('changes Internet access and returns a private Computer to the Bot in the same chat turn', async () => {
   const root = await mkdtemp('/tmp/yh-sign-in-web-')
   const runtimePath = join(root, 'computer.mjs')
   const overlay = join(root, 'computer.yml')
@@ -82,12 +82,21 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('returns a private 
       export function apply(ctx, config) {
         const ensure = VpsRuntime.prototype.ensure
         const desktopCommand = VpsRuntime.prototype.desktopCommand
+        const runPodman = VpsRuntime.prototype.runPodman
+        const supportsNetworkControl = VpsRuntime.prototype.supportsNetworkControl
         ctx.effect(() => {
           VpsRuntime.prototype.ensure = sessionId => appendFile(${JSON.stringify(startedComputers)}, sessionId + '\\n')
           VpsRuntime.prototype.desktopCommand = async () => Buffer.from(${JSON.stringify(jpeg)}, 'base64')
+          VpsRuntime.prototype.supportsNetworkControl = () => true
+          VpsRuntime.prototype.runPodman = async args => {
+            if (args[0] === 'container' && args[1] === 'exists') return { code: 1, stdout: '', stderr: '' }
+            throw new Error('Unexpected Podman command in Computer fixture.')
+          }
           return () => {
             VpsRuntime.prototype.ensure = ensure
             VpsRuntime.prototype.desktopCommand = desktopCommand
+            VpsRuntime.prototype.runPodman = runPodman
+            VpsRuntime.prototype.supportsNetworkControl = supportsNetworkControl
           }
         })
         mountVpsBots(ctx, config, [])
@@ -122,6 +131,28 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('returns a private 
     await panel.getByRole('img', { name: 'Live computer screen' }).waitFor()
     const opened = (await readFile(startedComputers, 'utf8')).trim().split('\n')
     expect(new Set(opened)).toEqual(new Set([imported.sessionId]))
+    const network = panel.locator('[data-computer-network-control]').getByRole('switch')
+    await expect.poll(() => network.getAttribute('aria-checked')).toBe('false')
+    const request = (payload: object) => ({ method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload) })
+    const target = { sessionId: imported.sessionId }
+    const enable = request({ ...target, enabled: true })
+    expect((await fetch(new URL('/api/computer/network', web.baseUrl), enable)).status).toBe(401)
+    const other = await web.hostFetch('/api/computer/network', request({ ...target, sessionId: 'bot-session-11111111-1111-4111-8111-111111111111', enabled: true }))
+    expect(other.status).toBe(404)
+    const invalid = await web.hostFetch('/api/computer/network', request({ ...target, enabled: 'true' }))
+    expect(invalid.status).toBe(400)
+    await panel.getByRole('button', { name: 'Take control', exact: true }).click()
+    await panel.getByRole('button', { name: 'Hand back', exact: true }).waitFor()
+    expect((await web.hostFetch('/api/computer/network', enable)).status).toBe(409)
+    expect(await network.getAttribute('aria-checked')).toBe('false')
+    await panel.getByRole('button', { name: 'Hand back', exact: true }).click()
+    await panel.getByRole('button', { name: 'Take control', exact: true }).waitFor()
+    await network.click()
+    await expect.poll(() => network.getAttribute('aria-checked')).toBe('true')
+    const status = await web.hostFetch('/api/computer/status', request(target))
+    expect(await status.json()).toMatchObject({ computer: { id: imported.id, terminalInternet: true, networkControl: true } })
+    const networkView = await captureStableAria(page, panelSelector, web.workspaceCwd)
     await panel.getByRole('button', { name: 'Close computer panel' }).click()
     await page.locator(`[data-bot-id="${BOT}"]`).click()
     const conversation = page.locator('[data-conversation-surface="bots"]')
@@ -150,7 +181,7 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('returns a private 
     expect(adapter.sawReceipt).toBe(true)
     await card.waitFor({ state: 'hidden' })
     expect(consoleLog.pageErrors).toEqual([])
-    await compareOrRefreshGolden(GOLDEN, `## Waiting in chat\n\n${pending}\n\n## In control\n\n${privateView}`, MODE)
+    await compareOrRefreshGolden(GOLDEN, `## Internet enabled\n\n${networkView}\n\n## Waiting in chat\n\n${pending}\n\n## In control\n\n${privateView}`, MODE)
   } finally {
     try { await browser?.close() }
     finally {

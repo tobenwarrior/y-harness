@@ -189,6 +189,7 @@ export function apply(ctx: Context): void {
         const face = controller.face()
         return {
           ...face, computer, setComputerTarget, openWorkspaceTab,
+          refreshComputerAvailability: (sessionId?: string): void => { computerAvailability.refresh(sessionId) },
           hooks: {
             ...face.hooks,
             computerAvailability: computerAvailability.source,

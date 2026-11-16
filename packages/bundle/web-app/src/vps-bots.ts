@@ -10,15 +10,17 @@ import type {} from '@yharness/bots'
 import type { WorkspaceFileAccessProvider } from '@yharness/api-workspace-files'
 import type {} from '@yharness/client-connection'
 import type {} from '@yharness/system-prompt'
-import { containerComputer, type VpsComputer } from './computer.ts'
+import { ComputerLeaseError, containerComputer, type VpsComputer } from './computer.ts'
 import * as ComputerTool from './computer-tool.ts'
 import {
-  botComputerRoutesWithLegacy, computerFileDownloadRoute, computerFileHandoffRoutes, computerFileUploadRoute, computerSignInRoute,
+  botComputerRoutesWithLegacy, computerFileDownloadRoute, computerFileHandoffRoutes, computerFileUploadRoute,
+  computerNetworkRoute, computerSignInRoute,
 } from './computer-api.ts'
 import { registerVpsBotFileTools, VpsBotFileHandoffs } from './vps-bot-file-handoffs.ts'
 import { resolveVpsFileUploadLimits, uploadComputerFile, type VpsFileUploadConfig } from './vps-bot-upload.ts'
 import { SessionId } from '@yharness/session/types'
 import { isVpsSharedPath, VpsRuntime, type VpsBrowserOptions } from './vps-runtime.ts'
+import { VpsBotNetworkPolicy } from './vps-bot-network-policy.ts'
 import { registerVpsProjectTool } from './vps-project-tool.ts'
 import { isSharedBrowserSession, runAuthorizedBrowserOperation, VpsIsolatedBrowser, type VpsIsolatedBrowserConfig } from './vps-isolated-browser.ts'
 import { VpsBrowserHandoffs } from './vps-browser-handoffs.ts'
@@ -104,6 +106,7 @@ export function mountVpsBots(
   if ([...browserBotIds].some(botId => isolatedBrowserBotIds.has(botId))) {
     throw new Error('VPS browser and isolated browser Bots must not overlap.')
   }
+  const networkPolicy = new VpsBotNetworkPolicy(config.root)
   const runtimes = new Map<string, VpsRuntime>()
   const runtimeWith = (browser: VpsBrowserOptions | undefined, sharedWorkspace: boolean, internet: boolean): VpsRuntime => {
     const key = `${browser !== undefined}/${sharedWorkspace}/${internet}`
@@ -111,7 +114,7 @@ export function mountVpsBots(
     if (runtime === undefined) {
       runtime = new VpsRuntime(config.root, config.image, undefined, {
         ...(browser === undefined ? {} : { browser }),
-        sharedWorkspace, internet,
+        sharedWorkspace, internet, networkPolicy,
       })
       runtimes.set(key, runtime)
     }
@@ -265,6 +268,22 @@ export function mountVpsBots(
   })
 
   ctx.inject(['bots', 'connection'], (scope) => {
+    scope.effect(() => scope.connection.fetch.register(computerNetworkRoute(async (sessionId, enabled, signal) => {
+      const bot = await scope.bots.ownerBotForSession(sessionId)
+      if (bot?.state !== 'active' || bot.sessionId !== sessionId || !isDesktopBot(bot.id)) return undefined
+      const apply = async () => {
+        if (scope.get('agents')?.get(sessionId)?.status === 'running'
+          || scope.get('terminalController')?.list(sessionId).some(terminal => terminal.state === 'running')) return 'busy' as const
+        return runtimeFor(bot.id).setInternetAccess(sessionId, enabled, signal)
+      }
+      const computer = computers.get(sessionId)
+      try {
+        return computer === undefined ? await apply() : await computer.runWhileBotControls(apply, signal)
+      } catch (error) {
+        if (error instanceof ComputerLeaseError) return 'busy'
+        throw error
+      }
+    })), 'vps-bots: owner Computer internet setting')
     if (isolatedBrowser?.usesManagedSharing() === true) {
       scope.effect(() => scope.connection.fetch.register(vpsBrowserAccessRoute(scope, isolatedBrowser)), 'vps-bots: owner browser access')
     }
@@ -328,12 +347,15 @@ export function mountVpsBots(
       if (bot?.state !== 'active') return undefined
       if (isDesktopBot(bot.id)) {
         const navigate = browserNavigateFor(bot.id, bot.sessionId)
+        const runtime = runtimeFor(bot.id)
+        const internet = await runtime.internetFor(bot.sessionId)
         return {
           computer: (signal: AbortSignal) => computerFor(bot.sessionId, bot.id, signal),
           id: bot.id,
           permissionScope: 'bot' as const,
           ...(scope.get('terminalController') === undefined ? {} : {
-            terminal: true as const, terminalInternet: runtimeFor(bot.id).internet,
+            terminal: true as const, terminalInternet: internet,
+            ...(runtime.supportsNetworkControl(internet) ? { networkControl: true as const } : {}),
           }),
           ...(scope.get('workspaceFiles') === undefined ? {}
             : { files: true as const, ...(sharesProject(bot.id) ? { sharedFiles: true as const } : {}) }),

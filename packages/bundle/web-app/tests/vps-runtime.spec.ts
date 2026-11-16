@@ -33,12 +33,13 @@ function result(code = 0, stdout = ''): VpsCommandResult {
 function fixture(run: (argv: readonly string[]) => Promise<VpsCommandResult> | VpsCommandResult = async (argv) => {
   if (argv[1] === 'container' && argv[2] === 'exists') return result(1)
   return result()
-}, { browser = false, sharedWorkspace = false, hostileSharedVolume = false, internet, userService = false }: {
+}, { browser = false, sharedWorkspace = false, hostileSharedVolume = false, internet, userService = false, networkPolicy }: {
   browser?: boolean
   sharedWorkspace?: boolean
   hostileSharedVolume?: boolean
   internet?: boolean
   userService?: boolean
+  networkPolicy?: { get(session: string): Promise<boolean | undefined>; set(session: string, enabled: boolean): Promise<void> }
 } = {}): Fixture {
   const root = mkdtempSync(join(tmpdir(), 'dsh-vps-runtime-'))
   roots.push(root)
@@ -77,6 +78,7 @@ function fixture(run: (argv: readonly string[]) => Promise<VpsCommandResult> | V
   }
   const runtime = new VpsRuntime(root, 'localhost/yharness-vps-bot:24.04', {
     userService,
+    networkHelperAvailable: () => true,
     run: async (argv) => {
       calls.push([...argv])
       const podman = argv.slice(argv.indexOf('/usr/bin/podman'))
@@ -87,11 +89,101 @@ function fixture(run: (argv: readonly string[]) => Promise<VpsCommandResult> | V
     ...(browser ? { browser: { image: 'localhost/yharness-vps-bot-browser:24.04-v1', seccompProfile } } : {}),
     sharedWorkspace,
     ...(internet === undefined ? {} : { internet }),
+    ...(networkPolicy === undefined ? {} : { networkPolicy }),
   })
   return { root, calls, runtime }
 }
 
 describe('VpsRuntime', () => {
+  it('sets one cold Computer’s network policy without starting it or enrolling another Bot', async () => {
+    const values = new Map<string, boolean>()
+    const f = fixture(undefined, { networkPolicy: {
+      get: async id => values.get(id), set: async (id, enabled) => { values.set(id, enabled) },
+    } })
+    const signal = new AbortController().signal
+    await expect(f.runtime.setInternetAccess(sessions.alice, true, signal)).resolves.toBe('applied')
+    expect(f.calls.some(argv => argv[1] === 'run')).toBe(false)
+    await expect(f.runtime.internetFor(sessions.alice)).resolves.toBe(true)
+    await expect(f.runtime.internetFor(sessions.bob)).resolves.toBe(false)
+    await f.runtime.ensure(sessions.alice)
+    await f.runtime.ensure(sessions.bob)
+    expect(f.calls.filter(argv => argv[1] === 'run').map(argv => argv.find(value => value.startsWith('--network='))))
+      .toEqual(['--network=slirp4netns:allow_host_loopback=false', '--network=none'])
+  })
+
+  it('preserves the current Computer while a command is in progress', async () => {
+    const set = vi.fn(async (_id: string, _enabled: boolean) => {})
+    const f = fixture(undefined, { networkPolicy: { get: async () => undefined, set } })
+    const finish = f.runtime.beginUse(sessions.alice)
+    try {
+      await expect(f.runtime.setInternetAccess(sessions.alice, true, new AbortController().signal)).resolves.toBe('busy')
+      expect(f.calls).toEqual([])
+      expect(set).not.toHaveBeenCalled()
+    } finally {
+      finish()
+    }
+  })
+
+  it.each(['idle', 'busy', 'stop failed'])('changes network access only when the existing Computer is %s and can stop', async (state) => {
+    const saved = new Map<string, boolean>()
+    const processes = [
+      'PID   PPID  COMMAND     COMMAND',
+      '1     0     bash        bash /usr/local/bin/yharness-vps-bot-start',
+      '24    1     Xvfb        Xvfb :99 -screen 0 1280x800x24 -nolisten tcp -auth /tmp/yharness-xauthority',
+      '28    1     openbox     openbox',
+      '144   1     sleep       sleep 1',
+    ]
+    if (state === 'busy') processes.push('145   1     sleep       sleep 300')
+    let present = false
+    const f = fixture(async (argv) => {
+      const command = argv[1]
+      if (command === 'container' && argv[2] === 'exists') return result(present ? 0 : 1)
+      if (command === 'run') present = true
+      if (command === 'inspect') {
+        const volume = `yharness-bot-volume-${(argv.at(-1) ?? '').replace(/^yharness-bot-/u, '')}`
+        const image = 'localhost/yharness-vps-bot:24.04'
+        const workspace = f.runtime.workspace(sessions.alice)
+        return result(0, JSON.stringify({
+          ImageName: image,
+          Config: { User: '1000:1000', Labels: {
+            'io.yharness.vps.root': f.root,
+            'io.yharness.vps.image': image,
+            'io.yharness.vps.session': sessions.alice,
+            'io.yharness.vps.workspace': workspace,
+            'io.yharness.vps.volume': volume,
+          } },
+          State: { Running: true },
+          Mounts: [{ Type: 'volume', Name: volume, Destination: workspace, RW: true, Options: ['nodev', 'nosuid'] }],
+          HostConfig: { NetworkMode: 'none', SecurityOpt: ['no-new-privileges'], CapDrop: ['ALL'],
+            UsernsMode: 'keep-id', Tmpfs: { '/tmp': 'rw,noexec,nosuid,nodev' } },
+        }))
+      }
+      if (command === 'top') return result(0, processes.join('\n'))
+      if (command === 'stop' && state === 'stop failed') return result(125)
+      if (command === 'rm') present = false
+      return result()
+    }, { networkPolicy: {
+      get: async id => saved.get(id), set: async (id, enabled) => { saved.set(id, enabled) },
+    } })
+    await f.runtime.ensure(sessions.alice)
+    const change = f.runtime.setInternetAccess(sessions.alice, true, new AbortController().signal)
+    if (state === 'stop failed') await expect(change).rejects.toThrow('could not stop')
+    else await expect(change).resolves.toBe(state === 'busy' ? 'busy' : 'applied')
+    expect(f.calls.some(argv => argv[1] === 'stop')).toBe(state !== 'busy')
+    expect(f.calls.some(argv => argv[1] === 'rm')).toBe(state === 'idle')
+    expect(saved.has(sessions.alice)).toBe(state === 'idle')
+    if (state === 'idle') {
+      const removed = f.calls.find(argv => argv[1] === 'rm')
+      expect(removed).toHaveLength(3)
+      await f.runtime.ensure(sessions.alice)
+      const launches = f.calls.filter(argv => argv[1] === 'run')
+      expect(launches[0]).toContain('--network=none')
+      expect(launches[1]).toContain('--network=slirp4netns:allow_host_loopback=false')
+      expect(launches[0]?.find(arg => arg.includes(':rw,nodev,nosuid')))
+        .toBe(launches[1]?.find(arg => arg.includes(':rw,nodev,nosuid')))
+    }
+  })
+
   it('starts a desktop in a separate user scope while keeping inspection in the Web service', async () => {
     const f = fixture(undefined, { userService: true, internet: true })
     await f.runtime.ensure(sessions.alice)

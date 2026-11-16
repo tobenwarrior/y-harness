@@ -51,6 +51,7 @@ export type BotsPanelProps =
     readonly computer: ComputerClient
     readonly setComputerTarget: (sessionId: string | null) => void
     readonly openWorkspaceTab: (kind: WorkspaceTabKind) => void
+    readonly refreshComputerAvailability?: (sessionId?: string) => void
     readonly hooks: {
       readonly computerAvailability: HostObservable<AvailabilityState>
       readonly computerIdentity: HostObservable<ComputerIdentity | undefined>
@@ -208,7 +209,7 @@ export function BotsPanel({
   rename, updateProfile, memoryManager, readGrokHistory,
   routineManager, skillManager, SessionProvider, renderSlot, t, share, computer, useComputerAvailability,
   setComputerTarget, useComputerTarget, useComputerIdentity, useComputerSignIn, openWorkspaceTab, useTerminalAvailable, useFilesAvailable,
-  useSharedFilesAvailable,
+  useSharedFilesAvailable, refreshComputerAvailability,
 }: BotsPanelProps): ReactNode {
   const state: BotWorkspaceState = useWorkspace(value => value)
   const statuses = useSessionStatus(value => value)
@@ -294,8 +295,11 @@ export function BotsPanel({
             ? <MacComputerPanel key={selectedReference.sessionId} sessionId={selectedReference.sessionId}
               close={closeComputer} t={t} />
             : <ComputerPanel key={selectedReference.sessionId} computer={computer} sessionId={selectedReference.sessionId}
+              {...(selectedBot === undefined ? {} : { botId: selectedBot.id })}
               signIn={signIn?.sessionId === selectedReference.sessionId ? signIn : undefined}
-              close={closeComputer} t={t} />}
+              close={closeComputer}
+              {...(refreshComputerAvailability === undefined ? {} : { refreshAvailability: refreshComputerAvailability })}
+              t={t} />}
         </div>
       )}
     </div>

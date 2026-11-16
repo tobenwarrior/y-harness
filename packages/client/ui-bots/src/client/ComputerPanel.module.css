@@ -135,6 +135,36 @@
   white-space: nowrap;
 }
 
+.networkControl {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  padding: 8px 10px;
+  border-bottom: 0.5px solid var(--yh-alias-border-l2);
+  background: var(--yh-alias-bg-layer-2);
+}
+
+.networkCopy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.networkLabel {
+  color: var(--yh-alias-label-secondary);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.networkHint {
+  color: var(--yh-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 14px;
+}
+
 .viewport {
   display: flex;
   min-width: 0;

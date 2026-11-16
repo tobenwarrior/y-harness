@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, ReactNode, WheelEvent as ReactWheelEvent } from 'react'
 import {
-  Button, IconCloseOutlineRegular, IconRefreshOutlineRegular, IconStopFillRegular, Input, StateDot, Tooltip,
+  Button, IconCloseOutlineRegular, IconRefreshOutlineRegular, IconStopFillRegular, Input, StateDot, Switch, Tooltip,
 } from '@yharness/client-ui-primitives'
 import type { PropsLocale } from '@yharness/client-ui-slots'
 import { randomUUID } from '@yharness/util-crypto'
@@ -16,7 +16,10 @@ import css from './ComputerPanel.module.css'
 interface ComputerPanelProps extends PropsLocale<'bots'> {
   readonly computer: ComputerClient
   readonly sessionId?: string
+  /** Roster Bot id returned by Computer status for the selected Session. */
+  readonly botId?: string
   readonly close: () => void
+  readonly refreshAvailability?: (sessionId?: string) => void
   readonly local?: { readonly checkSharing: () => void }
   readonly signIn?: {
     readonly requestId: string
@@ -28,7 +31,7 @@ interface ComputerPanelProps extends PropsLocale<'bots'> {
 
 type PanelPhase = 'loading' | 'ready' | 'disconnected' | 'unavailable'
 type BusyAction = 'take' | 'release' | undefined
-type FeedbackKey = 'computerControlBusy' | 'computerInputRejected' | 'computerPasteFailed' | 'computerTextTrimmed' | 'computerSignInError' | 'computerNavigationFailed'
+type FeedbackKey = 'computerControlBusy' | 'computerInputRejected' | 'computerPasteFailed' | 'computerTextTrimmed' | 'computerSignInError' | 'computerNavigationFailed' | 'computerNetworkBusy' | 'computerNetworkError'
 
 const FRAME_POLL_MS = 300
 const MAX_TEXT_LENGTH = 4_096
@@ -132,7 +135,7 @@ function imageErrorPhase(error: unknown): PanelPhase {
 }
 
 /** Render the Computer tab's image, lease controls, and bounded input affordances. */
-export function ComputerPanel({ computer, sessionId, close, local, signIn, t }: ComputerPanelProps): ReactNode {
+export function ComputerPanel({ computer, sessionId, botId, close, refreshAvailability, local, signIn, t }: ComputerPanelProps): ReactNode {
   const viewerIdRef = useRef<string>()
   if (viewerIdRef.current === undefined) viewerIdRef.current = randomUUID()
   const viewerId = viewerIdRef.current
@@ -163,7 +166,10 @@ export function ComputerPanel({ computer, sessionId, close, local, signIn, t }: 
   const [retryNonce, setRetryNonce] = useState(0)
   const [website, setWebsite] = useState('')
   const [navigating, setNavigating] = useState(false)
+  const [networkBusy, setNetworkBusy] = useState(false)
   const navigation = useRef<AbortController>()
+  const networkController = useRef<AbortController>()
+  const networkOperationRef = useRef(0)
   const signInApi = computer.signIn
   const frameSessionId = signIn?.targetSessionId ?? sessionId
   const sharedSignIn = signIn?.targetSessionId !== undefined
@@ -179,8 +185,18 @@ export function ComputerPanel({ computer, sessionId, close, local, signIn, t }: 
     setPhase('loading')
     setWebsite('')
     setNavigating(false)
-    return () => { navigation.current?.abort(); navigation.current = undefined }
-  }, [frameSessionId, sessionId])
+    setNetworkBusy(false)
+    networkController.current?.abort()
+    networkController.current = undefined
+    ++networkOperationRef.current
+    return () => {
+      navigation.current?.abort()
+      navigation.current = undefined
+      networkController.current?.abort()
+      networkController.current = undefined
+      ++networkOperationRef.current
+    }
+  }, [botId, frameSessionId, sessionId])
 
   useEffect(() => {
     if (local !== undefined) return
@@ -194,7 +210,7 @@ export function ComputerPanel({ computer, sessionId, close, local, signIn, t }: 
       void error
     })
     return () => { disposed = true; controller.abort() }
-  }, [computer, local, sessionId])
+  }, [botId, computer, local, sessionId])
 
   const applyMode = useCallback((next: ComputerMode): void => {
     modeRef.current = next
@@ -217,6 +233,7 @@ export function ComputerPanel({ computer, sessionId, close, local, signIn, t }: 
   }, [computer, frameSessionId, viewerId])
 
   useEffect(() => {
+    if (networkBusy) return
     let disposed = false
     const controller = new AbortController()
     const poll = async (): Promise<void> => {
@@ -248,9 +265,43 @@ export function ComputerPanel({ computer, sessionId, close, local, signIn, t }: 
     }
     void poll()
     return () => { disposed = true; controller.abort() }
-  }, [applyMode, computer, frameSessionId, local, retryNonce, sharedSignIn, viewerId])
+  }, [applyMode, computer, frameSessionId, local, networkBusy, retryNonce, sharedSignIn, viewerId])
 
   const alive = (operation: number): boolean => !disposedRef.current && operation === operationRef.current
+
+  const networkIdentity = computerStatus?.computer
+  const networkControlAvailable = local === undefined && !sharedSignIn && sessionId !== undefined && botId !== undefined
+    && computer.network !== undefined && networkIdentity?.id === botId
+    && networkIdentity.location === 'vps' && networkIdentity.permissionScope === 'bot'
+    && networkIdentity.networkControl === true && networkIdentity.terminal === true
+    && typeof networkIdentity.terminalInternet === 'boolean'
+
+  const changeNetworkAccess = useCallback((enabled: boolean): void => {
+    if (!networkControlAvailable || networkBusy) return
+    const targetSessionId = sessionId
+    const operation = ++networkOperationRef.current
+    const controller = new AbortController()
+    networkController.current?.abort()
+    networkController.current = controller
+    setNetworkBusy(true)
+    setFeedback(undefined)
+    void computer.network(targetSessionId, enabled, controller.signal).then((result) => {
+      if (disposedRef.current || operation !== networkOperationRef.current || controller.signal.aborted) return
+      setComputerStatus((current) => {
+        if (current?.computer?.id !== botId) return current
+        return { ...current, computer: { ...current.computer, terminalInternet: result.enabled } }
+      })
+      setNetworkBusy(false)
+      if (networkController.current === controller) networkController.current = undefined
+      refreshAvailability?.(targetSessionId)
+    }).catch((error: unknown) => {
+      if (disposedRef.current || operation !== networkOperationRef.current || controller.signal.aborted) return
+      setNetworkBusy(false)
+      if (networkController.current === controller) networkController.current = undefined
+      setFeedback(error instanceof ComputerApiError && error.status === 409
+        ? 'computerNetworkBusy' : 'computerNetworkError')
+    })
+  }, [botId, computer, networkBusy, networkControlAvailable, refreshAvailability, sessionId])
 
   const takeControl = useCallback((requestId?: string): void => {
     if (requestId !== undefined && (signInApi === undefined || frameSessionId === undefined)) return
@@ -524,6 +575,16 @@ export function ComputerPanel({ computer, sessionId, close, local, signIn, t }: 
             : <Button variant="ghost" size="sm" icon={<IconCloseOutlineRegular size={14} />} aria-label={t('computerClose')} onClick={close} />}
         </div>
       </header>
+      {networkControlAvailable && (
+        <div className={css.networkControl} data-computer-network-control>
+          <span className={css.networkCopy}>
+            <span className={css.networkLabel}>{t('computerNetworkLabel')}</span>
+            <span className={css.networkHint}>{t('computerNetworkHint')}</span>
+          </span>
+          <Switch checked={networkIdentity.terminalInternet} onChange={changeNetworkAccess}
+            disabled={networkBusy} label={t('computerNetworkToggle')} />
+        </div>
+      )}
       {computerStatus?.computer?.browser === true && mode === 'controlling' && (
         <form className={css.browserAddress} onSubmit={(event) => { event.preventDefault(); openWebsite() }}>
           <Input type="url" inputMode="url" aria-label={t('computerWebsiteAddress')} placeholder={t('computerWebsitePlaceholder')}

@@ -60,6 +60,8 @@ export interface ComputerStatusMetadata {
   readonly terminal?: true
   /** Whether the private VPS terminal is configured for outbound internet access. */
   readonly terminalInternet?: boolean
+  /** Whether this exact owner Computer offers a network setting. */
+  readonly networkControl?: true
   /** Whether the owner's file browser uses this Bot's private workspace. */
   readonly files?: true
   /** Whether the owner can browse this Bot's shared project files. */
@@ -78,6 +80,8 @@ export interface BotComputerRouteTarget {
   readonly terminal?: true
   /** Whether outbound internet access is enabled in the private Computer's runtime. */
   readonly terminalInternet?: boolean
+  /** Whether the owner may change outbound access from the Computer panel. */
+  readonly networkControl?: true
   /** Whether the owner's file browser uses this Bot's private workspace. */
   readonly files?: true
   /** Whether the owner can browse this Bot's shared project files. */
@@ -502,6 +506,7 @@ export function botComputerRoutesWithLegacy(
         ...(target.terminal === true ? { terminal: true } : {}),
         ...(target.permissionScope === 'bot' && target.terminal === true && target.terminalInternet !== undefined
           ? { terminalInternet: target.terminalInternet } : {}),
+        ...(target.permissionScope === 'bot' && target.networkControl === true ? { networkControl: true } : {}),
         ...(target.files === true ? { files: true } : {}),
         ...(target.files === true && target.sharedFiles === true ? { sharedFiles: true } : {}),
       },
@@ -526,6 +531,43 @@ export function botComputerRoutesWithLegacy(
       })
     },
   }), browserNavigationRoute(resolveComputer)]
+}
+
+/**
+ * Accept one network choice for an exact owner Bot without exposing the VPS runtime.
+ * @param apply - Resolve and update the selected private Computer. Undefined means it is unavailable.
+ * @returns The authenticated private Computer network route.
+ */
+export function computerNetworkRoute(
+  apply: (sessionId: SessionId, enabled: boolean, signal: AbortSignal) => Promise<'applied' | 'busy' | undefined>,
+): ConnectionFetchRoute {
+  return {
+    path: '/api/computer/network', methods: ['POST'], requestBody: 'streaming',
+    async fetch(request) {
+      let payload: unknown
+      try {
+        payload = await readPayload(request)
+      } catch (error) {
+        void error
+        return json({ status: 'invalid-request' }, 400)
+      }
+      if (!isRecord(payload) || Object.keys(payload).length !== 2 || typeof payload.enabled !== 'boolean') {
+        return json({ status: 'invalid-request' }, 400)
+      }
+      const target = sessionTarget(payload, true)
+      if (target === undefined) return json({ status: 'invalid-request' }, 400)
+      try {
+        request.signal.throwIfAborted()
+        const outcome = await apply(SessionId(target.id), payload.enabled, request.signal)
+        if (outcome === 'applied') return json({ status: 'applied', enabled: payload.enabled })
+        if (outcome === 'busy') return json({ status: 'busy' }, 409)
+        return json({ status: 'unavailable' }, 404)
+      } catch (error) {
+        void error
+        return json({ status: 'unavailable' }, 503)
+      }
+    },
+  }
 }
 
 /**

@@ -38,20 +38,25 @@ export class VpsBotSubprocess extends SubprocessRuntime {
       throw new SubprocessExecutableNotFoundError(command)
     }
     const { runtime, sessionId } = this.config
-    await runtime.ensure(sessionId)
-    signal?.throwIfAborted()
-    const [program, ...argv] = runtime.execArgv(sessionId, [
-      '/bin/bash', '-c', 'if [[ "$1" == /* ]]; then [[ -f "$1" && -x "$1" ]] && printf "%s\\n" "$1"; else type -P -- "$1"; fi', 'bash', command,
-    ])
+    const finished = runtime.beginUse(sessionId)
     try {
-      const { stdout } = await exec(program, argv, { signal, timeout: 10_000, maxBuffer: 4096 })
-      const path = stdout.trim()
-      if (isAbsolute(path)) return path
-    } catch (error) {
-      void error
+      await runtime.ensure(sessionId)
       signal?.throwIfAborted()
+      const [program, ...argv] = runtime.execArgv(sessionId, [
+        '/bin/bash', '-c', 'if [[ "$1" == /* ]]; then [[ -f "$1" && -x "$1" ]] && printf "%s\\n" "$1"; else type -P -- "$1"; fi', 'bash', command,
+      ])
+      try {
+        const { stdout } = await exec(program, argv, { signal, timeout: 10_000, maxBuffer: 4096 })
+        const path = stdout.trim()
+        if (isAbsolute(path)) return path
+      } catch (error) {
+        void error
+        signal?.throwIfAborted()
+      }
+      throw new SubprocessExecutableNotFoundError(command)
+    } finally {
+      finished()
     }
-    throw new SubprocessExecutableNotFoundError(command)
   }
 
   /** @inheritdoc */
@@ -65,7 +70,15 @@ export class VpsBotSubprocess extends SubprocessRuntime {
     const { runtime, sessionId, host } = this.config
     if (spec.stdio.control !== undefined) throw new Error('The VPS Bot process provider does not forward host control descriptors.')
     const argv = runtime.execArgv(sessionId, spec.argv, { workdir: spec.cwd, stdin: spec.stdio.stdin !== 'ignore' })
-    return host.spawn({ ...spec, argv, cwd: '/', env: undefined })
+    const finished = runtime.beginUse(sessionId)
+    try {
+      const child = host.spawn({ ...spec, argv, cwd: '/', env: undefined })
+      void child.done.then(finished, finished)
+      return child
+    } catch (error) {
+      finished()
+      throw error
+    }
   }
 
   /** @inheritdoc */
@@ -77,8 +90,6 @@ export class VpsBotSubprocess extends SubprocessRuntime {
     const argv = runtime.execArgv(sessionId, [...control, 'start', scope, spec.terminalType, ...spec.argv], {
       workdir: spec.cwd, interactive: true,
     })
-    await runtime.ensure(sessionId)
-    spec.signal?.throwIfAborted()
     const stop = async (): Promise<void> => {
       try {
         await runtime.desktopCommand(sessionId, [...control, 'stop', scope, String(spec.graceMs)], new AbortController().signal)
@@ -87,14 +98,24 @@ export class VpsBotSubprocess extends SubprocessRuntime {
         throw new VpsRuntimeError('The VPS Bot terminal session could not be closed.')
       }
     }
+    const finished = runtime.beginUse(sessionId)
     try {
-      return scopedBotTerminal(await host.spawnTerminal({ ...spec, argv, cwd: '/', env: undefined }), stop)
-    } catch (error) {
+      await runtime.ensure(sessionId)
+      spec.signal?.throwIfAborted()
       try {
-        await stop()
-      } catch (cleanup) {
-        throw new AggregateError([error, cleanup], 'The VPS Bot terminal could not be opened or cleaned up.')
+        const terminal = scopedBotTerminal(await host.spawnTerminal({ ...spec, argv, cwd: '/', env: undefined }), stop)
+        void terminal.done.then(finished, finished)
+        return terminal
+      } catch (error) {
+        try {
+          await stop()
+        } catch (cleanup) {
+          throw new AggregateError([error, cleanup], 'The VPS Bot terminal could not be opened or cleaned up.')
+        }
+        throw error
       }
+    } catch (error) {
+      finished()
       throw error
     }
   }

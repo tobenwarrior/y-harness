@@ -117,16 +117,18 @@ The share attaches when a private Computer is created. To enroll or remove an ex
 
 ### Give a Bot's VPS terminal internet access
 
-Run `python3 scripts/setup-vps.py network` from the VPS release checkout to prepare rootless networking. Set this list under `botComputers` in the private Web profile, using the roster IDs of the Bots you want to connect.
+In a Cloud Bot's chat, open **Computer** and use **Internet for Terminal & apps**. Close any programs running on that desktop, finish any terminal work, and hand back control before applying the change. The Computer reconnects with the same workspace and Firefox profile. Your choice persists across Cloud restarts.
+
+The setting applies to that Bot's private desktop and **Terminal**. Bash in a fully managed Bot uses the same desktop. A desktop-only Bot's ordinary Bash keeps its existing workspace policy. The [isolated browser](#enable-an-isolated-browser-for-selected-bots) follows its own network policy. Rootless networking blocks the VPS host's loopback address. Review other services reachable from the VPS before granting access.
+
+If the setting is missing, run `python3 scripts/setup-vps.py network` from the VPS release checkout to prepare rootless networking. To configure the initial defaults on a new deployment, set this list under `botComputers` in the private Web profile with the roster IDs of the Bots you want to connect.
 
 ```yaml
 network:
   bots: [bot-worker]
 ```
 
-The list controls each private desktop and its **Terminal**. Bash in a fully managed Bot also uses that desktop. A desktop-only Bot's ordinary Bash keeps its existing workspace policy. The separate [isolated browser](#enable-an-isolated-browser-for-selected-bots) keeps its own network policy. Private desktops start with no network by default, except Firefox desktops when the list is omitted. Set `bots: []` to keep every private desktop offline and retain any Firefox profiles.
-
-For each Bot whose access changes, stop and replace its idle container using the [Firefox steps](#enable-firefox-for-selected-bots). Preserve the named volumes. After restarting Cloud with the updated profile, hover over **Terminal** in the Bot header to see its configured internet access. Rootless networking blocks the host loopback address. Review any services reachable from the VPS network before granting access.
+Saved choices from the Computer panel take precedence over this list. When the list is omitted, Firefox desktops default to outbound access and other private desktops default to offline. Set `bots: []` for an offline default on every private desktop. For an existing container affected by a manual profile change, follow the replacement procedure in [Enable Firefox for selected Bots](#enable-firefox-for-selected-bots) and keep its named volumes.
 
 ### Enable Firefox for selected Bots
 

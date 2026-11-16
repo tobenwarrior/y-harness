@@ -17,6 +17,8 @@ export interface ComputerIdentity {
   readonly terminal?: true
   /** Configured internet access for a Bot's private VPS terminal. */
   readonly terminalInternet?: boolean
+  /** Whether this private Bot exposes the owner Internet-access control. */
+  readonly networkControl?: true
   readonly files?: true
   readonly sharedFiles?: true
 }
@@ -26,6 +28,12 @@ export interface ComputerStatus {
   readonly available: boolean
   readonly kind?: ComputerLocation
   readonly computer?: ComputerIdentity
+}
+
+/** Result from changing one private Bot's terminal Internet policy. */
+export interface ComputerNetworkResult {
+  readonly status: 'applied'
+  readonly enabled: boolean
 }
 
 /** Direct response from a Computer frame request. */
@@ -111,6 +119,8 @@ export interface ComputerClient {
   input(
     viewerId: string, action: ComputerInputAction, signal?: AbortSignal, sessionId?: string, origin?: string,
   ): Promise<ComputerControlResult>
+  /** Change the selected private Bot's terminal Internet policy when supported. */
+  readonly network?: (sessionId: string, enabled: boolean, signal?: AbortSignal) => Promise<ComputerNetworkResult>
   /** Open a URL while the viewer controls the selected isolated browser. */
   readonly navigate?: (viewerId: string, url: string, sessionId: string, signal?: AbortSignal) => Promise<ComputerControlResult>
   /** Read or respond to sign-in requests on a VPS Bot's Computer. */
@@ -129,6 +139,7 @@ const RELEASE_CONTROL_PATH = 'api/computer/release-control'
 const INPUT_PATH = 'api/computer/input'
 const NAVIGATE_PATH = 'api/computer/navigate'
 const SIGN_IN_PATH = 'api/computer/sign-in'
+const NETWORK_PATH = 'api/computer/network'
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu
 const HANDOFF_TARGET = /^handoff-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u
 
@@ -155,6 +166,7 @@ function identityOf(value: unknown): ComputerIdentity | undefined {
       terminal: true,
       ...(typeof value.terminalInternet === 'boolean' ? { terminalInternet: value.terminalInternet } : {}),
     } : {}),
+    ...(dedicated && value.networkControl === true ? { networkControl: true } : {}),
     ...(dedicated && value.files === true ? {
       files: true,
       ...(value.sharedFiles === true ? { sharedFiles: true } : {}),
@@ -231,6 +243,12 @@ function controlOf(value: unknown): ComputerControlResult | undefined {
   return mode === undefined ? undefined : { mode }
 }
 
+function networkOf(value: unknown): ComputerNetworkResult | undefined {
+  if (!isRecord(value) || Object.keys(value).length !== 2 || value.status !== 'applied'
+    || typeof value.enabled !== 'boolean') return undefined
+  return { status: value.status, enabled: value.enabled }
+}
+
 function withSession(payload: Record<string, unknown>, sessionId: string | undefined): Record<string, unknown> {
   return sessionId === undefined || sessionId === '' ? payload : { ...payload, sessionId }
 }
@@ -280,6 +298,9 @@ export function createComputerClient(): ComputerClient {
     input: (viewerId, action, signal, sessionId, origin) => post(
       INPUT_PATH, withSession({ viewerId, action, ...(origin === undefined ? {} : { origin }) }, sessionId),
       controlOf, requestOptions(signal),
+    ),
+    network: (sessionId, enabled, signal) => post(
+      NETWORK_PATH, { sessionId, enabled }, networkOf, requestOptions(signal),
     ),
     navigate: (viewerId, url, sessionId, signal) => post(
       NAVIGATE_PATH, { viewerId, url, sessionId }, controlOf, requestOptions(signal),

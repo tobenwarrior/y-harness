@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createComputerClient, createMacComputerClient } from '../src/client/computer-client.ts'
+import { createComputerClient, createMacComputerClient, type ComputerClient } from '../src/client/computer-client.ts'
 
 afterEach(() => { vi.unstubAllGlobals() })
 
@@ -8,6 +8,11 @@ function response(value: unknown, status = 200): Response {
     status,
     headers: { 'content-type': 'application/json' },
   })
+}
+
+function parsedBody(value: unknown): unknown {
+  if (typeof value !== 'object' || value === null || !('body' in value) || typeof value.body !== 'string') return undefined
+  return JSON.parse(value.body)
 }
 
 describe('Computer HTTP client', () => {
@@ -27,18 +32,18 @@ describe('Computer HTTP client', () => {
     const fetchMock = vi.fn(async () => response({
       available: true,
       kind: 'vps',
-      computer: { id: 'bot-session', location: 'vps', permissionScope: 'bot', files: true, sharedFiles: true },
+      computer: { id: 'bot-id-owner', location: 'vps', permissionScope: 'bot', files: true, sharedFiles: true },
     }))
     vi.stubGlobal('fetch', fetchMock)
     const client = createComputerClient()
 
-    await expect(client.status(undefined, 'bot-session')).resolves.toEqual({
+    await expect(client.status(undefined, 'bot-session-owner')).resolves.toEqual({
       available: true,
       kind: 'vps',
-      computer: { id: 'bot-session', location: 'vps', permissionScope: 'bot', files: true, sharedFiles: true },
+      computer: { id: 'bot-id-owner', location: 'vps', permissionScope: 'bot', files: true, sharedFiles: true },
     })
     expect(fetchMock).toHaveBeenCalledWith('api/computer/status', expect.objectContaining({
-      body: JSON.stringify({ sessionId: 'bot-session' }),
+      body: JSON.stringify({ sessionId: 'bot-session-owner' }),
     }))
   })
 
@@ -46,15 +51,15 @@ describe('Computer HTTP client', () => {
     const fetchMock = vi.fn(async () => response({
       available: true,
       kind: 'vps',
-      computer: { id: 'bot-session', location: 'vps', permissionScope: 'bot', sharedFiles: true },
+      computer: { id: 'bot-id-owner', location: 'vps', permissionScope: 'bot', sharedFiles: true },
     }))
     vi.stubGlobal('fetch', fetchMock)
     const client = createComputerClient()
 
-    await expect(client.status(undefined, 'bot-session')).resolves.toEqual({
+    await expect(client.status(undefined, 'bot-session-owner')).resolves.toEqual({
       available: true,
       kind: 'vps',
-      computer: { id: 'bot-session', location: 'vps', permissionScope: 'bot' },
+      computer: { id: 'bot-id-owner', location: 'vps', permissionScope: 'bot' },
     })
   })
 
@@ -63,17 +68,42 @@ describe('Computer HTTP client', () => {
     const base = { available: true, kind: 'vps' }
     const bot = { id: 'bot-internet', location: 'vps', permissionScope: 'bot', terminal: true }
     fetchMock
-      .mockResolvedValueOnce(response({ ...base, computer: { ...bot, terminalInternet: false } }))
+      .mockResolvedValueOnce(response({ ...base, computer: { ...bot, terminalInternet: false, networkControl: true } }))
       .mockResolvedValueOnce(response({ ...base, computer: { ...bot, terminalInternet: true } }))
       .mockResolvedValueOnce(response({ ...base, computer: { ...bot, terminal: undefined, terminalInternet: true } }))
       .mockResolvedValueOnce(response({ ...base, computer: { ...bot, permissionScope: 'workspace', terminalInternet: true } }))
     vi.stubGlobal('fetch', fetchMock)
     const client = createComputerClient()
 
-    await expect(client.status()).resolves.toMatchObject({ computer: { terminal: true, terminalInternet: false } })
+    await expect(client.status()).resolves.toMatchObject({ computer: { terminal: true, terminalInternet: false, networkControl: true } })
     await expect(client.status()).resolves.toMatchObject({ computer: { terminal: true, terminalInternet: true } })
     await expect(client.status()).resolves.toEqual({ ...base, computer: { id: bot.id, location: 'vps', permissionScope: 'bot' } })
     await expect(client.status()).resolves.toEqual({ ...base, computer: { id: bot.id, location: 'vps', permissionScope: 'workspace' } })
+  })
+
+  it('posts the exact private-session Internet toggle and preserves the busy response', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response({ status: 'applied', enabled: true }))
+      .mockResolvedValueOnce(response({ status: 'busy' }, 409))
+    vi.stubGlobal('fetch', fetchMock)
+    const client = createComputerClient()
+    const network = (client as ComputerClient & {
+      readonly network?: (sessionId: string, enabled: boolean, signal?: AbortSignal) => Promise<{
+        readonly status: 'applied'
+        readonly enabled: boolean
+      }>
+    }).network
+    expect(network).toBeTypeOf('function')
+    if (network === undefined) return
+
+    await expect(network('bot-session', true)).resolves.toEqual({ status: 'applied', enabled: true })
+    expect(fetchMock).toHaveBeenNthCalledWith(1, 'api/computer/network', expect.objectContaining({
+      method: 'POST', body: JSON.stringify({ sessionId: 'bot-session', enabled: true }),
+    }))
+    await expect(network('bot-session', false)).rejects.toMatchObject({ status: 409 })
+    expect(fetchMock).toHaveBeenNthCalledWith(2, 'api/computer/network', expect.objectContaining({
+      body: JSON.stringify({ sessionId: 'bot-session', enabled: false }),
+    }))
   })
 
   it('sends the viewer lease and input action to their exact routes', async () => {
@@ -132,7 +162,7 @@ describe('Computer HTTP client', () => {
       body: JSON.stringify({ action: 'take', sessionId: targetSessionId, requestId, viewerId: 'viewer-id' }),
     }))
     expect(fetchMock.mock.calls[3]?.[0]).toBe('api/computer/input')
-    expect(JSON.parse(fetchMock.mock.calls[3]?.[1]?.body as string)).toEqual({
+    expect(parsedBody(fetchMock.mock.calls[3]?.[1])).toEqual({
       viewerId: 'viewer-id', action: { kind: 'key', key: 'a' }, sessionId: targetSessionId, origin,
     })
   })

@@ -254,24 +254,28 @@ export class VpsBotFileSystem extends FileSystem {
 
   private async call<T>(operation: string, path: string, arguments_: object, schema: z.ZodType<T>, signal?: AbortSignal): Promise<T> {
     signal?.throwIfAborted()
-    await this.runtime.ensure(this.sessionId)
-    signal?.throwIfAborted()
-    const worker = this.workspace === 'shared' ? ['-c', vpsProjectWorker] : ['/usr/local/lib/yharness/files.py']
-    const command = ['/usr/bin/python3', '-I', ...worker, this.root]
-    const [program, ...argv] = this.runtime.execArgv(this.sessionId, command, { stdin: true })
+    const finished = this.runtime.beginUse(this.sessionId)
     try {
-      const child = exec(program, argv, { signal, timeout: 30_000, maxBuffer: MAX_TEXT_BYTES * 2 })
-      child.child.stdin?.on('error', (error) => { void error })
-      child.child.stdin?.end(JSON.stringify({ operation, path, ...arguments_ }))
-      const { stdout } = await child
-      const response: unknown = JSON.parse(stdout)
-      const failure = workerFailure.safeParse(response)
-      if (failure.success) throw new FsError(failure.data.message, failure.data.error)
-      return z.object({ value: schema }).parse(response).value
-    } catch (error) {
+      await this.runtime.ensure(this.sessionId)
       signal?.throwIfAborted()
-      if (error instanceof FsError) throw error
-      throw new FsError('The VPS Bot file operation could not complete.', 'FS_IO_ERROR')
+      const worker = this.workspace === 'shared' ? ['-c', vpsProjectWorker] : ['/usr/local/lib/yharness/files.py']
+      const command = ['/usr/bin/python3', '-I', ...worker, this.root]
+      const [program, ...argv] = this.runtime.execArgv(this.sessionId, command, { stdin: true })
+      try {
+        const child = exec(program, argv, { signal, timeout: 30_000, maxBuffer: MAX_TEXT_BYTES * 2 })
+        child.child.stdin?.on('error', (error) => { void error })
+        child.child.stdin?.end(JSON.stringify({ operation, path, ...arguments_ }))
+        const { stdout } = await child
+        const response: unknown = JSON.parse(stdout)
+        const failure = workerFailure.safeParse(response)
+        if (failure.success) throw new FsError(failure.data.message, failure.data.error)
+        return z.object({ value: schema }).parse(response).value
+      } catch (error) {
+        if (error instanceof FsError) throw error
+        throw new FsError('The VPS Bot file operation could not complete.', 'FS_IO_ERROR')
+      }
+    } finally {
+      finished()
     }
   }
 }
