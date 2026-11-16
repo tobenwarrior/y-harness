@@ -215,7 +215,8 @@ it('cancels the old retry and closes the old chat when the owner changes servers
   const first = connection()
   const initialForward = forward()
   const newOrigin = 'http://127.0.0.1:43191'
-  fixture.forward.mockResolvedValueOnce(initialForward).mockResolvedValueOnce(forward(newOrigin))
+  const nextForward = forward(newOrigin)
+  fixture.forward.mockResolvedValueOnce(initialForward).mockResolvedValueOnce(nextForward)
   const next = connection(newOrigin)
   fixture.open.mockResolvedValueOnce(first.value).mockResolvedValueOnce(next.value)
   workspace.attach(new BrowserWindow())
@@ -232,6 +233,10 @@ it('cancels the old retry and closes the old chat when the owner changes servers
   expect(chat.webContents.close).toHaveBeenCalledOnce()
   choose('https://workspace.invalid/connect?target=another-cloud')
   await vi.advanceTimersByTimeAsync(30_000)
-  expect(fixture.open.mock.calls.map(([target]) => target)).toEqual(['cloud-fixture', 'another-cloud'])
+  expect(fixture.open).toHaveBeenCalledTimes(2)
+  expect(fixture.open).toHaveBeenNthCalledWith(1, 'cloud-fixture', expect.any(AbortSignal),
+    expect.objectContaining({ forward: initialForward }))
+  expect(fixture.open).toHaveBeenNthCalledWith(2, 'another-cloud', expect.any(AbortSignal),
+    expect.objectContaining({ forward: nextForward }))
   expect(view(2).webContents.loadURL).toHaveBeenCalledExactlyOnceWith(newOrigin + '/')
 })
