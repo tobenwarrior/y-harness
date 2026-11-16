@@ -8,7 +8,7 @@ import SessionStore, { SessionId } from '@yharness/session'
 import SessionProjections from '@yharness/session-projection'
 import SystemPrompt from '@yharness/system-prompt'
 import ToolRuntime from '@yharness/tools'
-import { apply, applyMacComputer, inject } from '../src/computer-tool.ts'
+import { apply, applyMacComputer, applyVpsBotComputer, inject } from '../src/computer-tool.ts'
 import { MacComputerBridge } from '../src/mac-computer.ts'
 
 const screenshot = Buffer.from([0xff, 0xd8, 0xff, 0xd9])
@@ -80,6 +80,50 @@ describe('Computer tool', () => {
     await expect(ctx.tools.execute({
       ...call, callId: ToolCallId('shared-input'), arguments: { action: 'key', key: 'Escape' }, agent,
     })).resolves.toMatchObject({ isError: false, content: [{ type: 'text', text: 'Computer input sent.' }] })
+    expect(actAsBot).toHaveBeenCalledExactlyOnceWith({ kind: 'key', key: 'Escape' }, signal)
+    await fiber.dispose()
+    expect(ctx.tools.get(call.name)).toBeUndefined()
+  })
+
+  it('checks the calling Session for managed VPS Computer observations and input', async () => {
+    const observe = vi.fn(async () => frame)
+    const actAsBot = vi.fn(async () => undefined)
+    const route = { provider: 'fixture', model: 'vision' }
+    const owner = await ctx.agentLoop.create(SessionId('bot-computer-owner'), route)
+    const other = await ctx.agentLoop.create(SessionId('bot-computer-other'), route)
+    const denialMessage = 'The Session has no managed Computer.'
+    vi.spyOn(ctx.llm, 'resolveModelInfo').mockResolvedValue({
+      provider: route.provider, id: route.model, name: 'Vision', inputModalities: ['text', 'image'],
+    })
+    ctx.provide('attachments', { saveImage: async () => attachment } as never)
+    const fiber = await ctx.inject(['tools', 'attachments', 'llm'], (scope) => {
+      applyVpsBotComputer(scope, async (sessionId) => {
+        if (sessionId !== owner.session.id) throw new Error(denialMessage)
+        return { observe, actAsBot }
+      })
+    })
+
+    const signal = new AbortController().signal
+    const call = { name: 'vps_computer', signal }
+    const observation = { action: 'observe' }
+    const input = { action: 'key', key: 'Escape' }
+    const denial = { isError: true, error: { message: denialMessage } }
+    await expect(ctx.tools.execute({
+      ...call, callId: ToolCallId('other-observation'), arguments: observation, agent: other,
+    })).resolves.toMatchObject(denial)
+    await expect(ctx.tools.execute({
+      ...call, callId: ToolCallId('other-input'), arguments: input, agent: other,
+    })).resolves.toMatchObject(denial)
+    expect(observe).not.toHaveBeenCalled()
+    expect(actAsBot).not.toHaveBeenCalled()
+
+    await expect(ctx.tools.execute({
+      ...call, callId: ToolCallId('owner-observation'), arguments: observation, agent: owner,
+    })).resolves.toMatchObject({ isError: false, content: [{ type: 'text' }, { type: 'image', attachment }] })
+    await expect(ctx.tools.execute({
+      ...call, callId: ToolCallId('owner-input'), arguments: input, agent: owner,
+    })).resolves.toMatchObject({ isError: false })
+    expect(observe).toHaveBeenCalledExactlyOnceWith(signal)
     expect(actAsBot).toHaveBeenCalledExactlyOnceWith({ kind: 'key', key: 'Escape' }, signal)
     await fiber.dispose()
     expect(ctx.tools.get(call.name)).toBeUndefined()
