@@ -135,7 +135,27 @@ function imageErrorPhase(error: unknown): PanelPhase {
 }
 
 /** Render the Computer tab's image, lease controls, and bounded input affordances. */
-export function ComputerPanel({ computer, sessionId, botId, close, refreshAvailability, local, signIn, t }: ComputerPanelProps): ReactNode {
+export function ComputerPanel({ computer, signIn, ...props }: ComputerPanelProps): ReactNode {
+  const [view, setView] = useState<ComputerView>()
+  const desktop = view === 'desktop' && signIn === undefined ? computer.desktop : undefined
+  const select = computer.desktop === undefined || signIn !== undefined ? undefined : setView
+  return <ComputerViewer key={desktop === undefined ? 'primary' : 'desktop'} {...props}
+    computer={desktop ?? computer} signIn={signIn} view={desktop === undefined ? 'browser' : 'desktop'}
+    restoreFocus={view !== undefined}
+    {...(select === undefined ? {} : { select })} />
+}
+
+type ComputerView = 'browser' | 'desktop'
+
+interface ComputerViewerProps extends ComputerPanelProps {
+  readonly view: ComputerView
+  readonly restoreFocus: boolean
+  readonly select?: (view: ComputerView) => void
+}
+
+function ComputerViewer({
+  computer, sessionId, botId, close, refreshAvailability, local, signIn, view, restoreFocus, select, t,
+}: ComputerViewerProps): ReactNode {
   const viewerIdRef = useRef<string>()
   if (viewerIdRef.current === undefined) viewerIdRef.current = randomUUID()
   const viewerId = viewerIdRef.current
@@ -650,6 +670,12 @@ export function ComputerPanel({ computer, sessionId, botId, close, refreshAvaila
       ? t('computerScopeWorkspaceMeta')
       : undefined
 
+  const canSelectView = local === undefined && select !== undefined && computerStatus?.computer?.desktop === true
+    && computerStatus.computer.id === botId && computerStatus.computer.location === 'vps'
+    && computerStatus.computer.permissionScope === 'bot' && privateSignIn === undefined
+  const viewLocked = busy !== undefined || mode === 'controlling' || networkActionDisabled || restartConfirmOpen
+  const restartingBrowser = computerStatus?.computer?.desktop === true && computerStatus.computer.browser === true
+
   return (
     <section className={css.root} aria-label={t('computerTitle')} data-computer-panel>
       <header className={css.toolbar}>
@@ -675,6 +701,16 @@ export function ComputerPanel({ computer, sessionId, botId, close, refreshAvaila
             : <Button variant="ghost" size="sm" icon={<IconCloseOutlineRegular size={14} />} aria-label={t('computerClose')} onClick={close} />}
         </div>
       </header>
+      {canSelectView && (
+        <div className={css.viewSwitch} role="group" aria-label={t('computerView')}>
+          {(['browser', 'desktop'] as const).map(option => (
+            <Button key={option} size="sm" variant="toolbar" aria-pressed={option === view}
+              autoFocus={restoreFocus && option === view} disabled={viewLocked} onClick={() => { select(option) }}>
+              {t(option === 'browser' ? 'computerViewBrowser' : 'computerViewDesktop')}
+            </Button>
+          ))}
+        </div>
+      )}
       {networkControlAvailable && (
         <div className={css.networkControl} data-computer-network-control>
           <span className={css.networkCopy}>
@@ -717,7 +753,7 @@ export function ComputerPanel({ computer, sessionId, botId, close, refreshAvaila
       {feedback !== undefined && <div className={css.notice} role="alert">{t(feedback)}</div>}
       {restartConfirmOpen && restartActionAvailable && (
         <div className={css.restartConfirm} data-computer-restart-confirm>
-          <p>{t('computerRestartConfirm')}</p>
+          <p>{t(restartingBrowser ? 'computerRestartBrowserConfirm' : 'computerRestartConfirm')}</p>
           <div className={css.restartConfirmActions}>
             <Button variant="ghost" size="sm" disabled={restartBusy} onClick={() => { setRestartConfirmOpen(false) }}>
               {t('cancel')}
@@ -758,7 +794,9 @@ export function ComputerPanel({ computer, sessionId, botId, close, refreshAvaila
           {restartActionAvailable && !restartConfirmOpen && (
             <Button data-computer-restart variant="ghost" size="sm" icon={<IconRefreshOutlineRegular size={14} />}
               disabled={restartActionDisabled} onClick={() => { setRestartConfirmOpen(true) }}>
-              {t(restartBusy ? 'computerRestarting' : 'computerRestart')}
+              {restartingBrowser
+                ? t(restartBusy ? 'computerRestartingBrowser' : 'computerRestartBrowser')
+                : t(restartBusy ? 'computerRestarting' : 'computerRestart')}
             </Button>
           )}
           {local === undefined && <Tooltip label={t('computerPaste')} side="top" delayMs={500}>

@@ -664,6 +664,44 @@ class VaultTest(unittest.TestCase):
         """Return one exact owner action for the fixture Bot/session pair."""
         return {'action': 'set-browser-access', 'bot': bot, 'session': session, 'enabled': enabled}
 
+    def test_owner_roster_authorizes_current_pairs_and_prunes_only_detached_shared_decisions(self):
+        self.store.allow_desktop(OWNER_UID, CLOUD_UID, [])
+        administrator = self.root.parent / 'roster'
+        administrator.mkdir()
+        administrator.chmod(0o755)
+        publisher = administrator / 'cloud'
+        publisher.mkdir()
+        cloud_uid = os.geteuid() or CLOUD_UID
+        if os.geteuid() == 0:
+            os.chown(publisher, cloud_uid, os.getegid())
+        publisher.chmod(0o2750)
+        roster = publisher / 'active.json'
+        original = {'bot': BROWSER_BOT, 'session': BROWSER_SESSION}
+        newcomer = {'bot': 'bot-new', 'session': 'bot-session-bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'}
+        roster.write_text(json.dumps([newcomer], separators=(',', ':')) + '\n')
+        if os.geteuid() == 0:
+            os.chown(roster, cloud_uid, os.getegid())
+        roster.chmod(0o640)
+        grants_patch, policy_patch, group_patch = self.browser_access_files(
+            grants={'version': 1, 'cloudUid': cloud_uid, 'grants': [original]},
+            policy={'version': 1, 'bots': [{**original, 'enabled': True, 'revision': 'b' * 32}]},
+        )
+        request = self.browser_access_request(bot=newcomer['bot'], session=newcomer['session'])
+        with (grants_patch, policy_patch, group_patch, patch.object(vault, 'BROWSER_OWNER_ROSTER', roster),
+              patch.object(vault, 'browser_client', return_value=b'{"ok":true}') as browser):
+            self.assertEqual(vault.browser_grant_pairs(), {(newcomer['bot'], newcomer['session'])})
+            with self.assertRaises(vault.VaultError):
+                self.store.desktop(self.browser_access_request(), OWNER_UID)
+            self.assertEqual(self.store.desktop(request, OWNER_UID), {'ok': True})
+            self.assertEqual([(row['bot'], row['session']) for row in vault.browser_shared_policy()],
+                             [(newcomer['bot'], newcomer['session'])])
+            browser.assert_called_once()
+            roster.chmod(0o600)
+            with self.assertRaises(vault.VaultError):
+                self.store.desktop(request, OWNER_UID)
+            roster.unlink()
+            self.assertFalse(vault.browser_grant_pairs())
+
     def test_browser_access_wire_requires_the_exact_owner_action_and_canonical_session(self):
         valid = self.browser_access_request()
         self.assertEqual(vault.desktop_request(json.dumps(valid).encode()), valid)

@@ -20,6 +20,7 @@ ACCOUNT = 'yharness-browser'
 STATE_ROOT = Path('/var/lib') / ACCOUNT
 INSTALL_ROOT = Path('/usr/local/lib') / ACCOUNT
 CONFIG_ROOT = Path('/etc') / ACCOUNT
+ROSTER_ROOT = Path('/var/lib/yharness-browser-roster')
 GRANTS_PATH = CONFIG_ROOT / 'grants.json'
 SHARED_GRANTS_PATH = CONFIG_ROOT / 'shared-grants.json'
 UNIT_ROOT = Path('/etc/systemd/system')
@@ -58,6 +59,7 @@ class InstallPaths:
     config_root: Path = CONFIG_ROOT
     unit_root: Path = UNIT_ROOT
     runtime_root: Path = RUNTIME_ROOT
+    roster_root: Path = ROSTER_ROOT
 
 
 class BrowserError(Exception):
@@ -423,9 +425,9 @@ def artifact_payload(name):
     return source if source.startswith(ARTIFACT_MARKER) else ARTIFACT_MARKER + source
 
 
-def grant_records(grants, *, shared_bots=()):
+def grant_records(grants, *, shared_bots=(), allow_empty=False):
     """Validate and sort grants with optional shared browser access."""
-    if type(grants) is not list or len(grants) == 0 or len(grants) > 64:
+    if type(grants) is not list or len(grants) > 64 or (not grants and not allow_empty):
         raise BrowserError('Select 1 to 64 isolated browser grants.')
     shared = set(shared_bots)
     if len(shared) != len(shared_bots):
@@ -452,9 +454,31 @@ def grant_records(grants, *, shared_bots=()):
     return sorted(records, key=lambda record: (record['bot'], record['session']))
 
 
-def grants_payload(records):
-    """Encode the immutable grant list without executable or comment fields."""
-    return (json.dumps(records, ensure_ascii=True, separators=(',', ':'), sort_keys=True) + '\n').encode()
+def grants_payload(records, cloud_uid=None):
+    """Encode static grants or owner-roster mode with its pinned publisher UID."""
+    configuration = records if cloud_uid is None else {'version': 1, 'cloudUid': cloud_uid, 'grants': records}
+    return (json.dumps(configuration, ensure_ascii=True, separators=(',', ':'), sort_keys=True) + '\n').encode()
+
+
+def installed_grants(path, cloud_uid, gid):
+    """Keep legacy browser profiles and shared defaults when adopting the owner roster."""
+    info = _file_info(path, 0, gid, 0o640)
+    if info is None:
+        return []
+    if info.st_size > 32 * 1024:
+        raise BrowserError('The existing isolated browser grants are invalid.')
+    data = json.loads(path.read_bytes())
+    if (type(data) is dict and set(data) == {'version', 'cloudUid', 'grants'}
+            and type(data['version']) is int and data['version'] == 1
+            and type(data['cloudUid']) is int and data['cloudUid'] == cloud_uid):
+        data = data['grants']
+    if type(data) is not list or any(
+            type(row) is not dict or set(row) not in ({'bot', 'session'}, {'bot', 'session', 'shared'})
+            or ('shared' in row and row['shared'] is not True) or type(row['bot']) is not str
+            for row in data):
+        raise BrowserError('The existing isolated browser grants are invalid.')
+    return grant_records([(row['bot'], row['session']) for row in data],
+                         shared_bots=[row['bot'] for row in data if row.get('shared') is True], allow_empty=True)
 
 
 def shared_grants_payload(records=()):
@@ -462,8 +486,8 @@ def shared_grants_payload(records=()):
     return (json.dumps({'version': 1, 'bots': list(records)}, ensure_ascii=True, separators=(',', ':')) + '\n').encode()
 
 
-def reconciled_shared_grants(path, grants, uid, gid):
-    """Validate an existing policy and drop only rows absent from the new roster."""
+def reconciled_shared_grants(path, grants, uid, gid, *, owner_roster=False):
+    """Keep exact shared decisions across upgrades of an owner-managed roster."""
     try:
         info = _file_info(path, uid, gid, 0o640)
     except BrowserError:
@@ -506,7 +530,7 @@ def reconciled_shared_grants(path, grants, uid, gid):
         (
             {'bot': record['bot'], 'session': record['session'],
              'enabled': record['enabled'], 'revision': record['revision']}
-            for record in value['bots'] if (record['bot'], record['session']) in roster
+            for record in value['bots'] if owner_roster or (record['bot'], record['session']) in roster
         ),
         key=lambda record: (record['bot'], record['session']),
     )
@@ -588,25 +612,31 @@ def ensure_units_inactive():
             raise BrowserError('Stop the isolated browser service before changing its settings.')
 
 
-def install(chromium, node, cloud_uid, grants, *, paths=InstallPaths(), saved_logins=False, shared_bots=()):
+def install(chromium, node, cloud_uid, grants, *, paths=InstallPaths(), saved_logins=False, shared_bots=(), owner_roster=False):
     """Install the browser worker, sockets, private state, and root grant list."""
     chromium_path = trusted_executable(chromium)
     node_path = trusted_executable(node)
     cloud_uid = _validate_uid_for_unit(cloud_uid)
-    records = grant_records(grants, shared_bots=shared_bots)
+    records = grant_records(grants, shared_bots=shared_bots, allow_empty=owner_roster)
     account = ensure_account()
     if cloud_uid == account.pw_uid:
         raise BrowserError('The Cloud account must not be the isolated browser account.')
+    if owner_roster and not records:
+        records = installed_grants(paths.config_root / GRANTS_PATH.name, cloud_uid, account.pw_gid)
     shared_policy = reconciled_shared_grants(
-        paths.config_root / SHARED_GRANTS_PATH.name, records, 0, account.pw_gid,
+        paths.config_root / SHARED_GRANTS_PATH.name, records, 0, account.pw_gid, owner_roster=owner_roster,
     )
     shared_payload = shared_grants_payload(()) if shared_policy is None else shared_grants_payload(shared_policy)
     _prepare_directories(paths, account)
+    if owner_roster:
+        _directory(paths.roster_root, 0, 0, 0o755, create=True)
+        _directory(paths.roster_root / 'cloud', cloud_uid, account.pw_gid, 0o2750, create=True)
     artifacts = tuple(
         (paths.install_root / name, artifact_payload(name), 0, 0, 0o644, ARTIFACT_MARKER)
         for name in SERVICE_ARTIFACTS
     ) + (
-        (paths.config_root / 'grants.json', grants_payload(records), 0, account.pw_gid, 0o640, None),
+        (paths.config_root / GRANTS_PATH.name, grants_payload(records, cloud_uid if owner_roster else None),
+         0, account.pw_gid, 0o640, None),
         (paths.config_root / SHARED_GRANTS_PATH.name, shared_payload, 0, account.pw_gid, 0o640, None),
         (paths.unit_root / SERVICE_UNIT, service_unit(cloud_uid, node_path, chromium_path, saved_logins=saved_logins), 0, 0, 0o644, MANAGED_MARKER),
         (paths.unit_root / CONTROL_SOCKET_UNIT, control_socket_unit(cloud_uid), 0, 0, 0o644, MANAGED_MARKER),
@@ -641,6 +671,7 @@ def main(argv=None):
     install_parser.add_argument('--chromium', required=True, help='absolute preinstalled Chromium executable')
     install_parser.add_argument('--node', required=True, help='absolute preinstalled Node executable')
     install_parser.add_argument('--saved-logins', action='store_true', help='allow owner-approved logins from the Cloud Vault')
+    install_parser.add_argument('--owner-roster', action='store_true', help='follow the active private Cloud Bot roster')
     cloud = install_parser.add_mutually_exclusive_group()
     cloud.add_argument('--cloud-user', default='yharness-cloud', help='Cloud Linux account owning control.sock')
     cloud.add_argument('--cloud-uid', type=int, help='Cloud uid owning control.sock')
@@ -660,7 +691,7 @@ def main(argv=None):
         if args.action == 'install':
             cloud_uid = args.cloud_uid if args.cloud_uid is not None else user_uid(args.cloud_user)
             install(args.chromium, args.node, cloud_uid, args.grant,
-                    saved_logins=args.saved_logins, shared_bots=args.shared_bot)
+                    saved_logins=args.saved_logins, shared_bots=args.shared_bot, owner_roster=args.owner_roster)
             print('Isolated browser installed; run activate to enable its sockets.')
         else:
             activate()

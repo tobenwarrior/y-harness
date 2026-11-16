@@ -164,6 +164,7 @@ export const Config: z<Config> = z.object({
         z.object({
           socketPath: z.string().required(),
           bots: z.array(String).required(),
+          ownerRosterPath: z.string(),
           sharedBots: z.array(String),
           savedLogins: z.boolean(),
         }),

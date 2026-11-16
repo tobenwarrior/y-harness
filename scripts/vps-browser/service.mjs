@@ -1,7 +1,8 @@
 /** Systemd socket worker for fixed, private Computer operations. */
 
 import { createHash, randomBytes } from 'node:crypto'
-import { lstat, mkdir, readFile, realpath } from 'node:fs/promises'
+import { constants } from 'node:fs'
+import { lstat, mkdir, open, readFile, realpath } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { dirname, isAbsolute, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -15,6 +16,8 @@ const BOT = /^bot-[a-zA-Z0-9][a-zA-Z0-9-]{0,245}$/u
 const SESSION = /^bot-session-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u
 const SHARED_SESSION = /^shared-session-(?:group-)?[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u
 const MAX_BOTS = 64
+const MAX_ROSTER_BYTES = 32 * 1024
+const OWNER_ROSTER = '/var/lib/yharness-browser-roster/cloud/active.json'
 const MAX_PAGES = 4
 const MAX_CLIENTS = 24
 const MAX_REQUEST = 16 * 1024
@@ -62,7 +65,40 @@ export function parseGrants(value) {
   return grants
 }
 
-function parseSharingPolicy(value, grants) {
+async function readOwnerRoster({ path, uid }, trusted) {
+  const directory = dirname(path)
+  const administrator = await lstat(dirname(directory))
+  const publisher = await lstat(directory)
+  if (!administrator.isDirectory() || administrator.uid !== (trusted ? 0 : process.getuid())
+    || (administrator.mode & 0o7777) !== 0o755 || !publisher.isDirectory() || publisher.uid !== uid
+    || publisher.gid !== process.getgid() || (publisher.mode & 0o7777) !== 0o2750) {
+    throw new Error('Invalid isolated browser roster')
+  }
+  let file
+  try { file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK) }
+  catch (error) {
+    if (error?.code === 'ENOENT') return new Map()
+    throw error
+  }
+  try {
+    const info = await file.stat()
+    if (!info.isFile() || info.uid !== uid || info.gid !== publisher.gid || info.nlink !== 1
+      || (info.mode & 0o7777) !== 0o640 || info.size > MAX_ROSTER_BYTES) throw new Error('Invalid isolated browser roster')
+    const buffer = Buffer.alloc(MAX_ROSTER_BYTES + 1)
+    const { bytesRead } = await file.read(buffer, 0, buffer.length, 0)
+    const text = buffer.toString('utf8', 0, bytesRead)
+    const records = JSON.parse(text)
+    if (bytesRead > MAX_ROSTER_BYTES || JSON.stringify(records) + '\n' !== text
+      || !Array.isArray(records) || !records.every(record => fields(record, ['bot', 'session']))) {
+      throw new Error('Invalid isolated browser roster')
+    }
+    return parseGrants(records)
+  } finally {
+    await file.close()
+  }
+}
+
+function parseSharingPolicy(value, grants, managedRoster) {
   if (!fields(value, ['version', 'bots']) || value.version !== 1
     || !Array.isArray(value.bots) || value.bots.length > MAX_BOTS) {
     throw new Error('Invalid shared browser policy')
@@ -74,8 +110,7 @@ function parseSharingPolicy(value, grants) {
       || typeof entry.session !== 'string' || !SESSION.test(entry.session)
       || typeof entry.enabled !== 'boolean'
       || typeof entry.revision !== 'string' || !SHARING_REVISION.test(entry.revision)
-      || bots.has(entry.bot) || !grants.has(entry.bot)
-      || grants.get(entry.bot).session !== entry.session) {
+      || bots.has(entry.bot) || (!managedRoster && grants.get(entry.bot)?.session !== entry.session)) {
       throw new Error('Invalid shared browser policy')
     }
     bots.set(entry.bot, { enabled: entry.enabled, revision: entry.revision, session: entry.session })
@@ -83,7 +118,7 @@ function parseSharingPolicy(value, grants) {
   return bots
 }
 
-async function readSharingPolicy(path, grants, trusted = false) {
+async function readSharingPolicy(path, grants, trusted, managedRoster) {
   try {
     const info = await lstat(path)
     if (!info.isFile() || info.nlink !== 1 || (info.mode & 0o7777) !== SHARED_POLICY_MODE
@@ -91,7 +126,7 @@ async function readSharingPolicy(path, grants, trusted = false) {
       throw new Error('Invalid shared browser policy')
     }
     if (info.size > 32 * 1024) throw new Error('Invalid shared browser policy')
-    return { kind: 'managed', bots: parseSharingPolicy(JSON.parse(await readFile(path, 'utf8')), grants) }
+    return { kind: 'managed', bots: parseSharingPolicy(JSON.parse(await readFile(path, 'utf8')), grants, managedRoster) }
   } catch (error) {
     if (error?.code === 'ENOENT') return { kind: 'legacy', bots: new Map() }
     return { kind: 'invalid', bots: new Map() }
@@ -103,21 +138,21 @@ function sharedProfileSession(bot, sharedSession, revision = undefined) {
   return 'shared-' + createHash('sha256').update(bot + '\0' + suffix).digest('hex')
 }
 
-function sharingPolicy(path, grants, trusted = false) {
+function sharingPolicy(path, grants, trusted, getGrants, managedRoster) {
   let reconciled
   let loading = Promise.resolve()
-  const initial = readSharingPolicy(path, grants, trusted)
+  const initial = readSharingPolicy(path, grants, trusted, managedRoster)
 
   async function latest() {
     await loading
-    return readSharingPolicy(path, grants, trusted)
+    return readSharingPolicy(path, grants, trusted, managedRoster)
   }
 
   async function refresh() {
     let result
     const operation = loading.then(async () => {
       const previous = reconciled ?? await initial
-      const next = await readSharingPolicy(path, grants, trusted)
+      const next = await readSharingPolicy(path, grants, trusted, managedRoster)
       reconciled = next
       result = { previous, next }
     })
@@ -127,10 +162,11 @@ function sharingPolicy(path, grants, trusted = false) {
   }
 
   async function resolve(request) {
-    const grant = grants.get(request.bot)
+    const grant = (await getGrants()).get(request.bot)
     if (grant === undefined || grant.session !== request.ownerSession) throw new Error('Browser unavailable')
     const active = await latest()
-    const override = active.kind === 'managed' ? active.bots.get(request.bot) : undefined
+    const stored = active.kind === 'managed' ? active.bots.get(request.bot) : undefined
+    const override = stored?.session === grant.session ? stored : undefined
     const managed = active.kind === 'managed'
     const legacy = active.kind === 'managed' || active.kind === 'legacy' ? grant.shared === true : false
     const allowed = request.shared === true && active.kind !== 'invalid'
@@ -157,11 +193,13 @@ function sharingPolicy(path, grants, trusted = false) {
     return { managed: resolved.managed, legacy: resolved.legacy, override: resolved.override }
   }
 
-  function affected(previous, next) {
+  async function affected(previous, next) {
     const identities = []
-    for (const [bot, grant] of grants) {
-      const oldOverride = previous.kind === 'managed' ? previous.bots.get(bot) : undefined
-      const newOverride = next.kind === 'managed' ? next.bots.get(bot) : undefined
+    for (const [bot, grant] of await getGrants()) {
+      const oldRow = previous.kind === 'managed' ? previous.bots.get(bot) : undefined
+      const newRow = next.kind === 'managed' ? next.bots.get(bot) : undefined
+      const oldOverride = oldRow?.session === grant.session ? oldRow : undefined
+      const newOverride = newRow?.session === grant.session ? newRow : undefined
       const oldValue = oldOverride === undefined
         ? { enabled: grant.shared === true, revision: undefined }
         : { enabled: oldOverride.enabled, revision: oldOverride.revision }
@@ -183,8 +221,8 @@ function parseControl(value, grants) {
   if (!object(value) || typeof value.bot !== 'string' || typeof value.session !== 'string') throw new Error('Browser unavailable')
   const grant = grants.get(value.bot)
   const shared = grant !== undefined && SHARED_SESSION.test(value.session)
-  if (!shared && grant?.session !== value.session) throw new Error('Browser unavailable')
-  const session = shared ? 'shared-' + createHash('sha256').update(value.bot + '\0' + value.session).digest('hex') : value.session
+  if (grant === undefined || (!shared && grant.session !== value.session)) throw new Error('Browser unavailable')
+  const session = shared ? sharedProfileSession(value.bot, value.session) : grant.profile ?? value.session
   const base = ['action', 'bot', 'session']
   const request = extra => ({
     bot: value.bot, ownerSession: grant.session, shared, sharedSession: shared ? value.session : undefined, session, ...extra,
@@ -568,7 +606,6 @@ function browserLogins(pool, enabled, authorize) {
     return { id: record.id, origin: record.reviewed.origin, destination: record.reviewed.destination, state: 'pending' }
   }
   async function admit(record, release = false) {
-    if (!record.shared) return
     await authorize(record, release)
   }
   async function awaitSharedApproval(record, signal) {
@@ -590,9 +627,7 @@ function browserLogins(pool, enabled, authorize) {
     async control({ bot, ownerSession, sharedSession, session, shared, identity, action, id, challenge }, signal) {
       if (!enabled) return UNAVAILABLE
       if (action === 'request-login') {
-        const request = shared ? { bot, ownerSession, shared: true, sharedSession, session } : undefined
-        const requestAuthorize = request === undefined ? undefined : () => authorize(request, false)
-        const requestRelease = request === undefined ? undefined : () => authorize(request, true)
+        const request = { bot, ownerSession, shared, sharedSession, session }
         return pool.run(session, async page => {
           if (bySession.has(session) || byId.size >= MAX_BOTS) return UNAVAILABLE
           const id = randomBytes(16).toString('hex')
@@ -610,7 +645,7 @@ function browserLogins(pool, enabled, authorize) {
             if (record.state === 'pending' || record.approval !== undefined) finish(record, 'unavailable')
           })
           return view(record)
-        }, signal, undefined, identity, requestAuthorize, requestRelease)
+        }, signal, undefined, identity, () => authorize(request), () => authorize(request, true))
       }
       const record = find(id)
       if (action === 'authorize-login') {
@@ -625,7 +660,7 @@ function browserLogins(pool, enabled, authorize) {
       if (action === 'cancel-login' && (record.state === 'pending' || record.state === 'using' || record.approval !== undefined)) {
         return finish(record, 'unavailable')
       }
-      if (record.shared) await admit(record).catch(() => { throw new Error('Browser unavailable') })
+      await admit(record)
       if (record.approval !== undefined) return { state: 'approval-pending', challenge: record.approval.challenge }
       return { state: record.state === 'using' ? 'pending' : record.state }
     },
@@ -637,18 +672,19 @@ function browserLogins(pool, enabled, authorize) {
         if (body.action === 'cancel-login') return finish(record, 'unavailable')
       }
       if (record.state !== 'pending') return UNAVAILABLE
+      await admit(record)
       if (fields(body, ['action', 'id'])) {
         if (body.action === 'inspect-login') return record.shared
           ? { ...view(record), scope: 'shared', bot: record.bot } : view(record)
         if (body.action === 'inspect-login-automatic' && !record.shared) {
-          return { ...view(record), bot: record.bot, session: record.session }
+          return { ...view(record), bot: record.bot, session: record.ownerSession }
         }
         if (body.action === 'inspect-login-bot') return { bot: record.bot }
       }
       const useFields = ['action', 'id', 'origin', 'username', 'password']
       const botAccount = fields(body, [...useFields, 'bot']) && body.bot === record.bot
       const automatic = fields(body, [...useFields, 'bot', 'session']) && !record.shared
-        && body.bot === record.bot && body.session === record.session
+        && body.bot === record.bot && body.session === record.ownerSession
       if (body.action !== 'use-login' || !(automatic || botAccount || (!record.shared && fields(body, useFields)))
         || body.origin !== record.reviewed.origin || !credential(body.username, 512) || !credential(body.password, 8192)) return UNAVAILABLE
       return pool.run(record.session, async page => {
@@ -668,8 +704,7 @@ function browserLogins(pool, enabled, authorize) {
           return finish(record, result === 'submitted' ? result : 'needs-owner')
         } catch (error) { void error; return finish(record, 'needs-owner') }
       }, signal, undefined, record.identity,
-        record.shared ? () => admit(record, false) : undefined,
-        record.shared ? () => admit(record, true) : undefined)
+        () => admit(record, false), () => admit(record, true))
     },
     retire(predicate) {
       for (const record of byId.values()) {
@@ -688,8 +723,24 @@ function browserLogins(pool, enabled, authorize) {
 /** Build both listeners without binding any TCP port. */
 export function browserServers(options) {
   const pool = browserPool(options)
+  const { grants, ownerRoster } = options
+  const useOwnerRoster = ownerRoster !== undefined
+  const getGrants = async () => {
+    if (ownerRoster === undefined) return grants
+    const roster = await readOwnerRoster(ownerRoster, options.trustedSharing === true)
+    for (const [bot, grant] of roster) {
+      const legacy = grants.get(bot)
+      if (legacy?.session === grant.session) {
+        roster.set(bot, legacy)
+      } else {
+        grant.profile = 'owner-' + createHash('sha256').update(bot + '\0' + grant.session).digest('hex')
+      }
+    }
+    return roster
+  }
   const sharing = sharingPolicy(
-    options.sharingFile ?? join(options.root, 'shared-grants.json'), options.grants, options.trustedSharing === true,
+    options.sharingFile ?? join(options.root, 'shared-grants.json'), grants, options.trustedSharing === true,
+    getGrants, useOwnerRoster,
   )
   let refreshQueue = Promise.resolve()
   async function prepare(request) {
@@ -700,12 +751,17 @@ export function browserServers(options) {
     request.session = resolved.profile
     request.identity = resolved.identity
   }
-  const authorize = (request, release = false) => request.shared
-    ? (release ? sharing.admission(request) : refreshQueue.then(() => sharing.admission(request)))
-    : Promise.resolve()
+  const authorize = async (request, release = false) => {
+    if (request.shared) {
+      if (!release) await refreshQueue
+      await sharing.admission(request)
+    } else if (useOwnerRoster && (await getGrants()).get(request.bot)?.session !== request.ownerSession) {
+      throw new Error('Browser unavailable')
+    }
+  }
   const logins = browserLogins(pool, options.savedLogins === true, authorize)
   const control = endpoint(async (body, signal) => {
-    const request = parseControl(body, options.grants)
+    const request = parseControl(body, await getGrants())
     if (request.action === 'sharing-status') {
       await refreshQueue
       return sharing.status(request.bot, request.ownerSession)
@@ -753,7 +809,7 @@ export function browserServers(options) {
       let reply
       const operation = refreshQueue.then(async () => {
         const result = await sharing.refresh()
-        const affected = sharing.affected(result.previous, result.next)
+        const affected = await sharing.affected(result.previous, result.next)
         const identities = new Set(affected.map(identity => identity.bot + '\0' + identity.ownerSession))
         const isAffected = identity => identities.has(identity.bot + '\0' + identity.ownerSession)
         logins.retire(isAffected)
@@ -811,12 +867,16 @@ async function main() {
   if (grantInfo.size > 32 * 1024 || typeof values.root !== 'string' || !isAbsolute(values.root)) throw new Error('Browser profile unavailable')
   const root = await lstat(values.root)
   if (!root.isDirectory() || root.uid !== uid || (root.mode & 0o077) !== 0) throw new Error('Browser profile unavailable')
-  const grants = parseGrants(JSON.parse(await readFile(grantsFile, 'utf8')))
+  const savedGrants = JSON.parse(await readFile(grantsFile, 'utf8'))
+  const ownerRoster = fields(savedGrants, ['version', 'cloudUid', 'grants'])
+    && savedGrants.version === 1 && savedGrants.cloudUid === cloudUid
+    ? { path: OWNER_ROSTER, uid: cloudUid } : undefined
+  const grants = parseGrants(ownerRoster === undefined ? savedGrants : savedGrants.grants)
   const names = process.env.LISTEN_FDNAMES?.split(':') ?? []
   if (process.env.LISTEN_PID !== String(process.pid) || process.env.LISTEN_FDS !== '2'
     || names.length !== 2 || !names.includes('control') || !names.includes('vault')) throw new Error('Browser sockets unavailable')
   const servers = browserServers({
-    executable, root: values.root, grants, sharingFile, trustedSharing: true, savedLogins: values['saved-logins'],
+    executable, root: values.root, grants, ownerRoster, sharingFile, trustedSharing: true, savedLogins: values['saved-logins'],
   })
   const stop = () => { void servers.close().catch(() => { process.exitCode = 1 }) }
   process.once('SIGTERM', stop)

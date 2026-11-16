@@ -46,6 +46,7 @@ BROWSER_ACCOUNT = 'yharness-browser'
 BROWSER_CONFIG = Path('/etc') / BROWSER_ACCOUNT
 BROWSER_GRANTS = BROWSER_CONFIG / 'grants.json'
 BROWSER_SHARED_GRANTS = BROWSER_CONFIG / 'shared-grants.json'
+BROWSER_OWNER_ROSTER = Path('/var/lib/yharness-browser-roster/cloud/active.json')
 BROWSER_GRANT_LIMIT = 64
 BROWSER_FILE_LIMIT = 32 * 1024
 BROWSER_SESSION = re.compile(
@@ -731,9 +732,8 @@ def read_browser_managed_json(path):
         raise VaultError(BROWSER_UNAVAILABLE) from None
 
 
-def browser_grant_pairs():
-    """Validate the immutable browser roster and return its exact Bot/session pairs."""
-    data = read_browser_managed_json(BROWSER_GRANTS)
+def browser_pairs(data, *, allow_shared=True):
+    """Validate one bounded browser roster with unique Bot and Session identities."""
     if type(data) is not list or len(data) > BROWSER_GRANT_LIMIT:
         raise VaultError(BROWSER_UNAVAILABLE)
     pairs = set()
@@ -742,7 +742,7 @@ def browser_grant_pairs():
     for record in data:
         if type(record) is not dict or set(record) not in ({'bot', 'session'}, {'bot', 'session', 'shared'}) \
                 or not valid_bot(record.get('bot')) or not valid_browser_session(record.get('session')) \
-                or ('shared' in record and record['shared'] is not True):
+                or ('shared' in record and (not allow_shared or record['shared'] is not True)):
             raise VaultError(BROWSER_UNAVAILABLE)
         pair = (record['bot'], record['session'])
         if pair in pairs or record['bot'] in bots or record['session'] in sessions:
@@ -751,6 +751,56 @@ def browser_grant_pairs():
         bots.add(record['bot'])
         sessions.add(record['session'])
     return pairs
+
+
+def read_browser_owner_roster(cloud_uid):
+    """Read exact active pairs from the Cloud-owned file under the installer-owned root."""
+    path = BROWSER_OWNER_ROSTER
+    root_uid = 0 if os.geteuid() == 0 else os.geteuid()
+    group = browser_group_gid()
+    try:
+        administrator = path.parent.parent.lstat()
+        publisher = path.parent.lstat()
+        if (not stat.S_ISDIR(administrator.st_mode) or administrator.st_uid != root_uid
+                or stat.S_IMODE(administrator.st_mode) != 0o755 or not stat.S_ISDIR(publisher.st_mode)
+                or publisher.st_uid != cloud_uid or publisher.st_gid != group
+                or stat.S_IMODE(publisher.st_mode) != 0o2750):
+            raise VaultError(BROWSER_UNAVAILABLE)
+        try:
+            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        except FileNotFoundError:
+            return []
+        with os.fdopen(fd, 'rb') as source:
+            info = os.fstat(source.fileno())
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != cloud_uid or info.st_gid != group
+                    or info.st_nlink != 1 or stat.S_IMODE(info.st_mode) != 0o640 or info.st_size > BROWSER_FILE_LIMIT):
+                raise VaultError(BROWSER_UNAVAILABLE)
+            payload = source.read(BROWSER_FILE_LIMIT + 1)
+        if len(payload) > BROWSER_FILE_LIMIT:
+            raise VaultError(BROWSER_UNAVAILABLE)
+        rows = json.loads(payload.decode('ascii'), object_pairs_hook=exact_object)
+        if (json.dumps(rows, separators=(',', ':'), ensure_ascii=True) + '\n').encode('ascii') != payload:
+            raise VaultError(BROWSER_UNAVAILABLE)
+        return rows
+    except (OSError, UnicodeError, ValueError, RecursionError):
+        raise VaultError(BROWSER_UNAVAILABLE) from None
+
+
+def browser_grants():
+    """Resolve the active roster and report whether Cloud publishes the owner pairs."""
+    data = read_browser_managed_json(BROWSER_GRANTS)
+    if type(data) is dict:
+        if (set(data) != {'version', 'cloudUid', 'grants'} or type(data['version']) is not int or data['version'] != 1
+                or type(data['cloudUid']) is not int or data['cloudUid'] <= 0):
+            raise VaultError(BROWSER_UNAVAILABLE)
+        browser_pairs(data['grants'])
+        return browser_pairs(read_browser_owner_roster(data['cloudUid']), allow_shared=False), True
+    return browser_pairs(data), False
+
+
+def browser_grant_pairs():
+    """Read the exact Bot and Session identities admitted by the installed browser."""
+    return browser_grants()[0]
 
 
 def browser_shared_policy():
@@ -1839,12 +1889,15 @@ class Vault:
     def set_browser_access(self, request):
         """Persist one owner-approved browser decision before asking the worker to reload it."""
         pair = (request['bot'], request['session'])
-        grants = browser_grant_pairs()
+        grants, owner_roster = browser_grants()
         if pair not in grants:
             raise VaultError(BROWSER_UNAVAILABLE)
         records = browser_shared_policy()
-        if any((record['bot'], record['session']) not in grants for record in records):
+        active = [record for record in records if (record['bot'], record['session']) in grants]
+        detached = len(active) != len(records)
+        if detached and not owner_roster:
             raise VaultError(BROWSER_UNAVAILABLE)
+        records = active
         current = next((record for record in records
                         if (record['bot'], record['session']) == pair), None)
         if current is None:
@@ -1856,10 +1909,13 @@ class Vault:
             })
             records.sort(key=lambda record: (record['bot'], record['session']))
             replace_browser_policy(records)
-        elif current['enabled'] != request['enabled']:
-            current['enabled'] = request['enabled']
-            current['revision'] = secrets.token_hex(16)
-            replace_browser_policy(records)
+        else:
+            changed = current['enabled'] != request['enabled']
+            if changed:
+                current['enabled'] = request['enabled']
+                current['revision'] = secrets.token_hex(16)
+            if changed or detached:
+                replace_browser_policy(records)
         return browser_refresh_acknowledged()
 
     def desktop_credential_request(self, request, requester_uid):

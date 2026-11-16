@@ -56,6 +56,83 @@ describe('managed VPS Bot composition', () => {
     }
   })
 
+  it('opens the isolated Browser and Linux Desktop of the same owner Bot with separate leases', async () => {
+    const ctx = new Context()
+    const routes: ConnectionFetchRoute[] = []
+    const bot = { id: BotId('bot-with-browser'), sessionId: BOT_SESSION, state: 'active' }
+    const other = { id: BotId('bot-without-browser'), sessionId: DESKTOP_SESSION, state: 'active' }
+    const browserImage = Buffer.from([0xff, 0xd8, 0xff, 0xda, 0xff, 0xd9])
+    const desktopImage = Buffer.from([0xff, 0xd8, 0xff, 0xd9])
+    const ensure = vi.spyOn(VpsRuntime.prototype, 'ensure').mockResolvedValue(undefined)
+    const desktop = vi.spyOn(VpsRuntime.prototype, 'desktopCommand').mockResolvedValue(desktopImage)
+    const status = vi.spyOn(VpsIsolatedBrowser.prototype, 'status').mockResolvedValue({ available: true })
+    const browser = vi.spyOn(VpsIsolatedBrowser.prototype, 'frame').mockResolvedValue(browserImage)
+    const browserInput = vi.spyOn(VpsIsolatedBrowser.prototype, 'input').mockResolvedValue(undefined)
+    const browserRestart = vi.spyOn(VpsIsolatedBrowser.prototype, 'restart').mockResolvedValue('restarted')
+    const desktopRestart = vi.spyOn(VpsRuntime.prototype, 'restart').mockResolvedValue('restarted')
+    try {
+      ctx.provide('connection', { fetch: { register: (route: ConnectionFetchRoute) => {
+        routes.push(route)
+        return () => { routes.splice(routes.indexOf(route), 1) }
+      } } } as never)
+      ctx.provide('bots', {
+        ownerBotForSession: async (id: string) => [bot, other].find(candidate => candidate.sessionId === id),
+      } as never)
+      await ctx.plugin((scope) => {
+        mountVpsBots(scope, {
+          root: '/yharness-test-bots', image: 'localhost/yharness-test',
+          isolatedBrowser: { socketPath: '/run/yharness-browser.sock', bots: [bot.id] },
+        }, [])
+      })
+      const request = (endpoint: string, body: object): Promise<Response> => {
+        const path = '/api/computer/' + endpoint
+        const route = routes.find(item => item.path === path)
+        if (route === undefined) throw new Error('Computer route was not registered')
+        return Promise.resolve(route.fetch(new Request('http://127.0.0.1' + path, {
+          method: 'POST', body: JSON.stringify(body),
+        })))
+      }
+      const owner = { sessionId: bot.sessionId, viewerId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' }
+      const onDesktop = { ...owner, surface: 'desktop' }
+      const click = { kind: 'click', x: 12, y: 20, button: 1 }
+      await expect((await request('status', owner)).json()).resolves.toMatchObject({
+        available: true, computer: { id: bot.id, browser: true, desktop: true },
+      })
+      expect(ensure).not.toHaveBeenCalled()
+      expect(browser).not.toHaveBeenCalled()
+      const denied = await request('status', { ...onDesktop, sessionId: other.sessionId })
+      await expect(denied.json()).resolves.toMatchObject({ available: false })
+      expect((await request('frame', { ...onDesktop, sessionId: SHARED_BROWSER_SESSION })).status).toBe(409)
+      expect((await request('frame', { ...onDesktop, surface: 'other' })).status).toBe(400)
+
+      await expect((await request('frame', owner)).json()).resolves.toMatchObject({ jpeg: browserImage.toString('base64') })
+      await expect((await request('frame', onDesktop)).json()).resolves.toMatchObject({ jpeg: desktopImage.toString('base64') })
+      expect(ensure).toHaveBeenCalledWith(bot.sessionId)
+
+      expect((await request('take-control', onDesktop)).status).toBe(200)
+      expect((await request('input', { ...owner, action: click })).status).toBe(409)
+      expect((await request('input', { ...onDesktop, action: click })).status).toBe(200)
+      expect(browserInput).not.toHaveBeenCalled()
+      expect(desktop).toHaveBeenCalledWith(bot.sessionId, expect.arrayContaining(['click', '1']), expect.any(AbortSignal), undefined)
+      expect((await request('restart', { sessionId: bot.sessionId, surface: 'desktop' })).status).toBe(409)
+      expect((await request('release-control', onDesktop)).status).toBe(200)
+      expect((await request('restart', { sessionId: bot.sessionId, surface: 'desktop' })).status).toBe(200)
+      expect(desktopRestart).toHaveBeenCalledExactlyOnceWith(bot.sessionId, expect.any(AbortSignal))
+      expect(browserRestart).not.toHaveBeenCalled()
+      expect((await request('restart', { sessionId: bot.sessionId })).status).toBe(200)
+      expect(browserRestart).toHaveBeenCalledExactlyOnceWith(bot.id, bot.sessionId, expect.any(AbortSignal))
+    } finally {
+      ensure.mockRestore()
+      desktop.mockRestore()
+      status.mockRestore()
+      browser.mockRestore()
+      browserInput.mockRestore()
+      browserRestart.mockRestore()
+      desktopRestart.mockRestore()
+      await ctx.fiber.dispose()
+    }
+  })
+
   it('assigns unlisted Bots an on-demand private desktop and preserves their working directory and project access', async () => {
     const ctx = new Context()
     const routes: ConnectionFetchRoute[] = []
@@ -483,6 +560,8 @@ describe('managed VPS Bot composition', () => {
     const readJournal = vi.spyOn(VpsJournal.prototype, 'read').mockResolvedValue({
       version: 1, generatedAt: '2026-01-01T00:00:00.000Z', recovery: [], primaryAudit: [],
     })
+    const startDesktop = vi.spyOn(VpsRuntime.prototype, 'ensure').mockResolvedValue(undefined)
+    const desktopInput = vi.spyOn(VpsRuntime.prototype, 'desktopCommand').mockResolvedValue(Buffer.alloc(0))
     const browserStatus = vi.spyOn(VpsIsolatedBrowser.prototype, 'status').mockResolvedValue({ available: true })
     const browserNavigate = vi.spyOn(VpsIsolatedBrowser.prototype, 'navigate').mockResolvedValue(undefined)
     const browserLogin = vi.spyOn(VpsBrowserLogin.prototype, 'request').mockResolvedValue({ state: 'submitted' })
@@ -581,6 +660,20 @@ describe('managed VPS Bot composition', () => {
       expect(ctx.tools.get('vps_computer', bot)).toBeDefined()
       expect(ctx.tools.get('vps_computer', desktop)).toBeDefined()
       expect(ctx.tools.get('vps_computer', regular)).toBeUndefined()
+      expect(ctx.tools.get('vps_computer', bot)?.parameters).toMatchObject({
+        properties: { surface: { enum: ['desktop'] } },
+      })
+      await expect(ctx.tools.execute({
+        ...call, name: 'vps_computer', callId: ToolCallId('desktop-input'), agent: bot,
+        arguments: { action: 'key', surface: 'desktop', key: 'Escape' },
+      })).resolves.toMatchObject({ isError: false })
+      expect(desktopInput).toHaveBeenCalledWith(BOT_SESSION, expect.arrayContaining(['key', 'Escape']), call.signal, undefined)
+      expect(browserStatus).not.toHaveBeenCalled()
+      await expect(ctx.tools.execute({
+        ...call, name: 'vps_computer', callId: ToolCallId('desktop-website-login'), agent: bot,
+        arguments: { action: 'request_saved_login', surface: 'desktop' },
+      })).resolves.toMatchObject({ isError: true })
+      expect(browserLogin).not.toHaveBeenCalled()
       const handoff = routes.find(route => route.path === '/api/computer/sign-in')
       if (handoff === undefined) throw new Error('Owner handoff route is unavailable')
       const send = (body: object): Promise<Response> => handoff.fetch(new Request('http://127.0.0.1/api/computer/sign-in', {
@@ -690,6 +783,8 @@ describe('managed VPS Bot composition', () => {
     } finally {
       argv.mockRestore()
       readJournal.mockRestore()
+      startDesktop.mockRestore()
+      desktopInput.mockRestore()
       browserStatus.mockRestore()
       browserNavigate.mockRestore()
       browserLogin.mockRestore()
