@@ -63,6 +63,12 @@ ssh -o ExitOnForwardFailure=yes -L 127.0.0.1:3080:127.0.0.1:3080 your-vps \
 
 Open the printed sign-in link in your browser and keep it private. Leave the command running while you use Y Harness. You can close the tunnel and reconnect later while the service continues on the VPS. [Set up your models and workspace](./index.md) in the VPS Web interface.
 
+## Copy model catalogs from Mac
+
+Open Cloud, then choose **Workspace → Copy Model Catalogs to Cloud**. Review how many provider catalogs can be added and confirm the copy. The action adds model definitions for missing routes. Cloud keeps the routes it already has, including provider defaults inherited from its settings.
+
+In Cloud **Settings → Models**, enter a key or sign in for each newly copied provider you want to use. Only ordinary catalog fields cross the connection. Your Mac and Cloud each keep their own credentials and account sign-ins.
+
 ## Watch and control the Computer
 
 Open a Bot in Cloud. Its header identifies the VPS computer it uses and the scope of its permissions. Choose **Computer** to see that Bot’s desktop. Choose an image-capable model so the Bot can read the screen.

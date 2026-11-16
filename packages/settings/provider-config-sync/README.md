@@ -44,6 +44,10 @@ The allowlist contains `displayName`, `api`, a credential-free HTTP(S) `baseURL`
 
 New API-key routes receive a target-owned, unique, intentionally unconfigured credential reference. No credential record is created. Enter a key through that application's masked provider form when desired. New Nous/retired ChatGPT routes require local setup because they cannot use this missing-key protection.
 
+### Copy a catalog to Cloud
+
+In the Mac app, choose **Workspace → Copy Model Catalogs to Cloud** while both workspaces are connected. The action uses the same ordinary provider projection and checks the active settings schemas. It adds missing routes with target-owned credential references. An existing route in Cloud retains its settings. The preview is bound to the destination settings revision, and a concurrent edit requires a new preview.
+
 ### Authentication consent
 
 Ordinary configuration synchronization does not avoid separate authentication. The supported route today is user entry in the target application's masked key form, or an explicit target-app sign-in. The user chooses whether to persist the credential locally; the assistant does not inspect or transfer its value.

@@ -15,6 +15,7 @@ import {
   type CloudWorkspaceStatus,
 } from './cloud-workspace-document.ts'
 import type { DesktopCloudVault } from './cloud-vault-window.ts'
+import type { VaultCloudWorkspace } from './cloud-vault.ts'
 import type { DesktopMessages } from './locale.ts'
 
 const BAR_HEIGHT = 50
@@ -111,17 +112,26 @@ export class DesktopCloudWorkspace {
 
   /** Open Vault for the active Cloud connection. */
   showVault(): void {
-    const { connection, owner, remote, target } = this
-    if (!this.selected || this.status !== 'online' || connection === undefined || owner === undefined
-      || remote === undefined || target === undefined) return
+    const { owner, target } = this
+    const workspace = this.ownerCloudWorkspace()
+    if (owner === undefined || target === undefined || workspace === undefined) return
+    this.vault.open(owner, target, { kind: 'manage' }, workspace)
+  }
+
+  /** @returns The selected owner's current Cloud connection for native settings operations. */
+  ownerCloudWorkspace(): VaultCloudWorkspace | undefined {
+    const { connection, remote } = this
+    if (!this.selected || this.status !== 'online' || connection === undefined || remote === undefined) return undefined
     const contents = remote.webContents
-    this.vault.open(owner, target, { kind: 'manage' }, {
+    return {
       origin: connection.origin,
-      fetch: async (url, options) => {
-        if (this.connection !== connection || contents.isDestroyed()) throw new Error('Cloud workspace disconnected')
+      fetch: (url, options) => {
+        if (!this.selected || this.status !== 'online' || this.connection !== connection || contents.isDestroyed()) {
+          throw new Error('Cloud workspace disconnected')
+        }
         return contents.session.fetch(url, options)
       },
-    })
+    }
   }
 
   /**

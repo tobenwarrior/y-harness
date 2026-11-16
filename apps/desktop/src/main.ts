@@ -40,6 +40,7 @@ import { createCheckoutProbe, detectCheckoutUpdate, detectManagedGithubUpdate, f
   requestManagedGithubRestart, type CheckoutUpdateState } from './update-checkout.ts'
 import { DesktopCommandManager } from './command-management.ts'
 import { serveWebDocument, authenticateWebHost, forwardWebRequest } from './web-document.ts'
+import { prepareCloudProviderCatalogCopy } from './cloud-provider-catalog.ts'
 import { DesktopFatalRecovery } from './fatal-recovery.ts'
 import { pruneCrashReports, RendererConsoleTail, writeCrashReport, type CrashReportSource } from './crash-report.ts'
 import { connectDesktopWelcome, type DesktopWelcomeBackend } from './welcome-backend.ts'
@@ -1065,6 +1066,61 @@ async function main(): Promise<void> {
         join(app.getAppPath(), 'renderer'), () => currentDesktopLocale().messages), () => { macComputer?.revoke() })
     : undefined
 
+  let copyingProviderCatalogs = false
+  const copyProviderCatalogs = async (): Promise<void> => {
+    if (copyingProviderCatalogs || isQuitting()) return
+    copyingProviderCatalogs = true
+    const messages = currentDesktopLocale().messages
+    const title = messages.cloudCopyCatalogsReview
+    const notice = async (message: string): Promise<void> => {
+      if (!isQuitting()) await ordinaryMessageBox({ type: 'info', title, message, buttons: [messages.updateAcknowledge] })
+    }
+    try {
+      const macUrl = hostUrl
+      const macCookie = hostCookie
+      const destination = cloudWorkspace?.ownerCloudWorkspace()
+      if (backend.state.phase !== 'ready' || macUrl === undefined || macCookie === undefined || destination === undefined) {
+        await notice(messages.cloudCopyCatalogsReady)
+        return
+      }
+      const transfer = await prepareCloudProviderCatalogCopy({
+        origin: new URL(macUrl).origin,
+        fetch: (url, options) => {
+          if (hostUrl !== macUrl || hostCookie !== macCookie || backend.state.phase !== 'ready') {
+            throw new Error('Mac workspace disconnected')
+          }
+          const headers = new Headers(options.headers)
+          headers.set('cookie', macCookie)
+          return fetch(url, { ...options, headers })
+        },
+      }, destination)
+      const counts = messages.cloudCopyCatalogsCounts
+        .replace('{additions}', String(transfer.additions))
+        .replace('{retained}', String(transfer.retained))
+        .replace('{skipped}', String(transfer.skipped))
+      if (transfer.additions === 0) {
+        await notice(messages.cloudCopyCatalogsEmpty + ' ' + counts)
+        return
+      }
+      if (isQuitting()) return
+      const consent = await ordinaryMessageBox({
+        type: 'info', title, message: messages.cloudCopyCatalogsReview,
+        detail: counts + '\n' + messages.cloudCopyCatalogsKeyHint,
+        buttons: [messages.cloudCopyCatalogsConfirm, messages.cancel], cancelId: 1, defaultId: 1,
+      })
+      if (consent.response !== 0 || isQuitting()) return
+      if (hostUrl !== macUrl || hostCookie !== macCookie || backend.state.phase !== 'ready') {
+        throw new Error('Mac workspace disconnected')
+      }
+      await transfer.apply()
+      await notice(messages.cloudCopyCatalogsDone + ' ' + messages.cloudCopyCatalogsKeyHint)
+    } catch (_error) {
+      await notice(messages.cloudCopyCatalogsFailed)
+    } finally {
+      copyingProviderCatalogs = false
+    }
+  }
+
   const automaticCheck = (): void => {
     if (!quitting) void mandatoryPolicy?.check('foreground-or-resume').catch((error: unknown) => { console.error(error) })
     if (!quitting) void updateSchedule.check().catch((error: unknown) => { console.error(error) })
@@ -1098,6 +1154,9 @@ async function main(): Promise<void> {
       submenu: [
         { label: currentDesktopLocale().messages.cloudOpenMac, click: () => { cloudWorkspace?.showMac() } },
         { label: currentDesktopLocale().messages.cloudOpen, click: () => { cloudWorkspace?.showCloud() } },
+        { type: 'separator' },
+        { label: currentDesktopLocale().messages.cloudCopyCatalogs,
+          click: () => { void copyProviderCatalogs().catch((_error: unknown) => undefined) } },
       ],
     }, { role: 'windowMenu' }]
     : [{ role: 'editMenu' }]

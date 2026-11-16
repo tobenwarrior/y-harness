@@ -2436,7 +2436,7 @@ export interface Config {
 ## `@yharness/provider-config-sync`
 
 - `inject`: `settings` · `profileContext`
-- `source`: [`packages/settings/provider-config-sync/src/index.ts:21`](../packages/settings/provider-config-sync/src/index.ts)
+- `source`: [`packages/settings/provider-config-sync/src/index.ts:24`](../packages/settings/provider-config-sync/src/index.ts)
 
 ```ts config-catalog
 /** Pairing is explicit; no shared location is selected by default. */

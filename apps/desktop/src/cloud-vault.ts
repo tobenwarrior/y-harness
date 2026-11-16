@@ -1,4 +1,5 @@
 /** Write-only VPS Vault management over the owner's existing SSH login. */
+import { readBoundedJson } from './web-document.ts'
 import { execFile, type ChildProcess, type ExecFileOptions } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { isIP } from 'node:net'
@@ -620,27 +621,6 @@ export function vaultRequestAllowed(value: unknown, scope: VaultRequestMode | Va
   return scope === undefined || (typeof scope !== 'string' && scope.kind === 'manage')
 }
 
-async function readCloudReply(response: Response, maxBytes: number): Promise<unknown> {
-  if (!response.ok || response.body === null) return undefined
-  const reader = response.body.getReader()
-  const chunks: Uint8Array[] = []
-  let remaining = maxBytes
-  try {
-    for (;;) {
-      const next = await reader.read()
-      if (next.done) return JSON.parse(Buffer.concat(chunks).toString('utf8'))
-      remaining -= next.value.byteLength
-      if (remaining < 0) {
-        await reader.cancel()
-        return undefined
-      }
-      chunks.push(next.value)
-    }
-  } finally {
-    reader.releaseLock()
-  }
-}
-
 interface VaultPolicy {
   readonly mode: 'managed' | 'external' | 'disabled'
   readonly sharedScopes: boolean
@@ -656,7 +636,7 @@ async function readCloudVaultPolicy(
       method: 'GET', redirect: 'error', credentials: 'include', cache: 'no-store',
       signal: AbortSignal.any([signal, AbortSignal.timeout(5_000)]),
     })
-    const reply = await readCloudReply(response, MAX_ACCESS_MODE_BYTES)
+    const reply = await readBoundedJson(response, MAX_ACCESS_MODE_BYTES)
     if (signal.aborted || !record(reply) || Object.keys(reply).length !== 1) return undefined
     const { mode } = reply
     if (mode !== 'managed' && mode !== 'external' && mode !== 'disabled') return undefined
@@ -685,7 +665,7 @@ export async function readCloudVaultBots(
       body: JSON.stringify({ type: 'client-request', rpcId, method: 'bots/list', payload: { args: { request: { includeHidden: true } } } }),
       signal: AbortSignal.any([signal, AbortSignal.timeout(5_000)]),
     })
-    const reply = await readCloudReply(response, MAX_ROSTER_BYTES)
+    const reply = await readBoundedJson(response, MAX_ROSTER_BYTES)
     if (signal.aborted || !record(reply) || reply.type !== 'server-response' || reply.rpcId !== rpcId
       || !record(reply.result) || reply.result.ok !== true || !record(reply.result.value)
       || !Array.isArray(reply.result.value.bots)) return undefined
@@ -745,7 +725,7 @@ async function readCloudBrowserAccess(
       method: 'GET', redirect: 'error', credentials: 'include', cache: 'no-store',
       signal: AbortSignal.any([signal, AbortSignal.timeout(5_000)]),
     })
-    const reply = await readCloudReply(response, MAX_BROWSER_ACCESS_BYTES)
+    const reply = await readBoundedJson(response, MAX_BROWSER_ACCESS_BYTES)
     if (signal.aborted) return undefined
     return browserAccessBody(reply)
   } catch (_error) {

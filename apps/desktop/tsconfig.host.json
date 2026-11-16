@@ -15,6 +15,9 @@
       "path": "../../packages/util/home-paths"
     },
     {
+      "path": "../../packages/settings/provider-config-sync"
+    },
+    {
       "path": "../../packages/credentials/deepseek-account"
     },
     {

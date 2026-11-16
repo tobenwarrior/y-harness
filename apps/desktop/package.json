@@ -55,6 +55,7 @@
     "@yharness/client-ui-settings-general": "workspace:*",
     "@yharness/client-ui-sidebar-browser": "workspace:*",
     "@yharness/home-paths": "workspace:*",
+    "@yharness/provider-config-sync": "workspace:*",
     "@electron/get": "^5.1.0",
     "@electron/notarize": "2.5.0",
     "@types/js-yaml": "^4.0.9",
