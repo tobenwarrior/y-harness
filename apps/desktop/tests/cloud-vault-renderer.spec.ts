@@ -623,6 +623,38 @@ it('assigns a website login to a Bot and displays its account without exposing t
   expect((p.element('login-password') as HTMLInputElement).value).toBe('')
 })
 
+it('shows a masked code field for a verification request and sends it once', async () => {
+  const id = 'c'.repeat(32)
+  const origin = 'https://example.test'
+  const destination = origin + '/verify'
+  const code = '041235'
+  const request = vi.fn(async (value: unknown) => {
+    if (value && typeof value === 'object' && 'action' in value && value.action === 'inspect-login-use') {
+      return { request: { id, origin, destination, purpose: 'verification', logins: [] } }
+    }
+    return { state: 'submitted' }
+  })
+  const p = page({ kind: 'login-use', id }, request)
+  p.run()
+  await expect.poll(() => p.element('title').textContent).toBe('Website verification')
+  const input = p.element('login-use-code') as HTMLInputElement
+  expect(input.type).toBe('password')
+  expect(input.disabled).toBe(false)
+  expect(p.dom.window.document.activeElement).toBe(input)
+  expect(p.element('login-use-username').hidden).toBe(true)
+  expect(p.element('login-use-password').hidden).toBe(true)
+  expect(p.element('login-use-save-toggle').hidden).toBe(true)
+  expect(p.element('login-use-approve').hidden).toBe(true)
+  input.value = code
+  p.element('login-use-entry').dispatchEvent(new p.dom.window.Event('submit', { bubbles: true, cancelable: true }))
+  await expect.poll(() => p.element('login-use-outcome').textContent).toContain('Verification code sent')
+  expect(input.value).toBe('')
+  expect(request.mock.calls).toEqual([
+    [{ action: 'inspect-login-use', id, form: 'entry' }],
+    [{ action: 'enter-verification-code', id, origin, destination, code }],
+  ])
+})
+
 it('reviews a CSV in Vault before importing personal logins', async () => {
   const login = { origin: 'https://example.com', label: 'Example account', username: 'fixture-user' }
   const id = 'f'.repeat(32)

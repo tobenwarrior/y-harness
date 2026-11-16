@@ -781,6 +781,43 @@ test('reserves the exact browser for one owner-approved login and consumes it on
   assert.deepEqual(await controlResponse(control, { ...request, action: 'frame' }), { jpeg: '/9j/2Q==', width: 1280, height: 800 })
 })
 
+test('delivers a one-time code only to its exact reviewed private browser', async t => {
+  const origin = 'https://login.example.test'
+  const destination = `${origin}/verify`
+  const observed = []
+  const { control, vault } = await setup(t, {
+    savedLogins: true,
+    grants: parseGrants([{ ...request, shared: true }]),
+    createPage: async () => ({
+      captureLogin: async () => ({ origin, destination, purpose: 'verification' }),
+      submitVerification: async (reviewed, code) => {
+        observed.push({ destination: reviewed.destination, code })
+        return 'submitted'
+      },
+      close: async () => {}, closed: new Promise(() => {}),
+    }),
+  })
+  assert.deepEqual(await controlResponse(control, {
+    bot: BOT, session: 'shared-session-cccccccc-cccc-4ccc-8ccc-cccccccccccc', action: 'request-login',
+  }), { error: 'unavailable' })
+  const pending = await controlResponse(control, { ...request, action: 'request-login' })
+  assert.deepEqual(pending, { id: pending.id, origin, destination, purpose: 'verification', state: 'pending' })
+  assert.deepEqual(await controlResponse(vault, { action: 'inspect-login', id: pending.id }), { ...pending, ...request })
+  assert.deepEqual(await controlResponse(vault, { action: 'inspect-login-automatic', id: pending.id }), { error: 'unavailable' })
+  const use = { action: 'use-verification', id: pending.id, origin, destination, code: '041235', ...request }
+  for (const forbidden of [
+    { ...use, origin: 'https://elsewhere.test' }, { ...use, destination: `${origin}/other` },
+    { ...use, session: otherSession }, { ...use, bot: 'bot-other' }, { ...use, code: 'bad\ncode' },
+    { action: 'use-login', id: pending.id, origin, username: 'fixture', password: 'fixture', ...request },
+  ]) assert.deepEqual(await controlResponse(vault, forbidden), { error: 'unavailable' })
+  assert.deepEqual(await controlResponse(control, use), { error: 'unavailable' })
+  assert.deepEqual(observed, [])
+  assert.deepEqual(await controlResponse(vault, use), { state: 'submitted' })
+  assert.deepEqual(await controlResponse(vault, use), { error: 'unavailable' })
+  assert.deepEqual(await controlResponse(control, { ...request, action: 'login-status', id: pending.id }), { state: 'submitted' })
+  assert.deepEqual(observed, [{ destination, code: use.code }])
+})
+
 test('exposes and consumes only the exact private automatic login form', async t => {
   const origin = 'https://login.example.test'
   const destination = `${origin}/session`

@@ -13,6 +13,12 @@ import css from './BotVaultRequestCard.module.css'
 export type BotWebsiteLoginRequestCardProps = PropsRuntime<'conversation.composer.dock'>
   & PropsLocale<'bots'>
 
+const loginRequestCopy = {
+  signIn: { titleKey: 'websiteLoginRequestTitle', action: 'websiteLoginOpenDesktop', hint: 'websiteLoginDesktopOnly' },
+  signup: { titleKey: 'websiteSignupRequestTitle', action: 'websiteSignupOpenDesktop', hint: 'websiteSignupDesktopOnly' },
+  verification: { titleKey: 'websiteVerificationRequestTitle', action: 'websiteVerificationOpenDesktop', hint: 'websiteVerificationDesktopOnly' },
+} as const
+
 interface SessionRequest {
   readonly sessionId: string
   readonly request: BotWebsiteLoginRequest
@@ -46,9 +52,8 @@ export function BotWebsiteLoginRequestCard({ botChat, sessionId, useSession, t }
 
   if (request === null) return null
   const desktop = isYHarnessCloudDesktop(typeof navigator === 'undefined' ? '' : navigator.userAgent)
-  const signup = request.purpose === 'signup'
-  const title = request.scope === 'shared' ? t('websiteLoginSharedRequestTitle')
-    : t(signup ? 'websiteSignupRequestTitle' : 'websiteLoginRequestTitle')
+  const copy = loginRequestCopy[request.purpose ?? 'signIn']
+  const title = t(request.scope === 'shared' ? 'websiteLoginSharedRequestTitle' : copy.titleKey)
   return (
     <section className={css.card} aria-label={title}>
       <span className={css.icon} aria-hidden="true"><IconShieldOutlineRegular size={16} /></span>
@@ -62,9 +67,9 @@ export function BotWebsiteLoginRequestCard({ botChat, sessionId, useSession, t }
         </div>
         {desktop
           ? <a className={css.action} href={`/__yharness/vault-login-use/${request.id}`}>
-            {t(signup ? 'websiteSignupOpenDesktop' : 'websiteLoginOpenDesktop')}
+            {t(copy.action)}
           </a>
-          : <p className={css.desktopHint}>{t(signup ? 'websiteSignupDesktopOnly' : 'websiteLoginDesktopOnly')}</p>}
+          : <p className={css.desktopHint}>{t(copy.hint)}</p>}
       </div>
     </section>
   )

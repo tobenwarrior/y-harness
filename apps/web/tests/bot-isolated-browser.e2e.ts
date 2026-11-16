@@ -29,8 +29,18 @@ const REPLY = 'I opened the website.'
 const DESKTOP_REPLY = 'I sent the key to my Linux desktop.'
 const LOGIN = { id: 'a'.repeat(32), origin: 'https://example.test', destination: 'https://example.test/session', state: 'pending' }
 const SHARED_LOGIN = { ...LOGIN, id: 'b'.repeat(32) }
-const SIGNUP = { ...LOGIN, id: 'd'.repeat(32), destination: 'https://example.test/signup', purpose: 'signup' }
-const SIGNUP_REPLY = 'The signup form was submitted. I’ll check the site.'
+const SECURE_FORMS = [
+  {
+    request: { ...LOGIN, id: 'd'.repeat(32), destination: 'https://example.test/signup', purpose: 'signup' },
+    cue: 'secure signup', title: 'Approve website signup', action: 'Review signup', section: 'Signup approval',
+    result: 'signup form was submitted', reply: 'The signup form was submitted. I’ll check the site.',
+  },
+  {
+    request: { ...LOGIN, id: 'e'.repeat(32), destination: 'https://example.test/verify', purpose: 'verification' },
+    cue: 'secure verification', title: 'Website verification', action: 'Enter code', section: 'Verification code',
+    result: 'verification code was submitted', reply: 'I sent the verification code. I’ll check the site.',
+  },
+] as const
 const SHARED_CHALLENGE = 'c'.repeat(32)
 const LOGIN_REPLY = 'The login was submitted. I’ll check the page.'
 const ROUTINE_NEEDS_OWNER = 'The scheduled check needs the owner to sign in.'
@@ -49,8 +59,8 @@ class BrowserAdapter extends LlmAdapter {
       message.role === 'user' && !CONTEXT_SOURCES.includes(message.source?.kind ?? ''))
     const input = options.messages[latestUser]?.content.filter(block => block.type === 'text').map(block => block.text).join(' ') ?? ''
     const desktop = input.includes('Use the Linux desktop')
-    const signup = input.includes('secure signup')
-    const savedLogin = signup || input.includes('saved login')
+    const secureForm = SECURE_FORMS.find(form => input.includes(form.cue))
+    const savedLogin = secureForm !== undefined || input.includes('saved login')
     const routine = input.includes('scheduled check')
     const unapproved = input.includes('without a grant')
     const handoff = input.includes('take over')
@@ -60,7 +70,7 @@ class BrowserAdapter extends LlmAdapter {
     if (result === undefined && !checkSharing) {
       const id = ToolCallId(desktop ? 'fixture-desktop-input'
         : routine ? (unapproved ? 'fixture-routine-unapproved' : 'fixture-routine-approved')
-          : handoff ? 'fixture-browser-handoff' : signup ? 'fixture-browser-signup'
+          : handoff ? 'fixture-browser-handoff' : secureForm !== undefined ? `fixture-browser-${secureForm.request.purpose}`
             : savedLogin ? 'fixture-browser-login' : 'fixture-browser-navigation')
       const name = shared ? 'shared_browser' : 'vps_computer'
       const args = JSON.stringify(desktop ? { action: 'key', key: 'Escape', surface: 'desktop' }
@@ -85,19 +95,20 @@ class BrowserAdapter extends LlmAdapter {
       expect(result.content).toEqual([expect.objectContaining({ type: 'text', text: returned })])
       expect(JSON.stringify(options.messages.slice(latestUser))).not.toContain('fixture-input')
     } else if (savedLogin) {
-      const resultText = signup ? 'signup form was submitted'
-        : unapproved ? 'This routine needs the owner' : 'sign-in submission'
+      const resultText = secureForm?.result ?? (unapproved ? 'This routine needs the owner' : 'sign-in submission')
       expect(result.content.some(block => block.type === 'text' && block.text.includes(resultText))).toBe(true)
       expect(JSON.stringify(result)).not.toContain(LOGIN.destination)
       expect(JSON.stringify(result)).not.toContain(LOGIN.id)
       expect(JSON.stringify(result)).not.toContain(SHARED_LOGIN.id)
-      expect(JSON.stringify(result)).not.toContain(SIGNUP.id)
-      expect(JSON.stringify(result)).not.toContain(SIGNUP.destination)
+      for (const { request } of SECURE_FORMS) {
+        expect(JSON.stringify(result)).not.toContain(request.id)
+        expect(JSON.stringify(result)).not.toContain(request.destination)
+      }
     } else {
       expect(result.content.some(block => block.type === 'text' && block.text.includes('Browser'))).toBe(true)
     }
     const text = desktop ? DESKTOP_REPLY : checkSharing ? BROWSER_DISABLED : handoff ? HANDOFF_REPLY
-      : routine ? (unapproved ? ROUTINE_NEEDS_OWNER : ROUTINE_REPLY) : signup ? SIGNUP_REPLY : savedLogin ? LOGIN_REPLY : REPLY
+      : routine ? (unapproved ? ROUTINE_NEEDS_OWNER : ROUTINE_REPLY) : secureForm?.reply ?? (savedLogin ? LOGIN_REPLY : REPLY)
     yield { type: 'block-start', index: 0, blockType: 'text' }
     yield { type: 'text-delta', index: 0, text }
     yield { type: 'block-end', index: 0, block: { type: 'text', text } }
@@ -119,8 +130,8 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('opens websites for
   let handoff: { readonly lease: string; readonly session: string } | undefined
   let handoffLease: string | undefined
   let loginApproved = false
-  let signupFormOpen = false
-  let signupApproved = false
+  let currentForm: typeof SECURE_FORMS[number]['request'] | undefined
+  const approvedForms = new Set<string>()
   let automaticAllowed = false
   let automaticAttempts = 0
   let sharedApproved = false
@@ -220,7 +231,7 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('opens websites for
             }
             response = holding && (!owner || request.origin !== LOGIN.origin) ? { error: 'unavailable' } : { ok: true }
             break
-          case 'request-login': response = shared ? SHARED_LOGIN : signupFormOpen ? SIGNUP : LOGIN; break
+          case 'request-login': response = shared ? SHARED_LOGIN : currentForm ?? LOGIN; break
           case 'automatic-login':
             automaticAttempts++
             response = !shared && request.bot === BOT && request.session === ownerSession && request.id === LOGIN.id
@@ -229,7 +240,8 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('opens websites for
           case 'login-status':
             response = shared && sharedApproved && !sharedAuthorized
               ? { state: 'approval-pending', challenge: SHARED_CHALLENGE }
-              : { state: (shared ? sharedAuthorized : request.id === SIGNUP.id ? signupApproved : loginApproved) ? 'submitted' : 'pending' }
+              : { state: (shared ? sharedAuthorized : request.id === LOGIN.id ? loginApproved
+                : approvedForms.has(request.id ?? '')) ? 'submitted' : 'pending' }
             break
           case 'authorize-login':
             sharedAuthorized = shared && sharedApproved && request.id === SHARED_LOGIN.id && request.challenge === SHARED_CHALLENGE
@@ -372,23 +384,27 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('opens websites for
     await conversation.getByText(LOGIN_REPLY, { exact: true }).waitFor()
     await approval.waitFor({ state: 'hidden' })
 
-    signupFormOpen = true
-    await conversation.locator('[data-composer-input][contenteditable="true"]').fill('Use secure signup on the test website.')
-    await conversation.getByRole('button', { name: 'Send message', exact: true }).click()
-    const signupSelector = 'section[aria-label="Approve website signup"]'
-    const signup = page.locator(signupSelector)
-    const reviewSignup = signup.getByRole('link', { name: 'Review signup' })
-    await reviewSignup.waitFor()
-    expect(await signup.locator('input').count()).toBe(0)
-    expect(await reviewSignup.getAttribute('href')).toBe(`/__yharness/vault-login-use/${SIGNUP.id}`)
-    expect(await (await web.hostFetch(loginRoute)).json()).toEqual({
-      request: { id: SIGNUP.id, origin: SIGNUP.origin, destination: SIGNUP.destination, purpose: SIGNUP.purpose },
-    })
-    const signupReview = await captureStableAria(page, signupSelector, web.workspaceCwd, { replacements: [[SIGNUP.id, '{{id}}']] })
-    signupApproved = true
-    await conversation.getByText(SIGNUP_REPLY, { exact: true }).waitFor()
-    await signup.waitFor({ state: 'hidden' })
-    signupFormOpen = false
+    const secureFormSnapshots: string[] = []
+    for (const { request, cue, title, action, section, reply } of SECURE_FORMS) {
+      currentForm = request
+      await conversation.locator('[data-composer-input][contenteditable="true"]').fill(`Use ${cue} on the test website.`)
+      await conversation.getByRole('button', { name: 'Send message', exact: true }).click()
+      const selector = `section[aria-label="${title}"]`
+      const card = page.locator(selector)
+      const openReview = card.getByRole('link', { name: action })
+      await openReview.waitFor()
+      expect(await card.locator('input').count()).toBe(0)
+      expect(await openReview.getAttribute('href')).toBe(`/__yharness/vault-login-use/${request.id}`)
+      expect(await (await web.hostFetch(loginRoute)).json()).toEqual({
+        request: { id: request.id, origin: request.origin, destination: request.destination, purpose: request.purpose },
+      })
+      const review = await captureStableAria(page, selector, web.workspaceCwd, { replacements: [[request.id, '{{id}}']] })
+      secureFormSnapshots.push(`## ${section}\n\n${review}`)
+      approvedForms.add(request.id)
+      await conversation.getByText(reply, { exact: true }).waitFor()
+      await card.waitFor({ state: 'hidden' })
+    }
+    currentForm = undefined
 
     await web.ctx.schedule.create(bot.sessionId, {
       title: 'Website check without approval', prompt: 'Use the saved login for this scheduled check without a grant.', after_seconds: 1,
@@ -544,7 +560,7 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('opens websites for
     expect(consoleLog.pageErrors).toEqual([])
     await compareOrRefreshGolden(GOLDEN,
       [`## In control\n\n${controlling}`, `## Watching\n\n${viewing}`, `## Linux desktop\n\n${desktopViewing}`,
-        `## Saved login approval\n\n${review}`, `## Signup approval\n\n${signupReview}`,
+        `## Saved login approval\n\n${review}`, ...secureFormSnapshots,
         `## Scheduled login\n\n${unapprovedReply}\n\n${routineReply}`, `## Shared login approval\n\n${sharedReview}`,
         `## Shared browser sign-in\n\n${handoffCardAria}`, `## Shared browser in control\n\n${handoffPanelAria}`].join('\n\n'),
       MODE)

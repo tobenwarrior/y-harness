@@ -87,9 +87,9 @@ function registerVpsComputer(
       + (signIn === undefined ? '' : ' For a website sign-in or verification that needs the owner, use request_sign_in. '
         + 'The owner uses the Computer directly. Never ask for a password or code in chat.')
       + (navigate === undefined ? '' : ' Use navigate for an HTTP(S) website URL without credentials.')
-      + (savedLogin === undefined ? '' : ' Use request_saved_login on a website sign-in or signup form. '
+      + (savedLogin === undefined ? '' : ' Use request_saved_login on a website sign-in, signup, or one-time-code form. '
         + 'The owner can authorize automatic sign-in for this Bot and website. In a direct owner chat, the owner can also select '
-        + 'or enter a login, or let Vault create a password for a new account. Verify the page after submission.'),
+        + 'or enter a login, approve a generated password, or enter a verification code privately. Verify the page after submission.'),
     keyDescription: 'X11 key or chord, for example Return or ctrl+a.',
     observe: async (sessionId, signal) => (await resolve(sessionId, signal)).observe(signal),
     act: async (sessionId, action, signal) => (await resolve(sessionId, signal)).actAsBot(action, signal),
@@ -259,6 +259,19 @@ function computerToolDefinition(ctx: Context, target: ComputerToolTarget): ToolD
             : 'Secure website sign-in takes no arguments and requires the owner Bot chat.')
         }
         const result = await target.savedLogin(exec.agent, exec.signal)
+        if (result.purpose === 'verification') {
+          switch (result.state) {
+            case 'submitted':
+              return { message: 'The verification code was submitted. Check the website to confirm sign-in.' }
+            case 'approval-required':
+              return { message: 'Ask the owner to open the secure verification form in this Bot’s direct chat. Keep the code out of messages.' }
+            case 'needs-owner':
+              return { message: 'The website needs manual verification.'
+                + (target.signIn === undefined ? '' : ' Use request_sign_in to ask the owner to take over.') }
+            case 'unavailable':
+              return { message: 'The verification request ended. Ask the owner before trying again.' }
+          }
+        }
         const signup = result.purpose === 'signup'
         switch (result.state) {
           case 'submitted':

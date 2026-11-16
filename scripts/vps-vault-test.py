@@ -1132,6 +1132,53 @@ class VaultTest(unittest.TestCase):
                 self.assertEqual(submitted, [request['id']])
         self.assertEqual(self.store.desktop({'action': 'list-bot-logins'}, OWNER_UID)['botLogins'][0]['label'], 'New account')
 
+    def test_website_verification_code_reaches_only_the_reviewed_owner_form(self):
+        self.store.allow_desktop(OWNER_UID, CLOUD_UID, [])
+        request = {'action': 'enter-verification-code', 'id': 'c' * 32, 'origin': 'https://example.com',
+                   'destination': 'https://example.com/verify', 'code': '041235'}
+        page = {key: request[key] for key in ('id', 'origin', 'destination')}
+        inspected = {**page, 'state': 'pending', 'purpose': 'verification',
+                     'bot': BROWSER_BOT, 'session': BROWSER_SESSION}
+        deliveries = []
+
+        def exchange(payload):
+            call = json.loads(payload)
+            if call['action'] == 'inspect-login':
+                return json.dumps(inspected if not deliveries else {'error': 'unavailable'}).encode()
+            self.assertEqual(call, {**page, 'action': 'use-verification', 'bot': BROWSER_BOT,
+                                    'session': BROWSER_SESSION, 'code': request['code']})
+            deliveries.append(call['id'])
+            return b'{"state":"submitted"}'
+
+        value = vault.desktop_request(json.dumps(request).encode())
+        for invalid in ({**request, 'saveLabel': 'Example'}, {**request, 'code': 'bad\ncode'},
+                        {**request, 'destination': 'https://elsewhere.test/verify'}):
+            with self.assertRaises(vault.VaultError):
+                vault.desktop_request(json.dumps(invalid).encode())
+        with self.assertRaises(vault.VaultError):
+            vault.cloud_request(json.dumps(request).encode())
+
+        with patch.object(vault, 'browser_client', side_effect=exchange):
+            with self.assertRaises(vault.VaultError):
+                self.store.desktop(value, CLOUD_UID)
+            self.assertEqual(self.store.desktop({'action': 'inspect-login-use', 'id': request['id'],
+                                                 'form': 'entry'}, OWNER_UID),
+                             {'request': {**page, 'purpose': 'verification', 'logins': []}})
+            with patch.object(vault, 'browser_grant_pairs', return_value=set()):
+                self.assertEqual(self.store.desktop(value, OWNER_UID), {'state': 'unavailable'})
+            with patch.object(vault, 'browser_grant_pairs', return_value={(BROWSER_BOT, BROWSER_SESSION)}):
+                wrong_page = {**value, 'destination': request['origin'] + '/other'}
+                self.assertEqual(self.store.desktop(wrong_page, OWNER_UID), {'state': 'unavailable'})
+                wrong_action = {'action': 'enter-login-use', **page, 'username': 'fixture', 'password': 'fixture'}
+                self.assertEqual(self.store.desktop(wrong_action, OWNER_UID), {'state': 'unavailable'})
+                self.assertEqual(deliveries, [])
+                self.assertEqual(self.store.desktop(value, OWNER_UID), {'state': 'submitted'})
+                self.assertEqual(self.store.desktop(value, OWNER_UID), {'state': 'unavailable'})
+        self.assertEqual(deliveries, [request['id']])
+        self.assertEqual(self.sealed, [])
+        self.assertEqual(self.store.website_login_records(), [])
+        self.assertEqual(self.store.website_login_records(scoped=True), [])
+
     def test_entered_login_requires_the_owner_and_the_reviewed_destination(self):
         self.store.allow_desktop(OWNER_UID, CLOUD_UID, [])
         request = {'action': 'enter-login-use', 'id': 'a' * 32, 'origin': 'https://example.com',

@@ -30,6 +30,7 @@ const loginUseDecline = element('login-use-decline')
 const loginUseEntry = element('login-use-entry')
 const loginUseUsername = element('login-use-username')
 const loginUsePassword = element('login-use-password')
+const loginUseCode = element('login-use-code')
 const loginUseSave = element('login-use-save')
 const loginUseSaveLabel = element('login-use-save-label')
 const loginUseSubmit = element('login-use-submit')
@@ -150,14 +151,15 @@ function loginUseMetadata(value) {
   if (!record(value) || Object.keys(value).length !== 1 || !record(value.request)) return
   const item = value.request
   const acceptsCredentials = item.acceptsCredentials === true
-  const signup = item.purpose === 'signup'
-  if (Object.keys(item).length !== (acceptsCredentials || signup ? 5 : 4) || item.id !== requestId
-    || (acceptsCredentials && signup) || (item.purpose !== undefined && !signup)
+  const { purpose } = item
+  const special = purpose !== undefined
+  if (Object.keys(item).length !== (acceptsCredentials || special ? 5 : 4) || item.id !== requestId
+    || (acceptsCredentials && special) || (special && purpose !== 'signup' && purpose !== 'verification')
     || (item.acceptsCredentials !== undefined && !acceptsCredentials)) return
   const origin = loginUseOrigin(item.origin)
   const destination = loginUseDestination(item.destination, origin)
   if (origin === undefined || destination === undefined || !Array.isArray(item.logins) || item.logins.length > 64
-    || (signup && item.logins.length !== 0)) return
+    || (special && item.logins.length !== 0)) return
   const ids = new Set()
   const logins = []
   for (const login of item.logins) {
@@ -169,7 +171,7 @@ function loginUseMetadata(value) {
     ids.add(login.id)
     logins.push({ id: login.id, label: login.label, generation: login.generation })
   }
-  return { origin, destination, logins, acceptsCredentials, signup }
+  return { origin, destination, logins, acceptsCredentials, purpose }
 }
 
 function requestMetadata(value) {
@@ -986,7 +988,8 @@ async function loadRequest() {
 }
 
 function showLoginUseSaveLabel() {
-  const save = loginUseRequest?.signup === true || loginUseSave.checked
+  const save = loginUseRequest?.purpose === 'signup'
+    || (loginUseRequest?.acceptsCredentials === true && loginUseSave.checked)
   element('login-use-save-label-text').hidden = !save
   loginUseSaveLabel.hidden = !save
   loginUseSaveLabel.required = save
@@ -995,14 +998,23 @@ function showLoginUseSaveLabel() {
 
 function renderLoginUseForm() {
   const hasSaved = (loginUseRequest?.logins.length ?? 0) > 0
-  const signup = loginUseRequest?.signup === true
-  const canEnter = signup || loginUseRequest?.acceptsCredentials === true
-  element('login-use-password-label').hidden = signup
-  loginUsePassword.hidden = signup
-  loginUsePassword.required = !signup
-  element('login-use-save-toggle').hidden = signup
-  loginUseSave.hidden = signup
-  loginUseSubmit.textContent = messages[signup ? 'cloudVaultSignupSubmit' : 'cloudVaultLoginUseSignIn']
+  const purpose = loginUseRequest?.purpose
+  const special = purpose !== undefined
+  const verification = purpose === 'verification'
+  const canEnter = special || loginUseRequest?.acceptsCredentials === true
+  element('login-use-username-label').hidden = verification
+  loginUseUsername.hidden = verification
+  loginUseUsername.required = !verification
+  element('login-use-password-label').hidden = special
+  loginUsePassword.hidden = special
+  loginUsePassword.required = !special
+  element('login-use-code-label').hidden = !verification
+  loginUseCode.hidden = !verification
+  loginUseCode.required = verification
+  element('login-use-save-toggle').hidden = special
+  loginUseSave.hidden = special
+  loginUseSubmit.textContent = messages[verification ? 'cloudVaultVerificationSubmit'
+    : purpose === 'signup' ? 'cloudVaultSignupSubmit' : 'cloudVaultLoginUseSignIn']
   element('login-use-saved').hidden = !hasSaved || enteringLogin
   loginUseEmpty.hidden = loginUseRequest === undefined || hasSaved || canEnter
   loginUseEntry.hidden = !canEnter || !enteringLogin
@@ -1016,7 +1028,10 @@ function renderLoginUseForm() {
 }
 
 function focusLoginUseForm() {
-  if (!loginUseEntry.hidden) loginUseUsername.focus({ preventScroll: true })
+  if (!loginUseEntry.hidden) {
+    const field = loginUseRequest?.purpose === 'verification' ? loginUseCode : loginUseUsername
+    field.focus({ preventScroll: true })
+  }
   else if (!loginUseApprove.hidden) loginChoice.focus({ preventScroll: true })
   else if (!loginUseDecline.hidden) loginUseDecline.focus({ preventScroll: true })
   else loginUseClose.focus({ preventScroll: true })
@@ -1034,11 +1049,13 @@ async function loadLoginUse() {
     loginUseOriginValue.textContent = loginUseRequest.origin
     loginUseDestinationValue.textContent = loginUseRequest.destination
     loginChoice.replaceChildren(...loginUseRequest.logins.map(login => new Option(login.label, login.id)))
-    enteringLogin = loginUseRequest.signup || (loginUseRequest.acceptsCredentials && loginUseRequest.logins.length === 0)
-    if (loginUseRequest.signup) {
-      document.title = messages.cloudVaultSignupTitle
-      element('title').textContent = messages.cloudVaultSignupTitle
-      element('hint').textContent = messages.cloudVaultSignupHint
+    const { purpose } = loginUseRequest
+    enteringLogin = purpose !== undefined || (loginUseRequest.acceptsCredentials && loginUseRequest.logins.length === 0)
+    if (purpose !== undefined) {
+      const title = messages[purpose === 'verification' ? 'cloudVaultVerificationTitle' : 'cloudVaultSignupTitle']
+      document.title = title
+      element('title').textContent = title
+      element('hint').textContent = messages[purpose === 'verification' ? 'cloudVaultVerificationHint' : 'cloudVaultSignupHint']
     }
     setLoginUseOutcome()
   }
@@ -1060,18 +1077,26 @@ async function submitLoginUse(request) {
   busy = true
   availability()
   const signup = request.action === 'create-login-use'
-  setLoginUseOutcome(signup ? 'cloudVaultSignupSending' : 'cloudVaultLoginUseApproving')
+  const verification = request.action === 'enter-verification-code'
+  setLoginUseOutcome(verification ? 'cloudVaultVerificationSending'
+    : signup ? 'cloudVaultSignupSending' : 'cloudVaultLoginUseApproving')
   loginUseEntry.reset()
   const result = await send(request)
   busy = false
-  if ((signup || request.action === 'enter-login-use') && record(result) && result.ok === false && result.reason === 'invalid') {
-    setLoginUseOutcome(signup ? 'cloudVaultSignupInvalid' : 'cloudVaultLoginUseInvalid', 'error')
+  if ((signup || verification || request.action === 'enter-login-use')
+    && record(result) && result.ok === false && result.reason === 'invalid') {
+    setLoginUseOutcome(verification ? 'cloudVaultVerificationInvalid'
+      : signup ? 'cloudVaultSignupInvalid' : 'cloudVaultLoginUseInvalid', 'error')
     renderLoginUseForm()
     focusLoginUseForm()
     return
   }
   loginUseRequest = undefined
-  if (signup && record(result) && result.saved === true) {
+  if (verification) {
+    const submitted = record(result) && result.state === 'submitted'
+    setLoginUseOutcome(submitted ? 'cloudVaultVerificationSubmitted' : 'cloudVaultVerificationUnavailable',
+      submitted ? '' : 'error')
+  } else if (signup && record(result) && result.saved === true) {
     setLoginUseOutcome(result.state === 'submitted' ? 'cloudVaultSignupSubmitted' : 'cloudVaultSignupNeedsOwner')
   } else if (signup) {
     setLoginUseOutcome('cloudVaultSignupUnavailable', 'error')
@@ -1244,7 +1269,14 @@ loginUseSave.addEventListener('change', showLoginUseSaveLabel)
 loginUseEntry.addEventListener('submit', event => {
   event.preventDefault()
   if (busy || !enteringLogin || loginUseRequest === undefined) return
-  if (loginUseRequest.signup) {
+  if (loginUseRequest.purpose === 'verification') {
+    void submitLoginUse({
+      action: 'enter-verification-code', id: requestId, origin: loginUseRequest.origin, destination: loginUseRequest.destination,
+      code: loginUseCode.value,
+    })
+    return
+  }
+  if (loginUseRequest.purpose === 'signup') {
     void submitLoginUse({
       action: 'create-login-use', id: requestId, origin: loginUseRequest.origin, destination: loginUseRequest.destination,
       username: loginUseUsername.value.trim(), saveLabel: loginUseSaveLabel.value.trim(),
@@ -1307,6 +1339,7 @@ void Promise.all([api.messages(), api.mode()]).then(([copy, presentation]) => {
     ['login-use-login-label', 'cloudVaultLoginUseLogin'], ['login-use-empty', 'cloudVaultLoginUseEmpty'],
     ['login-use-approve', 'cloudVaultLoginUseApprove'], ['login-use-decline', 'cloudVaultLoginUseDecline'],
     ['login-use-username-label', 'cloudVaultWebsiteUsername'], ['login-use-password-label', 'cloudVaultWebsitePassword'],
+    ['login-use-code-label', 'cloudVaultVerificationLabel'],
     ['login-use-save-text', 'cloudVaultLoginUseSave'], ['login-use-save-label-text', 'cloudVaultWebsiteLabel'],
     ['login-use-submit', 'cloudVaultLoginUseSignIn'], ['login-use-close', 'cloudVaultLoginUseDone'],
   ]) element(id).textContent = copy[key]

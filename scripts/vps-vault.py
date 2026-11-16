@@ -354,6 +354,15 @@ def website_signup_request(request):
     }
 
 
+def website_verification_request(request):
+    """Validate a one-time code for an exact owner-reviewed POST form."""
+    if (set(request) != {'action', 'id', 'origin', 'destination', 'code'}
+            or not valid_request_id(request.get('id'))
+            or not valid_login_destination(request.get('origin'), request.get('destination'))):
+        raise VaultError('Invalid website verification request.')
+    return {**request, 'code': login_text(request['code'], 64)}
+
+
 def browser_login_inspection(payload, expected_id, *, automatic=False):
     """Decode one bounded browser inspection without returning browser diagnostics."""
     try:
@@ -370,9 +379,10 @@ def browser_login_inspection(payload, expected_id, *, automatic=False):
             permitted = (set(reply) == fields | {'bot', 'session'} and valid_bot(reply['bot'])
                          and valid_browser_session(reply['session']))
         else:
-            signup = (set(reply) == fields | {'purpose', 'bot', 'session'} and reply['purpose'] == 'signup'
-                      and valid_bot(reply['bot']) and valid_browser_session(reply['session']))
-            permitted = set(reply) == fields or shared or signup
+            owner_form = (set(reply) == fields | {'purpose', 'bot', 'session'}
+                          and reply['purpose'] in ('signup', 'verification')
+                          and valid_bot(reply['bot']) and valid_browser_session(reply['session']))
+            permitted = set(reply) == fields or shared or owner_form
         if (not permitted
                 or reply.get('id') != expected_id or not valid_request_id(reply.get('id'))
                 or reply.get('state') != 'pending' or not valid_login_origin(reply.get('origin'))
@@ -496,6 +506,8 @@ def desktop_request(payload):
             return entered_website_login_request(request)
         if action == 'create-login-use':
             return website_signup_request(request)
+        if action == 'enter-verification-code':
+            return website_verification_request(request)
         if action == 'inspect-login-use' and set(request) == {'action', 'id', 'form'}:
             if not valid_request_id(request.get('id')) or request['form'] != 'entry':
                 raise VaultError('Invalid Vault request.')
@@ -1802,7 +1814,7 @@ class Vault:
 
     def _browser_login_records(self, inspected):
         """Choose accounts for the reviewed Bot and website."""
-        if inspected.get('purpose') == 'signup':
+        if 'purpose' in inspected:
             return []
         origin = inspected['origin']
         assigned = [record for record in self.website_login_records(scoped=True) if record['origin'] == origin]
@@ -1834,8 +1846,8 @@ class Vault:
                 for record in self._browser_login_records(inspected)
             ],
         }
-        if inspected.get('purpose') == 'signup':
-            visible['purpose'] = 'signup'
+        if 'purpose' in inspected:
+            visible['purpose'] = inspected['purpose']
         elif request.get('form') == 'entry' and inspected.get('scope') != 'shared':
             visible['acceptsCredentials'] = True
         return {'request': visible}
@@ -1901,7 +1913,7 @@ class Vault:
         """Submit a one-time login and save it only after submission and explicit consent."""
         try:
             inspected = self._browser_login_metadata(request['id'])
-            if (inspected.get('scope') == 'shared' or inspected.get('purpose') == 'signup'
+            if (inspected.get('scope') == 'shared' or 'purpose' in inspected
                     or inspected['origin'] != request['origin'] or inspected['destination'] != request['destination']):
                 return {'state': 'unavailable'}
             result = self._deliver_browser_login(inspected, request['username'], request['password'])
@@ -1917,6 +1929,23 @@ class Vault:
             except (VaultError, OSError):
                 result['saved'] = False
         return result
+
+    def _enter_browser_verification(self, request):
+        """Send a code once to its current private browser without creating a Vault entry."""
+        try:
+            inspected = self._browser_login_metadata(request['id'])
+            if (inspected.get('purpose') != 'verification' or inspected['origin'] != request['origin']
+                    or inspected['destination'] != request['destination']
+                    or (inspected['bot'], inspected['session']) not in browser_grant_pairs()):
+                return {'state': 'unavailable'}
+            payload = json.dumps({
+                'action': 'use-verification', 'id': inspected['id'], 'origin': inspected['origin'],
+                'destination': inspected['destination'], 'bot': inspected['bot'], 'session': inspected['session'],
+                'code': request['code'],
+            }, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
+            return browser_login_state(browser_client(payload))
+        except (VaultError, OSError):
+            return {'state': 'unavailable'}
 
     def _create_browser_login(self, request):
         """Save a Bot's generated password before submitting it to the reviewed site."""
@@ -2143,6 +2172,8 @@ class Vault:
                 return self._enter_browser_login(entered_website_login_request(request))
             if action == 'create-login-use':
                 return self._create_browser_login(website_signup_request(request))
+            if action == 'enter-verification-code':
+                return self._enter_browser_verification(website_verification_request(request))
             if action == 'decline-login-use':
                 return self._decline_browser_login(request)
             if action == 'list':

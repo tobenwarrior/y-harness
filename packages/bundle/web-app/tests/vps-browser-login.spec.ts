@@ -114,14 +114,14 @@ describe('isolated browser saved-login registry', () => {
     ])
   })
 
-  it('shows signup only to the owner and keeps routine sign-in away from signup forms', async () => {
+  it.each(['signup', 'verification'] as const)('reserves a %s form for the direct owner chat', async (purpose) => {
     const origin = 'https://example.test'
-    const destination = origin + '/signup'
+    const destination = `${origin}/${purpose}`
     const actions: unknown[] = []
     let polls = 0
     const socketPath = await listen((request) => {
       actions.push(request.action)
-      if (request.action === 'request-login') return { id: LOGIN_ID, origin, destination, purpose: 'signup', state: 'pending' }
+      if (request.action === 'request-login') return { id: LOGIN_ID, origin, destination, purpose, state: 'pending' }
       if (request.action === 'login-status') return { state: polls++ === 0 ? 'pending' : 'submitted' }
       if (request.action === 'cancel-login') return { state: 'unavailable' }
       throw new Error('Unexpected browser request')
@@ -133,14 +133,14 @@ describe('isolated browser saved-login registry', () => {
     const logins = new VpsBrowserLogin(browser, {
       automaticLogin,
       sleep: async () => {
-        expect(logins.currentForOwner(BOT, SESSION)).toEqual({ id: LOGIN_ID, origin, destination, purpose: 'signup' })
+        expect(logins.currentForOwner(BOT, SESSION)).toEqual({ id: LOGIN_ID, origin, destination, purpose })
       },
     })
     try {
       await expect(logins.requestForRoutine(BOT, SESSION, lease, signal))
-        .resolves.toEqual({ state: 'approval-required', purpose: 'signup' })
+        .resolves.toEqual({ state: 'approval-required', purpose })
       expect(logins.current(SESSION)).toBeUndefined()
-      await expect(logins.request(BOT, SESSION, lease, signal)).resolves.toEqual({ state: 'submitted', purpose: 'signup' })
+      await expect(logins.request(BOT, SESSION, lease, signal)).resolves.toEqual({ state: 'submitted', purpose })
       expect(automaticLogin).not.toHaveBeenCalled()
       expect(actions).toEqual(['request-login', 'cancel-login', 'request-login', 'login-status', 'login-status'])
     } finally {

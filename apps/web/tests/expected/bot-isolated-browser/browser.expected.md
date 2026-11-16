@@ -70,6 +70,16 @@
   - link "Review signup":
     - /url: /__yharness/vault-login-use/{{id}}
 
+## Verification code
+
+- region "Website verification":
+  - text: Website verification Website
+  - code: https://example.test
+  - text: Destination
+  - code: https://example.test/verify
+  - link "Enter code":
+    - /url: /__yharness/vault-login-use/{{id}}
+
 ## Scheduled login
 
 The scheduled check needs the owner to sign in.

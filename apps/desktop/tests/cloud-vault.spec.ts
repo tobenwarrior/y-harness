@@ -498,6 +498,38 @@ describe('Desktop Vault SSH transport', () => {
       .resolves.toEqual({ ok: false, reason: 'unavailable' })
   })
 
+  it('sends a verification code through the exact native approval and only accepts a fixed result', async () => {
+    const id = 'c'.repeat(32)
+    const other = 'd'.repeat(32)
+    if (!isVaultLoginUseRequestId(id) || !isVaultLoginUseRequestId(other)) throw new Error('Fixture id is invalid.')
+    const origin = 'https://example.test'
+    const request = { action: 'enter-verification-code', id, origin, destination: origin + '/verify', code: '041235' }
+    expect(vaultRequestAllowed(request, { kind: 'login-use', id })).toBe(true)
+    expect(vaultRequestAllowed(request, { kind: 'login-use', id: other })).toBe(false)
+    expect(vaultRequestAllowed(request, { kind: 'manage' })).toBe(false)
+    expect(vaultRequestAllowed({ ...request, destination: 'https://elsewhere.test/verify' }, { kind: 'login-use', id })).toBe(false)
+    expect(vaultRequestAllowed({ ...request, code: '' }, { kind: 'login-use', id })).toBe(false)
+    expect(vaultRequestAllowed({ ...request, saveLabel: 'Fixture' }, { kind: 'login-use', id })).toBe(false)
+
+    const expected = JSON.stringify(request)
+    const execute: VaultExec = (file, args, options, callback) => {
+      expect(args).not.toContain(request.code)
+      return fixture(`
+        let body = '';
+        process.stdin.setEncoding('utf8');
+        process.stdin.on('data', chunk => { body += chunk; });
+        process.stdin.on('end', () => {
+          if (body !== ${JSON.stringify(expected)}) process.exit(2);
+          process.stdout.write(JSON.stringify({ state: 'submitted' }));
+        });
+      `)(file, args, options, callback)
+    }
+    await expect(cloudVaultRequest('fixture-vps', request, signal, execute)).resolves.toEqual({ state: 'submitted' })
+    await expect(cloudVaultRequest('fixture-vps', request, signal,
+      fixture('process.stdout.write(JSON.stringify({ state: "submitted", code: "fixture" }));')))
+      .resolves.toEqual({ ok: false, reason: 'unavailable' })
+  })
+
   it('sends an exact website login decline and returns the fixed unavailable state', async () => {
     const id = 'f'.repeat(32)
     await expect(cloudVaultRequest('fixture-vps', { action: 'decline-login-use', id }, signal,

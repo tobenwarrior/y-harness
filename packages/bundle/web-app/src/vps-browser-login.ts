@@ -31,16 +31,16 @@ export interface VpsBrowserLoginView {
   readonly destination: string
   /** The login was requested in a collaborator chat. */
   readonly scope?: 'shared'
-  /** The owner is reviewing a new-account form. */
-  readonly purpose?: 'signup'
+  /** The owner is reviewing a new-account or verification form. */
+  readonly purpose?: NonNullable<VpsBrowserLoginRequest['purpose']>
 }
 
 /** Result safe to return to the model after owner approval processing. */
 export interface VpsBrowserLoginResult {
   /** Submission or owner-action status of the browser request. */
   readonly state: 'submitted' | 'needs-owner' | 'approval-required' | 'unavailable'
-  /** The browser captured a new-account form. */
-  readonly purpose?: 'signup'
+  /** The browser captured a new-account or verification form. */
+  readonly purpose?: NonNullable<VpsBrowserLoginRequest['purpose']>
 }
 
 /** Host operation that holds the Bot's browser lease through capture and automatic submission. */
@@ -127,7 +127,7 @@ export class VpsBrowserLogin {
     return {
       id: entry.request.id, origin: entry.request.origin, destination: entry.request.destination,
       ...(isSharedBrowserSession(session) ? { scope: 'shared' as const } : {}),
-      ...(entry.request.purpose === 'signup' ? { purpose: 'signup' as const } : {}),
+      ...(entry.request.purpose === undefined ? {} : { purpose: entry.request.purpose }),
     }
   }
 
@@ -216,7 +216,11 @@ export class VpsBrowserLogin {
       const begin = (): Promise<VpsBrowserLoginRequest> => this.browser.requestLogin(bot, session, bounded)
       const automatic = await lease(async () => {
         request = continueShared === undefined ? await begin() : await runAuthorizedBrowserOperation(continueShared, begin, bounded)
-        if (request.purpose === 'signup' || isSharedBrowserSession(session) || this.automaticLogin === undefined) return undefined
+        if (isSharedBrowserSession(session)) {
+          if (request.purpose !== undefined) throw new Error(UNAVAILABLE)
+          return undefined
+        }
+        if (request.purpose !== undefined || this.automaticLogin === undefined) return undefined
         return await this.automaticLogin(bot, session, request.id, bounded)
       }, bounded)
       if (request === undefined) throw new Error(UNAVAILABLE)
@@ -253,7 +257,7 @@ export class VpsBrowserLogin {
         await this.cancel(bot, session, request.id)
       }
       void error
-      return { state: 'unavailable' }
+      return { state: 'unavailable', ...(request?.purpose === undefined ? {} : { purpose: request.purpose }) }
     } finally {
       this.entries.delete(session)
       this.pending.delete(session)

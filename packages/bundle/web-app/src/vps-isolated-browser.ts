@@ -79,8 +79,8 @@ export interface VpsBrowserLoginRequest {
   readonly destination: string
   /** The only creation state accepted from the broker. */
   readonly state: 'pending'
-  /** A reviewed new-account form, available only in a private owner browser. */
-  readonly purpose?: 'signup'
+  /** A new-account or verification form in a private owner browser. */
+  readonly purpose?: 'signup' | 'verification'
 }
 
 /** State returned by saved-login status and cancellation operations. */
@@ -223,14 +223,14 @@ function loginMetadata(originValue: unknown, destinationValue: unknown): Pick<Vp
 
 function decodeLoginRequest(value: unknown): VpsBrowserLoginRequest {
   if (!isRecord(value)) throw new Error(INVALID_RESPONSE)
-  const signup = value.purpose === 'signup'
+  const { purpose } = value
   const metadata = loginMetadata(value.origin, value.destination)
-  if (Object.keys(value).length !== (signup ? 5 : 4) || (value.purpose !== undefined && !signup)
+  if (Object.keys(value).length !== (purpose === undefined ? 4 : 5) || (purpose !== undefined && purpose !== 'signup' && purpose !== 'verification')
     || value.state !== 'pending' || !metadataString(value.id, LOGIN_ID_MAX_BYTES) || !LOGIN_ID.test(value.id)
     || metadata === undefined) throw new Error(INVALID_RESPONSE)
   return {
     id: value.id, origin: metadata.origin, destination: metadata.destination, state: 'pending',
-    ...(signup ? { purpose: 'signup' } : {}),
+    ...(purpose === undefined ? {} : { purpose }),
   }
 }
 
