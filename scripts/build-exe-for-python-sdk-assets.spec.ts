@@ -42,8 +42,9 @@ describe('Python runtime executable assets', () => {
     })
 
     expect(result.status).toBe(0)
-    expect(result.stdout).toContain('native/system run build:native --landlock-only')
-    expect(result.stdout).toContain('node_modules/@yharness/node-addon-system-linux-arm64/bin/landlock-run')
-    expect(result.stdout).toContain('dist-exe/linux-arm64/landlock-run')
+    const log = result.stdout.replaceAll('\\', '/')
+    expect(log).toContain('native/system run build:native --landlock-only')
+    expect(log).toContain('node_modules/@yharness/node-addon-system-linux-arm64/bin/landlock-run')
+    expect(log).toContain('dist-exe/linux-arm64/landlock-run')
   })
 })

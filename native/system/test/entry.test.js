@@ -76,10 +76,11 @@ assert.ok(defaultPath.endsWith(path.join('bin', LAUNCHER_BIN)), defaultPath);
 // --- launcherPath: a packaged Linux runtime uses its real resource sidecar ---
 const originalPlatform = process.platform;
 const originalExecPath = process.execPath;
+const linuxTarget = `linux-${process.arch}`;
 Reflect.defineProperty(process, 'platform', { configurable: true, enumerable: true, value: 'linux' });
-process.execPath = '/runtime/yharness-sdk-runtime-linux-arm64';
+process.execPath = path.join('/runtime', `yharness-sdk-runtime-${linuxTarget}`);
 Reflect.defineProperty(process, 'pkg', { configurable: true, value: {} });
-assert.equal(launcherPath(() => { throw new Error('packaged runtime must not resolve its virtual package'); }), path.join('/runtime', 'linux-arm64', LAUNCHER_BIN));
+assert.equal(launcherPath(() => { throw new Error('packaged runtime must not resolve its virtual package'); }), path.join('/runtime', linuxTarget, LAUNCHER_BIN));
 Reflect.deleteProperty(process, 'pkg');
 Reflect.defineProperty(process, 'platform', { configurable: true, enumerable: true, value: originalPlatform });
 process.execPath = originalExecPath;
