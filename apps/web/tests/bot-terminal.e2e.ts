@@ -47,6 +47,7 @@ it.skipIf(process.platform === 'win32')('switches between a Bot’s Computer and
     const patch = join(scope, 'terminal.yml')
     const project = join(scope, 'project')
     await mkdir(project, { mode: 0o700 })
+    await mkdir(join(scope, 'bots'), { mode: 0o700 })
     const projectWorkerHarness = [
       'import json, subprocess, sys',
       'script, root = sys.argv[1:3]',
