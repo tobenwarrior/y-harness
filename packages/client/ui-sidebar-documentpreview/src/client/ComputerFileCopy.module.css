@@ -12,7 +12,7 @@
   color: var(--yh-alias-label-primary);
   font: inherit;
   background: var(--yh-alias-interactive-bg-hover);
-  border: 1px solid var(--yh-alias-border-l3);
+  border: 0.5px solid var(--yh-alias-border-l3);
   border-radius: var(--yh-radius-md);
 }
 
