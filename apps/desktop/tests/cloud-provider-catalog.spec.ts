@@ -8,13 +8,20 @@ function settings(providers: Record<string, unknown>) {
   }] }
 }
 
+function bodyText(options: RequestInit): string {
+  if (typeof options.body !== 'string') throw new Error('Expected a JSON request body')
+  return options.body
+}
+
 function peer(port: number, providers: Record<string, unknown>, accepted = true) {
   const origin = `http://127.0.0.1:${port}`
   const fetch = vi.fn(async (url: string, options: RequestInit) => {
     expect(new URL(url).origin).toBe(origin)
     expect(options.redirect).toBe('error')
     expect(options.credentials).toBe('include')
-    const data = JSON.parse(String(options.body))
+    const data: unknown = JSON.parse(bodyText(options))
+    if (typeof data !== 'object' || data === null || !('method' in data) || typeof data.method !== 'string'
+      || !('rpcId' in data) || typeof data.rpcId !== 'string') throw new Error('Expected a settings request')
     expect(new URL(url).pathname).toBe('/api/' + data.method)
     const result = data.method === 'settings/describe'
       ? { ok: true, value: settings(providers) } : { ok: accepted, value: {} }
@@ -36,12 +43,13 @@ describe('Mac-to-Cloud model catalog copy', () => {
     expect(cloud.fetch).toHaveBeenCalledTimes(1)
     await copy.apply()
     expect(mac.fetch).toHaveBeenCalledTimes(1)
-    const body = String(cloud.fetch.mock.calls[1]![1].body)
+    const body = bodyText(cloud.fetch.mock.calls[1]![1])
     expect(body).not.toMatch(/MAC_KEY|CLOUD_KEY|fixture-private|already-on-cloud/u)
+    const unconfiguredKey: unknown = expect.stringMatching(/^YH_SYNC_UNCONFIGURED_/u)
     expect(JSON.parse(body)).toMatchObject({
       method: 'settings/mutate', payload: { args: { ns: 'llm-pi-ai', expectedRevision: 5,
         ops: [{ op: 'set', path: ['providers', 'example-models'], value: {
-          baseURL: 'https://example.com/v1', apiKeyEnv: expect.stringMatching(/^YH_SYNC_UNCONFIGURED_/u),
+          baseURL: 'https://example.com/v1', apiKeyEnv: unconfiguredKey,
         } }],
       } },
     })

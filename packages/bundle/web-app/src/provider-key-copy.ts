@@ -5,7 +5,7 @@ import type { Context } from '@yharness/cordis'
 import { isIP } from 'node:net'
 import type { CredentialProvider, CredentialRef } from '@yharness/credentials'
 import { assertUsableApiKey } from '@yharness/llm'
-import { recordKeyFor, resolveProfiles } from '@yharness/llm-pi-ai'
+import { recordKeyFor, resolveApiKeyRoute } from '@yharness/llm-pi-ai'
 import {
   PROVIDER_KEY_IMPORT_PATH, providerKeyImportRequest, providerKeyRoute, providerKeySourceRequest, providerKeyValue,
 } from '@yharness/provider-config-sync'
@@ -35,20 +35,19 @@ function routeFor(provider: string, value: unknown): ResolvedRoute | undefined {
   if (!record(value) || !providerKeyRoute.shape.provider.safeParse(provider).success
     || provider === 'nous' || provider === 'chatgpt') return undefined
   try {
-    const profile = resolveProfiles({ [provider]: value }, 'deferred').get(provider)
-    const models = profile?.piProvider?.getModels()
-    if (profile?.piProvider?.auth.apiKey === undefined || models === undefined || models.length === 0) return undefined
+    const route = resolveApiKeyRoute(provider, value)
+    if (route === undefined) return undefined
     const endpoints = new Set<string>()
-    for (const model of models) {
-      const url = new URL(model.baseUrl)
+    for (const { api, baseUrl } of route.endpoints) {
+      const url = new URL(baseUrl)
       if (url.protocol !== 'https:' || url.username !== '' || url.password !== ''
         || url.hostname === 'localhost' || url.hostname.endsWith('.localhost') || isIP(url.hostname.replace(/^\[|\]$/gu, '')) !== 0
-        || model.baseUrl.includes('?') || model.baseUrl.includes('#')) return undefined
-      endpoints.add(JSON.stringify([model.api, url.href]))
+        || baseUrl.includes('?') || baseUrl.includes('#')) return undefined
+      endpoints.add(JSON.stringify([api, url.href]))
     }
     return {
       provider, identity: digest([provider, [...endpoints].sort()]),
-      ...profile.apiKeyEnv === undefined ? {} : { ref: profile.apiKeyEnv },
+      ...route.ref === undefined ? {} : { ref: route.ref },
     }
   } catch (_error) {
     return undefined
