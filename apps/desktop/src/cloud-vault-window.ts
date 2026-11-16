@@ -2,7 +2,7 @@
 import { randomUUID } from 'node:crypto'
 import { BrowserWindow, type IpcMainInvokeEvent } from 'electron'
 import { cloudVaultRequest, isVaultLoginUseRequestId, isVaultRequestId, vaultRequestAllowed } from './cloud-vault.ts'
-import type { VaultCloudWorkspace } from './cloud-vault.ts'
+import type { CloudVaultSession } from './cloud-vault.ts'
 import { VAULT_IPC, VAULT_PAGE, type CloudVaultMode } from './cloud-vault-ipc.ts'
 import type { DesktopMessages } from './locale.ts'
 import { serveWebDocument } from './web-document.ts'
@@ -23,12 +23,10 @@ export class DesktopCloudVault {
 
   /**
    * @param parent - Window holding the connected Cloud workspace.
-   * @param target - Verified SSH destination of the current connection.
+   * @param workspace - Owner-authenticated Cloud view and its open Vault connection.
    * @param mode - Owner-selected presentation; management is the default.
-   * @param workspace - Owner-authenticated Cloud view for Bot policy and roster checks.
    */
-  open(parent: BrowserWindow, target: string, mode: CloudVaultMode = { kind: 'manage' },
-    workspace?: VaultCloudWorkspace): void {
+  open(parent: BrowserWindow, workspace: CloudVaultSession, mode: CloudVaultMode = { kind: 'manage' }): void {
     if (parent.isDestroyed() || !parent.isVisible()) return
     if (mode.kind === 'request' && !isVaultRequestId(mode.id)) return
     if (mode.kind === 'login-use' && !isVaultLoginUseRequestId(mode.id)) return
@@ -85,7 +83,7 @@ export class DesktopCloudVault {
       const pending = new AbortController()
       this.pending = pending
       try {
-        return await cloudVaultRequest(target, request, pending.signal, undefined, workspace)
+        return await cloudVaultRequest(workspace.sendVaultRequest, request, pending.signal, workspace)
       }
       finally { if (this.pending === pending) this.pending = undefined }
     })
@@ -105,7 +103,7 @@ export class DesktopCloudVault {
     void window.loadURL(VAULT_PAGE).catch(() => { if (this.window === window) this.close() })
   }
 
-  /** Dismiss the Vault and cancel an in-flight connection. */
+  /** Dismiss the Vault and cancel its outstanding request. */
   close(): void {
     const window = this.window
     this.window = undefined

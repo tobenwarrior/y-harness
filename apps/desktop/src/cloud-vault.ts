@@ -1,12 +1,8 @@
 /** Write-only VPS Vault management over the owner's existing SSH login. */
 import { readBoundedJson } from './web-document.ts'
-import { execFile, type ChildProcess, type ExecFileOptions } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { isIP } from 'node:net'
-import { isCloudTarget } from './cloud-connection.ts'
-
-const SSH = '/usr/bin/ssh'
-const COMMAND = '/usr/local/sbin/yharness-vault desktop-client'
+import type { CloudVaultTransport } from './cloud-connection.ts'
 const UNIT = /^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,220}\.service$/u
 const NAME = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/u
 const BOT = /^bot-[A-Za-z0-9][A-Za-z0-9-]{0,245}$/u
@@ -20,7 +16,6 @@ const LOGIN_LABEL_LIMIT = 80
 const LOGIN_USERNAME_LIMIT = 512
 const LOGIN_PASSWORD_LIMIT = 8192
 const MAX_LOGINS = 64
-const MAX_OUTPUT = 160 * 1024
 const MAX_ROSTER_BYTES = 4 * 1024 * 1024
 const MAX_ACCESS_MODE_BYTES = 128
 const MAX_BROWSER_ACCESS_BYTES = 64 * 1024
@@ -267,11 +262,11 @@ export interface VaultCloudWorkspace {
   readonly fetch: (url: string, options: RequestInit) => Promise<Response>
 }
 
-/** SSH execution seam used by tests with a real local subprocess. */
-export type VaultExec = (
-  file: string, args: readonly string[], options: ExecFileOptions & { encoding: 'utf8' },
-  complete: (error: Error | null, stdout: string) => void,
-) => ChildProcess
+/** Owner-authenticated Cloud view and its connection-bound Vault commands. */
+export interface CloudVaultSession extends VaultCloudWorkspace {
+  /** Transport owned by the active native Cloud connection. */
+  readonly sendVaultRequest: CloudVaultTransport
+}
 
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -637,7 +632,8 @@ async function readCloudVaultPolicy(
       signal: AbortSignal.any([signal, AbortSignal.timeout(5_000)]),
     })
     const reply = await readBoundedJson(response, MAX_ACCESS_MODE_BYTES)
-    if (signal.aborted || !record(reply) || Object.keys(reply).length !== 1) return undefined
+    signal.throwIfAborted()
+    if (!record(reply) || Object.keys(reply).length !== 1) return undefined
     const { mode } = reply
     if (mode !== 'managed' && mode !== 'external' && mode !== 'disabled') return undefined
     return { mode, sharedScopes: mode === 'managed' && response.headers.get('X-YH-Vault-Grant-Scopes') === '1' }
@@ -666,7 +662,8 @@ export async function readCloudVaultBots(
       signal: AbortSignal.any([signal, AbortSignal.timeout(5_000)]),
     })
     const reply = await readBoundedJson(response, MAX_ROSTER_BYTES)
-    if (signal.aborted || !record(reply) || reply.type !== 'server-response' || reply.rpcId !== rpcId
+    signal.throwIfAborted()
+    if (!record(reply) || reply.type !== 'server-response' || reply.rpcId !== rpcId
       || !record(reply.result) || reply.result.ok !== true || !record(reply.result.value)
       || !Array.isArray(reply.result.value.bots)) return undefined
     const bots: VaultBotChoice[] = []
@@ -726,7 +723,7 @@ async function readCloudBrowserAccess(
       signal: AbortSignal.any([signal, AbortSignal.timeout(5_000)]),
     })
     const reply = await readBoundedJson(response, MAX_BROWSER_ACCESS_BYTES)
-    if (signal.aborted) return undefined
+    signal.throwIfAborted()
     return browserAccessBody(reply)
   } catch (_error) {
     return undefined
@@ -742,18 +739,17 @@ function browserAccessReply(value: CloudBrowserAccess): VaultReply {
 
 /**
  * Send one bounded request over SSH and return only validated metadata or a fixed failure.
- * @param target - Main-owned, previously connected Cloud SSH destination.
+ * @param send - Request transport owned by the current native Cloud connection.
  * @param value - Untrusted IPC input from the Vault window.
  * @param signal - Cancel the SSH child when its window closes.
- * @param execute - Subprocess injection for tests.
  * @param workspace - Authenticated Cloud connection required for Bot grant operations.
  * @returns A safe response for the Vault window.
  */
 export async function cloudVaultRequest(
-  target: string, value: unknown, signal: AbortSignal, execute: VaultExec = execFile, workspace?: VaultCloudWorkspace,
+  send: CloudVaultTransport, value: unknown, signal: AbortSignal, workspace?: VaultCloudWorkspace,
 ): Promise<VaultReply> {
   const request = requestBody(value)
-  if (!isCloudTarget(target) || request === undefined) return { ok: false, reason: 'invalid' }
+  if (request === undefined) return { ok: false, reason: 'invalid' }
   if (request.action === 'list-browser-access' || request.action === 'set-browser-access') {
     if (workspace === undefined) return unavailable
     const current = await readCloudBrowserAccess(workspace, signal)
@@ -762,10 +758,10 @@ export async function cloudVaultRequest(
     if (current.mode !== 'managed') return unavailable
     const selected = current.bots.find(bot => bot.id === request.bot)
     if (selected === undefined) return unavailable
-    const changed = await executeVaultRequest(target, {
+    const changed = await executeVaultRequest(send, {
       action: 'set-browser-access', bot: request.bot, session: selected.sessionId, enabled: request.enabled,
-    }, signal, execute)
-    if (!('ok' in changed) || changed.ok !== true) return changed
+    }, signal)
+    if (!('ok' in changed) || !changed.ok) return changed
     const verified = await readCloudBrowserAccess(workspace, signal)
     if (verified?.mode !== 'managed') return unavailable
     const confirmed = verified.bots.find(bot => bot.id === request.bot)
@@ -797,11 +793,11 @@ export async function cloudVaultRequest(
     if (!bots?.some(bot => bot.id === request.bot)) return unavailable
   }
   const scoped = request.action === 'list-grants' && sharedScopes
-    ? await executeVaultRequest(target, { action: 'list-scoped-grants' }, signal, execute)
+    ? await executeVaultRequest(send, { action: 'list-scoped-grants' }, signal)
     : undefined
   const reply = scoped !== undefined && 'access' in scoped
     ? scoped
-    : await executeVaultRequest(target, request, signal, execute)
+    : await executeVaultRequest(send, request, signal)
   if ('loginAutomation' in reply && reply.loginAutomation.available) {
     const policy = workspace === undefined ? undefined : await readCloudVaultPolicy(workspace, signal)
     return { ...reply, loginAutomation: { ...reply.loginAutomation, available: policy?.mode === 'managed' } }
@@ -810,35 +806,17 @@ export async function cloudVaultRequest(
 }
 
 async function executeVaultRequest(
-  target: string, request: VaultWireRequest, signal: AbortSignal, execute: VaultExec,
+  send: CloudVaultTransport, request: VaultWireRequest, signal: AbortSignal,
 ): Promise<VaultReply> {
   if (signal.aborted) return unavailable
-  return new Promise((resolve) => {
-    try {
-      const child = execute(SSH, [
-        '-a', '-x', '-T',
-        '-o', 'BatchMode=yes', '-o', 'ClearAllForwardings=yes',
-        '-o', 'ControlMaster=no', '-o', 'ControlPath=none',
-        '-o', 'ForwardAgent=no', '-o', 'ForwardX11=no',
-        '-o', 'PermitLocalCommand=no', '-o', 'RequestTTY=no',
-        '-o', 'StrictHostKeyChecking=yes', '--', target, COMMAND,
-      ], {
-        signal, encoding: 'utf8', timeout: 25_000, maxBuffer: MAX_OUTPUT,
-        env: Object.fromEntries(Object.entries(process.env).filter(([key]) => !/(?:KEY|SECRET|TOKEN|PASSWORD)/iu.test(key))),
-      }, (error, stdout) => {
-        if (error !== null || signal.aborted) { resolve(unavailable); return }
-        try {
-          const expectedId = request.action === 'inspect-request' || request.action === 'inspect-login-use'
-            ? request.id : undefined
-          resolve(replyBody(request.action, stdout, expectedId) ?? unavailable)
-        }
-        catch { resolve(unavailable) }
-      })
-      // OpenSSH can exit before reading stdin, for example if the owner lost access.
-      child.stdin?.on('error', () => { resolve(unavailable) })
-      child.stdin?.end(JSON.stringify(request), 'utf8')
-    } catch {
-      resolve(unavailable)
-    }
-  })
+  try {
+    const stdout = await send(JSON.stringify(request), signal)
+    signal.throwIfAborted()
+    if (stdout === undefined) return unavailable
+    const expectedId = request.action === 'inspect-request' || request.action === 'inspect-login-use'
+      ? request.id : undefined
+    return replyBody(request.action, stdout, expectedId) ?? unavailable
+  } catch {
+    return unavailable
+  }
 }
