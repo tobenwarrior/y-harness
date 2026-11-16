@@ -1,7 +1,7 @@
 /** Tests for the isolated browser's fixed Computer protocol. */
 
 import assert from 'node:assert/strict'
-import { mkdtemp, rm, symlink } from 'node:fs/promises'
+import { chmod, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { createServer as createHttpServer } from 'node:http'
 import { connect } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -16,6 +16,10 @@ const otherSession = 'bot-session-b2b2b2b2-b2b2-42b2-82b2-b2b2b2b2b2b2'
 const sharedSession = 'shared-session-c3c3c3c3-c3c3-43c3-83c3-c3c3c3c3c3c3'
 const anotherSharedSession = 'shared-session-d4d4d4d4-d4d4-44d4-84d4-d4d4d4d4d4d4'
 const request = { bot: BOT, session: SESSION }
+const BOT2 = 'bot-second'
+const SESSION2 = 'bot-session-b2b2b2b2-b2b2-42b2-82b2-b2b2b2b2b2b2'
+const REVISION = '1'.repeat(32)
+const REVISION2 = '2'.repeat(32)
 
 const controlResponse = (socketPath, data) => new Promise((resolve, reject) => {
   const socket = connect(socketPath)
@@ -43,6 +47,12 @@ async function setup(t, options = {}) {
   const root = await mkdtemp(join(tmpdir(), 'yh-isolated-browser-'))
   const control = join(root, 'control.sock')
   const vault = join(root, 'vault.sock')
+  let sharingFile = options.sharingFile ?? join(root, 'shared-grants.json')
+  if (options.policy !== undefined) {
+    await writeFile(sharingFile, JSON.stringify(options.policy))
+    await chmod(sharingFile, 0o640)
+    options = { ...options, sharingFile }
+  }
   const servers = browserServers({
     grants: parseGrants([request]), root, executable: '/usr/bin/chromium',
     createPage: async () => { throw new Error('The status check must be lazy.') },
@@ -55,7 +65,7 @@ async function setup(t, options = {}) {
     server.once('error', reject)
     server.listen(path, resolve)
   })))
-  return { control, vault, root, servers }
+  return { control, vault, root, sharingFile, servers }
 }
 
 test('checks the exact Bot and Session without launching a browser', async t => {
@@ -88,6 +98,194 @@ test('opens only explicitly enabled shared chats in their own browser profiles',
   assert.deepEqual(await controlResponse(control, { bot: BOT, session: 'shared-session-incorrect', action: 'status' }),
     { error: 'unavailable' })
   assert.throws(() => parseGrants([{ ...request, shared: 'true' }]))
+})
+
+test('uses an exact owner pair override and gives its managed generation a fresh profile', async t => {
+  const profiles = []
+  const { control } = await setup(t, {
+    policy: { version: 1, bots: [{ bot: BOT, session: SESSION, enabled: true, revision: REVISION }] },
+    createPage: async (_executable, profile) => {
+      profiles.push(profile)
+      return { frame: async () => '/9j/2Q==', close: async () => {}, closed: new Promise(() => {}) }
+    },
+  })
+  assert.deepEqual(await controlResponse(control, { ...request, action: 'sharing-status' }), {
+    managed: true, legacy: false, override: true,
+  })
+  assert.deepEqual(await controlResponse(control, {
+    bot: BOT, session: sharedSession, action: 'frame',
+  }), { jpeg: '/9j/2Q==', width: 1280, height: 800 })
+  assert.equal(profiles.length, 1)
+  assert.equal(profiles[0].endsWith('/' + SESSION), false)
+  assert.deepEqual(await controlResponse(control, {
+    bot: BOT, session: otherSession, action: 'sharing-status',
+  }), { error: 'unavailable' })
+})
+
+test('lets an explicit disabled override supersede a legacy shared grant', async t => {
+  let pages = 0
+  const { control } = await setup(t, {
+    grants: parseGrants([{ ...request, shared: true }]),
+    policy: { version: 1, bots: [{ bot: BOT, session: SESSION, enabled: false, revision: REVISION }] },
+    createPage: async () => { pages++; throw new Error('disabled shared access must not launch') },
+  })
+  assert.deepEqual(await controlResponse(control, { ...request, action: 'sharing-status' }), {
+    managed: true, legacy: true, override: false,
+  })
+  assert.deepEqual(await controlResponse(control, { bot: BOT, session: sharedSession, action: 'frame' }), {
+    error: 'unavailable',
+  })
+  assert.equal(pages, 0)
+})
+
+test('keeps legacy shared access when the owner policy is absent', async t => {
+  const { control } = await setup(t, {
+    grants: parseGrants([{ ...request, shared: true }]),
+    createPage: async () => ({ frame: async () => '/9j/2Q==', close: async () => {}, closed: new Promise(() => {}) }),
+  })
+  assert.deepEqual(await controlResponse(control, { ...request, action: 'sharing-status' }), {
+    managed: false, legacy: true, override: null,
+  })
+  assert.deepEqual(await controlResponse(control, { bot: BOT, session: sharedSession, action: 'frame' }), {
+    jpeg: '/9j/2Q==', width: 1280, height: 800,
+  })
+})
+
+test('exposes a managed empty policy before the first owner opt-in', async t => {
+  let pages = 0
+  const { control } = await setup(t, {
+    policy: { version: 1, bots: [] },
+    createPage: async () => { pages++; throw new Error('empty policy must deny shared access') },
+  })
+  assert.deepEqual(await controlResponse(control, { ...request, action: 'sharing-status' }), {
+    managed: true, legacy: false, override: null,
+  })
+  assert.deepEqual(await controlResponse(control, { bot: BOT, session: sharedSession, action: 'frame' }), {
+    error: 'unavailable',
+  })
+  assert.equal(pages, 0)
+})
+
+test('fails closed for a corrupt policy without advertising legacy access', async t => {
+  let pages = 0
+  const { control } = await setup(t, {
+    grants: parseGrants([{ ...request, shared: true }]),
+    policy: { version: 1, bots: [{ bot: BOT, session: SESSION, enabled: 'yes', revision: REVISION }] },
+    createPage: async () => { pages++; throw new Error('corrupt policy must deny shared access') },
+  })
+  assert.deepEqual(await controlResponse(control, { ...request, action: 'sharing-status' }), {
+    managed: false, legacy: false, override: null,
+  })
+  assert.deepEqual(await controlResponse(control, { bot: BOT, session: sharedSession, action: 'frame' }), {
+    error: 'unavailable',
+  })
+  assert.equal(pages, 0)
+})
+
+test('refresh-sharing revokes only the changed Bot shared profile', async t => {
+  const closeCalls = []
+  const grants = parseGrants([
+    { ...request, shared: true },
+    { bot: BOT2, session: SESSION2, shared: true },
+  ])
+  const chat = { bot: BOT, session: sharedSession }
+  const otherChat = { bot: BOT2, session: anotherSharedSession }
+  const policy = {
+    version: 1,
+    bots: [
+      { bot: BOT, session: SESSION, enabled: true, revision: REVISION },
+      { bot: BOT2, session: SESSION2, enabled: true, revision: REVISION2 },
+    ],
+  }
+  const { control, vault, sharingFile } = await setup(t, {
+    grants,
+    policy,
+    createPage: async (_executable, profile) => {
+      const done = Promise.withResolvers()
+      return {
+        frame: async () => '/9j/2Q==',
+        close: async () => { closeCalls.push(profile); done.resolve() },
+        closed: done.promise,
+      }
+    },
+  })
+  await controlResponse(control, { ...request, action: 'frame' })
+  await controlResponse(control, { ...chat, action: 'frame' })
+  await controlResponse(control, { ...otherChat, action: 'frame' })
+  const next = { ...policy, bots: policy.bots.map(entry => entry.bot === BOT ? { ...entry, enabled: false, revision: '3'.repeat(32) } : entry) }
+  await writeFile(sharingFile, JSON.stringify(next))
+  assert.deepEqual(await controlResponse(vault, { action: 'refresh-sharing' }), { ok: true })
+  assert.deepEqual(await controlResponse(control, { ...request, action: 'sharing-status' }), {
+    managed: true, legacy: true, override: false,
+  })
+  assert.deepEqual(await controlResponse(control, { ...chat, action: 'frame' }), { error: 'unavailable' })
+  assert.deepEqual(await controlResponse(control, { ...otherChat, action: 'frame' }), {
+    jpeg: '/9j/2Q==', width: 1280, height: 800,
+  })
+  assert.deepEqual(await controlResponse(control, { ...request, action: 'frame' }), {
+    jpeg: '/9j/2Q==', width: 1280, height: 800,
+  })
+  assert.equal(closeCalls.length, 1)
+})
+
+test('rechecks a durable shared policy before releasing a queued frame', async t => {
+  const started = Promise.withResolvers()
+  const release = Promise.withResolvers()
+  const policy = {
+    version: 1,
+    bots: [{ bot: BOT, session: SESSION, enabled: true, revision: REVISION }],
+  }
+  const { control, vault, sharingFile } = await setup(t, {
+    policy,
+    createPage: async () => ({
+      frame: async () => {
+        started.resolve()
+        await release.promise
+        return '/9j/2Q=='
+      },
+      close: async () => {},
+      closed: new Promise(() => {}),
+    }),
+  })
+  const frame = controlResponse(control, { bot: BOT, session: sharedSession, action: 'frame' })
+  await started.promise
+  await writeFile(sharingFile, JSON.stringify({
+    version: 1,
+    bots: [{ bot: BOT, session: SESSION, enabled: false, revision: REVISION2 }],
+  }))
+  const refreshed = controlResponse(vault, { action: 'refresh-sharing' })
+  await new Promise(resolve => setTimeout(resolve, 10))
+  release.resolve()
+  assert.deepEqual(await frame, { error: 'unavailable' })
+  assert.deepEqual(await refreshed, { ok: true })
+})
+
+test('rechecks a policy changed on disk even without a refresh command', async t => {
+  const started = Promise.withResolvers()
+  const release = Promise.withResolvers()
+  const { control, sharingFile } = await setup(t, {
+    policy: { version: 1, bots: [{ bot: BOT, session: SESSION, enabled: true, revision: REVISION }] },
+    createPage: async () => ({
+      frame: async () => {
+        started.resolve()
+        await release.promise
+        return '/9j/2Q=='
+      },
+      close: async () => {},
+      closed: new Promise(() => {}),
+    }),
+  })
+  const frame = controlResponse(control, { bot: BOT, session: sharedSession, action: 'frame' })
+  await started.promise
+  await writeFile(sharingFile, JSON.stringify({
+    version: 1,
+    bots: [{ bot: BOT, session: SESSION, enabled: false, revision: REVISION2 }],
+  }))
+  release.resolve()
+  assert.deepEqual(await frame, { error: 'unavailable' })
+  assert.deepEqual(await controlResponse(control, { ...request, action: 'sharing-status' }), {
+    managed: true, legacy: false, override: false,
+  })
 })
 
 test('admits only screen input and web navigation, and keeps the Vault endpoint closed to requests', async t => {
@@ -452,6 +650,40 @@ test('allows a shared login only for the requesting chat and its assigned Bot ac
   assert.deepEqual(await rejected, { state: 'unavailable' })
   assert.deepEqual(await controlResponse(control, { ...authorize, id: next.id, challenge: nextStatus.challenge }), { error: 'unavailable' })
   assert.equal(submissions, 1)
+})
+
+test('does not submit an old shared login approval after a disk-only disable', async t => {
+  const origin = 'https://login.example.test'
+  const destination = origin + '/session'
+  let submissions = 0
+  const chat = { bot: BOT, session: sharedSession }
+  const { control, vault, sharingFile } = await setup(t, {
+    grants: parseGrants([{ ...request, shared: true }]),
+    savedLogins: true,
+    policy: { version: 1, bots: [{ bot: BOT, session: SESSION, enabled: true, revision: REVISION }] },
+    createPage: async () => ({
+      captureLogin: async () => ({ origin, destination }),
+      submitLogin: async () => { submissions++; return 'submitted' },
+      close: async () => {},
+      closed: new Promise(() => {}),
+    }),
+  })
+  const pending = await controlResponse(control, { ...chat, action: 'request-login' })
+  const approval = controlResponse(vault, {
+    action: 'use-login', id: pending.id, origin, username: 'fixture-user', password: 'fixture-password', bot: BOT,
+  })
+  const status = await approvalStatus(control, chat, pending.id)
+  assert.equal(status.state, 'approval-pending')
+  await writeFile(sharingFile, JSON.stringify({
+    version: 1,
+    bots: [{ bot: BOT, session: SESSION, enabled: false, revision: REVISION2 }],
+  }))
+  assert.deepEqual(await controlResponse(control, {
+    ...chat, action: 'authorize-login', id: pending.id, challenge: status.challenge,
+  }), { error: 'unavailable' })
+  assert.deepEqual(await controlResponse(vault, { action: 'cancel-login', id: pending.id }), { state: 'unavailable' })
+  assert.deepEqual(await approval, { error: 'unavailable' })
+  assert.equal(submissions, 0)
 })
 
 test('opens a real browser through its pipe and submits keyboard input with Enter', {

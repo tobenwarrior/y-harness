@@ -172,6 +172,81 @@ it('keeps scope controls hidden for legacy Cloud grant responses', async () => {
   expect(p.element('grants').querySelector('select.grant-scope')).toBeNull()
 })
 
+it('renders compact shared-browser controls with safe names and verifies a toggle result', async () => {
+  const browser = { id: 'bot-scout', name: '<img src=x onerror=alert(1)>', enabled: false }
+  let enabled = false
+  const request = vi.fn(async (value: unknown) => {
+    if (value && typeof value === 'object' && 'action' in value) {
+      switch (value.action) {
+        case 'list': return { ok: true, services: [] }
+        case 'list-logins': return { ok: true, logins: [] }
+        case 'list-grants': return { ok: true, access: { services: [], grants: [] }, bots: [] }
+        case 'list-browser-access': return { ok: true, browserAccess: { mode: 'managed', bots: [{ ...browser, enabled }] } }
+        case 'set-browser-access':
+          expect(value).toEqual({ action: 'set-browser-access', bot: browser.id, enabled: true })
+          enabled = true
+          return { ok: true, browserAccess: { mode: 'managed', bots: [{ ...browser, enabled }] } }
+      }
+    }
+    return { ok: false, reason: 'unavailable' }
+  })
+  const p = page({ kind: 'manage' }, request)
+  p.run()
+  await expect.poll(() => p.dom.window.document.querySelector('main')?.getAttribute('aria-busy')).toBe('false')
+  p.element('bot-access-tab').click()
+  await expect.poll(() => p.element('browser-access').hidden).toBe(false)
+  expect(p.element('browser-access-list').textContent).toContain(browser.name)
+  expect(p.element('browser-access-list').querySelector('img')).toBeNull()
+  const toggle = p.element('browser-access-list').querySelector('input') as HTMLInputElement
+  expect(toggle.checked).toBe(false)
+  toggle.click()
+  await expect.poll(() => (p.element('browser-access-list').querySelector('input') as HTMLInputElement).checked).toBe(true)
+  expect(request).toHaveBeenCalledWith({ action: 'set-browser-access', bot: browser.id, enabled: true })
+})
+
+it('hides shared-browser settings when the Cloud worker is unavailable', async () => {
+  const request = vi.fn(async (value: unknown) => {
+    if (value && typeof value === 'object' && 'action' in value) {
+      switch (value.action) {
+        case 'list': return { ok: true, services: [] }
+        case 'list-logins': return { ok: true, logins: [] }
+        case 'list-grants': return { ok: true, access: { services: [], grants: [] }, bots: [] }
+        case 'list-browser-access': return { ok: true, browserAccess: { mode: 'unavailable', bots: [] } }
+      }
+    }
+    return { ok: false, reason: 'unavailable' }
+  })
+  const p = page({ kind: 'manage' }, request)
+  p.run()
+  await expect.poll(() => p.dom.window.document.querySelector('main')?.getAttribute('aria-busy')).toBe('false')
+  p.element('bot-access-tab').click()
+  await expect.poll(() => p.element('browser-access').hidden).toBe(true)
+})
+
+it('restores a failed shared-browser toggle and reports the failure', async () => {
+  const browser = { id: 'bot-scout', name: 'Scout', enabled: false }
+  const request = vi.fn(async (value: unknown) => {
+    if (value && typeof value === 'object' && 'action' in value) {
+      switch (value.action) {
+        case 'list': return { ok: true, services: [] }
+        case 'list-logins': return { ok: true, logins: [] }
+        case 'list-grants': return { ok: true, access: { services: [], grants: [] }, bots: [] }
+        case 'list-browser-access': return { ok: true, browserAccess: { mode: 'managed', bots: [{ ...browser }] } }
+        case 'set-browser-access': return { ok: false, reason: 'unavailable' }
+      }
+    }
+    return { ok: false, reason: 'unavailable' }
+  })
+  const p = page({ kind: 'manage' }, request)
+  p.run()
+  await expect.poll(() => p.dom.window.document.querySelector('main')?.getAttribute('aria-busy')).toBe('false')
+  p.element('bot-access-tab').click()
+  await expect.poll(() => p.element('browser-access').hidden).toBe(false)
+  ;(p.element('browser-access-list').querySelector('input') as HTMLInputElement).click()
+  await expect.poll(() => p.element('browser-access-notice').textContent).toBe(en.cloudVaultBrowserAccessFailed)
+  expect((p.element('browser-access-list').querySelector('input') as HTMLInputElement).checked).toBe(false)
+})
+
 it('clears a previously loaded grant when Cloud policy takes over during removal', async () => {
   const unit = 'fixture-worker.service'
   const grant = { bot: 'bot-scout', unit, name: 'SCOUT_API_KEY' }

@@ -7,6 +7,7 @@ import type { ComputerAction, ComputerCaptureRunner, VpsComputer } from './compu
 import { validateComputerAction, VpsComputer as ComputerHost } from './computer.ts'
 
 const SOCKET_TIMEOUT_MS = 30_000
+const POLICY_PROBE_MS = 3_000
 const MAX_REQUEST_BYTES = 16 * 1024
 const MAX_RESPONSE_BYTES = 3 * 1024 * 1024
 const MAX_JPEG_BYTES = 2 * 1024 * 1024
@@ -24,6 +25,7 @@ const INVALID_RESPONSE = 'The isolated browser response was invalid.'
 const INVALID_URL = 'The isolated browser URL is invalid.'
 const COMPUTER_DISPLAY = ':isolated-browser'
 const COMPUTER_AUTHORITY = '/dev/null'
+const MANAGED_BROWSER_CONTROL = '/run/yharness-browser/control.sock'
 
 /** Trusted Web Host configuration for one isolated browser broker socket. */
 export interface VpsIsolatedBrowserConfig {
@@ -49,6 +51,18 @@ interface StatusResponse {
 
 interface AckResponse {
   readonly ok: true
+}
+
+interface BrowserSharingStatus {
+  readonly managed: boolean
+  readonly legacy: boolean
+  readonly override: boolean | null
+}
+
+/** Effective shared-browser permission and its eligibility for the owner controls. */
+export interface VpsBrowserSharingPolicy {
+  readonly managed: boolean
+  readonly enabled: boolean
 }
 
 /** Metadata shown only to the authenticated owner while a saved login is pending. */
@@ -86,7 +100,7 @@ export interface VpsBrowserHandoff {
 }
 
 type Request =
-  | { readonly action: 'status' | 'frame'; readonly bot: string; readonly session: string }
+  | { readonly action: 'status' | 'frame' | 'sharing-status'; readonly bot: string; readonly session: string }
   | { readonly action: 'input'; readonly bot: string; readonly session: string; readonly input: ComputerAction }
   | { readonly action: 'navigate'; readonly bot: string; readonly session: string; readonly url: string }
   | { readonly action: 'request-login'; readonly bot: string; readonly session: string }
@@ -141,6 +155,13 @@ function decodeJson(bytes: Buffer): unknown {
 function decodeStatus(value: unknown): StatusResponse {
   if (isRecord(value) && value.available === true) return { available: true }
   throw new Error(INVALID_RESPONSE)
+}
+
+function decodeSharingStatus(value: unknown): BrowserSharingStatus {
+  if (!isRecord(value) || Object.keys(value).length !== 3 || typeof value.managed !== 'boolean'
+    || typeof value.legacy !== 'boolean' || (value.override !== null && typeof value.override !== 'boolean')
+    || (!value.managed && value.override !== null)) throw new Error(INVALID_RESPONSE)
+  return { managed: value.managed, legacy: value.legacy, override: value.override }
 }
 
 function decodeAck(value: unknown): AckResponse {
@@ -311,14 +332,65 @@ export class VpsIsolatedBrowser {
   }
 
   /**
-   * Check whether a Bot is admitted by the owner allowlist.
+   * Check whether the Cloud configuration selects the Bot for this provider.
    * @param bot - Bot roster id.
    * @param session - If supplied, verify the Session's browser scope.
-   * @returns Whether the Bot may use this broker.
+   * @returns Whether the Bot is eligible for a broker request. Shared turns also check their effective policy.
    */
   authorized(bot: string, session?: string): boolean {
     return session !== undefined && isSharedBrowserSession(session)
-      ? this.sharedBots.has(bot) : this.bots.has(bot)
+      ? this.sharedBots.has(bot) || (this.usesManagedSharing() && this.bots.has(bot)) : this.bots.has(bot)
+  }
+
+  /**
+   * Identify the installed worker eligible for management through the owner's Vault.
+   * @returns Whether this profile uses the installed browser worker socket.
+   */
+  usesManagedSharing(): boolean {
+    return this.socketPath === MANAGED_BROWSER_CONTROL
+  }
+
+  /** Read the effective shared selection for the exact owner Bot Session.
+   * @param bot - Configured isolated browser Bot.
+   * @param ownerSession - Canonical Bot owner Session.
+   * @param signal - Cancellation for the read-only broker request.
+   * @returns Whether the owner can manage the selection and whether shared browsing is enabled.
+   */
+  async sharingPolicy(bot: string, ownerSession: string, signal: AbortSignal): Promise<VpsBrowserSharingPolicy> {
+    if (!this.usesManagedSharing() || isSharedBrowserSession(ownerSession)) throw new Error(UNAUTHORIZED)
+    const bounded = AbortSignal.any([signal, AbortSignal.timeout(POLICY_PROBE_MS)])
+    const policy = await this.request({
+      action: 'sharing-status', bot, session: validateSession(ownerSession),
+    }, decodeSharingStatus, bounded)
+    return { managed: policy.managed, enabled: policy.override ?? (policy.legacy && this.sharedBots.has(bot)) }
+  }
+
+  /** Resolve one shared chat's permission without launching its browser.
+   * @param bot - Configured isolated browser Bot.
+   * @param session - Calling private or group shared Session.
+   * @param ownerSession - Canonical Bot owner Session when available.
+   * @param signal - Cancellation owned by the prompt or tool operation.
+   * @returns Whether the current browser policy admits the exact shared chat.
+   */
+  async availableInSharedSession(bot: string, session: string, ownerSession: string | undefined, signal: AbortSignal): Promise<boolean> {
+    if (signal.aborted || !isSharedBrowserSession(session) || !this.authorized(bot, session)) return false
+    if (!this.usesManagedSharing()) return true
+    if (ownerSession !== undefined) {
+      try {
+        return (await this.sharingPolicy(bot, ownerSession, signal)).enabled
+      } catch (error) {
+        // Older installed workers reply on the original shared-session status route.
+        void error
+      }
+    }
+    if (signal.aborted || !this.sharedBots.has(bot)) return false
+    try {
+      await this.status(bot, session, AbortSignal.any([signal, AbortSignal.timeout(POLICY_PROBE_MS)]))
+      return true
+    } catch (error) {
+      void error
+      return false
+    }
   }
 
   /**

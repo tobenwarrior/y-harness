@@ -28,6 +28,8 @@ CLOUD_UID = 23000
 OWNER_UID = 23002
 FIRST_VALUE = b'example value before rotation'
 SECOND_VALUE = b'example value after rotation'
+BROWSER_BOT = 'bot-browser'
+BROWSER_SESSION = 'bot-session-37888424-5b3d-4a8c-81f5-751ed2d24f96'
 
 
 class VaultTest(unittest.TestCase):
@@ -550,6 +552,113 @@ class VaultTest(unittest.TestCase):
                 vault.browser_peer_uid()
         with patch.object(vault.pwd, 'getpwnam', side_effect=KeyError), self.assertRaises(vault.VaultError):
             vault.browser_peer_uid()
+
+    def browser_access_files(self, grants=None, policy=None):
+        """Install fixture-owned browser grant files and patch their fixed paths."""
+        config = self.root.parent / 'browser-config'
+        config.mkdir(mode=0o700, exist_ok=True)
+        grants_path = config / 'grants.json'
+        policy_path = config / 'shared-grants.json'
+        grants_path.write_text(json.dumps([{'bot': BROWSER_BOT, 'session': BROWSER_SESSION}]
+                                          if grants is None else grants) + '\n')
+        policy_path.write_text(json.dumps({'version': 1, 'bots': []} if policy is None else policy) + '\n')
+        grants_path.chmod(0o640)
+        policy_path.chmod(0o640)
+        return patch.object(vault, 'BROWSER_GRANTS', grants_path), patch.object(vault, 'BROWSER_SHARED_GRANTS', policy_path), \
+            patch.object(vault, 'browser_group_gid', return_value=os.getegid())
+
+    def browser_access_request(self, *, enabled=True, bot=BROWSER_BOT, session=BROWSER_SESSION):
+        """Return one exact owner action for the fixture Bot/session pair."""
+        return {'action': 'set-browser-access', 'bot': bot, 'session': session, 'enabled': enabled}
+
+    def test_browser_access_wire_requires_the_exact_owner_action_and_canonical_session(self):
+        valid = self.browser_access_request()
+        self.assertEqual(vault.desktop_request(json.dumps(valid).encode()), valid)
+        with self.assertRaises(vault.VaultError):
+            vault.cloud_request(json.dumps(valid).encode())
+        for malformed in (
+            {**valid, 'enabled': 1}, {**valid, 'enabled': 'true'},
+            {**valid, 'bot': 'bot bad'},
+            {**valid, 'session': 'bot-session-not-a-uuid'},
+            {**valid, 'extra': True}, {key: value for key, value in valid.items() if key != 'session'},
+        ):
+            with self.subTest(request=malformed), self.assertRaises(vault.VaultError):
+                vault.desktop_request(json.dumps(malformed).encode())
+
+    def test_browser_access_requires_the_authenticated_owner_and_exact_installed_pair(self):
+        self.store.allow_desktop(OWNER_UID, CLOUD_UID, [])
+        request = self.browser_access_request()
+        grants_patch, policy_patch, group_patch = self.browser_access_files()
+        with grants_patch, policy_patch, group_patch, patch.object(vault, 'browser_client') as browser:
+            with self.assertRaises(vault.VaultError):
+                self.store.desktop(request, OWNER_UID + 1)
+            browser.assert_not_called()
+        other = self.browser_access_request()
+        grants = [{'bot': 'bot-other', 'session': BROWSER_SESSION}]
+        grants_patch, policy_patch, group_patch = self.browser_access_files(grants=grants)
+        with grants_patch, policy_patch, group_patch, patch.object(vault, 'browser_client') as browser:
+            with self.assertRaises(vault.VaultError):
+                self.store.desktop(other, OWNER_UID)
+            browser.assert_not_called()
+
+    def test_browser_access_fails_closed_for_absent_or_unsafe_managed_files(self):
+        self.store.allow_desktop(OWNER_UID, CLOUD_UID, [])
+        request = self.browser_access_request()
+        grants_patch, policy_patch, group_patch = self.browser_access_files()
+        with grants_patch, policy_patch, group_patch as group, patch.object(vault, 'browser_client') as browser:
+            grants_path = vault.BROWSER_GRANTS
+            grants_path.unlink()
+            with self.assertRaises(vault.VaultError):
+                self.store.desktop(request, OWNER_UID)
+            browser.assert_not_called()
+            grants_path.write_text('[{"bot":"bot-browser","session":"' + BROWSER_SESSION + '"}]\n')
+            grants_path.chmod(0o600)
+            with self.assertRaises(vault.VaultError):
+                self.store.desktop(request, OWNER_UID)
+            browser.assert_not_called()
+            grants_path.chmod(0o640)
+            group.return_value = os.getegid() + 1
+            with self.assertRaises(vault.VaultError):
+                self.store.desktop(request, OWNER_UID)
+            group.return_value = os.getegid()
+            vault.BROWSER_SHARED_GRANTS.write_text('{}\n')
+            with self.assertRaises(vault.VaultError):
+                self.store.desktop(request, OWNER_UID)
+
+    def test_browser_access_persists_revision_before_ack_and_retries_without_rollback(self):
+        self.store.allow_desktop(OWNER_UID, CLOUD_UID, [])
+        request = self.browser_access_request()
+        grants_patch, policy_patch, group_patch = self.browser_access_files()
+        with grants_patch, policy_patch, group_patch, patch.object(vault, 'browser_client', return_value=b'{"ok":true}') as browser:
+            self.assertEqual(self.store.desktop(request, OWNER_UID), {'ok': True})
+            first = json.loads(vault.BROWSER_SHARED_GRANTS.read_text())['bots'][0]
+            self.assertTrue(first['enabled'])
+            self.assertRegex(first['revision'], r'^[0-9a-f]{32}$')
+            first_bytes = vault.BROWSER_SHARED_GRANTS.read_bytes()
+            self.assertEqual(self.store.desktop(request, OWNER_UID), {'ok': True})
+            self.assertEqual(vault.BROWSER_SHARED_GRANTS.read_bytes(), first_bytes)
+            self.assertEqual(json.loads(vault.BROWSER_SHARED_GRANTS.read_text())['bots'][0]['revision'], first['revision'])
+            browser.return_value = b'{"ok":false}'
+            with self.assertRaises(vault.VaultError):
+                self.store.desktop(request, OWNER_UID)
+            self.assertEqual(vault.BROWSER_SHARED_GRANTS.read_bytes(), first_bytes)
+            browser.return_value = b'{"ok":true}'
+            browser.side_effect = vault.VaultError(vault.BROWSER_UNAVAILABLE)
+            denied = self.browser_access_request(enabled=False)
+            with self.assertRaises(vault.VaultError):
+                self.store.desktop(denied, OWNER_UID)
+            after_denial = json.loads(vault.BROWSER_SHARED_GRANTS.read_text())['bots'][0]
+            self.assertFalse(after_denial['enabled'])
+            self.assertNotEqual(after_denial['revision'], first['revision'])
+            browser.side_effect = None
+            browser.return_value = b'{"ok":true}'
+            self.assertEqual(self.store.desktop(denied, OWNER_UID), {'ok': True})
+            self.assertEqual(json.loads(vault.BROWSER_SHARED_GRANTS.read_text())['bots'][0]['revision'], after_denial['revision'])
+            self.assertEqual([json.loads(call.args[0]) for call in browser.call_args_list], [
+                {'action': 'refresh-sharing'}, {'action': 'refresh-sharing'},
+                {'action': 'refresh-sharing'}, {'action': 'refresh-sharing'},
+                {'action': 'refresh-sharing'},
+            ])
 
     def test_desktop_login_use_requires_the_current_owner_before_contacting_browser(self):
         self.store.allow_desktop(OWNER_UID, CLOUD_UID, [])

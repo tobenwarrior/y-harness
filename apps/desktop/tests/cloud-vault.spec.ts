@@ -6,6 +6,7 @@ const unit = 'fixture-worker.service'
 const value = 'a synthetic value with spaces, quotes and \n a second line'
 const signal = new AbortController().signal
 const origin = 'http://127.0.0.1:28634'
+const browserSession = 'bot-session-0e9beecd-b6f5-40b1-8d52-f97259bdcf76'
 const children = new Set<ReturnType<typeof execFile>>()
 
 function managedWorkspace(sharedScopes = false) {
@@ -47,6 +48,91 @@ afterEach(async () => {
 })
 
 describe('Desktop Vault SSH transport', () => {
+  it('loads managed shared-browser access as a credential-free owner projection', async () => {
+    const fetch = vi.fn(async (url: string, options: RequestInit) => {
+      expect(url).toBe(origin + '/api/bot-browser-access')
+      expect(options.method).toBe('GET')
+      expect(options.credentials).toBe('include')
+      expect(options.redirect).toBe('error')
+      expect(options.cache).toBe('no-store')
+      return Response.json({ mode: 'managed', bots: [{
+        id: 'bot-scout', name: 'Scout', sessionId: browserSession, enabled: true,
+      }] })
+    })
+    const execute: VaultExec = () => { throw new Error('Shared-browser listing must not open SSH') }
+    await expect(cloudVaultRequest('fixture-vps', { action: 'list-browser-access' }, signal, execute, { origin, fetch }))
+      .resolves.toEqual({ ok: true, browserAccess: { mode: 'managed', bots: [{ id: 'bot-scout', name: 'Scout', enabled: true }] } })
+    expect(fetch).toHaveBeenCalledOnce()
+  })
+
+  it.each([
+    { label: 'confirms the original owner Session', nextSession: browserSession, succeed: true },
+    { label: 'refuses confirmation after the owner Session changes', nextSession: 'bot-session-5f3ec8e4-4c34-4ec6-a38f-aad6d07cb337', succeed: false },
+  ])('$label after a browser toggle', async ({ nextSession, succeed }) => {
+    let enabled = false
+    const fetch = vi.fn(async (url: string, _options: RequestInit) => {
+      expect(url).toBe(origin + '/api/bot-browser-access')
+      return Response.json({ mode: 'managed', bots: [{
+        id: 'bot-scout', name: 'Scout', sessionId: enabled ? nextSession : browserSession, enabled,
+      }] })
+    })
+    const request = { action: 'set-browser-access', bot: 'bot-scout', enabled: true } as const
+    const execute = vi.fn(fixture(
+      'let body = ""; process.stdin.on("data", chunk => body += chunk); process.stdin.on("end", () => {'
+      + 'const value = JSON.parse(body);'
+      + 'if (value.action !== "set-browser-access" || value.bot !== "bot-scout" || value.session !== ' + JSON.stringify(browserSession) + ' || value.enabled !== true) process.exit(2);'
+      + 'process.stdout.write("{\\"ok\\":true}");'
+      + '});',
+    ))
+    const workspace = { origin, fetch: async (url: string, options: RequestInit) => {
+      if (url.endsWith('/api/bot-browser-access') && fetch.mock.calls.length > 0) enabled = true
+      const response = await fetch(url, options)
+      return response
+    } }
+    await expect(cloudVaultRequest('fixture-vps', request, signal, execute, workspace)).resolves.toEqual(succeed
+      ? { ok: true, browserAccess: { mode: 'managed', bots: [{ id: 'bot-scout', name: 'Scout', enabled: true }] } }
+      : { ok: false, reason: 'unavailable' })
+    expect(fetch).toHaveBeenCalledTimes(2)
+    expect(execute).toHaveBeenCalledOnce()
+  })
+
+  it('rejects forged or stale shared-browser roster rows before SSH', async () => {
+    const execute = vi.fn(fixture('process.stdout.write("{\\"ok\\":true}");'))
+    const request = { action: 'set-browser-access', bot: 'bot-scout', enabled: true } as const
+    const missing = { origin, fetch: async () => Response.json({ mode: 'managed', bots: [{
+      id: 'bot-other', name: 'Other', sessionId: browserSession, enabled: false,
+    }] }) }
+    await expect(cloudVaultRequest('fixture-vps', request, signal, execute, missing)).resolves.toEqual({ ok: false, reason: 'unavailable' })
+    const stale = { origin, fetch: async () => Response.json({ mode: 'managed', bots: [{
+      id: 'bot-scout', name: 'Scout', sessionId: 'bot-session-stale', enabled: false,
+    }] }) }
+    await expect(cloudVaultRequest('fixture-vps', request, signal, execute, stale)).resolves.toEqual({ ok: false, reason: 'unavailable' })
+    expect(execute).not.toHaveBeenCalled()
+  })
+
+  it('returns an unavailable browser projection when the Cloud worker is legacy or gated', async () => {
+    const workspace = { origin, fetch: async () => Response.json({ mode: 'unavailable', bots: [] }) }
+    await expect(cloudVaultRequest('fixture-vps', { action: 'list-browser-access' }, signal,
+      () => { throw new Error('Shared-browser listing must not open SSH') }, workspace))
+      .resolves.toEqual({ ok: true, browserAccess: { mode: 'unavailable', bots: [] } })
+  })
+
+  it('does not acknowledge a failed or unverified shared-browser toggle', async () => {
+    const request = { action: 'set-browser-access', bot: 'bot-scout', enabled: true } as const
+    const workspace = { origin, fetch: async () => Response.json({ mode: 'managed', bots: [{
+      id: 'bot-scout', name: 'Scout', sessionId: browserSession, enabled: false,
+    }] }) }
+    const failed = vi.fn(fixture('process.stdout.write("{\\"ok\\":false}");'))
+    await expect(cloudVaultRequest('fixture-vps', request, signal, failed, workspace))
+      .resolves.toEqual({ ok: false, reason: 'unavailable' })
+    expect(failed).toHaveBeenCalledOnce()
+
+    const stale = vi.fn(fixture('process.stdout.write("{\\"ok\\":true}");'))
+    await expect(cloudVaultRequest('fixture-vps', request, signal, stale, workspace))
+      .resolves.toEqual({ ok: false, reason: 'unavailable' })
+    expect(stale).toHaveBeenCalledOnce()
+  })
+
   it('accepts grant metadata only in the management window', async () => {
     const grant = { bot: 'bot-scout', unit, name: 'FIXTURE_KEY' }
     const add = { action: 'add-grant', ...grant }

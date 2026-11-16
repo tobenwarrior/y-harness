@@ -2716,6 +2716,8 @@ describe('durable Bot roster', () => {
       firstClosed = true
 
       const calls = vi.fn(async () => 'shared browser result')
+      let browserAllowed = true
+      const browserAvailable = vi.fn(async () => browserAllowed)
       let authorized: ReturnType<typeof vi.fn<(signal: AbortSignal, start?: () => void) => Promise<boolean>>> | undefined
       const vaultCalls = vi.fn(async () => 'shared vault result')
       let vaultAuthorized: ReturnType<typeof vi.fn<(signal: AbortSignal, start?: () => void) => Promise<boolean>>> | undefined
@@ -2725,6 +2727,7 @@ describe('durable Bot roster', () => {
         inspectSharedSessions: true,
         beforeService: (ctx) => {
           ctx.provide('botSharedBrowser', {
+            available: browserAvailable,
             toolForSession: (
               _scope: Context,
               _agent: Agent,
@@ -2773,6 +2776,17 @@ describe('durable Bot roster', () => {
         expect(h.ctx.tools.schemas().map(schema => schema.name)).not.toContain('shared_browser')
         expect(h.ctx.tools.schemas().map(schema => schema.name)).not.toContain('request_vps_secret')
         expect(vaultOwnerSessionId).toBe(created.bot.sessionId)
+        const assemble = async () => (await h.ctx.systemPrompt.assemble({ scope: agent })).tools.map(tool => tool.name)
+        await expect(assemble()).resolves.toContain('shared_browser')
+        browserAllowed = false
+        await expect(assemble()).resolves.not.toContain('shared_browser')
+        await expect(h.ctx.tools.execute({
+          callId: ToolCallId('shared-browser-disabled'), name: 'shared_browser', arguments: {},
+          signal: new AbortController().signal, agent,
+        })).resolves.toMatchObject({ isError: true })
+        expect(calls).not.toHaveBeenCalled()
+        browserAllowed = true
+        await expect(assemble()).resolves.toContain('shared_browser')
         await expect(h.ctx.tools.execute({
           callId: ToolCallId('shared-browser-admitted'), name: 'shared_browser', arguments: {},
           signal: new AbortController().signal, agent,

@@ -27,6 +27,77 @@ const SHARED_BROWSER_SESSION = SessionId('shared-session-37888424-5b3d-4a8c-81f5
 const GROUP_BROWSER_SESSION = SessionId('shared-session-group-37888424-5b3d-4a8c-81f5-751ed2d24f97')
 
 describe('managed VPS Bot composition', () => {
+  it('registers live sharing control for the installed browser worker with no static shared Bots', async () => {
+    const ctx = new Context()
+    try {
+      await ctx.plugin((scope) => { mountVpsBots(scope, {
+        root: '/yharness-test-bots', image: 'localhost/yharness-test',
+        isolatedBrowser: { socketPath: '/run/yharness-browser/control.sock', bots: ['bot-private'] },
+      }, []) })
+      expect(ctx.get('botSharedBrowser')).toBeDefined()
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('lists only active exact owner Bots eligible to change shared browser access', async () => {
+    const ctx = new Context()
+    const routes: ConnectionFetchRoute[] = []
+    const rows = [
+      { id: 'bot-eligible', name: 'Browser Scout', sessionId: BOT_SESSION, state: 'active' },
+      { id: 'bot-legacy', name: 'External Browser', sessionId: LEGACY_SESSION, state: 'active' },
+      { id: 'bot-stale', name: 'Stale Binding', sessionId: DESKTOP_SESSION, state: 'active' },
+      { id: 'bot-unconfigured', name: 'Unconfigured Bot', sessionId: GROUP_BROWSER_SESSION, state: 'active' },
+      { id: 'bot-paused', name: 'Pending Bot', sessionId: SHARED_BROWSER_SESSION, state: 'creating' },
+    ]
+    let enabled = false
+    const policy = vi.spyOn(VpsIsolatedBrowser.prototype, 'sharingPolicy').mockImplementation(async bot =>
+      bot === 'bot-eligible' ? { managed: true, enabled } : { managed: false, enabled: true })
+    try {
+      ctx.provide('connection', { fetch: { register: (route: ConnectionFetchRoute) => {
+        routes.push(route)
+        return () => { routes.splice(routes.indexOf(route), 1) }
+      } } } as never)
+      ctx.provide('bots', {
+        list: async () => ({ bots: rows }),
+        ownerBotForSession: async (id: string) => rows.find(row => row.sessionId === id && row.id !== 'bot-stale'),
+      } as never)
+      await ctx.plugin((scope) => { mountVpsBots(scope, {
+        root: '/yharness-test-bots', image: 'localhost/yharness-test',
+        isolatedBrowser: { socketPath: '/run/yharness-browser/control.sock',
+          bots: rows.filter(row => row.id !== 'bot-unconfigured').map(row => row.id) },
+      }, []) })
+      const route = routes.find(value => value.path === '/api/bot-browser-access')
+      if (route === undefined) throw new Error('Owner browser access route was not mounted')
+      expect(route.methods).toEqual(['GET'])
+      const response = await route.fetch(new Request(`http://127.0.0.1${route.path}`))
+      expect(response.headers.get('Cache-Control')).toBe('no-store')
+      await expect(response.json()).resolves.toEqual({
+        mode: 'managed', bots: [{ id: 'bot-eligible', name: 'Browser Scout', sessionId: BOT_SESSION, enabled: false }],
+      })
+      expect(policy.mock.calls.map(call => call.slice(0, 2))).toEqual([['bot-eligible', BOT_SESSION], ['bot-legacy', LEGACY_SESSION]])
+      enabled = true
+      const current = await route.fetch(new Request(`http://127.0.0.1${route.path}`))
+      await expect(current.json()).resolves.toMatchObject({ bots: [{ id: 'bot-eligible', enabled: true }] })
+      const bad = await route.fetch(new Request(`http://127.0.0.1${route.path}?bot=unexpected`))
+      expect(bad.status).toBe(400)
+
+      policy.mockRejectedValue(new Error('Worker unavailable'))
+      const offline = await route.fetch(new Request(`http://127.0.0.1${route.path}`))
+      await expect(offline.json()).resolves.toEqual({ mode: 'unavailable', bots: [] })
+
+      policy.mockClear()
+      const controller = new AbortController()
+      controller.abort()
+      const closed = await route.fetch(new Request(`http://127.0.0.1${route.path}`, { signal: controller.signal }))
+      await expect(closed.json()).resolves.toEqual({ mode: 'unavailable', bots: [] })
+      expect(policy).not.toHaveBeenCalled()
+    } finally {
+      policy.mockRestore()
+      await ctx.fiber.dispose()
+    }
+  })
+
   it.each([
     { session: SHARED_BROWSER_SESSION, outcome: 'complete' },
     { session: GROUP_BROWSER_SESSION, outcome: 'revoked' },

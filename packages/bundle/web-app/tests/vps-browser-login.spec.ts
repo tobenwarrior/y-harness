@@ -1,4 +1,4 @@
-import { createServer, type Server } from 'node:net'
+import { createConnection, createServer, type Server } from 'node:net'
 import { once } from 'node:events'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -12,6 +12,7 @@ const BOT = 'bot-login'
 const SESSION = 'bot-session-0e9beecd-b6f5-40b1-8d52-f97259bdcf76'
 const SHARED_SESSION = 'shared-session-0e9beecd-b6f5-40b1-8d52-f97259bdcf77'
 const LOGIN_ID = '0123456789abcdef0123456789abcdef'
+const INSTALLED_CONTROL = '/run/yharness-browser/control.sock'
 
 const roots: string[] = []
 const servers: Server[] = []
@@ -46,6 +47,36 @@ async function listen(handler: (request: Record<string, unknown>) => unknown): P
 }
 
 describe('isolated browser saved-login registry', () => {
+  it('reads a live exact browser selection and preserves old static selections', async () => {
+    let sharing: unknown = { managed: true, legacy: true, override: null }
+    const requests: Record<string, unknown>[] = []
+    const socketPath = await listen((request) => {
+      requests.push(request)
+      if (request.action === 'sharing-status' && request.session === SESSION) return sharing
+      return request.action === 'status' && request.session === SHARED_SESSION
+        ? { available: true } : { error: 'unavailable' }
+    })
+    const open = vi.fn(() => createConnection({ path: socketPath }))
+    const browser = new VpsIsolatedBrowser({ socketPath: INSTALLED_CONTROL, bots: [BOT] }, { connect: open })
+    const legacy = new VpsIsolatedBrowser({ socketPath: INSTALLED_CONTROL, bots: [BOT], sharedBots: [BOT] }, { connect: open })
+    const signal = new AbortController().signal
+    await expect(browser.sharingPolicy(BOT, SESSION, signal)).resolves.toEqual({ managed: true, enabled: false })
+    await expect(legacy.sharingPolicy(BOT, SESSION, signal)).resolves.toEqual({ managed: true, enabled: true })
+    sharing = { managed: true, legacy: false, override: true }
+    await expect(browser.availableInSharedSession(BOT, SHARED_SESSION, SESSION, signal)).resolves.toBe(true)
+    sharing = { managed: true, legacy: true, override: false }
+    await expect(legacy.availableInSharedSession(BOT, SHARED_SESSION, SESSION, signal)).resolves.toBe(false)
+    sharing = { managed: false, legacy: true, override: true }
+    await expect(browser.availableInSharedSession(BOT, SHARED_SESSION, SESSION, signal)).resolves.toBe(false)
+    sharing = { error: 'unavailable' }
+    await expect(legacy.availableInSharedSession(BOT, SHARED_SESSION, SESSION, signal)).resolves.toBe(true)
+    expect(requests.at(-1)).toEqual({ action: 'status', bot: BOT, session: SHARED_SESSION })
+    expect(requests.filter(request => request.action === 'sharing-status').every(
+      request => request.bot === BOT && request.session === SESSION,
+    )).toBe(true)
+    expect(open).toHaveBeenCalledWith({ path: INSTALLED_CONTROL })
+  })
+
   it('leases only creation, publishes owner metadata, polls status, and hides metadata from the result', async () => {
     const requests: Record<string, unknown>[] = []
     let statuses = 0

@@ -22,6 +22,7 @@ import { isVpsSharedPath, VpsRuntime, type VpsBrowserOptions } from './vps-runti
 import { registerVpsProjectTool } from './vps-project-tool.ts'
 import { isSharedBrowserSession, runAuthorizedBrowserOperation, VpsIsolatedBrowser, type VpsIsolatedBrowserConfig } from './vps-isolated-browser.ts'
 import { VpsBrowserHandoffs } from './vps-browser-handoffs.ts'
+import { vpsBrowserAccessRoute } from './vps-browser-access.ts'
 import { VpsBrowserLogin, vpsBrowserLoginRoute } from './vps-browser-login.ts'
 import { registerVpsServiceTools, VpsServices, type VpsServiceAccess } from './vps-services.ts'
 import { registerVpsJournalTool, VpsJournal, type VpsJournalConfig } from './vps-journal.ts'
@@ -122,11 +123,14 @@ export function mountVpsBots(
   const browserLogin = isolatedBrowser === undefined || config.isolatedBrowser?.savedLogins !== true
     ? undefined
     : new VpsBrowserLogin(isolatedBrowser)
-  const browserHandoffs = isolatedBrowser === undefined || !config.isolatedBrowser?.sharedBots?.length
+  const browserHandoffs = isolatedBrowser === undefined
+    || (!isolatedBrowser.usesManagedSharing() && !config.isolatedBrowser?.sharedBots?.length)
     ? undefined
     : new VpsBrowserHandoffs(isolatedBrowser)
   if (isolatedBrowser !== undefined && browserHandoffs !== undefined) {
     ctx.provide('botSharedBrowser', {
+      available: (botId, sessionId, ownerSessionId, signal) =>
+        isolatedBrowser.availableInSharedSession(botId, sessionId, ownerSessionId, signal),
       toolForSession(scope, agent, botId, authorized, ownerSessionId) {
         const sessionId = agent.id
         if (!isSharedBrowserSession(sessionId) || !isolatedBrowser.authorized(botId, sessionId)) return undefined
@@ -255,6 +259,9 @@ export function mountVpsBots(
   })
 
   ctx.inject(['bots', 'connection'], (scope) => {
+    if (isolatedBrowser?.usesManagedSharing() === true) {
+      scope.effect(() => scope.connection.fetch.register(vpsBrowserAccessRoute(scope, isolatedBrowser)), 'vps-bots: owner browser access')
+    }
     scope.inject(['workspaceFiles'], (filesScope) => {
       filesScope.effect(() => filesScope.connection.fetch.register(computerFileDownloadRoute(
         (sessionId, path, signal) => filesScope.workspaceFiles.downloadComputer(SessionId(sessionId), path, signal),

@@ -259,7 +259,7 @@ Changing a Bot grant does not rewrite Session history. The scoped tool set remai
 
 #### What the model sees
 
-An optional Host browser provider can expose one `shared_browser` tool to an explicitly opted Bot's shared Session. The tool applies only to the exact live shared Agent. A group call requires one isolated delivery for the current turn and step. The provider rechecks `authorized` while a sign-in is pending and starts browser operations through its synchronous `start` callback. The provider uses the canonical owner Session, when available, to display private handoff metadata.
+An optional Host browser provider can expose one `shared_browser` tool to an explicitly opted Bot's shared Session. The tool applies only to the exact live shared Agent. A group call requires one isolated delivery for the current turn and step. An optional provider availability check controls prompt visibility and dispatch for each request. The provider rechecks `authorized` while a sign-in is pending and starts browser operations through its synchronous `start` callback. The provider uses the canonical owner Session, when available, to display private handoff metadata.
 
 #### Token effect
 

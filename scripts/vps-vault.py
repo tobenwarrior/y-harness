@@ -5,6 +5,7 @@ import argparse
 import base64
 import fcntl
 import getpass
+import grp
 import hashlib
 import ipaddress
 import json
@@ -42,6 +43,15 @@ DESKTOP_NAME_LIMIT = 100
 DESKTOP_RESPONSE_LIMIT = 160 * 1024
 BROWSER_SOCKET = Path('/run/yharness-browser/vault.sock')
 BROWSER_ACCOUNT = 'yharness-browser'
+BROWSER_CONFIG = Path('/etc') / BROWSER_ACCOUNT
+BROWSER_GRANTS = BROWSER_CONFIG / 'grants.json'
+BROWSER_SHARED_GRANTS = BROWSER_CONFIG / 'shared-grants.json'
+BROWSER_GRANT_LIMIT = 64
+BROWSER_FILE_LIMIT = 32 * 1024
+BROWSER_SESSION = re.compile(
+    r'bot-session-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\Z'
+)
+BROWSER_REVISION = re.compile(r'[0-9a-f]{32}\Z')
 BROWSER_REQUEST_LIMIT = 24 * 1024
 BROWSER_RESPONSE_LIMIT = 64 * 1024
 BROWSER_TIMEOUT = 25
@@ -183,6 +193,16 @@ def valid_request_id(value):
 def valid_bot(value):
     """Accept an exact Cloud roster identity."""
     return type(value) is str and BOT.fullmatch(value) is not None
+
+
+def valid_browser_session(value):
+    """Accept the canonical owner Bot Session assigned by the browser installer."""
+    return type(value) is str and BROWSER_SESSION.fullmatch(value) is not None
+
+
+def valid_browser_revision(value):
+    """Accept one lower-case revision for a durable shared-browser decision."""
+    return type(value) is str and BROWSER_REVISION.fullmatch(value) is not None
 
 
 def valid_login_id(value):
@@ -416,6 +436,13 @@ def desktop_request(payload):
                     or not valid_request_grant((request['bot'], request['unit'], request['name']))):
                 raise VaultError('Invalid Vault request.')
             return request
+        if action == 'set-browser-access':
+            if (set(request) != {'action', 'bot', 'session', 'enabled'}
+                    or not valid_bot(request.get('bot'))
+                    or not valid_browser_session(request.get('session'))
+                    or type(request.get('enabled')) is not bool):
+                raise VaultError('Invalid Vault request.')
+            return request
         if action in ('list-logins', 'list-bot-logins', 'add-login', 'replace-login', 'remove-login'):
             return website_login_request(request)
         if action == 'enter-login-use':
@@ -628,6 +655,125 @@ def desktop_client(payload, endpoint=DESKTOP_SOCKET):
     if not result or len(result) > DESKTOP_RESPONSE_LIMIT:
         raise VaultError('Desktop Vault is unavailable.')
     return result
+
+
+def browser_group_gid():
+    """Resolve the private group that can read installed browser configuration."""
+    if os.geteuid() != 0:
+        # Unit tests use the current account as the fixture's administrator.
+        return os.getegid()
+    try:
+        gid = grp.getgrnam(BROWSER_ACCOUNT).gr_gid
+    except (AttributeError, KeyError, TypeError):
+        raise VaultError(BROWSER_UNAVAILABLE) from None
+    if type(gid) is not int or gid <= 0:
+        raise VaultError(BROWSER_UNAVAILABLE)
+    return gid
+
+
+def browser_managed_file(path):
+    """Require one fixed browser file with administrator/group ownership and mode 0640."""
+    expected_uid = 0 if os.geteuid() == 0 else os.geteuid()
+    try:
+        if not directory(path.parent, private=False, uid=expected_uid):
+            raise VaultError(BROWSER_UNAVAILABLE)
+        info = path.lstat()
+    except FileNotFoundError:
+        raise VaultError(BROWSER_UNAVAILABLE) from None
+    except (OSError, VaultError):
+        raise VaultError(BROWSER_UNAVAILABLE) from None
+    if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != expected_uid
+            or info.st_gid != browser_group_gid() or stat.S_IMODE(info.st_mode) != 0o640):
+        raise VaultError(BROWSER_UNAVAILABLE)
+    return info
+
+
+def read_browser_managed_json(path):
+    """Read bounded JSON from one already-validated browser file."""
+    browser_managed_file(path)
+    try:
+        with path.open('rb') as source:
+            payload = source.read(BROWSER_FILE_LIMIT + 1)
+        if len(payload) > BROWSER_FILE_LIMIT:
+            raise VaultError(BROWSER_UNAVAILABLE)
+        return json.loads(payload.decode('utf-8'), object_pairs_hook=exact_object)
+    except VaultError:
+        raise VaultError(BROWSER_UNAVAILABLE) from None
+    except (OSError, OverflowError, UnicodeError, ValueError, RecursionError, TypeError):
+        raise VaultError(BROWSER_UNAVAILABLE) from None
+
+
+def browser_grant_pairs():
+    """Validate the immutable browser roster and return its exact Bot/session pairs."""
+    data = read_browser_managed_json(BROWSER_GRANTS)
+    if type(data) is not list or len(data) > BROWSER_GRANT_LIMIT:
+        raise VaultError(BROWSER_UNAVAILABLE)
+    pairs = set()
+    bots = set()
+    sessions = set()
+    for record in data:
+        if type(record) is not dict or set(record) not in ({'bot', 'session'}, {'bot', 'session', 'shared'}) \
+                or not valid_bot(record.get('bot')) or not valid_browser_session(record.get('session')) \
+                or ('shared' in record and record['shared'] is not True):
+            raise VaultError(BROWSER_UNAVAILABLE)
+        pair = (record['bot'], record['session'])
+        if pair in pairs or record['bot'] in bots or record['session'] in sessions:
+            raise VaultError(BROWSER_UNAVAILABLE)
+        pairs.add(pair)
+        bots.add(record['bot'])
+        sessions.add(record['session'])
+    return pairs
+
+
+def browser_shared_policy():
+    """Validate the durable shared-browser decision list without accepting unknown fields."""
+    data = read_browser_managed_json(BROWSER_SHARED_GRANTS)
+    if (type(data) is not dict or set(data) != {'version', 'bots'} or type(data['version']) is not int
+            or data['version'] != 1 or type(data['bots']) is not list or len(data['bots']) > BROWSER_GRANT_LIMIT):
+        raise VaultError(BROWSER_UNAVAILABLE)
+    pairs = set()
+    for record in data['bots']:
+        if (type(record) is not dict or set(record) != {'bot', 'session', 'enabled', 'revision'}
+                or not valid_bot(record.get('bot')) or not valid_browser_session(record.get('session'))
+                or type(record.get('enabled')) is not bool or not valid_browser_revision(record.get('revision'))):
+            raise VaultError(BROWSER_UNAVAILABLE)
+        pair = (record['bot'], record['session'])
+        if pair in pairs:
+            raise VaultError(BROWSER_UNAVAILABLE)
+        pairs.add(pair)
+    return data['bots']
+
+
+def replace_browser_policy(records):
+    """Atomically publish the validated shared-browser policy with exact ownership."""
+    gid = browser_group_gid()
+    payload = (json.dumps({'version': 1, 'bots': records}, separators=(',', ':')) + '\n').encode('ascii')
+    descriptor, name = tempfile.mkstemp(prefix='.yharness-browser-', dir=BROWSER_SHARED_GRANTS.parent)
+    temporary = Path(name)
+    try:
+        with os.fdopen(descriptor, 'wb') as output:
+            os.fchmod(output.fileno(), 0o640)
+            if os.geteuid() == 0:
+                os.fchown(output.fileno(), 0, gid)
+            output.write(payload)
+            output.flush()
+            os.fsync(output.fileno())
+        temporary.replace(BROWSER_SHARED_GRANTS)
+        sync_directory(BROWSER_SHARED_GRANTS.parent)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def browser_refresh_acknowledged():
+    """Ask the root browser worker to reload the durable policy and require its exact acknowledgment."""
+    payload = b'{"action":"refresh-sharing"}'
+    try:
+        reply = json.loads(browser_client(payload).decode('utf-8'), object_pairs_hook=exact_object)
+    except (VaultError, OSError, OverflowError, UnicodeError, ValueError, RecursionError, TypeError):
+        raise VaultError(BROWSER_UNAVAILABLE) from None
+    if type(reply) is not dict or set(reply) != {'ok'} or reply['ok'] is not True:
+        raise VaultError(BROWSER_UNAVAILABLE)
+    return {'ok': True}
 
 
 def browser_peer_uid():
@@ -1553,6 +1699,32 @@ class Vault:
             self.write_request_grants(policy, grants, start=True)
         return {'ok': True}
 
+    def set_browser_access(self, request):
+        """Persist one owner-approved browser decision before asking the worker to reload it."""
+        pair = (request['bot'], request['session'])
+        grants = browser_grant_pairs()
+        if pair not in grants:
+            raise VaultError(BROWSER_UNAVAILABLE)
+        records = browser_shared_policy()
+        if any((record['bot'], record['session']) not in grants for record in records):
+            raise VaultError(BROWSER_UNAVAILABLE)
+        current = next((record for record in records
+                        if (record['bot'], record['session']) == pair), None)
+        if current is None:
+            if len(records) >= BROWSER_GRANT_LIMIT:
+                raise VaultError(BROWSER_UNAVAILABLE)
+            records.append({
+                'bot': request['bot'], 'session': request['session'],
+                'enabled': request['enabled'], 'revision': secrets.token_hex(16),
+            })
+            records.sort(key=lambda record: (record['bot'], record['session']))
+            replace_browser_policy(records)
+        elif current['enabled'] != request['enabled']:
+            current['enabled'] = request['enabled']
+            current['revision'] = secrets.token_hex(16)
+            replace_browser_policy(records)
+        return browser_refresh_acknowledged()
+
     def desktop_credential_request(self, request, requester_uid):
         """Serve owner metadata and wait for live admission before a shared save."""
         action = request['action']
@@ -1636,6 +1808,8 @@ class Vault:
             policy = self.desktop_policy(requester_uid)
             if action in ('list-grants', 'list-scoped-grants', 'add-grant', 'remove-grant', 'set-grant-scope'):
                 return self.desktop_grants(policy, request)
+            if action == 'set-browser-access':
+                return self.set_browser_access(request)
             if action in ('list-logins', 'list-bot-logins', 'add-login', 'replace-login', 'remove-login'):
                 request = website_login_request(request)
                 if action == 'list-logins':

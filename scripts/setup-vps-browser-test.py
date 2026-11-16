@@ -128,6 +128,7 @@ class IsolatedBrowserTest(unittest.TestCase):
         ):
             with self.subTest(bad=bad), self.assertRaises(installer.BrowserError):
                 installer.grant_records(bad)
+        self.assertEqual(json.loads(installer.shared_grants_payload()), {'version': 1, 'bots': []})
 
     def test_shared_grants_require_an_existing_distinct_bot_selection(self):
         session = 'bot-session-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
@@ -137,6 +138,37 @@ class IsolatedBrowserTest(unittest.TestCase):
         for shared in (['bot-unknown'], ['bot-alpha', 'bot-alpha']):
             with self.subTest(shared=shared), self.assertRaises(installer.BrowserError):
                 installer.grant_records(grants, shared_bots=shared)
+
+    def test_existing_shared_policy_reconciles_only_removed_roster_pairs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / 'shared-grants.json'
+            path.write_text(json.dumps({
+                'version': 1,
+                'bots': [
+                    {'bot': 'bot-alpha', 'session': 'bot-session-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+                     'enabled': True, 'revision': 'a' * 32},
+                    {'bot': 'bot-old', 'session': 'bot-session-bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+                     'enabled': True, 'revision': 'b' * 32},
+                ],
+            }))
+            path.chmod(0o640)
+            grants = [{'bot': 'bot-alpha', 'session': 'bot-session-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'}]
+            self.assertEqual(
+                installer.reconciled_shared_grants(path, grants, os.geteuid(), os.getegid()),
+                [{'bot': 'bot-alpha', 'session': grants[0]['session'], 'enabled': True, 'revision': 'a' * 32}],
+            )
+
+    def test_existing_malformed_shared_policy_fails_before_roster_mutation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / 'shared-grants.json'
+            path.write_text('{\"version\":1,\"bots\":[{\"bot\":\"bot-alpha\"}]}')
+            path.chmod(0o640)
+            with self.assertRaisesRegex(installer.BrowserError, 'repair it before changing grants'):
+                installer.reconciled_shared_grants(
+                    path,
+                    [{'bot': 'bot-alpha', 'session': 'bot-session-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'}],
+                    os.geteuid(), os.getegid(),
+                )
 
     def test_trusted_path_requires_root_owned_non_writable_executable(self):
         path = pathlib.Path('/opt/chromium/chrome')
@@ -222,6 +254,9 @@ class IsolatedBrowserTest(unittest.TestCase):
                 'session': 'bot-session-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
             }])
             self.assertEqual(stat.S_IMODE(grant.stat().st_mode), 0o640)
+            shared = paths.config_root / 'shared-grants.json'
+            self.assertEqual(json.loads(shared.read_text()), {'version': 1, 'bots': []})
+            self.assertEqual(stat.S_IMODE(shared.stat().st_mode), 0o640)
             self.assertEqual(stat.S_IMODE(paths.config_root.stat().st_mode), 0o750)
             self.assertEqual(stat.S_IMODE(paths.state_root.stat().st_mode), 0o700)
             self.assertEqual(stat.S_IMODE(paths.install_root.stat().st_mode), 0o755)
@@ -291,10 +326,19 @@ class IsolatedBrowserTest(unittest.TestCase):
                 page = paths.install_root / 'page.mjs'
                 previous = page.read_bytes()
                 page.write_bytes(installer.ARTIFACT_MARKER + b'export const oldPage = true\n')
+                shared = paths.config_root / 'shared-grants.json'
+                preserved = b'{\"version\":1,\"bots\":[{\"bot\":\"bot-alpha\",\"session\":\"bot-session-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\",\"enabled\":true,\"revision\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},{\"bot\":\"bot-removed\",\"session\":\"bot-session-bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb\",\"enabled\":true,\"revision\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"}]}\n'
+                shared.write_bytes(preserved)
                 installer.install('/opt/chromium/chrome', '/opt/node/bin/node', 722, [grant], paths=paths)
             self.assertEqual(inactive.call_count, 2)
             self.assertEqual(page.read_bytes(), previous)
             self.assertEqual(cookie_store.read_bytes(), b'fixture profile state')
+            self.assertEqual(shared.read_bytes(), installer.shared_grants_payload([{
+                'bot': 'bot-alpha',
+                'session': grant[1],
+                'enabled': True,
+                'revision': 'a' * 32,
+            }]))
 
     def test_install_leaves_managed_files_alone_when_a_unit_has_an_administrator_edit(self):
         with tempfile.TemporaryDirectory() as directory:

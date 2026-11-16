@@ -189,7 +189,11 @@ Saved login approval supports a single HTTPS sign-in form that submits to the sa
 
 ### Let a shared Bot use its browser
 
-Pass `--shared-bot BOT_ID` for each isolated browser Bot whose collaborators should be able to browse. Add those same IDs to `botComputers.isolatedBrowser.sharedBots` in the private Web profile. Each private shared chat and each Bot in a shared group uses its own browser profile.
+Open **Cloud → Vault → Bot access** in Y Harness. Under **Shared browsers**, enable the Bots whose collaborators should be able to browse. The list shows Bots with an isolated browser configured on this VPS. The setting takes effect in existing chats and persists when Cloud restarts. Each private shared chat and each Bot in a shared group has its own browser profile.
+
+Turn off a Bot’s shared browser access to end its current shared browsing and pending sign-ins. Turning access back on starts a fresh browser for each of its shared chats. The Bot’s main chat keeps its own browser.
+
+For a manually managed deployment, pass `--shared-bot BOT_ID` when installing the isolated browser worker and add the same ID to `botComputers.isolatedBrowser.sharedBots` in the private Web profile. A choice saved in **Shared browsers** controls that Bot when the deployment uses the installed Vault and browser worker.
 
 To let a shared Bot sign in, enable saved logins and select the Bot under **Saved for** when you save its website account. When a collaborator asks the Bot to sign in, open the Bot’s main chat in Y Harness and review **Approve shared website sign-in**. Select an account assigned to that Bot for the displayed website. The collaborator sees the outcome in their chat. End any existing sign-in at the website if you revoke the account’s access.
 

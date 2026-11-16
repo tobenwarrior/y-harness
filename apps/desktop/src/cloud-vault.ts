@@ -22,13 +22,16 @@ const MAX_LOGINS = 64
 const MAX_OUTPUT = 160 * 1024
 const MAX_ROSTER_BYTES = 4 * 1024 * 1024
 const MAX_ACCESS_MODE_BYTES = 128
+const MAX_BROWSER_ACCESS_BYTES = 64 * 1024
 const LOOPBACK_ORIGIN = /^http:\/\/127\.0\.0\.1:[1-9][0-9]{0,4}$/u
+const BOT_SESSION = /^bot-session-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u
 
 declare const VAULT_REQUEST_ID: unique symbol
 declare const VAULT_LOGIN_USE_REQUEST_ID: unique symbol
 declare const VAULT_LOGIN_ID: unique symbol
 declare const VAULT_LOGIN_GENERATION: unique symbol
 declare const VAULT_BOT_ID: unique symbol
+declare const VAULT_BOT_SESSION_ID: unique symbol
 
 /** Opaque request identifier issued by the connected Cloud workspace. */
 export type VaultRequestId = string & { readonly [VAULT_REQUEST_ID]: true }
@@ -45,6 +48,8 @@ export type VaultLoginGeneration = string & { readonly [VAULT_LOGIN_GENERATION]:
 /** Exact Bot identity from the connected Cloud roster. */
 export type VaultBotId = string & { readonly [VAULT_BOT_ID]: true }
 
+type VaultBotSessionId = string & { readonly [VAULT_BOT_SESSION_ID]: true }
+
 /** Exact audiences for a service key grant. */
 export type VaultGrantScope = 'owner' | 'shared'
 
@@ -58,6 +63,12 @@ export type VaultRequest = { readonly action: 'list' | 'list-grants' } | ({
   readonly action: 'set-grant-scope'
   readonly scope: VaultGrantScope
 } & VaultBotGrant) | {
+  readonly action: 'list-browser-access'
+} | {
+  readonly action: 'set-browser-access'
+  readonly bot: VaultBotId
+  readonly enabled: boolean
+} | {
   readonly action: 'revoke'
   readonly unit: string
   readonly name: string
@@ -118,7 +129,13 @@ export type VaultRequest = { readonly action: 'list' | 'list-grants' } | ({
   readonly id: VaultLoginUseRequestId
 }
 
-type VaultWireRequest = VaultRequest | { readonly action: 'list-scoped-grants' }
+type VaultWireRequest = Exclude<VaultRequest, { readonly action: 'list-browser-access' | 'set-browser-access' }>
+  | { readonly action: 'list-scoped-grants' } | {
+    readonly action: 'set-browser-access'
+    readonly bot: VaultBotId
+    readonly session: VaultBotSessionId
+    readonly enabled: boolean
+  }
 
 /** Names for a single administrator-enabled Linux service. */
 export interface VaultService {
@@ -145,6 +162,19 @@ export interface VaultBotAccess {
 export interface VaultBotChoice {
   readonly id: VaultBotId
   readonly name: string
+}
+
+/** Non-secret owner projection of one Bot's shared-browser capability. */
+export interface VaultBrowserAccessBot {
+  readonly id: VaultBotId
+  readonly name: string
+  readonly enabled: boolean
+}
+
+/** Shared-browser capability returned to the native Vault renderer. */
+export interface VaultBrowserAccess {
+  readonly mode: 'managed' | 'unavailable'
+  readonly bots: readonly VaultBrowserAccessBot[]
 }
 
 /** Metadata for one Cloud-to-Vault key request; no secret value is returned. */
@@ -203,6 +233,9 @@ export type VaultReply = {
   readonly access: VaultBotAccess
   readonly bots?: readonly VaultBotChoice[]
 } | {
+  readonly ok: true
+  readonly browserAccess: VaultBrowserAccess
+} | {
   readonly request: VaultRequestMetadata | VaultLoginUseRequestMetadata
 } | {
   readonly state: 'saved' | 'cancelled' | 'needs-owner' | 'unavailable'
@@ -240,6 +273,10 @@ function keyName(value: unknown): value is string {
 
 function botId(value: unknown): value is VaultBotId {
   return typeof value === 'string' && value === value.trim() && BOT.test(value)
+}
+
+function botSessionId(value: unknown): value is VaultBotSessionId {
+  return typeof value === 'string' && BOT_SESSION.test(value)
 }
 
 function requestState(value: unknown): value is VaultRequestMetadata['state'] {
@@ -326,6 +363,10 @@ function requestBody(value: unknown): VaultRequest | undefined {
   const { action, unit, name } = value
   const fields = Object.keys(value).length
   if ((action === 'list' || action === 'list-grants') && fields === 1) return { action }
+  if (action === 'list-browser-access' && fields === 1) return { action }
+  if (action === 'set-browser-access' && fields === 3 && botId(value.bot) && typeof value.enabled === 'boolean') {
+    return { action, bot: value.bot, enabled: value.enabled }
+  }
   if ((action === 'add-grant' || action === 'remove-grant' || action === 'set-grant-scope')
     && botId(value.bot) && unitName(unit) && keyName(name)) {
     const subject = { bot: value.bot, unit, name }
@@ -472,6 +513,9 @@ function replyBody(
   if (action === 'list-grants' || action === 'list-scoped-grants') {
     const access = botAccess(value.access, action === 'list-scoped-grants')
     return access === undefined ? undefined : { ok: true, access }
+  }
+  if (action === 'set-browser-access') {
+    return Object.keys(value).length === 1 && value.ok === true ? { ok: true } : undefined
   }
   if (action === 'inspect-request') {
     const request = value.request
@@ -631,6 +675,61 @@ export async function readCloudVaultBots(
   }
 }
 
+interface CloudBrowserAccessBot extends VaultBrowserAccessBot {
+  readonly sessionId: VaultBotSessionId
+}
+
+interface CloudBrowserAccess {
+  readonly mode: 'managed' | 'unavailable'
+  readonly bots: readonly CloudBrowserAccessBot[]
+}
+
+function browserAccessBody(value: unknown): CloudBrowserAccess | undefined {
+  if (!record(value) || Object.keys(value).length !== 2
+    || (value.mode !== 'managed' && value.mode !== 'unavailable')
+    || !Array.isArray(value.bots) || value.bots.length > 64) return undefined
+  if (value.mode === 'unavailable' && value.bots.length !== 0) return undefined
+  const bots: CloudBrowserAccessBot[] = []
+  const ids = new Set<string>()
+  const sessions = new Set<VaultBotSessionId>()
+  for (const row of value.bots) {
+    if (!record(row) || Object.keys(row).length !== 4 || !botId(row.id)
+      || typeof row.name !== 'string' || !row.name.isWellFormed() || row.name.trim() !== row.name
+      || row.name.length === 0 || row.name.length > 255 || CONTROL.test(row.name)
+      || !botSessionId(row.sessionId)
+      || typeof row.enabled !== 'boolean' || ids.has(row.id) || sessions.has(row.sessionId)) return undefined
+    ids.add(row.id)
+    sessions.add(row.sessionId)
+    bots.push({ id: row.id, name: row.name, sessionId: row.sessionId, enabled: row.enabled })
+  }
+  return { mode: value.mode, bots }
+}
+
+async function readCloudBrowserAccess(
+  workspace: VaultCloudWorkspace, signal: AbortSignal,
+): Promise<CloudBrowserAccess | undefined> {
+  const { origin } = workspace
+  if (signal.aborted || !LOOPBACK_ORIGIN.test(origin)) return undefined
+  try {
+    const response = await workspace.fetch(origin + '/api/bot-browser-access', {
+      method: 'GET', redirect: 'error', credentials: 'include', cache: 'no-store',
+      signal: AbortSignal.any([signal, AbortSignal.timeout(5_000)]),
+    })
+    const reply = await readCloudReply(response, MAX_BROWSER_ACCESS_BYTES)
+    if (signal.aborted) return undefined
+    return browserAccessBody(reply)
+  } catch (_error) {
+    return undefined
+  }
+}
+
+function browserAccessReply(value: CloudBrowserAccess): VaultReply {
+  return { ok: true, browserAccess: {
+    mode: value.mode,
+    bots: value.bots.map(({ id, name, enabled }) => ({ id, name, enabled })),
+  } }
+}
+
 /**
  * Send one bounded request over SSH and return only validated metadata or a fixed failure.
  * @param target - Main-owned, previously connected Cloud SSH destination.
@@ -645,6 +744,24 @@ export async function cloudVaultRequest(
 ): Promise<VaultReply> {
   const request = requestBody(value)
   if (!isCloudTarget(target) || request === undefined) return { ok: false, reason: 'invalid' }
+  if (request.action === 'list-browser-access' || request.action === 'set-browser-access') {
+    if (workspace === undefined) return unavailable
+    const current = await readCloudBrowserAccess(workspace, signal)
+    if (current === undefined) return unavailable
+    if (request.action === 'list-browser-access') return browserAccessReply(current)
+    if (current.mode !== 'managed') return unavailable
+    const selected = current.bots.find(bot => bot.id === request.bot)
+    if (selected === undefined) return unavailable
+    const changed = await executeVaultRequest(target, {
+      action: 'set-browser-access', bot: request.bot, session: selected.sessionId, enabled: request.enabled,
+    }, signal, execute)
+    if (!('ok' in changed) || changed.ok !== true) return changed
+    const verified = await readCloudBrowserAccess(workspace, signal)
+    if (verified?.mode !== 'managed') return unavailable
+    const confirmed = verified.bots.find(bot => bot.id === request.bot)
+    return confirmed?.sessionId === selected.sessionId && confirmed.enabled === request.enabled
+      ? browserAccessReply(verified) : unavailable
+  }
   let bots: readonly VaultBotChoice[] | undefined
   let sharedScopes = false
   const grantWrite = request.action === 'add-grant' || request.action === 'set-grant-scope'

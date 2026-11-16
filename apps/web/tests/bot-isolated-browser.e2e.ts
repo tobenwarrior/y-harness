@@ -14,6 +14,7 @@ import { captureStableAria, compareOrRefreshGolden, launchWebScaffold, watchCons
 const FIXTURE = fileURLToPath(new URL('../../../snapshots/web/bot-workspace/session.v3.jsonl', import.meta.url))
 const GOLDEN = fileURLToPath(new URL('./expected/bot-isolated-browser/browser.expected.md', import.meta.url))
 const BOTS_SOURCE = new URL('../../../packages/bundle/web-app/lib/types/vps-bots.js', import.meta.url).href
+const BROKER_SOURCE = new URL('../../../packages/bundle/web-app/lib/types/vps-isolated-browser.js', import.meta.url).href
 const MODE = webSnapshotMode()
 const BOT = BotId('bot-browser-fixture')
 const PROVIDER = 'browser-fixture'
@@ -25,6 +26,7 @@ const SHARED_LOGIN = { ...LOGIN, id: 'b'.repeat(32) }
 const SHARED_CHALLENGE = 'c'.repeat(32)
 const LOGIN_REPLY = 'The login was submitted. I’ll check the page.'
 const HANDOFF_REPLY = 'Thanks. I have the shared browser again.'
+const BROWSER_DISABLED = 'Shared browsing is off.'
 
 class BrowserAdapter extends LlmAdapter {
   override async listModels(provider: string) {
@@ -38,7 +40,8 @@ class BrowserAdapter extends LlmAdapter {
     const handoff = input.includes('take over')
     const shared = input.includes('shared chat')
     const result = options.messages.slice(latestUser + 1).findLast(message => message.role === 'tool')
-    if (result === undefined) {
+    const checkSharing = input.includes('check the browser setting')
+    if (result === undefined && !checkSharing) {
       const id = ToolCallId(handoff ? 'fixture-browser-handoff' : savedLogin ? 'fixture-browser-login' : 'fixture-browser-navigation')
       const name = shared ? 'shared_browser' : 'vps_computer'
       const args = JSON.stringify(handoff ? { action: 'request_sign_in' }
@@ -53,7 +56,9 @@ class BrowserAdapter extends LlmAdapter {
       yield { type: 'finish', reason: { kind: 'tool-calls' } }
       return
     }
-    if (handoff) {
+    if (result === undefined) {
+      expect(options.tools?.some(tool => tool.name === 'shared_browser') ?? false).toBe(false)
+    } else if (handoff) {
       expect(result.content).toEqual([expect.objectContaining({ type: 'text', text: expect.stringContaining('returned the Computer') })])
       expect(JSON.stringify(options.messages.slice(latestUser))).not.toContain('fixture-input')
     } else if (savedLogin) {
@@ -64,7 +69,7 @@ class BrowserAdapter extends LlmAdapter {
     } else {
       expect(result.content.some(block => block.type === 'text' && block.text.includes('Browser'))).toBe(true)
     }
-    const text = handoff ? HANDOFF_REPLY : savedLogin ? LOGIN_REPLY : REPLY
+    const text = checkSharing ? BROWSER_DISABLED : handoff ? HANDOFF_REPLY : savedLogin ? LOGIN_REPLY : REPLY
     yield { type: 'block-start', index: 0, blockType: 'text' }
     yield { type: 'text-delta', index: 0, text }
     yield { type: 'block-end', index: 0, block: { type: 'text', text } }
@@ -85,6 +90,8 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('opens websites for
   let loginApproved = false
   let sharedApproved = false
   let sharedAuthorized = false
+  let sharingOverride: boolean | null = null
+  let ownerSession: string | undefined
   let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined
   let scaffold: Awaited<ReturnType<typeof launchWebScaffold>> | undefined
   let socketServer: ReturnType<typeof createServer> | undefined
@@ -115,6 +122,7 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('opens websites for
       socket.once('end', () => {
         const request = JSON.parse(body) as {
           action: string
+          bot: string
           session: string
           url?: string
           id?: string
@@ -125,6 +133,10 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('opens websites for
           input?: { kind: string; text?: string }
         }
         const shared = request.session.startsWith('shared-session-')
+        if (shared && sharingOverride !== true) {
+          socket.end(JSON.stringify({ error: 'unavailable' }))
+          return
+        }
         if (shared) sharedRequests.push({ action: request.action, session: request.session })
         if (request.action === 'navigate' && request.url !== undefined) websites.push(request.url)
         const holding = handoff !== undefined && handoff.session === request.session
@@ -132,6 +144,10 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('opens websites for
         let response: object
         switch (request.action) {
           case 'status': response = { available: true }; break
+          case 'sharing-status':
+            response = request.bot === BOT && request.session === ownerSession
+              ? { managed: true, legacy: false, override: sharingOverride } : { error: 'unavailable' }
+            break
           case 'frame':
             response = holding && !owner ? { error: 'unavailable' } : {
               jpeg, width: 1280, height: 800, ...(owner ? { origin: LOGIN.origin } : {}),
@@ -175,18 +191,28 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('opens websites for
     await new Promise<void>((resolve, reject) => { socketServer!.once('error', reject); socketServer!.listen(socketPath, resolve) })
     await writeFile(runtimePath, `
       import { mountVpsBots } from ${JSON.stringify(BOTS_SOURCE)}
+      import { VpsIsolatedBrowser } from ${JSON.stringify(BROKER_SOURCE)}
       export const name = 'isolated-browser-fixture'
-      export function apply(ctx, config) { mountVpsBots(ctx, config, []) }
+      export function apply(ctx, config) {
+        // The fixture provides the installed worker protocol on a temporary socket.
+        ctx.effect(() => {
+          const original = VpsIsolatedBrowser.prototype.usesManagedSharing
+          VpsIsolatedBrowser.prototype.usesManagedSharing = () => true
+          return () => { VpsIsolatedBrowser.prototype.usesManagedSharing = original }
+        })
+        mountVpsBots(ctx, config, [])
+      }
     `)
     await writeFile(overlay, JSON.stringify([{ insert: [{ id: 'isolated-browser-fixture', name: pathToFileURL(runtimePath).href,
       config: { root: join(root, 'bots'), image: 'localhost/yharness-test', bots: [BOT], desktopOnlyBots: [BOT],
-        isolatedBrowser: { bots: [BOT], sharedBots: [BOT], socketPath, savedLogins: true } },
+        isolatedBrowser: { bots: [BOT], socketPath, savedLogins: true } },
     }] }]))
     const web = scaffold = await launchWebScaffold({ extraOverlayPath: overlay, replayFixture: FIXTURE, replayProvidersOnly: true, toolsMode: 'native' })
     const adapter = new BrowserAdapter()
     web.ctx.effect(() => web.ctx.llm.registerAdapter([PROVIDER], adapter), 'Isolated Browser fixture model')
     await web.ctx.agentDefaultModel.saveSelection({ provider: PROVIDER, model: MODEL })
     const { bot } = await web.ctx.bots.create({ id: BOT, name: 'Browser Scout', cwd: web.workspaceCwd })
+    ownerSession = bot.sessionId
     await page.goto(web.authenticatedUrl, { waitUntil: 'load' })
     await page.locator('[data-yh-part="sidebar"]').getByRole('button', { name: 'Bots', exact: true }).click()
     await page.locator(`[data-bot-id="${BOT}"]`).click()
@@ -256,6 +282,18 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('opens websites for
       const view = await sharedCall('read-private-chat', { botId: BOT }, cookie)
       return JSON.stringify(view.result.value?.recent ?? [])
     }
+    const browserAccessPath = '/api/bot-browser-access'
+    const access = async () => (await web.hostFetch(browserAccessPath)).json()
+    const guestAccess = await fetch(new URL(browserAccessPath, origin), { headers: { Cookie: cookie } })
+    expect(guestAccess.status).toBe(401)
+    await expect(access()).resolves.toEqual({
+      mode: 'managed', bots: [{ id: BOT, name: 'Browser Scout', sessionId: ownerSession, enabled: false }],
+    })
+    expect((await chat('Please check the browser setting in this shared chat.')).result.ok).toBe(true)
+    await expect.poll(recent, { timeout: 10_000 }).toContain(BROWSER_DISABLED)
+    expect(sharedRequests).toEqual([])
+    sharingOverride = true
+    await expect(access()).resolves.toMatchObject({ bots: [{ id: BOT, enabled: true }] })
     expect((await chat('Open the test site in this shared chat.')).result.ok).toBe(true)
     await expect.poll(recent).toContain(REPLY)
     const sharedSession = sharedRequests.find(request => request.action === 'navigate')?.session
@@ -316,7 +354,8 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('opens websites for
       image.dispatchEvent(new ClipboardEvent('paste', { clipboardData: contents, bubbles: true, cancelable: true }))
     })
     await expect.poll(() => handoffInputs).toEqual([{ session: sharedSession, origin: LOGIN.origin }])
-    const release = page.waitForResponse(response => response.url().endsWith('/api/computer/release-control') && response.ok())
+    const release = page.waitForResponse(response => response.url().endsWith('/api/computer/release-control') && response.ok(),
+      { timeout: 10_000 })
     await panel.getByRole('button', { name: 'Close computer panel' }).click()
     await release
     expect(handoff).toBeDefined()
@@ -331,6 +370,9 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('opens websites for
     expect((await web.hostFetch('/api/computer/frame', otherViewer)).status).toBe(409)
     expect(sharedRequests).toContainEqual({ action: 'end-handoff', session: sharedSession })
 
+    sharingOverride = false
+    await expect(access()).resolves.toMatchObject({ bots: [{ id: BOT, enabled: false }] })
+    sharingOverride = true
     sharedApproved = false
     sharedAuthorized = false
     expect((await chat('Request the saved login again in this shared chat.')).result.ok).toBe(true)

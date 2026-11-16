@@ -21,6 +21,7 @@ STATE_ROOT = Path('/var/lib') / ACCOUNT
 INSTALL_ROOT = Path('/usr/local/lib') / ACCOUNT
 CONFIG_ROOT = Path('/etc') / ACCOUNT
 GRANTS_PATH = CONFIG_ROOT / 'grants.json'
+SHARED_GRANTS_PATH = CONFIG_ROOT / 'shared-grants.json'
 UNIT_ROOT = Path('/etc/systemd/system')
 RUNTIME_ROOT = Path('/run') / ACCOUNT
 CONTROL_SOCKET = RUNTIME_ROOT / 'control.sock'
@@ -38,6 +39,7 @@ SAFE_BOT = re.compile(r'bot-[A-Za-z0-9][A-Za-z0-9-]{0,245}\Z')
 BOT_SESSION = re.compile(
     r'bot-session-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\Z'
 )
+REVISION = re.compile(r'[0-9a-f]{32}\Z')
 MANAGED_MARKER = b'# Managed by Y Harness isolated browser installer.\n'
 ARTIFACT_MARKER = b'// Managed by Y Harness isolated browser installer.\n'
 ERRNO_NO_CAPABILITY = (errno.ENODATA, errno.ENOTSUP, errno.EOPNOTSUPP)
@@ -455,6 +457,61 @@ def grants_payload(records):
     return (json.dumps(records, ensure_ascii=True, separators=(',', ':'), sort_keys=True) + '\n').encode()
 
 
+def shared_grants_payload(records=()):
+    """Encode the owner-managed shared-browser policy with its exact records."""
+    return (json.dumps({'version': 1, 'bots': list(records)}, ensure_ascii=True, separators=(',', ':')) + '\n').encode()
+
+
+def reconciled_shared_grants(path, grants, uid, gid):
+    """Validate an existing policy and drop only rows absent from the new roster."""
+    try:
+        info = _file_info(path, uid, gid, 0o640)
+    except BrowserError:
+        raise BrowserError('The existing shared browser policy is invalid; repair it before changing grants.') from None
+    if info is None:
+        return None
+    try:
+        value = json.loads(path.read_bytes())
+    except (OSError, UnicodeError, ValueError, TypeError):
+        raise BrowserError('The existing shared browser policy is invalid; repair it before changing grants.') from None
+    if (
+        type(value) is not dict
+        or set(value) != {'version', 'bots'}
+        or type(value['version']) is not int
+        or value['version'] != 1
+        or type(value['bots']) is not list
+        or len(value['bots']) > 64
+    ):
+        raise BrowserError('The existing shared browser policy is invalid; repair it before changing grants.')
+    pairs = set()
+    for record in value['bots']:
+        if (
+            type(record) is not dict
+            or set(record) != {'bot', 'session', 'enabled', 'revision'}
+            or type(record['bot']) is not str
+            or SAFE_BOT.fullmatch(record['bot']) is None
+            or type(record['session']) is not str
+            or BOT_SESSION.fullmatch(record['session']) is None
+            or type(record['enabled']) is not bool
+            or type(record['revision']) is not str
+            or REVISION.fullmatch(record['revision']) is None
+        ):
+            raise BrowserError('The existing shared browser policy is invalid; repair it before changing grants.')
+        pair = (record['bot'], record['session'])
+        if pair in pairs:
+            raise BrowserError('The existing shared browser policy is invalid; repair it before changing grants.')
+        pairs.add(pair)
+    roster = {(record['bot'], record['session']) for record in grants}
+    return sorted(
+        (
+            {'bot': record['bot'], 'session': record['session'],
+             'enabled': record['enabled'], 'revision': record['revision']}
+            for record in value['bots'] if (record['bot'], record['session']) in roster
+        ),
+        key=lambda record: (record['bot'], record['session']),
+    )
+
+
 def parse_grant(value):
     """Parse one CLI grant written as BOT=CANONICAL_BOT_SESSION_ID."""
     if type(value) is not str or value.count('=') != 1:
@@ -540,12 +597,17 @@ def install(chromium, node, cloud_uid, grants, *, paths=InstallPaths(), saved_lo
     account = ensure_account()
     if cloud_uid == account.pw_uid:
         raise BrowserError('The Cloud account must not be the isolated browser account.')
+    shared_policy = reconciled_shared_grants(
+        paths.config_root / SHARED_GRANTS_PATH.name, records, 0, account.pw_gid,
+    )
+    shared_payload = shared_grants_payload(()) if shared_policy is None else shared_grants_payload(shared_policy)
     _prepare_directories(paths, account)
     artifacts = tuple(
         (paths.install_root / name, artifact_payload(name), 0, 0, 0o644, ARTIFACT_MARKER)
         for name in SERVICE_ARTIFACTS
     ) + (
         (paths.config_root / 'grants.json', grants_payload(records), 0, account.pw_gid, 0o640, None),
+        (paths.config_root / SHARED_GRANTS_PATH.name, shared_payload, 0, account.pw_gid, 0o640, None),
         (paths.unit_root / SERVICE_UNIT, service_unit(cloud_uid, node_path, chromium_path, saved_logins=saved_logins), 0, 0, 0o644, MANAGED_MARKER),
         (paths.unit_root / CONTROL_SOCKET_UNIT, control_socket_unit(cloud_uid), 0, 0, 0o644, MANAGED_MARKER),
         (paths.unit_root / VAULT_SOCKET_UNIT, vault_socket_unit(), 0, 0, 0o644, MANAGED_MARKER),
