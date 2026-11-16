@@ -2,13 +2,14 @@
 
 import errno
 import importlib.util
+import os
 import pathlib
 import stat
 import subprocess
 import tempfile
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 SPEC = importlib.util.spec_from_file_location('setup_vps_account', pathlib.Path(__file__).with_name('setup-vps-account.py'))
 assert SPEC is not None and SPEC.loader is not None
@@ -83,6 +84,12 @@ class DedicatedCloudTest(unittest.TestCase):
                 self.assertIn('--user', args)
                 self.assertNotIn('--system', args)
                 self.assertIn('DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/721/bus', args)
+                self.assertEqual(installer.live_invocation(721, through_local_bus=True), (invocation, '4321'))
+                args = run.call_args.args[0]
+                self.assertEqual(args[0], '/usr/bin/systemctl')
+                self.assertIn('--user', args)
+                self.assertIn('--machine=yharness-cloud@.host', args)
+                self.assertEqual(args[-1], installer.UNIT)
                 process_uid.return_value = 0
                 with self.assertRaises(installer.AccountError):
                     installer.live_invocation(721)
@@ -174,6 +181,128 @@ class DedicatedCloudTest(unittest.TestCase):
             '/usr/bin/python3', '-I', str(release / 'scripts/setup-vps-account.py'),
             'check-runtime', '--node', str(node), '--release', str(release), '--prepare-image',
         ])
+
+    def test_owner_link_units_pin_local_socket_identity_and_trusted_worker(self):
+        directory = pathlib.Path('/opt/yharness/release')
+        units = installer.owner_link_units(1001, 721, directory)
+        listener = units[installer.LINK_SOCKET_UNIT].decode()
+        self.assertIn('ListenStream=/run/yharness-cloud-link.sock', listener)
+        self.assertIn('SocketUser=1001', listener)
+        self.assertIn('SocketMode=0600', listener)
+        self.assertIn('Accept=yes', listener)
+        worker = units[installer.LINK_WORKER_UNIT].decode()
+        self.assertIn('StandardInput=socket', worker)
+        self.assertIn('StandardOutput=null', worker)
+        self.assertIn('RestrictAddressFamilies=AF_UNIX', worker)
+        self.assertIn('"/opt/yharness/release/scripts/setup-vps-account.py" link-worker --owner-uid 1001 --cloud-uid 721', worker)
+        for owner in (0, 721):
+            with self.assertRaises(installer.AccountError):
+                installer.owner_link_units(owner, 721, directory)
+
+    def test_privileged_status_commands_do_not_inherit_connection_input(self):
+        with patch.object(installer.subprocess, 'run') as run:
+            run.return_value = subprocess.CompletedProcess([], 0, stdout='ready')
+            self.assertEqual(installer.command(['systemctl', 'show'], 'could not check status'), 'ready')
+            self.assertEqual(run.call_args.kwargs['stdin'], subprocess.DEVNULL)
+
+    def test_only_the_owner_peer_receives_a_live_launch_link(self):
+        connection = Mock()
+        link = 'http://127.0.0.1:3080/?token=' + 'b' * 43
+        with (
+            patch.object(installer, 'link_peer_uid', return_value=1002) as peer,
+            patch.object(installer, 'launch_url', return_value=link) as get_link,
+        ):
+            with self.assertRaises(installer.AccountError):
+                installer.send_owner_link(connection, 1001, 721)
+            get_link.assert_not_called()
+            connection.sendall.assert_not_called()
+            peer.return_value = 1001
+            installer.send_owner_link(connection, 1001, 721)
+            get_link.assert_called_once_with(721, 3080, through_local_bus=True)
+            connection.sendall.assert_called_once_with((link + '\n').encode('ascii'))
+
+    @unittest.skipIf(os.geteuid() == 0, 'the launch helper is installed as the unprivileged owner')
+    def test_install_link_client_refuses_to_replace_the_legacy_helper(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = pathlib.Path(directory)
+            release = home / 'release'
+            (release / 'scripts').mkdir(parents=True)
+            (release / 'scripts' / 'vps-cloud-link.py').write_bytes(b'# client\n')
+            with patch.object(installer.pwd, 'getpwuid', return_value=SimpleNamespace(pw_dir=str(home))):
+                installer.install_owner_link_client(release)
+                path = home / '.local/bin/yharness-vps'
+                self.assertEqual(path.read_bytes(), b'# client\n')
+                self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o700)
+                inode = path.stat().st_ino
+                installer.install_owner_link_client(release)
+                self.assertEqual(path.stat().st_ino, inode)
+                path.write_bytes(b'legacy workspace\n')
+                with self.assertRaises(installer.AccountError):
+                    installer.install_owner_link_client(release)
+                self.assertEqual(path.read_bytes(), b'legacy workspace\n')
+
+    def test_owner_link_setup_validates_all_units_before_writing_a_helper(self):
+        owner = SimpleNamespace(pw_uid=1001, pw_name='cloud-owner')
+        release = pathlib.Path('/opt/yharness/release')
+        with tempfile.TemporaryDirectory() as directory, patch.object(installer, 'command') as run:
+            root = pathlib.Path(directory)
+            with patch.object(installer, 'SYSTEM_UNIT_DIRECTORY', root):
+                (root / installer.LINK_WORKER_UNIT).write_bytes(b'site administrator config')
+                with self.assertRaises(installer.AccountError):
+                    installer.prepare_owner_link(owner, 721, release)
+                run.assert_not_called()
+                self.assertFalse((root / installer.LINK_SOCKET_UNIT).exists())
+
+    def test_native_owner_setup_uses_the_app_port(self):
+        with (
+            patch.object(installer, 'trusted_path', side_effect=pathlib.Path),
+            patch.object(installer, 'check_executable'),
+        ):
+            with self.assertRaisesRegex(installer.AccountError, '3080'):
+                installer.install('/opt/node/bin/node', '/opt/yharness/release', 3180, ssh_owner='cloud-owner')
+
+    def test_owner_socket_starts_only_after_cloud_can_authenticate(self):
+        owner = SimpleNamespace(pw_uid=1001, pw_name='cloud-owner')
+        cloud = SimpleNamespace(pw_uid=721)
+        node = pathlib.Path('/opt/node/bin/node')
+        release = pathlib.Path('/opt/yharness/release')
+        calls = []
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.object(installer, 'UNIT_PATH', pathlib.Path(directory) / installer.UNIT),
+            patch.object(installer, 'trusted_path', side_effect=pathlib.Path),
+            patch.object(pathlib.Path, 'is_file', return_value=True),
+            patch.object(installer, 'check_executable'),
+            patch.object(installer, 'ensure_account', return_value=cloud),
+            patch.object(installer.pwd, 'getpwnam', return_value=owner),
+            patch.object(installer, 'prepare_owner_link', side_effect=lambda *_: calls.append('prepare link')) as prepare,
+            patch.object(installer, 'command'),
+            patch.object(installer, 'prepare_cloud_runtime'),
+            patch.object(installer.os, 'chdir'),
+            patch.object(installer, 'start_cloud', side_effect=lambda *_: calls.append('Cloud ready')),
+            patch.object(installer, 'start_owner_link', side_effect=lambda: calls.append('listen for owner')),
+        ):
+            installer.install(node, release, 3080, ssh_owner='cloud-owner')
+        self.assertEqual(calls, ['prepare link', 'Cloud ready', 'listen for owner'])
+        prepare.assert_called_once_with(owner, 721, release)
+
+    def test_launch_helper_accepts_only_a_bounded_loopback_link(self):
+        path = pathlib.Path(__file__).with_name('vps-cloud-link.py')
+        spec = importlib.util.spec_from_file_location('vps_cloud_link', path)
+        helper = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(helper)
+        link = b'http://127.0.0.1:3080/?token=' + b'b' * 43 + b'\n'
+        with patch.object(helper.socket, 'socket') as make_connection:
+            connection = make_connection.return_value.__enter__.return_value
+            read = connection.makefile.return_value.__enter__.return_value.readline
+            read.return_value = link
+            self.assertEqual(helper.owner_link('/run/test-cloud-link.sock'), link)
+            connection.connect.assert_called_once_with('/run/test-cloud-link.sock')
+            read.assert_called_once_with(128)
+            for value in (b'', link.replace(b'3080', b'3180'), link + b'more', link.replace(b'token=', b'other=')):
+                with self.subTest(value=value), self.assertRaises(ValueError):
+                    read.return_value = value
+                    helper.owner_link('/run/test-cloud-link.sock')
 
     def test_enables_the_service_after_the_current_process_is_ready(self):
         calls = []

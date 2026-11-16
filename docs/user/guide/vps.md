@@ -28,11 +28,14 @@ Use the dedicated-account installer to start a new Cloud instance without giving
 
 ```sh
 sudo /usr/bin/python3 -I /opt/yharness/release/scripts/setup-vps-account.py install \
-  --release /opt/yharness/release --node /opt/node/bin/node --port 3180
-sudo /usr/bin/python3 -I /opt/yharness/release/scripts/setup-vps-account.py url --port 3180
+  --release /opt/yharness/release --node /opt/node/bin/node --owner "$USER"
 ```
 
-Use the selected loopback port for both sides of the [SSH forward](#open-y-harness), then open the printed private sign-in link. Setup prepares the Bot image inside Cloud's service environment so it can use the same container storage at startup. The `yharness-cloud.service` user service starts at boot under the locked Cloud account and stores its data under `/var/lib/yharness-cloud/.yharness-vps`. It starts with its own Bot workspaces and provider settings. Keep an existing Cloud installation running until its chats, files, providers, and desktop volumes have been moved and verified.
+Use `--owner` from the regular SSH account that will open Cloud. Port 3080 is required for the Mac workspace. Setup installs the sign-in helper in that account and makes the private link available to that account over a local socket. Then [open Cloud with your usual SSH destination](#open-y-harness). If that account already has a different `~/.local/bin/yharness-vps`, setup keeps it and reports the conflict.
+
+For a browser-only deployment, omit `--owner` and choose an available `--port`. Run `sudo /usr/bin/python3 -I /opt/yharness/release/scripts/setup-vps-account.py url --port PORT` to get the private sign-in link. Use the selected port for both sides of the [SSH forward](#open-y-harness).
+
+Setup prepares the Bot image inside Cloud's service environment so it can use the same container storage at startup. The `yharness-cloud.service` user service starts at boot under the locked Cloud account and stores its data under `/var/lib/yharness-cloud/.yharness-vps`. It starts with its own Bot workspaces and provider settings. Keep an existing Cloud installation running until its chats, files, providers, and desktop volumes have been moved and verified.
 
 ### Preserve the existing workspace path
 
