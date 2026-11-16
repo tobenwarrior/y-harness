@@ -1688,7 +1688,7 @@ describe('durable Bot roster', () => {
       if (storedFence?.kind !== 'grant') throw new Error('shared roster fence was not persisted')
       const fenceToken = z.object({
         sharedRosterFence: z.object({ token: z.string() }),
-      }).passthrough().parse(storedFence.payload).sharedRosterFence.token
+      }).loose().parse(storedFence.payload).sharedRosterFence.token
       type SharedRosterRecoveryService = {
         recoverSharedRosterFence: (request: {
           readonly token: string
@@ -1712,7 +1712,7 @@ describe('durable Bot roster', () => {
         .resolves.toEqual({ status: 'busy' })
       expect(z.object({
         sharedRosterFence: z.object({ token: z.string() }),
-      }).passthrough().parse(storedFence.payload).sharedRosterFence.token).toBe(fenceToken)
+      }).loose().parse(storedFence.payload).sharedRosterFence.token).toBe(fenceToken)
       await expect(recovery.recoverSharedRosterFence({ token: fenceToken, confirmQuiescent: true, acceptRaceRisk: true })).resolves.toEqual({ status: 'released' })
       await expect(host.withBotRoster(bots, undefined, async () => 'recovered')).resolves.toEqual({
         valid: true,
@@ -1753,7 +1753,7 @@ describe('durable Bot roster', () => {
       if (storedFence?.kind !== 'grant') throw new Error('shared roster fence was not persisted')
       const fenceToken = z.object({
         sharedRosterFence: z.object({ token: z.string() }),
-      }).passthrough().parse(storedFence.payload).sharedRosterFence.token
+      }).loose().parse(storedFence.payload).sharedRosterFence.token
       await expect(h.service.recoverSharedRosterFence({ token: fenceToken, confirmQuiescent: true, acceptRaceRisk: true }))
         .resolves.toEqual({ status: 'released' })
       await expect(host.withBotRoster([], undefined, async () => 'authority-reconciled')).resolves.toEqual({
