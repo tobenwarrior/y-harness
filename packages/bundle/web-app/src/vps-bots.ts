@@ -55,6 +55,7 @@ export function mountVpsBots(
     readonly image: string
     readonly bots?: readonly string[] | null
     readonly desktopOnlyBots?: readonly string[]
+    readonly desktopForUnlistedBots?: boolean
     readonly sharedWorkspace?: { readonly bots?: readonly string[] | null } | null
     readonly network?: { readonly bots: readonly string[] } | null
     readonly uploads?: VpsFileUploadConfig
@@ -77,18 +78,20 @@ export function mountVpsBots(
   if (managedBotIds !== undefined && [...desktopOnlyBotIds].some(botId => !managedBotIds.has(botId))) {
     throw new Error('Desktop-only VPS Bots must be selected by botComputers.bots.')
   }
-  const isDesktopBot = (botId: string): boolean => isManagedBot(botId) || desktopOnlyBotIds.has(botId)
+  const isSelectedDesktop = (botId: string): boolean => isManagedBot(botId) || desktopOnlyBotIds.has(botId)
+  const isDesktopBot = (botId: string): boolean => isSelectedDesktop(botId) || config.desktopForUnlistedBots === true
+  const isDesktopOnly = (botId: string): boolean => isDesktopBot(botId) && !isManagedBot(botId)
   const sharedBotIds = config.sharedWorkspace?.bots == null ? undefined : new Set(config.sharedWorkspace.bots)
   if (sharedBotIds !== undefined && [...sharedBotIds].some(botId => !isDesktopBot(botId))) {
     throw new Error('Shared project access must select private Computer Bots.')
   }
   const sharesProject = (botId: string): boolean => config.sharedWorkspace != null && isDesktopBot(botId)
-    && (sharedBotIds === undefined || sharedBotIds.has(botId))
+    && (sharedBotIds === undefined ? isSelectedDesktop(botId) : sharedBotIds.has(botId))
   const browserBotIds = new Set(config.browser?.bots)
   const networkBotIds = config.network == null ? undefined : new Set(config.network.bots)
   const isolatedBrowserBotIds = new Set(config.isolatedBrowser?.bots)
   const hasBrowserSignIn = (botId: string): boolean => isolatedBrowserBotIds.has(botId)
-    || (browserBotIds.has(botId) && desktopOnlyBotIds.has(botId))
+    || (browserBotIds.has(botId) && isDesktopOnly(botId))
   if ([...browserBotIds].some(botId => !isDesktopBot(botId))) {
     throw new Error('VPS browser access must select private Computer Bots.')
   }
@@ -188,7 +191,7 @@ export function mountVpsBots(
     workspace: sessionId => defaultRuntime.workspace(sessionId),
     prepare: (sessionId, botId) => runtimeFor(botId).ensure(sessionId),
     managed: (botId: string) => isManagedBot(botId),
-    desktopOnly: botId => desktopOnlyBotIds.has(botId),
+    desktopOnly: isDesktopOnly,
   })
   ctx.effect(() => async () => {
     const active = [...computers.values()]
@@ -199,9 +202,11 @@ export function mountVpsBots(
     await Promise.all(active.map(computer => computer.dispose()))
   }, 'vps-bots: dispose desktop controllers')
 
-  const computerFor = async (sessionId: string, botId: string): Promise<VpsComputer> => {
+  const computerFor = async (sessionId: string, botId: string, signal?: AbortSignal): Promise<VpsComputer> => {
+    signal?.throwIfAborted()
     if (isolatedBrowser !== undefined && isolatedBrowserBotIds.has(botId)) {
-      await isolatedBrowser.status(botId, sessionId, new AbortController().signal)
+      await isolatedBrowser.status(botId, sessionId, signal ?? new AbortController().signal)
+      signal?.throwIfAborted()
       const existing = computers.get(sessionId)
       if (existing !== undefined) return existing
       const computer = isolatedBrowser.computer(botId, sessionId)
@@ -210,6 +215,7 @@ export function mountVpsBots(
     }
     const runtime = runtimeFor(botId)
     await runtime.ensure(sessionId)
+    signal?.throwIfAborted()
     const existing = computers.get(sessionId)
     if (existing !== undefined) return existing
     const computer = containerComputer((argv, signal, stdin) => runtime.desktopCommand(sessionId, argv, signal, stdin))
@@ -323,7 +329,7 @@ export function mountVpsBots(
       if (isDesktopBot(bot.id)) {
         const navigate = browserNavigateFor(bot.id, bot.sessionId)
         return {
-          computer: await computerFor(bot.sessionId, bot.id),
+          computer: (signal: AbortSignal) => computerFor(bot.sessionId, bot.id, signal),
           id: bot.id,
           permissionScope: 'bot' as const,
           ...(scope.get('terminalController') === undefined ? {} : {

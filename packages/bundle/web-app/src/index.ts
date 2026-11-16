@@ -87,6 +87,8 @@ export interface Config {
     bots?: string[] | null
     /** Exact selected Bot ids that receive only a private Computer, not a VPS workspace. */
     desktopOnlyBots?: string[]
+    /** Give Bots outside an explicit allowlist a private desktop, terminal, and file panel while preserving their Session workspace. */
+    desktopForUnlistedBots?: boolean
     /** Owner project volume shared by the selected private Computer Bots. */
     sharedWorkspace?: {
       /** Exact participants. Omit or use null for every private Computer Bot. */
@@ -145,6 +147,7 @@ export const Config: z<Config> = z.object({
       image: z.string().required(),
       bots: z.union([z.array(String), z.const(null)]),
       desktopOnlyBots: z.array(String),
+      desktopForUnlistedBots: z.boolean(),
       sharedWorkspace: z.union([z.object({ bots: z.union([z.array(String), z.const(null)]) }), z.const(null)]),
       network: z.union([z.object({ bots: z.array(String).required() }), z.const(null)]),
       uploads: z.object({ maxBytes: z.number(), reserveBytes: z.number(), timeoutMs: z.number() }),

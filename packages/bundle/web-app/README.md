@@ -79,6 +79,8 @@ The optional `computer` configuration supplies one shared X11 display for a cust
 
 `botComputers.desktopOnlyBots` selects Bots whose private Computer should use the isolated desktop while their shell and file tools retain the existing Host workspace and policy. The list contains only Bots selected by `botComputers`.
 
+Set `botComputers.desktopForUnlistedBots` to give Bots outside an explicit allowlist the same desktop-only behavior. Computer status describes the selected runtime without opening it. The implicit shared-project selection follows the original desktop allowlist. Give an additional Bot project access by including its ID in an explicit `sharedWorkspace.bots` list.
+
 `botComputers.browser` grants selected private Computers a Firefox desktop and persistent profile. The selected Bot keeps its workspace volume when its desktop is replaced. The optional `botComputers.network.bots` list controls outbound connections independently of the desktop image. When the list is omitted, Firefox desktops get outbound access and other private desktops stay offline. See [VPS terminal internet access](../../../docs/user/guide/vps.md#give-a-bots-vps-terminal-internet-access).
 
 `botComputers.isolatedBrowser` routes selected Bots’ Computer input and screenshots to a separate browser service over a private Unix socket. The Bot’s shell and file providers stay in their current runtime. In a direct owner turn, the Bot can hand the browser to the owner for sign-in. Only the viewer holding that handoff receives frames and can send input or navigate. See [Enable an isolated browser for selected Bots](../../../docs/user/guide/vps.md#enable-an-isolated-browser-for-selected-bots).

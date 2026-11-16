@@ -17,7 +17,8 @@ interface ComputerRouteController {
 }
 
 interface ResolvedComputer {
-  readonly controller: ComputerRouteController
+  readonly open: (signal: AbortSignal) => ComputerRouteController | Promise<ComputerRouteController>
+  readonly available: boolean
   readonly metadata?: ComputerStatusMetadata
   readonly navigate?: (viewer: string, url: string, signal: AbortSignal) => Promise<unknown>
 }
@@ -67,8 +68,8 @@ export interface ComputerStatusMetadata {
 
 /** Server-selected Computer target for a Bot Session route. */
 export interface BotComputerRouteTarget {
-  /** Controller selected after resolving the exact owner Bot Session. */
-  readonly computer: VpsComputer
+  /** Existing controller or a provider opened only when a viewer uses the Computer. */
+  readonly computer: VpsComputer | ((signal: AbortSignal) => Promise<VpsComputer>)
   /** Stable identity rendered by the Web Computer status panel. */
   readonly id: string
   /** Whether permissions apply to the Bot or the legacy shared workspace. */
@@ -306,7 +307,6 @@ interface RouteOptions {
   readonly managed: boolean
   /** Permit the old shared route's omitted session id during an allowlisted rollout. */
   readonly allowMissingSession?: boolean
-  readonly legacyComputer?: ComputerRouteController
   readonly status: (computer: ResolvedComputer | undefined, target: SessionTarget) => Response
 }
 
@@ -342,12 +342,6 @@ function routesFor(
         if (!isRecord(payload)) return json({ error: 'invalid-request' }, 400)
         const target = sessionTarget(payload, options.managed && options.allowMissingSession !== true)
         if (target === undefined) return json({ error: 'invalid-request' }, 400)
-        if (!options.managed) {
-          return options.status(
-            options.legacyComputer === undefined ? undefined : { controller: options.legacyComputer },
-            target,
-          )
-        }
         try {
           return options.status(await resolveComputer(target.id), target)
         } catch (error) {
@@ -376,7 +370,8 @@ function routesFor(
         if (id === undefined || target === undefined) return json({ error: 'invalid-request' }, 400)
         try {
           const resolved = await resolveComputer(target.id)
-          const handle = resolved === undefined ? undefined : action(resolved.controller, endpoint)
+          request.signal.throwIfAborted()
+          const handle = resolved === undefined ? undefined : action(await resolved.open(request.signal), endpoint)
           if (handle === undefined) return json({ error: 'computer-unavailable' }, 409)
           return json(await handle(id, payload, request.signal))
         } catch (error) {
@@ -430,11 +425,10 @@ function browserNavigationRoute(resolveComputer: (sessionId: string) => Promise<
  * @returns The five private POST routes.
  */
 export function computerRoutes(computer: ComputerRouteController): readonly ConnectionFetchRoute[] {
-  return routesFor(() => Promise.resolve({ controller: computer }), {
+  return routesFor(() => Promise.resolve({ open: () => computer, available: computer.status?.().available !== false }), {
     managed: false,
-    legacyComputer: computer,
     status: resolved => json({
-      available: resolved?.controller.status?.().available !== false,
+      available: resolved?.available === true,
       kind: 'vps',
       computer: {
         id: 'shared-vps',
@@ -461,11 +455,11 @@ export function botComputerRoutes(
 ): readonly ConnectionFetchRoute[] {
   return routesFor(async (sessionId) => {
     const computer = await resolveComputer(sessionId)
-    return computer === undefined ? undefined : { controller: computer }
+    return computer === undefined ? undefined : { open: () => computer, available: computer.status().available }
   }, {
     managed: true,
     status: (resolved, target) => json({
-      available: resolved?.controller.status?.().available === true,
+      available: resolved?.available === true,
       kind: 'vps',
       computer: {
         id: target.managed ? target.id : 'shared-vps',
@@ -483,7 +477,7 @@ export function botComputerRoutes(
  * The resolver must return `undefined` for unknown or inactive Sessions. A
  * client-supplied id therefore cannot choose the legacy controller as a
  * fallback; the Host decides whether a known Bot is selected for isolation.
- * @param resolveTarget - Resolve the server-selected Computer target.
+ * @param resolveTarget - Describe the selected Computer without opening its desktop.
  * @param options - Permit omitted session ids only for an explicit legacy rollout.
  * @returns Private Computer routes and the optional browser navigation route.
  */
@@ -495,8 +489,11 @@ export function botComputerRoutesWithLegacy(
     const target = await resolveTarget(sessionId)
     if (target === undefined) return undefined
     const navigate = target.navigate
+    const computer = target.computer
+    const open = typeof computer === 'function' ? computer : () => computer
     return {
-      controller: target.computer,
+      open,
+      available: typeof computer === 'function' || computer.status().available,
       metadata: {
         id: target.id,
         location: 'vps',
@@ -509,7 +506,7 @@ export function botComputerRoutesWithLegacy(
         ...(target.files === true && target.sharedFiles === true ? { sharedFiles: true } : {}),
       },
       ...(navigate === undefined ? {} : {
-        navigate: (viewer, url, signal) => target.computer.navigateAsViewer(viewer, url, signal, navigate),
+        navigate: async (viewer, url, signal) => (await open(signal)).navigateAsViewer(viewer, url, signal, navigate),
       }),
     }
   }
@@ -523,7 +520,7 @@ export function botComputerRoutesWithLegacy(
         permissionScope: 'bot' as const,
       }
       return json({
-        available: resolved?.controller.status?.().available === true,
+        available: resolved?.available === true,
         kind: 'vps',
         computer: metadata satisfies ComputerStatusMetadata,
       })

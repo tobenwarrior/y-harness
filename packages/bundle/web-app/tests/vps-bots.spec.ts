@@ -27,6 +27,82 @@ const SHARED_BROWSER_SESSION = SessionId('shared-session-37888424-5b3d-4a8c-81f5
 const GROUP_BROWSER_SESSION = SessionId('shared-session-group-37888424-5b3d-4a8c-81f5-751ed2d24f97')
 
 describe('managed VPS Bot composition', () => {
+  it('describes a private Computer without starting it when the owner opens a chat', async () => {
+    const ctx = new Context()
+    const routes: ConnectionFetchRoute[] = []
+    const bot = { id: BotId('bot-migrated'), sessionId: BOT_SESSION, state: 'active' }
+    const ensure = vi.spyOn(VpsRuntime.prototype, 'ensure').mockResolvedValue(undefined)
+    try {
+      ctx.provide('connection', { fetch: { register: (route: ConnectionFetchRoute) => {
+        routes.push(route)
+        return () => { routes.splice(routes.indexOf(route), 1) }
+      } } } as never)
+      ctx.provide('bots', { ownerBotForSession: async (id: string) => id === BOT_SESSION ? bot : undefined } as never)
+      await ctx.plugin((scope) => { mountVpsBots(scope, {
+        root: '/yharness-test-bots', image: 'localhost/yharness-test', bots: [bot.id], desktopOnlyBots: [bot.id],
+      }, []) })
+      const status = routes.find(route => route.path === '/api/computer/status')
+      if (status === undefined) throw new Error('Computer status was not registered')
+      const response = await status.fetch(new Request('http://127.0.0.1/api/computer/status', {
+        method: 'POST', body: JSON.stringify({ sessionId: BOT_SESSION }),
+      }))
+      await expect(response.json()).resolves.toMatchObject({
+        available: true, computer: { id: bot.id, location: 'vps', permissionScope: 'bot' },
+      })
+      expect(ensure).not.toHaveBeenCalled()
+    } finally {
+      ensure.mockRestore()
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('assigns unlisted Bots an on-demand private desktop and preserves their working directory and project access', async () => {
+    const ctx = new Context()
+    const routes: ConnectionFetchRoute[] = []
+    const managed = BotId('bot-existing-managed')
+    const other = { id: BotId('bot-unlisted'), sessionId: LEGACY_SESSION, state: 'active' }
+    const ensure = vi.spyOn(VpsRuntime.prototype, 'ensure').mockResolvedValue(undefined)
+    const screenshot = Buffer.from([0xff, 0xd8, 0xff, 0xd9])
+    const desktop = vi.spyOn(VpsRuntime.prototype, 'desktopCommand').mockResolvedValue(screenshot)
+    try {
+      ctx.provide('connection', { fetch: { register: (route: ConnectionFetchRoute) => {
+        routes.push(route)
+        return () => { routes.splice(routes.indexOf(route), 1) }
+      } } } as never)
+      ctx.provide('bots', { ownerBotForSession: async (id: string) => id === other.sessionId ? other : undefined } as never)
+      await ctx.plugin((scope) => { mountVpsBots(scope, {
+        root: '/yharness-test-bots', image: 'localhost/yharness-test', bots: [managed],
+        desktopForUnlistedBots: true, sharedWorkspace: {},
+      }, []) })
+      const request = async (endpoint: string, sessionId: string) => {
+        const path = '/api/computer/' + endpoint
+        const route = routes.find(item => item.path === path)
+        if (route === undefined) throw new Error('Computer route was not registered')
+        return route.fetch(new Request('http://127.0.0.1' + path, {
+          method: 'POST', body: JSON.stringify({ sessionId, viewerId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' }),
+        }))
+      }
+      expect(ctx.botWorkspaces.managed?.(managed)).toBe(true)
+      expect(ctx.botWorkspaces.managed?.(other.id)).toBe(false)
+      expect(ctx.botWorkspaces.desktopOnly?.(other.id)).toBe(true)
+      await expect(ctx.workspaceFileAccess.forSession?.(other.sessionId, new AbortController().signal)).resolves.toBeUndefined()
+      await expect(ctx.workspaceFileAccess.forComputer?.(other.sessionId, new AbortController().signal, '/workspace/project.txt'))
+        .resolves.toBeUndefined()
+      await expect((await request('status', other.sessionId)).json()).resolves.toMatchObject({
+        available: true, computer: { id: other.id, permissionScope: 'bot' },
+      })
+      expect((await request('frame', SHARED_BROWSER_SESSION)).status).toBe(409)
+      expect(ensure).not.toHaveBeenCalled()
+      await expect((await request('frame', other.sessionId)).json()).resolves.toMatchObject({ jpeg: screenshot.toString('base64') })
+      expect(ensure).toHaveBeenCalledExactlyOnceWith(other.sessionId)
+      expect(desktop.mock.contexts).toEqual([expect.objectContaining({ internet: false })])
+    } finally {
+      ensure.mockRestore()
+      desktop.mockRestore()
+      await ctx.fiber.dispose()
+    }
+  })
+
   it('registers live sharing control for the installed browser worker with no static shared Bots', async () => {
     const ctx = new Context()
     try {

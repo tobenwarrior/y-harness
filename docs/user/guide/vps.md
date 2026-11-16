@@ -103,6 +103,8 @@ Bots outside the list continue using their existing working directories and shar
 
 For a selected Bot that still needs its host working directory or existing routine tools, add its roster ID to `botComputers.desktopOnlyBots`. Its **Computer** panel and `vps_computer` tool use the private desktop, including with an image-capable native Codex model. Its shell and file tools keep their existing permissions and working directory.
 
+Set `botComputers.desktopForUnlistedBots: true` to give every remaining Bot a private **Computer**, **Terminal**, and **Files** panel in the same chat. These Bots keep their existing working directories and routine permissions. Their private computers start when used. To give one of these Bots shared project files, include its ID in an explicit `sharedWorkspace.bots` list.
+
 When the Cloud user service starts a private desktop, that desktop and its network processes run independently. The desktop can stay connected through a Cloud restart.
 
 ### Share project files between Bots

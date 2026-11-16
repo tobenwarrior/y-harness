@@ -4445,6 +4445,8 @@ export interface Config {
     bots?: string[] | null
     /** Exact selected Bot ids that receive only a private Computer, not a VPS workspace. */
     desktopOnlyBots?: string[]
+    /** Give Bots outside an explicit allowlist a private desktop, terminal, and file panel while preserving their Session workspace. */
+    desktopForUnlistedBots?: boolean
     /** Owner project volume shared by the selected private Computer Bots. */
     sharedWorkspace?: {
       /** Exact participants. Omit or use null for every private Computer Bot. */

@@ -1,6 +1,6 @@
 /** Replay a Bot's Computer handoff in the real authenticated Cloud interface. */
 
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { BotId } from '@yharness/bots'
@@ -15,6 +15,7 @@ const RUNTIME_SOURCE = new URL('../../../packages/bundle/web-app/lib/types/vps-r
 const BOTS_SOURCE = new URL('../../../packages/bundle/web-app/lib/types/vps-bots.js', import.meta.url).href
 const MODE = webSnapshotMode()
 const BOT = BotId('bot-sign-in-fixture')
+const IMPORTED_BOT = BotId('bot-imported-desktop-fixture')
 const PROVIDER = 'sign-in-fixture'
 const MODEL = 'reply'
 const REPLY = 'I’m back on the Computer.'
@@ -53,6 +54,7 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('returns a private 
   const root = await mkdtemp('/tmp/yh-sign-in-web-')
   const runtimePath = join(root, 'computer.mjs')
   const overlay = join(root, 'computer.yml')
+  const startedComputers = join(root, 'started-computers')
   let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined
   let scaffold: Awaited<ReturnType<typeof launchWebScaffold>> | undefined
   try {
@@ -71,7 +73,9 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('returns a private 
       canvas.fillText('Browser sign-in fixture', 450, 400)
       return image.toDataURL('image/jpeg').split(',')[1]
     })
+    await writeFile(startedComputers, '')
     await writeFile(runtimePath, `
+      import { appendFile } from 'node:fs/promises'
       import { VpsRuntime } from ${JSON.stringify(RUNTIME_SOURCE)}
       import { mountVpsBots } from ${JSON.stringify(BOTS_SOURCE)}
       export const name = 'computer-sign-in-fixture'
@@ -79,7 +83,7 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('returns a private 
         const ensure = VpsRuntime.prototype.ensure
         const desktopCommand = VpsRuntime.prototype.desktopCommand
         ctx.effect(() => {
-          VpsRuntime.prototype.ensure = async () => {}
+          VpsRuntime.prototype.ensure = sessionId => appendFile(${JSON.stringify(startedComputers)}, sessionId + '\\n')
           VpsRuntime.prototype.desktopCommand = async () => Buffer.from(${JSON.stringify(jpeg)}, 'base64')
           return () => {
             VpsRuntime.prototype.ensure = ensure
@@ -92,7 +96,7 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('returns a private 
     await writeFile(overlay, JSON.stringify([{ insert: [{
       id: 'computer-sign-in-fixture', name: pathToFileURL(runtimePath).href,
       config: {
-        root: join(root, 'bots'), image: 'localhost/yharness-test', bots: [BOT], desktopOnlyBots: [BOT],
+        root: join(root, 'bots'), image: 'localhost/yharness-test', bots: [BOT], desktopOnlyBots: [BOT], desktopForUnlistedBots: true,
         browser: { bots: [BOT], image: 'localhost/yharness-browser', seccompProfile: join(root, 'browser.json') },
       },
     }] }]))
@@ -103,17 +107,28 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('returns a private 
     web.ctx.effect(() => web.ctx.llm.registerAdapter([PROVIDER], adapter), 'Computer sign-in fixture model')
     await web.ctx.agentDefaultModel.saveSelection({ provider: PROVIDER, model: MODEL })
     const { bot } = await web.ctx.bots.create({ id: BOT, name: 'Scout', cwd: web.workspaceCwd })
+    const { bot: imported } = await web.ctx.bots.create({ id: IMPORTED_BOT, name: 'Imported Scout', cwd: web.workspaceCwd })
+    expect(imported.cwd).toBe(web.workspaceCwd)
     await page.goto(web.authenticatedUrl, { waitUntil: 'load' })
     expect(await page.evaluate(() => Reflect.get(window, '__YH_BOT_COMPUTER_SIGN_IN__'))).toBe(true)
     await page.locator('[data-yh-part="sidebar"]').getByRole('button', { name: 'Bots', exact: true }).click()
+    const panelSelector = '[data-computer-panel]'
+    const panel = page.locator(panelSelector)
+    await page.locator(`[data-bot-id="${IMPORTED_BOT}"]`).click()
+    const computer = page.getByRole('button', { name: 'Open computer panel', exact: true })
+    await computer.waitFor({ state: 'visible' })
+    expect(await readFile(startedComputers, 'utf8')).toBe('')
+    await computer.click()
+    await panel.getByRole('img', { name: 'Live computer screen' }).waitFor()
+    const opened = (await readFile(startedComputers, 'utf8')).trim().split('\n')
+    expect(new Set(opened)).toEqual(new Set([imported.sessionId]))
+    await panel.getByRole('button', { name: 'Close computer panel' }).click()
     await page.locator(`[data-bot-id="${BOT}"]`).click()
     const conversation = page.locator('[data-conversation-surface="bots"]')
     await conversation.locator('[data-composer-input][contenteditable="true"]').fill('Ask me to sign in on your Computer.')
     await conversation.getByRole('button', { name: 'Send message', exact: true }).click()
     const cardSelector = '[data-computer-sign-in-card]'
     const card = page.locator(cardSelector)
-    const panelSelector = '[data-computer-panel]'
-    const panel = page.locator(panelSelector)
     const api = { method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ action: 'status', sessionId: bot.sessionId }) }
     await expect.poll(() => adapter.requestCount, { timeout: 5_000 }).toBeGreaterThan(0)
