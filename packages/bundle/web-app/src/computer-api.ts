@@ -56,6 +56,8 @@ export interface ComputerStatusMetadata {
   readonly permissionScope: ComputerPermissionScope
   /** Whether the Computer exposes browser address navigation. */
   readonly browser?: true
+  /** Whether this Bot also offers the Linux desktop alongside its isolated browser. */
+  readonly desktop?: true
   /** Whether the owner's terminal uses this Bot's private computer. */
   readonly terminal?: true
   /** Whether the private VPS terminal is configured for outbound internet access. */
@@ -76,6 +78,8 @@ export interface ComputerStatusMetadata {
 export interface BotComputerRouteTarget {
   /** Existing controller or a provider opened only when a viewer uses the Computer. */
   readonly computer: VpsComputer | ((signal: AbortSignal) => Promise<VpsComputer>)
+  /** The Linux desktop when the primary Computer is the same Bot's isolated browser. */
+  readonly desktop?: (signal: AbortSignal) => Promise<VpsComputer>
   /** Stable identity rendered by the Web Computer status panel. */
   readonly id: string
   /** Whether permissions apply to the Bot or the legacy shared workspace. */
@@ -279,17 +283,24 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+type ComputerSurface = 'primary' | 'desktop'
+
 interface SessionTarget {
   readonly id: string
   readonly managed: boolean
+  readonly surface: ComputerSurface
 }
 
-function sessionTarget(payload: Record<string, unknown>, requireManaged: boolean): SessionTarget | undefined {
-  if (!Object.prototype.hasOwnProperty.call(payload, 'sessionId')) {
-    return requireManaged ? undefined : { id: '', managed: false }
+function sessionTarget(payload: Record<string, unknown>, requireManaged: boolean, allowDesktop = false): SessionTarget | undefined {
+  const { surface } = payload
+  if (surface !== undefined && (surface !== 'desktop' || !allowDesktop)) return undefined
+  if (!Object.hasOwn(payload, 'sessionId')) {
+    return requireManaged || surface !== undefined ? undefined : { id: '', managed: false, surface: 'primary' }
   }
   const value = payload.sessionId
-  return typeof value === 'string' && SESSION_ID.test(value) ? { id: value, managed: true } : undefined
+  return typeof value === 'string' && SESSION_ID.test(value)
+    ? { id: value, managed: true, surface: surface ?? 'primary' }
+    : undefined
 }
 
 async function readPayload(request: Request): Promise<unknown> {
@@ -319,11 +330,12 @@ interface RouteOptions {
   readonly managed: boolean
   /** Permit the old shared route's omitted session id during an allowlisted rollout. */
   readonly allowMissingSession?: boolean
+  readonly allowDesktop?: boolean
   readonly status: (computer: ResolvedComputer | undefined, target: SessionTarget) => Response
 }
 
 function routesFor(
-  resolveComputer: (sessionId: string, statusSignal?: AbortSignal) => Promise<ResolvedComputer | undefined>,
+  resolveComputer: (target: SessionTarget, statusSignal?: AbortSignal) => Promise<ResolvedComputer | undefined>,
   options: RouteOptions,
 ): readonly ConnectionFetchRoute[] {
   const action = (computer: ComputerRouteController, endpoint: string) => {
@@ -352,10 +364,10 @@ function routesFor(
           return json({ error: 'invalid-request' }, 400)
         }
         if (!isRecord(payload)) return json({ error: 'invalid-request' }, 400)
-        const target = sessionTarget(payload, options.managed && options.allowMissingSession !== true)
+        const target = sessionTarget(payload, options.managed && options.allowMissingSession !== true, options.allowDesktop)
         if (target === undefined) return json({ error: 'invalid-request' }, 400)
         try {
-          return options.status(await resolveComputer(target.id, request.signal), target)
+          return options.status(await resolveComputer(target, request.signal), target)
         } catch (error) {
           // Lazy startup and provider diagnostics stay private to the Host.
           void error
@@ -378,10 +390,10 @@ function routesFor(
         }
         if (!isRecord(payload)) return json({ error: 'invalid-request' }, 400)
         const id = viewerId(payload.viewerId)
-        const target = sessionTarget(payload, options.managed && options.allowMissingSession !== true)
+        const target = sessionTarget(payload, options.managed && options.allowMissingSession !== true, options.allowDesktop)
         if (id === undefined || target === undefined) return json({ error: 'invalid-request' }, 400)
         try {
-          const resolved = await resolveComputer(target.id)
+          const resolved = await resolveComputer(target)
           request.signal.throwIfAborted()
           const handle = resolved === undefined ? undefined : action(await resolved.open(request.signal), endpoint)
           if (handle === undefined) return json({ error: 'computer-unavailable' }, 409)
@@ -465,8 +477,8 @@ export function computerRoutes(computer: ComputerRouteController): readonly Conn
 export function botComputerRoutes(
   resolveComputer: (sessionId: string) => Promise<VpsComputer | undefined>,
 ): readonly ConnectionFetchRoute[] {
-  return routesFor(async (sessionId) => {
-    const computer = await resolveComputer(sessionId)
+  return routesFor(async ({ id }) => {
+    const computer = await resolveComputer(id)
     return computer === undefined ? undefined : { open: () => computer, available: computer.status().available }
   }, {
     managed: true,
@@ -497,13 +509,16 @@ export function botComputerRoutesWithLegacy(
   resolveTarget: (sessionId: string) => Promise<BotComputerRouteTarget | undefined>,
   options: { readonly allowMissingSession?: boolean } = {},
 ): readonly ConnectionFetchRoute[] {
-  const resolveComputer = async (sessionId: string, statusSignal?: AbortSignal): Promise<ResolvedComputer | undefined> => {
-    const target = await resolveTarget(sessionId)
+  const resolveComputer = async (selection: SessionTarget, statusSignal?: AbortSignal): Promise<ResolvedComputer | undefined> => {
+    const target = await resolveTarget(selection.id)
     if (target === undefined) return undefined
-    const navigate = target.navigate
-    const computer = target.computer
+    const desktop = target.permissionScope === 'bot' ? target.desktop : undefined
+    const selectedDesktop = selection.surface === 'desktop'
+    const computer = selectedDesktop ? desktop : target.computer
+    if (computer === undefined) return undefined
+    const navigate = selectedDesktop ? undefined : target.navigate
     const open = typeof computer === 'function' ? computer : () => computer
-    const restart = target.permissionScope === 'bot' && (target.restart === true
+    const restart = target.permissionScope === 'bot' && (selectedDesktop || target.restart === true
       || (statusSignal !== undefined && target.restart !== undefined && await target.restart(statusSignal)))
     return {
       open,
@@ -513,6 +528,7 @@ export function botComputerRoutesWithLegacy(
         location: 'vps',
         permissionScope: target.permissionScope,
         ...(navigate === undefined ? {} : { browser: true }),
+        ...(desktop === undefined ? {} : { desktop: true }),
         ...(target.terminal === true ? { terminal: true } : {}),
         ...(target.permissionScope === 'bot' && target.terminal === true && target.terminalInternet !== undefined
           ? { terminalInternet: target.terminalInternet } : {}),
@@ -530,6 +546,7 @@ export function botComputerRoutesWithLegacy(
   }
   return [...routesFor(resolveComputer, {
     managed: true,
+    allowDesktop: true,
     ...(options.allowMissingSession === undefined ? {} : { allowMissingSession: options.allowMissingSession }),
     status: (resolved, target) => {
       const metadata = resolved?.metadata ?? {
@@ -543,7 +560,7 @@ export function botComputerRoutesWithLegacy(
         computer: metadata satisfies ComputerStatusMetadata,
       })
     },
-  }), browserNavigationRoute(resolveComputer)]
+  }), browserNavigationRoute(id => resolveComputer({ id, managed: true, surface: 'primary' }))]
 }
 
 /**
@@ -587,11 +604,11 @@ export function computerSettingRoute(
 
 /**
  * Restart one private owner Computer through its idle checks.
- * @param restart - Resolve and restart the exact owner Session. Undefined means no eligible Computer.
+ * @param restart - Restart the selected Computer of the exact owner Session, or return undefined when it is unavailable.
  * @returns The authenticated, no-store restart route.
  */
 export function computerRestartRoute(
-  restart: (sessionId: SessionId, signal: AbortSignal) => Promise<'restarted' | 'busy' | undefined>,
+  restart: (sessionId: SessionId, surface: ComputerSurface, signal: AbortSignal) => Promise<'restarted' | 'busy' | undefined>,
 ): ConnectionFetchRoute {
   return {
     path: '/api/computer/restart', methods: ['POST'], requestBody: 'streaming',
@@ -603,12 +620,14 @@ export function computerRestartRoute(
         void error
         return json({ status: 'invalid-request' }, 400)
       }
-      if (!isRecord(payload) || Object.keys(payload).length !== 1) return json({ status: 'invalid-request' }, 400)
-      const target = sessionTarget(payload, true)
-      if (target === undefined) return json({ status: 'invalid-request' }, 400)
+      if (!isRecord(payload)) return json({ status: 'invalid-request' }, 400)
+      const target = sessionTarget(payload, true, true)
+      if (target === undefined || Object.keys(payload).length !== (target.surface === 'desktop' ? 2 : 1)) {
+        return json({ status: 'invalid-request' }, 400)
+      }
       try {
         request.signal.throwIfAborted()
-        const status = await restart(SessionId(target.id), request.signal)
+        const status = await restart(SessionId(target.id), target.surface, request.signal)
         if (status === 'restarted') return json({ status })
         if (status === 'busy') return json({ status }, 409)
         return json({ status: 'unavailable' }, 404)

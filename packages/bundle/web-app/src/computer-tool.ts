@@ -44,39 +44,46 @@ const ATTACHMENT = {
  */
 export function apply(ctx: Context): void {
   const computer = ctx.vpsComputer
-  registerVpsComputer(ctx, async () => computer, 'the private VPS desktop')
+  registerVpsComputer(ctx, () => Promise.resolve(computer), 'the private VPS desktop')
 }
+
+type ResolveComputer = (sessionId: string, signal: AbortSignal) => Promise<ComputerAgentControls>
 
 /**
  * Expose the managed computer of the exact calling Bot Session.
  * @param ctx - Agent scope carrying tools and attachments.
- * @param resolve - Resolves the current owner Bot's desktop from the calling Session.
+ * @param resolve - Resolves the current owner Bot's primary display from the calling Session.
  * @param signIn - Optional handoff restricted to a direct owner turn.
  * @param navigate - Optional website navigation through the calling Bot's browser.
  * @param savedLogin - Optional secure login for a direct owner message or private time-based routine.
+ * @param desktop - Optional Linux desktop alongside the primary isolated browser.
  */
 export function applyVpsBotComputer(
   ctx: Context,
-  resolve: (sessionId: string) => Promise<ComputerAgentControls>,
+  resolve: ResolveComputer,
   signIn?: ComputerToolTarget['signIn'],
   navigate?: ComputerToolTarget['navigate'],
   savedLogin?: ComputerToolTarget['savedLogin'],
+  desktop?: ResolveComputer,
 ): void {
-  registerVpsComputer(ctx, resolve, 'this Bot’s private VPS desktop', signIn, navigate, savedLogin)
+  const description = desktop === undefined ? 'this Bot’s private VPS desktop' : 'this Bot’s isolated browser'
+  registerVpsComputer(ctx, resolve, description, signIn, navigate, savedLogin, desktop)
 }
 
 function registerVpsComputer(
   ctx: Context,
-  resolve: (sessionId: string) => Promise<ComputerAgentControls>,
+  resolve: ResolveComputer,
   desktop: string,
   signIn?: ComputerToolTarget['signIn'],
   navigate?: ComputerToolTarget['navigate'],
   savedLogin?: ComputerToolTarget['savedLogin'],
+  desktopComputer?: ResolveComputer,
 ): void {
   registerComputerTool(ctx, {
     name: 'vps_computer',
     description: `Observe or operate ${desktop} shown in the Computer panel. `
       + 'Observe before targeting visible controls. The tool pauses while the user is in control.'
+      + (desktopComputer === undefined ? '' : ' Set surface to desktop to observe or send input to the Linux desktop.')
       + (signIn === undefined ? '' : ' For a website sign-in or verification that needs the owner, use request_sign_in. '
         + 'The owner uses the Computer directly. Never ask for a password or code in chat.')
       + (navigate === undefined ? '' : ' Use navigate for an HTTP(S) website URL without credentials.')
@@ -84,8 +91,9 @@ function registerVpsComputer(
         + 'The owner can authorize automatic sign-in for this Bot and website. In a direct owner chat, the owner can also select '
         + 'or enter a login securely. Verify the page after submission.'),
     keyDescription: 'X11 key or chord, for example Return or ctrl+a.',
-    observe: async (sessionId, signal) => (await resolve(sessionId)).observe(signal),
-    act: async (sessionId, action, signal) => (await resolve(sessionId)).actAsBot(action, signal),
+    observe: async (sessionId, signal) => (await resolve(sessionId, signal)).observe(signal),
+    act: async (sessionId, action, signal) => (await resolve(sessionId, signal)).actAsBot(action, signal),
+    ...(desktopComputer === undefined ? {} : { desktop: desktopComputer }),
     ...(signIn === undefined ? {} : { signIn }),
     ...(navigate === undefined ? {} : { navigate }),
     ...(savedLogin === undefined ? {} : { savedLogin }),
@@ -149,6 +157,7 @@ interface ComputerToolTarget {
   readonly name: 'vps_computer' | 'mac_computer' | 'shared_browser'
   readonly description: string
   readonly keyDescription: string
+  readonly desktop?: ResolveComputer
   readonly authorize?: (agent: NonNullable<ToolExecution['agent']>, signal: AbortSignal) => Promise<boolean>
   observe(sessionId: string, signal: AbortSignal): ReturnType<ComputerAgentControls['observe']>
   act(sessionId: string, action: object, signal: AbortSignal): Promise<unknown>
@@ -178,6 +187,9 @@ function computerToolDefinition(ctx: Context, target: ComputerToolTarget): ToolD
           + (target.navigate === undefined ? '' : ' Navigate with an HTTP(S) URL without credentials.')
           + (target.savedLogin === undefined ? '' : ' Request secure website sign-in with no other arguments.'),
       },
+      ...(target.desktop === undefined ? {} : {
+        surface: { type: 'string', enum: ['desktop' as const], description: 'Use the Linux desktop for screenshots and input.' },
+      }),
       x: { type: 'integer', description: 'Horizontal pixel for move, click, drag, or scroll.' },
       y: { type: 'integer', description: 'Vertical pixel for move, click, drag, or scroll.' },
       toX: { type: 'integer', description: 'Destination horizontal pixel for drag.' },
@@ -212,11 +224,16 @@ function computerToolDefinition(ctx: Context, target: ComputerToolTarget): ToolD
     },
     presentCall: () => ({ card: 'generic', title: target.name === 'shared_browser' ? 'Browser' : 'Computer' }),
     async execute(args, exec) {
-      const { action, ...values } = args
+      const { action, surface, ...values } = args
       if (target.authorize !== undefined && (exec.agent === undefined || !await target.authorize(exec.agent, exec.signal))) {
         throw new Error('The shared browser is unavailable for this chat.')
       }
       const sessionId = exec.agent?.session.id ?? ''
+      const desktop = surface === 'desktop' ? target.desktop : undefined
+      if (surface !== undefined && (desktop === undefined || action === 'navigate'
+        || action === 'request_sign_in' || action === 'request_saved_login')) {
+        throw new Error('The desktop selection supports screenshots and input.')
+      }
       if (action === 'request_sign_in') {
         if (exec.agent === undefined || target.signIn === undefined || Object.keys(values).length !== 0) {
           throw new Error(target.name === 'shared_browser' ? 'Browser sign-in takes no arguments.'
@@ -255,7 +272,9 @@ function computerToolDefinition(ctx: Context, target: ComputerToolTarget): ToolD
         }
       }
       if (action !== 'observe') {
-        await target.act(sessionId, { kind: action, ...values }, exec.signal)
+        const input = { kind: action, ...values }
+        if (desktop === undefined) await target.act(sessionId, input, exec.signal)
+        else await (await desktop(sessionId, exec.signal)).actAsBot(input, exec.signal)
         return { message: 'Computer input sent.' }
       }
       const activeRoute = exec.agent?.session.requestHeader()?.config
@@ -264,10 +283,13 @@ function computerToolDefinition(ctx: Context, target: ComputerToolTarget): ToolD
       if (provider === undefined || model === undefined) throw new Error('The current model route could not be resolved.')
       const info = await ctx.llm.resolveModelInfo(provider, model, exec.signal)
       if (info.inputModalities?.includes('image') !== true) throw new Error('Select a model that accepts images to observe the desktop.')
-      const frame = await target.observe(sessionId, exec.signal)
+      const frame = desktop === undefined
+        ? await target.observe(sessionId, exec.signal)
+        : await (await desktop(sessionId, exec.signal)).observe(exec.signal)
+      const display = target.name === 'shared_browser' || (target.desktop !== undefined && desktop === undefined) ? 'Browser' : 'Desktop'
       const image = await ctx.attachments.saveImage({ data: Buffer.from(frame.jpeg, 'base64'), mediaType: 'image/jpeg', name: 'Computer.jpg' })
       return {
-        message: `${target.name === 'shared_browser' ? 'Browser' : 'Desktop'} coordinates are ${String(frame.width)}×${String(frame.height)} pixels. `
+        message: `${display} coordinates are ${String(frame.width)}×${String(frame.height)} pixels. `
           + `This attachment is ${String(image.width)}×${String(image.height)} pixels. Scale coordinates if the sizes differ.`,
         image: {
           attachmentId: image.attachmentId, mediaType: image.mediaType, bytes: image.bytes, width: image.width, height: image.height,

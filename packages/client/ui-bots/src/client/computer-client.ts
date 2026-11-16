@@ -14,6 +14,8 @@ export interface ComputerIdentity {
   readonly location: ComputerLocation
   readonly permissionScope: ComputerPermissionScope
   readonly browser?: true
+  /** This Bot has both an isolated browser and a Linux desktop. */
+  readonly desktop?: true
   readonly terminal?: true
   /** Configured internet access for a Bot's private VPS terminal. */
   readonly terminalInternet?: boolean
@@ -134,6 +136,8 @@ export interface ComputerClient {
   input(
     viewerId: string, action: ComputerInputAction, signal?: AbortSignal, sessionId?: string, origin?: string,
   ): Promise<ComputerControlResult>
+  /** View and control the Linux desktop of a Bot that advertises both displays. */
+  readonly desktop?: ComputerClient
   /** Change the selected private Bot's terminal Internet policy when supported. */
   readonly network?: (sessionId: string, enabled: boolean, signal?: AbortSignal) => Promise<ComputerNetworkResult>
   /** Restart the selected private Bot's Computer when supported. */
@@ -183,6 +187,7 @@ function identityOf(value: unknown): ComputerIdentity | undefined {
   const dedicated = location === 'vps' && permissionScope === 'bot'
   return { ...(id === undefined ? {} : { id }), location, permissionScope,
     ...(dedicated && value.browser === true ? { browser: true } : {}),
+    ...(dedicated && value.desktop === true ? { desktop: true } : {}),
     ...(dedicated && value.terminal === true ? {
       terminal: true,
       ...(typeof value.terminalInternet === 'boolean' ? { terminalInternet: value.terminalInternet } : {}),
@@ -281,10 +286,6 @@ function sharedWorkspaceOf(value: unknown): ComputerSharedWorkspaceResult | unde
   return networkOf(value)
 }
 
-function withSession(payload: Record<string, unknown>, sessionId: string | undefined): Record<string, unknown> {
-  return sessionId === undefined || sessionId === '' ? payload : { ...payload, sessionId }
-}
-
 async function post<T>(
   path: string,
   payload: unknown,
@@ -320,26 +321,40 @@ async function post<T>(
  * @returns a client that uses relative authenticated Computer routes
  */
 export function createComputerClient(): ComputerClient {
-  return {
-    status: (signal, sessionId) => post(STATUS_PATH, withSession({}, sessionId), statusOf, requestOptions(signal)),
-    frame: (viewerId, signal, sessionId) => post(FRAME_PATH, withSession({ viewerId }, sessionId), frameOf, requestOptions(signal)),
+  return computerClientFor()
+}
+
+function computerClientFor(surface?: 'desktop'): ComputerClient {
+  const select = (payload: Record<string, unknown>, sessionId: string | undefined): Record<string, unknown> => ({
+    ...payload,
+    ...(sessionId === undefined || sessionId === '' ? {} : { sessionId }),
+    ...(surface === undefined ? {} : { surface }),
+  })
+  const client: ComputerClient = {
+    status: (signal, sessionId) => post(STATUS_PATH, select({}, sessionId), statusOf, requestOptions(signal)),
+    frame: (viewerId, signal, sessionId) => post(FRAME_PATH, select({ viewerId }, sessionId), frameOf, requestOptions(signal)),
     takeControl: (viewerId, signal, sessionId) => post(
-      TAKE_CONTROL_PATH, withSession({ viewerId }, sessionId), controlOf, requestOptions(signal),
+      TAKE_CONTROL_PATH, select({ viewerId }, sessionId), controlOf, requestOptions(signal),
     ),
-    releaseControl: (viewerId, options, sessionId) => post(RELEASE_CONTROL_PATH, withSession({ viewerId }, sessionId), controlOf, options),
+    releaseControl: (viewerId, options, sessionId) => post(RELEASE_CONTROL_PATH, select({ viewerId }, sessionId), controlOf, options),
     input: (viewerId, action, signal, sessionId, origin) => post(
-      INPUT_PATH, withSession({ viewerId, action, ...(origin === undefined ? {} : { origin }) }, sessionId),
+      INPUT_PATH, select({ viewerId, action, ...(origin === undefined ? {} : { origin }) }, sessionId),
       controlOf, requestOptions(signal),
     ),
     network: (sessionId, enabled, signal) => post(
       NETWORK_PATH, { sessionId, enabled }, networkOf, requestOptions(signal),
     ),
     restart: (sessionId, signal) => post(
-      RESTART_PATH, { sessionId }, restartOf, requestOptions(signal),
+      RESTART_PATH, select({}, sessionId), restartOf, requestOptions(signal),
     ),
     sharedWorkspace: (sessionId, enabled, signal) => post(
       SHARED_WORKSPACE_PATH, { sessionId, enabled }, sharedWorkspaceOf, requestOptions(signal),
     ),
+  }
+  if (surface === 'desktop') return client
+  return {
+    ...client,
+    desktop: computerClientFor('desktop'),
     navigate: (viewerId, url, sessionId, signal) => post(
       NAVIGATE_PATH, { viewerId, url, sessionId }, controlOf, requestOptions(signal),
     ),

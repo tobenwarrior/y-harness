@@ -1,6 +1,6 @@
 /** Verify the Bot browser panel through the real Cloud Host and browser worker protocol. */
 
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { createServer } from 'node:net'
 import { join } from 'node:path'
@@ -13,6 +13,7 @@ import { captureStableAria, compareOrRefreshGolden, launchWebScaffold, watchCons
 
 const FIXTURE = fileURLToPath(new URL('../../../snapshots/web/bot-workspace/session.v3.jsonl', import.meta.url))
 const GOLDEN = fileURLToPath(new URL('./expected/bot-isolated-browser/browser.expected.md', import.meta.url))
+const RUNTIME_SOURCE = new URL('../../../packages/bundle/web-app/lib/types/vps-runtime.js', import.meta.url).href
 const BOTS_SOURCE = new URL('../../../packages/bundle/web-app/lib/types/vps-bots.js', import.meta.url).href
 const BROKER_SOURCE = new URL('../../../packages/bundle/web-app/lib/types/vps-isolated-browser.js', import.meta.url).href
 const VAULT_SOURCE = new URL('../../../packages/bundle/web-app/lib/types/vps-vault-requests.js', import.meta.url).href
@@ -22,6 +23,7 @@ const PROVIDER = 'browser-fixture'
 const MODEL = 'reply'
 const WEBSITE = 'https://example.test/'
 const REPLY = 'I opened the website.'
+const DESKTOP_REPLY = 'I sent the key to my Linux desktop.'
 const LOGIN = { id: 'a'.repeat(32), origin: 'https://example.test', destination: 'https://example.test/session', state: 'pending' }
 const SHARED_LOGIN = { ...LOGIN, id: 'b'.repeat(32) }
 const SHARED_CHALLENGE = 'c'.repeat(32)
@@ -41,6 +43,7 @@ class BrowserAdapter extends LlmAdapter {
     const latestUser = options.messages.findLastIndex(message =>
       message.role === 'user' && !CONTEXT_SOURCES.includes(message.source?.kind ?? ''))
     const input = options.messages[latestUser]?.content.filter(block => block.type === 'text').map(block => block.text).join(' ') ?? ''
+    const desktop = input.includes('Use the Linux desktop')
     const savedLogin = input.includes('saved login')
     const routine = input.includes('scheduled check')
     const unapproved = input.includes('without a grant')
@@ -49,11 +52,13 @@ class BrowserAdapter extends LlmAdapter {
     const result = options.messages.slice(latestUser + 1).findLast(message => message.role === 'tool')
     const checkSharing = input.includes('check the browser setting')
     if (result === undefined && !checkSharing) {
-      const id = ToolCallId(routine ? (unapproved ? 'fixture-routine-unapproved' : 'fixture-routine-approved')
-        : handoff ? 'fixture-browser-handoff' : savedLogin ? 'fixture-browser-login' : 'fixture-browser-navigation')
+      const id = ToolCallId(desktop ? 'fixture-desktop-input'
+        : routine ? (unapproved ? 'fixture-routine-unapproved' : 'fixture-routine-approved')
+          : handoff ? 'fixture-browser-handoff' : savedLogin ? 'fixture-browser-login' : 'fixture-browser-navigation')
       const name = shared ? 'shared_browser' : 'vps_computer'
-      const args = JSON.stringify(handoff ? { action: 'request_sign_in' }
-        : savedLogin ? { action: 'request_saved_login' } : { action: 'navigate', url: WEBSITE })
+      const args = JSON.stringify(desktop ? { action: 'key', key: 'Escape', surface: 'desktop' }
+        : handoff ? { action: 'request_sign_in' }
+          : savedLogin ? { action: 'request_saved_login' } : { action: 'navigate', url: WEBSITE })
       expect(options.tools?.some(tool => tool.name === name)).toBe(true)
       if (shared) {
         expect(options.tools?.some(tool => ['vps_computer', 'bash', 'request_vps_secret'].includes(tool.name))).toBe(false)
@@ -66,6 +71,8 @@ class BrowserAdapter extends LlmAdapter {
     }
     if (result === undefined) {
       expect(options.tools?.some(tool => tool.name === 'shared_browser') ?? false).toBe(false)
+    } else if (desktop) {
+      expect(result.content).toEqual([expect.objectContaining({ type: 'text', text: 'Computer input sent.' })])
     } else if (handoff) {
       expect(result.content).toEqual([expect.objectContaining({ type: 'text', text: expect.stringContaining('returned the Computer') })])
       expect(JSON.stringify(options.messages.slice(latestUser))).not.toContain('fixture-input')
@@ -78,7 +85,7 @@ class BrowserAdapter extends LlmAdapter {
     } else {
       expect(result.content.some(block => block.type === 'text' && block.text.includes('Browser'))).toBe(true)
     }
-    const text = checkSharing ? BROWSER_DISABLED : handoff ? HANDOFF_REPLY
+    const text = desktop ? DESKTOP_REPLY : checkSharing ? BROWSER_DISABLED : handoff ? HANDOFF_REPLY
       : routine ? (unapproved ? ROUTINE_NEEDS_OWNER : ROUTINE_REPLY) : savedLogin ? LOGIN_REPLY : REPLY
     yield { type: 'block-start', index: 0, blockType: 'text' }
     yield { type: 'text-delta', index: 0, text }
@@ -92,6 +99,7 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('opens websites for
   const runtimePath = join(root, 'browser.mjs')
   const overlay = join(root, 'browser.yml')
   const socketPath = join(root, 'browser.sock')
+  const desktopInput = join(root, 'desktop-input')
   const websites: string[] = []
   const sharedRequests: Array<{ readonly action: string; readonly session: string }> = []
   const handoffInputs: Array<{ readonly session: string; readonly origin: string }> = []
@@ -112,18 +120,25 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('opens websites for
     const runtime = browser = await chromium.launch()
     const page = await runtime.newPage({ locale: 'en-US', userAgent: 'YHarnessCloudDesktop/1', viewport: { width: 1180, height: 900 } })
     const consoleLog = watchConsole(page)
-    const jpeg = await page.evaluate(() => {
+    const { jpeg, desktopJpeg } = await page.evaluate(() => {
       const image = document.createElement('canvas')
       image.width = 1280
       image.height = 800
       const canvas = image.getContext('2d')!
-      canvas.fillStyle = '#f1f4fa'
-      canvas.fillRect(0, 0, image.width, image.height)
-      canvas.font = '40px sans-serif'
-      canvas.fillStyle = '#1c2233'
-      canvas.fillText('Example workspace', 100, 180)
-      return image.toDataURL('image/jpeg').split(',')[1]
+      const screenshot = (label: string, background: string, ink: string) => {
+        canvas.fillStyle = background
+        canvas.fillRect(0, 0, image.width, image.height)
+        canvas.font = '40px sans-serif'
+        canvas.fillStyle = ink
+        canvas.fillText(label, 100, 180)
+        return image.toDataURL('image/jpeg').split(',')[1]
+      }
+      return {
+        jpeg: screenshot('Example website', '#f1f4fa', '#1c2233'),
+        desktopJpeg: screenshot('Linux desktop fixture', '#151c2a', '#eef2f8'),
+      }
     })
+    await writeFile(desktopInput, '')
     socketServer = createServer({ allowHalfOpen: true }, (socket) => {
       sockets.add(socket)
       socket.once('close', () => { sockets.delete(socket) })
@@ -207,6 +222,8 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('opens websites for
     })
     await new Promise<void>((resolve, reject) => { socketServer!.once('error', reject); socketServer!.listen(socketPath, resolve) })
     await writeFile(runtimePath, `
+      import { appendFile } from 'node:fs/promises'
+      import { VpsRuntime } from ${JSON.stringify(RUNTIME_SOURCE)}
       import { mountVpsBots } from ${JSON.stringify(BOTS_SOURCE)}
       import { VpsIsolatedBrowser } from ${JSON.stringify(BROKER_SOURCE)}
       import { submitAutomaticVpsLogin } from ${JSON.stringify(VAULT_SOURCE)}
@@ -215,8 +232,22 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('opens websites for
         // The fixture provides the installed worker protocol on a temporary socket.
         ctx.effect(() => {
           const original = VpsIsolatedBrowser.prototype.usesManagedSharing
+          const ensure = VpsRuntime.prototype.ensure
+          const command = VpsRuntime.prototype.desktopCommand
           VpsIsolatedBrowser.prototype.usesManagedSharing = () => true
-          return () => { VpsIsolatedBrowser.prototype.usesManagedSharing = original }
+          VpsRuntime.prototype.ensure = () => Promise.resolve()
+          VpsRuntime.prototype.desktopCommand = async (sessionId, argv) => {
+            if (argv[0] === '/usr/local/bin/yharness-vps-bot-capture') {
+              return Buffer.from(${JSON.stringify(desktopJpeg)}, 'base64')
+            }
+            await appendFile(${JSON.stringify(desktopInput)}, JSON.stringify({ sessionId, argv }) + '\\n')
+            return Buffer.alloc(0)
+          }
+          return () => {
+            VpsIsolatedBrowser.prototype.usesManagedSharing = original
+            VpsRuntime.prototype.ensure = ensure
+            VpsRuntime.prototype.desktopCommand = command
+          }
         })
         mountVpsBots(ctx, config, [], undefined, undefined, (bot, session, id, signal) =>
           submitAutomaticVpsLogin(config.isolatedBrowser.socketPath, bot, session, id, signal))
@@ -254,6 +285,31 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('opens websites for
     await panel.getByRole('button', { name: 'Hand back', exact: true }).click()
     await address.waitFor({ state: 'hidden' })
     const viewing = await captureStableAria(page, panelSelector, web.workspaceCwd)
+    const screenshot = panel.getByRole('img', { name: 'Live computer screen' })
+    await expect.poll(() => screenshot.getAttribute('src')).toBe('data:image/jpeg;base64,' + jpeg)
+    await panel.getByRole('button', { name: 'Desktop', exact: true }).click()
+    await expect.poll(() => screenshot.getAttribute('src')).toBe('data:image/jpeg;base64,' + desktopJpeg)
+    const desktopViewing = await captureStableAria(page, panelSelector, web.workspaceCwd)
+    await panel.getByRole('button', { name: 'Take control', exact: true }).click()
+    await panel.getByRole('button', { name: 'Hand back', exact: true }).waitFor()
+    expect(await panel.getByRole('textbox', { name: 'Website address' }).count()).toBe(0)
+    await screenshot.press('Escape')
+    await expect.poll(() => readFile(desktopInput, 'utf8')).toContain('"Escape"')
+    await panel.getByRole('button', { name: 'Hand back', exact: true }).click()
+    await panel.getByRole('button', { name: 'Browser', exact: true }).click()
+    await expect.poll(() => screenshot.getAttribute('src')).toBe('data:image/jpeg;base64,' + jpeg)
+    await conversation.locator('[data-composer-input][contenteditable="true"]').fill('Use the Linux desktop and press Escape.')
+    await conversation.getByRole('button', { name: 'Send message', exact: true }).click()
+    await conversation.getByText(DESKTOP_REPLY, { exact: true }).waitFor()
+    const desktopCommands = (await readFile(desktopInput, 'utf8')).trim().split('\n').map(line => JSON.parse(line))
+    expect(desktopCommands).toEqual(Array.from({ length: 2 }, () => ({
+      sessionId: bot.sessionId, argv: expect.arrayContaining(['key', 'Escape']),
+    })))
+    const unauthorizedDesktop = await fetch(new URL('/api/computer/frame', web.baseUrl), {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId: bot.sessionId, viewerId: randomUUID(), surface: 'desktop' }),
+    })
+    expect(unauthorizedDesktop.status).toBe(401)
     const unauthorized = await fetch(new URL('/api/computer/navigate', web.baseUrl), {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ sessionId: bot.sessionId, viewerId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', url: WEBSITE }),
@@ -423,7 +479,8 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('opens websites for
     expect(automaticAttempts).toBe(3)
     expect(consoleLog.pageErrors).toEqual([])
     await compareOrRefreshGolden(GOLDEN,
-      [`## In control\n\n${controlling}`, `## Watching\n\n${viewing}`, `## Saved login approval\n\n${review}`,
+      [`## In control\n\n${controlling}`, `## Watching\n\n${viewing}`, `## Linux desktop\n\n${desktopViewing}`,
+        `## Saved login approval\n\n${review}`,
         `## Scheduled login\n\n${unapprovedReply}\n\n${routineReply}`, `## Shared login approval\n\n${sharedReview}`,
         `## Shared browser sign-in\n\n${handoffCardAria}`, `## Shared browser in control\n\n${handoffPanelAria}`].join('\n\n'),
       MODE)

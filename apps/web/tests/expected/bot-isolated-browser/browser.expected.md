@@ -4,6 +4,9 @@
   - status: You are controlling Display and input are dedicated to this Bot
   - button "Hand back"
   - button "Close computer panel"
+  - group "Computer view":
+    - button "Browser" [disabled] [pressed]
+    - button "Desktop" [disabled]
   - text: Shared workspace Grants this Bot access to common project files.
   - switch "Allow access to common project files" [disabled]
   - textbox "Website address":
@@ -12,7 +15,7 @@
   - button "Open"
   - img "Live computer screen"
   - text: Click, scroll, or type in the screen
-  - button "Restart computer" [disabled]
+  - button "Restart browser" [disabled]
   - button "Paste"
 
 ## Watching
@@ -21,6 +24,25 @@
   - status: Watching Display and input are dedicated to this Bot
   - button "Take control"
   - button "Close computer panel"
+  - group "Computer view":
+    - button "Browser" [pressed]
+    - button "Desktop"
+  - text: Shared workspace Grants this Bot access to common project files.
+  - switch "Allow access to common project files"
+  - img "Live computer screen"
+  - text: Watching only
+  - button "Restart browser"
+  - button "Paste" [disabled]
+
+## Linux desktop
+
+- region "Computer":
+  - status: Watching Display and input are dedicated to this Bot
+  - button "Take control"
+  - button "Close computer panel"
+  - group "Computer view":
+    - button "Browser"
+    - button "Desktop" [pressed]
   - text: Shared workspace Grants this Bot access to common project files.
   - switch "Allow access to common project files"
   - img "Live computer screen"

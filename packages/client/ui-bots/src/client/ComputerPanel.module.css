@@ -45,6 +45,19 @@
   gap: 6px;
 }
 
+.viewSwitch {
+  display: flex;
+  flex: none;
+  gap: 4px;
+  padding: 6px 10px;
+  border-bottom: 0.5px solid var(--yh-alias-border-l2);
+}
+
+.viewSwitch button[aria-pressed='true'] {
+  background: var(--yh-alias-bg-layer-2);
+  color: var(--yh-alias-label-primary);
+}
+
 .restartConfirm {
   display: grid;
   flex: none;
