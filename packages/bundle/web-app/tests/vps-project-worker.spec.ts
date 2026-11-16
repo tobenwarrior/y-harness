@@ -11,7 +11,8 @@ const run = promisify(execFile)
 async function request(root: string, path: string, args: object): Promise<unknown> {
   const child = run('python3', ['-I', '-c', vpsProjectWorker, root], { timeout: 7000 })
   child.child.stdin?.end(JSON.stringify({ path, ...args }))
-  return JSON.parse((await child).stdout) as unknown
+  const response: unknown = JSON.parse((await child).stdout)
+  return response
 }
 
 describe.skipIf(process.platform === 'win32')('VPS project file worker', () => {
