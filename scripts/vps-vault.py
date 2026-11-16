@@ -1390,6 +1390,17 @@ class Vault:
                 self.enabled_credentials(grant[-2], policy['cloud'])
             self.write_request_grants(policy, set(map(tuple, grants)), start=start)
 
+    def enable_login_automation(self, *, start=False):
+        """Start the standard broker for website login without allocating service key grants."""
+        if not directory(self.root):
+            raise VaultError('Enable Desktop Vault access before enabling website login automation.')
+        with self.locked():
+            policy = self.root_policy()
+            if not browser_grant_pairs():
+                raise VaultError('Configure a private isolated browser before enabling website login automation.')
+            grants = self.require_requests(policy, allow_disabled=True)
+            self.write_request_grants(policy, grants, start=start)
+
     def set_shared_request_grant(self, grant, enabled):
         """Change an existing Bot credential grant without replacing unrelated grants."""
         if not directory(self.root) or not valid_request_grant(grant) or len(grant) != 3:
@@ -2116,6 +2127,7 @@ def main():
     actions.add_parser('deny-desktop')
     enable_requests = actions.add_parser('enable-requests', help='enable the root Cloud request broker')
     enable_requests.add_argument('grants', metavar='[[shared/]BOT/]UNIT.service=KEY_NAME', nargs='+', type=request_grant)
+    actions.add_parser('enable-login-automation', help='enable the Cloud broker for automatic website sign-in')
     for action, help_text in (('share-request-grant', 'allow a Bot grant in shared chats'),
                               ('unshare-request-grant', 'limit a Bot grant to owner chats')):
         command = actions.add_parser(action, help=help_text)
@@ -2156,6 +2168,9 @@ def main():
         elif args.action == 'enable-requests':
             vault.enable_requests(args.grants, start=True)
             print('Cloud Vault request broker enabled.')
+        elif args.action == 'enable-login-automation':
+            vault.enable_login_automation(start=True)
+            print('Cloud Vault website login broker enabled.')
         elif args.action == 'disable-requests':
             vault.disable_requests()
             print('Cloud Vault request broker disabled.')

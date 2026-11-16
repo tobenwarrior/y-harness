@@ -327,6 +327,24 @@ class VaultTest(unittest.TestCase):
             with self.assertRaises(vault.VaultError):
                 vault.cloud_request(json.dumps(action).encode())
 
+    def test_website_login_setup_starts_the_broker_without_service_grants(self):
+        self.store.enable(FIRST_UNIT, CLOUD_UID)
+        self.store.allow_desktop(OWNER_UID, CLOUD_UID, [FIRST_UNIT])
+        with patch.object(vault, 'trusted_file'), \
+                patch.object(vault, 'browser_grant_pairs', return_value={(BROWSER_BOT, BROWSER_SESSION)}):
+            self.store.enable_login_automation(start=True)
+            self.assertTrue(self.cloud_listener_active)
+            policy = self.store.root_policy()
+            self.assertEqual(self.store.require_requests(policy), set())
+            self.assertEqual(self.store.desktop({'action': 'list-login-automation'}, OWNER_UID), {
+                'loginAutomation': {'available': True, 'enabled': []},
+            })
+            grant = (BROWSER_BOT, FIRST_UNIT, 'EXAMPLE_KEY')
+            self.store.enable_requests([grant])
+            self.store.enable_login_automation(start=True)
+            self.assertEqual(self.store.require_requests(policy), {grant})
+            self.assertEqual(self.store.cloud({'action': 'list', 'bot': 'bot-other'}, CLOUD_UID), {'credentials': []})
+
     def test_automatic_sign_in_requires_the_current_assigned_account_and_owner_grant(self):
         site = 'https://example.com'
         request = {'action': 'automatic-login', 'id': 'a' * 32, 'bot': BROWSER_BOT, 'session': BROWSER_SESSION}
