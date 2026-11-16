@@ -1,6 +1,10 @@
 import { execFile } from 'node:child_process'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cloudVaultRequest, isVaultLoginUseRequestId, isVaultRequestId, readCloudVaultBots, vaultRequestAllowed, type VaultExec } from '../src/cloud-vault.ts'
+import { runCloudVaultCommand, type VaultExec } from '../src/cloud-connection.ts'
+import {
+  cloudVaultRequest as requestVaultOnConnection, isVaultLoginUseRequestId, isVaultRequestId,
+  readCloudVaultBots, vaultRequestAllowed, type VaultCloudWorkspace,
+} from '../src/cloud-vault.ts'
 
 const unit = 'fixture-worker.service'
 const value = 'a synthetic value with spaces, quotes and \n a second line'
@@ -8,6 +12,14 @@ const signal = new AbortController().signal
 const origin = 'http://127.0.0.1:28634'
 const browserSession = 'bot-session-0e9beecd-b6f5-40b1-8d52-f97259bdcf76'
 const children = new Set<ReturnType<typeof execFile>>()
+
+function rosterRequest(init: RequestInit) {
+  if (typeof init.body !== 'string') throw new Error('Expected a JSON request body')
+  const request: unknown = JSON.parse(init.body)
+  if (request === null || typeof request !== 'object' || !('rpcId' in request)
+    || typeof request.rpcId !== 'string') throw new Error('Expected a roster request')
+  return { body: request, rpcId: request.rpcId }
+}
 
 function managedWorkspace(sharedScopes = false) {
   return {
@@ -23,12 +35,20 @@ function managedWorkspace(sharedScopes = false) {
         })
       }
       expect(url).toBe(`${origin}/api/bots/list`)
-      const call = JSON.parse(String(options.body))
-      return Response.json({ type: 'server-response', rpcId: call.rpcId, result: { ok: true, value: {
+      const { rpcId } = rosterRequest(options)
+      return Response.json({ type: 'server-response', rpcId, result: { ok: true, value: {
         bots: [{ id: 'bot-scout', state: 'active', name: 'Scout' }],
       } } })
     },
   }
+}
+
+function cloudVaultRequest(target: string, request: unknown, requestSignal: AbortSignal,
+  execute: VaultExec, workspace?: VaultCloudWorkspace) {
+  return requestVaultOnConnection(
+    (payload, signal) => runCloudVaultCommand(target, '/fixture/control.sock', payload, signal, execute),
+    request, requestSignal, workspace,
+  )
 }
 
 function fixture(script: string): VaultExec {
@@ -259,9 +279,9 @@ describe('Desktop Vault SSH transport', () => {
       expect(url).toBe(`${origin}/api/bots/list`)
       expect(init.credentials).toBe('include')
       expect(init.redirect).toBe('error')
-      const body = JSON.parse(String(init.body))
+      const { body, rpcId } = rosterRequest(init)
       expect(body).toMatchObject({ type: 'client-request', method: 'bots/list', payload: { args: { request: { includeHidden: true } } } })
-      return Response.json({ type: 'server-response', rpcId: body.rpcId, result: { ok: true, value: { bots: [
+      return Response.json({ type: 'server-response', rpcId, result: { ok: true, value: { bots: [
         { id: 'bot-scout', state: 'active', name: 'Scout', fixtureOtherField: value },
         { id: 'bot-preparing', state: 'provisioning', name: 'Preparing' },
       ] } } })
@@ -521,6 +541,8 @@ describe('Desktop Vault SSH transport', () => {
     const execute: VaultExec = (file, args, options, callback) => {
       expect(file).toBe('/usr/bin/ssh')
       expect(args.slice(-3)).toEqual(['--', 'fixture-vps', '/usr/local/sbin/yharness-vault desktop-client'])
+      expect(args[args.indexOf('-S') + 1]).toBe('/fixture/control.sock')
+      expect(args).toContain('ProxyCommand=/usr/bin/false')
       expect(args).toContain('StrictHostKeyChecking=yes')
       expect(args).toContain('ClearAllForwardings=yes')
       expect(args).toContain('ForwardAgent=no')
@@ -640,7 +662,6 @@ describe('Desktop Vault SSH transport', () => {
     ]) {
       await expect(cloudVaultRequest('fixture-vps', request, signal, mustNotOpen)).resolves.toEqual({ ok: false, reason: 'invalid' })
     }
-    await expect(cloudVaultRequest('-oUntrusted', { action: 'list' }, signal, mustNotOpen)).resolves.toEqual({ ok: false, reason: 'invalid' })
     await expect(cloudVaultRequest('fixture-vps', { action: 'list' }, AbortSignal.abort(), mustNotOpen))
       .resolves.toEqual({ ok: false, reason: 'unavailable' })
   })

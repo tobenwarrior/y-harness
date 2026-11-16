@@ -1,6 +1,9 @@
-import { spawn, type ChildProcess } from 'node:child_process'
+import { execFile, spawn, type ChildProcess } from 'node:child_process'
+import { access } from 'node:fs/promises'
+import { dirname } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { isCloudTarget, openCloudConnection, type CloudConnectionTestOptions } from '../src/cloud-connection.ts'
+import { cloudVaultRequest } from '../src/cloud-vault.ts'
 
 const TOKEN = 'a'.repeat(43)
 
@@ -66,9 +69,10 @@ describe('cloud connection', () => {
     expect(call.args).toEqual(expect.arrayContaining([
       '-a', '-x', '-T',
       '-o', 'BatchMode=yes',
-      '-o', 'ControlMaster=no',
-      '-o', 'ControlPath=none',
+      '-o', 'ControlMaster=yes',
+      '-o', 'ControlPersist=no',
       '-o', 'ExitOnForwardFailure=yes',
+      '-o', 'ForkAfterAuthentication=no',
       '-o', 'ForwardAgent=no',
       '-o', 'ForwardX11=no',
       '-o', 'PermitLocalCommand=no',
@@ -83,6 +87,77 @@ describe('cloud connection', () => {
     connection.close()
     await connection.closed
     await expect(connection.closed).resolves.toBeUndefined()
+  })
+
+  it('sends Vault reads through the active Cloud connection', async () => {
+    script = `process.stdout.write('http://127.0.0.1:3080/?token=${TOKEN}\\n'); setInterval(() => {}, 1000)`
+    const requests: Array<{ file: string; args: readonly string[] }> = []
+    const signal = new AbortController().signal
+    const connection = await openCloudConnection('fixture-host', signal, options({
+      executeVault(file, args, execOptions, done) {
+        requests.push({ file, args })
+        const child = execFile(process.execPath, ['-e', `
+          let input = '';
+          process.stdin.on('data', chunk => { input += chunk; });
+          process.stdin.on('end', () => {
+            const operation = JSON.parse(input).action;
+            const replies = { list: { services: [] }, 'list-logins': { logins: [] } };
+            process.stdout.write(JSON.stringify(replies[operation]));
+          });
+        `], execOptions, done)
+        children.push(child)
+        return child
+      },
+    }))
+    const master = calls[0]!
+    const control = master.args[master.args.indexOf('-S') + 1]!
+    try {
+      expect(master.args).toContain('ControlMaster=yes')
+      expect(master.args).toContain('ControlPersist=no')
+      expect(dirname(control)).toBe(dirname(master.args[master.args.indexOf('-L') + 1]!))
+      await expect(cloudVaultRequest(connection.sendVaultRequest, { action: 'list' }, signal))
+        .resolves.toEqual({ ok: true, services: [] })
+      await expect(cloudVaultRequest(connection.sendVaultRequest, { action: 'list-logins' }, signal))
+        .resolves.toEqual({ ok: true, logins: [] })
+      expect(requests).toHaveLength(2)
+      for (const request of requests) {
+        expect(request.file).toBe('/usr/bin/ssh')
+        expect(request.args[request.args.indexOf('-S') + 1]).toBe(control)
+        expect(request.args).toContain('ProxyCommand=/usr/bin/false')
+        expect(request.args.slice(-3)).toEqual(['--', 'fixture-host', '/usr/local/sbin/yharness-vault desktop-client'])
+      }
+    } finally {
+      connection.close()
+      await connection.closed
+    }
+    await expect(access(dirname(control))).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(cloudVaultRequest(connection.sendVaultRequest, { action: 'list' }, signal))
+      .resolves.toEqual({ ok: false, reason: 'unavailable' })
+    expect(requests).toHaveLength(2)
+  })
+
+  it('waits for the owned Vault command to exit when Cloud closes', async () => {
+    script = `process.stdout.write('http://127.0.0.1:3080/?token=${TOKEN}\\n'); setInterval(() => {}, 1000)`
+    let vaultChild: ChildProcess | undefined
+    const signal = new AbortController().signal
+    const connection = await openCloudConnection('fixture-host', signal, options({
+      executeVault(_file, _args, execOptions, done) {
+        vaultChild = execFile(process.execPath, ['-e', 'process.stdin.resume(); setInterval(() => {}, 1000)'], execOptions, done)
+        children.push(vaultChild)
+        return vaultChild
+      },
+    }))
+    try {
+      const receipt = connection.sendVaultRequest('{"action":"list"}', signal)
+      expect(vaultChild).toBeDefined()
+      connection.close()
+      await connection.closed
+      expect(vaultChild?.signalCode).toBe('SIGKILL')
+      await expect(receipt).resolves.toBeUndefined()
+    } finally {
+      connection.close()
+      await connection.closed
+    }
   })
 
   it('proxies loopback HTTP bytes through the owned Unix forward', async () => {
