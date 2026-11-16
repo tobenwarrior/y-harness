@@ -496,6 +496,50 @@ class VaultTest(unittest.TestCase):
         self.assertEqual(self.store.desktop({'action': 'remove-login', 'id': listed['id']}, OWNER_UID), {'ok': True})
         self.assertEqual(self.store.desktop({'action': 'list-logins'}, OWNER_UID), {'logins': []})
 
+    def test_login_import_reviews_duplicates_and_never_replaces_saved_accounts(self):
+        self.store.allow_desktop(OWNER_UID, CLOUD_UID, [])
+        original = {
+            'action': 'add-login', 'origin': 'https://example.com', 'label': 'Existing',
+            'username': 'owner@example.com', 'password': 'original-secret',
+        }
+        self.store.desktop(original, OWNER_UID)
+        draft = {'action': 'inspect-login-import', 'salt': 'ab' * 32}
+        item = {**original, 'action': 'import-login', 'label': 'Imported', 'password': 'import-secret'}
+
+        for request in (draft, item):
+            self.assertEqual(vault.desktop_request(json.dumps(request).encode()), request)
+            with self.assertRaises(vault.VaultError):
+                vault.cloud_request(json.dumps(request).encode())
+            with self.assertRaises(vault.VaultError):
+                self.store.desktop(request, CLOUD_UID)
+        for request in ({**draft, 'salt': 'invalid'}, {**draft, 'username': 'owner'}, {**item, 'bot': BROWSER_BOT}):
+            with self.assertRaises(vault.VaultError):
+                vault.desktop_request(json.dumps(request).encode())
+
+        digest = vault.hashlib.sha256(
+            bytes.fromhex(draft['salt']) + b'https://example.com\0owner@example.com'
+        ).hexdigest()
+        index = self.store.desktop(draft, OWNER_UID)
+        self.assertEqual(index, {'importIndex': {'fingerprints': [digest], 'remaining': vault.WEBSITE_LOGIN_LIMIT - 1}})
+        self.assertNotIn(original['username'], json.dumps(index))
+        self.assertNotIn(original['password'], json.dumps(index))
+        self.assertEqual(self.store.desktop(item, OWNER_UID), {'outcome': 'duplicate'})
+        self.assertEqual(len(self.sealed), 1)
+
+        with patch.object(vault, 'WEBSITE_LOGIN_LIMIT', 2):
+            new_item = {**item, 'username': 'second@example.com'}
+            self.assertEqual(self.store.desktop(new_item, OWNER_UID), {'outcome': 'imported'})
+            self.assertEqual(self.store.desktop(new_item, OWNER_UID), {'outcome': 'duplicate'})
+            self.assertEqual(self.store.desktop({**item, 'origin': 'https://elsewhere.test'}, OWNER_UID),
+                             {'outcome': 'full'})
+        self.assertEqual(len(self.sealed), 2)
+        listing = self.store.desktop({'action': 'list-logins'}, OWNER_UID)
+        self.assertEqual({login['label'] for login in listing['logins']}, {'Existing', 'Imported'})
+        for login in listing['logins']:
+            record = (self.store.website_login_directory() / login['id']).read_text()
+            self.assertNotIn('example.com","password"', record)
+            self.assertNotIn('secret', record)
+
     def test_website_login_encryption_failure_preserves_the_prior_record(self):
         self.store.allow_desktop(OWNER_UID, CLOUD_UID, [])
         add = {

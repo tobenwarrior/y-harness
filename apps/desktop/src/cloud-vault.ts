@@ -139,7 +139,19 @@ export type VaultRequest = { readonly action: 'list' | 'list-grants' } | ({
   readonly id: VaultLoginUseRequestId
 }
 
-type VaultWireRequest = Exclude<VaultRequest, { readonly action: 'list-browser-access' | 'set-browser-access' }>
+/** Personal website login normalized for the existing Vault store. */
+export interface VaultWebsiteLoginInput {
+  readonly origin: string
+  readonly label: string
+  readonly username: string
+  readonly password: string
+}
+
+/** Import operations reserved for the native file picker flow. */
+export type VaultLoginImportRequest = { readonly action: 'inspect-login-import'; readonly salt: string }
+  | ({ readonly action: 'import-login' } & VaultWebsiteLoginInput)
+
+type VaultWireRequest = VaultLoginImportRequest | Exclude<VaultRequest, { readonly action: 'list-browser-access' | 'set-browser-access' }>
   | { readonly action: 'list-scoped-grants' } | {
     readonly action: 'set-browser-access'
     readonly bot: VaultBotId
@@ -252,6 +264,10 @@ export type VaultReply = {
 } | {
   readonly ok: true
   readonly browserAccess: VaultBrowserAccess
+} | {
+  readonly importIndex: { readonly fingerprints: readonly string[]; readonly remaining: number }
+} | {
+  readonly outcome: 'imported' | 'duplicate' | 'full'
 } | {
   readonly request: VaultRequestMetadata | VaultLoginUseRequestMetadata
 } | {
@@ -369,6 +385,29 @@ function loginOrigin(value: unknown, requireCanonical = false): string | undefin
   if (authority.endsWith(':')) return undefined
   const origin = url.origin
   return requireCanonical && value !== origin ? undefined : origin
+}
+
+/**
+ * Normalize a CSV login to an exact Vault origin. Password and username text are preserved.
+ * @param site - HTTPS login URL from the export.
+ * @param title - Optional entry label from the export.
+ * @param user - Exact account name from the export.
+ * @param secret - Exact password from the export.
+ * @returns A valid website login or undefined when the row cannot be stored.
+ */
+export function normalizeVaultLoginImport(site: string, title: string, user: string, secret: string): VaultWebsiteLoginInput | undefined {
+  const candidate = site.trim()
+  if (!/^https:\/\//iu.test(candidate) || CONTROL.test(site) || candidate.includes('\\')) return undefined
+  let url: URL
+  try { url = new URL(candidate) }
+  catch { return undefined }
+  if (url.username !== '' || url.password !== '') return undefined
+  const origin = loginOrigin(url.origin, true)
+  const username = boundedLoginText(user, LOGIN_USERNAME_LIMIT, false)
+  const password = boundedLoginText(secret, LOGIN_PASSWORD_LIMIT, false)
+  if (origin === undefined || username === undefined || password === undefined) return undefined
+  const label = boundedLoginText(title, LOGIN_LABEL_LIMIT, true) ?? url.hostname.slice(0, LOGIN_LABEL_LIMIT)
+  return { origin, label, username, password }
 }
 
 function grantScope(value: unknown): value is VaultGrantScope {
@@ -542,6 +581,19 @@ function replyBody(
   const value: unknown = JSON.parse(stdout)
   if (!record(value)) return undefined
   const fields = Object.keys(value).length
+  if (action === 'inspect-login-import') {
+    const index = value.importIndex
+    if (fields !== 1 || !record(index) || Object.keys(index).length !== 2
+      || !Array.isArray(index.fingerprints) || !index.fingerprints.every(isVaultLoginGeneration)
+      || new Set(index.fingerprints).size !== index.fingerprints.length
+      || typeof index.remaining !== 'number' || !Number.isInteger(index.remaining) || index.remaining < 0
+      || index.remaining + index.fingerprints.length > MAX_LOGINS) return undefined
+    return { importIndex: { fingerprints: index.fingerprints, remaining: index.remaining } }
+  }
+  if (action === 'import-login') {
+    const { outcome } = value
+    return fields === 1 && (outcome === 'imported' || outcome === 'duplicate' || outcome === 'full') ? { outcome } : undefined
+  }
   if (action === 'list-login-automation') {
     const automation = value.loginAutomation
     if (fields !== 1 || !record(automation) || Object.keys(automation).length !== 2
@@ -830,6 +882,19 @@ export async function cloudVaultRequest(
     return { ...reply, loginAutomation: { ...reply.loginAutomation, available: policy?.mode === 'managed' } }
   }
   return ('access' in reply || 'botLogins' in reply) && bots !== undefined ? { ...reply, bots } : reply
+}
+
+/**
+ * Send an import operation through the native workspace's authenticated Vault connection.
+ * @param send - The active connection's Vault transport.
+ * @param request - Native import operation, unavailable through renderer requests.
+ * @param signal - Cancellation for the current native import.
+ * @returns Validated import metadata, outcome, or an unavailable result.
+ */
+export function cloudVaultLoginImport(
+  send: CloudVaultTransport, request: VaultLoginImportRequest, signal: AbortSignal,
+): Promise<VaultReply> {
+  return executeVaultRequest(send, request, signal)
 }
 
 async function executeVaultRequest(

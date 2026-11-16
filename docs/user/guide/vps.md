@@ -237,6 +237,12 @@ In a direct Cloud Bot chat, ask the Bot to open the website's signup form and re
 
 This works with a same-site HTTPS signup form containing an account field and one or two new-password fields. Check the website after submission and complete any verification in the Computer panel. If the site needs more fields or special verification, take control. The assigned login can be replaced or removed from **Vault → Websites**. Update Desktop, Cloud, the browser worker, and the Vault command together.
 
+### Import saved website logins
+
+In the Mac app, open **Cloud → Vault → Websites** and choose **Import CSV…**. Select a password export under 5 MB from 1Password, Chrome, Edge, Safari, Apple Passwords, Firefox, Bitwarden, or LastPass. Review the website and account details and choose **Import** to save the listed personal logins.
+
+The Mac reads the CSV locally. After you confirm, it sends each eligible login over the private Cloud connection and the VPS Vault encrypts it. The review skips duplicate websites and usernames, invalid or unsupported rows, and accounts that exceed the 64 personal login limit. If an import is interrupted, review the file again to retry. Vault checks for duplicates again before each write.
+
 ### Let a private routine sign in automatically
 
 In **Cloud → Vault → Websites**, save the website login for the Bot that should use it and turn on **Use automatically** for that account. This requires the standard Cloud Vault broker and updated versions of the Mac app, Cloud, and isolated browser worker. The Bot can use the account on the saved HTTPS website in its direct owner chat and time-based routines, including while the Mac is off.

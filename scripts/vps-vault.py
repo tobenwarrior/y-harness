@@ -293,10 +293,14 @@ def website_login_request(request):
         if set(request) != {'action'}:
             raise VaultError('Invalid website login request.')
         return request
+    if action == 'inspect-login-import':
+        if set(request) != {'action', 'salt'} or not valid_login_generation(request.get('salt')):
+            raise VaultError('Invalid website login request.')
+        return request
     scope = {'bot'} if 'bot' in request else set()
-    if scope and not valid_bot(request['bot']):
+    if scope and (action == 'import-login' or not valid_bot(request['bot'])):
         raise VaultError('Invalid website login request.')
-    if action == 'add-login':
+    if action in ('add-login', 'import-login'):
         fields = {'action', 'origin', 'label', 'username', 'password'}
     elif action == 'replace-login':
         fields = {'action', 'id', 'label', 'username', 'password'}
@@ -310,7 +314,7 @@ def website_login_request(request):
         raise VaultError('Invalid website login request.')
     if action == 'replace-login' and not valid_login_id(request.get('id')):
         raise VaultError('Invalid website login request.')
-    if action == 'add-login' and not valid_login_origin(request.get('origin')):
+    if action in ('add-login', 'import-login') and not valid_login_origin(request.get('origin')):
         raise VaultError('Invalid website login request.')
     return {
         **request,
@@ -483,7 +487,8 @@ def desktop_request(payload):
                     or type(request.get('enabled')) is not bool):
                 raise VaultError('Invalid Vault request.')
             return request
-        if action in ('list-logins', 'list-bot-logins', 'add-login', 'replace-login', 'remove-login'):
+        if action in ('list-logins', 'list-bot-logins', 'add-login', 'replace-login', 'remove-login',
+                      'inspect-login-import', 'import-login'):
             return website_login_request(request)
         if action in ('list-login-automation', 'set-login-automatic'):
             return login_automation_request(request)
@@ -1268,6 +1273,33 @@ class Vault:
         if scoped:
             record['bot'] = request['bot']
         self.write_website_login(path, record, request['username'], request['password'], 'add')
+
+    def _desktop_login_import(self, request):
+        """Review or add personal accounts while holding the owner-authorized Vault lock."""
+        records = self.website_login_records()
+        if request['action'] == 'inspect-login-import':
+            salt = bytes.fromhex(request['salt'])
+            fingerprints = []
+            for record in records:
+                origin = record['origin']
+                prefix = salt + origin.encode('ascii') + b'\0'
+                fingerprints.append(self._use_website_login_locked(
+                    record['id'], origin, lambda username, _password: hashlib.sha256(
+                        prefix + username.encode('utf-8')
+                    ).hexdigest(),
+                ))
+            return {'importIndex': {
+                'fingerprints': sorted(set(fingerprints)), 'remaining': WEBSITE_LOGIN_LIMIT - len(records),
+            }}
+        origin = request['origin']
+        for record in records:
+            if record['origin'] == origin and self._use_website_login_locked(
+                    record['id'], origin, lambda username, _password: username == request['username']):
+                return {'outcome': 'duplicate'}
+        if len(records) >= WEBSITE_LOGIN_LIMIT:
+            return {'outcome': 'full'}
+        self.add_website_login(request)
+        return {'outcome': 'imported'}
 
     def _website_login_for_edit(self, request):
         """Resolve a record only in the exact management scope supplied by the owner."""
@@ -2082,6 +2114,8 @@ class Vault:
                 return self.set_browser_access(request)
             if action in ('list-login-automation', 'set-login-automatic'):
                 return self.manage_login_automation(policy, request)
+            if action in ('inspect-login-import', 'import-login'):
+                return self._desktop_login_import(website_login_request(request))
             if action in ('list-logins', 'list-bot-logins', 'add-login', 'replace-login', 'remove-login'):
                 request = website_login_request(request)
                 if action == 'list-logins':

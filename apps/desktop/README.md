@@ -50,6 +50,8 @@ Cloud’s [Vault](../../docs/user/guide/vps.md#manage-service-secrets-from-the-m
 
 The [website sign-in approval](../../docs/user/guide/vps.md#approve-a-saved-website-login) window shows the site and exact destination. Choose a saved login or enter one for the current request. The VPS Vault sends the login directly to the browser. Select **Save this login to Vault** to keep an entered login after submission. In **Websites**, use **Saved for** to give a Bot a dedicated account. Vault verifies the pending browser request belongs to that Bot and website before submitting the account details. **Use automatically** applies to that Bot in private chats and routines on the website; enable it again after replacing the account.
 
+Use [Import CSV](../../docs/user/guide/vps.md#import-saved-website-logins) under **Websites** to review a local password export and save eligible personal logins on the connected VPS. The native file picker reads the export and only the approved login fields reach the Vault broker.
+
 The Vault’s **Shared browsers** section lists the Bots whose browser access the owner can change for shared chats. Desktop binds each selection to the Bot’s current owner Session and verifies the worker’s updated permission before confirming it.
 
 A [Bot credential request](../../docs/user/guide/vps.md#let-a-bot-request-a-key-in-chat) opens the same isolated window for one request. Desktop accepts the exact request link from the selected Cloud view and resolves the current request over SSH before showing a masked field.

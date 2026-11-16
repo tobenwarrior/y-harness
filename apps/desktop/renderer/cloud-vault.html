@@ -111,9 +111,12 @@
           <div id="websites-notice" role="status" aria-live="polite"></div>
           <div class="list-title">
             <h2 id="logins-title"></h2>
-            <button id="add-login" class="subtle" type="button">
-              <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4.5v11m-5.5-5.5h11"/></svg><span id="add-login-label"></span>
-            </button>
+            <div class="actions">
+              <button id="import-logins" class="subtle" type="button" disabled></button>
+              <button id="add-login" class="subtle" type="button">
+                <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4.5v11m-5.5-5.5h11"/></svg><span id="add-login-label"></span>
+              </button>
+            </div>
           </div>
           <p id="logins-empty" class="empty"></p>
           <ul id="logins" aria-labelledby="logins-title"></ul>
@@ -171,6 +174,16 @@
       <div class="actions">
         <button id="confirm-cancel" type="button" autofocus></button>
         <button id="confirm-revoke" class="danger" type="button"></button>
+      </div>
+    </dialog>
+    <dialog id="login-import" aria-labelledby="login-import-title" aria-describedby="login-import-detail login-import-notes">
+      <h2 id="login-import-title"></h2>
+      <p id="login-import-detail"></p>
+      <ul id="login-import-list" aria-labelledby="login-import-title"></ul>
+      <p id="login-import-notes"></p>
+      <div class="actions">
+        <button id="login-import-cancel" type="button" autofocus></button>
+        <button id="login-import-save" class="primary" type="button"></button>
       </div>
     </dialog>
     <script src="cloud-vault.js"></script>

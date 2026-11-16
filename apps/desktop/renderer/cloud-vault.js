@@ -43,6 +43,8 @@ const browserAccessList = element('browser-access-list')
 const websitesNotice = element('websites-notice')
 const loginList = element('logins')
 const loginEditor = element('login-editor')
+const loginImport = element('login-import')
+const importSave = element('login-import-save')
 const loginOriginInput = element('login-origin')
 const loginLabelInput = element('login-label')
 const loginBot = element('login-bot')
@@ -69,6 +71,7 @@ let browserAccess
 let browserAccessReady = false
 let editing
 let editingLogin
+let loginImportDraft
 let revoking
 let removingLogin
 let removingGrant
@@ -294,6 +297,9 @@ function availability() {
   for (const button of secretList.querySelectorAll('button')) button.disabled = busy || !ready
   for (const input of editor.querySelectorAll('input, button')) input.disabled = busy || !ready
   element('add-login').disabled = busy || !websitesReady
+  element('import-logins').disabled = busy || !websitesReady
+  element('login-import-cancel').disabled = busy
+  importSave.disabled = busy || !loginImportDraft?.logins.length
   for (const button of loginList.querySelectorAll('button')) {
     button.disabled = busy || !websitesReady || (button.dataset.botLogin === 'true' && !botLoginsReady)
   }
@@ -787,6 +793,93 @@ async function change(request) {
   element(loaded ? 'add' : 'refresh').focus()
 }
 
+function skippedLoginImport({ duplicates, invalid, full, unconfirmed }) {
+  return [
+    duplicates > 0 && messages.cloudVaultLoginImportDuplicate.replace('{count}', String(duplicates)),
+    invalid > 0 && messages.cloudVaultLoginImportSkipped.replace('{count}', String(invalid)),
+    full > 0 && messages.cloudVaultLoginImportFull.replace('{count}', String(full)),
+    unconfirmed > 0 && messages.cloudVaultLoginImportUnconfirmed.replace('{count}', String(unconfirmed)),
+  ].filter(Boolean).join(' ')
+}
+
+async function sendLoginImport(...args) {
+  try { return await api.importLogins(...args) }
+  catch { return { state: 'unavailable' } }
+}
+
+async function chooseLoginImport() {
+  if (busy || !websitesReady) return
+  closeLoginEditor()
+  setWebsitesNotice()
+  busy = true
+  availability()
+  const draft = await sendLoginImport('choose')
+  busy = false
+  if (draft.state === 'ready') {
+    loginImportDraft = draft
+    const count = draft.logins.length
+    element('login-import-detail').textContent = messages[count === 0 ? 'cloudVaultLoginImportEmpty' : 'cloudVaultLoginImportDetail']
+    element('login-import-notes').textContent = skippedLoginImport(draft)
+    importSave.hidden = count === 0
+    importSave.textContent = count === 1 ? messages.cloudVaultLoginImportConfirmOne
+      : messages.cloudVaultLoginImportConfirmMany.replace('{count}', String(count))
+    const rows = draft.logins.map(({ origin, label, username }) => {
+      const row = document.createElement('li')
+      for (const value of [label, origin, username]) {
+        const span = document.createElement('span')
+        span.textContent = value
+        row.append(span)
+      }
+      return row
+    })
+    element('login-import-list').replaceChildren(...rows)
+    loginImport.showModal()
+    element('login-import-cancel').focus()
+  } else if (draft.state !== 'cancelled') {
+    setWebsitesNotice(draft.state === 'invalid-file' ? 'cloudVaultLoginImportInvalid' : 'cloudVaultLoginImportFailed', 'error')
+  }
+  availability()
+}
+
+function closeLoginImport() {
+  loginImportDraft = undefined
+  element('login-import-list').replaceChildren()
+  if (loginImport.open) loginImport.close()
+}
+
+async function dismissLoginImport() {
+  if (busy) return
+  busy = true
+  availability()
+  closeLoginImport()
+  await sendLoginImport('cancel')
+  busy = false
+  availability()
+  element('import-logins').focus()
+}
+
+async function saveLoginImport() {
+  if (busy || !loginImportDraft?.logins.length) return
+  busy = true
+  availability()
+  importSave.textContent = messages.cloudVaultLoginImportWorking
+  const result = await sendLoginImport('confirm', loginImportDraft.id)
+  closeLoginImport()
+  const loaded = result.state !== 'finished' || await readLogins()
+  busy = false
+  availability()
+  if (result.state !== 'finished') {
+    setWebsitesNotice('cloudVaultLoginImportFailed', 'error')
+  } else {
+    const saved = result.imported === 1 ? messages.cloudVaultLoginImportSavedOne
+      : messages.cloudVaultLoginImportSavedMany.replace('{count}', String(result.imported))
+    websitesNotice.textContent = [saved, skippedLoginImport(result), loaded ? '' : messages.cloudVaultWebsitesUnavailable]
+      .filter(Boolean).join(' ')
+    websitesNotice.dataset.tone = result.unconfirmed > 0 || !loaded ? 'error' : ''
+  }
+  element(loaded ? 'import-logins' : 'websites-tab').focus()
+}
+
 async function changeLogin(request) {
   if (busy || !websitesReady) return
   busy = true
@@ -1101,6 +1194,13 @@ editor.addEventListener('submit', event => {
   void change(request)
 })
 element('add-login').addEventListener('click', () => openLoginEditor('add'))
+element('import-logins').addEventListener('click', () => { void chooseLoginImport() })
+element('login-import-cancel').addEventListener('click', () => { void dismissLoginImport() })
+importSave.addEventListener('click', () => { void saveLoginImport() })
+loginImport.addEventListener('cancel', (event) => {
+  event.preventDefault()
+  void dismissLoginImport()
+})
 element('login-editor-cancel').addEventListener('click', () => { closeLoginEditor(); element('add-login').focus() })
 loginEditor.addEventListener('submit', event => {
   event.preventDefault()
@@ -1161,7 +1261,7 @@ loginUseEntry.addEventListener('submit', event => {
 loginUseDecline.addEventListener('click', () => { void declineLoginUse() })
 loginUseClose.addEventListener('click', () => { void api.close().catch(() => {}) })
 document.addEventListener('keydown', event => {
-  if (event.key !== 'Escape' || confirmation.open) return
+  if (event.key !== 'Escape' || confirmation.open || loginImport.open) return
   event.preventDefault()
   if (mode?.kind === 'request' || mode?.kind === 'login-use') { void api.close().catch(() => {}); return }
   if ((editor.hidden && loginEditor.hidden && grantEditor.hidden) || busy) void api.close().catch(() => {})
@@ -1172,6 +1272,7 @@ document.addEventListener('keydown', event => {
 window.addEventListener('pagehide', () => {
   closeEditor()
   closeLoginEditor()
+  closeLoginImport()
   closeGrantEditor()
   requestValue.value = ''
   loginChoice.replaceChildren()
@@ -1192,6 +1293,7 @@ void Promise.all([api.messages(), api.mode()]).then(([copy, presentation]) => {
     ['browser-access-title', 'cloudVaultBrowserAccess'], ['browser-access-hint', 'cloudVaultBrowserAccessHint'],
     ['websites-hint', 'cloudVaultWebsitesHint'], ['websites-automatic-hint', 'cloudVaultWebsiteAutomaticHint'],
     ['logins-title', 'cloudVaultWebsites'], ['add-login-label', 'cloudVaultWebsiteAdd'],
+    ['import-logins', 'cloudVaultLoginImportChoose'], ['login-import-title', 'cloudVaultLoginImportTitle'], ['login-import-cancel', 'cancel'],
     ['logins-empty', 'cloudVaultWebsitesEmpty'], ['login-origin-label', 'cloudVaultWebsiteOrigin'], ['login-label-label', 'cloudVaultWebsiteLabel'],
     ['login-bot-label', 'cloudVaultWebsiteBot'],
     ['login-username-label', 'cloudVaultWebsiteUsername'], ['login-password-label', 'cloudVaultWebsitePassword'],
