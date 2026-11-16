@@ -921,6 +921,9 @@ describe('desktop main startup', () => {
       expect(workspace?.submenu).toEqual([
         expect.objectContaining({ label: en.cloudOpenMac }),
         expect.objectContaining({ label: en.cloudOpen }),
+        expect.objectContaining({ type: 'separator' }),
+        expect.objectContaining({ label: en.cloudCopyCatalogs }),
+        expect.objectContaining({ label: en.cloudCopyProviderKeys }),
       ])
     }
     const application = template[0]!.submenu as MenuItemConstructorOptions[]
