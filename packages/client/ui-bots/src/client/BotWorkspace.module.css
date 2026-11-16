@@ -3056,7 +3056,7 @@
   min-width: 0;
   padding: 6px 8px;
   color: var(--yh-alias-label-primary);
-  border: 1px solid var(--yh-alias-border-l2);
+  border: 0.5px solid var(--yh-alias-border-l2);
   border-radius: var(--yh-radius-md);
   background: var(--yh-alias-bg-layer-1);
   font: inherit;

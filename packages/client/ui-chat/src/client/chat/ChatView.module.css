@@ -314,6 +314,7 @@
   width: 5px;
   height: 5px;
   border-radius: 50%;
+  corner-shape: round;
   background: currentColor;
   opacity: 0.7;
 }
