@@ -399,12 +399,7 @@ export class BotAttachmentGrantStore {
     now: number,
     leaseMs: number,
   ): Promise<'reserved' | 'busy' | 'duplicate'> {
-    if (token.length < 1 || token.length > MAX_LEASE_TOKEN) {
-      throw new BotAttachmentGrantError('invalid', 'private delivery lease token is invalid')
-    }
-    if (!Number.isSafeInteger(leaseMs) || leaseMs < 1 || leaseMs > 300_000) {
-      throw new BotAttachmentGrantError('invalid', 'private delivery lease duration is invalid')
-    }
+    validatePrivateDeliveryLease(token, leaseMs)
     const normalizedScope = normalizePrivateScope(scope)
     const id = privateDeliveryKey(normalizedScope)
     const current = this.privateDeliveries.get(id)
@@ -436,12 +431,7 @@ export class BotAttachmentGrantStore {
     now: number,
     leaseMs: number,
   ): Promise<boolean> {
-    if (token.length < 1 || token.length > MAX_LEASE_TOKEN) {
-      throw new BotAttachmentGrantError('invalid', 'private delivery lease token is invalid')
-    }
-    if (!Number.isSafeInteger(leaseMs) || leaseMs < 1 || leaseMs > 300_000) {
-      throw new BotAttachmentGrantError('invalid', 'private delivery lease duration is invalid')
-    }
+    validatePrivateDeliveryLease(token, leaseMs)
     const normalizedScope = normalizePrivateScope(scope)
     const id = privateDeliveryKey(normalizedScope)
     const current = this.privateDeliveries.get(id)
@@ -615,6 +605,15 @@ function sortIds(ids: readonly BotId[]): readonly BotId[] {
 function safeTimestamp(value: number, label: string): number {
   if (!Number.isSafeInteger(value) || value < 0) throw new BotAttachmentGrantError('invalid', `${label} is invalid`)
   return value
+}
+
+function validatePrivateDeliveryLease(token: string, leaseMs: number): void {
+  if (token.length < 1 || token.length > MAX_LEASE_TOKEN) {
+    throw new BotAttachmentGrantError('invalid', 'private delivery lease token is invalid')
+  }
+  if (!Number.isSafeInteger(leaseMs) || leaseMs < 1 || leaseMs > 300_000) {
+    throw new BotAttachmentGrantError('invalid', 'private delivery lease duration is invalid')
+  }
 }
 
 function privateDeliveryKey(scope: Extract<BotAttachmentScope, { readonly kind: 'shared-private' }>): string {
