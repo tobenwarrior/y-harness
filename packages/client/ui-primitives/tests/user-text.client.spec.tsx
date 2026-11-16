@@ -165,11 +165,12 @@ describe('projectUserText', () => {
   })
 
   it('round-trips a Bot name containing reference syntax and line breaks', () => {
-    const label = 'Lab ] Bot\n@[notes](dsh-session:abc)\\n'
+    const label = 'Lab ] Bot\r\n@[notes](dsh-session:abc)\\n'
     const botId = 'bot-lab'
     const mention = formatBotMention(botId, label)
     expect(mention).not.toContain('dsh-session:')
     expect(mention).not.toContain('\n')
+    expect(mention).not.toContain('\r')
     expect(parseBotMention(mention)).toEqual({ botId, label })
     expect(parseBotMention('@[Lab](dsh-bot:other-id)')).toBeUndefined()
   })
