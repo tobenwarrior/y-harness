@@ -36,9 +36,10 @@ import { MacComputerBridge } from './mac-computer.ts'
 import { mountVpsBots } from './vps-bots.ts'
 import type { VpsServiceAccess } from './vps-services.ts'
 import type { VpsJournalConfig } from './vps-journal.ts'
-import { mountVpsVaultRequests, VPS_VAULT_REQUEST_SOCKET, vpsVaultAccessRoute } from './vps-vault-requests.ts'
+import { mountVpsVaultRequests, submitAutomaticVpsLogin, VPS_VAULT_REQUEST_SOCKET, vpsVaultAccessRoute } from './vps-vault-requests.ts'
 import type { VpsVaultRequestsConfig } from './vps-vault-requests.ts'
 import type { VpsIsolatedBrowserConfig } from './vps-isolated-browser.ts'
+import type { AutomaticVpsBrowserLogin } from './vps-browser-login.ts'
 
 /** Stable Cordis plugin name. */
 export const name = 'web-app'
@@ -422,7 +423,11 @@ export function apply(ctx: Context, config: Config): void {
   }
   if (config.botComputers !== undefined && config.botComputers !== null) {
     if (process.platform !== 'linux') throw new Error('Managed VPS Bot computers require Linux.')
-    mountVpsBots(ctx, config.botComputers, config.vpsServices ?? [], legacyComputer, config.vpsJournal ?? undefined)
+    const automaticLogin: AutomaticVpsBrowserLogin | undefined =
+      vaultRequests?.socketPath === VPS_VAULT_REQUEST_SOCKET && vaultRequests.grants == null
+        ? (bot, session, id, signal) => submitAutomaticVpsLogin(vaultRequests.socketPath, bot, session, id, signal)
+        : undefined
+    mountVpsBots(ctx, config.botComputers, config.vpsServices ?? [], legacyComputer, config.vpsJournal ?? undefined, automaticLogin)
   } else if (legacyComputer !== undefined) {
     const computer = legacyComputer
     ctx.on('agent/created', ({ agent }) => {

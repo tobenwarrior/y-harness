@@ -314,6 +314,81 @@ class VaultTest(unittest.TestCase):
             with self.subTest(action=request['action']), self.assertRaises(vault.VaultError):
                 vault.cloud_request(json.dumps(request).encode())
 
+    def test_automatic_login_is_exact_to_the_private_browser_request(self):
+        request = {'action': 'automatic-login', 'id': 'a' * 32, 'bot': BROWSER_BOT, 'session': BROWSER_SESSION}
+        self.assertEqual(vault.cloud_request(json.dumps(request).encode()), request)
+        for extra in ({'scope': 'shared'}, {'password': 'fixture'}, {'session': 'shared-session-test'}, {'id': '_'}):
+            with self.subTest(extra=extra), self.assertRaises(vault.VaultError):
+                vault.cloud_request(json.dumps({**request, **extra}).encode())
+        for action in ({'action': 'list-login-automation'}, {
+            'action': 'set-login-automatic', 'id': 'b' * 32, 'bot': BROWSER_BOT, 'enabled': True,
+        }):
+            self.assertEqual(vault.desktop_request(json.dumps(action).encode()), action)
+            with self.assertRaises(vault.VaultError):
+                vault.cloud_request(json.dumps(action).encode())
+
+    def test_automatic_sign_in_requires_the_current_assigned_account_and_owner_grant(self):
+        site = 'https://example.com'
+        request = {'action': 'automatic-login', 'id': 'a' * 32, 'bot': BROWSER_BOT, 'session': BROWSER_SESSION}
+        login = {'action': 'add-login', 'origin': site, 'label': 'Fixture',
+                 'username': 'test-user', 'password': 'synthetic-passphrase'}
+        available = {'action': 'list-login-automation'}
+        self.store.allow_desktop(OWNER_UID, CLOUD_UID, [])
+        self.assertEqual(self.store.desktop(available, OWNER_UID), {'loginAutomation': {'available': False, 'enabled': []}})
+        self.store.write_request_grants(self.store.root_policy(), set())
+        self.store.desktop(login, OWNER_UID)
+        self.store.desktop({**login, 'bot': BROWSER_BOT}, OWNER_UID)
+        [account] = self.store.desktop({'action': 'list-bot-logins'}, OWNER_UID)['botLogins']
+        [personal] = self.store.desktop({'action': 'list-logins'}, OWNER_UID)['logins']
+        enable = {'action': 'set-login-automatic', 'id': account['id'], 'bot': BROWSER_BOT, 'enabled': True}
+        viewer = {'id': request['id'], 'state': 'pending', 'bot': BROWSER_BOT, 'session': BROWSER_SESSION,
+                  'origin': site, 'destination': site + '/login'}
+        inspections = []
+        submissions = []
+
+        def browser(payload):
+            call = json.loads(payload)
+            if call['action'] == 'inspect-login-automatic':
+                inspections.append(call)
+                return json.dumps(viewer).encode()
+            self.assertEqual(call['action'], 'use-login')
+            submissions.append(call)
+            return b'{"state":"submitted"}'
+
+        with patch.object(vault, 'browser_grant_pairs', return_value={(BROWSER_BOT, BROWSER_SESSION)}), \
+                patch.object(vault, 'browser_client', side_effect=browser):
+            self.assertEqual(self.store.cloud(request, CLOUD_UID), {'state': 'approval-required'})
+            with self.assertRaises(vault.VaultError):
+                self.store.desktop(enable, CLOUD_UID)
+            with self.assertRaises(vault.VaultError):
+                self.store.desktop({**enable, 'id': personal['id']}, OWNER_UID)
+            self.assertEqual(self.store.desktop(enable, OWNER_UID), {'ok': True})
+            self.assertEqual(self.store.desktop(available, OWNER_UID), {
+                'loginAutomation': {'available': True, 'enabled': [account['id']]},
+            })
+            with self.assertRaises(vault.VaultError):
+                self.store.cloud(request, OWNER_UID)
+            viewer['session'] = 'bot-session-11111111-1111-4111-8111-111111111111'
+            self.assertEqual(self.store.cloud(request, CLOUD_UID), {'state': 'unavailable'})
+            viewer.update(session=BROWSER_SESSION, origin='https://example.com:444', destination='https://example.com:444/login')
+            self.assertEqual(self.store.cloud(request, CLOUD_UID), {'state': 'approval-required'})
+            self.assertEqual(self.decrypt_calls, [])
+            viewer.update(origin=site, destination=site + '/login')
+            self.assertEqual(self.store.cloud(request, CLOUD_UID), {'state': 'submitted'})
+            self.assertEqual(submissions, [{
+                'action': 'use-login', 'id': request['id'], 'bot': BROWSER_BOT, 'session': BROWSER_SESSION,
+                'origin': site, 'username': login['username'], 'password': login['password'],
+            }])
+            self.assertTrue(all(set(call) == {'action', 'id'} for call in inspections))
+            self.store.desktop({'action': 'replace-login', 'id': account['id'], 'bot': BROWSER_BOT,
+                                'label': 'Rotated', 'username': 'test-user', 'password': 'rotated-fixture'}, OWNER_UID)
+            self.assertEqual(self.store.cloud(request, CLOUD_UID), {'state': 'approval-required'})
+            self.assertEqual(self.store.desktop(available, OWNER_UID)['loginAutomation']['enabled'], [])
+            self.store.desktop(enable, OWNER_UID)
+            self.store.desktop({**enable, 'enabled': False}, OWNER_UID)
+            self.assertEqual(self.store.cloud(request, CLOUD_UID), {'state': 'approval-required'})
+            self.assertEqual(len(self.decrypt_calls), 1)
+
     def test_owner_desktop_can_manage_website_logins_without_secret_output(self):
         self.store.allow_desktop(OWNER_UID, CLOUD_UID, [])
         add = {

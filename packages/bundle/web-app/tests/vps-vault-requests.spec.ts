@@ -4,7 +4,9 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { expect, it } from 'vitest'
 import { SessionId } from '@yharness/session'
-import { VPS_VAULT_REQUEST_SOCKET, VpsVaultRequests, vpsVaultAccessRoute, type VpsVaultRequestsConfig } from '../src/vps-vault-requests.ts'
+import {
+  submitAutomaticVpsLogin, VPS_VAULT_REQUEST_SOCKET, VpsVaultRequests, vpsVaultAccessRoute, type VpsVaultRequestsConfig,
+} from '../src/vps-vault-requests.ts'
 
 const bot = 'bot-example'
 const session = SessionId('bot-session-7e2e3bd7-aec8-4f11-925d-478a83ed004a')
@@ -66,6 +68,21 @@ async function withBroker<T>(
 }
 
 const unixTest = it.skipIf(process.platform === 'win32')
+
+unixTest('sends only the private browser request coordinates and accepts only a fixed sign-in result', async () => {
+  const id = 'a'.repeat(32)
+  let response: object = { state: 'submitted' }
+  await withBroker(() => response, async (path, calls) => {
+    const signal = new AbortController().signal
+    const submit = () => submitAutomaticVpsLogin(path, bot, session, id, signal)
+    await expect(submit()).resolves.toBe('submitted')
+    expect(calls).toEqual([{ action: 'automatic-login', bot, session, id }])
+    response = { state: 'approval-required' }
+    await expect(submit()).resolves.toBe('approval-required')
+    response = { state: 'submitted', value: 'fixture' }
+    await expect(submit()).resolves.toBe('unavailable')
+  })
+})
 
 unixTest('uses the Vault’s latest grant for a Bot without recreating the request registry', async () => {
   let allowed = false

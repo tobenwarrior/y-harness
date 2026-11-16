@@ -4,12 +4,15 @@
   - status: You are controlling Display and input are dedicated to this Bot
   - button "Hand back"
   - button "Close computer panel"
+  - text: Shared workspace Grants this Bot access to common project files.
+  - switch "Allow access to common project files" [disabled]
   - textbox "Website address":
     - /placeholder: https://example.com
     - text: https://example.test/next
   - button "Open"
   - img "Live computer screen"
   - text: Click, scroll, or type in the screen
+  - button "Restart computer" [disabled]
   - button "Paste"
 
 ## Watching
@@ -18,8 +21,11 @@
   - status: Watching Display and input are dedicated to this Bot
   - button "Take control"
   - button "Close computer panel"
+  - text: Shared workspace Grants this Bot access to common project files.
+  - switch "Allow access to common project files"
   - img "Live computer screen"
   - text: Watching only
+  - button "Restart computer"
   - button "Paste" [disabled]
 
 ## Saved login approval
@@ -31,6 +37,12 @@
   - code: https://example.test/session
   - link "Approve sign-in":
     - /url: /__yharness/vault-login-use/{{id}}
+
+## Scheduled login
+
+The scheduled check needs the owner to sign in.
+
+The scheduled check used the saved login.
 
 ## Shared login approval
 

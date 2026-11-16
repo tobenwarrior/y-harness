@@ -383,6 +383,14 @@ async ownerBotForSession(sessionId: string): Promise<{ readonly id: BotId readon
 async isDirectOwnerTurn(agent: Agent, signal?: AbortSignal): Promise<boolean>
 
 /**
+ * Identify a live private turn whose input belongs exclusively to the owner or its schedule.
+ * @param agent - Exact Agent invoking the operation.
+ * @param signal - Cancellation while reading the current Session log.
+ * @returns The trusted input source for the open owner turn, or undefined when none qualifies.
+ */
+async privateOwnerTurnSource(agent: Agent, signal?: AbortSignal): Promise<'user' | 'schedule' | undefined>
+
+/**
  * Rename one Bot while preserving its one Session mapping and visual identity.
  * @param request - Bot id and new display name.
  * @returns the committed row.

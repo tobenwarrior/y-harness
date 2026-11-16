@@ -195,6 +195,14 @@ Select **Save this login to Vault** and add a label to keep an entered login aft
 
 Saved login approval supports a single HTTPS sign-in form that submits to the same website. Sites using single sign-on, passkeys, or a separate verification step may require manual sign-in. Removing or replacing a Vault entry prevents use of the old value. Sign out at the website to end an existing browser session.
 
+### Let a private routine sign in automatically
+
+In **Cloud → Vault → Websites**, save the website login for the Bot that should use it and turn on **Automatic sign-in** for that account. This requires the standard Cloud Vault broker and updated versions of the Mac app, Cloud, and isolated browser worker. The Bot can use the account on the saved HTTPS website in its direct owner chat and time-based routines, including while the Mac is off.
+
+Vault accepts one automatic account per Bot and website. It sends credentials directly to the private browser. Routines without access report that the owner is needed. Shared chats use the existing owner approval flow.
+
+Turn off automatic sign-in or remove the account to withdraw access. Replacing the account requires turning automatic sign-in on again. Sign out at the website to end a session the browser already opened.
+
 ### Let a shared Bot use its browser
 
 Open **Cloud → Vault → Bot access** in Y Harness. Under **Shared browsers**, enable the Bots whose collaborators should be able to browse. The list shows Bots with an isolated browser configured on this VPS. The setting takes effect in existing chats and persists when Cloud restarts. Each private shared chat and each Bot in a shared group has its own browser profile.

@@ -870,6 +870,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'Whether the current turn belongs exclusively to a direct owner conversation.',
       },
       {
+        signature: 'async privateOwnerTurnSource(agent: Agent, signal?: AbortSignal): Promise<\'user\' | \'schedule\' | undefined>',
+        description: 'Identify a live private turn whose input belongs exclusively to the owner or its schedule.',
+        parameters: [{ name: 'agent', description: 'Exact Agent invoking the operation.' }, { name: 'signal', description: 'Cancellation while reading the current Session log.' }],
+        returns: 'The trusted input source for the open owner turn, or undefined when none qualifies.',
+      },
+      {
         signature: '@Remote(\'rename\') async rename(request: BotRenameRequest): Promise<BotRenameValue>',
         description: 'Rename one Bot while preserving its one Session mapping and visual identity.',
         parameters: [{ name: 'request', description: 'Bot id and new display name.' }],

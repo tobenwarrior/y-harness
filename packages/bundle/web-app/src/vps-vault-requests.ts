@@ -10,9 +10,12 @@ import type { ConnectionFetchRoute } from '@yharness/client-connection'
 import type { Context } from '@yharness/cordis'
 import type { SessionId } from '@yharness/session'
 import { defineTool, type ToolDefinition, type ToolRunContext } from '@yharness/tools'
+import type { VpsBrowserLoginResult } from './vps-browser-login.ts'
+import type { VpsBrowserLoginRequest } from './vps-isolated-browser.ts'
 
 const POLL_MS = 2_000
 const SOCKET_TIMEOUT_MS = 4_000
+const LOGIN_TIMEOUT_MS = 24_000
 const REQUEST_MS = 10 * 60_000
 const RECEIPT_MS = 2 * 60_000
 const MAX_REQUESTS = 64
@@ -63,6 +66,7 @@ type RequestCommand = ({ readonly action: 'create'; readonly id: RequestId } & V
   | { readonly action: 'authorize'; readonly id: RequestId; readonly challenge: ChallengeId }
 type Command = (RequestCommand & { readonly bot?: string; readonly scope?: 'shared' })
   | { readonly action: 'list'; readonly bot: string; readonly scope?: 'shared' }
+  | { readonly action: 'automatic-login'; readonly id: VpsBrowserLoginRequest['id']; readonly bot: string; readonly session: string }
 
 /** Metadata shown to the owner of the live Bot conversation. */
 export interface VpsVaultRequestView extends VpsVaultCredential {
@@ -274,11 +278,12 @@ function decodedCredentials(data: string): VpsVaultCredential[] {
 
 function exchange<T>(
   path: string, command: Command, signal: AbortSignal, decode: (reply: string) => T, maxBytes: number,
+  timeoutMs = SOCKET_TIMEOUT_MS,
 ): Promise<T> {
   return new Promise((resolve, reject) => {
     signal.throwIfAborted()
     const socket = createConnection({ path })
-    const deadline = setTimeout(fail, SOCKET_TIMEOUT_MS)
+    const deadline = setTimeout(fail, timeoutMs)
     const buffer: Buffer[] = []
     let length = 0
     let received: T | undefined
@@ -307,6 +312,38 @@ function exchange<T>(
       else resolve(received)
     })
   })
+}
+
+function decodedLoginState(data: string): VpsBrowserLoginResult['state'] {
+  const reply: unknown = JSON.parse(data)
+  if (reply === null || typeof reply !== 'object' || Object.keys(reply).length !== 1 || !('state' in reply)) throw new Error(UNAVAILABLE)
+  switch (reply.state) {
+    case 'submitted':
+    case 'approval-required':
+    case 'needs-owner':
+    case 'unavailable': return reply.state
+    default: throw new Error(UNAVAILABLE)
+  }
+}
+
+/**
+ * Ask the installed Vault to deliver a previously authorized private website login.
+ * @param path - Trusted local Vault broker socket.
+ * @param bot - Exact Bot that owns the private browser.
+ * @param session - The Bot's owner Session as assigned by the browser worker.
+ * @param id - Pending browser request identifier returned by the worker.
+ * @param signal - Calling turn's cancellation signal.
+ * @returns A state-only result. Socket errors leave manual approval available.
+ */
+export async function submitAutomaticVpsLogin(
+  path: string, bot: string, session: string, id: VpsBrowserLoginRequest['id'], signal: AbortSignal,
+): Promise<VpsBrowserLoginResult['state']> {
+  try {
+    return await exchange(path, { action: 'automatic-login', id, bot, session }, signal, decodedLoginState, MAX_REPLY_BYTES, LOGIN_TIMEOUT_MS)
+  } catch (error) {
+    void error
+    return 'unavailable'
+  }
 }
 
 async function runAdmitted<T>(authorize: SharedAdmission, signal: AbortSignal, operation: () => Promise<T>): Promise<T> {

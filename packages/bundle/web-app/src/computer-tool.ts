@@ -53,7 +53,7 @@ export function apply(ctx: Context): void {
  * @param resolve - Resolves the current owner Bot's desktop from the calling Session.
  * @param signIn - Optional handoff restricted to a direct owner turn.
  * @param navigate - Optional website navigation through the calling Bot's browser.
- * @param savedLogin - Optional secure website login request restricted to a direct owner turn.
+ * @param savedLogin - Optional secure login for a direct owner message or private time-based routine.
  */
 export function applyVpsBotComputer(
   ctx: Context,
@@ -80,8 +80,9 @@ function registerVpsComputer(
       + (signIn === undefined ? '' : ' For a website sign-in or verification that needs the owner, use request_sign_in. '
         + 'The owner uses the Computer directly. Never ask for a password or code in chat.')
       + (navigate === undefined ? '' : ' Use navigate for an HTTP(S) website URL without credentials.')
-      + (savedLogin === undefined ? '' : ' In a direct owner Bot turn, use request_saved_login for a website login. '
-        + 'The owner can select a saved login or enter one securely. Verify the page after the request.'),
+      + (savedLogin === undefined ? '' : ' Use request_saved_login when a website asks for a login. '
+        + 'The owner can authorize automatic sign-in for this Bot and website. In a direct owner chat, the owner can also select '
+        + 'or enter a login securely. Verify the page after submission.'),
     keyDescription: 'X11 key or chord, for example Return or ctrl+a.',
     observe: async (sessionId, signal) => (await resolve(sessionId)).observe(signal),
     act: async (sessionId, action, signal) => (await resolve(sessionId)).actAsBot(action, signal),
@@ -244,6 +245,8 @@ function computerToolDefinition(ctx: Context, target: ComputerToolTarget): ToolD
         switch (result.state) {
           case 'submitted':
             return { message: 'The website received the sign-in submission. Check the page to see whether you’re signed in.' }
+          case 'approval-required':
+            return { message: 'This routine needs the owner to sign in or enable this Bot’s automatic sign-in in Vault.' }
           case 'needs-owner':
             return { message: 'The website needs a manual sign-in or verification step.'
               + (target.signIn === undefined ? '' : ' Use request_sign_in to ask the owner to take over.') }

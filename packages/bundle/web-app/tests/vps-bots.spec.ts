@@ -515,6 +515,7 @@ describe('managed VPS Bot composition', () => {
           return undefined
         },
         isDirectOwnerTurn: async () => directOwnerTurn,
+        privateOwnerTurnSource: async () => directOwnerTurn ? 'user' : undefined,
       } as never)
       await ctx.plugin((scope) => {
         mountVpsBots(scope, {

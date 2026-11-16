@@ -175,10 +175,12 @@ test('submits a reviewed HTTPS form without typing credentials or forwarding the
   const selected = await control('request-login')
   assert.equal(selected.destination, `${origin}/session`)
   assert.deepEqual(await exchange(vaultPath, { action: 'inspect-login-bot', id: selected.id }), { bot: BOT.bot })
+  assert.deepEqual(await exchange(vaultPath, { action: 'inspect-login-automatic', id: selected.id }), { ...selected, ...BOT })
   assert.deepEqual(await exchange(vaultPath, {
     action: 'use-login', id: selected.id, origin, bot: 'bot-other', ...CREDENTIAL,
   }), { error: 'unavailable' })
-  assert.deepEqual(await use(selected.id), { state: 'submitted' })
+  assert.deepEqual(await exchange(vaultPath, { action: 'use-login', id: selected.id, origin, ...BOT, ...CREDENTIAL }),
+    { state: 'submitted' })
   assert.deepEqual(await use(selected.id), { error: 'unavailable' })
   assert.deepEqual(posts, [
     { host: `${HOST}:${port}`, path: '/forward', matches: true },

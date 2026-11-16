@@ -76,6 +76,7 @@ REQUEST_UNAVAILABLE = 'The Vault request is unavailable.'
 BROWSER_UNAVAILABLE = 'The browser Vault is unavailable.'
 WEBSITE_LOGIN_DIRECTORY = 'website-logins'
 BOT_WEBSITE_LOGIN_DIRECTORY = 'bot-website-logins'
+WEBSITE_LOGIN_AUTOMATION = 'website-login-automation.json'
 WEBSITE_LOGIN_LIMIT = 64
 WEBSITE_LOGIN_FILE_LIMIT = 64 * 1024
 WEBSITE_LOGIN_ID = re.compile(r'[0-9a-f]{32}')
@@ -335,7 +336,7 @@ def entered_website_login_request(request):
     return validated
 
 
-def browser_login_inspection(payload, expected_id):
+def browser_login_inspection(payload, expected_id, *, automatic=False):
     """Decode one bounded browser inspection without returning browser diagnostics."""
     try:
         if len(payload) > BROWSER_RESPONSE_LIMIT:
@@ -347,7 +348,12 @@ def browser_login_inspection(payload, expected_id):
             raise VaultError(BROWSER_UNAVAILABLE)
         fields = {'id', 'origin', 'destination', 'state'}
         shared = set(reply) == fields | {'scope', 'bot'} and reply['scope'] == 'shared' and valid_bot(reply['bot'])
-        if (not (set(reply) == fields or shared)
+        if automatic:
+            permitted = (set(reply) == fields | {'bot', 'session'} and valid_bot(reply['bot'])
+                         and valid_browser_session(reply['session']))
+        else:
+            permitted = set(reply) == fields or shared
+        if (not permitted
                 or reply.get('id') != expected_id or not valid_request_id(reply.get('id'))
                 or reply.get('state') != 'pending' or not valid_login_origin(reply.get('origin'))
                 or not valid_login_destination(reply['origin'], reply.get('destination'))):
@@ -407,6 +413,24 @@ def finish_request(record, state):
     record.pop('approval', None)
 
 
+def login_automation_request(request):
+    """Validate the exact owner controls for automatic sign-in."""
+    if request.get('action') == 'list-login-automation' and set(request) == {'action'}:
+        return request
+    if (request.get('action') == 'set-login-automatic' and set(request) == {'action', 'id', 'bot', 'enabled'}
+            and valid_login_id(request.get('id')) and valid_bot(request.get('bot'))
+            and type(request.get('enabled')) is bool):
+        return request
+    raise VaultError('Invalid automatic sign-in request.')
+
+
+def valid_automatic_login(request):
+    """Accept only the server-owned coordinates of a pending private browser request."""
+    return (set(request) == {'action', 'id', 'bot', 'session'} and request.get('action') == 'automatic-login'
+            and valid_request_id(request.get('id')) and valid_bot(request.get('bot'))
+            and valid_browser_session(request.get('session')))
+
+
 def desktop_request(payload):
     """Decode one bounded management request with no secret read operation."""
     try:
@@ -445,6 +469,8 @@ def desktop_request(payload):
             return request
         if action in ('list-logins', 'list-bot-logins', 'add-login', 'replace-login', 'remove-login'):
             return website_login_request(request)
+        if action in ('list-login-automation', 'set-login-automatic'):
+            return login_automation_request(request)
         if action == 'enter-login-use':
             return entered_website_login_request(request)
         if action == 'inspect-login-use' and set(request) == {'action', 'id', 'form'}:
@@ -499,6 +525,8 @@ def cloud_request(payload):
         if type(request) is not dict:
             raise VaultError('Invalid Vault request.')
         action = request.get('action')
+        if valid_automatic_login(request):
+            return request
         fields = set(request)
         if 'bot' in fields:
             if not valid_bot(request['bot']):
@@ -1197,6 +1225,73 @@ class Vault:
         if not self.remove_value(path / request['id']):
             raise VaultError('The website login changed. Refresh and try again.')
 
+    def login_automation(self):
+        """Read exact account generations and browser sessions from the owner policy."""
+        path = self.root / WEBSITE_LOGIN_AUTOMATION
+        if not file_exists(path):
+            return {}
+        invalid = 'The automatic sign-in settings are invalid.'
+        try:
+            with path.open('rb') as source:
+                payload = source.read(BROWSER_FILE_LIMIT + 1)
+            data = json.loads(payload.decode('ascii'), object_pairs_hook=exact_object)
+            if (len(payload) > BROWSER_FILE_LIMIT or type(data) is not dict or set(data) != {'version', 'enabled'}
+                    or type(data['version']) is not int or data['version'] != 1 or type(data['enabled']) is not dict
+                    or len(data['enabled']) > WEBSITE_LOGIN_LIMIT):
+                raise VaultError(invalid)
+            for login_id, grant in data['enabled'].items():
+                if (not valid_login_id(login_id) or type(grant) is not dict or set(grant) != {'session', 'generation'}
+                        or not valid_browser_session(grant['session']) or not valid_login_generation(grant['generation'])):
+                    raise VaultError(invalid)
+            return data['enabled']
+        except (OSError, UnicodeError, ValueError, RecursionError):
+            raise VaultError(invalid) from None
+
+    def current_automatic_logins(self, grants):
+        """Match saved choices to the current encrypted generations of assigned accounts."""
+        if not grants:
+            return []
+        return [(record, grants[record['id']]) for record in self.website_login_records(scoped=True)
+                if record['id'] in grants and grants[record['id']]['generation'] == website_login_generation(record)]
+
+    def manage_login_automation(self, policy, request):
+        """Show or change exact owner sign-in permission under the Vault lock."""
+        request = login_automation_request(request)
+        grants = self.login_automation()
+        if request['action'] == 'list-login-automation':
+            try:
+                self.require_requests(policy)
+                available = bool(browser_grant_pairs())
+            except VaultError:
+                available = False
+            return {'loginAutomation': {'available': available,
+                    'enabled': [record['id'] for record, _grant in self.current_automatic_logins(grants)]}}
+
+        _path, record = self._website_login_for_edit(request)
+        login_id, bot = record['id'], record['bot']
+        if request['enabled']:
+            self.require_requests(policy)
+            pairs = browser_grant_pairs()
+            session = next((selected for candidate, selected in pairs if candidate == bot), None)
+            if session is None:
+                raise VaultError('Automatic sign-in requires a private browser for this Bot.')
+            current = self.current_automatic_logins(grants)
+            if any(account['id'] != login_id and account['bot'] == bot and account['origin'] == record['origin']
+                   and grant['session'] == session for account, grant in current):
+                raise VaultError('Turn off the other automatic sign-in for this website first.')
+            updated = {account['id']: grant for account, grant in current}
+            updated[login_id] = {'session': session, 'generation': website_login_generation(record)}
+        else:
+            updated = {key: grant for key, grant in grants.items() if key != login_id}
+        target = self.root / WEBSITE_LOGIN_AUTOMATION
+        if updated != grants:
+            if updated:
+                payload = (json.dumps({'version': 1, 'enabled': updated}, separators=(',', ':')) + '\n').encode('ascii')
+                replace_file(target, payload, self.root, 0o600)
+            else:
+                self.remove_value(target)
+        return {'ok': True}
+
     def allow_desktop(self, owner_uid, cloud_uid, units, *, start=False):
         """Authorize one SSH owner for an explicit list of enabled services."""
         if owner_uid <= 0 or cloud_uid <= 0 or owner_uid == cloud_uid:
@@ -1409,6 +1504,7 @@ class Vault:
             with self.locked():
                 self.remove_value(self.root / 'desktop.json')
                 self.remove_value(self.root / CLOUD_REQUESTS_ENABLED)
+                self.remove_value(self.root / WEBSITE_LOGIN_AUTOMATION)
                 self.write_request_records([])
                 self.stop_cloud_requests()
                 self.stop_desktop()
@@ -1604,14 +1700,44 @@ class Vault:
             visible['acceptsCredentials'] = True
         return {'request': visible}
 
-    def _deliver_browser_login(self, inspected, username, password, *, bot=None):
+    def _deliver_browser_login(self, inspected, username, password, *, bot=None, session=None):
         """Send the values for one pending login to the dedicated browser worker."""
         payload = json.dumps({
             'action': 'use-login', 'id': inspected['id'], 'origin': inspected['origin'],
             'username': username, 'password': password,
             **({} if bot is None else {'bot': bot}),
+            **({} if session is None else {'session': session}),
         }, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
         return browser_login_state(browser_client(payload))
+
+    def _automatic_browser_login(self, request):
+        """Deliver one current account to its exact pending private browser and HTTPS origin."""
+        try:
+            bot, session = request['bot'], request['session']
+            candidates = [record for record, grant in self.current_automatic_logins(self.login_automation())
+                          if record['bot'] == bot and grant['session'] == session]
+            if not candidates:
+                return {'state': 'approval-required'}
+            if (bot, session) not in browser_grant_pairs():
+                return {'state': 'unavailable'}
+            query = json.dumps({'action': 'inspect-login-automatic', 'id': request['id']},
+                               separators=(',', ':')).encode('ascii')
+            inspected = browser_login_inspection(browser_client(query), request['id'], automatic=True)
+            if (inspected['bot'], inspected['session']) != (bot, session):
+                return {'state': 'unavailable'}
+            matching = [record for record in candidates if record['origin'] == inspected['origin']]
+            if not matching:
+                return {'state': 'approval-required'}
+            if len(matching) != 1:
+                return {'state': 'unavailable'}
+            return self._use_website_login_locked(
+                matching[0]['id'], inspected['origin'],
+                lambda username, password: self._deliver_browser_login(
+                    inspected, username, password, bot=bot, session=session,
+                ), bot=bot,
+            )
+        except (VaultError, OSError, UnicodeError, ValueError, RecursionError, TypeError):
+            return {'state': 'unavailable'}
 
     def _approve_browser_login(self, request):
         """Deliver an owner-selected login while policy, generation, and delivery share one lock."""
@@ -1810,6 +1936,8 @@ class Vault:
                 return self.desktop_grants(policy, request)
             if action == 'set-browser-access':
                 return self.set_browser_access(request)
+            if action in ('list-login-automation', 'set-login-automatic'):
+                return self.manage_login_automation(policy, request)
             if action in ('list-logins', 'list-bot-logins', 'add-login', 'replace-login', 'remove-login'):
                 request = website_login_request(request)
                 if action == 'list-logins':
@@ -1867,6 +1995,11 @@ class Vault:
                 if requester_uid != policy['cloud']:
                     raise VaultError(REQUEST_UNAVAILABLE)
                 action = request.get('action')
+                if action == 'automatic-login':
+                    if not valid_automatic_login(request):
+                        raise VaultError(REQUEST_UNAVAILABLE)
+                    self.require_requests(policy)
+                    return self._automatic_browser_login(request)
                 bot = request.get('bot')
                 scope = request.get('scope')
                 if (action not in ('list', 'create', 'status', 'cancel', 'authorize')

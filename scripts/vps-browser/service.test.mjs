@@ -717,6 +717,41 @@ test('reserves the exact browser for one owner-approved login and consumes it on
   assert.deepEqual(await controlResponse(control, { ...request, action: 'frame' }), { jpeg: '/9j/2Q==', width: 1280, height: 800 })
 })
 
+test('exposes and consumes only the exact private automatic login form', async t => {
+  const origin = 'https://login.example.test'
+  const destination = `${origin}/session`
+  const document = Symbol('fixture document')
+  const submitted = []
+  const { control, vault } = await setup(t, {
+    savedLogins: true,
+    createPage: async () => ({
+      captureLogin: async () => ({ origin, destination, document }),
+      submitLogin: async (selected, username, password) => {
+        submitted.push({ document: selected.document, username, password })
+        return 'submitted'
+      },
+      close: async () => {}, closed: new Promise(() => {}),
+    }),
+  })
+  const pending = await controlResponse(control, { ...request, action: 'request-login' })
+  const inspect = { action: 'inspect-login-automatic', id: pending.id }
+  assert.deepEqual(await controlResponse(vault, { ...inspect, bot: BOT, session: SESSION }), { error: 'unavailable' })
+  assert.deepEqual(await controlResponse(vault, inspect), {
+    id: pending.id, origin, destination, state: 'pending', bot: BOT, session: SESSION,
+  })
+  const use = {
+    action: 'use-login', id: pending.id, origin, username: 'fixture-user', password: 'fixture-password',
+    bot: BOT, session: SESSION,
+  }
+  assert.deepEqual(await controlResponse(vault, { ...use, bot: 'bot-other' }), { error: 'unavailable' })
+  assert.deepEqual(await controlResponse(vault, { ...use, session: otherSession }), { error: 'unavailable' })
+  assert.deepEqual(await controlResponse(vault, { ...use, origin: 'https://different.example.test' }), { error: 'unavailable' })
+  assert.deepEqual(await controlResponse(vault, use), { state: 'submitted' })
+  assert.deepEqual(await controlResponse(vault, inspect), { error: 'unavailable' })
+  assert.deepEqual(await controlResponse(vault, use), { error: 'unavailable' })
+  assert.deepEqual(submitted, [{ document, username: use.username, password: use.password }])
+})
+
 test('allows a shared login only for the requesting chat and its assigned Bot account', async t => {
   const origin = 'https://login.example.test'
   const destination = `${origin}/session`
@@ -738,9 +773,13 @@ test('allows a shared login only for the requesting chat and its assigned Bot ac
   const inspect = { action: 'inspect-login', id: pending.id }
   assert.deepEqual(await controlResponse(control, { ...chat, ...inspect }), { error: 'unavailable' })
   assert.deepEqual(await controlResponse(vault, inspect), { ...pending, scope: 'shared', bot: BOT })
+  assert.deepEqual(await controlResponse(vault, { action: 'inspect-login-automatic', id: pending.id }), {
+    error: 'unavailable',
+  })
   const use = { action: 'use-login', id: pending.id, origin, username: 'fixture-team', password: 'fixture-password' }
   assert.deepEqual(await controlResponse(vault, use), { error: 'unavailable' })
   assert.deepEqual(await controlResponse(vault, { ...use, bot: 'bot-other' }), { error: 'unavailable' })
+  assert.deepEqual(await controlResponse(vault, { ...use, bot: BOT, session: sharedSession }), { error: 'unavailable' })
   assert.deepEqual(await controlResponse(control, { ...request, action: 'cancel-login', id: pending.id }), { state: 'unavailable' })
   assert.deepEqual(await controlResponse(control, { ...chat, session: anotherSharedSession, action: 'login-status', id: pending.id }),
     { state: 'unavailable' })

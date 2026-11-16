@@ -15,6 +15,7 @@ const FIXTURE = fileURLToPath(new URL('../../../snapshots/web/bot-workspace/sess
 const GOLDEN = fileURLToPath(new URL('./expected/bot-isolated-browser/browser.expected.md', import.meta.url))
 const BOTS_SOURCE = new URL('../../../packages/bundle/web-app/lib/types/vps-bots.js', import.meta.url).href
 const BROKER_SOURCE = new URL('../../../packages/bundle/web-app/lib/types/vps-isolated-browser.js', import.meta.url).href
+const VAULT_SOURCE = new URL('../../../packages/bundle/web-app/lib/types/vps-vault-requests.js', import.meta.url).href
 const MODE = webSnapshotMode()
 const BOT = BotId('bot-browser-fixture')
 const PROVIDER = 'browser-fixture'
@@ -25,8 +26,11 @@ const LOGIN = { id: 'a'.repeat(32), origin: 'https://example.test', destination:
 const SHARED_LOGIN = { ...LOGIN, id: 'b'.repeat(32) }
 const SHARED_CHALLENGE = 'c'.repeat(32)
 const LOGIN_REPLY = 'The login was submitted. I’ll check the page.'
+const ROUTINE_NEEDS_OWNER = 'The scheduled check needs the owner to sign in.'
+const ROUTINE_REPLY = 'The scheduled check used the saved login.'
 const HANDOFF_REPLY = 'Thanks. I have the shared browser again.'
 const BROWSER_DISABLED = 'Shared browsing is off.'
+const CONTEXT_SOURCES: readonly string[] = ['repeat-tool-reminder', 'runtime-context']
 
 class BrowserAdapter extends LlmAdapter {
   override async listModels(provider: string) {
@@ -34,15 +38,19 @@ class BrowserAdapter extends LlmAdapter {
   }
 
   override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
-    const latestUser = options.messages.findLastIndex(message => message.role === 'user')
+    const latestUser = options.messages.findLastIndex(message =>
+      message.role === 'user' && !CONTEXT_SOURCES.includes(message.source?.kind ?? ''))
     const input = options.messages[latestUser]?.content.filter(block => block.type === 'text').map(block => block.text).join(' ') ?? ''
     const savedLogin = input.includes('saved login')
+    const routine = input.includes('scheduled check')
+    const unapproved = input.includes('without a grant')
     const handoff = input.includes('take over')
     const shared = input.includes('shared chat')
     const result = options.messages.slice(latestUser + 1).findLast(message => message.role === 'tool')
     const checkSharing = input.includes('check the browser setting')
     if (result === undefined && !checkSharing) {
-      const id = ToolCallId(handoff ? 'fixture-browser-handoff' : savedLogin ? 'fixture-browser-login' : 'fixture-browser-navigation')
+      const id = ToolCallId(routine ? (unapproved ? 'fixture-routine-unapproved' : 'fixture-routine-approved')
+        : handoff ? 'fixture-browser-handoff' : savedLogin ? 'fixture-browser-login' : 'fixture-browser-navigation')
       const name = shared ? 'shared_browser' : 'vps_computer'
       const args = JSON.stringify(handoff ? { action: 'request_sign_in' }
         : savedLogin ? { action: 'request_saved_login' } : { action: 'navigate', url: WEBSITE })
@@ -62,14 +70,16 @@ class BrowserAdapter extends LlmAdapter {
       expect(result.content).toEqual([expect.objectContaining({ type: 'text', text: expect.stringContaining('returned the Computer') })])
       expect(JSON.stringify(options.messages.slice(latestUser))).not.toContain('fixture-input')
     } else if (savedLogin) {
-      expect(result.content.some(block => block.type === 'text' && /sign-in submission/iu.test(block.text))).toBe(true)
+      const resultText = unapproved ? 'This routine needs the owner' : 'sign-in submission'
+      expect(result.content.some(block => block.type === 'text' && block.text.includes(resultText))).toBe(true)
       expect(JSON.stringify(result)).not.toContain(LOGIN.destination)
       expect(JSON.stringify(result)).not.toContain(LOGIN.id)
       expect(JSON.stringify(result)).not.toContain(SHARED_LOGIN.id)
     } else {
       expect(result.content.some(block => block.type === 'text' && block.text.includes('Browser'))).toBe(true)
     }
-    const text = checkSharing ? BROWSER_DISABLED : handoff ? HANDOFF_REPLY : savedLogin ? LOGIN_REPLY : REPLY
+    const text = checkSharing ? BROWSER_DISABLED : handoff ? HANDOFF_REPLY
+      : routine ? (unapproved ? ROUTINE_NEEDS_OWNER : ROUTINE_REPLY) : savedLogin ? LOGIN_REPLY : REPLY
     yield { type: 'block-start', index: 0, blockType: 'text' }
     yield { type: 'text-delta', index: 0, text }
     yield { type: 'block-end', index: 0, block: { type: 'text', text } }
@@ -88,6 +98,8 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('opens websites for
   let handoff: { readonly lease: string; readonly session: string } | undefined
   let handoffLease: string | undefined
   let loginApproved = false
+  let automaticAllowed = false
+  let automaticAttempts = 0
   let sharedApproved = false
   let sharedAuthorized = false
   let sharingOverride: boolean | null = null
@@ -173,6 +185,11 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('opens websites for
             response = holding && (!owner || request.origin !== LOGIN.origin) ? { error: 'unavailable' } : { ok: true }
             break
           case 'request-login': response = shared ? SHARED_LOGIN : LOGIN; break
+          case 'automatic-login':
+            automaticAttempts++
+            response = !shared && request.bot === BOT && request.session === ownerSession && request.id === LOGIN.id
+              ? { state: automaticAllowed ? 'submitted' : 'approval-required' } : { state: 'unavailable' }
+            break
           case 'login-status':
             response = shared && sharedApproved && !sharedAuthorized
               ? { state: 'approval-pending', challenge: SHARED_CHALLENGE }
@@ -192,6 +209,7 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('opens websites for
     await writeFile(runtimePath, `
       import { mountVpsBots } from ${JSON.stringify(BOTS_SOURCE)}
       import { VpsIsolatedBrowser } from ${JSON.stringify(BROKER_SOURCE)}
+      import { submitAutomaticVpsLogin } from ${JSON.stringify(VAULT_SOURCE)}
       export const name = 'isolated-browser-fixture'
       export function apply(ctx, config) {
         // The fixture provides the installed worker protocol on a temporary socket.
@@ -200,7 +218,8 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('opens websites for
           VpsIsolatedBrowser.prototype.usesManagedSharing = () => true
           return () => { VpsIsolatedBrowser.prototype.usesManagedSharing = original }
         })
-        mountVpsBots(ctx, config, [])
+        mountVpsBots(ctx, config, [], undefined, undefined, (bot, session, id, signal) =>
+          submitAutomaticVpsLogin(config.isolatedBrowser.socketPath, bot, session, id, signal))
       }
     `)
     await writeFile(overlay, JSON.stringify([{ insert: [{ id: 'isolated-browser-fixture', name: pathToFileURL(runtimePath).href,
@@ -257,6 +276,26 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('opens websites for
     loginApproved = true
     await conversation.getByText(LOGIN_REPLY, { exact: true }).waitFor()
     await approval.waitFor({ state: 'hidden' })
+    await web.ctx.schedule.create(bot.sessionId, {
+      title: 'Website check without approval', prompt: 'Use the saved login for this scheduled check without a grant.', after_seconds: 1,
+    })
+    const needsOwner = conversation.getByText(ROUTINE_NEEDS_OWNER, { exact: true })
+    await needsOwner.waitFor()
+    expect(await (await web.hostFetch(loginRoute)).json()).toEqual({ request: null })
+    const unapprovedReply = await needsOwner.innerText()
+    automaticAllowed = true
+    await page.goto('about:blank')
+    await web.ctx.schedule.create(bot.sessionId, {
+      title: 'Approved website check', prompt: 'Use the saved login for this scheduled check.', after_seconds: 1,
+    })
+    await expect.poll(async () => (await web.ctx.sessionController.inspect(bot.sessionId)).events.some(event =>
+      event.type === 'assistant/message' && event.data.message.content.some(block => block.type === 'text' && block.text === ROUTINE_REPLY),
+    ), { timeout: 15_000 }).toBe(true)
+    expect(await (await web.hostFetch(loginRoute)).json()).toEqual({ request: null })
+    await page.goto(web.authenticatedUrl, { waitUntil: 'load' })
+    await page.locator('[data-yh-part="sidebar"]').getByRole('button', { name: 'Bots', exact: true }).click()
+    await page.locator(`[data-bot-id="${BOT}"]`).click()
+    const routineReply = await conversation.getByText(ROUTINE_REPLY, { exact: true }).innerText()
 
     const origin = new URL(web.baseUrl).origin
     const sharedCall = async (operation: string, payload: object, cookie?: string) => {
@@ -381,9 +420,12 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('opens websites for
     await sharedApproval.waitFor({ state: 'hidden', timeout: 15_000 })
     await expect.poll(() => sharedRequests).toContainEqual({ action: 'cancel-login', session: sharedSession })
     expect(sharedRequests.filter(request => request.action === 'authorize-login')).toHaveLength(1)
+    expect(automaticAttempts).toBe(3)
     expect(consoleLog.pageErrors).toEqual([])
     await compareOrRefreshGolden(GOLDEN,
-      `## In control\n\n${controlling}\n\n## Watching\n\n${viewing}\n\n## Saved login approval\n\n${review}\n\n## Shared login approval\n\n${sharedReview}\n\n## Shared browser sign-in\n\n${handoffCardAria}\n\n## Shared browser in control\n\n${handoffPanelAria}`,
+      [`## In control\n\n${controlling}`, `## Watching\n\n${viewing}`, `## Saved login approval\n\n${review}`,
+        `## Scheduled login\n\n${unapprovedReply}\n\n${routineReply}`, `## Shared login approval\n\n${sharedReview}`,
+        `## Shared browser sign-in\n\n${handoffCardAria}`, `## Shared browser in control\n\n${handoffPanelAria}`].join('\n\n'),
       MODE)
   } finally {
     try { await browser?.close() }

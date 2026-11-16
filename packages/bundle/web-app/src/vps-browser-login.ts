@@ -1,4 +1,4 @@
-/** Owner-approved saved website login requests for an isolated browser. */
+/** Saved website login requests for private and shared isolated browsers. */
 
 import { setTimeout as delay } from 'node:timers/promises'
 import type {} from '@yharness/bots'
@@ -37,13 +37,21 @@ export interface VpsBrowserLoginView {
 export type VpsBrowserLoginResult =
   | { readonly state: 'submitted' }
   | { readonly state: 'needs-owner' }
+  | { readonly state: 'approval-required' }
   | { readonly state: 'unavailable' }
 
-/** Host operation that admits only the request-creation exchange to the Bot lease. */
+/** Host operation that holds the Bot's browser lease through capture and automatic submission. */
 export type VpsBrowserLoginLease = <T>(operation: () => Promise<T>, signal: AbortSignal) => Promise<T>
 
-/** Deterministic seams for saved-login polling tests. */
-export interface VpsBrowserLoginInternals {
+/** Private, metadata-only delivery through the installed Vault. */
+export type AutomaticVpsBrowserLogin = (
+  bot: string, session: string, id: VpsBrowserLoginRequest['id'], signal: AbortSignal,
+) => Promise<VpsBrowserLoginResult['state']>
+
+/** Sign-in admission and polling options for the isolated browser. */
+export interface VpsBrowserLoginOptions {
+  /** Attempt automatic delivery for a private browser request through the standard Vault. */
+  readonly automaticLogin?: AutomaticVpsBrowserLogin
   /** Wait between broker status polls. */
   readonly sleep?: (milliseconds: number, signal: AbortSignal) => Promise<void>
   /** Clock used to bound owner metadata lifetime. */
@@ -58,12 +66,13 @@ interface Entry {
 }
 
 /**
- * Coordinates one owner-approved saved login per Bot Session without handling credentials.
- * The request-create exchange is admitted through the Computer lease; polling and owner
- * handoff continue independently so the native approval window does not occupy that lease.
+ * Coordinates one saved login per Bot Session without handling credentials.
+ * Capture and automatic submission hold the Computer lease. Polling and owner
+ * approval run after releasing that lease so the owner can use the approval window.
  */
 export class VpsBrowserLogin {
   private readonly browser: VpsIsolatedBrowser
+  private readonly automaticLogin: AutomaticVpsBrowserLogin | undefined
   private readonly sleep: (milliseconds: number, signal: AbortSignal) => Promise<void>
   private readonly now: () => number
   private readonly pending = new Set<string>()
@@ -73,12 +82,13 @@ export class VpsBrowserLogin {
 
   /**
    * @param browser - Configured isolated-browser socket client.
-   * @param internals - Optional polling and clock seams for deterministic tests.
+   * @param options - Optional automatic Vault delivery and polling configuration.
    */
-  constructor(browser: VpsIsolatedBrowser, internals: VpsBrowserLoginInternals = {}) {
+  constructor(browser: VpsIsolatedBrowser, options: VpsBrowserLoginOptions = {}) {
     this.browser = browser
-    this.sleep = internals.sleep ?? ((milliseconds, signal) => delay(milliseconds, undefined, { signal }))
-    this.now = internals.now ?? Date.now
+    this.automaticLogin = options.automaticLogin
+    this.sleep = options.sleep ?? ((milliseconds, signal) => delay(milliseconds, undefined, { signal }))
+    this.now = options.now ?? Date.now
   }
 
   /**
@@ -138,23 +148,43 @@ export class VpsBrowserLogin {
    * Create and await one owner-approved saved-login request.
    * @param bot - Authorized Bot roster id.
    * @param session - Exact owner or admitted shared Session id.
-   * @param lease - Admits only the request-create exchange through the Computer lease.
+   * @param lease - Admits the capture and any automatic submission through the Computer lease.
    * @param signal - Calling turn cancellation signal.
    * @param continueShared - Admit shared browser operations and recheck access while polling.
    * @returns State-only result; broker ids and website metadata never reach the model.
    */
-  async request(
+  request(
     bot: string, session: string, lease: VpsBrowserLoginLease, signal: AbortSignal,
     continueShared?: VpsBrowserAdmission,
   ): Promise<VpsBrowserLoginResult> {
+    return this.start(bot, session, lease, signal, false, continueShared)
+  }
+
+  /**
+   * Use an owner-approved automatic account during a private scheduled routine.
+   * @param bot - Bot with a configured private browser.
+   * @param session - Exact private owner Session.
+   * @param lease - Admits the browser capture and submission while the Bot has control.
+   * @param signal - Calling routine's cancellation signal.
+   * @returns The submission outcome or a request for the owner to configure access.
+   */
+  requestForRoutine(bot: string, session: string, lease: VpsBrowserLoginLease, signal: AbortSignal): Promise<VpsBrowserLoginResult> {
+    return this.start(bot, session, lease, signal, true)
+  }
+
+  private async start(
+    bot: string, session: string, lease: VpsBrowserLoginLease, signal: AbortSignal,
+    routine: boolean, continueShared?: VpsBrowserAdmission,
+  ): Promise<VpsBrowserLoginResult> {
     if (!this.browser.authorized(bot, session)) throw new Error(UNAUTHORIZED)
     if (!SESSION_ID.test(session)) throw new Error(UNAVAILABLE)
-    if (isSharedBrowserSession(session) && continueShared === undefined) throw new Error(UNAUTHORIZED)
+    if (isSharedBrowserSession(session) && (routine || continueShared === undefined)) throw new Error(UNAUTHORIZED)
     if (signal.aborted || this.closed.signal.aborted) return { state: 'unavailable' }
     if (this.hasPending(session)) throw new Error('A saved website login is already pending in this Session.')
     if (this.pending.size >= MAX_PENDING) return { state: 'unavailable' }
+    if (routine && this.automaticLogin === undefined) return { state: 'approval-required' }
     this.pending.add(session)
-    const running = this.run(bot, session, lease, signal, continueShared)
+    const running = this.run(bot, session, lease, signal, routine, continueShared)
     this.flights.add(running)
     return running.finally(() => {
       this.flights.delete(running)
@@ -174,14 +204,25 @@ export class VpsBrowserLogin {
 
   private async run(
     bot: string, session: string, lease: VpsBrowserLoginLease, signal: AbortSignal,
-    continueShared?: VpsBrowserAdmission,
+    routine: boolean, continueShared?: VpsBrowserAdmission,
   ): Promise<VpsBrowserLoginResult> {
     const bounded = AbortSignal.any([signal, this.closed.signal, AbortSignal.timeout(REQUEST_TTL_MS)])
     let request: VpsBrowserLoginRequest | undefined
     try {
       const begin = (): Promise<VpsBrowserLoginRequest> => this.browser.requestLogin(bot, session, bounded)
-      request = await lease(() => continueShared === undefined
-        ? begin() : runAuthorizedBrowserOperation(continueShared, begin, bounded), bounded)
+      const automatic = await lease(async () => {
+        request = continueShared === undefined ? await begin() : await runAuthorizedBrowserOperation(continueShared, begin, bounded)
+        if (isSharedBrowserSession(session) || this.automaticLogin === undefined) return undefined
+        return await this.automaticLogin(bot, session, request.id, bounded)
+      }, bounded)
+      if (request === undefined) throw new Error(UNAVAILABLE)
+      if (automatic === 'submitted') return { state: automatic }
+      if (automatic === 'needs-owner') return { state: routine ? 'approval-required' : automatic }
+      bounded.throwIfAborted()
+      if (routine) {
+        await this.cancel(bot, session, request.id)
+        return { state: automatic === 'unavailable' ? 'unavailable' : 'approval-required' }
+      }
       this.entries.set(session, { bot, request, expires: this.now() + REQUEST_TTL_MS, signal: bounded })
       for (let poll = 0; poll < MAX_POLLS; poll++) {
         if (poll > 0) await this.sleep(POLL_MS, bounded)

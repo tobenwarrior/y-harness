@@ -114,6 +114,55 @@ describe('isolated browser saved-login registry', () => {
     ])
   })
 
+  it('uses the automatic grant during a private routine while the Bot holds the browser', async () => {
+    const browser = new VpsIsolatedBrowser({ socketPath: INSTALLED_CONTROL, bots: [BOT], savedLogins: true })
+    const pending = { id: LOGIN_ID, origin: 'https://example.test', destination: 'https://example.test/login', state: 'pending' as const }
+    const open = vi.spyOn(browser, 'requestLogin').mockResolvedValue(pending)
+    const status = vi.spyOn(browser, 'loginStatus').mockResolvedValue('unavailable')
+    let held = false
+    const lease: VpsBrowserLoginLease = async (operation) => {
+      held = true
+      try { return await operation() } finally { held = false }
+    }
+    const automaticLogin = vi.fn(async () => {
+      expect(held).toBe(true)
+      return 'submitted' as const
+    })
+    const logins = new VpsBrowserLogin(browser, { automaticLogin })
+    try {
+      const result = await logins.requestForRoutine(BOT, SESSION, lease, new AbortController().signal)
+      expect(result).toEqual({ state: 'submitted' })
+      expect(open).toHaveBeenCalledExactlyOnceWith(BOT, SESSION, expect.any(AbortSignal))
+      expect(automaticLogin).toHaveBeenCalledExactlyOnceWith(BOT, SESSION, LOGIN_ID, expect.any(AbortSignal))
+      expect(status).not.toHaveBeenCalled()
+      expect(logins.current(SESSION)).toBeUndefined()
+    } finally {
+      await logins.dispose()
+    }
+  })
+
+  it('releases an unapproved routine login and still offers manual approval in a direct owner chat', async () => {
+    const browser = new VpsIsolatedBrowser({ socketPath: INSTALLED_CONTROL, bots: [BOT], savedLogins: true })
+    vi.spyOn(browser, 'requestLogin').mockResolvedValue({
+      id: LOGIN_ID, origin: 'https://example.test', destination: 'https://example.test/login', state: 'pending',
+    })
+    const cancel = vi.spyOn(browser, 'cancelLogin').mockResolvedValue('unavailable')
+    const status = vi.spyOn(browser, 'loginStatus').mockResolvedValue('submitted')
+    const logins = new VpsBrowserLogin(browser, { automaticLogin: async () => 'approval-required' })
+    const lease: VpsBrowserLoginLease = async operation => operation()
+    const signal = new AbortController().signal
+    try {
+      await expect(logins.requestForRoutine(BOT, SESSION, lease, signal)).resolves.toEqual({ state: 'approval-required' })
+      expect(cancel).toHaveBeenCalledExactlyOnceWith(BOT, SESSION, LOGIN_ID, expect.any(AbortSignal))
+      expect(status).not.toHaveBeenCalled()
+      expect(logins.current(SESSION)).toBeUndefined()
+      await expect(logins.request(BOT, SESSION, lease, signal)).resolves.toEqual({ state: 'submitted' })
+      expect(status).toHaveBeenCalledExactlyOnceWith(BOT, SESSION, LOGIN_ID, expect.any(AbortSignal))
+    } finally {
+      await logins.dispose()
+    }
+  })
+
   it('keeps one pending request per Session and withdraws it on abort', async () => {
     let releaseSleep: (() => void) | undefined
     const socketPath = await listen((request) => {
@@ -185,7 +234,8 @@ describe('isolated browser saved-login registry', () => {
         : request.action === 'login-status' ? { state: 'pending' } : { state: 'unavailable' }
     })
     const browser = new VpsIsolatedBrowser({ socketPath, bots: [BOT, 'bot-other'], sharedBots: [BOT], savedLogins: true })
-    const logins = new VpsBrowserLogin(browser)
+    const automaticLogin = vi.fn(async () => 'submitted' as const)
+    const logins = new VpsBrowserLogin(browser, { automaticLogin })
     const controller = new AbortController()
     const pending = logins.request(BOT, SHARED_SESSION, async operation => operation(), controller.signal,
       async (_signal, start) => { start?.(); return true })
@@ -207,6 +257,7 @@ describe('isolated browser saved-login registry', () => {
       await expect((await fetch('other-owner')).json()).resolves.toEqual({ request: null })
       controller.abort()
       await expect(pending).resolves.toEqual({ state: 'unavailable' })
+      expect(automaticLogin).not.toHaveBeenCalled()
       expect(commands).toContainEqual({ action: 'cancel-login', bot: BOT, session: SHARED_SESSION, id: LOGIN_ID })
       await expect((await fetch(SESSION)).json()).resolves.toEqual({ request: null })
     } finally {

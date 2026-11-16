@@ -25,7 +25,7 @@ import { registerVpsProjectTool } from './vps-project-tool.ts'
 import { isSharedBrowserSession, runAuthorizedBrowserOperation, VpsIsolatedBrowser, type VpsIsolatedBrowserConfig } from './vps-isolated-browser.ts'
 import { VpsBrowserHandoffs } from './vps-browser-handoffs.ts'
 import { vpsBrowserAccessRoute } from './vps-browser-access.ts'
-import { VpsBrowserLogin, vpsBrowserLoginRoute } from './vps-browser-login.ts'
+import { type AutomaticVpsBrowserLogin, VpsBrowserLogin, type VpsBrowserLoginLease, vpsBrowserLoginRoute } from './vps-browser-login.ts'
 import { registerVpsServiceTools, VpsServices, type VpsServiceAccess } from './vps-services.ts'
 import { registerVpsJournalTool, VpsJournal, type VpsJournalConfig } from './vps-journal.ts'
 
@@ -49,6 +49,7 @@ const BOT_TOOLS = new Set([
  * @param grants - Exact operator-configured systemd grants.
  * @param legacyComputer - Existing shared controller used by Bots outside the allowlist.
  * @param journalConfig - Private socket and authorized Computer Bots.
+ * @param automaticLogin - Private automatic account delivery through the installed Vault.
  */
 export function mountVpsBots(
   ctx: Context,
@@ -67,6 +68,7 @@ export function mountVpsBots(
   grants: readonly VpsServiceAccess[],
   legacyComputer?: VpsComputer,
   journalConfig?: VpsJournalConfig,
+  automaticLogin?: AutomaticVpsBrowserLogin,
 ): void {
   const uploadLimits = resolveVpsFileUploadLimits(config.uploads)
   const services = new VpsServices(grants)
@@ -131,7 +133,7 @@ export function mountVpsBots(
     : new VpsIsolatedBrowser(config.isolatedBrowser)
   const browserLogin = isolatedBrowser === undefined || config.isolatedBrowser?.savedLogins !== true
     ? undefined
-    : new VpsBrowserLogin(isolatedBrowser)
+    : new VpsBrowserLogin(isolatedBrowser, automaticLogin === undefined ? undefined : { automaticLogin })
   const browserHandoffs = isolatedBrowser === undefined
     || (!isolatedBrowser.usesManagedSharing() && !config.isolatedBrowser?.sharedBots?.length)
     ? undefined
@@ -463,12 +465,15 @@ export function mountVpsBots(
           if (sessionId !== bot.sessionId) throw new Error('VPS Computer requires the owning Bot Session.')
           return navigateFor(bot.id, sessionId, url, signal)
         } : undefined, browserLogin !== undefined && isolatedBrowserBotIds.has(bot.id) ? async (caller, signal) => {
-          if (caller !== agent || !await scope.bots.isDirectOwnerTurn(caller, signal)) {
-            throw new Error('Saved website login is available in a direct owner Bot chat.')
+          const source = caller === agent ? await scope.bots.privateOwnerTurnSource(caller, signal) : undefined
+          if (source === undefined) {
+            throw new Error('Saved website login requires a direct owner message or a private time-based routine.')
           }
           const computer = await computerFor(bot.sessionId, bot.id)
-          return browserLogin.request(bot.id, bot.sessionId,
-            (operation, requestSignal) => computer.runWhileBotControls(operation, requestSignal), signal)
+          const lease: VpsBrowserLoginLease = (operation, requestSignal) => computer.runWhileBotControls(operation, requestSignal)
+          return source === 'schedule'
+            ? browserLogin.requestForRoutine(bot.id, bot.sessionId, lease, signal)
+            : browserLogin.request(bot.id, bot.sessionId, lease, signal)
         } : undefined)
       }
       if (!isManagedBot(bot.id)) {

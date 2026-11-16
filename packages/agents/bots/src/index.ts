@@ -2341,32 +2341,33 @@ function openTurnFromEvents(events: readonly SessionEvent[]): number {
   return openTurn
 }
 
-/** Admit owner-only imported context only while a direct user turn is open. */
-function hasDirectUserInputInOpenTurn(events: readonly SessionEvent[]): boolean {
+/** Attribute an open owner turn to a direct message or time-based routine. */
+function ownerInputInOpenTurn(events: readonly SessionEvent[]): 'user' | 'schedule' | undefined {
   let openTurn = -1
-  let hasUserMessage = false
-  let hasNonDirectUserMessage = false
+  let input: 'user' | 'schedule' | undefined
+  let mixed = false
   for (const event of events) {
     if (event.type === 'turn/start') {
       openTurn = event.data.turn
-      hasUserMessage = false
-      hasNonDirectUserMessage = false
+      input = undefined
+      mixed = false
       continue
     }
     if (event.type === 'turn/end') {
       if (event.data.turn === openTurn) {
         openTurn = -1
-        hasUserMessage = false
-        hasNonDirectUserMessage = false
+        input = undefined
+        mixed = false
       }
       continue
     }
     if (openTurn >= 0 && event.type === 'user/message' && !isSyntheticGroupContext(event.data)) {
-      hasUserMessage = true
-      if (event.data.source.kind !== 'user') hasNonDirectUserMessage = true
+      const kind: string = event.data.source.kind
+      if ((kind !== 'user' && kind !== 'schedule') || (input !== undefined && input !== kind)) mixed = true
+      else input = kind
     }
   }
-  return openTurn >= 0 && hasUserMessage && !hasNonDirectUserMessage
+  return openTurn >= 0 && !mixed ? input : undefined
 }
 
 /** Reconstruct every routine-triggered turn from one persisted Session scan. */
@@ -7265,7 +7266,7 @@ export class BotService extends TypertRemoteService {
       const current = await this.readOwnedBot(record.id)
       if (current.sessionId !== sessionId) throw new BotCollaborationError('sender-not-bot', 'The calling Session is not owned by a Bot.')
       const inspection = await this.ctx.sessionController.inspect(sessionId, signal)
-      if (!hasDirectUserInputInOpenTurn(inspection.events)) {
+      if (ownerInputInOpenTurn(inspection.events) !== 'user') {
         throw new BotCollaborationError('target-unavailable', 'Imported Grok history is available only during a direct owner Bot turn.')
       }
       signal?.throwIfAborted()
@@ -7458,14 +7459,24 @@ export class BotService extends TypertRemoteService {
    * @returns Whether the current turn belongs exclusively to a direct owner conversation.
    */
   async isDirectOwnerTurn(agent: Agent, signal?: AbortSignal): Promise<boolean> {
+    return (await this.privateOwnerTurnSource(agent, signal)) === 'user'
+  }
+
+  /**
+   * Identify a live private turn whose input belongs exclusively to the owner or its schedule.
+   * @param agent - Exact Agent invoking the operation.
+   * @param signal - Cancellation while reading the current Session log.
+   * @returns The trusted input source for the open owner turn, or undefined when none qualifies.
+   */
+  async privateOwnerTurnSource(agent: Agent, signal?: AbortSignal): Promise<'user' | 'schedule' | undefined> {
     const agents = this.ctx.agents
     const liveOwner = (): boolean => agents.get(agent.id) === agent && agent.status === 'running'
       && !this.sharedScopeAgents.has(agent) && !this.sharedScopeFences.has(agent) && !this.stopping
     if (!liveOwner()
-      || (await this.ownerBotForSession(agent.id))?.state !== 'active') return false
+      || (await this.ownerBotForSession(agent.id))?.state !== 'active') return undefined
     const inspection = await this.ctx.sessionController.inspect(agent.id, signal)
     signal?.throwIfAborted()
-    return liveOwner() && hasDirectUserInputInOpenTurn(inspection.events)
+    return liveOwner() ? ownerInputInOpenTurn(inspection.events) : undefined
   }
 
   private async createImpl(request: BotCreateRequest, signal?: AbortSignal): Promise<BotCreateValue> {
