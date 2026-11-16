@@ -91,6 +91,22 @@ describe('BotWebsiteLoginRequestCard', () => {
     expect(screen.queryByRole('textbox')).toBeNull()
   })
 
+  it.each([
+    ['signup', en.websiteSignupRequestTitle, en.websiteSignupOpenDesktop],
+    ['verification', en.websiteVerificationRequestTitle, en.websiteVerificationOpenDesktop],
+  ] as const)('labels a private %s and links to the secure Desktop review', async (purpose, title, action) => {
+    vi.spyOn(window.navigator, 'userAgent', 'get').mockReturnValue('YHarnessCloudDesktop/1')
+    const form = { ...websiteResponse().request, destination: `https://example.com/${purpose}`, purpose }
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(Response.json({ request: form }))
+    render(<BotWebsiteLoginRequestCard {...cardProps()} />)
+    const review = await screen.findByRole('link', { name: action })
+    expect(screen.getByText(title)).toBeTruthy()
+    expect(review.getAttribute('href')).toBe(`/__yharness/vault-login-use/${REQUEST_ID}`)
+    expect(screen.queryByRole('textbox')).toBeNull()
+    expect(parseBotWebsiteLoginResponse({ request: { ...form, scope: 'shared' } })).toBeNull()
+    expect(parseBotWebsiteLoginResponse({ request: { ...form, code: 'fixture-only' } })).toBeNull()
+  })
+
   it('does not query ordinary conversations or Web handoff links', async () => {
     const fetcher = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(websiteResponse()), { status: 200 }))
     render(<BotWebsiteLoginRequestCard {...cardProps({ botChat: false })} />)

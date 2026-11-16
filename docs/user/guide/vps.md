@@ -229,7 +229,25 @@ In a direct Bot chat, ask the Bot to sign in. Open **Approve sign-in** and check
 
 Select **Save this login to Vault** and add a label to keep an entered login after the form is submitted. Leave the option unchecked for a single submission. The Bot receives the outcome and can check the website. Secure entry requires an updated Mac app and VPS Vault command.
 
-Saved login approval supports a single HTTPS sign-in form that submits to the same website. Sites using single sign-on, passkeys, or a separate verification step may require manual sign-in. Removing or replacing a Vault entry prevents use of the old value. Sign out at the website to end an existing browser session.
+Saved login approval supports a single HTTPS sign-in form that submits to the same website. Sites using single sign-on, passkeys, or unsupported verification forms may require manual sign-in. Removing or replacing a Vault entry prevents use of the old value. Sign out at the website to end an existing browser session.
+
+### Create a website account with Vault
+
+In a direct Cloud Bot chat, ask the Bot to open the website's signup form and request secure signup. Choose **Review signup**, verify the website and destination, and enter the account name and a label for Vault. Vault generates a password, saves it for that Bot, and submits the form. The Bot receives the result.
+
+This works with a same-site HTTPS signup form containing an account field and one or two new-password fields. Check the website after submission. Use the [secure code form](#enter-a-one-time-website-code) when it is available. If the site needs more fields or special verification, take control. The assigned login can be replaced or removed from **Vault → Websites**. Update Desktop, Cloud, the browser worker, and the Vault command together.
+
+### Enter a one-time website code
+
+When a website shows a verification step in a direct Cloud Bot chat, ask the Bot to request secure verification. Choose **Enter code**, confirm the website and destination, and submit your code in the Mac form. The VPS browser sends it once, and the Bot receives the outcome. Vault keeps no copy of the code.
+
+The secure form supports one visible one-time-code field in a same-site HTTPS POST form. Use **Take control** in the Computer panel for passkeys, codes split across several fields, or other verification forms. Update Desktop, Cloud, the browser worker, and the Vault command together.
+
+### Import saved website logins
+
+In the Mac app, open **Cloud → Vault → Websites** and choose **Import CSV…**. Select a password export under 5 MB from 1Password, Chrome, Edge, Safari, Apple Passwords, Firefox, Bitwarden, or LastPass. Review the website and account details and choose **Import** to save the listed personal logins.
+
+The Mac reads the CSV locally. After you confirm, it sends each eligible login over the private Cloud connection and the VPS Vault encrypts it. The review skips duplicate websites and usernames, invalid or unsupported rows, and accounts that exceed the 64 personal login limit. If an import is interrupted, review the file again to retry. Vault checks for duplicates again before each write.
 
 ### Let a private routine sign in automatically
 

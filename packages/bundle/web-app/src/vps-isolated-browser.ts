@@ -79,6 +79,8 @@ export interface VpsBrowserLoginRequest {
   readonly destination: string
   /** The only creation state accepted from the broker. */
   readonly state: 'pending'
+  /** A new-account or verification form in a private owner browser. */
+  readonly purpose?: 'signup' | 'verification'
 }
 
 /** State returned by saved-login status and cancellation operations. */
@@ -116,6 +118,10 @@ type Request =
   | (VpsBrowserHandoff & { readonly action: 'end-handoff'; readonly outcome: 'complete' | 'discard' })
   | (VpsBrowserHandoff & { readonly action: 'input'; readonly origin: string; readonly input: ComputerAction })
   | (VpsBrowserHandoff & { readonly action: 'navigate'; readonly url: string })
+
+function requireBrowserSignal(signal: AbortSignal): void {
+  if (signal.aborted) throw new Error(ABORTED)
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -216,13 +222,16 @@ function loginMetadata(originValue: unknown, destinationValue: unknown): Pick<Vp
 }
 
 function decodeLoginRequest(value: unknown): VpsBrowserLoginRequest {
-  const metadata = isRecord(value) ? loginMetadata(value.origin, value.destination) : undefined
-  if (!isRecord(value) || Object.keys(value).length !== 4 || value.state !== 'pending'
-    || !metadataString(value.id, LOGIN_ID_MAX_BYTES) || !LOGIN_ID.test(value.id)
-    || metadata === undefined) {
-    throw new Error(INVALID_RESPONSE)
+  if (!isRecord(value)) throw new Error(INVALID_RESPONSE)
+  const { purpose } = value
+  const metadata = loginMetadata(value.origin, value.destination)
+  if (Object.keys(value).length !== (purpose === undefined ? 4 : 5) || (purpose !== undefined && purpose !== 'signup' && purpose !== 'verification')
+    || value.state !== 'pending' || !metadataString(value.id, LOGIN_ID_MAX_BYTES) || !LOGIN_ID.test(value.id)
+    || metadata === undefined) throw new Error(INVALID_RESPONSE)
+  return {
+    id: value.id, origin: metadata.origin, destination: metadata.destination, state: 'pending',
+    ...(purpose === undefined ? {} : { purpose }),
   }
-  return { id: value.id, origin: metadata.origin, destination: metadata.destination, state: 'pending' }
 }
 
 function decodeLoginState(value: unknown): VpsBrowserLoginState {
@@ -404,8 +413,9 @@ export class VpsIsolatedBrowser {
         void error
       }
     }
-    if (signal.aborted || !this.sharedBots.has(bot)) return false
+    if (!this.sharedBots.has(bot)) return false
     try {
+      requireBrowserSignal(signal)
       await this.status(bot, session, AbortSignal.any([signal, AbortSignal.timeout(POLICY_PROBE_MS)]))
       return true
     } catch (error) {
@@ -626,9 +636,9 @@ export class VpsIsolatedBrowser {
 
   private async request<T>(request: Request, decode: (value: unknown) => T, signal: AbortSignal): Promise<T> {
     if (!this.authorized(request.bot, request.session)) throw new Error(UNAUTHORIZED)
-    if (signal.aborted) throw new Error(ABORTED)
+    requireBrowserSignal(signal)
     await this.prepare?.()
-    if (signal.aborted) throw new Error(ABORTED)
+    requireBrowserSignal(signal)
     const body = Buffer.from(JSON.stringify(request), 'utf8')
     if (body.byteLength > MAX_REQUEST_BYTES) throw new Error(INVALID_RESPONSE)
     return await new Promise<T>((resolve, reject) => {
@@ -665,15 +675,15 @@ export class VpsIsolatedBrowser {
           finish({ error: safeSocketError(error) })
         }
       }
-      const deadline = setTimeout(() => finish({ error: new Error(TIMED_OUT) }), SOCKET_TIMEOUT_MS)
+      const deadline = setTimeout(() => { finish({ error: new Error(TIMED_OUT) }) }, SOCKET_TIMEOUT_MS)
       signal.addEventListener('abort', onAbort, { once: true })
       try {
         socket = this.connect({ path: this.socketPath })
         socket.once('connect', () => { socket?.end(body) })
         socket.on('data', onData)
         socket.once('end', onEnd)
-        socket.once('close', () => finish({ error: new Error(UNAVAILABLE) }))
-        socket.once('error', error => finish({ error: safeSocketError(error) }))
+        socket.once('close', () => { finish({ error: new Error(UNAVAILABLE) }) })
+        socket.once('error', (error) => { finish({ error: safeSocketError(error) }) })
       } catch (error) {
         finish({ error: safeSocketError(error) })
       }

@@ -617,6 +617,9 @@ importers:
       koffi:
         specifier: 3.1.1
         version: 3.1.1
+      papaparse:
+        specifier: 5.5.3
+        version: 5.5.3
       semver:
         specifier: ^7.8.5
         version: 7.8.5
@@ -636,6 +639,9 @@ importers:
       '@types/node':
         specifier: ^22.20.0
         version: 22.20.0
+      '@types/papaparse':
+        specifier: ^5.3.16
+        version: 5.5.2
       '@types/react':
         specifier: ~18.3.1
         version: 18.3.31

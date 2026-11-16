@@ -15,6 +15,7 @@ const HOST = 'login.example.test'
 const ALTERNATE = 'other.example.test'
 const BOT = { bot: 'bot-fixture', session: 'bot-session-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' }
 const SHARED = { bot: BOT.bot, session: 'shared-session-cccccccc-cccc-4ccc-8ccc-cccccccccccc' }
+const CODE = '041235'
 const CREDENTIAL = { username: 'vault-user@example.test', password: 'fixture-only-password' }
 const form = (action, extra = '') => `<!doctype html><form method="post" action="${action}">
   <input name="account" type="email" autocomplete="username">
@@ -86,9 +87,12 @@ test('submits a reviewed HTTPS form without typing credentials or forwarding the
       for await (const chunk of request) text += chunk
       const body = new URLSearchParams(text)
       posts.push({ host: request.headers.host, path: request.url,
-        matches: body.get('account') === CREDENTIAL.username && body.get('pass') === CREDENTIAL.password
-          && body.get('nonce') === 'fixture' })
-      if (request.url === '/forward') {
+        matches: request.url === '/check-code'
+          ? body.get('code') === CODE && body.get('nonce') === 'fixture' && body.size === 2
+          : body.get('account') === CREDENTIAL.username && body.get('pass') === CREDENTIAL.password
+            && body.get('nonce') === 'fixture'
+            && (request.url !== '/register' || body.get('confirm') === CREDENTIAL.password) })
+      if (request.url === '/forward' || request.url === '/check-code') {
         reply.writeHead(307, { Location: `https://${ALTERNATE}:${port}/trap` })
       } else {
         reply.writeHead(303, { Location: '/signed-in', 'Set-Cookie': 'signed=1; Secure; HttpOnly; Path=/' })
@@ -101,7 +105,22 @@ test('submits a reviewed HTTPS form without typing credentials or forwarding the
     if (request.url === '/worker-ready') workerReady.resolve()
     if (request.url === '/worker-intercepted') intercepted = true
     if (request.url === '/change-observed') changed.resolve()
-    if (request.url === '/other-origin') {
+    if (request.url === '/signup') {
+      reply.end(`<!doctype html><form method="post" action="/register">
+        <input name="account" type="email" autocomplete="email">
+        <input name="pass" type="password" autocomplete="new-password">
+        <input name="confirm" type="password" autocomplete="new-password">
+        <input name="nonce" type="hidden" value="fixture"><button>Register</button></form>`)
+    } else if (request.url === '/code') {
+      reply.end(`<!doctype html><form method="post" action="/check-code">
+        <input name="code" type="text" autocomplete="one-time-code" maxlength="6">
+        <input name="nonce" type="hidden" value="fixture"><button>Verify</button></form><script>
+        document.addEventListener('input', () => navigator.sendBeacon('/visible-value'));
+        setInterval(() => {
+          if (document.querySelector('[name=code]').value) navigator.sendBeacon('/visible-value');
+        }, 20);
+      </script>`)
+    } else if (request.url === '/other-origin') {
       reply.end(form(`https://${ALTERNATE}:${port}/trap`))
     } else if (request.url === '/forward-form') {
       reply.end(form('/forward'))
@@ -123,7 +142,7 @@ test('submits a reviewed HTTPS form without typing credentials or forwarding the
       reply.end(`self.addEventListener('install', () => self.skipWaiting());
         self.addEventListener('activate', event => event.waitUntil(self.clients.claim()));
         self.addEventListener('fetch', event => {
-          if (event.request.method === 'POST' && new URL(event.request.url).pathname === '/session') {
+          if (event.request.method === 'POST' && ['/session', '/check-code'].includes(new URL(event.request.url).pathname)) {
             event.respondWith(fetch('/worker-intercepted').then(() => new Response('intercepted', {status: 400})));
           }
         });`)
@@ -214,6 +233,34 @@ test('submits a reviewed HTTPS form without typing credentials or forwarding the
   assert.deepEqual(await shared('request-login'), { error: 'unavailable' })
   assert.equal(posts.length, 3)
   assert.equal(posts.at(-1).matches, true)
+  assert.equal(visibleValue, false)
+  assert.equal(intercepted, false)
+
+  assert.deepEqual(await shared('navigate', { url: `${origin}/signup` }), { ok: true })
+  assert.deepEqual(await shared('request-login'), { error: 'unavailable' })
+  assert.deepEqual(await control('navigate', { url: `${origin}/signup` }), { ok: true })
+  const signup = await control('request-login')
+  assert.equal(signup.purpose, 'signup')
+  assert.equal(signup.destination, `${origin}/register`)
+  assert.deepEqual(await exchange(vaultPath, { action: 'inspect-login', id: signup.id }), { ...signup, ...BOT })
+  assert.deepEqual(await exchange(vaultPath, { action: 'inspect-login-automatic', id: signup.id }), { error: 'unavailable' })
+  assert.deepEqual(await use(signup.id), { error: 'unavailable' })
+  assert.deepEqual(await exchange(vaultPath, { action: 'use-signup', id: signup.id, origin, bot: BOT.bot, ...CREDENTIAL }),
+    { error: 'unavailable' })
+  assert.deepEqual(await exchange(vaultPath, { action: 'use-signup', id: signup.id, origin, ...BOT, ...CREDENTIAL }),
+    { state: 'submitted' })
+  assert.deepEqual(posts.at(-1), { host: `${HOST}:${port}`, path: '/register', matches: true })
+  assert.equal(posts.length, 4)
+
+  assert.deepEqual(await control('navigate', { url: `${origin}/code` }), { ok: true })
+  const verification = await control('request-login')
+  assert.equal(verification.purpose, 'verification')
+  assert.equal(verification.destination, `${origin}/check-code`)
+  const verify = { action: 'use-verification', id: verification.id, origin, destination: verification.destination, ...BOT, code: CODE }
+  assert.deepEqual(await exchange(vaultPath, verify), { state: 'submitted' })
+  assert.deepEqual(await exchange(vaultPath, verify), { error: 'unavailable' })
+  assert.deepEqual(posts.at(-1), { host: `${HOST}:${port}`, path: '/check-code', matches: true })
+  assert.equal(posts.length, 5)
   assert.equal(visibleValue, false)
   assert.equal(intercepted, false)
 })

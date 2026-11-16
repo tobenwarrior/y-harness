@@ -29,6 +29,18 @@ const REPLY = 'I opened the website.'
 const DESKTOP_REPLY = 'I sent the key to my Linux desktop.'
 const LOGIN = { id: 'a'.repeat(32), origin: 'https://example.test', destination: 'https://example.test/session', state: 'pending' }
 const SHARED_LOGIN = { ...LOGIN, id: 'b'.repeat(32) }
+const SECURE_FORMS = [
+  {
+    request: { ...LOGIN, id: 'd'.repeat(32), destination: 'https://example.test/signup', purpose: 'signup' },
+    cue: 'secure signup', title: 'Approve website signup', action: 'Review signup', section: 'Signup approval',
+    result: 'signup form was submitted', reply: 'The signup form was submitted. I’ll check the site.',
+  },
+  {
+    request: { ...LOGIN, id: 'e'.repeat(32), destination: 'https://example.test/verify', purpose: 'verification' },
+    cue: 'secure verification', title: 'Website verification', action: 'Enter code', section: 'Verification code',
+    result: 'verification code was submitted', reply: 'I sent the verification code. I’ll check the site.',
+  },
+] as const
 const SHARED_CHALLENGE = 'c'.repeat(32)
 const LOGIN_REPLY = 'The login was submitted. I’ll check the page.'
 const ROUTINE_NEEDS_OWNER = 'The scheduled check needs the owner to sign in.'
@@ -47,7 +59,8 @@ class BrowserAdapter extends LlmAdapter {
       message.role === 'user' && !CONTEXT_SOURCES.includes(message.source?.kind ?? ''))
     const input = options.messages[latestUser]?.content.filter(block => block.type === 'text').map(block => block.text).join(' ') ?? ''
     const desktop = input.includes('Use the Linux desktop')
-    const savedLogin = input.includes('saved login')
+    const secureForm = SECURE_FORMS.find(form => input.includes(form.cue))
+    const savedLogin = secureForm !== undefined || input.includes('saved login')
     const routine = input.includes('scheduled check')
     const unapproved = input.includes('without a grant')
     const handoff = input.includes('take over')
@@ -57,7 +70,8 @@ class BrowserAdapter extends LlmAdapter {
     if (result === undefined && !checkSharing) {
       const id = ToolCallId(desktop ? 'fixture-desktop-input'
         : routine ? (unapproved ? 'fixture-routine-unapproved' : 'fixture-routine-approved')
-          : handoff ? 'fixture-browser-handoff' : savedLogin ? 'fixture-browser-login' : 'fixture-browser-navigation')
+          : handoff ? 'fixture-browser-handoff' : secureForm !== undefined ? `fixture-browser-${secureForm.request.purpose}`
+            : savedLogin ? 'fixture-browser-login' : 'fixture-browser-navigation')
       const name = shared ? 'shared_browser' : 'vps_computer'
       const args = JSON.stringify(desktop ? { action: 'key', key: 'Escape', surface: 'desktop' }
         : handoff ? { action: 'request_sign_in' }
@@ -77,19 +91,24 @@ class BrowserAdapter extends LlmAdapter {
     } else if (desktop) {
       expect(result.content).toEqual([expect.objectContaining({ type: 'text', text: 'Computer input sent.' })])
     } else if (handoff) {
-      expect(result.content).toEqual([expect.objectContaining({ type: 'text', text: expect.stringContaining('returned the Computer') })])
+      const returned: unknown = expect.stringContaining('returned the Computer')
+      expect(result.content).toEqual([expect.objectContaining({ type: 'text', text: returned })])
       expect(JSON.stringify(options.messages.slice(latestUser))).not.toContain('fixture-input')
     } else if (savedLogin) {
-      const resultText = unapproved ? 'This routine needs the owner' : 'sign-in submission'
+      const resultText = secureForm?.result ?? (unapproved ? 'This routine needs the owner' : 'sign-in submission')
       expect(result.content.some(block => block.type === 'text' && block.text.includes(resultText))).toBe(true)
       expect(JSON.stringify(result)).not.toContain(LOGIN.destination)
       expect(JSON.stringify(result)).not.toContain(LOGIN.id)
       expect(JSON.stringify(result)).not.toContain(SHARED_LOGIN.id)
+      for (const { request } of SECURE_FORMS) {
+        expect(JSON.stringify(result)).not.toContain(request.id)
+        expect(JSON.stringify(result)).not.toContain(request.destination)
+      }
     } else {
       expect(result.content.some(block => block.type === 'text' && block.text.includes('Browser'))).toBe(true)
     }
     const text = desktop ? DESKTOP_REPLY : checkSharing ? BROWSER_DISABLED : handoff ? HANDOFF_REPLY
-      : routine ? (unapproved ? ROUTINE_NEEDS_OWNER : ROUTINE_REPLY) : savedLogin ? LOGIN_REPLY : REPLY
+      : routine ? (unapproved ? ROUTINE_NEEDS_OWNER : ROUTINE_REPLY) : secureForm?.reply ?? (savedLogin ? LOGIN_REPLY : REPLY)
     yield { type: 'block-start', index: 0, blockType: 'text' }
     yield { type: 'text-delta', index: 0, text }
     yield { type: 'block-end', index: 0, block: { type: 'text', text } }
@@ -111,6 +130,8 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('opens websites for
   let handoff: { readonly lease: string; readonly session: string } | undefined
   let handoffLease: string | undefined
   let loginApproved = false
+  let currentForm: typeof SECURE_FORMS[number]['request'] | undefined
+  const approvedForms = new Set<string>()
   let automaticAllowed = false
   let automaticAttempts = 0
   let sharedApproved = false
@@ -136,7 +157,8 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('opens websites for
         canvas.font = '40px sans-serif'
         canvas.fillStyle = ink
         canvas.fillText(label, 100, 180)
-        return image.toDataURL('image/jpeg').split(',')[1]
+        const data = image.toDataURL('image/jpeg')
+        return data.slice(data.indexOf(',') + 1)
       }
       return {
         jpeg: screenshot('Example website', '#f1f4fa', '#1c2233'),
@@ -152,7 +174,7 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('opens websites for
       socket.on('error', () => socket.destroy())
       let body = ''
       socket.setEncoding('utf8')
-      socket.on('data', (value) => { body += value })
+      socket.on('data', (value) => { body += value.toString() })
       socket.once('end', () => {
         const request = JSON.parse(body) as {
           action: string
@@ -168,7 +190,7 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('opens websites for
         }
         const shared = request.session.startsWith('shared-session-')
         const rosterText = readFileSync(ownerRosterPath, 'utf8')
-        const ownerPairs: readonly { readonly bot: string; readonly session: string }[] = JSON.parse(rosterText)
+        const ownerPairs = JSON.parse(rosterText) as readonly { readonly bot: string; readonly session: string }[]
         if (!ownerPairs.some(pair => pair.bot === request.bot && (shared || pair.session === request.session))
           || (shared && sharingOverride !== true)) {
           socket.end(JSON.stringify({ error: 'unavailable' }))
@@ -209,7 +231,7 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('opens websites for
             }
             response = holding && (!owner || request.origin !== LOGIN.origin) ? { error: 'unavailable' } : { ok: true }
             break
-          case 'request-login': response = shared ? SHARED_LOGIN : LOGIN; break
+          case 'request-login': response = shared ? SHARED_LOGIN : currentForm ?? LOGIN; break
           case 'automatic-login':
             automaticAttempts++
             response = !shared && request.bot === BOT && request.session === ownerSession && request.id === LOGIN.id
@@ -218,7 +240,8 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('opens websites for
           case 'login-status':
             response = shared && sharedApproved && !sharedAuthorized
               ? { state: 'approval-pending', challenge: SHARED_CHALLENGE }
-              : { state: (shared ? sharedAuthorized : loginApproved) ? 'submitted' : 'pending' }
+              : { state: (shared ? sharedAuthorized : request.id === LOGIN.id ? loginApproved
+                : approvedForms.has(request.id ?? '')) ? 'submitted' : 'pending' }
             break
           case 'authorize-login':
             sharedAuthorized = shared && sharedApproved && request.id === SHARED_LOGIN.id && request.challenge === SHARED_CHALLENGE
@@ -274,7 +297,10 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('opens websites for
     await web.ctx.agentDefaultModel.saveSelection({ provider: PROVIDER, model: MODEL })
     const { bot } = await web.ctx.bots.create({ id: BOT, name: 'Browser Scout', cwd: web.workspaceCwd })
     ownerSession = bot.sessionId
-    await expect.poll(async () => JSON.parse(await readFile(ownerRosterPath, 'utf8')), { timeout: 5000 }).toEqual([
+    await expect.poll(async () => {
+      const roster: unknown = JSON.parse(await readFile(ownerRosterPath, 'utf8'))
+      return roster
+    }, { timeout: 5000 }).toEqual([
       { bot: BOT, session: bot.sessionId },
     ])
     await page.goto(web.authenticatedUrl, { waitUntil: 'load' })
@@ -327,10 +353,9 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('opens websites for
     await conversation.locator('[data-composer-input][contenteditable="true"]').fill('Use the Linux desktop and press Escape.')
     await conversation.getByRole('button', { name: 'Send message', exact: true }).click()
     await conversation.getByText(DESKTOP_REPLY, { exact: true }).waitFor()
-    const desktopCommands = (await readFile(desktopInput, 'utf8')).trim().split('\n').map(line => JSON.parse(line))
-    expect(desktopCommands).toEqual(Array.from({ length: 2 }, () => ({
-      sessionId: bot.sessionId, argv: expect.arrayContaining(['key', 'Escape']),
-    })))
+    const desktopCommands = (await readFile(desktopInput, 'utf8')).trim().split('\n').map((line): unknown => JSON.parse(line))
+    const keyCommand: unknown = expect.arrayContaining(['key', 'Escape'])
+    expect(desktopCommands).toEqual(Array.from({ length: 2 }, () => ({ sessionId: bot.sessionId, argv: keyCommand })))
     const unauthorizedDesktop = await fetch(new URL('/api/computer/frame', web.baseUrl), {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ sessionId: bot.sessionId, viewerId: randomUUID(), surface: 'desktop' }),
@@ -358,6 +383,29 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('opens websites for
     loginApproved = true
     await conversation.getByText(LOGIN_REPLY, { exact: true }).waitFor()
     await approval.waitFor({ state: 'hidden' })
+
+    const secureFormSnapshots: string[] = []
+    for (const { request, cue, title, action, section, reply } of SECURE_FORMS) {
+      currentForm = request
+      await conversation.locator('[data-composer-input][contenteditable="true"]').fill(`Use ${cue} on the test website.`)
+      await conversation.getByRole('button', { name: 'Send message', exact: true }).click()
+      const selector = `section[aria-label="${title}"]`
+      const card = page.locator(selector)
+      const openReview = card.getByRole('link', { name: action })
+      await openReview.waitFor()
+      expect(await card.locator('input').count()).toBe(0)
+      expect(await openReview.getAttribute('href')).toBe(`/__yharness/vault-login-use/${request.id}`)
+      expect(await (await web.hostFetch(loginRoute)).json()).toEqual({
+        request: { id: request.id, origin: request.origin, destination: request.destination, purpose: request.purpose },
+      })
+      const review = await captureStableAria(page, selector, web.workspaceCwd, { replacements: [[request.id, '{{id}}']] })
+      secureFormSnapshots.push(`## ${section}\n\n${review}`)
+      approvedForms.add(request.id)
+      await conversation.getByText(reply, { exact: true }).waitFor()
+      await card.waitFor({ state: 'hidden' })
+    }
+    currentForm = undefined
+
     await web.ctx.schedule.create(bot.sessionId, {
       title: 'Website check without approval', prompt: 'Use the saved login for this scheduled check without a grant.', after_seconds: 1,
     })
@@ -404,7 +452,10 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('opens websites for
       return JSON.stringify(view.result.value?.recent ?? [])
     }
     const browserAccessPath = '/api/bot-browser-access'
-    const access = async () => (await web.hostFetch(browserAccessPath)).json()
+    const access = async (): Promise<unknown> => {
+      const reply: unknown = await (await web.hostFetch(browserAccessPath)).json()
+      return reply
+    }
     const guestAccess = await fetch(new URL(browserAccessPath, origin), { headers: { Cookie: cookie } })
     expect(guestAccess.status).toBe(401)
     await expect(access()).resolves.toEqual({
@@ -466,7 +517,10 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('opens websites for
     await handoffCard.getByRole('button', { name: 'Take over' }).click()
     const screen = panel.getByRole('img', { name: 'Live computer screen' })
     await screen.waitFor()
-    await expect.poll(async () => (await (await web.hostFetch('/api/computer/frame', otherViewer)).json()).jpeg).toBe('')
+    await expect.poll(async () => {
+      const frame: unknown = await (await web.hostFetch('/api/computer/frame', otherViewer)).json()
+      return frame !== null && typeof frame === 'object' && 'jpeg' in frame ? frame.jpeg : undefined
+    }).toBe('')
     await panel.getByText(LOGIN.origin, { exact: true }).waitFor()
     const handoffPanelAria = await captureStableAria(page, panelSelector, web.workspaceCwd)
     await screen.evaluate((image) => {
@@ -506,7 +560,7 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('opens websites for
     expect(consoleLog.pageErrors).toEqual([])
     await compareOrRefreshGolden(GOLDEN,
       [`## In control\n\n${controlling}`, `## Watching\n\n${viewing}`, `## Linux desktop\n\n${desktopViewing}`,
-        `## Saved login approval\n\n${review}`,
+        `## Saved login approval\n\n${review}`, ...secureFormSnapshots,
         `## Scheduled login\n\n${unapprovedReply}\n\n${routineReply}`, `## Shared login approval\n\n${sharedReview}`,
         `## Shared browser sign-in\n\n${handoffCardAria}`, `## Shared browser in control\n\n${handoffPanelAria}`].join('\n\n'),
       MODE)
@@ -516,7 +570,7 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('opens websites for
       try { await scaffold?.close() }
       finally {
         for (const socket of sockets) socket.destroy()
-        if (socketServer?.listening === true) await new Promise<void>(resolve => socketServer!.close(() => resolve()))
+        if (socketServer?.listening === true) await new Promise<void>((resolve) => { socketServer!.close(() => { resolve() }) })
         await rm(root, { recursive: true, force: true })
       }
     }

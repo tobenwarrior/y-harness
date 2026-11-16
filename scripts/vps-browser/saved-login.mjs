@@ -22,7 +22,7 @@ export function loginDestination(origin, destination) {
  * Run in Chromium's isolated world. The opaque marker and form snapshot stay in
  * that document. The page's inputs and event handlers never receive the values.
  */
-function websiteLogin(operation, token, origin, destination, username, password) {
+function websiteLogin(operation, token, origin, destination, values) {
   const previous = globalThis.yharnessLogin
   globalThis.yharnessLogin = undefined
   if (!isSecureContext || window !== window.top || location.protocol !== 'https:' || document.visibilityState !== 'visible'
@@ -33,44 +33,70 @@ function websiteLogin(operation, token, origin, destination, username, password)
       && field.getClientRects().length > 0 && getComputedStyle(field).visibility === 'visible'
   }
 
+  function selectFields(inputs) {
+    const codes = inputs.filter(field => field.autocomplete === 'one-time-code')
+    if (codes.length > 0) {
+      const [code] = codes
+      return codes.length === 1 && ['text', 'tel', 'number', 'password'].includes(code.type) && editable(code)
+        ? { controls: codes, purpose: 'verification' } : null
+    }
+    const passwords = inputs.filter(field => field.type === 'password')
+    if (passwords.length === 0 || passwords.length > 2 || passwords.some(field => !editable(field))) return null
+    const signup = passwords.every(field => field.autocomplete === 'new-password')
+    if (!signup && (passwords.length !== 1 || passwords[0].autocomplete !== 'current-password')) return null
+    const identifiers = inputs.filter(field => ['email', 'text', 'tel'].includes(field.type)
+      && (field.autocomplete === 'username' || (signup && field.autocomplete === 'email')) && editable(field))
+    if (identifiers.length !== 1) return null
+    return { controls: [...identifiers, ...passwords], purpose: signup ? 'signup' : undefined }
+  }
+
   function candidate(form) {
     const target = form.target || document.querySelector('base[target]')?.target || '_self'
     const action = new URL(form.action, document.baseURI)
     if (form.method !== 'post' || target.toLowerCase() !== '_self' || form.enctype !== 'application/x-www-form-urlencoded'
       || action.origin !== location.origin || /[?#]/u.test(action.href) || form.elements.length > 32) return null
     const inputs = [...form.elements].filter(field => field instanceof HTMLInputElement)
-    const passwords = inputs.filter(field => field.type === 'password')
-    const identifiers = inputs.filter(field => ['email', 'text', 'tel'].includes(field.type)
-      && field.autocomplete === 'username' && editable(field))
-    if (passwords.length !== 1 || identifiers.length !== 1 || passwords[0].autocomplete !== 'current-password'
-      || !editable(passwords[0]) || passwords[0].name === identifiers[0].name) return null
-    const [user] = identifiers
-    const [pass] = passwords
+    const selection = selectFields(inputs)
+    if (selection === null) return null
+    const { controls, purpose } = selection
+    const names = new Set(controls.map(field => field.name))
+    if (names.size !== controls.length) return null
     const hidden = new URLSearchParams()
     for (const field of form.elements) {
-      if (field === user || field === pass || !field.name || field.matches(':disabled')) continue
+      if (controls.includes(field) || !field.name || field.matches(':disabled')) continue
       if (!(field instanceof HTMLInputElement) || field.type !== 'hidden' || field.name.length > 256 || field.value.length > 8192
-        || field.name === user.name || field.name === pass.name || hidden.has(field.name)) return null
+        || names.has(field.name) || hidden.has(field.name)) return null
       hidden.append(field.name, field.value)
     }
-    return { form, user, pass, action: action.href, hidden: hidden.toString() }
+    return { form, controls, purpose, action: action.href, hidden: hidden.toString() }
   }
 
   const candidates = [...document.forms].map(candidate).filter(value => value !== null)
   if (candidates.length !== 1) return null
-  const [{ form, user, pass, action, hidden }] = candidates
+  const [{ form, controls, purpose, action, hidden }] = candidates
   if (hidden.length > 48_000) return null
   if (operation === 'capture') {
-    globalThis.yharnessLogin = { token, form, user, pass, action, hidden, location: location.href, userName: user.name, passName: pass.name }
-    return { origin: location.origin, destination: action }
+    globalThis.yharnessLogin = {
+      token, form, controls, purpose, action, hidden, location: location.href,
+      names: controls.map(field => field.name),
+    }
+    return { origin: location.origin, destination: action, ...(purpose === undefined ? {} : { purpose }) }
   }
-  if (previous?.token !== token || previous.form !== form || previous.user !== user || previous.pass !== pass
+  const verification = purpose === 'verification'
+  if (previous?.token !== token || previous.form !== form || previous.purpose !== purpose
+    || previous.controls.length !== controls.length
+    || controls.some((field, index) => previous.controls[index] !== field || previous.names[index] !== field.name)
     || previous.action !== action || previous.hidden !== hidden || previous.location !== location.href
-    || previous.userName !== user.name || previous.passName !== pass.name || origin !== location.origin || destination !== action) return null
+    || origin !== location.origin || destination !== action || values.length !== (verification ? 1 : 2)) return null
 
   const payload = new URLSearchParams(hidden)
-  payload.set(user.name, username)
-  payload.set(pass.name, password)
+  for (const [index, field] of controls.entries()) {
+    const value = index === 0 ? values[0] : values[1]
+    if ((verification || (purpose === 'signup' && index > 0)) && (
+      (field.minLength >= 0 && value.length < field.minLength) || (field.maxLength >= 0 && value.length > field.maxLength)
+    )) return null
+    payload.set(field.name, value)
+  }
   if (payload.toString().length > 65_536) return null
   return fetch(destination, {
     method: 'POST', body: payload, mode: 'same-origin', credentials: 'same-origin',
@@ -91,6 +117,33 @@ export function savedLoginPage(command, close) {
     return response.exceptionDetails === undefined ? response.result?.value : undefined
   }
   const topFrame = async () => (await command('Page.getFrameTree')).frameTree.frame
+  const submit = async (reviewed, values, signal) => {
+    const bounded = AbortSignal.any([signal, AbortSignal.timeout(LOGIN_TIMEOUT)])
+    bounded.throwIfAborted()
+    const abort = () => { void close().catch(error => { void error }) }
+    bounded.addEventListener('abort', abort, { once: true })
+    try {
+      const frame = await topFrame()
+      if (frame.id !== reviewed.frame || frame.loaderId !== reviewed.loader || new URL(frame.url).origin !== reviewed.origin) {
+        return 'needs-owner'
+      }
+      await command('Network.setBypassServiceWorker', { bypass: true })
+      let result
+      try {
+        bounded.throwIfAborted()
+        result = await evaluate(reviewed.executionContextId, [
+          'submit', reviewed.token, reviewed.origin, reviewed.destination, values,
+        ])
+      } finally {
+        if (!bounded.aborted) await command('Network.setBypassServiceWorker', { bypass: false })
+      }
+      if (result !== 'submitted') return 'needs-owner'
+      await command('Page.reload', { loaderId: reviewed.loader }).catch(error => { void error })
+      return 'submitted'
+    } finally {
+      bounded.removeEventListener('abort', abort)
+    }
+  }
   return {
     async captureLogin(token) {
       const frame = await topFrame()
@@ -104,31 +157,10 @@ export function savedLoginPage(command, close) {
       return { token, frame: frame.id, loader: frame.loaderId, executionContextId, ...details }
     },
     async submitLogin(reviewed, username, password, signal) {
-      const bounded = AbortSignal.any([signal, AbortSignal.timeout(LOGIN_TIMEOUT)])
-      bounded.throwIfAborted()
-      const abort = () => { void close().catch(error => { void error }) }
-      bounded.addEventListener('abort', abort, { once: true })
-      try {
-        const frame = await topFrame()
-        if (frame.id !== reviewed.frame || frame.loaderId !== reviewed.loader || new URL(frame.url).origin !== reviewed.origin) {
-          return 'needs-owner'
-        }
-        await command('Network.setBypassServiceWorker', { bypass: true })
-        let result
-        try {
-          bounded.throwIfAborted()
-          result = await evaluate(reviewed.executionContextId, [
-            'submit', reviewed.token, reviewed.origin, reviewed.destination, username, password,
-          ])
-        } finally {
-          if (!bounded.aborted) await command('Network.setBypassServiceWorker', { bypass: false })
-        }
-        if (result !== 'submitted') return 'needs-owner'
-        await command('Page.reload', { loaderId: reviewed.loader }).catch(error => { void error })
-        return 'submitted'
-      } finally {
-        bounded.removeEventListener('abort', abort)
-      }
+      return reviewed.purpose === 'verification' ? 'needs-owner' : await submit(reviewed, [username, password], signal)
+    },
+    async submitVerification(reviewed, code, signal) {
+      return reviewed.purpose !== 'verification' ? 'needs-owner' : await submit(reviewed, [code], signal)
     },
   }
 }

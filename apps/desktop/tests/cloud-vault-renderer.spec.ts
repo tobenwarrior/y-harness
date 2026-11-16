@@ -4,7 +4,7 @@ import { JSDOM } from 'jsdom'
 import { expect, it, onTestFinished, vi } from 'vitest'
 import { en } from '../src/locale.ts'
 
-function page(mode: { readonly kind: 'request'; readonly id: string } | { readonly kind: 'login-use'; readonly id: string } | { readonly kind: 'manage' }, request: (value: unknown) => Promise<unknown>) {
+function page(mode: { readonly kind: 'request'; readonly id: string } | { readonly kind: 'login-use'; readonly id: string } | { readonly kind: 'manage' }, request: (value: unknown) => Promise<unknown>, importLogins?: (action: unknown, id?: unknown) => Promise<unknown>) {
   const dom = new JSDOM(readFileSync(new URL('../renderer/cloud-vault.html', import.meta.url), 'utf8'), {
     runScripts: 'outside-only', url: 'dsh-app://shell/cloud-vault.html',
   })
@@ -12,7 +12,7 @@ function page(mode: { readonly kind: 'request'; readonly id: string } | { readon
   dom.window.HTMLDialogElement.prototype.close = function () { this.open = false; this.dispatchEvent(new dom.window.Event('close')) }
   const close = vi.fn(async () => {})
   Object.defineProperty(dom.window, 'yhCloudVault', {
-    value: { messages: async () => en, mode: async () => mode, request, close },
+    value: { messages: async () => en, mode: async () => mode, request, importLogins, close },
   })
   onTestFinished(() => { dom.window.dispatchEvent(new dom.window.Event('pagehide')); dom.window.close() })
   const element = (id: string): HTMLElement => {
@@ -371,6 +371,33 @@ it.each([false, true])('enters a login for the reviewed website with saving set 
     .toBe(save ? en.cloudVaultLoginUseSubmittedSaved : en.cloudVaultLoginUseSubmitted)
 })
 
+it('approves a reviewed signup using only an account name and required Vault label', async () => {
+  const id = 'a'.repeat(32)
+  const origin = 'https://example.com'
+  const destination = origin + '/signup'
+  const request = vi.fn<(value: unknown) => Promise<unknown>>()
+    .mockResolvedValueOnce({ request: { id, origin, destination, logins: [], purpose: 'signup' } })
+    .mockResolvedValue({ state: 'needs-owner', saved: true })
+  const p = page({ kind: 'login-use', id }, request)
+  p.run()
+  await expect.poll(() => p.element('login-use-entry').hidden).toBe(false)
+  expect(p.element('title').textContent).toBe(en.cloudVaultSignupTitle)
+  expect(p.element('login-use-destination').textContent).toBe(destination)
+  expect(p.element('login-use-submit').textContent).toBe(en.cloudVaultSignupSubmit)
+  expect(p.element('login-use-password').hidden).toBe(true)
+  expect(p.element('login-use-save-toggle').hidden).toBe(true)
+  const label = p.element('login-use-save-label') as HTMLInputElement
+  expect(label.hidden).toBe(false)
+  expect(label.required).toBe(true)
+  ;(p.element('login-use-username') as HTMLInputElement).value = ' fixture@example.com '
+  label.value = ' Fixture '
+  p.element('login-use-entry').dispatchEvent(new p.dom.window.Event('submit', { bubbles: true, cancelable: true }))
+  await expect.poll(() => p.element('login-use-outcome').textContent).toBe(en.cloudVaultSignupNeedsOwner)
+  expect(request).toHaveBeenLastCalledWith({
+    action: 'create-login-use', id, origin, destination, username: 'fixture@example.com', saveLabel: 'Fixture',
+  })
+})
+
 it('clears entered credentials when the owner returns to a saved login', async () => {
   const id = 'a'.repeat(32)
   const origin = 'https://example.com'
@@ -594,6 +621,83 @@ it('assigns a website login to a Bot and displays its account without exposing t
   expect(scope.value).toBe(bot.id)
   expect(scope.disabled).toBe(true)
   expect((p.element('login-password') as HTMLInputElement).value).toBe('')
+})
+
+it('shows a masked code field for a verification request and sends it once', async () => {
+  const id = 'c'.repeat(32)
+  const origin = 'https://example.test'
+  const destination = origin + '/verify'
+  const code = '041235'
+  const request = vi.fn(async (value: unknown) => {
+    if (value && typeof value === 'object' && 'action' in value && value.action === 'inspect-login-use') {
+      return { request: { id, origin, destination, purpose: 'verification', logins: [] } }
+    }
+    return { state: 'submitted' }
+  })
+  const p = page({ kind: 'login-use', id }, request)
+  p.run()
+  await expect.poll(() => p.element('title').textContent).toBe('Website verification')
+  const input = p.element('login-use-code') as HTMLInputElement
+  expect(input.type).toBe('password')
+  expect(input.disabled).toBe(false)
+  expect(p.dom.window.document.activeElement).toBe(input)
+  expect(p.element('login-use-username').hidden).toBe(true)
+  expect(p.element('login-use-password').hidden).toBe(true)
+  expect(p.element('login-use-save-toggle').hidden).toBe(true)
+  expect(p.element('login-use-approve').hidden).toBe(true)
+  input.value = code
+  p.element('login-use-entry').dispatchEvent(new p.dom.window.Event('submit', { bubbles: true, cancelable: true }))
+  await expect.poll(() => p.element('login-use-outcome').textContent).toContain('Verification code sent')
+  expect(input.value).toBe('')
+  expect(request.mock.calls).toEqual([
+    [{ action: 'inspect-login-use', id, form: 'entry' }],
+    [{ action: 'enter-verification-code', id, origin, destination, code }],
+  ])
+})
+
+it('reviews a CSV in Vault before importing personal logins', async () => {
+  const login = { origin: 'https://example.com', label: 'Example account', username: 'fixture-user' }
+  const id = 'f'.repeat(32)
+  let saved = false
+  const importLogins = vi.fn(async (action: unknown) => {
+    if (action === 'choose') return { state: 'ready', id, logins: [login], duplicates: 2, invalid: 3, full: 0 }
+    if (action === 'confirm') {
+      saved = true
+      return { state: 'finished', imported: 1, duplicates: 0, full: 0, unconfirmed: 0 }
+    }
+    return { state: 'cancelled' }
+  })
+  const request = vi.fn(async (value: unknown) => {
+    if (value && typeof value === 'object' && 'action' in value) {
+      if (value.action === 'list') return { ok: true, services: [] }
+      if (value.action === 'list-logins') return { ok: true, logins: saved ? [
+        { id: 'a'.repeat(32), origin: login.origin, label: login.label },
+      ] : [] }
+      if (value.action === 'list-bot-logins') return { ok: true, botLogins: [] }
+    }
+    return { ok: false }
+  })
+  const p = page({ kind: 'manage' }, request, importLogins)
+  p.run()
+  await expect.poll(() => p.dom.window.document.querySelector('main')?.getAttribute('aria-busy')).toBe('false')
+  p.element('websites-tab').click()
+  p.element('import-logins').click()
+  const review = p.element('login-import') as HTMLDialogElement
+  await expect.poll(() => review.open).toBe(true)
+  expect(p.element('login-import-list').textContent).toContain(login.label)
+  expect(p.element('login-import-list').textContent).toContain(login.origin)
+  expect(p.element('login-import-list').textContent).toContain(login.username)
+  expect(p.element('login-import-notes').textContent).toContain('2 already saved or repeated')
+  expect(p.element('login-import-notes').textContent).toContain('3 invalid or unsupported')
+  expect(review.querySelector('input')).toBeNull()
+  expect(importLogins.mock.calls).toEqual([['choose']])
+
+  p.element('login-import-save').click()
+  await expect.poll(() => p.element('logins').textContent).toContain(login.label)
+  expect(review.open).toBe(false)
+  expect(importLogins.mock.calls).toEqual([['choose'], ['confirm', id]])
+  expect(p.element('websites-notice').textContent).toContain('1 login imported')
+  expect(request.mock.calls.every(([value]) => !JSON.stringify(value).includes('fixture-user'))).toBe(true)
 })
 
 it('shows automatic sign-in only for assigned accounts and lets the owner disable one when unavailable', async () => {

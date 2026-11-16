@@ -12,6 +12,7 @@ export interface BotWebsiteLoginRequest {
   readonly origin: string
   readonly destination: string
   readonly scope?: 'shared'
+  readonly purpose?: 'signup' | 'verification'
 }
 
 /** Fetch seam used by the browser reader and lifecycle tests. */
@@ -64,9 +65,12 @@ function publicDestination(value: unknown, origin: string): value is string {
 export function parseBotWebsiteLoginResponse(value: unknown): BotWebsiteLoginRequest | null {
   if (!record(value) || Object.keys(value).length !== 1 || value.request === null) return null
   const request = value.request
-  const shared = record(request) && request.scope === 'shared'
-  if (!record(request) || Object.keys(request).length !== (shared ? 4 : 3)
-    || (request.scope !== undefined && !shared)
+  if (!record(request)) return null
+  const shared = request.scope === 'shared'
+  const { purpose } = request
+  const special = purpose !== undefined
+  if (Object.keys(request).length !== (shared || special ? 4 : 3) || (shared && special)
+    || (request.scope !== undefined && !shared) || (special && purpose !== 'signup' && purpose !== 'verification')
     || typeof request.id !== 'string' || !REQUEST_ID.test(request.id)
     || !publicOrigin(request.origin) || !publicDestination(request.destination, request.origin)) return null
   return {
@@ -74,6 +78,7 @@ export function parseBotWebsiteLoginResponse(value: unknown): BotWebsiteLoginReq
     origin: request.origin,
     destination: request.destination,
     ...(shared ? { scope: 'shared' as const } : {}),
+    ...(purpose === undefined ? {} : { purpose }),
   }
 }
 

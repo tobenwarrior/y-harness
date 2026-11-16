@@ -109,6 +109,12 @@ dialog { width: min(345px, calc(100vw - 32px)); padding: 18px; border: 1px solid
 dialog::backdrop { background: rgb(0 0 0 / 34%); }
 dialog h2 { overflow-wrap: anywhere; }
 dialog p { margin: 7px 0 15px; }
+#login-import { width: min(440px, calc(100vw - 32px)); }
+#login-import-list:not(:empty) { max-height: min(36vh, 250px); overflow-y: auto; scrollbar-width: thin; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
+#login-import-list li { display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; padding: 8px 10px; }
+#login-import-list li span + span { color: var(--muted); font-size: 12px; }
+#login-import-notes:empty { margin: 0; }
+#login-import .actions { margin-top: 13px; }
 @media (max-width: 480px) {
   #grants li:has(.grant-scope) { display: grid; grid-template-columns: minmax(0, 1fr); gap: 7px; padding-block: 8px; }
   #grants li:has(.grant-scope) .actions { justify-content: space-between; }
