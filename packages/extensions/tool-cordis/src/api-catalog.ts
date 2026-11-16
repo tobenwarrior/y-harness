@@ -4618,6 +4618,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'the current bytes, subject to the configured complete-file cap.',
       },
       {
+        signature: 'async downloadWorkspaceFile(scope: WorkspaceFileScope, path: string, filename: string, signal: AbortSignal): Promise<Response>',
+        description: 'Download a regular file confined to its authorized Session workspace.',
+        parameters: [{ name: 'scope', description: 'Session and the workspace root from its header.' }, { name: 'path', description: 'declared path inside the workspace.' }, { name: 'filename', description: 'suggested attachment name.' }, { name: 'signal', description: 'download request lifetime.' }],
+        returns: 'an uncacheable attachment response subject to the complete-file cap.',
+      },
+      {
         signature: 'async readVerifiedBytes( scope: WorkspaceFileScope, path: WorkspaceFilePath, expected: WorkspaceFileStat, maxBytes: number, signal: AbortSignal, ): Promise<Uint8Array>',
         description: 'Read an authorized file after checking the reserved source identity.',
         parameters: [{ name: 'scope', description: 'authorization Session and its working directory.' }, { name: 'path', description: 'Session path or a path confined to its private Computer workspace.' }, { name: 'expected', description: 'source identity observed before the reservation.' }, { name: 'maxBytes', description: 'the consumer\'s reserved byte capacity.' }, { name: 'signal', description: 'caller cancellation.' }],
