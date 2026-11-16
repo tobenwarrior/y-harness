@@ -72,3 +72,12 @@ export function bundlePackageNameCandidates(packageSpecifier: string): readonly 
   }
   return [...candidates]
 }
+
+/** Compare package names, including any subpaths, under the profile resolver's aliases.
+ * @param left - First package specifier.
+ * @param right - Second package specifier.
+ * @returns Whether the names are identical or recognized aliases for the same module.
+ */
+export function samePackageName(left: string, right: string): boolean {
+  return left === right || bundlePackageNameCandidates(left).includes(right)
+}
