@@ -12,6 +12,7 @@ import pwd
 import re
 import socket
 import stat
+import struct
 import subprocess
 import sys
 import tempfile
@@ -25,6 +26,16 @@ HOME = Path('/var/lib') / ACCOUNT
 DATA = HOME / '.yharness-vps'
 UNIT = 'yharness-cloud.service'
 UNIT_PATH = Path('/etc/systemd/user') / UNIT
+SYSTEM_UNIT_DIRECTORY = Path('/etc/systemd/system')
+LINK_CLIENT = Path('scripts/vps-cloud-link.py')
+LINK_SOCKET = '/run/yharness-cloud-link.sock'
+LINK_SOCKET_UNIT = 'yharness-cloud-link.socket'
+LINK_WORKER_UNIT = 'yharness-cloud-link@.service'
+NATIVE_CLOUD_PORT = 3080
+BROWSER_INSTALLER = Path('scripts/setup-vps-browser.py')
+BROWSER_ROSTER = '/var/lib/yharness-browser-roster/cloud/active.json'
+VAULT_SOURCE = Path('scripts/vps-vault.py')
+VAULT_EXECUTABLE = Path('/usr/local/sbin/yharness-vault')
 SYSTEMCTL = ('/usr/bin/systemctl', '--system', '--no-pager', '--no-ask-password')
 SYSTEM_ENV = {'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'LC_ALL': 'C'}
 CLI = Path('apps/cli/lib/bin.js')
@@ -41,7 +52,9 @@ class AccountError(Exception):
 def command(args, error, *, timeout=30):
     """Run a fixed operation without forwarding potentially private diagnostics."""
     try:
-        result = subprocess.run(args, env=SYSTEM_ENV, capture_output=True, text=True, check=True, timeout=timeout)
+        result = subprocess.run(
+            args, env=SYSTEM_ENV, stdin=subprocess.DEVNULL, capture_output=True, text=True, check=True, timeout=timeout,
+        )
     except (OSError, subprocess.SubprocessError):
         raise AccountError(error) from None
     return result.stdout
@@ -53,13 +66,14 @@ def validate_port(port):
         raise AccountError('Choose an available port from 1024 to 65535.')
 
 
-def service_unit(uid, node, release, port):
+def service_unit(uid, node, release, port, *, isolated_browser=False):
     """Render the user unit for the dedicated account's rootless container cgroups."""
     if uid <= 0 or not all(SAFE_PATH.fullmatch(str(path)) for path in (node, release)):
         raise AccountError('Use absolute release and Node paths with letters, numbers, dots, underscores or hyphens.')
     validate_port(port)
     runtime = f'/run/user/{uid}'
     setup = Path(release) / 'scripts/setup-vps-account.py'
+    browser_env = f'Environment="YH_VPS_BOT_BROWSER_ROSTER={BROWSER_ROSTER}"\n' if isolated_browser else ''
     return f"""[Unit]
 Description=Y Harness Cloud
 ConditionUser={ACCOUNT}
@@ -71,7 +85,7 @@ Environment="HOME={HOME}"
 Environment="YH_HOME={DATA}/state"
 Environment="YH_VPS_BOT_ROOT={DATA}/bots"
 Environment="YH_VPS_BOT_IMAGE={BOT_IMAGE}"
-Environment="PATH={Path(node).parent}:/usr/local/bin:/usr/bin:/bin"
+{browser_env}Environment="PATH={Path(node).parent}:/usr/local/bin:/usr/bin:/bin"
 Environment="XDG_RUNTIME_DIR={runtime}"
 Environment="DBUS_SESSION_BUS_ADDRESS=unix:path={runtime}/bus"
 UMask=0077
@@ -85,6 +99,50 @@ RestartSec=5s
 [Install]
 WantedBy=default.target
 """.encode()
+
+
+def owner_link_units(owner_uid, cloud_uid, release):
+    """Bind an owner-only local socket to a read-only, release-owned link worker."""
+    if owner_uid <= 0 or cloud_uid <= 0 or owner_uid == cloud_uid:
+        raise AccountError('Choose a regular SSH owner separate from the Cloud account.')
+    setup = Path(release) / 'scripts/setup-vps-account.py'
+    if not SAFE_PATH.fullmatch(str(setup)):
+        raise AccountError('Use an administrator-owned release path for the Cloud link worker.')
+    listener = f"""[Unit]
+Description=Y Harness Cloud owner connection
+
+[Socket]
+ListenStream={LINK_SOCKET}
+SocketUser={owner_uid}
+SocketGroup=root
+SocketMode=0600
+Accept=yes
+MaxConnections=4
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target
+"""
+    worker = f"""[Unit]
+Description=Y Harness Cloud owner launch link
+PartOf={LINK_SOCKET_UNIT}
+
+[Service]
+Type=exec
+User=root
+ExecStart=/usr/bin/python3 -I "{setup}" link-worker --owner-uid {owner_uid} --cloud-uid {cloud_uid}
+StandardInput=socket
+StandardOutput=null
+StandardError=journal
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+RestrictAddressFamilies=AF_UNIX
+LimitCORE=0
+UMask=0077
+RuntimeMaxSec=10s
+"""
+    return {LINK_SOCKET_UNIT: listener.encode(), LINK_WORKER_UNIT: worker.encode()}
 
 
 def ensure_account():
@@ -191,20 +249,64 @@ def prepare_cloud_runtime(uid, node, release):
     ), 'The Cloud prerequisites could not be prepared. Check the private Podman build log.', timeout=900)
 
 
-def install_unit(path, content):
-    """Create the root-managed user unit without replacing administrator changes."""
+def file_installed(path, content):
+    """Accept only identical owner-controlled files at installer destinations."""
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        return False
+    if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o022
+            or info.st_nlink != 1 or info.st_size != len(content) or path.read_bytes() != content):
+        raise AccountError('A different Cloud setup file already exists. Keep it and review this installation.')
+    return True
+
+
+def install_unit(path, content, *, mode=0o644):
+    """Create a managed file atomically and keep existing identical files."""
     with tempfile.NamedTemporaryFile(dir=path.parent, prefix='.yharness-cloud-') as pending:
         pending.write(content)
         pending.flush()
+        os.fchmod(pending.fileno(), mode)
         os.fsync(pending.fileno())
-        os.fchmod(pending.fileno(), 0o644)
         try:
             os.link(pending.name, path)
         except FileExistsError:
-            info = path.lstat()
-            if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o022
-                    or info.st_nlink != 1 or path.read_bytes() != content):
-                raise AccountError('A different Cloud unit already exists. Review it before changing the deployment.') from None
+            if not file_installed(path, content):
+                raise AccountError('The Cloud setup file changed during installation.') from None
+
+
+def install_owner_link_client(release):
+    """Install the existing Mac launch command under the SSH owner's UID."""
+    uid = os.geteuid()
+    if uid <= 0:
+        raise AccountError('Install the Cloud launch helper as its SSH owner.')
+    home = Path(pwd.getpwuid(uid).pw_dir)
+    for path in (home, home / '.local', home / '.local/bin'):
+        path.mkdir(mode=0o700, exist_ok=True)
+        info = path.lstat()
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != uid or info.st_mode & 0o022:
+            raise AccountError('The SSH owner must control the Cloud helper directory.')
+    install_unit(home / '.local/bin/yharness-vps', (release / LINK_CLIENT).read_bytes(), mode=0o700)
+
+
+def prepare_owner_link(owner, cloud_uid, release):
+    """Prepare the private launch command and root units without starting a listener."""
+    units = owner_link_units(owner.pw_uid, cloud_uid, release)
+    files = {SYSTEM_UNIT_DIRECTORY / name: content for name, content in units.items()}
+    for path, content in files.items():
+        file_installed(path, content)
+    command([
+        '/usr/sbin/runuser', '-u', owner.pw_name, '--', '/usr/bin/env', '-i', 'PATH=/usr/bin:/bin', 'LC_ALL=C',
+        '/usr/bin/python3', '-I', str(release / 'scripts/setup-vps-account.py'), 'install-link-client',
+    ], 'Could not install the owner launch helper. Check for an existing ~/.local/bin/yharness-vps.')
+    for path, content in files.items():
+        install_unit(path, content)
+
+
+def start_owner_link():
+    """Enable only the root-managed owner link socket after Cloud is ready."""
+    command([*SYSTEMCTL, 'daemon-reload'], 'Could not reload the owner Cloud connection units.')
+    command([*SYSTEMCTL, 'enable', '--now', '--', LINK_SOCKET_UNIT], 'Could not start the owner Cloud connection.')
 
 
 def process_uid(pid):
@@ -221,11 +323,14 @@ def installed_fragment(value):
     return path.is_absolute() and path.resolve() == UNIT_PATH.resolve()
 
 
-def live_invocation(uid):
-    """Get the exact active service invocation and process identity."""
-    raw = command(cloud_systemctl(
-        uid, 'show', '--property=Id,FragmentPath,ActiveState,InvocationID,MainPID', '--', UNIT,
-    ), 'Could not check the dedicated Cloud service.')
+def live_invocation(uid, *, through_local_bus=False):
+    """Get the active invocation through the account manager or the worker's local bus."""
+    args = ('show', '--property=Id,FragmentPath,ActiveState,InvocationID,MainPID', '--', UNIT)
+    if through_local_bus:
+        query = ['/usr/bin/systemctl', '--user', '--no-pager', '--no-ask-password', f'--machine={ACCOUNT}@.host', *args]
+    else:
+        query = cloud_systemctl(uid, *args)
+    raw = command(query, 'Could not check the dedicated Cloud service.')
     fields = dict(line.split('=', 1) for line in raw.splitlines() if '=' in line)
     invocation = fields.get('InvocationID', '')
     pid = fields.get('MainPID', '')
@@ -237,10 +342,10 @@ def live_invocation(uid):
     return invocation, pid
 
 
-def launch_url(uid, port):
+def launch_url(uid, port, *, through_local_bus=False):
     """Read the private sign-in URL for the current Cloud process only."""
     validate_port(port)
-    invocation, pid = live_invocation(uid)
+    invocation, pid = live_invocation(uid, through_local_bus=through_local_bus)
     log = command([
         '/usr/bin/journalctl', '--no-pager', '--output=cat', '--lines=200',
         '_SYSTEMD_USER_UNIT=' + UNIT, '_SYSTEMD_INVOCATION_ID=' + invocation, f'_UID={uid}', '_PID=' + pid,
@@ -249,10 +354,26 @@ def launch_url(uid, port):
     for line in reversed(log.splitlines()):
         match = pattern.match(line)
         if match is not None:
-            if live_invocation(uid) != (invocation, pid):
+            if live_invocation(uid, through_local_bus=through_local_bus) != (invocation, pid):
                 break
             return match[1]
     raise AccountError('The dedicated Cloud sign-in link is unavailable. Try again after startup.')
+
+
+def link_peer_uid(connection):
+    """Return the UID the Linux kernel recorded for the accepted socket."""
+    credentials = struct.Struct('=iII')
+    _pid, uid, _gid = credentials.unpack(connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, credentials.size))
+    return uid
+
+
+def send_owner_link(connection, owner_uid, cloud_uid):
+    """Send the running Cloud process's link only to the configured SSH owner."""
+    if owner_uid <= 0 or cloud_uid <= 0 or owner_uid == cloud_uid or link_peer_uid(connection) != owner_uid:
+        raise AccountError('Cloud connection is unavailable for this SSH account.')
+    connection.settimeout(2)
+    link = launch_url(cloud_uid, NATIVE_CLOUD_PORT, through_local_bus=True)
+    connection.sendall((link + '\n').encode('ascii'))
 
 
 def runtime_prerequisites(node, release, prepare):
@@ -338,29 +459,68 @@ def start_cloud(uid, port):
         raise
 
 
-def install(node, release, port):
+def prepare_cloud_computer(node, release, chromium, owner, cloud):
+    """Provision the Browser worker and an empty Vault before the first Cloud start."""
+    browser = trusted_path(release / BROWSER_INSTALLER)
+    vault = trusted_path(release / VAULT_SOURCE).read_bytes()
+    trusted_path(VAULT_EXECUTABLE.parent.parent)
+    VAULT_EXECUTABLE.parent.mkdir(mode=0o755, exist_ok=True)
+    trusted_path(VAULT_EXECUTABLE.parent)
+    if file_installed(VAULT_EXECUTABLE, vault) and stat.S_IMODE(VAULT_EXECUTABLE.stat().st_mode) != 0o755:
+        raise AccountError('The installed Vault command needs mode 0755 for Desktop access.')
+    browser_command = ['/usr/bin/python3', '-I', str(browser)]
+    command([
+        *browser_command, 'install', '--chromium', str(chromium), '--node', str(node),
+        '--cloud-uid', str(cloud.pw_uid), '--owner-roster', '--saved-logins',
+    ], 'Could not install the isolated Browser. Check Chromium and the existing browser settings.')
+    install_unit(VAULT_EXECUTABLE, vault, mode=0o755)
+    command([
+        '/usr/bin/python3', '-I', str(VAULT_EXECUTABLE), '--cloud-user', ACCOUNT,
+        'initialize-cloud', '--owner', owner.pw_name,
+    ], 'Could not initialize the Cloud Vault. Check the existing Vault owner and Cloud account.')
+    command([*browser_command, 'activate'], 'Could not enable the isolated Browser sockets.')
+
+
+def install(node, release, port, *, ssh_owner=None, chromium=None):
     """Prepare the separate account and start its loopback Cloud service."""
+    if chromium is not None and ssh_owner is None:
+        raise AccountError('Select the regular SSH owner with --owner when installing Browser and Vault.')
     node = trusted_path(node)
     release = trusted_path(release)
+    if chromium is not None:
+        chromium = trusted_path(chromium)
+        check_executable(chromium)
     for executable in (node, trusted_path('/usr/bin/podman')):
         check_executable(executable)
     validate_port(port)
+    if ssh_owner is not None and port != NATIVE_CLOUD_PORT:
+        raise AccountError('Use port 3080 for the native Cloud workspace.')
+    owner = None if ssh_owner is None else pwd.getpwnam(ssh_owner)
+    if owner is not None and (owner.pw_uid <= 0 or owner.pw_name == ACCOUNT):
+        raise AccountError('Choose a regular SSH owner separate from the Cloud account.')
+    if owner is not None and not trusted_path(release / LINK_CLIENT).is_file():
+        raise AccountError('Install the Cloud launch helper from the release first.')
     for path in (release / CLI, release / 'scripts/setup-vps.py', release / 'scripts/setup-vps-account.py',
                  release / 'apps/web/dist/index.html'):
         if not trusted_path(path).is_file():
             raise AccountError('Install the built Web release, Node, and Podman first.')
     account = ensure_account()
-    unit = service_unit(account.pw_uid, node, release, port)
-    if UNIT_PATH.exists() or UNIT_PATH.is_symlink():
-        install_unit(UNIT_PATH, unit)
-    command(['/usr/bin/loginctl', 'enable-linger', ACCOUNT], 'Could not enable the Cloud account to run without a login.')
-    command([*SYSTEMCTL, 'start', f'user@{account.pw_uid}.service'], 'Could not start the Cloud user manager.')
+    unit = service_unit(account.pw_uid, node, release, port, isolated_browser=chromium is not None)
+    installed = file_installed(UNIT_PATH, unit)
     # The administrator's working directory may be private.
     os.chdir('/')
+    if owner is not None:
+        prepare_owner_link(owner, account.pw_uid, release)
+    command(['/usr/bin/loginctl', 'enable-linger', ACCOUNT], 'Could not enable the Cloud account to run without a login.')
+    command([*SYSTEMCTL, 'start', f'user@{account.pw_uid}.service'], 'Could not start the Cloud user manager.')
     prepare_cloud_runtime(account.pw_uid, node, release)
+    if chromium is not None and not installed:
+        prepare_cloud_computer(node, release, chromium, owner, account)
     install_unit(UNIT_PATH, unit)
     command(cloud_systemctl(account.pw_uid, 'daemon-reload'), 'Could not reload the Cloud user unit configuration.')
     start_cloud(account.pw_uid, port)
+    if owner is not None:
+        start_owner_link()
 
 
 @contextmanager
@@ -384,11 +544,17 @@ def main():
         choice.add_argument('--node', type=Path, required=True)
         choice.add_argument('--release', type=Path, required=True)
         if action == 'install':
-            choice.add_argument('--port', type=int, default=3080)
+            choice.add_argument('--port', type=int, default=NATIVE_CLOUD_PORT)
+            choice.add_argument('--owner', help='SSH account allowed to open the native Cloud workspace')
+            choice.add_argument('--chromium', type=Path, help='trusted Chromium executable to install Browser and Vault')
         else:
             choice.add_argument('--prepare-image', action='store_true')
     actions.add_parser('status')
-    actions.add_parser('url').add_argument('--port', type=int, default=3080)
+    actions.add_parser('url').add_argument('--port', type=int, default=NATIVE_CLOUD_PORT)
+    actions.add_parser('install-link-client', help=argparse.SUPPRESS)
+    worker = actions.add_parser('link-worker', help=argparse.SUPPRESS)
+    worker.add_argument('--owner-uid', type=int, required=True)
+    worker.add_argument('--cloud-uid', type=int, required=True)
     options = parser.parse_args()
     os.umask(0o077)
     try:
@@ -396,12 +562,20 @@ def main():
             raise AccountError('Dedicated Cloud setup requires Linux and systemd.')
         if options.action == 'check-runtime':
             runtime_prerequisites(options.node, options.release, options.prepare_image)
+        elif options.action == 'install-link-client':
+            install_owner_link_client(Path(__file__).resolve().parents[1])
         elif os.geteuid() != 0:
             raise AccountError('Run this Cloud administration command through sudo.')
         elif options.action == 'install':
             with installation_lock():
-                install(options.node, options.release, options.port)
+                install(options.node, options.release, options.port, ssh_owner=options.owner, chromium=options.chromium)
             print('Dedicated Cloud service enabled.')
+        elif options.action == 'link-worker':
+            if options.cloud_uid != pwd.getpwnam(ACCOUNT).pw_uid:
+                raise AccountError('The dedicated Cloud account changed.')
+            os.chdir('/')
+            with socket.fromfd(0, socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+                send_owner_link(connection, options.owner_uid, options.cloud_uid)
         elif options.action == 'url':
             os.chdir('/')
             print(launch_url(pwd.getpwnam(ACCOUNT).pw_uid, options.port))

@@ -678,6 +678,9 @@ importers:
       '@yharness/home-paths':
         specifier: workspace:*
         version: link:../../packages/util/home-paths
+      '@yharness/provider-config-sync':
+        specifier: workspace:*
+        version: link:../../packages/settings/provider-config-sync
       app-builder-lib:
         specifier: 26.15.3
         version: 26.15.3(dmg-builder@26.15.3)(electron-builder-squirrel-windows@26.15.3)(supports-color@9.4.0)
@@ -1230,12 +1233,12 @@ importers:
       '@yharness/tools':
         specifier: workspace:*
         version: link:../../core/tools
-      '@yharness/user-approval':
-        specifier: workspace:*
-        version: link:../../interaction/user-approval
       '@yharness/typert-protocol':
         specifier: workspace:*
         version: link:../../typert/protocol
+      '@yharness/user-approval':
+        specifier: workspace:*
+        version: link:../../interaction/user-approval
 
   packages/api/account-controller:
     dependencies:
@@ -2848,6 +2851,9 @@ importers:
       '@yharness/cordis-host-runner':
         specifier: workspace:*
         version: link:../../extensions/cordis-host-runner
+      '@yharness/credentials':
+        specifier: workspace:*
+        version: link:../../credentials/credentials
       '@yharness/file-reference':
         specifier: workspace:*
         version: link:../../context/file-reference
@@ -2890,6 +2896,9 @@ importers:
       '@yharness/llm':
         specifier: workspace:*
         version: link:../../llm/llm
+      '@yharness/llm-pi-ai':
+        specifier: workspace:*
+        version: link:../../llm/llm-pi-ai
       '@yharness/message-feedback':
         specifier: workspace:*
         version: link:../../feedback/message-feedback
@@ -2905,6 +2914,9 @@ importers:
       '@yharness/plugin-manager':
         specifier: workspace:*
         version: link:../../boot/plugin-manager
+      '@yharness/provider-config-sync':
+        specifier: workspace:*
+        version: link:../../settings/provider-config-sync
       '@yharness/sandbox':
         specifier: workspace:*
         version: link:../../sandbox/sandbox
@@ -2929,6 +2941,9 @@ importers:
       '@yharness/session-turn-outline':
         specifier: workspace:*
         version: link:../../session/session-turn-outline
+      '@yharness/settings':
+        specifier: workspace:*
+        version: link:../../settings/settings
       '@yharness/skill-filesystem':
         specifier: workspace:*
         version: link:../../skill/skill-filesystem

@@ -73,6 +73,8 @@ When you launch `yharness --profile web` over SSH, the URL line still prints but
 
 The VPS installer enables `botComputers` and provisions a separate rootless Podman computer for each owner Bot. The owner-authenticated Computer routes resolve the requested Session against the Bot roster. The model tool uses the calling Session. Each desktop has its own controller and renewable human lease that pauses the Computer tool's screenshots and input. An existing Bot receives its computer when first accessed, while its saved Session and roster identity stay in place. File cards and previews use the selected Bot's workspace, including for a cold Session.
 
+The dedicated VPS installer prepares the isolated browser worker and owner Vault when Chromium is selected. The Web profile uses the managed owner roster supplied by the service environment and enables owner-approved website login requests. A deployment can set its own Computer configuration in the Web profile patch.
+
 The Web systemd user service starts each private Computer in a separate scope. Its runtime and network processes can continue across a Web service restart. Interactive Web launches use Podman directly.
 
 The authenticated owner can restart an idle private Computer. The desktop runtime reuses its named volumes and saved network policy. On a Bot with an isolated browser, Desktop restarts the Linux desktop and Browser recovery closes the isolated browser until the next frame. Browser recovery keeps its profile and requires worker support. Running turns, terminals, viewer leases and sign-in requests block recovery.
@@ -116,6 +118,8 @@ Each browser session selects a shipped preset (`standard` by default). The Agent
 
 <details>
 <summary>Implementation internals — click to expand</summary>
+
+On a loopback Web Host, the authenticated owner route accepts a separately approved Mac provider key copy. It matches the provider's live endpoint identity and settings revision, then fills only an empty copy-specific credential reference. Its replies contain admission status without key values.
 
 The bundle is one patch layer of six files plus one runtime glue plugin: `cordis.patch.yml` carries the host rows and the preset registry, and each `presets/<id>.patch.yml` inserts one shipped preset declaration, applied in the order `dsh.bundle.patch` lists them. The storage stack and projection cache come from the base bundle; the Web overlay's workspace and message-feedback rows consume that shared `storageDomain` service. The patch restates the surface-specific values the base deliberately omits, inserts the Web-only host rows and browser roster, then moves the agent plane behind presets. The glue plugin owns dist serving, the advertised application URL, trust sampling, prompt sections, the bash variable, and the readiness announcements. Shared Bot sessions use the `shared-bot` preset and a private temporary working directory; the collaborator route is separately allowlisted, capped, and concurrency-limited, and never exposes ordinary operator RPCs. The `office-to-pdf` row mounts one lazy [Office conversion provider](../../document/office-to-pdf/README.md) for Host consumers, including Desktop compositions using this bundle. The conversion service's Remote methods authorize preview reads, while Document Preview owns the Office viewer and Client cache.
 

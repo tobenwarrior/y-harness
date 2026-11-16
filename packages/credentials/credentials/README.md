@@ -56,6 +56,8 @@ await ctx.credentials.set(ref, 'sk-…')                 // rejects while a read
 await ctx.credentials.unset(ref)                       // no-op when absent; same shadowing rule
 ```
 
+Consumers that transfer a key into an empty workspace use the optional create-only operation. A provider that implements it checks all effective sources and inserts under one lock.
+
 Store a key with `set`, remove it with `unset`, check its status with `describe`, and read the current value with `resolve` when an operation needs it. `describe` reports whether the key is set, where it comes from, and whether you can write to it — it never returns the value.
 
 ### Storing, updating, and removing records

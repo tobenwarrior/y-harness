@@ -1,11 +1,13 @@
 /** Locked three-way synchronization of explicit provider catalog configuration. */
-import { randomUUID } from 'node:crypto'
 import { lstat, mkdir, readFile, realpath } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join } from 'node:path'
 import { z } from 'zod'
 import { withFileLock, writeFileAtomic } from '@yharness/atomic-write'
 import type { SettingsPathOpView } from '@yharness/settings/types'
-import { canonicalJson, hasExcludedModelFields, parseProvider, projectProvider, providerFields, schemaFingerprint } from './profile.ts'
+import {
+  canonicalJson, hasExcludedModelFields, parseProvider, projectProvider, providerCatalogRoute,
+  providerFields, schemaFingerprint, unconfiguredProviderSettings,
+} from './profile.ts'
 import type { ProviderProfile } from './profile.ts'
 
 /** Active explicit configuration and its current write revision. */
@@ -25,11 +27,10 @@ export interface EngineOptions {
 /** Safe observable result; conflict identities contain no configuration values. */
 export interface SyncStatus { state: 'ready' | 'pending' | 'conflict' | 'unconfigured' | 'error'; conflicts: string[] }
 
-const route = z.string().regex(/^[a-z][a-z0-9-]{0,127}$/)
 const record = z.strictObject({
   revision: z.number().int().nonnegative(), value: z.unknown().transform(value => value === null ? null : parseProvider(value)),
 })
-const records = z.record(route, record)
+const records = z.record(providerCatalogRoute, record)
 const documentSchema = z.strictObject({
   version: z.literal(1), schemaFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
   revision: z.number().int().nonnegative(), providers: records,
@@ -62,7 +63,7 @@ async function readDocument<T>(path: string, schema: z.ZodType<T>): Promise<T | 
 
 function projection(providers: Record<string, unknown>): Record<string, ProviderProfile> {
   return Object.fromEntries(Object.entries(providers).map(([id, value]) => {
-    if (!route.safeParse(id).success) throw new Error('Unsupported local provider identity')
+    if (!providerCatalogRoute.safeParse(id).success) throw new Error('Unsupported local provider identity')
     return [id, projectProvider(value)]
   }))
 }
@@ -83,10 +84,8 @@ function importOps(id: string, local: LocalNamespace, value: ProviderProfile | n
   }
   if (raw === undefined) {
     if (Object.hasOwn(local.inherited, id)) return undefined
-    // Nous requires grant-bound local setup and forbids the missing-key guard.
-    if (id === 'nous' || id === 'chatgpt') return undefined
-    const apiKeyEnv = `YH_SYNC_UNCONFIGURED_${randomUUID().replaceAll('-', '').toUpperCase()}`
-    return [{ op: 'set', path: ['providers', id], value: { ...value, apiKeyEnv } as JsonValue }]
+    const settings = unconfiguredProviderSettings(id, value)
+    return settings === undefined ? undefined : [{ op: 'set', path: ['providers', id], value: settings }]
   }
   const before = projectProvider(raw)
   // Existing authorization must never be redirected by a remote endpoint change.

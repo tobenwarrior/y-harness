@@ -345,6 +345,58 @@ class VaultTest(unittest.TestCase):
             self.assertEqual(self.store.require_requests(policy), {grant})
             self.assertEqual(self.store.cloud({'action': 'list', 'bot': 'bot-other'}, CLOUD_UID), {'credentials': []})
 
+    def test_dedicated_vault_initializes_before_a_bot_exists(self):
+        with patch.object(vault, 'trusted_file'), patch.object(vault, 'browser_grants', return_value=(set(), CLOUD_UID)):
+            self.store.initialize_cloud(OWNER_UID, CLOUD_UID, start=True)
+        self.assertTrue(self.listener_active)
+        self.assertTrue(self.cloud_listener_active)
+        self.assertEqual(self.store.desktop({'action': 'list-grants'}, OWNER_UID), {
+            'access': {'services': [], 'grants': []},
+        })
+        self.assertEqual(self.store.cloud({'action': 'list', 'bot': BROWSER_BOT}, CLOUD_UID), {'credentials': []})
+        with self.assertRaises(vault.VaultError):
+            self.store.desktop({'action': 'list-grants'}, CLOUD_UID)
+        with self.assertRaises(vault.VaultError):
+            self.store.cloud({'action': 'list', 'bot': BROWSER_BOT}, OWNER_UID)
+
+    def test_dedicated_vault_rejects_a_different_browser_publisher(self):
+        for browser in ((set(), CLOUD_UID + 10), ({(BROWSER_BOT, BROWSER_SESSION)}, None)):
+            with self.subTest(browser=browser), patch.object(vault, 'browser_grants', return_value=browser):
+                with self.assertRaises(vault.VaultError):
+                    self.store.initialize_cloud(OWNER_UID, CLOUD_UID)
+        self.assertFalse((self.root / 'desktop.json').exists())
+
+    def test_dedicated_vault_retries_before_committing_owner_access(self):
+        with patch.object(vault, 'trusted_file'), patch.object(vault, 'browser_grants', return_value=(set(), CLOUD_UID)):
+            self.failed_listener_start = True
+            with self.assertRaises(vault.VaultError):
+                self.store.initialize_cloud(OWNER_UID, CLOUD_UID, start=True)
+            with self.assertRaises(vault.VaultError):
+                self.store.desktop({'action': 'list-grants'}, OWNER_UID)
+            self.failed_listener_start = False
+            self.store.initialize_cloud(OWNER_UID, CLOUD_UID, start=True)
+        self.assertTrue(self.listener_active and self.cloud_listener_active)
+        self.assertEqual(self.store.require_requests(self.store.root_policy()), set())
+
+    def test_dedicated_vault_preserves_credentials_grants_and_disabled_requests(self):
+        self.store.enable(FIRST_UNIT, CLOUD_UID)
+        self.store.save(FIRST_UNIT, 'EXAMPLE_KEY', FIRST_VALUE, CLOUD_UID)
+        self.store.allow_desktop(OWNER_UID, CLOUD_UID, [FIRST_UNIT])
+        grant = (BROWSER_BOT, FIRST_UNIT, 'EXAMPLE_KEY')
+        self.store.enable_requests([grant])
+        before = {path: path.read_bytes() for path in self.root.rglob('*') if path.is_file()}
+        self.store.initialize_cloud(OWNER_UID, CLOUD_UID, start=True)
+        self.assertEqual({path: path.read_bytes() for path in self.root.rglob('*') if path.is_file()}, before)
+        with self.assertRaises(vault.VaultError):
+            self.store.initialize_cloud(OWNER_UID + 1, CLOUD_UID)
+        with self.assertRaises(vault.VaultError):
+            self.store.initialize_cloud(OWNER_UID, CLOUD_UID + 1)
+        self.store.disable_requests()
+        self.store.initialize_cloud(OWNER_UID, CLOUD_UID, start=True)
+        self.assertFalse(self.cloud_listener_active)
+        self.assertEqual(self.store.names(FIRST_UNIT), ['EXAMPLE_KEY'])
+        self.assertFalse((self.root / vault.CLOUD_REQUESTS_ENABLED).exists())
+
     def test_automatic_sign_in_requires_the_current_assigned_account_and_owner_grant(self):
         site = 'https://example.com'
         request = {'action': 'automatic-login', 'id': 'a' * 32, 'bot': BROWSER_BOT, 'session': BROWSER_SESSION}

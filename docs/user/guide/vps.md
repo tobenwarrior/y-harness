@@ -28,11 +28,17 @@ Use the dedicated-account installer to start a new Cloud instance without giving
 
 ```sh
 sudo /usr/bin/python3 -I /opt/yharness/release/scripts/setup-vps-account.py install \
-  --release /opt/yharness/release --node /opt/node/bin/node --port 3180
-sudo /usr/bin/python3 -I /opt/yharness/release/scripts/setup-vps-account.py url --port 3180
+  --release /opt/yharness/release --node /opt/node/bin/node --owner "$USER" \
+  --chromium /opt/chromium/chrome
 ```
 
-Use the selected loopback port for both sides of the [SSH forward](#open-y-harness), then open the printed private sign-in link. Setup prepares the Bot image inside Cloud's service environment so it can use the same container storage at startup. The `yharness-cloud.service` user service starts at boot under the locked Cloud account and stores its data under `/var/lib/yharness-cloud/.yharness-vps`. It starts with its own Bot workspaces and provider settings. Keep an existing Cloud installation running until its chats, files, providers, and desktop volumes have been moved and verified.
+Use `--owner` from the regular SSH account that will open Cloud. Port 3080 is required for the Mac workspace. Setup installs the sign-in helper in that account and makes the private link available to that account over a local socket. Then [open Cloud with your usual SSH destination](#open-y-harness). If that account already has a different `~/.local/bin/yharness-vps`, setup keeps it and reports the conflict.
+
+Set `--chromium` to the absolute path of an administrator-installed Chromium executable. On a fresh installation, this prepares an isolated Browser for each owner Bot and opens an empty Cloud Vault for the SSH owner. Add website accounts in **Cloud → Vault** and grant shared access or automatic sign-in there when needed. Omit `--chromium` for a desktop-only VPS. On repeat runs, setup keeps the existing Browser and Vault policies. Manage a custom installation through the [isolated Browser settings](#enable-an-isolated-browser-for-selected-bots) and [Vault settings](#manage-service-secrets-from-the-mac-app).
+
+For a Web-only connection, omit `--owner` and `--chromium` and choose an available `--port`. Run `sudo /usr/bin/python3 -I /opt/yharness/release/scripts/setup-vps-account.py url --port PORT` to get the private sign-in link. Use the selected port for both sides of the [SSH forward](#open-y-harness).
+
+Setup prepares the Bot image inside Cloud's service environment so it can use the same container storage at startup. The `yharness-cloud.service` user service starts at boot under the locked Cloud account and stores its data under `/var/lib/yharness-cloud/.yharness-vps`. It starts with its own Bot workspaces and provider settings. Keep an existing Cloud installation running until its chats, files, providers, and desktop volumes have been moved and verified.
 
 ### Preserve the existing workspace path
 
@@ -56,6 +62,16 @@ ssh -o ExitOnForwardFailure=yes -L 127.0.0.1:3080:127.0.0.1:3080 your-vps \
 ```
 
 Open the printed sign-in link in your browser and keep it private. Leave the command running while you use Y Harness. You can close the tunnel and reconnect later while the service continues on the VPS. [Set up your models and workspace](./index.md) in the VPS Web interface.
+
+## Copy model catalogs from Mac
+
+Open Cloud, then choose **Workspace → Copy Model Catalogs to Cloud**. Review how many provider catalogs can be added and confirm the copy. The action adds model definitions for missing routes. Cloud keeps the routes it already has, including provider defaults inherited from its settings.
+
+### Copy saved provider keys
+
+After copying the catalogs, choose **Workspace → Copy Saved Provider Keys to Cloud**. The app lists the eligible providers and the Cloud connection that will receive them. Confirm to save a separate copy of each listed key. Y Harness matches the provider's HTTPS endpoints and checks that the Cloud credential is still empty. This keeps any key you already saved in Cloud.
+
+Use **Settings → Models** in Cloud to replace or remove a copied key. Account sign-ins and keys supplied by a launch environment or a .env file are set up separately in that workspace. The key copy requires an up-to-date Mac app and Cloud server.
 
 ## Watch and control the Computer
 
