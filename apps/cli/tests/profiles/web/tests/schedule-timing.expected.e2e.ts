@@ -73,7 +73,7 @@ it('edits a retained task through built Remote bindings and preserves its identi
     expect(JSON.parse(persisted)).toEqual({
       unit: { name: 'schedule', version: 1 },
       global: null,
-      tables: { tasks: { [id]: { ...task, record: updated } } },
+      tables: { tasks: { [id]: { ...task, record: updated } }, create_operations: {} },
     })
     expect(await rpc('schedule/history', historyRequest)).toEqual(expectedHistory)
 
