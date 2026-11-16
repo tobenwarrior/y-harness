@@ -787,15 +787,15 @@ def read_browser_owner_roster(cloud_uid):
 
 
 def browser_grants():
-    """Resolve the active roster and report whether Cloud publishes the owner pairs."""
+    """Return active pairs and the publisher UID for an installer-managed roster."""
     data = read_browser_managed_json(BROWSER_GRANTS)
     if type(data) is dict:
         if (set(data) != {'version', 'cloudUid', 'grants'} or type(data['version']) is not int or data['version'] != 1
                 or type(data['cloudUid']) is not int or data['cloudUid'] <= 0):
             raise VaultError(BROWSER_UNAVAILABLE)
         browser_pairs(data['grants'])
-        return browser_pairs(read_browser_owner_roster(data['cloudUid']), allow_shared=False), True
-    return browser_pairs(data), False
+        return browser_pairs(read_browser_owner_roster(data['cloudUid']), allow_shared=False), data['cloudUid']
+    return browser_pairs(data), None
 
 
 def browser_grant_pairs():
@@ -1374,6 +1374,31 @@ class Vault:
                     replace_file(policy, previous, self.root, 0o600)
                 raise
 
+    def initialize_cloud(self, owner_uid, cloud_uid, *, start=False):
+        """Open an empty managed Vault for one owner while preserving an existing policy."""
+        if owner_uid <= 0 or cloud_uid <= 0 or owner_uid == cloud_uid:
+            raise VaultError('Desktop Vault needs an SSH owner account separate from Cloud.')
+        directory(self.root, create=True)
+        with self.locked():
+            destination = self.root / 'desktop.json'
+            if file_exists(destination):
+                if self.desktop_policy(owner_uid)['cloud'] != cloud_uid:
+                    raise VaultError('The existing Vault belongs to a different Cloud account.')
+                return
+            _pairs, publisher_uid = browser_grants()
+            if publisher_uid != cloud_uid:
+                raise VaultError('Install the managed Browser roster for this Cloud account before opening its Vault.')
+            policy = {'owner': owner_uid, 'cloud': cloud_uid, 'services': []}
+            if self.require_requests(policy, allow_disabled=True):
+                raise VaultError('Existing Vault broker grants require administrator review.')
+            if start:
+                desktop = self.prepare_desktop(owner_uid)
+                broker = self.prepare_cloud_requests(cloud_uid)
+                self.activate_desktop(desktop)
+                self.activate_cloud_requests(broker)
+            self.write_request_grants(policy, set())
+            replace_file(destination, (json.dumps(policy) + '\n').encode(), self.root, 0o600)
+
     def desktop_units(self, owner_uid):
         """Resolve the exact managed systemd files for a Desktop Vault listener."""
         return {
@@ -1889,13 +1914,13 @@ class Vault:
     def set_browser_access(self, request):
         """Persist one owner-approved browser decision before asking the worker to reload it."""
         pair = (request['bot'], request['session'])
-        grants, owner_roster = browser_grants()
+        grants, publisher_uid = browser_grants()
         if pair not in grants:
             raise VaultError(BROWSER_UNAVAILABLE)
         records = browser_shared_policy()
         active = [record for record in records if (record['bot'], record['session']) in grants]
         detached = len(active) != len(records)
-        if detached and not owner_roster:
+        if detached and publisher_uid is None:
             raise VaultError(BROWSER_UNAVAILABLE)
         records = active
         current = next((record for record in records
@@ -2180,6 +2205,8 @@ def main():
     allow = actions.add_parser('allow-desktop')
     allow.add_argument('--owner', required=True, help='SSH account used by Y Harness Desktop')
     allow.add_argument('units', nargs='*', help='exact enabled services that Desktop may manage')
+    initialize = actions.add_parser('initialize-cloud', help=argparse.SUPPRESS)
+    initialize.add_argument('--owner', required=True)
     actions.add_parser('deny-desktop')
     enable_requests = actions.add_parser('enable-requests', help='enable the root Cloud request broker')
     enable_requests.add_argument('grants', metavar='[[shared/]BOT/]UNIT.service=KEY_NAME', nargs='+', type=request_grant)
@@ -2215,6 +2242,9 @@ def main():
             owner_uid = user_uid(args.owner)
             vault.allow_desktop(owner_uid, user_uid(args.cloud_user), args.units, start=True)
             print('Desktop Vault access enabled.')
+        elif args.action == 'initialize-cloud':
+            vault.initialize_cloud(user_uid(args.owner), user_uid(args.cloud_user), start=True)
+            print('Dedicated Cloud Vault ready.')
         elif args.action == 'deny-desktop':
             vault.deny_desktop()
             print('Desktop Vault access removed.')

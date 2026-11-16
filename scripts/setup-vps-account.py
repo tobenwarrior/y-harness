@@ -32,6 +32,10 @@ LINK_SOCKET = '/run/yharness-cloud-link.sock'
 LINK_SOCKET_UNIT = 'yharness-cloud-link.socket'
 LINK_WORKER_UNIT = 'yharness-cloud-link@.service'
 NATIVE_CLOUD_PORT = 3080
+BROWSER_INSTALLER = Path('scripts/setup-vps-browser.py')
+BROWSER_ROSTER = '/var/lib/yharness-browser-roster/cloud/active.json'
+VAULT_SOURCE = Path('scripts/vps-vault.py')
+VAULT_EXECUTABLE = Path('/usr/local/sbin/yharness-vault')
 SYSTEMCTL = ('/usr/bin/systemctl', '--system', '--no-pager', '--no-ask-password')
 SYSTEM_ENV = {'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'LC_ALL': 'C'}
 CLI = Path('apps/cli/lib/bin.js')
@@ -62,13 +66,14 @@ def validate_port(port):
         raise AccountError('Choose an available port from 1024 to 65535.')
 
 
-def service_unit(uid, node, release, port):
+def service_unit(uid, node, release, port, *, isolated_browser=False):
     """Render the user unit for the dedicated account's rootless container cgroups."""
     if uid <= 0 or not all(SAFE_PATH.fullmatch(str(path)) for path in (node, release)):
         raise AccountError('Use absolute release and Node paths with letters, numbers, dots, underscores or hyphens.')
     validate_port(port)
     runtime = f'/run/user/{uid}'
     setup = Path(release) / 'scripts/setup-vps-account.py'
+    browser_env = f'Environment="YH_VPS_BOT_BROWSER_ROSTER={BROWSER_ROSTER}"\n' if isolated_browser else ''
     return f"""[Unit]
 Description=Y Harness Cloud
 ConditionUser={ACCOUNT}
@@ -80,7 +85,7 @@ Environment="HOME={HOME}"
 Environment="YH_HOME={DATA}/state"
 Environment="YH_VPS_BOT_ROOT={DATA}/bots"
 Environment="YH_VPS_BOT_IMAGE={BOT_IMAGE}"
-Environment="PATH={Path(node).parent}:/usr/local/bin:/usr/bin:/bin"
+{browser_env}Environment="PATH={Path(node).parent}:/usr/local/bin:/usr/bin:/bin"
 Environment="XDG_RUNTIME_DIR={runtime}"
 Environment="DBUS_SESSION_BUS_ADDRESS=unix:path={runtime}/bus"
 UMask=0077
@@ -454,10 +459,37 @@ def start_cloud(uid, port):
         raise
 
 
-def install(node, release, port, *, ssh_owner=None):
+def prepare_cloud_computer(node, release, chromium, owner, cloud):
+    """Provision the Browser worker and an empty Vault before the first Cloud start."""
+    browser = trusted_path(release / BROWSER_INSTALLER)
+    vault = trusted_path(release / VAULT_SOURCE).read_bytes()
+    trusted_path(VAULT_EXECUTABLE.parent.parent)
+    VAULT_EXECUTABLE.parent.mkdir(mode=0o755, exist_ok=True)
+    trusted_path(VAULT_EXECUTABLE.parent)
+    if file_installed(VAULT_EXECUTABLE, vault) and stat.S_IMODE(VAULT_EXECUTABLE.stat().st_mode) != 0o755:
+        raise AccountError('The installed Vault command needs mode 0755 for Desktop access.')
+    browser_command = ['/usr/bin/python3', '-I', str(browser)]
+    command([
+        *browser_command, 'install', '--chromium', str(chromium), '--node', str(node),
+        '--cloud-uid', str(cloud.pw_uid), '--owner-roster', '--saved-logins',
+    ], 'Could not install the isolated Browser. Check Chromium and the existing browser settings.')
+    install_unit(VAULT_EXECUTABLE, vault, mode=0o755)
+    command([
+        '/usr/bin/python3', '-I', str(VAULT_EXECUTABLE), '--cloud-user', ACCOUNT,
+        'initialize-cloud', '--owner', owner.pw_name,
+    ], 'Could not initialize the Cloud Vault. Check the existing Vault owner and Cloud account.')
+    command([*browser_command, 'activate'], 'Could not enable the isolated Browser sockets.')
+
+
+def install(node, release, port, *, ssh_owner=None, chromium=None):
     """Prepare the separate account and start its loopback Cloud service."""
+    if chromium is not None and ssh_owner is None:
+        raise AccountError('Select the regular SSH owner with --owner when installing Browser and Vault.')
     node = trusted_path(node)
     release = trusted_path(release)
+    if chromium is not None:
+        chromium = trusted_path(chromium)
+        check_executable(chromium)
     for executable in (node, trusted_path('/usr/bin/podman')):
         check_executable(executable)
     validate_port(port)
@@ -473,8 +505,8 @@ def install(node, release, port, *, ssh_owner=None):
         if not trusted_path(path).is_file():
             raise AccountError('Install the built Web release, Node, and Podman first.')
     account = ensure_account()
-    unit = service_unit(account.pw_uid, node, release, port)
-    file_installed(UNIT_PATH, unit)
+    unit = service_unit(account.pw_uid, node, release, port, isolated_browser=chromium is not None)
+    installed = file_installed(UNIT_PATH, unit)
     # The administrator's working directory may be private.
     os.chdir('/')
     if owner is not None:
@@ -482,6 +514,8 @@ def install(node, release, port, *, ssh_owner=None):
     command(['/usr/bin/loginctl', 'enable-linger', ACCOUNT], 'Could not enable the Cloud account to run without a login.')
     command([*SYSTEMCTL, 'start', f'user@{account.pw_uid}.service'], 'Could not start the Cloud user manager.')
     prepare_cloud_runtime(account.pw_uid, node, release)
+    if chromium is not None and not installed:
+        prepare_cloud_computer(node, release, chromium, owner, account)
     install_unit(UNIT_PATH, unit)
     command(cloud_systemctl(account.pw_uid, 'daemon-reload'), 'Could not reload the Cloud user unit configuration.')
     start_cloud(account.pw_uid, port)
@@ -512,6 +546,7 @@ def main():
         if action == 'install':
             choice.add_argument('--port', type=int, default=NATIVE_CLOUD_PORT)
             choice.add_argument('--owner', help='SSH account allowed to open the native Cloud workspace')
+            choice.add_argument('--chromium', type=Path, help='trusted Chromium executable to install Browser and Vault')
         else:
             choice.add_argument('--prepare-image', action='store_true')
     actions.add_parser('status')
@@ -533,7 +568,7 @@ def main():
             raise AccountError('Run this Cloud administration command through sudo.')
         elif options.action == 'install':
             with installation_lock():
-                install(options.node, options.release, options.port, ssh_owner=options.owner)
+                install(options.node, options.release, options.port, ssh_owner=options.owner, chromium=options.chromium)
             print('Dedicated Cloud service enabled.')
         elif options.action == 'link-worker':
             if options.cloud_uid != pwd.getpwnam(ACCOUNT).pw_uid:

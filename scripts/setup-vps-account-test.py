@@ -28,6 +28,7 @@ class DedicatedCloudTest(unittest.TestCase):
         self.assertIn('Environment="XDG_RUNTIME_DIR=/run/user/721"', unit)
         self.assertIn('Environment="YH_HOME=/var/lib/yharness-cloud/.yharness-vps/state"', unit)
         self.assertIn('Environment="YH_VPS_BOT_ROOT=/var/lib/yharness-cloud/.yharness-vps/bots"', unit)
+        self.assertNotIn('YH_VPS_BOT_BROWSER_ROSTER', unit)
         self.assertIn(' --profile web --no-open --host 127.0.0.1 --port 3180\n', unit)
         self.assertIn('StandardOutput=journal\n', unit)
         self.assertIn('UMask=0077\n', unit)
@@ -285,6 +286,75 @@ class DedicatedCloudTest(unittest.TestCase):
             installer.install(node, release, 3080, ssh_owner='cloud-owner')
         self.assertEqual(calls, ['prepare link', 'Cloud ready', 'listen for owner'])
         prepare.assert_called_once_with(owner, 721, release)
+
+    def test_fresh_dedicated_install_prepares_browser_and_vault_only_once(self):
+        owner = SimpleNamespace(pw_uid=1001, pw_name='cloud-owner')
+        cloud = SimpleNamespace(pw_uid=721)
+        node = pathlib.Path('/opt/node/bin/node')
+        release = pathlib.Path('/opt/yharness/release')
+        chromium = pathlib.Path('/opt/chromium/chrome')
+        steps = []
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.object(installer, 'UNIT_PATH', pathlib.Path(directory) / installer.UNIT),
+            patch.object(installer, 'trusted_path', side_effect=pathlib.Path),
+            patch.object(pathlib.Path, 'is_file', return_value=True),
+            patch.object(installer, 'check_executable'),
+            patch.object(installer, 'ensure_account', return_value=cloud),
+            patch.object(installer.pwd, 'getpwnam', return_value=owner),
+            patch.object(installer, 'prepare_owner_link'),
+            patch.object(installer, 'command'),
+            patch.object(installer, 'prepare_cloud_runtime'),
+            patch.object(installer.os, 'chdir'),
+            patch.object(installer, 'prepare_cloud_computer', side_effect=lambda *_: steps.append('computer')) as prepare,
+            patch.object(installer, 'start_cloud', side_effect=lambda *_: steps.append('Cloud')),
+            patch.object(installer, 'start_owner_link'),
+        ):
+            installer.install(node, release, 3080, ssh_owner='cloud-owner', chromium=chromium)
+            unit = installer.UNIT_PATH.read_text()
+            self.assertIn('Environment="YH_VPS_BOT_BROWSER_ROSTER=/var/lib/yharness-browser-roster/cloud/active.json"', unit)
+            installer.install(node, release, 3080, ssh_owner='cloud-owner', chromium=chromium)
+        prepare.assert_called_once_with(node, release, chromium, owner, cloud)
+        self.assertEqual(steps, ['computer', 'Cloud', 'Cloud'])
+
+    def test_computer_setup_uses_roster_mode_and_a_blank_owner_vault(self):
+        with tempfile.TemporaryDirectory() as directory:
+            release = pathlib.Path(directory) / 'release'
+            (release / 'scripts').mkdir(parents=True)
+            (release / installer.BROWSER_INSTALLER).write_bytes(b'# browser installer\n')
+            (release / installer.VAULT_SOURCE).write_bytes(b'# Vault executable\n')
+            destination = pathlib.Path(directory) / 'sbin/yharness-vault'
+            node = pathlib.Path('/opt/node/bin/node')
+            chromium = pathlib.Path('/opt/chromium/chrome')
+            owner = SimpleNamespace(pw_name='cloud-owner')
+            cloud = SimpleNamespace(pw_uid=721)
+            with (
+                patch.object(installer, 'VAULT_EXECUTABLE', destination),
+                patch.object(installer, 'trusted_path', side_effect=pathlib.Path),
+                patch.object(installer, 'command') as run,
+            ):
+                installer.prepare_cloud_computer(node, release, chromium, owner, cloud)
+            browser = ['/usr/bin/python3', '-I', str(release / installer.BROWSER_INSTALLER)]
+            self.assertEqual([entry.args[0] for entry in run.call_args_list], [
+                [*browser, 'install', '--chromium', str(chromium), '--node', str(node),
+                 '--cloud-uid', '721', '--owner-roster', '--saved-logins'],
+                ['/usr/bin/python3', '-I', str(destination), '--cloud-user', 'yharness-cloud',
+                 'initialize-cloud', '--owner', 'cloud-owner'],
+                [*browser, 'activate'],
+            ])
+            self.assertEqual(destination.read_bytes(), b'# Vault executable\n')
+            self.assertEqual(stat.S_IMODE(destination.stat().st_mode), 0o755)
+
+    def test_chromium_setup_requires_an_explicit_ssh_owner(self):
+        with (
+            patch.object(installer, 'trusted_path', side_effect=pathlib.Path),
+            patch.object(installer, 'check_executable'),
+            patch.object(installer, 'ensure_account') as create_account,
+        ):
+            with self.assertRaisesRegex(installer.AccountError, '--owner'):
+                installer.install('/opt/node/bin/node', '/opt/yharness/release', 3080,
+                                  chromium='/opt/chromium/chrome')
+            create_account.assert_not_called()
 
     def test_launch_helper_accepts_only_a_bounded_loopback_link(self):
         path = pathlib.Path(__file__).with_name('vps-cloud-link.py')
