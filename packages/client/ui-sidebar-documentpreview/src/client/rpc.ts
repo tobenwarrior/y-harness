@@ -8,7 +8,7 @@
  */
 import type { RemoteResult } from '@yharness/api-remotes/client'
 import type { SessionId } from '@yharness/session/types'
-import type { WorkspaceFileBytes, WorkspaceFileRange, WorkspaceFileText } from '@yharness/api-workspace-files/types'
+import type { WorkspaceFileBytes, WorkspaceFilePath, WorkspaceFileRange, WorkspaceFileText } from '@yharness/api-workspace-files/types'
 import { parseFileAddress } from '@yharness/util-workspace-path'
 
 /** The slice of the Client Remote this package calls. */
@@ -24,7 +24,7 @@ export interface WorkspaceFilesReadRemote {
      */
     read(
       sessionId: SessionId,
-      path: string,
+      path: WorkspaceFilePath,
       range: WorkspaceFileRange,
       signal?: AbortSignal,
     ): Promise<RemoteResult<WorkspaceFileText>>
@@ -40,7 +40,7 @@ export interface WorkspaceFilesReadRemote {
  */
 export type ReadWorkspaceFilePage = (
   sessionId: SessionId,
-  path: string,
+  path: WorkspaceFilePath,
   offset: number,
   signal: AbortSignal,
 ) => Promise<RemoteResult<WorkspaceFileText>>
@@ -51,24 +51,33 @@ export interface SessionFile {
   readonly sessionId: SessionId
   /** The path the Host receives, absolute or relative to the addressed Session's workspace. */
   readonly path: string
+  /** Resolve this file in the Bot's private Computer. */
+  readonly computer?: true
 }
 
 /**
  * The session and path one `dsh-resource://file/…` address names.
  *
- * A `session` address names its own session and a relative or absolute path, so
- * a tab addressed into another session reads from that session. An `absolute`
- * address carries no session and cannot be read here. The registry routes only
- * session-scoped `file` addresses to this type, so an address `parseFileAddress`
- * rejects or that carries no session is a programming error and throws.
+ * Session and Computer addresses carry the authorization Session. An absolute
+ * address cannot be read here because it supplies no Session.
  * @param address - a tab's `dsh-resource://file/…` address.
  * @returns the session and the path to hand the endpoint.
  */
 export function hostFileOf(address: string): SessionFile {
   const parsed = parseFileAddress(address)
-  if (parsed?.scope !== 'session') throw new Error(`ui-sidebar-documentpreview: not a session file address "${address}"`)
+  if (parsed === undefined || parsed.scope === 'absolute') throw new Error(`ui-sidebar-documentpreview: not a session file address "${address}"`)
   // The address is a string boundary: its id segment is the Session id it names.
-  return { sessionId: parsed.sessionId as SessionId, path: parsed.path }
+  return { sessionId: parsed.sessionId as SessionId, path: parsed.path, ...(parsed.scope === 'computer' ? { computer: true } : {}) }
+}
+
+/**
+ * Preserve the selected filesystem for a file or a related path.
+ * @param file - original file with its workspace selection.
+ * @param path - path in that same workspace.
+ * @returns the path accepted by Workspace Files.
+ */
+export function documentPath(file: SessionFile, path = file.path): WorkspaceFilePath {
+  return file.computer === true ? { computer: path } : path
 }
 
 /**

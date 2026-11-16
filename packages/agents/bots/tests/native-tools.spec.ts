@@ -1,4 +1,5 @@
 import { SessionId } from '@yharness/session'
+import { AttachmentId } from '@yharness/attachment'
 import { describe, expect, it, vi } from 'vitest'
 import {
   BotCollaborationError,
@@ -11,7 +12,7 @@ import type { BotMemoryClient } from '../src/memory.ts'
 import { BotGroupId, BotGroupMessageId } from '../src/group-chat.ts'
 import type { BotGroupToolHost } from '../src/scoped-tools.ts'
 import { BotId } from '../src/types.ts'
-import { createBotNativeToolProvider, type BotNativeToolContext } from '../src/native-tools.ts'
+import { createBotNativeToolProvider, type BotNativeToolContext, type BotNativeToolHost } from '../src/native-tools.ts'
 import type { BotGrokHistoryPage } from '../src/grok-history.ts'
 import { UNTRUSTED_TRANSCRIPT_NOTICE, UNTRUSTED_TRANSCRIPT_END } from '../src/collaboration.ts'
 
@@ -82,15 +83,124 @@ function groups(sendResult: 'accepted' | 'partial' = 'accepted'): GroupHostFixtu
 }
 
 describe('native Bot actions', () => {
+  it('records only the exact Vault request fields and withholds the action from other Sessions', async () => {
+    const sessionId = SessionId('bot-session-alpha')
+    const recorded: BotDynamicToolEvent[] = []
+    const arguments_ = { unit: 'example-worker.service', name: 'EXAMPLE_API_KEY' }
+    const execute = vi.fn(async () => ({
+      success: true, contentItems: [{ type: 'inputText' as const, text: 'The key is saved in the VPS Vault.' }],
+    }))
+    let granted = true
+    const provider = createBotNativeToolProvider({
+      bind: async () => client(), persist: async (event) => { recorded.push(event) }, replay: async () => recorded,
+      vpsVaultRequest: async id => granted && id === sessionId ? {
+        description: 'Request an approved key.',
+        inputSchema: {
+          type: 'object', additionalProperties: false, required: ['unit', 'name'],
+          properties: {
+            unit: { type: 'string', const: arguments_.unit },
+            name: { type: 'string', const: arguments_.name },
+          },
+        },
+        execute,
+      } : undefined,
+    })
+    const tool = (await provider.resolve({ sessionId })).find(candidate => candidate.name === 'request_vps_secret')
+    if (tool === undefined) throw new Error('native Vault tool missing')
+    const call = { name: tool.name, callId: 'call-1', threadId: 'thread-1', turnId: 'turn-1', sessionId, arguments: arguments_ }
+    const other = SessionId('bot-session-beta')
+    expect((await provider.resolve({ sessionId: other })).map(candidate => candidate.name)).not.toContain(tool.name)
+    expect((await provider.resolve({ sessionId, purpose: 'session-title' })).map(candidate => candidate.name)).not.toContain(tool.name)
+    await expect(provider.observe({ phase: 'started', ...call, arguments: { ...arguments_, value: 'fixture-secret' } }))
+      .rejects.toThrow('invalid')
+    await expect(provider.observe({ phase: 'started', ...call, arguments: { ...arguments_, name: 'fixture-secret' } }))
+      .rejects.toThrow('invalid')
+    expect(recorded).toEqual([])
+    await expect(tool.execute(arguments_, context({ sessionId: other }))).resolves.toMatchObject({ success: false })
+    await provider.observe({ phase: 'started', ...call })
+    const result = await tool.execute(arguments_, context({ sessionId }))
+    await provider.observe({ phase: 'settled', ...call, result })
+    expect(recorded).toEqual([{ phase: 'started', ...call }, { phase: 'settled', ...call, result }])
+    await expect(provider.replay({ sessionId, purpose: 'session-title' })).resolves.toEqual([])
+    granted = false
+    await expect(tool.execute(arguments_, context({ sessionId }))).resolves.toMatchObject({ success: false })
+    await expect(provider.replay({ sessionId })).resolves.toEqual([])
+    expect(execute).toHaveBeenCalledTimes(1)
+  })
+
+  it('exposes and records the selected owner Bot Computer, with revocation checked before input', async () => {
+    const sessionId = SessionId('bot-session-alpha')
+    const otherSessionId = SessionId('bot-session-beta')
+    const image = { attachmentId: AttachmentId('test-screen'), mediaType: 'image/jpeg' as const, bytes: 3, width: 1, height: 1 }
+    const execute = vi.fn(async () => ({ success: true, contentItems: [], image }))
+    const recorded: BotDynamicToolEvent[] = []
+    let granted = true
+    const host = {
+      bind: async () => client(),
+      persist: async (event: BotDynamicToolEvent) => { recorded.push(event) },
+      replay: async () => recorded,
+      vpsComputer: async (id: SessionId) => granted && id === sessionId
+        ? { description: 'Observe or operate the selected Computer.', inputSchema: { type: 'object' }, execute }
+        : undefined,
+    }
+    const provider = createBotNativeToolProvider(host)
+    const computer = (await provider.resolve({ sessionId })).find(tool => tool.name === 'vps_computer')
+    if (computer === undefined) throw new Error('native Computer tool missing')
+    expect((await provider.resolve({ sessionId: otherSessionId })).map(tool => tool.name)).not.toContain(computer.name)
+    expect((await provider.resolve({ sessionId, purpose: 'session-title' })).map(tool => tool.name)).not.toContain(computer.name)
+    await expect(computer.execute({ action: 'click' }, context({ sessionId: otherSessionId }))).resolves.toMatchObject({ success: false })
+    expect(execute).not.toHaveBeenCalled()
+    const call = { name: computer.name, callId: 'call-1', threadId: 'thread-1', turnId: 'turn-1', sessionId, arguments: { action: 'observe' } }
+    await provider.observe({ phase: 'started', ...call })
+    const result = await computer.execute(call.arguments, context({ sessionId }))
+    await provider.observe({ phase: 'settled', ...call, result })
+    expect(recorded[1]?.result).toEqual({ success: true, contentItems: [], image })
+    await expect(provider.replay({ sessionId, purpose: 'session-title' })).resolves.toEqual([])
+    granted = false
+    await expect(computer.execute({ action: 'click' }, context({ sessionId }))).resolves.toMatchObject({ success: false })
+    await expect(provider.replay({ sessionId })).resolves.toEqual([])
+    expect(execute).toHaveBeenCalledTimes(1)
+  })
+
+  it('rechecks a journal grant at invocation and withholds the journal from other Sessions', async () => {
+    const sessionId = SessionId('bot-session-alpha')
+    const otherSessionId = SessionId('bot-session-beta')
+    const readJournal = vi.fn(async (_signal: AbortSignal) => ({ version: 1, recovery: [], primaryAudit: [] }))
+    const recorded: BotDynamicToolEvent[] = []
+    let granted = true
+    const provider = createBotNativeToolProvider({
+      bind: async () => client(), persist: async (event) => { recorded.push(event) }, replay: async () => recorded,
+      vpsJournal: async id => granted && id === sessionId ? readJournal : undefined,
+    })
+    const journal = (await provider.resolve({ sessionId })).find(tool => tool.name === 'vps_service_journal')
+    if (journal === undefined) throw new Error('native journal tool missing')
+    expect((await provider.resolve({ sessionId: otherSessionId })).map(tool => tool.name)).not.toContain(journal.name)
+    expect((await provider.resolve({ sessionId, purpose: 'session-title' })).map(tool => tool.name)).not.toContain(journal.name)
+    await expect(journal.execute({}, context({ sessionId: otherSessionId }))).resolves.toMatchObject({ success: false })
+    await expect(journal.execute({ path: '/tmp/fixture' }, context({ sessionId }))).resolves.toMatchObject({ success: false })
+    await expect(journal.execute({}, context({ sessionId, signal: AbortSignal.abort() }))).resolves.toMatchObject({ success: false })
+    expect(readJournal).not.toHaveBeenCalled()
+    const invocation = { name: journal.name, callId: 'call-1', threadId: 'thread-1', turnId: 'turn-1', sessionId, arguments: {} }
+    await provider.observe({ phase: 'started', ...invocation })
+    const result = await journal.execute({}, context({ sessionId }))
+    expect(result.success).toBe(true)
+    await provider.observe({ phase: 'settled', ...invocation, result })
+    await expect(provider.replay({ sessionId })).resolves.toEqual(recorded)
+    await expect(provider.replay({ sessionId, purpose: 'session-title' })).resolves.toEqual([])
+    expect(readJournal).toHaveBeenCalledTimes(1)
+    granted = false
+    await expect(journal.execute({}, context({ sessionId }))).resolves.toMatchObject({ success: false })
+    await expect(provider.observe({ phase: 'started', ...invocation })).rejects.toThrow('grant is unavailable')
+    await expect(provider.replay({ sessionId })).resolves.toEqual([])
+    expect(readJournal).toHaveBeenCalledTimes(1)
+  })
+
   it('reads only the owned Grok archive as paginated untrusted excerpts', async () => {
     const archivePage: BotGrokHistoryPage = {
       source: 'grok-bot', version: 1, firstCachedSequence: 4, totalMessages: 2, nextBefore: 8,
       messages: [{ sourceSequence: 8, role: 'assistant', text: 'A'.repeat(2_000), timestampMs: 2_000 }],
     }
-    const history = vi.fn(async (_sessionId: SessionId, request: { readonly limit?: number; readonly before?: number }) => {
-      expect(request).toEqual({ limit: 1 })
-      return archivePage
-    })
+    const history = vi.fn<NonNullable<BotNativeToolHost['grokHistory']>>(async () => archivePage)
     const provider = createBotNativeToolProvider({
       bind: async () => client(), persist: async () => {}, replay: async () => [], grokHistory: history,
     })
@@ -108,6 +218,26 @@ describe('native Bot actions', () => {
     expect(value.messages[0]?.text).toContain(UNTRUSTED_TRANSCRIPT_END)
     expect(value.messages[0]?.text.length).toBeLessThan(1_300)
     expect(history).toHaveBeenCalledWith(SessionId('bot-session-alpha'), { limit: 1 }, expect.any(AbortSignal))
+
+    history.mockResolvedValueOnce({
+      ...archivePage,
+      version: 2,
+      sourceId: 'full-export',
+      sourceLabel: 'Source label',
+      sources: [{ id: 'full-export', label: 'Source label' }],
+      messages: [{ sourceSequence: 8, role: 'assistant', text: 'Recovered text', timestampMs: null, author: 'Source author', fromBot: 'Source bot' }],
+    })
+    const selected = await tool.execute({ limit: 1, source: 'full-export' }, context())
+    expect(selected.success).toBe(true)
+    const recovered = JSON.parse(selected.contentItems[0]?.text ?? '') as BotGrokHistoryPage
+    expect(recovered.sourceId).toBe('full-export')
+    expect(recovered.sourceLabel).toContain(UNTRUSTED_TRANSCRIPT_NOTICE)
+    expect(recovered.sources?.[0]?.label).toContain(UNTRUSTED_TRANSCRIPT_NOTICE)
+    expect(recovered.messages[0]?.author).toContain(UNTRUSTED_TRANSCRIPT_NOTICE)
+    expect(recovered.messages[0]?.fromBot).toContain(UNTRUSTED_TRANSCRIPT_NOTICE)
+    expect(history).toHaveBeenLastCalledWith(SessionId('bot-session-alpha'), { limit: 1, source: 'full-export' }, expect.any(AbortSignal))
+    expect((await tool.execute({ source: 12 }, context())).success).toBe(false)
+    expect(history).toHaveBeenCalledTimes(2)
   })
 
   it('offers approved routine actions bound to the Bot Session', async () => {
@@ -1007,6 +1137,8 @@ describe('native Bot actions', () => {
       'list_bot_memory', 'remember_bot_memory', 'forget_bot_memory',
       'create_bot', 'edit_bot_profile',
     ])
+    expect(tools.find(tool => tool.name === 'inspect_bot')?.description).toContain('dsh-bot:<bot-id>')
+    expect(tools.find(tool => tool.name === 'send_bot_message')?.description).toContain('never sends a message')
     const send = tools.find(tool => tool.name === 'send_bot_message')
     if (send === undefined) throw new Error('send_bot_message was not registered')
     await expect(send.execute({ targetBotId: 'bot-beta', text: 'hello' }, context())).resolves.toMatchObject({ success: true })

@@ -31,6 +31,13 @@ import type {} from '@yharness/session-projection'
 import type {} from '@yharness/system-prompt'
 
 export { SANDBOX_MODES, setSandboxMode } from './session-mode.ts'
+export {
+  bindManagedBotExecution,
+  createManagedBotExecution,
+  managedBotExecutionFor,
+  resolveManagedWorkdir,
+} from './managed-execution.ts'
+export type { ManagedBotExecution } from './managed-execution.ts'
 
 /** Preserve execution-world spelling; enforcing providers resolve filesystem identity on their host. */
 function resolveWorkspaceRoot(path: string): string {

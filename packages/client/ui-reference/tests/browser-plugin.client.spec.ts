@@ -101,7 +101,7 @@ async function bench(
     projectionValues?: { title?: string | null }
   }> = {},
   opening: Pick<SessionFixture, 'initialOpen' | 'snapshot'> = {},
-  bots: readonly BotView[] = [],
+  bots: readonly BotView[] | null = [],
 ) {
   const ctx = new Context()
   ctx.provide('sidebarRight', { openResource: vi.fn() })
@@ -123,7 +123,7 @@ async function bench(
   ctx.provide('remote.fileReferences', { list: files })
   ctx.provide('remote.sessionReferenceResolver', { candidates: sessions })
   const listBots = vi.fn(() => Promise.resolve({ ok: true as const, value: { bots } }))
-  ctx.provide('remote.bots', { list: listBots })
+  if (bots !== null) ctx.provide('remote.bots', { list: listBots })
   ctx.provide('locale', new LocaleRuntime(ctx))
   const sessionStore = new TestSessions(async (action) => { await action() }, ctx)
   onTestFinished(async () => {
@@ -318,7 +318,7 @@ describe('candidates', () => {
     ])
   })
 
-  it('lists other active Bots and inserts a canonical session snapshot mention', async () => {
+  it('reserves Bot-backed Sessions while leaving Bot completion to the Bot source', async () => {
     const files = vi.fn(() => Promise.resolve({ ok: true as const, value: [] }))
     const sessions = vi.fn(() => Promise.resolve({
       ok: true as const,
@@ -331,41 +331,39 @@ describe('candidates', () => {
         mention: '@[Grok Bot session](dsh-session:ImJvdC1zZXNzaW9uLWdyb2si)',
       }],
     }))
-    const { source } = await bench(files, sessions, {}, {}, [
+    const { source, listBots } = await bench(files, sessions, {}, {}, [
       botView('bot-grok', 'bot-session-grok', 'Grok Bot', { description: 'Market research' }),
       botView('bot-self', session.sessionId, 'Chief of Staff'),
       botView('bot-provisioning', 'bot-session-new', 'Still setting up', { state: 'provisioning' }),
     ])
     const candidates = await source.candidates(session, request('grok'))
-    expect(candidates).toHaveLength(1)
-    const [candidate] = candidates
-    expect(candidate).toMatchObject({
-      name: 'Grok Bot',
-      description: 'Market research · idle',
-      section: 'Bots',
+    expect(candidates).toEqual([])
+    expect(listBots).toHaveBeenCalledWith({ includeHidden: true })
+  })
+
+  it('resolves the optional Bot Remote when it becomes available after source registration', async () => {
+    const files = vi.fn(() => Promise.resolve({ ok: true as const, value: [] }))
+    const sessions = vi.fn(() => Promise.resolve({
+      ok: true as const,
+      value: [{
+        sessionId: sid('bot-session-late'),
+        label: 'Late Bot session',
+        cwd: `${HOME}/project`,
+        sameWorkspace: true,
+        createdAt: CREATED_AT,
+        mention: '@[Late Bot session](dsh-session:ImJvdC1zZXNzaW9uLWxhdGUi)',
+      }],
+    }))
+    const b = await bench(files, sessions, {}, {}, null)
+    b.ctx.provide('remote.bots', {
+      list: b.listBots.mockResolvedValue({
+        ok: true,
+        value: { bots: [botView('bot-late', 'bot-session-late', 'Late Bot')] },
+      }),
     })
-    expect(candidate?.icon).toEqual(expect.any(Function))
-    expect(JSON.parse(candidate?.value ?? '{}')).toEqual({
-      kind: 'session',
-      label: 'Grok Bot',
-      mention: '@[Grok Bot](dsh-session:ImJvdC1zZXNzaW9uLWdyb2si)',
-    })
-    expect(source.onPick({
-      candidate: candidate!,
-      session,
-      position: 'inline',
-      via: 'menu',
-      action: 'pick',
-      span: { start: 0, end: 4, draftRev: 1 },
-    })).toEqual({
-      insert: {
-        source: 'reference',
-        ref: '@[Grok Bot](dsh-session:ImJvdC1zZXNzaW9uLWdyb2si)',
-        label: 'Grok Bot',
-        appearance: 'session',
-        clipboardText: '@[Grok Bot](dsh-session:ImJvdC1zZXNzaW9uLWdyb2si)',
-      },
-    })
+
+    await expect(b.source.candidates(session, request('late'))).resolves.toEqual([])
+    expect(b.listBots).toHaveBeenCalledWith({ includeHidden: true })
   })
 
   it('hides Bot Sessions from generic references while keeping hidden rows out of the picker', async () => {

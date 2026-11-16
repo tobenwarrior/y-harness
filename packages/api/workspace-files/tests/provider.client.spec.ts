@@ -2,7 +2,7 @@
 import { RemoteError } from '@yharness/client-test-runtime'
 import type { SessionId } from '@yharness/session/types'
 import type { RemoteFailure, RemoteResult } from '@yharness/typert-protocol'
-import { absoluteFileAddress, sessionFileAddress } from '@yharness/util-workspace-path'
+import { absoluteFileAddress, computerFileAddress, sessionFileAddress } from '@yharness/util-workspace-path'
 import type { WorkspaceFileStat } from '../src/types.ts'
 import { describe, expect, it, onTestFinished } from 'vitest'
 import { ChangeFeed } from '../src/client/change-feed.ts'
@@ -59,6 +59,17 @@ async function live(version = 'v0', bytes = 3) {
 }
 
 describe('file provider — the address', () => {
+  it('reads Computer metadata without subscribing to the ordinary Session filesystem', async () => {
+    const { remote, it } = opened(computerFileAddress(S1, REL_PATH))
+    const first = it.next()
+    const request = await remote.waitForStat(0)
+    expect(request).toMatchObject({ sessionId: S1, path: { computer: REL_PATH } })
+    request.resolve({ ok: true, value: stat('computer-v1', 4) })
+    await expect(first).resolves.toEqual({ done: false, value: { ok: true, value: stat('computer-v1', 4) } })
+    expect(remote.calls).toEqual(['stat'])
+    await expect(it.next()).resolves.toMatchObject({ done: true })
+  })
+
   it.each([
     ['another scope', 'dsh-resource://file/shared/x/w/a.txt'],
     ['no path', 'dsh-resource://file/session/s1'],

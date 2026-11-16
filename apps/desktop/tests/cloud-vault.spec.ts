@@ -302,6 +302,73 @@ describe('Desktop Vault SSH transport', () => {
       .resolves.toEqual({ ok: false, reason: 'unavailable' })
   })
 
+  it('manages automatic sign-in metadata and revalidates the Bot only when enabling', async () => {
+    const loginId = 'c'.repeat(32)
+    const list = { loginAutomation: { available: false, enabled: [loginId] } }
+    await expect(cloudVaultRequest('fixture-vps', { action: 'list-login-automation' }, signal,
+      fixture(`process.stdout.write(${JSON.stringify(JSON.stringify(list))});`)))
+      .resolves.toEqual({ ok: true, ...list })
+    const external = { origin, fetch: async () => Response.json({ mode: 'external' }) }
+    const brokerReady = { loginAutomation: { ...list.loginAutomation, available: true } }
+    await expect(cloudVaultRequest('fixture-vps', { action: 'list-login-automation' }, signal,
+      fixture(`process.stdout.write(${JSON.stringify(JSON.stringify(brokerReady))});`), external))
+      .resolves.toEqual({ ok: true, ...list })
+
+    const enable = { action: 'set-login-automatic', id: loginId, bot: 'bot-scout', enabled: true } as const
+    const disable = { ...enable, enabled: false } as const
+    const execute = vi.fn(fixture(
+      'let body=""; process.stdin.on("data", chunk => body+=chunk); process.stdin.on("end", () => { '
+      + `if (![${JSON.stringify(JSON.stringify(enable))},${JSON.stringify(JSON.stringify(disable))}].includes(body)) process.exit(2); `
+      + 'process.stdout.write("{\\"ok\\":true}"); });',
+    ))
+    await expect(cloudVaultRequest('fixture-vps', { ...enable, bot: 'bot-other' }, signal, execute, managedWorkspace()))
+      .resolves.toEqual({ ok: false, reason: 'unavailable' })
+    await expect(cloudVaultRequest('fixture-vps', enable, signal, execute, external))
+      .resolves.toEqual({ ok: false, reason: 'unavailable' })
+    expect(execute).not.toHaveBeenCalled()
+    await expect(cloudVaultRequest('fixture-vps', enable, signal, execute, managedWorkspace()))
+      .resolves.toEqual({ ok: true })
+    expect(execute).toHaveBeenCalledOnce()
+
+    const noRoster = { origin, fetch: async () => { throw new Error('Disabling must not require the current roster') } }
+    await expect(cloudVaultRequest('fixture-vps', disable, signal, execute, noRoster))
+      .resolves.toEqual({ ok: true })
+    expect(execute).toHaveBeenCalledTimes(2)
+  })
+
+  it('strictly validates automatic sign-in requests and wire replies', async () => {
+    const id = 'd'.repeat(32)
+    const requestModeId = 'e'.repeat(32)
+    const loginUseModeId = 'f'.repeat(32)
+    if (!isVaultRequestId(requestModeId) || !isVaultLoginUseRequestId(loginUseModeId)) throw new Error('Fixture id is invalid')
+    const listRequest = { action: 'list-login-automation' } as const
+    const setRequest = { action: 'set-login-automatic', id, bot: 'bot-scout', enabled: true } as const
+    expect(vaultRequestAllowed(listRequest, { kind: 'manage' })).toBe(true)
+    expect(vaultRequestAllowed(listRequest, { kind: 'request', id: requestModeId })).toBe(false)
+    expect(vaultRequestAllowed(setRequest, { kind: 'manage' })).toBe(true)
+    expect(vaultRequestAllowed(setRequest, { kind: 'login-use', id: loginUseModeId })).toBe(false)
+    const mustNotOpen: VaultExec = () => { throw new Error('SSH was started') }
+    for (const request of [
+      { action: 'list-login-automation', extra: true },
+      { action: 'set-login-automatic', id, bot: 'bot-scout' },
+      { action: 'set-login-automatic', id: id.toUpperCase(), bot: 'bot-scout', enabled: true },
+      { action: 'set-login-automatic', id, bot: 'bot-scout', enabled: 'true' },
+    ]) {
+      await expect(cloudVaultRequest('fixture-vps', request, signal, mustNotOpen))
+        .resolves.toEqual({ ok: false, reason: 'invalid' })
+    }
+    for (const reply of [
+      { loginAutomation: { available: true, enabled: [id, id] } },
+      { loginAutomation: { available: true, enabled: [id.toUpperCase()] } },
+      { loginAutomation: { available: true, enabled: [], extra: true } },
+      { ok: true, loginAutomation: { available: true, enabled: [] } },
+    ]) {
+      await expect(cloudVaultRequest('fixture-vps', { action: 'list-login-automation' }, signal,
+        fixture(`process.stdout.write(${JSON.stringify(JSON.stringify(reply))});`)))
+        .resolves.toEqual({ ok: false, reason: 'unavailable' })
+    }
+  })
+
   it('inspects a request and returns only its validated metadata', async () => {
     const id = 'a'.repeat(32)
     const execute: VaultExec = (_file, _args, options, callback) => fixture(`

@@ -68,6 +68,7 @@
     "@yharness/client-ui-renderer": "workspace:*",
     "@yharness/client-ui-session": "workspace:*",
     "@yharness/client-ui-sidebar": "workspace:*",
+    "@yharness/client-ui-sidebar-right": "workspace:*",
     "@yharness/client-ui-slots": "workspace:*",
     "@yharness/util-crypto": "workspace:*",
     "@yharness/util-values": "workspace:*",

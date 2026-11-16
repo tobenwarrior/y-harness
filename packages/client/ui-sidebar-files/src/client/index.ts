@@ -16,8 +16,8 @@ import type {} from '@yharness/api-remotes/client'
 import type {} from '@yharness/client-ui-renderer/client'
 import type {} from '@yharness/client-ui-session/client'
 import type {} from '@yharness/client-ui-sidebar-right/client'
-import { FILES_ID, filesDefinition } from './definition.tsx'
-import { createList, createWatch, filesFace } from './face.ts'
+import { filesDefinition } from './definition.tsx'
+import { createList, createWatch, filesFace, type WatchWorkspaceDirectory } from './face.ts'
 import { FilesBody } from './FilesBody.tsx'
 import { FilesTitle } from './FilesTitle.tsx'
 import { en } from './locales.ts'
@@ -78,20 +78,25 @@ export function apply(ctx: ClientContext): void {
       /* jscpd:ignore-end */
     }), 'ui-sidebar-files: shortcut')
   })
-  ctx.effect(() => ctx.sidebarRightTabs.register(filesDefinition(t)), 'ui-sidebar-files: files type')
   ctx.effect(() => ctx.locale.register(NS, { en }), 'ui-sidebar-files: dictionaries')
 
-  const store = createFilesStore()
-  const inject = filesFace(createList(ctx.remote), createWatch(ctx.remote))
-  ctx.effect(() => ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register(
-    {
-      name: 'sidebar.right.pane.tab', key: FILES_ID, locale: NS, store, inject,
-      children: { 'sidebar.right.tab.files.actions': { kind: 'list', scope: 'session' } },
-    },
-    FilesBody,
-  )), 'ui-sidebar-files: files tab body')
-  ctx.effect(() => ctx.slots.inject('sidebar.right.pane.tab.title', () => ctx.slots.register(
-    { name: 'sidebar.right.pane.tab.title', key: FILES_ID },
-    FilesTitle,
-  )), 'ui-sidebar-files: files tab title')
+  const readOnce: WatchWorkspaceDirectory = () => ['ready']
+  for (const computer of [false, true, 'shared'] as const) {
+    const isComputer = computer !== false
+    const definition = filesDefinition(t, computer)
+    const store = createFilesStore()
+    const inject = filesFace(createList(ctx.remote, isComputer), isComputer ? readOnce : createWatch(ctx.remote))
+    ctx.effect(() => ctx.sidebarRightTabs.register(definition), 'ui-sidebar-files: files type')
+    ctx.effect(() => ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register(
+      {
+        name: 'sidebar.right.pane.tab', key: definition.id, locale: NS, store, inject,
+        children: isComputer ? {} : { 'sidebar.right.tab.files.actions': { kind: 'list', scope: 'session' } },
+      },
+      FilesBody,
+    )), 'ui-sidebar-files: files tab body')
+    ctx.effect(() => ctx.slots.inject('sidebar.right.pane.tab.title', () => ctx.slots.register(
+      { name: 'sidebar.right.pane.tab.title', key: definition.id },
+      FilesTitle,
+    )), 'ui-sidebar-files: files tab title')
+  }
 }

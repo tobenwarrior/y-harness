@@ -6,7 +6,7 @@
  */
 
 /**
- * A file resource address, in one of two scopes.
+ * A file resource address scoped to a Session, private Computer, or absolute path.
  *
  * Every resource address is `dsh-resource://<type>/…`, the URI host naming the
  * resource protocol; for `file` the path opens with the scope:
@@ -14,6 +14,8 @@
  * - `dsh-resource://file/session/<sessionId>/<path>` names a file by its path,
  *   relative to that Session's workspace root or absolute; the
  *   Host resolves it against the root it holds for the Session.
+ * - `dsh-resource://file/computer/<sessionId>/<path>` names a file inside that
+ *   Session's private Computer workspace.
  * - `dsh-resource://file/absolute/<path>` names a file by its absolute path with
  *   the leading `/` dropped (`dsh-resource://file/absolute/home/ys/notes.txt`;
  *   Windows `dsh-resource://file/absolute/C:/x/y.txt`; a UNC path keeps an empty
@@ -26,8 +28,8 @@
  */
 export type FileAddress =
   | {
-    readonly scope: 'session'
-    /** The Session whose Host workspace resolves the path. */
+    readonly scope: 'session' | 'computer'
+    /** The Session that owns the file lookup. */
     readonly sessionId: string
     /** Absolute or workspace-relative `/`-separated path; empty for the workspace root itself. */
     readonly path: string
@@ -68,6 +70,16 @@ export function sessionFileAddress(sessionId: string, path: string): string {
 }
 
 /**
+ * Build the address of a file in a Session's private Computer.
+ * @param sessionId - the Session that owns the Computer.
+ * @param path - POSIX path inside the Computer workspace.
+ * @returns the private Computer file address.
+ */
+export function computerFileAddress(sessionId: string, path: string): string {
+  return `${FILE_ADDRESS_PREFIX}computer/${encodeSegment(sessionId)}/${encodePath(path.replace(/^(?:\.\/)+/u, ''))}`
+}
+
+/**
  * Build the address of a file by its absolute path.
  * @param path - absolute path; backslashes are normalized to `/` and the leading `/` is dropped,
  *   except that a UNC path (`\\server\share`) keeps one empty first segment.
@@ -91,7 +103,7 @@ export function parseFileAddress(address: string): FileAddress | undefined {
     if (!address.startsWith(FILE_ADDRESS_PREFIX)) return undefined
     const end = address.search(/[?#]/)
     const [scope, ...rest] = address.slice(FILE_ADDRESS_PREFIX.length, end === -1 ? undefined : end).split('/')
-    if (scope === 'session') {
+    if (scope === 'session' || scope === 'computer') {
       const [id, ...segments] = rest
       if (id === undefined || id === '' || segments.length === 0) return undefined
       return { scope, sessionId: decodeURIComponent(id), path: segments.map(decodeURIComponent).join('/') }

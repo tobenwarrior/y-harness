@@ -1,12 +1,47 @@
 /** Read-only Grok archive inside the current Bot conversation. */
 
 import { useEffect, useState } from 'react'
-import type { BotGrokHistoryArchive } from '@yharness/bots/client'
-import { Button, IconArchiveOffOutlineRegular, Modal, Tooltip } from '@yharness/client-ui-primitives'
+import type { BotGrokHistoryView } from '@yharness/bots/client'
+import { Button, IconArchiveOffOutlineRegular, IconDownloadOutlineRegular, Modal, Tooltip } from '@yharness/client-ui-primitives'
 import type { PropsLocale } from '@yharness/client-ui-slots'
 import css from './BotWorkspace.module.css'
 
 const dateFormat = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+
+function messageLabel(
+  message: BotGrokHistoryView['messages'][number],
+  botName: string,
+  t: PropsLocale<'bots'>['t'],
+): string {
+  if (message.fromBot !== undefined) return message.fromBot
+  if (message.author !== undefined) return message.author
+  if (message.role === 'user') return t('grokHistoryYou')
+  if (message.role === 'assistant') return botName
+  return message.role
+}
+
+function sourceIsPartial(source: {
+  readonly firstCachedSequence: number
+  readonly complete?: boolean
+}): boolean {
+  return source.complete === false || source.firstCachedSequence > 1
+}
+
+function hasVerifiedAttachment(
+  history: BotGrokHistoryView,
+  sourceId: string,
+  message: BotGrokHistoryView['messages'][number],
+): boolean {
+  if (message.role !== 'attachment' || history.availableAttachments === undefined) return false
+  return history.availableAttachments.some(attachment => (
+    attachment.sourceId === sourceId && attachment.sourceSequence === message.sourceSequence
+  ))
+}
+
+function attachmentDownloadUrl(botId: string, sourceId: string, sourceSequence: number): string {
+  const query = new URLSearchParams({ botId, sourceId, sourceSequence: String(sourceSequence) })
+  return `/api/bots/grokHistory/downloadAttachment?${query}`
+}
 
 /**
  * Open the recovered messages without replacing the current conversation.
@@ -18,10 +53,11 @@ export function GrokHistoryAction({
 }: PropsLocale<'bots'> & {
   botId: string
   botName: string
-  read: (id: string) => Promise<BotGrokHistoryArchive | null>
+  read: (id: string) => Promise<BotGrokHistoryView | null>
 }) {
-  const [history, setHistory] = useState<BotGrokHistoryArchive | null>(null)
+  const [history, setHistory] = useState<BotGrokHistoryView | null>(null)
   const [open, setOpen] = useState(false)
+  const [sourceId, setSourceId] = useState('primary')
   useEffect(() => {
     let active = true
     void read(botId).then((archive) => {
@@ -32,25 +68,60 @@ export function GrokHistoryAction({
     return () => { active = false }
   }, [botId, read])
   if (history === null) return null
+  const sources = history.sources ?? []
+  const selectedSource = sources.find(source => source.id === sourceId) ?? history
   const close = (): void => { setOpen(false) }
   return (
     <>
       <Tooltip label={t('grokHistory')} side="bottom" portal>
         <Button variant="ghost" size="sm" aria-label={t('grokHistory')} icon={<IconArchiveOffOutlineRegular size={14} />}
-          onClick={() => { setOpen(true) }} />
+          onClick={() => { setSourceId('primary'); setOpen(true) }} />
       </Tooltip>
       <Modal open={open} onClose={close} title={t('grokHistory')} closeLabel={t('close')}
-        description={t(history.firstCachedSequence === 1 ? 'grokHistoryRecovered' : 'grokHistoryPartial')}
+        description={t(sourceIsPartial(selectedSource) ? 'grokHistoryPartial' : 'grokHistoryRecovered')}
         className={css.grokHistoryModal as string}
         footer={<Button variant="ghost" onClick={close}>{t('close')}</Button>}>
-        <ol className={css.grokHistoryMessages}>
-          {history.messages.map(message => (
+        {sources.length > 0 && (
+          <label className={css.grokHistorySource}>
+            <span>{t('grokHistorySource')}</span>
+            <select value={sourceId} onChange={(event) => { setSourceId(event.target.value) }}>
+              <option value="primary">{t('grokHistoryPrimary')}</option>
+              {sources.map(source => <option key={source.id} value={source.id}>{source.label}</option>)}
+            </select>
+          </label>
+        )}
+        <ol key={sourceId} className={css.grokHistoryMessages}>
+          {selectedSource.messages.map(message => (
             <li key={message.sourceSequence} className={css.grokHistoryMessage}>
               <div className={css.grokHistoryMessageMeta}>
-                <strong>{message.role === 'user' ? t('grokHistoryYou') : botName}</strong>
-                <time dateTime={new Date(message.timestampMs).toISOString()}>{dateFormat.format(message.timestampMs)}</time>
+                <span className={css.grokHistoryMessageMetaPrimary}>
+                  <strong>{messageLabel(message, botName, t)}</strong>
+                  {message.fromBot !== undefined && message.author !== undefined && message.author !== message.fromBot && (
+                    <span>{t('grokHistoryAuthor', { name: message.author })}</span>
+                  )}
+                </span>
+                <span className={css.grokHistoryMessageMetaActions}>
+                  {typeof message.timestampMs === 'number' && Number.isFinite(message.timestampMs) ? (
+                    <time dateTime={new Date(message.timestampMs).toISOString()}>{dateFormat.format(message.timestampMs)}</time>
+                  ) : (
+                    <span>{t('grokHistoryUnknownTimestamp')}</span>
+                  )}
+                  {hasVerifiedAttachment(history, sourceId, message) && (
+                    <Tooltip label={t('grokHistoryDownloadTooltip')} side="top" portal>
+                      <a
+                        className={css.grokHistoryDownload}
+                        href={attachmentDownloadUrl(botId, sourceId, message.sourceSequence)}
+                        aria-label={t('grokHistoryDownloadAttachment', { name: message.text })}
+                        download
+                      >
+                        <IconDownloadOutlineRegular size={14} />
+                      </a>
+                    </Tooltip>
+                  )}
+                </span>
               </div>
-              <p>{message.text}</p>
+              {message.text.length > 0 && <p>{message.text}</p>}
+              {message.incomplete === true && <div className={css.grokHistoryMessageStatus}>{t('grokHistoryIncomplete')}</div>}
             </li>
           ))}
         </ol>

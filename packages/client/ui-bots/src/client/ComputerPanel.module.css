@@ -38,6 +38,35 @@
   white-space: nowrap;
 }
 
+.footerActions {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+}
+
+.restartConfirm {
+  display: grid;
+  flex: none;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 0.5px solid var(--yh-alias-border-l2);
+  background: var(--yh-alias-bg-layer-2);
+  color: var(--yh-alias-label-secondary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.restartConfirm p {
+  margin: 0;
+}
+
+.restartConfirmActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
 .status,
 .controls {
   display: inline-flex;
@@ -51,6 +80,23 @@
   color: var(--yh-alias-label-secondary);
   font-size: 12px;
   line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.statusCopy {
+  display: inline-flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0;
+  overflow: hidden;
+}
+
+.statusMeta {
+  overflow: hidden;
+  color: var(--yh-alias-label-tertiary);
+  font-size: 10px;
+  line-height: 13px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -69,6 +115,83 @@
   color: var(--yh-alias-label-secondary);
   font-size: 11px;
   line-height: 16px;
+}
+
+.signInNotice {
+  flex: none;
+  padding: 8px 12px;
+  background: var(--yh-alias-bg-layer-2);
+  color: var(--yh-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.browserAddress {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 6px 10px;
+  border-bottom: 0.5px solid var(--yh-alias-border-l2);
+}
+
+.browserAddress > :first-child {
+  min-width: 0;
+  flex: 1;
+}
+
+.browserOrigin {
+  display: flex;
+  flex: none;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  padding: 6px 10px;
+  border-bottom: 0.5px solid var(--yh-alias-border-l2);
+  background: var(--yh-alias-bg-layer-2);
+  color: var(--yh-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.browserOrigin code {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--yh-alias-label-secondary);
+  font-family: var(--ds-font-family-code);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.networkControl {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  padding: 8px 10px;
+  border-bottom: 0.5px solid var(--yh-alias-border-l2);
+  background: var(--yh-alias-bg-layer-2);
+}
+
+.networkCopy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.networkLabel {
+  color: var(--yh-alias-label-secondary);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.networkHint {
+  color: var(--yh-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 14px;
 }
 
 .viewport {

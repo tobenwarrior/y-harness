@@ -223,7 +223,7 @@ The selected catalog model receives one system prompt (`GenerateOptions.system`,
 
 #### Token effect
 
-Provider tokenization governs exact input. Retained images add the stable attachment and coordinate descriptor; the offload placeholder replaces an omitted image's visual tokens. Replay metadata may let a native API reuse provider-side state.
+Provider tokenization governs exact input. Retained images add the stable attachment and coordinate descriptor; the offload placeholder replaces an omitted image's visual tokens. Replay metadata may let a native API reuse provider-side state. Native Codex resolves a dynamic tool’s durable image reference to an inline image for the live call. The action observer records only the attachment reference.
 
 #### KV Cache effect
 

@@ -11,7 +11,7 @@ import type {
   PropsStore, SlotHookFactory, SnapshotSelectorHook,
 } from '@yharness/client-ui-slots'
 import type { ObservableSnapshot } from '@yharness/client-store'
-import type { MarkdownFileMentions } from '@yharness/client-ui-primitives'
+import type { MarkdownFileMentions, UserTextReferences } from '@yharness/client-ui-primitives'
 import type {} from '@yharness/client-ui-layout/client'
 import type { createChatStore } from '../stores.ts'
 import type { ChatPresentationPolicy } from '../presentation-policy.ts'
@@ -158,11 +158,14 @@ export interface ChatNodeInjected {
 
 /** Stable owner currency delivered to a keyed Chat renderer. */
 export interface ChatNodeOwnerProps {
+  /** Speaker for a Bot's embedded Conversation occurrence. */
+  bot?: import('@yharness/client-ui-conversation/client').ConversationBot
   /** Renderer-owned Node portion selected by the grouping Definition. */
   groupPart?: string
   cwd?: string | undefined
   /** Open the current source file of a skill referenced by a sent message. */
   openSkill: (name: string) => void
+  botIcon?: UserTextReferences['botIcon']
   openFile: (path: string, options?: OpenFileOptions) => void
   inspectCall: ((callId: ToolCallId) => void) | undefined
   forkAt: (seq: number) => void
@@ -244,6 +247,7 @@ export interface ChatViewInjected {
   }
   /** Open the current source file of a skill referenced by a sent message. */
   openSkill: (name: string) => void
+  botIcon?: UserTextReferences['botIcon']
   /** Open one HTTP(S) message link at the selected destination, using an external tab if Sidebar Browser is unavailable. */
   openExternalLink: (url: string) => void
   openFile: (path: string, options?: OpenFileOptions) => Promise<void>

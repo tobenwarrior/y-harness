@@ -80,6 +80,13 @@ export type VaultRequest = { readonly action: 'list' | 'list-grants' } | ({
 } | {
   readonly action: 'list-logins' | 'list-bot-logins'
 } | {
+  readonly action: 'list-login-automation'
+} | {
+  readonly action: 'set-login-automatic'
+  readonly id: VaultLoginId
+  readonly bot: VaultBotId
+  readonly enabled: boolean
+} | {
   readonly action: 'add-login'
   readonly bot?: VaultBotId
   readonly origin: string
@@ -228,6 +235,12 @@ export type VaultReply = {
   readonly ok: true
   readonly botLogins: readonly VaultLogin[]
   readonly bots?: readonly VaultBotChoice[]
+} | {
+  readonly ok: true
+  readonly loginAutomation: {
+    readonly available: boolean
+    readonly enabled: readonly VaultLoginId[]
+  }
 } | {
   readonly ok: true
   readonly access: VaultBotAccess
@@ -407,6 +420,11 @@ function requestBody(value: unknown): VaultRequest | undefined {
     return { action, id: value.id, value: value.value }
   }
   if ((action === 'list-logins' || action === 'list-bot-logins') && fields === 1) return { action }
+  if (action === 'list-login-automation' && fields === 1) return { action }
+  if (action === 'set-login-automatic' && fields === 4 && isVaultLoginId(value.id)
+    && botId(value.bot) && typeof value.enabled === 'boolean') {
+    return { action, id: value.id, bot: value.bot, enabled: value.enabled }
+  }
   if (action === 'add-login' || action === 'replace-login' || action === 'remove-login') {
     const assigned = Object.hasOwn(value, 'bot')
     if (assigned && !botId(value.bot)) return undefined
@@ -506,6 +524,18 @@ function replyBody(
   const value: unknown = JSON.parse(stdout)
   if (!record(value)) return undefined
   const fields = Object.keys(value).length
+  if (action === 'list-login-automation') {
+    const automation = value.loginAutomation
+    if (fields !== 1 || !record(automation) || Object.keys(automation).length !== 2
+      || typeof automation.available !== 'boolean' || !Array.isArray(automation.enabled)
+      || automation.enabled.length > MAX_LOGINS) return undefined
+    const ids = new Set<VaultLoginId>()
+    for (const id of automation.enabled) {
+      if (!isVaultLoginId(id) || ids.has(id)) return undefined
+      ids.add(id)
+    }
+    return { ok: true, loginAutomation: { available: automation.available, enabled: automation.enabled } }
+  }
   if (action === 'enter-login-use' && fields === 2 && value.state === 'submitted' && typeof value.saved === 'boolean') {
     return { state: value.state, saved: value.saved }
   }
@@ -779,12 +809,23 @@ export async function cloudVaultRequest(
     if (workspace !== undefined) bots = await readCloudVaultBots(workspace.origin, workspace.fetch, signal)
     if (assignedLogin !== undefined && !bots?.some(bot => bot.id === assignedLogin)) return unavailable
   }
+  if (request.action === 'set-login-automatic' && request.enabled) {
+    // Enabling binds the grant to the current authenticated Cloud roster. Disabling
+    // stays available for an exact Vault account after its Bot leaves that roster.
+    if (workspace === undefined || (await readCloudVaultPolicy(workspace, signal))?.mode !== 'managed') return unavailable
+    bots = await readCloudVaultBots(workspace.origin, workspace.fetch, signal)
+    if (!bots?.some(bot => bot.id === request.bot)) return unavailable
+  }
   const scoped = request.action === 'list-grants' && sharedScopes
     ? await executeVaultRequest(target, { action: 'list-scoped-grants' }, signal, execute)
     : undefined
   const reply = scoped !== undefined && 'access' in scoped
     ? scoped
     : await executeVaultRequest(target, request, signal, execute)
+  if ('loginAutomation' in reply && reply.loginAutomation.available) {
+    const policy = workspace === undefined ? undefined : await readCloudVaultPolicy(workspace, signal)
+    return { ...reply, loginAutomation: { ...reply.loginAutomation, available: policy?.mode === 'managed' } }
+  }
   return ('access' in reply || 'botLogins' in reply) && bots !== undefined ? { ...reply, bots } : reply
 }
 

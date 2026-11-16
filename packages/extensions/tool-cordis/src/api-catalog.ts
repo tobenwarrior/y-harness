@@ -816,16 +816,16 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'Newest-first timed receipts or event deliveries/results.',
       },
       {
-        signature: '@Remote(\'readGrokHistory\') async readGrokHistory(request: BotGrokHistoryRequest): Promise<BotGrokHistoryArchive | null>',
-        description: 'Read a private recovered archive without activating the Bot Session.',
-        parameters: [{ name: 'request', description: 'Bot identity.' }],
+        signature: '@Remote(\'readGrokHistory\') async readGrokHistory(request: BotGrokHistoryRequest, signal?: AbortSignal): Promise<BotGrokHistoryView | null>',
+        description: 'Read a private recovered archive and its verified attachment positions without activating the Bot Session.',
+        parameters: [{ name: 'request', description: 'Bot identity.' }, { name: 'signal', description: 'Cancellation for attachment verification.' }],
         returns: 'Recovered history or null if the Bot has no archive.',
       },
       {
         signature: '@Remote(\'importGrokHistory\') async importGrokHistory(request: BotGrokHistoryImportRequest): Promise<{ readonly messages: number }>',
         description: 'Store a reviewed transcript without delivering it to the Bot or changing its Session.',
         parameters: [{ name: 'request', description: 'Existing Bot and versioned transcript JSON.' }],
-        returns: 'The number of recovered messages.',
+        returns: 'The total number of stored records across the primary and supplemental sources.',
       },
       {
         signature: '@Remote(\'importGrokBot\') async importGrokBot(request: BotGrokImportRequest, signal?: AbortSignal): Promise<BotGrokImportValue>',
@@ -856,6 +856,24 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'Create one durable Bot and its exactly-one ordinary Session.\n\nA provisioning row is committed before Session creation. If Session creation or activation cannot finish, the row remains visible and the same Bot id can be retried safely; no second Session is allocated for that Bot.',
         parameters: [{ name: 'request', description: 'Name, visual identity, optional working directory, and preset.' }],
         returns: 'the active row or a retryable provisioning row.',
+      },
+      {
+        signature: 'async ownerBotForSession(sessionId: string): Promise<{ readonly id: BotId readonly sessionId: SessionId readonly state: \'active\' | \'provisioning\' } | undefined>',
+        description: 'Resolve a server-owned Bot by its exact backing Session.',
+        parameters: [{ name: 'sessionId', description: 'Session identity from the live Agent or authenticated UI.' }],
+        returns: 'The owner Bot, including provisioning state, or undefined for other Sessions.',
+      },
+      {
+        signature: 'async isDirectOwnerTurn(agent: Agent, signal?: AbortSignal): Promise<boolean>',
+        description: 'Check whether the live owner Bot is answering a direct human message.',
+        parameters: [{ name: 'agent', description: 'Exact live Agent invoking the owner-only operation.' }, { name: 'signal', description: 'Cancellation while reading the current Session log.' }],
+        returns: 'Whether the current turn belongs exclusively to a direct owner conversation.',
+      },
+      {
+        signature: 'async privateOwnerTurnSource(agent: Agent, signal?: AbortSignal): Promise<\'user\' | \'schedule\' | undefined>',
+        description: 'Identify a live private turn whose input belongs exclusively to the owner or its schedule.',
+        parameters: [{ name: 'agent', description: 'Exact Agent invoking the operation.' }, { name: 'signal', description: 'Cancellation while reading the current Session log.' }],
+        returns: 'The trusted input source for the open owner turn, or undefined when none qualifies.',
       },
       {
         signature: '@Remote(\'rename\') async rename(request: BotRenameRequest): Promise<BotRenameValue>',
@@ -2166,9 +2184,9 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         throws: ['{OfficeToPdfError} Invalid input, unusable output, or engine failure; cancellation rejects with its reason.'],
       },
       {
-        signature: '@Remote async render( workspaceFileScope: WorkspaceFileScope, path: string, priority: OfficeToPdfPriority, signal: AbortSignal, ): Promise<RenderedDocumentBytes>',
-        description: 'Read and convert one Office file using the Session\'s ordinary filesystem authorization.',
-        parameters: [{ name: 'workspaceFileScope', description: 'Session header lookup shared with workspaceFiles.' }, { name: 'path', description: 'absolute or workspace-relative Office path.' }, { name: 'priority', description: 'foreground preview or speculative background work.' }, { name: 'signal', description: 'Remote cancellation; disposal also cancels outstanding reads and conversions.' }],
+        signature: '@Remote async render( workspaceFileScope: WorkspaceFileScope, path: WorkspaceFilePath, priority: OfficeToPdfPriority, signal: AbortSignal, ): Promise<RenderedDocumentBytes>',
+        description: 'Read and convert one Office file using the selected workspace\'s filesystem authorization.',
+        parameters: [{ name: 'workspaceFileScope', description: 'Session header lookup shared with workspaceFiles.' }, { name: 'path', description: 'Office file in the Session or its private Computer workspace.' }, { name: 'priority', description: 'foreground preview or speculative background work.' }, { name: 'signal', description: 'Remote cancellation; disposal also cancels outstanding reads and conversions.' }],
         returns: 'complete PDF bytes with original source identity and missing font families.',
       },
       {
@@ -3950,6 +3968,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     description: 'Typed Remote control of transient Session-owned terminal processes.',
     methods: [
       {
+        signature: 'bindWorkspace(agent: Agent, workspace: TerminalWorkspace): () => Promise<void>',
+        description: 'Bind one Agent\'s owner terminals to a workspace.',
+        parameters: [{ name: 'agent', description: 'Agent whose terminal uses the supplied workspace.' }, { name: 'workspace', description: 'Shell provider and initial directory for owner terminals.' }],
+        returns: 'A disposer that closes the Agent\'s terminals and disables new shells in this scope.',
+      },
+      {
         signature: '@Remote environment(agent: Agent, signal: AbortSignal): TerminalEnvironment',
         description: 'Read the Session working directory and terminal limits without resolving a shell.',
         parameters: [{ name: 'agent', description: 'Session owner supplied by the Gateway.' }, { name: 'signal', description: 'request cancellation.' }],
@@ -4552,36 +4576,85 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     ],
   },
   {
+    key: 'workspaceFileAccess',
+    summary: 'Resolve a managed Session without opening its Agent or consulting the Host filesystem.',
+    description: 'Resolve a managed Session without opening its Agent or consulting the Host filesystem.',
+    methods: [
+      {
+        signature: 'forSession(sessionId: SessionId, signal: AbortSignal): Promise<WorkspaceFileAccess | undefined>',
+        description: 'Select the filesystem for the given managed Session.',
+        parameters: [{ name: 'sessionId', description: 'exact Session identity.' }, { name: 'signal', description: 'caller cancellation.' }],
+        returns: 'the managed workspace, or undefined for Sessions using the Host filesystem.',
+      },
+      {
+        signature: 'forComputer?(sessionId: SessionId, signal: AbortSignal, path?: string): Promise<WorkspaceFileAccess | undefined>',
+        description: 'Resolve the authorized Computer filesystem for the requested path.',
+        parameters: [{ name: 'sessionId', description: 'exact Session identity.' }, { name: 'signal', description: 'caller cancellation.' }, { name: 'path', description: 'requested Computer path or the base file for a relative read.' }],
+        returns: 'the selected workspace, or undefined when it is unavailable for this Session.',
+      },
+    ],
+  },
+  {
     key: 'workspaceFiles',
     summary: 'Host Remote file reads and workspace directory observations over the composed filesystem.',
     description: 'Host Remote file reads and workspace directory observations over the composed filesystem.',
     methods: [
       {
-        signature: '@Remote async read( workspaceFileScope: WorkspaceFileScope, path: string, range: WorkspaceFileRange, signal: AbortSignal, ): Promise<WorkspaceFileText>',
+        signature: '@Remote async read( workspaceFileScope: WorkspaceFileScope, path: WorkspaceFilePath, range: WorkspaceFileRange, signal: AbortSignal, ): Promise<WorkspaceFileText>',
         description: 'Read one page of lines from a UTF-8 file readable by the filesystem backend.',
-        parameters: [{ name: 'workspaceFileScope', description: 'header-derived workspace root for the Session identity on the wire.' }, { name: 'path', description: 'absolute path or path relative to the workspace root; files outside it are allowed.' }, { name: 'range', description: 'the line window; omitted fields take the page defaults.' }, { name: 'signal', description: 'caller cancellation.' }],
+        parameters: [{ name: 'workspaceFileScope', description: 'header-derived workspace root for the Session identity on the wire.' }, { name: 'path', description: 'Session path or a path confined to its private Computer workspace.' }, { name: 'range', description: 'the line window; omitted fields take the page defaults.' }, { name: 'signal', description: 'caller cancellation.' }],
         returns: 'the page, the file\'s version at the stat before it, and whether it reaches the last line.',
       },
       {
-        signature: '@Remote async readBytes( workspaceFileScope: WorkspaceFileScope, path: string, options: WorkspaceByteReadOptions, signal: AbortSignal, ): Promise<WorkspaceFileBytes>',
+        signature: '@Remote async readBytes( workspaceFileScope: WorkspaceFileScope, path: WorkspaceFilePath, options: WorkspaceByteReadOptions, signal: AbortSignal, ): Promise<WorkspaceFileBytes>',
         description: 'Read a complete regular file or one byte range without text decoding.',
-        parameters: [{ name: 'workspaceFileScope', description: 'header-derived workspace root for the Session identity on the wire.' }, { name: 'path', description: 'target path, absolute or workspace-relative; relative to the base file\'s directory when provided.' }, { name: 'options', description: 'optional base file and range; without a range the complete-file cap applies.' }, { name: 'signal', description: 'caller cancellation.' }],
+        parameters: [{ name: 'workspaceFileScope', description: 'header-derived workspace root for the Session identity on the wire.' }, { name: 'path', description: 'Session or private Computer path, relative to the base file\'s directory when provided.' }, { name: 'options', description: 'optional base file and range; without a range the complete-file cap applies.' }, { name: 'signal', description: 'caller cancellation.' }],
         returns: 'native bytes with the file\'s version and size at the preceding stat, byte offset, and EOF marker.',
       },
       {
-        signature: '@Remote async stat(workspaceFileScope: WorkspaceFileScope, path: string, signal: AbortSignal): Promise<WorkspaceFileStat>',
+        signature: 'async readWorkspaceBytes(scope: WorkspaceFileScope, path: string, signal: AbortSignal): Promise<Uint8Array>',
+        description: 'Read a complete regular file that resolves inside its Session workspace.',
+        parameters: [{ name: 'scope', description: 'Session and the workspace root from its header.' }, { name: 'path', description: 'declared path inside the workspace.' }, { name: 'signal', description: 'caller cancellation.' }],
+        returns: 'the current bytes, subject to the configured complete-file cap.',
+      },
+      {
+        signature: 'async readVerifiedBytes( scope: WorkspaceFileScope, path: WorkspaceFilePath, expected: WorkspaceFileStat, maxBytes: number, signal: AbortSignal, ): Promise<Uint8Array>',
+        description: 'Read an authorized file after checking the reserved source identity.',
+        parameters: [{ name: 'scope', description: 'authorization Session and its working directory.' }, { name: 'path', description: 'Session path or a path confined to its private Computer workspace.' }, { name: 'expected', description: 'source identity observed before the reservation.' }, { name: 'maxBytes', description: 'the consumer\'s reserved byte capacity.' }, { name: 'signal', description: 'caller cancellation.' }],
+        returns: 'native bytes within the reservation.',
+      },
+      {
+        signature: 'async downloadComputer(sessionId: SessionId, path: string, signal: AbortSignal): Promise<Response>',
+        description: 'Stream one private Computer file using bounded byte windows from one version.',
+        parameters: [{ name: 'sessionId', description: 'the Session that owns the Computer.' }, { name: 'path', description: 'file inside that Computer\'s workspace.' }, { name: 'signal', description: 'download request lifetime.' }],
+        returns: 'an attachment response with a backpressured body.',
+      },
+      {
+        signature: 'async openComputerFile( sessionId: SessionId, path: string, signal: AbortSignal, expectedVersion?: string, ): Promise<ComputerFileTransfer>',
+        description: 'Open a private Computer file for a byte-preserving transfer.',
+        parameters: [{ name: 'sessionId', description: 'exact owner Bot Session.' }, { name: 'path', description: 'workspace-relative or absolute private Computer path.' }, { name: 'signal', description: 'transfer lifetime.' }, { name: 'expectedVersion', description: 'file version shown to the owner, when available.' }],
+        returns: 'the file name, size, and a version-checked byte stream.',
+      },
+      {
+        signature: '@Remote async stat(workspaceFileScope: WorkspaceFileScope, path: WorkspaceFilePath, signal: AbortSignal): Promise<WorkspaceFileStat>',
         description: 'Report one regular file\'s identity, version, and size without its content.',
-        parameters: [{ name: 'workspaceFileScope', description: 'header-derived workspace root for the Session identity on the wire.' }, { name: 'path', description: 'absolute path or path relative to the workspace root; files outside it are allowed.' }, { name: 'signal', description: 'caller cancellation.' }],
+        parameters: [{ name: 'workspaceFileScope', description: 'header-derived workspace root for the Session identity on the wire.' }, { name: 'path', description: 'Session path or a path confined to its private Computer workspace.' }, { name: 'signal', description: 'caller cancellation.' }],
         returns: 'the file\'s absolute path, current version, and byte size.',
       },
       {
-        signature: '@Remote async list(workspaceFileScope: WorkspaceFileScope, path: string, signal: AbortSignal): Promise<WorkspaceDirectoryListing>',
+        signature: 'async hostFilePath(scope: WorkspaceFileScope, path: string, signal: AbortSignal): Promise<string | undefined>',
+        description: 'Resolve one file for an action that runs on the Host desktop.',
+        parameters: [{ name: 'scope', description: 'viewed Session and its header-derived root.' }, { name: 'path', description: 'declared file path.' }, { name: 'signal', description: 'caller cancellation.' }],
+        returns: 'the verified regular file\'s Host path, or undefined for a managed workspace.',
+      },
+      {
+        signature: '@Remote async list(workspaceFileScope: WorkspaceFileScope, path: WorkspaceFilePath, signal: AbortSignal): Promise<WorkspaceDirectoryListing>',
         description: 'List the direct children of one directory inside the Session\'s workspace.',
-        parameters: [{ name: 'workspaceFileScope', description: 'header-derived workspace root for the Session identity on the wire.' }, { name: 'path', description: 'workspace path, absolute or relative to the workspace root.' }, { name: 'signal', description: 'caller cancellation.' }],
+        parameters: [{ name: 'workspaceFileScope', description: 'header-derived workspace root for the Session identity on the wire.' }, { name: 'path', description: 'directory inside the Session or private Computer workspace.' }, { name: 'signal', description: 'caller cancellation.' }],
         returns: 'the directory\'s children in the backend\'s stable name order, bounded by the entry cap.',
       },
       {
-        signature: '@Remote({ mode: \'stream\' }) changes(workspaceFileScope: WorkspaceFileScope, path: string, signal: AbortSignal): AsyncIterable<WorkspaceFileWatchFrame>',
+        signature: '@Remote({ mode: \'stream\' }) async *changes(workspaceFileScope: WorkspaceFileScope, path: string, signal: AbortSignal): AsyncIterable<WorkspaceFileWatchFrame>',
         description: 'Watch one file or a directory\'s direct entries in the Session\'s filesystem. Files use the backend\'s read authority; directories remain workspace-scoped.',
         parameters: [{ name: 'workspaceFileScope', description: 'header-derived workspace root for the Session identity on the wire.' }, { name: 'path', description: 'target path; the Host determines its type and confines directories to the workspace.' }, { name: 'signal', description: 'generation cancellation.' }],
         returns: '`ready` once the target watch is active, then current metadata for queued and live invalidations.',
@@ -5829,7 +5902,11 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'BotGrokHistoryArchive',
-    declaration: 'export interface BotGrokHistoryArchive {\n    readonly source: \'grok-bot\';\n    readonly version: 1;\n    readonly firstCachedSequence: number;\n    readonly messages: readonly BotGrokHistoryMessage[];\n}',
+    declaration: 'export interface BotGrokHistoryArchive {\n    readonly source: \'grok-bot\';\n    readonly version: 1 | 2;\n    readonly firstCachedSequence: number;\n    readonly messages: readonly BotGrokHistoryMessage[];\n    readonly complete?: false;\n    readonly sources?: readonly BotGrokHistorySource[];\n}',
+  },
+  {
+    name: 'BotGrokHistoryAttachmentPosition',
+    declaration: 'export interface BotGrokHistoryAttachmentPosition {\n    readonly sourceId: string;\n    readonly sourceSequence: number;\n}',
   },
   {
     name: 'BotGrokHistoryImportRequest',
@@ -5837,11 +5914,19 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'BotGrokHistoryMessage',
-    declaration: 'export interface BotGrokHistoryMessage {\n    readonly sourceSequence: number;\n    readonly role: \'user\' | \'assistant\';\n    readonly text: string;\n    readonly timestampMs: number;\n}',
+    declaration: 'export interface BotGrokHistoryMessage {\n    readonly sourceSequence: number;\n    readonly role: string;\n    readonly text: string;\n    readonly timestampMs: number | null;\n    readonly author?: string;\n    readonly fromBot?: string;\n    readonly incomplete?: true;\n}',
   },
   {
     name: 'BotGrokHistoryRequest',
     declaration: 'export interface BotGrokHistoryRequest {\n    readonly botId: BotId;\n}',
+  },
+  {
+    name: 'BotGrokHistorySource',
+    declaration: 'export interface BotGrokHistorySource {\n    readonly id: string;\n    readonly label: string;\n    readonly firstCachedSequence: number;\n    readonly messages: readonly BotGrokHistoryMessage[];\n    readonly complete?: false;\n}',
+  },
+  {
+    name: 'BotGrokHistoryView',
+    declaration: 'export interface BotGrokHistoryView extends BotGrokHistoryArchive {\n    readonly availableAttachments?: readonly BotGrokHistoryAttachmentPosition[];\n}',
   },
   {
     name: 'BotGrokImportRequest',
@@ -6612,6 +6697,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type CompositionRowEnablement = boolean | \'conditional\';',
   },
   {
+    name: 'ComputerFileTransfer',
+    declaration: 'export interface ComputerFileTransfer {\n    readonly name: string;\n    readonly bytes: number | undefined;\n    readonly body: ReadableStream<Uint8Array<ArrayBuffer>>;\n}',
+  },
+  {
     name: 'ComputerUseProviderName',
     declaration: 'export type ComputerUseProviderName = Branded<\'ComputerUseProviderName\'>;',
   },
@@ -7046,6 +7135,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'FileReferenceCandidate',
     declaration: 'export interface FileReferenceCandidate {\n    path: string;\n    kind: \'file\' | \'directory\';\n}',
+  },
+  {
+    name: 'FileSystem',
+    declaration: 'export abstract class FileSystem extends Service {\n    constructor(ctx: Context);\n    watch(target: FsTarget, changed: (error?: Error) => void, signal: AbortSignal): Promise<() => Promise<void>>;\n    get sandboxMode(): SandboxMode | undefined;\n    abstract resolve(path: string, opts?: {\n        cwd?: string;\n        signal?: AbortSignal;\n    }): Promise<FsTarget>;\n    abstract processPath(target: FsTarget): string;\n    processPathFromHostPath(hostPath: string): string | undefined;\n    abstract fileUrl(target: FsTarget): string;\n    abstract contains(parent: FsTarget, child: FsTarget): boolean;\n    abstract stat(target: FsTarget, signal?: AbortSignal): Promise<FsInfo | undefined>;\n    abstract lstat(path: string, opts?: {\n        cwd?: string;\n    }, signal?: AbortSignal): Promise<FsPathInfo | undefined>;\n    abstract readText(target: FsTarget, signal?: AbortSignal): Promise<string>;\n    abstract streamText(target: FsTarget, signal?: AbortSignal): Promise<AsyncIterable<string>>;\n    abstract readBytes(target: FsTarget, signal: AbortSignal | undefined, maxBytes: number): Promise<Uint8Array>;\n    abstract readByteRange(target: FsTarget, range: {\n        offset: number;\n        length: number;\n    }, signal?: AbortSignal): Promise<Uint8Array>;\n    abstract listDir(target: FsTarget, signal?: AbortSignal): Promise<FsDirEntry[]>;\n    abstract writeText(target: FsTarget, content: string, expected?: FsWriteIntent, signal?: AbortSignal, sandboxPolicy?: SandboxExecutionPolicy): Promise< /* …truncated — full shape in source */',
   },
   {
     name: 'FileUploadReceiptId',
@@ -9972,6 +10065,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type TerminalWaitReason = \'stdin_read\' | \'inferred_idle\' | \'timeout\' | \'session_exit\';',
   },
   {
+    name: 'TerminalWorkspace',
+    declaration: 'export interface TerminalWorkspace {\n    readonly subprocess: Context[\'subprocess\'];\n    readonly cwd: string;\n}',
+  },
+  {
     name: 'TextProps',
     declaration: 'export interface TextProps {\n    readonly color?: string | undefined;\n    readonly bold?: boolean | undefined;\n    readonly dimColor?: boolean | undefined;\n    readonly italic?: boolean | undefined;\n    readonly underline?: boolean | undefined;\n    readonly children?: UiNode | undefined;\n}',
   },
@@ -10580,6 +10677,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface WorkspaceDirectoryListing {\n    readonly path: string;\n    readonly entries: readonly WorkspaceDirectoryEntry[];\n    readonly truncated: boolean;\n}',
   },
   {
+    name: 'WorkspaceFileAccess',
+    declaration: 'export interface WorkspaceFileAccess {\n    readonly fs: FileSystem;\n    readonly workspaceRoot: string;\n}',
+  },
+  {
     name: 'WorkspaceFileBytes',
     declaration: 'export interface WorkspaceFileBytes<Data extends Uint8Array = Uint8Array> extends WorkspaceFileStat {\n    readonly offset: number;\n    readonly data: Data;\n    readonly eof: boolean;\n}',
   },
@@ -10590,6 +10691,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'WorkspaceFileDiff',
     declaration: 'export type WorkspaceFileDiff = {\n    kind: \'text\';\n    path: string;\n    display: string;\n    before: boolean;\n    after: boolean;\n    hunks: WorkspaceDiffHunk[];\n    coarse: boolean;\n} | {\n    kind: \'binary\';\n    path: string;\n    display: string;\n} | {\n    kind: \'oversized\';\n    path: string;\n    display: string;\n};',
+  },
+  {
+    name: 'WorkspaceFilePath',
+    declaration: 'export type WorkspaceFilePath = string | {\n    readonly computer: string;\n};',
   },
   {
     name: 'WorkspaceFileRange',

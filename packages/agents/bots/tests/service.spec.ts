@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { createHash, randomUUID } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { Context, Service } from '@yharness/cordis'
 import { SharedAccessAuthority, sharedPrincipalOf, type ConnectionFetchRoute } from '@yharness/client-connection'
@@ -811,6 +811,61 @@ function provideResolvedTemplatePreset(ctx: Context): void {
 }
 
 describe('durable Bot roster', () => {
+  it('provisions one managed workspace per Bot and retains it across a failed setup retry', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'yh-managed-bot-'))
+    const workspace = (sessionId: SessionId) => join(root, sessionId)
+    const prepare = vi.fn(async (sessionId: SessionId, _botId: BotId) => { await mkdir(workspace(sessionId), { mode: 0o700 }) })
+    prepare.mockRejectedValueOnce(new Error('Computer unavailable'))
+    const h = await harness(undefined, undefined, undefined, [], new Map(), new Map(), true, 'native', false, {
+      beforeService: (ctx) => { ctx.provide('botWorkspaces', { workspace, prepare }) },
+    })
+    try {
+      const request = { id: BotId('bot-managed'), name: 'Managed Bot' }
+      await expect(h.service.create(request)).rejects.toThrow('Computer unavailable')
+      expect(h.create).not.toHaveBeenCalled()
+      const first = (await h.service.create(request)).bot
+      const second = (await h.service.create({ name: 'Second Bot' })).bot
+      expect(first.cwd).toBe(workspace(first.sessionId))
+      expect(second.cwd).not.toBe(first.cwd)
+      expect(prepare.mock.calls).toEqual([[first.sessionId, first.id], [first.sessionId, first.id], [second.sessionId, second.id]])
+      await expect(h.service.create(request)).resolves.toMatchObject({ bot: { sessionId: first.sessionId } })
+      expect(h.create).toHaveBeenCalledWith(expect.objectContaining({ sessionId: first.sessionId, cwd: first.cwd }), expect.anything())
+      await expect(h.service.ownerBotForSession(first.sessionId)).resolves.toMatchObject({ id: first.id, state: 'active' })
+      await expect(h.service.ownerBotForSession(SessionId('other-session'))).resolves.toBeUndefined()
+      await expect(h.service.create({ name: 'Host directory', cwd: root })).rejects.toThrow('assigned a private workspace')
+    } finally {
+      await close(h.ctx)
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps non-allowlisted Bot creation on the legacy cwd and skips VPS preparation', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'yh-allowlisted-bot-'))
+    const workspace = (sessionId: SessionId) => join(root, sessionId)
+    const prepare = vi.fn(async (sessionId: SessionId, _botId: BotId) => { await mkdir(workspace(sessionId), { mode: 0o700 }) })
+    const h = await harness(undefined, undefined, undefined, [], new Map(), new Map(), true, 'native', false, {
+      beforeService: (ctx) => {
+        ctx.provide('botWorkspaces', {
+          workspace,
+          prepare,
+          managed: (botId: string) => botId === 'bot-research',
+        })
+      },
+    })
+    try {
+      const managed = (await h.service.create({ id: BotId('bot-research'), name: 'Research' })).bot
+      const legacy = (await h.service.create({ id: BotId('bot-legacy'), name: 'Legacy', cwd: root })).bot
+      expect(managed.cwd).toBe(workspace(managed.sessionId))
+      expect(legacy.cwd).toBe(resolve(root))
+      await expect(h.service.create({ id: BotId('bot-legacy'), name: 'Legacy', cwd: root }))
+        .resolves.toMatchObject({ bot: { cwd: resolve(root), sessionId: legacy.sessionId } })
+      expect(prepare).toHaveBeenCalledExactlyOnceWith(managed.sessionId, managed.id)
+    } finally {
+      await close(h.ctx)
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('waits for an in-flight local attachment upload before closing its attachment domain', async () => {
     let route: ConnectionFetchRoute | undefined
     let enteredResolve: (() => void) | undefined
@@ -2611,6 +2666,181 @@ describe('durable Bot roster', () => {
       expect(search).toHaveBeenCalledOnce()
     } finally {
       await close(h.ctx)
+    }
+  })
+
+  it('installs exact shared browser and Vault request tools only in the shared Agent and rechecks admission before their bodies', async () => {
+    const pool = new MemoryMediaPool()
+    const sharedSessionId = SessionId('shared-session-browser-admission')
+    const connection = {
+      sharedRpc: {
+        enroll: vi.fn(() => async () => {}),
+        handle: vi.fn(() => async () => {}),
+      },
+    }
+    const first = await harness(pool, undefined, undefined, [], new Map(), new Map(), true, 'native', false, { connection })
+    let firstClosed = false
+    let ownerPrincipalId = ''
+    try {
+      const created = await first.service.create({ name: 'Shared browser owner', cwd: '/tmp' })
+      const authority = await SharedAccessAuthority.create(first.ctx, first.credentials, {
+        sessionMaxAgeMs: 60_000,
+        inviteMaxAgeMs: 60_000,
+      })
+      try {
+        const owner = await authority.enrollOwner({ headers: { host: '127.0.0.1:3080' } })
+        ownerPrincipalId = String(owner.principalId)
+        await bindSharedSession(authority, created.bot.id, sharedSessionId, ownerPrincipalId)
+        await authority.mutateExtension('agent-bots/shared-memberships', (current) => {
+          const membership = sharedMembershipSnapshotSchema.parse(current)
+          return {
+            value: undefined,
+            next: {
+              ...membership,
+              memberships: [...membership.memberships, {
+                botId: created.bot.id,
+                principalId: BotPrincipalId(ownerPrincipalId),
+                role: 'owner' as const,
+                grantedBy: BotPrincipalId(ownerPrincipalId),
+                createdAt: 1,
+                updatedAt: 1,
+              }],
+            },
+          }
+        })
+      } finally {
+        await authority.dispose()
+      }
+      const records = first.records
+      await close(first.ctx)
+      firstClosed = true
+
+      const calls = vi.fn(async () => 'shared browser result')
+      let browserAllowed = true
+      const browserAvailable = vi.fn(async () => browserAllowed)
+      let authorized: ReturnType<typeof vi.fn<(signal: AbortSignal, start?: () => void) => Promise<boolean>>> | undefined
+      const vaultCalls = vi.fn(async () => 'shared vault result')
+      let vaultAuthorized: ReturnType<typeof vi.fn<(signal: AbortSignal, start?: () => void) => Promise<boolean>>> | undefined
+      let vaultOwnerSessionId: SessionId | undefined
+      const h = await harness(pool, undefined, undefined, [String(sharedSessionId)], new Map(), records, true, 'native', false, {
+        connection,
+        inspectSharedSessions: true,
+        beforeService: (ctx) => {
+          ctx.provide('botSharedBrowser', {
+            available: browserAvailable,
+            toolForSession: (
+              _scope: Context,
+              _agent: Agent,
+              _botId: BotId,
+              check: (signal: AbortSignal, start?: () => void) => Promise<boolean>,
+            ) => {
+              authorized = vi.fn((signal, start) => check(signal, start))
+              return plainFixtureTool('shared_browser', async () => {
+                if (authorized === undefined) throw new Error('shared browser unavailable')
+                let operation: Promise<string> | undefined
+                if (!await authorized(new AbortController().signal, () => {
+                  operation = calls()
+                }) || operation === undefined) throw new Error('shared browser unavailable')
+                return operation
+              })
+            },
+          } as never)
+          ctx.provide('botSharedVaultRequests', {
+            toolForSession: (
+              _scope: Context,
+              _agent: Agent,
+              _botId: BotId,
+              ownerSessionId: SessionId,
+              check: (signal: AbortSignal, start?: () => void) => Promise<boolean>,
+            ) => {
+              vaultOwnerSessionId = ownerSessionId
+              vaultAuthorized = vi.fn((signal, start) => check(signal, start))
+              return plainFixtureTool('request_vps_secret', async () => {
+                if (vaultAuthorized === undefined) throw new Error('shared vault request unavailable')
+                let operation: Promise<string> | undefined
+                if (!await vaultAuthorized(new AbortController().signal, () => {
+                  operation = vaultCalls()
+                }) || operation === undefined) throw new Error('shared vault request unavailable')
+                return operation
+              })
+            },
+          } as never)
+        },
+      })
+      try {
+        const agent = h.agents[0]
+        if (agent === undefined) throw new Error('shared browser Agent was not created')
+        Object.defineProperty(agent, 'status', { value: 'running', configurable: true })
+        expect(h.ctx.tools.schemas(agent).map(schema => schema.name)).toContain('shared_browser')
+        expect(h.ctx.tools.schemas(agent).map(schema => schema.name)).toContain('request_vps_secret')
+        expect(h.ctx.tools.schemas().map(schema => schema.name)).not.toContain('shared_browser')
+        expect(h.ctx.tools.schemas().map(schema => schema.name)).not.toContain('request_vps_secret')
+        expect(vaultOwnerSessionId).toBe(created.bot.sessionId)
+        const assemble = async () => (await h.ctx.systemPrompt.assemble({ scope: agent })).tools.map(tool => tool.name)
+        await expect(assemble()).resolves.toContain('shared_browser')
+        browserAllowed = false
+        await expect(assemble()).resolves.not.toContain('shared_browser')
+        await expect(h.ctx.tools.execute({
+          callId: ToolCallId('shared-browser-disabled'), name: 'shared_browser', arguments: {},
+          signal: new AbortController().signal, agent,
+        })).resolves.toMatchObject({ isError: true })
+        expect(calls).not.toHaveBeenCalled()
+        browserAllowed = true
+        await expect(assemble()).resolves.toContain('shared_browser')
+        await expect(h.ctx.tools.execute({
+          callId: ToolCallId('shared-browser-admitted'), name: 'shared_browser', arguments: {},
+          signal: new AbortController().signal, agent,
+        })).resolves.toMatchObject({ isError: false })
+        expect(calls).toHaveBeenCalledOnce()
+        await expect(h.ctx.tools.execute({
+          callId: ToolCallId('shared-vault-admitted'), name: 'request_vps_secret', arguments: {},
+          signal: new AbortController().signal, agent,
+        })).resolves.toMatchObject({ isError: false })
+        expect(vaultCalls).toHaveBeenCalledOnce()
+        if (authorized === undefined) throw new Error('shared browser authorization callback was not installed')
+        if (vaultAuthorized === undefined) throw new Error('shared vault authorization callback was not installed')
+        const admittedStart = vi.fn()
+        await expect(authorized(new AbortController().signal, admittedStart)).resolves.toBe(true)
+        expect(admittedStart).toHaveBeenCalledOnce()
+        const authority = await SharedAccessAuthority.create(h.ctx, h.credentials, {
+          sessionMaxAgeMs: 60_000,
+          inviteMaxAgeMs: 60_000,
+        })
+        try {
+          await authority.mutateExtension('agent-bots/shared-memberships', (current) => {
+            const membership = sharedMembershipSnapshotSchema.parse(current)
+            return {
+              value: undefined,
+              next: {
+                ...membership,
+                memberships: membership.memberships.filter(member => String(member.principalId) !== ownerPrincipalId),
+              },
+            }
+          })
+        } finally {
+          await authority.dispose()
+        }
+        const revokedStart = vi.fn()
+        await expect(authorized(new AbortController().signal, revokedStart)).resolves.toBe(false)
+        expect(revokedStart).not.toHaveBeenCalled()
+        const revokedVaultStart = vi.fn()
+        await expect(vaultAuthorized(new AbortController().signal, revokedVaultStart)).resolves.toBe(false)
+        expect(revokedVaultStart).not.toHaveBeenCalled()
+        await expect(h.ctx.tools.execute({
+          callId: ToolCallId('shared-browser-revoked'), name: 'shared_browser', arguments: {},
+          signal: new AbortController().signal, agent,
+        })).resolves.toMatchObject({ isError: true })
+        await expect(h.ctx.tools.execute({
+          callId: ToolCallId('shared-vault-revoked'), name: 'request_vps_secret', arguments: {},
+          signal: new AbortController().signal, agent,
+        })).resolves.toMatchObject({ isError: true })
+        expect(calls).toHaveBeenCalledOnce()
+        expect(vaultCalls).toHaveBeenCalledOnce()
+      } finally {
+        await close(h.ctx)
+      }
+    } finally {
+      if (!firstClosed) await close(first.ctx)
     }
   })
 
@@ -12000,6 +12230,72 @@ describe('durable Bot roster', () => {
       expect(resumedResult.success).toBe(true)
     } finally {
       await close(reopened.ctx)
+    }
+  })
+
+  it('retains version-two roles, authors, partial records, and supplemental sources additively', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    let botId!: BotView['id']
+    try {
+      const { bot } = await first.service.create({ name: 'Extended History Bot', cwd: '/tmp' })
+      botId = bot.id
+      await expect(first.service.importGrokHistory({ botId, document: JSON.stringify({
+        source: 'grok-bot', version: 1, firstCachedSequence: 1, messages: [
+          { sourceSequence: 1, role: 'user', text: 'Earlier question', timestampMs: 1000 },
+          { sourceSequence: 2, role: 'assistant', text: 'Earlier answer', timestampMs: 2000 },
+        ],
+      }) })).resolves.toEqual({ messages: 2 })
+
+      const extended = {
+        source: 'grok-bot', version: 2, firstCachedSequence: 0, complete: false,
+        messages: [
+          { sourceSequence: 0, role: 'tool', text: '', timestampMs: null, incomplete: true as const },
+          { sourceSequence: 1, role: 'user', text: 'Earlier question', timestampMs: 1000 },
+          { sourceSequence: 2, role: 'assistant', text: 'Earlier answer', timestampMs: 2000 },
+          { sourceSequence: 3, role: 'agent', text: 'Later answer', timestampMs: null, author: 'Desk Bot' },
+        ],
+        sources: [{
+          id: 'builder', label: 'Bot builder', firstCachedSequence: 0, complete: false,
+          messages: [
+            { sourceSequence: 0, role: 'tool', text: 'Tool output', timestampMs: 3000 },
+            { sourceSequence: 1, role: 'assistant', text: 'Builder answer', timestampMs: null, incomplete: true as const },
+          ],
+        }],
+      }
+      await expect(first.service.importGrokHistory({ botId, document: JSON.stringify(extended) }))
+        .resolves.toEqual({ messages: 6 })
+      await expect(first.service.readGrokHistory({ botId })).resolves.toEqual(extended)
+
+      const enriched = {
+        ...structuredClone(extended),
+        messages: structuredClone(extended.messages).map(message => message.sourceSequence === 1 ? { ...message, author: 'owner' } : message),
+      }
+      await expect(first.service.importGrokHistory({ botId, document: JSON.stringify(enriched) }))
+        .resolves.toEqual({ messages: 6 })
+      const enrichedArchive = await first.service.readGrokHistory({ botId })
+      expect(enrichedArchive?.messages[0]).toMatchObject({ sourceSequence: 0 })
+      expect(enrichedArchive?.messages[1]).toMatchObject({ sourceSequence: 1, author: 'owner' })
+
+      const changedAuthor = {
+        ...structuredClone(enriched),
+        messages: structuredClone(enriched.messages).map(message => message.sourceSequence === 1 ? { ...message, author: 'another owner' } : message),
+      }
+      await expect(first.service.importGrokHistory({ botId, document: JSON.stringify(changedAuthor) }))
+        .rejects.toThrow('would remove or change')
+
+      const sourceRemoved = { ...structuredClone(enriched), sources: undefined }
+      await expect(first.service.importGrokHistory({ botId, document: JSON.stringify(sourceRemoved) }))
+        .rejects.toThrow('would remove or change')
+
+      await expect(first.service.importGrokHistory({ botId, document: JSON.stringify({
+        source: 'grok-bot', version: 1, firstCachedSequence: 1, messages: [
+          { sourceSequence: 1, role: 'user', text: 'Earlier question', timestampMs: 1000 },
+          { sourceSequence: 2, role: 'assistant', text: 'Earlier answer', timestampMs: 2000 },
+        ],
+      }) })).rejects.toThrow('would remove or change')
+    } finally {
+      await close(first.ctx)
     }
   })
 

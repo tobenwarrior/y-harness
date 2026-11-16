@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
 /** File-tree presentation over controlled directory watches and deferred listings. */
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { act, cleanup, fireEvent } from '@testing-library/react'
+import { act, cleanup, fireEvent, waitFor } from '@testing-library/react'
 import { makeTranslate, RemoteError } from '@yharness/client-test-runtime'
 import type { RemoteFailure } from '@yharness/api-remotes/client'
-import { fileAddressFor } from '@yharness/util-workspace-path'
+import { computerFileAddress, fileAddressFor } from '@yharness/util-workspace-path'
 import { failureLine, orderEntries } from '../src/client/FilesBody.tsx'
+import { COMPUTER_SHARED_FILES_KIND } from '../src/client/definition.tsx'
 import type { DirLevel } from '../src/client/store.ts'
 import { zh } from '../src/client/locales.ts'
 import { mountBody, ROOT, SESSION, TAB } from './mount.client.tsx'
@@ -56,6 +57,63 @@ describe('FilesBody', () => {
     const envIcon = view.container.querySelector(`[data-files-path="${ROOT}/.env"] svg`)?.innerHTML
     const readmeIcon = view.container.querySelector(`[data-files-path="${ROOT}/README.md"] svg`)?.innerHTML
     expect(envIcon).not.toBe(readmeIcon)
+  })
+
+  it('keeps the shared Computer tree rooted at /workspace for listings and file addresses', async () => {
+    const { view, script, tabActions } = mountBody(null, undefined, COMPUTER_SHARED_FILES_KIND)
+    await act(() => script.waitForList(0))
+    expect(script.list).toHaveBeenCalledWith(SESSION, '/workspace', expect.any(AbortSignal))
+    await act(() => script.settle({ ok: true, value: {
+      entries: [{ name: 'shared.txt', type: 'file' }, { name: 'docs', type: 'directory' }], truncated: false,
+    } }))
+    expect(view.container.querySelector('[data-files-root]')?.getAttribute('data-files-root')).toBe('/workspace')
+    expect(view.getByText(zh.computerSharedWorkspace)).toBeTruthy()
+    fireEvent.click(view.container.querySelector('[data-files-path="/workspace/shared.txt"] > button')!)
+    expect(tabActions.openResource).toHaveBeenCalledWith(computerFileAddress(SESSION, '/workspace/shared.txt'))
+    fireEvent.click(view.container.querySelector('[data-files-path="/workspace/docs"] button')!)
+    await act(() => script.waitForList(1))
+    expect(script.list).toHaveBeenLastCalledWith(SESSION, '/workspace/docs', expect.any(AbortSignal))
+  })
+
+  it('uploads a shared root file with the absolute workspace directory', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 201 }))
+    vi.stubGlobal('fetch', fetchMock)
+    try {
+      const { view, script } = mountBody(null, undefined, COMPUTER_SHARED_FILES_KIND)
+      await act(() => script.waitForList(0))
+      await act(() => script.settle({ ok: true, value: { entries: [], truncated: false } }))
+      const input = view.container.querySelector<HTMLInputElement>('[data-computer-file-picker]')
+      if (input === null) throw new Error('expected the Computer file picker')
+      fireEvent.click(view.getByRole('button', { name: zh['upload.label'] }))
+      fireEvent.change(input, { target: { files: [new File(['contents'], 'shared.txt')] } })
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+      expect(String(fetchMock.mock.calls[0]?.[0])).toContain('directory=%2Fworkspace')
+      expect(String(fetchMock.mock.calls[0]?.[0])).toContain('name=shared.txt')
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('cancels a shared Computer upload and clears its progress state', async () => {
+    const fetchMock = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => { reject(new DOMException('Aborted', 'AbortError')) }, { once: true })
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    try {
+      const { view, script } = mountBody(null, undefined, COMPUTER_SHARED_FILES_KIND)
+      await act(() => script.waitForList(0))
+      await act(() => script.settle({ ok: true, value: { entries: [], truncated: false } }))
+      const input = view.container.querySelector<HTMLInputElement>('[data-computer-file-picker]')
+      if (input === null) throw new Error('expected the Computer file picker')
+      fireEvent.click(view.getByRole('button', { name: zh['upload.label'] }))
+      fireEvent.change(input, { target: { files: [new File(['contents'], 'cancel.txt')] } })
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+      expect(view.getByRole('status')).toBeTruthy()
+      fireEvent.click(view.getByRole('button', { name: zh['upload.cancel'] }))
+      await waitFor(() => expect(view.queryByRole('status')).toBeNull())
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 
   it('heads a separator-only root by the root itself, since it has no final segment', async () => {

@@ -17,18 +17,35 @@ export const FILES_KIND = 'files'
 /** This implementation's identity in the tab system, and the key its body registers under. */
 export const FILES_ID = '@yharness/client-ui-sidebar-files'
 
+/** The tab kind for a private Bot Computer workspace. */
+export const COMPUTER_FILES_KIND = 'computer-files'
+
+/** The tab kind for a shared Bot Computer workspace. */
+export const COMPUTER_SHARED_FILES_KIND = 'computer-shared-files'
+
+/** Computer workspace variants accepted by the files definition. */
+export type ComputerFilesMode = 'private' | 'shared'
+
 /**
  * The files type's registry definition.
  * @param t - namespace-bound translate, read fresh on every label call.
+ * @param computer - register a private or shared Computer file tree.
  * @returns the definition to register.
  */
-export function filesDefinition(t: TranslateNS<'sidebarFiles'>): SidebarRightTabDefinition {
+export function filesDefinition(
+  t: TranslateNS<'sidebarFiles'>,
+  computer: boolean | ComputerFilesMode = false,
+): SidebarRightTabDefinition {
+  const shared = computer === 'shared'
+  const isComputer = computer === true || computer === 'private' || shared
+  const kind = shared ? COMPUTER_SHARED_FILES_KIND : isComputer ? COMPUTER_FILES_KIND : FILES_KIND
+  const id = shared ? `${FILES_ID}/${COMPUTER_SHARED_FILES_KIND}` : computer === true || computer === 'private' ? `${FILES_ID}/computer` : FILES_ID
   return {
-    id: FILES_ID,
-    kind: FILES_KIND,
+    id,
+    kind,
     priority: 'builtin',
-    title: () => t('type.label'),
-    guide: [{
+    title: () => t(shared ? 'sharedType.label' : 'type.label'),
+    guide: isComputer ? [] : [{
       id: 'workspace',
       commandId: 'workspace.files' as ShortcutCommandId,
       order: 10,

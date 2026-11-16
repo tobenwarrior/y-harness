@@ -1,0 +1,3 @@
+- menu:
+  - menuitem "Private workspace"
+  - menuitem "Shared workspace"

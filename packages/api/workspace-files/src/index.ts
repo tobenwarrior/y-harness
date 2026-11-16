@@ -22,20 +22,21 @@
 import { posix, win32 } from 'node:path'
 import type { Context } from '@yharness/cordis'
 import z from '@yharness/schemastery'
-import type {} from '@yharness/fs'
-import type { FsDirEntry, FsInfo, FsPathInfo, FsTarget } from '@yharness/fs'
+import type { FileSystem, FsDirEntry, FsInfo, FsPathInfo, FsTarget } from '@yharness/fs'
 import type {} from '@yharness/sandbox-policy'
 import type {} from '@yharness/session'
 import type {} from '@yharness/session-persistence'
 import type { SessionId } from '@yharness/session/types'
 import { Remote, RemoteError, TypertRemoteService, type TypertLookup } from '@yharness/typert-protocol'
 import { WorkspaceChangeFeed } from './changes.ts'
+import { fileDownloadResponse } from './download.ts'
 import type {
   WorkspaceByteRange,
   WorkspaceByteReadOptions,
   WorkspaceDirectoryEntry,
   WorkspaceDirectoryListing,
   WorkspaceFileBytes,
+  WorkspaceFilePath,
   WorkspaceFileRange,
   WorkspaceFileStat,
   WorkspaceFileText,
@@ -43,11 +44,14 @@ import type {
 } from './types.ts'
 
 export type * from './types.ts'
+export { fileDownloadResponse } from './download.ts'
 
 declare module '@yharness/cordis' {
   interface Context {
     /** Host owner of the `workspaceFiles` Remote namespace. */
     workspaceFiles: WorkspaceFiles
+    /** Optional execution filesystem for managed Sessions. */
+    workspaceFileAccess: WorkspaceFileAccessProvider
   }
 }
 
@@ -57,6 +61,43 @@ export interface WorkspaceFileScope {
   readonly sessionId: SessionId
   /** Session workspace root, or the deployment fallback when its header has no cwd. */
   readonly workspaceRoot: string
+}
+
+/** The filesystem and root that own a Session's files. */
+export interface WorkspaceFileAccess {
+  /** Read provider for this workspace. */
+  readonly fs: FileSystem
+  /** Root path in that provider's filesystem. */
+  readonly workspaceRoot: string
+}
+
+/** Backpressured read of an exact private Computer file version. */
+export interface ComputerFileTransfer {
+  /** Final component of the resolved Computer path. */
+  readonly name: string
+  /** Complete file byte count, when the filesystem supplies it. */
+  readonly bytes: number | undefined
+  /** Byte stream that fails if the selected file changes. */
+  readonly body: ReadableStream<Uint8Array<ArrayBuffer>>
+}
+
+/** Resolve a managed Session without opening its Agent or consulting the Host filesystem. */
+export interface WorkspaceFileAccessProvider {
+  /**
+   * Select the filesystem for the given managed Session.
+   * @param sessionId - exact Session identity.
+   * @param signal - caller cancellation.
+   * @returns the managed workspace, or undefined for Sessions using the Host filesystem.
+   */
+  forSession(sessionId: SessionId, signal: AbortSignal): Promise<WorkspaceFileAccess | undefined>
+  /**
+   * Resolve the authorized Computer filesystem for the requested path.
+   * @param sessionId - exact Session identity.
+   * @param signal - caller cancellation.
+   * @param path - requested Computer path or the base file for a relative read.
+   * @returns the selected workspace, or undefined when it is unavailable for this Session.
+   */
+  forComputer?(sessionId: SessionId, signal: AbortSignal, path?: string): Promise<WorkspaceFileAccess | undefined>
 }
 
 declare module '@yharness/typert-protocol' {
@@ -179,6 +220,14 @@ function directoryEntry(child: FsDirEntry): WorkspaceDirectoryEntry {
   }
 }
 
+async function requireSameComputerVersion(
+  fs: FileSystem, target: FsTarget, version: FsInfo['version'], path: string, signal: AbortSignal,
+): Promise<void> {
+  const current = await fs.stat(target, signal)
+  signal.throwIfAborted()
+  if (current?.version !== version) throw new RemoteError('workspace-file/changed', 'The file changed during the read.', { path })
+}
+
 /** Host Remote file reads and workspace directory observations over the composed filesystem. */
 export class WorkspaceFiles extends TypertRemoteService {
   static inject = ['fs', 'sandboxPolicy', 'sessions', 'typert']
@@ -224,7 +273,7 @@ export class WorkspaceFiles extends TypertRemoteService {
   /**
    * Read one page of lines from a UTF-8 file readable by the filesystem backend.
    * @param workspaceFileScope - header-derived workspace root for the Session identity on the wire.
-   * @param path - absolute path or path relative to the workspace root; files outside it are allowed.
+   * @param path - Session path or a path confined to its private Computer workspace.
    * @param range - the line window; omitted fields take the page defaults.
    * @param signal - caller cancellation.
    * @returns the page, the file's version at the stat before it, and whether it reaches the last line.
@@ -232,23 +281,25 @@ export class WorkspaceFiles extends TypertRemoteService {
   @Remote
   async read(
     workspaceFileScope: WorkspaceFileScope,
-    path: string,
+    path: WorkspaceFilePath,
     range: WorkspaceFileRange,
     signal: AbortSignal,
   ): Promise<WorkspaceFileText> {
     const { offset, limit } = this.resolvePage(range)
-    const { target, info } = await this.locateFile(workspaceFileScope, path, signal)
-    const page = await this.cutPage(target, offset, limit, signal, path)
+    const { access, name, confined } = await this.location(workspaceFileScope, path, signal)
+    const { target, info } = await this.locateFile(access, name, signal, confined)
+    const page = await this.cutPage(access.fs, target, offset, limit, signal, name)
+    if (confined) await requireSameComputerVersion(access.fs, target, info.version, name, signal)
     if (page.text.includes(NUL)) {
-      throw new RemoteError('workspace-file/not-text', `"${path}" contains NUL bytes`, { path })
+      throw new RemoteError('workspace-file/not-text', `"${name}" contains NUL bytes`, { path: name })
     }
-    return { ...this.statOf(target, info), offset, text: page.text, lines: page.lines, eof: page.eof }
+    return { ...this.statOf(access.fs, target, info), offset, text: page.text, lines: page.lines, eof: page.eof }
   }
 
   /**
    * Read a complete regular file or one byte range without text decoding.
    * @param workspaceFileScope - header-derived workspace root for the Session identity on the wire.
-   * @param path - target path, absolute or workspace-relative; relative to the base file's directory when provided.
+   * @param path - Session or private Computer path, relative to the base file's directory when provided.
    * @param options - optional base file and range; without a range the complete-file cap applies.
    * @param signal - caller cancellation.
    * @returns native bytes with the file's version and size at the preceding stat, byte offset, and EOF marker.
@@ -256,72 +307,198 @@ export class WorkspaceFiles extends TypertRemoteService {
   @Remote
   async readBytes(
     workspaceFileScope: WorkspaceFileScope,
-    path: string,
+    path: WorkspaceFilePath,
     options: WorkspaceByteReadOptions,
     signal: AbortSignal,
   ): Promise<WorkspaceFileBytes> {
-    const window = options.range === undefined ? undefined : this.resolveWindow(options.range, path)
-    const resolved = options.baseFile === undefined ? path : await this.relativePath(workspaceFileScope, options.baseFile, path, signal)
-    const { target, info } = await this.locateFile(workspaceFileScope, resolved, signal)
-    if (window !== undefined) {
-      const { offset, length } = window
-      const data = await this.ctx.fs.readByteRange(target, window, signal)
-      const eof = info.size === undefined ? data.length < length : offset + data.length >= info.size
-      return { ...this.statOf(target, info), offset, data, eof }
+    const name = typeof path === 'string' ? path : path.computer
+    const window = options.range === undefined ? undefined : this.resolveWindow(options.range, name)
+    const { access, confined } = await this.location(workspaceFileScope, path, signal, options.baseFile)
+    const resolved = options.baseFile === undefined ? name : await this.relativePath(access, options.baseFile, name, signal, confined)
+    const { target, info } = await this.locateFile(access, resolved, signal, confined)
+    const data = window === undefined
+      ? await this.readComplete(access.fs, target, name, signal)
+      : await access.fs.readByteRange(target, window, signal)
+    if (confined) await requireSameComputerVersion(access.fs, target, info.version, name, signal)
+    const offset = window?.offset ?? 0
+    const eof = window === undefined || (info.size === undefined ? data.length < window.length : offset + data.length >= info.size)
+    return { ...this.statOf(access.fs, target, info), offset, data, eof }
+  }
+
+  /**
+   * Read a complete regular file that resolves inside its Session workspace.
+   * @param scope - Session and the workspace root from its header.
+   * @param path - declared path inside the workspace.
+   * @param signal - caller cancellation.
+   * @returns the current bytes, subject to the configured complete-file cap.
+   */
+  async readWorkspaceBytes(scope: WorkspaceFileScope, path: string, signal: AbortSignal): Promise<Uint8Array> {
+    const access = await this.access(scope, signal)
+    const { target } = await this.locateFile(access, path, signal, true)
+    return this.readComplete(access.fs, target, path, signal)
+  }
+
+  /**
+   * Read an authorized file after checking the reserved source identity.
+   * @param scope - authorization Session and its working directory.
+   * @param path - Session path or a path confined to its private Computer workspace.
+   * @param expected - source identity observed before the reservation.
+   * @param maxBytes - the consumer's reserved byte capacity.
+   * @param signal - caller cancellation.
+   * @returns native bytes within the reservation.
+   */
+  async readVerifiedBytes(
+    scope: WorkspaceFileScope, path: WorkspaceFilePath, expected: WorkspaceFileStat, maxBytes: number, signal: AbortSignal,
+  ): Promise<Uint8Array> {
+    const { access, name, confined } = await this.location(scope, path, signal)
+    const changed = (): RemoteError<'workspace-file/changed'> => new RemoteError('workspace-file/changed', 'The file changed.', { path: name })
+    const { target, info } = await this.locateFile(access, name, signal, confined).catch((error: unknown) => {
+      if (error instanceof RemoteError && (error.code === 'workspace-file/not-found' || error.code === 'workspace-file/not-regular-file')) {
+        throw changed()
+      }
+      throw error
+    })
+    if (info.version !== expected.version || access.fs.processPath(target) !== expected.absolutePath) throw changed()
+    const data = await access.fs.readBytes(target, signal, maxBytes)
+    if (confined) await requireSameComputerVersion(access.fs, target, info.version, name, signal)
+    return data
+  }
+
+  /**
+   * Stream one private Computer file using bounded byte windows from one version.
+   * @param sessionId - the Session that owns the Computer.
+   * @param path - file inside that Computer's workspace.
+   * @param signal - download request lifetime.
+   * @returns an attachment response with a backpressured body.
+   */
+  async downloadComputer(sessionId: SessionId, path: string, signal: AbortSignal): Promise<Response> {
+    const { body, name, bytes } = await this.openComputerFile(sessionId, path, signal)
+    return fileDownloadResponse(body, name, bytes)
+  }
+
+  /**
+   * Open a private Computer file for a byte-preserving transfer.
+   * @param sessionId - exact owner Bot Session.
+   * @param path - workspace-relative or absolute private Computer path.
+   * @param signal - transfer lifetime.
+   * @param expectedVersion - file version shown to the owner, when available.
+   * @returns the file name, size, and a version-checked byte stream.
+   */
+  async openComputerFile(
+    sessionId: SessionId, path: string, signal: AbortSignal, expectedVersion?: string,
+  ): Promise<ComputerFileTransfer> {
+    const access = await this.computerAccess(sessionId, path, signal)
+    const { target, info } = await this.locateFile(access, path, signal, true)
+    const { fs } = access
+    const { size, version } = info
+    if (expectedVersion !== undefined && expectedVersion !== version) {
+      throw new RemoteError('workspace-file/changed', 'The file changed before copying.', { path })
     }
+    const chunkSize = this.config.maxBytes
+    const cancel = new AbortController()
+    const lifetime = AbortSignal.any([signal, cancel.signal])
+    const absolutePath = fs.processPath(target)
+    const name = (absolutePath.startsWith('/') ? posix : win32).basename(absolutePath)
+    let offset = 0
+    let pending: Promise<void> | undefined
+    const body = new ReadableStream<Uint8Array<ArrayBuffer>>({
+      pull(controller) {
+        pending = (async () => {
+          lifetime.throwIfAborted()
+          const length = size === undefined ? chunkSize : Math.min(chunkSize, size - offset)
+          if (length === 0) {
+            controller.close()
+            return
+          }
+          const data = await fs.readByteRange(target, { offset, length }, lifetime)
+          await requireSameComputerVersion(fs, target, version, path, lifetime)
+          if (size !== undefined && data.length !== length) {
+            throw new Error('The file changed during download.')
+          }
+          offset += data.length
+          if (data.length > 0) controller.enqueue(new Uint8Array(data))
+          if (data.length < length || offset === size) controller.close()
+        })()
+        return pending
+      },
+      async cancel() {
+        cancel.abort()
+        await Promise.allSettled([pending])
+      },
+    }, { highWaterMark: 0 })
+    return { body, name, bytes: size }
+  }
+
+  private readComplete(fs: FileSystem, target: FsTarget, path: string, signal: AbortSignal): Promise<Uint8Array> {
     const limit = this.config.maxFileBytes
-    const data = await this.ctx.fs.readBytes(target, signal, limit).catch((cause: unknown) => {
+    return fs.readBytes(target, signal, limit).catch((cause: unknown) => {
       if (typeof cause === 'object' && cause !== null && 'code' in cause && cause.code === 'FS_TOO_LARGE') {
         throw new RemoteError('workspace-file/too-large', `"${path}" exceeds the ${limit} byte full-file cap`, { path, limit }, { cause })
       }
       throw cause
     })
-    return { ...this.statOf(target, info), offset: 0, data, eof: true }
   }
 
   /**
    * Report one regular file's identity, version, and size without its content.
    * @param workspaceFileScope - header-derived workspace root for the Session identity on the wire.
-   * @param path - absolute path or path relative to the workspace root; files outside it are allowed.
+   * @param path - Session path or a path confined to its private Computer workspace.
    * @param signal - caller cancellation.
    * @returns the file's absolute path, current version, and byte size.
    */
   @Remote
-  async stat(workspaceFileScope: WorkspaceFileScope, path: string, signal: AbortSignal): Promise<WorkspaceFileStat> {
-    const { target, info } = await this.locateFile(workspaceFileScope, path, signal)
-    return this.statOf(target, info)
+  async stat(workspaceFileScope: WorkspaceFileScope, path: WorkspaceFilePath, signal: AbortSignal): Promise<WorkspaceFileStat> {
+    const { access, name, confined } = await this.location(workspaceFileScope, path, signal)
+    const { target, info } = await this.locateFile(access, name, signal, confined)
+    return this.statOf(access.fs, target, info)
+  }
+
+  /**
+   * Resolve one file for an action that runs on the Host desktop.
+   * @param scope - viewed Session and its header-derived root.
+   * @param path - declared file path.
+   * @param signal - caller cancellation.
+   * @returns the verified regular file's Host path, or undefined for a managed workspace.
+   */
+  async hostFilePath(scope: WorkspaceFileScope, path: string, signal: AbortSignal): Promise<string | undefined> {
+    if (await this.managedAccess(scope, signal) !== undefined) return undefined
+    const fs = this.ctx.fs
+    const { target } = await this.locateFile({ fs, workspaceRoot: scope.workspaceRoot }, path, signal)
+    return fs.processPath(target)
   }
 
   /**
    * List the direct children of one directory inside the Session's workspace.
    * @param workspaceFileScope - header-derived workspace root for the Session identity on the wire.
-   * @param path - workspace path, absolute or relative to the workspace root.
+   * @param path - directory inside the Session or private Computer workspace.
    * @param signal - caller cancellation.
    * @returns the directory's children in the backend's stable name order, bounded by the entry cap.
    */
   @Remote
-  async list(workspaceFileScope: WorkspaceFileScope, path: string, signal: AbortSignal): Promise<WorkspaceDirectoryListing> {
-    const { root, workspaceRoot, entry } = await this.inspect(workspaceFileScope, path, signal)
+  async list(workspaceFileScope: WorkspaceFileScope, path: WorkspaceFilePath, signal: AbortSignal): Promise<WorkspaceDirectoryListing> {
+    const { access, name } = await this.location(workspaceFileScope, path, signal)
+    const { fs } = access
+    const { root, entry } = await this.inspect(access, name, signal)
     // A final link — a Windows junction or a symlink — is listed through the
     // directory it resolves to, matching the child type `listDir` reports for
     // that entry; `read` keeps its own no-follow gate on the final component.
     if (entry.type !== 'directory' && entry.type !== 'symlink') {
       throw new RemoteError(
         'workspace-file/not-directory',
-        `"${path}" is a ${entry.type}`,
-        { path, kind: entry.type },
+        `"${name}" is a ${entry.type}`,
+        { path: name, kind: entry.type },
       )
     }
-    const target = await this.confine(root, workspaceRoot, path, signal)
+    const target = await this.confine(access, root, name, signal)
     if (entry.type === 'symlink') {
-      const info = await this.ctx.fs.stat(target, signal)
+      const info = await fs.stat(target, signal)
       if (info?.type !== 'directory') {
-        throw new RemoteError('workspace-file/not-directory', `"${path}" does not resolve to a directory`, { path, kind: 'symlink' })
+        throw new RemoteError('workspace-file/not-directory', `"${name}" does not resolve to a directory`, { path: name, kind: 'symlink' })
       }
     }
-    const children = await this.ctx.fs.listDir(target, signal)
+    const children = await fs.listDir(target, signal)
     return {
-      path: workspacePathOf(this.ctx.fs.fileUrl(root), this.ctx.fs.fileUrl(target)),
+      path: workspacePathOf(fs.fileUrl(root), fs.fileUrl(target)),
       entries: children.slice(0, this.config.maxEntries).map(directoryEntry),
       truncated: children.length > this.config.maxEntries,
     }
@@ -337,17 +514,49 @@ export class WorkspaceFiles extends TypertRemoteService {
    * @throws RemoteError when watching is unavailable or a directory is outside the workspace.
    */
   @Remote({ mode: 'stream' })
-  changes(workspaceFileScope: WorkspaceFileScope, path: string, signal: AbortSignal): AsyncIterable<WorkspaceFileWatchFrame> {
-    return this.feed.follow(workspaceFileScope.workspaceRoot, path, signal)
+  async *changes(workspaceFileScope: WorkspaceFileScope, path: string, signal: AbortSignal): AsyncIterable<WorkspaceFileWatchFrame> {
+    const managed = await this.managedAccess(workspaceFileScope, signal)
+    if (managed !== undefined) {
+      throw new RemoteError('workspace-file/watch-unsupported', 'Live updates are unavailable for this workspace', { path })
+    }
+    yield* this.feed.follow(workspaceFileScope.workspaceRoot, path, signal)
   }
 
-  private async relativePath(scope: WorkspaceFileScope, baseFile: string, path: string, signal: AbortSignal): Promise<string> {
+  private async managedAccess(scope: WorkspaceFileScope, signal: AbortSignal): Promise<WorkspaceFileAccess | undefined> {
+    signal.throwIfAborted()
+    const access = await this.ctx.get('workspaceFileAccess')?.forSession(scope.sessionId, signal)
+    signal.throwIfAborted()
+    return access
+  }
+
+  private async access(scope: WorkspaceFileScope, signal: AbortSignal): Promise<WorkspaceFileAccess> {
+    return await this.managedAccess(scope, signal) ?? { fs: this.ctx.fs, workspaceRoot: scope.workspaceRoot }
+  }
+
+  private async location(
+    scope: WorkspaceFileScope, path: WorkspaceFilePath, signal: AbortSignal, baseFile?: string,
+  ): Promise<{ access: WorkspaceFileAccess; name: string; confined: boolean }> {
+    if (typeof path === 'string') return { access: await this.access(scope, signal), name: path, confined: false }
+    return { access: await this.computerAccess(scope.sessionId, baseFile ?? path.computer, signal), name: path.computer, confined: true }
+  }
+
+  private async computerAccess(sessionId: SessionId, path: string, signal: AbortSignal): Promise<WorkspaceFileAccess> {
+    signal.throwIfAborted()
+    const access = await this.ctx.get('workspaceFileAccess')?.forComputer?.(sessionId, signal, path)
+    signal.throwIfAborted()
+    if (access === undefined) throw new RemoteError('workspace-file/computer-unavailable', 'Computer files are unavailable', {})
+    return access
+  }
+
+  private async relativePath(
+    access: WorkspaceFileAccess, baseFile: string, path: string, signal: AbortSignal, confined: boolean,
+  ): Promise<string> {
     const relative = path.replace(/\\/g, '/')
     if (relative.length === 0 || relative.startsWith('/') || /^[a-z][a-z\d+.-]*:/iu.test(relative) || relative.includes(NUL)) {
       throw new RemoteError('gateway/bad-request', 'path must be relative when baseFile is provided', {})
     }
-    const { target } = await this.locateFile(scope, baseFile, signal)
-    const absolute = this.ctx.fs.processPath(target)
+    const { target } = await this.locateFile(access, baseFile, signal, confined)
+    const absolute = access.fs.processPath(target)
     const paths = absolute.startsWith('/') ? posix : win32
     return paths.resolve(paths.dirname(absolute), relative)
   }
@@ -383,25 +592,25 @@ export class WorkspaceFiles extends TypertRemoteService {
    * component. Directory containment is checked separately by `list`.
    */
   private async inspect(
-    workspaceFileScope: WorkspaceFileScope,
+    { fs, workspaceRoot }: WorkspaceFileAccess,
     path: string,
     signal: AbortSignal,
-  ): Promise<{ root: FsTarget; workspaceRoot: string; entry: FsPathInfo }> {
+  ): Promise<{ root: FsTarget; entry: FsPathInfo }> {
     if (path.length === 0) throw new RemoteError('gateway/bad-request', 'path is required', {})
-    const { workspaceRoot } = workspaceFileScope
-    const root = await this.ctx.fs.resolve(workspaceRoot, { signal })
-    // Gate on the path itself before anything follows it.
-    const entry = await this.ctx.fs.lstat(path, { cwd: workspaceRoot }, signal)
+    const root = await fs.resolve(workspaceRoot, { signal })
+    const entry = await fs.lstat(path, { cwd: workspaceRoot }, signal)
     if (entry === undefined) {
       throw new RemoteError('workspace-file/not-found', `no entry at "${path}"`, { path })
     }
-    return { root, workspaceRoot, entry }
+    return { root, entry }
   }
 
   /** Resolve an inspected path and refuse it unless the workspace contains it. */
-  private async confine(root: FsTarget, workspaceRoot: string, path: string, signal: AbortSignal): Promise<FsTarget> {
-    const target = await this.ctx.fs.resolve(path, { cwd: workspaceRoot, signal })
-    if (!this.ctx.fs.contains(root, target)) {
+  private async confine(
+    { fs, workspaceRoot }: WorkspaceFileAccess, root: FsTarget, path: string, signal: AbortSignal,
+  ): Promise<FsTarget> {
+    const target = await fs.resolve(path, { cwd: workspaceRoot, signal })
+    if (!fs.contains(root, target)) {
       throw new RemoteError('workspace-file/outside-workspace', `"${path}" is outside the workspace`, { path })
     }
     return target
@@ -413,16 +622,20 @@ export class WorkspaceFiles extends TypertRemoteService {
    * changed kind in between.
    */
   private async locateFile(
-    workspaceFileScope: WorkspaceFileScope,
+    access: WorkspaceFileAccess,
     path: string,
     signal: AbortSignal,
+    insideWorkspace = false,
   ): Promise<{ target: FsTarget; info: FsInfo }> {
-    const { workspaceRoot, entry } = await this.inspect(workspaceFileScope, path, signal)
+    const { fs, workspaceRoot } = access
+    const { root, entry } = await this.inspect(access, path, signal)
     if (entry.type !== 'file') {
       throw new RemoteError('workspace-file/not-regular-file', `"${path}" is a ${entry.type}`, { path, kind: entry.type })
     }
-    const target = await this.ctx.fs.resolve(path, { cwd: workspaceRoot, signal })
-    const info = await this.ctx.fs.stat(target, signal)
+    const target = insideWorkspace
+      ? await this.confine(access, root, path, signal)
+      : await fs.resolve(path, { cwd: workspaceRoot, signal })
+    const info = await fs.stat(target, signal)
     if (info === undefined) {
       throw new RemoteError('workspace-file/not-found', `no entry at "${path}"`, { path })
     }
@@ -432,18 +645,20 @@ export class WorkspaceFiles extends TypertRemoteService {
     return { target, info }
   }
 
-  private statOf(target: FsTarget, info: FsInfo): WorkspaceFileStat {
+  private statOf(fs: FileSystem, target: FsTarget, info: FsInfo): WorkspaceFileStat {
     return {
-      absolutePath: this.ctx.fs.processPath(target),
+      absolutePath: fs.processPath(target),
       version: info.version,
       ...info.size === undefined ? {} : { bytes: info.size },
     }
   }
 
   /** Stream the file as text and cut the page, classifying the backend's non-text refusal. */
-  private async cutPage(target: FsTarget, offset: number, limit: number, signal: AbortSignal, path: string): Promise<Page> {
+  private async cutPage(
+    fs: FileSystem, target: FsTarget, offset: number, limit: number, signal: AbortSignal, path: string,
+  ): Promise<Page> {
     try {
-      return await cutPage(await this.ctx.fs.streamText(target, signal), offset, limit, this.config.maxBytes, path)
+      return await cutPage(await fs.streamText(target, signal), offset, limit, this.config.maxBytes, path)
     } catch (error: unknown) {
       if (isNotTextRefusal(error)) {
         throw new RemoteError('workspace-file/not-text', `"${path}" is not UTF-8 text`, { path }, { cause: error })

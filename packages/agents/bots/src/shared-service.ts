@@ -249,6 +249,29 @@ export interface SharedPrivateSessionInitiatorRequest {
   readonly sessionId: SessionId
 }
 
+/** Exact shared Session coordinate used at a shared-tool body-start boundary. */
+export type SharedToolAuthorizationRequest =
+  | {
+    readonly kind: 'private'
+    /** Shared Bot backing the private Session. */
+    readonly botId: BotId
+    /** Exact durable private Session binding. */
+    readonly sessionId: SessionId
+  }
+  | {
+    readonly kind: 'group'
+    /** Shared group containing the isolated delivery. */
+    readonly groupId: BotGroupId
+    /** Shared Bot backing the isolated Session. */
+    readonly botId: BotId
+    /** Exact isolated shared-group Session binding. */
+    readonly sessionId: SessionId
+    /** Model turn containing the claimed input. */
+    readonly turn: number
+    /** Current model step, at or after the isolated claim step. */
+    readonly step: number
+  }
+
 /** Exact shared Session and connected-app source used at a tool boundary. */
 export type SharedConnectedAppAuthorizationRequest =
   | {
@@ -1303,7 +1326,6 @@ export class SharedBotService {
           started = start()
         } catch (error: unknown) {
           // Preserve the original failure, including non-Error rejections from external tools.
-          // oxlint-disable-next-line typescript/prefer-promise-reject-errors
           started = Promise.reject(error)
           void started.catch(() => undefined)
           throw error
@@ -2021,6 +2043,66 @@ export class SharedBotService {
     })
   }
 
+  private async authorizeSharedToolWithHook(
+    request: SharedToolAuthorizationRequest,
+    signal: AbortSignal | undefined,
+    onAuthorized?: () => void,
+  ): Promise<boolean> {
+    const operationSignal = signal === undefined
+      ? this.stoppingController.signal
+      : AbortSignal.any([signal, this.stoppingController.signal])
+    const operation = await this.host.withBot(request.botId, operationSignal, async (bot) => {
+      void bot
+      const keys = request.kind === 'private'
+        ? [SHARED_MEMBERSHIP_EXTENSION_KEY, SHARED_PRIVATE_SESSIONS_EXTENSION_KEY]
+        : [SHARED_MEMBERSHIP_EXTENSION_KEY]
+      const readLockedExtensions = onAuthorized === undefined
+        ? this.authority.readLockedExtensions.bind(this.authority)
+        : this.authority.readLockedExtensionsForActionStart.bind(this.authority)
+      const result = await readLockedExtensions<{
+        readonly memberships: readonly SharedMembershipRecord[]
+        readonly value: boolean
+      }>(keys, (extensions, authorityState) => {
+        const membershipSnapshot = parseMembershipSnapshot(extensions[SHARED_MEMBERSHIP_EXTENSION_KEY])
+        const principalId = request.kind === 'private'
+          ? resolvePrivateSessionInitiatorFromSnapshot(
+            membershipSnapshot,
+            extensions[SHARED_PRIVATE_SESSIONS_EXTENSION_KEY],
+            authorityState,
+            { botId: request.botId, sessionId: request.sessionId },
+          )
+          : resolveSharedGroupInitiatorFromSnapshot(
+            extensions[SHARED_MEMBERSHIP_EXTENSION_KEY],
+            authorityState,
+            request,
+          )
+        const allowed = principalId !== undefined
+        if (allowed && onAuthorized !== undefined) {
+          operationSignal.throwIfAborted()
+          if (this.stopping || this.stoppingController.signal.aborted) {
+            return {
+              memberships: membershipSnapshot.memberships,
+              value: false,
+            }
+          }
+          onAuthorized()
+        }
+        return {
+          memberships: membershipSnapshot.memberships,
+          value: allowed,
+        }
+      })
+      this.membershipSnapshot = result.memberships
+      return result.value
+    })
+    if (!operation.found) {
+      operationSignal.throwIfAborted()
+      return false
+    }
+    if (onAuthorized === undefined) operationSignal.throwIfAborted()
+    return operation.value
+  }
+
   private async authorizeSharedConnectedAppWithHook(
     request: SharedConnectedAppAuthorizationRequest,
     signal: AbortSignal | undefined,
@@ -2276,6 +2358,24 @@ export class SharedBotService {
     request: SharedGroupInitiatorRequest,
   ): Promise<ReturnType<typeof BotPrincipalId> | undefined> {
     return this.groups.resolveSharedGroupInitiator(request)
+  }
+
+  /**
+   * Authorize one shared tool operation and optionally start its body under
+   * the authority record lock. The starter is synchronous: it may launch a
+   * provider promise, but this method never awaits that promise while the lock
+   * is held.
+   * @param request - Exact private or isolated group Session coordinate.
+   * @param signal - Cancellation for the authorization operation.
+   * @param onAuthorized - Optional synchronous body starter used at final admission.
+   * @returns Whether the current principal and delivery are authorized.
+   */
+  async authorizeSharedTool(
+    request: SharedToolAuthorizationRequest,
+    signal?: AbortSignal,
+    onAuthorized?: () => void,
+  ): Promise<boolean> {
+    return this.authorizeSharedToolWithHook(request, signal, onAuthorized)
   }
 
   /**

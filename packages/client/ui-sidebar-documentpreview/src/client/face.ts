@@ -19,7 +19,7 @@
 import type { BoundActions } from '@yharness/client-store'
 import type { TabId } from '@yharness/client-ui-dockkit'
 import type { SessionId } from '@yharness/session/types'
-import type { ReadDocumentBytes, ReadWorkspaceFilePage, SessionFile } from './rpc.ts'
+import { documentPath, type ReadDocumentBytes, type ReadWorkspaceFilePage, type SessionFile } from './rpc.ts'
 import type { TextStore } from './store.ts'
 import type { DocumentLoadMode } from './document/registry.ts'
 import type { Resources } from '@yharness/client-resources/client'
@@ -148,7 +148,7 @@ export function textFace(
       const reads = modeOf(tabId, signal, 'text-pages')
       const { generation } = reads
       actions.loading(tabId, 'text-pages', observedVersion)
-      void read(file.sessionId, file.path, offset, signal).then((result) => {
+      void read(file.sessionId, documentPath(file), offset, signal).then((result) => {
         if (signal.aborted || reads.generation !== generation) return
         if (!result.ok) {
           actions.failed(tabId, result.error)

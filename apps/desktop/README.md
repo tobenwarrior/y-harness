@@ -54,6 +54,14 @@ The Vault’s **Shared browsers** section lists the Bots whose browser access th
 
 A Bot credential request from a compatible Cloud Host opens the same isolated window for one request. Desktop accepts the exact request link from the selected Cloud view and resolves the current request over SSH before showing a masked field.
 
+Cloud’s [Vault](../../docs/user/guide/vps.md#manage-service-secrets-from-the-mac-app) opens in a separate desktop-owned window. Its preload accepts only that window’s document. The main process sends requests over the connected owner’s SSH account and returns names, permission lists, and operation status. [Bot access](../../docs/user/guide/vps.md#let-a-bot-request-a-key-in-chat) checks the connected Cloud Host’s current policy before reading or changing grants and uses its authenticated roster for grant choices. Grant controls require a Cloud Host that uses the standard local Vault broker and its per-Bot grants. With shared grants enabled, the owner can set whether each exact service key can be requested from shared chats.
+
+The [website sign-in approval](../../docs/user/guide/vps.md#approve-a-saved-website-login) window shows the site and exact destination. Choose a saved login or enter one for the current request. The VPS Vault sends the login directly to the browser. Select **Save this login to Vault** to keep an entered login after submission. In **Websites**, use **Saved for** to give a Bot a dedicated account. Vault verifies the pending browser request belongs to that Bot and website before submitting the account details. **Use automatically** applies to that Bot in private chats and routines on the website; enable it again after replacing the account.
+
+The Vault’s **Shared browsers** section lists the Bots whose browser access the owner can change for shared chats. Desktop binds each selection to the Bot’s current owner Session and verifies the worker’s updated permission before confirming it.
+
+A [Bot credential request](../../docs/user/guide/vps.md#let-a-bot-request-a-key-in-chat) opens the same isolated window for one request. Desktop accepts the exact request link from the selected Cloud view and resolves the current request over SSH before showing a masked field.
+
 ### Mac Computer
 
 The [Computer panel](../../docs/user/guide/index.md#let-a-bot-use-your-mac) uses the application’s macOS permissions. The Electron main process owns the permission checks, native confirmation, primary-display capture and input. It accepts panel requests from the local application document and model actions from the Desktop Host IPC channel. A renewable panel lease binds both paths to the selected Bot Session. The main process revokes that lease on workspace switch, main document navigation, window close, lock or suspension.

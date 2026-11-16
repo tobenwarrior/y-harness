@@ -1,6 +1,18 @@
 /** Watch and read ownership for the Files panel's expanded directory tree. */
 import type { DirLevel } from './store.ts'
 
+/**
+ * Join a listed basename to its parent's tree key.
+ * @param parent - absolute Session path or relative Computer path.
+ * @param name - the entry's basename.
+ * @returns the child's tree key.
+ */
+export function childPath(parent: string, name: string): string {
+  const posix = parent === '.' || parent.startsWith('./') || (parent.startsWith('/') && !parent.startsWith('//'))
+  const trailing = posix ? /\/+$/u : /[/\\]+$/u
+  return `${parent.replace(trailing, '')}/${name}`
+}
+
 /** One open directory and its active child nodes; cached view preferences live in the store. */
 export class DirectoryNode {
   /** Open direct-child directories, keyed by absolute path. */
@@ -16,7 +28,7 @@ export class DirectoryNode {
   constructor(
     readonly path: string,
     private readonly load: (path: string, signal: AbortSignal) => Promise<DirLevel | undefined>,
-    private readonly watch: (path: string, signal: AbortSignal) => AsyncIterable<'ready' | 'change'>,
+    private readonly watch: (path: string, signal: AbortSignal) => AsyncIterable<'ready' | 'change'> | Iterable<'ready' | 'change'>,
     private readonly failed: (path: string, error: unknown) => void,
     lifetime: AbortSignal,
     private restore: readonly string[] = [],
@@ -140,7 +152,7 @@ export class DirectoryNode {
         if (this.signal.aborted || level === undefined) return
         this.initialized = true
         const directories = new Set(level.entries.filter(entry => entry.type === 'directory')
-          .map(entry => `${this.path.replace(/[/\\]+$/, '')}/${entry.name}`))
+          .map(entry => childPath(this.path, entry.name)))
         for (const path of this.children.keys()) {
           if (!directories.has(path)) await this.collapse(path)
         }
