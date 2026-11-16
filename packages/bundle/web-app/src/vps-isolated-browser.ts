@@ -33,6 +33,8 @@ export interface VpsIsolatedBrowserConfig {
   readonly socketPath: string
   /** Exact Bot roster ids allowed to use the browser service. */
   readonly bots: string[]
+  /** Installer-prepared roster file to enable private browsing for each eligible owner Bot. */
+  readonly ownerRosterPath?: string
   /** Bot roster ids also allowed to use separate browsers in their shared chats. */
   readonly sharedBots?: string[]
   /** Whether the owner-approved saved-login flow is available to these Bots. */
@@ -43,6 +45,8 @@ export interface VpsIsolatedBrowserConfig {
 export interface VpsIsolatedBrowserInternals {
   /** Open one Unix-domain socket connection. */
   readonly connect?: (options: { readonly path: string }) => Socket
+  /** Publish current owner assignments before the installed worker reads them. */
+  readonly prepare?: () => Promise<void>
 }
 
 interface StatusResponse {
@@ -121,7 +125,12 @@ function validateConfig(config: VpsIsolatedBrowserConfig): void {
   if (!isAbsolute(config.socketPath) || config.socketPath.includes('\u0000')) {
     throw new TypeError('VPS isolated browser socketPath must be absolute.')
   }
-  if (config.bots.length === 0 || config.bots.some(bot => typeof bot !== 'string' || bot.length === 0 || bot.includes('\u0000'))) {
+  const roster = config.ownerRosterPath
+  if (roster !== undefined && (!isAbsolute(roster) || roster.includes('\u0000'))) {
+    throw new TypeError('VPS isolated browser ownerRosterPath must be absolute.')
+  }
+  if ((roster === undefined && config.bots.length === 0)
+    || config.bots.some(bot => typeof bot !== 'string' || bot.length === 0 || bot.includes('\u0000'))) {
     throw new TypeError('VPS isolated browser bots must contain at least one valid Bot id.')
   }
   if (new Set(config.bots).size !== config.bots.length) {
@@ -323,6 +332,8 @@ export async function runAuthorizedBrowserOperation<T>(
 export class VpsIsolatedBrowser {
   private readonly socketPath: string
   private readonly bots: ReadonlySet<string>
+  private readonly usesOwnerRoster: boolean
+  private readonly prepare: (() => Promise<void>) | undefined
   private readonly sharedBots: ReadonlySet<string>
   private readonly connect: (options: { readonly path: string }) => Socket
 
@@ -334,6 +345,8 @@ export class VpsIsolatedBrowser {
     validateConfig(config)
     this.socketPath = config.socketPath
     this.bots = new Set(config.bots)
+    this.usesOwnerRoster = config.ownerRosterPath !== undefined
+    this.prepare = internals.prepare
     this.sharedBots = new Set(config.sharedBots)
     this.connect = internals.connect ?? createConnection
   }
@@ -345,8 +358,9 @@ export class VpsIsolatedBrowser {
    * @returns Whether the Bot is eligible for a broker request. Shared turns also check their effective policy.
    */
   authorized(bot: string, session?: string): boolean {
+    const eligible = this.usesOwnerRoster || this.bots.has(bot)
     return session !== undefined && isSharedBrowserSession(session)
-      ? this.sharedBots.has(bot) || (this.usesManagedSharing() && this.bots.has(bot)) : this.bots.has(bot)
+      ? this.sharedBots.has(bot) || (this.usesManagedSharing() && eligible) : eligible
   }
 
   /**
@@ -612,6 +626,8 @@ export class VpsIsolatedBrowser {
 
   private async request<T>(request: Request, decode: (value: unknown) => T, signal: AbortSignal): Promise<T> {
     if (!this.authorized(request.bot, request.session)) throw new Error(UNAUTHORIZED)
+    if (signal.aborted) throw new Error(ABORTED)
+    await this.prepare?.()
     if (signal.aborted) throw new Error(ABORTED)
     const body = Buffer.from(JSON.stringify(request), 'utf8')
     if (body.byteLength > MAX_REQUEST_BYTES) throw new Error(INVALID_RESPONSE)

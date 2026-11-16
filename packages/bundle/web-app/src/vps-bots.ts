@@ -23,6 +23,7 @@ import { isVpsSharedPath, VpsRuntime, type VpsBrowserOptions } from './vps-runti
 import { VpsBotComputerSetting } from './vps-bot-computer-setting.ts'
 import { registerVpsProjectTool } from './vps-project-tool.ts'
 import { isSharedBrowserSession, runAuthorizedBrowserOperation, VpsIsolatedBrowser, type VpsIsolatedBrowserConfig } from './vps-isolated-browser.ts'
+import { VpsBrowserRoster, type VpsBrowserRosterEntry } from './vps-browser-roster.ts'
 import { VpsBrowserHandoffs } from './vps-browser-handoffs.ts'
 import { vpsBrowserAccessRoute } from './vps-browser-access.ts'
 import { type AutomaticVpsBrowserLogin, VpsBrowserLogin, type VpsBrowserLoginLease, vpsBrowserLoginRoute } from './vps-browser-login.ts'
@@ -95,7 +96,10 @@ export function mountVpsBots(
   const browserBotIds = new Set(config.browser?.bots)
   const networkBotIds = config.network == null ? undefined : new Set(config.network.bots)
   const isolatedBrowserBotIds = new Set(config.isolatedBrowser?.bots)
-  const hasBrowserSignIn = (botId: string): boolean => isolatedBrowserBotIds.has(botId)
+  const ownerRosterPath = config.isolatedBrowser?.ownerRosterPath
+  const isIsolatedBrowserBot = (botId: string): boolean => isolatedBrowserBotIds.has(botId)
+    || (ownerRosterPath !== undefined && isDesktopBot(botId) && !browserBotIds.has(botId))
+  const hasBrowserSignIn = (botId: string): boolean => isIsolatedBrowserBot(botId)
     || (browserBotIds.has(botId) && isDesktopOnly(botId))
   if ([...browserBotIds].some(botId => !isDesktopBot(botId))) {
     throw new Error('VPS browser access must select private Computer Bots.')
@@ -129,9 +133,46 @@ export function mountVpsBots(
   const defaultRuntime = runtimeWith(undefined, false, false)
   if (config.sharedWorkspace != null) runtimeWith(undefined, true, false)
   if (config.browser != null) runtimeWith(config.browser, false, networkBotIds === undefined)
+  let browserRoster: VpsBrowserRoster | undefined
+  if (ownerRosterPath !== undefined) {
+    ctx.inject(['bots'], (scope) => {
+      const roster = new VpsBrowserRoster(ownerRosterPath, async () => {
+        const entries: VpsBrowserRosterEntry[] = []
+        for (const row of (await scope.bots.list({ includeHidden: true })).bots) {
+          if (row.state !== 'active' || !isIsolatedBrowserBot(row.id)) continue
+          const owner = await scope.bots.ownerBotForSession(row.sessionId)
+          if (owner?.state === 'active' && owner.id === row.id && owner.sessionId === row.sessionId) {
+            entries.push({ bot: owner.id, session: owner.sessionId })
+          }
+        }
+        return entries
+      })
+      const publish = (): void => {
+        void roster.sync().catch((error: unknown) => {
+          void error
+          scope.logger.warn('Could not publish private Bot browser assignments.')
+        })
+      }
+      scope.effect(() => {
+        browserRoster = roster
+        publish()
+        return async () => {
+          if (browserRoster === roster) browserRoster = undefined
+          await roster.close()
+        }
+      }, 'vps-bots: publish private browser assignments')
+      scope.on('bots/changed', () => { roster.invalidate(); publish() })
+    })
+  }
   const isolatedBrowser = config.isolatedBrowser == null
     ? undefined
-    : new VpsIsolatedBrowser(config.isolatedBrowser)
+    : new VpsIsolatedBrowser(config.isolatedBrowser, ownerRosterPath === undefined ? undefined : {
+      prepare: async () => {
+        if (browserRoster === undefined) throw new Error('The isolated browser roster is unavailable.')
+        try { await browserRoster.sync() }
+        catch (error) { void error; throw new Error('The isolated browser roster is unavailable.') }
+      },
+    })
   const browserLogin = isolatedBrowser === undefined || config.isolatedBrowser?.savedLogins !== true
     ? undefined
     : new VpsBrowserLogin(isolatedBrowser, automaticLogin === undefined ? undefined : { automaticLogin })
@@ -142,10 +183,13 @@ export function mountVpsBots(
   if (isolatedBrowser !== undefined && browserHandoffs !== undefined) {
     ctx.provide('botSharedBrowser', {
       available: (botId, sessionId, ownerSessionId, signal) =>
-        isolatedBrowser.availableInSharedSession(botId, sessionId, ownerSessionId, signal),
+        isIsolatedBrowserBot(botId)
+          ? isolatedBrowser.availableInSharedSession(botId, sessionId, ownerSessionId, signal)
+          : Promise.resolve(false),
       toolForSession(scope, agent, botId, authorized, ownerSessionId) {
         const sessionId = agent.id
-        if (!isSharedBrowserSession(sessionId) || !isolatedBrowser.authorized(botId, sessionId)) return undefined
+        if (!isSharedBrowserSession(sessionId) || !isIsolatedBrowserBot(botId)
+          || !isolatedBrowser.authorized(botId, sessionId)) return undefined
         if (scope.get('attachments') === undefined || scope.get('llm') === undefined) {
           throw new Error('The shared browser requires attachment and model services.')
         }
@@ -172,7 +216,7 @@ export function mountVpsBots(
       })
     }
   }
-  if (isolatedBrowserBotIds.size > 0 || [...browserBotIds].some(hasBrowserSignIn)) {
+  if (ownerRosterPath !== undefined || isolatedBrowserBotIds.size > 0 || [...browserBotIds].some(hasBrowserSignIn)) {
     ctx.on('webserver/index-inject', (table) => {
       table.push({ kind: 'global', name: '__YH_BOT_COMPUTER_SIGN_IN__', value: true })
     })
@@ -224,7 +268,7 @@ export function mountVpsBots(
     return computer
   }
   const computerFor = async (sessionId: string, botId: string, signal: AbortSignal): Promise<VpsComputer> => {
-    if (isolatedBrowser === undefined || !isolatedBrowserBotIds.has(botId)) return desktopFor(sessionId, botId, signal)
+    if (isolatedBrowser === undefined || !isIsolatedBrowserBot(botId)) return desktopFor(sessionId, botId, signal)
     signal.throwIfAborted()
     await isolatedBrowser.status(botId, sessionId, signal)
     signal.throwIfAborted()
@@ -235,7 +279,7 @@ export function mountVpsBots(
     return computer
   }
   const navigateFor = async (botId: string, sessionId: string, url: string, signal: AbortSignal): Promise<void> => {
-    if (isolatedBrowser === undefined || !isolatedBrowserBotIds.has(botId)) {
+    if (isolatedBrowser === undefined || !isIsolatedBrowserBot(botId)) {
       throw new Error('Browser navigation is unavailable for this Bot.')
     }
     const computer = await computerFor(sessionId, botId, signal)
@@ -244,7 +288,7 @@ export function mountVpsBots(
     ))
   }
   const browserNavigateFor = (botId: string, sessionId: string): ((url: string, signal: AbortSignal) => Promise<void>) | undefined => {
-    if (isolatedBrowser === undefined || !isolatedBrowserBotIds.has(botId)) return undefined
+    if (isolatedBrowser === undefined || !isIsolatedBrowserBot(botId)) return undefined
     return (url, signal) => isolatedBrowser.navigate(botId, sessionId, url, signal)
   }
 
@@ -305,7 +349,7 @@ export function mountVpsBots(
     )), 'vps-bots: owner Computer internet setting')
     scope.effect(() => scope.connection.fetch.register(computerRestartRoute((sessionId, surface, signal) =>
       maintain(sessionId, signal, (botId) => {
-        const hasIsolatedBrowser = isolatedBrowserBotIds.has(botId)
+        const hasIsolatedBrowser = isIsolatedBrowserBot(botId)
         if (surface === 'desktop' && !hasIsolatedBrowser) return undefined
         if (surface === 'primary' && hasIsolatedBrowser && isolatedBrowser !== undefined) {
           return isolatedBrowser.restart(botId, sessionId, signal)
@@ -359,7 +403,7 @@ export function mountVpsBots(
       if (sessionId.startsWith('handoff-')) return ownedHandoff(sessionId)
       const bot = await scope.bots.ownerBotForSession(sessionId)
       if (bot?.state !== 'active' || !hasBrowserSignIn(bot.id)) return undefined
-      const computer = (isolatedBrowserBotIds.has(bot.id) ? browsers : desktops).get(sessionId)
+      const computer = (isIsolatedBrowserBot(bot.id) ? browsers : desktops).get(sessionId)
       return {
         status: () => computer?.signInRequest() ?? browserHandoffs?.status(bot.id, bot.sessionId),
         answer: async (...args) => {
@@ -387,7 +431,7 @@ export function mountVpsBots(
       if (bot?.state !== 'active') return undefined
       if (isDesktopBot(bot.id)) {
         const navigate = browserNavigateFor(bot.id, bot.sessionId)
-        const isolated = isolatedBrowser !== undefined && isolatedBrowserBotIds.has(bot.id) ? isolatedBrowser : undefined
+        const isolated = isolatedBrowser !== undefined && isIsolatedBrowserBot(bot.id) ? isolatedBrowser : undefined
         const runtime = runtimeFor(bot.id)
         const internet = await runtime.internetFor(bot.sessionId)
         const files = scope.get('workspaceFiles') !== undefined
@@ -476,10 +520,10 @@ export function mountVpsBots(
             throw new Error('Resolve the pending Vault sign-in before requesting Computer handoff.')
           }
           return computer.requestSignIn(signal)
-        } : undefined, isolatedBrowserBotIds.has(bot.id) ? (sessionId, url, signal) => {
+        } : undefined, isIsolatedBrowserBot(bot.id) ? (sessionId, url, signal) => {
           if (sessionId !== bot.sessionId) throw new Error('VPS Computer requires the owning Bot Session.')
           return navigateFor(bot.id, sessionId, url, signal)
-        } : undefined, browserLogin !== undefined && isolatedBrowserBotIds.has(bot.id) ? async (caller, signal) => {
+        } : undefined, browserLogin !== undefined && isIsolatedBrowserBot(bot.id) ? async (caller, signal) => {
           const source = caller === agent ? await scope.bots.privateOwnerTurnSource(caller, signal) : undefined
           if (source === undefined) {
             throw new Error('Saved website login requires a direct owner message or a private time-based routine.')
@@ -489,7 +533,7 @@ export function mountVpsBots(
           return source === 'schedule'
             ? browserLogin.requestForRoutine(bot.id, bot.sessionId, lease, signal)
             : browserLogin.request(bot.id, bot.sessionId, lease, signal)
-        } : undefined, isolatedBrowserBotIds.has(bot.id) ? async (sessionId, requestSignal) => {
+        } : undefined, isIsolatedBrowserBot(bot.id) ? async (sessionId, requestSignal) => {
           if (sessionId !== bot.sessionId) throw new Error('VPS Computer requires the owning Bot Session.')
           return desktopFor(sessionId, bot.id, requestSignal)
         } : undefined)

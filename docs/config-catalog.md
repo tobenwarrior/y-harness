@@ -4499,6 +4499,8 @@ export interface VpsIsolatedBrowserConfig {
   readonly socketPath: string
   /** Exact Bot roster ids allowed to use the browser service. */
   readonly bots: string[]
+  /** Installer-prepared roster file to enable private browsing for each eligible owner Bot. */
+  readonly ownerRosterPath?: string
   /** Bot roster ids also allowed to use separate browsers in their shared chats. */
   readonly sharedBots?: string[]
   /** Whether the owner-approved saved-login flow is available to these Bots. */

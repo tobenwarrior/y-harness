@@ -161,7 +161,27 @@ For a Firefox-enabled Bot also listed in `botComputers.desktopOnlyBots`, the Bot
 
 The isolated browser gives each selected Bot a persistent Chromium profile under a separate Linux account. The Bot also has its Linux desktop and existing shell and file workspace. Use a supported, up-to-date Chromium build with working renderer sandboxing and an administrator-owned executable path. On Ubuntu 24.04, Google Chrome at `/opt/google/chrome/chrome` uses Ubuntu's built-in AppArmor profile. Ubuntu's Chromium Snap launcher requires privileges the isolated worker does not have.
 
-From the VPS administrator checkout, install the worker with the trusted Node and Chromium paths. Repeat `--grant` for each Bot roster ID and its existing Session ID. This installs a separate service and keeps the existing browser profiles available.
+From the VPS administrator checkout, install the worker with trusted Node and Chromium binaries. Use `--owner-roster` to follow Cloud’s active owner Bots automatically.
+
+```sh
+sudo python3 scripts/setup-vps-browser.py install \
+  --node /usr/bin/node --chromium /opt/google/chrome/chrome \
+  --cloud-user yharness-cloud --owner-roster
+sudo python3 scripts/setup-vps-browser.py activate
+```
+
+Add `isolatedBrowser` under `botComputers` in the private Web profile patch.
+
+```yaml
+isolatedBrowser:
+  socketPath: /run/yharness-browser/control.sock
+  bots: []
+  ownerRosterPath: /var/lib/yharness-browser-roster/cloud/active.json
+```
+
+Every active owner Bot with a private desktop can open its own Browser, including newly created Bots. The automatic roster supports up to 64 Bots and excludes the Firefox selection. Enable shared browsing or automatic Vault sign-in separately for each eligible Bot. The installer keeps profiles assigned through an earlier static list.
+
+To configure only selected Bots, repeat `--grant` for each Bot roster ID and its existing Session ID.
 
 ```sh
 sudo python3 scripts/setup-vps-browser.py install \
@@ -183,7 +203,7 @@ Reload Cloud when its tasks are idle. In the Bot’s **Computer** panel, choose 
 
 For a sign-in or verification step that needs your input, ask the Bot to hand you the Computer from its direct chat. Choose **Take over** and verify the website before entering anything. The Bot and other viewers stop receiving browser frames during the handoff. Choose **I’m done** once the signed-in page loads. If you cancel after taking control, clear the form first.
 
-To update the worker, stop its service and both sockets, then run the install and activate commands from the new release with the complete grant list. The worker reuses the existing Bot browser profiles.
+To update the worker, stop its service and both sockets when idle, then run the install and activate commands from the new release. Use `--owner-roster` for automatic assignments or supply the complete static grant list. Include `--saved-logins` if you use Vault website sign-in. The worker reuses existing Bot browser profiles.
 
 ### Approve a saved website login
 

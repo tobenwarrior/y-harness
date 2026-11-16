@@ -1,7 +1,7 @@
 /** Tests for the isolated browser's fixed Computer protocol. */
 
 import assert from 'node:assert/strict'
-import { chmod, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { createServer as createHttpServer } from 'node:http'
 import { connect } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -80,6 +80,70 @@ test('checks the exact Bot and Session without launching a browser', async t => 
   assert.deepEqual(await controlResponse(control, { ...request, action: 'status', session: otherSession }), { error: 'unavailable' })
   assert.deepEqual(await controlResponse(control, { ...request, action: 'status', bot: 'bot-other' }), { error: 'unavailable' })
   assert.throws(() => parseGrants([request, { bot: 'bot-duplicate', session: SESSION }]))
+})
+
+test('follows the opted-in owner roster without transferring browser sharing to a new Session', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'yh-browser-owner-roster-'))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  await chmod(directory, 0o755)
+  const publisher = join(directory, 'cloud')
+  await mkdir(publisher)
+  await chmod(publisher, 0o2750)
+  const roster = join(publisher, 'active.json')
+  const publish = async grants => {
+    const path = join(publisher, 'next.json')
+    await writeFile(path, JSON.stringify(grants) + '\n')
+    await chmod(path, 0o640)
+    await rename(path, roster)
+  }
+  const profiles = []
+  const origin = 'https://example.test'
+  const { control, vault } = await setup(t, {
+    ownerRoster: { path: roster, uid: process.getuid() },
+    policy: { version: 1, bots: [{ ...request, enabled: true, revision: REVISION }] },
+    savedLogins: true,
+    createPage: async (_executable, profile) => {
+      profiles.push(profile)
+      return {
+        captureLogin: async () => ({ origin, destination: origin + '/login' }),
+        frame: async () => '/9j/2Q==',
+        close: async () => {},
+        closed: new Promise(() => {}),
+      }
+    },
+  })
+  const second = { bot: BOT2, session: SESSION2 }
+  const status = pair => controlResponse(control, { ...pair, action: 'status' })
+  assert.deepEqual(await status(request), { error: 'unavailable' })
+  await publish([request, second])
+  assert.deepEqual(await status(request), { available: true })
+  assert.deepEqual(await status(second), { available: true })
+  assert.deepEqual(await status({ bot: BOT2, session: SESSION }), { error: 'unavailable' })
+  assert.deepEqual(await status({ bot: BOT, session: sharedSession }), { available: true })
+  assert.deepEqual(await status({ bot: BOT2, session: sharedSession }), { error: 'unavailable' })
+  assert.deepEqual(profiles, [])
+  await controlResponse(control, { ...request, action: 'frame' })
+  const pending = await controlResponse(control, { ...second, action: 'request-login' })
+  const inspect = { action: 'inspect-login-automatic', id: pending.id }
+  assert.deepEqual(await controlResponse(vault, inspect), {
+    ...pending, bot: second.bot, session: second.session,
+  })
+  assert.ok(profiles[0].endsWith('/' + SESSION))
+  assert.match(profiles[1], /\/owner-[a-f0-9]{64}$/u)
+
+  await publish([{ bot: BOT, session: SESSION2 }])
+  assert.deepEqual(await controlResponse(vault, inspect), { error: 'unavailable' })
+  assert.deepEqual(await status(request), { error: 'unavailable' })
+  assert.deepEqual(await status({ bot: BOT, session: SESSION2 }), { available: true })
+  assert.deepEqual(await status({ bot: BOT, session: sharedSession }), { error: 'unavailable' })
+
+  await chmod(roster, 0o666)
+  assert.deepEqual(await status({ bot: BOT, session: SESSION2 }), { error: 'unavailable' })
+  await publish([{ bot: BOT, session: SESSION2, shared: true }])
+  assert.deepEqual(await status({ bot: BOT, session: SESSION2 }), { error: 'unavailable' })
+  await rm(roster)
+  await symlink(join(publisher, 'ignored'), roster)
+  assert.deepEqual(await status({ bot: BOT, session: SESSION2 }), { error: 'unavailable' })
 })
 
 test('restarts only the exact private owner browser and preserves the profile', async t => {

@@ -215,6 +215,38 @@ class IsolatedBrowserTest(unittest.TestCase):
             with self.assertRaises(installer.BrowserError):
                 installer.ensure_account()
 
+    def test_owner_roster_keeps_existing_profile_and_shared_decisions_on_update(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            paths = installer.InstallPaths(
+                install_root=root / 'lib', state_root=root / 'profiles', config_root=root / 'etc',
+                unit_root=root / 'units', runtime_root=root / 'run', roster_root=root / 'roster',
+            )
+            account = SimpleNamespace(pw_uid=721, pw_gid=721)
+            grant = ('bot-example', 'bot-session-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')
+            existing = {'bot': grant[0], 'session': grant[1], 'shared': True}
+            new_shared = {'bot': 'bot-new', 'session': 'bot-session-bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+                          'enabled': True, 'revision': 'a' * 32}
+            with (
+                patch.object(installer, 'ensure_account', return_value=account),
+                patch.object(installer, 'trusted_executable', side_effect=pathlib.Path),
+                patch.object(installer, 'ensure_units_inactive'),
+                patch.object(installer, 'artifact_source', return_value=b'// fixture'),
+            ):
+                installer.install('/opt/chrome/chrome', '/opt/node/node', 722, [grant],
+                                  paths=paths, shared_bots=[grant[0]], saved_logins=True)
+                installer.install('/opt/chrome/chrome', '/opt/node/node', 722, [],
+                                  paths=paths, owner_roster=True, saved_logins=True)
+                self.assertEqual(json.loads((paths.config_root / 'grants.json').read_bytes()),
+                                 {'version': 1, 'cloudUid': 722, 'grants': [existing]})
+                policy = paths.config_root / 'shared-grants.json'
+                policy.write_bytes(installer.shared_grants_payload([new_shared]))
+                installer.install('/opt/chrome/chrome', '/opt/node/node', 722, [],
+                                  paths=paths, owner_roster=True, saved_logins=True)
+                self.assertEqual(json.loads(policy.read_bytes())['bots'], [new_shared])
+                self.assertEqual(stat.S_IMODE((paths.roster_root / 'cloud').stat().st_mode), 0o2750)
+                self.assertFalse((paths.roster_root / 'cloud' / 'active.json').exists())
+
     def test_install_writes_root_managed_artifacts_without_starting_cloud(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)

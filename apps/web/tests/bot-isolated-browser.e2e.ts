@@ -1,8 +1,10 @@
 /** Verify the Bot browser panel through the real Cloud Host and browser worker protocol. */
 
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { readFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { createServer } from 'node:net'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { BotId, BotPrincipalId } from '@yharness/bots'
@@ -19,6 +21,7 @@ const BROKER_SOURCE = new URL('../../../packages/bundle/web-app/lib/types/vps-is
 const VAULT_SOURCE = new URL('../../../packages/bundle/web-app/lib/types/vps-vault-requests.js', import.meta.url).href
 const MODE = webSnapshotMode()
 const BOT = BotId('bot-browser-fixture')
+const NEW_BOT = BotId('bot-new-browser-fixture')
 const PROVIDER = 'browser-fixture'
 const MODEL = 'reply'
 const WEBSITE = 'https://example.test/'
@@ -95,11 +98,13 @@ class BrowserAdapter extends LlmAdapter {
 }
 
 it.skipIf(MODE === 'record' || process.platform === 'win32')('opens websites for an owner or collaborator and approves the exact Bot sign-in in Cloud', async () => {
-  const root = await mkdtemp('/tmp/yh-browser-web-')
+  const root = await mkdtemp(join(tmpdir(), 'yh-browser-web-'))
   const runtimePath = join(root, 'browser.mjs')
   const overlay = join(root, 'browser.yml')
   const socketPath = join(root, 'browser.sock')
   const desktopInput = join(root, 'desktop-input')
+  const rosterDirectory = join(root, 'cloud')
+  const ownerRosterPath = join(rosterDirectory, 'active.json')
   const websites: string[] = []
   const sharedRequests: Array<{ readonly action: string; readonly session: string }> = []
   const handoffInputs: Array<{ readonly session: string; readonly origin: string }> = []
@@ -139,6 +144,8 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('opens websites for
       }
     })
     await writeFile(desktopInput, '')
+    await mkdir(rosterDirectory)
+    await chmod(rosterDirectory, 0o2750)
     socketServer = createServer({ allowHalfOpen: true }, (socket) => {
       sockets.add(socket)
       socket.once('close', () => { sockets.delete(socket) })
@@ -160,7 +167,10 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('opens websites for
           input?: { kind: string; text?: string }
         }
         const shared = request.session.startsWith('shared-session-')
-        if (shared && sharingOverride !== true) {
+        const rosterText = readFileSync(ownerRosterPath, 'utf8')
+        const ownerPairs: readonly { readonly bot: string; readonly session: string }[] = JSON.parse(rosterText)
+        if (!ownerPairs.some(pair => pair.bot === request.bot && (shared || pair.session === request.session))
+          || (shared && sharingOverride !== true)) {
           socket.end(JSON.stringify({ error: 'unavailable' }))
           return
         }
@@ -255,7 +265,8 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('opens websites for
     `)
     await writeFile(overlay, JSON.stringify([{ insert: [{ id: 'isolated-browser-fixture', name: pathToFileURL(runtimePath).href,
       config: { root: join(root, 'bots'), image: 'localhost/yharness-test', bots: [BOT], desktopOnlyBots: [BOT],
-        isolatedBrowser: { bots: [BOT], socketPath, savedLogins: true } },
+        desktopForUnlistedBots: true,
+        isolatedBrowser: { bots: [], ownerRosterPath, socketPath, savedLogins: true } },
     }] }]))
     const web = scaffold = await launchWebScaffold({ extraOverlayPath: overlay, replayFixture: FIXTURE, replayProvidersOnly: true, toolsMode: 'native' })
     const adapter = new BrowserAdapter()
@@ -263,6 +274,9 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('opens websites for
     await web.ctx.agentDefaultModel.saveSelection({ provider: PROVIDER, model: MODEL })
     const { bot } = await web.ctx.bots.create({ id: BOT, name: 'Browser Scout', cwd: web.workspaceCwd })
     ownerSession = bot.sessionId
+    await expect.poll(async () => JSON.parse(await readFile(ownerRosterPath, 'utf8')), { timeout: 5000 }).toEqual([
+      { bot: BOT, session: bot.sessionId },
+    ])
     await page.goto(web.authenticatedUrl, { waitUntil: 'load' })
     await page.locator('[data-yh-part="sidebar"]').getByRole('button', { name: 'Bots', exact: true }).click()
     await page.locator(`[data-bot-id="${BOT}"]`).click()
@@ -271,6 +285,18 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('opens websites for
     await conversation.getByRole('button', { name: 'Send message', exact: true }).click()
     await conversation.getByText(REPLY, { exact: true }).waitFor()
     expect(websites).toEqual([WEBSITE])
+    const { bot: addedBot } = await web.ctx.bots.create({ id: NEW_BOT, name: 'New browser Bot', cwd: web.workspaceCwd })
+    const newComputer = await web.hostFetch('/api/computer/status', {
+      method: 'POST', headers: { 'content-type': 'application/json', Origin: new URL(web.baseUrl).origin },
+      body: JSON.stringify({ sessionId: addedBot.sessionId }),
+    })
+    await expect(newComputer.json()).resolves.toMatchObject({
+      available: true, computer: { id: NEW_BOT, browser: true, desktop: true, restart: true },
+    })
+    expect(JSON.parse(await readFile(ownerRosterPath, 'utf8'))).toEqual([
+      { bot: BOT, session: bot.sessionId },
+      { bot: NEW_BOT, session: addedBot.sessionId },
+    ])
     await page.getByRole('button', { name: 'Open computer panel', exact: true }).click()
     const panelSelector = '[data-computer-panel]'
     const panel = page.locator(panelSelector)
