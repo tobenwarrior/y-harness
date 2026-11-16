@@ -50,6 +50,8 @@ Cloud’s [Vault](../../docs/user/guide/vps.md#manage-service-secrets-from-the-m
 
 A compatible Cloud Host can open the same window for website sign-in approval. Review the website and destination, then choose a saved login or enter one for the current request. The VPS Vault sends the login directly to the browser. Select **Save this login to Vault** to keep an entered login after submission. In **Websites**, use **Saved for** to assign a dedicated account to a Bot. The VPS Vault offers it for that Bot's matching website sign-in.
 
+The Vault’s **Shared browsers** section lists the Bots whose browser access the owner can change for shared chats. Desktop binds each selection to the Bot’s current owner Session and verifies the worker’s updated permission before confirming it.
+
 A Bot credential request from a compatible Cloud Host opens the same isolated window for one request. Desktop accepts the exact request link from the selected Cloud view and resolves the current request over SSH before showing a masked field.
 
 ### Mac Computer

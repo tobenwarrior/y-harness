@@ -39,6 +39,7 @@ const loginUseOutcome = element('login-use-outcome')
 const confirmation = element('confirmation')
 const notice = element('notice')
 const grantNotice = element('grant-notice')
+const browserAccessList = element('browser-access-list')
 const websitesNotice = element('websites-notice')
 const loginList = element('logins')
 const loginEditor = element('login-editor')
@@ -62,6 +63,8 @@ let loginBots = []
 let grantAccess
 let grantBots
 let grantAccessReason
+let browserAccess
+let browserAccessReady = false
 let editing
 let editingLogin
 let revoking
@@ -83,6 +86,12 @@ function setNotice(key, tone = '') {
 function setWebsitesNotice(key, tone = '') {
   websitesNotice.textContent = key === undefined ? '' : messages[key]
   websitesNotice.dataset.tone = tone
+}
+
+function setBrowserAccessNotice(key, tone = '') {
+  const target = element('browser-access-notice')
+  target.textContent = key === undefined ? '' : messages[key]
+  target.dataset.tone = tone
 }
 
 function setRequestOutcome(key, tone = '') {
@@ -173,6 +182,36 @@ function loginMetadata(value, scoped) {
   return value
 }
 
+function browserAccessBotMetadata(value) {
+  if (!record(value) || Object.keys(value).length !== 3 || typeof value.id !== 'string'
+    || !/^bot-[A-Za-z0-9][A-Za-z0-9-]{0,245}$/.test(value.id)
+    || typeof value.name !== 'string' || !value.name.isWellFormed() || value.name.trim() !== value.name
+    || value.name.length === 0 || value.name.length > 255 || /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/u.test(value.name)
+    || typeof value.enabled !== 'boolean') return
+  return { id: value.id, name: value.name, enabled: value.enabled }
+}
+
+function browserAccessMetadata(value) {
+  if (!record(value) || Object.keys(value).length !== 2
+    || (value.mode !== 'managed' && value.mode !== 'unavailable') || !Array.isArray(value.bots)
+    || value.bots.length > 64 || (value.mode === 'unavailable' && value.bots.length !== 0)) return
+  const ids = new Set()
+  const bots = []
+  for (const item of value.bots) {
+    const bot = browserAccessBotMetadata(item)
+    if (bot === undefined || ids.has(bot.id)) return
+    ids.add(bot.id)
+    bots.push(bot)
+  }
+  return { mode: value.mode, bots }
+}
+
+function browserAccessReply(value) {
+  if (!record(value) || Object.keys(value).length !== 2 || value.ok !== true) return
+  const access = browserAccessMetadata(value.browserAccess)
+  return access === undefined ? undefined : access
+}
+
 function acknowledged(value) {
   return record(value) && Object.keys(value).length === 1 && value.ok === true
 }
@@ -238,6 +277,7 @@ function availability() {
   loginBot.disabled = busy || !botLoginsReady || editingLogin?.action === 'replace'
   element('add-grant').disabled = busy || !canGrantAccess()
   for (const control of grantList.querySelectorAll('button, select')) control.disabled = busy || !grantsReady
+  for (const control of browserAccessList.querySelectorAll('input, button')) control.disabled = busy || !browserAccessReady
   for (const input of grantEditor.querySelectorAll('input, select, button')) input.disabled = busy || !canGrantAccess()
 }
 
@@ -472,6 +512,44 @@ function renderGrants() {
   availability()
 }
 
+function renderBrowserAccess() {
+  const section = element('browser-access')
+  const empty = element('browser-access-empty')
+  section.hidden = !browserAccessReady
+  if (!browserAccessReady || browserAccess === undefined) {
+    browserAccessList.replaceChildren()
+    empty.hidden = true
+    availability()
+    return
+  }
+  const rows = browserAccess.bots.map(bot => {
+    const row = document.createElement('li')
+    const details = document.createElement('span')
+    details.className = 'grant-details'
+    const name = document.createElement('span')
+    name.textContent = bot.name
+    const state = document.createElement('span')
+    state.textContent = bot.enabled ? messages.cloudVaultBrowserAccessEnabled : messages.cloudVaultBrowserAccessDisabled
+    details.append(name, state)
+    const label = document.createElement('label')
+    label.className = 'browser-access-toggle'
+    const toggle = document.createElement('input')
+    toggle.type = 'checkbox'
+    toggle.checked = bot.enabled
+    toggle.setAttribute('aria-label', messages.cloudVaultBrowserAccessToggle + ' ' + bot.name)
+    toggle.addEventListener('change', () => { void changeBrowserAccess(bot.id, toggle.checked) })
+    const copy = document.createElement('span')
+    copy.textContent = messages.cloudVaultBrowserAccessToggle
+    label.append(toggle, copy)
+    row.append(details, label)
+    return row
+  })
+  browserAccessList.replaceChildren(...rows)
+  empty.textContent = messages.cloudVaultBrowserAccessEmpty
+  empty.hidden = rows.length > 0
+  availability()
+}
+
 async function send(request) {
   try { return await api.request(request) }
   catch { return { ok: false, reason: 'unavailable' } }
@@ -520,8 +598,20 @@ function displayGrantAccess(reply) {
   renderGrants()
 }
 
+function displayBrowserAccess(reply) {
+  const access = browserAccessReply(reply)
+  browserAccessReady = access?.mode === 'managed'
+  browserAccess = browserAccessReady ? access : undefined
+  setBrowserAccessNotice()
+  renderBrowserAccess()
+}
+
 async function readGrantAccess() {
   displayGrantAccess(await send({ action: 'list-grants' }))
+}
+
+async function readBrowserAccess() {
+  displayBrowserAccess(await send({ action: 'list-browser-access' }))
 }
 
 function grantInventoryNotice(success) {
@@ -540,6 +630,7 @@ async function refreshGrants() {
   availability()
   setNotice('cloudVaultLoading')
   await readGrantAccess()
+  await readBrowserAccess()
   busy = false
   availability()
   grantInventoryNotice()
@@ -562,6 +653,30 @@ async function refresh() {
   if (!loaded) setNotice('cloudVaultUnavailable', 'error')
   else setNotice(services.length === 0 ? 'cloudVaultNoServices' : undefined)
   setWebsitesNotice(websitesLoaded ? undefined : 'cloudVaultWebsitesUnavailable', websitesLoaded ? '' : 'error')
+}
+
+async function changeBrowserAccess(botId, enabled) {
+  if (busy || !browserAccessReady || browserAccess === undefined) return
+  const previous = browserAccess
+  const selected = previous.bots.find(bot => bot.id === botId)
+  if (selected === undefined) return
+  busy = true
+  availability()
+  setBrowserAccessNotice('cloudVaultSaving')
+  const result = await send({ action: 'set-browser-access', bot: botId, enabled })
+  const access = browserAccessReply(result)
+  const confirmed = access?.mode === 'managed' && access.bots.find(bot => bot.id === botId)?.enabled === enabled
+  if (confirmed) {
+    browserAccess = access
+    renderBrowserAccess()
+    setBrowserAccessNotice('cloudVaultBrowserAccessUpdated')
+  } else {
+    browserAccess = previous
+    renderBrowserAccess()
+    setBrowserAccessNotice('cloudVaultBrowserAccessFailed', 'error')
+  }
+  busy = false
+  availability()
 }
 
 async function changeGrant(request) {
@@ -963,6 +1078,7 @@ void Promise.all([api.messages(), api.mode()]).then(([copy, presentation]) => {
     ['add-grant-label', 'cloudVaultBotAccessAdd'], ['grant-bot-label', 'cloudVaultBotAccessBot'], ['grant-service-label', 'cloudVaultService'],
     ['grant-name-label', 'cloudVaultRequestName'], ['grant-scope-label', 'cloudVaultBotAccessScope'],
     ['grant-editor-cancel', 'cancel'], ['grant-save', 'cloudVaultBotAccessAdd'],
+    ['browser-access-title', 'cloudVaultBrowserAccess'], ['browser-access-hint', 'cloudVaultBrowserAccessHint'],
     ['websites-hint', 'cloudVaultWebsitesHint'], ['logins-title', 'cloudVaultWebsites'], ['add-login-label', 'cloudVaultWebsiteAdd'],
     ['logins-empty', 'cloudVaultWebsitesEmpty'], ['login-origin-label', 'cloudVaultWebsiteOrigin'], ['login-label-label', 'cloudVaultWebsiteLabel'],
     ['login-bot-label', 'cloudVaultWebsiteBot'],
