@@ -10,7 +10,7 @@ import { load } from 'js-yaml'
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import {
   PROFILE_COMPATIBILITY_FILENAME, PluginPackages, boot, getDshRuntimeVersion,
-  prepareProfileEntries, prepareProfilePatches, type ProfileContext,
+  composeEntries, prepareProfileEntries, prepareProfilePatches, renderConfigDump, type ProfileContext,
 } from '../src/index.ts'
 
 const runtime = getDshRuntimeVersion()
@@ -83,6 +83,30 @@ it('blocks an incompatible plugin before its module is imported while a compatib
   expect(effects).toEqual(['import:allowed-plugin', 'apply:allowed-plugin'])
   expect(f.warnings.join('\n')).toContain('denied-plugin@1.0.0')
   expect(f.warnings.join('\n')).toContain('data loss')
+})
+
+it('matches legacy and current package names when applying profile overlays', async () => {
+  const f = fixture()
+  f.plugin('@yharness/fixture')
+  f.plugin('@yharness/kept')
+  const rows = insert('@yharness/fixture', '@yharness/kept')
+  const overlays = [
+    { id: 'row-0', name: '@deepseek-ai/dsh-fixture', disabled: true },
+    { id: 'row-1', name: '@deepseek-ai/dsh-kept/other', disabled: true },
+  ]
+  const expected = [
+    { id: 'row-0', name: '@yharness/fixture', disabled: true },
+    { id: 'row-1', name: '@yharness/kept' },
+  ]
+  expect(await f.run([...rows, ...overlays])).toEqual(['import:@yharness/kept', 'apply:@yharness/kept'])
+  expect(f.warnings.join('\n')).toContain('@deepseek-ai/dsh-kept/other')
+  expect(composeEntries([rows, overlays])).toEqual(expected)
+  const dump = renderConfigDump('yharness', f.configPath, [
+    { label: 'bundle', patches: rows },
+    { label: 'overlay', patches: overlays },
+  ], () => {})
+  expect(load(dump, { schema: entryListSchema })).toEqual(expected)
+  expect(rows).toEqual(insert('@yharness/fixture', '@yharness/kept'))
 })
 
 it('admits the same plugin only for its exact version and the running runtime', async () => {
