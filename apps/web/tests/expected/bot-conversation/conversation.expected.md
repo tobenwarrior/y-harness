@@ -1,0 +1,104 @@
+- text: Summarize the release checklist. {{clock}}
+- button "Copy"
+- status: Completed
+- button "Activity"
+- text: Scout
+- paragraph: The release checklist is ready for review.
+- button "Copy"
+- button "Good response"
+- button "Bad response"
+- button "Branch into a new conversation"
+- button "Token usage"
+- text: {{clock}}
+- textbox "Message or run a task, / commands, @ files or sessions"
+- button "Add files or run commands"
+- 'button "Access mode, current: Approve for me"'
+- button "Select model, current bot-conversation-browser-test/reply": bot-conversation-browser-test/reply
+- button "Send message" [disabled]
+- button "Activity"
+- button "Token usage"
+- text: Summarize the release checklist. {{clock}}
+- button "Copy"
+- status: Completed
+- button "Completed in {{duration}}" [expanded]
+- button "Analysis completed"
+- text: Scout
+- paragraph: The release checklist is ready for review.
+- button "Copy"
+- button "Good response"
+- button "Bad response"
+- button "Branch into a new conversation"
+- button "Token usage"
+- text: {{clock}}
+- textbox "Message or run a task, / commands, @ files or sessions"
+- button "Add files or run commands"
+- 'button "Access mode, current: Approve for me"'
+- button "Select model, current bot-conversation-browser-test/reply": bot-conversation-browser-test/reply
+- button "Send message" [disabled]
+- button "Activity"
+- button "Token usage"
+- dialog "Session statistics":
+  - text: Session statistics 1 turns 1 steps
+  - term: LLM time
+  - definition: {{duration}}
+  - term: Avg time to first token (TTFT)
+  - definition: {{duration}}
+  - term: Tokens per second (TPS)
+  - definition: {{throughput}} tok/s
+- dialog "Token usage":
+  - text: Token usage 802 tok
+  - term: Cache hit
+  - definition: 17%
+  - term: Uncached input
+  - definition: 640 tok
+  - term: Cached input
+  - definition: 128 tok
+  - term: Output
+  - definition: 34 tok
+- dialog "Turn usage":
+  - text: Turn usage 802 tok
+  - term: Provider / model
+  - definition: bot-conversation-browser-test/reply
+  - term: Cache hit
+  - definition: 16.7%
+  - term: Uncached input
+  - definition: 640 tok
+  - term: Cached input
+  - definition: 128 tok
+  - term: Cache write
+  - definition: 0 tok
+  - term: Output
+  - definition: 34 tok
+- text: Summarize the release checklist. {{clock}}
+- button "Copy"
+- status: Completed
+- button "Completed in {{duration}}" [expanded]
+- button "Analysis completed"
+- text: Scout
+- paragraph: The release checklist is ready for review.
+- button "Copy"
+- button "Good response"
+- button "Bad response"
+- button "Branch into a new conversation"
+- button "Token usage"
+- text: {{clock}}
+- button "Automation task {{clock}}":
+  - text: Automation task
+  - time: {{clock}}
+- status: Completed
+- button "Activity"
+- text: Scout
+- paragraph: "Scheduled check: the release checklist is still ready."
+- button "Copy"
+- button "Good response"
+- button "Bad response"
+- button "Branch into a new conversation"
+- button "Token usage"
+- text: {{clock}}
+- textbox "Message or run a task, / commands, @ files or sessions"
+- button "Add files or run commands"
+- 'button "Access mode, current: Approve for me"'
+- button "Select model, current bot-conversation-browser-test/reply": bot-conversation-browser-test/reply
+- button "Send message" [disabled]
+- button "Activity"
+- button "Token usage"

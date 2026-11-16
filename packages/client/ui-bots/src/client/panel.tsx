@@ -3,12 +3,13 @@
 import type { ReactNode } from 'react'
 import type { BotView } from '@yharness/bots/client'
 import type { HostObservable, PropsLocale, PropsRenderFactories, PropsRenderSlots, PropsRuntime, InjectFace } from '@yharness/client-ui-slots'
-import type {} from '@yharness/client-ui-conversation/client'
+import type { ConversationBot } from '@yharness/client-ui-conversation/client'
 import type { SessionStatusSnapshot } from '@yharness/client-ui-session/client'
 import type { BotWorkspaceFace, BotWorkspaceState } from './controller.ts'
 import { BotDetail, BotGroupDetail, BotRoster } from './BotWorkspace.tsx'
 import type { BotStatus, BotSummary } from './types.ts'
 import { ComputerAction } from './ComputerAction.tsx'
+import { BotAvatar } from './BotAvatar.tsx'
 import { GrokHistoryAction } from './GrokHistoryAction.tsx'
 import { ComputerPanel } from './ComputerPanel.tsx'
 import { MacComputerPanel } from './MacComputerPanel.tsx'
@@ -20,7 +21,11 @@ import css from './BotWorkspace.module.css'
 declare module '@yharness/client-ui-slots' {
   interface SlotMap {
     /** Embedded Conversation for the selected Bot. */
-    'bots.conversation': { kind: 'single'; scope: 'session-maybe' }
+    'bots.conversation': {
+      kind: 'single'
+      scope: 'session-maybe'
+      owner: { bot: ConversationBot }
+    }
   }
 }
 
@@ -75,8 +80,21 @@ function summaryOf(bot: BotView, statuses: SessionStatusSnapshot): BotSummary {
 }
 
 /** Render the selected Bot's real Conversation under its retained Session. */
-export function BotsConversation({ renderFactorySlot }: BotsConversationProps): ReactNode {
-  return renderFactorySlot('conversation.content', { variant: 'embedded', phase: 'active', hero: false })
+export function BotsConversation({ renderFactorySlot, bot }: BotsConversationProps): ReactNode {
+  return renderFactorySlot('conversation.content', { variant: 'embedded', phase: 'active', hero: false, bot })
+}
+
+/** Injected roster and image loader for each Bot reply avatar. */
+export type BotReplyAvatarFace = Pick<BotWorkspaceFace, 'hooks' | 'loadAvatar'>
+
+/** Draw the conversation speaker with the same appearance as its roster entry. */
+export function BotReplyAvatar({
+  sessionId, useWorkspace, loadAvatar,
+}: PropsRuntime<'conversation.bot.reply.avatar'> & InjectFace<BotReplyAvatarFace>): ReactNode {
+  const bot = useWorkspace(state => state.bots.find(candidate => candidate.sessionId === sessionId))
+  return bot === undefined ? null
+    : <BotAvatar name={bot.name} identity={bot.identity} accent={bot.accent} avatar={bot.avatar}
+      botId={bot.id} loadAvatar={loadAvatar} />
 }
 
 /** Render the Bot roster inside the existing sidebar column. */
@@ -138,11 +156,11 @@ export function BotsPanel({
   const canShowComputer = (availability === 'available' || availability === 'mac') && selectedReference !== undefined
   const showComputer = canShowComputer && computerTarget === selectedReference.sessionId
   const closeComputer = (): void => { setComputerTarget(null) }
-  const conversation = selectedReference === undefined
+  const conversation = selectedReference === undefined || selectedBot === undefined
     ? undefined
     : (
       <SessionProvider session={selectedReference}>
-        {renderSlot('bots.conversation', {})}
+        {renderSlot('bots.conversation', { bot: { name: selectedBot.name } })}
       </SessionProvider>
     )
   if (groupsAvailable && state.selectedGroupId !== null) {

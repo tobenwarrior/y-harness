@@ -276,3 +276,30 @@
 .modalAction {
   min-width: 72px;
 }
+
+:global([data-conversation-surface='bots']) .scroll {
+  padding: 16px;
+}
+
+:global([data-conversation-surface='bots']) .column > .flowItem {
+  --dsh-chat-flow-gap: 6px;
+}
+
+:global([data-conversation-surface='bots']) .column > .flowItem:is(
+  [data-chat-flow-kind='user'],
+  [data-chat-flow-kind='steering']
+) {
+  --dsh-chat-flow-gap: 18px;
+}
+
+:global([data-conversation-surface='bots']) .column > .flowItem:has([data-bot-reply-speaker]) {
+  --dsh-chat-flow-gap: 12px;
+}
+
+:global([data-conversation-surface='bots']) .running {
+  padding-inline-start: var(--dsh-bot-reply-inset);
+}
+
+:global([data-conversation-surface='bots']) .running .runningDivider {
+  display: none;
+}

@@ -25,6 +25,8 @@ Use a Bot workspace with a roster, persistent Sessions, animated avatars, profil
 
 Mount the Client export alongside the Bot Remote, Session UI, conversation UI, locale, layout, sidebar, renderer, and Connection packages. The owner supplies plain roster rows and callbacks; the panel selects a Bot and renders the owner's persistent Session in its conversation slot. When Connection is mounted, the same Bot mode includes an invite and shared-context policy dialog for owner-side membership management and a shared workspace where an owner can create a group from accessible Bots and issue a group invite. Create or request a Bot invite for every Bot and redeem those invites before creating or joining a room; a group invite grants room access but does not replace those Bot memberships. Collaborators discover shared Bots and groups, chat through a private per-person Session, and publish explicitly acknowledged notes to a separate shared context. In shared groups, collaborators can mention specific Bots to address only those recipients.
 
+One-to-one conversations place the user's messages on the right and identify Bot replies by name and avatar. Open **Activity** for elapsed time and recorded work, or open the usage icon for token details. Scheduled replies carry an expandable origin label. Composer approvals and questions stay visible while they await a response.
+
 Open **Group settings** in a shared room to see its Bots and people. Room owners can change the name or remove a member's access to the room.
 
 Use **Reply** on a group message to quote it in the composer and send a reply to that message. Use the reaction picker to add or remove your reaction. The transcript displays the quoted message and counts each reaction.

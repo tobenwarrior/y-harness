@@ -57,3 +57,21 @@ button.pill[aria-expanded='true'] {
   color: var(--yh-alias-separator-primary);
   margin: 0 6px;
 }
+
+:global([data-conversation-surface='bots']) [data-composer-stat='activity'],
+:global([data-conversation-surface='bots']) [data-composer-stat='usage'] {
+  width: calc(28px + var(--dsh-content-font-delta, 0px));
+  justify-content: center;
+}
+
+:global([data-conversation-surface='bots']) [data-composer-stat='activity'] .pill,
+:global([data-conversation-surface='bots']) [data-composer-stat='usage'] .pill {
+  justify-content: center;
+  width: 100%;
+  padding-inline: 6px;
+}
+
+:global([data-conversation-surface='bots']) [data-composer-stat='activity'] .label,
+:global([data-conversation-surface='bots']) [data-composer-stat='usage'] .label {
+  display: none;
+}

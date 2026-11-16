@@ -52,6 +52,22 @@
   font-variant-numeric: tabular-nums;
 }
 
+:global([data-conversation-surface='bots']) button[data-turn-process] {
+  width: fit-content;
+  max-width: calc(100% - var(--dsh-bot-reply-inset));
+  height: auto;
+  min-height: calc(24px + var(--dsh-content-font-delta, 0px));
+  margin-inline-start: var(--dsh-bot-reply-inset);
+  padding: 2px 0;
+  border-bottom: 0;
+  font-size: var(--dsh-content-font-size-secondary, 13px);
+  line-height: calc(20px + var(--dsh-content-font-delta-secondary, 0px));
+}
+
+:global([data-conversation-surface='bots']) button[data-turn-process] .label {
+  line-height: inherit;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .root,
   .chevron {

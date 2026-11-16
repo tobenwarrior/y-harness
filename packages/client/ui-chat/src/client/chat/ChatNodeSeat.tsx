@@ -43,7 +43,7 @@ function turnOf(node: ChatNode | undefined): number | undefined {
  * only seats whose visibility actually changes.
  */
 export const ChatNodeSeat = memo(function ChatNodeSeat({
-  nodeKey, groupPart, useChatNode, useChatNodeProcess, usePresentation,
+  nodeKey, groupPart, bot, useChatNode, useChatNodeProcess, usePresentation,
   cwd, openFile, openSkill, inspectCall, forkAt,
   loadImage, renderMessageImages, fileMentions, useStore, actions, renderSlot, t,
 }: ChatNodeSeatProps) {
@@ -68,7 +68,7 @@ export const ChatNodeSeat = memo(function ChatNodeSeat({
       actions.setTurnProcessOpen(processSpec.turn, processSpec.answerStep ?? 0, open)
     }
   }, [actions, processSpec, alwaysOpen])
-  const foldCompleted = usePresentation(policy => policy.foldCompletedTurns)
+  const foldCompleted = usePresentation(policy => bot !== undefined || policy.foldCompletedTurns)
   // A loaded end makes a partial historical Turn eligible without its start.
   const processWindowReady = processSpec !== undefined
     && processPresentation !== undefined
@@ -124,6 +124,7 @@ export const ChatNodeSeat = memo(function ChatNodeSeat({
     ? null
     : {
       ...groupPart === undefined ? {} : { groupPart },
+      ...bot === undefined ? {} : { bot },
       cwd,
       openFile,
       openSkill,
@@ -134,7 +135,7 @@ export const ChatNodeSeat = memo(function ChatNodeSeat({
       fileMentions,
       turnProcess,
     }, [
-    node, groupPart, cwd, openFile, openSkill, inspectCall, forkAt,
+    node, groupPart, bot, cwd, openFile, openSkill, inspectCall, forkAt,
     loadImage, renderMessageImages, fileMentions, turnProcess,
   ])
   if (routedNode === undefined || owner === null) return null

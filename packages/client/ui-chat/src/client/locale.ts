@@ -68,6 +68,7 @@ export const en = {
   'message.trigger.explanation': 'This notification triggered this response.',
   'message.turnProcess.worked': 'Completed',
   'message.turnProcess.took': 'Completed in ',
+  'message.turnProcess.activity': 'Activity',
   'message.turnProcess.failed': 'Failed',
   'view.chat': 'Chat',
   'image.open': 'View full image',
