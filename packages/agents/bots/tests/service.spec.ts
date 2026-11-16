@@ -12003,6 +12003,167 @@ describe('durable Bot roster', () => {
     }
   })
 
+  it('retains version-two roles, authors, partial records, and supplemental sources additively', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    let botId!: BotView['id']
+    try {
+      const { bot } = await first.service.create({ name: 'Extended History Bot', cwd: '/tmp' })
+      botId = bot.id
+      await expect(first.service.importGrokHistory({ botId, document: JSON.stringify({
+        source: 'grok-bot', version: 1, firstCachedSequence: 1, messages: [
+          { sourceSequence: 1, role: 'user', text: 'Earlier question', timestampMs: 1000 },
+          { sourceSequence: 2, role: 'assistant', text: 'Earlier answer', timestampMs: 2000 },
+        ],
+      }) })).resolves.toEqual({ messages: 2 })
+
+      const extended = {
+        source: 'grok-bot', version: 2, firstCachedSequence: 0, complete: false,
+        messages: [
+          { sourceSequence: 0, role: 'tool', text: '', timestampMs: null, incomplete: true as const },
+          { sourceSequence: 1, role: 'user', text: 'Earlier question', timestampMs: 1000 },
+          { sourceSequence: 2, role: 'assistant', text: 'Earlier answer', timestampMs: 2000 },
+          { sourceSequence: 3, role: 'agent', text: 'Later answer', timestampMs: null, author: 'Desk Bot' },
+        ],
+        sources: [{
+          id: 'builder', label: 'Bot builder', firstCachedSequence: 0, complete: false,
+          messages: [
+            { sourceSequence: 0, role: 'tool', text: 'Tool output', timestampMs: 3000 },
+            { sourceSequence: 1, role: 'assistant', text: 'Builder answer', timestampMs: null, incomplete: true as const },
+          ],
+        }],
+      }
+      await expect(first.service.importGrokHistory({ botId, document: JSON.stringify(extended) }))
+        .resolves.toEqual({ messages: 6 })
+      await expect(first.service.readGrokHistory({ botId })).resolves.toEqual(extended)
+
+      const enriched = {
+        ...structuredClone(extended),
+        messages: structuredClone(extended.messages).map(message => message.sourceSequence === 1 ? { ...message, author: 'owner' } : message),
+      }
+      await expect(first.service.importGrokHistory({ botId, document: JSON.stringify(enriched) }))
+        .resolves.toEqual({ messages: 6 })
+      const enrichedArchive = await first.service.readGrokHistory({ botId })
+      expect(enrichedArchive?.messages[0]).toMatchObject({ sourceSequence: 0 })
+      expect(enrichedArchive?.messages[1]).toMatchObject({ sourceSequence: 1, author: 'owner' })
+
+      const changedAuthor = {
+        ...structuredClone(enriched),
+        messages: structuredClone(enriched.messages).map(message => message.sourceSequence === 1 ? { ...message, author: 'another owner' } : message),
+      }
+      await expect(first.service.importGrokHistory({ botId, document: JSON.stringify(changedAuthor) }))
+        .rejects.toThrow('would remove or change')
+
+      const sourceRemoved = { ...structuredClone(enriched), sources: undefined }
+      await expect(first.service.importGrokHistory({ botId, document: JSON.stringify(sourceRemoved) }))
+        .rejects.toThrow('would remove or change')
+
+      await expect(first.service.importGrokHistory({ botId, document: JSON.stringify({
+        source: 'grok-bot', version: 1, firstCachedSequence: 1, messages: [
+          { sourceSequence: 1, role: 'user', text: 'Earlier question', timestampMs: 1000 },
+          { sourceSequence: 2, role: 'assistant', text: 'Earlier answer', timestampMs: 2000 },
+        ],
+      }) })).rejects.toThrow('would remove or change')
+    } finally {
+      await close(first.ctx)
+    }
+  })
+
+  it('keeps supplemental Grok context scoped to each Bot after restart', async () => {
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    let alpha!: BotView
+    let beta!: BotView
+    const archiveDocument = (name: string, sourceId: string): string => JSON.stringify({
+      source: 'grok-bot', version: 2, firstCachedSequence: 0, complete: false,
+      messages: [
+        { sourceSequence: 0, role: 'tool', text: '', timestampMs: null, incomplete: true },
+        { sourceSequence: 1, role: 'assistant', text: `${name} primary`, timestampMs: null },
+      ],
+      sources: [{
+        id: sourceId, label: `${name} supplement`, firstCachedSequence: 0, complete: false,
+        messages: [{
+          sourceSequence: 0, role: 'agent', text: `${name} supplemental`, timestampMs: null,
+          author: `${name} author`,
+        }],
+      }],
+    })
+    try {
+      alpha = (await seed.service.create({ name: 'Alpha history owner', cwd: '/tmp' })).bot
+      beta = (await seed.service.create({ name: 'Beta history owner', cwd: '/tmp' })).bot
+      await expect(seed.service.importGrokHistory({
+        botId: alpha.id, document: archiveDocument('Alpha', 'alpha-supplement'),
+      })).resolves.toEqual({ messages: 3 })
+      await expect(seed.service.importGrokHistory({
+        botId: beta.id, document: archiveDocument('Beta', 'beta-supplement'),
+      })).resolves.toEqual({ messages: 3 })
+    } finally {
+      await close(seed.ctx)
+    }
+
+    const reopened = await harness(pool, undefined, undefined, [String(alpha.sessionId), String(beta.sessionId)])
+    try {
+      const provider = reopened.ctx.get('codexDynamicTools') as BotNativeToolProvider | undefined
+      if (provider === undefined) throw new Error('Bot native provider was not mounted')
+      const appendDirectTurn = (sessionId: SessionId, text: string): void => {
+        const agent = reopened.agents.find(candidate => candidate.id === sessionId)
+        if (agent === undefined) throw new Error(`Bot Agent ${String(sessionId)} was not reopened`)
+        agent.session.append('turn/start', { turn: 1 })
+        agent.session.append('user/message', createUserMessage({
+          content: [{ type: 'text', text }], source: { kind: 'user' },
+        }), { surfaceOp: 'append' })
+        agent.session.append('user/message', createUserMessage({
+          content: [{ type: 'text', text: 'Current time.' }],
+          source: { kind: 'time-context', form: 'notice', summary: 'Current time' },
+        }), { surfaceOp: 'append' })
+      }
+      appendDirectTurn(alpha.sessionId, 'Continue Alpha privately.')
+      appendDirectTurn(beta.sessionId, 'Continue Beta privately.')
+
+      const alphaHistory = (await provider.resolve({ sessionId: alpha.sessionId }))
+        .find(tool => tool.name === 'read_own_grok_history')
+      const betaHistory = (await provider.resolve({ sessionId: beta.sessionId }))
+        .find(tool => tool.name === 'read_own_grok_history')
+      if (alphaHistory === undefined || betaHistory === undefined) throw new Error('Native Grok history tools were not mounted')
+      const context = (sessionId: SessionId, callId: string) => ({
+        callId, threadId: 'history-scope-thread', turnId: callId, sessionId,
+        signal: new AbortController().signal, approvalPolicy: 'on-request' as const,
+        requestApproval: async () => true,
+      })
+
+      const alphaResult = await alphaHistory.execute(
+        { limit: 1, source: 'alpha-supplement' }, context(alpha.sessionId, 'alpha-history'),
+      )
+      const betaResult = await betaHistory.execute(
+        { limit: 1, source: 'beta-supplement' }, context(beta.sessionId, 'beta-history'),
+      )
+      expect(alphaResult.success).toBe(true)
+      expect(betaResult.success).toBe(true)
+      const alphaText = alphaResult.contentItems[0]?.text ?? ''
+      const betaText = betaResult.contentItems[0]?.text ?? ''
+      expect(alphaText).toContain('Alpha supplemental')
+      expect(alphaText).not.toContain('Beta supplemental')
+      expect(betaText).toContain('Beta supplemental')
+      expect(betaText).not.toContain('Alpha supplemental')
+      expect(JSON.parse(alphaText)).toMatchObject({
+        sourceId: 'alpha-supplement', sources: [{ id: 'alpha-supplement' }],
+      })
+      expect(JSON.parse(betaText)).toMatchObject({
+        sourceId: 'beta-supplement', sources: [{ id: 'beta-supplement' }],
+      })
+
+      const crossBot = await alphaHistory.execute(
+        { limit: 1, source: 'beta-supplement' }, context(alpha.sessionId, 'alpha-cross-bot-history'),
+      )
+      expect(crossBot.success).toBe(false)
+      expect(JSON.parse(crossBot.contentItems[0]?.text ?? '{}')).toMatchObject({
+        error: 'invalid-request', message: expect.stringContaining('not found'),
+      })
+    } finally {
+      await close(reopened.ctx)
+    }
+  })
+
   it('imports Grok memories and paused routines into the existing Bot Session', async () => {
     const pool = new MemoryMediaPool()
     const first = await harness(pool)

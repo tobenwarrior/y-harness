@@ -828,23 +828,47 @@ export interface BotSkillUpdateValue {
   readonly revision: number
 }
 
-/** One settled text message from a Grok Bot conversation. */
+/** One recovered message from a Grok Bot conversation. */
 export interface BotGrokHistoryMessage {
   /** Position in the source conversation. */
   readonly sourceSequence: number
-  readonly role: 'user' | 'assistant'
+  /** Source role label, retained even when the source uses a non-chat role. */
+  readonly role: string
   readonly text: string
-  /** Source message creation time in milliseconds since the Unix epoch. */
-  readonly timestampMs: number
+  /** Source message creation time in milliseconds since the Unix epoch, or null when unknown. */
+  readonly timestampMs: number | null
+  /** Source-provided author label, when one was present. */
+  readonly author?: string
+  /** Source-provided Bot attribution, when one was present. */
+  readonly fromBot?: string
+  /** Whether the source marked this record as incomplete. */
+  readonly incomplete?: true
+}
+
+/** One supplemental source conversation retained beside the primary archive. */
+export interface BotGrokHistorySource {
+  /** Stable source identifier used by page requests. */
+  readonly id: string
+  /** Source label shown to an owner. */
+  readonly label: string
+  /** Earliest position recovered from this source cache. */
+  readonly firstCachedSequence: number
+  readonly messages: readonly BotGrokHistoryMessage[]
+  /** Whether the source export was marked incomplete. */
+  readonly complete?: false
 }
 
 /** Private recovered chat history for display within an existing Bot. */
 export interface BotGrokHistoryArchive {
   readonly source: 'grok-bot'
-  readonly version: 1
+  readonly version: 1 | 2
   /** Earliest position recovered from the source cache. */
   readonly firstCachedSequence: number
   readonly messages: readonly BotGrokHistoryMessage[]
+  /** Whether the primary source export was marked incomplete. */
+  readonly complete?: false
+  /** Supplemental source conversations retained in a version-two archive. */
+  readonly sources?: readonly BotGrokHistorySource[]
 }
 
 /** Owner request to recover chat history for an existing Bot. */
@@ -852,7 +876,7 @@ export interface BotGrokHistoryRequest {
   readonly botId: BotId
 }
 
-/** Owner import of a version-one Grok transcript export. */
+/** Owner import of a versioned Grok transcript archive. */
 export interface BotGrokHistoryImportRequest extends BotGrokHistoryRequest {
   readonly document: string
 }

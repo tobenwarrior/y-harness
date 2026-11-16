@@ -54,7 +54,7 @@ The native Mac application reports `kind: 'mac'` and serves its Computer request
 
 ### Owner callbacks
 
-Open **App access** from a Bot’s roster menu to manage the apps that Bot can use. **Imported Grok chat** in the conversation header opens recovered messages and their original timestamps as a read-only archive.
+Open **App access** from a Bot’s roster menu to manage the apps that Bot can use. **Imported Grok chat** in the conversation header opens a read-only archive with recovered messages, source timestamps, and available author labels. Use **History source** to view a supplemental export when one is available.
 
 `BotRoster` accepts the roster, selection, and creation callbacks. The setup dialog collects a name, role, persona, capabilities, character, and color. `BotDetail` renders the selected Bot's persistent Session and can edit its profile using the captured row revision to prevent stale changes. Optional actions support connected apps, organization, avatar editing and generation, sharing, templates, and host-local skill policies. When routine actions are mounted, the detail header opens a manager for timed and message-triggered routines with bounded history and confirmation for changes. Pinned Bots have a dedicated section. The Hidden bots section starts collapsed. Click a built-in or user folder heading to expand or collapse its rows. Collapsed headings show the row count beside the title. The selected chat stays open, and folder disclosure state persists in browser-local storage. Search reveals matching rows and restores the previous folder state when cleared.
 
