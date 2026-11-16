@@ -8,7 +8,7 @@ const signal = new AbortController().signal
 const origin = 'http://127.0.0.1:28634'
 const children = new Set<ReturnType<typeof execFile>>()
 
-function managedWorkspace() {
+function managedWorkspace(sharedScopes = false) {
   return {
     origin,
     async fetch(url: string, options: RequestInit) {
@@ -17,7 +17,9 @@ function managedWorkspace() {
         expect(options.credentials).toBe('include')
         expect(options.redirect).toBe('error')
         expect(options.cache).toBe('no-store')
-        return Response.json({ mode: 'managed' })
+        return Response.json({ mode: 'managed' }, {
+          headers: sharedScopes ? { 'X-YH-Vault-Grant-Scopes': '1' } : {},
+        })
       }
       expect(url).toBe(`${origin}/api/bots/list`)
       const call = JSON.parse(String(options.body))
@@ -99,6 +101,57 @@ describe('Desktop Vault SSH transport', () => {
     await expect(cloudVaultRequest('fixture-vps', { action: 'remove-grant', ...grant },
       signal, execute, { ...workspace, fetch })).resolves.toEqual({ ok: false, reason: 'external' })
     expect(execute).toHaveBeenCalledOnce()
+  })
+
+  it('loads explicit grant scopes from the current Cloud broker and keeps legacy listings readable', async () => {
+    const grant = { bot: 'bot-scout', unit, name: 'FIXTURE_KEY' }
+    const bots = [{ id: 'bot-scout', name: 'Scout' }]
+    const fallback = { access: { services: [unit], grants: [grant] } }
+    const scoped = { access: { services: [unit], grants: [{ ...grant, scope: 'shared' }] } }
+    const execute = (current: boolean) => vi.fn(fixture(
+      'let body = ""; process.stdin.on("data", chunk => body += chunk); process.stdin.on("end", () => {'
+      + 'const action = JSON.parse(body).action;'
+      + `if (action === "list-scoped-grants" && ${current}) process.stdout.write(${JSON.stringify(JSON.stringify(scoped))});`
+      + `else if (action === "list-grants") process.stdout.write(${JSON.stringify(JSON.stringify(fallback))});`
+      + 'else process.exit(1); });',
+    ))
+    const current = execute(true)
+    await expect(cloudVaultRequest('fixture-vps', { action: 'list-grants' }, signal, current, managedWorkspace(true)))
+      .resolves.toEqual({ ok: true, access: { ...scoped.access, sharedScopes: true }, bots })
+    expect(current).toHaveBeenCalledOnce()
+    const legacy = execute(false)
+    await expect(cloudVaultRequest('fixture-vps', { action: 'list-grants' }, signal, legacy, managedWorkspace(true)))
+      .resolves.toEqual({ ok: true, ...fallback, bots })
+    expect(legacy).toHaveBeenCalledTimes(2)
+  })
+
+  it('allows an exact scoped grant change only in Mac Vault management with current Cloud support', async () => {
+    const grant = { bot: 'bot-scout', unit, name: 'FIXTURE_KEY' }
+    const update = { action: 'set-grant-scope', ...grant, scope: 'owner' }
+    const add = { action: 'add-grant', ...grant, scope: 'shared' }
+    const id = 'a'.repeat(32)
+    if (!isVaultRequestId(id)) throw new Error('Invalid fixture id')
+    expect(vaultRequestAllowed(update, { kind: 'manage' })).toBe(true)
+    expect(vaultRequestAllowed(update, { kind: 'request', id })).toBe(false)
+    expect(vaultRequestAllowed({ ...update, scope: 'everyone' }, { kind: 'manage' })).toBe(false)
+    expect(vaultRequestAllowed({ ...add, scope: 'owner' }, { kind: 'manage' })).toBe(false)
+    expect(vaultRequestAllowed({ action: 'remove-grant', ...grant, scope: 'shared' }, { kind: 'manage' })).toBe(false)
+    const execute = vi.fn(fixture(
+      'let body = ""; process.stdin.on("data", chunk => body += chunk); process.stdin.on("end", () => {'
+      + `const actions = ${JSON.stringify([update, add])};`
+      + 'const parsed = JSON.parse(body), { isDeepStrictEqual } = require("node:util");'
+      + 'if (!actions.some(action => isDeepStrictEqual(action, parsed))) process.exit(1);'
+      + 'process.stdout.write(JSON.stringify({ ok: true })); });',
+    ))
+    await expect(cloudVaultRequest('fixture-vps', update, signal, execute, managedWorkspace()))
+      .resolves.toEqual({ ok: false, reason: 'unavailable' })
+    await expect(cloudVaultRequest('fixture-vps', { ...update, bot: 'bot-other' }, signal, execute, managedWorkspace(true)))
+      .resolves.toEqual({ ok: false, reason: 'unavailable' })
+    expect(execute).not.toHaveBeenCalled()
+    for (const request of [update, add]) {
+      await expect(cloudVaultRequest('fixture-vps', request, signal, execute, managedWorkspace(true))).resolves.toEqual({ ok: true })
+    }
+    expect(execute).toHaveBeenCalledTimes(2)
   })
 
   it('does not start a grant operation if the Cloud connection closes during the policy check', async () => {

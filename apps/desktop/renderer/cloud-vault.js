@@ -9,6 +9,8 @@ const grantEditor = element('grant-editor')
 const grantBot = element('grant-bot')
 const grantService = element('grant-service')
 const grantName = element('grant-name')
+const grantScopeField = element('grant-scope-field')
+const grantScope = element('grant-scope')
 const service = element('service')
 const secretList = element('secrets')
 const editor = element('editor')
@@ -235,7 +237,7 @@ function availability() {
   for (const input of loginEditor.querySelectorAll('input, button')) input.disabled = busy || !websitesReady
   loginBot.disabled = busy || !botLoginsReady || editingLogin?.action === 'replace'
   element('add-grant').disabled = busy || !canGrantAccess()
-  for (const button of grantList.querySelectorAll('button')) button.disabled = busy || !grantsReady
+  for (const control of grantList.querySelectorAll('button, select')) control.disabled = busy || !grantsReady
   for (const input of grantEditor.querySelectorAll('input, select, button')) input.disabled = busy || !canGrantAccess()
 }
 
@@ -342,6 +344,7 @@ function botName(id) {
 
 function closeGrantEditor() {
   grantEditor.reset()
+  grantScopeField.hidden = true
   grantEditor.hidden = true
   element('add-grant').hidden = false
 }
@@ -355,6 +358,12 @@ function openGrantEditor() {
     names.get(bot.name) > 1 ? `${bot.name} (${bot.id})` : bot.name, bot.id,
   )))
   grantService.replaceChildren(...grantAccess.services.map(unit => new Option(unit, unit)))
+  grantScope.replaceChildren(
+    new Option(messages.cloudVaultBotAccessOwner, 'owner'),
+    new Option(messages.cloudVaultBotAccessShared, 'shared'),
+  )
+  grantScope.value = 'owner'
+  grantScopeField.hidden = grantAccess.sharedScopes !== true
   grantEditor.hidden = false
   element('add-grant').hidden = true
   element('grants-empty').hidden = true
@@ -434,8 +443,26 @@ function renderGrants() {
     bot.textContent = botName(grant.bot)
     key.textContent = `${grant.unit} · ${grant.name}`
     details.append(bot, key)
-    row.append(details, actionButton('cloudVaultBotAccessRemove', `${bot.textContent} ${grant.name}`,
+    const actions = document.createElement('div')
+    actions.className = 'actions'
+    if (grantAccess?.sharedScopes === true && (grant.scope === 'owner' || grant.scope === 'shared')) {
+      const scope = document.createElement('select')
+      scope.className = 'grant-scope'
+      scope.setAttribute('aria-label', `${messages.cloudVaultBotAccessScope} ${bot.textContent} ${grant.name}`)
+      scope.append(
+        new Option(messages.cloudVaultBotAccessOwner, 'owner'),
+        new Option(messages.cloudVaultBotAccessShared, 'shared'),
+      )
+      scope.value = grant.scope
+      scope.addEventListener('change', () => {
+        if (scope.value !== 'owner' && scope.value !== 'shared') return
+        void changeGrant({ action: 'set-grant-scope', bot: grant.bot, unit: grant.unit, name: grant.name, scope: scope.value })
+      })
+      actions.append(scope)
+    }
+    actions.append(actionButton('cloudVaultBotAccessRemove', `${bot.textContent} ${grant.name}`,
       () => confirmGrantRemoval(grant), 'subtle'))
+    row.append(details, actions)
     return row
   }) ?? []
   grantList.replaceChildren(...rows)
@@ -546,7 +573,9 @@ async function changeGrant(request) {
   if (acknowledged(result)) {
     closeGrantEditor()
     await readGrantAccess()
-    grantInventoryNotice(request.action === 'add-grant' ? 'cloudVaultBotAccessGranted' : 'cloudVaultBotAccessRemoved')
+    const success = request.action === 'add-grant' ? 'cloudVaultBotAccessGranted'
+      : request.action === 'remove-grant' ? 'cloudVaultBotAccessRemoved' : 'cloudVaultBotAccessScopeChanged'
+    grantInventoryNotice(success)
   } else {
     if (result.reason === 'invalid') setNotice('cloudVaultBotAccessInvalid', 'error')
     else {
@@ -830,9 +859,17 @@ element('grant-editor-cancel').addEventListener('click', () => { closeGrantEdito
 grantEditor.addEventListener('submit', event => {
   event.preventDefault()
   if (busy || !canGrantAccess() || grantEditor.hidden) return
-  const request = { action: 'add-grant', bot: grantBot.value, unit: grantService.value, name: grantName.value.trim() }
+  const request = {
+    action: 'add-grant', bot: grantBot.value, unit: grantService.value, name: grantName.value.trim(),
+    ...(grantAccess.sharedScopes === true && grantScope.value === 'shared' ? { scope: 'shared' } : {}),
+  }
   if (!/^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(request.name) || !grantBots.some(bot => bot.id === request.bot)
     || !grantAccess.services.includes(request.unit)) { setNotice('cloudVaultBotAccessInvalid', 'error'); return }
+  if (grantAccess.sharedScopes === true && grantAccess.grants.some(grant =>
+    grant.bot === request.bot && grant.unit === request.unit && grant.name === request.name)) {
+    setNotice('cloudVaultBotAccessDuplicate', 'info')
+    return
+  }
   void changeGrant(request)
 })
 service.addEventListener('change', () => { closeEditor(); setNotice(); renderNames() })
@@ -869,7 +906,7 @@ element('confirm-revoke').addEventListener('click', () => {
   confirmation.close()
   if (request !== undefined) void change(request)
   else if (login !== undefined) void removeLoginRequest(login)
-  else if (grant !== undefined) void changeGrant({ action: 'remove-grant', ...grant })
+  else if (grant !== undefined) void changeGrant({ action: 'remove-grant', bot: grant.bot, unit: grant.unit, name: grant.name })
 })
 requestEditor.addEventListener('submit', event => {
   event.preventDefault()
@@ -924,7 +961,8 @@ void Promise.all([api.messages(), api.mode()]).then(([copy, presentation]) => {
     ['title', 'cloudVault'], ['hint', 'cloudVaultHint'], ['api-keys-tab', 'cloudVaultApiKeys'], ['websites-tab', 'cloudVaultWebsites'],
     ['bot-access-tab', 'cloudVaultBotAccess'], ['grants-hint', 'cloudVaultBotAccessHint'], ['grants-title', 'cloudVaultBotAccessTitle'],
     ['add-grant-label', 'cloudVaultBotAccessAdd'], ['grant-bot-label', 'cloudVaultBotAccessBot'], ['grant-service-label', 'cloudVaultService'],
-    ['grant-name-label', 'cloudVaultRequestName'], ['grant-editor-cancel', 'cancel'], ['grant-save', 'cloudVaultBotAccessAdd'],
+    ['grant-name-label', 'cloudVaultRequestName'], ['grant-scope-label', 'cloudVaultBotAccessScope'],
+    ['grant-editor-cancel', 'cancel'], ['grant-save', 'cloudVaultBotAccessAdd'],
     ['websites-hint', 'cloudVaultWebsitesHint'], ['logins-title', 'cloudVaultWebsites'], ['add-login-label', 'cloudVaultWebsiteAdd'],
     ['logins-empty', 'cloudVaultWebsitesEmpty'], ['login-origin-label', 'cloudVaultWebsiteOrigin'], ['login-label-label', 'cloudVaultWebsiteLabel'],
     ['login-bot-label', 'cloudVaultWebsiteBot'],

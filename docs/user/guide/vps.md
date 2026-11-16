@@ -267,15 +267,13 @@ Desktop Vault checks how the running Cloud workspace manages requests before ena
 
 ### Let a shared Bot request a key
 
-Give the Bot an exact service and key grant in **Cloud → Vault → Bot access**. Then allow that grant in shared chats from the VPS.
-
-```sh
-sudo /usr/local/sbin/yharness-vault share-request-grant bot-worker/example-worker.service=EXAMPLE_API_KEY
-```
+Open **Cloud → Vault → Bot access**. When granting an exact service and key, choose **Owner and shared chats** under **Available in**. To share an existing grant, choose that setting on its row.
 
 A collaborator can ask the Bot to request the key. Open the Bot’s main chat as the owner and choose **Enter key securely**. Vault verifies the collaborator still has access before saving the key. The configured service loads it on its next start. A collaborator receives the outcome in their own chat. Any connected app used by the Bot still follows its app permissions.
 
-Run `unshare-request-grant` with the same grant to limit future requests to the owner and cancel pending shared requests. To remove the saved key from the service, revoke it under **API keys**.
+Choose **Owner only** on a grant to stop shared requests and cancel any pending shared approval. To remove the saved key from the service, revoke it under **API keys**.
+
+Administrators can use `share-request-grant` or `unshare-request-grant` on the VPS with the exact `BOT/UNIT.service=KEY_NAME` grant.
 
 ### Read a filtered journal feed
 

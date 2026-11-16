@@ -70,6 +70,108 @@ it('grants and withdraws one named Bot’s request access', async () => {
   expect(request).toHaveBeenCalledWith({ action: 'remove-grant', ...grant })
 })
 
+it('lets the owner create a shared per-key grant only when the capability is advertised', async () => {
+  const unit = 'fixture-worker.service'
+  const grant = { bot: 'bot-scout', unit, name: 'SCOUT_API_KEY' }
+  let grants: Array<typeof grant & { scope?: 'shared' }> = []
+  const request = vi.fn(async (value: unknown) => {
+    if (value && typeof value === 'object' && 'action' in value) {
+      switch (value.action) {
+        case 'list': return { ok: true, services: [{ unit, names: [] }] }
+        case 'list-logins': return { ok: true, logins: [] }
+        case 'list-grants': return { ok: true, access: { services: [unit], grants, sharedScopes: true }, bots: [
+          { id: 'bot-scout', name: 'Scout' },
+        ] }
+        case 'add-grant':
+          grants = [{ ...grant, ...('scope' in value && value.scope === 'shared' ? { scope: 'shared' as const } : {}) }]
+          return { ok: true }
+      }
+    }
+    return { ok: false }
+  })
+  const p = page({ kind: 'manage' }, request)
+  p.run()
+  await expect.poll(() => p.dom.window.document.querySelector('main')?.getAttribute('aria-busy')).toBe('false')
+  p.element('bot-access-tab').click()
+  await expect.poll(() => (p.element('add-grant') as HTMLButtonElement).disabled).toBe(false)
+  p.element('add-grant').click()
+  const scopeField = p.dom.window.document.getElementById('grant-scope-field')
+  expect(scopeField).not.toBeNull()
+  expect((p.element('grant-scope') as HTMLSelectElement).value).toBe('owner')
+  ;(p.element('grant-bot') as HTMLSelectElement).value = grant.bot
+  ;(p.element('grant-service') as HTMLSelectElement).value = unit
+  ;(p.element('grant-name') as HTMLInputElement).value = grant.name
+  ;(p.element('grant-scope') as HTMLSelectElement).value = 'shared'
+  p.element('grant-editor').dispatchEvent(new p.dom.window.Event('submit', { bubbles: true, cancelable: true }))
+  await expect.poll(() => p.element('grants').textContent).toContain('Scout')
+  expect(request).toHaveBeenCalledWith({ action: 'add-grant', ...grant, scope: 'shared' })
+
+  await expect.poll(() => (p.element('add-grant') as HTMLButtonElement).disabled).toBe(false)
+  p.element('add-grant').click()
+  expect((p.element('grant-scope') as HTMLSelectElement).value).toBe('owner')
+  ;(p.element('grant-name') as HTMLInputElement).value = grant.name
+  const requestCount = request.mock.calls.length
+  p.element('grant-editor').dispatchEvent(new p.dom.window.Event('submit', { bubbles: true, cancelable: true }))
+  expect(request).toHaveBeenCalledTimes(requestCount)
+  expect(p.element('grant-notice').textContent).toContain('This key already has a grant')
+})
+
+it('changes an existing supported grant back to owner-only with its exact identity', async () => {
+  const unit = 'fixture-worker.service'
+  const grant = { bot: 'bot-scout', unit, name: 'SCOUT_API_KEY', scope: 'shared' as const }
+  const request = vi.fn(async (value: unknown) => {
+    if (value && typeof value === 'object' && 'action' in value) {
+      switch (value.action) {
+        case 'list': return { ok: true, services: [{ unit, names: [] }] }
+        case 'list-logins': return { ok: true, logins: [] }
+        case 'list-grants': return { ok: true, access: { services: [unit], grants: [grant], sharedScopes: true }, bots: [
+          { id: 'bot-scout', name: 'Scout' },
+        ] }
+        case 'set-grant-scope': return { ok: true }
+      }
+    }
+    return { ok: false }
+  })
+  const p = page({ kind: 'manage' }, request)
+  p.run()
+  await expect.poll(() => p.dom.window.document.querySelector('main')?.getAttribute('aria-busy')).toBe('false')
+  p.element('bot-access-tab').click()
+  await expect.poll(() => p.element('grants').textContent).toContain('Scout')
+  const scope = p.element('grants').querySelector('select.grant-scope') as HTMLSelectElement
+  expect(scope.value).toBe('shared')
+  scope.value = 'owner'
+  scope.dispatchEvent(new p.dom.window.Event('change', { bubbles: true }))
+  await expect.poll(() => request.mock.calls.some(([value]) => value && typeof value === 'object'
+    && 'action' in value && value.action === 'set-grant-scope')).toBe(true)
+  expect(request).toHaveBeenCalledWith({ action: 'set-grant-scope', bot: grant.bot, unit, name: grant.name, scope: 'owner' })
+})
+
+it('keeps scope controls hidden for legacy Cloud grant responses', async () => {
+  const unit = 'fixture-worker.service'
+  const grant = { bot: 'bot-scout', unit, name: 'SCOUT_API_KEY' }
+  const request = vi.fn(async (value: unknown) => {
+    if (value && typeof value === 'object' && 'action' in value) {
+      switch (value.action) {
+        case 'list': return { ok: true, services: [{ unit, names: [] }] }
+        case 'list-logins': return { ok: true, logins: [] }
+        case 'list-grants': return { ok: true, access: { services: [unit], grants: [grant] }, bots: [
+          { id: 'bot-scout', name: 'Scout' },
+        ] }
+      }
+    }
+    return { ok: false }
+  })
+  const p = page({ kind: 'manage' }, request)
+  p.run()
+  await expect.poll(() => p.dom.window.document.querySelector('main')?.getAttribute('aria-busy')).toBe('false')
+  p.element('bot-access-tab').click()
+  await expect.poll(() => p.element('grants').textContent).toContain('Scout')
+  const scopeField = p.dom.window.document.getElementById('grant-scope-field')
+  expect(scopeField).not.toBeNull()
+  expect(scopeField?.hidden).toBe(true)
+  expect(p.element('grants').querySelector('select.grant-scope')).toBeNull()
+})
+
 it('clears a previously loaded grant when Cloud policy takes over during removal', async () => {
   const unit = 'fixture-worker.service'
   const grant = { bot: 'bot-scout', unit, name: 'SCOUT_API_KEY' }

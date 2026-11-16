@@ -75,6 +75,7 @@ it.skipIf(MODE === 'record' || process.platform === 'win32').each([
       const response = await web.hostFetch('/api/bot-vault-access')
       expect(response.status).toBe(200)
       expect(response.headers.get('cache-control')).toBe('no-store')
+      expect(response.headers.get('X-YH-Vault-Grant-Scopes')).toBe(mode === 'managed' ? '1' : null)
       expect(await response.json()).toEqual({ mode })
       expect((await fetch(new URL('/api/bot-vault-access', web.baseUrl))).status).toBe(401)
     } finally { await web.close() }

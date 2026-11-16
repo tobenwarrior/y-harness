@@ -396,10 +396,23 @@ def desktop_request(payload):
         if type(request) is not dict:
             raise VaultError('Invalid Vault request.')
         action = request.get('action')
-        if action in ('list', 'list-grants') and set(request) == {'action'}:
+        if action in ('list', 'list-grants', 'list-scoped-grants') and set(request) == {'action'}:
             return request
-        if action in ('add-grant', 'remove-grant'):
-            if (set(request) != {'action', 'bot', 'unit', 'name'}
+        grant_fields = {'action', 'bot', 'unit', 'name'}
+        if action == 'add-grant':
+            if (set(request) not in (grant_fields, grant_fields | {'scope'})
+                    or ('scope' in request and request['scope'] != 'shared')
+                    or not valid_request_grant((request['bot'], request['unit'], request['name']))):
+                raise VaultError('Invalid Vault request.')
+            return request
+        if action == 'remove-grant':
+            if (set(request) != grant_fields
+                    or not valid_request_grant((request['bot'], request['unit'], request['name']))):
+                raise VaultError('Invalid Vault request.')
+            return request
+        if action == 'set-grant-scope':
+            if (set(request) != grant_fields | {'scope'}
+                    or request['scope'] not in ('owner', 'shared')
                     or not valid_request_grant((request['bot'], request['unit'], request['name']))):
                 raise VaultError('Invalid Vault request.')
             return request
@@ -1143,12 +1156,18 @@ class Vault:
         with self.locked():
             policy = self.root_policy()
             grants = self.require_requests(policy)
-            bot, unit, name = grant
-            self.request_credentials(policy, grants, unit, name, bot)
-            shared = ('shared', *grant)
-            grants.difference_update((grant, shared))
-            grants.add(shared if enabled else grant)
-            self.write_request_grants(policy, grants)
+            self.set_request_grant_scope(policy, grants, grant, 'shared' if enabled else 'owner')
+
+    def set_request_grant_scope(self, policy, grants, grant, scope):
+        """Change one existing Bot grant while the caller owns the Vault lock."""
+        if scope not in ('owner', 'shared'):
+            raise VaultError('Select an owner or shared Bot credential grant.')
+        bot, unit, name = grant
+        self.request_credentials(policy, grants, unit, name, bot)
+        shared = ('shared', *grant)
+        grants.difference_update((grant, shared))
+        grants.add(shared if scope == 'shared' else grant)
+        self.write_request_grants(policy, grants)
 
     def write_request_grants(self, policy, grants, *, start=False):
         """Publish a grant set and discard withdrawn requests under the Vault lock."""
@@ -1504,17 +1523,32 @@ class Vault:
                 {'bot': bot, 'unit': unit, 'name': name}
                 for bot, unit, name in sorted({grant[-3:] for grant in grants if len(grant) >= 3})
             ]}}
+        if action == 'list-scoped-grants':
+            scoped = [
+                {'bot': grant[-3], 'unit': grant[-2], 'name': grant[-1],
+                 'scope': 'shared' if len(grant) == 4 else 'owner'}
+                for grant in sorted(
+                    (grant for grant in grants if len(grant) in (3, 4)),
+                    key=lambda grant: (*grant[-3:], 'shared' if len(grant) == 4 else 'owner'),
+                )
+            ]
+            return {'access': {'services': policy['services'], 'grants': scoped}}
         grant = (request['bot'], request['unit'], request['name'])
         shared_grant = ('shared', *grant)
         if action == 'remove-grant':
             if grant in grants or shared_grant in grants:
                 grants.difference_update((grant, shared_grant))
                 self.write_request_grants(policy, grants)
+        elif action == 'set-grant-scope':
+            self.set_request_grant_scope(policy, grants, grant, request['scope'])
         else:
             if grant[1] not in policy['services']:
                 raise VaultError('This service is not enabled for Desktop Vault.')
             self.enabled_credentials(grant[1], policy['cloud'])
-            if shared_grant not in grants:
+            if request.get('scope') == 'shared':
+                grants.difference_update((grant, shared_grant))
+                grants.add(shared_grant)
+            elif shared_grant not in grants:
                 grants.add(grant)
             self.write_request_grants(policy, grants, start=True)
         return {'ok': True}
@@ -1600,7 +1634,7 @@ class Vault:
             return self.desktop_credential_request(request, requester_uid)
         with self.locked():
             policy = self.desktop_policy(requester_uid)
-            if action in ('list-grants', 'add-grant', 'remove-grant'):
+            if action in ('list-grants', 'list-scoped-grants', 'add-grant', 'remove-grant', 'set-grant-scope'):
                 return self.desktop_grants(policy, request)
             if action in ('list-logins', 'list-bot-logins', 'add-login', 'replace-login', 'remove-login'):
                 request = website_login_request(request)

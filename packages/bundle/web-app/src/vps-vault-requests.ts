@@ -224,7 +224,9 @@ export function vpsVaultAccessRoute(config: VpsVaultRequestsConfig | null | unde
     methods: ['GET'],
     requestBody: 'buffered',
     async fetch() {
-      return Response.json({ mode }, { headers: { 'Cache-Control': 'no-store' } })
+      const headers = new Headers({ 'Cache-Control': 'no-store' })
+      if (mode === 'managed' && config?.sharedRequests !== false) headers.set('X-YH-Vault-Grant-Scopes', '1')
+      return Response.json({ mode }, { headers })
     },
   }
 }

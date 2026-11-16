@@ -1041,6 +1041,73 @@ class VaultTest(unittest.TestCase):
         legacy = {'action': 'create', 'id': 'b' * 32, 'unit': FIRST_UNIT, 'name': 'EXAMPLE_KEY'}
         self.assertEqual(self.store.cloud(legacy, CLOUD_UID), {'state': 'pending'})
 
+    def test_desktop_scoped_grant_wire_is_exact(self):
+        grant = {'bot': 'bot-research', 'unit': FIRST_UNIT, 'name': 'EXAMPLE_KEY'}
+        list_scoped = {'action': 'list-scoped-grants'}
+        self.assertEqual(vault.desktop_request(json.dumps(list_scoped).encode()), list_scoped)
+        shared_add = {'action': 'add-grant', 'scope': 'shared', **grant}
+        self.assertEqual(vault.desktop_request(json.dumps(shared_add).encode()), shared_add)
+        set_scope = {'action': 'set-grant-scope', 'scope': 'owner', **grant}
+        self.assertEqual(vault.desktop_request(json.dumps(set_scope).encode()), set_scope)
+        for malformed in (
+            {'action': 'list-scoped-grants', 'extra': 1},
+            {'action': 'add-grant', 'scope': 'owner', **grant},
+            {'action': 'add-grant', 'scope': 'shared', **grant, 'extra': 1},
+            {'action': 'remove-grant', 'scope': 'shared', **grant},
+            {'action': 'set-grant-scope', 'scope': 'invalid', **grant},
+            {'action': 'set-grant-scope', **grant},
+        ):
+            with self.subTest(request=malformed), self.assertRaises(vault.VaultError):
+                vault.desktop_request(json.dumps(malformed).encode())
+
+    def test_desktop_scoped_grants_preserve_legacy_add_and_revoke_shared_requests(self):
+        self.store.enable(FIRST_UNIT, CLOUD_UID)
+        self.store.allow_desktop(OWNER_UID, CLOUD_UID, [FIRST_UNIT])
+        grant = {'bot': 'bot-research', 'unit': FIRST_UNIT, 'name': 'EXAMPLE_KEY'}
+        self.store.enable_requests([tuple(grant.values())])
+        expected_services = [FIRST_UNIT]
+        self.assertEqual(self.store.desktop({'action': 'list-scoped-grants'}, OWNER_UID), {
+            'access': {'services': expected_services, 'grants': [{**grant, 'scope': 'owner'}]},
+        })
+
+        with patch.object(vault, 'trusted_file'):
+            self.assertEqual(self.store.desktop({'action': 'add-grant', **grant}, OWNER_UID), {'ok': True})
+        self.assertEqual(self.store.desktop({'action': 'list-grants'}, OWNER_UID), {
+            'access': {'services': expected_services, 'grants': [grant]},
+        })
+        self.assertEqual(self.store.desktop({'action': 'list-scoped-grants'}, OWNER_UID), {
+            'access': {'services': expected_services, 'grants': [{**grant, 'scope': 'owner'}]},
+        })
+
+        shared_add = {'action': 'add-grant', 'scope': 'shared', **grant}
+        with patch.object(vault, 'trusted_file'):
+            self.assertEqual(self.store.desktop(shared_add, OWNER_UID), {'ok': True})
+            self.assertEqual(self.store.desktop({'action': 'add-grant', **grant}, OWNER_UID), {'ok': True})
+        scoped = self.store.desktop({'action': 'list-scoped-grants'}, OWNER_UID)
+        self.assertEqual(scoped, {
+            'access': {'services': expected_services, 'grants': [{**grant, 'scope': 'shared'}]},
+        })
+        self.assertNotIn(FIRST_VALUE.decode(), json.dumps(scoped))
+        self.assertEqual(self.store.desktop({'action': 'list-grants'}, OWNER_UID), {
+            'access': {'services': expected_services, 'grants': [grant]},
+        })
+
+        pending = {'action': 'create', 'id': 'c' * 32, 'scope': 'shared', **grant}
+        self.assertEqual(self.store.cloud(pending, CLOUD_UID), {'state': 'pending'})
+        self.assertEqual(self.store.desktop({'action': 'set-grant-scope', 'scope': 'owner', **grant}, OWNER_UID), {'ok': True})
+        self.assertEqual(self.store.desktop({'action': 'list-scoped-grants'}, OWNER_UID), {
+            'access': {'services': expected_services, 'grants': [{**grant, 'scope': 'owner'}]},
+        })
+        with self.assertRaises(vault.VaultError):
+            self.store.desktop({'action': 'inspect-request', 'id': pending['id']}, OWNER_UID)
+        for requester in (CLOUD_UID, OWNER_UID + 1):
+            with self.subTest(requester=requester), self.assertRaises(vault.VaultError):
+                self.store.desktop({'action': 'list-scoped-grants'}, requester)
+        self.assertEqual(self.store.desktop({'action': 'remove-grant', **grant}, OWNER_UID), {'ok': True})
+        self.assertEqual(self.store.desktop({'action': 'list-scoped-grants'}, OWNER_UID), {
+            'access': {'services': expected_services, 'grants': []},
+        })
+
     def test_desktop_removing_the_only_grant_retains_the_vault_service(self):
         self.store.enable(FIRST_UNIT, CLOUD_UID)
         self.store.allow_desktop(OWNER_UID, CLOUD_UID, [FIRST_UNIT])

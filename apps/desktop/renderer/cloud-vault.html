@@ -85,6 +85,10 @@
             <select id="grant-service" required></select>
             <label for="grant-name" id="grant-name-label"></label>
             <input id="grant-name" type="text" maxlength="64" pattern="[A-Za-z_][A-Za-z0-9_]{0,63}" spellcheck="false" required>
+            <div id="grant-scope-field" hidden>
+              <label for="grant-scope" id="grant-scope-label"></label>
+              <select id="grant-scope" required></select>
+            </div>
             <div class="actions">
               <button id="grant-editor-cancel" type="button"></button>
               <button id="grant-save" class="primary" type="submit"></button>
