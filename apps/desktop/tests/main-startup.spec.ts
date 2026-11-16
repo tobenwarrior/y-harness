@@ -1155,7 +1155,7 @@ describe('desktop main startup', () => {
     vi.stubEnv('DSH_DESKTOP_GITHUB_STATUS', status)
     vi.stubEnv('DSH_DESKTOP_GITHUB_BUILD_COMMIT', built)
     harness.updateSourceAvailable = false
-    await readyForUpdate()
+    const host = await readyForUpdate()
     harness.updateState = { phase: 'available', version: candidate.slice(0, 12) }
     harness.app.quit.mockClear()
     await invoke(DESKTOP_IPC.updatesOpen, 'app')
@@ -1163,6 +1163,9 @@ describe('desktop main startup', () => {
     writeFileSync(status, JSON.stringify({ phase: 'ready', commit: candidate }))
     await invoke(DESKTOP_IPC.updatesOpen, 'app')
     expect(harness.app.quit).toHaveBeenCalledOnce()
+    host.exited.resolve()
+    await harness.quitCompleted.promise
+    expect(readdirSync(directory)).toContain('restart-request.json')
   })
 
   it('refreshes managed update state when the supervisor replaces status after launch', async () => {
