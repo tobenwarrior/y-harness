@@ -13,6 +13,8 @@ import {
   isYHarnessCloudDesktop,
   parseBotVaultRequestResponse,
   type BotVaultRequest,
+  type BotVaultRequestFetcher,
+  type BotVaultRequestResult,
 } from '../src/client/bot-vault-request.ts'
 import { BotVaultRequestCard } from '../src/client/BotVaultRequestCard.tsx'
 import {
@@ -82,7 +84,7 @@ describe('BotWebsiteLoginRequestCard', () => {
   it('shows origin and exact destination without rendering a credential editor', async () => {
     vi.spyOn(window.navigator, 'userAgent', 'get').mockReturnValue('YHarnessCloudDesktop/1')
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(websiteResponse()), { status: 200 }))
-    render(<BotWebsiteLoginRequestCard {...cardProps() as ComponentProps<typeof BotWebsiteLoginRequestCard>} />)
+    render(<BotWebsiteLoginRequestCard {...cardProps()} />)
     expect(await screen.findByText('https://example.com')).toBeTruthy()
     expect(screen.getByText('https://example.com/sign-in')).toBeTruthy()
     expect(screen.getByRole('link').getAttribute('href')).toBe(`/__yharness/vault-login-use/${REQUEST_ID}`)
@@ -91,11 +93,11 @@ describe('BotWebsiteLoginRequestCard', () => {
 
   it('does not query ordinary conversations or Web handoff links', async () => {
     const fetcher = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(websiteResponse()), { status: 200 }))
-    render(<BotWebsiteLoginRequestCard {...cardProps({ botChat: false }) as ComponentProps<typeof BotWebsiteLoginRequestCard>} />)
+    render(<BotWebsiteLoginRequestCard {...cardProps({ botChat: false })} />)
     await Promise.resolve()
     expect(fetcher).not.toHaveBeenCalled()
     cleanup()
-    render(<BotWebsiteLoginRequestCard {...cardProps() as ComponentProps<typeof BotWebsiteLoginRequestCard>} />)
+    render(<BotWebsiteLoginRequestCard {...cardProps()} />)
     expect(await screen.findByText(en.websiteLoginDesktopOnly)).toBeTruthy()
     expect(screen.queryByRole('link')).toBeNull()
   })
@@ -107,7 +109,7 @@ describe('BotWebsiteLoginRequestCard', () => {
     const fetcher = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
       request: { ...websiteResponse().request, scope: 'shared' },
     }), { status: 200 }))
-    render(<BotWebsiteLoginRequestCard {...cardProps() as ComponentProps<typeof BotWebsiteLoginRequestCard>} />)
+    render(<BotWebsiteLoginRequestCard {...cardProps()} />)
 
     await act(async () => { await vi.advanceTimersByTimeAsync(0) })
     expect(fetcher).toHaveBeenCalledTimes(1)
@@ -186,8 +188,46 @@ describe('Bot Vault request polling', () => {
     expect(fetcher).toHaveBeenCalledTimes(2)
     expect(fetcher).toHaveBeenNthCalledWith(1, 'first-session', expect.any(AbortSignal))
     expect(fetcher).toHaveBeenNthCalledWith(2, 'second-session', expect.any(AbortSignal))
+    expect(fetcher.mock.calls[0]?.[1].aborted).toBe(true)
     expect(results[0]).toMatchObject({ sessionId: 'second-session', request: { name: 'OTHER_API_KEY' } })
     poller.dispose()
+  })
+
+  it('retries a failed refresh without replacing the last metadata', async () => {
+    vi.useFakeTimers()
+    const fetcher = vi.fn<BotVaultRequestFetcher>()
+      .mockResolvedValueOnce(response().request)
+      .mockRejectedValueOnce(new Error('connection closed'))
+      .mockResolvedValueOnce(null)
+    const onResult = vi.fn<BotVaultRequestResult>()
+    const poller = createBotVaultRequestPoller({ fetcher, onResult, intervalMs: 100 })
+
+    poller.select('bot-session', true)
+    await vi.advanceTimersByTimeAsync(100)
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(onResult.mock.calls).toEqual([['bot-session', response().request]])
+
+    await vi.advanceTimersByTimeAsync(100)
+    expect(onResult).toHaveBeenLastCalledWith('bot-session', null)
+    poller.dispose()
+  })
+
+  it('stops future reads when selection clears or the poller is disposed', async () => {
+    vi.useFakeTimers()
+    const fetcher = vi.fn(async () => null)
+    const poller = createBotVaultRequestPoller({ fetcher, onResult: vi.fn(), intervalMs: 100 })
+
+    poller.select('bot-session', true)
+    await vi.advanceTimersByTimeAsync(0)
+    poller.select(undefined, false)
+    await vi.advanceTimersByTimeAsync(100)
+    expect(fetcher).toHaveBeenCalledTimes(1)
+
+    poller.dispose()
+    poller.dispose()
+    poller.select('bot-session', true)
+    await vi.advanceTimersByTimeAsync(100)
+    expect(fetcher).toHaveBeenCalledTimes(1)
   })
 })
 

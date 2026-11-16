@@ -33,6 +33,8 @@ When the selected owner Bot requests a credential, the composer dock shows only 
 
 When a selected Bot requests sign-in from a shared chat, its owner sees the website and destination in the Bot’s main chat. **Approve sign-in** opens the native Vault with accounts assigned to that Bot.
 
+Approval cards cancel their previous metadata read when the selected Session changes or the card unmounts. During polling, a failed read leaves the last validated metadata visible.
+
 Open **Group settings** in a shared room to see its Bots and people. Room owners can change the name or remove a member's access to the room.
 
 Use **Reply** on a group message to quote it in the composer and send a reply to that message. Use the reaction picker to add or remove your reaction. The transcript displays the quoted message and counts each reaction.
