@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { createHash, randomUUID } from 'node:crypto'
 import { spawn } from 'node:child_process'
@@ -914,7 +915,7 @@ describe('durable Bot roster', () => {
     }
   })
 
-  it('does not hold the profile credential queue while shared authority commits', async () => {
+  it('releases the profile credential queue before shared authority commits', async () => {
     const root = await mkdtemp(join(tmpdir(), 'yh-bot-roster-fence-'))
     const h = await harness(
       undefined,
@@ -928,25 +929,31 @@ describe('durable Bot roster', () => {
       false,
       { credentialPath: join(root, 'credentials.yaml') },
     )
+    const credentialMutation = new AsyncLocalStorage<true>()
+    const modifyRecord = h.credentials.modifyRecord.bind(h.credentials)
+    const observeQueue = vi.spyOn(h.credentials, 'modifyRecord').mockImplementation((key, mutate) =>
+      modifyRecord(key, current => credentialMutation.run(true, () => mutate(current))))
     let authority: SharedAccessAuthority | undefined
     try {
       await h.service.create({ name: 'Roster fence deadlock', cwd: '/tmp' })
-      authority = await SharedAccessAuthority.create(h.ctx, h.credentials, {
+      const sharedAuthority = await SharedAccessAuthority.create(h.ctx, h.credentials, {
         sessionMaxAgeMs: 60_000,
         inviteMaxAgeMs: 60_000,
       })
+      authority = sharedAuthority
       const host = productionSharedHost(h.service)
       const bots = (await h.service.list({ includeHidden: true })).bots
-      const operation = host.withBotRoster(
-        bots,
-        undefined,
-        () => authority!.mutateExtension('test/shared-roster-fence', current => ({ value: undefined, next: current ?? null })),
-      )
-      const timeout = new Promise<'timed-out'>((resolve) => {
-        setTimeout(() => { resolve('timed-out') }, 250).unref()
-      })
-      await expect(Promise.race([operation.then(() => 'completed' as const), timeout])).resolves.toBe('completed')
+      const commitAuthority = async () => {
+        expect(credentialMutation.getStore()).toBeUndefined()
+        return sharedAuthority.mutateExtension('test/shared-roster-fence', current => ({
+          value: 'committed',
+          next: current ?? null,
+        }))
+      }
+      await expect(host.withBotRoster(bots, undefined, commitAuthority))
+        .resolves.toEqual({ valid: true, value: 'committed' })
     } finally {
+      observeQueue.mockRestore()
       await authority?.dispose()
       await close(h.ctx)
       await rm(root, { recursive: true, force: true })
