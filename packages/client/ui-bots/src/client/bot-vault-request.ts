@@ -1,6 +1,7 @@
 /** Browser-side metadata reader for the owner Bot's write-only Vault request. */
 
 import type { Branded } from '@yharness/brand'
+import { createBotRequestPoller, type BotRequestPoller } from './bot-request-poller.ts'
 
 /** Opaque identifier issued by the authenticated Cloud Vault broker. */
 export type BotVaultRequestId = Branded<'BotVaultRequestId'>
@@ -29,8 +30,6 @@ export type BotVaultRequestResult = (
   request: BotVaultRequest | null,
 ) => void
 
-/** Poll interval while the selected Bot Session is running. */
-const POLL_INTERVAL_MS = 2_000
 const UNIT = /^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,220}\.service$/u
 const NAME = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/u
 const REQUEST_ID = /^[a-f0-9]{32}$/u
@@ -112,62 +111,12 @@ export interface BotVaultRequestPollerOptions {
 }
 
 /**
- * Create a stale-safe reader that polls only the currently selected Session.
+ * Poll metadata for the selected Session.
  * @param options - fetch seam, cadence, and result callback.
  * @returns selection and disposal controls.
  */
-export function createBotVaultRequestPoller(options: BotVaultRequestPollerOptions): {
-  readonly select: (sessionId: string | undefined, running: boolean) => void
-  readonly dispose: () => void
-} {
-  const fetcher = options.fetcher ?? fetchBotVaultRequest
-  const intervalMs = options.intervalMs ?? POLL_INTERVAL_MS
-  let generation = 0
-  let timer: ReturnType<typeof setTimeout> | undefined
-  let requestController: AbortController | undefined
-  let disposed = false
-
-  const cancel = (): void => {
-    if (timer !== undefined) {
-      clearTimeout(timer)
-      timer = undefined
-    }
-    requestController?.abort()
-    requestController = undefined
-  }
-
-  const select = (sessionId: string | undefined, running: boolean): void => {
-    cancel()
-    const currentGeneration = ++generation
-    if (disposed || sessionId === undefined) return
-
-    const read = async (): Promise<void> => {
-      const controller = new AbortController()
-      requestController = controller
-      try {
-        const request = await fetcher(sessionId, controller.signal)
-        if (disposed || currentGeneration !== generation || controller.signal.aborted) return
-        options.onResult(sessionId, request)
-      } catch {
-        // Network and abort failures leave the last validated card unchanged.
-      } finally {
-        if (requestController === controller) requestController = undefined
-        if (!disposed && currentGeneration === generation && running) {
-          timer = setTimeout(() => { void read() }, intervalMs)
-        }
-      }
-    }
-    void read()
-  }
-
-  const dispose = (): void => {
-    if (disposed) return
-    disposed = true
-    ++generation
-    cancel()
-  }
-
-  return { select, dispose }
+export function createBotVaultRequestPoller(options: BotVaultRequestPollerOptions): BotRequestPoller {
+  return createBotRequestPoller(options.fetcher ?? fetchBotVaultRequest, options.onResult, options.intervalMs)
 }
 
 /**
