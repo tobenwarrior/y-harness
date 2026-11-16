@@ -79,7 +79,7 @@ export function parseBotWebsiteLoginResponse(value: unknown): BotWebsiteLoginReq
 }
 
 /**
- * Read one request from the same-origin broker without caching or exposing a value.
+ * Read one request from the document-relative broker without caching or exposing a value.
  * @param sessionId - exact direct Bot Session selected by the owner.
  * @param signal - cancellation signal for selection changes and disposal.
  * @param fetcher - browser or test HTTP carrier.
@@ -90,7 +90,7 @@ export async function fetchBotWebsiteLoginRequest(
   signal: AbortSignal,
   fetcher: typeof fetch = globalThis.fetch,
 ): Promise<BotWebsiteLoginRequest | null> {
-  const response = await fetcher(`/api/bot-website-login?sessionId=${encodeURIComponent(sessionId)}`, {
+  const response = await fetcher(`api/bot-website-login?sessionId=${encodeURIComponent(sessionId)}`, {
     method: 'GET', credentials: 'same-origin', cache: 'no-store', headers: { Accept: 'application/json' }, signal,
   })
   if (!response.ok) return null

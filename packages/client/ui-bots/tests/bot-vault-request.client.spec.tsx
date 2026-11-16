@@ -56,10 +56,10 @@ describe('Bot website login request response', () => {
     expect(parseBotWebsiteLoginResponse({ request: { ...websiteResponse().request, username: 'alice', password: 'secret' } })).toBeNull()
   })
 
-  it('uses the exact same-origin session route without a cache', async () => {
+  it('reads the Session’s website login request from the document route without caching', async () => {
     const fetcher = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(websiteResponse()), { status: 200 }))
     await expect(fetchBotWebsiteLoginRequest('owner session/one', new AbortController().signal)).resolves.toEqual(websiteResponse().request)
-    expect(fetcher).toHaveBeenCalledWith('/api/bot-website-login?sessionId=owner%20session%2Fone', expect.objectContaining({
+    expect(fetcher).toHaveBeenCalledWith('api/bot-website-login?sessionId=owner%20session%2Fone', expect.objectContaining({
       method: 'GET', credentials: 'same-origin', cache: 'no-store',
     }))
   })
@@ -151,10 +151,10 @@ describe('Bot Vault request response parser', () => {
     expect(isYHarnessCloudDesktop('NotYHarnessCloudDesktop/1')).toBe(false)
   })
 
-  it('uses the exact same-origin session route without a cache', async () => {
+  it('reads the Session’s Vault request from the document route without caching', async () => {
     const fetcher = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(response()), { status: 200 }))
     await expect(fetchBotVaultRequest('owner session/one', new AbortController().signal)).resolves.toEqual(response().request)
-    expect(fetcher).toHaveBeenCalledWith('/api/bot-vault-request?sessionId=owner%20session%2Fone', expect.objectContaining({
+    expect(fetcher).toHaveBeenCalledWith('api/bot-vault-request?sessionId=owner%20session%2Fone', expect.objectContaining({
       method: 'GET', credentials: 'same-origin', cache: 'no-store',
     }))
   })
