@@ -469,6 +469,35 @@ describe('Desktop Vault SSH transport', () => {
       .resolves.toEqual({ ok: false, reason: 'unavailable' })
   })
 
+  it('limits generated signup to the reviewed native window and returns only saved status', async () => {
+    const id = 'f'.repeat(32)
+    const otherId = 'd'.repeat(32)
+    if (!isVaultLoginUseRequestId(id) || !isVaultLoginUseRequestId(otherId)) throw new Error('Fixture id is invalid.')
+    const request = {
+      action: 'create-login-use', id, origin: 'https://example.com', destination: 'https://example.com/signup',
+      username: 'fixture-user', saveLabel: 'Fixture account',
+    }
+    expect(vaultRequestAllowed(request, { kind: 'login-use', id })).toBe(true)
+    expect(vaultRequestAllowed(request, { kind: 'login-use', id: otherId })).toBe(false)
+    expect(vaultRequestAllowed(request, { kind: 'manage' })).toBe(false)
+    expect(vaultRequestAllowed({ ...request, password: 'fixture-value' }, { kind: 'login-use', id })).toBe(false)
+    expect(vaultRequestAllowed({ ...request, destination: 'https://elsewhere.example/signup' }, { kind: 'login-use', id })).toBe(false)
+    const payload = JSON.stringify(request)
+    const execute = fixture(`
+      let body = '';
+      process.stdin.setEncoding('utf8');
+      process.stdin.on('data', chunk => { body += chunk; });
+      process.stdin.on('end', () => {
+        if (body !== ${JSON.stringify(payload)}) process.exit(2);
+        process.stdout.write(JSON.stringify({ state: 'needs-owner', saved: true }));
+      });
+    `)
+    await expect(cloudVaultRequest('fixture-vps', request, signal, execute)).resolves.toEqual({ state: 'needs-owner', saved: true })
+    await expect(cloudVaultRequest('fixture-vps', request, signal,
+      fixture('process.stdout.write(JSON.stringify({ state: "submitted", saved: true, password: "fixture-value" }));')))
+      .resolves.toEqual({ ok: false, reason: 'unavailable' })
+  })
+
   it('sends an exact website login decline and returns the fixed unavailable state', async () => {
     const id = 'f'.repeat(32)
     await expect(cloudVaultRequest('fixture-vps', { action: 'decline-login-use', id }, signal,

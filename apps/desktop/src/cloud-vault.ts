@@ -128,6 +128,13 @@ export type VaultRequest = { readonly action: 'list' | 'list-grants' } | ({
   readonly password: string
   readonly saveLabel?: string
 } | {
+  readonly action: 'create-login-use'
+  readonly id: VaultLoginUseRequestId
+  readonly origin: string
+  readonly destination: string
+  readonly username: string
+  readonly saveLabel: string
+} | {
   readonly action: 'decline-login-use'
   readonly id: VaultLoginUseRequestId
 }
@@ -204,6 +211,7 @@ export interface VaultLoginUseRequestMetadata {
   readonly destination: string
   readonly logins: readonly VaultLoginUseChoice[]
   readonly acceptsCredentials?: true
+  readonly purpose?: 'signup'
 }
 
 /** Non-secret saved-login choice bound to its current record revision. */
@@ -247,9 +255,9 @@ export type VaultReply = {
 } | {
   readonly request: VaultRequestMetadata | VaultLoginUseRequestMetadata
 } | {
-  readonly state: 'saved' | 'cancelled' | 'needs-owner' | 'unavailable'
+  readonly state: 'saved' | 'cancelled' | 'unavailable'
 } | {
-  readonly state: 'submitted'
+  readonly state: 'submitted' | 'needs-owner'
   readonly saved?: boolean
 } | {
   readonly ok: false
@@ -410,6 +418,14 @@ function requestBody(value: unknown): VaultRequest | undefined {
     const saveLabel = boundedLoginText(value.saveLabel, LOGIN_LABEL_LIMIT, true)
     return fields === 7 && saveLabel !== undefined ? { ...entry, saveLabel } : undefined
   }
+  if (action === 'create-login-use' && fields === 6 && isVaultLoginUseRequestId(value.id)) {
+    const origin = loginOrigin(value.origin, true)
+    const destination = origin === undefined ? undefined : loginDestination(value.destination, origin)
+    const username = boundedLoginText(value.username, LOGIN_USERNAME_LIMIT, true)
+    const saveLabel = boundedLoginText(value.saveLabel, LOGIN_LABEL_LIMIT, true)
+    if (origin === undefined || destination === undefined || username === undefined || saveLabel === undefined) return undefined
+    return { action, id: value.id, origin, destination, username, saveLabel }
+  }
   if (action === 'save-request' && fields === 3 && isVaultRequestId(value.id)
     && typeof value.value === 'string' && value.value.length > 0 && !value.value.includes('\0')
     && value.value.isWellFormed() && Buffer.byteLength(value.value, 'utf8') <= VALUE_LIMIT) {
@@ -478,11 +494,13 @@ function loginUseMetadata(value: unknown, expectedId?: VaultLoginUseRequestId): 
   if (!record(value) || !isVaultLoginUseRequestId(value.id) || value.id !== expectedId) return undefined
   const fields = Object.keys(value).length
   const acceptsCredentials = value.acceptsCredentials === true
-  if (fields !== (acceptsCredentials ? 5 : 4)) return undefined
+  const signup = value.purpose === 'signup'
+  if (fields !== (acceptsCredentials || signup ? 5 : 4) || (acceptsCredentials && signup)
+    || (value.purpose !== undefined && !signup) || (value.acceptsCredentials !== undefined && !acceptsCredentials)) return undefined
   const origin = loginOrigin(value.origin, true)
   const destination = origin === undefined ? undefined : loginDestination(value.destination, origin)
   if (origin === undefined || destination === undefined || !Array.isArray(value.logins)
-    || value.logins.length > MAX_LOGINS) return undefined
+    || value.logins.length > MAX_LOGINS || (signup && value.logins.length !== 0)) return undefined
   const ids = new Set<string>()
   const logins: VaultLoginUseChoice[] = []
   for (const login of value.logins) {
@@ -491,7 +509,11 @@ function loginUseMetadata(value: unknown, expectedId?: VaultLoginUseRequestId): 
     ids.add(metadata.id)
     logins.push(metadata)
   }
-  return { id: value.id, origin, destination, logins, ...(acceptsCredentials ? { acceptsCredentials: true } : {}) }
+  return {
+    id: value.id, origin, destination, logins,
+    ...(acceptsCredentials ? { acceptsCredentials: true } : {}),
+    ...(signup ? { purpose: 'signup' } : {}),
+  }
 }
 
 function botAccess(value: unknown, sharedScopes: boolean): VaultBotAccess | undefined {
@@ -531,6 +553,11 @@ function replyBody(
       ids.add(id)
     }
     return { ok: true, loginAutomation: { available: automation.available, enabled: automation.enabled } }
+  }
+  if (action === 'create-login-use') {
+    if (fields === 1 && value.state === 'unavailable') return { state: value.state }
+    return fields === 2 && value.saved === true && (value.state === 'submitted' || value.state === 'needs-owner')
+      ? { state: value.state, saved: true } : undefined
   }
   if (action === 'enter-login-use' && fields === 2 && value.state === 'submitted' && typeof value.saved === 'boolean') {
     return { state: value.state, saved: value.saved }
@@ -610,7 +637,7 @@ export function vaultRequestAllowed(value: unknown, scope: VaultRequestMode | Va
     return typeof scope === 'string' ? request.id === scope : scope?.kind === 'request' && request.id === scope.id
   }
   if (request.action === 'inspect-login-use' || request.action === 'approve-login-use'
-    || request.action === 'enter-login-use' || request.action === 'decline-login-use') {
+    || request.action === 'enter-login-use' || request.action === 'create-login-use' || request.action === 'decline-login-use') {
     return typeof scope !== 'string' && scope?.kind === 'login-use' && request.id === scope.id
   }
   return scope === undefined || (typeof scope !== 'string' && scope.kind === 'manage')

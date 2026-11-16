@@ -1049,6 +1049,45 @@ class VaultTest(unittest.TestCase):
             with self.subTest(fields=fields), self.assertRaises(vault.VaultError):
                 vault.browser_login_inspection(json.dumps({**page, **fields}).encode(), request_id)
 
+    def test_website_signup_saves_a_generated_password_before_the_reviewed_post(self):
+        self.store.allow_desktop(OWNER_UID, CLOUD_UID, [])
+        request = {'action': 'create-login-use', 'id': 'b' * 32, 'origin': 'https://example.com',
+                   'destination': 'https://example.com/signup', 'username': 'fixture@example.com', 'saveLabel': 'New account'}
+        page = {key: request[key] for key in ('id', 'origin', 'destination')}
+        page.update(state='pending', purpose='signup', bot='bot-scout',
+                    session='bot-session-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')
+        submitted = []
+
+        def exchange(payload):
+            call = json.loads(payload)
+            if call['action'] == 'inspect-login':
+                return json.dumps(page).encode()
+            self.assertEqual(call['action'], 'use-signup')
+            self.assertEqual((call['bot'], call['session']), (page['bot'], page['session']))
+            self.assertEqual(call['username'], request['username'])
+            self.assertGreaterEqual(len(call['password']), 24)
+            logins = self.store.website_login_records(scoped=True)
+            self.assertEqual([(login['id'], login['bot']) for login in logins], [(request['id'], page['bot'])])
+            self.assertNotIn(call['password'], (self.store.website_login_directory(scoped=True) / request['id']).read_text())
+            submitted.append(call['id'])
+            return b'{"state":"needs-owner"}'
+
+        with patch.object(vault, 'browser_client', side_effect=exchange):
+            with patch.object(vault, 'browser_grant_pairs', return_value={(page['bot'], page['session'])}):
+                value = vault.desktop_request(json.dumps(request).encode())
+                with self.assertRaises(vault.VaultError):
+                    self.store.desktop(value, CLOUD_UID)
+                wrong_page = {**value, 'destination': request['origin'] + '/other'}
+                self.assertEqual(self.store.desktop(wrong_page, OWNER_UID), {'state': 'unavailable'})
+                self.failed_encryption = True
+                self.assertEqual(self.store.desktop(value, OWNER_UID), {'state': 'unavailable'})
+                self.assertEqual(submitted, [])
+                self.failed_encryption = False
+                for _attempt in range(2):
+                    self.assertEqual(self.store.desktop(value, OWNER_UID), {'state': 'needs-owner', 'saved': True})
+                self.assertEqual(submitted, [request['id']])
+        self.assertEqual(self.store.desktop({'action': 'list-bot-logins'}, OWNER_UID)['botLogins'][0]['label'], 'New account')
+
     def test_entered_login_requires_the_owner_and_the_reviewed_destination(self):
         self.store.allow_desktop(OWNER_UID, CLOUD_UID, [])
         request = {'action': 'enter-login-use', 'id': 'a' * 32, 'origin': 'https://example.com',

@@ -40,37 +40,47 @@ function websiteLogin(operation, token, origin, destination, username, password)
       || action.origin !== location.origin || /[?#]/u.test(action.href) || form.elements.length > 32) return null
     const inputs = [...form.elements].filter(field => field instanceof HTMLInputElement)
     const passwords = inputs.filter(field => field.type === 'password')
+    if (passwords.length === 0 || passwords.length > 2 || passwords.some(field => !editable(field))) return null
+    const signup = passwords.every(field => field.autocomplete === 'new-password')
+    if (!signup && (passwords.length !== 1 || passwords[0].autocomplete !== 'current-password')) return null
     const identifiers = inputs.filter(field => ['email', 'text', 'tel'].includes(field.type)
-      && field.autocomplete === 'username' && editable(field))
-    if (passwords.length !== 1 || identifiers.length !== 1 || passwords[0].autocomplete !== 'current-password'
-      || !editable(passwords[0]) || passwords[0].name === identifiers[0].name) return null
+      && (field.autocomplete === 'username' || (signup && field.autocomplete === 'email')) && editable(field))
+    if (identifiers.length !== 1) return null
     const [user] = identifiers
-    const [pass] = passwords
+    const names = new Set([user.name, ...passwords.map(field => field.name)])
+    if (names.size !== passwords.length + 1) return null
     const hidden = new URLSearchParams()
     for (const field of form.elements) {
-      if (field === user || field === pass || !field.name || field.matches(':disabled')) continue
+      if (field === user || passwords.includes(field) || !field.name || field.matches(':disabled')) continue
       if (!(field instanceof HTMLInputElement) || field.type !== 'hidden' || field.name.length > 256 || field.value.length > 8192
-        || field.name === user.name || field.name === pass.name || hidden.has(field.name)) return null
+        || names.has(field.name) || hidden.has(field.name)) return null
       hidden.append(field.name, field.value)
     }
-    return { form, user, pass, action: action.href, hidden: hidden.toString() }
+    return { form, user, passwords, signup, action: action.href, hidden: hidden.toString() }
   }
 
   const candidates = [...document.forms].map(candidate).filter(value => value !== null)
   if (candidates.length !== 1) return null
-  const [{ form, user, pass, action, hidden }] = candidates
+  const [{ form, user, passwords, signup, action, hidden }] = candidates
   if (hidden.length > 48_000) return null
   if (operation === 'capture') {
-    globalThis.yharnessLogin = { token, form, user, pass, action, hidden, location: location.href, userName: user.name, passName: pass.name }
-    return { origin: location.origin, destination: action }
+    globalThis.yharnessLogin = {
+      token, form, user, passwords, signup, action, hidden, location: location.href,
+      userName: user.name, passNames: passwords.map(field => field.name),
+    }
+    return { origin: location.origin, destination: action, ...(signup ? { purpose: 'signup' } : {}) }
   }
-  if (previous?.token !== token || previous.form !== form || previous.user !== user || previous.pass !== pass
+  if (previous?.token !== token || previous.form !== form || previous.user !== user || previous.signup !== signup
+    || previous.passwords.length !== passwords.length
+    || passwords.some((field, index) => previous.passwords[index] !== field || previous.passNames[index] !== field.name)
     || previous.action !== action || previous.hidden !== hidden || previous.location !== location.href
-    || previous.userName !== user.name || previous.passName !== pass.name || origin !== location.origin || destination !== action) return null
+    || previous.userName !== user.name || origin !== location.origin || destination !== action) return null
+  if (signup && passwords.some(field => (field.minLength >= 0 && password.length < field.minLength)
+    || (field.maxLength >= 0 && password.length > field.maxLength))) return null
 
   const payload = new URLSearchParams(hidden)
   payload.set(user.name, username)
-  payload.set(pass.name, password)
+  for (const field of passwords) payload.set(field.name, password)
   if (payload.toString().length > 65_536) return null
   return fetch(destination, {
     method: 'POST', body: payload, mode: 'same-origin', credentials: 'same-origin',

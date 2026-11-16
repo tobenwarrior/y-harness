@@ -46,7 +46,9 @@ export function BotWebsiteLoginRequestCard({ botChat, sessionId, useSession, t }
 
   if (request === null) return null
   const desktop = isYHarnessCloudDesktop(typeof navigator === 'undefined' ? '' : navigator.userAgent)
-  const title = request.scope === 'shared' ? t('websiteLoginSharedRequestTitle') : t('websiteLoginRequestTitle')
+  const signup = request.purpose === 'signup'
+  const title = request.scope === 'shared' ? t('websiteLoginSharedRequestTitle')
+    : t(signup ? 'websiteSignupRequestTitle' : 'websiteLoginRequestTitle')
   return (
     <section className={css.card} aria-label={title}>
       <span className={css.icon} aria-hidden="true"><IconShieldOutlineRegular size={16} /></span>
@@ -59,8 +61,10 @@ export function BotWebsiteLoginRequestCard({ botChat, sessionId, useSession, t }
           <code className={css.targetValue}>{request.destination}</code>
         </div>
         {desktop
-          ? <a className={css.action} href={`/__yharness/vault-login-use/${request.id}`}>{t('websiteLoginOpenDesktop')}</a>
-          : <p className={css.desktopHint}>{t('websiteLoginDesktopOnly')}</p>}
+          ? <a className={css.action} href={`/__yharness/vault-login-use/${request.id}`}>
+            {t(signup ? 'websiteSignupOpenDesktop' : 'websiteLoginOpenDesktop')}
+          </a>
+          : <p className={css.desktopHint}>{t(signup ? 'websiteSignupDesktopOnly' : 'websiteLoginDesktopOnly')}</p>}
       </div>
     </section>
   )

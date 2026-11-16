@@ -87,7 +87,8 @@ test('submits a reviewed HTTPS form without typing credentials or forwarding the
       const body = new URLSearchParams(text)
       posts.push({ host: request.headers.host, path: request.url,
         matches: body.get('account') === CREDENTIAL.username && body.get('pass') === CREDENTIAL.password
-          && body.get('nonce') === 'fixture' })
+          && body.get('nonce') === 'fixture'
+          && (request.url !== '/register' || body.get('confirm') === CREDENTIAL.password) })
       if (request.url === '/forward') {
         reply.writeHead(307, { Location: `https://${ALTERNATE}:${port}/trap` })
       } else {
@@ -101,7 +102,13 @@ test('submits a reviewed HTTPS form without typing credentials or forwarding the
     if (request.url === '/worker-ready') workerReady.resolve()
     if (request.url === '/worker-intercepted') intercepted = true
     if (request.url === '/change-observed') changed.resolve()
-    if (request.url === '/other-origin') {
+    if (request.url === '/signup') {
+      reply.end(`<!doctype html><form method="post" action="/register">
+        <input name="account" type="email" autocomplete="email">
+        <input name="pass" type="password" autocomplete="new-password">
+        <input name="confirm" type="password" autocomplete="new-password">
+        <input name="nonce" type="hidden" value="fixture"><button>Register</button></form>`)
+    } else if (request.url === '/other-origin') {
       reply.end(form(`https://${ALTERNATE}:${port}/trap`))
     } else if (request.url === '/forward-form') {
       reply.end(form('/forward'))
@@ -216,6 +223,22 @@ test('submits a reviewed HTTPS form without typing credentials or forwarding the
   assert.equal(posts.at(-1).matches, true)
   assert.equal(visibleValue, false)
   assert.equal(intercepted, false)
+
+  assert.deepEqual(await shared('navigate', { url: `${origin}/signup` }), { ok: true })
+  assert.deepEqual(await shared('request-login'), { error: 'unavailable' })
+  assert.deepEqual(await control('navigate', { url: `${origin}/signup` }), { ok: true })
+  const signup = await control('request-login')
+  assert.equal(signup.purpose, 'signup')
+  assert.equal(signup.destination, `${origin}/register`)
+  assert.deepEqual(await exchange(vaultPath, { action: 'inspect-login', id: signup.id }), { ...signup, ...BOT })
+  assert.deepEqual(await exchange(vaultPath, { action: 'inspect-login-automatic', id: signup.id }), { error: 'unavailable' })
+  assert.deepEqual(await use(signup.id), { error: 'unavailable' })
+  assert.deepEqual(await exchange(vaultPath, { action: 'use-signup', id: signup.id, origin, bot: BOT.bot, ...CREDENTIAL }),
+    { error: 'unavailable' })
+  assert.deepEqual(await exchange(vaultPath, { action: 'use-signup', id: signup.id, origin, ...BOT, ...CREDENTIAL }),
+    { state: 'submitted' })
+  assert.deepEqual(posts.at(-1), { host: `${HOST}:${port}`, path: '/register', matches: true })
+  assert.equal(posts.length, 4)
 })
 
 test('hands the same HTTPS browser back after the owner completes verification', {

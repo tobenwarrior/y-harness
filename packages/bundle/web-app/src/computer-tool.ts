@@ -87,9 +87,9 @@ function registerVpsComputer(
       + (signIn === undefined ? '' : ' For a website sign-in or verification that needs the owner, use request_sign_in. '
         + 'The owner uses the Computer directly. Never ask for a password or code in chat.')
       + (navigate === undefined ? '' : ' Use navigate for an HTTP(S) website URL without credentials.')
-      + (savedLogin === undefined ? '' : ' Use request_saved_login when a website asks for a login. '
+      + (savedLogin === undefined ? '' : ' Use request_saved_login on a website sign-in or signup form. '
         + 'The owner can authorize automatic sign-in for this Bot and website. In a direct owner chat, the owner can also select '
-        + 'or enter a login securely. Verify the page after submission.'),
+        + 'or enter a login, or let Vault create a password for a new account. Verify the page after submission.'),
     keyDescription: 'X11 key or chord, for example Return or ctrl+a.',
     observe: async (sessionId, signal) => (await resolve(sessionId, signal)).observe(signal),
     act: async (sessionId, action, signal) => (await resolve(sessionId, signal)).actAsBot(action, signal),
@@ -259,16 +259,23 @@ function computerToolDefinition(ctx: Context, target: ComputerToolTarget): ToolD
             : 'Secure website sign-in takes no arguments and requires the owner Bot chat.')
         }
         const result = await target.savedLogin(exec.agent, exec.signal)
+        const signup = result.purpose === 'signup'
         switch (result.state) {
           case 'submitted':
-            return { message: 'The website received the sign-in submission. Check the page to see whether you’re signed in.' }
+            return { message: signup
+              ? 'The signup form was submitted. Check the page to see whether the account is ready.'
+              : 'The website received the sign-in submission. Check the page to see whether you’re signed in.' }
           case 'approval-required':
-            return { message: 'This routine needs the owner to sign in or enable this Bot’s automatic sign-in in Vault.' }
+            return { message: signup
+              ? 'Ask the owner to approve signup in this Bot’s direct chat.'
+              : 'This routine needs the owner to sign in or enable this Bot’s automatic sign-in in Vault.' }
           case 'needs-owner':
-            return { message: 'The website needs a manual sign-in or verification step.'
+            return { message: (signup ? 'The website needs a manual signup or verification step.'
+              : 'The website needs a manual sign-in or verification step.')
               + (target.signIn === undefined ? '' : ' Use request_sign_in to ask the owner to take over.') }
           case 'unavailable':
-            return { message: 'The website sign-in request ended. Ask the owner before trying again.' }
+            return { message: signup ? 'The website signup request ended. Ask the owner before trying again.'
+              : 'The website sign-in request ended. Ask the owner before trying again.' }
         }
       }
       if (action !== 'observe') {

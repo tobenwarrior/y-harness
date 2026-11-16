@@ -231,6 +231,12 @@ Select **Save this login to Vault** and add a label to keep an entered login aft
 
 Saved login approval supports a single HTTPS sign-in form that submits to the same website. Sites using single sign-on, passkeys, or a separate verification step may require manual sign-in. Removing or replacing a Vault entry prevents use of the old value. Sign out at the website to end an existing browser session.
 
+### Create a website account with Vault
+
+In a direct Cloud Bot chat, ask the Bot to open the website's signup form and request secure signup. Choose **Review signup**, verify the website and destination, and enter the account name and a label for Vault. Vault generates a password, saves it for that Bot, and submits the form. The Bot receives the result.
+
+This works with a same-site HTTPS signup form containing an account field and one or two new-password fields. Check the website after submission and complete any verification in the Computer panel. If the site needs more fields or special verification, take control. The assigned login can be replaced or removed from **Vault → Websites**. Update Desktop, Cloud, the browser worker, and the Vault command together.
+
 ### Let a private routine sign in automatically
 
 In **Cloud → Vault → Websites**, save the website login for the Bot that should use it and turn on **Use automatically** for that account. This requires the standard Cloud Vault broker and updated versions of the Mac app, Cloud, and isolated browser worker. The Bot can use the account on the saved HTTPS website in its direct owner chat and time-based routines, including while the Mac is off.

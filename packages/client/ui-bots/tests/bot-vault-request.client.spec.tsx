@@ -82,20 +82,31 @@ describe('BotWebsiteLoginRequestCard', () => {
   it('shows origin and exact destination without rendering a credential editor', async () => {
     vi.spyOn(window.navigator, 'userAgent', 'get').mockReturnValue('YHarnessCloudDesktop/1')
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(websiteResponse()), { status: 200 }))
-    render(<BotWebsiteLoginRequestCard {...cardProps() as ComponentProps<typeof BotWebsiteLoginRequestCard>} />)
+    render(<BotWebsiteLoginRequestCard {...cardProps()} />)
     expect(await screen.findByText('https://example.com')).toBeTruthy()
     expect(screen.getByText('https://example.com/sign-in')).toBeTruthy()
     expect(screen.getByRole('link').getAttribute('href')).toBe(`/__yharness/vault-login-use/${REQUEST_ID}`)
     expect(screen.queryByRole('textbox')).toBeNull()
   })
 
+  it('labels an owner signup and links to the secure Desktop review', async () => {
+    vi.spyOn(window.navigator, 'userAgent', 'get').mockReturnValue('YHarnessCloudDesktop/1')
+    const signup = { ...websiteResponse().request, destination: 'https://example.com/signup', purpose: 'signup' }
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(Response.json({ request: signup }))
+    render(<BotWebsiteLoginRequestCard {...cardProps()} />)
+    const review = await screen.findByRole('link', { name: en.websiteSignupOpenDesktop })
+    expect(screen.getByText(en.websiteSignupRequestTitle)).toBeTruthy()
+    expect(review.getAttribute('href')).toBe(`/__yharness/vault-login-use/${REQUEST_ID}`)
+    expect(parseBotWebsiteLoginResponse({ request: { ...signup, scope: 'shared' } })).toBeNull()
+  })
+
   it('does not query ordinary conversations or Web handoff links', async () => {
     const fetcher = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(websiteResponse()), { status: 200 }))
-    render(<BotWebsiteLoginRequestCard {...cardProps({ botChat: false }) as ComponentProps<typeof BotWebsiteLoginRequestCard>} />)
+    render(<BotWebsiteLoginRequestCard {...cardProps({ botChat: false })} />)
     await Promise.resolve()
     expect(fetcher).not.toHaveBeenCalled()
     cleanup()
-    render(<BotWebsiteLoginRequestCard {...cardProps() as ComponentProps<typeof BotWebsiteLoginRequestCard>} />)
+    render(<BotWebsiteLoginRequestCard {...cardProps()} />)
     expect(await screen.findByText(en.websiteLoginDesktopOnly)).toBeTruthy()
     expect(screen.queryByRole('link')).toBeNull()
   })
@@ -107,7 +118,7 @@ describe('BotWebsiteLoginRequestCard', () => {
     const fetcher = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
       request: { ...websiteResponse().request, scope: 'shared' },
     }), { status: 200 }))
-    render(<BotWebsiteLoginRequestCard {...cardProps() as ComponentProps<typeof BotWebsiteLoginRequestCard>} />)
+    render(<BotWebsiteLoginRequestCard {...cardProps()} />)
 
     await act(async () => { await vi.advanceTimersByTimeAsync(0) })
     expect(fetcher).toHaveBeenCalledTimes(1)

@@ -60,6 +60,16 @@
   - link "Approve sign-in":
     - /url: /__yharness/vault-login-use/{{id}}
 
+## Signup approval
+
+- region "Approve website signup":
+  - text: Approve website signup Website
+  - code: https://example.test
+  - text: Destination
+  - code: https://example.test/signup
+  - link "Review signup":
+    - /url: /__yharness/vault-login-use/{{id}}
+
 ## Scheduled login
 
 The scheduled check needs the owner to sign in.

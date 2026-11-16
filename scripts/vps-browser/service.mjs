@@ -603,7 +603,10 @@ function browserLogins(pool, enabled, authorize) {
     return record
   }
   function view(record) {
-    return { id: record.id, origin: record.reviewed.origin, destination: record.reviewed.destination, state: 'pending' }
+    return {
+      id: record.id, origin: record.reviewed.origin, destination: record.reviewed.destination, state: 'pending',
+      ...(record.reviewed.purpose === 'signup' ? { purpose: 'signup' } : {}),
+    }
   }
   async function admit(record, release = false) {
     await authorize(record, release)
@@ -633,7 +636,7 @@ function browserLogins(pool, enabled, authorize) {
           const id = randomBytes(16).toString('hex')
           const reviewed = await page.captureLogin(id)
           signal.throwIfAborted()
-          if (!loginDestination(reviewed.origin, reviewed.destination)) return UNAVAILABLE
+          if (!loginDestination(reviewed.origin, reviewed.destination) || (shared && reviewed.purpose === 'signup')) return UNAVAILABLE
           const record = {
             id, bot, ownerSession, sharedSession, session, shared, identity, page, reviewed,
             state: 'pending', deadline: performance.now() + LOGIN_TTL,
@@ -674,9 +677,12 @@ function browserLogins(pool, enabled, authorize) {
       if (record.state !== 'pending') return UNAVAILABLE
       await admit(record)
       if (fields(body, ['action', 'id'])) {
-        if (body.action === 'inspect-login') return record.shared
-          ? { ...view(record), scope: 'shared', bot: record.bot } : view(record)
-        if (body.action === 'inspect-login-automatic' && !record.shared) {
+        if (body.action === 'inspect-login') {
+          if (record.shared) return { ...view(record), scope: 'shared', bot: record.bot }
+          return record.reviewed.purpose === 'signup'
+            ? { ...view(record), bot: record.bot, session: record.ownerSession } : view(record)
+        }
+        if (body.action === 'inspect-login-automatic' && !record.shared && record.reviewed.purpose !== 'signup') {
           return { ...view(record), bot: record.bot, session: record.ownerSession }
         }
         if (body.action === 'inspect-login-bot') return { bot: record.bot }
@@ -685,8 +691,11 @@ function browserLogins(pool, enabled, authorize) {
       const botAccount = fields(body, [...useFields, 'bot']) && body.bot === record.bot
       const automatic = fields(body, [...useFields, 'bot', 'session']) && !record.shared
         && body.bot === record.bot && body.session === record.ownerSession
-      if (body.action !== 'use-login' || !(automatic || botAccount || (!record.shared && fields(body, useFields)))
-        || body.origin !== record.reviewed.origin || !credential(body.username, 512) || !credential(body.password, 8192)) return UNAVAILABLE
+      const authorized = record.reviewed.purpose === 'signup'
+        ? body.action === 'use-signup' && automatic
+        : body.action === 'use-login' && (automatic || botAccount || (!record.shared && fields(body, useFields)))
+      if (!authorized || body.origin !== record.reviewed.origin
+        || !credential(body.username, 512) || !credential(body.password, 8192)) return UNAVAILABLE
       return pool.run(record.session, async page => {
         if (record.state !== 'pending') return UNAVAILABLE
         if (expires(record) || page !== record.page) return finish(record, 'unavailable')

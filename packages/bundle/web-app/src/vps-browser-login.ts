@@ -31,14 +31,17 @@ export interface VpsBrowserLoginView {
   readonly destination: string
   /** The login was requested in a collaborator chat. */
   readonly scope?: 'shared'
+  /** The owner is reviewing a new-account form. */
+  readonly purpose?: 'signup'
 }
 
 /** Result safe to return to the model after owner approval processing. */
-export type VpsBrowserLoginResult =
-  | { readonly state: 'submitted' }
-  | { readonly state: 'needs-owner' }
-  | { readonly state: 'approval-required' }
-  | { readonly state: 'unavailable' }
+export interface VpsBrowserLoginResult {
+  /** Submission or owner-action status of the browser request. */
+  readonly state: 'submitted' | 'needs-owner' | 'approval-required' | 'unavailable'
+  /** The browser captured a new-account form. */
+  readonly purpose?: 'signup'
+}
 
 /** Host operation that holds the Bot's browser lease through capture and automatic submission. */
 export type VpsBrowserLoginLease = <T>(operation: () => Promise<T>, signal: AbortSignal) => Promise<T>
@@ -124,6 +127,7 @@ export class VpsBrowserLogin {
     return {
       id: entry.request.id, origin: entry.request.origin, destination: entry.request.destination,
       ...(isSharedBrowserSession(session) ? { scope: 'shared' as const } : {}),
+      ...(entry.request.purpose === 'signup' ? { purpose: 'signup' as const } : {}),
     }
   }
 
@@ -212,7 +216,7 @@ export class VpsBrowserLogin {
       const begin = (): Promise<VpsBrowserLoginRequest> => this.browser.requestLogin(bot, session, bounded)
       const automatic = await lease(async () => {
         request = continueShared === undefined ? await begin() : await runAuthorizedBrowserOperation(continueShared, begin, bounded)
-        if (isSharedBrowserSession(session) || this.automaticLogin === undefined) return undefined
+        if (request.purpose === 'signup' || isSharedBrowserSession(session) || this.automaticLogin === undefined) return undefined
         return await this.automaticLogin(bot, session, request.id, bounded)
       }, bounded)
       if (request === undefined) throw new Error(UNAVAILABLE)
@@ -221,7 +225,10 @@ export class VpsBrowserLogin {
       bounded.throwIfAborted()
       if (routine) {
         await this.cancel(bot, session, request.id)
-        return { state: automatic === 'unavailable' ? 'unavailable' : 'approval-required' }
+        return {
+          state: automatic === 'unavailable' ? 'unavailable' : 'approval-required',
+          ...(request.purpose === undefined ? {} : { purpose: request.purpose }),
+        }
       }
       this.entries.set(session, { bot, request, expires: this.now() + REQUEST_TTL_MS, signal: bounded })
       for (let poll = 0; poll < MAX_POLLS; poll++) {
@@ -235,7 +242,7 @@ export class VpsBrowserLogin {
             this.browser.authorizeLogin(bot, session, id, state.challenge, bounded), bounded)
         } else if (state !== 'pending') {
           if (continueShared !== undefined && !await continueShared(bounded)) throw new Error(UNAVAILABLE)
-          return { state }
+          return { state, ...(request.purpose === undefined ? {} : { purpose: request.purpose }) }
         }
         if (this.current(session) === undefined) throw new Error(UNAVAILABLE)
       }

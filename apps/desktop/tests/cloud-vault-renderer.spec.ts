@@ -371,6 +371,33 @@ it.each([false, true])('enters a login for the reviewed website with saving set 
     .toBe(save ? en.cloudVaultLoginUseSubmittedSaved : en.cloudVaultLoginUseSubmitted)
 })
 
+it('approves a reviewed signup using only an account name and required Vault label', async () => {
+  const id = 'a'.repeat(32)
+  const origin = 'https://example.com'
+  const destination = origin + '/signup'
+  const request = vi.fn<(value: unknown) => Promise<unknown>>()
+    .mockResolvedValueOnce({ request: { id, origin, destination, logins: [], purpose: 'signup' } })
+    .mockResolvedValue({ state: 'needs-owner', saved: true })
+  const p = page({ kind: 'login-use', id }, request)
+  p.run()
+  await expect.poll(() => p.element('login-use-entry').hidden).toBe(false)
+  expect(p.element('title').textContent).toBe(en.cloudVaultSignupTitle)
+  expect(p.element('login-use-destination').textContent).toBe(destination)
+  expect(p.element('login-use-submit').textContent).toBe(en.cloudVaultSignupSubmit)
+  expect(p.element('login-use-password').hidden).toBe(true)
+  expect(p.element('login-use-save-toggle').hidden).toBe(true)
+  const label = p.element('login-use-save-label') as HTMLInputElement
+  expect(label.hidden).toBe(false)
+  expect(label.required).toBe(true)
+  ;(p.element('login-use-username') as HTMLInputElement).value = ' fixture@example.com '
+  label.value = ' Fixture '
+  p.element('login-use-entry').dispatchEvent(new p.dom.window.Event('submit', { bubbles: true, cancelable: true }))
+  await expect.poll(() => p.element('login-use-outcome').textContent).toBe(en.cloudVaultSignupNeedsOwner)
+  expect(request).toHaveBeenLastCalledWith({
+    action: 'create-login-use', id, origin, destination, username: 'fixture@example.com', saveLabel: 'Fixture',
+  })
+})
+
 it('clears entered credentials when the owner returns to a saved login', async () => {
   const id = 'a'.repeat(32)
   const origin = 'https://example.com'

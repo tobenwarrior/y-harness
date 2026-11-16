@@ -23,7 +23,7 @@ afterEach(async () => {
       resolve()
       return
     }
-    server.close(() => resolve())
+    server.close(() => { resolve() })
   })))
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
 })
@@ -112,6 +112,40 @@ describe('isolated browser saved-login registry', () => {
       { action: 'login-status', bot: BOT, session: SESSION, id: LOGIN_ID },
       { action: 'login-status', bot: BOT, session: SESSION, id: LOGIN_ID },
     ])
+  })
+
+  it('shows signup only to the owner and keeps routine sign-in away from signup forms', async () => {
+    const origin = 'https://example.test'
+    const destination = origin + '/signup'
+    const actions: unknown[] = []
+    let polls = 0
+    const socketPath = await listen((request) => {
+      actions.push(request.action)
+      if (request.action === 'request-login') return { id: LOGIN_ID, origin, destination, purpose: 'signup', state: 'pending' }
+      if (request.action === 'login-status') return { state: polls++ === 0 ? 'pending' : 'submitted' }
+      if (request.action === 'cancel-login') return { state: 'unavailable' }
+      throw new Error('Unexpected browser request')
+    })
+    const browser = new VpsIsolatedBrowser({ socketPath, bots: [BOT], savedLogins: true })
+    const automaticLogin = vi.fn(async () => 'submitted' as const)
+    const lease: VpsBrowserLoginLease = operation => operation()
+    const signal = new AbortController().signal
+    const logins = new VpsBrowserLogin(browser, {
+      automaticLogin,
+      sleep: async () => {
+        expect(logins.currentForOwner(BOT, SESSION)).toEqual({ id: LOGIN_ID, origin, destination, purpose: 'signup' })
+      },
+    })
+    try {
+      await expect(logins.requestForRoutine(BOT, SESSION, lease, signal))
+        .resolves.toEqual({ state: 'approval-required', purpose: 'signup' })
+      expect(logins.current(SESSION)).toBeUndefined()
+      await expect(logins.request(BOT, SESSION, lease, signal)).resolves.toEqual({ state: 'submitted', purpose: 'signup' })
+      expect(automaticLogin).not.toHaveBeenCalled()
+      expect(actions).toEqual(['request-login', 'cancel-login', 'request-login', 'login-status', 'login-status'])
+    } finally {
+      await logins.dispose()
+    }
   })
 
   it('uses the automatic grant during a private routine while the Bot holds the browser', async () => {

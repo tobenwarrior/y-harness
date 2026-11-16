@@ -147,10 +147,14 @@ function loginUseMetadata(value) {
   if (!record(value) || Object.keys(value).length !== 1 || !record(value.request)) return
   const item = value.request
   const acceptsCredentials = item.acceptsCredentials === true
-  if (Object.keys(item).length !== (acceptsCredentials ? 5 : 4) || item.id !== requestId) return
+  const signup = item.purpose === 'signup'
+  if (Object.keys(item).length !== (acceptsCredentials || signup ? 5 : 4) || item.id !== requestId
+    || (acceptsCredentials && signup) || (item.purpose !== undefined && !signup)
+    || (item.acceptsCredentials !== undefined && !acceptsCredentials)) return
   const origin = loginUseOrigin(item.origin)
   const destination = loginUseDestination(item.destination, origin)
-  if (origin === undefined || destination === undefined || !Array.isArray(item.logins) || item.logins.length > 64) return
+  if (origin === undefined || destination === undefined || !Array.isArray(item.logins) || item.logins.length > 64
+    || (signup && item.logins.length !== 0)) return
   const ids = new Set()
   const logins = []
   for (const login of item.logins) {
@@ -162,7 +166,7 @@ function loginUseMetadata(value) {
     ids.add(login.id)
     logins.push({ id: login.id, label: login.label, generation: login.generation })
   }
-  return { origin, destination, logins, acceptsCredentials }
+  return { origin, destination, logins, acceptsCredentials, signup }
 }
 
 function requestMetadata(value) {
@@ -889,7 +893,7 @@ async function loadRequest() {
 }
 
 function showLoginUseSaveLabel() {
-  const save = loginUseSave.checked
+  const save = loginUseRequest?.signup === true || loginUseSave.checked
   element('login-use-save-label-text').hidden = !save
   loginUseSaveLabel.hidden = !save
   loginUseSaveLabel.required = save
@@ -898,7 +902,14 @@ function showLoginUseSaveLabel() {
 
 function renderLoginUseForm() {
   const hasSaved = (loginUseRequest?.logins.length ?? 0) > 0
-  const canEnter = loginUseRequest?.acceptsCredentials === true
+  const signup = loginUseRequest?.signup === true
+  const canEnter = signup || loginUseRequest?.acceptsCredentials === true
+  element('login-use-password-label').hidden = signup
+  loginUsePassword.hidden = signup
+  loginUsePassword.required = !signup
+  element('login-use-save-toggle').hidden = signup
+  loginUseSave.hidden = signup
+  loginUseSubmit.textContent = messages[signup ? 'cloudVaultSignupSubmit' : 'cloudVaultLoginUseSignIn']
   element('login-use-saved').hidden = !hasSaved || enteringLogin
   loginUseEmpty.hidden = loginUseRequest === undefined || hasSaved || canEnter
   loginUseEntry.hidden = !canEnter || !enteringLogin
@@ -930,7 +941,12 @@ async function loadLoginUse() {
     loginUseOriginValue.textContent = loginUseRequest.origin
     loginUseDestinationValue.textContent = loginUseRequest.destination
     loginChoice.replaceChildren(...loginUseRequest.logins.map(login => new Option(login.label, login.id)))
-    enteringLogin = loginUseRequest.acceptsCredentials && loginUseRequest.logins.length === 0
+    enteringLogin = loginUseRequest.signup || (loginUseRequest.acceptsCredentials && loginUseRequest.logins.length === 0)
+    if (loginUseRequest.signup) {
+      document.title = messages.cloudVaultSignupTitle
+      element('title').textContent = messages.cloudVaultSignupTitle
+      element('hint').textContent = messages.cloudVaultSignupHint
+    }
     setLoginUseOutcome()
   }
   busy = false
@@ -950,18 +966,23 @@ function toggleLoginUseEntry() {
 async function submitLoginUse(request) {
   busy = true
   availability()
-  setLoginUseOutcome('cloudVaultLoginUseApproving')
+  const signup = request.action === 'create-login-use'
+  setLoginUseOutcome(signup ? 'cloudVaultSignupSending' : 'cloudVaultLoginUseApproving')
   loginUseEntry.reset()
   const result = await send(request)
   busy = false
-  if (request.action === 'enter-login-use' && record(result) && result.ok === false && result.reason === 'invalid') {
-    setLoginUseOutcome('cloudVaultLoginUseInvalid', 'error')
+  if ((signup || request.action === 'enter-login-use') && record(result) && result.ok === false && result.reason === 'invalid') {
+    setLoginUseOutcome(signup ? 'cloudVaultSignupInvalid' : 'cloudVaultLoginUseInvalid', 'error')
     renderLoginUseForm()
     focusLoginUseForm()
     return
   }
   loginUseRequest = undefined
-  if (record(result) && result.state === 'submitted') {
+  if (signup && record(result) && result.saved === true) {
+    setLoginUseOutcome(result.state === 'submitted' ? 'cloudVaultSignupSubmitted' : 'cloudVaultSignupNeedsOwner')
+  } else if (signup) {
+    setLoginUseOutcome('cloudVaultSignupUnavailable', 'error')
+  } else if (record(result) && result.state === 'submitted') {
     if (request.saveLabel === undefined) setLoginUseOutcome('cloudVaultLoginUseSubmitted')
     else if (result.saved === true) setLoginUseOutcome('cloudVaultLoginUseSubmittedSaved')
     else setLoginUseOutcome('cloudVaultLoginUseSaveFailed', 'error')
@@ -1122,7 +1143,15 @@ loginUseToggle.addEventListener('click', toggleLoginUseEntry)
 loginUseSave.addEventListener('change', showLoginUseSaveLabel)
 loginUseEntry.addEventListener('submit', event => {
   event.preventDefault()
-  if (busy || !enteringLogin || loginUseRequest?.acceptsCredentials !== true) return
+  if (busy || !enteringLogin || loginUseRequest === undefined) return
+  if (loginUseRequest.signup) {
+    void submitLoginUse({
+      action: 'create-login-use', id: requestId, origin: loginUseRequest.origin, destination: loginUseRequest.destination,
+      username: loginUseUsername.value.trim(), saveLabel: loginUseSaveLabel.value.trim(),
+    })
+    return
+  }
+  if (!loginUseRequest.acceptsCredentials) return
   void submitLoginUse({
     action: 'enter-login-use', id: requestId, origin: loginUseRequest.origin, destination: loginUseRequest.destination,
     username: loginUseUsername.value, password: loginUsePassword.value,
