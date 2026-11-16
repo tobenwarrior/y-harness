@@ -31,6 +31,16 @@ export function parseWebsite(value) {
   return url.href
 }
 
+/** Return the canonical origin of a live HTTPS URL, or null for blank/non-HTTPS pages. */
+export function canonicalHttpsOrigin(value) {
+  if (typeof value !== 'string' || value.length === 0) return null
+  try {
+    const url = new URL(value)
+    if (url.protocol !== 'https:' || url.username !== '' || url.password !== '') return null
+    return url.origin
+  } catch (error) { void error; return null }
+}
+
 function integer(value, lower, upper) {
   if (!Number.isInteger(value) || value < lower || value > upper) throw new Error('Invalid Computer input')
   return value
@@ -154,6 +164,10 @@ export async function createBrowserPage(executable, profile) {
     return {
       ...savedLoginPage(command, browser.close),
       input: action => performInput(command, action),
+      async origin() {
+        const frame = await command('Page.getFrameTree')
+        return canonicalHttpsOrigin(frame.frameTree?.frame?.url)
+      },
       async frame() {
         const { data } = await command('Page.captureScreenshot', {
           format: 'jpeg', quality: 80, fromSurface: true, captureBeyondViewport: false,

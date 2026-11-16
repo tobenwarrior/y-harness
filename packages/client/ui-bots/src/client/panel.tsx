@@ -24,6 +24,8 @@ export interface ComputerSignInTarget {
   readonly sessionId: string
   readonly requestId: string
   readonly attempt: number
+  readonly targetSessionId?: string
+  readonly origin?: string
 }
 
 type WorkspaceTabKind = 'terminal' | 'computer-files' | 'computer-shared-files'

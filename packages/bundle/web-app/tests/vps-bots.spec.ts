@@ -15,6 +15,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { VpsBotFileSystem } from '../src/vps-bot-files.ts'
 import { mountVpsBots } from '../src/vps-bots.ts'
 import { VpsJournal } from '../src/vps-journal.ts'
+import { VpsBrowserHandoffs } from '../src/vps-browser-handoffs.ts'
 import { VpsBrowserLogin } from '../src/vps-browser-login.ts'
 import { VpsIsolatedBrowser } from '../src/vps-isolated-browser.ts'
 import { VpsRuntime } from '../src/vps-runtime.ts'
@@ -23,8 +24,143 @@ const BOT_SESSION = SessionId('bot-session-0e9beecd-b6f5-40b1-8d52-f97259bdcf76'
 const DESKTOP_SESSION = SessionId('bot-session-5f3ec8e4-4c34-4ec6-a38f-aad6d07cb337')
 const LEGACY_SESSION = SessionId('bot-session-37888424-5b3d-4a8c-81f5-751ed2d24f95')
 const SHARED_BROWSER_SESSION = SessionId('shared-session-37888424-5b3d-4a8c-81f5-751ed2d24f96')
+const GROUP_BROWSER_SESSION = SessionId('shared-session-group-37888424-5b3d-4a8c-81f5-751ed2d24f97')
 
 describe('managed VPS Bot composition', () => {
+  it.each([
+    { session: SHARED_BROWSER_SESSION, outcome: 'complete' },
+    { session: GROUP_BROWSER_SESSION, outcome: 'revoked' },
+    { session: SHARED_BROWSER_SESSION, outcome: 'cancel' },
+    { session: SHARED_BROWSER_SESSION, outcome: 'worker-unavailable' },
+    { session: SHARED_BROWSER_SESSION, outcome: 'shutdown' },
+  ])('offers an exact owner sign-in and handles $outcome', async ({ session, outcome }) => {
+    const ctx = new Context()
+    const botId = BotId('bot-owner')
+    const agent = { id: session, session: { id: session } } as never
+    const lifetime = new AbortController()
+    const begin = vi.spyOn(VpsIsolatedBrowser.prototype, 'beginHandoff').mockResolvedValue('https://example.test')
+    const finish = vi.spyOn(VpsIsolatedBrowser.prototype, 'endHandoff').mockResolvedValue(undefined)
+    const navigate = vi.spyOn(VpsIsolatedBrowser.prototype, 'navigateHandoff').mockResolvedValue(undefined)
+    const routes: ConnectionFetchRoute[] = []
+    let active = true
+    let pending: Promise<unknown> | undefined
+    const authorized = vi.fn(async (_signal: AbortSignal, start?: () => void) => {
+      if (active) start?.()
+      return active
+    })
+    try {
+      await ctx.plugin(LlmRuntime)
+      ctx.provide('attachments', {} as never)
+      ctx.provide('connection', { fetch: { register: (route: ConnectionFetchRoute) => {
+        routes.push(route)
+        return () => { routes.splice(routes.indexOf(route), 1) }
+      } } } as never)
+      ctx.provide('bots', { ownerBotForSession: async (id: string) => {
+        if (id === BOT_SESSION) return { id: botId, sessionId: id, state: 'active' }
+        if (id === DESKTOP_SESSION) return { id: 'bot-other', sessionId: id, state: 'active' }
+        return undefined
+      } } as never)
+      await ctx.plugin((scope) => { mountVpsBots(scope, {
+        root: '/yharness-test-bots', image: 'localhost/yharness-test',
+        isolatedBrowser: { socketPath: '/run/yharness-browser.sock', bots: [botId, 'bot-other'], sharedBots: [botId] },
+      }, []) })
+      const tool = ctx.get('botSharedBrowser')?.toolForSession(ctx, agent, botId, authorized, BOT_SESSION)
+      if (tool === undefined) throw new Error('No shared browser registered')
+      const post = (endpoint: string, body: object) => {
+        const route = routes.find(value => value.path === `/api/computer/${endpoint}`)
+        if (route === undefined) throw new Error('No Computer route registered')
+        return route.fetch(new Request(`http://127.0.0.1${route.path}`, { method: 'POST', body: JSON.stringify(body) }))
+      }
+      const status = async (id: string) => (await post('sign-in', { action: 'status', sessionId: id })).json()
+      pending = tool.execute({ action: 'request_sign_in' }, { agent, signal: lifetime.signal } as never)
+      await expect.poll(() => status(BOT_SESSION)).toEqual({
+        request: { id: expect.any(String), targetSessionId: expect.stringMatching(/^handoff-/u), canCancel: true, origin: 'https://example.test' },
+      })
+      const { request }: { request: { id: string; targetSessionId: string } } = await status(BOT_SESSION)
+      await expect(status(DESKTOP_SESSION)).resolves.toEqual({ request: null })
+      await expect(status(session)).resolves.toEqual({ request: null })
+      await expect(tool.execute({ action: 'request_sign_in' }, { agent, signal: lifetime.signal } as never))
+        .resolves.toEqual({ message: expect.stringContaining('sign-in wait ended') })
+      const binding = { bot: botId, session, lease: expect.stringMatching(/^[a-f0-9]{32}$/u) }
+      expect(begin).toHaveBeenCalledExactlyOnceWith(binding, expect.any(AbortSignal))
+      expect(authorized.mock.calls.some(([, start]) => start !== undefined)).toBe(true)
+      if (outcome === 'complete') {
+        const checks = authorized.mock.calls.length
+        await expect.poll(() => authorized.mock.calls.length, { timeout: 3_500 }).toBeGreaterThan(checks)
+        await expect(status(BOT_SESSION)).resolves.toMatchObject({ request })
+      }
+      const viewerId = '59354d83-771d-4fb4-a688-bf862afab169'
+      const target = { sessionId: request.targetSessionId, requestId: request.id, viewerId }
+      expect((await post('sign-in', { ...target, sessionId: BOT_SESSION, action: 'take' })).status).toBe(409)
+      expect((await post('take-control', { sessionId: target.sessionId, viewerId })).status).toBe(409)
+      const before = await post('frame', { sessionId: target.sessionId, viewerId })
+      await expect(before.json()).resolves.toMatchObject({ jpeg: '', mode: 'other' })
+      expect((await post('sign-in', { ...target, action: 'take' })).status).toBe(200)
+      const unsupported = await post('input', { sessionId: target.sessionId, viewerId, action: { kind: 'text', text: 'example' } })
+      expect(unsupported.status).toBe(409)
+      const url = 'https://example.test/confirm'
+      expect((await post('navigate', { sessionId: target.sessionId, viewerId, url })).status).toBe(200)
+      expect(navigate).toHaveBeenCalledExactlyOnceWith(binding, url, expect.any(AbortSignal))
+      if (outcome === 'shutdown') {
+        await ctx.fiber.dispose()
+        await expect(pending).resolves.toEqual({ message: expect.stringContaining('sign-in wait ended') })
+        expect(finish).toHaveBeenCalledExactlyOnceWith(binding, 'discard', expect.any(AbortSignal))
+        return
+      }
+      if (outcome === 'revoked') active = false
+      if (outcome === 'worker-unavailable') {
+        finish.mockRejectedValue(new Error('Worker diagnostics are private.'))
+      }
+      const reply = await post('sign-in', { ...target, action: outcome === 'cancel' ? 'cancel' : 'complete' })
+      expect(reply.status).toBe(outcome === 'complete' || outcome === 'cancel' ? 200 : 409)
+      await expect(pending).resolves.toEqual({
+        message: expect.stringContaining(outcome === 'complete' ? 'returned the Computer'
+          : outcome === 'cancel' ? 'declined the sign-in' : 'sign-in wait ended'),
+      })
+      expect(finish.mock.calls.map(call => call[1])).toEqual(outcome === 'worker-unavailable' ? ['complete', 'discard']
+        : [outcome === 'complete' ? 'complete' : 'discard'])
+      expect(finish.mock.calls.every(call => call[0].session === session && call[0].bot === botId)).toBe(true)
+      await expect(status(BOT_SESSION)).resolves.toEqual({ request: null })
+      expect((await post('frame', { sessionId: target.sessionId, viewerId })).status).toBe(409)
+    } finally {
+      lifetime.abort()
+      await pending?.catch(() => undefined)
+      begin.mockRestore()
+      finish.mockRestore()
+      navigate.mockRestore()
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('withdraws the owner view as soon as the shared turn is cancelled', async () => {
+    const botId = BotId('bot-owner')
+    const browser = new VpsIsolatedBrowser({ socketPath: '/run/yharness-browser.sock', bots: [botId], sharedBots: [botId] })
+    vi.spyOn(browser, 'beginHandoff').mockResolvedValue('https://example.test')
+    const finish = vi.spyOn(browser, 'endHandoff').mockResolvedValue(undefined)
+    const browserHandoffs = new VpsBrowserHandoffs(browser)
+    const lifetime = new AbortController()
+    const authorize = async (_signal: AbortSignal, start?: () => void): Promise<boolean> => { start?.(); return true }
+    const computer = browser.computer(botId, SHARED_BROWSER_SESSION, authorize)
+    const pending = browserHandoffs.request(botId, BOT_SESSION, SHARED_BROWSER_SESSION, computer, authorize, lifetime.signal)
+    try {
+      await expect.poll(() => browserHandoffs.status(botId, BOT_SESSION)).toMatchObject({ origin: 'https://example.test' })
+      const request = browserHandoffs.status(botId, BOT_SESSION)
+      if (request === undefined) throw new Error('No pending owner view')
+      const view = browserHandoffs.target(request.targetSessionId)
+      if (view === undefined) throw new Error('No pending owner target')
+      lifetime.abort()
+      expect(view.status()).toBeUndefined()
+      expect(browserHandoffs.target(request.targetSessionId)).toBeUndefined()
+      await expect(pending).resolves.toBe('interrupted')
+      expect(finish).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ session: SHARED_BROWSER_SESSION }),
+        'discard', expect.any(AbortSignal))
+    } finally {
+      lifetime.abort()
+      await browserHandoffs.dispose()
+      await computer.dispose()
+    }
+  })
+
   it('rejects desktop-only Bots outside the selected Bot allowlist', () => {
     expect(() => { mountVpsBots(new Context(), {
       root: '/yharness-test-bots', image: 'localhost/yharness-test', bots: ['bot-selected'], desktopOnlyBots: ['bot-other'],
@@ -128,9 +264,9 @@ describe('managed VPS Bot composition', () => {
         isolatedBrowser: { socketPath: '/run/yharness-browser.sock', bots: [botId, 'bot-private'], sharedBots: [botId], savedLogins: true },
       }, []) })
       const browser = ctx.get('botSharedBrowser')
-      expect(browser?.toolForSession(ctx, agent, BotId('bot-private'), authorized)).toBeUndefined()
-      expect(browser?.toolForSession(ctx, { id: BOT_SESSION } as never, botId, authorized)).toBeUndefined()
-      const tool = browser?.toolForSession(ctx, agent, botId, authorized)
+      expect(browser?.toolForSession(ctx, agent, BotId('bot-private'), authorized, BOT_SESSION)).toBeUndefined()
+      expect(browser?.toolForSession(ctx, { id: BOT_SESSION } as never, botId, authorized, BOT_SESSION)).toBeUndefined()
+      const tool = browser?.toolForSession(ctx, agent, botId, authorized, BOT_SESSION)
       expect(tool?.name).toBe('shared_browser')
       if (tool === undefined) throw new Error('No shared browser registered')
       await expect(tool.execute({ action: 'navigate', url }, { agent, signal } as never)).resolves.toBeDefined()
@@ -144,7 +280,7 @@ describe('managed VPS Bot composition', () => {
       await expect(tool.execute({ action: 'navigate', url }, { agent, signal } as never)).rejects.toThrow('unavailable')
       expect(navigate).toHaveBeenCalledOnce()
       expect(JSON.stringify(tool.parameters)).toContain('"request_saved_login"')
-      expect(JSON.stringify(tool.parameters)).not.toContain('"request_sign_in"')
+      expect(JSON.stringify(tool.parameters)).toContain('"request_sign_in"')
 
       const inFlight = Promise.withResolvers<undefined>()
       authorized.mockImplementation(async (_signal, start) => { start?.(); return true })

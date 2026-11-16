@@ -37,12 +37,18 @@ export interface ComputerFrame {
   readonly botActive: boolean
   /** An active owner sign-in request. Non-controlling viewers receive an empty JPEG. */
   readonly signIn?: string
+  /** Canonical HTTPS origin currently shown by an isolated browser frame. */
+  readonly browserOrigin?: string | null
 }
 
 /** Metadata for the owner-only Computer sign-in card. */
 export interface ComputerSignInRequest {
   readonly id: string
   readonly canCancel: boolean
+  /** Synthetic Session accepted only for this live shared handoff. */
+  readonly targetSessionId?: string
+  /** Website origin requested by a shared handoff. */
+  readonly origin?: string
 }
 
 /** Bounded human input accepted by the Computer input route. */
@@ -100,8 +106,11 @@ export interface ComputerClient {
    * @param action - Validated pointer or keyboard action.
    * @param signal - Optional cancellation signal.
    * @param sessionId - Active Bot Session selecting an isolated Cloud Computer.
+   * @param origin - Canonical HTTPS origin shown in the current shared handoff frame.
    */
-  input(viewerId: string, action: ComputerInputAction, signal?: AbortSignal, sessionId?: string): Promise<ComputerControlResult>
+  input(
+    viewerId: string, action: ComputerInputAction, signal?: AbortSignal, sessionId?: string, origin?: string,
+  ): Promise<ComputerControlResult>
   /** Open a URL while the viewer controls the selected isolated browser. */
   readonly navigate?: (viewerId: string, url: string, sessionId: string, signal?: AbortSignal) => Promise<ComputerControlResult>
   /** Read or respond to sign-in requests on a VPS Bot's Computer. */
@@ -121,6 +130,7 @@ const INPUT_PATH = 'api/computer/input'
 const NAVIGATE_PATH = 'api/computer/navigate'
 const SIGN_IN_PATH = 'api/computer/sign-in'
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu
+const HANDOFF_TARGET = /^handoff-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u
 
 function requestOptions(signal: AbortSignal | undefined): { readonly signal?: AbortSignal } {
   return signal === undefined ? {} : { signal }
@@ -155,6 +165,15 @@ function modeOf(value: unknown): ComputerMode | undefined {
   return value === 'watching' || value === 'controlling' || value === 'other' ? value : undefined
 }
 
+function canonicalHttpsOrigin(value: unknown): string | undefined {
+  if (typeof value !== 'string' || value.trim() !== value) return undefined
+  let url: URL
+  try { url = new URL(value) }
+  catch { return undefined }
+  return url.protocol === 'https:' && url.username === '' && url.password === ''
+    && url.pathname === '/' && url.search === '' && url.hash === '' && url.origin === value ? value : undefined
+}
+
 function statusOf(value: unknown): ComputerStatus | undefined {
   if (!isRecord(value) || typeof value.available !== 'boolean') return undefined
   const kind = value.kind === 'mac' || value.kind === 'vps' ? value.kind : undefined
@@ -173,8 +192,17 @@ function frameOf(value: unknown): ComputerFrame | undefined {
   const mode = modeOf(value.mode)
   if (mode === undefined) return undefined
   const signIn = signInId(value.signIn)
+  let browserOrigin: string | null | undefined
+  if (Object.prototype.hasOwnProperty.call(value, 'browserOrigin')) {
+    if (value.browserOrigin === null) browserOrigin = null
+    else {
+      browserOrigin = canonicalHttpsOrigin(value.browserOrigin)
+      if (browserOrigin === undefined) return undefined
+    }
+  }
   return { jpeg: value.jpeg, width: value.width, height: value.height, mode, botActive: value.botActive,
-    ...(signIn === undefined ? {} : { signIn }) }
+    ...(signIn === undefined ? {} : { signIn }),
+    ...(browserOrigin === undefined ? {} : { browserOrigin }) }
 }
 
 function signInId(value: unknown): string | undefined {
@@ -182,12 +210,19 @@ function signInId(value: unknown): string | undefined {
 }
 
 function signInStatusOf(value: unknown): { readonly request: ComputerSignInRequest | null } | undefined {
-  if (!isRecord(value)) return undefined
+  if (!isRecord(value) || Object.keys(value).length !== 1) return undefined
   const request = value.request
   if (request === null) return { request: null }
   if (!isRecord(request) || typeof request.canCancel !== 'boolean') return undefined
   const id = signInId(request.id)
-  return id === undefined ? undefined : { request: { id, canCancel: request.canCancel } }
+  if (id === undefined) return undefined
+  if (Object.keys(request).length === 2) return { request: { id, canCancel: request.canCancel } }
+  if (Object.keys(request).length !== 4) return undefined
+  const targetSessionId = typeof request.targetSessionId === 'string' && HANDOFF_TARGET.test(request.targetSessionId)
+    ? request.targetSessionId : undefined
+  const origin = canonicalHttpsOrigin(request.origin)
+  return targetSessionId === undefined || origin === undefined
+    ? undefined : { request: { id, canCancel: request.canCancel, targetSessionId, origin } }
 }
 
 function controlOf(value: unknown): ComputerControlResult | undefined {
@@ -242,8 +277,9 @@ export function createComputerClient(): ComputerClient {
       TAKE_CONTROL_PATH, withSession({ viewerId }, sessionId), controlOf, requestOptions(signal),
     ),
     releaseControl: (viewerId, options, sessionId) => post(RELEASE_CONTROL_PATH, withSession({ viewerId }, sessionId), controlOf, options),
-    input: (viewerId, action, signal, sessionId) => post(
-      INPUT_PATH, withSession({ viewerId, action }, sessionId), controlOf, requestOptions(signal),
+    input: (viewerId, action, signal, sessionId, origin) => post(
+      INPUT_PATH, withSession({ viewerId, action, ...(origin === undefined ? {} : { origin }) }, sessionId),
+      controlOf, requestOptions(signal),
     ),
     navigate: (viewerId, url, sessionId, signal) => post(
       NAVIGATE_PATH, { viewerId, url, sessionId }, controlOf, requestOptions(signal),

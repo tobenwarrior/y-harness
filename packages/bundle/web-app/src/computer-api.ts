@@ -2,7 +2,7 @@
 
 import type { Branded } from '@yharness/brand'
 import type { ConnectionFetchRoute } from '@yharness/client-connection'
-import type { ComputerSignInAction, VpsComputer } from './computer.ts'
+import type { ComputerSignInAction, ComputerSignInRequest, VpsComputer } from './computer.ts'
 import { validateIsolatedBrowserUrl } from './vps-isolated-browser.ts'
 
 type ViewerId = Branded<'computer-viewer-id'>
@@ -12,7 +12,7 @@ interface ComputerRouteController {
   readonly frame: Action
   readonly takeControl: Action
   readonly releaseControl: Action
-  readonly input: (viewer: ViewerId, action: unknown, signal: AbortSignal) => Promise<unknown>
+  readonly input: (viewer: ViewerId, action: unknown, signal: AbortSignal, browserOrigin?: string) => Promise<unknown>
   readonly status?: () => { readonly available: boolean }
 }
 
@@ -22,10 +22,22 @@ interface ResolvedComputer {
   readonly navigate?: (viewer: string, url: string, signal: AbortSignal) => Promise<unknown>
 }
 
-interface ComputerSignInRouteTarget {
-  readonly status: () => ReturnType<VpsComputer['signInRequest']>
-  readonly answer: VpsComputer['answerSignIn']
+/** Exact owner view the sign-in route can inspect or change. */
+export interface ComputerSignInRouteTarget {
+  readonly status: () => ComputerSignInRequest | SharedComputerSignInRequest | undefined
+  readonly answer: (
+    requestId: string, action: ComputerSignInAction, viewerId: string | undefined, signal: AbortSignal,
+  ) => ReturnType<VpsComputer['answerSignIn']>
 }
+
+/** Owner-visible request that opens the isolated browser of a particular shared chat. */
+export interface SharedComputerSignInRequest extends ComputerSignInRequest {
+  readonly targetSessionId: SharedBrowserHandoffTarget
+  readonly origin: string
+}
+
+/** Temporary owner route address for the shared browser, distinct from a Session id. */
+export type SharedBrowserHandoffTarget = Branded<'SharedBrowserHandoffTarget'>
 
 /** Cloud Computer location exposed by an authenticated status response. */
 export type ComputerLocation = 'vps'
@@ -307,7 +319,9 @@ function routesFor(
       case 'frame': return (id: ViewerId, _payload: Record<string, unknown>, signal: AbortSignal): Promise<unknown> => computer.frame(id, signal)
       case 'take-control': return (id: ViewerId, _payload: Record<string, unknown>, signal: AbortSignal): Promise<unknown> => computer.takeControl(id, signal)
       case 'release-control': return (id: ViewerId, _payload: Record<string, unknown>, signal: AbortSignal): Promise<unknown> => computer.releaseControl(id, signal)
-      case 'input': return (id: ViewerId, payload: Record<string, unknown>, signal: AbortSignal): Promise<unknown> => computer.input(id, payload.action, signal)
+      case 'input': return (id: ViewerId, payload: Record<string, unknown>, signal: AbortSignal): Promise<unknown> =>
+        typeof payload.origin === 'string' ? computer.input(id, payload.action, signal, payload.origin)
+          : computer.input(id, payload.action, signal)
       default: return undefined
     }
   }

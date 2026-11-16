@@ -112,6 +112,29 @@
   flex: 1;
 }
 
+.browserOrigin {
+  display: flex;
+  flex: none;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  padding: 6px 10px;
+  border-bottom: 0.5px solid var(--yh-alias-border-l2);
+  background: var(--yh-alias-bg-layer-2);
+  color: var(--yh-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.browserOrigin code {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--yh-alias-label-secondary);
+  font-family: var(--ds-font-family-code);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .viewport {
   display: flex;
   min-width: 0;

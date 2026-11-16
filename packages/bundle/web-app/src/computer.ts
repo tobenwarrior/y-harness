@@ -52,6 +52,7 @@ interface ComputerImage {
   readonly jpeg: string
   readonly width: typeof COMPUTER_WIDTH
   readonly height: typeof COMPUTER_HEIGHT
+  readonly browserOrigin?: string | null
 }
 
 /** Frame returned by the Host. `jpeg` is base64 encoded JPEG data. */
@@ -113,9 +114,11 @@ export type ComputerCommandRunner = (
  * byte channel. The Host never supplies a shared filesystem path for this
  * operation.
  * @param signal - Cancellation and command deadline signal.
- * @returns JPEG bytes captured inside the execution environment.
+ * @returns JPEG bytes, with a confirmed HTTPS origin when the frame is part of a browser handoff.
  */
-export type ComputerCaptureRunner = (signal: AbortSignal) => Promise<Buffer>
+export type ComputerCaptureRunner = (
+  signal: AbortSignal,
+) => Promise<Buffer | { readonly bytes: Buffer; readonly browserOrigin: string | null }>
 
 /** Deterministic seams for tests; production uses the local clock and child process runner. */
 export interface ComputerInternals {
@@ -124,7 +127,7 @@ export interface ComputerInternals {
   /** Optional in-environment screenshot capture used by container-backed Hosts. */
   readonly capture?: ComputerCaptureRunner
   /** An isolated browser receives normalized input after Computer lease admission. */
-  readonly input?: (action: ComputerAction, signal: AbortSignal) => Promise<void>
+  readonly input?: (action: ComputerAction, signal: AbortSignal, browserOrigin?: string) => Promise<void>
 }
 
 /** Stable error codes for route and tool owners that need to classify failures. */
@@ -524,9 +527,10 @@ export class VpsComputer {
    * @param viewerId - UUID identifying the browser viewer.
    * @param action - Untrusted action value to validate before admission.
    * @param signal - Optional request cancellation.
+   * @param browserOrigin - Expected origin from the viewer's last browser frame, when required by the provider.
    * @returns The continuing controlling mode.
    */
-  async input(viewerId: string, action: unknown, signal?: AbortSignal): Promise<ComputerControlResult> {
+  async input(viewerId: string, action: unknown, signal?: AbortSignal, browserOrigin?: string): Promise<ComputerControlResult> {
     const id = validateViewer(viewerId)
     const normalized = validateComputerAction(action)
     return this.admit(async () => {
@@ -534,7 +538,7 @@ export class VpsComputer {
       if (this.owner !== id) throw new ComputerLeaseError('viewer does not hold computer control')
       if (this.signIn !== undefined && !this.signIn.taken) throw new ComputerLeaseError('accept the Computer sign-in request first')
       this.leaseExpiry = this.now() + LEASE_DURATION_MS
-      await this.execute(normalized, signal, this.signIn !== undefined)
+      await this.execute(normalized, signal, this.signIn !== undefined, browserOrigin)
       return { mode: 'controlling' as const }
     }, signal)
   }
@@ -676,10 +680,10 @@ export class VpsComputer {
     return run
   }
 
-  private async execute(action: ComputerAction, signal?: AbortSignal, signIn = false): Promise<void> {
+  private async execute(action: ComputerAction, signal?: AbortSignal, signIn = false, browserOrigin?: string): Promise<void> {
     throwIfAborted(signal)
     if (this.inputRunner !== undefined) {
-      await this.inputRunner(action, signal ?? new AbortController().signal)
+      await this.inputRunner(action, signal ?? new AbortController().signal, browserOrigin)
       return
     }
     const env = { ...scrubbedParentEnv(), DISPLAY: this.config.display, XAUTHORITY: this.config.authorityPath }
@@ -752,11 +756,15 @@ export class VpsComputer {
     throwIfAborted(signal)
     if (this.captureRunner !== undefined) {
       try {
-        const bytes = await this.captureRunner(signal ?? new AbortController().signal)
+        const capture = await this.captureRunner(signal ?? new AbortController().signal)
+        const bytes = Buffer.isBuffer(capture) ? capture : capture.bytes
         if (bytes.length < 2 || bytes[0] !== 0xff || bytes[1] !== 0xd8) {
           throw new ComputerError('computer frame capture failed', 'capture-failed')
         }
-        return { jpeg: bytes.toString('base64'), width: COMPUTER_WIDTH, height: COMPUTER_HEIGHT }
+        return {
+          jpeg: bytes.toString('base64'), width: COMPUTER_WIDTH, height: COMPUTER_HEIGHT,
+          ...(Buffer.isBuffer(capture) ? {} : { browserOrigin: capture.browserOrigin }),
+        }
       } catch (error) {
         if (error instanceof ComputerError) throw error
         if (signal?.aborted === true) throw abortError()

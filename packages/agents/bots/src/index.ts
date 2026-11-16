@@ -544,6 +544,7 @@ export interface BotSharedBrowser {
    * @param agent - the live shared Bot Agent.
    * @param botId - the Bot identity bound to the shared Session.
    * @param authorized - current private/group admission check and optional final body starter.
+   * @param ownerSessionId - the true owner Bot Session for private handoff metadata, when available.
    * @returns the named `shared_browser` definition, or undefined when unavailable.
    */
   readonly toolForSession: (
@@ -551,6 +552,7 @@ export interface BotSharedBrowser {
     agent: Agent,
     botId: BotId,
     authorized: (signal: AbortSignal, start?: () => void) => Promise<boolean>,
+    ownerSessionId?: SessionId,
   ) => ToolDefinition | undefined
 }
 
@@ -8176,14 +8178,14 @@ export class BotService extends TypertRemoteService {
           : undefined
         if (record !== undefined && sharedToolAuthorized !== undefined) {
           const authorized = sharedToolAuthorized
-          const candidate = scope.get('botSharedBrowser')?.toolForSession(scope, agent, record.id, authorized)
+          const ownerSessionId = this.ownerSessionIdForSharedBot(record.id)
+          const candidate = scope.get('botSharedBrowser')?.toolForSession(scope, agent, record.id, authorized, ownerSessionId)
           if (candidate?.name === SHARED_BOT_BROWSER_TOOL_NAME) {
             scope.tools.register(candidate)
             if (scope.tools.get(SHARED_BOT_BROWSER_TOOL_NAME, agent) === candidate) {
               sharedBrowserDefinition = candidate
             }
           }
-          const ownerSessionId = this.ownerSessionIdForSharedBot(record.id)
           if (ownerSessionId !== undefined) {
             const vaultCandidate = scope.get('botSharedVaultRequests')?.toolForSession(
               scope,

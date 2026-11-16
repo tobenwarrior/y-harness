@@ -10,7 +10,7 @@ import css from './BotVaultRequestCard.module.css'
 /** Shared Computer controls exposed to the sign-in card. */
 export interface ComputerSignInFace {
   readonly computer: ComputerClient
-  readonly openSignIn: (sessionId: string, requestId: string) => void
+  readonly openSignIn: (sessionId: string, requestId: string, targetSessionId?: string, origin?: string) => void
 }
 
 type Props = PropsRuntime<'conversation.composer.dock'> & PropsLocale<'bots'> & InjectFace<ComputerSignInFace>
@@ -55,12 +55,20 @@ export function ComputerSignInCard({ botChat, sessionId, computer, openSignIn, t
   }, [api, enabled, sessionId])
 
   if (!enabled || request === undefined || api === undefined) return null
+  const shared = request.targetSessionId !== undefined
+  const title = shared ? t('computerSignInSharedTitle') : t('computerSignInTitle')
   return (
-    <section className={`${css.card} ${css.signIn}`} aria-label={t('computerSignInTitle')} data-computer-sign-in-card>
+    <section className={`${css.card} ${css.signIn}`} aria-label={title} data-computer-sign-in-card>
       <span className={css.icon} aria-hidden="true"><IconShieldOutlineRegular size={16} /></span>
       <div className={css.content}>
-        <span className={css.title}>{t('computerSignInTitle')}</span>
+        <span className={css.title}>{title}</span>
         <span>{t('computerSignInDescription')}</span>
+        {shared && request.origin !== undefined && (
+          <div className={css.target}>
+            <span className={css.targetLabel}>{t('computerSignInOrigin')}</span>
+            <code className={css.targetValue}>{request.origin}</code>
+          </div>
+        )}
         {error === request.id && <span role="alert">{t('computerSignInError')}</span>}
       </div>
       <div className={css.signInActions}>
@@ -68,7 +76,7 @@ export function ComputerSignInCard({ botChat, sessionId, computer, openSignIn, t
           <Button variant="ghost" size="sm" disabled={cancelling === request.id} onClick={() => {
             setCancelling(request.id)
             setError(undefined)
-            void api.cancel(sessionId, request.id).then(() => {
+            void api.cancel(request.targetSessionId ?? sessionId, request.id).then(() => {
               setCurrent(value => value?.request.id === request.id ? undefined : value)
             }, () => { setError(request.id) }).finally(() => {
               setCancelling(value => value === request.id ? undefined : value)
@@ -76,7 +84,7 @@ export function ComputerSignInCard({ botChat, sessionId, computer, openSignIn, t
           }}>{t('cancel')}</Button>
         )}
         <Button variant="outline" size="sm" disabled={cancelling === request.id}
-          onClick={() => { openSignIn(sessionId, request.id) }}>{t('computerSignInTake')}</Button>
+          onClick={() => { openSignIn(sessionId, request.id, request.targetSessionId, request.origin) }}>{t('computerSignInTake')}</Button>
       </div>
     </section>
   )

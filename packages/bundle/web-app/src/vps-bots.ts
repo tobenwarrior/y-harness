@@ -21,6 +21,7 @@ import { SessionId } from '@yharness/session/types'
 import { isVpsSharedPath, VpsRuntime, type VpsBrowserOptions } from './vps-runtime.ts'
 import { registerVpsProjectTool } from './vps-project-tool.ts'
 import { isSharedBrowserSession, runAuthorizedBrowserOperation, VpsIsolatedBrowser, type VpsIsolatedBrowserConfig } from './vps-isolated-browser.ts'
+import { VpsBrowserHandoffs } from './vps-browser-handoffs.ts'
 import { VpsBrowserLogin, vpsBrowserLoginRoute } from './vps-browser-login.ts'
 import { registerVpsServiceTools, VpsServices, type VpsServiceAccess } from './vps-services.ts'
 import { registerVpsJournalTool, VpsJournal, type VpsJournalConfig } from './vps-journal.ts'
@@ -121,9 +122,12 @@ export function mountVpsBots(
   const browserLogin = isolatedBrowser === undefined || config.isolatedBrowser?.savedLogins !== true
     ? undefined
     : new VpsBrowserLogin(isolatedBrowser)
-  if (isolatedBrowser !== undefined && (config.isolatedBrowser?.sharedBots?.length ?? 0) > 0) {
+  const browserHandoffs = isolatedBrowser === undefined || !config.isolatedBrowser?.sharedBots?.length
+    ? undefined
+    : new VpsBrowserHandoffs(isolatedBrowser)
+  if (isolatedBrowser !== undefined && browserHandoffs !== undefined) {
     ctx.provide('botSharedBrowser', {
-      toolForSession(scope, agent, botId, authorized) {
+      toolForSession(scope, agent, botId, authorized, ownerSessionId) {
         const sessionId = agent.id
         if (!isSharedBrowserSession(sessionId) || !isolatedBrowser.authorized(botId, sessionId)) return undefined
         if (scope.get('attachments') === undefined || scope.get('llm') === undefined) {
@@ -140,6 +144,9 @@ export function mountVpsBots(
               () => isolatedBrowser.navigate(botId, sessionId, target, operationSignal), operationSignal)),
           browserLogin === undefined ? undefined : (_caller, signal) => browserLogin.request(botId, sessionId,
             (operation, requestSignal) => computer.runWhileBotControls(operation, requestSignal), signal, authorized),
+          ownerSessionId === undefined ? undefined : (_caller, signal) => browserHandoffs.request(
+            botId, ownerSessionId, sessionId, computer, authorized, signal,
+          ),
         )
       },
     })
@@ -184,7 +191,7 @@ export function mountVpsBots(
     computers.clear()
     previewFiles.clear()
     projectFiles.clear()
-    await browserLogin?.dispose()
+    await Promise.all([browserLogin?.dispose(), browserHandoffs?.dispose()])
     await Promise.all(active.map(computer => computer.dispose()))
   }, 'vps-bots: dispose desktop controllers')
 
@@ -268,14 +275,34 @@ export function mountVpsBots(
     if (browserLogin !== undefined) {
       scope.effect(() => scope.connection.fetch.register(vpsBrowserLoginRoute(scope, browserLogin)), 'vps-bots: owner saved-login metadata')
     }
+    const ownedHandoff = async (target: string) => {
+      const handoff = browserHandoffs?.target(target)
+      if (handoff === undefined) return undefined
+      const bot = await scope.bots.ownerBotForSession(handoff.ownerSessionId)
+      if (bot?.state !== 'active' || bot.id !== handoff.botId || bot.sessionId !== handoff.ownerSessionId
+        || browserHandoffs?.target(target) !== handoff) return undefined
+      return handoff
+    }
     scope.effect(() => scope.connection.fetch.register(computerSignInRoute(async (sessionId) => {
+      if (sessionId.startsWith('handoff-')) return ownedHandoff(sessionId)
       const bot = await scope.bots.ownerBotForSession(sessionId)
       if (bot?.state !== 'active' || !hasBrowserSignIn(bot.id)) return undefined
       const computer = computers.get(sessionId)
-      if (computer === undefined) return undefined
-      return { status: () => computer.signInRequest(), answer: (...args) => computer.answerSignIn(...args) }
+      return {
+        status: () => computer?.signInRequest() ?? browserHandoffs?.status(bot.id, bot.sessionId),
+        answer: async (...args) => {
+          if (computer === undefined) throw new Error('Computer sign-in request has ended.')
+          return computer.answerSignIn(...args)
+        },
+      }
     })), 'vps-bots: owner sign-in handoff')
     for (const route of botComputerRoutesWithLegacy(async (sessionId) => {
+      if (sessionId.startsWith('handoff-')) {
+        const handoff = await ownedHandoff(sessionId)
+        return handoff === undefined ? undefined : {
+          computer: handoff.computer, id: handoff.botId, permissionScope: 'bot' as const, navigate: handoff.navigate,
+        }
+      }
       // Only an explicit allowlist rollout retains the old omitted-session
       // request as the shared legacy display. Fresh managed installations
       // require a Bot Session and fail closed in the route parser.

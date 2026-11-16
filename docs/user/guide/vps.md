@@ -193,6 +193,10 @@ Pass `--shared-bot BOT_ID` for each isolated browser Bot whose collaborators sho
 
 To let a shared Bot sign in, enable saved logins and select the Bot under **Saved for** when you save its website account. When a collaborator asks the Bot to sign in, open the Bot’s main chat in Y Harness and review **Approve shared website sign-in**. Select an account assigned to that Bot for the displayed website. The collaborator sees the outcome in their chat. End any existing sign-in at the website if you revoke the account’s access.
 
+For verification that needs you at the keyboard, open the Bot’s main chat and choose **Take over** on **Sign in to the shared browser**. Check **Current website**, complete the step, and choose **I’m done** once the signed-in page is ready. The Bot resumes in the same browser. Update both Cloud and the isolated browser worker to use this flow.
+
+If you close the panel, return to the card to pick up the same page. Cancelling or timing out closes the browser page and keeps the shared chat’s browser profile.
+
 ## Give a Bot access to service diagnostics
 
 Ask the VPS owner to add `vpsServices` inside the same `web-runtime` configuration. The grant names an exact systemd service and the Bot roster IDs that may inspect it. This example grants read access to a service managed by the same Linux user as Y Harness.

@@ -115,6 +115,250 @@ test('admits only screen input and web navigation, and keeps the Vault endpoint 
   assert.deepEqual(events, [true])
 })
 
+test('reserves an existing page for an exact owner lease and checks the live origin before input', async t => {
+  const inputs = []
+  const navigations = []
+  const origin = 'https://example.test'
+  const lease = 'a'.repeat(32)
+  const chat = { bot: BOT, session: sharedSession }
+  const { control } = await setup(t, { grants: parseGrants([{ ...request, shared: true }]), createPage: async () => ({
+    origin: async () => origin,
+    frame: async () => '/9j/2Q==',
+    input: async data => { inputs.push(data) },
+    navigate: async url => { navigations.push(url) },
+    close: async () => {},
+    closed: new Promise(() => {}),
+  }) })
+  assert.deepEqual(await controlResponse(control, { ...chat, action: 'frame' }), {
+    jpeg: '/9j/2Q==', width: 1280, height: 800,
+  })
+  assert.deepEqual(await controlResponse(control, { ...chat, action: 'begin-handoff', lease: 'b'.repeat(31) }),
+    { error: 'unavailable' })
+  const begin = await controlResponse(control, { ...chat, action: 'begin-handoff', lease })
+  assert.deepEqual(begin, { origin })
+  assert.equal(JSON.stringify(begin).includes(lease), false)
+  for (const action of [
+    { action: 'frame' },
+    { action: 'input', input: { kind: 'text', text: 'ordinary' } },
+    { action: 'navigate', url: 'https://ordinary.example.test/' },
+  ]) assert.deepEqual(await controlResponse(control, { ...chat, ...action }), { error: 'unavailable' })
+  assert.deepEqual(await controlResponse(control, { ...chat, action: 'frame', lease }), {
+    jpeg: '/9j/2Q==', width: 1280, height: 800, origin,
+  })
+  assert.deepEqual(await controlResponse(control, {
+    ...chat, action: 'input', lease, origin: 'https://changed.example.test',
+    input: { kind: 'text', text: 'owner' },
+  }), { error: 'unavailable' })
+  assert.deepEqual(await controlResponse(control, {
+    ...chat, action: 'input', lease, origin, input: { kind: 'text', text: 'owner' },
+  }), { ok: true })
+  assert.deepEqual(await controlResponse(control, {
+    ...chat, action: 'navigate', lease, url: 'http://example.test/',
+  }), { error: 'unavailable' })
+  assert.deepEqual(await controlResponse(control, {
+    ...chat, action: 'navigate', lease, url: 'https://owner.example.test/',
+  }), { ok: true })
+  assert.deepEqual(await controlResponse(control, { ...chat, action: 'end-handoff', lease: 'c'.repeat(32), outcome: 'complete' }),
+    { error: 'unavailable' })
+  assert.deepEqual(await controlResponse(control, { ...chat, action: 'end-handoff', lease, outcome: 'complete' }), { ok: true })
+  assert.deepEqual(await controlResponse(control, { ...chat, action: 'frame', lease }), { error: 'unavailable' })
+  assert.deepEqual(await controlResponse(control, { ...chat, action: 'frame' }), {
+    jpeg: '/9j/2Q==', width: 1280, height: 800,
+  })
+  assert.deepEqual(inputs, [{ kind: 'text', text: 'owner' }])
+  assert.deepEqual(navigations, ['https://owner.example.test/'])
+})
+
+test('returns a null owner-frame origin when navigation changes during capture', async t => {
+  const origins = ['https://before.example.test', 'https://after.example.test']
+  const lease = '3'.repeat(32)
+  const chat = { bot: BOT, session: sharedSession }
+  const { control } = await setup(t, { grants: parseGrants([{ ...request, shared: true }]), createPage: async () => ({
+    origin: async () => origins.shift() ?? 'https://after.example.test',
+    frame: async () => '/9j/2Q==',
+    close: async () => {},
+    closed: new Promise(() => {}),
+  }) })
+  await controlResponse(control, { ...chat, action: 'frame' })
+  assert.deepEqual(await controlResponse(control, { ...chat, action: 'begin-handoff', lease }), {
+    origin: 'https://before.example.test',
+  })
+  origins.push('https://before.example.test', 'https://after.example.test')
+  assert.deepEqual(await controlResponse(control, { ...chat, action: 'frame', lease }), {
+    jpeg: '/9j/2Q==', width: 1280, height: 800, origin: null,
+  })
+})
+
+test('rejects private lease forms and never launches a page for stale or scope-crossing leases', async t => {
+  const lease = '4'.repeat(32)
+  const privatePages = []
+  const privateControl = await setup(t, {
+    createPage: async () => { privatePages.push(true); throw new Error('must not launch') },
+  })
+  assert.deepEqual(await controlResponse(privateControl.control, { ...request, action: 'begin-handoff', lease }), {
+    error: 'unavailable',
+  })
+  assert.equal(privatePages.length, 0)
+
+  const sharedPages = []
+  const chat = { bot: BOT, session: sharedSession }
+  const otherChat = { bot: BOT, session: anotherSharedSession }
+  const sharedControl = await setup(t, {
+    grants: parseGrants([{ ...request, shared: true }]),
+    createPage: async () => { sharedPages.push(true); throw new Error('must not launch') },
+  })
+  for (const action of [
+    { action: 'begin-handoff', lease },
+    { action: 'frame', lease },
+    { action: 'input', lease, origin: null, input: { kind: 'text', text: 'stale' } },
+    { action: 'navigate', lease, url: 'https://example.test/' },
+  ]) assert.deepEqual(await controlResponse(sharedControl.control, { ...chat, ...action }), { error: 'unavailable' })
+  assert.deepEqual(await controlResponse(sharedControl.control, { ...otherChat, action: 'frame', lease }), {
+    error: 'unavailable',
+  })
+  assert.equal(sharedPages.length, 0)
+})
+
+test('refuses handoff for a blank or non-HTTPS page and while a saved login is pending', async t => {
+  const chat = { bot: BOT, session: sharedSession }
+  for (const pageOrigin of [null, 'http://example.test']) {
+    const { control } = await setup(t, { grants: parseGrants([{ ...request, shared: true }]), createPage: async () => ({
+      origin: async () => pageOrigin,
+      frame: async () => '/9j/2Q==',
+      close: async () => {},
+      closed: new Promise(() => {}),
+    }) })
+    await controlResponse(control, { ...chat, action: 'frame' })
+    assert.deepEqual(await controlResponse(control, {
+      ...chat, action: 'begin-handoff', lease: 'd'.repeat(32),
+    }), { error: 'unavailable' })
+  }
+
+  const origin = 'https://login.example.test'
+  const destination = `${origin}/session`
+  const { control } = await setup(t, {
+    grants: parseGrants([{ ...request, shared: true }]),
+    savedLogins: true,
+    createPage: async () => ({
+      origin: async () => origin,
+      captureLogin: async () => ({ origin, destination }),
+      frame: async () => '/9j/2Q==',
+      close: async () => {},
+      closed: new Promise(() => {}),
+    }),
+  })
+  const pending = await controlResponse(control, { ...chat, action: 'request-login' })
+  assert.match(pending.id, /^[a-f0-9]{32}$/u)
+  assert.deepEqual(await controlResponse(control, {
+    ...chat, action: 'begin-handoff', lease: 'e'.repeat(32),
+  }), { error: 'unavailable' })
+  assert.deepEqual(await controlResponse(control, { ...chat, action: 'cancel-login', id: pending.id }), { state: 'unavailable' })
+  assert.deepEqual(await controlResponse(control, {
+    ...chat, action: 'begin-handoff', lease: 'e'.repeat(32),
+  }), { origin })
+})
+
+test('discards a handed-off page before reopening the same persistent profile', async t => {
+  const profiles = []
+  const closed = []
+  const lease = 'f'.repeat(32)
+  const chat = { bot: BOT, session: sharedSession }
+  const { control } = await setup(t, {
+    grants: parseGrants([{ ...request, shared: true }]),
+    createPage: async (_executable, profile) => {
+      profiles.push(profile)
+      const done = Promise.withResolvers()
+      closed.push(done)
+      return {
+        origin: async () => 'https://example.test',
+        frame: async () => '/9j/2Q==',
+        close: async () => done.resolve(),
+        closed: done.promise,
+      }
+    },
+  })
+  await controlResponse(control, { ...chat, action: 'frame' })
+  assert.deepEqual(await controlResponse(control, { ...chat, action: 'begin-handoff', lease }), {
+    origin: 'https://example.test',
+  })
+  assert.deepEqual(await controlResponse(control, { ...chat, action: 'end-handoff', lease, outcome: 'discard' }), { ok: true })
+  assert.deepEqual(await controlResponse(control, { ...chat, action: 'frame' }), {
+    jpeg: '/9j/2Q==', width: 1280, height: 800,
+  })
+  assert.equal(profiles.length, 2)
+  assert.equal(profiles[0], profiles[1])
+  assert.equal(closed.length, 2)
+})
+
+test('keeps a failed discard fail-closed until the page reports closed', async t => {
+  const firstClosed = Promise.withResolvers()
+  let closeFailure = true
+  let pages = 0
+  const chat = { bot: BOT, session: sharedSession }
+  const { control } = await setup(t, {
+    grants: parseGrants([{ ...request, shared: true }]),
+    createPage: async () => {
+      pages++
+      if (pages > 1) return {
+        origin: async () => 'https://example.test', frame: async () => '/9j/2Q==',
+        close: async () => {}, closed: new Promise(() => {}),
+      }
+      return {
+        origin: async () => 'https://example.test', frame: async () => '/9j/2Q==',
+        close: async () => { if (closeFailure) throw new Error('fixture close failure'); firstClosed.resolve() },
+        closed: firstClosed.promise,
+      }
+    },
+  })
+  const lease = '1'.repeat(32)
+  await controlResponse(control, { ...chat, action: 'frame' })
+  await controlResponse(control, { ...chat, action: 'begin-handoff', lease })
+  assert.deepEqual(await controlResponse(control, { ...chat, action: 'end-handoff', lease, outcome: 'discard' }), {
+    error: 'unavailable',
+  })
+  assert.deepEqual(await controlResponse(control, { ...chat, action: 'frame' }), { error: 'unavailable' })
+  closeFailure = false
+  firstClosed.resolve()
+  assert.deepEqual(await controlResponse(control, { ...chat, action: 'frame' }), {
+    jpeg: '/9j/2Q==', width: 1280, height: 800,
+  })
+  assert.equal(pages, 2)
+})
+
+test('expires a handoff lease and closes the page through the per-page queue', async t => {
+  let now = 0
+  const timers = []
+  let pages = 0
+  let closed = false
+  const chat = { bot: BOT, session: sharedSession }
+  const { control } = await setup(t, {
+    grants: parseGrants([{ ...request, shared: true }]),
+    handoffNow: () => now,
+    handoffSchedule: callback => { timers.push(callback); return { unref() {} } },
+    createPage: async () => {
+      pages++
+      const pageClosed = new Promise(() => {})
+      return {
+        origin: async () => 'https://example.test',
+        frame: async () => '/9j/2Q==',
+        close: async () => { closed = true },
+        closed: pageClosed,
+      }
+    },
+  })
+  await controlResponse(control, { ...chat, action: 'frame' })
+  assert.deepEqual(await controlResponse(control, { ...chat, action: 'begin-handoff', lease: '2'.repeat(32) }), {
+    origin: 'https://example.test',
+  })
+  now = 10 * 60_000
+  timers[0]()
+  assert.deepEqual(await controlResponse(control, { ...chat, action: 'frame' }), {
+    jpeg: '/9j/2Q==', width: 1280, height: 800,
+  })
+  assert.equal(closed, true)
+  assert.equal(pages, 2)
+})
+
 test('refuses profiles that point outside the browser account directory', async t => {
   const { root, control } = await setup(t)
   await symlink(tmpdir(), join(root, SESSION), 'dir')

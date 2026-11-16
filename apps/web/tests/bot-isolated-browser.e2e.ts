@@ -24,6 +24,7 @@ const LOGIN = { id: 'a'.repeat(32), origin: 'https://example.test', destination:
 const SHARED_LOGIN = { ...LOGIN, id: 'b'.repeat(32) }
 const SHARED_CHALLENGE = 'c'.repeat(32)
 const LOGIN_REPLY = 'The login was submitted. I’ll check the page.'
+const HANDOFF_REPLY = 'Thanks. I have the shared browser again.'
 
 class BrowserAdapter extends LlmAdapter {
   override async listModels(provider: string) {
@@ -34,12 +35,14 @@ class BrowserAdapter extends LlmAdapter {
     const latestUser = options.messages.findLastIndex(message => message.role === 'user')
     const input = options.messages[latestUser]?.content.filter(block => block.type === 'text').map(block => block.text).join(' ') ?? ''
     const savedLogin = input.includes('saved login')
+    const handoff = input.includes('take over')
     const shared = input.includes('shared chat')
     const result = options.messages.slice(latestUser + 1).findLast(message => message.role === 'tool')
     if (result === undefined) {
-      const id = ToolCallId(savedLogin ? 'fixture-browser-login' : 'fixture-browser-navigation')
+      const id = ToolCallId(handoff ? 'fixture-browser-handoff' : savedLogin ? 'fixture-browser-login' : 'fixture-browser-navigation')
       const name = shared ? 'shared_browser' : 'vps_computer'
-      const args = JSON.stringify(savedLogin ? { action: 'request_saved_login' } : { action: 'navigate', url: WEBSITE })
+      const args = JSON.stringify(handoff ? { action: 'request_sign_in' }
+        : savedLogin ? { action: 'request_saved_login' } : { action: 'navigate', url: WEBSITE })
       expect(options.tools?.some(tool => tool.name === name)).toBe(true)
       if (shared) {
         expect(options.tools?.some(tool => ['vps_computer', 'bash', 'request_vps_secret'].includes(tool.name))).toBe(false)
@@ -50,7 +53,10 @@ class BrowserAdapter extends LlmAdapter {
       yield { type: 'finish', reason: { kind: 'tool-calls' } }
       return
     }
-    if (savedLogin) {
+    if (handoff) {
+      expect(result.content).toEqual([expect.objectContaining({ type: 'text', text: expect.stringContaining('returned the Computer') })])
+      expect(JSON.stringify(options.messages.slice(latestUser))).not.toContain('fixture-input')
+    } else if (savedLogin) {
       expect(result.content.some(block => block.type === 'text' && /sign-in submission/iu.test(block.text))).toBe(true)
       expect(JSON.stringify(result)).not.toContain(LOGIN.destination)
       expect(JSON.stringify(result)).not.toContain(LOGIN.id)
@@ -58,7 +64,7 @@ class BrowserAdapter extends LlmAdapter {
     } else {
       expect(result.content.some(block => block.type === 'text' && block.text.includes('Browser'))).toBe(true)
     }
-    const text = savedLogin ? LOGIN_REPLY : REPLY
+    const text = handoff ? HANDOFF_REPLY : savedLogin ? LOGIN_REPLY : REPLY
     yield { type: 'block-start', index: 0, blockType: 'text' }
     yield { type: 'text-delta', index: 0, text }
     yield { type: 'block-end', index: 0, block: { type: 'text', text } }
@@ -73,6 +79,9 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('opens websites for
   const socketPath = join(root, 'browser.sock')
   const websites: string[] = []
   const sharedRequests: Array<{ readonly action: string; readonly session: string }> = []
+  const handoffInputs: Array<{ readonly session: string; readonly origin: string }> = []
+  let handoff: { readonly lease: string; readonly session: string } | undefined
+  let handoffLease: string | undefined
   let loginApproved = false
   let sharedApproved = false
   let sharedAuthorized = false
@@ -104,14 +113,49 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('opens websites for
       socket.setEncoding('utf8')
       socket.on('data', (value) => { body += value })
       socket.once('end', () => {
-        const request = JSON.parse(body) as { action: string; session: string; url?: string; id?: string; challenge?: string }
+        const request = JSON.parse(body) as {
+          action: string
+          session: string
+          url?: string
+          id?: string
+          challenge?: string
+          lease?: string
+          origin?: string
+          outcome?: string
+          input?: { kind: string; text?: string }
+        }
         const shared = request.session.startsWith('shared-session-')
         if (shared) sharedRequests.push({ action: request.action, session: request.session })
         if (request.action === 'navigate' && request.url !== undefined) websites.push(request.url)
+        const holding = handoff !== undefined && handoff.session === request.session
+        const owner = holding && handoff?.lease === request.lease
         let response: object
         switch (request.action) {
           case 'status': response = { available: true }; break
-          case 'frame': response = { jpeg, width: 1280, height: 800 }; break
+          case 'frame':
+            response = holding && !owner ? { error: 'unavailable' } : {
+              jpeg, width: 1280, height: 800, ...(owner ? { origin: LOGIN.origin } : {}),
+            }
+            break
+          case 'begin-handoff':
+            if (shared && !holding && request.lease !== undefined && /^[0-9a-f]{32}$/u.test(request.lease)) {
+              handoff = { lease: request.lease, session: request.session }
+              handoffLease = request.lease
+              response = { origin: LOGIN.origin }
+            } else response = { error: 'unavailable' }
+            break
+          case 'end-handoff':
+            if (owner && request.outcome === 'complete') {
+              handoff = undefined
+              response = { ok: true }
+            } else response = { error: 'unavailable' }
+            break
+          case 'input':
+            if (owner && request.origin === LOGIN.origin && request.input?.text === 'fixture-input') {
+              handoffInputs.push({ session: request.session, origin: request.origin })
+            }
+            response = holding && (!owner || request.origin !== LOGIN.origin) ? { error: 'unavailable' } : { ok: true }
+            break
           case 'request-login': response = shared ? SHARED_LOGIN : LOGIN; break
           case 'login-status':
             response = shared && sharedApproved && !sharedAuthorized
@@ -235,6 +279,58 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('opens websites for
     expect(await recent()).not.toContain(SHARED_LOGIN.id)
     expect(sharedRequests).toContainEqual({ action: 'authorize-login', session: sharedSession })
 
+    expect((await chat('Please take over the browser in this shared chat.')).result.ok).toBe(true)
+    const handoffSelector = 'section[aria-label="Sign in to the shared browser"]'
+    const handoffCard = page.locator(handoffSelector)
+    await handoffCard.waitFor({ timeout: 15_000 })
+    const handoffCardAria = await captureStableAria(page, handoffSelector, web.workspaceCwd)
+    const body = (value: object): RequestInit => ({
+      method: 'POST', headers: { 'Content-Type': 'application/json', Origin: origin }, body: JSON.stringify(value),
+    })
+    const statusBody = body({ action: 'status', sessionId: bot.sessionId })
+    const signIn = '/api/computer/sign-in'
+    const ownerResponse = await web.hostFetch(signIn, statusBody)
+    expect(ownerResponse.ok).toBe(true)
+    const metadata = await ownerResponse.json() as { request: { targetSessionId: string; origin: string } }
+    const target = metadata.request.targetSessionId
+    expect(target).toMatch(/^handoff-/u)
+    expect(metadata.request.origin).toBe(LOGIN.origin)
+    expect(handoffLease).toMatch(/^[a-f0-9]{32}$/u)
+    expect(JSON.stringify(metadata)).not.toContain(handoffLease)
+    expect(JSON.stringify(metadata)).not.toContain(sharedSession)
+    const otherViewer = body({ sessionId: target, viewerId: randomUUID() })
+    for (const [path, init] of [[signIn, statusBody], ['/api/computer/frame', otherViewer]] as const) {
+      const headers = new Headers(init.headers)
+      headers.set('Cookie', cookie)
+      expect((await fetch(new URL(path, origin), { ...init, headers })).status).toBe(401)
+    }
+    await handoffCard.getByRole('button', { name: 'Take over' }).click()
+    const screen = panel.getByRole('img', { name: 'Live computer screen' })
+    await screen.waitFor()
+    await expect.poll(async () => (await (await web.hostFetch('/api/computer/frame', otherViewer)).json()).jpeg).toBe('')
+    await panel.getByText(LOGIN.origin, { exact: true }).waitFor()
+    const handoffPanelAria = await captureStableAria(page, panelSelector, web.workspaceCwd)
+    await screen.evaluate((image) => {
+      const contents = new DataTransfer()
+      contents.setData('text/plain', 'fixture-input')
+      image.dispatchEvent(new ClipboardEvent('paste', { clipboardData: contents, bubbles: true, cancelable: true }))
+    })
+    await expect.poll(() => handoffInputs).toEqual([{ session: sharedSession, origin: LOGIN.origin }])
+    const release = page.waitForResponse(response => response.url().endsWith('/api/computer/release-control') && response.ok())
+    await panel.getByRole('button', { name: 'Close computer panel' }).click()
+    await release
+    expect(handoff).toBeDefined()
+    await handoffCard.getByRole('button', { name: 'Take over' }).click()
+    await screen.waitFor()
+    await panel.getByRole('button', { name: 'I’m done' }).click()
+    await expect.poll(recent, { timeout: 10_000 }).toContain(HANDOFF_REPLY)
+    expect(await recent()).not.toContain(target)
+    expect(await recent()).not.toContain(handoffLease)
+    await panel.waitFor({ state: 'hidden' })
+    await handoffCard.waitFor({ state: 'hidden' })
+    expect((await web.hostFetch('/api/computer/frame', otherViewer)).status).toBe(409)
+    expect(sharedRequests).toContainEqual({ action: 'end-handoff', session: sharedSession })
+
     sharedApproved = false
     sharedAuthorized = false
     expect((await chat('Request the saved login again in this shared chat.')).result.ok).toBe(true)
@@ -245,7 +341,7 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('opens websites for
     expect(sharedRequests.filter(request => request.action === 'authorize-login')).toHaveLength(1)
     expect(consoleLog.pageErrors).toEqual([])
     await compareOrRefreshGolden(GOLDEN,
-      `## In control\n\n${controlling}\n\n## Watching\n\n${viewing}\n\n## Saved login approval\n\n${review}\n\n## Shared login approval\n\n${sharedReview}`,
+      `## In control\n\n${controlling}\n\n## Watching\n\n${viewing}\n\n## Saved login approval\n\n${review}\n\n## Shared login approval\n\n${sharedReview}\n\n## Shared browser sign-in\n\n${handoffCardAria}\n\n## Shared browser in control\n\n${handoffPanelAria}`,
       MODE)
   } finally {
     try { await browser?.close() }

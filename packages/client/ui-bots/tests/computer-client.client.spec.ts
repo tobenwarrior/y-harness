@@ -92,6 +92,51 @@ describe('Computer HTTP client', () => {
     }))
   })
 
+  it('decodes only the exact shared sign-in target and canonical origin', async () => {
+    const id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+    const targetSessionId = 'handoff-bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+    const origin = 'https://example.test'
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response({ request: { id, canCancel: true, targetSessionId, origin } }))
+      .mockResolvedValueOnce(response({ request: { id, canCancel: true, targetSessionId: 'handoff-invalid', origin } }))
+      .mockResolvedValueOnce(response({ request: { id, canCancel: true, targetSessionId, origin: 'https://example.test/' } }))
+    vi.stubGlobal('fetch', fetchMock)
+    const client = createComputerClient()
+    if (client.signIn === undefined) throw new Error('Computer sign-in client is unavailable')
+
+    await expect(client.signIn.status('owner-session', new AbortController().signal)).resolves.toEqual({
+      request: { id, canCancel: true, targetSessionId, origin },
+    })
+    await expect(client.signIn.status('owner-session', new AbortController().signal)).rejects.toMatchObject({ status: 200 })
+    await expect(client.signIn.status('owner-session', new AbortController().signal)).rejects.toMatchObject({ status: 200 })
+  })
+
+  it('decodes current browser origins and sends shared target origin with input', async () => {
+    const targetSessionId = 'handoff-bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+    const requestId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+    const origin = 'https://example.test'
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response({ jpeg: 'frame', width: 1280, height: 800, mode: 'controlling', botActive: false, browserOrigin: origin }))
+      .mockResolvedValueOnce(response({ jpeg: '', width: 1280, height: 800, mode: 'controlling', botActive: false, browserOrigin: null }))
+      .mockResolvedValueOnce(response({ mode: 'controlling' }))
+      .mockResolvedValueOnce(response({ mode: 'controlling' }))
+    vi.stubGlobal('fetch', fetchMock)
+    const client = createComputerClient()
+    if (client.signIn === undefined) throw new Error('Computer sign-in client is unavailable')
+
+    await expect(client.frame('viewer-id', undefined, targetSessionId)).resolves.toMatchObject({ browserOrigin: origin })
+    await expect(client.frame('viewer-id', undefined, targetSessionId)).resolves.toMatchObject({ browserOrigin: null })
+    await client.signIn.take(targetSessionId, requestId, 'viewer-id')
+    await client.input('viewer-id', { kind: 'key', key: 'a' }, undefined, targetSessionId, origin)
+    expect(fetchMock).toHaveBeenNthCalledWith(3, 'api/computer/sign-in', expect.objectContaining({
+      body: JSON.stringify({ action: 'take', sessionId: targetSessionId, requestId, viewerId: 'viewer-id' }),
+    }))
+    expect(fetchMock.mock.calls[3]?.[0]).toBe('api/computer/input')
+    expect(JSON.parse(fetchMock.mock.calls[3]?.[1]?.body as string)).toEqual({
+      viewerId: 'viewer-id', action: { kind: 'key', key: 'a' }, sessionId: targetSessionId, origin,
+    })
+  })
+
   it('reads the isolated browser capability and sends a website to that viewer lease', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(response({ available: true, computer: { location: 'vps', permissionScope: 'bot', browser: true } }))

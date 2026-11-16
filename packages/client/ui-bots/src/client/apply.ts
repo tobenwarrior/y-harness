@@ -215,9 +215,13 @@ export function apply(ctx: Context): void {
       name: 'conversation.composer.dock', id: 'bot-computer-sign-in', order: -1, locale: 'bots',
       inject: () => ({
         computer,
-        openSignIn: (sessionId: string, requestId: string) => {
+        openSignIn: (sessionId: string, requestId: string, targetSessionId?: string, origin?: string) => {
           if (selectedSessionId() !== sessionId) return
-          setComputerTarget(sessionId, { sessionId, requestId, attempt: ++signInAttempt })
+          setComputerTarget(sessionId, {
+            sessionId, requestId, attempt: ++signInAttempt,
+            ...(targetSessionId === undefined ? {} : { targetSessionId }),
+            ...(origin === undefined ? {} : { origin }),
+          })
         },
       }),
     }, ComputerSignInCard))

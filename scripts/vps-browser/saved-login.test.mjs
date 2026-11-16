@@ -215,3 +215,67 @@ test('submits a reviewed HTTPS form without typing credentials or forwarding the
   assert.equal(visibleValue, false)
   assert.equal(intercepted, false)
 })
+
+test('hands the same HTTPS browser back after the owner completes verification', {
+  skip: process.env.YH_ISOLATED_TEST_CHROMIUM === undefined,
+  timeout: 30_000,
+}, async t => {
+  const root = await mkdtemp(join(tmpdir(), 'yh-handoff-browser-'))
+  let browser
+  let server
+  t.after(async () => {
+    try { await browser?.close() }
+    finally {
+      if (server?.listening === true) await new Promise(resolve => { server.close(resolve); server.closeAllConnections() })
+      await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 })
+    }
+  })
+  const profile = 'shared-' + createHash('sha256').update(SHARED.bot + '\0' + SHARED.session).digest('hex')
+  const security = await tls(root, [join(root, profile)])
+  const submission = Promise.withResolvers()
+  const authenticated = Promise.withResolvers()
+  server = createServer(security, async (request, reply) => {
+    if (request.method === 'POST' && request.url === '/verify') {
+      let body = ''
+      for await (const chunk of request) body += chunk
+      submission.resolve(new URLSearchParams(body).get('code'))
+      reply.writeHead(303, { Location: '/verified', 'Set-Cookie': 'verified=1; Secure; HttpOnly; Path=/' }).end()
+    } else {
+      if (request.url === '/ready' && request.headers.cookie?.includes('verified=1')) authenticated.resolve()
+      reply.setHeader('Content-Type', 'text/html')
+      if (request.url === '/verify') {
+        reply.end('<form method="post"><label>Verification code<input name="code" autofocus></label><button>Verify</button></form>')
+      } else if (request.url === '/verified') {
+        reply.end('<h1>Verified</h1><script>requestAnimationFrame(() => fetch("/ready"))</script>')
+      } else reply.end('<h1>Browser fixture</h1>')
+    }
+  })
+  await listen(server, 0, '127.0.0.1')
+  const port = server.address().port
+  const origin = `https://${HOST}:${port}`
+  const verification = `https://${ALTERNATE}:${port}`
+  const controlPath = join(root, 'control.sock')
+  browser = browserServers({ root, executable: process.env.YH_ISOLATED_TEST_CHROMIUM, grants: parseGrants([{ ...BOT, shared: true }]) })
+  await Promise.all([listen(browser.control, controlPath), listen(browser.vault, join(root, 'vault.sock'))])
+  const shared = (action, parameters) => exchange(controlPath, { ...SHARED, action, ...parameters })
+  const lease = 'e'.repeat(32)
+  assert.deepEqual(await shared('navigate', { url: `${origin}/start` }), { ok: true })
+  assert.deepEqual(await shared('begin-handoff', { lease }), { origin })
+  assert.deepEqual(await shared('frame'), { error: 'unavailable' })
+  assert.deepEqual(await shared('navigate', { lease, url: `${verification}/verify` }), { ok: true })
+  const frame = await shared('frame', { lease })
+  assert.equal(frame.origin, verification)
+  assert.match(frame.jpeg, /^\/9j\//u)
+  const input = { kind: 'text', text: '314159' }
+  assert.deepEqual(await shared('input', { lease, origin, input }), { error: 'unavailable' })
+  assert.deepEqual(await shared('input', { lease, origin: verification, input }), { ok: true })
+  assert.deepEqual(await shared('input', { lease, origin: verification, input: { kind: 'key', key: 'Return' } }), { ok: true })
+  assert.equal(await submission.promise, '314159')
+  await authenticated.promise
+  assert.match((await shared('frame', { lease })).jpeg, /^\/9j\//u)
+  assert.deepEqual(await shared('end-handoff', { lease, outcome: 'complete' }), { ok: true })
+  const resumed = await shared('frame')
+  assert.match(resumed.jpeg, /^\/9j\//u)
+  assert.equal(resumed.origin, undefined)
+  assert.deepEqual(await shared('frame', { lease }), { error: 'unavailable' })
+})

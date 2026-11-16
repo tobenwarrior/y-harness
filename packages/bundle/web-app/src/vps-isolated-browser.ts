@@ -2,6 +2,7 @@
 
 import { createConnection, type Socket } from 'node:net'
 import { isAbsolute } from 'node:path'
+import type { Branded } from '@yharness/brand'
 import type { ComputerAction, ComputerCaptureRunner, VpsComputer } from './computer.ts'
 import { validateComputerAction, VpsComputer as ComputerHost } from './computer.ts'
 
@@ -74,6 +75,16 @@ export interface VpsBrowserApprovalChallenge {
 /** Validate current shared access and start work inside its authority check. */
 export type VpsBrowserAdmission = (signal: AbortSignal, start?: () => void) => Promise<boolean>
 
+/** Private worker lease used only by the Web Host that requested the handoff. */
+export type VpsBrowserHandoffLease = Branded<'VpsBrowserHandoffLease'>
+
+/** Exact shared browser and its private worker lease. */
+export interface VpsBrowserHandoff {
+  readonly bot: string
+  readonly session: string
+  readonly lease: VpsBrowserHandoffLease
+}
+
 type Request =
   | { readonly action: 'status' | 'frame'; readonly bot: string; readonly session: string }
   | { readonly action: 'input'; readonly bot: string; readonly session: string; readonly input: ComputerAction }
@@ -81,6 +92,10 @@ type Request =
   | { readonly action: 'request-login'; readonly bot: string; readonly session: string }
   | { readonly action: 'login-status' | 'cancel-login'; readonly bot: string; readonly session: string; readonly id: string }
   | { readonly action: 'authorize-login'; readonly bot: string; readonly session: string; readonly id: string; readonly challenge: string }
+  | (VpsBrowserHandoff & { readonly action: 'begin-handoff' | 'frame' })
+  | (VpsBrowserHandoff & { readonly action: 'end-handoff'; readonly outcome: 'complete' | 'discard' })
+  | (VpsBrowserHandoff & { readonly action: 'input'; readonly origin: string; readonly input: ComputerAction })
+  | (VpsBrowserHandoff & { readonly action: 'navigate'; readonly url: string })
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -203,6 +218,23 @@ function decodeFrame(value: unknown): Buffer {
     throw new Error(INVALID_RESPONSE)
   }
   return bytes
+}
+
+function handoffOrigin(value: unknown): string {
+  if (!metadataString(value, URL_MAX_BYTES)) throw new Error(INVALID_RESPONSE)
+  const url = new URL(validateUrl(value))
+  if (url.protocol !== 'https:' || url.origin !== value) throw new Error(INVALID_RESPONSE)
+  return value
+}
+
+function decodeHandoffOrigin(value: unknown): string {
+  if (!isRecord(value) || Object.keys(value).length !== 1) throw new Error(INVALID_RESPONSE)
+  return handoffOrigin(value.origin)
+}
+
+function decodeHandoffFrame(value: unknown): { readonly bytes: Buffer; readonly browserOrigin: string | null } {
+  if (!isRecord(value) || Object.keys(value).length !== 4) throw new Error(INVALID_RESPONSE)
+  return { bytes: decodeFrame(value), browserOrigin: value.origin === null ? null : handoffOrigin(value.origin) }
 }
 
 function validateSession(session: string): string {
@@ -391,6 +423,62 @@ export class VpsIsolatedBrowser {
   async cancelLogin(bot: string, session: string, id: string, signal: AbortSignal): Promise<VpsBrowserLoginState> {
     if (!metadataString(id, LOGIN_ID_MAX_BYTES) || !LOGIN_ID.test(id)) throw new Error(INVALID_RESPONSE)
     return this.request({ action: 'cancel-login', bot, session: validateSession(session), id }, decodeLoginState, signal)
+  }
+
+  /** Reserve the current shared browsing page before exposing the request to the owner.
+   * @param handoff - Exact shared profile and private lease.
+   * @param signal - Calling turn cancellation.
+   * @returns The canonical origin of the current HTTPS page.
+   */
+  async beginHandoff(handoff: VpsBrowserHandoff, signal: AbortSignal): Promise<string> {
+    if (!isSharedBrowserSession(handoff.session)) throw new Error(UNAUTHORIZED)
+    return this.request({ ...handoff, action: 'begin-handoff' }, decodeHandoffOrigin, signal)
+  }
+
+  /** Return an owner-confirmed page to the model or close the interrupted page.
+   * @param handoff - Exact shared profile and private lease.
+   * @param outcome - Complete the handoff or discard the live page.
+   * @param signal - Request deadline and cancellation.
+   * @returns When the worker acknowledges the exact lease transition.
+   */
+  async endHandoff(handoff: VpsBrowserHandoff, outcome: 'complete' | 'discard', signal: AbortSignal): Promise<void> {
+    await this.request({ ...handoff, action: 'end-handoff', outcome }, decodeAck, signal)
+  }
+
+  /** Navigate the shared browser while the owner holds it.
+   * @param handoff - Exact shared profile and private lease.
+   * @param url - HTTPS website address entered by the owner.
+   * @param signal - Request cancellation.
+   * @returns When the worker acknowledges navigation.
+   */
+  async navigateHandoff(handoff: VpsBrowserHandoff, url: string, signal: AbortSignal): Promise<void> {
+    const validated = validateUrl(url)
+    if (!validated.startsWith('https://')) throw new Error(INVALID_URL)
+    await this.request({ ...handoff, action: 'navigate', url: validated }, decodeAck, signal)
+  }
+
+  /** Build the owner controller that uses only the worker's temporary handoff lease.
+   * @param handoff - Exact shared profile and private lease.
+   * @param authorize - Fresh admission for the shared turn.
+   * @param lifetime - Aborts when the handoff stops accepting owner input.
+   * @returns Private viewer controls for the leased page.
+   */
+  handoffComputer(handoff: VpsBrowserHandoff, authorize: VpsBrowserAdmission, lifetime: AbortSignal): VpsComputer {
+    const capture: ComputerCaptureRunner = (signal) => {
+      const bounded = AbortSignal.any([lifetime, signal])
+      return runAuthorizedBrowserOperation(authorize,
+        () => this.request({ ...handoff, action: 'frame' }, decodeHandoffFrame, bounded), bounded)
+    }
+    return new ComputerHost({ display: COMPUTER_DISPLAY, authorityPath: COMPUTER_AUTHORITY }, {
+      capture,
+      input: async (action, signal, origin) => {
+        const bounded = AbortSignal.any([lifetime, signal])
+        const expected = handoffOrigin(origin)
+        await runAuthorizedBrowserOperation(authorize, () => this.request({
+          ...handoff, action: 'input', origin: expected, input: action,
+        }, decodeAck, bounded), bounded)
+      },
+    })
   }
 
   /**

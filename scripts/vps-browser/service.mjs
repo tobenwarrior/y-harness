@@ -6,7 +6,9 @@ import { createServer } from 'node:net'
 import { isAbsolute, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { parseArgs } from 'node:util'
-import { BROWSER_HEIGHT, BROWSER_WIDTH, browserInput, createBrowserPage, parseWebsite } from './page.mjs'
+import {
+  BROWSER_HEIGHT, BROWSER_WIDTH, browserInput, canonicalHttpsOrigin, createBrowserPage, parseWebsite,
+} from './page.mjs'
 import { loginDestination } from './saved-login.mjs'
 
 const BOT = /^bot-[a-zA-Z0-9][a-zA-Z0-9-]{0,245}$/u
@@ -23,6 +25,8 @@ const IDLE_TIMEOUT = 10 * 60_000
 const LOGIN_TTL = 5 * 60_000
 const LOGIN_RECEIPT_TTL = 60_000
 const LOGIN_ID = /^[a-f0-9]{32}$/u
+const LEASE = /^[a-f0-9]{32}$/u
+const HANDOFF_TTL = 10 * 60_000
 const UNAVAILABLE = Object.freeze({ error: 'unavailable' })
 
 function object(value) {
@@ -31,6 +35,10 @@ function object(value) {
 
 function fields(value, names) {
   return object(value) && Object.keys(value).length === names.length && names.every(name => Object.hasOwn(value, name))
+}
+
+function validLease(value) {
+  return typeof value === 'string' && LEASE.test(value)
 }
 
 /** Read a bounded, administrator-owned roster to select exactly one profile per Session. */
@@ -57,12 +65,28 @@ function parseControl(value, grants) {
   if (!shared && grant?.session !== value.session) throw new Error('Browser unavailable')
   const session = shared ? 'shared-' + createHash('sha256').update(value.bot + '\0' + value.session).digest('hex') : value.session
   const base = ['action', 'bot', 'session']
-  if (value.action === 'frame' || value.action === 'status') {
+  if (value.action === 'begin-handoff' && shared && fields(value, [...base, 'lease']) && validLease(value.lease)) {
+    return { session, action: value.action, lease: value.lease }
+  } else if (value.action === 'end-handoff' && shared && fields(value, [...base, 'lease', 'outcome'])
+    && validLease(value.lease) && (value.outcome === 'complete' || value.outcome === 'discard')) {
+    return { session, action: value.action, lease: value.lease, outcome: value.outcome }
+  } else if (value.action === 'frame' || value.action === 'status') {
+    if (value.action === 'frame' && shared && fields(value, [...base, 'lease']) && validLease(value.lease)) {
+      return { session, action: value.action, lease: value.lease }
+    }
     if (fields(value, base)) return { session, action: value.action }
   } else if (value.action === 'input' && fields(value, [...base, 'input'])) {
     return { session, action: 'input', input: browserInput(value.input) }
+  } else if (value.action === 'input' && fields(value, [...base, 'lease', 'origin', 'input'])
+    && shared && validLease(value.lease) && typeof value.origin === 'string' && value.origin.length > 0
+    && canonicalHttpsOrigin(value.origin) === value.origin) {
+    return { session, action: 'input', lease: value.lease, origin: value.origin, input: browserInput(value.input) }
   } else if (value.action === 'navigate' && fields(value, [...base, 'url'])) {
     return { session, action: 'navigate', url: parseWebsite(value.url) }
+  } else if (value.action === 'navigate' && shared && fields(value, [...base, 'lease', 'url']) && validLease(value.lease)) {
+    const url = parseWebsite(value.url)
+    if (!url.startsWith('https://')) throw new Error('Invalid website')
+    return { session, action: 'navigate', lease: value.lease, url }
   } else if (value.action === 'request-login' && fields(value, base)) {
     return { bot: value.bot, session, shared, action: value.action }
   } else if ((value.action === 'login-status' || value.action === 'cancel-login') && fields(value, [...base, 'id'])
@@ -88,9 +112,39 @@ async function profileDirectory(root, session) {
   return path
 }
 
-function browserPool({ root, executable, createPage = createBrowserPage }) {
+function browserPool({ root, executable, createPage = createBrowserPage, handoffNow = () => performance.now(),
+  handoffSchedule = (callback, delay) => setTimeout(callback, delay) }) {
   const pages = new Map()
   let closed = false
+
+  function clearHandoffTimer(handoff) {
+    if (handoff.timer !== undefined) clearTimeout(handoff.timer)
+    handoff.timer = undefined
+  }
+
+  function scheduleHandoffExpiry(session, entry, handoff) {
+    const timer = handoffSchedule(() => {
+      if (closed || pages.get(session) !== entry || entry.handoff !== handoff || handoff.state !== 'active') return
+      if (handoffNow() < handoff.expiresAt) {
+        scheduleHandoffExpiry(session, entry, handoff)
+        return
+      }
+      handoff.state = 'expired'
+      void queueDiscard(session, entry, handoff.lease).catch(() => undefined)
+    }, HANDOFF_TTL)
+    timer?.unref?.()
+    handoff.timer = timer
+  }
+
+  function markExpired(session, entry) {
+    const handoff = entry.handoff
+    if (handoff?.state !== 'active' || handoffNow() < handoff.expiresAt) return false
+    handoff.state = 'expired'
+    clearHandoffTimer(handoff)
+    void queueDiscard(session, entry, handoff.lease).catch(() => undefined)
+    return true
+  }
+
   function disposePage(session, entry) {
     clearTimeout(entry.idle)
     if (entry.disposal !== undefined) return entry.disposal
@@ -99,44 +153,138 @@ function browserPool({ root, executable, createPage = createBrowserPage }) {
     })
     return entry.disposal
   }
-  return {
-    async run(session, operation, signal) {
-      signal.throwIfAborted()
+
+  function queueDiscard(session, entry, lease) {
+    if (entry.discardTask !== undefined) return entry.discardTask
+    entry.discardTask = enqueue(session, entry, async page => {
+      const handoff = entry.handoff
+      if (handoff === undefined || handoff.lease !== lease
+        || (handoff.state !== 'expired' && handoff.state !== 'discarding')) throw new Error('Browser unavailable')
+      handoff.state = 'discarding'
+      clearHandoffTimer(handoff)
+      await page.close()
+      entry.disposed = true
+      if (pages.get(session) === entry) pages.delete(session)
+      return { ok: true }
+    }, undefined, { kind: 'discard', lease })
+    return entry.discardTask
+  }
+
+  async function entryFor(session, signal, create) {
+    signal?.throwIfAborted()
+    if (closed) throw new Error('Browser unavailable')
+    let entry = pages.get(session)
+    if (entry?.disposal !== undefined) {
+      await entry.disposal
+      signal?.throwIfAborted()
       if (closed) throw new Error('Browser unavailable')
-      let entry = pages.get(session)
-      if (entry?.disposal !== undefined) {
-        await entry.disposal
-        signal.throwIfAborted()
-        if (closed) throw new Error('Browser unavailable')
-        entry = pages.get(session)
-      }
-      if (entry === undefined) {
-        if (pages.size >= MAX_PAGES) throw new Error('Too many active browsers')
-        const next = { page: profileDirectory(root, session).then(path => createPage(executable, path)),
-          queue: Promise.resolve(), pending: 0, idle: undefined, disposal: undefined }
-        pages.set(session, next)
-        void next.page.then(page => page.closed).catch(() => undefined).then(() => {
-          if (pages.get(session) === next) pages.delete(session)
-          clearTimeout(next.idle)
-        })
-        entry = next
-      }
-      const active = entry
-      clearTimeout(active.idle)
-      active.pending++
-      const result = active.queue.then(async () => {
-        signal.throwIfAborted()
-        const page = await active.page
-        signal.throwIfAborted()
-        return operation(page)
+      entry = pages.get(session)
+    }
+    if (entry === undefined) {
+      if (!create) throw new Error('Browser unavailable')
+      if (pages.size >= MAX_PAGES) throw new Error('Too many active browsers')
+      const next = { page: profileDirectory(root, session).then(path => createPage(executable, path)),
+        queue: Promise.resolve(), pending: 0, idle: undefined, disposal: undefined,
+        handoff: undefined, discardTask: undefined, disposed: false }
+      pages.set(session, next)
+      void next.page.then(page => page.closed).catch(() => undefined).then(() => {
+        if (pages.get(session) === next) pages.delete(session)
+        clearTimeout(next.idle)
       })
-      active.queue = result.then(() => undefined, () => undefined)
-      try { return await result } finally {
-        active.pending--
-        if (active.pending === 0 && !closed && pages.get(session) === active && active.disposal === undefined) {
-          active.idle = setTimeout(() => { void disposePage(session, active).catch(() => undefined) }, IDLE_TIMEOUT).unref()
-        }
+      entry = next
+    }
+    return entry
+  }
+
+  function checkAdmission(session, entry, admission) {
+    if (pages.get(session) !== entry || entry.disposed) throw new Error('Browser unavailable')
+    if (admission.kind === 'begin') {
+      if (entry.handoff !== undefined) throw new Error('Browser unavailable')
+      return
+    }
+    const handoff = entry.handoff
+    if (admission.kind === 'discard') {
+      if (handoff === undefined || handoff.lease !== admission.lease
+        || (handoff.state !== 'expired' && handoff.state !== 'discarding')) throw new Error('Browser unavailable')
+      return
+    }
+    if (admission.kind === 'owner') {
+      if (handoff === undefined || handoff.lease !== admission.lease || handoff.state !== 'active'
+        || handoffNow() >= handoff.expiresAt) {
+        markExpired(session, entry)
+        throw new Error('Browser unavailable')
       }
+      return
+    }
+    if (handoff !== undefined) {
+      markExpired(session, entry)
+      throw new Error('Browser unavailable')
+    }
+  }
+
+  function enqueue(session, entry, operation, signal, admission = { kind: 'ordinary' }) {
+    signal?.throwIfAborted()
+    if (entry.handoff?.state === 'active') markExpired(session, entry)
+    entry.pending++
+    const result = entry.queue.then(async () => {
+      signal?.throwIfAborted()
+      checkAdmission(session, entry, admission)
+      const page = await entry.page
+      signal?.throwIfAborted()
+      checkAdmission(session, entry, admission)
+      return operation(page)
+    })
+    entry.queue = result.then(() => undefined, () => undefined)
+    void result.finally(() => {
+      entry.pending--
+      if (entry.pending === 0 && !closed && pages.get(session) === entry && entry.disposal === undefined
+        && entry.handoff === undefined) {
+        entry.idle = setTimeout(() => { void disposePage(session, entry).catch(() => undefined) }, IDLE_TIMEOUT).unref()
+      }
+    }).catch(() => undefined)
+    return result
+  }
+
+  return {
+    async run(session, operation, signal, lease = undefined) {
+      const active = await entryFor(session, signal, lease === undefined)
+      clearTimeout(active.idle)
+      return enqueue(session, active, operation, signal,
+        lease === undefined ? { kind: 'ordinary' } : { kind: 'owner', lease })
+    },
+    async begin(session, lease, operation, signal) {
+      const active = await entryFor(session, signal, false)
+      clearTimeout(active.idle)
+      const result = enqueue(session, active, async page => {
+        const result = await operation(page)
+        signal?.throwIfAborted()
+        const handoff = { lease, expiresAt: handoffNow() + HANDOFF_TTL, state: 'active', timer: undefined }
+        active.handoff = handoff
+        scheduleHandoffExpiry(session, active, handoff)
+        return result
+      }, signal, { kind: 'begin' })
+      return result
+    },
+    async end(session, lease, outcome, signal) {
+      const active = await entryFor(session, signal, false)
+      clearTimeout(active.idle)
+      return enqueue(session, active, async page => {
+        const handoff = active.handoff
+        if (handoff === undefined || handoff.lease !== lease || handoff.state !== 'active') {
+          throw new Error('Browser unavailable')
+        }
+        if (outcome === 'complete') {
+          clearHandoffTimer(handoff)
+          active.handoff = undefined
+          return { ok: true }
+        }
+        handoff.state = 'discarding'
+        clearHandoffTimer(handoff)
+        await page.close()
+        active.disposed = true
+        if (pages.get(session) === active) pages.delete(session)
+        return { ok: true }
+      }, signal, { kind: 'owner', lease })
     },
     async close() {
       closed = true
@@ -316,17 +464,36 @@ export function browserServers(options) {
   const control = endpoint(async (body, signal) => {
     const request = parseControl(body, options.grants)
     if (request.action === 'status') return { available: true }
+    if (request.action === 'begin-handoff') {
+      return pool.begin(request.session, request.lease, async page => {
+        if (logins.reserved(request.session)) throw new Error('Browser unavailable')
+        const origin = await page.origin()
+        if (origin === null || canonicalHttpsOrigin(origin) !== origin) throw new Error('Browser unavailable')
+        return { origin }
+      }, signal)
+    }
+    if (request.action === 'end-handoff') {
+      return pool.end(request.session, request.lease, request.outcome, signal)
+    }
     if (request.action === 'request-login' || request.action === 'login-status' || request.action === 'cancel-login'
       || request.action === 'authorize-login') {
       return logins.control(request, signal)
     }
     return pool.run(request.session, async page => {
       if (logins.reserved(request.session)) return UNAVAILABLE
-      if (request.action === 'frame') return { jpeg: await page.frame(), width: BROWSER_WIDTH, height: BROWSER_HEIGHT }
-      if (request.action === 'input') await page.input(request.input)
-      else await page.navigate(request.url)
+      if (request.action === 'frame') {
+        if (request.lease === undefined) return { jpeg: await page.frame(), width: BROWSER_WIDTH, height: BROWSER_HEIGHT }
+        const before = await page.origin()
+        const jpeg = await page.frame()
+        const after = await page.origin()
+        return { jpeg, width: BROWSER_WIDTH, height: BROWSER_HEIGHT, origin: before !== null && before === after ? before : null }
+      }
+      if (request.action === 'input') {
+        if (request.lease !== undefined && await page.origin() !== request.origin) throw new Error('Browser unavailable')
+        await page.input(request.input)
+      } else await page.navigate(request.url)
       return { ok: true }
-    }, signal)
+    }, signal, request.lease)
   })
   const vault = endpoint(logins.vault, MAX_VAULT_REQUEST)
   return { control: control.server, vault: vault.server, close: async () => {
