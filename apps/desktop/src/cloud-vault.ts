@@ -45,9 +45,18 @@ export type VaultLoginGeneration = string & { readonly [VAULT_LOGIN_GENERATION]:
 /** Exact Bot identity from the connected Cloud roster. */
 export type VaultBotId = string & { readonly [VAULT_BOT_ID]: true }
 
+/** Exact audiences for a service key grant. */
+export type VaultGrantScope = 'owner' | 'shared'
+
 /** Request from the dedicated Vault window. No operation reads a saved value. */
 export type VaultRequest = { readonly action: 'list' | 'list-grants' } | ({
-  readonly action: 'add-grant' | 'remove-grant'
+  readonly action: 'add-grant'
+  readonly scope?: 'shared'
+} & VaultBotGrant) | ({
+  readonly action: 'remove-grant'
+} & VaultBotGrant) | ({
+  readonly action: 'set-grant-scope'
+  readonly scope: VaultGrantScope
 } & VaultBotGrant) | {
   readonly action: 'revoke'
   readonly unit: string
@@ -109,6 +118,8 @@ export type VaultRequest = { readonly action: 'list' | 'list-grants' } | ({
   readonly id: VaultLoginUseRequestId
 }
 
+type VaultWireRequest = VaultRequest | { readonly action: 'list-scoped-grants' }
+
 /** Names for a single administrator-enabled Linux service. */
 export interface VaultService {
   readonly unit: string
@@ -125,7 +136,9 @@ export interface VaultBotGrant {
 /** Service choices and current Bot permissions returned by the VPS Vault. */
 export interface VaultBotAccess {
   readonly services: readonly string[]
-  readonly grants: readonly VaultBotGrant[]
+  readonly grants: readonly (VaultBotGrant & { readonly scope?: VaultGrantScope })[]
+  /** Current Cloud and the VPS broker support editing grant scopes. */
+  readonly sharedScopes?: true
 }
 
 /** Bot identity and name presented to the owner in the grant form. */
@@ -304,13 +317,24 @@ function loginOrigin(value: unknown, requireCanonical = false): string | undefin
   return requireCanonical && value !== origin ? undefined : origin
 }
 
+function grantScope(value: unknown): value is VaultGrantScope {
+  return value === 'owner' || value === 'shared'
+}
+
 function requestBody(value: unknown): VaultRequest | undefined {
   if (!record(value)) return undefined
   const { action, unit, name } = value
   const fields = Object.keys(value).length
   if ((action === 'list' || action === 'list-grants') && fields === 1) return { action }
-  if ((action === 'add-grant' || action === 'remove-grant') && fields === 4
-    && botId(value.bot) && unitName(unit) && keyName(name)) return { action, bot: value.bot, unit, name }
+  if ((action === 'add-grant' || action === 'remove-grant' || action === 'set-grant-scope')
+    && botId(value.bot) && unitName(unit) && keyName(name)) {
+    const subject = { bot: value.bot, unit, name }
+    if (action === 'set-grant-scope') {
+      return fields === 5 && grantScope(value.scope) ? { action, ...subject, scope: value.scope } : undefined
+    }
+    if (fields === 4) return { action, ...subject }
+    return action === 'add-grant' && fields === 5 && value.scope === 'shared' ? { action, ...subject, scope: value.scope } : undefined
+  }
   if (action === 'inspect-request' && fields === 2 && isVaultRequestId(value.id)) return { action, id: value.id }
   if (action === 'dismiss-request' && fields === 2 && isVaultRequestId(value.id)) return { action, id: value.id }
   if (action === 'inspect-login-use' && isVaultLoginUseRequestId(value.id)) {
@@ -415,24 +439,27 @@ function loginUseMetadata(value: unknown, expectedId?: VaultLoginUseRequestId): 
   return { id: value.id, origin, destination, logins, ...(acceptsCredentials ? { acceptsCredentials: true } : {}) }
 }
 
-function botAccess(value: unknown): VaultBotAccess | undefined {
+function botAccess(value: unknown, sharedScopes: boolean): VaultBotAccess | undefined {
   if (!record(value) || Object.keys(value).length !== 2 || !Array.isArray(value.services) || value.services.length > 16
     || !value.services.every(unitName) || new Set(value.services).size !== value.services.length
     || !Array.isArray(value.grants) || value.grants.length > 64) return undefined
-  const grants: VaultBotGrant[] = []
+  const grants: Array<VaultBotAccess['grants'][number]> = []
   const identities = new Set<string>()
   for (const item of value.grants) {
-    if (!record(item) || Object.keys(item).length !== 3 || !botId(item.bot) || !unitName(item.unit) || !keyName(item.name)) return undefined
+    if (!record(item) || Object.keys(item).length !== (sharedScopes ? 4 : 3)
+      || !botId(item.bot) || !unitName(item.unit) || !keyName(item.name)) return undefined
+    const scope = item.scope
+    if (sharedScopes && !grantScope(scope)) return undefined
     const key = JSON.stringify([item.bot, item.unit, item.name])
     if (identities.has(key)) return undefined
     identities.add(key)
-    grants.push({ bot: item.bot, unit: item.unit, name: item.name })
+    grants.push({ bot: item.bot, unit: item.unit, name: item.name, ...(grantScope(scope) ? { scope } : {}) })
   }
-  return { services: value.services, grants }
+  return { services: value.services, grants, ...(sharedScopes ? { sharedScopes: true } : {}) }
 }
 
 function replyBody(
-  action: VaultRequest['action'], stdout: string,
+  action: VaultWireRequest['action'], stdout: string,
   expectedId?: VaultRequestId | VaultLoginUseRequestId,
 ): VaultReply | undefined {
   const value: unknown = JSON.parse(stdout)
@@ -442,8 +469,8 @@ function replyBody(
     return { state: value.state, saved: value.saved }
   }
   if (fields !== 1) return undefined
-  if (action === 'list-grants') {
-    const access = botAccess(value.access)
+  if (action === 'list-grants' || action === 'list-scoped-grants') {
+    const access = botAccess(value.access, action === 'list-scoped-grants')
     return access === undefined ? undefined : { ok: true, access }
   }
   if (action === 'inspect-request') {
@@ -540,9 +567,14 @@ async function readCloudReply(response: Response, maxBytes: number): Promise<unk
   }
 }
 
-async function readCloudVaultMode(
+interface VaultPolicy {
+  readonly mode: 'managed' | 'external' | 'disabled'
+  readonly sharedScopes: boolean
+}
+
+async function readCloudVaultPolicy(
   workspace: VaultCloudWorkspace, signal: AbortSignal,
-): Promise<'managed' | 'external' | 'disabled' | undefined> {
+): Promise<VaultPolicy | undefined> {
   const { origin } = workspace
   if (signal.aborted || !LOOPBACK_ORIGIN.test(origin)) return undefined
   try {
@@ -553,7 +585,8 @@ async function readCloudVaultMode(
     const reply = await readCloudReply(response, MAX_ACCESS_MODE_BYTES)
     if (signal.aborted || !record(reply) || Object.keys(reply).length !== 1) return undefined
     const { mode } = reply
-    return mode === 'managed' || mode === 'external' || mode === 'disabled' ? mode : undefined
+    if (mode !== 'managed' && mode !== 'external' && mode !== 'disabled') return undefined
+    return { mode, sharedScopes: mode === 'managed' && response.headers.get('X-YH-Vault-Grant-Scopes') === '1' }
   } catch (_error) {
     return undefined
   }
@@ -613,18 +646,34 @@ export async function cloudVaultRequest(
   const request = requestBody(value)
   if (!isCloudTarget(target) || request === undefined) return { ok: false, reason: 'invalid' }
   let bots: readonly VaultBotChoice[] | undefined
-  if (request.action === 'list-grants' || request.action === 'add-grant' || request.action === 'remove-grant') {
+  let sharedScopes = false
+  const grantWrite = request.action === 'add-grant' || request.action === 'set-grant-scope'
+  if (request.action === 'list-grants' || grantWrite || request.action === 'remove-grant') {
     if (workspace === undefined) return unavailable
-    const mode = await readCloudVaultMode(workspace, signal)
-    if (mode !== 'managed') return { ok: false, reason: mode ?? 'unavailable' }
+    const policy = await readCloudVaultPolicy(workspace, signal)
+    if (policy?.mode !== 'managed') return { ok: false, reason: policy?.mode ?? 'unavailable' }
+    sharedScopes = policy.sharedScopes
+    if (grantWrite && request.scope !== undefined && !sharedScopes) return unavailable
     if (request.action !== 'remove-grant') bots = await readCloudVaultBots(workspace.origin, workspace.fetch, signal)
-    if (request.action === 'add-grant' && !bots?.some(bot => bot.id === request.bot)) return unavailable
+    if (grantWrite && !bots?.some(bot => bot.id === request.bot)) return unavailable
   }
   const assignedLogin = request.action === 'add-login' ? request.bot : undefined
   if (request.action === 'list-bot-logins' || assignedLogin !== undefined) {
     if (workspace !== undefined) bots = await readCloudVaultBots(workspace.origin, workspace.fetch, signal)
     if (assignedLogin !== undefined && !bots?.some(bot => bot.id === assignedLogin)) return unavailable
   }
+  const scoped = request.action === 'list-grants' && sharedScopes
+    ? await executeVaultRequest(target, { action: 'list-scoped-grants' }, signal, execute)
+    : undefined
+  const reply = scoped !== undefined && 'access' in scoped
+    ? scoped
+    : await executeVaultRequest(target, request, signal, execute)
+  return ('access' in reply || 'botLogins' in reply) && bots !== undefined ? { ...reply, bots } : reply
+}
+
+async function executeVaultRequest(
+  target: string, request: VaultWireRequest, signal: AbortSignal, execute: VaultExec,
+): Promise<VaultReply> {
   if (signal.aborted) return unavailable
   return new Promise((resolve) => {
     try {
@@ -643,8 +692,7 @@ export async function cloudVaultRequest(
         try {
           const expectedId = request.action === 'inspect-request' || request.action === 'inspect-login-use'
             ? request.id : undefined
-          const reply = replyBody(request.action, stdout, expectedId) ?? unavailable
-          resolve(('access' in reply || 'botLogins' in reply) && bots !== undefined ? { ...reply, bots } : reply)
+          resolve(replyBody(request.action, stdout, expectedId) ?? unavailable)
         }
         catch { resolve(unavailable) }
       })

@@ -84,6 +84,7 @@ li > span { min-width: 0; overflow-wrap: anywhere; }
 .login-details span:last-child, .grant-details span:last-child { color: var(--muted); font-size: 12px; }
 .actions { display: flex; align-items: center; justify-content: flex-end; gap: 7px; flex: none; }
 li .actions { gap: 3px; }
+.grant-scope { width: auto; min-width: 90px; }
 .danger { color: var(--error); }
 .primary { background: var(--button); color: var(--button-ink); border-color: transparent; }
 form { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; padding: 12px; margin-top: 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
@@ -98,4 +99,8 @@ dialog { width: min(345px, calc(100vw - 32px)); padding: 18px; border: 1px solid
 dialog::backdrop { background: rgb(0 0 0 / 34%); }
 dialog h2 { overflow-wrap: anywhere; }
 dialog p { margin: 7px 0 15px; }
+@media (max-width: 480px) {
+  #grants li:has(.grant-scope) { display: grid; grid-template-columns: minmax(0, 1fr); gap: 7px; padding-block: 8px; }
+  #grants li:has(.grant-scope) .actions { justify-content: space-between; }
+}
 @media (max-width: 440px) { main { padding-inline: 16px; } }
