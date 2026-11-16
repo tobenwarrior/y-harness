@@ -299,7 +299,7 @@ describe('withFileLock', () => {
         if (error?.code !== 'ERR_ATOMIC_WRITE_LOCK_PROTOCOL') process.exitCode = 1
       }
     `
-    const child = spawn(process.execPath, ['--experimental-strip-types', '--input-type=module', '-e', childSource], {
+    const child = spawn(process.execPath, ['--import', 'tsx/esm', '--input-type=module', '-e', childSource], {
       cwd: process.cwd(),
       stdio: ['ignore', 'ignore', 'pipe'],
     })
