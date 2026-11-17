@@ -193,7 +193,7 @@ function implicitMessageId(
 }
 
 function dynamicCallKey(event: BotDynamicToolEvent): string {
-  return [String(event.sessionId ?? ''), event.name, event.callId, event.threadId, event.turnId].join('\0')
+  return [event.sessionId, event.name, event.callId, event.threadId, event.turnId].join('\0')
 }
 
 function nativeCallKey(
@@ -736,11 +736,11 @@ function ownGrokHistoryTool(host: BotNativeToolHost, sessionId: SessionId): BotN
       if (host.grokHistory === undefined) return failure('unavailable', 'Imported Grok history is unavailable.')
       try {
         const page = await host.grokHistory(sessionId, request, context.signal)
-        if (context.signal.aborted) return failure('cancelled', 'The Bot action was cancelled.')
+        if (signalIsAborted(context.signal)) return failure('cancelled', 'The Bot action was cancelled.')
         if (page === null) return output(null)
         return output(frameGrokHistoryPage(page))
       } catch (error: unknown) {
-        return context.signal.aborted ? failure('cancelled', 'The Bot action was cancelled.') : collaborationFailure(error)
+        return signalIsAborted(context.signal) ? failure('cancelled', 'The Bot action was cancelled.') : collaborationFailure(error)
       }
     },
   }
@@ -1003,7 +1003,7 @@ function routineTool(
                     failure('uncertain-outcome', 'The earlier routine creation was abandoned before approval completed.'))
                 }
               }
-              else if (resolution.status === 'absent' && candidate.state === 'pending') {
+              else if (candidate.state === 'pending') {
                 // Schedule has durably proved that no task committed. Close the
                 // native lifecycle before permitting a new operation.
                 await persistSettlement(candidate.call, candidate.call.arguments,
@@ -1481,7 +1481,7 @@ function createGroupTool(
         return failure('uncertain-outcome', `A previous shared Bot group creation may already have completed.${suffix}`)
       }
       const groupId = requestedGroupId === undefined
-        ? implicitRetry && prior !== undefined
+        ? implicitRetry
           ? groupCreateIdForEvent(senderId, prior)
             ?? implicitGroupId(senderId, context.threadId, context.turnId, name, effectiveGroupBotIds(senderId, botIds))
           : implicitGroupId(senderId, context.threadId, context.turnId, name, effectiveGroupBotIds(senderId, botIds))
@@ -1677,11 +1677,11 @@ export function createBotNativeToolProvider(host: BotNativeToolHost): BotNativeT
           additionalProperties: false,
         },
         execute: async (args, context) => {
-          if (context.signal.aborted) return failure('cancelled', 'The Bot action was cancelled.')
+          if (signalIsAborted(context.signal)) return failure('cancelled', 'The Bot action was cancelled.')
           if (context.approvalPolicy === 'never' || !await context.requestApproval(
             action === 'create' ? 'Create a Bot.' : 'Change a Bot profile.',
           )) return failure('approval-denied', 'The Bot action was not approved.')
-          if (context.signal.aborted) return failure('cancelled', 'The Bot action was cancelled.')
+          if (signalIsAborted(context.signal)) return failure('cancelled', 'The Bot action was cancelled.')
           if (host.manage === undefined) return failure('unavailable', 'Bot management is unavailable.')
           if (action === 'create' && context.sessionId !== undefined) {
             const events = await host.replay(context.sessionId)
@@ -1696,7 +1696,7 @@ export function createBotNativeToolProvider(host: BotNativeToolHost): BotNativeT
               && !completed.has(dynamicCallKey(event)))) {
               return failure('uncertain-outcome', 'An earlier Bot creation may have completed. Check the Bot list before trying again.')
             }
-            if (context.signal.aborted) return failure('cancelled', 'The Bot action was cancelled.')
+            if (signalIsAborted(context.signal)) return failure('cancelled', 'The Bot action was cancelled.')
           }
           try { return output(await host.manage(action, args, context)) }
           catch (error: unknown) { return collaborationFailure(error) }
@@ -1706,7 +1706,7 @@ export function createBotNativeToolProvider(host: BotNativeToolHost): BotNativeT
       const routineEnabled = routine !== undefined
         && host.routineAvailable !== undefined
         && await host.routineAvailable(sessionId)
-      const routines = !routineEnabled || routine === undefined ? [] : [
+      const routines = !routineEnabled ? [] : [
         routineTool('create', routine, host.routineReconcile, host.routineReserve, host.routineRelease, host.persist, host.replay, sessionId, routineCreateFlights, routineCreateReceipts),
         routineTool('list', routine, host.routineReconcile, host.routineReserve, host.routineRelease, host.persist, host.replay, sessionId, routineCreateFlights, routineCreateReceipts),
         routineTool('update', routine, host.routineReconcile, host.routineReserve, host.routineRelease, host.persist, host.replay, sessionId, routineCreateFlights, routineCreateReceipts),
