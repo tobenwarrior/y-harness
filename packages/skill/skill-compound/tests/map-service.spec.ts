@@ -185,8 +185,8 @@ describe('loopback proxy', () => {
     current = '/private/compound-overlay'
     service.invalidate()
     await service.proxy('map', new Request('http://localhost/x'))
-    expect(starts).toHaveBeenNthCalledWith(1, '/usr/bin/python3.11', `${assets}compound/scripts/map_server.py`, '/work/repo', expect.any(String))
-    expect(starts).toHaveBeenNthCalledWith(2, '/usr/bin/python3.11', '/private/compound-overlay/compound/scripts/map_server.py', '/work/repo', expect.any(String))
+    expect(starts).toHaveBeenNthCalledWith(1, '/usr/bin/python3.11', join(assets, 'compound', 'scripts', 'map_server.py'), '/work/repo', expect.any(String))
+    expect(starts).toHaveBeenNthCalledWith(2, '/usr/bin/python3.11', join('/private/compound-overlay', 'compound', 'scripts', 'map_server.py'), '/work/repo', expect.any(String))
   })
 
   it('answers 502 with the reason when the service cannot start', async () => {
@@ -243,8 +243,8 @@ describe('service state directory', () => {
   })
 
   it('keeps the cache outside a repository that contains the home directory', () => {
-    expect(resolveStateDir('/work/repo', undefined, '/work/repo/.home', '/tmp')).toBe('/tmp/compound-skills')
-    expect(resolveStateDir('/work/repo', undefined, '/Users/someone', '/tmp')).toBe('/Users/someone/.cache/compound-skills')
+    expect(resolveStateDir('/work/repo', undefined, '/work/repo/.home', '/tmp')).toBe(join('/tmp', 'compound-skills'))
+    expect(resolveStateDir('/work/repo', undefined, '/Users/someone', '/tmp')).toBe(join('/Users/someone', '.cache', 'compound-skills'))
   })
 
   it('respects an explicit directory or environment value', () => {
