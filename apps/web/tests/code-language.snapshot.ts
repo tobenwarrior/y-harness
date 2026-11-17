@@ -6,7 +6,7 @@ import { chromium, type Browser } from 'playwright'
 import { expect, it } from 'vitest'
 import {
   captureStableAria, compareOrRefreshGolden, fixtureUserPrompts, launchWebScaffold,
-  recordFixture, watchConsole, webSnapshotMode,
+  recordFixture, selectedSessionFixture, watchConsole, webSnapshotMode,
 } from './scaffold.ts'
 import { connectFreshWorkspace, expandTurnProcesses, newEnglishPage } from './support.ts'
 
@@ -22,8 +22,9 @@ const FILES = [
 it('replays highlighted Python stubs, PowerShell and CSV reads with their document previews', async () => {
   const prompt = MODE === 'record'
     ? 'Use the read tool exactly once per file to read sample.pyi, deploy.ps1 and table.csv in the current directory. Use these relative paths. Do not run commands or change files. Then reply exactly: Read all three files.'
-    : fixtureUserPrompts(await readFile(FIXTURE, 'utf8'))[0]!
+    : fixtureUserPrompts(await readFile(await selectedSessionFixture(FIXTURE), 'utf8'))[0]!
   const scaffold = await launchWebScaffold({
+    extraOverlayPath: fileURLToPath(new URL('../../../snapshots/web/code-language/cordis.snapshot.yml', import.meta.url)),
     ...(MODE === 'record' ? {} : { replayFixture: FIXTURE }),
     compareReplaySession: true,
   })

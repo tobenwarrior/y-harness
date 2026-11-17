@@ -1,7 +1,7 @@
 version: 1
 scenario: skill-load
 profile: headless
-composition: default
+composition: skill-load
 recording: authored
 header:
   class: skill

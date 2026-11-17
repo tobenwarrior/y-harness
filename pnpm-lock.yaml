@@ -67,6 +67,9 @@ importers:
       '@yharness/agent':
         specifier: workspace:*
         version: link:packages/core/agent
+      '@yharness/app-boot':
+        specifier: workspace:*
+        version: link:packages/boot/app-boot
       '@yharness/browser-use':
         specifier: workspace:*
         version: link:packages/browser-use/browser-use
@@ -94,18 +97,42 @@ importers:
       '@yharness/experimental-computer-use-cua-driver-native':
         specifier: workspace:*
         version: link:packages/experimental/computer-use-cua-driver-native
+      '@yharness/experimental-ptc-runtime-python':
+        specifier: workspace:*
+        version: link:packages/experimental/ptc-runtime-python
       '@yharness/llm-replay':
         specifier: workspace:*
         version: link:packages/test-support/llm-replay
+      '@yharness/lsp':
+        specifier: workspace:*
+        version: link:packages/lsp/lsp
+      '@yharness/lsp-stdio':
+        specifier: workspace:*
+        version: link:packages/lsp/lsp-stdio
       '@yharness/mcp-client':
         specifier: workspace:*
         version: link:packages/mcp/mcp-client
       '@yharness/skill-office':
         specifier: workspace:*
         version: link:packages/skill/skill-office
+      '@yharness/subagent-acp':
+        specifier: workspace:*
+        version: link:packages/subagent/subagent-acp
+      '@yharness/subagent-codex':
+        specifier: workspace:*
+        version: link:packages/subagent/subagent-codex
+      '@yharness/subagent-dsh-sdk':
+        specifier: workspace:*
+        version: link:packages/subagent/subagent-dsh-sdk
+      '@yharness/tool-lsp':
+        specifier: workspace:*
+        version: link:packages/lsp/tool-lsp
       '@yharness/tool-session-query':
         specifier: workspace:*
         version: link:packages/session-query/tool-session-query
+      '@yharness/tool-terminal':
+        specifier: workspace:*
+        version: link:packages/terminal/tool-terminal
       '@yharness/tool-workspace-dependencies':
         specifier: workspace:*
         version: link:packages/skill/tool-workspace-dependencies
@@ -1230,12 +1257,12 @@ importers:
       '@yharness/tools':
         specifier: workspace:*
         version: link:../../core/tools
-      '@yharness/user-approval':
-        specifier: workspace:*
-        version: link:../../interaction/user-approval
       '@yharness/typert-protocol':
         specifier: workspace:*
         version: link:../../typert/protocol
+      '@yharness/user-approval':
+        specifier: workspace:*
+        version: link:../../interaction/user-approval
 
   packages/api/account-controller:
     dependencies:
@@ -14427,12 +14454,18 @@ importers:
       '@yharness/agent':
         specifier: workspace:*
         version: link:../../core/agent
+      '@yharness/agent-default-model':
+        specifier: workspace:*
+        version: link:../../core/agent-default-model
       '@yharness/agent-loop':
         specifier: workspace:*
         version: link:../../core/agent-loop
       '@yharness/api-session-controller':
         specifier: workspace:*
         version: link:../../api/session-controller
+      '@yharness/attachment':
+        specifier: workspace:*
+        version: link:../../attachment/attachment
       '@yharness/bots':
         specifier: workspace:*
         version: link:../../agents/bots
@@ -14463,15 +14496,27 @@ importers:
       '@yharness/session-persistence':
         specifier: workspace:*
         version: link:../../session/session-persistence
+      '@yharness/storage-domain':
+        specifier: workspace:*
+        version: link:../../storage/storage-domain
       '@yharness/subagent':
         specifier: workspace:*
         version: link:../../subagent/subagent
+      '@yharness/tool-schedule':
+        specifier: workspace:*
+        version: link:../../schedule/tool-schedule
       '@yharness/tool-web':
         specifier: workspace:*
         version: link:../../web/tool-web
       '@yharness/tools':
         specifier: workspace:*
         version: link:../../core/tools
+      '@yharness/typert-protocol':
+        specifier: workspace:*
+        version: link:../../typert/protocol
+      '@yharness/user-approval':
+        specifier: workspace:*
+        version: link:../../interaction/user-approval
       '@yharness/user-questions':
         specifier: workspace:*
         version: link:../../interaction/user-questions

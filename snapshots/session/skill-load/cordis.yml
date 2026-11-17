@@ -1,0 +1,13 @@
+# Dedicated composition for skill snapshots. Keep default roots disabled while
+# exposing only the scenario's DSH skill root through an explicit custom path.
+
+- id: skill-filesystem
+  name: '@yharness/skill-filesystem'
+  config:
+    includeDefaultRoots: false
+    watch: false
+    customSkillDirs:
+      - !!js dshHomePath('skills')
+
+- id: skill-compound
+  disabled: true

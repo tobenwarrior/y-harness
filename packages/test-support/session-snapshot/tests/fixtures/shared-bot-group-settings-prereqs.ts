@@ -6,11 +6,10 @@ import { ApiSessionNotFound, type SessionCreateRequest } from '@yharness/api-ses
 import { SharedAccessAuthority } from '@yharness/client-connection'
 import type { PeerScope } from '@yharness/typert-protocol'
 import { SessionId } from '@yharness/session'
-import { BotGroupId, BotGroupMessageId } from '@yharness/bots/src/group-chat.ts'
-import { BotId } from '@yharness/bots/types'
-import { BotService, SHARED_BOT_AGENT_PRESET, SharedBotService } from '@yharness/bots'
+import {
+  BotGroupId, BotGroupMessageId, BotId, BotService, SHARED_BOT_AGENT_PRESET, SharedBotService, botDomain,
+} from '@yharness/bots'
 import type { SharedBotService as SharedBotServiceType } from '@yharness/bots'
-import { botDomain } from '@yharness/bots/src/storage.ts'
 
 export const name = 'snapshot-shared-bot-group-settings-prereqs'
 export const inject = ['agentDefaultModel', 'agents', 'credentials', 'sessions', 'storageDomain']

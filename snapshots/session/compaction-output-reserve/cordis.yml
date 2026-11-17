@@ -12,4 +12,5 @@
     thresholdRatio: 0.8
     headroomTokens: 1800
     retainTokens: 20
+    compactionRetries: 0
     maxTokens: 32

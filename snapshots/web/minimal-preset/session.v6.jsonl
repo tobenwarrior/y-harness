@@ -1,7 +1,7 @@
 {"type":"session","version":6,"id":"{{session:1}}","createdAt":1788240634286,"cwd":"{{cwd}}","isSeeded":false,"delegationDepth":0,"agentPreset":"minimal"}
-{"type":"permission/preset","data":{"preset":"workspace-write"}}
+{"type":"permission/preset","data":{"preset":"approve-for-me"}}
 {"type":"sandbox/mode","data":{"mode":"workspace-write"}}
-{"type":"approval/policy","data":{"policy":"ask"}}
+{"type":"approval/policy","data":{"policy":"never"}}
 {"type":"agent/inbox/spliced","data":{"target":"next-turn","start":0,"inserted":[{"content":[{"type":"text","text":"Use the bash tool to run exactly: printf 'MINIMAL_BASH_CARD_OK\\n'. Then reply exactly MINIMAL_PRESET_REQUEST_OK and stop."}],"source":{"kind":"user"},"role":"user","id":"{{message:1}}"}]}}
 {"type":"turn/start","data":{"turn":1}}
 {"type":"agent/inbox/spliced","data":{"target":"next-turn","start":0,"removedCount":1,"inserted":[]}}

@@ -16,6 +16,11 @@
     root: !!js process.env.DSH_SNAPSHOT_SESSIONS_ROOT ?? './.sessions'
     compression: none
 
+- id: permission
+  name: '@yharness/permission-presets'
+  config:
+    defaultPreset: !!js "process.env.DSH_PERMISSION_MODE ?? (process.env.DSH_SNAPSHOT === undefined ? 'workspace-write' : 'danger-full-access')"
+
 - id: agent-instructions
   name: '@yharness/agent-instructions'
   config:
