@@ -75,7 +75,7 @@ Six packages split Host and Client tsconfigs: `api/remotes`, `api/gateway`, `api
 The root build follows the generated dependency order:
 
 ```sh
-tsc -b tsconfig.host.json
+node --max-old-space-size=5120 ./node_modules/typescript/bin/tsc -b tsconfig.host.json
 tsdown --env.DSH_BUILD_FACE host
 pnpm --filter @yharness/desktop run bundle
 tsc -b tsconfig.client.json
