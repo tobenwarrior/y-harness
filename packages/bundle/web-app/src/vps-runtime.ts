@@ -780,8 +780,8 @@ function inspectContainer(
     throw new VpsRuntimeError('VPS Bot container mounts are invalid')
   }
   const workspaceMounts = value.Mounts.filter(mount => mount.Type === 'volume' && mount.Destination === workspace)
-  const [workspaceMount] = workspaceMounts
-  if (workspaceMounts.length !== 1 || workspaceMount.Name !== volume || workspaceMount.RW !== true) {
+  const workspaceMount = workspaceMounts.length === 1 ? workspaceMounts[0] : undefined
+  if (workspaceMount === undefined || workspaceMount.Name !== volume || workspaceMount.RW !== true) {
     throw new VpsRuntimeError('VPS Bot container workspace mount is invalid')
   }
   const profileMounts = value.Mounts.filter(mount => mount.Type === 'volume' && mount.Destination === BROWSER_PROFILE)
