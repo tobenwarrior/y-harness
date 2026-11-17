@@ -56,6 +56,7 @@ it('disposes a sync owner inside HMR while its imported write is queued, without
   const b = await fixture('test-dispose', shared, {}, false, true)
   await b.ctx.providerConfigSync.synchronize()
   const before = readFileSync(b.profile.patchPath, 'utf8')
+  const disabledPatch = before + '\n- id: provider-config-sync\n  disabled: true\n'
   await b.ctx.hmr.runExclusive(async () => {
     await a.ctx.settings.mutate('llm-pi-ai', [{ op: 'set', path: ['providers', 'example', 'displayName'], value: 'Queued' }])
     await a.ctx.providerConfigSync.synchronize()
@@ -63,10 +64,12 @@ it('disposes a sync owner inside HMR while its imported write is queued, without
       await expect(withFileLock(shared, async () => undefined, { waitMs: 0 })).rejects.toThrow('timed out waiting for the writer lock')
     })
     const entry = b.ctx.configEditor.entries().find(entry => entry.options.id === 'provider-config-sync')
-    await entry?.fiber?.dispose()
+    if (entry?.fiber === undefined) throw new Error('sync owner is not active')
+    writeFileSync(b.profile.patchPath, disabledPatch)
+    await entry.fiber.dispose()
   })
   await b.ctx.hmr.runExclusive(async () => {})
-  expect(readFileSync(b.profile.patchPath, 'utf8')).toBe(before)
+  expect(readFileSync(b.profile.patchPath, 'utf8')).toBe(disabledPatch)
   await expect(withFileLock(shared, async () => 'released', { waitMs: 0 })).resolves.toBe('released')
   expect(b.ctx.get('providerConfigSync')).toBeUndefined()
 })
