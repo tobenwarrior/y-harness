@@ -1,12 +1,12 @@
-import { createConnection, createServer, type Server } from 'node:net'
-import { once } from 'node:events'
+import { createServer, type Server } from 'node:net'
 import { randomUUID } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@yharness/cordis'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { VpsIsolatedBrowser } from '../src/vps-isolated-browser.ts'
+import { brokerFixture } from './vps-broker-fixture.ts'
+import { VpsIsolatedBrowser as BrowserUnderTest, type VpsIsolatedBrowserConfig, type VpsIsolatedBrowserInternals } from '../src/vps-isolated-browser.ts'
 import { VpsBrowserLogin, type VpsBrowserLoginLease, vpsBrowserLoginRoute } from '../src/vps-browser-login.ts'
 
 const BOT = 'bot-login'
@@ -14,6 +14,14 @@ const SESSION = 'bot-session-0e9beecd-b6f5-40b1-8d52-f97259bdcf76'
 const SHARED_SESSION = 'shared-session-0e9beecd-b6f5-40b1-8d52-f97259bdcf77'
 const LOGIN_ID = '0123456789abcdef0123456789abcdef'
 const INSTALLED_CONTROL = '/run/yharness-browser/control.sock'
+
+const fixture = brokerFixture()
+
+class VpsIsolatedBrowser extends BrowserUnderTest {
+  constructor(config: VpsIsolatedBrowserConfig, internals: VpsIsolatedBrowserInternals = {}) {
+    super(config, { ...internals, connect: internals.connect ?? fixture.connect })
+  }
+}
 
 const roots: string[] = []
 const servers: Server[] = []
@@ -33,6 +41,7 @@ afterEach(async () => {
     server.close(() => { resolve() })
   })))
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
+  fixture.clear()
 })
 
 async function listen(handler: (request: Record<string, unknown>) => unknown): Promise<string> {
@@ -48,8 +57,7 @@ async function listen(handler: (request: Record<string, unknown>) => unknown): P
     })
   })
   servers.push(server)
-  server.listen(path)
-  await once(server, 'listening')
+  await fixture.listen(server, path)
   return path
 }
 
@@ -63,7 +71,7 @@ describe('isolated browser saved-login registry', () => {
       return request.action === 'status' && request.session === SHARED_SESSION
         ? { available: true } : { error: 'unavailable' }
     })
-    const open = vi.fn(() => createConnection({ path: socketPath }))
+    const open = vi.fn(() => fixture.connect({ path: socketPath }))
     const browser = new VpsIsolatedBrowser({ socketPath: INSTALLED_CONTROL, bots: [BOT] }, { connect: open })
     const legacy = new VpsIsolatedBrowser({ socketPath: INSTALLED_CONTROL, bots: [BOT], sharedBots: [BOT] }, { connect: open })
     const signal = new AbortController().signal

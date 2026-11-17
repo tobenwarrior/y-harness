@@ -1,22 +1,32 @@
 import { createServer, type Server } from 'node:net'
-import { once } from 'node:events'
 import { randomUUID } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { brokerFixture } from './vps-broker-fixture.ts'
 import { COMPUTER_HEIGHT, COMPUTER_WIDTH, type ComputerAction } from '../src/computer.ts'
 import {
   isSharedBrowserSession,
   runAuthorizedBrowserOperation,
   validateIsolatedBrowserUrl,
   type VpsBrowserHandoff,
-  VpsIsolatedBrowser,
+  VpsIsolatedBrowser as BrowserUnderTest,
+  type VpsIsolatedBrowserConfig,
+  type VpsIsolatedBrowserInternals,
 } from '../src/vps-isolated-browser.ts'
 
 const BOT = 'bot-isolated'
 const SESSION = 'bot-session-0e9beecd-b6f5-40b1-8d52-f97259bdcf76'
 const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xd9])
+
+const fixture = brokerFixture()
+
+class VpsIsolatedBrowser extends BrowserUnderTest {
+  constructor(config: VpsIsolatedBrowserConfig, internals: VpsIsolatedBrowserInternals = {}) {
+    super(config, { ...internals, connect: internals.connect ?? fixture.connect })
+  }
+}
 
 const roots: string[] = []
 const servers: Server[] = []
@@ -36,6 +46,7 @@ afterEach(async () => {
     server.close(() => { resolve() })
   })))
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
+  fixture.clear()
 })
 
 async function listen(handler: (request: Record<string, unknown>) => unknown): Promise<string> {
@@ -51,8 +62,7 @@ async function listen(handler: (request: Record<string, unknown>) => unknown): P
     })
   })
   servers.push(server)
-  server.listen(path)
-  await once(server, 'listening')
+  await fixture.listen(server, path)
   return path
 }
 
@@ -69,8 +79,7 @@ async function listenRaw(response: string | Buffer, onRequest?: (request: Record
     })
   })
   servers.push(server)
-  server.listen(path)
-  await once(server, 'listening')
+  await fixture.listen(server, path)
   return path
 }
 
@@ -322,8 +331,7 @@ describe('isolated browser broker client', () => {
       socket.on('end', () => { /* Keep the response open until the client aborts. */ })
     })
     servers.push(server)
-    server.listen(path)
-    await once(server, 'listening')
+    await fixture.listen(server, path)
     const browser = new VpsIsolatedBrowser({ socketPath: path, bots: [BOT] })
     const controller = new AbortController()
     const pending = browser.status(BOT, SESSION, controller.signal)
@@ -340,8 +348,7 @@ describe('isolated browser broker client', () => {
       const path = fixtureSocketPath(root, 'isolated-browser-timeout')
       const server = createServer(() => {})
       servers.push(server)
-      server.listen(path)
-      await once(server, 'listening')
+      await fixture.listen(server, path)
       const browser = new VpsIsolatedBrowser({ socketPath: path, bots: [BOT] })
       const pending = browser.status(BOT, SESSION, new AbortController().signal).then(
         () => new Error('expected timeout'),
