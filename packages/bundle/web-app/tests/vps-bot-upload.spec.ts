@@ -3,19 +3,22 @@
 import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { promisify } from 'node:util'
 import { describe, expect, it, vi } from 'vitest'
 import { computerFileUploadRoute } from '../src/computer-api.ts'
 import { resolveVpsFileUploadLimits, uploadComputerFile } from '../src/vps-bot-upload.ts'
-import { VpsRuntime } from '../src/vps-runtime.ts'
+import { VpsRuntime, type VpsRuntimeOptions } from '../src/vps-runtime.ts'
 
 const OWNER = 'bot-session-784d3dc2-74aa-4456-9262-07d312084bad'
 const limits = resolveVpsFileUploadLimits({ maxBytes: 1024, reserveBytes: 0 })
 const requestSignal = (): AbortSignal => new AbortController().signal
 
-async function withWorkspace<T>(run: (runtime: VpsRuntime, workspace: string) => Promise<T>): Promise<T> {
+async function withWorkspace<T>(
+  run: (runtime: VpsRuntime, workspace: string) => Promise<T>, options?: VpsRuntimeOptions,
+): Promise<T> {
   const root = await mkdtemp(join(tmpdir(), 'yh-computer-upload-'))
   try {
-    const runtime = new VpsRuntime(root, 'localhost/yharness-test')
+    const runtime = new VpsRuntime(root, 'localhost/yharness-test', {}, options)
     const workspace = runtime.workspace(OWNER)
     await mkdir(workspace)
     vi.spyOn(runtime, 'ensure').mockResolvedValue(undefined)
@@ -27,6 +30,12 @@ async function withWorkspace<T>(run: (runtime: VpsRuntime, workspace: string) =>
 }
 
 describe('private Computer upload', () => {
+  it('applies the default transfer limits when the VPS has no overrides', () => {
+    expect(resolveVpsFileUploadLimits(undefined)).toEqual({
+      maxBytes: 1_000_000_000, reserveBytes: 128 * 1024 * 1024, timeoutMs: 5 * 60_000,
+    })
+  })
+
   it('copies the original binary bytes into the chosen directory and refuses duplicate names', async () => {
     await withWorkspace(async (runtime, workspace) => {
       await mkdir(join(workspace, 'reports'))
@@ -61,11 +70,87 @@ describe('private Computer upload', () => {
     })
   })
 
-  it('closes a stalled body and releases the temporary file on request cancellation', async () => {
+  it('publishes at the shared project root and in a subfolder only when the Bot has access', async () => {
+    await withWorkspace(async (runtime, workspace) => {
+      const project = join(workspace, '..', 'shared-project')
+      await mkdir(join(project, 'reports'), { recursive: true })
+      const projectRoot = await runtime.sharedWorkspaceFor(OWNER)
+      expect(projectRoot).toBe('/workspace')
+      vi.spyOn(runtime, 'sharedWorkspaceFor').mockResolvedValueOnce(undefined)
+      vi.mocked(runtime.execArgv).mockImplementation((_sessionId, argv) => {
+        expect(argv[4]).toBe(projectRoot)
+        return ['python3', ...argv.slice(1, 4), project, ...argv.slice(5)]
+      })
+      const send = (directory: string, name: string) => uploadComputerFile(runtime, OWNER, {
+        directory, name, bytes: 3, body: new Response('new').body,
+      }, limits, requestSignal())
+      await expect(send('/workspace', 'denied.txt')).resolves.toBe('folder-unavailable')
+      expect(runtime.ensure).not.toHaveBeenCalled()
+      expect(runtime.execArgv).not.toHaveBeenCalled()
+      await expect(send('/workspace', 'root.txt')).resolves.toBe('stored')
+      await expect(send('/workspace/reports', 'nested.txt')).resolves.toBe('stored')
+      expect(await readFile(join(project, 'root.txt'), 'utf8')).toBe('new')
+      expect(await readdir(join(project, 'reports'))).toEqual(['nested.txt'])
+      expect(await readdir(project)).toEqual(['reports', 'root.txt'])
+      expect(await readdir(workspace)).toEqual([])
+    }, { sharedWorkspace: true })
+  })
+
+  it('returns unavailable when the worker fails or reports an unrecognized result', async () => {
+    await withWorkspace(async (runtime, workspace) => {
+      const run = vi.mocked(runtime.execArgv)
+      run.mockReturnValueOnce([join(workspace, 'missing-python')])
+      run.mockReturnValueOnce([process.execPath, '-e', 'process.stdout.write("unexpected\\n")'])
+      const send = () => uploadComputerFile(runtime, OWNER, {
+        directory: '.', name: 'absent.txt', bytes: 0, body: null,
+      }, limits, requestSignal())
+      await expect(send()).resolves.toBe('unavailable')
+      await expect(send()).resolves.toBe('unavailable')
+      expect(await readdir(workspace)).toEqual([])
+    })
+  })
+
+  it('holds the workspace until a worker without an input pipe has settled', async () => {
+    const started = Promise.withResolvers<true>()
+    const finished = Promise.withResolvers<{ stdout: string; stderr: string }>()
+    const launch = vi.fn(() => {
+      started.resolve(true)
+      return Object.assign(finished.promise, { child: { stdin: null } })
+    })
+    vi.resetModules()
+    vi.doMock('node:child_process', async loadActual => ({
+      ...await loadActual<typeof import('node:child_process')>(),
+      execFile: Object.assign(vi.fn(), { [promisify.custom]: launch }),
+    }))
+    try {
+      const { uploadComputerFile: upload } = await import('../src/vps-bot-upload.ts')
+      await withWorkspace(async (runtime, workspace) => {
+        const release = vi.fn()
+        vi.spyOn(runtime, 'beginUse').mockReturnValue(release)
+        const result = upload(runtime, OWNER, {
+          directory: '.', name: 'absent.txt', bytes: 0, body: null,
+        }, limits, requestSignal())
+        await Promise.race([started.promise, result.then(() => {
+          throw new Error('The upload finished before the worker started.')
+        })])
+        const releasedEarly = release.mock.calls.length
+        finished.reject(new Error('The worker input pipe could not be opened.'))
+        await expect(result).resolves.toBe('unavailable')
+        expect(releasedEarly).toBe(0)
+        expect(release).toHaveBeenCalledOnce()
+        expect(await readdir(workspace)).toEqual([])
+      })
+    } finally {
+      vi.doUnmock('node:child_process')
+      vi.resetModules()
+    }
+  })
+
+  it('releases a stalled transfer even if its body rejects cancellation', async () => {
     await withWorkspace(async (runtime, workspace) => {
       const selected = new AbortController()
       const reading = Promise.withResolvers<boolean>()
-      const cancelled = vi.fn()
+      const cancelled = vi.fn().mockRejectedValue(new Error('The source stream has already closed.'))
       const body = new ReadableStream<Uint8Array>({
         start(controller) { controller.enqueue(Uint8Array.of(7)) },
         pull() { reading.resolve(true) },
