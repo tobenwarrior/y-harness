@@ -98,7 +98,7 @@ export function mountVpsVaultRequests(ctx: Context, config: VpsVaultRequestsConf
   if (requests.sharedEnabled) {
     const provider: BotSharedVaultRequests = {
       toolForSession(_scope, agent, botId, ownerSessionId, authorized) {
-        return vpsVaultRequestTool(requests, botId, ownerSessionId, async call => call.agent === agent, authorized)
+        return vpsVaultRequestTool(requests, botId, ownerSessionId, call => Promise.resolve(call.agent === agent), authorized)
       },
     }
     ctx.provide('botSharedVaultRequests', provider)
@@ -227,10 +227,10 @@ export function vpsVaultAccessRoute(config: VpsVaultRequestsConfig | null | unde
     path: '/api/bot-vault-access',
     methods: ['GET'],
     requestBody: 'buffered',
-    async fetch() {
+    fetch() {
       const headers = new Headers({ 'Cache-Control': 'no-store' })
       if (mode === 'managed' && config?.sharedRequests !== false) headers.set('X-YH-Vault-Grant-Scopes', '1')
-      return Response.json({ mode }, { headers })
+      return Promise.resolve(Response.json({ mode }, { headers }))
     },
   }
 }

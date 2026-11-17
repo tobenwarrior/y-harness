@@ -353,17 +353,26 @@ describe('managed VPS Bot composition', () => {
         if (route === undefined) throw new Error('No Computer route registered')
         return route.fetch(new Request(`http://127.0.0.1${route.path}`, { method: 'POST', body: JSON.stringify(body) }))
       }
-      const status = async (id: string) => (await post('sign-in', { action: 'status', sessionId: id })).json()
+      const status = async (id: string) => {
+        const response = await post('sign-in', { action: 'status', sessionId: id })
+        return response.json() as Promise<{ request: { id: string; targetSessionId: string } | null }>
+      }
       pending = tool.execute({ action: 'request_sign_in' }, { agent, signal: lifetime.signal } as never)
+      const requestIdMatcher: unknown = expect.any(String)
+      const targetIdMatcher: unknown = expect.stringMatching(/^handoff-/u)
       await expect.poll(() => status(BOT_SESSION)).toEqual({
-        request: { id: expect.any(String), targetSessionId: expect.stringMatching(/^handoff-/u), canCancel: true, origin: 'https://example.test' },
+        request: { id: requestIdMatcher, targetSessionId: targetIdMatcher, canCancel: true, origin: 'https://example.test' },
       })
-      const { request }: { request: { id: string; targetSessionId: string } } = await status(BOT_SESSION)
+      const { request } = await status(BOT_SESSION)
+      if (request === null) throw new Error('No owner sign-in request')
       await expect(status(DESKTOP_SESSION)).resolves.toEqual({ request: null })
       await expect(status(session)).resolves.toEqual({ request: null })
+      const waitEnded: unknown = expect.stringContaining('sign-in wait ended')
       await expect(tool.execute({ action: 'request_sign_in' }, { agent, signal: lifetime.signal } as never))
-        .resolves.toEqual({ message: expect.stringContaining('sign-in wait ended') })
-      const binding = { bot: botId, session, lease: expect.stringMatching(/^[a-f0-9]{32}$/u) }
+        .resolves.toEqual({ message: waitEnded })
+      const lease = begin.mock.calls[0]?.[0].lease
+      expect(lease).toMatch(/^[a-f0-9]{32}$/u)
+      const binding = { bot: botId, session, lease }
       expect(begin).toHaveBeenCalledExactlyOnceWith(binding, expect.any(AbortSignal))
       expect(authorized.mock.calls.some(([, start]) => start !== undefined)).toBe(true)
       if (outcome === 'complete') {
@@ -385,7 +394,7 @@ describe('managed VPS Bot composition', () => {
       expect(navigate).toHaveBeenCalledExactlyOnceWith(binding, url, expect.any(AbortSignal))
       if (outcome === 'shutdown') {
         await ctx.fiber.dispose()
-        await expect(pending).resolves.toEqual({ message: expect.stringContaining('sign-in wait ended') })
+        await expect(pending).resolves.toEqual({ message: waitEnded })
         expect(finish).toHaveBeenCalledExactlyOnceWith(binding, 'discard', expect.any(AbortSignal))
         return
       }
@@ -395,10 +404,9 @@ describe('managed VPS Bot composition', () => {
       }
       const reply = await post('sign-in', { ...target, action: outcome === 'cancel' ? 'cancel' : 'complete' })
       expect(reply.status).toBe(outcome === 'complete' || outcome === 'cancel' ? 200 : 409)
-      await expect(pending).resolves.toEqual({
-        message: expect.stringContaining(outcome === 'complete' ? 'returned the Computer'
-          : outcome === 'cancel' ? 'declined the sign-in' : 'sign-in wait ended'),
-      })
+      const resultMessage: unknown = expect.stringContaining(outcome === 'complete' ? 'returned the Computer'
+        : outcome === 'cancel' ? 'declined the sign-in' : 'sign-in wait ended')
+      await expect(pending).resolves.toEqual({ message: resultMessage })
       expect(finish.mock.calls.map(call => call[1])).toEqual(outcome === 'worker-unavailable' ? ['complete', 'discard']
         : [outcome === 'complete' ? 'complete' : 'discard'])
       expect(finish.mock.calls.every(call => call[0].session === session && call[0].bot === botId)).toBe(true)
@@ -553,8 +561,9 @@ describe('managed VPS Bot composition', () => {
       if (tool === undefined) throw new Error('No shared browser registered')
       await expect(tool.execute({ action: 'navigate', url }, { agent, signal } as never)).resolves.toBeDefined()
       expect(navigate).toHaveBeenCalledExactlyOnceWith(botId, SHARED_BROWSER_SESSION, url, expect.any(AbortSignal))
+      const submitted: unknown = expect.stringContaining('sign-in submission')
       await expect(tool.execute({ action: 'request_saved_login' }, { agent, signal } as never))
-        .resolves.toEqual({ message: expect.stringContaining('sign-in submission') })
+        .resolves.toEqual({ message: submitted })
       expect(login).toHaveBeenCalledExactlyOnceWith(botId, SHARED_BROWSER_SESSION, expect.any(Function), signal, authorized)
       await expect(tool.execute({ action: 'navigate', url }, { agent: { id: SHARED_BROWSER_SESSION }, signal } as never))
         .rejects.toThrow('unavailable')

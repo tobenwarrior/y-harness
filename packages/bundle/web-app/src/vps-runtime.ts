@@ -386,7 +386,7 @@ export class VpsRuntime {
    */
   execArgv(sessionId: string, argv: readonly string[], options: VpsExecOptions = {}): readonly [string, ...string[]] {
     validateSessionId(sessionId)
-    if (!Array.isArray(argv) || argv.length === 0 || argv.some(argument => typeof argument !== 'string' || argument.includes('\u0000'))) {
+    if (!validCommandArguments(argv)) {
       throw new VpsRuntimeError('VPS Bot command must contain a non-empty argv without NUL bytes')
     }
     const workspace = this.workspace(sessionId)
@@ -780,7 +780,8 @@ function inspectContainer(
     throw new VpsRuntimeError('VPS Bot container mounts are invalid')
   }
   const workspaceMounts = value.Mounts.filter(mount => mount.Type === 'volume' && mount.Destination === workspace)
-  if (workspaceMounts.length !== 1 || workspaceMounts[0]?.Name !== volume || workspaceMounts[0]?.RW !== true) {
+  const [workspaceMount] = workspaceMounts
+  if (workspaceMounts.length !== 1 || workspaceMount.Name !== volume || workspaceMount.RW !== true) {
     throw new VpsRuntimeError('VPS Bot container workspace mount is invalid')
   }
   const profileMounts = value.Mounts.filter(mount => mount.Type === 'volume' && mount.Destination === BROWSER_PROFILE)
@@ -802,7 +803,7 @@ function inspectContainer(
     && (projectVolume === undefined || mount.Destination !== SHARED_PROJECT)))) {
     throw new VpsRuntimeError('VPS Bot container has an unexpected host mount')
   }
-  const volumeMode = workspaceMounts[0] === undefined ? [] : mountOptions(workspaceMounts[0])
+  const volumeMode = mountOptions(workspaceMount)
   if (!volumeMode.includes('nodev') || !volumeMode.includes('nosuid')) {
     throw new VpsRuntimeError('VPS Bot workspace volume options are invalid')
   }
@@ -844,6 +845,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function recordArray(value: unknown): value is Record<string, unknown>[] {
   return Array.isArray(value) && value.every(isRecord)
+}
+
+function validCommandArguments(value: unknown): value is readonly [string, ...string[]] {
+  return Array.isArray(value) && value.length > 0
+    && !value.some((argument: unknown) => typeof argument !== 'string' || argument.includes('\u0000'))
 }
 
 function stringArray(value: unknown, expected: string): boolean {
@@ -901,13 +907,13 @@ async function runPodmanProcess(argv: readonly string[]): Promise<VpsCommandResu
       clearTimeout(timer)
       reject(new VpsRuntimeError('VPS Bot Podman output exceeded its limit'))
     }
-    child.stdout?.setEncoding('utf8')
-    child.stderr?.setEncoding('utf8')
-    child.stdout?.on('data', (chunk: string) => {
+    child.stdout.setEncoding('utf8')
+    child.stderr.setEncoding('utf8')
+    child.stdout.on('data', (chunk: string) => {
       stdout += chunk
       if (Buffer.byteLength(stdout, 'utf8') > PODMAN_OUTPUT_LIMIT) rejectOutput()
     })
-    child.stderr?.on('data', (chunk: string) => {
+    child.stderr.on('data', (chunk: string) => {
       stderr += chunk
       if (Buffer.byteLength(stderr, 'utf8') > PODMAN_OUTPUT_LIMIT) rejectOutput()
     })

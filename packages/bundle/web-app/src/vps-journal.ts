@@ -65,15 +65,6 @@ function boundedString(value: unknown): value is string {
   return typeof value === 'string' && Buffer.byteLength(value, 'utf8') <= MAX_JSON_STRING_BYTES
 }
 
-function freezeJson(value: VpsJournalValue): VpsJournalValue {
-  if (Array.isArray(value)) {
-    for (const child of value) freezeJson(child)
-  } else if (isRecord(value)) {
-    for (const child of Object.values(value)) freezeJson(child as VpsJournalValue)
-  }
-  return Object.freeze(value)
-}
-
 function boundedJson(value: unknown, depth: number): VpsJournalValue | undefined {
   if (value === null || typeof value === 'boolean') return value
   if (typeof value === 'number') return Number.isFinite(value) ? value : undefined
@@ -87,7 +78,7 @@ function boundedJson(value: unknown, depth: number): VpsJournalValue | undefined
       if (bounded === undefined) return undefined
       result.push(bounded)
     }
-    return result
+    return Object.freeze(result)
   }
   if (!isRecord(value)) return undefined
   const keys = Object.keys(value)
@@ -99,7 +90,7 @@ function boundedJson(value: unknown, depth: number): VpsJournalValue | undefined
     if (bounded === undefined) return undefined
     result[key] = bounded
   }
-  return result
+  return Object.freeze(result)
 }
 
 function boundedEntries(value: unknown, maxEntries: number): readonly VpsJournalEntry[] | undefined {
@@ -109,7 +100,7 @@ function boundedEntries(value: unknown, maxEntries: number): readonly VpsJournal
     if (!isRecord(item)) return undefined
     const bounded = boundedJson(item, 0)
     if (bounded === undefined || !isRecord(bounded)) return undefined
-    entries.push(freezeJson(bounded) as VpsJournalEntry)
+    entries.push(bounded)
   }
   return Object.freeze(entries)
 }

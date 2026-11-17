@@ -21,7 +21,7 @@ const errorByStatus: Readonly<Partial<Record<number, FailureKey>>> = {
 async function uploadFile(sessionId: string, directory: string, file: File, signal: AbortSignal): Promise<FailureKey | undefined> {
   const params = new URLSearchParams({ sessionId, directory, name: file.name, bytes: String(file.size) })
   try {
-    const response = await fetch('api/computer/files/upload?' + params, {
+    const response = await fetch(`api/computer/files/upload?${params.toString()}`, {
       method: 'POST', credentials: 'same-origin', signal,
       headers: { 'content-type': 'application/octet-stream' },
       body: file,
@@ -58,6 +58,7 @@ export function useComputerFilePicker(sessionId: string, lifetime: AbortSignal, 
   const active = useRef<AbortController | undefined>(undefined)
   const [uploading, setUploading] = useState<string>()
   const [failures, setFailures] = useState<readonly UploadFailure[]>([])
+  const tabIsClosed = () => lifetime.aborted
   useEffect(() => () => {
     active.current?.abort()
     active.current = undefined
@@ -67,12 +68,12 @@ export function useComputerFilePicker(sessionId: string, lifetime: AbortSignal, 
     uploading,
     failures,
     pick: (folder) => {
-      if (active.current !== undefined || lifetime.aborted) return
+      if (active.current !== undefined || tabIsClosed()) return
       directory.current = folder.startsWith('./') ? folder.slice(2) : folder
       input.current?.click()
     },
     submit: async (selection) => {
-      if (active.current !== undefined || lifetime.aborted || selection.length === 0) return
+      if (active.current !== undefined || tabIsClosed() || selection.length === 0) return
       const files = Array.from(selection)
       const folder = directory.current
       const controller = new AbortController()
@@ -94,12 +95,12 @@ export function useComputerFilePicker(sessionId: string, lifetime: AbortSignal, 
       } finally {
         if (active.current === controller) {
           active.current = undefined
-          if (!lifetime.aborted) {
+          if (!tabIsClosed()) {
             setUploading(undefined)
             setFailures(errors)
           }
         }
-        if (saved && !lifetime.aborted) refresh()
+        if (saved && !tabIsClosed()) refresh()
       }
     },
     cancel: () => { active.current?.abort() },
