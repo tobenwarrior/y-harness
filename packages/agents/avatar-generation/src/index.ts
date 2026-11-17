@@ -3,6 +3,7 @@
 import { Context } from '@yharness/cordis'
 import { brandString } from '@yharness/brand'
 import type { CredentialRef } from '@yharness/credentials/types'
+import type {} from '@yharness/credentials'
 import type {} from '@yharness/settings'
 import z from '@yharness/schemastery'
 import { Remote, RemoteError, TypertRemoteService } from '@yharness/typert-protocol'
