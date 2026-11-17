@@ -115,7 +115,7 @@ const envelopeSchema = z.object({
  * @returns An Ed25519 key pair whose private key stays in Host storage.
  */
 export async function createBotTemplateSigningKeys(): Promise<BotTemplateSigningKeys> {
-  const crypto = templateCrypto()
+  const crypto = templateCrypto(webcrypto)
   const keys = await crypto.generateKey('Ed25519', true, ['sign', 'verify']) as webcrypto.CryptoKeyPair
   return {
     privateKey: keys.privateKey,
@@ -128,7 +128,7 @@ export async function createBotTemplateSigningKeys(): Promise<BotTemplateSigning
  * @returns Base64url PKCS#8 key bytes.
  */
 export async function serializeBotTemplatePrivateKey(privateKey: webcrypto.CryptoKey): Promise<string> {
-  return encodeBotTemplateBytes(new Uint8Array(await templateCrypto().exportKey('pkcs8', privateKey)))
+  return encodeBotTemplateBytes(new Uint8Array(await templateCrypto(webcrypto).exportKey('pkcs8', privateKey)))
 }
 
 /** Restore the signing identity from the private bytes saved by the Host.
@@ -136,7 +136,7 @@ export async function serializeBotTemplatePrivateKey(privateKey: webcrypto.Crypt
  * @returns The restored Ed25519 key pair.
  */
 export async function restoreBotTemplateSigningKeys(value: string): Promise<BotTemplateSigningKeys> {
-  const crypto = templateCrypto()
+  const crypto = templateCrypto(webcrypto)
   const encoded = base64Url.max(1024).parse(value)
   const privateKey = await crypto.importKey('pkcs8', decodeBotTemplateBytes(encoded, 'private key'), 'Ed25519', true, ['sign'])
   const publicJwk = await crypto.exportKey('jwk', privateKey)
@@ -161,7 +161,7 @@ export async function encodeBotTemplateCode(
   }) as BotTemplateArtifactPayload
   const unsigned = { version: BOT_TEMPLATE_FORMAT_VERSION, publicKey: keys.publicKey, payload: valid }
   const canonical = canonicalJson(unsigned)
-  const signature = await templateCrypto().sign('Ed25519', keys.privateKey, Buffer.from(canonical))
+  const signature = await templateCrypto(webcrypto).sign('Ed25519', keys.privateKey, Buffer.from(canonical))
   const envelope = { ...unsigned, signature: encodeBotTemplateBytes(new Uint8Array(signature)) }
   const encoded = `${BOT_TEMPLATE_CODE_PREFIX}${encodeBotTemplateBytes(Buffer.from(canonicalJson(envelope)))}`
   if (encoded.length > BOT_TEMPLATE_CODE_MAX_LENGTH) throw new Error('Bot template code is too large')
@@ -192,7 +192,7 @@ export async function decodeBotTemplateCode(code: string | BotTemplateShareCodeT
   }
   const unsigned = { version: envelope.version, publicKey: envelope.publicKey, payload: envelope.payload }
   const canonical = canonicalJson(unsigned)
-  const crypto = templateCrypto()
+  const crypto = templateCrypto(webcrypto)
   let publicKeyBytes: Buffer<ArrayBuffer>
   let valid: boolean
   try {
@@ -211,10 +211,10 @@ export async function decodeBotTemplateCode(code: string | BotTemplateShareCodeT
   }
 }
 
-function templateCrypto(): webcrypto.SubtleCrypto {
-  const { subtle }: { readonly subtle?: webcrypto.SubtleCrypto } = webcrypto
-  if (subtle === undefined) throw new Error('Bot templates require Web Crypto in a secure context')
-  return subtle
+function templateCrypto(crypto: { readonly subtle?: webcrypto.SubtleCrypto }): webcrypto.SubtleCrypto {
+  // The preview worker also has a Crypto object when its origin is insecure.
+  if (crypto.subtle === undefined) throw new Error('Bot templates require Web Crypto in a secure context')
+  return crypto.subtle
 }
 
 function canonicalJson(value: object): string {

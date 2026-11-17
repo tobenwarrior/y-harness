@@ -378,7 +378,7 @@ async function bootPreview(origin: string, browser: Browser): Promise<void> {
       })
       const collaboratorAvailability = await remote('bots/listShareMembers', {
         request: { botId: source.bot.id },
-      }).then(() => 'available', (error: Error) => error.message)
+      }).then(() => 'available', (error: unknown) => error instanceof Error ? error.message : String(error))
       interface Template { shareCode: string; issuerFingerprint: string; name: string }
       const published = await remote<{ template: Template }>('bots/publishTemplate', {
         request: { botId: source.bot.id, name: 'Preview research template' },
