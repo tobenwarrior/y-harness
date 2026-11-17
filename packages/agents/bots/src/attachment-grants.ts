@@ -11,6 +11,7 @@ import { z } from 'zod'
 import { BotGroupId, BotGroupMessageId } from './group-chat.ts'
 import { BotPrincipalId } from './sharing.ts'
 import { BotId } from './types.ts'
+import { imageAttachmentRefWithId } from './image-attachment-ref.ts'
 
 /** Stable opaque identity for one admitted Bot-message attachment grant. */
 export type BotAttachmentGrantId = Branded<'BotAttachmentGrantId'>
@@ -149,26 +150,7 @@ const fileAttachmentSchema = z.object({
   name: value.name,
   bytes: value.bytes,
 }))
-const imageAttachmentSchema = z.object({
-  attachmentId: attachmentIdSchema,
-  mediaType: z.enum(['image/png', 'image/jpeg', 'image/webp', 'image/gif']),
-  bytes: z.number().int().nonnegative(),
-  width: z.number().int().positive(),
-  height: z.number().int().positive(),
-  name: z.string().min(1).max(255).optional(),
-  originalDimensions: z.object({
-    width: z.number().int().positive(),
-    height: z.number().int().positive(),
-  }).strict().optional(),
-}).strict().transform((value): ImageAttachmentRef => ({
-  attachmentId: value.attachmentId,
-  mediaType: value.mediaType,
-  bytes: value.bytes,
-  width: value.width,
-  height: value.height,
-  ...(value.name === undefined ? {} : { name: value.name }),
-  ...(value.originalDimensions === undefined ? {} : { originalDimensions: value.originalDimensions }),
-}))
+const imageAttachmentSchema = imageAttachmentRefWithId(attachmentIdSchema)
 const inputAttachmentSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('image'), attachment: imageAttachmentSchema }).strict(),
   z.object({ type: z.literal('file'), attachment: fileAttachmentSchema }).strict(),
