@@ -78,6 +78,17 @@ import type { BotEventRoutine, BotListRequest, BotListValue, BotRecord, BotView 
 import { sessionFormatCatalog } from '@yharness/session-format-catalog'
 import z from 'zod'
 
+const asymmetricMatchers: {
+  readonly any: (expected: unknown) => unknown
+  readonly anything: () => unknown
+  readonly arrayContaining: (expected: unknown[]) => unknown
+  readonly objectContaining: (expected: object) => unknown
+  readonly stringContaining: (expected: string) => unknown
+  readonly stringMatching: (expected: string | RegExp) => unknown
+} = expect
+const storedGroupMessages = z.array(z.looseObject({ status: z.string() }))
+const routineIdentifier = z.object({ id: z.string() })
+
 declare module '@yharness/llm' {
   interface MessageSourceMap {
     'runtime-context': { kind: 'runtime-context' } & ContextFormed
@@ -193,7 +204,10 @@ function expectCurrentSessionReload(session: Session): void {
     isSeeded: session.header.isSeeded,
     delegationDepth: session.header.delegationDepth ?? 0,
   }, Number(session.inheritedEventCount))
-  const currentRows = session.snapshotEvents().map(event => sessionFormatCatalog.encodeCurrentEvent(JSON.parse(JSON.stringify(event))))
+  const currentRows = session.snapshotEvents().map((event) => {
+    const serialized = JSON.parse(JSON.stringify(event)) as Parameters<typeof sessionFormatCatalog.encodeCurrentEvent>[0]
+    return sessionFormatCatalog.encodeCurrentEvent(serialized)
+  })
   const reopened = sessionFormatCatalog.createRestore(currentHeader, { recovery: 'strict', validation: 'current' })
   for (const row of currentRows) reopened.decodeRow(row)
   expect(() => reopened.finish()).not.toThrow()
@@ -577,7 +591,7 @@ async function createHarness({
   if (options.connection !== undefined) ctx.provide('connection', options.connection as never)
   if (scheduleEnabled) await ctx.plugin(ScheduleService)
   if (scheduleEnabled) await Promise.all(agents.map(agent => agent.ctx.inject(
-    ['schedule', 'tools'], (scheduleScope: Context) => registerScheduleTools(scheduleScope),
+    ['schedule', 'tools'], (scheduleScope: Context) => { registerScheduleTools(scheduleScope) },
   )))
   const service = new BotService(ctx, config)
   try {
@@ -1224,7 +1238,7 @@ describe('durable Bot roster', () => {
       if (fence === undefined) throw new Error('event routine roster fence capability was not mounted')
       await started.promise
 
-      const releaseTimer = setTimeout(() => release.resolve(true), 2_500)
+      const releaseTimer = setTimeout(() => { release.resolve(true) }, 2_500)
       const canceled = await harness(pool, undefined, undefined, [String(created.bot.sessionId)], new Map(), records)
       const canceledFollowup = canceled.followups[0]
       if (canceledFollowup === undefined) throw new Error('event routine canceled recovery follow-up was not created')
@@ -1300,7 +1314,7 @@ describe('durable Bot roster', () => {
       await trigger.triggerEventRoutines.call(h.service, owner.id, {
         message: event.data, eventSeq: Number(event.seq), eventTime: event.time, source: 'user',
       })
-      const releaseTimer = setTimeout(() => release.resolve(undefined), 2_000)
+      const releaseTimer = setTimeout(() => { release.resolve(undefined) }, 2_000)
       try {
         await vi.waitFor(() => { expect(followup).toHaveBeenCalledOnce() }, { timeout: 7_000 })
       } finally {
@@ -1380,7 +1394,7 @@ describe('durable Bot roster', () => {
       if (fence === undefined) throw new Error('mid-commit fence capability was not mounted')
       await started.promise
       releaseCommit.resolve(undefined)
-      const releaseTimer = setTimeout(() => release.resolve(undefined), 2_000)
+      const releaseTimer = setTimeout(() => { release.resolve(undefined) }, 2_000)
       try {
         await vi.waitFor(() => { expect(followup).toHaveBeenCalledOnce() }, { timeout: 7_000 })
       } finally {
@@ -1457,7 +1471,7 @@ describe('durable Bot roster', () => {
       try {
         await vi.waitFor(() => { expect(followup).toHaveBeenCalledOnce() }, { timeout: 13_000 })
         expect(h.records.get(credentialKey('agent-bots', 'profile-revisions-v4'))).not.toMatchObject({
-          payload: { pending: expect.anything() },
+          payload: { pending: asymmetricMatchers.anything() },
         })
       } finally {
         clearTimeout(releaseTimer)
@@ -1788,7 +1802,7 @@ describe('durable Bot roster', () => {
       if (storedFence?.kind !== 'grant') throw new Error('shared roster fence was not persisted')
       const fenceToken = z.object({
         sharedRosterFence: z.object({ token: z.string() }),
-      }).passthrough().parse(storedFence.payload).sharedRosterFence.token
+      }).loose().parse(storedFence.payload).sharedRosterFence.token
       type SharedRosterRecoveryService = {
         recoverSharedRosterFence: (request: {
           readonly token: string
@@ -1812,7 +1826,7 @@ describe('durable Bot roster', () => {
         .resolves.toEqual({ status: 'busy' })
       expect(z.object({
         sharedRosterFence: z.object({ token: z.string() }),
-      }).passthrough().parse(storedFence.payload).sharedRosterFence.token).toBe(fenceToken)
+      }).loose().parse(storedFence.payload).sharedRosterFence.token).toBe(fenceToken)
       await expect(recovery.recoverSharedRosterFence({ token: fenceToken, confirmQuiescent: true, acceptRaceRisk: true })).resolves.toEqual({ status: 'released' })
       await expect(host.withBotRoster(bots, undefined, async () => 'recovered')).resolves.toEqual({
         valid: true,
@@ -1853,7 +1867,7 @@ describe('durable Bot roster', () => {
       if (storedFence?.kind !== 'grant') throw new Error('shared roster fence was not persisted')
       const fenceToken = z.object({
         sharedRosterFence: z.object({ token: z.string() }),
-      }).passthrough().parse(storedFence.payload).sharedRosterFence.token
+      }).loose().parse(storedFence.payload).sharedRosterFence.token
       await expect(h.service.recoverSharedRosterFence({ token: fenceToken, confirmQuiescent: true, acceptRaceRisk: true }))
         .resolves.toEqual({ status: 'released' })
       await expect(host.withBotRoster([], undefined, async () => 'authority-reconciled')).resolves.toEqual({
@@ -1949,7 +1963,7 @@ describe('durable Bot roster', () => {
       expect(diagnostic.status).toBe('held')
       if (diagnostic.token === undefined) throw new Error('live shared roster fence token is missing')
       await expect(Reflect.apply(
-        second.service.recoverSharedRosterFence,
+        second.service.recoverSharedRosterFence.bind(second.service),
         second.service,
         [{ token: diagnostic.token, confirmQuiescent: true }],
       ))
@@ -6286,7 +6300,7 @@ describe('durable Bot roster', () => {
     h.ctx.emit('session/event', betaAgent.session, failure)
 
     await expect(h.service.inspectGroup({ groupId: group.group.id })).resolves.toMatchObject({
-      deliveries: expect.arrayContaining([
+      deliveries: asymmetricMatchers.arrayContaining([
         expect.objectContaining({
           messageId: 'bot-group-message-credential-failure', botId: beta.bot.id,
           status: 'failed', error: 'This Bot could not reply because its provider credentials are missing. Connect the provider, then retry.',
@@ -6298,10 +6312,10 @@ describe('durable Bot roster', () => {
     const reopened = await harness(pool, undefined, undefined, [String(alpha.bot.sessionId), String(beta.bot.sessionId)])
     try {
       await expect(reopened.service.inspectGroup({ groupId: group.group.id })).resolves.toMatchObject({
-        deliveries: expect.arrayContaining([
+        deliveries: asymmetricMatchers.arrayContaining([
           expect.objectContaining({
             messageId: 'bot-group-message-credential-failure', botId: beta.bot.id,
-            status: 'failed', error: expect.stringContaining('provider credentials are missing'),
+            status: 'failed', error: asymmetricMatchers.stringContaining('provider credentials are missing'),
           }),
         ]),
       })
@@ -6339,10 +6353,10 @@ describe('durable Bot roster', () => {
       await reopened.ctx.serial('agent/created', { agent: resumedBeta, source: 'resume' })
 
       await expect(reopened.service.inspectGroup({ groupId: group.group.id })).resolves.toMatchObject({
-        deliveries: expect.arrayContaining([
+        deliveries: asymmetricMatchers.arrayContaining([
           expect.objectContaining({
             messageId: 'bot-group-message-restart-failure', botId: beta.bot.id,
-            status: 'failed', error: expect.stringContaining('provider credentials are missing'),
+            status: 'failed', error: asymmetricMatchers.stringContaining('provider credentials are missing'),
           }),
         ]),
       })
@@ -6376,7 +6390,7 @@ describe('durable Bot roster', () => {
       await reopened.ctx.serial('agent/created', { agent: resumedBeta, source: 'resume' })
 
       await expect(reopened.service.inspectGroup({ groupId: group.group.id })).resolves.toMatchObject({
-        deliveries: expect.arrayContaining([
+        deliveries: asymmetricMatchers.arrayContaining([
           expect.objectContaining({
             messageId: 'bot-group-message-raw-blocked', botId: beta.bot.id,
             status: 'failed', error: 'This Bot could not reply because the request was blocked. Try again.',
@@ -6522,12 +6536,12 @@ describe('durable Bot roster', () => {
     )
     try {
       await expect(reopened.service.inspectGroup({ groupId: group.group.id })).resolves.toMatchObject({
-        deliveries: expect.arrayContaining([
+        deliveries: asymmetricMatchers.arrayContaining([
           expect.objectContaining({
             messageId: 'bot-group-message-persisted-time-context',
             botId: beta.bot.id,
             status: 'failed',
-            error: expect.stringContaining('provider credentials are missing'),
+            error: asymmetricMatchers.stringContaining('provider credentials are missing'),
           }),
         ]),
       })
@@ -6580,12 +6594,12 @@ describe('durable Bot roster', () => {
     try {
       expect(cold.agents).toHaveLength(0)
       await expect(cold.service.inspectGroup({ groupId: group.group.id })).resolves.toMatchObject({
-        deliveries: expect.arrayContaining([
+        deliveries: asymmetricMatchers.arrayContaining([
           expect.objectContaining({
             messageId: 'bot-group-message-cold-inspection',
             botId: beta.bot.id,
             status: 'failed',
-            error: expect.stringContaining('provider credentials are missing'),
+            error: asymmetricMatchers.stringContaining('provider credentials are missing'),
           }),
         ]),
       })
@@ -6638,7 +6652,7 @@ describe('durable Bot roster', () => {
     )
     try {
       await expect(reopened.service.inspectGroup({ groupId: group.group.id })).resolves.toMatchObject({
-        deliveries: expect.arrayContaining([
+        deliveries: asymmetricMatchers.arrayContaining([
           expect.objectContaining({
             messageId: 'bot-group-message-persisted-agent-relay',
             botId: beta.bot.id,
@@ -6881,8 +6895,8 @@ describe('durable Bot roster', () => {
       expect(transcript).toHaveLength(3)
       expect(transcript[0]).toMatchObject({ sender: { kind: 'user' }, text: 'Answer separately.' })
       expect(transcript.slice(1)).toEqual(expect.arrayContaining([
-        expect.objectContaining({ sender: expect.objectContaining({ kind: 'bot', botId: alpha.bot.id }) }),
-        expect.objectContaining({ sender: expect.objectContaining({ kind: 'bot', botId: beta.bot.id }) }),
+        asymmetricMatchers.objectContaining({ sender: asymmetricMatchers.objectContaining({ kind: 'bot', botId: alpha.bot.id }) }),
+        asymmetricMatchers.objectContaining({ sender: asymmetricMatchers.objectContaining({ kind: 'bot', botId: beta.bot.id }) }),
       ]))
     } finally {
       await close(h.ctx)
@@ -7206,7 +7220,7 @@ describe('durable Bot roster', () => {
                 kind: 'grant',
                 payload: {
                   version: 1,
-                  messages: stored.payload.messages.map(message => ({
+                  messages: storedGroupMessages.parse(stored.payload.messages).map(message => ({
                     ...(message.status === 'pending'
                       ? (() => {
                         const { admissionToken: _admissionToken, admissionStartedAt: _admissionStartedAt, ...withoutAdmission } = message
@@ -7332,7 +7346,7 @@ describe('durable Bot roster', () => {
       await rejected
       release.resolve(undefined)
       for (let index = 0; index < 6; index += 1) await Promise.resolve()
-      await vi.runAllTicks()
+      vi.runAllTicks()
       await vi.runOnlyPendingTimersAsync()
       await vi.advanceTimersByTimeAsync(1)
       expect(records.get(credentialKey('agent-bots', 'shared-group-message-deliveries'))).toMatchObject({
@@ -7411,7 +7425,7 @@ describe('durable Bot roster', () => {
         kind: 'grant',
         payload: {
           version: 1,
-          messages: current.payload.messages.map(message => ({
+          messages: storedGroupMessages.parse(current.payload.messages).map(message => ({
             ...message,
             ...(message.status === 'pending' ? { claimLeaseUntil: 0 } : {}),
           })),
@@ -8247,9 +8261,11 @@ describe('durable Bot roster', () => {
         source: { kind: 'bot-group-message', groupId, messageId },
       }), { surfaceOp: 'append' })
       await vi.advanceTimersByTimeAsync(1_000)
-      await vi.waitFor(() => expect(records.get(credentialKey('agent-bots', 'shared-group-message-deliveries'))).toMatchObject({
-        payload: { messages: [{ status: 'accepted' }] },
-      }), { timeout: 2_000, interval: 10 })
+      await vi.waitFor(() => {
+        expect(records.get(credentialKey('agent-bots', 'shared-group-message-deliveries'))).toMatchObject({
+          payload: { messages: [{ status: 'accepted' }] },
+        })
+      }, { timeout: 2_000, interval: 10 })
       expect(h.followups[0]).not.toHaveBeenCalled()
     } finally {
       processKill.mockRestore()
@@ -8533,7 +8549,7 @@ describe('durable Bot roster', () => {
         kind: 'grant',
         payload: {
           version: 1,
-          messages: current.payload.messages.map(message => ({
+          messages: storedGroupMessages.parse(current.payload.messages).map(message => ({
             ...message,
             ...(message.status === 'pending' ? { claimLeaseUntil: 0 } : {}),
           })),
@@ -10594,7 +10610,7 @@ describe('durable Bot roster', () => {
         kind: 'grant',
         payload: {
           version: 4,
-          revisions: { [id]: expect.any(Number) },
+          revisions: { [id]: asymmetricMatchers.any(Number) },
         },
       })
     } finally {
@@ -11497,7 +11513,7 @@ describe('durable Bot roster', () => {
         botId: created.bot.id,
         persona: 'New instruction.',
         capabilities: ['chat', 'research'],
-      })).resolves.toMatchObject({ bot: { updatedAt: expect.any(Number) } })
+      })).resolves.toMatchObject({ bot: { updatedAt: asymmetricMatchers.any(Number) } })
 
       await expect(h.service.updateProfile({
         botId: created.bot.id,
@@ -12153,7 +12169,7 @@ describe('durable Bot roster', () => {
       }
       const createdRoutine = await create.execute({ title: 'Status check', prompt: 'Check status', every_seconds: 300 }, context)
       expect(createdRoutine.success).toBe(true)
-      const routineId = JSON.parse(createdRoutine.contentItems[0]!.text).id as string
+      const { id: routineId } = routineIdentifier.parse(JSON.parse(createdRoutine.contentItems[0]!.text))
       const paused = await pause.execute({ id: routineId }, { ...context, callId: 'pause-routine' })
       expect(paused).toMatchObject({ success: true })
       expect(await h.ctx.schedule.catalog()).toEqual([expect.objectContaining({ id: routineId, status: 'paused' })])
@@ -12979,7 +12995,7 @@ describe('durable Bot roster', () => {
       if (followup === undefined) throw new Error('recovery candidate follow-up was not created')
       expect(followup).toHaveBeenCalledOnce()
       expect(followup.mock.calls[0]?.[0].content).toEqual([
-        { type: 'text', text: expect.stringContaining('[BOT EVENT ROUTINE]\nOlder routine prompt.') },
+        { type: 'text', text: asymmetricMatchers.stringContaining('[BOT EVENT ROUTINE]\nOlder routine prompt.') },
       ])
     } finally {
       if (reopened !== undefined) await close(reopened.ctx)
@@ -13169,7 +13185,8 @@ describe('durable Bot roster', () => {
       h.ctx.emit('session/event', owner.session, owner.session.snapshotEvents().at(-1)!)
       await vi.waitFor(() => { expect(followup).toHaveBeenCalledOnce() })
       await vi.waitFor(async () => {
-        const current = await history.execute({ id: JSON.parse(result.contentItems[0]!.text).id, limit: 1 }, {
+        const { id } = routineIdentifier.parse(JSON.parse(result.contentItems[0]!.text))
+        const current = await history.execute({ id, limit: 1 }, {
           ...context, callId: 'status-retry-history',
         })
         expect(JSON.parse(current.contentItems[0]!.text)).toMatchObject({ deliveries: [{ status: 'delivered' }] })
@@ -14206,7 +14223,7 @@ describe('durable Bot roster', () => {
       if (agent === undefined) throw new Error('boundary-id test Agent was not created')
 
       await expect(h.service.listConnectedApps({ botId: created.bot.id })).resolves.toMatchObject({
-        apps: expect.arrayContaining(ids.map(id => expect.objectContaining({ id, allowed: false }))),
+        apps: asymmetricMatchers.arrayContaining(ids.map(id => asymmetricMatchers.objectContaining({ id, allowed: false }))),
       })
       for (const [index, id] of ids.entries()) {
         await expect(h.service.setConnectedAppAccess({ botId: created.bot.id, appId: id, allowed: true })).resolves.toMatchObject({
@@ -14223,7 +14240,7 @@ describe('durable Bot roster', () => {
       const reopened = await harness(pool, undefined, undefined, [String(created.bot.sessionId)])
       try {
         await expect(reopened.service.listConnectedApps({ botId: created.bot.id })).resolves.toMatchObject({
-          apps: expect.arrayContaining(ids.map(id => expect.objectContaining({ id, allowed: true }))),
+          apps: asymmetricMatchers.arrayContaining(ids.map(id => asymmetricMatchers.objectContaining({ id, allowed: true }))),
         })
       } finally {
         await close(reopened.ctx)
@@ -15265,7 +15282,7 @@ describe('durable Bot roster', () => {
       await reopened.ctx.serial('agent/created', { agent: resumedBeta, source: 'resume' })
 
       await expect(reopened.service.inspectGroup({ groupId: group.group.id })).resolves.toMatchObject({
-        deliveries: expect.arrayContaining([
+        deliveries: asymmetricMatchers.arrayContaining([
           expect.objectContaining({
             messageId: 'bot-group-message-pending-restart', botId: beta.bot.id,
             status: 'failed', error: 'This Bot could not reply because the request was blocked. Try again.',
@@ -15298,7 +15315,7 @@ describe('durable Bot roster', () => {
       h.ctx.emit('session/event', betaAgent.session, failure)
 
       await expect(h.service.inspectGroup({ groupId: group.group.id })).resolves.toMatchObject({
-        deliveries: expect.arrayContaining([
+        deliveries: asymmetricMatchers.arrayContaining([
           expect.objectContaining({ messageId: 'bot-group-message-blocked-pre-step', botId: beta.bot.id, status: 'failed' }),
         ]),
       })
@@ -15336,7 +15353,7 @@ describe('durable Bot roster', () => {
       h.ctx.emit('session/event', betaAgent.session, failure)
 
       await expect(h.service.inspectGroup({ groupId: group.group.id })).resolves.toMatchObject({
-        deliveries: expect.arrayContaining([
+        deliveries: asymmetricMatchers.arrayContaining([
           expect.objectContaining({ messageId: 'bot-group-message-rewritten-pre-step', botId: beta.bot.id, status: 'accepted' }),
         ]),
       })
@@ -15408,7 +15425,7 @@ describe('durable Bot roster', () => {
           { sender: { kind: 'user' }, text: 'Beta should finish this after removal.' },
           { sender: { kind: 'bot', botId: beta.bot.id }, text: 'Beta completed the queued work.' },
         ],
-        deliveries: expect.arrayContaining([
+        deliveries: asymmetricMatchers.arrayContaining([
           expect.objectContaining({ messageId: 'bot-group-message-removed-delivery', botId: beta.bot.id, status: 'responded' }),
         ]),
       })
@@ -15447,7 +15464,7 @@ describe('durable Bot roster', () => {
       h.ctx.emit('session/event', betaAgent.session, failure)
 
       await expect(h.service.inspectGroup({ groupId: group.group.id })).resolves.toMatchObject({
-        deliveries: expect.arrayContaining([
+        deliveries: asymmetricMatchers.arrayContaining([
           expect.objectContaining({
             messageId: 'bot-group-message-removed-failure', botId: beta.bot.id, status: 'failed',
             error: 'This Bot could not reply because its provider credentials are missing. Connect the provider, then retry.',
@@ -15518,14 +15535,14 @@ describe('durable Bot roster', () => {
       const created = await h.service.create({ name: 'Revocation source', cwd: '/private/revocation-source' })
       const published = await h.service.publishTemplate({ botId: created.bot.id, name: 'Revocable template' })
       await expect(h.service.revokeTemplate({ templateId: published.template.id })).resolves.toMatchObject({
-        template: { id: published.template.id, revokedAt: expect.any(Number) },
+        template: { id: published.template.id, revokedAt: asymmetricMatchers.any(Number) },
       })
       await expect(h.service.previewTemplate({ shareCode: published.template.shareCode })).rejects.toMatchObject({ code: 'bot-template/revoked' })
       await expect(h.service.importTemplate({ shareCode: published.template.shareCode })).rejects.toMatchObject({ code: 'bot-template/revoked' })
       await expect(h.service.previewTemplate({ shareCode: 'malformed-code' as never })).rejects.toMatchObject({ code: 'bot-template/invalid' })
       await expect(h.service.importTemplate({ shareCode: 'malformed-code' as never })).rejects.toMatchObject({ code: 'bot-template/invalid' })
       await expect(h.service.listTemplates({})).resolves.toMatchObject({
-        templates: [expect.objectContaining({ id: published.template.id, revokedAt: expect.any(Number) })],
+        templates: [asymmetricMatchers.objectContaining({ id: published.template.id, revokedAt: asymmetricMatchers.any(Number) })],
       })
     } finally {
       await close(h.ctx)
@@ -15591,16 +15608,16 @@ describe('durable Bot roster', () => {
         name: 'Portable partner', persona: 'Prefer concise evidence-backed answers.',
         capabilities: ['chat', 'collaboration'], agentPreset: 'portable-preset', avatar: { data: 'AQID' },
         fingerprint: published.template.fingerprint,
-        issuerFingerprint: expect.stringMatching(/^[0-9a-f]{64}$/u),
+        issuerFingerprint: asymmetricMatchers.stringMatching(/^[0-9a-f]{64}$/u),
       })
       await approveTemplate(target.service, published.template.shareCode)
-      const first = await target.service.importTemplate({ shareCode: published.template.shareCode, importId: 'retry-1' } as never)
-      const second = await target.service.importTemplate({ shareCode: published.template.shareCode, importId: 'retry-1' } as never)
+      const first = await target.service.importTemplate({ shareCode: published.template.shareCode, importId: 'retry-1' })
+      const second = await target.service.importTemplate({ shareCode: published.template.shareCode, importId: 'retry-1' })
       expect(second.bot.id).toBe(first.bot.id)
       expect(second.bot.sessionId).toBe(first.bot.sessionId)
       await expect(target.service.importTemplate({
         shareCode: published.template.shareCode, importId: 'retry-1', name: 'Different retry metadata',
-      } as never)).rejects.toMatchObject({ code: 'bot-template/import-conflict' })
+      })).rejects.toMatchObject({ code: 'bot-template/import-conflict' })
       expect(first.bot).toMatchObject({
         name: 'Portable partner', persona: 'Prefer concise evidence-backed answers.',
         capabilities: ['chat', 'collaboration'], avatar: { mediaType: 'image/png' },
@@ -15631,7 +15648,7 @@ describe('durable Bot roster', () => {
       await expect(importedAfterRevocation.service.importTemplate({
         shareCode: published.template.shareCode,
         importId: 'after-revocation',
-      } as never)).resolves.toMatchObject({ bot: { name: 'Portable partner' } })
+      })).resolves.toMatchObject({ bot: { name: 'Portable partner' } })
     } finally {
       await close(importedAfterRevocation.ctx)
     }
@@ -15652,7 +15669,7 @@ describe('durable Bot roster', () => {
       provideResolvedTemplatePreset(target.ctx)
       await approveTemplate(target.service, published.template.shareCode)
       target.readImage.mockRejectedValueOnce(new Error('avatar admission blocked'))
-      await expect(target.service.importTemplate({ shareCode: published.template.shareCode } as never))
+      await expect(target.service.importTemplate({ shareCode: published.template.shareCode }))
         .rejects.toMatchObject({ code: 'bot-template/avatar-invalid' })
       await expect(target.service.list({})).resolves.toMatchObject({ bots: [] })
       expect(target.create).not.toHaveBeenCalled()
@@ -15662,7 +15679,7 @@ describe('durable Bot roster', () => {
       }
       target.saveImage.mockResolvedValue(targetAvatar)
       target.readImage.mockResolvedValue({ ref: targetAvatar, data: Uint8Array.of(1, 2, 3) })
-      const imported = await target.service.importTemplate({ shareCode: published.template.shareCode } as never)
+      const imported = await target.service.importTemplate({ shareCode: published.template.shareCode })
       expect(target.saveImage).toHaveBeenCalledTimes(2)
       expect(target.readImage).toHaveBeenCalledTimes(2)
       expect(imported.bot).toMatchObject({ name: 'Avatar source', avatar: { mediaType: 'image/png' } })
@@ -15719,22 +15736,22 @@ describe('durable Bot roster', () => {
       currentSchemas = changedSchemas
       await expect(target.service.importTemplate({
         shareCode: published.template.shareCode, importId: 'permission-mutation-retry',
-      } as never)).rejects.toMatchObject({ code: 'bot-template/approval-mismatch' })
+      })).rejects.toMatchObject({ code: 'bot-template/approval-mismatch' })
       expect(target.create).not.toHaveBeenCalled()
 
       currentSchemas = initialSchemas
       const first = await target.service.importTemplate({
         shareCode: published.template.shareCode, importId: 'permission-mutation-retry',
-      } as never)
+      })
       currentSchemas = changedSchemas
       await expect(target.service.importTemplate({
         shareCode: published.template.shareCode, importId: 'permission-mutation-retry',
-      } as never)).rejects.toMatchObject({ code: 'bot-template/approval-mismatch' })
+      })).rejects.toMatchObject({ code: 'bot-template/approval-mismatch' })
 
       currentSchemas = initialSchemas
       await expect(target.service.importTemplate({
         shareCode: published.template.shareCode, importId: 'permission-mutation-retry',
-      } as never)).resolves.toMatchObject({ bot: { id: first.bot.id } })
+      })).resolves.toMatchObject({ bot: { id: first.bot.id } })
       expect(target.create).toHaveBeenCalledOnce()
       expect(schemas).toHaveBeenCalled()
     } finally {
@@ -15773,7 +15790,7 @@ describe('durable Bot roster', () => {
       currentSchemas = initialSchemas
       await expect(target.service.importTemplate({
         shareCode: published.template.shareCode, importId: 'preview-race-import',
-      } as never)).rejects.toMatchObject({ code: 'bot-template/untrusted' })
+      })).rejects.toMatchObject({ code: 'bot-template/untrusted' })
 
       await expect(approveTemplate(target.service, published.template.shareCode)).resolves.toMatchObject({
         template: { fingerprint: published.template.fingerprint, approved: true },
@@ -15819,7 +15836,7 @@ describe('durable Bot roster', () => {
 
       await expect(target.service.importTemplate({
         shareCode: published.template.shareCode, importId: 'permission-retry',
-      } as never)).rejects.toMatchObject({ code: 'bot-template/permissions-unavailable' })
+      })).rejects.toMatchObject({ code: 'bot-template/permissions-unavailable' })
       expect(target.create).not.toHaveBeenCalled()
       await expect(target.service.list({})).resolves.toMatchObject({ bots: [] })
     } finally {
@@ -15870,7 +15887,7 @@ describe('durable Bot roster', () => {
       await expect(target.service.importTemplate({
         shareCode: published.template.shareCode,
         importId: 'untrusted-import',
-      } as never)).rejects.toMatchObject({ code: 'bot-template/untrusted' })
+      })).rejects.toMatchObject({ code: 'bot-template/untrusted' })
 
       const preview = await target.service.previewTemplate({ shareCode: published.template.shareCode })
       expect(preview.approvalToken).toBeDefined()
@@ -15886,7 +15903,7 @@ describe('durable Bot roster', () => {
       await expect(target.service.importTemplate({
         shareCode: published.template.shareCode,
         importId: 'untrusted-import',
-      } as never)).resolves.toMatchObject({ bot: { agentPreset: 'dangerous-preset' } })
+      })).resolves.toMatchObject({ bot: { agentPreset: 'dangerous-preset' } })
     } finally {
       await close(target.ctx)
     }
@@ -15911,10 +15928,10 @@ describe('durable Bot roster', () => {
     try {
       const source = await h.service.create({ name: 'Retry source', cwd: '/tmp' })
       const published = await h.service.publishTemplate({ botId: source.bot.id })
-      const first = await h.service.importTemplate({ shareCode: published.template.shareCode, importId: 'edited-retry' } as never)
+      const first = await h.service.importTemplate({ shareCode: published.template.shareCode, importId: 'edited-retry' })
       await h.service.rename({ botId: first.bot.id, name: 'Edited imported Bot' })
 
-      await expect(h.service.importTemplate({ shareCode: published.template.shareCode, importId: 'edited-retry' } as never)).resolves.toMatchObject({
+      await expect(h.service.importTemplate({ shareCode: published.template.shareCode, importId: 'edited-retry' })).resolves.toMatchObject({
         bot: { id: first.bot.id, sessionId: first.bot.sessionId, name: 'Edited imported Bot' },
       })
     } finally {
@@ -15927,10 +15944,10 @@ describe('durable Bot roster', () => {
     try {
       const source = await h.service.create({ name: 'Revoked retry source', cwd: '/tmp' })
       const published = await h.service.publishTemplate({ botId: source.bot.id })
-      const first = await h.service.importTemplate({ shareCode: published.template.shareCode, importId: 'revoked-retry' } as never)
+      const first = await h.service.importTemplate({ shareCode: published.template.shareCode, importId: 'revoked-retry' })
       await h.service.revokeTemplate({ templateId: published.template.id })
 
-      await expect(h.service.importTemplate({ shareCode: published.template.shareCode, importId: 'revoked-retry' } as never)).resolves.toMatchObject({
+      await expect(h.service.importTemplate({ shareCode: published.template.shareCode, importId: 'revoked-retry' })).resolves.toMatchObject({
         bot: { id: first.bot.id, sessionId: first.bot.sessionId },
       })
     } finally {
@@ -15977,7 +15994,7 @@ describe('durable Bot roster', () => {
       await expect(reopened.service.listTemplates({})).resolves.toMatchObject({
         templates: [{ name: 'Signed name', agentPreset: 'signed-preset' }],
       })
-      await expect(reopened.service.importTemplate({ shareCode: published.template.shareCode } as never)).resolves.toMatchObject({
+      await expect(reopened.service.importTemplate({ shareCode: published.template.shareCode })).resolves.toMatchObject({
         bot: { name: 'Signed name', agentPreset: 'signed-preset' },
       })
     } finally {

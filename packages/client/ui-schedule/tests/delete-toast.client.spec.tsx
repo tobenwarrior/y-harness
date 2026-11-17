@@ -11,7 +11,7 @@ import { en, zh } from '../src/client/task-manager-locales.ts'
 
 afterEach(() => { cleanup(); vi.useRealTimers() })
 
-function mount(state: DeleteToastState | null, dictionary: typeof en | typeof zh = en) {
+function mount(state: DeleteToastState | null, dictionary: typeof en = en) {
   const dismiss = vi.fn()
   const props = {
     useToast: <T,>(select: (value: DeleteToastState | null) => T): T => select(state),

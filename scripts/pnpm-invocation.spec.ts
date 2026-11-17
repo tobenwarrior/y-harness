@@ -18,7 +18,7 @@ describe('pnpm invocation', () => {
   it.each([
     '/tools/pnpm',
     '/tools/with spaces/$pnpm;',
-    `C:\\Program Files\\\u{5DE5}\u{5177}\\$pnpm;\\pnpm.exe`,
+    'C:\\Program Files\\\u{5DE5}\u{5177}\\$pnpm;\\pnpm.exe',
   ])('runs the executable entrypoint %j directly', (entrypoint) => {
     expect(pnpmInvocation(['run', 'build'], { npm_execpath: entrypoint })).toEqual({
       command: entrypoint,

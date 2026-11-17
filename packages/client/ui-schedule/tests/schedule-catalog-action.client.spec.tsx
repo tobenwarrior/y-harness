@@ -107,7 +107,7 @@ function sessionSnapshot(openState: SessionSnapshot['openState']): SessionSnapsh
 function props(
   records: readonly ScheduleRecord[] | undefined,
   openState: SessionSnapshot['openState'] = 'open',
-  dictionary: typeof zh | typeof en = en,
+  dictionary: typeof en = en,
 ): ScheduleCatalogActionProps {
   const snapshot = sessionSnapshot(openState)
   const useSession = <T,>(select: (value: SessionSnapshot) => T): T => select(snapshot)
