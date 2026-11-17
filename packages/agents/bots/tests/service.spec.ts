@@ -88,6 +88,7 @@ const asymmetricMatchers: {
 } = expect
 const storedGroupMessages = z.array(z.looseObject({ status: z.string() }))
 const routineIdentifier = z.object({ id: z.string() })
+const fixtureCwd = resolve('/tmp')
 
 declare module '@yharness/llm' {
   interface MessageSourceMap {
@@ -1703,13 +1704,11 @@ describe('durable Bot roster', () => {
           reject(new Error(`roster-fence worker exited before readiness (${String(code)}, ${String(signal)}): ${stdout}\n${stderr}`))
         })
       })
-      child.kill('SIGKILL')
+      expect(child.kill('SIGKILL')).toBe(true)
       const [exitCode, signal] = await closePromise
-      // Windows terminates through taskkill and reports an exit code instead
-      // of the POSIX signal; both forms prove the child was stopped.
-      if (process.platform === 'win32') {
-        expect(exitCode).not.toBeNull()
-        expect(signal).toBeNull()
+      // Windows may omit the signal after terminating the process.
+      if (process.platform === 'win32' && signal === null) {
+        expect(exitCode).not.toBe(0)
       } else {
         expect(exitCode).toBeNull()
         expect(signal).toBe('SIGKILL')
@@ -5131,7 +5130,7 @@ describe('durable Bot roster', () => {
   it('mounts native collaboration actions only for Bot-owned Sessions', async () => {
     const pool = new MemoryMediaPool()
     const first = await harness(pool)
-    const created = await first.service.create({ name: 'Native bridge owner', cwd: '/tmp' })
+    const created = await first.service.create({ name: 'Native bridge owner', cwd: fixtureCwd })
     await close(first.ctx)
 
     const h = await harness(pool, undefined, undefined, [String(created.bot.sessionId)])
@@ -5153,7 +5152,7 @@ describe('durable Bot roster', () => {
       expect((await create.execute({ name: 'Research', identity: 'heart', accent: 'rose' }, context)).success).toBe(true)
       const bots = (await h.service.list({})).bots
       const research = bots.find(bot => bot.name === 'Research')!
-      expect(research).toMatchObject({ identity: 'heart', accent: 'rose', cwd: '/tmp' })
+      expect(research).toMatchObject({ identity: 'heart', accent: 'rose', cwd: fixtureCwd })
       expect((await create.execute({ name: 'Research', identity: 'heart', accent: 'rose' }, context)).success).toBe(true)
       expect((await h.service.list({})).bots.filter(bot => bot.name === 'Research')).toHaveLength(1)
       const edit = tools.find(tool => tool.name === 'edit_bot_profile')!
@@ -9299,14 +9298,14 @@ describe('durable Bot roster', () => {
     const h = await harness()
     try {
       const created = await h.service.create({
-        name: 'Research partner', identity: 'sparkle', accent: 'blue', cwd: '/tmp',
+        name: 'Research partner', identity: 'sparkle', accent: 'blue', cwd: fixtureCwd,
       })
       expect(created.bot.state).toBe('active')
       expect(created.bot.identity).toBe('sparkle')
       expect(created.bot.accent).toBe('blue')
       expect(created.bot.sessionId).toMatch(/^bot-session-/)
       expect(h.create).toHaveBeenCalledWith(
-        { sessionId: created.bot.sessionId, cwd: '/tmp' },
+        { sessionId: created.bot.sessionId, cwd: fixtureCwd },
         expect.any(AbortSignal),
       )
 
@@ -14349,7 +14348,7 @@ describe('durable Bot roster', () => {
     const h = await harness(new MemoryMediaPool(), create)
     try {
       const id = BotId('bot-retry')
-      const failed = h.service.create({ id, name: 'Retry me', cwd: '/tmp' })
+      const failed = h.service.create({ id, name: 'Retry me', cwd: fixtureCwd })
       await expect(failed).rejects.toMatchObject({
         code: 'bot/provisioning-failed',
       })
@@ -14358,11 +14357,11 @@ describe('durable Bot roster', () => {
       await expect(h.service.list({})).resolves.toMatchObject({
         bots: [{ id, state: 'provisioning', sessionId: firstSessionId }],
       })
-      const retried = await h.service.create({ id, name: 'Retry me', cwd: '/tmp' })
+      const retried = await h.service.create({ id, name: 'Retry me', cwd: fixtureCwd })
       expect(retried.bot.state).toBe('active')
       expect(create).toHaveBeenNthCalledWith(
         2,
-        { sessionId: firstSessionId, cwd: '/tmp' },
+        { sessionId: firstSessionId, cwd: fixtureCwd },
         expect.any(AbortSignal),
       )
     } finally {
