@@ -238,6 +238,7 @@ describe('web e2e: seeded history renders through cold resume', () => {
       extraOverlayPath: [
         ...process.platform === 'win32' ? [] : [fileURLToPath(new URL('./fixtures/sidebar-terminal.patch.yml', import.meta.url))],
         fileURLToPath(new URL('./fixtures/native-open-on.patch.yml', import.meta.url)),
+        fileURLToPath(new URL('./fixtures/permission-presets.patch.yml', import.meta.url)),
       ],
       openInAppEnvironment: createLaunchEnvironmentSnapshot([{ source: 'process', values: { SSH_CONNECTION: '10.0.0.2 55000 10.0.0.9 22' } }]),
     })

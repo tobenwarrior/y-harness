@@ -630,7 +630,7 @@ export async function launchWebScaffold(options: LaunchOptions = {}): Promise<We
         overlayRoot: join(workspaceCwd, '.compound-overlay'),
         autoUpdate: false,
         ...mode !== 'record' && replayFixture !== undefined
-          && ['permission-policy-context', 'ptc-escalation-approved'].includes(basename(dirname(replayFixture)))
+          && ['permission-policy-context', 'ptc-escalation-approved', 'question-composer'].includes(basename(dirname(replayFixture)))
           ? { assetRoot: join(REPO_ROOT, 'apps/web/tests/fixtures/replay-compound-skills') }
           : {},
       },
