@@ -115,7 +115,7 @@ interface BashContribution {
 }
 
 describe('web-app runtime glue', () => {
-  const defaults: Config = { openBrowser: false, printUrl: false, surfaceContext: true, trustedHosts: [] }
+  const defaults = { openBrowser: false, printUrl: false, surfaceContext: true, trustedHosts: [] } satisfies Config
 
   it('keeps existing Bot Computer configurations valid without a browser', () => {
     const botComputers = { root: '/example/computers', image: 'localhost/example', bots: ['bot-existing'] }

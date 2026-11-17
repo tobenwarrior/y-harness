@@ -102,7 +102,7 @@ describe('Codex native backend', () => {
         for await (const _chunk of f.runtime.stream({ provider: 'codex-backend', model: 'gpt-6.1-sol', messages: [] })) { /* settle */ }
         expect(observed).toHaveLength(2)
         expect(observed.every(item => item.procedure !== undefined)).toBe(scope.expected)
-      } finally { f.runtime.close() }
+      } finally { await f.runtime.close() }
     }
   })
   it('invalidates bounded native observation without disrupting the native answer', async () => {
@@ -126,7 +126,7 @@ describe('Codex native backend', () => {
     for await (const chunk of f.runtime.stream({ provider: 'codex-backend', model: 'gpt-6.1-sol', messages: [] })) chunks.push(chunk)
     expect(observed.map(item => item.phase)).toEqual(['started', 'settled', 'invalidated'])
     expect(chunks.at(-1)).toMatchObject({ type: 'finish', reason: { kind: 'stop' } })
-    f.runtime.close()
+    await f.runtime.close()
   })
   it('invalidates changed start and settle metadata and ignores other native threads', async () => {
     const observed: SkillLearningNativeItem[] = []
@@ -147,7 +147,7 @@ describe('Codex native backend', () => {
     })
     for await (const _chunk of f.runtime.stream({ provider: 'codex-backend', model: 'gpt-6.1-sol', messages: [] })) { /* settle */ }
     expect(observed.map(item => item.phase)).toEqual(['started', 'invalidated'])
-    f.runtime.close()
+    await f.runtime.close()
   })
   it('publishes only matching live native tool metadata without commands or result bodies', async () => {
     const observed: SkillLearningNativeItem[] = []
@@ -175,7 +175,7 @@ describe('Codex native backend', () => {
     expect(observed[0]).toMatchObject({ provider: 'codex', connectionId: 'fixture-profile', sessionId: 'thread1', turnId: 'turn1', itemId: 'read', kind: 'read', phase: 'started' })
     expect(observed[1]).toMatchObject({ outcome: 'reported-success', skillReadPath: '/project/.dsh/skills/inspect/SKILL.md' })
     expect(JSON.stringify(observed)).not.toMatch(/api_key|stdout|private contents|old|orphan/)
-    f.runtime.close()
+    await f.runtime.close()
   })
   it('preserves real model IDs, Ultra and native Fast; filters hidden entries', () => {
     expect(parseCodexModels(catalog)).toEqual([{ id: 'gpt-6.1-sol', name: 'Sol', description: 'Native', efforts: [{ id: 'max', description: 'Max' }, { id: 'ultra', description: 'Delegation' }], defaultEffort: 'max', serviceTiers: [{ id: 'priority', name: 'Fast', description: 'More usage' }], inputModalities: ['text', 'image'] }])
@@ -285,7 +285,7 @@ describe('Codex native backend', () => {
     f.emit('turn/completed', { threadId: 'thread1', turnId: 'turn1', turn: { id: 'turn1', status: 'completed' } })
     const chunks = await running
     expect(chunks.at(-1)).toMatchObject({ type: 'finish', reason: { kind: 'stop' } })
-    f.runtime.close()
+    await f.runtime.close()
   })
   it('delivers a native Computer frame from its durable attachment reference', async () => {
     const attachment = { attachmentId: AttachmentId('computer-frame'), mediaType: 'image/jpeg' as const, bytes: 3, width: 1, height: 1 }
@@ -314,7 +314,7 @@ describe('Codex native backend', () => {
     } finally {
       f.emit('turn/completed', { threadId: 'thread1', turnId: 'turn1', turn: { id: 'turn1', status: 'completed' } })
       await turn
-      f.runtime.close()
+      await f.runtime.close()
     }
   })
   it('replays persisted dynamic-tool records after cursor loss without duplicating valid continuation', async () => {
@@ -402,7 +402,7 @@ describe('Codex native backend', () => {
     expect(starts()).toHaveLength(2)
     expect((starts()[1]?.[1] as { developerInstructions: string }).developerInstructions).toContain('Research Lead')
     expect((starts()[1]?.[1] as { developerInstructions: string }).developerInstructions).not.toContain('Chief of Staff')
-    runtime.close()
+    await runtime.close()
   })
   it('rejects missing or unadvertised efforts instead of converting Ultra to Max', async () => {
     const { runtime } = fixture(); await runtime.refresh(); await runtime.configure(true); const call = runtime.stream({ provider: 'codex-backend', model: 'gpt-6.1-sol', reasoningEffort: ReasoningEffortId('invented'), messages: [] }); await expect(call.next()).rejects.toThrow('effort')

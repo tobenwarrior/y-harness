@@ -26,9 +26,8 @@ describe('BotAvatarEditor appearance controls', () => {
   it('uploads a selected image without requiring an image generation provider', async () => {
     const bitmap = { width: 400, height: 300, close: vi.fn() }
     vi.stubGlobal('createImageBitmap', vi.fn().mockResolvedValue(bitmap))
-    const context: CanvasRenderingContext2D = Object.create(null)
-    context.drawImage = vi.fn()
-    const getContext = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(context)
+    const drawImage = vi.fn()
+    const getContext = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({ drawImage } as CanvasRenderingContext2D)
     const toDataURL = vi.spyOn(HTMLCanvasElement.prototype, 'toDataURL').mockReturnValue('data:image/png;base64,AQID')
     const upload = vi.fn().mockResolvedValue(undefined)
     try {
@@ -37,9 +36,9 @@ describe('BotAvatarEditor appearance controls', () => {
       const file = new File(['image'], 'portrait.jpg', { type: 'image/jpeg' })
       fireEvent.change(screen.getByLabelText('Choose an image'), { target: { files: [file] } })
       await screen.findByAltText('Uploaded avatar preview')
-      expect(context.drawImage).toHaveBeenLastCalledWith(bitmap, 50, 0, 300, 300, 0, 0, 512, 512)
+      expect(drawImage).toHaveBeenLastCalledWith(bitmap, 50, 0, 300, 300, 0, 0, 512, 512)
       fireEvent.change(screen.getByRole('slider', { name: 'Horizontal position' }), { target: { value: '0' } })
-      await waitFor(() => { expect(context.drawImage).toHaveBeenLastCalledWith(bitmap, 0, 0, 300, 300, 0, 0, 512, 512) })
+      await waitFor(() => { expect(drawImage).toHaveBeenLastCalledWith(bitmap, 0, 0, 300, 300, 0, 0, 512, 512) })
       fireEvent.click(screen.getByRole('button', { name: 'Use this avatar' }))
       await waitFor(() => { expect(upload).toHaveBeenCalledWith('bot-1', { data: 'AQID', mediaType: 'image/png' }) })
     } finally {
@@ -66,9 +65,8 @@ describe('BotAvatarEditor appearance controls', () => {
     const second = { width: 400, height: 300, close: vi.fn() }
     const decode = vi.fn().mockReturnValueOnce(new Promise((resolve) => { finishFirst = resolve })).mockResolvedValueOnce(second)
     vi.stubGlobal('createImageBitmap', decode)
-    const context: CanvasRenderingContext2D = Object.create(null)
-    context.drawImage = vi.fn()
-    const getContext = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(context)
+    const drawImage = vi.fn()
+    const getContext = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({ drawImage } as CanvasRenderingContext2D)
     const toDataURL = vi.spyOn(HTMLCanvasElement.prototype, 'toDataURL').mockReturnValue('data:image/png;base64,AQID')
     try {
       renderEditor({ upload: vi.fn(), updateAppearance: vi.fn() })
@@ -80,8 +78,8 @@ describe('BotAvatarEditor appearance controls', () => {
       await screen.findByAltText('Uploaded avatar preview')
       finishFirst(first)
       await waitFor(() => { expect(first.close).toHaveBeenCalledOnce() })
-      expect(context.drawImage).toHaveBeenCalledOnce()
-      expect(context.drawImage).toHaveBeenCalledWith(second, 0, 0, 300, 300, 0, 0, 512, 512)
+      expect(drawImage).toHaveBeenCalledOnce()
+      expect(drawImage).toHaveBeenCalledWith(second, 0, 0, 300, 300, 0, 0, 512, 512)
     } finally {
       getContext.mockRestore()
       toDataURL.mockRestore()

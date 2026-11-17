@@ -18,7 +18,7 @@ afterEach(() => {
 
 describe('Bot group attachment admission', () => {
   it('uses the owner or shared image admission callback for supported images', async () => {
-    const admitImage = vi.fn(async () => ({
+    const admitImage = vi.fn<Parameters<typeof admitBotGroupAttachments>[2]>(async () => ({
       grantId: brandString<BotAttachmentGrantId>('bot-attachment-grant-image'),
       attachments: [{ type: 'image' as const, mediaType: 'image/png' as const, bytes: 3, width: 1, height: 1 }],
     }))
@@ -32,10 +32,11 @@ describe('Bot group attachment admission', () => {
       '/api/bots/group/uploadAttachment',
     )).resolves.toEqual(['bot-attachment-grant-image'])
 
-    expect(admitImage).toHaveBeenCalledWith(expect.objectContaining({
+    expect(admitImage).toHaveBeenCalledOnce()
+    expect(admitImage.mock.calls[0]?.[0]).toMatchObject({
       groupId: 'bot-group-one', messageId: 'bot-group-message-one', targetBotIds: ['bot-two'],
-      image: expect.objectContaining({ mediaType: 'image/png', name: 'image.png', data: 'AQID' }),
-    }))
+      image: { mediaType: 'image/png', name: 'image.png', data: 'AQID' },
+    })
     expect(fetcher).not.toHaveBeenCalled()
   })
 
@@ -58,12 +59,13 @@ describe('Bot group attachment admission', () => {
     )).resolves.toEqual(['bot-attachment-grant-file'])
 
     const [url, init] = fetcher.mock.calls[0] ?? []
-    expect(String(url)).toContain('/shared-bots/bots/share/uploadAttachment?')
-    expect(String(url)).toContain('scope=group')
-    expect(String(url)).toContain('groupId=bot-group-one')
-    expect(String(url)).toContain('messageId=bot-group-message-one')
-    expect(String(url)).toContain('targetBotId=bot-two')
-    expect(String(url)).toContain('name=brief.txt')
+    if (!(url instanceof URL)) throw new Error('Expected a structured upload URL')
+    expect(url.pathname).toBe('/shared-bots/bots/share/uploadAttachment')
+    expect(url.searchParams.get('scope')).toBe('group')
+    expect(url.searchParams.get('groupId')).toBe('bot-group-one')
+    expect(url.searchParams.get('messageId')).toBe('bot-group-message-one')
+    expect(url.searchParams.getAll('targetBotId')).toEqual(['bot-two'])
+    expect(url.searchParams.get('name')).toBe('brief.txt')
     expect(init?.method).toBe('POST')
     expect(new Headers(init?.headers).get('content-type')).toBe('application/octet-stream')
     await expect(new Response(init?.body).arrayBuffer()).resolves.toEqual(new Uint8Array([1, 2, 3]).buffer)
