@@ -6,7 +6,7 @@ import { makeTranslate, RemoteError } from '@yharness/client-test-runtime'
 import type { RemoteFailure } from '@yharness/api-remotes/client'
 import { computerFileAddress, fileAddressFor } from '@yharness/util-workspace-path'
 import { failureLine, orderEntries } from '../src/client/FilesBody.tsx'
-import { COMPUTER_SHARED_FILES_KIND } from '../src/client/definition.tsx'
+import { COMPUTER_FILES_KIND, COMPUTER_SHARED_FILES_KIND } from '../src/client/definition.tsx'
 import type { DirLevel } from '../src/client/store.ts'
 import { zh } from '../src/client/locales.ts'
 import { mountBody, ROOT, SESSION, TAB } from './mount.client.tsx'
@@ -92,6 +92,31 @@ describe('FilesBody', () => {
       const url = typeof target === 'string' ? target : target instanceof URL ? target.href : target.url
       expect(url).toContain('directory=%2Fworkspace')
       expect(url).toContain('name=shared.txt')
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('uploads a private Computer folder file, renders the server failure, and ignores an empty picker', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 400 }))
+    vi.stubGlobal('fetch', fetchMock)
+    try {
+      const { view, script } = mountBody(null, undefined, COMPUTER_FILES_KIND)
+      await act(() => script.waitForList(0))
+      await act(() => script.settle({ ok: true, value: { entries: [{ name: 'docs', type: 'directory' }], truncated: false } }))
+      expect(view.getByText(zh.computerWorkspace)).toBeTruthy()
+      fireEvent.click(view.getByRole('button', { name: zh['upload.folder'].replace('{name}', 'docs') }))
+      const input = view.container.querySelector<HTMLInputElement>('[data-computer-file-picker]')
+      if (input === null) throw new Error('expected the Computer file picker')
+      fireEvent.change(input, { target: { files: [new File(['contents'], 'private.txt')] } })
+      await waitFor(() => { expect(fetchMock).toHaveBeenCalledTimes(1) })
+      const target = fetchMock.mock.calls[0]?.[0]
+      if (target === undefined) throw new Error('expected the upload request')
+      const url = typeof target === 'string' ? target : target instanceof URL ? target.href : target.url
+      expect(url).toContain('directory=docs')
+      expect(view.getByRole('alert').textContent).toContain('private.txt')
+      fireEvent.change(input, { target: { files: null } })
+      expect(fetchMock).toHaveBeenCalledTimes(1)
     } finally {
       vi.unstubAllGlobals()
     }

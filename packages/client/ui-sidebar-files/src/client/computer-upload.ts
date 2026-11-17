@@ -18,7 +18,9 @@ const errorByStatus: Readonly<Partial<Record<number, FailureKey>>> = {
   507: 'upload.error.space',
 }
 
-async function uploadFile(sessionId: string, directory: string, file: File, signal: AbortSignal): Promise<FailureKey | undefined> {
+async function uploadFile(
+  sessionId: string, directory: string, file: File, signal: AbortSignal,
+): Promise<FailureKey | 'cancelled' | undefined> {
   const params = new URLSearchParams({ sessionId, directory, name: file.name, bytes: String(file.size) })
   try {
     const response = await fetch(`api/computer/files/upload?${params.toString()}`, {
@@ -27,10 +29,8 @@ async function uploadFile(sessionId: string, directory: string, file: File, sign
       body: file,
     })
     return response.status === 201 ? undefined : errorByStatus[response.status] ?? 'upload.error.unavailable'
-  } catch (error) {
-    signal.throwIfAborted()
-    void error
-    return 'upload.error.unavailable'
+  } catch (_error) {
+    return signal.aborted ? 'cancelled' : 'upload.error.unavailable'
   }
 }
 
@@ -84,14 +84,13 @@ export function useComputerFilePicker(sessionId: string, lifetime: AbortSignal, 
       setFailures([])
       try {
         for (const file of files) {
-          signal.throwIfAborted()
+          if (signal.aborted) break
           setUploading(file.name)
           const failure = await uploadFile(sessionId, folder, file, signal)
+          if (failure === 'cancelled') break
           if (failure === undefined) saved = true
           else errors.push({ name: file.name, key: failure })
         }
-      } catch (error) {
-        if (!signal.aborted) throw error
       } finally {
         if (active.current === controller) {
           active.current = undefined
