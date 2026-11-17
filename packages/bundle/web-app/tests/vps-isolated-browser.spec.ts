@@ -1,5 +1,6 @@
 import { createServer, type Server } from 'node:net'
 import { once } from 'node:events'
+import { randomUUID } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -20,6 +21,12 @@ const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xd9])
 const roots: string[] = []
 const servers: Server[] = []
 
+function fixtureSocketPath(root: string, prefix: string): string {
+  return process.platform === 'win32'
+    ? `\\\\?\\pipe\\yharness-${prefix}-${randomUUID()}`
+    : join(root, 'broker.sock')
+}
+
 afterEach(async () => {
   await Promise.all(servers.splice(0).map(server => new Promise<void>((resolve) => {
     if (!server.listening) {
@@ -34,7 +41,7 @@ afterEach(async () => {
 async function listen(handler: (request: Record<string, unknown>) => unknown): Promise<string> {
   const root = mkdtempSync(join(tmpdir(), 'dsh-isolated-browser-'))
   roots.push(root)
-  const path = join(root, 'broker.sock')
+  const path = fixtureSocketPath(root, 'isolated-browser')
   const server = createServer((socket) => {
     const chunks: Buffer[] = []
     socket.on('data', chunk => chunks.push(chunk))
@@ -52,7 +59,7 @@ async function listen(handler: (request: Record<string, unknown>) => unknown): P
 async function listenRaw(response: string | Buffer, onRequest?: (request: Record<string, unknown>) => void): Promise<string> {
   const root = mkdtempSync(join(tmpdir(), 'dsh-isolated-browser-'))
   roots.push(root)
-  const path = join(root, 'broker.sock')
+  const path = fixtureSocketPath(root, 'isolated-browser-raw')
   const server = createServer((socket) => {
     const chunks: Buffer[] = []
     socket.on('data', chunk => chunks.push(chunk))
@@ -310,7 +317,7 @@ describe('isolated browser broker client', () => {
   it('aborts a broker request and closes the socket', async () => {
     const root = mkdtempSync(join(tmpdir(), 'dsh-isolated-browser-abort-'))
     roots.push(root)
-    const path = join(root, 'broker.sock')
+    const path = fixtureSocketPath(root, 'isolated-browser-abort')
     const server = createServer((socket) => {
       socket.on('end', () => { /* Keep the response open until the client aborts. */ })
     })
@@ -330,7 +337,7 @@ describe('isolated browser broker client', () => {
     try {
       const root = mkdtempSync(join(tmpdir(), 'dsh-isolated-browser-timeout-'))
       roots.push(root)
-      const path = join(root, 'broker.sock')
+      const path = fixtureSocketPath(root, 'isolated-browser-timeout')
       const server = createServer(() => {})
       servers.push(server)
       server.listen(path)

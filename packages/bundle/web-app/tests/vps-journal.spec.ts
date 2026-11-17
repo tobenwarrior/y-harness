@@ -21,7 +21,9 @@ afterEach(async () => {
 async function socketPath(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), 'yh-vps-journal-'))
   temporaryRoots.push(root)
-  return join(root, 'j')
+  return process.platform === 'win32'
+    ? `\\\\?\\pipe\\yharness-journal-${randomUUID()}`
+    : join(root, 'j')
 }
 
 async function listen(server: Server, path: string): Promise<void> {

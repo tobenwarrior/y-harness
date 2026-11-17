@@ -1,5 +1,6 @@
 import { createConnection, createServer, type Server } from 'node:net'
 import { once } from 'node:events'
+import { randomUUID } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -17,6 +18,12 @@ const INSTALLED_CONTROL = '/run/yharness-browser/control.sock'
 const roots: string[] = []
 const servers: Server[] = []
 
+function fixtureSocketPath(root: string, prefix: string): string {
+  return process.platform === 'win32'
+    ? `\\\\?\\pipe\\yharness-${prefix}-${randomUUID()}`
+    : join(root, 'broker.sock')
+}
+
 afterEach(async () => {
   await Promise.all(servers.splice(0).map(server => new Promise<void>((resolve) => {
     if (!server.listening) {
@@ -31,7 +38,7 @@ afterEach(async () => {
 async function listen(handler: (request: Record<string, unknown>) => unknown): Promise<string> {
   const root = mkdtempSync(join(tmpdir(), 'dsh-browser-login-'))
   roots.push(root)
-  const path = join(root, 'broker.sock')
+  const path = fixtureSocketPath(root, 'browser-login')
   const server = createServer((socket) => {
     const chunks: Buffer[] = []
     socket.on('data', chunk => chunks.push(chunk))
