@@ -4,7 +4,7 @@ import { chmod, copyFile, mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/pr
 import { realpathSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, relative, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
 import { runtimeArchivePath } from '../../desktop-host/src/office-engine.ts'
@@ -156,10 +156,12 @@ describe('packaged Codex runtime', () => {
     const unpackedRuntime = join(`${archive}.unpacked`, 'dsh')
     const unpackedWrapper = join(unpackedRuntime, 'node_modules', '@yharness', 'llm-pi-ai', 'node_modules', '@openai', 'codex', 'bin', 'codex.js')
     const unpackedNative = join(unpackedRuntime, 'node_modules', '@yharness', 'llm-pi-ai', 'node_modules', '@openai', target!.packageName.slice('@openai/'.length), 'vendor', target!.triple, 'bin', target!.executable)
+    const wrapperEntry = relative(archiveInput, prepared.wrapper)
+    const nativeEntry = relative(archiveInput, prepared.nativeExecutable)
     const archiveEntries = asarTools().listPackage(archive)
-    expect(archiveEntries).toContain('/dsh/node_modules/@yharness/llm-pi-ai/node_modules/@openai/codex/bin/codex.js')
-    expect(asarTools().statFile(archive, 'dsh/node_modules/@yharness/llm-pi-ai/node_modules/@openai/codex/bin/codex.js').unpacked).toBe(true)
-    expect(asarTools().statFile(archive, `dsh/node_modules/@yharness/llm-pi-ai/node_modules/@openai/${target!.packageName.slice('@openai/'.length)}/vendor/${target!.triple}/bin/${target!.executable}`).unpacked).toBe(true)
+    expect(archiveEntries).toContain(sep + wrapperEntry)
+    expect(asarTools().statFile(archive, wrapperEntry).unpacked).toBe(true)
+    expect(asarTools().statFile(archive, nativeEntry).unpacked).toBe(true)
     await expect(stat(unpackedWrapper)).resolves.toBeDefined()
     await expect(stat(unpackedNative)).resolves.toBeDefined()
     expect(prepared.wrapper).not.toBe(unpackedWrapper)

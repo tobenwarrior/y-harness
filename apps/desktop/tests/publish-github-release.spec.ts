@@ -83,8 +83,7 @@ describe('GitHub Desktop release publisher', () => {
     expect(calls[0]).toEqual(['gh', 'release', 'view', `v${version}`, '--repo', 'tobenwarrior/y-harness'])
     expect(calls[1]?.slice(0, 8)).toEqual(['gh', 'release', 'create', `v${version}`, '--repo', 'tobenwarrior/y-harness', '--verify-tag', '--title'])
     expect(calls[1]).toContain('--prerelease')
-    expect(calls[1]?.some(value => value.endsWith('/latest.yml'))).toBe(true)
-    expect(calls[1]?.some(value => value.endsWith('/latest-mac.yml'))).toBe(true)
+    expect(calls[1]?.slice(-plan.assets.length)).toEqual(plan.assets.map(asset => asset.path))
   })
 
   it('refuses to mutate an existing release', async () => {
