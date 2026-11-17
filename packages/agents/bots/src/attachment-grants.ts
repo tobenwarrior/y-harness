@@ -638,7 +638,7 @@ function normalizePrivateScope(
 function sameMessageScope(left: BotAttachmentScope, right: BotAttachmentScope): boolean {
   if (left.kind !== right.kind) return false
   if (left.kind === 'local-group' && right.kind === 'local-group') {
-    return String(left.ownerId) === String(right.ownerId)
+    return left.ownerId === right.ownerId
       && left.groupId === right.groupId
       && left.messageId === right.messageId
       && isDeepStrictEqual(left.targetBotIds, right.targetBotIds)

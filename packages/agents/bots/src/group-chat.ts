@@ -639,7 +639,7 @@ function normalizeOptionalMessageId(value: BotGroupMessageId | undefined): BotGr
 function normalizeText(value: string, label: string, max: number): string {
   if (typeof value !== 'string') throw new BotGroupError('invalid', `${label} must be a string`)
   const text = value.trim()
-  if (text.length === 0 || [...text].length > max) {
+  if (text.length === 0 || Array.from(text).length > max) {
     throw new BotGroupError('invalid', `${label} must contain 1-${String(max)} characters`)
   }
   return text
@@ -896,7 +896,7 @@ export class BotGroupService {
    * @returns The stored attachment reference.
    */
   async resolveAttachment(groupId: BotGroupId, messageId: BotGroupMessageId, attachmentId: string): Promise<BotInputAttachment> {
-    return this.serialize(async () => {
+    return this.serialize(() => {
       const group = this.domain.table('groups').get(groupId)
       const message = this.domain.table('messages').get(messageId)
       if (group === undefined || message === undefined || message.groupId !== group.id) {
@@ -1190,15 +1190,13 @@ export class BotGroupService {
           }
           const flight = this.inFlightDeliveries.get(id)
           const owner = flight === undefined
-          const generation = flight !== undefined
-            ? this.deliveryGenerations.get(id) ?? this.claimDeliveryGeneration(id)
-            : current === undefined || current.status === 'failed' || (current.status === 'pending' && owner)
-              ? this.claimDeliveryGeneration(id)
-              : this.deliveryGenerations.get(id) ?? this.claimDeliveryGeneration(id)
+          const generation = owner
+            ? this.claimDeliveryGeneration(id)
+            : this.deliveryGenerations.get(id) ?? this.claimDeliveryGeneration(id)
           const reservation: BotGroupDeliveryRecord = {
             id, groupId, messageId, botId, status: 'pending', updatedAt: Date.now(),
           }
-          if (current === undefined || current.status === 'failed' || (current.status === 'pending' && owner)) {
+          if (current === undefined || current.status === 'failed' || owner) {
             await deliveries.put(id, reservation)
             changed = true
           }
@@ -1271,12 +1269,12 @@ export class BotGroupService {
           })
           continue
         }
-        if (current?.status === 'accepted' || current?.status === 'responded') {
+        if (current.status === 'accepted' || current.status === 'responded') {
           prepared.outcomes.set(String(attempt.delivery.botId), { botId: attempt.delivery.botId, status: 'duplicate' })
           admitted ||= current.status === 'responded'
           continue
         }
-        if (current?.status === 'failed') {
+        if (current.status === 'failed') {
           prepared.outcomes.set(String(attempt.delivery.botId), {
             botId: attempt.delivery.botId, status: 'failed', error: current.error ?? 'Bot delivery failed',
           })
@@ -1302,15 +1300,7 @@ export class BotGroupService {
           })
           continue
         }
-        const prior = current ?? {
-          id: attempt.delivery.id,
-          groupId: attempt.delivery.groupId,
-          messageId: attempt.delivery.messageId,
-          botId: attempt.delivery.botId,
-          status: 'pending' as const,
-          updatedAt: Date.now(),
-        }
-        await deliveries.put(attempt.delivery.id, { ...prior, status: 'accepted', updatedAt: Date.now() })
+        await deliveries.put(attempt.delivery.id, { ...current, status: 'accepted', updatedAt: Date.now() })
         prepared.outcomes.set(String(attempt.delivery.botId), { botId: attempt.delivery.botId, status: result })
         admitted ||= result === 'accepted'
         changed = true
@@ -1432,7 +1422,7 @@ export class BotGroupService {
       let changed = false
       if (competingInput) {
         for (const [id, delivery] of deliveries.entries()) {
-          if (delivery.botId !== botId || delivery.claim?.turn !== turn || delivery.claim.isolated === false) continue
+          if (delivery.botId !== botId || delivery.claim?.turn !== turn || !delivery.claim.isolated) continue
           await deliveries.put(id, { ...delivery, claim: { ...delivery.claim, isolated: false }, updatedAt: now })
           changed = true
         }
@@ -1554,7 +1544,6 @@ export class BotGroupService {
       if (source.groupId !== delivery.groupId) return
       const messageId = responseMessageId(group.id, botId, sourceMessageId)
       const now = Math.max(Date.now(), source.createdAt + 1)
-      let changed = false
       const currentResponse = messages.get(messageId)
       if (currentResponse === undefined) {
         await messages.put(messageId, {
@@ -1565,7 +1554,6 @@ export class BotGroupService {
           text: messageText,
           createdAt: now,
         })
-        changed = true
       } else if (currentResponse.groupId !== group.id
         || currentResponse.sender.kind !== 'bot'
         || currentResponse.sender.botId !== botId
@@ -1573,7 +1561,6 @@ export class BotGroupService {
         await messages.put(messageId, {
           ...currentResponse, groupId: group.id, sender: { kind: 'bot', botId }, text: messageText,
         })
-        changed = true
       }
       const previousResponseId = delivery.responseMessageId
       if (previousResponseId !== undefined && previousResponseId !== messageId) {
@@ -1582,14 +1569,12 @@ export class BotGroupService {
           && previousResponse.sender.kind === 'bot'
           && previousResponse.sender.botId === botId) {
           await messages.delete(previousResponseId)
-          changed = true
         }
       }
       await deliveries.put(delivery.id, {
         ...delivery, status: 'responded', responseMessageId: messageId, updatedAt: now,
       })
-      changed = true
-      if (changed) this.host.changed?.()
+      this.host.changed?.()
     })
   }
 
@@ -1699,7 +1684,7 @@ export class BotGroupService {
     }
   }
 
-  private serialize<T>(work: () => Promise<T>): Promise<T> {
+  private serialize<T>(work: () => T | Promise<T>): Promise<T> {
     const pending = this.chain.then(work)
     this.chain = pending.catch(() => undefined)
     return pending
