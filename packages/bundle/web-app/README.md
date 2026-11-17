@@ -107,7 +107,7 @@ The private Computer reports workspace file access when Workspace Files is insta
 
 The shared workspace mounts one owner project volume at `/workspace` in each participating private Computer. The authenticated owner can change idle Computers’ access from the Computer panel. The saved choice overrides `botComputers.sharedWorkspace` defaults and replaces only the affected container, preserving its volumes. The file browser, transfer routes, and `vps_project_files` resolve the participant by its owner Session and current grant. The project file tool serializes create-only and version-checked writes across Computers. Terminal commands access the same files through the mount. File previews and downloads check for changes while reading, and Computer file operations reject project symlinks. See [Share project files between Bots](../../../docs/user/guide/vps.md#share-project-files-between-bots).
 
-The native macOS Desktop Host registers `mac_computer` on operator presets. It relays actions over its private Electron IPC channel with the invoking Session ID. The Electron main process authorizes the currently shared Bot before capturing the primary display or delivering input.
+The native macOS Desktop Host registers `mac_computer` on operator presets. It relays actions over its private Electron IPC channel with the invoking Session ID. The Electron main process authorizes the currently shared Bot before capturing the primary display or delivering input. The Host stops awaiting replies when a request is cancelled, times out, or the bridge closes.
 
 ### Per-session agent setup
 

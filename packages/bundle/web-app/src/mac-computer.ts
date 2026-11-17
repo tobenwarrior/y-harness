@@ -13,6 +13,14 @@ interface PendingRequest {
 
 const REQUEST_TIMEOUT_MS = 6_000
 
+/** Message transport used by the Desktop Host to reach the Electron process. */
+export interface MacComputerTransport {
+  readonly connected: boolean
+  readonly send?: (message: object, callback: (error: Error | null) => void) => void
+  on(event: 'message', listener: (message: unknown) => void): void
+  off(event: 'message', listener: (message: unknown) => void): void
+}
+
 function asError(value: unknown): Error {
   return value instanceof Error ? value : new Error(String(value))
 }
@@ -22,9 +30,11 @@ export class MacComputerBridge {
   private nextId = 0
   private readonly pending = new Map<number, PendingRequest>()
   private disposed = false
+  private readonly transport: MacComputerTransport
 
-  constructor() {
-    process.on('message', this.receive)
+  constructor(transport: MacComputerTransport = process) {
+    this.transport = transport
+    this.transport.on('message', this.receive)
   }
 
   private receive = (message: unknown): void => {
@@ -45,38 +55,39 @@ export class MacComputerBridge {
    */
   request(sessionId: string, action: object, signal: AbortSignal): Promise<unknown> {
     signal.throwIfAborted()
-    if (this.disposed || !process.connected || process.send === undefined) throw new Error('Mac Computer is unavailable.')
-    const send = process.send.bind(process)
+    if (this.disposed || !this.transport.connected || this.transport.send === undefined) throw new Error('Mac Computer is unavailable.')
+    const send = this.transport.send.bind(this.transport)
     return new Promise((resolve, reject) => {
       const id = ++this.nextId
-      const settle = (): boolean => {
-        if (!this.pending.delete(id)) return false
+      const settle = (): void => {
+        this.pending.delete(id)
         signal.removeEventListener('abort', abort)
         clearTimeout(timeout)
-        return true
       }
       const abort = (): void => {
-        if (settle()) reject(asError(signal.reason))
+        settle()
+        reject(asError(signal.reason))
       }
       const timeout = setTimeout(() => {
-        if (settle()) reject(new Error('Mac Computer did not respond.'))
+        settle()
+        reject(new Error('Mac Computer did not respond.'))
       }, REQUEST_TIMEOUT_MS)
       timeout.unref()
       this.pending.set(id, {
-        resolve: (value) => { if (settle()) resolve(value) },
-        reject: (error) => { if (settle()) reject(error) },
+        resolve: (value) => { settle(); resolve(value) },
+        reject: (error) => { settle(); reject(error) },
       })
       signal.addEventListener('abort', abort, { once: true })
-      if (signal.aborted) {
-        abort()
-        return
-      }
       try {
         send({ type: 'mac-computer-request', id, request: { sessionId, action } }, (error) => {
-          if (error !== null && settle()) reject(new Error('Mac Computer is unavailable.'))
+          if (error !== null) {
+            settle()
+            reject(new Error('Mac Computer is unavailable.'))
+          }
         })
       } catch (error: unknown) {
-        if (settle()) reject(asError(error))
+        settle()
+        reject(asError(error))
       }
     })
   }
@@ -90,9 +101,9 @@ export class MacComputerBridge {
   async observe(sessionId: string, signal: AbortSignal): Promise<MacFrame> {
     const value = await this.request(sessionId, { kind: 'observe' }, signal)
     if (typeof value !== 'object' || value === null || !('jpeg' in value) || typeof value.jpeg !== 'string'
-      || value.jpeg.length > 8_000_000 || !('width' in value) || !Number.isSafeInteger(value.width)
-      || !('height' in value) || !Number.isSafeInteger(value.height)
-      || typeof value.width !== 'number' || value.width < 1 || typeof value.height !== 'number' || value.height < 1) {
+      || value.jpeg.length > 8_000_000
+      || !('width' in value) || typeof value.width !== 'number' || !Number.isSafeInteger(value.width) || value.width < 1
+      || !('height' in value) || typeof value.height !== 'number' || !Number.isSafeInteger(value.height) || value.height < 1) {
       throw new Error('Mac Computer returned an invalid screenshot.')
     }
     return { jpeg: value.jpeg, width: value.width, height: value.height }
@@ -101,7 +112,7 @@ export class MacComputerBridge {
   /** Remove the native reply listener and reject outstanding requests. */
   dispose(): void {
     this.disposed = true
-    process.off('message', this.receive)
+    this.transport.off('message', this.receive)
     for (const pending of this.pending.values()) pending.reject(new Error('Mac Computer is unavailable.'))
   }
 }
