@@ -1,6 +1,6 @@
 /**
  * withTransientRetries: pre-output reopen, policy bounds, abort and
- * post-output propagation. Framework-free fakes; no timers (sleep injected).
+ * post-output propagation.
  */
 import { describe, expect, it, vi } from 'vitest'
 import {
@@ -105,6 +105,18 @@ describe('withTransientRetries', () => {
     expect(fake.attempts()).toBe(1)
   })
 
+  it('propagates a stream error when the signal is already aborted', async () => {
+    const controller = new AbortController()
+    controller.abort()
+    const fake = opener([failure('SERVER')], [{ type: 'text-delta' }])
+    await expect(collect(withTransientRetries(fake.open, {
+      policy: POLICY,
+      signal: controller.signal,
+      sleep: noSleep,
+    }))).rejects.toThrow('SERVER')
+    expect(fake.attempts()).toBe(1)
+  })
+
   it('always-mode retries non-listed codes until success', async () => {
     const always: RetryPolicyLike = { ...POLICY, mode: 'always' }
     const fake = opener([failure('WEIRD'), failure('WEIRD')], [{ type: 'finish' }])
@@ -147,6 +159,45 @@ describe('withTransientRetries', () => {
     }))).rejects.toThrow()
     expect(fake.attempts()).toBe(1)
   })
+
+  it('uses the default sleep and removes its abort listener after the delay', async () => {
+    const controller = new AbortController()
+    const addListener = vi.spyOn(controller.signal, 'addEventListener')
+    const removeListener = vi.spyOn(controller.signal, 'removeEventListener')
+    const fake = opener([failure('SERVER')], [{ type: 'text-delta' }])
+    const out = await collect(withTransientRetries(fake.open, {
+      policy: { ...POLICY, initialDelayMs: 0, maxDelayMs: 0 },
+      signal: controller.signal,
+    }))
+    expect(out).toEqual([{ type: 'text-delta' }])
+    expect(fake.attempts()).toBe(2)
+    expect(addListener).toHaveBeenCalledWith('abort', expect.any(Function), { once: true })
+    expect(removeListener).toHaveBeenCalledWith('abort', addListener.mock.calls[0]?.[1])
+  })
+
+  it('rejects when abort is observed before default sleep starts', async () => {
+    const controller = new AbortController()
+    const fake = opener([failure('SERVER')], [{ type: 'text-delta' }])
+    await expect(collect(withTransientRetries(fake.open, {
+      policy: { ...POLICY, initialDelayMs: 0, maxDelayMs: 0 },
+      signal: controller.signal,
+      onRetry: () => { controller.abort() },
+    }))).rejects.toThrow('aborted')
+    expect(fake.attempts()).toBe(1)
+  })
+
+  it('stops retrying when abort occurs during default backoff', async () => {
+    const controller = new AbortController()
+    const fake = opener([failure('SERVER')], [{ type: 'text-delta' }])
+    await expect(collect(withTransientRetries(fake.open, {
+      policy: { ...POLICY, initialDelayMs: 50, maxDelayMs: 50 },
+      signal: controller.signal,
+      onRetry: () => {
+        queueMicrotask(() => { controller.abort() })
+      },
+    }))).rejects.toThrow('aborted')
+    expect(fake.attempts()).toBe(1)
+  })
 })
 
 describe('classifyStreamFailure', () => {
@@ -160,6 +211,15 @@ describe('classifyStreamFailure', () => {
     expect(classifyStreamFailure(null).code).toBe('UNKNOWN')
     expect(classifyStreamFailure('nope').code).toBe('UNKNOWN')
     expect(classifyStreamFailure({ get failure() { throw new Error('trap') } }).code).toBe('UNKNOWN')
+  })
+
+  it('returns unknown when own property inspection throws', () => {
+    const hostile = new Proxy({}, {
+      getOwnPropertyDescriptor() {
+        throw new Error('descriptor trap')
+      },
+    })
+    expect(classifyStreamFailure(hostile)).toEqual({ code: 'UNKNOWN', retryAfterMs: undefined })
   })
 })
 

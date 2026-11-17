@@ -909,9 +909,16 @@ describe('LlmRuntime', () => {
     }(SCRIPT)
     ctx.llm.registerAdapter(['route'], tiered({ tiers: [
       { id: ServiceTierId('default'), name: 'Standard' },
-      { id: ServiceTierId('priority'), name: 'Fast' },
+      { id: ServiceTierId('priority'), name: 'Fast', description: 'Lower latency' },
     ], defaultTier: ServiceTierId('priority') }))
 
+    expect((await ctx.llm.resolveModelInfo('route', 'model')).serviceTiers).toEqual({
+      tiers: [
+        { id: 'default', name: 'Standard' },
+        { id: 'priority', name: 'Fast', description: 'Lower latency' },
+      ],
+      defaultTier: 'priority',
+    })
     // The adapter default materializes; an explicit choice wins; anything else refuses.
     expect(await ctx.llm.resolveCallConfig({ provider: 'route', model: 'model' }))
       .toEqual({ provider: 'route', model: 'model', serviceTier: 'priority' })

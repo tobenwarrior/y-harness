@@ -4,29 +4,29 @@
   disabled: true
 
 - id: agent-default-model
-  name: '@deepseek-ai/dsh-agent-default-model'
+  name: '@yharness/agent-default-model'
   config:
     provider: deepseek-official
     model: deepseek-v4-flash
 
 - id: session-persistence-jsonl
-  name: '@deepseek-ai/dsh-session-persistence-jsonl'
+  name: '@yharness/session-persistence-jsonl'
   config:
     root: !!js dshHomePath('sessions')
     compression: none
 
 - id: agent-instructions
-  name: '@deepseek-ai/dsh-agent-instructions'
+  name: '@yharness/agent-instructions'
   config:
     maxBytes: 65536
 
 - id: tools
-  name: '@deepseek-ai/dsh-tools'
+  name: '@yharness/tools'
   config:
     mode: both
 
 - id: system-prompt
-  name: '@deepseek-ai/dsh-system-prompt'
+  name: '@yharness/system-prompt'
   config:
     personaPrefix: |
       You are a coding assistant powered by the {{model}} model. Your working directory is {{cwd}}.
@@ -35,11 +35,11 @@
 
 - insert:
     - id: cordis-host-runner
-      name: '@deepseek-ai/dsh-cordis-host-runner'
+      name: '@yharness/cordis-host-runner'
     - id: cordis-inspect-providers
-      name: '@deepseek-ai/dsh-tool-cordis/host'
+      name: '@yharness/tool-cordis/host'
     - id: tool-cordis
-      name: '@deepseek-ai/dsh-tool-cordis'
+      name: '@yharness/tool-cordis'
     - id: llm-replay
       name: '@yharness/llm-replay'
       config:

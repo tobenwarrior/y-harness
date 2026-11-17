@@ -7,3 +7,4 @@ header:
   class: acp-default
 replay:
   override: true
+permission: danger-full-access

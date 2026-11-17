@@ -115,7 +115,7 @@ describe('MCP resource tools', () => {
     const ids = ['', 'x'.repeat(65)]
     const disposers = ids.map(id => ctx.mcpResources.register(id, provider))
     expect(ctx.mcpResources.servers()).toEqual(ids)
-    disposers.forEach(dispose => dispose())
+    disposers.forEach((dispose) => { dispose() })
   })
 
   it.each([false, true])('shares scoped tools across independent provider owners (reverse disposal: %s)', async (reverse) => {

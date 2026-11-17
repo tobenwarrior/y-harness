@@ -59,7 +59,7 @@ function mount({
 }: {
   shortcuts?: readonly ShortcutCatalogEntry[]
   wide?: boolean
-  dictionary?: typeof en | typeof zh
+  dictionary?: typeof en
   connectionState?: ConnectionSnapshot
   desktopUpdate?: DesktopUpdateView
   onboardingActive?: boolean

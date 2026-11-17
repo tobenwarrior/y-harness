@@ -1,0 +1,3 @@
+- id: skill-compound
+  config:
+    overlayRoot: !!js dshHomePath('compound-skills')

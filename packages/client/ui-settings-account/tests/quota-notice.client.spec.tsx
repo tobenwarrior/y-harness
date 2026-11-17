@@ -52,7 +52,7 @@ function callOrder(fn: { mock: { invocationCallOrder: readonly number[] } }, nth
  * Page changes re-render through the channel's own subscription, standing in
  * for the renderer's framework hook.
  */
-function mount(options: { account?: 'unloaded' | 'signed-out' | 'credential-stored'; pages?: PlatformPages; copy?: typeof en | typeof zh } = {}) {
+function mount(options: { account?: 'unloaded' | 'signed-out' | 'credential-stored'; pages?: PlatformPages; copy?: typeof en } = {}) {
   const copy = options.copy ?? en
   const pages = options.pages
   const initial = options.account ?? 'credential-stored'

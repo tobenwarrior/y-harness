@@ -4,6 +4,11 @@
 - id: plugin-package-inventory-deepseek
   disabled: true
 
+# Retain the relevance catalog recorded alongside the native skill events.
+- id: tool-skill
+  config:
+    catalogMode: relevant
+
 - insert:
     - id: native-item-projection-fixture
       name: '../../../scripts/fixtures/python-sdk-native-item.mjs'

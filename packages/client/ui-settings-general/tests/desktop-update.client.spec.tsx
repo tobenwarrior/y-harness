@@ -12,7 +12,7 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 
 type SettingsTranslate = PropsLocale<'settings'>['t']
 
-function translate(dictionary: typeof zh | typeof en): SettingsTranslate {
+function translate(dictionary: typeof en): SettingsTranslate {
   const messages: Readonly<Record<string, string>> = dictionary
   return (key, params) => Object.entries(params ?? {})
     .reduce((message, [name, value]) => message.replaceAll(`{${name}}`, String(value)),
@@ -35,7 +35,7 @@ function fixture() {
   function Indicator({ wide = true, hidden = false, dictionary = zh }: {
     wide?: boolean
     hidden?: boolean
-    dictionary?: typeof zh | typeof en
+    dictionary?: typeof en
   }) {
     const state = useSyncExternalStore(subscribe, snapshot)
     return <DesktopUpdateIndicator wide={wide} hidden={hidden} t={translate(dictionary)} view={state} onOpen={() => { source.open() }} />

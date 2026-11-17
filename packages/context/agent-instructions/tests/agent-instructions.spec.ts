@@ -2809,11 +2809,12 @@ describe('dynamic nested workspace context injection', () => {
   it('attaches instructions from every file touched by a successful apply_patch result', async () => {
     const root = await tempRepo()
     const home = await tempRepo()
+    const ctx = new Context()
     try {
       await mkdir(join(root, '.git'), { recursive: true })
       await write(join(root, 'pkg/AGENTS.md'), 'nested package rule')
       await write(join(root, 'other/AGENTS.md'), 'other package rule')
-      const ctx = new Context()
+      await write(join(root, 'moved/AGENTS.md'), 'destination package rule')
       await mountFileToolsAndAgentInstructions(ctx, { dshHome: home, maxBytes: 65536 })
       const agent = await stubAgent(root)
 
@@ -2824,8 +2825,11 @@ describe('dynamic nested workspace context injection', () => {
         arguments: {
           input: [
             '*** Begin Patch',
-            '*** Add File: pkg/new.txt',
-            '+one',
+            '*** Update File: pkg/old.txt',
+            '*** Move to: moved/new.txt',
+            '@@',
+            '-old',
+            '+new',
             '*** Add File: other/new.txt',
             '+two',
             '*** End Patch',
@@ -2838,7 +2842,9 @@ describe('dynamic nested workspace context injection', () => {
       const rendered = blocksText(context.content)
       expect(rendered).toContain('nested package rule')
       expect(rendered).toContain('other package rule')
+      expect(rendered).toContain('destination package rule')
     } finally {
+      await ctx.fiber.dispose()
       await rm(root, { recursive: true, force: true })
       await rm(home, { recursive: true, force: true })
     }
@@ -4396,6 +4402,13 @@ describe('dynamic nested workspace context injection', () => {
       ctx.emit('tools/result', stubToolExecution({
         signal: testToolSignal,
         callId: ToolCallId('non-fs'), name: 'composite', arguments: {}, agent,
+      }), plainResult)
+      ctx.emit('tools/result', stubToolExecution({
+        signal: testToolSignal,
+        callId: ToolCallId('invalid-patch'),
+        name: 'apply_patch',
+        arguments: { input: 'Missing patch markers' },
+        agent,
       }), plainResult)
 
       await Promise.resolve()

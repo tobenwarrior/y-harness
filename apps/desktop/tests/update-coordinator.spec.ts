@@ -247,7 +247,7 @@ describe('desktop update coordinator', () => {
     const f = fixture(false, async () => ({
       builtCommit: 'a'.repeat(40), headCommit: 'a'.repeat(40), available: false, shortHead: 'aaaaaaaaaaaa', managed: true,
       managedFailure: 'build',
-    } as CheckoutUpdateState))
+    }))
     expect(await f.coordinator.check(true)).toEqual({
       phase: 'error', managed: true, managedFailure: 'build', failedOperation: 'check',
     })

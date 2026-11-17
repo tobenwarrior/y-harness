@@ -73,7 +73,7 @@ describe('private computer Host', () => {
       const command = f.commands[0]
       expect(command?.command).toBe('scrot')
       expect(command?.args.slice(0, 3)).toEqual(['--pointer', '--quality', '85'])
-      expect(command?.args.at(-1)).toMatch(/dsh-computer-[^/]+\/frame\.jpg$/u)
+      expect(command?.args.at(-1)).toMatch(/dsh-computer-[^/\\]+[/\\]frame\.jpg$/u)
       expect(command?.env.DISPLAY).toBe(':99')
       expect(command?.env.XAUTHORITY).toBe('/run/user/1000/gdm/Xauthority')
       expect(command?.env.DEEPSEEK_API_KEY).toBeUndefined()

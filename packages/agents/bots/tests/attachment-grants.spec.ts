@@ -141,6 +141,28 @@ describe('BotAttachmentGrantStore', () => {
     }
   })
 
+  it('validates the token and duration for reservation and renewal', async () => {
+    const opened = await fixture()
+    try {
+      const store = new BotAttachmentGrantStore(opened.domain)
+      const scope: BotAttachmentScope = {
+        kind: 'shared-private',
+        botId: BotId('bot-alpha'),
+        principalId: BotPrincipalId('principal-one'),
+        messageId: BotPrivateMessageId('bot-private-message-validation'),
+        authorizationRevision: 3,
+      }
+      const invalidToken = { code: 'invalid', message: 'private delivery lease token is invalid' }
+      const invalidDuration = { code: 'invalid', message: 'private delivery lease duration is invalid' }
+      await expect(store.reservePrivateDelivery(scope, '', 100, 20)).rejects.toMatchObject(invalidToken)
+      await expect(store.renewPrivateDelivery(scope, '', 100, 20)).rejects.toMatchObject(invalidToken)
+      await expect(store.reservePrivateDelivery(scope, 'lease-one', 100, 0)).rejects.toMatchObject(invalidDuration)
+      await expect(store.renewPrivateDelivery(scope, 'lease-one', 100, 0)).rejects.toMatchObject(invalidDuration)
+    } finally {
+      await opened.ctx.fiber.dispose()
+    }
+  })
+
   it('keeps shared-private delivery exclusive until a lease expires or settles', async () => {
     const opened = await fixture()
     try {

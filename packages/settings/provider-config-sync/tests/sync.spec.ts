@@ -4,20 +4,18 @@ import { tmpdir } from 'node:os'
 import { afterEach, expect, it, vi } from 'vitest'
 import { ProviderSyncEngine, type LocalNamespace } from '../src/engine.ts'
 
-const reads = vi.hoisted(() => ({ deniedPath: undefined as string | undefined, unsafeModePath: undefined as string | undefined }))
+const reads = vi.hoisted(() => ({ deniedPath: undefined as string | undefined }))
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>()
   return { ...actual, lstat: async (...args: Parameters<typeof actual.lstat>) => {
     if (args[0] === reads.deniedPath) throw Object.assign(new Error('fabricated metadata access denied'), { code: 'EACCES' })
-    const info = await actual.lstat(...args)
-    if (args[0] === reads.unsafeModePath) info.mode = 0o644
-    return info
+    return actual.lstat(...args)
   } }
 })
 
 const homes: string[] = []
 afterEach(async () => {
-  reads.deniedPath = undefined; reads.unsafeModePath = undefined
+  reads.deniedPath = undefined
   await Promise.all(homes.splice(0).map(home => rm(home, { recursive: true, force: true })))
 })
 
@@ -279,16 +277,12 @@ it('propagates metadata access failures without treating them as missing receipt
   expect(await readFile(receiptPath, 'utf8')).toBe(receiptBefore)
 })
 
-it('refuses unsafe POSIX permission metadata on any test host without writing either document', async () => {
+it.skipIf(process.platform === 'win32')('refuses an unsafe POSIX receipt without writing either document', async () => {
   const { home, sharedPath, client } = await fixture(); const a = client('a', { example: {} }); await a.engine.synchronize()
   const receiptPath = join(home, 'a.json')
   const sharedBefore = await readFile(sharedPath, 'utf8'); const receiptBefore = await readFile(receiptPath, 'utf8')
-  const original = Object.getOwnPropertyDescriptor(process, 'platform') as PropertyDescriptor
-  reads.unsafeModePath = receiptPath
-  try {
-    Object.defineProperty(process, 'platform', { ...original, value: 'linux' })
-    await expect(a.engine.synchronize()).rejects.toThrow('owner-only regular file')
-  } finally { Object.defineProperty(process, 'platform', original) }
+  await chmod(receiptPath, 0o644)
+  await expect(a.engine.synchronize()).rejects.toThrow('owner-only regular file')
   expect(a.writes).toBe(0)
   expect(await readFile(sharedPath, 'utf8')).toBe(sharedBefore)
   expect(await readFile(receiptPath, 'utf8')).toBe(receiptBefore)

@@ -57,8 +57,8 @@ function botView(id: BotId, sessionId: SessionId, name: string): BotView {
 
 function waitFor<T>(promise: Promise<T>, milliseconds: number): Promise<T> {
   const timeout = new Promise<never>((_resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`Timed out after ${String(milliseconds)}ms`)), milliseconds)
-    void promise.then(() => clearTimeout(timer), () => clearTimeout(timer))
+    const timer = setTimeout(() => { reject(new Error(`Timed out after ${String(milliseconds)}ms`)) }, milliseconds)
+    void promise.then(() => { clearTimeout(timer) }, () => { clearTimeout(timer) })
   })
   return Promise.race([promise, timeout])
 }
