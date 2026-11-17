@@ -5,7 +5,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { COMPUTER_HEIGHT, COMPUTER_WIDTH, type ComputerAction } from '../src/computer.ts'
-import { validateIsolatedBrowserUrl, VpsIsolatedBrowser } from '../src/vps-isolated-browser.ts'
+import {
+  isSharedBrowserSession,
+  runAuthorizedBrowserOperation,
+  validateIsolatedBrowserUrl,
+  type VpsBrowserHandoff,
+  VpsIsolatedBrowser,
+} from '../src/vps-isolated-browser.ts'
 
 const BOT = 'bot-isolated'
 const SESSION = 'bot-session-0e9beecd-b6f5-40b1-8d52-f97259bdcf76'
@@ -74,6 +80,11 @@ describe('isolated browser broker client', () => {
     await expect(browser.restartAvailable(BOT, SESSION, signal)).resolves.toBe(true)
     await expect(browser.restart(BOT, SESSION, signal)).resolves.toBe('restarted')
     await expect(browser.restart(BOT, 'shared-session-0e9beecd-b6f5-40b1-8d52-f97259bdcf76', signal)).rejects.toThrow()
+    await expect(browser.restartAvailable(BOT, 'shared-session-0e9beecd-b6f5-40b1-8d52-f97259bdcf76', signal)).resolves.toBe(false)
+    const invalidRestartPath = await listen(() => ({ status: 'invalid' }))
+    const invalidRestartBrowser = new VpsIsolatedBrowser({ socketPath: invalidRestartPath, bots: [BOT] })
+    await expect(invalidRestartBrowser.restartAvailable(BOT, SESSION, signal)).resolves.toBe(false)
+    await expect(invalidRestartBrowser.restart(BOT, SESSION, signal)).rejects.toThrow('The isolated browser response was invalid.')
     expect(requests).toEqual([
       { action: 'status', bot: BOT, session: SESSION, capability: 'restart' },
       { action: 'restart', bot: BOT, session: SESSION },
@@ -154,6 +165,13 @@ describe('isolated browser broker client', () => {
     await expect(browser.loginStatus(BOT, SESSION, 'invalid-id', new AbortController().signal))
       .rejects.toThrow('The isolated browser response was invalid.')
     await expect(browser.cancelLogin(BOT, SESSION, 'invalid-id', new AbortController().signal))
+      .rejects.toThrow('The isolated browser response was invalid.')
+    const invalidPurposePath = await listen(() => ({
+      id: '0123456789abcdef0123456789abcdef', origin: 'https://example.test', destination: 'https://example.test/login',
+      state: 'pending', purpose: 'unknown',
+    }))
+    const invalidPurposeBrowser = new VpsIsolatedBrowser({ socketPath: invalidPurposePath, bots: [BOT] })
+    await expect(invalidPurposeBrowser.requestLogin(BOT, SESSION, new AbortController().signal))
       .rejects.toThrow('The isolated browser response was invalid.')
     const crossOriginPath = await listen(() => ({
       id: '0123456789abcdef0123456789abcdef', origin: 'https://example.test', destination: 'https://other.test/login', state: 'pending',
@@ -327,5 +345,192 @@ describe('isolated browser broker client', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('validates owner rosters, shared selections, and authorization namespaces', () => {
+    expect(isSharedBrowserSession('shared-session-fixture')).toBe(true)
+    expect(isSharedBrowserSession(SESSION)).toBe(false)
+    expect(() => new VpsIsolatedBrowser({ socketPath: '/run/browser.sock', bots: [BOT], ownerRosterPath: 'relative' })).toThrow('ownerRosterPath must be absolute')
+    expect(() => new VpsIsolatedBrowser({ socketPath: '/run/browser.sock', bots: [BOT], ownerRosterPath: '/run/roster\u0000' })).toThrow('ownerRosterPath must be absolute')
+    expect(() => new VpsIsolatedBrowser({ socketPath: '/run/browser.sock', bots: [BOT], sharedBots: [BOT, BOT] })).toThrow('must be unique')
+    expect(() => new VpsIsolatedBrowser({ socketPath: '/run/browser.sock', bots: [BOT], sharedBots: ['bot-other'] })).toThrow('already isolated')
+
+    const managed = new VpsIsolatedBrowser({ socketPath: '/run/yharness-browser/control.sock', bots: [], ownerRosterPath: '/run/roster', sharedBots: [] })
+    expect(managed.usesManagedSharing()).toBe(true)
+    expect(managed.authorized(BOT, SESSION)).toBe(true)
+    expect(managed.authorized(BOT, 'shared-session-fixture')).toBe(true)
+    expect(managed.authorized('bot-other', 'shared-session-fixture')).toBe(true)
+    const fixed = new VpsIsolatedBrowser({ socketPath: '/run/browser.sock', bots: [BOT], sharedBots: [BOT] })
+    expect(fixed.usesManagedSharing()).toBe(false)
+    expect(fixed.authorized(BOT, 'shared-session-fixture')).toBe(true)
+    expect(fixed.authorized('bot-other', 'shared-session-fixture')).toBe(false)
+  })
+
+  it('gates shared admission through the managed browser policy and legacy status probe', async () => {
+    let sharing: unknown = { managed: true, legacy: true, override: null }
+    const socketPath = await listen(request => request.action === 'sharing-status' ? sharing : { available: true })
+    const managed = new VpsIsolatedBrowser({ socketPath, bots: [BOT], sharedBots: [BOT] })
+    vi.spyOn(managed, 'usesManagedSharing').mockReturnValue(true)
+    expect(await managed.sharingPolicy(BOT, SESSION, new AbortController().signal)).toEqual({ managed: true, enabled: true })
+    sharing = { managed: true, legacy: true, override: false }
+    expect(await managed.sharingPolicy(BOT, SESSION, new AbortController().signal)).toEqual({ managed: true, enabled: false })
+    sharing = { managed: true, legacy: false, override: true }
+    expect(await managed.sharingPolicy(BOT, SESSION, new AbortController().signal)).toEqual({ managed: true, enabled: true })
+    sharing = { managed: false, legacy: true, override: true }
+    await expect(managed.sharingPolicy(BOT, SESSION, new AbortController().signal)).rejects.toThrow('response was invalid')
+    sharing = { managed: true, legacy: false, override: 'invalid' }
+    await expect(managed.sharingPolicy(BOT, SESSION, new AbortController().signal)).rejects.toThrow('response was invalid')
+    await expect(managed.sharingPolicy(BOT, 'shared-session-fixture', new AbortController().signal)).rejects.toThrow('not authorized')
+    sharing = { managed: true, legacy: true, override: null }
+    await expect(managed.availableInSharedSession(BOT, 'shared-session-fixture', undefined, new AbortController().signal)).resolves.toBe(true)
+
+    const fixed = new VpsIsolatedBrowser({ socketPath, bots: [BOT], sharedBots: [BOT] })
+    expect(await fixed.availableInSharedSession(BOT, 'shared-session-fixture', undefined, new AbortController().signal)).toBe(true)
+    expect(await fixed.availableInSharedSession('bot-other', 'shared-session-fixture', undefined, new AbortController().signal)).toBe(false)
+    expect(await fixed.availableInSharedSession(BOT, SESSION, undefined, new AbortController().signal)).toBe(false)
+    const aborted = new AbortController()
+    aborted.abort()
+    expect(await fixed.availableInSharedSession(BOT, 'shared-session-fixture', undefined, aborted.signal)).toBe(false)
+  })
+
+  it('falls back to the legacy shared status probe after owner-policy failure', async () => {
+    let sharing: unknown = { managed: true, legacy: false, override: 'bad' }
+    let statusAvailable = true
+    const socketPath = await listen(request => request.action === 'sharing-status' ? sharing : statusAvailable ? { available: true } : { available: false })
+    const browser = new VpsIsolatedBrowser({ socketPath, bots: [BOT], sharedBots: [BOT] })
+    vi.spyOn(browser, 'usesManagedSharing').mockReturnValue(true)
+    expect(await browser.availableInSharedSession(BOT, 'shared-session-fixture', SESSION, new AbortController().signal)).toBe(true)
+    statusAvailable = false
+    expect(await browser.availableInSharedSession(BOT, 'shared-session-fixture', SESSION, new AbortController().signal)).toBe(false)
+    const noShared = new VpsIsolatedBrowser({ socketPath, bots: [BOT], sharedBots: [] })
+    expect(await noShared.availableInSharedSession(BOT, 'shared-session-fixture', SESSION, new AbortController().signal)).toBe(false)
+    const managedNoShared = new VpsIsolatedBrowser({ socketPath, bots: [BOT], sharedBots: [] })
+    vi.spyOn(managedNoShared, 'usesManagedSharing').mockReturnValue(true)
+    expect(await managedNoShared.availableInSharedSession(BOT, 'shared-session-fixture', undefined, new AbortController().signal)).toBe(false)
+    sharing = { managed: true, legacy: true, override: false }
+    expect(await browser.availableInSharedSession(BOT, 'shared-session-fixture', SESSION, new AbortController().signal)).toBe(false)
+  })
+
+  it('starts admitted browser work only after the current authority check', async () => {
+    const signal = new AbortController().signal
+    const started: string[] = []
+    await expect(runAuthorizedBrowserOperation(async (_signal, start) => {
+      start?.()
+      return true
+    }, async () => {
+      started.push('operation')
+      return 'done'
+    }, signal)).resolves.toBe('done')
+    expect(started).toEqual(['operation'])
+    await expect(runAuthorizedBrowserOperation(async () => false, async () => 'unused', signal)).rejects.toThrow('unavailable')
+    await expect(runAuthorizedBrowserOperation(async () => true, async () => 'unused', signal)).rejects.toThrow('unavailable')
+
+    const operationError = new Error('fixture operation')
+    await expect(runAuthorizedBrowserOperation(async (_signal, start) => {
+      start?.()
+      return true
+    }, async () => { throw operationError }, signal)).rejects.toBe(operationError)
+    const abortController = new AbortController()
+    await expect(runAuthorizedBrowserOperation(async (_signal, start) => {
+      abortController.abort()
+      start?.()
+      return true
+    }, async () => 'never', abortController.signal)).rejects.toThrow('This operation was aborted')
+    await expect(runAuthorizedBrowserOperation(async () => { throw new Error('authority failed') }, async () => 'unused', signal)).rejects.toThrow('authority failed')
+  })
+
+  it('handles owner-approved login purpose and shared handoff operations', async () => {
+    const id = '0123456789abcdef0123456789abcdef'
+    const lease = { bot: BOT, session: 'shared-session-fixture', lease: 'fixture-lease' as never } satisfies VpsBrowserHandoff
+    const requests: Record<string, unknown>[] = []
+    const socketPath = await listen((request) => {
+      requests.push(request)
+      switch (request.action) {
+        case 'request-login': return { id, origin: 'https://example.test', destination: 'https://example.test/signup', state: 'pending', purpose: 'signup' }
+        case 'login-status': return { state: 'approval-pending', challenge: id }
+        case 'authorize-login':
+        case 'cancel-login':
+        case 'end-handoff':
+        case 'navigate': return { ok: true }
+        case 'begin-handoff': return { origin: 'https://example.test' }
+        default: return { available: true }
+      }
+    })
+    const browser = new VpsIsolatedBrowser({ socketPath, bots: [BOT], sharedBots: [BOT] })
+    const signal = new AbortController().signal
+    await expect(browser.requestLogin(BOT, SESSION, signal)).resolves.toMatchObject({ purpose: 'signup' })
+    await expect(browser.loginStatus(BOT, SESSION, id, signal)).resolves.toEqual({ state: 'approval-pending', challenge: id })
+    await expect(browser.authorizeLogin(BOT, lease.session, id, id, signal)).resolves.toBeUndefined()
+    await expect(browser.authorizeLogin(BOT, SESSION, 'bad', id, signal)).rejects.toThrow('response was invalid')
+    await expect(browser.beginHandoff(lease, signal)).resolves.toBe('https://example.test')
+    await expect(browser.beginHandoff({ ...lease, session: SESSION }, signal)).rejects.toThrow('not authorized')
+    await expect(browser.endHandoff(lease, 'complete', signal)).resolves.toBeUndefined()
+    await expect(browser.navigateHandoff(lease, 'https://example.test/path', signal)).resolves.toBeUndefined()
+    await expect(browser.navigateHandoff(lease, 'http://example.test/path', signal)).rejects.toThrow('URL is invalid')
+    expect(requests.map(request => request.action)).toEqual([
+      'request-login', 'login-status', 'authorize-login', 'begin-handoff', 'end-handoff', 'navigate',
+    ])
+  })
+
+  it('uses the handoff Computer capture and origin-checked input seams', async () => {
+    const lease = { bot: BOT, session: 'shared-session-fixture', lease: 'fixture-lease' as never } satisfies VpsBrowserHandoff
+    let nullOrigin = false
+    const socketPath = await listen(request => request.action === 'frame'
+      ? { width: COMPUTER_WIDTH, height: COMPUTER_HEIGHT, jpeg: JPEG.toString('base64'), origin: nullOrigin ? null : 'https://example.test' }
+      : { ok: true })
+    const browser = new VpsIsolatedBrowser({ socketPath, bots: [BOT], sharedBots: [BOT] })
+    const computer = browser.handoffComputer(lease, async (_signal, start) => {
+      start?.()
+      return true
+    }, new AbortController().signal)
+    await expect(computer.observe()).resolves.toMatchObject({ jpeg: JPEG.toString('base64'), browserOrigin: 'https://example.test' })
+    nullOrigin = true
+    await expect(computer.observe()).resolves.toMatchObject({ jpeg: JPEG.toString('base64'), browserOrigin: null })
+    const viewer = '01234567-89ab-4cde-8fab-0123456789ab'
+    await expect(computer.takeControl(viewer)).resolves.toEqual({ mode: 'controlling' })
+    await expect(computer.input(viewer, { kind: 'click', x: 1, y: 2, button: 1 }, undefined, 'https://example.test')).resolves.toEqual({ mode: 'controlling' })
+    await computer.dispose()
+  })
+
+  it('rejects malformed handoff origins and frames', async () => {
+    const lease = { bot: BOT, session: 'shared-session-fixture', lease: 'fixture-lease' as never } satisfies VpsBrowserHandoff
+    const invalidOriginPath = await listen(request => request.action === 'begin-handoff' ? { origin: null } : { ok: true })
+    const invalidOriginBrowser = new VpsIsolatedBrowser({ socketPath: invalidOriginPath, bots: [BOT], sharedBots: [BOT] })
+    await expect(invalidOriginBrowser.beginHandoff(lease, new AbortController().signal))
+      .rejects.toThrow('The isolated browser response was invalid.')
+
+    const httpOriginPath = await listen(request => request.action === 'begin-handoff' ? { origin: 'http://example.test' } : { ok: true })
+    const httpOriginBrowser = new VpsIsolatedBrowser({ socketPath: httpOriginPath, bots: [BOT], sharedBots: [BOT] })
+    await expect(httpOriginBrowser.beginHandoff(lease, new AbortController().signal))
+      .rejects.toThrow('The isolated browser response was invalid.')
+
+    const extraOriginPath = await listen(request => request.action === 'begin-handoff'
+      ? { origin: 'https://example.test', extra: true } : { ok: true })
+    const extraOriginBrowser = new VpsIsolatedBrowser({ socketPath: extraOriginPath, bots: [BOT], sharedBots: [BOT] })
+    await expect(extraOriginBrowser.beginHandoff(lease, new AbortController().signal))
+      .rejects.toThrow('The isolated browser response was invalid.')
+
+    const invalidFramePath = await listen(request => request.action === 'frame'
+      ? { width: COMPUTER_WIDTH, height: COMPUTER_HEIGHT, jpeg: JPEG.toString('base64') } : { ok: true })
+    const invalidFrameBrowser = new VpsIsolatedBrowser({ socketPath: invalidFramePath, bots: [BOT], sharedBots: [BOT] })
+    const computer = invalidFrameBrowser.handoffComputer(lease, async (_signal, start) => {
+      start?.()
+      return true
+    }, new AbortController().signal)
+    await expect(computer.observe()).rejects.toThrow('computer frame capture failed')
+    await computer.dispose()
+  })
+
+  it('rechecks authority for the ordinary Computer controller', async () => {
+    const socketPath = await listen(request => request.action === 'frame'
+      ? { width: COMPUTER_WIDTH, height: COMPUTER_HEIGHT, jpeg: JPEG.toString('base64') }
+      : { ok: true })
+    const browser = new VpsIsolatedBrowser({ socketPath, bots: [BOT] })
+    const computer = browser.computer(BOT, SESSION, async (_signal, start) => {
+      start?.()
+      return true
+    })
+    await expect(computer.observe()).resolves.toMatchObject({ jpeg: JPEG.toString('base64') })
+    await computer.dispose()
   })
 })
