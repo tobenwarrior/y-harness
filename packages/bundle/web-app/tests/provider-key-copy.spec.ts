@@ -104,9 +104,9 @@ describe('copying a saved provider key between private workspaces', () => {
   it('handles absent settings, missing source values, and invalid provider routes', async () => {
     const emptyCredentials = fixture().credentials
     const absent = new ProviderKeyTransfer(() => undefined, emptyCredentials)
-    const route = { provider: 'model-lab', identity: '0'.repeat(64), sourceClaim: '0'.repeat(64) } as ProviderKeyRoute
+    const route: ProviderKeyRoute = { provider: 'model-lab', identity: '0'.repeat(64) }
     await expect(absent.offer()).resolves.toEqual([])
-    await expect(absent.readKey(route)).resolves.toBeUndefined()
+    await expect(absent.readKey({ ...route, sourceClaim: '0'.repeat(64) })).resolves.toBeUndefined()
     await expect(absent.prepare(route)).resolves.toBeUndefined()
     await expect(absent.receive(route, 'claim', 'key')).resolves.toBe(false)
 
