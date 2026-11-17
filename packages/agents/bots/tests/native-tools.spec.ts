@@ -71,8 +71,8 @@ function groups(sendResult: 'accepted' | 'partial' = 'accepted'): GroupHostFixtu
     },
   }))
   return {
-    list: vi.fn(async () => ({ groups: [] })),
-    inspect: vi.fn(async request => ({
+    list: vi.fn<BotGroupToolHost['list']>(async () => ({ groups: [] })),
+    inspect: vi.fn<BotGroupToolHost['inspect']>(async request => ({
       group: { id: request.groupId, name: 'Room', botIds: [BotId('bot-alpha'), BotId('bot-beta')], bots: [], createdAt: 1, updatedAt: 1 },
       messages: [],
     })),
@@ -344,9 +344,9 @@ describe('native Bot actions', () => {
     }))
     expect(result.success).toBe(true)
     expect(routine).toHaveBeenCalledOnce()
-    expect(persisted).toContainEqual(expect.objectContaining({
-      phase: 'settled', callId: 'earlier', result: expect.objectContaining({ success: false }),
-    }))
+    const recovered = persisted.find(event => event.phase === 'settled' && event.callId === 'earlier')
+    expect(recovered).toBeDefined()
+    expect(recovered?.result?.success).toBe(false)
   })
 
   it('keeps a cross-call retry uncertain until Schedule registers the earlier operation', async () => {
@@ -392,9 +392,9 @@ describe('native Bot actions', () => {
     }))
     expect(result.success).toBe(true)
     expect(routine).toHaveBeenCalledOnce()
-    expect(persisted).toContainEqual(expect.objectContaining({
-      phase: 'settled', callId: 'abandoned', result: expect.objectContaining({ success: false }),
-    }))
+    const abandoned = persisted.find(event => event.phase === 'settled' && event.callId === 'abandoned')
+    expect(abandoned).toBeDefined()
+    expect(abandoned?.result?.success).toBe(false)
   })
 
   it('replays a matching routine found by Schedule reconciliation', async () => {
@@ -439,9 +439,11 @@ describe('native Bot actions', () => {
     })
     const create = (await provider.resolve({ sessionId })).find(tool => tool.name === 'schedule_create')
     if (create === undefined) throw new Error('schedule_create missing')
-    await expect(create.execute({ title: 'Daily check', prompt: 'Check the report', after_seconds: 60 }, context({
+    const result = await create.execute({ title: 'Daily check', prompt: 'Check the report', after_seconds: 60 }, context({
       sessionId, callId: 'new-call', threadId: 'new-thread', turnId: 'new-turn',
-    }))).resolves.toMatchObject({ success: false, contentItems: [{ text: expect.stringContaining('unavailable') }] })
+    }))
+    expect(result.success).toBe(false)
+    expect(result.contentItems[0]?.text).toContain('unavailable')
   })
 
   it('returns a structured failure when committed reservation recovery persistence fails', async () => {
@@ -462,9 +464,11 @@ describe('native Bot actions', () => {
     })
     const create = (await provider.resolve({ sessionId })).find(tool => tool.name === 'schedule_create')
     if (create === undefined) throw new Error('schedule_create missing')
-    await expect(create.execute({ title: 'Daily check', prompt: 'Check the report', after_seconds: 60 }, context({
+    const result = await create.execute({ title: 'Daily check', prompt: 'Check the report', after_seconds: 60 }, context({
       sessionId, ...current,
-    }))).resolves.toMatchObject({ success: false, contentItems: [{ text: expect.stringContaining('unavailable') }] })
+    }))
+    expect(result.success).toBe(false)
+    expect(result.contentItems[0]?.text).toContain('unavailable')
   })
 
   it('retires the recovered native routine lifecycle before allowing an intentional repeat', async () => {

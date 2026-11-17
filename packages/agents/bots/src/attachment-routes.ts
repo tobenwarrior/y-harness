@@ -261,12 +261,16 @@ function nextAttachmentChunk(
     const cleanup = (): void => { signal.removeEventListener('abort', onAbort) }
     const onAbort = (): void => {
       cleanup()
-      reject(signal.reason)
+      const reason: unknown = signal.reason
+      reject(reason instanceof Error ? reason : new Error('Bot attachment upload was aborted', { cause: reason }))
     }
     signal.addEventListener('abort', onAbort, { once: true })
     void iterator.next().then(
       (result) => { cleanup(); resolve(result) },
-      (error) => { cleanup(); reject(error) },
+      (error: unknown) => {
+        cleanup()
+        reject(error instanceof Error ? error : new Error('Bot attachment stream read failed', { cause: error }))
+      },
     )
   })
 }

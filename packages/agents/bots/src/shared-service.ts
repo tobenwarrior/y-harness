@@ -1325,8 +1325,10 @@ export class SharedBotService {
         try {
           started = start()
         } catch (error: unknown) {
-          // Preserve the original failure, including non-Error rejections from external tools.
-          started = Promise.reject(error)
+          // Preserve the original synchronous failure while tracking an Error-shaped body rejection.
+          started = Promise.reject(error instanceof Error
+            ? error
+            : new Error('Shared connected-app body failed', { cause: error }))
           void started.catch(() => undefined)
           throw error
         }
@@ -3866,7 +3868,7 @@ export class SharedBotService {
   private quarantineSession(key: string, quiescence: Promise<void>): void {
     if (this.quarantinedSessions.has(key)) return
     const released = new Promise<void>((resolve) => {
-      void quiescence.then(async () => {
+      void quiescence.then(() => {
         try {
           if (this.deferredRemoteCleanup.has(key)) {
             const binding = this.revokedBindings.get(key)
@@ -4155,7 +4157,7 @@ export class SharedBotService {
     const operationResult = await this.host.withBot(botId, signal, async () => {
       const result = await this.authority.mutateExtension(
         SHARED_MEMBERSHIP_EXTENSION_KEY,
-        async (current, authorityState) => {
+        (current, authorityState) => {
           const snapshot = parseMembershipSnapshot(current)
           if (actor !== undefined && operation !== undefined) {
             const authorityPrincipal = authorityState.principals.find(principal => String(principal.id) === String(actor))

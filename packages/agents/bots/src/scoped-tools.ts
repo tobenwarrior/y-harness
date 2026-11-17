@@ -398,13 +398,14 @@ export function installBotCollaborationTools(
           const groupId = args.groupId.trim()
           const text = args.text.trim()
           const targetBotIds = args.targetBotIds === undefined ? undefined : canonicalTargetBotIds(args.targetBotIds).map(BotId)
-          const messageId = args.messageId === undefined
+          const requestedMessageId = args.messageId
+          const messageId = requestedMessageId === undefined
             ? scopedGroupMessageId([String(client.sender.id), groupId, text, ...canonicalTargetBotIds(args.targetBotIds)].join('\u0000'))
-            : BotGroupMessageId(args.messageId.trim())
+            : BotGroupMessageId(requestedMessageId.trim())
           const value = await (await groups()).send({
             groupId: BotGroupId(groupId), text,
             ...(targetBotIds === undefined ? {} : { targetBotIds }),
-            ...(messageId === undefined ? {} : { messageId }), signal: exec.signal,
+            messageId, signal: exec.signal,
           })
           return {
             ...value, messageId: String(value.messageId),
@@ -533,7 +534,7 @@ export function installBotCollaborationTools(
           const client = await bind()
           const result = await manage(action, args, {
             callId: String(exec.callId), threadId: String(exec.agent.id), turnId: String(exec.callId),
-            sessionId: exec.agent.id, signal: exec.signal, approvalPolicy: 'on-request', requestApproval: async () => true,
+            sessionId: exec.agent.id, signal: exec.signal, approvalPolicy: 'on-request', requestApproval: () => Promise.resolve(true),
           })
           if (typeof result !== 'object' || result === null || !('id' in result) || typeof result.id !== 'string') {
             throw new Error('Bot management returned an invalid result.')

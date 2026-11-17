@@ -7,7 +7,6 @@ import { BOT_ACCENTS, BOT_IDENTITIES } from './types.ts'
 import { BotTemplateId, BotTemplateShareCode } from './template-types.ts'
 import type {
   BotTemplateAvatar,
-  BotTemplateCapability,
   BotTemplateProfile,
   BotTemplateView,
 } from './template-types.ts'
@@ -78,6 +77,8 @@ export interface BotTemplateGlobalState {
   readonly approvals?: Readonly<Record<string, BotTemplateApproval>>
 }
 
+const emptyBotTemplateGlobalState: BotTemplateGlobalState = {}
+
 /** Effective target-Host preset and tools bound to one approval. */
 export interface BotTemplateApprovalPermissions {
   /** Preset resolved while the artifact was approved. */
@@ -125,7 +126,7 @@ export const botTemplateRecordSchema = z.object({
   identity: value.identity,
   accent: value.accent,
   ...(value.persona === undefined ? {} : { persona: value.persona }),
-  ...(value.capabilities === undefined ? {} : { capabilities: value.capabilities as readonly BotTemplateCapability[] }),
+  ...(value.capabilities === undefined ? {} : { capabilities: value.capabilities }),
   ...(value.profile === undefined ? {} : { profile: value.profile as BotTemplateProfile }),
   ...(value.avatar === undefined ? {} : { avatar: value.avatar as BotTemplateAvatar }),
   ...(value.agentPreset === undefined ? {} : { agentPreset: value.agentPreset }),
@@ -157,7 +158,7 @@ export const botTemplateDomain = defineDomain({
         },
       ).optional(),
     }).strict(),
-    initial: {} as BotTemplateGlobalState,
+    initial: emptyBotTemplateGlobalState,
   },
   tables: {
     templates: domainTable<BotTemplateId, BotTemplateStoredRecord>(botTemplateRecordSchema),

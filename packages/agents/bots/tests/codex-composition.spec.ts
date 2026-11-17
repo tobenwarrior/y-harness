@@ -59,6 +59,11 @@ interface PeerFixture {
   readonly toolResults: Array<{ readonly name: string; readonly result: unknown }>
 }
 
+interface ListedBot {
+  readonly id: string
+  readonly name: string
+}
+
 function nativePeer(): PeerFixture {
   const listeners = new Set<(method: string, params: Record<string, unknown>) => void>()
   const requests: Array<{ readonly method: string; readonly params: Record<string, unknown> }> = []
@@ -271,11 +276,9 @@ it('composes Bot identity and Codex dynamic collaboration with sender-bound deli
   await ctx.plugin(AgentPresets, { default: 'standard' })
   await ctx.agentPresets.register({ id: 'standard', plugins: [{ name: '@yharness/tool-schedule' }] })
   await ctx.agentPresets.register({ id: 'minimal', plugins: [] })
-  expect(ctx.agentPresets.inspectCompositions()).toEqual(expect.arrayContaining([
-    expect.objectContaining({ id: 'standard', modules: expect.arrayContaining([
-      expect.objectContaining({ moduleName: expect.stringContaining('tool-schedule') }),
-    ]) }),
-  ]))
+  const standardComposition = ctx.agentPresets.inspectCompositions().find(composition => composition.id === 'standard')
+  expect(standardComposition).toBeDefined()
+  expect(standardComposition?.modules.some(module => module.moduleName.includes('tool-schedule'))).toBe(true)
   await ctx.codexBackendConnection.getState()
 
   const sender = await ctx.bots.create({ id: BotId('bot-sender'), name: 'Chief of staff', cwd: root, agentPreset: 'standard' })
@@ -339,7 +342,7 @@ it('composes Bot identity and Codex dynamic collaboration with sender-bound deli
   ]))
   if (peerFixture.toolResults.length !== 5) throw new Error(`Native tool calls failed: requests=${JSON.stringify(peerFixture.requests)} chunks=${JSON.stringify(chunks)}`)
   expect(output(peerFixture.toolResults[0]?.result)).toMatchObject({ success: true })
-  const listedBots = JSON.parse(output(peerFixture.toolResults[0]?.result).contentItems[0]!.text)
+  const listedBots = JSON.parse(output(peerFixture.toolResults[0]?.result).contentItems[0]!.text) as readonly ListedBot[]
   expect(listedBots).toHaveLength(2)
   expect(listedBots).toEqual(expect.arrayContaining([
     expect.objectContaining({ id: 'bot-target', name: 'Grok bot' }),

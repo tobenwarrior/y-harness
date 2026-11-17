@@ -180,7 +180,7 @@ export function decodeBotTemplateCode(code: string | BotTemplateShareCodeType): 
     throw new Error('Bot template code is invalid')
   }
   const encoded = code.slice(BOT_TEMPLATE_CODE_PREFIX.length)
-  let parsed: ReturnType<typeof JSON.parse>
+  let parsed: unknown
   try {
     parsed = JSON.parse(decodeBase64Url(encoded, 'template code').toString('utf8'))
   } catch (error: unknown) {

@@ -613,7 +613,7 @@ export class SharedBotGroupService {
     this.requireIsolatedHost()
     const groupId = normalizeGroupId(request.groupId)
     const messageId = normalizeMessageId(request.messageId)
-    await this.locked(principalId, 'write-group', signal, async (snapshot, memberships) => {
+    await this.locked(principalId, 'write-group', signal, (snapshot, memberships) => {
       const group = findGroup(snapshot, groupId)
       requireGroupAccess(group, memberships, principalId, 'write-group')
       if (snapshot.messages.some(message => message.id === messageId)) {
@@ -694,9 +694,6 @@ export class SharedBotGroupService {
     signal = this.recoveryController.signal,
   ): Promise<BotGroupDeliveryRecoveryValue> {
     this.requireIsolatedHost()
-    if (request === null || typeof request !== 'object' || request.confirmQuiescent !== true) {
-      throw new SharedGroupError('gateway/bad-request', 'explicit shared Bot delivery recovery requires confirmQuiescent=true')
-    }
     const groupId = normalizeGroupId(request.groupId)
     const botId = normalizeSharedGroupBotId(request.botId)
     const messageId = normalizeMessageId(request.messageId)
@@ -2158,7 +2155,6 @@ export class SharedBotGroupService {
             && groups.sessions.some(session => session.groupId === group.id
               && session.botId === attempt.botId && session.sessionId === attempt.sessionId && session.revokedAt === undefined)
           if (!authorized) {
-            if (delivery.status !== 'pending') return { value: { kind: 'denied' }, next: current }
             const failed = withoutDispatchLease({
               ...delivery,
               status: 'failed' as const,
@@ -2221,7 +2217,7 @@ export class SharedBotGroupService {
         })
         .finally(() => { inFlight = undefined })
     }, Math.max(1, Math.floor(SHARED_GROUP_DELIVERY_LEASE_MS / 3)))
-    timer.unref?.()
+    timer.unref()
     return {
       signal: fence.signal,
       stop: () => {
@@ -2301,7 +2297,7 @@ export class SharedBotGroupService {
       this.recoveryAttempts.set(deliveryId, attempt + 1)
       void this.startPendingRecovery(deliveryId)
     }, delay)
-    timer.unref?.()
+    timer.unref()
     this.recoveryTimers.set(deliveryId, timer)
   }
 
@@ -2340,7 +2336,7 @@ export class SharedBotGroupService {
         () => { this.recoveryTasks.delete(task) },
       )
     }, 1)
-    timer.unref?.()
+    timer.unref()
     this.recoverySweepTimer = timer
   }
 
@@ -2360,7 +2356,7 @@ export class SharedBotGroupService {
         signal,
       )
     } catch (error: unknown) {
-      if (!signal.aborted && !this.recoveryController.signal.aborted) {
+      if (!sharedGroupSignalIsAborted(signal) && !sharedGroupSignalIsAborted(this.recoveryController.signal)) {
         this.schedulePendingRecovery(deliveryId, SHARED_GROUP_AUTHORITY_TIMEOUT_MS)
       }
       throw error
@@ -2430,7 +2426,7 @@ export class SharedBotGroupService {
         SHARED_GROUP_RECOVERY_TIMEOUT_MS,
       )
     } catch {
-      if (!signal.aborted && !this.recoveryController.signal.aborted) {
+      if (!sharedGroupSignalIsAborted(signal) && !sharedGroupSignalIsAborted(this.recoveryController.signal)) {
         this.schedulePendingRecovery(delivery.id, SHARED_GROUP_AUTHORITY_TIMEOUT_MS)
       }
       return
@@ -2809,6 +2805,10 @@ class SharedGroupClaimLostError extends Error {
   }
 }
 
+function sharedGroupSignalIsAborted(signal: AbortSignal): boolean {
+  return signal.aborted
+}
+
 function sharedGroupSignal(signal: AbortSignal | undefined, fence: AbortSignal): AbortSignal {
   return signal === undefined ? fence : AbortSignal.any([signal, fence])
 }
@@ -2840,14 +2840,14 @@ async function withSharedGroupAuthorityTimeout<T>(
     }
     const onAbort = (): void => {
       onCancel?.()
-      const reason = signal?.reason
+      const reason: unknown = signal?.reason
       finishReject(reason instanceof Error ? reason : new SharedGroupError('gateway/unavailable', 'shared Bot operation was cancelled'))
     }
     timer = setTimeout(() => {
       onCancel?.()
       finishReject(new SharedGroupError('gateway/unavailable', 'shared Bot authority operation timed out'))
     }, timeoutMs)
-    timer.unref?.()
+    timer.unref()
     signal?.addEventListener('abort', onAbort, { once: true })
     void operation.then(
       finishResolve,

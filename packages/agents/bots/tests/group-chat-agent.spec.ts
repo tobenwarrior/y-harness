@@ -334,10 +334,9 @@ describe('Bot group delivery with a running Agent', () => {
         await groupService.recordBotMessageClaims(targetBot.id, claims, turn, step, claims.length === 1)
         return decision
       })
-      ctx.on('session/event', async (session, event) => {
+      ctx.on('session/event', (session, event) => {
         if (session !== target.session || event.type !== 'turn/end' || event.data.reason.kind !== 'error') return
         turnFailure = groupService.recordBotTurnFailure(targetBot.id, event.data.turn, MISSING_CREDENTIALS)
-        await turnFailure
       })
 
       const group = await groupService.create({

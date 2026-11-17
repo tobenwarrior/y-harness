@@ -4,6 +4,7 @@ import { mkdir } from 'node:fs/promises'
 import { createHash, randomUUID, type KeyObject } from 'node:crypto'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import { Readable } from 'node:stream'
 import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { Context, Service } from '@yharness/cordis'
@@ -1472,7 +1473,7 @@ function badRequest(message: string): never {
 }
 
 function textLength(value: string): number {
-  return [...value].length
+  return Array.from(value).length
 }
 
 function normalizeName(value: string): string {
@@ -1535,7 +1536,7 @@ function normalizeOrganizationGroup(value: BotOrganizationUpdateRequest['group']
   return normalizeOptionalText('Bot section', value, 80)
 }
 
-function normalizeBotId(value: BotRecord['id'] | undefined): BotRecord['id'] | undefined {
+function normalizeBotId(value: unknown): BotRecord['id'] | undefined {
   if (value === undefined) return undefined
   if (typeof value !== 'string' || !BOT_ID_PATTERN.test(value)) {
     return badRequest('Bot id must begin with bot- and contain simple URL-safe segments')
@@ -2016,7 +2017,7 @@ function withSharedGroupDeliveryTimeout<T>(
       onCancel?.()
       finishReject(new Error('shared Bot recipient authority operation timed out'))
     }, SHARED_GROUP_MESSAGE_DELIVERY_TIMEOUT_MS)
-    timer.unref?.()
+    timer.unref()
     signal?.addEventListener('abort', onAbort, { once: true })
     void operation.then(finishResolve, finishReject)
   })
@@ -2931,7 +2932,7 @@ export class BotService extends TypertRemoteService {
         if (session === undefined) throw new Error(`Bot Session "${sessionId}" is not live.`)
         if (!await ctx.sessions.flush(session)) throw new Error('Bot Session has no durable persistence listener.')
       },
-      eventRoutineContext: sessionId => this.eventRoutineContext(sessionId),
+      eventRoutineContext: (sessionId, signal) => this.eventRoutineContext(sessionId, signal),
       recordDelivery: (sessionId, event) => this.recordCollaborationDelivery(sessionId, event),
     }
     const collaborationHost: BotCollaborationHost = this.credentials === undefined
@@ -5350,18 +5351,16 @@ export class BotService extends TypertRemoteService {
           const current = await this.refreshBotRecordFromProfile(domain, sessionId)
             ?? this.currentBotRecord(domain, sessionId)
           if (current === undefined) return
-          let changed = false
           const eventRoutines = (current.eventRoutines ?? []).map((routine) => {
             if (routine.status !== 'active'
               || (routine.admissionWatermark !== undefined && routine.admissionWatermark >= highestEventSeq)) return routine
-            changed = true
             return {
               ...routine,
               admissionWatermark: highestEventSeq,
               updatedAt: Math.max(Date.now(), routine.updatedAt),
             }
           })
-          if (!changed) return
+          if (!eventRoutines.some((routine, index) => routine !== current.eventRoutines?.[index])) return
           const next: BotRecord = { ...current, eventRoutines, updatedAt: Math.max(Date.now(), current.updatedAt) }
           await this.commitEventRoutineRecord(current, next)
           this.emitChanged()
@@ -5455,16 +5454,13 @@ export class BotService extends TypertRemoteService {
   }
 
   /** Return relay metadata for the currently executing event-routine turn. */
-  private eventRoutineContext(sessionId: SessionId): BotEventRelayContext | undefined {
+  private async eventRoutineContext(sessionId: SessionId, signal?: AbortSignal): Promise<BotEventRelayContext | undefined> {
     let openTurn = this.openTurnNumber(sessionId)
     let turn = this.eventRoutineTurns.get(`${String(sessionId)}:${openTurn}`)
-    if (turn === undefined) {
-      const session = this.ctx.sessions.get(sessionId)
-      if (session !== undefined) {
-        const events = session.snapshotEvents()
-        openTurn = openTurn >= 0 ? openTurn : openTurnFromEvents(events)
-        if (openTurn >= 0) turn = routineTurnFromEvents(events, openTurn, undefined)
-      }
+    if (turn === undefined && this.ctx.sessions.get(sessionId) !== undefined) {
+      const { events } = await this.ctx.sessionController.inspect(sessionId, signal)
+      openTurn = openTurn >= 0 ? openTurn : openTurnFromEvents(events)
+      if (openTurn >= 0) turn = routineTurnFromEvents(events, openTurn, undefined)
     }
     if (turn?.relayContext === undefined) return undefined
     return { ...turn.relayContext, depth: Math.min(turn.relayContext.depth + 1, MAX_EVENT_ROUTINE_HOPS) }
@@ -5519,9 +5515,7 @@ export class BotService extends TypertRemoteService {
     input: EventRoutineTriggerInput,
     retryAttempt = 0,
   ): Promise<boolean> {
-    let admissionWriteFailed = false
-    let deliveryFailed = false
-    let fenceRetry = false
+    const progress = { deliveryFailed: false, fenceRetry: false }
     try {
       await this.serialize(async () => {
         const domain = await this.getDomain()
@@ -5557,8 +5551,7 @@ export class BotService extends TypertRemoteService {
             try {
               next = await this.commitEventRoutineRecord(base, candidate)
             } catch (error: unknown) {
-              admissionWriteFailed = true
-              fenceRetry = isBotRosterFenceBusyError(error)
+              progress.fenceRetry = isBotRosterFenceBusyError(error)
               throw error
             }
           }
@@ -5571,8 +5564,8 @@ export class BotService extends TypertRemoteService {
             next = await this.deliverEventRoutine(next, latest, admitted)
           } catch (error: unknown) {
             this.ctx.logger.warn(`bots: event routine ${routine.id} delivery failed: ${String(error)}`)
-            deliveryFailed = true
-            fenceRetry = fenceRetry || isBotRosterFenceBusyError(error)
+            progress.deliveryFailed = true
+            progress.fenceRetry ||= isBotRosterFenceBusyError(error)
           }
         }
       })
@@ -5582,12 +5575,12 @@ export class BotService extends TypertRemoteService {
         sessionId,
         input,
         retryAttempt + 1,
-        fenceRetry || isBotRosterFenceBusyError(error),
+        progress.fenceRetry || isBotRosterFenceBusyError(error),
       )
       return false
     }
-    if (admissionWriteFailed || deliveryFailed) {
-      this.scheduleEventRoutineAdmissionRetry(sessionId, input, retryAttempt + 1, fenceRetry)
+    if (progress.deliveryFailed) {
+      this.scheduleEventRoutineAdmissionRetry(sessionId, input, retryAttempt + 1, progress.fenceRetry)
       return false
     }
     return true
@@ -5718,7 +5711,6 @@ export class BotService extends TypertRemoteService {
         if (current === undefined) return
         const retryMessageIds = new Set<string>()
         const routines = (current.eventRoutines ?? []).map((routine) => {
-          let changed = false
           const deliveries = routine.deliveries.map((delivery) => {
             const inbox = botInboxMessageState(inspection.events, delivery.messageId)
             if (surfaceIds.has(String(delivery.messageId)) || inbox?.disposition !== 'canceled') return delivery
@@ -5727,11 +5719,10 @@ export class BotService extends TypertRemoteService {
               return delivery
             }
             if (delivery.status !== 'delivered' && delivery.dispatchStartedAt === undefined) return delivery
-            changed = true
             retryMessageIds.add(String(delivery.messageId))
             return resetCanceledDelivery(delivery)
           })
-          return changed
+          return deliveries.some((delivery, index) => delivery !== routine.deliveries[index])
             ? { ...routine, deliveries, updatedAt: Math.max(Date.now(), routine.updatedAt) }
             : routine
         })
@@ -6768,15 +6759,17 @@ export class BotService extends TypertRemoteService {
           { fingerprint: active.fingerprint },
         )
       }
-      if (typeof request.approvalToken !== 'string' || request.expectedPermissions === undefined) {
+      const approvalTokenValue: unknown = request.approvalToken
+      const permissionsValue: unknown = request.expectedPermissions
+      if (typeof approvalTokenValue !== 'string' || permissionsValue === undefined) {
         throw new RemoteError(
           'bot-template/approval-mismatch',
           'Approve the exact signed preview and target-Host permission view before importing this template.',
           { fingerprint: active.fingerprint },
         )
       }
-      const approvalToken = normalizeApprovalToken(request.approvalToken)
-      const expectedPermissions = normalizeExpectedApprovalPermissions(request.expectedPermissions)
+      const approvalToken = normalizeApprovalToken(approvalTokenValue)
+      const expectedPermissions = normalizeExpectedApprovalPermissions(permissionsValue)
       const preview = this.templateApprovalPreviews.get(approvalToken)
       if (preview === undefined || preview.expiresAt <= Date.now()
         || preview.fingerprint !== active.fingerprint
@@ -7231,7 +7224,6 @@ export class BotService extends TypertRemoteService {
       ...(request.before === undefined ? {} : { before: request.before }),
     })
     if ('records' in result) return { kind: 'schedule', ...result }
-    if (result.code === 'schedule_not_found') return { id: routineId, code: 'routine_not_found' }
     if (result.code === 'delivery_cursor_not_found') return { id: routineId, code: 'delivery_cursor_not_found' }
     return { id: routineId, code: 'routine_not_found' }
   }
@@ -7298,7 +7290,8 @@ export class BotService extends TypertRemoteService {
   @Remote('importGrokHistory')
   async importGrokHistory(request: BotGrokHistoryImportRequest): Promise<{ readonly messages: number }> {
     return this.serialize(async () => {
-      const id = normalizeBotId(request?.botId)
+      const payload: unknown = request
+      const id = normalizeBotId(payload !== null && typeof payload === 'object' && 'botId' in payload ? payload.botId : undefined)
       if (id === undefined || typeof request.document !== 'string') return badRequest('Bot id and Grok chat archive are required')
       const next = decodeGrokHistory(request.document)
       if (next === undefined) return badRequest('Invalid or oversized Grok chat archive')
@@ -7962,9 +7955,11 @@ export class BotService extends TypertRemoteService {
       this.sharedPromptMigrations.delete(agent)
     }
     if (this.sharedPromptMigrationsPending.has(agent)) return
-    const events = agent.session.snapshotEvents()
+    const sequences = agent.session.surface.nodes
+    const { events } = await this.ctx.sessionController.inspect(agent.id)
+    if (this.sharedPromptMigrationsPending.has(agent)) return
     const eventsBySequence = new Map(events.map(event => [event.seq, event]))
-    const nodes = agent.session.surface.nodes.flatMap((seq) => {
+    const nodes = sequences.flatMap((seq) => {
       const event = eventsBySequence.get(seq)
       if (event?.type !== 'system/message') return []
       const [block] = event.data.message.content
@@ -9663,9 +9658,10 @@ export class BotService extends TypertRemoteService {
   /** Register owner-authenticated attachment uploads and downloads. */
   private async mountAttachmentRoutes(): Promise<() => Promise<void>> {
     const connection: HostConnectionHandle | undefined = this.ctx.get('connection')
-    if (connection === undefined || connection.fetch === undefined) return async () => {}
+    const fetch = connection?.fetch
+    if (fetch === undefined) return () => Promise.resolve()
     const groups = await this.groupService
-    const remove = await connection.fetch.register({
+    const remove = fetch.register({
       path: BOT_GROUP_ATTACHMENT_UPLOAD_PATH,
       methods: ['POST'],
       requestBody: 'streaming',
@@ -9690,7 +9686,7 @@ export class BotService extends TypertRemoteService {
       await Promise.all(removals.map(unregister => unregister()))
     }
     try {
-      removals.push(await connection.fetch.register({
+      removals.push(fetch.register({
         path: BOT_GROUP_ATTACHMENT_DOWNLOAD_PATH,
         methods: ['GET'],
         requestBody: 'buffered',
@@ -9701,7 +9697,7 @@ export class BotService extends TypertRemoteService {
       }))
       const vault = this.grokHistoryAttachmentVault
       if (vault !== undefined) {
-        removals.push(await connection.fetch.register({
+        removals.push(fetch.register({
           path: BOT_GROK_HISTORY_ATTACHMENT_DOWNLOAD_PATH,
           methods: ['GET'],
           requestBody: 'buffered',
@@ -9727,7 +9723,7 @@ export class BotService extends TypertRemoteService {
       return { name: attachment.attachment.name, data: this.ctx.attachments.readFileStream(attachment.attachment, signal) }
     }
     const image = await this.ctx.attachments.readImage(attachment.attachment, signal)
-    return { name: image.ref.name ?? 'image', data: (async function* () { yield image.data })() }
+    return { name: image.ref.name ?? 'image', data: Readable.from([image.data]) }
   }
 
   /** Track a raw attachment request until its provider stream and admission settle. */
@@ -9920,7 +9916,7 @@ export class BotService extends TypertRemoteService {
       const bots = domain.table('bots')
       const legacyProfileState = await this.readLegacyProfileRevisionState(credentials)
       const token = randomUUID()
-      let acquired = false
+      const acquisition = { acquired: false }
       if (activeSharedRosterFenceTokens.has(credentials)) return { valid: false as const }
       try {
         await credentials.modifyRecord(BOT_PROFILE_REVISION_RECORD_KEY, async (stored) => {
@@ -9940,7 +9936,7 @@ export class BotService extends TypertRemoteService {
             return profileRevisionRecordOfState(state)
           }
           signal?.throwIfAborted()
-          acquired = true
+          acquisition.acquired = true
           // Mark the local owner before releasing the provider lock so a
           // direct recovery request cannot clear this live fence in the gap.
           activeSharedRosterFenceTokens.set(credentials, token)
@@ -9955,19 +9951,19 @@ export class BotService extends TypertRemoteService {
         }
         throw error
       }
-      if (!acquired) return { valid: false as const }
+      if (!acquisition.acquired) return { valid: false as const }
       try {
         return { valid: true as const, value: await operation() }
       } finally {
         try {
-          await credentials.modifyRecord(BOT_PROFILE_REVISION_RECORD_KEY, async (stored) => {
+          await credentials.modifyRecord(BOT_PROFILE_REVISION_RECORD_KEY, (stored) => {
             const state = profileRevisionRecordOf(stored)
             if (state.sharedRosterFence?.token !== token) {
               throw new Error('shared Bot roster fence changed before release')
             }
             const { sharedRosterFence: ignoredFence, ...withoutFence } = state
             void ignoredFence
-            return profileRevisionRecordOfState(withoutFence)
+            return Promise.resolve(profileRevisionRecordOfState(withoutFence))
           })
         } finally {
           if (activeSharedRosterFenceTokens.get(credentials) === token) {
@@ -9995,28 +9991,28 @@ export class BotService extends TypertRemoteService {
     if (activeSharedRosterFenceTokens.has(credentials)) return { status: 'busy' as const }
     const legacy = await this.readLegacyProfileRevisionState(credentials)
     let status: BotSharedRosterFenceRecoveryValue['status'] = 'absent'
-    await credentials.modifyRecord(BOT_PROFILE_REVISION_RECORD_KEY, async (stored) => {
+    await credentials.modifyRecord(BOT_PROFILE_REVISION_RECORD_KEY, (stored) => {
       // The request may have queued behind a local admission that was still
       // acquiring its provider lock when this method started. Recheck while
       // holding that lock so recovery cannot clear the newly acquired fence.
       if (activeSharedRosterFenceTokens.has(credentials)) {
         status = 'busy'
-        return undefined
+        return Promise.resolve(undefined)
       }
       const state = stored === undefined ? legacy ?? emptyProfileRevisionState() : profileRevisionRecordOf(stored)
       const fence = state.sharedRosterFence
       if (fence === undefined) {
         status = 'absent'
-        return undefined
+        return Promise.resolve(undefined)
       }
       if (fence.token !== request.token) {
         status = 'busy'
-        return undefined
+        return Promise.resolve(undefined)
       }
       const { sharedRosterFence: ignoredFence, ...withoutFence } = state
       void ignoredFence
       status = 'released'
-      return profileRevisionRecordOfState(withoutFence)
+      return Promise.resolve(profileRevisionRecordOfState(withoutFence))
     })
     return { status }
   }
@@ -10028,7 +10024,7 @@ export class BotService extends TypertRemoteService {
   private async inspectSharedRosterFenceImpl(): Promise<BotSharedRosterFenceDiagnosticValue> {
     const credentials = this.credentials ?? this.ctx.get('credentials')
     if (credentials === undefined) return { status: 'clear' as const }
-    const stored = await credentials.modifyRecord(BOT_PROFILE_REVISION_RECORD_KEY, async () => undefined)
+    const stored = await credentials.modifyRecord(BOT_PROFILE_REVISION_RECORD_KEY, () => Promise.resolve(undefined))
     const state = stored === undefined
       ? await this.readLegacyProfileRevisionState(credentials)
       : profileRevisionRecordOf(stored)
@@ -10352,8 +10348,7 @@ export class BotService extends TypertRemoteService {
       if (reconciliation.kind === 'resolved' && reconciliation.outcome === 'transient') {
         this.scheduleSharedGroupAdmissionReconciliation(request, current.admissionToken)
       }
-      if (reconciliation.kind === 'operator-required'
-        || (reconciliation.kind === 'resolved' && reconciliation.outcome === 'missing')) {
+      if (reconciliation.kind === 'operator-required' || reconciliation.outcome === 'missing') {
         return {
           kind: 'busy',
           retryAt: Date.now(),
@@ -10442,7 +10437,7 @@ export class BotService extends TypertRemoteService {
         }
       })
     }, delay)
-    timer.unref?.()
+    timer.unref()
     this.sharedGroupAdmissionRetryTimers.set(key, timer)
   }
 
@@ -10930,7 +10925,7 @@ export class BotService extends TypertRemoteService {
         })
         .finally(() => { inFlight = undefined })
     }, Math.max(1, Math.floor(SHARED_GROUP_MESSAGE_DELIVERY_LEASE_MS / 3)))
-    timer.unref?.()
+    timer.unref()
     return {
       signal: fence.signal,
       stop: () => {

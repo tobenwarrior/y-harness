@@ -115,7 +115,10 @@ export interface BotCollaborationHost {
     event: BotCollaborationDeliveryEvent,
   ) => Promise<'accepted' | 'canceled'>
   /** Return the active event-routine relay context for one Bot turn, when any. */
-  readonly eventRoutineContext?: (sessionId: SessionId) => BotEventRelayContext | undefined
+  readonly eventRoutineContext?: (
+    sessionId: SessionId,
+    signal?: AbortSignal,
+  ) => BotEventRelayContext | undefined | Promise<BotEventRelayContext | undefined>
 }
 
 /** Result payload retained for one native Bot action lifecycle record. */
@@ -728,7 +731,8 @@ export class BotCollaborationService {
     if (target === undefined) throw new BotCollaborationError('target-not-found', `Bot "${request.targetBotId}" was not found`)
     if (sender.id === target.id) throw new BotCollaborationError('self-message', 'A Bot cannot send a message to itself')
     const messageId = request.messageId ?? BotMessageId(`bot-message-${randomUUID()}`)
-    const relayContext = this.host.eventRoutineContext?.(senderSessionId)
+    const relayContext = await this.host.eventRoutineContext?.(senderSessionId, request.signal)
+    throwIfCancelled(request.signal)
     const source: MessageSourceMap['agent-message'] = {
       kind: 'agent-message', form: 'relay', senderSessionId: sender.sessionId,
       ...(relayContext === undefined ? {} : { botEventRoutine: relayContext }),

@@ -6059,7 +6059,10 @@ describe('shared Bot service', () => {
       const privateTranscript = await value.service.handle('bots/share/read-private-chat', {
         botId: 'bot-chief',
       }, new AbortController().signal, collaborator.peer)
-      expect(privateTranscript).toMatchObject({ ok: true, value: { recent: expect.any(Array) } })
+      expect(privateTranscript.ok).toBe(true)
+      if (!privateTranscript.ok) throw new Error('private transcript was not returned')
+      const privateTranscriptValue = z.object({ recent: z.array(z.unknown()) }).parse(privateTranscript.value)
+      expect(privateTranscriptValue.recent).toBeInstanceOf(Array)
       expect(JSON.stringify([...value.host.messages.values()])).toContain('private note')
       expect(JSON.stringify(privateTranscript)).not.toContain('Launch notes')
     } finally {
