@@ -81,9 +81,9 @@ describe('apply', () => {
     // the erased registration widens it past a direct cast, so hop unknown.
     const injectEntry = entries[0]!.inject as unknown as (sessionId: SessionId) => MenuViewInjected
     const injected = injectEntry(sid('a'))
-    const controller = inputTriggers.sessionOf(
-      ctx.sessions.scope(sid('a')),
-    )
+    const scope = ctx.sessions.scope(sid('a'))
+    if (scope === undefined) throw new Error('expected a mounted Session scope')
+    const controller = inputTriggers.sessionOf(scope)
     expect(injected.menu).toBe(controller.menu)
     expect(injected.headers).toBe(controller.headers)
     // The pick face routes into the controller pipeline (closed menu → no-op).

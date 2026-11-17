@@ -740,7 +740,8 @@ describe('shared Bot collaboration surfaces', () => {
     await waitFor(() => { expect(recoverRosterFence).toHaveBeenCalledWith('old-fence-token') })
     await waitFor(() => { expect(screen.getByText('new-fence-token')).toBeTruthy() })
     expect(screen.getByRole('alert').textContent).toContain('still active or changed')
-    expect((within(screen.getByRole('dialog', { name: 'Recover shared roster?' })).getByRole('button', { name: 'Recover roster' })).disabled).toBe(true)
+    expect(within(screen.getByRole('dialog', { name: 'Recover shared roster?' })).getByRole('button', { name: 'Recover roster' }))
+      .toHaveProperty('disabled', true)
   })
 
   it('shows and recovers only an owner-visible recipient fence after explicit acknowledgement', async () => {
@@ -842,8 +843,8 @@ describe('shared Bot collaboration surfaces', () => {
     fireEvent.click(within(confirmation).getByRole('button', { name: 'Enable context' }))
 
     await waitFor(() => { expect(actions.setMemoryPolicy).toHaveBeenCalledWith(bot.id, true) })
-    expect((screen.getByRole('button', { name: 'Create invite' })).disabled).toBe(true)
-    expect((screen.getByRole('button', { name: 'Revoke access: principal-member' })).disabled).toBe(true)
+    expect(screen.getByRole('button', { name: 'Create invite' })).toHaveProperty('disabled', true)
+    expect(screen.getByRole('button', { name: 'Revoke access: principal-member' })).toHaveProperty('disabled', true)
 
     await act(async () => {
       policyWrite.resolve({ botId: BotId(bot.id), enabled: true, updatedAt: 2 })
@@ -1819,7 +1820,7 @@ describe('shared Bot collaboration surfaces', () => {
       const recover = within(dialog).getByRole('button', { name: /Recover/ })
       expect(recover).toBeTruthy()
       expect((recover as HTMLButtonElement).disabled).toBe(true)
-      expect((within(dialog).getByRole('button', { name: 'Create shared group' })).disabled).toBe(true)
+      expect(within(dialog).getByRole('button', { name: 'Create shared group' })).toHaveProperty('disabled', true)
     })
     fireEvent.click(within(dialog).getByRole('button', { name: /Recover/ }))
     await new Promise<void>((resolve) => { setTimeout(resolve, 0) })
@@ -1828,7 +1829,7 @@ describe('shared Bot collaboration surfaces', () => {
     createGroup.resolve({ ok: false, error: { code: 'gateway/transport', message: 'settled', details: {} } })
     await act(async () => { await Promise.resolve(); await Promise.resolve() })
     await waitFor(() => {
-      expect((within(dialog).getByRole('button', { name: 'Recover' })).disabled).toBe(false)
+      expect(within(dialog).getByRole('button', { name: 'Recover' })).toHaveProperty('disabled', false)
     })
   })
 
@@ -2222,7 +2223,7 @@ describe('shared Bot collaboration surfaces', () => {
       await waitFor(() => { expect(screen.getByPlaceholderText('Message Catalog gate room')).toBeTruthy() })
       const input = screen.getByPlaceholderText('Message Catalog gate room')
       fireEvent.change(input, { target: { value: 'Catalog loaded' } })
-      expect((screen.getByRole('button', { name: 'Send to group' })).disabled).toBe(false)
+      expect(screen.getByRole('button', { name: 'Send to group' })).toHaveProperty('disabled', false)
     } finally {
       vi.restoreAllMocks()
     }
@@ -2407,7 +2408,7 @@ describe('shared Bot collaboration surfaces', () => {
       await Promise.resolve()
       await Promise.resolve()
     })
-    expect((screen.getByRole('button', { name: 'Sending…' })).disabled).toBe(true)
+    expect(screen.getByRole('button', { name: 'Sending…' })).toHaveProperty('disabled', true)
 
     await act(async () => {
       secondSend.resolve({ ok: true, value: { messageId: brandString<BotGroupMessageId>('bot-group-message-beta'), status: 'accepted', deliveries: [] } })

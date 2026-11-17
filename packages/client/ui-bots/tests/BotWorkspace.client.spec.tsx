@@ -1246,7 +1246,7 @@ describe('Bot roster and detail', () => {
 
     window.dispatchEvent(new Event('focus'))
     await waitFor(() => { expect(getOwnerCapability).toHaveBeenCalledTimes(2) })
-    expect((screen.getByRole('button', { name: 'Create a shared group' })).disabled).toBe(false)
+    expect(screen.getByRole('button', { name: 'Create a shared group' })).toHaveProperty('disabled', false)
     window.dispatchEvent(new Event('focus'))
     expect(getOwnerCapability).toHaveBeenCalledTimes(2)
   })
@@ -1296,12 +1296,12 @@ describe('Bot roster and detail', () => {
     />)
 
     await waitFor(() => { expect(capabilityCalls).toBe(1) })
-    expect((screen.getByRole('button', { name: 'Create a shared group' })).disabled).toBe(true)
+    expect(screen.getByRole('button', { name: 'Create a shared group' })).toHaveProperty('disabled', true)
     if (onGeneration === undefined) throw new Error('Connection generation listener was not registered')
     await act(async () => { onGeneration?.() })
     await waitFor(() => {
       expect(capabilityCalls).toBe(2)
-      expect((screen.getByRole('button', { name: 'Create a shared group' })).disabled).toBe(false)
+      expect(screen.getByRole('button', { name: 'Create a shared group' })).toHaveProperty('disabled', false)
     })
     view.unmount()
     client.dispose?.()
@@ -1972,7 +1972,7 @@ describe('Bot roster and detail', () => {
     fireEvent.change(screen.getByRole('textbox', { name: 'Message Release room' }), { target: { value: 'Retry this' } })
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
     await waitFor(() => { expect(failed).toHaveBeenCalledWith('Retry this') })
-    expect((screen.getByRole('textbox', { name: 'Message Release room' })).value).toBe('Retry this')
+    expect(screen.getByRole('textbox', { name: 'Message Release room' })).toHaveProperty('value', 'Retry this')
     expect(screen.getByRole('alert').textContent).toContain('Some Bots could not receive')
   })
 

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi, type Mock } from 'vitest'
 import type {
   SessionBinding, SessionReference, ISessions, SessionListState, SessionSummary,
 } from '@yharness/api-session-controller/client'
@@ -94,17 +94,22 @@ function pendingStoreFixture(initial: BotGroupPendingState = { creations: {}, me
   }
 }
 
-function remoteFixture(rows: readonly BotView[]) {
+function remoteFixture(rows: readonly BotView[]): BotWorkspaceRemote & {
+  list: Mock<BotWorkspaceRemote['list']>
+  create: Mock<BotWorkspaceRemote['create']>
+  createGroup: Mock<NonNullable<BotWorkspaceRemote['createGroup']>>
+  sendGroupMessage: Mock<NonNullable<BotWorkspaceRemote['sendGroupMessage']>>
+} {
   const create = vi.fn<BotWorkspaceRemote['create']>()
   const createGroup = vi.fn<NonNullable<BotWorkspaceRemote['createGroup']>>()
   const sendGroupMessage = vi.fn<NonNullable<BotWorkspaceRemote['sendGroupMessage']>>()
   return {
-    list: vi.fn(async () => ({ ok: true as const, value: { bots: rows } })),
+    list: vi.fn<BotWorkspaceRemote['list']>(async () => ({ ok: true, value: { bots: rows } })),
     create,
     createGroup,
     sendGroupMessage,
     rename: vi.fn<BotWorkspaceRemote['rename']>(),
-  } satisfies BotWorkspaceRemote
+  }
 }
 
 function groupView(id: string, name: string, bots: readonly BotView[]): BotGroupView {
@@ -236,10 +241,10 @@ describe('BotWorkspaceController', () => {
     const remote = remoteFixture([])
     remote.create
       .mockRejectedValueOnce(new Error('connection closed after commit'))
-      .mockImplementationOnce(async (request: { readonly id: string; readonly description?: string }) => ({
-        ok: true,
-        value: { bot: bot(request.id, 'session-profile-retry', { description: request.description }) },
-      }))
+      .mockImplementationOnce(({ id, description }) => {
+        if (id === undefined || description === undefined) throw new Error('profile retry must include the Bot id and description')
+        return Promise.resolve({ ok: true, value: { bot: bot(id, 'session-profile-retry', { description }) } })
+      })
     const { sessions } = sessionsFixture()
     const controller = new BotWorkspaceController(remote, sessions, () => 'unexpected response')
     const creation = {
@@ -977,10 +982,10 @@ describe('BotWorkspaceController', () => {
     const firstFailure = new Error('connection closed after commit')
     remote.create
       .mockRejectedValueOnce(firstFailure)
-      .mockImplementationOnce(async (request: { readonly id: string }) => ({
-        ok: true,
-        value: { bot: bot(request.id, 'session-retry') },
-      }))
+      .mockImplementationOnce(({ id }) => {
+        if (id === undefined) throw new Error('create retry must include the Bot id')
+        return Promise.resolve({ ok: true, value: { bot: bot(id, 'session-retry') } })
+      })
     const { sessions } = sessionsFixture()
     const controller = new BotWorkspaceController(remote, sessions, () => 'unexpected response')
 
