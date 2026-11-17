@@ -728,7 +728,7 @@ describe('web e2e: seeded history renders through cold resume', () => {
 
   it.skipIf(MODE === 'record')('an Access-chip switch persists its command without adding a Chat row', async () => {
     onTestFailed(() => saveFailureShot(page, 'web-e2e-seeded-command-row'))
-    await page.getByRole('button', { name: 'Access mode, current: Workspace Write' }).click()
+    await page.getByRole('button', { name: 'Access mode, current: Ask for approval' }).click()
     await page.getByRole('menuitem', { name: 'Read Only' }).click()
     const access = page.getByRole('button', { name: 'Access mode, current: Read Only' })
     await expect.poll(() => access.isEnabled(), { timeout: 10_000 }).toBe(true)
