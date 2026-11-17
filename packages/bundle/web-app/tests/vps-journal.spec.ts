@@ -374,10 +374,13 @@ describe('VPS Bot journal', () => {
       await close(closeServer)
     }
 
-    const invalidServer = createServer((socket) => { socket.end('{"version":1,"generatedAt":"now","recovery":[],"primaryAudit":"bad"}') })
+    const invalidServer = createServer((socket) => {
+      setTimeout(() => socket.end('{"version":1,"generatedAt":"now","recovery":[],"primaryAudit":"bad"}'), 50)
+    })
     await listen(invalidServer, path)
     try {
-      await expect(journal.read(bot, new AbortController().signal)).rejects.toThrow('invalid')
+      const validationJournal = new VpsJournal({ socketPath: path, bots: [bot] })
+      await expect(validationJournal.read(bot, new AbortController().signal)).rejects.toThrow('invalid')
     } finally {
       await close(invalidServer)
     }
