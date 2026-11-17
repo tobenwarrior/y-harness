@@ -18,10 +18,12 @@ import {
 } from '../src/client/bot-vault-request.ts'
 import { BotVaultRequestCard } from '../src/client/BotVaultRequestCard.tsx'
 import {
+  createBotWebsiteLoginRequestPoller,
   fetchBotWebsiteLoginRequest,
   isBotWebsiteLoginRequestEnabled,
   parseBotWebsiteLoginResponse,
   type BotWebsiteLoginRequest,
+  type BotWebsiteLoginRequestFetcher,
 } from '../src/client/bot-website-login-request.ts'
 import { BotWebsiteLoginRequestCard } from '../src/client/BotWebsiteLoginRequestCard.tsx'
 
@@ -53,6 +55,10 @@ describe('Bot website login request response', () => {
       ...websiteResponse().request, scope: 'shared',
     })
     expect(parseBotWebsiteLoginResponse({ request: { ...websiteResponse().request, scope: 'owner' } })).toBeNull()
+    expect(parseBotWebsiteLoginResponse({ request: [] })).toBeNull()
+    expect(parseBotWebsiteLoginResponse({ request: { ...websiteResponse().request, origin: null } })).toBeNull()
+    expect(parseBotWebsiteLoginResponse({ request: { ...websiteResponse().request, origin: 'https://[invalid' } })).toBeNull()
+    expect(parseBotWebsiteLoginResponse({ request: { ...websiteResponse().request, destination: 'https://example.com/sign-in?token=fixture-only' } })).toBeNull()
     expect(parseBotWebsiteLoginResponse({ request: { ...websiteResponse().request, destination: 'http://example.com/sign-in' } })).toBeNull()
     expect(parseBotWebsiteLoginResponse({ request: { ...websiteResponse().request, destination: 'https://other.example/sign-in' } })).toBeNull()
     expect(parseBotWebsiteLoginResponse({ request: { ...websiteResponse().request, username: 'alice', password: 'secret' } })).toBeNull()
@@ -64,6 +70,49 @@ describe('Bot website login request response', () => {
     expect(fetcher).toHaveBeenCalledWith('api/bot-website-login?sessionId=owner%20session%2Fone', expect.objectContaining({
       method: 'GET', credentials: 'same-origin', cache: 'no-store',
     }))
+  })
+
+  it('returns null for revoked, failed, and malformed broker responses', async () => {
+    const fetcher = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ request: null }), { status: 200 }))
+      .mockResolvedValueOnce(new Response('unavailable', { status: 503 }))
+      .mockResolvedValueOnce(new Response('not-json', { status: 200 }))
+    const signal = new AbortController().signal
+
+    await expect(fetchBotWebsiteLoginRequest('website-session', signal, fetcher)).resolves.toBeNull()
+    await expect(fetchBotWebsiteLoginRequest('website-session', signal, fetcher)).resolves.toBeNull()
+    await expect(fetchBotWebsiteLoginRequest('website-session', signal, fetcher)).resolves.toBeNull()
+  })
+
+  it('cancels a stale selected-session read and ignores its completion', async () => {
+    let resolveFirst: ((value: BotWebsiteLoginRequest | null) => void) | undefined
+    const fetcher = vi.fn<BotWebsiteLoginRequestFetcher>(async (sessionId, signal) => {
+      if (sessionId === 'first-session') {
+        await new Promise<BotWebsiteLoginRequest | null>((resolve) => { resolveFirst = resolve })
+        if (signal.aborted) return null
+        return websiteResponse().request
+      }
+      return { ...websiteResponse().request, purpose: 'verification' }
+    })
+    const results: Array<{ sessionId: string; request: BotWebsiteLoginRequest | null }> = []
+    const poller = createBotWebsiteLoginRequestPoller({
+      fetcher,
+      intervalMs: 1_000,
+      onResult: (sessionId, request) => { results.push({ sessionId, request }) },
+    })
+
+    try {
+      poller.select('first-session', true)
+      poller.select('second-session', false)
+      resolveFirst?.(websiteResponse().request)
+      await vi.waitFor(() => { expect(results).toHaveLength(1) })
+
+      expect(fetcher).toHaveBeenCalledTimes(2)
+      expect(fetcher.mock.calls[0]?.[1].aborted).toBe(true)
+      expect(results[0]).toMatchObject({ sessionId: 'second-session', request: { purpose: 'verification' } })
+    } finally {
+      poller.dispose()
+    }
   })
 
   it('requires the explicit website-login feature flag', () => {
@@ -118,6 +167,21 @@ describe('BotWebsiteLoginRequestCard', () => {
     expect(screen.queryByRole('link')).toBeNull()
   })
 
+  it('uses the Web handoff when the browser navigator is unavailable', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(websiteResponse()), { status: 200 }))
+    const props = cardProps()
+    const view = render(<BotWebsiteLoginRequestCard {...props} />)
+    expect(await screen.findByText(en.websiteLoginDesktopOnly)).toBeTruthy()
+
+    vi.stubGlobal('navigator', undefined)
+    try {
+      view.rerender(<BotWebsiteLoginRequestCard {...props} />)
+      expect(screen.getByText(en.websiteLoginDesktopOnly)).toBeTruthy()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('keeps polling an idle owner session for a shared approval', async () => {
     vi.useFakeTimers()
     window.__YH_BOT_SHARED_BROWSER__ = true
@@ -150,6 +214,7 @@ function response(overrides: Partial<BotVaultRequest> = {}): { request: BotVault
 
 describe('Bot Vault request response parser', () => {
   it('accepts only the exact metadata response and rejects secret-shaped or malformed values', () => {
+    expect(parseBotVaultRequestResponse(undefined)).toBeNull()
     expect(parseBotVaultRequestResponse({ request: null })).toBeNull()
     expect(parseBotVaultRequestResponse(response())).toEqual(response().request)
     expect(parseBotVaultRequestResponse({ request: { ...response().request, scope: 'shared' } })).toEqual({
@@ -175,6 +240,11 @@ describe('Bot Vault request response parser', () => {
     expect(fetcher).toHaveBeenCalledWith('api/bot-vault-request?sessionId=owner%20session%2Fone', expect.objectContaining({
       method: 'GET', credentials: 'same-origin', cache: 'no-store',
     }))
+  })
+
+  it('returns no metadata when the broker response is not valid JSON', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response('not-json', { status: 200 }))
+    await expect(fetchBotVaultRequest('owner session/one', new AbortController().signal, fetcher)).resolves.toBeNull()
   })
 })
 

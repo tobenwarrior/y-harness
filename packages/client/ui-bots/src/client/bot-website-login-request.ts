@@ -50,9 +50,7 @@ function publicOrigin(value: unknown): value is string {
 function publicDestination(value: unknown, origin: string): value is string {
   if (typeof value !== 'string' || value.trim() !== value || !/^[\x21-\x7e]+$/u.test(value)
     || /[?#\\]/u.test(value) || !value.startsWith(`${origin}/`)) return false
-  let url: URL
-  try { url = new URL(value) }
-  catch { return false }
+  const url = new URL(value)
   return url.protocol === 'https:' && url.username === '' && url.password === ''
     && url.origin === origin && url.search === '' && url.hash === '' && url.href === value
 }
