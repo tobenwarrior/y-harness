@@ -64,8 +64,8 @@ describe.skipIf(process.platform === 'win32')('VPS Bot Computer setting', () => 
       expect(() => new VpsBotComputerSetting('relative-root', 'network')).toThrow('invalid')
       expect(() => new VpsBotComputerSetting(`${root}\u0000unsafe`, 'network')).toThrow('invalid')
       const policy = new VpsBotComputerSetting(root, 'network')
-      const unchecked = policy as { set(sessionId: string, enabled: string): Promise<void> }
-      await expect(unchecked.set(SESSION, 'true')).rejects.toThrow('invalid')
+      const rejected: unknown = Reflect.apply(policy.set.bind(policy), undefined, [SESSION, 'true'])
+      await expect(rejected).rejects.toThrow('invalid')
     } finally {
       await rm(root, { recursive: true, force: true })
     }

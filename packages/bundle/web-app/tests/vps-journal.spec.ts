@@ -234,7 +234,6 @@ describe('VPS Bot journal', () => {
         callId: ToolCallId(randomUUID()),
         name: 'vps_service_journal',
         arguments: {},
-        agent: undefined,
       })
       expect(missingAgent.isError).toBe(true)
       expect(missingAgent.content.some(block => block.type === 'text'
