@@ -887,6 +887,42 @@ describe('Bot group delivery with a running Agent', () => {
         groupId, messageId, text: 'Review attachments.',
       })).resolves.toMatchObject({ status: 'accepted' })
       expect(sharedAttachments).toHaveBeenCalledOnce()
+      const unnamedMessageId = BotGroupMessageId('bot-group-message-attachment-unnamed-image')
+      const unnamedImage: ImageAttachmentRef = {
+        attachmentId: AttachmentId('provider:attachment-unnamed-image'), mediaType: 'image/png', bytes: 3, width: 1, height: 1,
+      }
+      const unnamedGrant = await service.admitAttachment({
+        groupId, messageId: unnamedMessageId, targetBotIds: [beta.id], attachments: [{ type: 'image', attachment: unnamedImage }],
+      })
+      await expect(service.send({ groupId, messageId: unnamedMessageId, targetBotIds: [beta.id], text: 'Unnamed image.', attachmentGrants: [unnamedGrant.grantId] }))
+        .resolves.toMatchObject({ status: 'accepted' })
+      const unnamedInspection = await service.inspect({ groupId })
+      const unnamedMessage = unnamedInspection.messages.find(message => message.id === unnamedMessageId)
+      expect(unnamedMessage?.attachments?.[0]).not.toHaveProperty('name')
+      const latestGroup = storage.domain.table('groups').get(groupId)
+      if (latestGroup === undefined) throw new Error('attachment group was not persisted')
+
+      await storage.domain.table('messages').put(messageId, { ...admittedMessage, sender: { kind: 'user' } })
+      await storage.domain.table('deliveries').put(admittedDelivery[0], { ...admittedDelivery[1], status: 'failed' })
+      const mismatchedFile: FileAttachmentRef = { attachmentId: AttachmentId('provider:attachment-mismatch'), name: 'mismatch.txt', bytes: 7 }
+      const admittedScope = {
+        kind: 'local-group' as const, ownerId: 'local-owner', groupId, messageId, targetBotIds: [beta.id],
+        authorizationRevision: latestGroup.updatedAt,
+      }
+      const mismatchedGrant = await store.admit(admittedScope, [{ type: 'file', attachment: mismatchedFile }])
+      await expect(service.send({
+        groupId, messageId, targetBotIds: [beta.id], text: 'Review attachments.', attachmentGrants: [mismatchedGrant.grantId],
+      })).rejects.toMatchObject({ code: 'invalid' })
+
+      const orphanConsumedId = BotGroupMessageId('bot-group-message-attachment-consumed-orphan')
+      const orphanScope = {
+        kind: 'local-group' as const, ownerId: 'local-owner', groupId, messageId: orphanConsumedId, targetBotIds: [beta.id],
+        authorizationRevision: latestGroup.updatedAt,
+      }
+      const orphanGrant = await store.admit(orphanScope, [{ type: 'file', attachment: file }])
+      await store.consume(orphanScope, [orphanGrant.grantId])
+      await expect(service.send({ groupId, messageId: orphanConsumedId, targetBotIds: [beta.id], text: 'Consumed orphan.' }))
+        .rejects.toMatchObject({ code: 'invalid' })
       await expect(service.admitAttachment({
         groupId, messageId, attachments: [{ type: 'file', attachment: file }],
       })).rejects.toMatchObject({ code: 'invalid' })
@@ -894,9 +930,11 @@ describe('Bot group delivery with a running Agent', () => {
         .resolves.toMatchObject({ type: 'image', attachment: { name: 'named.png' } })
       await expect(service.resolveAttachment(groupId, messageId, 'provider:missing'))
         .rejects.toMatchObject({ code: 'not-found' })
-      await expect(service.inspect({ groupId })).resolves.toMatchObject({ messages: [{ attachments: [
+      const attachmentInspection = await service.inspect({ groupId })
+      const namedMessage = attachmentInspection.messages.find(message => message.id === messageId)
+      expect(namedMessage?.attachments).toMatchObject([
         { type: 'image', name: 'named.png' }, { type: 'file', name: 'named.txt' },
-      ] }] })
+      ])
 
       const legacyId = BotGroupMessageId('bot-group-message-attachment-legacy')
       await storage.domain.table('messages').put(legacyId, {
