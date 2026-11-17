@@ -60,13 +60,13 @@ async function harness(withManagement = false, withApproval = false, withGroups 
   const bound = client()
   const manage = vi.fn(async () => ({ id: 'bot-created' }))
   const groupTools: BotGroupToolHost = {
-    list: vi.fn(async () => ({ groups: [] })),
-    inspect: vi.fn(async request => ({ group: { id: request.groupId, name: 'Room', botIds: [], bots: [], createdAt: 1, updatedAt: 1 }, messages: [] })),
-    create: vi.fn(async request => ({ group: { id: request.id ?? BotGroupId('bot-group-created'), name: request.name, botIds: request.botIds, bots: [], createdAt: 1, updatedAt: 1 } })),
-    update: vi.fn(async request => ({ group: {
+    list: vi.fn<BotGroupToolHost['list']>(async () => ({ groups: [] })),
+    inspect: vi.fn<BotGroupToolHost['inspect']>(async request => ({ group: { id: request.groupId, name: 'Room', botIds: [], bots: [], createdAt: 1, updatedAt: 1 }, messages: [] })),
+    create: vi.fn<BotGroupToolHost['create']>(async request => ({ group: { id: request.id ?? BotGroupId('bot-group-created'), name: request.name, botIds: request.botIds, bots: [], createdAt: 1, updatedAt: 1 } })),
+    update: vi.fn<BotGroupToolHost['update']>(async request => ({ group: {
       id: request.groupId, name: request.name, botIds: request.botIds, bots: [], createdAt: 1, updatedAt: 1,
     } })),
-    send: vi.fn(async request => ({ messageId: request.messageId ?? BotGroupMessageId('bot-group-message-created'), status: 'accepted' as const, deliveries: [] })),
+    send: vi.fn<BotGroupToolHost['send']>(async request => ({ messageId: request.messageId ?? BotGroupMessageId('bot-group-message-created'), status: 'accepted' as const, deliveries: [] })),
   }
   const history: BotGrokHistoryPage = {
     source: 'grok-bot', version: 1, firstCachedSequence: 4, totalMessages: 2, nextBefore: 8,
@@ -139,12 +139,8 @@ describe('scoped Bot collaboration tools', () => {
         'list_bots', 'inspect_bot', 'send_bot_message',
         'list_bot_memory', 'remember_bot_memory', 'forget_bot_memory',
       ])
-      expect(schemas.find(tool => tool.name === 'inspect_bot')).toMatchObject({
-        description: expect.stringContaining('dsh-bot:<bot-id>'),
-      })
-      expect(schemas.find(tool => tool.name === 'send_bot_message')).toMatchObject({
-        description: expect.stringContaining('never sends a message'),
-      })
+      expect(schemas.find(tool => tool.name === 'inspect_bot')?.description).toContain('dsh-bot:<bot-id>')
+      expect(schemas.find(tool => tool.name === 'send_bot_message')?.description).toContain('never sends a message')
       await expect(execute(h.ctx, h.agent, 'list_bots', {})).resolves.toMatchObject({ isError: false })
       expect(JSON.parse(text(await execute(h.ctx, h.agent, 'list_bots', {})))).toEqual([
         { id: 'bot-beta', name: 'Beta', availability: 'idle', state: 'active' },
