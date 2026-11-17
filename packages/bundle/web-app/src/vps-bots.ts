@@ -152,7 +152,7 @@ export function mountVpsBots(
       const publish = (): void => {
         void roster.sync().catch((error: unknown) => {
           void error
-          scope.logger.warn('Could not publish private Bot browser assignments.')
+          if (browserRoster === roster) scope.logger.warn('Could not publish private Bot browser assignments.')
         })
       }
       scope.effect(() => {

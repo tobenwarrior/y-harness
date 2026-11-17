@@ -63,13 +63,14 @@ export class VpsBrowserRoster {
 
   /** Publish all known changes before admitting an isolated browser operation.
    * @returns When the latest roster is available to the worker.
+   * @throws When the roster closes before synchronization completes.
    */
   async sync(): Promise<void> {
-    if (this.closed) throw new Error('The isolated browser roster is unavailable.')
     while (!this.closed && this.writtenRevision !== this.revision) {
       this.syncing ??= this.publish().finally(() => { this.syncing = undefined })
       await this.syncing
     }
+    if (this.closed) throw new Error('The isolated browser roster is unavailable.')
   }
 
   /** Quiesce the writer while leaving the published assignments on disk.
