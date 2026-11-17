@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { Context } from '@yharness/cordis'
 import SystemPrompt from '@yharness/system-prompt'
 import ToolRuntime from '@yharness/tools'
@@ -14,6 +14,8 @@ import type { SubprocessTerminalEnvironment, SubprocessTerminalSpawnSpec } from 
 import * as ToolFs from '@yharness/tool-fs'
 import { bindManagedBotExecution, createManagedBotExecution, managedBotExecutionFor, resolveManagedWorkdir } from '@yharness/sandbox-policy'
 import type { SandboxPolicyService } from '@yharness/sandbox-policy'
+
+const MANAGED_WORKSPACE = '/workspace'
 
 class UnusedShell extends ShellExecutor {
   resolve(request: ShellExecRequest): ShellExecSpec {
@@ -60,9 +62,14 @@ describe('managed Bot filesystem routing', () => {
       const agentFiber = ctx.plugin(() => {})
       const managedContext = agentFiber.ctx
       const managedFs = new LocalFileSystem(new Context(), { cwd: managedRoot, diffBasisMaxBytes: 10 * 1024 * 1024 })
+      const resolveLocal = managedFs.resolve.bind(managedFs)
+      vi.spyOn(managedFs, 'resolve').mockImplementation((path, options) => {
+        expect(options?.cwd).toBe(MANAGED_WORKSPACE)
+        return resolveLocal(path, { ...options, cwd: managedRoot })
+      })
       const policy: Pick<SandboxPolicyService, 'defaultMode' | 'resolve'> = {
         defaultMode: 'danger-full-access',
-        resolve: () => ({ mode: 'danger-full-access', workspaceRoot: managedRoot }),
+        resolve: () => ({ mode: 'danger-full-access', workspaceRoot: MANAGED_WORKSPACE }),
       }
       const capability = createManagedBotExecution({
         context: managedContext,
@@ -70,7 +77,7 @@ describe('managed Bot filesystem routing', () => {
         fs: managedFs,
         subprocess: new UnusedSubprocess(managedContext),
         sandboxPolicy: policy,
-        workspaceRoot: managedRoot,
+        workspaceRoot: MANAGED_WORKSPACE,
       })
       bindManagedBotExecution(managedContext, capability)
       const agent = {
@@ -102,7 +109,7 @@ describe('managed Bot filesystem routing', () => {
       const managedContext = agentFiber.ctx
       const policy: Pick<SandboxPolicyService, 'defaultMode' | 'resolve'> = {
         defaultMode: 'danger-full-access',
-        resolve: () => ({ mode: 'danger-full-access', workspaceRoot: root }),
+        resolve: () => ({ mode: 'danger-full-access', workspaceRoot: MANAGED_WORKSPACE }),
       }
       const capability = createManagedBotExecution({
         context: managedContext,
@@ -110,9 +117,9 @@ describe('managed Bot filesystem routing', () => {
         fs: new LocalFileSystem(new Context(), { cwd: root, diffBasisMaxBytes: 10 * 1024 * 1024 }),
         subprocess: new UnusedSubprocess(managedContext),
         sandboxPolicy: policy,
-        workspaceRoot: root,
+        workspaceRoot: MANAGED_WORKSPACE,
       })
-      expect(resolveManagedWorkdir(capability, 'nested')).toBe(join(root, 'nested'))
+      expect(resolveManagedWorkdir(capability, 'nested')).toBe('/workspace/nested')
       expect(() => resolveManagedWorkdir(capability, '/etc')).toThrow('stay inside')
       expect(() => resolveManagedWorkdir(capability, '../outside')).toThrow('stay inside')
     } finally {
