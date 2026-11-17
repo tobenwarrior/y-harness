@@ -109,9 +109,8 @@ describe('VPS Bot journal', () => {
         agent: owner,
       })
       expect(unexpected.isError).toBe(true)
-      expect(unexpected.content).toContainEqual(expect.objectContaining({
-        type: 'text', text: expect.stringContaining('additionalProperties: false'),
-      }))
+      expect(unexpected.content.some(block => block.type === 'text'
+        && block.text.includes('additionalProperties: false'))).toBe(true)
 
       const otherSession = await ctx.tools.execute({
         signal: new AbortController().signal,
@@ -121,9 +120,8 @@ describe('VPS Bot journal', () => {
         agent: { id: randomUUID(), ctx } as Agent,
       })
       expect(otherSession.isError).toBe(true)
-      expect(otherSession.content).toContainEqual(expect.objectContaining({
-        type: 'text', text: expect.stringContaining('owning Bot Session'),
-      }))
+      expect(otherSession.content.some(block => block.type === 'text'
+        && block.text.includes('owning Bot Session'))).toBe(true)
 
       const otherContext = await ctx.tools.execute({
         signal: new AbortController().signal,
@@ -133,9 +131,8 @@ describe('VPS Bot journal', () => {
         agent: { id: ownerSessionId, ctx: new Context() } as Agent,
       })
       expect(otherContext.isError).toBe(true)
-      expect(otherContext.content).toContainEqual(expect.objectContaining({
-        type: 'text', text: expect.stringContaining('owning Bot Session'),
-      }))
+      expect(otherContext.content.some(block => block.type === 'text'
+        && block.text.includes('owning Bot Session'))).toBe(true)
     } finally {
       await ctx.fiber.dispose()
       await denied.fiber.dispose()

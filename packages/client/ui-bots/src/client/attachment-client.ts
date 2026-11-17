@@ -101,7 +101,7 @@ export async function admitBotGroupAttachments(
 /** Validate an image media type without treating arbitrary image MIME values as raster input. */
 function imageMediaType(value: string): BotGroupImageAdmissionRequest['image']['mediaType'] | undefined {
   return isBotGroupImageType(value)
-    ? value as BotGroupImageAdmissionRequest['image']['mediaType']
+    ? value
     : undefined
 }
 
@@ -189,7 +189,7 @@ function parseMetadata(value: unknown): BotAttachmentGrantValue['attachments'][n
     || typeof value.height !== 'number' || !Number.isSafeInteger(value.height) || value.height < 1
     || (value.name !== undefined && (typeof value.name !== 'string' || value.name.length < 1 || value.name.length > 255))) return undefined
   return {
-    type: 'image', mediaType: value.mediaType as BotGroupImageAdmissionRequest['image']['mediaType'], bytes: value.bytes,
+    type: 'image', mediaType: value.mediaType, bytes: value.bytes,
     width: value.width, height: value.height, ...(value.name === undefined ? {} : { name: value.name }),
   }
 }
@@ -204,6 +204,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function browserOrigin(): string {
-  const locationValue = globalThis.location
-  return typeof locationValue?.origin === 'string' && locationValue.origin !== '' ? locationValue.origin : 'http://dsh.internal'
+  const locationValue: unknown = Reflect.get(globalThis, 'location')
+  const origin = isRecord(locationValue) ? locationValue.origin : undefined
+  return typeof origin === 'string' && origin !== '' ? origin : 'http://dsh.internal'
 }

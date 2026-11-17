@@ -27,7 +27,9 @@ describe('BotAvatarEditor appearance controls', () => {
     const bitmap = { width: 400, height: 300, close: vi.fn() }
     vi.stubGlobal('createImageBitmap', vi.fn().mockResolvedValue(bitmap))
     const drawImage = vi.fn()
-    const getContext = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({ drawImage } as CanvasRenderingContext2D)
+    const context = Object.create(null) as CanvasRenderingContext2D
+    context.drawImage = drawImage
+    const getContext = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(context)
     const toDataURL = vi.spyOn(HTMLCanvasElement.prototype, 'toDataURL').mockReturnValue('data:image/png;base64,AQID')
     const upload = vi.fn().mockResolvedValue(undefined)
     try {
@@ -66,7 +68,9 @@ describe('BotAvatarEditor appearance controls', () => {
     const decode = vi.fn().mockReturnValueOnce(new Promise((resolve) => { finishFirst = resolve })).mockResolvedValueOnce(second)
     vi.stubGlobal('createImageBitmap', decode)
     const drawImage = vi.fn()
-    const getContext = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({ drawImage } as CanvasRenderingContext2D)
+    const context = Object.create(null) as CanvasRenderingContext2D
+    context.drawImage = drawImage
+    const getContext = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(context)
     const toDataURL = vi.spyOn(HTMLCanvasElement.prototype, 'toDataURL').mockReturnValue('data:image/png;base64,AQID')
     try {
       renderEditor({ upload: vi.fn(), updateAppearance: vi.fn() })

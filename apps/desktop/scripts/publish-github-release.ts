@@ -167,8 +167,12 @@ export async function createGitHubReleasePlan(options: {
   const version = assertVersion(options.version)
   const tag = options.tag ?? `v${version}`
   if (!/^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u.test(tag)) throw new Error(`desktop GitHub release: invalid release tag ${JSON.stringify(tag)}`)
-  const targetInputs = options.targets ?? await Promise.all(DESKTOP_RELEASE_TARGETS.map(async target => ({ target, directory: await resolveTargetDirectory(options.input, target, version) })))
-  if (targetInputs.length !== DESKTOP_RELEASE_TARGETS.length || new Set(targetInputs.map(item => item.target)).size !== DESKTOP_RELEASE_TARGETS.length) {
+  const targetInputs = options.targets ?? await Promise.all(DESKTOP_RELEASE_TARGETS.map(async target => ({
+    target,
+    directory: await resolveTargetDirectory(options.input, target, version),
+  })))
+  if (targetInputs.length !== DESKTOP_RELEASE_TARGETS.length
+    || new Set(targetInputs.map(item => item.target)).size !== DESKTOP_RELEASE_TARGETS.length) {
     throw new Error('desktop GitHub release: exactly one artifact directory is required for each supported target')
   }
   const metadataByName = new Map<string, Record<string, unknown>>()
@@ -195,10 +199,10 @@ export async function createGitHubReleasePlan(options: {
   const macMetadata = metadataByName.get('latest-mac.yml')
   const winMetadata = metadataByName.get('latest.yml')
   if (macMetadata === undefined || winMetadata === undefined) throw new Error('desktop GitHub release: both latest.yml and latest-mac.yml are required')
-  const macFiles = targetInputs.filter(input => input.target.startsWith('mac-')).map(input => {
+  const macFiles = targetInputs.filter(input => input.target.startsWith('mac-')).map((input) => {
     const target = input.target
     const directory = resolve(input.directory)
-    return readMetadata(join(directory, 'latest-mac.yml'), version, target).then(metadata => {
+    return readMetadata(join(directory, 'latest-mac.yml'), version, target).then((metadata) => {
       if (!Array.isArray(metadata.files) || metadata.files.length !== 1) throw new Error('desktop GitHub release: macOS metadata lost its update file')
       return metadata.files[0]
     })

@@ -46,7 +46,7 @@ function createInput(): MacDesktop['input'] {
   const post = graphics.func('void CGEventPost(uint32_t, void *)')
   const release = foundation.func('void CFRelease(void *)')
 
-  const send = (event: ReturnType<typeof keyboard>, configure?: () => void): void => {
+  const send = (event: unknown, configure?: () => void): void => {
     if (event === null) throw new Error('macOS could not create the input event.')
     try {
       configure?.()
@@ -58,7 +58,7 @@ function createInput(): MacDesktop['input'] {
 
   const sendKey = (code: number, modifiers: number, characters?: string): void => {
     for (const down of [true, false]) {
-      const event = keyboard(null, code, down)
+      const event: unknown = keyboard(null, code, down)
       send(event, () => {
         flags(event, modifiers)
         if (characters !== undefined) {
@@ -112,13 +112,13 @@ function createInput(): MacDesktop['input'] {
     if (action.kind === 'move') {
       send(mouse(null, 5, point, 0))
     } else if (action.kind === 'scroll') {
-      const event = wheel(null, 1, 1, -action.delta, 0, 0)
+      const event: unknown = wheel(null, 1, 1, -action.delta, 0, 0)
       send(event, () => { locate(event, point) })
     } else if (action.kind === 'click') {
       const button = action.button === 1 ? 0 : action.button === 2 ? 2 : 1
       const down = button === 0 ? 1 : button === 1 ? 3 : 25
       for (const type of [down, down + 1]) {
-        const event = mouse(null, type, point, button)
+        const event: unknown = mouse(null, type, point, button)
         send(event, () => { setInteger(event, 1, 1) }) // kCGMouseEventClickState
       }
     } else {

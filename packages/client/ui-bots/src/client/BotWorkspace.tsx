@@ -116,8 +116,8 @@ const FOLDER_STATE_KEY = 'dsh.client-ui-bots.folder-state.v1'
  */
 function readCollapsedFolders(): ReadonlySet<string> {
   try {
-    const raw = globalThis.localStorage?.getItem(FOLDER_STATE_KEY)
-    if (raw === undefined || raw === null) return new Set(['hidden'])
+    const raw = globalThis.localStorage.getItem(FOLDER_STATE_KEY)
+    if (raw === null) return new Set(['hidden'])
     const parsed: unknown = JSON.parse(raw)
     if (!Array.isArray(parsed)) return new Set(['hidden'])
     return new Set(parsed.filter((value): value is string => typeof value === 'string' && value !== ''))
@@ -132,7 +132,7 @@ function readCollapsedFolders(): ReadonlySet<string> {
  */
 function persistCollapsedFolders(folders: ReadonlySet<string>): void {
   try {
-    globalThis.localStorage?.setItem(FOLDER_STATE_KEY, JSON.stringify([...folders].sort()))
+    globalThis.localStorage.setItem(FOLDER_STATE_KEY, JSON.stringify([...folders].sort()))
   } catch {
     // Private or full browser storage must not block roster interaction.
   }
@@ -773,7 +773,7 @@ export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate,
                     fallbackName={t('groupAttachmentFile')}
                     downloadLabel={name => t('groupDownloadAttachment', { name })}
                     downloadUrl={attachmentId => `/api/bots/group/downloadAttachment?${new URLSearchParams({
-                      groupId: String(group.id), messageId: String(message.id), attachmentId,
+                      groupId: group.id, messageId: message.id, attachmentId,
                     })}`}
                   />
                   <div className={css.groupMessageActions}>
@@ -866,7 +866,7 @@ export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate,
         className={css.groupComposerWrap}
         ref={composerRef}
         onBlur={(event) => {
-          if (!composerRef.current?.contains(event.relatedTarget as Node | null)) setMentionQuery(null)
+          if (!composerRef.current?.contains(event.relatedTarget)) setMentionQuery(null)
         }}
       >
         {replyingTo !== null && (
