@@ -1,7 +1,7 @@
 import { closeSync, constants, fstatSync, lstatSync, openSync, renameSync, symlinkSync, writeFileSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join, resolve, toNamespacedPath } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const state = {
@@ -178,7 +178,7 @@ describe('Windows lock handle', () => {
       await holder
     }
     await expect(withFileLock(canonical, async () => 'acquired', { waitMs: 0 })).resolves.toBe('acquired')
-    expect(new Set(state.paths)).toEqual(new Set([resolve(`${canonical}.lock`)]))
+    expect(new Set(state.paths)).toEqual(new Set([toNamespacedPath(resolve(`${canonical}.lock`))]))
     expect(await readFile(`${canonical}.lock`, 'utf8')).toContain('dsh-atomic-write-kernel-lock-v1')
     expect(Array.from(state.fds).every(fdIsClosed)).toBe(true)
   })
