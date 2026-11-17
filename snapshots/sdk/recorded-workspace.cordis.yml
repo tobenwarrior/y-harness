@@ -1,0 +1,20 @@
+# Preserve the workspace approval and skill defaults in these recordings.
+- id: permission
+  config:
+    presets:
+      read-only:
+        sandbox: read-only
+        approval: ask
+      workspace-write:
+        sandbox: workspace-write
+        approval: ask
+      danger-full-access:
+        sandbox: danger-full-access
+        approval: never
+
+- id: skill-compound
+  disabled: true
+
+- id: tool-skill
+  config:
+    catalogMode: all

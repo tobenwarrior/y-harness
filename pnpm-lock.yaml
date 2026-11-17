@@ -103,6 +103,9 @@ importers:
       '@yharness/skill-office':
         specifier: workspace:*
         version: link:packages/skill/skill-office
+      '@yharness/subagent-dsh-sdk':
+        specifier: workspace:*
+        version: link:packages/subagent/subagent-dsh-sdk
       '@yharness/tool-session-query':
         specifier: workspace:*
         version: link:packages/session-query/tool-session-query
