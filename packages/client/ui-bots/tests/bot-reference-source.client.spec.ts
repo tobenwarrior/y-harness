@@ -179,7 +179,7 @@ describe('Bot reference source', () => {
     })
 
     expect(pick(candidate, 'drill')).toBeUndefined()
-    expect(pick({ ...candidate!, value: undefined })).toBeUndefined()
+    expect(pick({ name: candidate!.name })).toBeUndefined()
     expect(pick({ ...candidate!, value: '@not a Bot reference' })).toBeUndefined()
   })
 
