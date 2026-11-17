@@ -1144,8 +1144,8 @@ function stableBotIdentityMatches(
   current: { readonly id: string; readonly sessionId: string; readonly ownerId: string; readonly createdAt: number },
   expected: { readonly id: string; readonly sessionId: string; readonly ownerId: string; readonly createdAt: number },
 ): boolean {
-  return String(current.id) === String(expected.id)
-    && String(current.sessionId) === String(expected.sessionId)
+  return current.id === expected.id
+    && current.sessionId === expected.sessionId
     && current.ownerId === expected.ownerId
     && current.createdAt === expected.createdAt
 }
@@ -1216,7 +1216,7 @@ function assertCompatibleProfileSnapshots(current: BotProfileSnapshot, legacy: B
     if (currentValue !== undefined && legacyValue !== undefined
       && !((field === 'pendingMemoryUpdate' || field === 'group') && currentValue === null)
       && !profileValuesEqual(currentValue, legacyValue)) {
-      throw new Error(`Bot profile snapshots disagree on ${String(field)}`)
+      throw new Error(`Bot profile snapshots disagree on ${field}`)
     }
   }
   if (current.persona !== undefined && legacy.persona !== undefined
@@ -1642,13 +1642,13 @@ function storedTemplateView(record: BotTemplateStoredRecord): BotTemplateView {
 
 function normalizeIdentity(value: BotCreateRequest['identity']): BotIdentity {
   const identity = value ?? 'agent'
-  if (!BOT_IDENTITIES.includes(identity)) return badRequest(`Unknown Bot identity '${String(identity)}'`)
+  if (!BOT_IDENTITIES.includes(identity)) return badRequest(`Unknown Bot identity '${identity}'`)
   return identity
 }
 
 function normalizeAccent(value: BotCreateRequest['accent']): BotAccent {
   const accent = value ?? 'violet'
-  if (!BOT_ACCENTS.includes(accent)) return badRequest(`Unknown Bot accent '${String(accent)}'`)
+  if (!BOT_ACCENTS.includes(accent)) return badRequest(`Unknown Bot accent '${accent}'`)
   return accent
 }
 
@@ -1676,13 +1676,13 @@ function normalizeRequestedBotSkillPolicy(value: unknown): BotSkillPolicy {
 
 function normalizeAppearanceIdentity(value: BotAppearanceUpdateRequest['identity']): BotIdentity | undefined {
   if (value === undefined) return undefined
-  if (!BOT_IDENTITIES.includes(value)) return badRequest(`Unknown Bot identity '${String(value)}'`)
+  if (!BOT_IDENTITIES.includes(value)) return badRequest(`Unknown Bot identity '${value}'`)
   return value
 }
 
 function normalizeAppearanceAccent(value: BotAppearanceUpdateRequest['accent']): BotAccent | undefined {
   if (value === undefined) return undefined
-  if (!BOT_ACCENTS.includes(value)) return badRequest(`Unknown Bot accent '${String(value)}'`)
+  if (!BOT_ACCENTS.includes(value)) return badRequest(`Unknown Bot accent '${value}'`)
   return value
 }
 
@@ -1692,8 +1692,17 @@ function normalizeClearAvatar(value: BotAppearanceUpdateRequest['clearAvatar']):
   return value
 }
 
+function isRequestObject(value: unknown): value is object {
+  return value !== null && typeof value === 'object'
+}
+
+function isPngAvatarUpload(value: unknown): boolean {
+  return isRequestObject(value) && 'data' in value && typeof value.data === 'string'
+    && 'mediaType' in value && value.mediaType === 'image/png'
+}
+
 function normalizeCreate(request: BotCreateRequest): NormalizedCreate {
-  if (request === null || typeof request !== 'object') return badRequest('Bot create request must be an object')
+  if (!isRequestObject(request)) return badRequest('Bot create request must be an object')
   const id = normalizeBotId(request.id)
   const name = normalizeName(request.name)
   const description = normalizeOptionalText('Bot description', request.description, 240)
@@ -2568,7 +2577,7 @@ function isAuditedSharedAuxiliaryRequest(options: GenerateOptions): boolean {
     || options.system === undefined) return false
   const [message] = options.messages
   if (message?.role !== 'user' || !('id' in message) || message.source === undefined) return false
-  const sourceKind = String(message.source.kind)
+  const sourceKind: string = message.source.kind
   switch (options.purpose) {
     case 'session-title':
       return sourceKind === 'dsh-session-title-llm'
@@ -2994,7 +3003,7 @@ export class BotService extends TypertRemoteService {
           messageId: BotMessageId(String(request.messageId)),
           ...(request.signal === undefined ? {} : { signal: request.signal }),
         }),
-        changed: () => this.emitChanged(),
+        changed: () => { this.emitChanged() },
       },
       new BotAttachmentGrantStore(attachmentDomain),
       this.ownerId,
@@ -6612,7 +6621,7 @@ export class BotService extends TypertRemoteService {
   @Remote('publishTemplate')
   async publishTemplate(request: BotTemplatePublishRequest): Promise<BotTemplatePublishValue> {
     return this.serialize(async () => {
-      if (request === null || typeof request !== 'object') return badRequest('Bot template publish request must be an object')
+      if (!isRequestObject(request)) return badRequest('Bot template publish request must be an object')
       const botId = normalizeBotId(request.botId)
       if (botId === undefined) return badRequest('Bot id is required')
       const bots = (await this.getDomain()).table('bots')
@@ -6677,7 +6686,7 @@ export class BotService extends TypertRemoteService {
   @Remote('revokeTemplate')
   async revokeTemplate(request: BotTemplateRevokeRequest): Promise<BotTemplateRevokeValue> {
     return this.serialize(async () => {
-      if (request === null || typeof request !== 'object') return badRequest('Bot template revoke request must be an object')
+      if (!isRequestObject(request)) return badRequest('Bot template revoke request must be an object')
       const id = normalizeTemplateId(request.templateId)
       const templates = (await this.templateDomain).table('templates')
       const current = templates.get(id)
@@ -6821,7 +6830,7 @@ export class BotService extends TypertRemoteService {
   @Remote('importTemplate')
   async importTemplate(request: BotTemplateImportRequest): Promise<BotTemplateImportValue> {
     return this.serialize(async () => {
-      if (request === null || typeof request !== 'object') return badRequest('Bot template import request must be an object')
+      if (!isRequestObject(request)) return badRequest('Bot template import request must be an object')
       const importId = normalizeTemplateImportId(request.importId)
       const importDigest = importId === undefined ? undefined : templateImportDigest(this.ownerId, importId)
       const templateDomain = await this.templateDomain
@@ -7235,7 +7244,8 @@ export class BotService extends TypertRemoteService {
    */
   @Remote('readGrokHistory')
   async readGrokHistory(request: BotGrokHistoryRequest, signal?: AbortSignal): Promise<BotGrokHistoryView | null> {
-    const id = normalizeBotId(request?.botId)
+    if (!isRequestObject(request)) return badRequest('Bot id is required')
+    const id = normalizeBotId(request.botId)
     if (id === undefined) return badRequest('Bot id is required')
     const archive = await this.readOwnedGrokHistory(id, signal)
     if (archive === undefined) return null
@@ -7616,7 +7626,7 @@ export class BotService extends TypertRemoteService {
   @Remote('updateProfile')
   async updateProfile(request: BotProfileUpdateRequest): Promise<BotProfileUpdateValue> {
     return this.serialize(async () => {
-      if (request === null || typeof request !== 'object') return badRequest('Bot profile request must be an object')
+      if (!isRequestObject(request)) return badRequest('Bot profile request must be an object')
       const id = normalizeBotId(request.botId)
       if (id === undefined) return badRequest('Bot id is required')
       const expectedUpdatedAt = request.expectedUpdatedAt
@@ -7694,7 +7704,7 @@ export class BotService extends TypertRemoteService {
     signal?: AbortSignal,
   ): Promise<BotOrganizationUpdateValue> {
     return this.serialize(async () => {
-      if (request === null || typeof request !== 'object') return badRequest('Bot organization request must be an object')
+      if (!isRequestObject(request)) return badRequest('Bot organization request must be an object')
       const id = normalizeBotId(request.botId)
       if (id === undefined) return badRequest('Bot id is required')
       const pinned = normalizeOptionalBoolean('Bot pinned', request.pinned)
@@ -7738,7 +7748,7 @@ export class BotService extends TypertRemoteService {
 
   private async updateAppearanceImpl(request: BotAppearanceUpdateRequest, signal?: AbortSignal): Promise<BotAppearanceUpdateValue> {
     return this.serialize(async () => {
-      if (request === null || typeof request !== 'object') return badRequest('Bot appearance request must be an object')
+      if (!isRequestObject(request)) return badRequest('Bot appearance request must be an object')
       const id = normalizeBotId(request.botId)
       if (id === undefined) return badRequest('Bot id is required')
       const identity = normalizeAppearanceIdentity(request.identity)
@@ -7783,7 +7793,7 @@ export class BotService extends TypertRemoteService {
    */
   @Remote('uploadAvatar')
   async uploadAvatar(request: BotAvatarUploadRequest): Promise<BotAvatarUpdateValue> {
-    if (request === null || typeof request !== 'object' || typeof request.data !== 'string' || request.mediaType !== 'image/png') {
+    if (!isPngAvatarUpload(request)) {
       return badRequest('A PNG avatar is required')
     }
     const id = normalizeBotId(request.botId)
@@ -7797,7 +7807,7 @@ export class BotService extends TypertRemoteService {
 
   private async updateAvatarImpl(request: BotAvatarUpdateRequest, signal?: AbortSignal): Promise<BotAvatarUpdateValue> {
     return this.serialize(async () => {
-      if (request === null || typeof request !== 'object') return badRequest('Bot avatar request must be an object')
+      if (!isRequestObject(request)) return badRequest('Bot avatar request must be an object')
       const id = normalizeBotId(request.botId)
       if (id === undefined) return badRequest('Bot id is required')
       const avatar = request.avatar === null ? undefined : await this.admitAvatar(id, request.avatar)
@@ -7822,7 +7832,7 @@ export class BotService extends TypertRemoteService {
   @Remote('readAvatar')
   async readAvatar(request: BotAvatarReadRequest): Promise<BotAvatarReadValue> {
     return this.serialize(async () => {
-      if (request === null || typeof request !== 'object') return badRequest('Bot avatar request must be an object')
+      if (!isRequestObject(request)) return badRequest('Bot avatar request must be an object')
       const id = normalizeBotId(request.botId)
       if (id === undefined) return badRequest('Bot id is required')
       const bots = (await this.getDomain()).table('bots')
@@ -9216,7 +9226,7 @@ export class BotService extends TypertRemoteService {
     request: BotTemplatePreviewRequest | BotTemplateApproveRequest | BotTemplateImportRequest,
     options: { readonly allowRevoked?: boolean } = {},
   ): Promise<ActiveBotTemplate> {
-    if (request === null || typeof request !== 'object') return badRequest('Bot template request must be an object')
+    if (!isRequestObject(request)) return badRequest('Bot template request must be an object')
     const shareCode = normalizeTemplateShareCode(request.shareCode)
     let decoded: ReturnType<typeof decodeBotTemplateCode>
     try {
@@ -10757,7 +10767,7 @@ export class BotService extends TypertRemoteService {
       request.signal,
     )
     const state = sharedGroupMessageDeliveryStateOf(stored)
-    if (state === undefined || state.messages.length < MAX_BOT_MESSAGE_DELIVERIES) return new Set()
+    if (state.messages.length < MAX_BOT_MESSAGE_DELIVERIES) return new Set()
     const candidates = state.messages.filter(entry => entry.status === 'accepted')
     const prunable = new Set<string>()
     for (const entry of candidates) {
