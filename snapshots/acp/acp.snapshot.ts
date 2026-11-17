@@ -68,14 +68,12 @@ const scenarios: Scenario[] = controllerCases.map((controller) => {
     ...(manifest.platform === 'posix' ? { posixOnly: true } : {}),
     ...(manifest.platform === 'pwsh' ? { pwshOnly: true } : {}),
     ...(controller.configPath === undefined ? {} : { configPath: controller.configPath }),
-    ...manifest.permission === undefined && manifest.environment === undefined
-      ? {}
-      : {
-          env: {
-            ...manifest.environment,
-            ...(manifest.permission === undefined ? {} : { DSH_PERMISSION_MODE: manifest.permission }),
-          },
-        },
+    env: {
+      ...manifest.environment,
+      ...(manifest.permission === undefined ? {} : { DSH_PERMISSION_MODE: manifest.permission }),
+      // Keep recorded skill catalogs independent of host overlays and bundled revisions.
+      DSH_SNAPSHOT_SKILLS_ROOT: join(corpusDir, 'escalation-approved', 'skill-fixture'),
+    },
   }
 })
 
