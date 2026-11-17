@@ -3,5 +3,8 @@ scenario: bash-tool-turn
 profile: headless
 composition: default
 recording: authored
+sessionFormat:
+  version: 5
+  coverage: [adjacent-migration]
 header:
   class: default
