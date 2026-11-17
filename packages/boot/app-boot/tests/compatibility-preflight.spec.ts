@@ -9,8 +9,8 @@ import type { EntryOptions } from '@yharness/cordis-plugin-loader'
 import { load } from 'js-yaml'
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import {
-  PROFILE_COMPATIBILITY_FILENAME, PluginPackages, boot, getDshRuntimeVersion,
-  prepareProfileEntries, prepareProfilePatches, type ProfileContext,
+  PROFILE_COMPATIBILITY_FILENAME, PluginPackages, boot, composeEntries, getDshRuntimeVersion,
+  prepareProfileEntries, prepareProfilePatches, renderConfigDump, type ProfileContext,
 } from '../src/index.ts'
 
 const runtime = getDshRuntimeVersion()
@@ -74,6 +74,31 @@ export function apply() { record('apply:${name}') }
 }
 
 const insert = (...names: string[]) => [{ insert: names.map((name, index) => ({ id: `row-${String(index)}`, name })) }]
+
+it('honors a saved patch with a legacy package name in the mounted and inspected profile', async () => {
+  const f = fixture()
+  f.plugin('@yharness/disabled-fixture')
+  f.plugin('@yharness/enabled-fixture')
+  const base = insert('@yharness/disabled-fixture', '@yharness/enabled-fixture')
+  const overrides = [
+    { id: 'row-0', name: '@deepseek-ai/dsh-disabled-fixture', disabled: true },
+    { id: 'row-1', name: '@deepseek-ai/dsh-unrelated', disabled: true },
+  ]
+  expect(await f.run([...base, ...overrides])).toEqual(['import:@yharness/enabled-fixture', 'apply:@yharness/enabled-fixture'])
+  expect(f.warnings.join('\n')).toContain('name mismatch for "row-1"')
+  expect(f.warnings.join('\n')).not.toContain('name mismatch for "row-0"')
+  expect(base[0]?.insert[0]).toEqual({ id: 'row-0', name: '@yharness/disabled-fixture' })
+
+  const composed = composeEntries([base, overrides])
+  expect(composed).toEqual([
+    { id: 'row-0', name: '@yharness/disabled-fixture', disabled: true },
+    { id: 'row-1', name: '@yharness/enabled-fixture' },
+  ])
+  const dump = renderConfigDump('preflight', f.configPath, [
+    { label: 'bundle', patches: base }, { label: 'saved profile', patches: overrides },
+  ], () => {})
+  expect(load(dump, { schema: entryListSchema })).toEqual(composed)
+})
 
 it('blocks an incompatible plugin before its module is imported while a compatible sibling loads', async () => {
   const f = fixture()

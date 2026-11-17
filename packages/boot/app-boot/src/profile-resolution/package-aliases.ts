@@ -72,3 +72,13 @@ export function bundlePackageNameCandidates(packageSpecifier: string): readonly 
   }
   return [...candidates]
 }
+
+/**
+ * Match a profile package specifier against its equivalent namespace spelling.
+ * @param left - package specifier as written in the profile.
+ * @param right - package specifier to compare, including any subpath.
+ * @returns Whether the specifiers name the same package and subpath.
+ */
+export function samePackageName(left: string, right: string): boolean {
+  return left === right || bundlePackageNameCandidates(left).includes(right)
+}
