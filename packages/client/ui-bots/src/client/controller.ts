@@ -340,6 +340,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
+function isPendingTargetList(value: unknown): value is readonly string[] {
+  return Array.isArray(value) && value.length > 0
+    && value.every((id: unknown) => typeof id === 'string' && id.trim() !== '')
+}
+
 function restorePendingGroupState(value: unknown): BotGroupPendingState {
   const creations: Record<string, string> = {}
   const messages: Record<string, {
@@ -364,8 +369,7 @@ function restorePendingGroupState(value: unknown): BotGroupPendingState {
       throw new Error('invalid pending Bot group message')
     }
     const targetBotIds = pending.targetBotIds
-    if (targetBotIds !== undefined && (!Array.isArray(targetBotIds)
-      || targetBotIds.length === 0 || targetBotIds.some(id => typeof id !== 'string' || id.trim() === ''))) {
+    if (targetBotIds !== undefined && !isPendingTargetList(targetBotIds)) {
       throw new Error('invalid pending Bot group targets')
     }
     const replyToMessageId = pending.replyToMessageId
@@ -717,7 +721,7 @@ export class BotWorkspaceController {
 
       if (this.pending === pending) {
         this.pending = undefined
-        if (this.refreshAfterPending && !this.disposed) {
+        if (this.refreshAfterPending && this.canUpdate()) {
           this.refreshAfterPending = false
           void this.load().catch((error: unknown) => {
             this.fail(error instanceof Error ? error.message : String(error))
@@ -726,6 +730,10 @@ export class BotWorkspaceController {
 
       }
     }
+  }
+
+  private canUpdate(): boolean {
+    return !this.disposed
   }
 
   private async read(): Promise<void> {
@@ -744,7 +752,7 @@ export class BotWorkspaceController {
     }
     const groupsResult = await this.readGroups()
     const templateCatalog = await this.readTemplates()
-    if (this.disposed) return
+    if (!this.canUpdate()) return
     if (rosterRevision !== this.rosterRevision) {
       this.refreshAfterPending = true
       return
@@ -782,7 +790,7 @@ export class BotWorkspaceController {
       this.fail(error instanceof Error ? error.message : String(error))
       return
     }
-    if (this.disposed) return
+    if (!this.canUpdate()) return
     if (this.selectionGeneration !== refreshSelectionGeneration) {
       this.refreshAfterPending = true
       return
@@ -821,7 +829,7 @@ export class BotWorkspaceController {
         () => !this.disposed && this.selectionGeneration === selectionGeneration,
       )
     }
-    if (this.disposed || this.selectionGeneration !== selectionGeneration) return
+    if (!this.canUpdate() || this.selectionGeneration !== selectionGeneration) return
     if (rosterRevision !== this.rosterRevision) {
       this.refreshAfterPending = true
       return
@@ -947,12 +955,12 @@ export class BotWorkspaceController {
       await action(actionGeneration)
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error)
-      if (this.disposed || actionGeneration !== this.templateActionGeneration) return
+      if (!this.canUpdate() || actionGeneration !== this.templateActionGeneration) return
       const latest = this.source.getSnapshot()
       this.source.set({ ...latest, templates: { ...latest.templates, busy: false, error: message } })
       throw new Error(message)
     } finally {
-      if (!this.disposed && actionGeneration === this.templateActionGeneration) {
+      if (this.canUpdate() && actionGeneration === this.templateActionGeneration) {
         this.templateActionKind = undefined
         const latest = this.source.getSnapshot()
         if (latest.templates.busy) {
@@ -967,7 +975,7 @@ export class BotWorkspaceController {
     const current = this.source.getSnapshot()
     if (this.remote.listTemplates === undefined) return
     const templateCatalog = await this.readTemplates(current.templates)
-    if (this.disposed || templateCatalog === undefined
+    if (!this.canUpdate() || templateCatalog === undefined
       || (actionGeneration !== undefined && actionGeneration !== this.templateActionGeneration)) return
     const latest = this.source.getSnapshot()
     this.source.set({ ...latest, templates: this.mergeTemplateCatalog(templateCatalog, latest.templates) })
@@ -1130,7 +1138,7 @@ export class BotWorkspaceController {
         throw new Error(error instanceof Error ? error.message : String(error))
       }
       if (!result.ok) throw new Error(result.error.message)
-      if (this.disposed || actionGeneration !== this.templateActionGeneration || editGeneration !== this.templateStateGeneration) return
+      if (!this.canUpdate() || actionGeneration !== this.templateActionGeneration || editGeneration !== this.templateStateGeneration) return
       this.templateImportIds.delete(importKey)
       const latest = this.source.getSnapshot()
       this.source.set({ ...latest, templates: { ...latest.templates, code: '', preview: null, error: null } })
@@ -1301,7 +1309,7 @@ export class BotWorkspaceController {
         throw new Error(message)
       }
     }
-    if (this.disposed) return
+    if (!this.canUpdate()) return
     const created = groupSummary(result.value.group)
     const current = this.source.getSnapshot()
     const groups = current.groups.some(group => group.id === created.id)
@@ -1545,7 +1553,7 @@ export class BotWorkspaceController {
       explicitMessageId?.trim() || `bot-group-message-${randomUUID()}`,
     )
     const effectiveTargetIds = normalizedTargetIds
-      ?? current.selectedGroup?.bots.map(bot => String(bot.id))
+      ?? current.selectedGroup?.bots.map(bot => bot.id)
       ?? []
     let existing: BotGroupMessageView | undefined
     try {
@@ -1576,7 +1584,7 @@ export class BotWorkspaceController {
       } else {
         const grants = await admitBotGroupAttachments(
           {
-            groupId: String(current.selectedGroupId),
+            groupId: current.selectedGroupId,
             messageId: String(messageId),
             ...(normalizedTargetIds === undefined ? {} : { targetBotIds: normalizedTargetIds }),
           },
@@ -1648,7 +1656,7 @@ export class BotWorkspaceController {
     const current = this.source.getSnapshot()
     if (current.selectedBotId !== id) return
     const referenceError = this.retainSelected(id, current.bots)
-    if (this.disposed || this.selectionGeneration !== selectionGeneration) {
+    if (!this.canUpdate() || this.selectionGeneration !== selectionGeneration) {
       this.selectedReference?.release()
       this.selectedReference = undefined
       return
@@ -2179,7 +2187,7 @@ export class BotWorkspaceController {
       bots,
       () => !this.disposed && this.selectionGeneration === selectionGeneration,
     )
-    if (this.disposed || this.selectionGeneration !== selectionGeneration) return
+    if (!this.canUpdate() || this.selectionGeneration !== selectionGeneration) return
     this.pendingCreation = result.value.bot.state === 'active' ? undefined : request
     this.source.set({
       phase: 'ready',
