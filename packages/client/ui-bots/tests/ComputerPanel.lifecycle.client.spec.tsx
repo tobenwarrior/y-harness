@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { afterEach, expect, it, onTestFinished, vi } from 'vitest'
 import { makeTranslate } from '@yharness/client-test-runtime'
 import { ComputerApiError, type ComputerClient, type ComputerFrame } from '../src/client/computer-client.ts'
+import { ComputerAction } from '../src/client/ComputerAction.tsx'
 import { ComputerPanel } from '../src/client/ComputerPanel.tsx'
 import { en } from '../src/client/locales.ts'
 
@@ -47,6 +48,31 @@ afterEach(() => {
   cleanup()
   vi.useRealTimers()
   vi.restoreAllMocks()
+})
+
+it('shows which VPS desktop the Computer button will open', () => {
+  const toggle = vi.fn()
+  const view = render(<ComputerAction
+    t={t} expanded={false} toggle={toggle} identity={{ location: 'vps', permissionScope: 'bot' }}
+  />)
+  const open = screen.getByRole('button', { name: en.computerOpen })
+  expect(open.getAttribute('aria-pressed')).toBe('false')
+  expect(within(open).getByText(en.computerScopeBotChip)).toBeTruthy()
+  fireEvent.click(open)
+  expect(toggle).toHaveBeenCalledOnce()
+
+  view.rerender(<ComputerAction
+    t={t} expanded toggle={toggle} identity={{ location: 'vps', permissionScope: 'workspace' }}
+  />)
+  const close = screen.getByRole('button', { name: en.computerClose })
+  expect(close.getAttribute('aria-pressed')).toBe('true')
+  expect(within(close).getByText(en.computerScopeWorkspaceChip)).toBeTruthy()
+  expect(within(close).queryByText(en.computerScopeBotChip)).toBeNull()
+
+  view.rerender(<ComputerAction t={t} expanded={false} toggle={toggle} />)
+  const withoutIdentity = screen.getByRole('button', { name: en.computerOpen })
+  expect(within(withoutIdentity).queryByText(en.computerScopeBotChip)).toBeNull()
+  expect(within(withoutIdentity).queryByText(en.computerScopeWorkspaceChip)).toBeNull()
 })
 
 it('sends input to a replacement Computer while the previous request is pending', async () => {
