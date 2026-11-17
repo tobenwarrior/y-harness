@@ -2861,8 +2861,11 @@ describe('dynamic nested workspace context injection', () => {
             '*** Begin Patch',
             '*** Add File: pkg/new.txt',
             '+one',
-            '*** Add File: other/new.txt',
-            '+two',
+            '*** Update File: pkg/old.txt',
+            '*** Move to: other/new.txt',
+            '@@',
+            '-old',
+            '+new',
             '*** End Patch',
           ].join('\n'),
         },
@@ -2874,6 +2877,33 @@ describe('dynamic nested workspace context injection', () => {
       expect(rendered).toContain('nested package rule')
       expect(rendered).toContain('other package rule')
     } finally {
+      await rm(root, { recursive: true, force: true })
+      await rm(home, { recursive: true, force: true })
+    }
+  })
+
+  it('ignores file touches in an unparseable patch reported by a tool', async () => {
+    const root = await tempRepo()
+    const home = await tempRepo()
+    const ctx = new Context()
+    try {
+      await mkdir(join(root, '.git'), { recursive: true })
+      await write(join(root, 'pkg/AGENTS.md'), 'nested package rule')
+      await mountFileToolsAndAgentInstructions(ctx, { dshHome: home, maxBytes: 65536 })
+      const agent = await stubAgent(root)
+
+      ctx.emit('tools/result', stubToolExecution({
+        signal: testToolSignal,
+        callId: ToolCallId('apply-patch-invalid-arguments'),
+        name: 'apply_patch',
+        arguments: { input: '*** Add File: pkg/new.txt\n+missing wrapper' },
+        agent,
+      }), { content: [], isError: false, value: null })
+
+      await syncAgentInstructions(ctx, agent)
+      expect(agent.inbox.nextStep.filter(message => message.source.kind === 'agent-instructions')).toEqual([])
+    } finally {
+      await ctx.fiber.dispose()
       await rm(root, { recursive: true, force: true })
       await rm(home, { recursive: true, force: true })
     }

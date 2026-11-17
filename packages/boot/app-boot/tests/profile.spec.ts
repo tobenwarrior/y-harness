@@ -248,6 +248,15 @@ describe('resolveBundleDir', () => {
     expect(() => resolveBundleDir('t', 'absent', anchor, profileDir)).toThrow('cannot resolve profile bundle')
   })
 
+  it('reports a Node built-in as an unresolved bundle', () => {
+    const anchor = stageInstallation({})
+    const profileDir = tmp()
+    writeFileSync(join(profileDir, 'package.json'), '{}')
+
+    expect(() => resolveBundleDir('t', 'fs', anchor, profileDir))
+      .toThrow('cannot resolve profile bundle "fs"')
+  })
+
   it('resolves a package whose exports map omits ./package.json', () => {
     // Common on npm: an exports map without "./package.json" makes
     // require.resolve('<pkg>/package.json') throw ERR_PACKAGE_PATH_NOT_EXPORTED;
@@ -311,6 +320,7 @@ describe('resolveBundleDir', () => {
   })
 
   it('preserves package subpaths while translating both package namespaces', () => {
+    expect(bundlePackageNameCandidates('third-party/subpath')).toEqual(['third-party/subpath'])
     expect(bundlePackageNameCandidates('@yharness/cordis-plugin-group/subpath')).toEqual([
       '@yharness/cordis-plugin-group/subpath',
       '@deepseek-ai/cordis-plugin-group/subpath',
