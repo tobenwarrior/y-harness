@@ -121,14 +121,15 @@ export class TerminalController extends TypertRemoteService {
    * Bind one Agent's owner terminals to a workspace.
    * @param agent - Agent whose terminal uses the supplied workspace.
    * @param workspace - Shell provider and initial directory for owner terminals.
-   * @returns A disposer that closes the Agent's terminals and disables new shells in this scope.
+   * @returns A disposer that closes the terminals for this binding and disables new shells until the workspace is rebound.
    */
   bindWorkspace(agent: Agent, workspace: TerminalWorkspace): () => Promise<void> {
     const current = this.workspaces.get(agent)
     if (current !== undefined && current !== null) throw new Error('Terminal workspace is already bound')
-    this.workspaces.set(agent, workspace)
+    const binding = { ...workspace }
+    this.workspaces.set(agent, binding)
     return async () => {
-      if (this.workspaces.get(agent) !== workspace) return
+      if (this.workspaces.get(agent) !== binding) return
       this.workspaces.set(agent, null)
       const owner = this.owners.get(agent.id)
       if (owner !== undefined) await this.disposeOwner(agent.id, owner)

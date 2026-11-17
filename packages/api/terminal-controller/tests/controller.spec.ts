@@ -112,6 +112,24 @@ describe('TerminalController', () => {
     expect(() => host.controller.environment(agent, signal())).toThrow('Terminal workspace is unavailable')
   })
 
+  it('keeps a replacement workspace open when its previous binding closes again', async () => {
+    const { controller, agent, ctx, subprocess } = fixture()
+    const workspace = { cwd: '/private-desktop', subprocess: ctx.subprocess }
+    const closePrevious = controller.bindWorkspace(agent, workspace)
+    expect(() => controller.bindWorkspace(agent, workspace)).toThrow('Terminal workspace is already bound')
+    await closePrevious()
+    expect(() => controller.environment(agent, signal())).toThrow('Terminal workspace is unavailable')
+
+    const closeReplacement = controller.bindWorkspace(agent, workspace)
+    try {
+      await closePrevious()
+      expect(controller.environment(agent, signal()).cwd).toBe(workspace.cwd)
+      expect(subprocess.spawnTerminal).not.toHaveBeenCalled()
+    } finally {
+      await closeReplacement()
+    }
+  })
+
   it('creates the environment default shell and keeps an existing identity when that default changes', async () => {
     const { controller, agent, subprocess } = fixture({ shell: undefined })
     subprocess.terminalEnvironment.mockResolvedValue({ platform: 'posix', defaultShell: '/usr/local/bin/zsh' })
