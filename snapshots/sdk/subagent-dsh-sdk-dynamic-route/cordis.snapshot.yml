@@ -16,7 +16,7 @@
                 reasoningEfforts: [max]
 
     - id: sdk-jsonrpc-server-dynamic-replay
-      name: '@deepseek-ai/dsh-sdk-jsonrpc-server'
+      name: '@yharness/sdk-jsonrpc-server'
       inject: [sdkAppStartup, loader]
       config:
         maxTokensAsSuccess: true

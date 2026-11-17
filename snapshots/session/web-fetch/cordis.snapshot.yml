@@ -1,7 +1,7 @@
 # Keyless replay counterpart: deterministic HTTP remains real; only the model
 # adapter is replaced by replay.
 - id: llm-deepseek
-  name: '@deepseek-ai/dsh-llm-deepseek-api-key'
+  name: '@yharness/llm-deepseek-api-key'
   disabled: true
 
 - insert:
@@ -19,13 +19,13 @@
       name: './web-fetch-fixture-server.mjs'
 
 - id: web
-  name: '@deepseek-ai/dsh-web'
+  name: '@yharness/web'
 
 - id: web-fetch-http
-  name: '@deepseek-ai/dsh-web-fetch-http'
+  name: '@yharness/web-fetch-http'
   disabled: true
 
 - id: tool-web
-  name: '@deepseek-ai/dsh-tool-web'
+  name: '@yharness/tool-web'
   config:
     search: false

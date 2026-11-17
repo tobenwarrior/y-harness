@@ -17,7 +17,7 @@
 
 - insert:
     - id: mcp-resource-catalog
-      name: '@deepseek-ai/dsh-mcp-client'
+      name: '@yharness/mcp-client'
       config:
         transport: stdio
         serverName: catalog
