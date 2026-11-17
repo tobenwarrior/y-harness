@@ -1174,7 +1174,9 @@ describe('desktop main startup', () => {
     try {
       await invoke(DESKTOP_IPC.updatesOpen, 'app')
       await entered.promise
-      expect(statusWatch.watch.mock.results.at(-1)?.value.close).toHaveBeenCalledOnce()
+      const watcher = statusWatch.watch.mock.results.at(-1)
+      if (watcher?.type !== 'return') throw new Error('The managed status watcher did not start.')
+      expect(watcher.value.close).toHaveBeenCalledOnce()
       harness.app.quit()
       await Promise.resolve()
       expect(completed).toBe(false)

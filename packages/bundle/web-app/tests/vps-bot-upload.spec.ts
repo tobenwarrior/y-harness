@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { promisify } from 'node:util'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, type MockInstance, vi } from 'vitest'
 import { computerFileUploadRoute } from '../src/computer-api.ts'
 import { resolveVpsFileUploadLimits, uploadComputerFile } from '../src/vps-bot-upload.ts'
 import { VpsRuntime, type VpsRuntimeOptions } from '../src/vps-runtime.ts'
@@ -13,17 +13,22 @@ const OWNER = 'bot-session-784d3dc2-74aa-4456-9262-07d312084bad'
 const limits = resolveVpsFileUploadLimits({ maxBytes: 1024, reserveBytes: 0 })
 const requestSignal = (): AbortSignal => new AbortController().signal
 
+interface UploadProcessMocks {
+  readonly ensure: MockInstance<VpsRuntime['ensure']>
+  readonly execArgv: MockInstance<VpsRuntime['execArgv']>
+}
+
 async function withWorkspace<T>(
-  run: (runtime: VpsRuntime, workspace: string) => Promise<T>, options?: VpsRuntimeOptions,
+  run: (runtime: VpsRuntime, workspace: string, mocks: UploadProcessMocks) => Promise<T>, options?: VpsRuntimeOptions,
 ): Promise<T> {
   const root = await mkdtemp(join(tmpdir(), 'yh-computer-upload-'))
   try {
     const runtime = new VpsRuntime(root, 'localhost/yharness-test', {}, options)
     const workspace = runtime.workspace(OWNER)
     await mkdir(workspace)
-    vi.spyOn(runtime, 'ensure').mockResolvedValue(undefined)
-    vi.spyOn(runtime, 'execArgv').mockImplementation((_sessionId, argv) => ['python3', ...argv.slice(1)])
-    return await run(runtime, workspace)
+    const ensure = vi.spyOn(runtime, 'ensure').mockResolvedValue(undefined)
+    const execArgv = vi.spyOn(runtime, 'execArgv').mockImplementation((_sessionId, argv) => ['python3', ...argv.slice(1)])
+    return await run(runtime, workspace, { ensure, execArgv })
   } finally {
     await rm(root, { recursive: true, force: true })
   }
@@ -71,13 +76,13 @@ describe('private Computer upload', () => {
   })
 
   it('publishes at the shared project root and in a subfolder only when the Bot has access', async () => {
-    await withWorkspace(async (runtime, workspace) => {
+    await withWorkspace(async (runtime, workspace, { ensure, execArgv }) => {
       const project = join(workspace, '..', 'shared-project')
       await mkdir(join(project, 'reports'), { recursive: true })
       const projectRoot = await runtime.sharedWorkspaceFor(OWNER)
       expect(projectRoot).toBe('/workspace')
       vi.spyOn(runtime, 'sharedWorkspaceFor').mockResolvedValueOnce(undefined)
-      vi.mocked(runtime.execArgv).mockImplementation((_sessionId, argv) => {
+      execArgv.mockImplementation((_sessionId, argv) => {
         expect(argv[4]).toBe(projectRoot)
         return ['python3', ...argv.slice(1, 4), project, ...argv.slice(5)]
       })
@@ -85,8 +90,8 @@ describe('private Computer upload', () => {
         directory, name, bytes: 3, body: new Response('new').body,
       }, limits, requestSignal())
       await expect(send('/workspace', 'denied.txt')).resolves.toBe('folder-unavailable')
-      expect(runtime.ensure).not.toHaveBeenCalled()
-      expect(runtime.execArgv).not.toHaveBeenCalled()
+      expect(ensure).not.toHaveBeenCalled()
+      expect(execArgv).not.toHaveBeenCalled()
       await expect(send('/workspace', 'root.txt')).resolves.toBe('stored')
       await expect(send('/workspace/reports', 'nested.txt')).resolves.toBe('stored')
       expect(await readFile(join(project, 'root.txt'), 'utf8')).toBe('new')
@@ -97,10 +102,9 @@ describe('private Computer upload', () => {
   })
 
   it('returns unavailable when the worker fails or reports an unrecognized result', async () => {
-    await withWorkspace(async (runtime, workspace) => {
-      const run = vi.mocked(runtime.execArgv)
-      run.mockReturnValueOnce([join(workspace, 'missing-python')])
-      run.mockReturnValueOnce([process.execPath, '-e', 'process.stdout.write("unexpected\\n")'])
+    await withWorkspace(async (runtime, workspace, { execArgv }) => {
+      execArgv.mockReturnValueOnce([join(workspace, 'missing-python')])
+      execArgv.mockReturnValueOnce([process.execPath, '-e', 'process.stdout.write("unexpected\\n")'])
       const send = () => uploadComputerFile(runtime, OWNER, {
         directory: '.', name: 'absent.txt', bytes: 0, body: null,
       }, limits, requestSignal())
@@ -172,7 +176,7 @@ describe('private Computer upload', () => {
     const route = computerFileUploadRoute(writer, 20)
     const call = (directory: string, name = 'source.bin', bytes = '3', media = 'application/octet-stream') => {
       const query = new URLSearchParams({ sessionId: OWNER, directory, name, bytes })
-      return route.fetch(new Request('http://localhost/api/computer/files/upload?' + query, {
+      return route.fetch(new Request('http://localhost/api/computer/files/upload?' + query.toString(), {
         method: 'POST', body: Uint8Array.of(7, 8, 9), headers: { 'content-type': media },
       }))
     }

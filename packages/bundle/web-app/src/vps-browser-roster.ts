@@ -85,6 +85,7 @@ export class VpsBrowserRoster {
     while (!this.closed && this.writtenRevision !== this.revision) {
       const revision = this.revision
       const pairs = await this.read()
+      // oxlint-disable-next-line typescript/no-unnecessary-condition -- The roster can close while the read is pending.
       if (this.closed) return
       if (revision !== this.revision) continue
       if (pairs.length > MAX_BOTS || new Set(pairs.map(pair => pair.bot)).size !== pairs.length
