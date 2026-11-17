@@ -49,6 +49,7 @@ None; this package neither assembles nor sends a provider request.
 
 <a id="known-limitations-and-deferred-work"></a>
 
+- **Native Claude operations require a Node host.** The browser preview loads the Claude plugins through an SDK replacement that reports which operation requires the native runtime.
 - **The worker composition writes plaintext session logs** (`compression: 'none'` boot patch): it carries no Zstandard codec, so exported logs are `.jsonl`, never `.jsonl.zstd`.
 - **`node:dns/promises`, `node:vm`, `node:net`, `node:sqlite`, `node:worker_threads` are structural stubs**: every call reports its refusal on the console and throws. Rows needing native DNS, a real process, or realm isolation cannot run here.
 - **`node:assert/strict` supports truthiness assertions only**: for falsy values, the callable default and `ok` throw `ERR_ASSERTION` with the supplied message or generic text, or rethrow a supplied Error unchanged. Other assertion APIs are absent.

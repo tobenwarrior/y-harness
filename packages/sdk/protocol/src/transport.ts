@@ -8,7 +8,6 @@
 
 import { randomUUID } from 'node:crypto'
 import type { Readable, Writable } from 'node:stream'
-import { StringDecoder } from 'node:string_decoder'
 
 type JsonRpcId = string | number
 type RequestHandler = (method: string, params: Record<string, unknown>) => Promise<unknown>
@@ -61,7 +60,7 @@ interface PendingRequest {
  */
 export class JsonRpcLineTransport implements JsonRpcTransportPeer {
   private buffer = ''
-  private readonly decoder = new StringDecoder('utf8')
+  private readonly decoder = new TextDecoder('utf-8', { ignoreBOM: true })
   private started = false
   private requestHandler: RequestHandler | undefined
   private notificationHandler: NotificationHandler | undefined
@@ -173,7 +172,7 @@ export class JsonRpcLineTransport implements JsonRpcTransportPeer {
   }
 
   private readonly onData = (chunk: Buffer | string): void => {
-    this.buffer += typeof chunk === 'string' ? chunk : this.decoder.write(chunk)
+    this.buffer += typeof chunk === 'string' ? chunk : this.decoder.decode(chunk, { stream: true })
     this.drainLines()
   }
 
@@ -193,7 +192,7 @@ export class JsonRpcLineTransport implements JsonRpcTransportPeer {
   }
 
   private readonly onInputEnd = (): void => {
-    this.buffer += this.decoder.end()
+    this.buffer += this.decoder.decode()
     this.drainLines()
     this.failPending(new Error('JSON-RPC input closed'))
   }
