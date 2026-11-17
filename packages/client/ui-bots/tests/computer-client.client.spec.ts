@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createComputerClient, createMacComputerClient, type ComputerClient } from '../src/client/computer-client.ts'
+import { createComputerAvailability } from '../src/client/computer-availability.ts'
 
 afterEach(() => { vi.unstubAllGlobals() })
 
@@ -16,6 +17,87 @@ function parsedBody(value: unknown): unknown {
 }
 
 describe('Computer HTTP client', () => {
+  it('starts checking, maps Mac/VPS/unavailable results, and keeps identity metadata', async () => {
+    const status = vi.fn<ComputerClient['status']>()
+      .mockResolvedValueOnce({ available: true, kind: 'mac', computer: { location: 'mac', permissionScope: 'workspace' } })
+      .mockResolvedValueOnce({ available: true, kind: 'vps', computer: { location: 'vps', permissionScope: 'bot', id: 'bot-id' } })
+      .mockResolvedValueOnce({ available: false })
+    const base = createComputerClient()
+    const availability = createComputerAvailability({ ...base, status })
+
+    expect(availability.source.getSnapshot()).toBe('checking')
+    expect(availability.identity.getSnapshot()).toBeUndefined()
+    availability.refresh('mac-session')
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(availability.source.getSnapshot()).toBe('mac')
+    expect(availability.identity.getSnapshot()).toEqual({ location: 'mac', permissionScope: 'workspace' })
+    expect(status).toHaveBeenLastCalledWith(expect.any(AbortSignal), 'mac-session')
+
+    availability.refresh('vps-session')
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(availability.source.getSnapshot()).toBe('available')
+    expect(availability.identity.getSnapshot()).toEqual({ location: 'vps', permissionScope: 'bot', id: 'bot-id' })
+
+    availability.refresh()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(availability.source.getSnapshot()).toBe('unavailable')
+    expect(availability.identity.getSnapshot()).toBeUndefined()
+    availability.dispose()
+  })
+
+  it('ignores aborted and stale failures, reports current failures, and stops after disposal', async () => {
+    let rejectStale: ((reason: unknown) => void) | undefined
+    let resolveStaleSuccess: ((value: { readonly available: boolean; readonly kind?: 'mac' | 'vps' }) => void) | undefined
+    let rejectDisposed: ((reason: unknown) => void) | undefined
+    const status = vi.fn<ComputerClient['status']>((_signal, sessionId) => {
+      if (sessionId === 'abort') return Promise.reject(new DOMException('aborted', 'AbortError'))
+      if (sessionId === 'stale') return new Promise((_resolve, reject) => { rejectStale = reject })
+      if (sessionId === 'stale-success') return new Promise((resolve) => { resolveStaleSuccess = resolve })
+      if (sessionId === 'disposed') return new Promise((_resolve, reject) => { rejectDisposed = reject })
+      return Promise.reject(new Error('synthetic status failure'))
+    })
+    const base = createComputerClient()
+    const availability = createComputerAvailability({ ...base, status })
+
+    availability.refresh('abort')
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(availability.source.getSnapshot()).toBe('checking')
+
+    availability.refresh('current-error')
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(availability.source.getSnapshot()).toBe('unavailable')
+
+    availability.refresh('stale')
+    availability.refresh('current-error-2')
+    await Promise.resolve()
+    await Promise.resolve()
+    rejectStale?.(new Error('synthetic stale failure'))
+    await Promise.resolve()
+    expect(availability.source.getSnapshot()).toBe('unavailable')
+
+    availability.refresh('stale-success')
+    availability.refresh('current-error-3')
+    await Promise.resolve()
+    await Promise.resolve()
+    resolveStaleSuccess?.({ available: true, kind: 'mac' })
+    await Promise.resolve()
+    expect(availability.source.getSnapshot()).toBe('unavailable')
+
+    availability.refresh('disposed')
+    availability.dispose()
+    availability.dispose()
+    rejectDisposed?.(new Error('synthetic disposed failure'))
+    availability.refresh('ignored')
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(status).not.toHaveBeenLastCalledWith(expect.any(AbortSignal), 'ignored')
+  })
+
   it('posts status to a relative API route and parses availability', async () => {
     const fetchMock = vi.fn(async () => response({ available: true }))
     vi.stubGlobal('fetch', fetchMock)

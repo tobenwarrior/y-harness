@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
-import { cleanup, render } from '@testing-library/react'
+import { cleanup, render, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
+import { createSnapshotStore } from '@yharness/client-store'
 import * as primitives from '@yharness/client-ui-primitives'
 import {
   IconAlarmClockOutlineRegular, IconApiOutlineRegular, IconArchiveOutlineRegular, IconFolderCloseRegular,
@@ -94,7 +95,7 @@ describe('product icon set', () => {
   })
 
   it('exports both weights for every reference kind', () => {
-    for (const kind of ['session', 'file', 'folder'] as const) {
+    for (const kind of ['session', 'file', 'folder', 'bot'] as const) {
       const regular = render(<primitives.ReferenceIconRegular kind={kind} />)
       expect(regular.container.querySelector('svg')?.getAttribute('stroke-width')).toBe('1')
       regular.unmount()
@@ -102,6 +103,18 @@ describe('product icon set', () => {
       expect(medium.container.querySelector('svg')?.getAttribute('stroke-width')).toBe('1.3')
       medium.unmount()
     }
+  })
+
+  it('updates a bound reference icon when the selected source value changes', async () => {
+    const source = createSnapshotStore<Record<string, string>>({ first: 'initial' })
+    const BoundIcon = primitives.bindInlineReferenceIcon(source, (state, reference) => state[reference] ?? 'missing', ({ value }) => (
+      <span data-reference-value>{value}</span>
+    ))
+    render(<BoundIcon reference="first" label="First" />)
+
+    expect(document.querySelector('[data-reference-value]')?.textContent).toBe('initial')
+    source.set({ first: 'updated' })
+    await waitFor(() => { expect(document.querySelector('[data-reference-value]')?.textContent).toBe('updated') })
   })
 
   it('each glyph defaults to its own drawn size, not one set-wide default', () => {

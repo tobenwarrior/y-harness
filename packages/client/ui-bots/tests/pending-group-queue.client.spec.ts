@@ -109,6 +109,47 @@ describe('shared-group browser retry queue', () => {
     expect(localStorage.getItem(key)).toBe(raw)
   })
 
+  it('rejects invalid scopes, recipients, and reply targets before persistence', async () => {
+    expect(() => createSharedGroupPendingQueue('not-a-principal')).toThrow('scope is invalid')
+    const queue = createSharedGroupPendingQueue('principal-validation')
+
+    await expect(queue.reserveMessage('duplicate-targets', 'bot-group-room', 'draft', ['bot-scout', 'bot-scout']))
+      .rejects.toThrow('recipients are invalid')
+    await expect(queue.reserveMessage('too-many-targets', 'bot-group-room', 'draft', [
+      'bot-a', 'bot-b', 'bot-c', 'bot-d', 'bot-e', 'bot-f', 'bot-g',
+    ])).rejects.toThrow('recipients are invalid')
+    await expect(queue.reserveMessage('unsafe-target', 'bot-group-room', 'draft', ['bot/scout']))
+      .rejects.toThrow('recipients are invalid')
+    await expect(queue.reserveMessage('bad-reply', 'bot-group-room', 'draft', ['bot-scout'], 'parent-message'))
+      .rejects.toThrow('reply target is invalid')
+    await expect(queue.listMessages()).resolves.toEqual([])
+  })
+
+  it('reports a non-durable queue when Web Locks are unavailable', async () => {
+    const descriptor = Object.getOwnPropertyDescriptor(navigator, 'locks')
+    Reflect.deleteProperty(navigator, 'locks')
+    try {
+      const queue = createSharedGroupPendingQueue('principal-no-locks')
+      expect(queue.durable).toBe(false)
+      await expect(queue.listMessages()).rejects.toThrow('storage is unavailable')
+    } finally {
+      if (descriptor === undefined) Reflect.deleteProperty(navigator, 'locks')
+      else Object.defineProperty(navigator, 'locks', descriptor)
+    }
+  })
+
+  it('removes malformed legacy records while retaining valid scoped persistence', async () => {
+    const key = 'yharness.client-ui-bots.shared-group-pending.v2.principal-malformed.message.deadbeef'
+    localStorage.setItem(key, '{malformed')
+    const queue = createSharedGroupPendingQueue('principal-malformed')
+
+    await expect(queue.listMessages()).resolves.toEqual([])
+    expect(localStorage.getItem(key)).toBeNull()
+    const saved = await queue.reserveMessage('valid-after-malformed', 'bot-group-room', 'draft')
+    const reloaded = createSharedGroupPendingQueue('principal-malformed')
+    await expect(reloaded.listMessages()).resolves.toMatchObject([{ id: saved.id, text: 'draft' }])
+  })
+
   it('keeps existing broadcast retries visible alongside targeted retries', async () => {
     const queue = createSharedGroupPendingQueue('principal-target-compatibility')
     const broadcast = await queue.reserveMessage('broadcast', 'bot-group-room', 'Hello everyone')

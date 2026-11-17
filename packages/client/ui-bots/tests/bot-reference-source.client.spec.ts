@@ -1,9 +1,17 @@
-import { describe, expect, it, vi } from 'vitest'
+// @vitest-environment jsdom
+
+import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { createElement } from 'react'
+import { AttachmentId } from '@yharness/attachment'
 import { BotId, type BotView } from '@yharness/bots/client'
 import type { SessionId } from '@yharness/session/types'
 import { createSnapshotStore } from '@yharness/client-store'
 import type { BotWorkspaceState } from '../src/client/controller.ts'
+import { createBotReferenceIcon } from '../src/client/bot-reference-icon.tsx'
 import { createBotReferenceSource } from '../src/client/bot-reference-source.ts'
+
+afterEach(cleanup)
 
 const currentSession = 'session-viewer' as SessionId
 
@@ -90,6 +98,48 @@ describe('Bot reference source', () => {
     expect(source).not.toHaveProperty('matchSpace')
     await expect(source.codec?.serialize('@[Atlas](dsh-bot:bot-atlas)', new AbortController().signal))
       .resolves.toBe('@[Atlas](dsh-bot:bot-atlas)')
+  })
+
+  it('renders preset and generated avatars through reference and candidate wiring', async () => {
+    const generatedAvatar = {
+      attachmentId: AttachmentId(`sha256:${'e'.repeat(64)}`),
+      mediaType: 'image/png' as const,
+      bytes: 3,
+      width: 1,
+      height: 1,
+    }
+    const generated = bot('bot-generated', 'session-generated', 'Generated', { avatar: generatedAvatar })
+    const preset = bot('bot-preset', 'session-preset', 'Preset')
+    const store = workspace([generated, preset])
+    const loadAvatar = vi.fn(async () => 'data:image/png;base64,avatar')
+    const source = createBotReferenceSource({
+      workspace: store,
+      loadAvatar,
+      section: () => 'Bots',
+      botLabel: () => 'Bot',
+    })
+    const candidates = await source.candidates({ sessionId: currentSession }, request(''))
+    const generatedCandidate = candidates.find(candidate => candidate.name === 'Generated')
+    const presetCandidate = candidates.find(candidate => candidate.name === 'Preset')
+    const GeneratedIcon = generatedCandidate?.icon
+    const PresetIcon = presetCandidate?.icon
+    if (GeneratedIcon === undefined || PresetIcon === undefined) throw new Error('Bot candidates need icons')
+
+    const candidatesView = render(createElement('div', null,
+      createElement(GeneratedIcon, { size: 16 }), createElement(PresetIcon, { size: 16 }),
+    ))
+    await waitFor(() => { expect(screen.getByRole('img', { name: 'Generated' }).querySelector('img')).not.toBeNull() })
+    expect(screen.getByRole('img', { name: 'Preset' }).querySelector('[data-character]')).not.toBeNull()
+    expect(loadAvatar).toHaveBeenCalledWith(String(generated.id), generatedAvatar)
+
+    candidatesView.unmount()
+    const ReferenceIcon = createBotReferenceIcon(store, loadAvatar)
+    const reference = render(createElement(ReferenceIcon, { reference: '@not-a-bot-reference', label: 'Missing' }))
+    expect(reference.container.querySelector('svg')).not.toBeNull()
+    reference.rerender(createElement(ReferenceIcon, { reference: generatedCandidate!.value!, label: 'Generated' }))
+    await waitFor(() => { expect(screen.getByRole('img', { name: 'Generated' }).querySelector('img')).not.toBeNull() })
+    reference.rerender(createElement(ReferenceIcon, { reference: presetCandidate!.value!, label: 'Preset' }))
+    expect(screen.getByRole('img', { name: 'Preset' }).querySelector('[data-character]')).not.toBeNull()
   })
 
   it('updates from the live roster and keeps path references out of Bot rows', async () => {

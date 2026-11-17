@@ -90,6 +90,164 @@ describe('ComputerSignInCard shared handoff', () => {
     await waitFor(() => { expect(cancel).toHaveBeenCalledWith(targetSessionId, requestId) })
   })
 
+  it('keeps the card hidden when the feature gate or sign-in API is unavailable', () => {
+    const disabled = render(<ComputerSignInCard {...props({ botChat: false })} />)
+    expect(disabled.container.querySelector('[data-computer-sign-in-card]')).toBeNull()
+    disabled.unmount()
+
+    const { signIn: _signIn, ...withoutSignIn } = computer()
+    const unavailable = render(<ComputerSignInCard {...props({ computer: withoutSignIn })} />)
+    expect(unavailable.container.querySelector('[data-computer-sign-in-card]')).toBeNull()
+  })
+
+  it('stays hidden while the sign-in status has no request', async () => {
+    const base = computer()
+    const status = vi.fn(async () => ({ request: null }))
+    const client: ComputerClient = {
+      ...base,
+      signIn: { ...base.signIn!, status },
+    }
+    const view = render(<ComputerSignInCard {...props({ computer: client })} />)
+
+    await waitFor(() => { expect(status).toHaveBeenCalledWith(ownerSessionId, expect.any(AbortSignal)) })
+    expect(view.container.querySelector('[data-computer-sign-in-card]')).toBeNull()
+  })
+
+  it('keeps the card hidden when status polling fails', async () => {
+    const base = computer()
+    const status = vi.fn(async () => { throw new Error('synthetic disconnected client') })
+    const client: ComputerClient = {
+      ...base,
+      signIn: { ...base.signIn!, status },
+    }
+    const view = render(<ComputerSignInCard {...props({ computer: client })} />)
+
+    await waitFor(() => { expect(status).toHaveBeenCalledWith(ownerSessionId, expect.any(AbortSignal)) })
+    await Promise.resolve()
+    expect(view.container.querySelector('[data-computer-sign-in-card]')).toBeNull()
+  })
+
+  it('does not publish a status result after the card unmounts', async () => {
+    let resolveStatus: ((value: { readonly request: ComputerSignInRequest | null }) => void) | undefined
+    const base = computer()
+    const status = vi.fn(async () => new Promise<{ readonly request: ComputerSignInRequest | null }>((resolve) => {
+      resolveStatus = resolve
+    }))
+    const client: ComputerClient = {
+      ...base,
+      signIn: { ...base.signIn!, status },
+    }
+    const view = render(<ComputerSignInCard {...props({ computer: client })} />)
+
+    await waitFor(() => { expect(status).toHaveBeenCalled() })
+    view.unmount()
+    resolveStatus?.({ request: null })
+    await Promise.resolve()
+  })
+
+  it('does not publish a polling error after the card unmounts', async () => {
+    let rejectStatus: ((reason: unknown) => void) | undefined
+    const base = computer()
+    const status = vi.fn(async () => new Promise<{ readonly request: ComputerSignInRequest | null }>((_resolve, reject) => {
+      rejectStatus = reject
+    }))
+    const client: ComputerClient = {
+      ...base,
+      signIn: { ...base.signIn!, status },
+    }
+    const view = render(<ComputerSignInCard {...props({ computer: client })} />)
+
+    await waitFor(() => { expect(status).toHaveBeenCalled() })
+    view.unmount()
+    rejectStatus?.(new Error('synthetic late disconnect'))
+    await Promise.resolve()
+    await Promise.resolve()
+  })
+
+  it('continues status polling while the card remains mounted', async () => {
+    vi.useFakeTimers()
+    try {
+      const base = computer()
+      const status = vi.fn(async () => ({ request: null }))
+      const client: ComputerClient = {
+        ...base,
+        signIn: { ...base.signIn!, status },
+      }
+      const view = render(<ComputerSignInCard {...props({ computer: client })} />)
+
+      await Promise.resolve()
+      await Promise.resolve()
+      expect(status).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(1_200)
+      expect(status).toHaveBeenCalledTimes(2)
+      view.unmount()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('renders a private request without shared origin details or cancellation', async () => {
+    const privateRequest: ComputerSignInRequest = { id: 'private-request', canCancel: false }
+    const base = computer()
+    const openSignIn = vi.fn()
+    const status = vi.fn(async () => ({ request: privateRequest }))
+    const client: ComputerClient = {
+      ...base,
+      signIn: { ...base.signIn!, status },
+    }
+    render(<ComputerSignInCard {...props({ computer: client, openSignIn })} />)
+
+    expect(await screen.findByText(en.computerSignInTitle)).toBeTruthy()
+    expect(screen.queryByText(en.computerSignInOrigin)).toBeNull()
+    expect(screen.queryByRole('button', { name: en.cancel })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: en.computerSignInTake }))
+    expect(openSignIn).toHaveBeenCalledWith(ownerSessionId, privateRequest.id, undefined, undefined)
+  })
+
+  it('shows the localized error and re-enables actions when cancellation fails', async () => {
+    const privateRequest: ComputerSignInRequest = { id: 'failed-cancel', canCancel: true }
+    const base = computer()
+    const status = vi.fn(async () => ({ request: privateRequest }))
+    const cancel = vi.fn(async () => { throw new Error('synthetic cancellation failure') })
+    const client: ComputerClient = {
+      ...base,
+      signIn: { ...base.signIn!, status, cancel },
+    }
+    render(<ComputerSignInCard {...props({ computer: client })} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: en.cancel }))
+    await waitFor(() => { expect(screen.getByRole('alert').textContent).toBe(en.computerSignInError) })
+    expect(cancel).toHaveBeenCalledWith(ownerSessionId, privateRequest.id)
+    expect(screen.getByRole('button', { name: en.cancel }).getAttribute('disabled')).toBeNull()
+  })
+
+  it('keeps a newer request when an older cancellation settles', async () => {
+    const firstRequest: ComputerSignInRequest = { id: 'first-cancel', canCancel: true }
+    const secondRequest: ComputerSignInRequest = { id: 'second-cancel', canCancel: true }
+    let resolveFirst: (() => void) | undefined
+    let resolveSecond: (() => void) | undefined
+    const firstCancel = new Promise<{ readonly mode: 'watching' }>((resolve) => { resolveFirst = () => { resolve({ mode: 'watching' }) } })
+    const secondCancel = new Promise<{ readonly mode: 'watching' }>((resolve) => { resolveSecond = () => { resolve({ mode: 'watching' }) } })
+    const base = computer()
+    const status = vi.fn()
+      .mockResolvedValueOnce({ request: firstRequest })
+      .mockResolvedValueOnce({ request: secondRequest })
+    const cancel = vi.fn((session: string, id: string) => id === firstRequest.id ? firstCancel : secondCancel)
+    const client: ComputerClient = {
+      ...base,
+      signIn: { ...base.signIn!, status, cancel },
+    }
+    const view = render(<ComputerSignInCard {...props({ computer: client })} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: en.cancel }))
+    view.rerender(<ComputerSignInCard {...props({ computer: client, sessionId: 'new-owner-session' })} />)
+    fireEvent.click(await screen.findByRole('button', { name: en.cancel }))
+    resolveFirst?.()
+    await Promise.resolve()
+    resolveSecond?.()
+    await waitFor(() => { expect(cancel).toHaveBeenCalledTimes(2) })
+  })
+
   it('keeps the owner Session selected while the panel uses the target and renders current origin', async () => {
     const status = vi.fn(async () => ({ available: true, kind: 'vps' as const,
       computer: { id: ownerBotId, location: 'vps' as const, permissionScope: 'bot' as const, browser: true as const } }))
