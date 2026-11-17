@@ -29,12 +29,13 @@
         sandbox: danger-full-access
         approval: never
 
-# The text-turn corpus predates bundled Compound skills and records no catalog
-# message. Keep the skill tool schema while making this composition catalog-free.
+# Only skills seeded in the temporary Harness home enter these recordings.
 - id: skill-filesystem
   name: '@yharness/skill-filesystem'
   config:
     includeDefaultRoots: false
+    customSkillDirs:
+      - !!js process.cwd() + '/.dsh/skills'
 
 - id: skill-compound
   disabled: true
