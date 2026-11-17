@@ -299,7 +299,13 @@ describe('VpsRuntime', () => {
     expect(run).toContain('--pid=private')
     expect(run).toContain('--ipc=private')
     expect(run).toContain('--uts=private')
-    expect(run).toContain('--user')
+    if (typeof process.getuid === 'function' && typeof process.getgid === 'function') {
+      const flag = run?.indexOf('--user') ?? -1
+      expect(flag).toBeGreaterThanOrEqual(0)
+      expect(run?.[flag + 1]).toBe(String(process.getuid()) + ':' + String(process.getgid()))
+    } else {
+      expect(run).not.toContain('--user')
+    }
     expect(run).toContain('--network=none')
     expect(run).toContain('--http-proxy=false')
     expect(run).toContain('--image-volume=ignore')
@@ -350,8 +356,8 @@ describe('VpsRuntime', () => {
     const project = runs.map(argv => argv.find(arg => arg.endsWith(':/workspace:rw,nodev,nosuid,nocopy')))
     expect(project[0]).toMatch(/^yharness-bot-project-[0-9a-f]{16}:\/workspace:/u)
     expect(project).toEqual([project[0], project[0]])
-    expect(f.runtime.execArgv(sessions.alice, ['pwd'], { workdir: '/workspace/research' }))
-      .toContain('/workspace/research')
+    const execution = f.runtime.execArgv(sessions.alice, ['pwd'], { workdir: '/workspace/research' })
+    expect(execution[execution.indexOf('--workdir') + 1]).toBe(resolve('/workspace/research'))
     expect(() => f.runtime.execArgv(sessions.bob, ['pwd'], { workdir: '/workspace/../outside' }))
       .toThrow('workspace')
     expect(() => fixture().runtime.execArgv(sessions.alice, ['pwd'], { workdir: '/workspace' }))
@@ -398,7 +404,8 @@ describe('VpsRuntime', () => {
     expect(await f.runtime.sharedWorkspaceFor(sessions.alice)).toBe('/workspace')
     expect(await f.runtime.sharedWorkspaceFor(sessions.bob)).toBeUndefined()
     await f.runtime.ensure(sessions.alice)
-    expect(f.runtime.execArgv(sessions.alice, ['pwd'], { workdir: '/workspace' })).toContain('/workspace')
+    const execution = f.runtime.execArgv(sessions.alice, ['pwd'], { workdir: '/workspace' })
+    expect(execution[execution.indexOf('--workdir') + 1]).toBe(resolve('/workspace'))
     const finish = f.runtime.beginUse(sessions.alice)
     try {
       await expect(f.runtime.setSharedWorkspaceAccess(sessions.alice, false, signal)).resolves.toBe('busy')

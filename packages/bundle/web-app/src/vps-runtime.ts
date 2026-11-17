@@ -14,7 +14,7 @@ import { execFile, spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { accessSync, constants, readFileSync } from 'node:fs'
 import { mkdir, lstat } from 'node:fs/promises'
-import { isAbsolute, relative, resolve, sep } from 'node:path'
+import { isAbsolute, parse, relative, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
 import type { VpsBotComputerSetting } from './vps-bot-computer-setting.ts'
 
@@ -695,7 +695,7 @@ function privatePath(value: string, label: string): string {
     throw new VpsRuntimeError(`${label} must be an absolute path without control characters`)
   }
   const normalized = resolve(value)
-  if (normalized === sep || normalized === '/tmp') {
+  if (normalized === parse(normalized).root || normalized === '/tmp') {
     throw new VpsRuntimeError(`${label} must name a dedicated private directory`)
   }
   return normalized
