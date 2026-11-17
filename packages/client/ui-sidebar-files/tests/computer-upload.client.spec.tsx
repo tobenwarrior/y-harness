@@ -10,6 +10,8 @@ interface ProbeProps {
   readonly refresh: () => void
 }
 
+const emptySelection: FileList = Object.assign([], { item: () => null })
+
 function Probe({ lifetime, root = '.', refresh }: ProbeProps) {
   const picker = useComputerFilePicker('owner/session', lifetime, root, refresh)
   return (
@@ -21,7 +23,7 @@ function Probe({ lifetime, root = '.', refresh }: ProbeProps) {
       }} />
       <button type="button" onClick={() => { picker.pick('./relative') }}>Pick relative</button>
       <button type="button" onClick={() => { picker.pick('/absolute') }}>Pick absolute</button>
-      <button type="button" onClick={() => { void picker.submit({ length: 0, item: () => null } as FileList) }}>Submit empty</button>
+      <button type="button" onClick={() => { void picker.submit(emptySelection) }}>Submit empty</button>
       <button type="button" onClick={picker.cancel}>Cancel</button>
       <output data-testid="uploading" data-uploading>{picker.uploading ?? ''}</output>
       <output data-testid="failures" data-failures>{JSON.stringify(picker.failures)}</output>

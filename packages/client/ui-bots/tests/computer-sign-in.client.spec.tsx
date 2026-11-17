@@ -4,6 +4,7 @@ import type { ComponentProps } from 'react'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { makeTranslate } from '@yharness/client-test-runtime'
+import { SessionId } from '@yharness/session/types'
 import { en } from '../src/client/locales.ts'
 import { ComputerSignInCard } from '../src/client/ComputerSignInCard.tsx'
 import { ComputerPanel } from '../src/client/ComputerPanel.tsx'
@@ -232,7 +233,7 @@ describe('ComputerSignInCard shared handoff', () => {
     const status = vi.fn()
       .mockResolvedValueOnce({ request: firstRequest })
       .mockResolvedValueOnce({ request: secondRequest })
-    const cancel = vi.fn((session: string, id: string) => id === firstRequest.id ? firstCancel : secondCancel)
+    const cancel = vi.fn((_session: string, id: string) => id === firstRequest.id ? firstCancel : secondCancel)
     const client: ComputerClient = {
       ...base,
       signIn: { ...base.signIn!, status, cancel },
@@ -240,7 +241,7 @@ describe('ComputerSignInCard shared handoff', () => {
     const view = render(<ComputerSignInCard {...props({ computer: client })} />)
 
     fireEvent.click(await screen.findByRole('button', { name: en.cancel }))
-    view.rerender(<ComputerSignInCard {...props({ computer: client, sessionId: 'new-owner-session' })} />)
+    view.rerender(<ComputerSignInCard {...props({ computer: client, sessionId: SessionId('new-owner-session') })} />)
     fireEvent.click(await screen.findByRole('button', { name: en.cancel }))
     resolveFirst?.()
     await Promise.resolve()

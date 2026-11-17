@@ -180,6 +180,7 @@ describe('ComputerFileCopy', () => {
     fireEvent.click(confirm)
     await waitFor(() => { expect(fetchMock).toHaveBeenCalledTimes(2) })
     const copying = screen.getByRole('button', { name: en['copy.copying'] })
+    if (!(copying instanceof HTMLButtonElement)) throw new Error('Expected the copy button')
     copying.disabled = false
     fireEvent.click(copying)
     expect(fetchMock).toHaveBeenCalledTimes(2)
