@@ -55,9 +55,9 @@ const approvalPermissionsSchema = z.object({
     .transform(values => [...values].sort()),
 }).strict()
 const approvalSchema = z.union([
-  z.number().safe().int().nonnegative().transform((approvedAt): BotTemplateApproval => ({ approvedAt })),
+  z.number().int().nonnegative().transform((approvedAt): BotTemplateApproval => ({ approvedAt })),
   z.object({
-    approvedAt: z.number().safe().int().nonnegative(),
+    approvedAt: z.number().int().nonnegative(),
     permissions: approvalPermissionsSchema.optional(),
   }).strict(),
 ])
@@ -111,9 +111,9 @@ export const botTemplateRecordSchema = z.object({
   avatar: botTemplateAvatarSchema.optional(),
   agentPreset: boundedText(160).optional(),
   fingerprint: fingerprintSchema.optional(),
-  portableVersion: z.number().safe().int().positive().optional(),
-  createdAt: z.number().safe().int().nonnegative(),
-  revokedAt: z.number().safe().int().nonnegative().optional(),
+  portableVersion: z.number().int().positive().optional(),
+  createdAt: z.number().int().nonnegative(),
+  revokedAt: z.number().int().nonnegative().optional(),
 }).strict().refine(record => record.revokedAt === undefined || record.revokedAt >= record.createdAt, {
   message: 'Template revocation must not predate publication',
 }).transform((value): BotTemplateStoredRecord => ({

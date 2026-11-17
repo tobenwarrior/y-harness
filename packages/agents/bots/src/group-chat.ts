@@ -534,8 +534,8 @@ export const botGroupRecordSchema = z.object({
   id: groupIdSchema,
   name: groupNameSchema,
   botIds: z.array(botIdSchema).min(2).max(MAX_GROUP_MEMBERS),
-  createdAt: z.number().safe().int().nonnegative(),
-  updatedAt: z.number().safe().int().nonnegative(),
+  createdAt: z.number().int().nonnegative(),
+  updatedAt: z.number().int().nonnegative(),
 }).strict().refine(record => new Set(record.botIds.map(String)).size === record.botIds.length, {
   message: 'Bot group members must be unique',
 }).refine(record => record.updatedAt >= record.createdAt, {
@@ -552,7 +552,7 @@ export const botGroupMessageRecordSchema = z.object({
   targetBotIds: z.array(botIdSchema).min(1).max(MAX_GROUP_MEMBERS).optional(),
   replyToMessageId: messageIdSchema.optional(),
   reactions: z.array(reactionRecordSchema).max(MAX_REACTIONS_PER_MESSAGE).optional(),
-  createdAt: z.number().safe().int().nonnegative(),
+  createdAt: z.number().int().nonnegative(),
 }).strict().superRefine((value, context) => {
   const reactionKeys = new Set(value.reactions?.map(reaction => `${reaction.actorId}:${reaction.emoji}`) ?? [])
   if (reactionKeys.size !== (value.reactions?.length ?? 0)) {
@@ -580,11 +580,11 @@ export const botGroupDeliveryRecordSchema = z.object({
   responseMessageId: messageIdSchema.optional(),
   error: z.string().min(1).max(400).optional(),
   claim: z.object({
-    turn: z.number().safe().int().nonnegative(),
-    step: z.number().safe().int().nonnegative(),
+    turn: z.number().int().nonnegative(),
+    step: z.number().int().nonnegative(),
     isolated: z.boolean(),
   }).strict().optional(),
-  updatedAt: z.number().safe().int().nonnegative(),
+  updatedAt: z.number().int().nonnegative(),
 }).strict().transform((value): BotGroupDeliveryRecord => ({
   id: value.id,
   groupId: value.groupId,

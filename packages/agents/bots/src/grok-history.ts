@@ -73,9 +73,9 @@ export const GROK_HISTORY_PAGE_MAX_LIMIT = 10
 export const GROK_HISTORY_EXCERPT_MAX_CHARS = 1_000
 const GROK_HISTORY_EXCERPT_SUFFIX = ' … [excerpt truncated]'
 
-const timestamp = z.number().safe().int().min(0).max(8_640_000_000_000_000)
-const v1Sequence = z.number().safe().int().positive()
-const v2Sequence = z.number().safe().int().nonnegative()
+const timestamp = z.number().int().min(0).max(8_640_000_000_000_000)
+const v1Sequence = z.number().int().positive()
+const v2Sequence = z.number().int().nonnegative()
 const v1Message = z.object({
   sourceSequence: v1Sequence,
   role: z.enum(['user', 'assistant']),

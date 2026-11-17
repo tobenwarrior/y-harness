@@ -143,7 +143,7 @@ const attachmentIdSchema = z.string().min(1).max(512).refine(
 const fileAttachmentSchema = z.object({
   attachmentId: attachmentIdSchema,
   name: z.string().min(1).max(255),
-  bytes: z.number().safe().int().nonnegative(),
+  bytes: z.number().int().nonnegative(),
 }).strict().transform((value): FileAttachmentRef => ({
   attachmentId: value.attachmentId,
   name: value.name,
@@ -152,13 +152,13 @@ const fileAttachmentSchema = z.object({
 const imageAttachmentSchema = z.object({
   attachmentId: attachmentIdSchema,
   mediaType: z.enum(['image/png', 'image/jpeg', 'image/webp', 'image/gif']),
-  bytes: z.number().safe().int().nonnegative(),
-  width: z.number().safe().int().positive(),
-  height: z.number().safe().int().positive(),
+  bytes: z.number().int().nonnegative(),
+  width: z.number().int().positive(),
+  height: z.number().int().positive(),
   name: z.string().min(1).max(255).optional(),
   originalDimensions: z.object({
-    width: z.number().safe().int().positive(),
-    height: z.number().safe().int().positive(),
+    width: z.number().int().positive(),
+    height: z.number().int().positive(),
   }).strict().optional(),
 }).strict().transform((value): ImageAttachmentRef => ({
   attachmentId: value.attachmentId,
@@ -177,7 +177,7 @@ const targetBotIdsSchema = z.array(botIdSchema).min(1).max(6).refine(
   values => new Set(values.map(String)).size === values.length,
   'Bot attachment targets must be unique',
 )
-const revisionSchema = z.number().safe().int().nonnegative()
+const revisionSchema = z.number().int().nonnegative()
 const localScopeSchema = z.object({
   kind: z.literal('local-group'),
   ownerId: z.string().min(1).max(MAX_OWNER_ID).refine(value => value.trim() === value),
@@ -210,8 +210,8 @@ export const botAttachmentGrantSchema = z.object({
   scope: scopeSchema,
   attachments: z.array(inputAttachmentSchema).min(1).max(MAX_GRANT_ATTACHMENTS),
   state: z.enum(['reserved', 'consumed', 'revoked']),
-  createdAt: z.number().safe().int().nonnegative(),
-  consumedAt: z.number().safe().int().nonnegative().optional(),
+  createdAt: z.number().int().nonnegative(),
+  consumedAt: z.number().int().nonnegative().optional(),
 }).strict().superRefine((record, context) => {
   if (record.state === 'consumed' && record.consumedAt === undefined) {
     context.addIssue({ code: 'custom', message: 'consumed grants require consumedAt', path: ['consumedAt'] })
@@ -233,8 +233,8 @@ const privateDeliverySchema = z.object({
   scope: sharedPrivateScopeSchema,
   token: z.string().min(1).max(MAX_LEASE_TOKEN),
   state: z.enum(['pending', 'accepted']),
-  leaseUntil: z.number().safe().int().nonnegative(),
-  updatedAt: z.number().safe().int().nonnegative(),
+  leaseUntil: z.number().int().nonnegative(),
+  updatedAt: z.number().int().nonnegative(),
 }).strict().transform((value): BotPrivateDeliveryRecord => ({
   id: value.id,
   scope: value.scope,

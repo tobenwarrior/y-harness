@@ -25,13 +25,13 @@ export type BotStoredRecord = BotRecord & {
 export const imageAttachmentRefSchema = z.object({
   attachmentId: z.string().regex(/^sha256:[0-9a-f]{64}$/).transform(value => brandString<AttachmentId>(value)),
   mediaType: z.enum(['image/png', 'image/jpeg', 'image/webp', 'image/gif']),
-  bytes: z.number().safe().int().nonnegative(),
-  width: z.number().safe().int().positive(),
-  height: z.number().safe().int().positive(),
+  bytes: z.number().int().nonnegative(),
+  width: z.number().int().positive(),
+  height: z.number().int().positive(),
   name: z.string().min(1).max(255).optional(),
   originalDimensions: z.object({
-    width: z.number().safe().int().positive(),
-    height: z.number().safe().int().positive(),
+    width: z.number().int().positive(),
+    height: z.number().int().positive(),
   }).strict().optional(),
 }).strict().transform((value): ImageAttachmentRef => ({
   attachmentId: value.attachmentId,
@@ -159,8 +159,8 @@ export const botRecordSchema = z.object({
   skillPolicy: botSkillPolicySchema.optional(),
   skillPolicyRevision: z.number().int().nonnegative().optional(),
   state: z.enum(['provisioning', 'active']),
-  createdAt: z.number().safe().int().nonnegative(),
-  updatedAt: z.number().safe().int().nonnegative(),
+  createdAt: z.number().int().nonnegative(),
+  updatedAt: z.number().int().nonnegative(),
   pendingMemoryUpdate: botPendingMemoryUpdateSchema.optional(),
 }).strict().refine(record => record.updatedAt >= record.createdAt, {
   message: 'updatedAt must not be earlier than createdAt',

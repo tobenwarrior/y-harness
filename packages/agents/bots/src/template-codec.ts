@@ -76,9 +76,9 @@ const artifactNonce = base64Url.min(22).max(64)
 export const botTemplateAvatarSchema = z.object({
   mediaType: z.enum(['image/png', 'image/jpeg', 'image/webp', 'image/gif']),
   data: base64Url.max(Math.ceil(BOT_TEMPLATE_AVATAR_MAX_BYTES * 4 / 3) + 8),
-  bytes: z.number().safe().int().positive().max(BOT_TEMPLATE_AVATAR_MAX_BYTES),
-  width: z.number().safe().int().positive().max(8192),
-  height: z.number().safe().int().positive().max(8192),
+  bytes: z.number().int().positive().max(BOT_TEMPLATE_AVATAR_MAX_BYTES),
+  width: z.number().int().positive().max(8192),
+  height: z.number().int().positive().max(8192),
   name: z.string().min(1).max(255).refine(value => value.trim() === value && !/[\\/\0]/u.test(value)).optional(),
 }).strict().superRefine((value, context) => {
   let decoded: Buffer
@@ -110,7 +110,7 @@ const payloadSchema = z.object({
   capabilities: z.array(capability).max(32).refine(values => new Set(values).size === values.length),
   agentPreset: boundedText(160).optional(),
   avatar: botTemplateAvatarSchema.optional(),
-  issuedAt: z.number().safe().int().nonnegative(),
+  issuedAt: z.number().int().nonnegative(),
 }).strict()
 
 const envelopeSchema = z.object({
