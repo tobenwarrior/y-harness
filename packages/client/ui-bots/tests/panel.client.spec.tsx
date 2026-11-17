@@ -10,6 +10,7 @@ import type { WorkspaceSnapshot } from '@yharness/api-workspace-controller/clien
 import { makeTranslate } from '@yharness/client-test-runtime'
 import { SessionId } from '@yharness/session/types'
 import { en } from '../src/client/locales.ts'
+import { BotsPanelIcon } from '../src/client/BotsPanelIcon.tsx'
 import {
   BotReplyAvatar, BotsConversation, BotsPanel,
   type BotsConversationProps, type BotsPanelProps,
@@ -159,6 +160,18 @@ function conversationProps(
 }
 
 describe('Bots conversation slot wiring', () => {
+  it('renders the decorative Bots glyph at the sidebar size', () => {
+    const { container } = render(<BotsPanelIcon
+      size={18}
+      active={false}
+      {...{ usePanelInfo, useSessions, useSessionStatus, useSessionRetainInfo, useResource, useWorkspaces }}
+    />)
+    const glyph = container.querySelector('svg')
+    expect(glyph?.getAttribute('width')).toBe('18')
+    expect(glyph?.getAttribute('height')).toBe('18')
+    expect(glyph?.getAttribute('aria-hidden')).toBe('true')
+  })
+
   it('renders the roster avatar for the matching Session and omits an unknown Session', () => {
     const matching = bot()
     const state = workspaceState([matching], matching.id)
