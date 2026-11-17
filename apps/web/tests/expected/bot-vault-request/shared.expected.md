@@ -1,0 +1,7 @@
+- region "Shared secure request":
+  - text: Shared secure request Service
+  - code: example-worker.service
+  - text: Key
+  - code: EXAMPLE_API_KEY
+  - link "Enter key securely":
+    - /url: /__yharness/vault-request/{{id}}

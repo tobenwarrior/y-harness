@@ -47,6 +47,8 @@ p { color: var(--muted); line-height: 1.45; }
 #websites-notice { min-height: 20px; margin: 8px 0; line-height: 1.5; color: var(--accent); }
 #websites-notice[data-tone="error"] { color: var(--error); }
 #websites-notice:empty { display: none; }
+#websites-automatic-notice { margin: -4px 0 8px; color: var(--muted); }
+#websites-automatic-notice:empty { display: none; }
 #request-outcome { margin: 12px 0 0; line-height: 1.5; color: var(--accent); }
 #request-outcome:empty { margin: 0; }
 #request-outcome[data-tone="error"] { color: var(--error); }
@@ -84,6 +86,8 @@ li > span { min-width: 0; overflow-wrap: anywhere; }
 .login-details span:last-child, .grant-details span:last-child { color: var(--muted); font-size: 12px; }
 .actions { display: flex; align-items: center; justify-content: flex-end; gap: 7px; flex: none; }
 li .actions { gap: 3px; }
+.website-automatic-toggle { display: inline-flex; align-items: center; gap: 5px; margin: 0; color: var(--muted); white-space: nowrap; }
+.website-automatic-toggle input { width: 16px; min-height: 16px; margin: 0; padding: 0; accent-color: var(--accent); }
 .grant-scope { width: auto; min-width: 90px; }
 .browser-access { margin-top: 18px; padding-top: 3px; border-top: 1px solid var(--line); }
 #browser-access-notice { min-height: 0; margin: 7px 0; line-height: 1.45; color: var(--accent); }

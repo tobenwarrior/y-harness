@@ -62,6 +62,8 @@ await ctx.credentials.describe(ref)             // { configured, source?, writab
 await ctx.credentials.unset(ref)                // remove
 ```
 
+The optional create-only write preserves any effective key from the environment, the current file, or a .env fallback. It rechecks the file under the writer lock when a second process uses the same store.
+
 A key you save is usable by the next request that names it, and `describe` reports whether it is set, where it comes from, and whether you can write to it — never the value itself. Records persist in the same file, addressed by `<owner>/<id>` and managed with the seam's record operations (`readRecord`, `describeRecord`, `listRecords`, `modifyRecord`, `deleteRecord`).
 
 ### Where keys come from

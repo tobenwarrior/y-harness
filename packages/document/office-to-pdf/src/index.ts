@@ -6,8 +6,7 @@ import { extname, isAbsolute, join } from 'node:path'
 import { Context } from '@yharness/cordis'
 import { createConverter, type Converter, type ConverterOptions } from '@deepseek-ai/libreoffice-kit'
 import z from '@yharness/schemastery'
-import type { WorkspaceFileScope, WorkspaceFileStat } from '@yharness/api-workspace-files'
-import type {} from '@yharness/fs'
+import type { WorkspaceFilePath, WorkspaceFileScope, WorkspaceFileStat } from '@yharness/api-workspace-files'
 import { brandString } from '@yharness/brand'
 import { Remote, RemoteError, TypertRemoteService } from '@yharness/typert-protocol'
 import { OfficeToPdfError } from './errors.ts'
@@ -149,16 +148,16 @@ export class OfficeToPdf extends TypertRemoteService {
   }
 
   /**
-   * Read and convert one Office file using the Session's ordinary filesystem authorization.
+   * Read and convert one Office file using the selected workspace's filesystem authorization.
    * @param workspaceFileScope - Session header lookup shared with workspaceFiles.
-   * @param path - absolute or workspace-relative Office path.
+   * @param path - Office file in the Session or its private Computer workspace.
    * @param priority - foreground preview or speculative background work.
    * @param signal - Remote cancellation; disposal also cancels outstanding reads and conversions.
    * @returns complete PDF bytes with original source identity and missing font families.
    */
   @Remote
   async render(
-    workspaceFileScope: WorkspaceFileScope, path: string, priority: OfficeToPdfPriority, signal: AbortSignal,
+    workspaceFileScope: WorkspaceFileScope, path: WorkspaceFilePath, priority: OfficeToPdfPriority, signal: AbortSignal,
   ): Promise<RenderedDocumentBytes> {
     const upstream = AbortSignal.any([signal, this.remoteLifetime.signal])
     const operation = this.renderFile(workspaceFileScope, path, priority, upstream)
@@ -175,18 +174,17 @@ export class OfficeToPdf extends TypertRemoteService {
   getGeneration(signal: AbortSignal): OfficeToPdfGeneration { signal.throwIfAborted(); return this.generation }
 
   private async renderFile(
-    scope: WorkspaceFileScope, path: string, priority: OfficeToPdfPriority, signal: AbortSignal,
+    scope: WorkspaceFileScope, path: WorkspaceFilePath, priority: OfficeToPdfPriority, signal: AbortSignal,
   ): Promise<RenderedDocumentBytes> {
     try {
       signal.throwIfAborted()
-      const extension = extname(path).slice(1).toLowerCase()
+      const extension = extname(typeof path === 'string' ? path : path.computer).slice(1).toLowerCase()
       if (extension !== 'doc' && extension !== 'docx' && extension !== 'xls'
         && extension !== 'xlsx' && extension !== 'ppt' && extension !== 'pptx') {
         throw new OfficeToPdfError('unsupported-format', 'The path must end in doc, docx, xls, xlsx, ppt, or pptx.')
       }
       const files = this.ctx.get('workspaceFiles')
-      const fs = this.ctx.get('fs')
-      if (files === undefined || fs === undefined) throw new OfficeToPdfError('unavailable', 'Office file rendering requires workspaceFiles and fs.')
+      if (files === undefined) throw new OfficeToPdfError('unavailable', 'Office file rendering requires workspace access.')
       const authorized = await files.readBytes(scope, path, { range: { offset: 0, length: 1 } }, signal)
       const source = await files.stat(scope, path, signal)
       const assertUnchanged = (current: WorkspaceFileStat): void => {
@@ -197,14 +195,13 @@ export class OfficeToPdf extends TypertRemoteService {
       assertUnchanged(authorized)
       signal.throwIfAborted()
       const result = await this.convert({ extension, priority, source: {
-        key: brandString<OfficeSourceKey>(JSON.stringify([scope.sessionId, scope.workspaceRoot, source.absolutePath])),
+        key: brandString<OfficeSourceKey>(JSON.stringify([scope.sessionId, scope.workspaceRoot, typeof path !== 'string', source.absolutePath])),
         version: source.version, ...(source.bytes === undefined ? {} : { bytes: source.bytes }),
         read: async (upstream, maxBytes) => {
-          const target = await fs.resolve(source.absolutePath, { signal: upstream })
-          const info = await fs.stat(target, upstream)
-          if (info === undefined || info.type !== 'file') throw new OfficeToPdfError('source-changed', 'The source changed.')
-          assertUnchanged({ absolutePath: fs.processPath(target), version: info.version })
-          const bytes = await fs.readBytes(target, upstream, maxBytes).catch(async (cause: unknown) => {
+          const bytes = await files.readVerifiedBytes(scope, path, source, maxBytes, upstream).catch(async (cause: unknown) => {
+            if (cause instanceof RemoteError && cause.code === 'workspace-file/changed') {
+              throw new OfficeToPdfError('source-changed', 'The source changed.', { cause })
+            }
             if (typeof cause === 'object' && cause !== null && 'code' in cause && cause.code === 'FS_TOO_LARGE') {
               assertUnchanged(await files.stat(scope, path, upstream))
               throw new OfficeToPdfError('input-too-large', 'The source exceeds the reserved byte capacity.', { cause })

@@ -4,7 +4,7 @@
  */
 
 import type { IncomingMessage } from 'node:http'
-import { Readable } from 'node:stream'
+import { PassThrough, Readable } from 'node:stream'
 import type { ConnectionFetchHandler } from './rpc.ts'
 
 /** Default carrier cap for all HTTP RPC bodies: sized for the default
@@ -57,6 +57,7 @@ export async function bridge(
   )
   const bodyMode = apiHandler.requestBodyMode({ method, url })
   let request: Request
+  let releaseBody: (() => void) | undefined
   if (bodyMode === 'buffered') {
     const declaredLength = req.headers['content-length']
     if (declaredLength !== undefined && Number(declaredLength) > maxRequestBodyBytes) {
@@ -105,42 +106,57 @@ export async function bridge(
       signal: abort.signal,
     })
   } else {
+    // A handler may stop reading before returning a rejection. Closing its
+    // body pipe must leave the socket open long enough to send that response.
+    const pipe = new PassThrough()
+    const fail = (error: Error): void => { pipe.destroy(error) }
+    req.on('error', fail)
+    req.once('close', () => { req.off('error', fail) })
+    const body = Readable.toWeb(pipe, { strategy: {
+      highWaterMark: pipe.readableHighWaterMark,
+      size: (chunk: Uint8Array) => chunk.byteLength,
+    } }) as ReadableStream<Uint8Array>
+    req.pipe(pipe)
+    releaseBody = () => {
+      req.unpipe(pipe)
+      pipe.destroy()
+    }
     request = new Request(url, {
       method,
       headers,
-      body: Readable.toWeb(req) as ReadableStream<Uint8Array>,
+      body,
       signal: abort.signal,
       duplex: 'half',
     } as RequestInit & { duplex: 'half' })
   }
-  const response = await apiHandler.fetch(request)
-  const requestUnread = bodyMode === 'streaming' && !req.readableEnded
-  const responseHeaders = Object.fromEntries(response.headers.entries())
-  res.writeHead(response.status, requestUnread ? { ...responseHeaders, connection: 'close' } : responseHeaders)
-  if (response.body === null) {
-    res.end()
-    if (requestUnread) req.destroy()
-    return
-  }
-  for await (const chunk of response.body) {
-    // Drain without writing after disconnect: cancelling Node multipart bodies
-    // can race their producer and reject with ERR_INVALID_STATE.
-    if (abort.signal.aborted) continue
-    // Backpressure: a false return means the socket buffer is full — wait for drain
-    // instead of buffering unboundedly (slow or suspended consumers). 'close' also
-    // resolves so a mid-wait disconnect cannot park this loop forever.
-    if (!res.write(chunk) && !res.destroyed) {
-      await new Promise<void>((resolve) => {
-        const done = (): void => {
-          res.off('drain', done)
-          res.off('close', done)
-          resolve()
+  try {
+    const response = await apiHandler.fetch(request)
+    const requestUnread = bodyMode === 'streaming' && !req.readableEnded
+    const responseHeaders = Object.fromEntries(response.headers.entries())
+    res.writeHead(response.status, requestUnread ? { ...responseHeaders, connection: 'close' } : responseHeaders)
+    if (response.body !== null) {
+      for await (const chunk of response.body) {
+        // Drain without writing after disconnect: cancelling Node multipart bodies
+        // can race their producer and reject with ERR_INVALID_STATE.
+        if (abort.signal.aborted) continue
+        // Backpressure: a false return means the socket buffer is full — wait for drain
+        // instead of buffering unboundedly (slow or suspended consumers). 'close' also
+        // resolves so a mid-wait disconnect cannot park this loop forever.
+        if (!res.write(chunk) && !res.destroyed) {
+          await new Promise<void>((resolve) => {
+            const done = (): void => {
+              res.off('drain', done)
+              res.off('close', done)
+              resolve()
+            }
+            res.once('drain', done)
+            res.once('close', done)
+          })
         }
-        res.once('drain', done)
-        res.once('close', done)
-      })
+      }
     }
+    res.end()
+  } finally {
+    releaseBody?.()
   }
-  res.end()
-  if (requestUnread) req.destroy()
 }

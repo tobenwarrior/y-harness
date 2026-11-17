@@ -25,6 +25,10 @@ const session: ReferenceContent = {
   source: 'reference', ref: '@[\u{7814}\u{7A76}\u{8BB0}\u{5F55}](dsh-session:c291cmNl)', label: '\u{7814}\u{7A76}\u{8BB0}\u{5F55}', appearance: 'session',
   clipboardText: '@[\u{7814}\u{7A76}\u{8BB0}\u{5F55}](dsh-session:c291cmNl)',
 }
+const bot: ReferenceContent = {
+  source: 'bot', ref: '@[Lab](dsh-bot:bot-lab)', label: 'Lab', appearance: 'bot',
+  clipboardText: '@[Lab](dsh-bot:bot-lab)',
+}
 
 function documentOf(...parts: readonly (string | ReferenceContent)[]): DraftSnapshot {
   let text = ''
@@ -100,6 +104,14 @@ function expectInitializationBlocked(shell: SessionInputShell): void {
 }
 
 describe('draft document values', () => {
+  it('restores a Bot mention with its source and stable reference', () => {
+    const draft = documentOf('Read ', bot, ' with ', file)
+    const shell = makeShell()
+    shell.setDraft(parseStoredDraft(JSON.parse(JSON.stringify(draft))) ?? '')
+    expect(shell.draftSnapshot).toEqual(draft)
+    expect(chips(shell)).toEqual([{ ...bot, invalid: false }, { ...file, invalid: false }])
+  })
+
   it.each(['', 'plain text', 'first\nsecond\n', '\n\n', '🙂 \u{4E2D}\u{6587} e\u0301\n\u{7B2C}\u{4E8C}\u{884C}'])('round-trips plain text %j', (text) => {
     const expected = { text, references: [] }
     expect(resolveDraftInput(text)).toEqual(expected)

@@ -1,5 +1,5 @@
 import { closeSync, fstatSync, lstatSync, openSync, renameSync, symlinkSync, writeFileSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -122,17 +122,6 @@ function fdIsClosed(fd: number): boolean {
   }
 }
 
-async function waitForLock(lockPath: string): Promise<void> {
-  for (;;) {
-    try {
-      await stat(lockPath)
-      return
-    } catch {
-      await new Promise(resolveDelay => setTimeout(resolveDelay, 5))
-    }
-  }
-}
-
 describe('Windows lock handle', () => {
   it('uses one native byte lock for path aliases', async () => {
     vi.doMock('koffi', () => ({ default: fakeKoffi }))
@@ -146,14 +135,20 @@ describe('Windows lock handle', () => {
     const alias = join(dir, 'alias', '..', 'document')
     const canonical = join(dir, 'document')
     await writeFile(`${canonical}.lock`, '')
-    let release = (): void => {}
-    const holder = withFileLock(alias, () => new Promise<void>((resolveRelease) => { release = resolveRelease }))
-    await waitForLock(`${alias}.lock`)
-
-    const contender = withFileLock(canonical, async () => 'unexpected', { waitMs: 50 })
-    await expect(contender).rejects.toThrow(/timed out waiting for the writer lock/)
-    release()
-    await holder
+    const entered = Promise.withResolvers<undefined>()
+    const release = Promise.withResolvers<undefined>()
+    const holder = withFileLock(alias, async () => {
+      entered.resolve(undefined)
+      await release.promise
+    })
+    try {
+      await Promise.race([entered.promise, holder])
+      const contender = withFileLock(canonical, async () => 'unexpected', { waitMs: 50 })
+      await expect(contender).rejects.toThrow(/timed out waiting for the writer lock/)
+    } finally {
+      release.resolve(undefined)
+      await holder
+    }
     await expect(withFileLock(canonical, async () => 'acquired', { waitMs: 0 })).resolves.toBe('acquired')
     expect(new Set(state.paths)).toEqual(new Set([resolve(`${canonical}.lock`)]))
     expect(await readFile(`${canonical}.lock`, 'utf8')).toContain('dsh-atomic-write-kernel-lock-v1')

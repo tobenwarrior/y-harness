@@ -5,6 +5,7 @@ import { afterAll, describe, expect, it, vi } from 'vitest'
 import { Context } from '@yharness/cordis'
 import Loader from '@yharness/cordis-plugin-loader'
 import * as AgentInstructions from '@yharness/agent-instructions'
+import { bindManagedBotExecution, createManagedBotExecution } from '@yharness/sandbox-policy'
 import LlmRuntime, { createUserMessage, ToolCallId, type Message, type MessageSource, type StreamChunk } from '@yharness/llm'
 import type { ContextFormed } from '@yharness/llm'
 import SessionStore, { SessionId, SessionSeq, type SessionEvent, type SurfaceIntent, type UserMessage } from '@yharness/session'
@@ -1052,6 +1053,40 @@ describe('workspace context request injection', () => {
       await mountAgentInstructionsPlugin(ctx, { maxBytes: 65536 })
     } finally {
       await ctx.fiber.dispose()
+    }
+  })
+
+  it('does not collect host instructions for managed Bot agents', async () => {
+    const root = await tempRepo()
+    const home = await tempRepo()
+    try {
+      await write(join(root, 'AGENTS.md'), 'host-only instruction')
+      const ctx = new Context()
+      await mountAgentInstructions(ctx, { dshHome: home, maxBytes: 65536 })
+      const agent = await stubAgent(root)
+      const execution = createManagedBotExecution({
+        context: agent.ctx,
+        shell: {} as never,
+        fs: {} as never,
+        subprocess: {} as never,
+        sandboxPolicy: {
+          defaultMode: 'workspace-write',
+          resolve: () => ({ mode: 'workspace-write', workspaceRoot: '/managed' }),
+        },
+        workspaceRoot: '/managed',
+      })
+      const unbind = bindManagedBotExecution(agent.ctx, execution)
+      try {
+        expect(await composeBaselinePrefix(ctx, agent)).toEqual([])
+        expect(baselineEvents(agent)).toHaveLength(0)
+        expect(agent.inbox.nextStep).toEqual([])
+      } finally {
+        unbind()
+        await ctx.fiber.dispose()
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true })
+      await rm(home, { recursive: true, force: true })
     }
   })
 

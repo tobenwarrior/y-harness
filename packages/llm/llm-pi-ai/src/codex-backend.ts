@@ -144,11 +144,21 @@ export interface CodexPreferences {
   auto?: boolean
 }
 
-/** Text result accepted by the Codex app-server dynamic-tool protocol. */
+/** Dynamic tool result before the backend resolves any attachment bytes. */
 export interface CodexDynamicToolResult {
-  /** Content sent back to the native model as the tool result. */
+  /** Text sent back to the native model as the tool result. */
   readonly contentItems: readonly { readonly type: 'inputText'; readonly text: string }[]
   /** Whether the model may treat the invocation as successful. */
+  readonly success: boolean
+  /** Durable image resolved to wire bytes after the tool returns. */
+  readonly image?: ImageAttachmentRef
+}
+
+interface CodexDynamicToolResponse {
+  readonly contentItems: readonly (
+    | CodexDynamicToolResult['contentItems'][number]
+    | { readonly type: 'inputImage'; readonly imageUrl: string }
+  )[]
   readonly success: boolean
 }
 
@@ -501,7 +511,7 @@ export class CodexBackendRuntime {
     signal: AbortSignal
     sessionId: GenerateOptions['sessionId']
     accepting: boolean
-  }, params: Obj): Promise<CodexDynamicToolResult> {
+  }, params: Obj): Promise<CodexDynamicToolResponse> {
     if (!active.accepting || active.signal.aborted || active.turnId === undefined || params.turnId !== active.turnId) return declineCodexRequest('item/tool/call', params) as Promise<never>
     const name = text(params.tool)
     const tool = active.dynamicTools.get(name)
@@ -518,14 +528,24 @@ export class CodexBackendRuntime {
     try { await this.options.observeDynamicTool?.({ phase: 'started', name, ...context, arguments: parsed }) }
     catch { return this.dynamicToolFailure('The requested Bot action could not be completed.') }
     let result: CodexDynamicToolResult
-    try { result = await tool.execute(parsed, context) }
-    catch { result = this.dynamicToolFailure('The requested Bot action could not be completed.') }
+    let response: CodexDynamicToolResponse
+    try {
+      result = await tool.execute(parsed, context)
+      const contentItems = result.image === undefined ? result.contentItems : [
+        ...result.contentItems,
+        { type: 'inputImage' as const, imageUrl: await this.imageUrl(result.image, context.signal) },
+      ]
+      response = { success: result.success, contentItems }
+    } catch (error) {
+      void error
+      result = response = this.dynamicToolFailure('The requested Bot action could not be completed.')
+    }
     try { await this.options.observeDynamicTool?.({ phase: 'settled', name, ...context, arguments: parsed, result }) }
     catch { return this.dynamicToolFailure('The requested Bot action could not be completed.') }
-    return result
+    return response
   }
-  private dynamicToolFailure(message: string): CodexDynamicToolResult {
-    return { success: false, contentItems: [{ type: 'inputText', text: message }] }
+  private dynamicToolFailure(message: string) {
+    return { success: false, contentItems: [{ type: 'inputText' as const, text: message }] }
   }
   private async readAccount(peer: CodexPeer): Promise<void> {
     const account = obj(obj(await peer.request('account/read', { refreshToken: false })).account)
@@ -850,7 +870,7 @@ export class CodexBackendRuntime {
     const latest = suffix.at(-1)
     const imageInputs = latest === undefined || latest.role !== 'user'
       ? []
-      : await Promise.all(latest.images.map(reference => this.imageInput(reference)))
+      : await Promise.all(latest.images.map(async reference => ({ type: 'image', url: await this.imageUrl(reference, options.signal) })))
     const queue: Array<{ method: string; params: Obj }> = []
     let wake: (() => void) | undefined
     const unsubscribe = peer.subscribe((method, params) => {
@@ -972,19 +992,20 @@ export class CodexBackendRuntime {
     }
   }
   /**
-   * Encode one durable image as a native Codex image input. The inline data URL
+   * Encode one durable image for native Codex. The inline data URL
    * keeps the turn self-contained: the Codex process runs in a separate profile
    * whose sandbox may not reach the Harness attachment directory.
    * @param reference - durable image reference carried by the request message.
-   * @returns the app-server `image` user-input item.
+   * @param signal - Caller cancellation for the attachment read.
+   * @returns the inline URL used by the app-server image input.
    */
-  private async imageInput(reference: ImageAttachmentRef): Promise<Obj> {
+  private async imageUrl(reference: ImageAttachmentRef, signal?: AbortSignal): Promise<string> {
     const attachments = this.options.resolveAttachments?.()
     if (attachments === undefined) {
       throw new Error('Codex image input requires the durable attachment service; this deployment mounts none.')
     }
-    const stored = await attachments.readImage(reference)
-    return { type: 'image', url: `data:${reference.mediaType};base64,${Buffer.from(stored.data).toString('base64')}` }
+    const stored = await attachments.readImage(reference, signal)
+    return `data:${reference.mediaType};base64,${Buffer.from(stored.data).toString('base64')}`
   }
 }
 /** Native Codex model routing while Codex, rather than Harness, owns tools. */

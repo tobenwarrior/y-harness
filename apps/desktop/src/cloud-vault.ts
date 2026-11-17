@@ -1,11 +1,8 @@
 /** Write-only VPS Vault management over the owner's existing SSH login. */
-import { execFile, type ChildProcess, type ExecFileOptions } from 'node:child_process'
+import { readBoundedJson } from './web-document.ts'
 import { randomUUID } from 'node:crypto'
 import { isIP } from 'node:net'
-import { isCloudTarget } from './cloud-connection.ts'
-
-const SSH = '/usr/bin/ssh'
-const COMMAND = '/usr/local/sbin/yharness-vault desktop-client'
+import type { CloudVaultTransport } from './cloud-connection.ts'
 const UNIT = /^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,220}\.service$/u
 const NAME = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/u
 const BOT = /^bot-[A-Za-z0-9][A-Za-z0-9-]{0,245}$/u
@@ -19,7 +16,6 @@ const LOGIN_LABEL_LIMIT = 80
 const LOGIN_USERNAME_LIMIT = 512
 const LOGIN_PASSWORD_LIMIT = 8192
 const MAX_LOGINS = 64
-const MAX_OUTPUT = 160 * 1024
 const MAX_ROSTER_BYTES = 4 * 1024 * 1024
 const MAX_ACCESS_MODE_BYTES = 128
 const MAX_BROWSER_ACCESS_BYTES = 64 * 1024
@@ -79,6 +75,13 @@ export type VaultRequest = { readonly action: 'list' | 'list-grants' } | ({
   readonly value: string
 } | {
   readonly action: 'list-logins' | 'list-bot-logins'
+} | {
+  readonly action: 'list-login-automation'
+} | {
+  readonly action: 'set-login-automatic'
+  readonly id: VaultLoginId
+  readonly bot: VaultBotId
+  readonly enabled: boolean
 } | {
   readonly action: 'add-login'
   readonly bot?: VaultBotId
@@ -230,6 +233,12 @@ export type VaultReply = {
   readonly bots?: readonly VaultBotChoice[]
 } | {
   readonly ok: true
+  readonly loginAutomation: {
+    readonly available: boolean
+    readonly enabled: readonly VaultLoginId[]
+  }
+} | {
+  readonly ok: true
   readonly access: VaultBotAccess
   readonly bots?: readonly VaultBotChoice[]
 } | {
@@ -253,11 +262,11 @@ export interface VaultCloudWorkspace {
   readonly fetch: (url: string, options: RequestInit) => Promise<Response>
 }
 
-/** SSH execution seam used by tests with a real local subprocess. */
-export type VaultExec = (
-  file: string, args: readonly string[], options: ExecFileOptions & { encoding: 'utf8' },
-  complete: (error: Error | null, stdout: string) => void,
-) => ChildProcess
+/** Owner-authenticated Cloud view and its connection-bound Vault commands. */
+export interface CloudVaultSession extends VaultCloudWorkspace {
+  /** Transport owned by the active native Cloud connection. */
+  readonly sendVaultRequest: CloudVaultTransport
+}
 
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -407,6 +416,11 @@ function requestBody(value: unknown): VaultRequest | undefined {
     return { action, id: value.id, value: value.value }
   }
   if ((action === 'list-logins' || action === 'list-bot-logins') && fields === 1) return { action }
+  if (action === 'list-login-automation' && fields === 1) return { action }
+  if (action === 'set-login-automatic' && fields === 4 && isVaultLoginId(value.id)
+    && botId(value.bot) && typeof value.enabled === 'boolean') {
+    return { action, id: value.id, bot: value.bot, enabled: value.enabled }
+  }
   if (action === 'add-login' || action === 'replace-login' || action === 'remove-login') {
     const assigned = Object.hasOwn(value, 'bot')
     if (assigned && !botId(value.bot)) return undefined
@@ -506,6 +520,18 @@ function replyBody(
   const value: unknown = JSON.parse(stdout)
   if (!record(value)) return undefined
   const fields = Object.keys(value).length
+  if (action === 'list-login-automation') {
+    const automation = value.loginAutomation
+    if (fields !== 1 || !record(automation) || Object.keys(automation).length !== 2
+      || typeof automation.available !== 'boolean' || !Array.isArray(automation.enabled)
+      || automation.enabled.length > MAX_LOGINS) return undefined
+    const ids = new Set<VaultLoginId>()
+    for (const id of automation.enabled) {
+      if (!isVaultLoginId(id) || ids.has(id)) return undefined
+      ids.add(id)
+    }
+    return { ok: true, loginAutomation: { available: automation.available, enabled: automation.enabled } }
+  }
   if (action === 'enter-login-use' && fields === 2 && value.state === 'submitted' && typeof value.saved === 'boolean') {
     return { state: value.state, saved: value.saved }
   }
@@ -590,27 +616,6 @@ export function vaultRequestAllowed(value: unknown, scope: VaultRequestMode | Va
   return scope === undefined || (typeof scope !== 'string' && scope.kind === 'manage')
 }
 
-async function readCloudReply(response: Response, maxBytes: number): Promise<unknown> {
-  if (!response.ok || response.body === null) return undefined
-  const reader = response.body.getReader()
-  const chunks: Uint8Array[] = []
-  let remaining = maxBytes
-  try {
-    for (;;) {
-      const next = await reader.read()
-      if (next.done) return JSON.parse(Buffer.concat(chunks).toString('utf8'))
-      remaining -= next.value.byteLength
-      if (remaining < 0) {
-        await reader.cancel()
-        return undefined
-      }
-      chunks.push(next.value)
-    }
-  } finally {
-    reader.releaseLock()
-  }
-}
-
 interface VaultPolicy {
   readonly mode: 'managed' | 'external' | 'disabled'
   readonly sharedScopes: boolean
@@ -626,8 +631,9 @@ async function readCloudVaultPolicy(
       method: 'GET', redirect: 'error', credentials: 'include', cache: 'no-store',
       signal: AbortSignal.any([signal, AbortSignal.timeout(5_000)]),
     })
-    const reply = await readCloudReply(response, MAX_ACCESS_MODE_BYTES)
-    if (signal.aborted || !record(reply) || Object.keys(reply).length !== 1) return undefined
+    const reply = await readBoundedJson(response, MAX_ACCESS_MODE_BYTES)
+    signal.throwIfAborted()
+    if (!record(reply) || Object.keys(reply).length !== 1) return undefined
     const { mode } = reply
     if (mode !== 'managed' && mode !== 'external' && mode !== 'disabled') return undefined
     return { mode, sharedScopes: mode === 'managed' && response.headers.get('X-YH-Vault-Grant-Scopes') === '1' }
@@ -655,8 +661,9 @@ export async function readCloudVaultBots(
       body: JSON.stringify({ type: 'client-request', rpcId, method: 'bots/list', payload: { args: { request: { includeHidden: true } } } }),
       signal: AbortSignal.any([signal, AbortSignal.timeout(5_000)]),
     })
-    const reply = await readCloudReply(response, MAX_ROSTER_BYTES)
-    if (signal.aborted || !record(reply) || reply.type !== 'server-response' || reply.rpcId !== rpcId
+    const reply = await readBoundedJson(response, MAX_ROSTER_BYTES)
+    signal.throwIfAborted()
+    if (!record(reply) || reply.type !== 'server-response' || reply.rpcId !== rpcId
       || !record(reply.result) || reply.result.ok !== true || !record(reply.result.value)
       || !Array.isArray(reply.result.value.bots)) return undefined
     const bots: VaultBotChoice[] = []
@@ -715,8 +722,8 @@ async function readCloudBrowserAccess(
       method: 'GET', redirect: 'error', credentials: 'include', cache: 'no-store',
       signal: AbortSignal.any([signal, AbortSignal.timeout(5_000)]),
     })
-    const reply = await readCloudReply(response, MAX_BROWSER_ACCESS_BYTES)
-    if (signal.aborted) return undefined
+    const reply = await readBoundedJson(response, MAX_BROWSER_ACCESS_BYTES)
+    signal.throwIfAborted()
     return browserAccessBody(reply)
   } catch (_error) {
     return undefined
@@ -732,18 +739,17 @@ function browserAccessReply(value: CloudBrowserAccess): VaultReply {
 
 /**
  * Send one bounded request over SSH and return only validated metadata or a fixed failure.
- * @param target - Main-owned, previously connected Cloud SSH destination.
+ * @param send - Request transport owned by the current native Cloud connection.
  * @param value - Untrusted IPC input from the Vault window.
  * @param signal - Cancel the SSH child when its window closes.
- * @param execute - Subprocess injection for tests.
  * @param workspace - Authenticated Cloud connection required for Bot grant operations.
  * @returns A safe response for the Vault window.
  */
 export async function cloudVaultRequest(
-  target: string, value: unknown, signal: AbortSignal, execute: VaultExec = execFile, workspace?: VaultCloudWorkspace,
+  send: CloudVaultTransport, value: unknown, signal: AbortSignal, workspace?: VaultCloudWorkspace,
 ): Promise<VaultReply> {
   const request = requestBody(value)
-  if (!isCloudTarget(target) || request === undefined) return { ok: false, reason: 'invalid' }
+  if (request === undefined) return { ok: false, reason: 'invalid' }
   if (request.action === 'list-browser-access' || request.action === 'set-browser-access') {
     if (workspace === undefined) return unavailable
     const current = await readCloudBrowserAccess(workspace, signal)
@@ -752,10 +758,10 @@ export async function cloudVaultRequest(
     if (current.mode !== 'managed') return unavailable
     const selected = current.bots.find(bot => bot.id === request.bot)
     if (selected === undefined) return unavailable
-    const changed = await executeVaultRequest(target, {
+    const changed = await executeVaultRequest(send, {
       action: 'set-browser-access', bot: request.bot, session: selected.sessionId, enabled: request.enabled,
-    }, signal, execute)
-    if (!('ok' in changed) || changed.ok !== true) return changed
+    }, signal)
+    if (!('ok' in changed) || !changed.ok) return changed
     const verified = await readCloudBrowserAccess(workspace, signal)
     if (verified?.mode !== 'managed') return unavailable
     const confirmed = verified.bots.find(bot => bot.id === request.bot)
@@ -779,45 +785,38 @@ export async function cloudVaultRequest(
     if (workspace !== undefined) bots = await readCloudVaultBots(workspace.origin, workspace.fetch, signal)
     if (assignedLogin !== undefined && !bots?.some(bot => bot.id === assignedLogin)) return unavailable
   }
+  if (request.action === 'set-login-automatic' && request.enabled) {
+    // Enabling binds the grant to the current authenticated Cloud roster. Disabling
+    // stays available for an exact Vault account after its Bot leaves that roster.
+    if (workspace === undefined || (await readCloudVaultPolicy(workspace, signal))?.mode !== 'managed') return unavailable
+    bots = await readCloudVaultBots(workspace.origin, workspace.fetch, signal)
+    if (!bots?.some(bot => bot.id === request.bot)) return unavailable
+  }
   const scoped = request.action === 'list-grants' && sharedScopes
-    ? await executeVaultRequest(target, { action: 'list-scoped-grants' }, signal, execute)
+    ? await executeVaultRequest(send, { action: 'list-scoped-grants' }, signal)
     : undefined
   const reply = scoped !== undefined && 'access' in scoped
     ? scoped
-    : await executeVaultRequest(target, request, signal, execute)
+    : await executeVaultRequest(send, request, signal)
+  if ('loginAutomation' in reply && reply.loginAutomation.available) {
+    const policy = workspace === undefined ? undefined : await readCloudVaultPolicy(workspace, signal)
+    return { ...reply, loginAutomation: { ...reply.loginAutomation, available: policy?.mode === 'managed' } }
+  }
   return ('access' in reply || 'botLogins' in reply) && bots !== undefined ? { ...reply, bots } : reply
 }
 
 async function executeVaultRequest(
-  target: string, request: VaultWireRequest, signal: AbortSignal, execute: VaultExec,
+  send: CloudVaultTransport, request: VaultWireRequest, signal: AbortSignal,
 ): Promise<VaultReply> {
   if (signal.aborted) return unavailable
-  return new Promise((resolve) => {
-    try {
-      const child = execute(SSH, [
-        '-a', '-x', '-T',
-        '-o', 'BatchMode=yes', '-o', 'ClearAllForwardings=yes',
-        '-o', 'ControlMaster=no', '-o', 'ControlPath=none',
-        '-o', 'ForwardAgent=no', '-o', 'ForwardX11=no',
-        '-o', 'PermitLocalCommand=no', '-o', 'RequestTTY=no',
-        '-o', 'StrictHostKeyChecking=yes', '--', target, COMMAND,
-      ], {
-        signal, encoding: 'utf8', timeout: 25_000, maxBuffer: MAX_OUTPUT,
-        env: Object.fromEntries(Object.entries(process.env).filter(([key]) => !/(?:KEY|SECRET|TOKEN|PASSWORD)/iu.test(key))),
-      }, (error, stdout) => {
-        if (error !== null || signal.aborted) { resolve(unavailable); return }
-        try {
-          const expectedId = request.action === 'inspect-request' || request.action === 'inspect-login-use'
-            ? request.id : undefined
-          resolve(replyBody(request.action, stdout, expectedId) ?? unavailable)
-        }
-        catch { resolve(unavailable) }
-      })
-      // OpenSSH can exit before reading stdin, for example if the owner lost access.
-      child.stdin?.on('error', () => { resolve(unavailable) })
-      child.stdin?.end(JSON.stringify(request), 'utf8')
-    } catch {
-      resolve(unavailable)
-    }
-  })
+  try {
+    const stdout = await send(JSON.stringify(request), signal)
+    signal.throwIfAborted()
+    if (stdout === undefined) return unavailable
+    const expectedId = request.action === 'inspect-request' || request.action === 'inspect-login-use'
+      ? request.id : undefined
+    return replyBody(request.action, stdout, expectedId) ?? unavailable
+  } catch {
+    return unavailable
+  }
 }

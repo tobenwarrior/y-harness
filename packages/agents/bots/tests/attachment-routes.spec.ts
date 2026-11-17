@@ -18,6 +18,19 @@ describe('Bot attachment upload route', () => {
     await expect(consume()).rejects.toMatchObject({ code: 'invalid' })
   })
 
+  it('admits 20 MiB of a normal Bot upload and rejects the next byte', async () => {
+    const mebibyte = new Uint8Array(1024 * 1024)
+    let received = 0
+    const consume = async (): Promise<void> => {
+      for await (const chunk of boundedBotAttachmentStream((async function* () {
+        for (let index = 0; index < 20; index++) yield mebibyte
+        yield Uint8Array.of(1)
+      })())) received += chunk.byteLength
+    }
+    await expect(consume()).rejects.toMatchObject({ code: 'invalid' })
+    expect(received).toBe(20 * mebibyte.byteLength)
+  })
+
   it('stops waiting for a stalled source when the upload is cancelled', async () => {
     let returned = false
     const source: AsyncIterable<Uint8Array> = {

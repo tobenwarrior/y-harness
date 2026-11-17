@@ -17,9 +17,11 @@ import type {
 } from '@yharness/client-ui-slots'
 import {
   FileTypeIcon, IconFolderCloseRegular, IconFolderOpenRegular, IconRefreshOutlineRegular, Tooltip, classifyFileType,
-  IconPauseOutlineRegular, IconPlayOutlineRegular, PathLabel,
+  IconPauseOutlineRegular, IconPlayOutlineRegular, IconUploadOutlineRegular, PathLabel,
 } from '@yharness/client-ui-primitives'
-import { fileAddressFor } from '@yharness/util-workspace-path'
+import { computerFileAddress, fileAddressFor } from '@yharness/util-workspace-path'
+import { COMPUTER_FILES_KIND, COMPUTER_SHARED_FILES_KIND } from './definition.tsx'
+import { useComputerFilePicker } from './computer-upload.ts'
 import type { WorkspaceDirectoryEntry } from '@yharness/api-workspace-files/types'
 import { childPath } from './face.ts'
 import type { FilesInjected } from './face.ts'
@@ -74,6 +76,8 @@ interface TreeContext {
   readonly state: FilesTabState
   readonly onToggle: (parent: string, path: string) => void
   readonly onOpen: (path: string) => void
+  readonly uploadTo?: (path: string) => void
+  readonly uploading?: boolean
   readonly t: TranslateNS<'sidebarFiles'>
 }
 
@@ -82,12 +86,27 @@ function Entry({ parent, entry, tree }: { parent: string; entry: WorkspaceDirect
   const path = childPath(parent, entry.name)
   if (entry.type === 'directory') {
     const expanded = tree.state.expanded.includes(path)
+    const folder = (
+      <button type="button" className={css.row} aria-expanded={expanded} onClick={() => { tree.onToggle(parent, path) }}>
+        {expanded ? <IconFolderOpenRegular className={css.icon} /> : <IconFolderCloseRegular className={css.icon} />}
+        <span className={css.name}>{entry.name}</span>
+      </button>
+    )
+    const uploadTo = tree.uploadTo
     return (
       <li className={css.item} data-files-entry="directory" data-files-path={path}>
-        <button type="button" className={css.row} aria-expanded={expanded} onClick={() => { tree.onToggle(parent, path) }}>
-          {expanded ? <IconFolderOpenRegular className={css.icon} /> : <IconFolderCloseRegular className={css.icon} />}
-          <span className={css.name}>{entry.name}</span>
-        </button>
+        {uploadTo === undefined ? folder : (
+          <div className={css.folderRow}>
+            {folder}
+            <Tooltip label={tree.t('upload.label')} side="bottom" delayMs={500}>
+              <button type="button" className={clsx(css.tool, css.folderUpload)}
+                aria-label={tree.t('upload.folder', { name: entry.name })}
+                disabled={tree.uploading} onClick={() => { uploadTo(path) }}>
+                <IconUploadOutlineRegular />
+              </button>
+            </Tooltip>
+          </div>
+        )}
         {expanded && <ul className={css.level}><Level path={path} tree={tree} /></ul>}
       </li>
     )
@@ -144,7 +163,12 @@ export function FilesBody({
   const { tab } = useTabInfo()
   useEffect(() => tab.actions.bindCommands({ refresh: () => { refresh(tab.id) } }), [tab.actions, tab.id, refresh])
   const { signal, actions: tabActions } = tab
-  const cwd = useSessions(sessions => sessions.byId[sessionId]?.cwd)
+  const sharedComputer = tab.kind === COMPUTER_SHARED_FILES_KIND
+  const computer = tab.kind === COMPUTER_FILES_KIND || sharedComputer
+  const computerRoot = sharedComputer ? '/workspace' : '.'
+  const picker = useComputerFilePicker(sessionId, signal, computerRoot, () => { refresh(tab.id) })
+  const sessionRoot = useSessions(sessions => sessions.byId[sessionId]?.cwd)
+  const cwd = computer ? computerRoot : sessionRoot
   const state = useStore(store => store.byTab[tab.id])
   const bodyRef = useRef<HTMLDivElement>(null)
   const scrollTopRef = useRef(0)
@@ -182,9 +206,12 @@ export function FilesBody({
   if (state === undefined) return null
   const tree: TreeContext = {
     state,
+    ...(computer ? { uploadTo: picker.pick, uploading: picker.uploading !== undefined } : {}),
     onToggle: (parent, path) => { toggle(tab.id, parent, path, state.expanded, signal) },
     // Every row is under the tree's root, so its address is session-relative.
-    onOpen: (path) => { tabActions.openResource(fileAddressFor(sessionId, state.root, path)) },
+    onOpen: (path) => {
+      tabActions.openResource(computer ? computerFileAddress(sessionId, path) : fileAddressFor(sessionId, state.root, path))
+    },
     t,
   }
   const reload = (): void => {
@@ -193,7 +220,9 @@ export function FilesBody({
   return (
     <div className={css.root} data-files-state="tree" data-files-root={state.root}>
       <div className={css.header} data-yh-terminal="toolbar">
-        <PathLabel path={state.root} className={css.path} data-files-path />
+        {computer
+          ? <span className={css.path} data-files-path>{t(sharedComputer ? 'computerSharedWorkspace' : 'computerWorkspace')}</span>
+          : <PathLabel path={state.root} className={css.path} data-files-path />}
         <span hidden>
           <button type="button" className={css.tool} aria-label={t('autoRefresh')}
             aria-pressed={state.autoRefresh} data-files-auto-refresh
@@ -214,10 +243,34 @@ export function FilesBody({
             <IconRefreshOutlineRegular />
           </button>
         </Tooltip>
-        {renderSlot('sidebar.right.tab.files.actions', {
+        {computer ? (
+          <>
+            <input ref={picker.input} type="file" hidden multiple data-computer-file-picker onChange={(event) => {
+              const files = event.currentTarget.files
+              if (files !== null) void picker.submit(files)
+              event.currentTarget.value = ''
+            }} />
+            <button type="button" className={css.uploadButton} aria-label={t('upload.label')}
+              disabled={picker.uploading !== undefined} onClick={() => { picker.pick(computerRoot) }}>
+              <IconUploadOutlineRegular />
+              {t('upload.button')}
+            </button>
+          </>
+        ) : renderSlot('sidebar.right.tab.files.actions', {
           absolutePath: state.root,
         })}
       </div>
+      {picker.uploading !== undefined && (
+        <div className={css.uploadProgress} role="status">
+          <span className={css.name}>{t('upload.progress', { name: picker.uploading })}</span>
+          <button type="button" className={css.uploadButton} onClick={picker.cancel}>{t('upload.cancel')}</button>
+        </div>
+      )}
+      {picker.failures.length > 0 && (
+        <div className={css.uploadErrors} role="alert">
+          {picker.failures.map((failure, index) => <p key={index}>{t(failure.key, { name: failure.name })}</p>)}
+        </div>
+      )}
       <div
         ref={bodyRef}
         className={css.body}

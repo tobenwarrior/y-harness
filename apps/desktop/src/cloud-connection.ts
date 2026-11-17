@@ -1,6 +1,6 @@
 /** Owns the private SSH forward used by the native Cloud workspace. */
 
-import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
+import { execFile, spawn, type ChildProcess, type ExecFileOptions, type SpawnOptions } from 'node:child_process'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { createConnection, createServer, type Server, type Socket } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -12,6 +12,8 @@ const REMOTE_COMMAND = 'python3 ~/.local/bin/yharness-vps url && exec sleep infi
 const TARGET_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.@-]{0,127}$/u
 const REMOTE_LOGIN_PATTERN = /^http:\/\/127\.0\.0\.1:3080\/\?token=[A-Za-z0-9_-]{1,512}$/u
 const MAX_STDOUT_CHARS = 64 * 1024
+const MAX_VAULT_OUTPUT = 160 * 1024
+const VAULT_COMMAND = '/usr/local/sbin/yharness-vault desktop-client'
 
 /** Maximum time allowed for the SSH session to publish its authenticated URL. */
 export const CLOUD_CONNECTION_STARTUP_TIMEOUT_MS = 15_000
@@ -19,13 +21,24 @@ export const CLOUD_CONNECTION_STARTUP_TIMEOUT_MS = 15_000
 /** Maximum time allowed for the owned SSH process to leave after close or abort. */
 export const CLOUD_CONNECTION_TERMINATE_TIMEOUT_MS = 2_000
 
+/** Exchange a serialized Vault request over the current Cloud connection. */
+export type CloudVaultTransport = (payload: string, signal: AbortSignal) => Promise<string | undefined>
+
+/** Execution seam for tests that exercise Vault stdin, stdout, and cancellation. */
+export type VaultExec = (
+  file: string, args: readonly string[], options: ExecFileOptions & { encoding: 'utf8' },
+  complete: (error: Error | null, stdout: string) => void,
+) => ChildProcess
+
 /** A ready private loopback forward and the URL that authenticates its first browser request. */
 export interface CloudConnection {
   /** HTTP origin served by the local forward. */
   readonly origin: string
   /** Authenticated login URL rewritten to the local forward's origin. */
   readonly loginUrl: string
-  /** Settles after the SSH process, its proxy sockets and private socket directory are closed. */
+  /** Send a Vault request to the same authenticated SSH account and return its bounded stdout. */
+  readonly sendVaultRequest: CloudVaultTransport
+  /** Settles after the owned SSH processes, proxy sockets and private socket directory are closed. */
   readonly closed: Promise<void>
   /** Stop this connection; repeated calls are harmless. */
   close(): void
@@ -36,6 +49,7 @@ export interface CloudConnectionOptions {
   /** Reusable loopback origin owned by the workspace. The attempt owns one when omitted. */
   readonly forward?: CloudForward
   readonly spawnProcess?: (file: string, args: readonly string[], options: SpawnOptions) => ChildProcess
+  readonly executeVault?: VaultExec
   readonly startupTimeoutMs?: number
   readonly terminateTimeoutMs?: number
 }
@@ -75,6 +89,61 @@ function normalizeFailure(error: unknown): Error {
 function childEnvironment(): NodeJS.ProcessEnv {
   return Object.fromEntries(Object.entries(process.env).filter(([name]) =>
     !/(?:KEY|SECRET|TOKEN|PASSWORD)/iu.test(name)))
+}
+
+/**
+ * Run the fixed Vault client on a connection-owned OpenSSH control socket.
+ * @param target - The private connection's verified destination.
+ * @param controlPath - The private control socket of that connection.
+ * @param payload - One serialized Vault request to send on stdin.
+ * @param signal - Cancellation for the current request and connection.
+ * @param execute - Optional local subprocess fixture.
+ * @returns The bounded response after the process closes, or undefined on failure.
+ */
+export function runCloudVaultCommand(
+  target: string, controlPath: string, payload: string, signal: AbortSignal, execute: VaultExec = execFile,
+): Promise<string | undefined> {
+  if (signal.aborted) return Promise.resolve(undefined)
+  return new Promise((resolve) => {
+    let response: string | undefined
+    let child: ChildProcess
+    try {
+      child = execute(SSH_EXECUTABLE, [
+        '-F', '/dev/null', '-a', '-x', '-T',
+        '-S', controlPath,
+        '-o', 'BatchMode=yes',
+        '-o', 'ClearAllForwardings=yes',
+        '-o', 'ControlMaster=no',
+        '-o', 'ControlPersist=no',
+        '-o', 'ForwardAgent=no',
+        '-o', 'ForwardX11=no',
+        '-o', 'PermitLocalCommand=no',
+        // If the owned socket has closed, OpenSSH must fail without a fresh connection.
+        '-o', 'ProxyCommand=/usr/bin/false',
+        '-o', 'RequestTTY=no',
+        '-o', 'StrictHostKeyChecking=yes', '--', target, VAULT_COMMAND,
+      ], {
+        encoding: 'utf8', timeout: 25_000, maxBuffer: MAX_VAULT_OUTPUT,
+        killSignal: 'SIGKILL', env: childEnvironment(),
+      }, (error, stdout) => {
+        if (error === null) response = stdout
+      })
+    } catch {
+      resolve(undefined)
+      return
+    }
+    const abort = (): void => { child.kill('SIGKILL') }
+    let inputFailed = false
+    child.once('close', () => {
+      signal.removeEventListener('abort', abort)
+      resolve(signal.aborted || inputFailed ? undefined : response)
+    })
+    // OpenSSH can exit before reading stdin when the private connection is gone.
+    child.stdin?.on('error', () => { inputFailed = true })
+    signal.addEventListener('abort', abort, { once: true })
+    if (signal.aborted) abort()
+    else child.stdin?.end(payload, 'utf8')
+  })
 }
 
 function throwIfAborted(signal: AbortSignal): void {
@@ -192,9 +261,9 @@ export async function openCloudForward(): Promise<CloudForward> {
  * Open an authenticated Cloud workspace over the configured OpenSSH destination.
  *
  * A random owner-only Unix socket is the SSH listener. A TCP proxy binds its loopback
- * port before SSH starts, so the returned origin never points at a port that this
- * process reserved and then released. The SSH child is the only process this module
- * terminates; it is not placed in a process group shared with unrelated work.
+ * port before SSH starts and keeps that port for the connection's lifetime. Vault
+ * commands reuse that SSH session through a control socket in the same private
+ * directory. Teardown terminates only the processes owned by this connection.
  *
  * @param target - Existing OpenSSH host alias or `user@host` destination.
  * @param signal - Cancellation for startup and, after readiness, the connection lifetime.
@@ -218,6 +287,9 @@ export async function openCloudConnection(
   const socketPath = join(directory, 'forward.sock')
   let forward: CloudForward | undefined
   let detach: (() => void) | undefined
+  const controlPath = join(directory, 'c')
+  const vaultLifetime = new AbortController()
+  const vaultRequests = new Set<Promise<string | undefined>>()
   let child: ChildProcess | undefined
   let childExitResolve!: () => void
   let childExited = false
@@ -258,7 +330,8 @@ export async function openCloudConnection(
     if (finalizing !== undefined) return finalizing
     finalizing = (async () => {
       try {
-        await terminateChild()
+        vaultLifetime.abort()
+        await Promise.all([terminateChild(), ...vaultRequests])
         if (options.forward === undefined) await forward?.closed
         await rm(directory, { recursive: true, force: true })
       } catch {
@@ -302,9 +375,11 @@ export async function openCloudConnection(
       child = spawnProcess(SSH_EXECUTABLE, [
         '-a', '-x', '-T',
         '-o', 'BatchMode=yes',
-        '-o', 'ControlMaster=no',
-        '-o', 'ControlPath=none',
+        '-S', controlPath,
+        '-o', 'ControlMaster=yes',
+        '-o', 'ControlPersist=no',
         '-o', 'ExitOnForwardFailure=yes',
+        '-o', 'ForkAfterAuthentication=no',
         '-o', 'ForwardAgent=no',
         '-o', 'ForwardX11=no',
         '-o', 'PermitLocalCommand=no',
@@ -355,6 +430,12 @@ export async function openCloudConnection(
       const ready = await startup
       return {
         ...ready,
+        async sendVaultRequest(payload, requestSignal) {
+          const active = AbortSignal.any([requestSignal, vaultLifetime.signal])
+          const pending = runCloudVaultCommand(target, controlPath, payload, active, options.executeVault)
+          vaultRequests.add(pending)
+          try { return await pending } finally { vaultRequests.delete(pending) }
+        },
         closed,
         close: requestClose,
       }

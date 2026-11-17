@@ -170,6 +170,8 @@ This section explains the design behind the adapter; the observable behavior is 
 
 The adapter is built on immutable snapshots and per-operation resolution. Each operation captures a whole snapshot — the profiles plus a `createModels()` collection holding the `Provider` each route built — before its first `await`, and a configuration change builds a new collection rather than mutating the one in use, so a request that started under one configuration never finishes under another. A route's own credential reference resolves through the harness seam and rides as the request's `apiKey` option, which pi-ai treats as the highest-priority auth override — that is what keeps the fail-loud reference semantics. Everything that override does not cover reaches pi-ai through the collection's own auth: the credential store holds the records a login wrote and a refresh rotates (addressed as `llm-pi-ai/<provider id>`), and the auth context answers the ambient questions a provider asks while resolving. Both are stable across snapshots, so a configuration change rebuilds the collection without forgetting who is signed in. Runtime imports use pi-ai's provider, API, and utility entry points; `src/models.ts` supplies the small model-helper subset this adapter needs without evaluating pi-ai's aggregate entry point.
 
+Host provisioning code uses `resolveApiKeyRoute()` to match a saved API key to the effective protocols and base URLs of a configured route's models. The result contains only those endpoints and the optional credential reference. It is unavailable for routes without serviceable API-key models.
+
 ### Source map
 
 | File | Role |
@@ -223,7 +225,7 @@ The selected catalog model receives one system prompt (`GenerateOptions.system`,
 
 #### Token effect
 
-Provider tokenization governs exact input. Retained images add the stable attachment and coordinate descriptor; the offload placeholder replaces an omitted image's visual tokens. Replay metadata may let a native API reuse provider-side state.
+Provider tokenization governs exact input. Retained images add the stable attachment and coordinate descriptor; the offload placeholder replaces an omitted image's visual tokens. Replay metadata may let a native API reuse provider-side state. Native Codex resolves a dynamic tool’s durable image reference to an inline image for the live call. The action observer records only the attachment reference.
 
 #### KV Cache effect
 

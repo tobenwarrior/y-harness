@@ -596,6 +596,76 @@ it('assigns a website login to a Bot and displays its account without exposing t
   expect((p.element('login-password') as HTMLInputElement).value).toBe('')
 })
 
+it('shows automatic sign-in only for assigned accounts and lets the owner disable one when unavailable', async () => {
+  const bot = { id: 'bot-scout', name: 'Scout' }
+  const personal = { id: 'a'.repeat(32), origin: 'https://example.com', label: 'Personal' }
+  const assigned = { id: 'b'.repeat(32), origin: 'https://example.com', label: 'Operations', bot: bot.id }
+  let enabled = [assigned.id]
+  const request = vi.fn(async (value: unknown) => {
+    if (value && typeof value === 'object' && 'action' in value) {
+      switch (value.action) {
+        case 'list': return { ok: true, services: [] }
+        case 'list-logins': return { ok: true, logins: [personal] }
+        case 'list-bot-logins': return { ok: true, botLogins: [assigned], bots: [bot] }
+        case 'list-login-automation': return { ok: true, loginAutomation: { available: false, enabled } }
+        case 'set-login-automatic':
+          expect(value).toEqual({ action: 'set-login-automatic', id: assigned.id, bot: bot.id, enabled: false })
+          enabled = []
+          return { ok: true }
+      }
+    }
+    return { ok: false, reason: 'unavailable' }
+  })
+  const p = page({ kind: 'manage' }, request)
+  p.run()
+  await expect.poll(() => p.dom.window.document.querySelector('main')?.getAttribute('aria-busy')).toBe('false')
+  p.element('websites-tab').click()
+  await expect.poll(() => p.element('logins').querySelectorAll('input[type="checkbox"]').length).toBe(1)
+  const toggle = p.element('logins').querySelector('input[type="checkbox"]') as HTMLInputElement
+  expect(toggle.checked).toBe(true)
+  expect(toggle.disabled).toBe(false)
+  expect(toggle.closest('li')?.textContent).toContain('Operations')
+  expect(p.element('logins').querySelector('li')?.textContent).toContain('Personal')
+  expect(p.element('websites-automatic-hint').textContent).toContain('private chats and routines')
+  toggle.click()
+  await expect.poll(() => toggle.checked).toBe(false)
+  expect(toggle.disabled).toBe(true)
+  expect(p.element('websites-automatic-notice').textContent).toBe(en.cloudVaultWebsiteAutomaticUnavailable)
+  expect(request).toHaveBeenCalledWith({ action: 'set-login-automatic', id: assigned.id, bot: bot.id, enabled: false })
+})
+
+it('lets the owner enable automatic sign-in for an assigned account when available', async () => {
+  const bot = { id: 'bot-scout', name: 'Scout' }
+  const assigned = { id: 'c'.repeat(32), origin: 'https://example.com', label: 'Operations', bot: bot.id }
+  const request = vi.fn(async (value: unknown) => {
+    if (value && typeof value === 'object' && 'action' in value) {
+      switch (value.action) {
+        case 'list': return { ok: true, services: [] }
+        case 'list-logins': return { ok: true, logins: [] }
+        case 'list-bot-logins': return { ok: true, botLogins: [assigned], bots: [bot] }
+        case 'list-login-automation': return { ok: true, loginAutomation: { available: true, enabled: [] } }
+        case 'set-login-automatic':
+          expect(value).toEqual({ action: 'set-login-automatic', id: assigned.id, bot: bot.id, enabled: true })
+          return { ok: true }
+      }
+    }
+    return { ok: false, reason: 'unavailable' }
+  })
+  const p = page({ kind: 'manage' }, request)
+  p.run()
+  await expect.poll(() => p.dom.window.document.querySelector('main')?.getAttribute('aria-busy')).toBe('false')
+  p.element('websites-tab').click()
+  await expect.poll(() => p.element('logins').querySelectorAll('input[type="checkbox"]').length).toBe(1)
+  const toggle = p.element('logins').querySelector('input[type="checkbox"]') as HTMLInputElement
+  expect(toggle.checked).toBe(false)
+  expect(toggle.disabled).toBe(false)
+  toggle.click()
+  await expect.poll(() => request).toHaveBeenCalledWith({
+    action: 'set-login-automatic', id: assigned.id, bot: bot.id, enabled: true,
+  })
+  expect(toggle.checked).toBe(true)
+})
+
 it('requires confirmation before removing a website login', async () => {
   const id = 'c'.repeat(32)
   const requests: unknown[] = []

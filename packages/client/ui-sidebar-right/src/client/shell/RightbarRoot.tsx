@@ -2,23 +2,26 @@
 import { useLayoutEffect } from 'react'
 import type { HostObservable, InjectFace, PropsRenderSlots, PropsRuntime } from '@yharness/client-ui-slots'
 import type { SessionReference } from '@yharness/api-session-controller/client'
+import type { SessionId } from '@yharness/session/types'
 import type { SidebarSessionViewSnapshot } from '../session-views.ts'
 import type {} from '../contract/slots.ts'
 import css from './SidebarRight.module.css'
 
 /** Root-only retained Session targets and their committed mount lifetimes. */
 export interface RightbarRootInjected {
-  readonly hooks: { readonly views: HostObservable<readonly SidebarSessionViewSnapshot[]> }
+  readonly hooks: {
+    readonly views: HostObservable<readonly SidebarSessionViewSnapshot[]>
+    readonly activeSession: HostObservable<SessionId | undefined>
+  }
   readonly mountView: (reference: SessionReference) => () => void
 }
 
 type RootProps = PropsRuntime<'rightbar'> & PropsRenderSlots<'rightbar.session'> & InjectFace<RightbarRootInjected>
 
-function SessionView({ view, visible, SessionProvider, renderSlot, mountView, width, viewportWidth, canShow }:
+function SessionView({ view, active, SessionProvider, renderSlot, mountView, width, viewportWidth, canShow }:
   Pick<RootProps, 'SessionProvider' | 'renderSlot' | 'mountView' | 'width' | 'viewportWidth' | 'canShow'>
-  & { readonly view: SidebarSessionViewSnapshot; readonly visible: boolean }) {
+  & { readonly view: SidebarSessionViewSnapshot; readonly active: boolean }) {
   useLayoutEffect(() => mountView(view.reference), [mountView, view.reference])
-  const active = visible && view.selected
   return <div className={css.session} hidden={!active} data-sidebar-right-session={view.sessionId}>
     <SessionProvider session={view.reference}>
       {renderSlot('rightbar.session', { width, viewportWidth, canShow, active, retainTab: view.retainTab })}
@@ -31,8 +34,8 @@ function SessionView({ view, visible, SessionProvider, renderSlot, mountView, wi
  * @param props - frame geometry, view targets and the authorized Session renderer.
  * @returns the foreground and retained background Sidebars.
  */
-export function RightbarRoot({ usePanelInfo, useViews, ...props }: RootProps) {
-  const visible = usePanelInfo(info => info.activePanelId === null)
+export function RightbarRoot({ useViews, useActiveSession, ...props }: RootProps) {
   const views = useViews(value => value)
-  return <>{views.map(view => <SessionView key={view.sessionId} {...props} view={view} visible={visible} />)}</>
+  const activeSession = useActiveSession(value => value)
+  return <>{views.map(view => <SessionView key={view.sessionId} {...props} view={view} active={view.sessionId === activeSession} />)}</>
 }

@@ -28,6 +28,7 @@ import type { RetainedItems } from '@yharness/output-retention'
 import type { SubprocessHandle, SubprocessOutcome, SubprocessOutputRead, SubprocessSpawnSpec } from '@yharness/subprocess'
 import type { SaveTextSpill, SpillRef } from '@yharness/spill'
 import type { ToolExecution } from '@yharness/tools'
+import { managedBotExecutionFor, resolveManagedWorkdir } from '@yharness/sandbox-policy'
 
 /**
  * Default cap on the complete raw `rg` stdout the tools will parse (the
@@ -63,6 +64,23 @@ export const SEARCH_GRACE_MS = 3_000
  * typical search while bounding the pathological one.
  */
 export const SEARCH_META_MAX_BYTES = 65_536
+
+/**
+ * Resolve a model-supplied search root inside a managed execution workspace.
+ * Search builders place the optional path after `--`; all preceding argv
+ * elements are patterns or fixed ripgrep flags and must remain unchanged.
+ * @param execution - managed Bot capability.
+ * @param argv - search argv excluding the executable.
+ * @returns argv with its optional target rooted in the managed workspace.
+ */
+function routeManagedSearchPath(execution: ReturnType<typeof managedBotExecutionFor>, argv: readonly string[]): readonly string[] {
+  if (execution === undefined) return argv
+  const separator = argv.indexOf('--')
+  if (separator === -1 || separator + 1 >= argv.length) return argv
+  const path = argv[separator + 1]
+  if (path === undefined) return argv
+  return [...argv.slice(0, separator + 1), resolveManagedWorkdir(execution, path), ...argv.slice(separator + 2)]
+}
 
 /**
  * Stable, machine-routable codes for search failures. Package-owned (not
@@ -231,12 +249,18 @@ export async function runRipgrep(
   if (exec.signal.aborted) {
     throw new SearchError(`${toolName} was aborted before completion (tool timeout or caller cancellation)`, 'SEARCH_ABORTED')
   }
-  const cwd = exec.agent?.session.header.cwd
-  const workdir = cwd ?? process.cwd()
+  const managed = managedBotExecutionFor(exec)
+  const subprocess = managed?.subprocess ?? ctx.subprocess
+  const workdir = managed === undefined
+    ? exec.agent?.session.header.cwd ?? process.cwd()
+    : resolveManagedWorkdir(managed)
   let handle: SubprocessHandle
   try {
-    handle = ctx.subprocess.spawn({
-      argv: [await resolveRgPath(), '--no-config', ...argv],
+    // Managed calls resolve rg in the container. The host-packaged sidecar
+    // path is never handed to a managed subprocess provider.
+    const executable = managed === undefined ? await resolveRgPath() : await subprocess.resolveExecutable('rg', undefined, exec.signal)
+    handle = subprocess.spawn({
+      argv: [executable, '--no-config', ...routeManagedSearchPath(managed, argv)],
       cwd: workdir,
       stdio: {
         stdin: 'ignore',

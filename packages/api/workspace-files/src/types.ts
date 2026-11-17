@@ -34,6 +34,12 @@ export interface WorkspaceFileStat {
   readonly bytes?: number
 }
 
+/** A Session path or an explicit path inside its private Computer workspace. */
+export type WorkspaceFilePath = string | {
+  /** Absolute or workspace-relative path on the owning Computer. */
+  readonly computer: string
+}
+
 /**
  * The line window one `read` returns. Lines are 1-based and end at `\n`; a
  * final `\n` terminates the last line rather than starting an empty one.
@@ -152,6 +158,10 @@ export type WorkspaceFileWatchFrame =
 
 declare module '@yharness/typert-protocol' {
   interface RemoteErrorDetailsMap {
+    /** This Session has no authorized private Computer workspace. */
+    'workspace-file/computer-unavailable': Record<string, never>
+    /** The source changed between authorization and its reserved read. */
+    'workspace-file/changed': { readonly path: string }
     /** The filesystem provider cannot initialize a watch for this target. */
     'workspace-file/watch-unsupported': { readonly path: string }
     /** No entry exists at that path inside the workspace. */

@@ -42,10 +42,10 @@ const useResource = (() => ({ status: 'none' as const, value: undefined, failure
 
 const FactoryViewsTestContext = createContext<ConversationViewsProps | undefined>(undefined)
 
-function StableConversationViews() {
+function StableConversationViews({ bot }: Pick<ConversationViewsProps, 'bot'>) {
   const props = useContext(FactoryViewsTestContext)
   if (props === undefined) throw new Error('Factory views test context is missing')
-  return <>{props.renderSlot('conversation.session', {})}</>
+  return <>{props.renderSlot('conversation.session', bot === undefined ? {} : { bot })}</>
 }
 
 // jsdom implements no Range geometry (Lexical's scroll-into-view measures the
@@ -130,6 +130,7 @@ function mount(
     variant?: 'main' | 'embedded'
     /** Override the factory phase to exercise host-owned embedded states. */
     contentPhase?: 'settling' | 'hero' | 'active'
+    bot?: ConversationContentInputProps['bot']
     /** When true, mimic overlay:true chain siblings (hidden fallback + takeover). */
     overlayTakeover?: boolean
     /** The session list summary's `blank` flag — independent of the snapshot's. */
@@ -240,8 +241,10 @@ function mount(
       )
     }
     if (key === 'conversation.session') {
+      const sessionOwner = owner as Pick<ConversationSessionSlotProps, 'view' | 'bot'>
       return (
         <ConversationSession
+          {...sessionOwner}
           sessionId={SID}
           SessionProvider={({ children }) => children}
           useSession={useSession}
@@ -310,6 +313,7 @@ function mount(
         />
       )
     }
+    if (key === 'conversation.view') seatOwners.push({ key, owner })
     return <div data-testid={`view-${opts?.only ?? key}`} />
   }) as ConversationContentProps['renderSlot']
   const renderSlotChain = ((_key, _owner, opts) => (
@@ -362,9 +366,11 @@ function mount(
       selectWorkspace: retargetWorkspace,
       t,
     }
-    const contentInput = options.contentPhase === undefined
-      ? input
-      : { ...input, phase: options.contentPhase, hero: options.contentPhase === 'hero' }
+    const contentInput = {
+      ...input,
+      ...options.contentPhase === undefined ? {} : { phase: options.contentPhase, hero: options.contentPhase === 'hero' },
+      ...options.bot === undefined ? {} : { bot: options.bot },
+    }
     const useFactorySlot = ((name: string, fallback: (props: never) => ReactNode) => (
       name === 'views' ? StableConversationViews : factoryOptions?.slots?.[name] ?? fallback
     )) as ConversationContentProps['useFactorySlot']
@@ -574,6 +580,19 @@ describe('ConversationRoot resident composer', () => {
     expect(content?.getAttribute('data-content-phase')).toBe('active')
     expect(content?.getAttribute('data-composer-placement')).toBe('bottom')
     expect(content?.querySelector('[data-composer-seat]')).not.toBeNull()
+  })
+
+  it('marks the Bot occurrence while keeping the ordinary Conversation surface', () => {
+    const ordinary = mount(sessionSnapshotOf())
+    const bot = mount(sessionSnapshotOf(), undefined, undefined, {
+      variant: 'embedded', bot: { name: 'Atlas' },
+    })
+    expect(ordinary.view.container.querySelector('[data-conversation-surface]')).toBeNull()
+    expect(bot.view.container.querySelector('[data-conversation-surface="bots"] [data-composer-seat]')).not.toBeNull()
+    expect(bot.seatOwners).toContainEqual({
+      key: 'conversation.view', owner: expect.objectContaining({ bot: { name: 'Atlas' } }),
+    })
+    expect(bot.seatOwners).toContainEqual({ key: 'conversation.composer.dock', owner: { botChat: true } })
   })
 
   it('sticky composer seat wraps the whole overlay chain, not only the fallback stack', () => {

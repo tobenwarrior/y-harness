@@ -4,6 +4,7 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import type { PlatformSession } from '@yharness/deepseek-account'
+import type { ProviderKeySourceRequest } from '@yharness/provider-config-sync'
 import { desktopNodeEnvironment } from './node-environment.ts'
 
 interface ReadyEvent {
@@ -39,6 +40,11 @@ type DesktopHostEvent = ReadyEvent | FatalEvent | PlatformSessionEvent | { reado
   readonly type: 'boot-injections'
   readonly requestId: number
   readonly injections?: readonly unknown[]
+  readonly error?: string
+} | {
+  readonly type: 'provider-key-copy'
+  readonly requestId: number
+  readonly value?: unknown
   readonly error?: string
 }
 
@@ -94,6 +100,8 @@ function isDesktopHostEvent(message: unknown): message is DesktopHostEvent {
     case 'quit-inspection':
       return Number.isSafeInteger(candidate.requestId) && typeof candidate.activeTasks === 'boolean'
         && typeof candidate.scheduledTasks === 'boolean' && (candidate.error === undefined || typeof candidate.error === 'string')
+    case 'provider-key-copy':
+      return Number.isSafeInteger(candidate.requestId) && (candidate.error === undefined || typeof candidate.error === 'string')
     case 'boot-injections':
       return Number.isSafeInteger(candidate.requestId) && (candidate.injections === undefined || Array.isArray(candidate.injections))
         && (candidate.error === undefined || typeof candidate.error === 'string')
@@ -299,13 +307,26 @@ export class DesktopHostProcess {
     return { activeTasks: response.activeTasks, scheduledTasks: response.scheduledTasks }
   }
 
+  /**
+   * Resolve a specific saved provider key after a native owner approval, or list candidates.
+   * @param command - Key-free offer or the exact approved provider route.
+   * @returns Key-free preview or the single approved key for immediate Cloud transfer.
+   */
+  async providerKeyRequest(command: ProviderKeySourceRequest): Promise<unknown> {
+    const reply = await this.control({ type: 'provider-key-copy', command }, 10_000, 'Provider key copy timed out.')
+    if (reply.type !== 'provider-key-copy') throw new Error('Provider key copy is unavailable.')
+    return reply.value
+  }
+
   private async control(
     request: { readonly type: 'update-tasks'; readonly action: 'inspect' | 'lock' | 'unlock' }
-    | { readonly type: 'quit-inspection' } | { readonly type: 'boot-injections' },
+    | { readonly type: 'quit-inspection' } | { readonly type: 'boot-injections' }
+    | { readonly type: 'provider-key-copy'; readonly command: ProviderKeySourceRequest },
     deadlineMs: number, deadlineMessage: string,
   ): Promise<DesktopHostControlResponse> {
     const child = this.child
     if (child === undefined || !child.connected || this.failureReported || this.stopping) {
+      if (request.type === 'provider-key-copy') throw new Error('Provider key copy is unavailable.')
       const action = request.type === 'update-tasks' ? 'desktop update' : request.type === 'quit-inspection' ? 'desktop quit' : 'desktop boot'
       throw new Error(`${action}: Host is unavailable`)
     }

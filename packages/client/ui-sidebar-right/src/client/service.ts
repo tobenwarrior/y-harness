@@ -39,6 +39,7 @@ import { createSnapshotStore, type ObservableSnapshot } from '@yharness/client-s
 import type { FloatRect, PaneId, TabId, TabRecord } from '@yharness/client-ui-dockkit'
 import { activeDockPaneId, canSplit, findContentTab, findPaneContentTab, dockPaneIds, findTabPane, getPane } from '@yharness/client-ui-dockkit'
 import type { BoundActions } from '@yharness/client-ui-slots'
+import type { MainPanelId } from '@yharness/client-ui-layout/client'
 import type { SessionId } from '@yharness/session/types'
 import type { SidebarRightNavigationParams, SidebarRightResourceParams, SidebarRightTabParamsFor } from './contract/params.ts'
 import { pageAddress } from './contract/seed.ts'
@@ -185,8 +186,8 @@ export type SidebarRightCloseHandler = (sessionId: SessionId, tab: TabRecord) =>
 /** The outward right-Sidebar face (`ctx.sidebarRight`). */
 export interface ISidebarRight {
   /**
-   * The Session on screen, or `undefined` while none is (a global panel fills
-   * the main column, or no Session is selected). It changes before React
+   * The Session of the active main panel, or undefined when the panel has no Session.
+   * It changes before React
    * renders the selection or panel change that causes it, so every component
    * rendered in that commit reads the arriving Session, and the commands act on
    * it from that commit's effects: its seat mints its store in the same render.
@@ -267,6 +268,24 @@ export class SidebarRightController implements ISidebarRight {
   private readonly adopted: ReadonlyMap<SessionId, Adoption>
   private readonly rooms: ReadonlyMap<SessionId, RoomRule>
   private readonly closeHandlers = new Map<string, SidebarRightCloseHandler>()
+  private readonly panelSessionStore = createSnapshotStore<ReadonlyMap<MainPanelId, SessionId>>(new Map())
+
+  /** Selected Sessions published by panels with their own navigation. */
+  readonly panelSessions: ObservableSnapshot<ReadonlyMap<MainPanelId, SessionId>> = this.panelSessionStore
+
+  /**
+   * Associate a main panel with the Session whose sidebar it can display.
+   * @param panelId - Panel that owns the selection.
+   * @param sessionId - Its selected Session, or undefined to clear the association.
+   */
+  selectPanelSession(panelId: MainPanelId, sessionId: SessionId | undefined): void {
+    const current = this.panelSessionStore.getSnapshot()
+    if (current.get(panelId) === sessionId) return
+    const next = new Map(current)
+    if (sessionId === undefined) next.delete(panelId)
+    else next.set(panelId, sessionId)
+    this.panelSessionStore.set(next)
+  }
 
   /**
    * Register resource cleanup before explicit removal. Failure preserves the tab.

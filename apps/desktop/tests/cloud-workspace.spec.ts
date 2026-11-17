@@ -68,7 +68,8 @@ const TOKEN = 'a'.repeat(43)
 const connection = (origin = ORIGIN) => {
   const ended = Promise.withResolvers<undefined>()
   const close = vi.fn(() => { ended.resolve(undefined) })
-  return { value: { origin, loginUrl: origin + '/?token=' + TOKEN, closed: ended.promise, close }, ended }
+  const sendVaultRequest = vi.fn(async (_payload: string, _signal: AbortSignal) => 'fixture')
+  return { value: { origin, loginUrl: origin + '/?token=' + TOKEN, closed: ended.promise, close, sendVaultRequest }, ended }
 }
 const forward = (origin = ORIGIN) => {
   const ended = Promise.withResolvers<undefined>()
@@ -149,6 +150,49 @@ it('keeps the loaded Cloud chat across a failed reconnect and reauthenticates at
   expect(fixture.vault.open).toHaveBeenCalledOnce()
 })
 
+it('routes Vault actions through the current authenticated connection after reconnect', async () => {
+  const first = connection()
+  const restored = connection()
+  fixture.open.mockResolvedValueOnce(first.value).mockResolvedValueOnce(restored.value)
+  const owner = new BrowserWindow()
+  const signal = new AbortController().signal
+  workspace.attach(owner)
+  await vi.advanceTimersByTimeAsync(0)
+
+  const stale = workspace.ownerCloudWorkspace()
+  expect(stale).toBeDefined()
+  await expect(stale!.sendVaultRequest('before', signal)).resolves.toBe('fixture')
+  first.ended.resolve(undefined)
+  await vi.advanceTimersByTimeAsync(0)
+  await expect(stale!.sendVaultRequest('offline', signal)).resolves.toBeUndefined()
+  expect(first.value.sendVaultRequest).toHaveBeenCalledOnce()
+
+  await vi.advanceTimersByTimeAsync(5_000)
+  const current = workspace.ownerCloudWorkspace()
+  expect(current).toBeDefined()
+  await expect(stale!.sendVaultRequest('stale', signal)).resolves.toBeUndefined()
+  await expect(current!.sendVaultRequest('restored', signal)).resolves.toBe('fixture')
+  expect(fixture.views).toHaveLength(2)
+  expect(view(1).webContents.loadURL).toHaveBeenCalledExactlyOnceWith(ORIGIN + '/')
+
+  workspace.showVault()
+  const requestId = 'a'.repeat(32)
+  for (const route of ['vault-request', 'vault-login-use']) {
+    const event = { preventDefault: vi.fn() }
+    view(1).webContents.emit('will-navigate', event, `${ORIGIN}/__yharness/${route}/${requestId}`)
+    expect(event.preventDefault).toHaveBeenCalledOnce()
+  }
+  expect(fixture.vault.open.mock.calls.map(([, , mode]) => mode?.kind)).toEqual([
+    undefined, 'request', 'login-use',
+  ])
+  for (const [, session] of fixture.vault.open.mock.calls) {
+    await expect(session.sendVaultRequest('card', signal)).resolves.toBe('fixture')
+  }
+  expect(restored.value.sendVaultRequest).toHaveBeenCalledTimes(4)
+  workspace.showMac()
+  await expect(current!.sendVaultRequest('mac', signal)).resolves.toBeUndefined()
+})
+
 it('waits for a saved Cloud server on launch and stops retrying on Mac', async () => {
   const online = connection()
   fixture.open.mockRejectedValueOnce(new Error('Offline')).mockResolvedValueOnce(online.value)
@@ -171,7 +215,8 @@ it('cancels the old retry and closes the old chat when the owner changes servers
   const first = connection()
   const initialForward = forward()
   const newOrigin = 'http://127.0.0.1:43191'
-  fixture.forward.mockResolvedValueOnce(initialForward).mockResolvedValueOnce(forward(newOrigin))
+  const nextForward = forward(newOrigin)
+  fixture.forward.mockResolvedValueOnce(initialForward).mockResolvedValueOnce(nextForward)
   const next = connection(newOrigin)
   fixture.open.mockResolvedValueOnce(first.value).mockResolvedValueOnce(next.value)
   workspace.attach(new BrowserWindow())
@@ -188,6 +233,10 @@ it('cancels the old retry and closes the old chat when the owner changes servers
   expect(chat.webContents.close).toHaveBeenCalledOnce()
   choose('https://workspace.invalid/connect?target=another-cloud')
   await vi.advanceTimersByTimeAsync(30_000)
-  expect(fixture.open.mock.calls.map(([target]) => target)).toEqual(['cloud-fixture', 'another-cloud'])
+  expect(fixture.open).toHaveBeenCalledTimes(2)
+  expect(fixture.open).toHaveBeenNthCalledWith(1, 'cloud-fixture', expect.any(AbortSignal),
+    expect.objectContaining({ forward: initialForward }))
+  expect(fixture.open).toHaveBeenNthCalledWith(2, 'another-cloud', expect.any(AbortSignal),
+    expect.objectContaining({ forward: nextForward }))
   expect(view(2).webContents.loadURL).toHaveBeenCalledExactlyOnceWith(newOrigin + '/')
 })

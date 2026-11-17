@@ -1,7 +1,7 @@
 /** Completed-Turn token usage action and its accounting details dialog. */
 
 import { createPortal } from 'react-dom'
-import { IconDatabaseOutlineRegular } from '@yharness/client-ui-primitives'
+import { IconDatabaseOutlineRegular, Tooltip } from '@yharness/client-ui-primitives'
 import type { TurnTokenUsage } from '../contract/chat-nodes.ts'
 import type { ChatViewSlotProps } from '../contract/slots.ts'
 import { formatCacheHitPercent, formatExactTokens, formatTokens } from './token-format.ts'
@@ -11,6 +11,8 @@ import dialogCss from './stat-dialog.module.css'
 
 export interface TurnUsagePanelProps {
   usage: TurnTokenUsage
+  /** Render the compact Bots icon-only trigger while retaining the dialog. */
+  compact?: boolean
   /** The owning view's locale seat, passed down as a plain prop. */
   t: ChatViewSlotProps['t']
 }
@@ -28,7 +30,7 @@ function formatExactCount(value: number, t: ChatViewSlotProps['t']): string {
  * @param props - Turn usage buckets and locale seat.
  * @returns The trigger and, while open, its portaled dialog anchored above the trigger.
  */
-export function TurnUsagePanel({ usage, t }: TurnUsagePanelProps) {
+export function TurnUsagePanel({ usage, compact = false, t }: TurnUsagePanelProps) {
   const { open, setOpen, rootRef, panelRef, pos } = useStatDialog()
 
   const cacheHit = usage.cacheReadTokens === undefined
@@ -37,18 +39,24 @@ export function TurnUsagePanel({ usage, t }: TurnUsagePanelProps) {
   const total = formatCompactCount(usage.totalTokens, t)
   const routes = usage.routes?.map(route => `${route.provider}/${route.model}`).join(', ') ?? ''
 
+  const label = t('stats.dialog.usageTitle')
+  const trigger = (
+    <button
+      type="button"
+      className={css.trigger}
+      aria-haspopup="dialog"
+      aria-expanded={open}
+      aria-label={compact ? label : undefined}
+      data-turn-usage-trigger
+      onClick={() => { setOpen(!open) }}
+    >
+      <IconDatabaseOutlineRegular />
+      <span className={css.label}>{t('message.turnUsage.consumed', { total })}</span>
+    </button>
+  )
   return (
-    <span ref={rootRef} className={css.root}>
-      <button
-        type="button"
-        className={css.trigger}
-        aria-haspopup="dialog"
-        aria-expanded={open}
-        onClick={() => { setOpen(!open) }}
-      >
-        <IconDatabaseOutlineRegular />
-        <span className={css.label}>{t('message.turnUsage.consumed', { total })}</span>
-      </button>
+    <span ref={rootRef} className={css.root} data-compact={compact || undefined}>
+      {compact ? <Tooltip label={label} side="bottom" disabled={open} portal>{trigger}</Tooltip> : trigger}
       {open && createPortal(
         <div
           ref={panelRef}

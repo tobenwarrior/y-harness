@@ -7,7 +7,7 @@ kind: "package-library"
 
 ## Summary
 
-Browser-safe path helpers shared by Workspace-facing client and controller packages. The package joins Workspace-relative paths, abbreviates POSIX home directories for display, derives Workspace titles from POSIX or Windows paths, splits a path into its directories and final segment for display, and owns the `dsh-resource://file/…` address grammar that names a workspace file across the Sidebar and the resource model. `relativizeToCwd` removes the workspace prefix for display while preserving paths outside that directory. It has no Cordis service or runtime state.
+Browser-safe helpers for workspace paths and `dsh-resource://file/…` addresses. Resolve relative paths, abbreviate POSIX home paths, derive workspace titles, and split directory names from basenames. `relativizeToCwd` removes the workspace prefix from display paths inside it. `computerFileAddress` identifies a private Computer file and its owning Session. The package has no runtime state.
 
 ## Table of Contents
 

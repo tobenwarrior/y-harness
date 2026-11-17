@@ -60,6 +60,8 @@ let services = []
 let logins = []
 let botLogins = []
 let loginBots = []
+let loginAutomation
+let loginAutomationReady = false
 let grantAccess
 let grantBots
 let grantAccessReason
@@ -182,6 +184,24 @@ function loginMetadata(value, scoped) {
   return value
 }
 
+function loginAutomationMetadata(value) {
+  if (!record(value) || Object.keys(value).length !== 2 || typeof value.available !== 'boolean'
+    || !Array.isArray(value.enabled) || value.enabled.length > 64) return
+  const ids = new Set()
+  const enabled = []
+  for (const id of value.enabled) {
+    if (typeof id !== 'string' || !/^[a-f0-9]{32}$/.test(id) || ids.has(id)) return
+    ids.add(id)
+    enabled.push(id)
+  }
+  return { available: value.available, enabled }
+}
+
+function loginAutomationReply(value) {
+  if (!record(value) || Object.keys(value).length !== 2 || value.ok !== true) return
+  return loginAutomationMetadata(value.loginAutomation)
+}
+
 function browserAccessBotMetadata(value) {
   if (!record(value) || Object.keys(value).length !== 3 || typeof value.id !== 'string'
     || !/^bot-[A-Za-z0-9][A-Za-z0-9-]{0,245}$/.test(value.id)
@@ -272,6 +292,10 @@ function availability() {
   element('add-login').disabled = busy || !websitesReady
   for (const button of loginList.querySelectorAll('button')) {
     button.disabled = busy || !websitesReady || (button.dataset.botLogin === 'true' && !botLoginsReady)
+  }
+  for (const toggle of loginList.querySelectorAll('input[data-automatic="true"]')) {
+    toggle.disabled = busy || !websitesReady || !botLoginsReady || !loginAutomationReady
+      || (!loginAutomation?.available && !toggle.checked)
   }
   for (const input of loginEditor.querySelectorAll('input, button')) input.disabled = busy || !websitesReady
   loginBot.disabled = busy || !botLoginsReady || editingLogin?.action === 'replace'
@@ -459,6 +483,22 @@ function renderLogins() {
     if (login.bot !== undefined) {
       replace.dataset.botLogin = 'true'
       remove.dataset.botLogin = 'true'
+      if (loginAutomationReady) {
+        const automatic = document.createElement('label')
+        automatic.className = 'website-automatic-toggle'
+        const toggle = document.createElement('input')
+        toggle.type = 'checkbox'
+        toggle.checked = loginAutomation.enabled.includes(login.id)
+        toggle.dataset.automatic = 'true'
+        toggle.dataset.botLogin = 'true'
+        toggle.setAttribute('aria-label', `${messages.cloudVaultWebsiteAutomaticToggle} ${login.label}`)
+        toggle.disabled = !loginAutomation.available && !toggle.checked
+        toggle.addEventListener('change', () => { void changeLoginAutomatic(login, toggle) })
+        const copy = document.createElement('span')
+        copy.textContent = messages.cloudVaultWebsiteAutomaticToggle
+        automatic.append(toggle, copy)
+        actions.append(automatic)
+      }
     }
     actions.append(replace, remove)
     row.append(details, actions)
@@ -466,6 +506,9 @@ function renderLogins() {
   })
   loginList.replaceChildren(...rows)
   element('logins-empty').hidden = rows.length > 0 || !websitesReady || !loginEditor.hidden
+  const automaticNotice = element('websites-automatic-notice')
+  automaticNotice.hidden = !loginAutomationReady || loginAutomation.available
+  automaticNotice.textContent = automaticNotice.hidden ? '' : messages.cloudVaultWebsiteAutomaticUnavailable
   availability()
 }
 
@@ -576,6 +619,8 @@ async function readLogins() {
     logins = []
     botLogins = []
     loginBots = []
+    loginAutomation = undefined
+    loginAutomationReady = false
     renderLogins()
     return false
   }
@@ -586,6 +631,15 @@ async function readLogins() {
     && assigned.botLogins.every(login => loginMetadata(login, true))
   if (botLoginsReady) botLogins = assigned.botLogins
   loginBots = botLoginsReady && Array.isArray(assigned.bots) ? assigned.bots : []
+  loginAutomation = undefined
+  loginAutomationReady = false
+  if (botLoginsReady) {
+    const automation = loginAutomationReply(await send({ action: 'list-login-automation' }))
+    if (automation !== undefined) {
+      loginAutomation = automation
+      loginAutomationReady = true
+    }
+  }
   renderLogins()
   return true
 }
@@ -751,6 +805,34 @@ async function changeLogin(request) {
   availability()
   setWebsitesNotice(loaded ? 'cloudVaultWebsiteSaved' : 'cloudVaultWebsitesUnavailable', loaded ? '' : 'error')
   element(loaded ? 'add-login' : 'websites-tab').focus()
+}
+
+async function changeLoginAutomatic(login, toggle) {
+  if (busy || !websitesReady || !loginAutomationReady || login.bot === undefined) return
+  const enabled = toggle.checked
+  if (enabled && loginAutomation.available !== true) {
+    toggle.checked = false
+    availability()
+    return
+  }
+  busy = true
+  availability()
+  setWebsitesNotice('cloudVaultSaving')
+  const result = await send({ action: 'set-login-automatic', id: login.id, bot: login.bot, enabled })
+  if (!acknowledged(result)) {
+    toggle.checked = !enabled
+    busy = false
+    availability()
+    setWebsitesNotice('cloudVaultWebsiteAutomaticFailed', 'error')
+    return
+  }
+  const ids = new Set(loginAutomation.enabled)
+  if (enabled) ids.add(login.id)
+  else ids.delete(login.id)
+  loginAutomation = { ...loginAutomation, enabled: [...ids] }
+  busy = false
+  availability()
+  setWebsitesNotice('cloudVaultWebsiteAutomaticUpdated')
 }
 
 async function removeLoginRequest(login) {
@@ -1079,7 +1161,8 @@ void Promise.all([api.messages(), api.mode()]).then(([copy, presentation]) => {
     ['grant-name-label', 'cloudVaultRequestName'], ['grant-scope-label', 'cloudVaultBotAccessScope'],
     ['grant-editor-cancel', 'cancel'], ['grant-save', 'cloudVaultBotAccessAdd'],
     ['browser-access-title', 'cloudVaultBrowserAccess'], ['browser-access-hint', 'cloudVaultBrowserAccessHint'],
-    ['websites-hint', 'cloudVaultWebsitesHint'], ['logins-title', 'cloudVaultWebsites'], ['add-login-label', 'cloudVaultWebsiteAdd'],
+    ['websites-hint', 'cloudVaultWebsitesHint'], ['websites-automatic-hint', 'cloudVaultWebsiteAutomaticHint'],
+    ['logins-title', 'cloudVaultWebsites'], ['add-login-label', 'cloudVaultWebsiteAdd'],
     ['logins-empty', 'cloudVaultWebsitesEmpty'], ['login-origin-label', 'cloudVaultWebsiteOrigin'], ['login-label-label', 'cloudVaultWebsiteLabel'],
     ['login-bot-label', 'cloudVaultWebsiteBot'],
     ['login-username-label', 'cloudVaultWebsiteUsername'], ['login-password-label', 'cloudVaultWebsitePassword'],
