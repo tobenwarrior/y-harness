@@ -1,4 +1,4 @@
-import { closeSync, fstatSync, lstatSync, openSync, renameSync, symlinkSync, writeFileSync } from 'node:fs'
+import { closeSync, constants, fstatSync, lstatSync, openSync, renameSync, symlinkSync, writeFileSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -33,8 +33,8 @@ const fakeKoffi = {
             if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
           }
           const fd = isSymbolicLink
-            ? openSync(state.fakeFilePath ?? `${canonical}.fake-native-file`, 'a+')
-            : openSync(canonical, 'a+')
+            ? openSync(state.fakeFilePath ?? `${canonical}.fake-native-file`, constants.O_CREAT | constants.O_RDWR)
+            : openSync(canonical, constants.O_CREAT | constants.O_RDWR)
           state.handles.set(handle, { path: canonical, fd })
           state.fds.add(fd)
           state.paths.push(canonical)
@@ -92,6 +92,7 @@ const scratchDirs: string[] = []
 afterEach(async () => {
   vi.restoreAllMocks()
   vi.doUnmock('koffi')
+  vi.doUnmock('node:fs')
   vi.doUnmock('node:fs/promises')
   await Promise.all(scratchDirs.splice(0).map(dir => rm(dir, { force: true, recursive: true })))
   for (const fd of state.fds) {
@@ -123,6 +124,33 @@ function fdIsClosed(fd: number): boolean {
 }
 
 describe('Windows lock handle', () => {
+  it('fails closed when the native marker write is short', async () => {
+    vi.doMock('koffi', () => ({ default: fakeKoffi }))
+    vi.doMock('node:fs', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('node:fs')>()
+      return {
+        ...actual,
+        write: (_fd: number, buffer: Buffer, _offset: number, length: number, _position: number,
+          callback: (error: NodeJS.ErrnoException | null, bytesWritten: number, buffer: Buffer) => void) => {
+          callback(null, length - 1, buffer)
+        },
+      }
+    })
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
+    vi.resetModules()
+    const entryPath: string = '../src/index.ts?windows-lock-short-write'
+    const { withFileLock } = await import(/* @vite-ignore */ entryPath) as typeof import('../src/index.ts')
+    const dir = await mkdtemp(join(tmpdir(), 'dsh-atomic-write-win32-'))
+    scratchDirs.push(dir)
+    const operation = vi.fn(async () => {})
+
+    await expect(withFileLock(join(dir, 'document'), operation, { waitMs: 0 }))
+      .rejects.toMatchObject({ code: 'EIO' })
+    expect(operation).not.toHaveBeenCalled()
+    expect(state.active.size).toBe(0)
+    expect(Array.from(state.fds).every(fdIsClosed)).toBe(true)
+  })
+
   it('uses one native byte lock for path aliases', async () => {
     vi.doMock('koffi', () => ({ default: fakeKoffi }))
     vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
