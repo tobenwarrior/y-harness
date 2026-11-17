@@ -3020,6 +3020,8 @@ export interface Config {
   mapStateDir?: string
   /** Absolute private directory where automatically downloaded revisions are published. */
   overlayRoot?: string
+  /** Check for and apply upstream revisions in the background. Defaults to true. */
+  autoUpdate?: boolean
 }
 ```
 <!-- END GENERATED config-catalog:@yharness/skill-compound -->

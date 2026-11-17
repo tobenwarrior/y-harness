@@ -48,6 +48,8 @@ export interface Config {
   mapStateDir?: string
   /** Absolute private directory where automatically downloaded revisions are published. */
   overlayRoot?: string
+  /** Check for and apply upstream revisions in the background. Defaults to true. */
+  autoUpdate?: boolean
 }
 
 /** Validated resource configuration. */
@@ -56,6 +58,7 @@ export const Config: z<Config> = z.object({
   python: z.string().min(1),
   mapStateDir: z.string().min(1),
   overlayRoot: z.string().min(1),
+  autoUpdate: z.boolean().default(true),
 })
 
 /** Cordis plugin identity. */
@@ -295,8 +298,8 @@ export function apply(ctx: Context, config: Config = {}): void {
         pendingChecks.add(operation)
         void operation.then(() => { pendingChecks.delete(operation) }, () => { pendingChecks.delete(operation) })
       }
-      schedule()
-      const timer = setInterval(schedule, AUTO_UPDATE_INTERVAL_MS)
+      const timer = config.autoUpdate === false ? undefined : setInterval(schedule, AUTO_UPDATE_INTERVAL_MS)
+      if (timer !== undefined) schedule()
       return async () => {
         disposed = true
         lifetime.abort()

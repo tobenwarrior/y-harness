@@ -267,7 +267,7 @@ describe('bundled Compound skills', () => {
     }
   })
 
-  it('keeps a manual update alive after the request aborts and waits on disposal', async () => {
+  it('updates on request with background updates disabled and waits for disposal', async () => {
     vi.useFakeTimers()
     const root = await mkdtemp(join(tmpdir(), 'dsh-compound-manual-update-'))
     const routes: ConnectionFetchRoute[] = []
@@ -275,15 +275,13 @@ describe('bundled Compound skills', () => {
     let upstreamVersion = VENDORED_VERSION
     let upstreamCommit = 'd36f372a60624b92e0e364871cae2c50cbf4ba01'
     let upstreamSignal: AbortSignal | null | undefined
-    const initialStatus = Promise.withResolvers<undefined>()
     const rawStarted = Promise.withResolvers<undefined>()
     const filesFor = () => new Map(names.map(name => [
       `skills/${name}/SKILL.md`,
       `---\nname: ${name}\ndescription: manual upstream ${upstreamVersion}\n---\n\nManual body ${upstreamVersion}.\n`,
     ]))
-    vi.stubGlobal('fetch', (url: string, init?: RequestInit) => {
+    const fetchUpstream = vi.fn((url: string, init?: RequestInit) => {
       if (url.includes('/commits/')) {
-        initialStatus.resolve(undefined)
         return Promise.resolve(Response.json({ sha: upstreamCommit }))
       }
       if (url.endsWith('/plugin.json')) return Promise.resolve(Response.json({ version: upstreamVersion }))
@@ -305,13 +303,16 @@ describe('bundled Compound skills', () => {
         }, { once: true })
       })
     })
+    vi.stubGlobal('fetch', fetchUpstream)
     ctx.provide('connection', {
       fetch: { register: (route: ConnectionFetchRoute) => { routes.push(route); return () => {} } },
     } as never)
     try {
       await ctx.plugin(SkillRegistry)
-      const fiber = await ctx.plugin(SkillCompound, { overlayRoot: root })
-      await initialStatus.promise
+      const config = { overlayRoot: root, autoUpdate: false }
+      const fiber = await ctx.plugin(SkillCompound, config)
+      await vi.advanceTimersByTimeAsync(AUTO_UPDATE_INTERVAL_MS)
+      expect(fetchUpstream).not.toHaveBeenCalled()
       upstreamVersion = '2.0.0'
       upstreamCommit = 'a'.repeat(40)
       const applyRoute = routes.find(route => route.path === '/api/skill-compound.update.apply')
