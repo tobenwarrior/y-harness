@@ -353,9 +353,8 @@ function transcript(events: readonly SessionEvent[]): BotCollaborationTranscript
     }
     if (event.type === 'turn/end') {
       if (currentTurn === event.data.turn) {
-        const turnSeqs = eventSeqsByTurn.get(event.data.turn) ?? new Set<string>()
+        const turnSeqs = eventSeqsByTurn.get(event.data.turn) as Set<string>
         turnSeqs.add(String(event.seq))
-        eventSeqsByTurn.set(event.data.turn, turnSeqs)
         currentTurn = undefined
         lastLegacyAssistantTurn = undefined
         closeLegacySegment(true)
@@ -369,9 +368,8 @@ function transcript(events: readonly SessionEvent[]): BotCollaborationTranscript
     const eventSeq = String(event.seq)
     if (currentTurn === undefined) legacyEventSeqs.add(eventSeq)
     else {
-      const turnSeqs = eventSeqsByTurn.get(currentTurn) ?? new Set<string>()
+      const turnSeqs = eventSeqsByTurn.get(currentTurn) as Set<string>
       turnSeqs.add(eventSeq)
-      eventSeqsByTurn.set(currentTurn, turnSeqs)
     }
     if (currentTurn !== undefined && taintedTurns.has(currentTurn)) markTaintedEvents([eventSeq])
     if (currentTurn === undefined && legacySegmentTainted) markTaintedEvents([eventSeq])
@@ -625,12 +623,13 @@ export class BotCollaborationService {
 
   private async authorize(senderSessionId: SessionId): Promise<{
     readonly bots: readonly BotView[]
+    readonly senderBot: BotView
     readonly sender: BotCollaborationRosterEntry
   }> {
     const bots = await this.host.listBots()
     const sender = bots.find(bot => bot.sessionId === senderSessionId)
     if (sender === undefined) throw new BotCollaborationError('sender-not-bot', 'The sending Session is not owned by a Bot')
-    return { bots, sender: rosterEntry(sender) }
+    return { bots, senderBot: sender, sender: rosterEntry(sender) }
   }
 
   private async listFor(senderSessionId: SessionId): Promise<readonly BotCollaborationRosterEntry[]> {
@@ -723,10 +722,9 @@ export class BotCollaborationService {
       && (request.messageId.length === 0 || request.messageId.length > MAX_MESSAGE_ID_LENGTH)) {
       throw new BotCollaborationError('message-invalid', `Bot message ids must contain 1-${String(MAX_MESSAGE_ID_LENGTH)} characters`)
     }
-    const { bots } = await this.authorize(senderSessionId)
+    const { bots, senderBot } = await this.authorize(senderSessionId)
     throwIfCancelled(request.signal)
-    const sender = bots.find(bot => bot.sessionId === senderSessionId)
-    if (sender === undefined) throw new BotCollaborationError('sender-not-bot', 'The sending Session is not owned by a Bot')
+    const sender = senderBot
     const target = bots.find(bot => bot.id === request.targetBotId)
     if (target === undefined) throw new BotCollaborationError('target-not-found', `Bot "${request.targetBotId}" was not found`)
     if (sender.id === target.id) throw new BotCollaborationError('self-message', 'A Bot cannot send a message to itself')
