@@ -24,6 +24,17 @@
   config:
     policy: !!js "(process.env.DSH_PERMISSION_MODE ?? (process.env.DSH_SNAPSHOT === undefined ? 'workspace-write' : 'danger-full-access')) === 'danger-full-access' ? 'never' : 'ask'"
 
+# Use each recorded scenario's sandbox and approval settings as the preset.
+- id: permission
+  config:
+    presets:
+      workspace-write:
+        sandbox: workspace-write
+        approval: ask
+      danger-full-access:
+        sandbox: danger-full-access
+        approval: never
+
 - id: session-persistence-jsonl
   name: '@yharness/session-persistence-jsonl'
   config:
