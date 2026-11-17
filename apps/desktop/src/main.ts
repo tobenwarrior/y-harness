@@ -372,6 +372,7 @@ async function main(): Promise<void> {
   let hostEnvironment: NodeJS.ProcessEnv = process.env
   const prepareHostEnvironment = async (): Promise<void> => { hostEnvironment = await loginShell }
   let quitting = false
+  let quitCleanupComplete = false
   let startup: Promise<void> | undefined
   let workspaceRecovery: Promise<void> | undefined
   let mainWindow: BrowserWindow | undefined
@@ -1453,7 +1454,8 @@ async function main(): Promise<void> {
     managedStatusWatcher?.close()
     updateJournal?.action('quit-requested')
     quitConfirmation.dispose()
-    const closeCloud = cloudWorkspace?.dispose()
+    const closeCloud = Promise.resolve().then(() => cloudWorkspace?.dispose())
+      .catch((error: unknown) => { console.error(error) })
     backgroundNotice?.dispose()
     tray?.dispose()
     stopAccount?.()
@@ -1465,10 +1467,13 @@ async function main(): Promise<void> {
       ? Promise.resolve()
       : requestManagedGithubRestart(restartRequest).catch((error: unknown) => { console.error(error) })
     void writeRestartRequest.then(() => Promise.all([
-      closeCloud, Promise.resolve(mandatoryPolicy?.dispose()).then(() => policyAuth?.dispose()), backend.close(),
-      // A Platform cleanup failure is logged without cutting the remaining Host shutdown short.
-      platformView.dispose().catch((error: unknown) => { console.error(error) }),
-    ])).catch((error: unknown) => { console.error(error) }).finally(() => { app.quit() })
+      closeCloud,
+      Promise.resolve().then(() => mandatoryPolicy?.dispose()).catch((error: unknown) => { console.error(error) })
+        .then(() => policyAuth?.dispose())
+        .catch((error: unknown) => { console.error(error) }),
+      Promise.resolve().then(() => backend.close()).catch((error: unknown) => { console.error(error) }),
+      Promise.resolve().then(() => platformView.dispose()).catch((error: unknown) => { console.error(error) }),
+    ])).finally(() => { quitCleanupComplete = true; app.quit() })
   }
   app.on('before-quit', (event) => {
     if (shellInstallerOwnsQuit) {
@@ -1485,7 +1490,10 @@ async function main(): Promise<void> {
       void platformView.dispose().catch((error: unknown) => { console.error(error) })
       return
     }
-    if (quitting) return
+    if (quitting) {
+      if (!quitCleanupComplete) event.preventDefault()
+      return
+    }
     event.preventDefault()
     if (skipQuitConfirmation || sessionEnding) { finishQuit(); return }
     void quitConfirmation.confirm().then((approved) => {
