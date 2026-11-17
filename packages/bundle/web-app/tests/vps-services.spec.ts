@@ -1,5 +1,10 @@
+import type { Agent } from '@yharness/agent'
+import { Context } from '@yharness/cordis'
+import SystemPrompt from '@yharness/system-prompt'
+import ToolRuntime from '@yharness/tools'
+import { ToolCallId } from '@yharness/llm'
 import { describe, expect, it, vi } from 'vitest'
-import { VpsServices } from '../src/vps-services.ts'
+import { registerVpsServiceTools, VpsServices } from '../src/vps-services.ts'
 
 const access = [{ unit: 'example-worker.service', scope: 'system' as const, bots: ['bot-worker'], restart: true }]
 const signal = new AbortController().signal
@@ -61,5 +66,56 @@ describe('VPS service access', () => {
     const ask = async () => { controller.abort(); return true }
     await expect(services.restart('bot-worker', 'example-worker.service', ask, controller.signal)).rejects.toThrow()
     expect(run).not.toHaveBeenCalled()
+  })
+})
+
+describe('VPS service tools', () => {
+  it('checks the exact owning Agent and cancels an approval when its Web mount ends', async () => {
+    const ctx = new Context()
+    await ctx.plugin(SystemPrompt)
+    await ctx.plugin(ToolRuntime)
+    const entered = Promise.withResolvers<AbortSignal>()
+    const request = vi.fn(async ({ signal }: { signal: AbortSignal }) => {
+      entered.resolve(signal)
+      await new Promise<void>((resolve) => {
+        if (signal.aborted) resolve()
+        else signal.addEventListener('abort', () => { resolve() }, { once: true })
+      })
+      return 'allowed-once'
+    })
+    ctx.provide('approval', { request } as never)
+    const run = vi.fn<(args: readonly string[], signal: AbortSignal) => Promise<string>>()
+      .mockResolvedValue('Id=example-worker.service\nActiveState=active\n')
+    const owner = { id: 'owner-session', ctx } as Agent
+    const other = { id: owner.id, ctx } as Agent
+    const lifetime = new AbortController()
+    registerVpsServiceTools(ctx, 'bot-worker', new VpsServices(access, run), owner, lifetime.signal)
+    const execute = (name: 'vps_service_status' | 'vps_service_restart', agent?: Agent) => ctx.tools.execute({
+      signal,
+      callId: ToolCallId('vps-service-owner-test'),
+      name,
+      arguments: { unit: 'example-worker.service' },
+      ...(agent === undefined ? {} : { agent }),
+    })
+    try {
+      await expect(execute('vps_service_status')).resolves.toMatchObject({ isError: true })
+      await expect(execute('vps_service_status', other)).resolves.toMatchObject({ isError: true })
+      await expect(execute('vps_service_restart', other)).resolves.toMatchObject({ isError: true })
+      expect(request).not.toHaveBeenCalled()
+      expect(run).not.toHaveBeenCalled()
+
+      await expect(execute('vps_service_status', owner)).resolves.toMatchObject({ isError: false })
+      expect(run).toHaveBeenCalledOnce()
+      const restart = execute('vps_service_restart', owner)
+      const requestSignal = await entered.promise
+      lifetime.abort()
+      expect(requestSignal.aborted).toBe(true)
+      await expect(restart).resolves.toMatchObject({ isError: true })
+      await expect(execute('vps_service_status', owner)).resolves.toMatchObject({ isError: true })
+      expect(run).toHaveBeenCalledOnce()
+    } finally {
+      lifetime.abort()
+      await ctx.fiber.dispose()
+    }
   })
 })

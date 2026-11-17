@@ -634,6 +634,9 @@ describe('managed VPS Bot composition', () => {
     const browserLogin = vi.spyOn(VpsBrowserLogin.prototype, 'request').mockResolvedValue({ state: 'submitted' })
     const routes: ConnectionFetchRoute[] = []
     const bindWorkspace = vi.fn<Context['terminalController']['bindWorkspace']>().mockReturnValue(() => Promise.resolve())
+    const lateSession = SessionId('bot-session-c5496e76-4558-4cf8-a45a-0e59d0723527')
+    const lateLookup = Promise.withResolvers<undefined>()
+    const releaseLookup = Promise.withResolvers<undefined>()
     let directOwnerTurn = true
     try {
       await ctx.plugin(LlmRuntime)
@@ -658,12 +661,17 @@ describe('managed VPS Bot composition', () => {
           if (sessionId === BOT_SESSION) return { id: 'bot-test', sessionId, state: 'active' }
           if (sessionId === DESKTOP_SESSION) return { id: 'bot-desktop', sessionId, state: 'active' }
           if (sessionId === LEGACY_SESSION) return { id: 'bot-legacy', sessionId, state: 'active' }
+          if (sessionId === lateSession) {
+            lateLookup.resolve(undefined)
+            await releaseLookup.promise
+            return { id: 'bot-test', sessionId, state: 'active' }
+          }
           return undefined
         },
         isDirectOwnerTurn: async () => directOwnerTurn,
         privateOwnerTurnSource: async () => directOwnerTurn ? 'user' : undefined,
       } as never)
-      await ctx.plugin((scope) => {
+      const mount = () => ctx.plugin((scope) => {
         mountVpsBots(scope, {
           root: '/yharness-test-bots', image: 'localhost/yharness-test', bots: ['bot-test', 'bot-desktop'],
           desktopOnlyBots: ['bot-desktop'],
@@ -673,6 +681,7 @@ describe('managed VPS Bot composition', () => {
           socketPath: '/run/yharness-test.sock', bots: ['bot-test', 'bot-desktop'],
         })
       })
+      const mounted = await mount()
       const files = await ctx.workspaceFileAccess.forSession(BOT_SESSION, new AbortController().signal)
       expect(files?.workspaceRoot).toBe(`/yharness-test-bots/${BOT_SESSION}`)
       expect(files?.fs).toBeInstanceOf(VpsBotFileSystem)
@@ -830,24 +839,46 @@ describe('managed VPS Bot composition', () => {
 
       await expect(ctx.tools.execute({ ...call, name: 'vps_service_journal', callId: ToolCallId('journal-call'), agent: bot }))
         .resolves.toMatchObject({ isError: false })
-      expect(readJournal).toHaveBeenCalledExactlyOnceWith('bot-test', call.signal)
+      expect(readJournal).toHaveBeenCalledExactlyOnceWith('bot-test', expect.any(AbortSignal))
       await expect(ctx.tools.execute({ ...call, name: 'vps_service_journal', callId: ToolCallId('desktop-journal-call'), agent: desktop }))
         .resolves.toMatchObject({ isError: false })
-      expect(readJournal).toHaveBeenNthCalledWith(2, 'bot-desktop', call.signal)
+      expect(readJournal).toHaveBeenNthCalledWith(2, 'bot-desktop', expect.any(AbortSignal))
       const journal = ctx.get('botVpsJournal')
       if (journal === undefined) throw new Error('native Bot journal reader was not mounted')
       expect(journal.forBot(BotId('bot-legacy'))).toBeUndefined()
       const readDesktopJournal = journal.forBot(BotId('bot-desktop'))
       if (readDesktopJournal === undefined) throw new Error('desktop-only Bot journal grant was not mounted')
       await expect(readDesktopJournal(call.signal)).resolves.toMatchObject({ version: 1 })
-      expect(readJournal).toHaveBeenNthCalledWith(3, 'bot-desktop', call.signal)
+      expect(readJournal).toHaveBeenNthCalledWith(3, 'bot-desktop', expect.any(AbortSignal))
       await expect(ctx.tools.execute({ ...call, callId: ToolCallId('bot-call'), agent: bot }))
         .resolves.toMatchObject({ isError: true })
       await expect(ctx.tools.execute({ ...call, callId: ToolCallId('desktop-call'), agent: desktop }))
         .resolves.toMatchObject({ isError: false })
       await expect(ctx.tools.execute({ ...call, callId: ToolCallId('regular-call'), agent: regular }))
         .resolves.toMatchObject({ isError: false })
+
+      const opening = ctx.agentLoop.create(lateSession, options)
+      const refused = expect(opening).rejects.toThrow('VPS Bot Computer scope is closed')
+      await lateLookup.promise
+      await mounted.dispose()
+      releaseLookup.resolve(undefined)
+      await refused
+      expect(managedBotExecutionFor({ agent: bot }) === undefined).toBe(true)
+      expect(readJournal.mock.calls.map(([, requestSignal]) => requestSignal.aborted)).toEqual([true, true, true])
+      await expect(execution.subprocess.resolveExecutable('/bin/bash')).rejects.toThrow('VPS Bot Computer scope is closed')
+      await expect(execution.fs.lstat('notes.txt')).rejects.toThrow('VPS Bot Computer scope is closed')
+      expect(ctx.tools.get('vps_computer', desktop)).toBeUndefined()
+      await expect(ctx.tools.execute({ ...call, callId: ToolCallId('bot-after-reload'), agent: bot }))
+        .resolves.toMatchObject({ isError: true })
+      await expect(ctx.tools.execute({ ...call, callId: ToolCallId('regular-after-reload'), agent: regular }))
+        .resolves.toMatchObject({ isError: false })
+
+      await mount()
+      await expect.poll(() => managedBotExecutionFor({ agent: bot })).toBeDefined()
+      await expect.poll(() => ctx.tools.get('vps_computer', desktop)).toBeDefined()
+      expect(bindWorkspace).toHaveBeenCalledTimes(2)
     } finally {
+      releaseLookup.resolve(undefined)
       argv.mockRestore()
       readJournal.mockRestore()
       startDesktop.mockRestore()

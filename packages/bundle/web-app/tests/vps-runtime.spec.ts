@@ -30,7 +30,7 @@ function result(code = 0, stdout = ''): VpsCommandResult {
   return { code, stdout, stderr: '' }
 }
 
-function fixture(run: (argv: readonly string[]) => Promise<VpsCommandResult> | VpsCommandResult = async (argv) => {
+function fixture(run: (argv: readonly string[], signal: AbortSignal) => Promise<VpsCommandResult> | VpsCommandResult = async (argv) => {
   if (argv[1] === 'container' && argv[2] === 'exists') return result(1)
   return result()
 }, {
@@ -83,11 +83,11 @@ function fixture(run: (argv: readonly string[]) => Promise<VpsCommandResult> | V
   const runtime = new VpsRuntime(root, 'localhost/yharness-vps-bot:24.04', {
     userService,
     networkHelperAvailable: () => true,
-    run: async (argv) => {
+    run: async (argv, signal) => {
       calls.push([...argv])
       const podman = argv.slice(argv.indexOf('/usr/bin/podman'))
       if (podman[1] === 'volume') return await defaultVolumeCommand(podman)
-      return await run(podman)
+      return await run(podman, signal)
     },
   }, {
     ...(browser ? { browser: { image: 'localhost/yharness-vps-bot-browser:24.04-v1', seccompProfile } } : {}),
@@ -100,6 +100,30 @@ function fixture(run: (argv: readonly string[]) => Promise<VpsCommandResult> | V
 }
 
 describe('VpsRuntime', () => {
+  it('cancels provisioning and waits for the pending command before closing', async () => {
+    const entered = Promise.withResolvers<AbortSignal>()
+    const released = Promise.withResolvers<VpsCommandResult>()
+    const { runtime } = fixture(async (_args, signal) => {
+      entered.resolve(signal)
+      return released.promise
+    })
+    const preparing = runtime.ensure(sessions.alice)
+    const rejected = expect(preparing).rejects.toThrow('VPS Bot Computer scope is closed')
+    const signal = await entered.promise
+    let disposed = false
+    const disposal = runtime.dispose().then(() => { disposed = true })
+    try {
+      expect(signal.aborted).toBe(true)
+      await expect(runtime.ensure(sessions.bob)).rejects.toThrow('VPS Bot Computer scope is closed')
+      expect(() => runtime.execArgv(sessions.alice, ['/bin/bash'])).toThrow('VPS Bot Computer scope is closed')
+      expect(disposed).toBe(false)
+    } finally {
+      released.resolve(result())
+      await rejected
+      await disposal
+    }
+  })
+
   it('sets one cold Computer’s network policy without starting it or enrolling another Bot', async () => {
     const values = new Map<string, boolean>()
     const f = fixture(undefined, { networkPolicy: {

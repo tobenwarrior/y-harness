@@ -253,19 +253,20 @@ export class VpsBotFileSystem extends FileSystem {
   }
 
   private async call<T>(operation: string, path: string, arguments_: object, schema: z.ZodType<T>, signal?: AbortSignal): Promise<T> {
-    signal?.throwIfAborted()
+    const operationSignal = this.runtime.operationSignal(signal)
+    operationSignal.throwIfAborted()
     const finished = this.runtime.beginUse(this.sessionId)
     try {
       if (this.workspace === 'shared' && await this.runtime.sharedWorkspaceFor(this.sessionId) === undefined) {
         throw new VpsRuntimeError('This Bot does not have shared workspace access.')
       }
       await this.runtime.ensure(this.sessionId)
-      signal?.throwIfAborted()
+      operationSignal.throwIfAborted()
       const worker = this.workspace === 'shared' ? ['-c', vpsProjectWorker] : ['/usr/local/lib/yharness/files.py']
       const command = ['/usr/bin/python3', '-I', ...worker, this.root]
       const [program, ...argv] = this.runtime.execArgv(this.sessionId, command, { stdin: true })
       try {
-        const child = exec(program, argv, { signal, timeout: 30_000, maxBuffer: MAX_TEXT_BYTES * 2 })
+        const child = exec(program, argv, { signal: operationSignal, timeout: 30_000, maxBuffer: MAX_TEXT_BYTES * 2 })
         child.child.stdin?.on('error', (error) => { void error })
         child.child.stdin?.end(JSON.stringify({ operation, path, ...arguments_ }))
         const { stdout } = await child
@@ -274,6 +275,7 @@ export class VpsBotFileSystem extends FileSystem {
         if (failure.success) throw new FsError(failure.data.message, failure.data.error)
         return z.object({ value: schema }).parse(response).value
       } catch (error) {
+        operationSignal.throwIfAborted()
         if (error instanceof FsError) throw error
         throw new FsError('The VPS Bot file operation could not complete.', 'FS_IO_ERROR')
       }

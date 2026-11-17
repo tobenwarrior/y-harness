@@ -228,6 +228,7 @@ const EMPTY_INPUT = {
  * @param ownerSessionId - Session id that must own every execution.
  * @param journal - Read-only journal client used after identity checks pass.
  * @param ownerContext - Exact Agent context required for execution; defaults to `ctx`.
+ * @param lifetime - Optional cancellation of the Web configuration supplying the journal.
  */
 export function registerVpsJournalTool(
   ctx: Context,
@@ -235,6 +236,7 @@ export function registerVpsJournalTool(
   ownerSessionId: string,
   journal: VpsJournal,
   ownerContext: Context = ctx,
+  lifetime?: AbortSignal,
 ): void {
   if (!journal.authorized(bot)) return
   ctx.effect(() => ctx.tools.register({
@@ -249,7 +251,9 @@ export function registerVpsJournalTool(
       }
       const violations = validateJsonSchemaValue(EMPTY_INPUT, args)
       if (violations.length > 0) throw new ToolArgsError(violations)
-      return JSON.stringify(await journal.read(bot, call.signal))
+      const signal = lifetime === undefined ? call.signal : AbortSignal.any([call.signal, lifetime])
+      signal.throwIfAborted()
+      return JSON.stringify(await journal.read(bot, signal))
     },
   }), 'vps-journal: read-only diagnostics')
 }

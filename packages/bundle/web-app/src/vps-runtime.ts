@@ -27,9 +27,11 @@ const SESSION_ID_PATTERN = /^bot-session-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[8
 const IMAGE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/@:-]*$/u
 const PRIVATE_MODE_MASK = 0o077
 const PODMAN_TIMEOUT_MS = 120_000
+const PODMAN_KILL_GRACE_MS = 2_000
 const PODMAN_OUTPUT_LIMIT = 64 * 1024
 const DESKTOP_READY_TIMEOUT_MS = 30_000
 const DESKTOP_HEALTH_CACHE_MS = 500
+const RUNTIME_CLOSED = 'VPS Bot Computer scope is closed'
 const SHARED_PROJECT = '/workspace'
 const SHARED_PROJECT_PURPOSE = 'shared-project'
 const BROWSER_PROFILE = '/var/lib/yharness-browser-profile'
@@ -49,7 +51,7 @@ export interface VpsCommandResult {
  * Injectable Podman seam used by unit tests. Production uses argv-only
  * `spawn`; no command is interpreted by a shell.
  */
-export type VpsCommandRunner = (argv: readonly string[]) => Promise<VpsCommandResult>
+export type VpsCommandRunner = (argv: readonly string[], signal: AbortSignal) => Promise<VpsCommandResult>
 
 /** Test-only hooks for the local Podman process and filesystem clock. */
 export interface VpsRuntimeInternals {
@@ -138,7 +140,9 @@ export class VpsRuntime {
   readonly internet: boolean
   /** Project mount point for this runtime when a Session has access. */
   readonly sharedRoot?: string
+  private readonly lifetime = new AbortController()
   private readonly pending = new Map<string, Promise<void>>()
+  private readonly pendingCommands = new Set<Promise<VpsCommandResult>>()
   private readonly healthyUntil = new Map<string, number>()
   private readonly active = new Map<string, number>()
   private readonly replacing = new Set<string>()
@@ -170,6 +174,27 @@ export class VpsRuntime {
       this.sharedRoot = SHARED_PROJECT
       this.projectVolume = 'yharness-bot-project-' + rootDigest(this.rootPath)
     }
+  }
+
+  /** Cancellation shared by operations owned by this VPS configuration. */
+  get signal(): AbortSignal {
+    return this.lifetime.signal
+  }
+
+  /**
+   * Combine a request with the lifetime of its VPS configuration.
+   * @param signal - Optional request cancellation.
+   * @returns Cancellation when either the request or the configuration ends.
+   */
+  operationSignal(signal?: AbortSignal): AbortSignal {
+    return signal === undefined ? this.signal : AbortSignal.any([signal, this.signal])
+  }
+
+  /** Cancel and drain pending computer preparation and Podman commands. */
+  async dispose(): Promise<void> {
+    this.lifetime.abort(new VpsRuntimeError(RUNTIME_CLOSED))
+    this.healthyUntil.clear()
+    await Promise.allSettled([...this.pending.values(), ...this.pendingCommands])
   }
 
   /**
@@ -227,6 +252,7 @@ export class VpsRuntime {
    * @returns An idempotent release after the operation and its process have settled.
    */
   beginUse(sessionId: string): () => void {
+    this.signal.throwIfAborted()
     validateSessionId(sessionId)
     this.requireStableComputer(sessionId)
     this.active.set(sessionId, (this.active.get(sessionId) ?? 0) + 1)
@@ -301,8 +327,8 @@ export class VpsRuntime {
   }
 
   private async changeWhileIdle<T>(sessionId: string, signal: AbortSignal, change: () => Promise<T | 'busy'>): Promise<T | 'busy'> {
+    this.operationSignal(signal).throwIfAborted()
     validateSessionId(sessionId)
-    signal.throwIfAborted()
     if (this.replacing.has(sessionId) || this.pending.has(sessionId) || this.active.has(sessionId)) return 'busy'
     this.replacing.add(sessionId)
     try {
@@ -351,6 +377,7 @@ export class VpsRuntime {
    * @returns A promise settled after the container is running.
    */
   async ensure(sessionId: string): Promise<void> {
+    this.signal.throwIfAborted()
     validateSessionId(sessionId)
     this.requireStableComputer(sessionId)
     const existing = this.pending.get(sessionId)
@@ -358,8 +385,10 @@ export class VpsRuntime {
     const now = Date.now()
     if ((this.healthyUntil.get(sessionId) ?? 0) > now) return
     const task = Promise.resolve().then(async () => {
+      this.signal.throwIfAborted()
       this.mountedProjects.delete(sessionId)
       await this.ensureOne(sessionId)
+      this.signal.throwIfAborted()
       this.healthyUntil.set(sessionId, Date.now() + DESKTOP_HEALTH_CACHE_MS)
     })
     this.pending.set(sessionId, task)
@@ -385,6 +414,7 @@ export class VpsRuntime {
    * @returns A fresh immutable argv array suitable for an argv-only spawner.
    */
   execArgv(sessionId: string, argv: readonly string[], options: VpsExecOptions = {}): readonly [string, ...string[]] {
+    this.signal.throwIfAborted()
     validateSessionId(sessionId)
     if (!validCommandArguments(argv)) {
       throw new VpsRuntimeError('VPS Bot command must contain a non-empty argv without NUL bytes')
@@ -417,19 +447,20 @@ export class VpsRuntime {
    * @returns Command output bytes for the Computer controller.
    */
   async desktopCommand(sessionId: string, argv: readonly string[], signal: AbortSignal, stdin?: string): Promise<Buffer> {
-    signal.throwIfAborted()
+    const operationSignal = this.operationSignal(signal)
+    operationSignal.throwIfAborted()
     const [program, ...args] = this.execArgv(sessionId, argv, { stdin: stdin !== undefined })
     const finished = this.beginUse(sessionId)
     try {
-      const child = exec(program, args, { encoding: 'buffer', maxBuffer: 4 * 1024 * 1024, timeout: 12_000, signal })
+      const child = exec(program, args, { encoding: 'buffer', maxBuffer: 4 * 1024 * 1024, timeout: 12_000, signal: operationSignal })
       if (stdin !== undefined) {
         child.child.stdin?.on('error', (error) => { void error })
         child.child.stdin?.end(stdin)
       }
       return (await child).stdout
     } catch (error) {
+      operationSignal.throwIfAborted()
       if (stdin === undefined) throw error
-      signal.throwIfAborted()
       throw new VpsRuntimeError('The private Computer input could not be sent')
     } finally {
       finished()
@@ -575,15 +606,23 @@ export class VpsRuntime {
   }
 
   private async runPodman(args: readonly string[]): Promise<VpsCommandResult> {
+    this.signal.throwIfAborted()
     const startsComputer = args[0] === 'run' || args[0] === 'start'
     const argv = this.scopedLaunch && startsComputer
       ? [...USER_COMPUTER_SCOPE, PODMAN, ...args]
       : [PODMAN, ...args]
-    const result = await (this.internals.run ?? runPodmanProcess)(argv)
-    if (!Number.isInteger(result.code) || typeof result.stdout !== 'string' || typeof result.stderr !== 'string') {
-      throw new VpsRuntimeError('VPS Bot Podman returned invalid command facts')
+    const command = (this.internals.run ?? runPodmanProcess)(argv, this.signal)
+    this.pendingCommands.add(command)
+    try {
+      const result = await command
+      this.signal.throwIfAborted()
+      if (!Number.isInteger(result.code) || typeof result.stdout !== 'string' || typeof result.stderr !== 'string') {
+        throw new VpsRuntimeError('VPS Bot Podman returned invalid command facts')
+      }
+      return result
+    } finally {
+      this.pendingCommands.delete(command)
     }
-    return result
   }
 }
 
@@ -883,9 +922,10 @@ async function ensurePrivateDirectory(path: string, uidHook?: () => number | und
   }
 }
 
-async function runPodmanProcess(argv: readonly string[]): Promise<VpsCommandResult> {
+async function runPodmanProcess(argv: readonly string[], signal: AbortSignal): Promise<VpsCommandResult> {
   const [command, ...args] = argv
   if (command === undefined) throw new VpsRuntimeError('VPS Bot Podman command is empty')
+  signal.throwIfAborted()
   return await new Promise<VpsCommandResult>((resolveResult, reject) => {
     const child = spawn(command, args, {
       env: podmanEnvironment(),
@@ -894,43 +934,52 @@ async function runPodmanProcess(argv: readonly string[]): Promise<VpsCommandResu
     let stdout = ''
     let stderr = ''
     let settled = false
-    const timer = setTimeout(() => {
-      if (settled) return
-      settled = true
+    let failure: VpsRuntimeError | undefined
+    let forceKill: ReturnType<typeof setTimeout> | undefined
+    const terminate = (error: VpsRuntimeError): void => {
+      if (settled || failure !== undefined) return
+      failure = error
+      clearTimeout(deadline)
+      forceKill = setTimeout(() => { child.kill('SIGKILL') }, PODMAN_KILL_GRACE_MS)
       child.kill('SIGTERM')
-      reject(new VpsRuntimeError('VPS Bot Podman command timed out'))
-    }, PODMAN_TIMEOUT_MS)
-    const rejectOutput = (): void => {
-      if (settled) return
-      settled = true
-      child.kill('SIGTERM')
-      clearTimeout(timer)
-      reject(new VpsRuntimeError('VPS Bot Podman output exceeded its limit'))
     }
+    const stop = (): void => { terminate(new VpsRuntimeError(RUNTIME_CLOSED)) }
+    const deadline = setTimeout(() => {
+      terminate(new VpsRuntimeError('VPS Bot Podman command timed out'))
+    }, PODMAN_TIMEOUT_MS)
+    const clean = (): void => {
+      settled = true
+      clearTimeout(deadline)
+      clearTimeout(forceKill)
+      signal.removeEventListener('abort', stop)
+    }
+    const outputOverflow = (): void => { terminate(new VpsRuntimeError('VPS Bot Podman output exceeded its limit')) }
     child.stdout.setEncoding('utf8')
     child.stderr.setEncoding('utf8')
     child.stdout.on('data', (chunk: string) => {
+      if (failure !== undefined) return
       stdout += chunk
-      if (Buffer.byteLength(stdout, 'utf8') > PODMAN_OUTPUT_LIMIT) rejectOutput()
+      if (Buffer.byteLength(stdout, 'utf8') > PODMAN_OUTPUT_LIMIT) outputOverflow()
     })
     child.stderr.on('data', (chunk: string) => {
+      if (failure !== undefined) return
       stderr += chunk
-      if (Buffer.byteLength(stderr, 'utf8') > PODMAN_OUTPUT_LIMIT) rejectOutput()
+      if (Buffer.byteLength(stderr, 'utf8') > PODMAN_OUTPUT_LIMIT) outputOverflow()
     })
-    child.once('error', (error) => {
-      void error
-      if (settled) return
-      settled = true
-      clearTimeout(timer)
+    child.once('error', () => {
+      if (settled || failure !== undefined) return
+      clean()
       reject(new VpsRuntimeError('VPS Bot Podman could not start'))
     })
     child.once('close', (code) => {
       if (settled) return
-      settled = true
-      clearTimeout(timer)
-      if (code === null) reject(new VpsRuntimeError('VPS Bot Podman exited without a status'))
+      clean()
+      if (failure !== undefined) reject(failure)
+      else if (code === null) reject(new VpsRuntimeError('VPS Bot Podman exited without a status'))
       else resolveResult({ code, stdout, stderr })
     })
+    signal.addEventListener('abort', stop, { once: true })
+    if (signal.aborted) stop()
   })
 }
 

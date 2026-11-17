@@ -1,5 +1,6 @@
 /** Assign each owner Bot on a configured VPS its own shell, files and desktop. */
 
+import type { Agent } from '@yharness/agent'
 import type { Context } from '@yharness/cordis'
 import type {} from '@yharness/api-terminal-controller'
 import { LocalBashExecutor } from '@yharness/bash-local'
@@ -30,6 +31,9 @@ import { type AutomaticVpsBrowserLogin, VpsBrowserLogin, type VpsBrowserLoginLea
 import { registerVpsServiceTools, VpsServices, type VpsServiceAccess } from './vps-services.ts'
 import { registerVpsJournalTool, VpsJournal, type VpsJournalConfig } from './vps-journal.ts'
 
+const BINDING_UNAVAILABLE = 'The Bot’s VPS environment could not be bound to this Session.'
+const guardedAgents = new WeakSet<Agent>()
+
 const BOT_TOOLS = new Set([
   'bash', 'read', 'write', 'edit', 'apply_patch', 'glob', 'grep', 'present', 'job_output', 'job_list', 'job_kill',
   'vps_computer', 'copy_vps_file', 'read_vps_file', 'vps_project_files', 'vps_service_status', 'vps_service_restart', 'vps_service_journal', 'skill', 'search_skills',
@@ -42,6 +46,18 @@ const BOT_TOOLS = new Set([
   'list_bot_memory', 'remember_bot_memory', 'forget_bot_memory', 'list_connected_apps',
   'list_bot_groups', 'inspect_bot_group', 'create_bot_group', 'update_bot_group', 'send_bot_group_message',
 ])
+
+function guardHostFallback(agent: Agent): void {
+  if (guardedAgents.has(agent)) return
+  agent.ctx.effect(() => {
+    const dispose = agent.ctx.tools.guard(call => managedBotExecutionFor(call) === undefined ? BINDING_UNAVAILABLE : undefined)
+    guardedAgents.add(agent)
+    return () => {
+      dispose()
+      guardedAgents.delete(agent)
+    }
+  }, 'vps-bots: protect an unbound managed Agent')
+}
 
 /**
  * Mount managed Linux computers in the shipped VPS Web profile.
@@ -76,7 +92,9 @@ export function mountVpsBots(
   const browsers = new Map<string, VpsComputer>()
   const desktops = new Map<string, VpsComputer>()
   const pendingComputerStarts = new Set<Promise<unknown>>()
-  let closingComputers = false
+  const lifetime = new AbortController()
+  const bindings = new Set<() => void | Promise<void>>()
+  const attachments = new WeakMap<Agent, Promise<void>>()
   const previewFiles = new Map<string, VpsBotFileSystem>()
   const projectFiles = new Map<string, VpsBotFileSystem>()
   const managedBotIds = config.bots == null ? undefined : new Set(config.bots)
@@ -120,6 +138,7 @@ export function mountVpsBots(
   const projectToolGrants = new Map<SessionId, (granted: boolean) => Promise<void>>()
   const runtimes = new Map<string, VpsRuntime>()
   const runtimeWith = (browser: VpsBrowserOptions | undefined, sharedWorkspace: boolean, internet: boolean): VpsRuntime => {
+    lifetime.signal.throwIfAborted()
     const key = `${browser !== undefined}/${sharedWorkspace}/${internet}`
     let runtime = runtimes.get(key)
     if (runtime === undefined) {
@@ -239,7 +258,9 @@ export function mountVpsBots(
   const journal = journalConfig === undefined ? undefined : new VpsJournal(journalConfig)
   if (journal !== undefined) {
     ctx.provide('botVpsJournal', {
-      forBot: botId => journal.authorized(botId) ? signal => journal.read(botId, signal) : undefined,
+      forBot: botId => journal.authorized(botId)
+        ? signal => journal.read(botId, AbortSignal.any([signal, lifetime.signal]))
+        : undefined,
     })
   }
   ctx.provide('botWorkspaces', {
@@ -249,20 +270,60 @@ export function mountVpsBots(
     desktopOnly: isDesktopOnly,
   })
   ctx.effect(() => async () => {
-    closingComputers = true
+    lifetime.abort(new Error('VPS Bot Computer scope is closed'))
     const active = [...browsers.values(), ...desktops.values()]
     browsers.clear()
     desktops.clear()
     previewFiles.clear()
     projectFiles.clear()
     const preparations = Promise.allSettled(pendingComputerStarts)
-    await Promise.all([browserLogin?.dispose(), browserHandoffs?.dispose()])
-    await Promise.all([preparations, ...active.map(computer => computer.dispose())])
-  }, 'vps-bots: dispose desktop controllers')
+    // Terminal bindings close their container process groups before the runtime stops.
+    const unbound = await Promise.allSettled([
+      ...[...bindings].map(dispose => Promise.resolve().then(dispose)),
+      browserLogin?.dispose(),
+      browserHandoffs?.dispose(),
+    ])
+    const stopped = await Promise.allSettled([
+      ...[...runtimes.values()].map(runtime => runtime.dispose()),
+      ...active.map(computer => computer.dispose()),
+      preparations,
+    ])
+    const errors = [...unbound, ...stopped]
+      .filter(result => result.status === 'rejected')
+      .map((result): unknown => result.reason)
+    if (errors.length > 0) throw new AggregateError(errors, 'The VPS Bot configuration could not close.')
+  }, 'vps-bots: dispose Agent bindings and desktop controllers')
+
+  const bind = async (
+    agent: Agent,
+    services: Parameters<Context['inject']>[0],
+    install: (agentCtx: Context) => void | Promise<void>,
+  ): Promise<void> => {
+    lifetime.signal.throwIfAborted()
+    const fiber = agent.ctx.inject(services, (agentCtx) => {
+      lifetime.signal.throwIfAborted()
+      return install(agentCtx)
+    })
+    const dispose = agent.ctx.effect(() => async () => {
+      try {
+        await fiber.dispose()
+      } finally {
+        bindings.delete(dispose)
+      }
+    }, 'vps-bots: dispose an Agent binding')
+    bindings.add(dispose)
+    try {
+      await fiber
+      lifetime.signal.throwIfAborted()
+    } catch (error) {
+      await dispose()
+      throw error
+    }
+  }
 
   const requireOpenComputerScope = (signal: AbortSignal): void => {
     signal.throwIfAborted()
-    if (closingComputers) throw new ComputerLeaseError('The Bot Computer is closing.')
+    if (lifetime.signal.aborted) throw new ComputerLeaseError('The Bot Computer is closing.')
   }
 
   const openComputer = async (
@@ -297,8 +358,9 @@ export function mountVpsBots(
 
   const computerFor = (sessionId: string, botId: string, signal: AbortSignal): Promise<VpsComputer> => {
     if (isolatedBrowser === undefined || !isIsolatedBrowserBot(botId)) return desktopFor(sessionId, botId, signal)
-    return openComputer(browsers, sessionId, signal,
-      () => isolatedBrowser.status(botId, sessionId, signal),
+    const requestSignal = AbortSignal.any([signal, lifetime.signal])
+    return openComputer(browsers, sessionId, requestSignal,
+      () => isolatedBrowser.status(botId, sessionId, requestSignal),
       () => isolatedBrowser.computer(botId, sessionId))
   }
   const navigateFor = async (botId: string, sessionId: string, url: string, signal: AbortSignal): Promise<void> => {
@@ -489,12 +551,18 @@ export function mountVpsBots(
     scope.on('tools/pre-execute', async (call, next) => {
       const bot = call.agent === undefined ? undefined : await scope.bots.ownerBotForSession(call.agent.id)
       if (bot !== undefined && isManagedBot(bot.id) && managedBotExecutionFor(call) === undefined) {
-        return { kind: 'deny', reason: 'The Bot’s VPS environment could not be bound to this Session.' }
+        return { kind: 'deny', reason: BINDING_UNAVAILABLE }
       }
       return next()
     }, { prepend: true })
-    scope.on('agent/created', async ({ agent, signal }) => {
+    const installAgent = async (agent: Agent, signal?: AbortSignal): Promise<void> => {
       const bot = await scope.bots.ownerBotForSession(agent.id)
+      if (agent.ctx.fiber.uid === null) return
+      if (bot !== undefined && isManagedBot(bot.id)) {
+        lifetime.signal.throwIfAborted()
+        guardHostFallback(agent)
+      } else if (lifetime.signal.aborted) return
+      signal?.throwIfAborted()
       if (bot === undefined || !isDesktopBot(bot.id)) {
         if (managedBotIds === undefined || legacyComputer === undefined) return
         const canUseComputer = (): boolean => {
@@ -502,7 +570,7 @@ export function mountVpsBots(
           return preset !== undefined && /^(?:standard|cordis|ptc)$/u.test(preset)
         }
         if (!canUseComputer()) return
-        await agent.ctx.inject(ComputerTool.inject, (agentCtx) => {
+        await bind(agent, ComputerTool.inject, (agentCtx) => {
           ComputerTool.apply(agentCtx)
           agentCtx.effect(() => agentCtx.tools.guard(exec => exec.name === 'vps_computer' && !canUseComputer()
             ? 'This Agent preset cannot access the private Computer.'
@@ -527,6 +595,7 @@ export function mountVpsBots(
               return () => { if (projectToolGrants.get(bot.sessionId) === setAccess) projectToolGrants.delete(bot.sessionId) }
             }, 'vps-bots: update the Bot project tool when access changes')
             const granted = await runtime.sharedWorkspaceFor(bot.sessionId) !== undefined
+            lifetime.signal.throwIfAborted()
             signal?.throwIfAborted()
             await setAccess(granted)
           }
@@ -562,7 +631,7 @@ export function mountVpsBots(
         } : undefined)
       }
       if (!isManagedBot(bot.id)) {
-        await agent.ctx.inject(['terminalController', 'subprocess'], (terminalCtx) => {
+        await bind(agent, ['terminalController', 'subprocess'], (terminalCtx) => {
           const runtime = runtimeFor(bot.id)
           const subprocess = new VpsBotSubprocess(terminalCtx.isolate('subprocess'), {
             runtime, sessionId: bot.sessionId, host: terminalCtx.subprocess,
@@ -571,7 +640,7 @@ export function mountVpsBots(
             cwd: runtime.workspace(bot.sessionId), subprocess,
           }), 'vps-bots: bind owner terminal')
         })
-        await agent.ctx.inject(['tools', 'attachments', 'llm', 'systemPrompt'], async (agentCtx) => {
+        await bind(agent, ['tools', 'attachments', 'llm', 'systemPrompt'], async (agentCtx) => {
           agentCtx.systemPrompt.section({
             name: 'app:vps-bot-desktop',
             order: agentCtx.systemPrompt.getSectionOrder('WEB_SURFACE'),
@@ -579,11 +648,11 @@ export function mountVpsBots(
               + 'Bash and file tools use your existing Session workspace and permissions.',
           })
           await installComputerTool(agentCtx)
-          if (journal !== undefined) registerVpsJournalTool(agentCtx, bot.id, bot.sessionId, journal, agent.ctx)
+          if (journal !== undefined) registerVpsJournalTool(agentCtx, bot.id, bot.sessionId, journal, agent.ctx, lifetime.signal)
         })
         return
       }
-      await agent.ctx.inject(['tools', 'attachments', 'llm', 'systemPrompt', 'subprocess', 'sandboxPolicy'], async (agentCtx) => {
+      await bind(agent, ['tools', 'attachments', 'llm', 'systemPrompt', 'subprocess', 'sandboxPolicy'], async (agentCtx) => {
         const runtime = runtimeFor(bot.id)
         const workspace = runtime.workspace(bot.sessionId)
         const managedContext = agentCtx.isolate('fs').isolate('subprocess').isolate('shell')
@@ -635,9 +704,24 @@ export function mountVpsBots(
             + 'Host service access requires a separate grant. Mac permissions do not apply here.',
         })
         await installComputerTool(agentCtx)
-        registerVpsServiceTools(agentCtx, bot.id, services)
-        if (journal !== undefined) registerVpsJournalTool(agentCtx, bot.id, bot.sessionId, journal, agent.ctx)
+        registerVpsServiceTools(agentCtx, bot.id, services, agent, lifetime.signal)
+        if (journal !== undefined) registerVpsJournalTool(agentCtx, bot.id, bot.sessionId, journal, agent.ctx, lifetime.signal)
       })
-    })
+    }
+    const attach = (agent: Agent, signal?: AbortSignal): Promise<void> => {
+      const current = attachments.get(agent)
+      if (current !== undefined) return current
+      const pending = installAgent(agent, signal)
+      attachments.set(agent, pending)
+      void pending.catch(() => { attachments.delete(agent) })
+      return pending
+    }
+    scope.on('agent/created', async ({ agent, signal }) => { await attach(agent, signal) })
+    for (const agent of scope.get('agents')?.list() ?? []) {
+      void attach(agent).catch((error: unknown) => {
+        void error
+        if (!lifetime.signal.aborted) scope.logger.warn('Could not rebind the private VPS Computer to an active Bot.')
+      })
+    }
   })
 }

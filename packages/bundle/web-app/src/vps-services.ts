@@ -2,6 +2,7 @@
 
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
+import type { Agent } from '@yharness/agent'
 import type { Context } from '@yharness/cordis'
 import { defineTool } from '@yharness/tools'
 import { scrubbedParentEnv } from '@yharness/subprocess'
@@ -152,16 +153,27 @@ export class VpsServices {
  * @param ctx - The owner Bot's tool scope.
  * @param bot - Bot id from the server roster.
  * @param services - Validated operator service grants.
+ * @param owner - Exact Agent that owns the service tools.
+ * @param lifetime - Cancellation of the Web configuration that supplied the grants.
  */
-export function registerVpsServiceTools(ctx: Context, bot: string, services: VpsServices): void {
+export function registerVpsServiceTools(ctx: Context, bot: string, services: VpsServices, owner: Agent, lifetime: AbortSignal): void {
   const grants = services.list(bot)
   if (grants.length === 0) return
+  const ownerSignal = (agent: Agent | undefined, callSignal: AbortSignal): AbortSignal => {
+    if (agent !== owner) throw new Error('VPS service tools require the owning Bot Session.')
+    const signal = AbortSignal.any([callSignal, lifetime])
+    signal.throwIfAborted()
+    return signal
+  }
   ctx.effect(() => ctx.tools.register(defineTool({
     name: 'vps_service_status',
     description: 'Read service state, restart count and last exit details for an authorized VPS service. Omit unit to list available services.',
     parameters: { unit: { type: 'string', description: 'An exact unit from the authorized service list.' } },
     output: TEXT_OUTPUT,
-    execute: async ({ unit }, call) => JSON.stringify(unit === undefined ? grants : await services.status(bot, unit, call.signal)),
+    execute: async ({ unit }, call) => {
+      const signal = ownerSignal(call.agent, call.signal)
+      return JSON.stringify(unit === undefined ? grants : await services.status(bot, unit, signal))
+    },
   })), 'vps-services: diagnostics')
   const approval = ctx.get('approval')
   if (approval === undefined || !grants.some(grant => grant.restart)) return
@@ -171,11 +183,10 @@ export function registerVpsServiceTools(ctx: Context, bot: string, services: Vps
     parameters: { unit: { type: 'string', required: true, description: 'An exact unit with restart permission.' } },
     output: TEXT_OUTPUT,
     async execute({ unit }, call) {
-      const agent = call.agent
-      if (agent === undefined) throw new Error('VPS service restart requires an owner Bot Session.')
+      const signal = ownerSignal(call.agent, call.signal)
       await services.restart(bot, unit, async () => await approval.request({
-        agent, toolName: call.name, callId: call.callId, reason: 'Restart VPS service ' + unit, signal: call.signal,
-      }) === 'allowed-once', call.signal)
+        agent: owner, toolName: call.name, callId: call.callId, reason: 'Restart VPS service ' + unit, signal,
+      }) === 'allowed-once', signal)
       return 'Restart completed for ' + unit + '.'
     },
   })), 'vps-services: owner-approved restart')
