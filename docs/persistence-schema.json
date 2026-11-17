@@ -28425,7 +28425,7 @@
       "digest": "11c7e946f76f16eda6dd66de89593719d5916b92305b33a18ffc444bd96394cd",
       "names": [],
       "sources": [
-        "packages/agents/bots/src/collaboration.ts:124"
+        "packages/agents/bots/src/collaboration.ts:127"
       ]
     },
     {
@@ -29287,7 +29287,7 @@
         "packages/agents/bots/src/collaboration.ts#BotDynamicToolEventResult"
       ],
       "sources": [
-        "packages/agents/bots/src/collaboration.ts:122"
+        "packages/agents/bots/src/collaboration.ts:125"
       ]
     },
     {
@@ -31009,7 +31009,7 @@
         "packages/agents/bots/src/collaboration.ts#BotDynamicToolEvent"
       ],
       "sources": [
-        "packages/agents/bots/src/collaboration.ts:134"
+        "packages/agents/bots/src/collaboration.ts:137"
       ]
     },
     {

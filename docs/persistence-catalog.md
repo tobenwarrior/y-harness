@@ -337,7 +337,7 @@ Source: [`packages/core/session/src/types.ts:341`](../packages/core/session/src/
 'bot/collaboration': BotCollaborationDeliveryEvent
 ```
 
-Source: [`packages/agents/bots/src/collaboration.ts:150`](../packages/agents/bots/src/collaboration.ts)
+Source: [`packages/agents/bots/src/collaboration.ts:153`](../packages/agents/bots/src/collaboration.ts)
 
 <a id="botdynamic-tool--log-only"></a>
 
@@ -348,7 +348,7 @@ Source: [`packages/agents/bots/src/collaboration.ts:150`](../packages/agents/bot
 'bot/dynamic-tool': BotDynamicToolEvent
 ```
 
-Source: [`packages/agents/bots/src/collaboration.ts:148`](../packages/agents/bots/src/collaboration.ts)
+Source: [`packages/agents/bots/src/collaboration.ts:151`](../packages/agents/bots/src/collaboration.ts)
 
 <a id="botmemory--log-only"></a>
 
@@ -3666,7 +3666,7 @@ Sources: [`packages/agents/bots/src/collaboration.ts:34`](../packages/agents/bot
 
 SHA-256: `a24a4523c15b8e694a0bbb4be2ed19e335b43cb48437be70b3cd9071c449fd83`
 
-Sources: [`packages/agents/bots/src/collaboration.ts:134`](../packages/agents/bots/src/collaboration.ts)
+Sources: [`packages/agents/bots/src/collaboration.ts:137`](../packages/agents/bots/src/collaboration.ts)
 
 | Property | Presence | Type |
 |---|---|---|
@@ -3689,7 +3689,7 @@ Sources: [`packages/agents/bots/src/collaboration.ts:134`](../packages/agents/bo
 
 SHA-256: `442d54eaa89cebdf092c66fbe029424d6754a8be165e52eb39e6f10cdcefe23e`
 
-Sources: [`packages/agents/bots/src/collaboration.ts:122`](../packages/agents/bots/src/collaboration.ts)
+Sources: [`packages/agents/bots/src/collaboration.ts:125`](../packages/agents/bots/src/collaboration.ts)
 
 | Property | Presence | Type |
 |---|---|---|
@@ -9556,7 +9556,7 @@ SHA-256: `b222069eea2d768065161c1147b1f2c78c1b54328c84b3586ae5c8f91b8ed35e`
 
 SHA-256: `11c7e946f76f16eda6dd66de89593719d5916b92305b33a18ffc444bd96394cd`
 
-Sources: [`packages/agents/bots/src/collaboration.ts:124`](../packages/agents/bots/src/collaboration.ts)
+Sources: [`packages/agents/bots/src/collaboration.ts:127`](../packages/agents/bots/src/collaboration.ts)
 
 | Property | Presence | Type |
 |---|---|---|
