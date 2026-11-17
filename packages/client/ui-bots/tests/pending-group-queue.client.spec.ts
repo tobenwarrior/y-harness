@@ -504,7 +504,7 @@ describe('shared-group browser retry queue', () => {
 
   it('uses the deterministic operation hash fallback without Web Crypto', async () => {
     const originalCrypto = globalThis.crypto
-    vi.stubGlobal('crypto', { getRandomValues: (array: Uint8Array) => originalCrypto.getRandomValues(array) })
+    vi.stubGlobal('crypto', { getRandomValues: originalCrypto.getRandomValues.bind(originalCrypto) })
     try {
       const queue = createSharedGroupPendingQueue('principal-hash-fallback')
       const reservation = await queue.reserveMessage('fallback-operation', 'bot-group-room', 'fallback draft')
