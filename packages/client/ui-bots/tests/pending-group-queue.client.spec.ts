@@ -259,10 +259,10 @@ describe('shared-group browser retry queue', () => {
     vi.useFakeTimers({ now: Date.now() + 24 * 60 * 60 * 1_000 + 1 })
     try {
       await firstTab.listMessages()
-      const originalGetItem = Storage.prototype.getItem
+      const originalGetItem = Storage.prototype.getItem.bind(localStorage)
       let recreated = false
       vi.spyOn(Storage.prototype, 'getItem').mockImplementation(function (this: Storage, key: string) {
-        const raw = originalGetItem.call(this, key)
+        const raw = originalGetItem(key)
         if (!recreated && key === targetKey && raw !== null) {
           recreated = true
           const oldRecord = JSON.parse(raw) as Record<string, unknown>

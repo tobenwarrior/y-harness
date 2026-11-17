@@ -168,26 +168,34 @@ describe('ComputerSignInCard shared handoff', () => {
     const identity = {
       id: ownerBotId, location: 'vps' as const, permissionScope: 'bot' as const, desktop: true as const,
     }
+    const desktopFrame = vi.fn(async () => ({ jpeg: 'desktop-data', width: 1280, height: 800, mode: 'watching' as const, botActive: false }))
+    const signInTake = vi.fn(async () => ({ mode: 'controlling' as const }))
     const desktop: ComputerClient = {
       ...computer(),
       status: async () => ({ available: true, computer: identity }),
-      frame: vi.fn(async () => ({ jpeg: 'desktop-data', width: 1280, height: 800, mode: 'watching' as const, botActive: false })),
+      frame: desktopFrame,
     }
     const client = {
       ...computer(),
       desktop,
       status: async () => ({ available: true, computer: { ...identity, browser: true as const } }),
+      signIn: {
+        status: async () => ({ request: null }),
+        take: signInTake,
+        complete: async () => ({ mode: 'watching' as const }),
+        cancel: async () => ({ mode: 'watching' as const }),
+      },
     }
     const panel = { computer: client, botId: ownerBotId, sessionId: ownerSessionId, close: vi.fn(), t }
     const view = render(<ComputerPanel {...panel} />)
     fireEvent.click(await screen.findByRole('button', { name: 'Desktop' }))
     const frame = await screen.findByRole('img', { name: en.computerScreenAlt })
     expect(frame.getAttribute('src')).toContain('desktop-data')
-    expect(desktop.frame).toHaveBeenCalledWith(expect.any(String), expect.any(AbortSignal), ownerSessionId)
+    expect(desktopFrame).toHaveBeenCalledWith(expect.any(String), expect.any(AbortSignal), ownerSessionId)
     expect(screen.getByRole('button', { name: 'Desktop' }).getAttribute('aria-pressed')).toBe('true')
 
     view.rerender(<ComputerPanel {...panel} signIn={{ requestId, attempt: 1 }} />)
-    await waitFor(() => { expect(client.signIn?.take).toHaveBeenCalledWith(ownerSessionId, requestId, expect.any(String)) })
+    await waitFor(() => { expect(signInTake).toHaveBeenCalledWith(ownerSessionId, requestId, expect.any(String)) })
     expect(screen.queryByRole('button', { name: 'Desktop' })).toBeNull()
     expect(screen.queryByRole('img', { name: en.computerScreenAlt })).toBeNull()
   })

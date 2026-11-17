@@ -166,7 +166,8 @@ function ComputerViewer({
   const viewerId = viewerIdRef.current
   const frameRef = useRef<ComputerFrame>()
   const modeRef = useRef<ComputerMode>('watching')
-  const disposedRef = useRef(false)
+  const disposedRef = useRef<boolean>(false)
+  const isDisposed = (): boolean => disposedRef.current
   const requestEpochRef = useRef(0)
   const operationRef = useRef(0)
   const claimedSignIn = useRef<string>()
@@ -558,6 +559,7 @@ function ComputerViewer({
     if (address === '' || frameSessionId === undefined || navigate === undefined || navigation.current !== undefined
       || modeRef.current !== 'controlling' || busy !== undefined) return
     const controller = new AbortController()
+    const isAborted = (): boolean => controller.signal.aborted
     navigation.current = controller
     setFeedback(undefined)
     setNavigating(true)
@@ -566,9 +568,9 @@ function ComputerViewer({
       if (controller.signal.aborted || inputQueue.current !== queue || modeRef.current !== 'controlling') return
       try {
         await navigate(viewerId, address, frameSessionId, controller.signal)
-        if (!controller.signal.aborted && !disposedRef.current) imageRef.current?.focus()
+        if (!isAborted() && !isDisposed()) imageRef.current?.focus()
       } catch (error: unknown) {
-        if (!controller.signal.aborted && !disposedRef.current) {
+        if (!isAborted() && !isDisposed()) {
           if (sharedSignIn && error instanceof ComputerApiError && error.status === 404) {
             frameRef.current = undefined
             setFrame(undefined)

@@ -99,7 +99,7 @@ export function apply(ctx: Context): void {
         const selected = sessionId !== undefined && identity?.id === selection ? identity : undefined
         const terminal = selected?.terminal === true && scope.sidebarRightTabs.get('terminal') !== undefined
         const files = selected?.files === true && scope.sidebarRightTabs.get('computer-files') !== undefined
-        const sharedFiles = files && selected?.sharedFiles === true
+        const sharedFiles = files && selected.sharedFiles === true
           && scope.sidebarRightTabs.get('computer-shared-files') !== undefined
         scope.sidebarRight.selectPanelSession(PANEL_ID, terminal || files || sharedFiles ? sessionId : undefined)
         terminalAvailable.set(terminal)

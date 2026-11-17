@@ -7,7 +7,7 @@ import { ScheduleId } from '@yharness/schedule'
 import { SessionId } from '@yharness/session'
 import { makeTranslate } from '@yharness/client-test-runtime'
 import type { ClientConnectionRpc } from '@yharness/client-connection/client'
-import type { ReactNode } from 'react'
+import type { ComponentProps, ReactNode } from 'react'
 import { BotAvatar } from '../src/client/BotAvatar.tsx'
 import { BotSkillsManager } from '../src/client/BotSkillsManager.tsx'
 import { BotDetail, BotGroupDetail, BotRoster } from '../src/client/BotWorkspace.tsx'
@@ -2043,7 +2043,7 @@ describe('Bot roster and detail', () => {
   })
 
   it('retries an attachment with the same message id and clears it only after success', async () => {
-    const sendWithAttachments = vi.fn()
+    const sendWithAttachments = vi.fn<NonNullable<ComponentProps<typeof BotGroupDetail>['onSendWithAttachments']>>()
       .mockRejectedValueOnce(new Error('attachment upload failed'))
       .mockResolvedValueOnce(undefined)
     render(<BotGroupDetail

@@ -8,6 +8,7 @@ import type {
   BotId as BotIdType,
   BotGroupId as BotGroupIdType,
   BotGroupMessageId as BotGroupMessageIdType,
+  BotGroupMessageView,
 } from '@yharness/bots/client'
 import { bytesToBase64 } from '@yharness/util-crypto'
 import type { BotGroupAttachmentDraft } from './types.ts'
@@ -54,6 +55,27 @@ const MESSAGE_ID_PATTERN = /^bot-group-message-[A-Za-z0-9][A-Za-z0-9-]*$/
  */
 export function isBotGroupImageType(value: string): value is BotGroupImageAdmissionRequest['image']['mediaType'] {
   return SUPPORTED_IMAGE_TYPES.has(value as BotGroupImageAdmissionRequest['image']['mediaType'])
+}
+
+/**
+ * Match an uploaded group message's attachment metadata against the browser drafts on retry.
+ * @param admitted - Metadata saved on the existing group message.
+ * @param drafts - Files selected by the sender in display order.
+ * @returns Whether the existing attachments can be reused for this send.
+ */
+export function groupAttachmentsMatchDrafts(
+  admitted: BotGroupMessageView['attachments'],
+  drafts: readonly BotGroupAttachmentDraft[],
+): boolean {
+  if (admitted === undefined || admitted.length !== drafts.length || admitted.length === 0) return false
+  return drafts.every((draft, index) => {
+    const current = admitted[index]
+    if (current === undefined || current.bytes !== draft.file.size) return false
+    if (current.type === 'file') return current.name === (draft.file.name || current.name)
+    return isBotGroupImageType(draft.file.type)
+      && current.mediaType === draft.file.type
+      && (draft.file.name === '' || current.name === draft.file.name || current.name === undefined)
+  })
 }
 
 /**

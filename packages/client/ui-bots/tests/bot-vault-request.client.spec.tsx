@@ -282,6 +282,15 @@ describe('BotVaultRequestCard', () => {
     expect(fetcher).not.toHaveBeenCalled()
   })
 
+  it('keeps broker errors out of the composer surface', async () => {
+    const fetcher = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('unavailable', { status: 503 }))
+    render(<BotVaultRequestCard {...cardProps()} />)
+
+    await waitFor(() => { expect(fetcher).toHaveBeenCalledTimes(1) })
+    expect(screen.queryByRole('region')).toBeNull()
+    expect(screen.queryByText(en.vaultRequestTitle)).toBeNull()
+  })
+
   it('shows a pending request without a value editor and links only to the validated native path', async () => {
     vi.spyOn(window.navigator, 'userAgent', 'get').mockReturnValue('YHarnessCloudDesktop/1')
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(response()), {
@@ -304,6 +313,27 @@ describe('BotVaultRequestCard', () => {
 
     expect(await screen.findByText(en.vaultRequestDesktopOnly)).toBeTruthy()
     expect(screen.queryByRole('link')).toBeNull()
+  })
+
+  it('renders a cancelled request with an accessible status and tolerates a missing navigator', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(response({ state: 'cancelled' })), { status: 200 }))
+    const props = cardProps()
+    const view = render(<BotVaultRequestCard {...props} />)
+
+    const region = await screen.findByRole('region', { name: en.vaultRequestTitle })
+    expect(region.getAttribute('data-bot-vault-request-state')).toBe('cancelled')
+    expect(screen.getByText(en.vaultRequestCancelled)).toBeTruthy()
+    expect(screen.getByText('yharness-worker.service')).toBeTruthy()
+    expect(screen.getByText('DEEPSEEK_API_KEY')).toBeTruthy()
+    expect(region.querySelector('[aria-hidden="true"]')).not.toBeNull()
+
+    vi.stubGlobal('navigator', undefined)
+    try {
+      view.rerender(<BotVaultRequestCard {...props} />)
+      expect(screen.getByRole('region', { name: en.vaultRequestTitle })).toBeTruthy()
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 
   it('renders saved and cancelled statuses and clears the card when the broker returns no request', async () => {

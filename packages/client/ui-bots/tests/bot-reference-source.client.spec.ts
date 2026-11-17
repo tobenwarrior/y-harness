@@ -70,8 +70,9 @@ describe('Bot reference source', () => {
     const candidates = await source.candidates({ sessionId: currentSession }, request('atlas'))
     expect(candidates).toHaveLength(1)
     expect(candidates[0]).toMatchObject({
-      name: 'Atlas', description: 'Bot', section: 'Bots', icon: expect.any(Function),
+      name: 'Atlas', description: 'Bot', section: 'Bots',
     })
+    expect(typeof candidates[0]?.icon).toBe('function')
     const outcome = source.onPick({
       candidate: candidates[0]!, session: { sessionId: currentSession }, position: 'inline', via: 'menu', action: 'pick',
       span: { start: 0, end: 9, draftRev: 1 },
@@ -85,8 +86,8 @@ describe('Bot reference source', () => {
         clipboardText: '@[Atlas](dsh-bot:bot-atlas)',
       },
     })
-    expect(source.matchEnter).toBeUndefined()
-    expect(source.matchSpace).toBeUndefined()
+    expect(source).not.toHaveProperty('matchEnter')
+    expect(source).not.toHaveProperty('matchSpace')
     await expect(source.codec?.serialize('@[Atlas](dsh-bot:bot-atlas)', new AbortController().signal))
       .resolves.toBe('@[Atlas](dsh-bot:bot-atlas)')
   })
@@ -112,6 +113,74 @@ describe('Bot reference source', () => {
     const [localized] = await source.candidates({ sessionId: currentSession }, request('new'))
     expect(localized).toMatchObject({ section: '机器人', description: '机器人' })
     await expect(source.candidates({ sessionId: currentSession }, request('', true))).resolves.toEqual([])
+  })
+
+  it('returns no rows when roster readiness settles after the request is cancelled', async () => {
+    let resolveReady: (() => void) | undefined
+    const ready = new Promise<void>((resolve) => { resolveReady = resolve })
+    const section = vi.fn(() => 'Bots')
+    const botLabel = vi.fn(() => 'Bot')
+    const store = workspace([bot('bot-atlas', 'session-atlas', 'Atlas')])
+    const source = createBotReferenceSource({
+      workspace: store,
+      loadAvatar: vi.fn(async () => 'avatar'),
+      section,
+      botLabel,
+      ready,
+    })
+    const controller = new AbortController()
+    const pending = source.candidates({ sessionId: currentSession }, {
+      ...request('atlas'), signal: controller.signal,
+    })
+
+    controller.abort()
+    resolveReady?.()
+
+    await expect(pending).resolves.toEqual([])
+    expect(section).not.toHaveBeenCalled()
+    expect(botLabel).not.toHaveBeenCalled()
+  })
+
+  it('re-evaluates the Session scope and parses visible mentions through pick completion', async () => {
+    const store = workspace([bot('bot-scout', 'session-scout', 'Scout @Home')])
+    const source = createBotReferenceSource({
+      workspace: store,
+      loadAvatar: vi.fn(async () => 'avatar'),
+      section: () => 'Bots',
+      botLabel: () => 'Bot',
+    })
+
+    await expect(source.candidates({ sessionId: 'session-scout' as SessionId }, request('scout'))).resolves.toEqual([])
+    const [candidate] = await source.candidates({ sessionId: currentSession }, request('scout'))
+    expect(candidate?.value).toBe('@[Scout \\@Home](dsh-bot:bot-scout)')
+    expect(source.onPick({
+      candidate: candidate!, session: { sessionId: currentSession }, position: 'inline', via: 'menu', action: 'pick',
+      span: { start: 0, end: 9, draftRev: 1 },
+    })).toEqual({
+      insert: {
+        source: 'bot', ref: '@[Scout \\@Home](dsh-bot:bot-scout)', label: 'Scout @Home', appearance: 'bot',
+        clipboardText: '@[Scout \\@Home](dsh-bot:bot-scout)',
+      },
+    })
+    expect(source.codec?.clipboardText(candidate!.value!)).toBe(candidate!.value)
+  })
+
+  it('rejects drill, missing, and malformed references at the completion entry point', async () => {
+    const source = createBotReferenceSource({
+      workspace: workspace([bot('bot-atlas', 'session-atlas', 'Atlas')]),
+      loadAvatar: vi.fn(async () => 'avatar'),
+      section: () => 'Bots',
+      botLabel: () => 'Bot',
+    })
+    const [candidate] = await source.candidates({ sessionId: currentSession }, request('atlas'))
+    const pick = (value: typeof candidate, action: 'pick' | 'drill' = 'pick') => source.onPick({
+      candidate: value!, session: { sessionId: currentSession }, position: 'inline', via: 'menu', action,
+      span: { start: 0, end: 9, draftRev: 1 },
+    })
+
+    expect(pick(candidate, 'drill')).toBeUndefined()
+    expect(pick({ ...candidate!, value: undefined })).toBeUndefined()
+    expect(pick({ ...candidate!, value: '@not a Bot reference' })).toBeUndefined()
   })
 
   it('refuses a candidate that loses roster access before selection', async () => {

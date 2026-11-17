@@ -28,9 +28,10 @@ function userAgent(): string {
   return typeof navigator === 'undefined' ? '' : navigator.userAgent
 }
 
-function statusState(state: BotVaultRequest['state']): 'ongoing' | 'done' | 'idle' {
+type SettledBotVaultRequestState = Exclude<BotVaultRequest['state'], 'pending'>
+
+function statusState(state: SettledBotVaultRequestState): 'done' | 'idle' {
   switch (state) {
-    case 'pending': return 'ongoing'
     case 'saved': return 'done'
     case 'cancelled': return 'idle'
   }
@@ -42,7 +43,7 @@ function statusState(state: BotVaultRequest['state']): 'ongoing' | 'done' | 'idl
  * @returns the card for a direct Bot conversation, or null elsewhere.
  */
 export function BotVaultRequestCard({ botChat, sessionId, useSession, t }: BotVaultRequestCardProps): ReactNode {
-  const running = useSession(snapshot => snapshot.running === true)
+  const running = useSession(snapshot => snapshot.running)
   const [sessionRequest, setSessionRequest] = useState<SessionRequest | null>(null)
   const enabled = typeof window !== 'undefined' && window.__YH_BOT_VAULT_REQUESTS__ === true && botChat === true
   const sharedRequestsEnabled = typeof window !== 'undefined' && window.__YH_BOT_SHARED_VAULT_REQUESTS__ === true
@@ -65,8 +66,9 @@ export function BotVaultRequestCard({ botChat, sessionId, useSession, t }: BotVa
   if (request === null) return null
   const desktop = isYHarnessCloudDesktop(userAgent())
   const title = request.scope === 'shared' ? t('vaultRequestSharedTitle') : t('vaultRequestTitle')
+  const state = request.state
   return (
-    <section className={css.card} data-bot-vault-request-state={request.state} aria-label={title}>
+    <section className={css.card} data-bot-vault-request-state={state} aria-label={title}>
       <span className={css.icon} aria-hidden="true"><IconShieldOutlineRegular size={16} /></span>
       <div className={css.content}>
         <span className={css.title}>{title}</span>
@@ -76,15 +78,15 @@ export function BotVaultRequestCard({ botChat, sessionId, useSession, t }: BotVa
           <span className={css.targetLabel}>{t('vaultRequestKey')}</span>
           <code className={css.targetValue}>{request.name}</code>
         </div>
-        {request.state === 'pending' && (
+        {state === 'pending' && (
           desktop
             ? <a className={css.action} href={`/__yharness/vault-request/${request.id}`}>{t('vaultRequestOpenDesktop')}</a>
             : <p className={css.desktopHint}>{t('vaultRequestDesktopOnly')}</p>
         )}
-        {request.state !== 'pending' && (
-          <span className={css.status} data-state={request.state}>
-            <StateDot state={statusState(request.state)} size={8} />
-            {request.state === 'saved' ? t('vaultRequestSaved') : t('vaultRequestCancelled')}
+        {state !== 'pending' && (
+          <span className={css.status} data-state={state}>
+            <StateDot state={statusState(state)} size={8} />
+            {state === 'saved' ? t('vaultRequestSaved') : t('vaultRequestCancelled')}
           </span>
         )}
       </div>

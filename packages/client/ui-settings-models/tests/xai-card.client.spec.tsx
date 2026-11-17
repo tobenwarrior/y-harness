@@ -54,7 +54,7 @@ it('publishes the whole installed catalog as the starter selection once connecte
   await screen.findByText(en.xaiAdded)
   expect(f.xai.models).toHaveBeenCalled()
   expect(f.writeSettings).toHaveBeenCalledWith('llm-pi-ai',
-    [{ op: 'set', path: ['providers', 'xai'], value: expect.objectContaining({ displayName: 'xAI' }) }],
+    [{ op: 'set', path: ['providers', 'xai'], value: expect.objectContaining({ displayName: 'xAI' }) as { displayName: string } }],
     namespace.revision)
   const written = f.writeSettings.mock.calls[0]?.[1][0]
   if (written?.op !== 'set') throw new Error('Expected saved xAI settings')

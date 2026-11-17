@@ -39,7 +39,7 @@ export function createBotReferenceSource(options: BotReferenceSourceOptions): In
       const currentSection = section()
       const currentBotLabel = botLabel()
       return workspace.getSnapshot().bots
-        .filter(bot => bot.state === 'active' && bot.hidden !== true && bot.sessionId !== sessionId)
+        .filter(bot => bot.state === 'active' && !bot.hidden && bot.sessionId !== sessionId)
         .filter(bot => needle === '' || [bot.name, bot.description, String(bot.id)]
           .some(value => value?.toLocaleLowerCase().includes(needle) === true))
         .map(bot => botCandidate(bot, currentSection, currentBotLabel, loadAvatar))
@@ -51,7 +51,7 @@ export function createBotReferenceSource(options: BotReferenceSourceOptions): In
       const mention = parseBotMention(reference)
       if (mention === undefined) return undefined
       const bot = workspace.getSnapshot().bots.find(item => String(item.id) === mention.botId)
-      if (bot === undefined || bot.state !== 'active' || bot.hidden === true || bot.sessionId === session.sessionId) return undefined
+      if (bot === undefined || bot.state !== 'active' || bot.hidden || bot.sessionId === session.sessionId) return undefined
       return {
         insert: {
           source: 'bot',

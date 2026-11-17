@@ -43,6 +43,10 @@ function recipient(value: unknown): value is Recipient {
   return record(value) && typeof value.id === 'string' && typeof value.name === 'string'
 }
 
+function signalAborted(signal: AbortSignal): boolean {
+  return signal.aborted
+}
+
 function copyError(value: unknown): CopyError {
   const status = record(value) ? value.status : undefined
   return typeof status === 'string' && Object.hasOwn(copyErrors, status)
@@ -90,7 +94,7 @@ export function ComputerFileCopy({ sessionId, path, version, lifetime, t, classN
     const signal = AbortSignal.any([lifetime, job.controller.signal])
     setPicker({ kind: 'loading' })
     try {
-      const response = await fetch('api/computer/files/recipients?' + new URLSearchParams({ sessionId }),
+      const response = await fetch('api/computer/files/recipients?' + new URLSearchParams({ sessionId }).toString(),
         { credentials: 'same-origin', signal })
       const value: unknown = await response.json()
       if (!response.ok || !record(value) || !Array.isArray(value.recipients) || !value.recipients.every(recipient)) {
@@ -120,7 +124,8 @@ export function ComputerFileCopy({ sessionId, path, version, lifetime, t, classN
         return
       }
       const reason = copyError(await result.json())
-      if (!signal.aborted) setPicker({ ...picker, copying: false, error: reason })
+      const aborted = signalAborted(signal)
+      if (!aborted) setPicker({ ...picker, copying: false, error: reason })
     } catch (error) {
       void error
       if (!signal.aborted) setPicker({ ...picker, copying: false, error: 'copy.unavailable' })

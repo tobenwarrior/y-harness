@@ -40,7 +40,7 @@ import { randomUUID } from '@yharness/util-crypto'
 import {
   admitBotGroupAttachments,
   BotAttachmentClientError,
-  isBotGroupImageType,
+  groupAttachmentsMatchDrafts,
   parseBotAttachmentGrantValue,
   type BotAttachmentFetch,
 } from './attachment-client.ts'
@@ -512,7 +512,7 @@ export function createSharedBotsClient(rpc: ClientConnectionRpc, options: Shared
     if (!inspect.ok) return inspect
     const existing = inspect.value.messages.find(message => message.id === request.messageId)
     if (existing !== undefined) {
-      if (!groupAttachmentMatchesDrafts(existing, request.attachments)) {
+      if (!groupAttachmentsMatchDrafts(existing.attachments, request.attachments)) {
         return { ok: false, error: { code: 'gateway/conflict', message: 'shared Bot message attachments differ from the retry', details: {} } }
       }
       return call('bots/share/send-group-message', {
@@ -539,7 +539,7 @@ export function createSharedBotsClient(rpc: ClientConnectionRpc, options: Shared
         attachmentFetcher,
         '/shared-bots/bots/share/uploadAttachment',
       )
-      return call('bots/share/send-group-message', {
+      return await call('bots/share/send-group-message', {
         groupId: request.groupId,
         text: request.text,
         messageId: request.messageId,
@@ -1110,23 +1110,6 @@ function parseGroupMessageSender(value: Record<string, unknown>): BotGroupMessag
   if (value.kind !== 'bot' || typeof value.botId !== 'string'
     || !/^bot-[A-Za-z0-9][A-Za-z0-9-]*$/.test(value.botId) || typeof value.name !== 'string') return undefined
   return { kind: 'bot', botId: brandString<BotIdType>(value.botId), name: value.name }
-}
-
-function groupAttachmentMatchesDrafts(
-  message: BotGroupMessageView,
-  drafts: readonly BotGroupAttachmentDraft[],
-): boolean {
-  const admitted = message.attachments
-  if (admitted === undefined || admitted.length !== drafts.length || admitted.length === 0) return false
-  return drafts.every((draft, index) => {
-    const current = admitted[index]
-    if (current === undefined || current.bytes !== draft.file.size) return false
-    if (current.type === 'file') return current.name === (draft.file.name || current.name)
-    return current.type === 'image'
-      && isBotGroupImageType(draft.file.type)
-      && current.mediaType === draft.file.type
-      && (draft.file.name === '' || current.name === draft.file.name || current.name === undefined)
-  })
 }
 
 function enumValue<T extends string>(value: unknown, choices: readonly T[]): T | undefined {

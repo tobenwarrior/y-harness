@@ -396,8 +396,8 @@ function mount(
     inputActions,
   }
   const props = { ...runtimeProps, renderFactorySlot }
-  const usePanelFactorySlot: ConversationPanelProps['useFactorySlot'] = <N extends never>(
-    _name: N,
+  const usePanelFactorySlot: ConversationPanelProps['useFactorySlot'] = (
+    _name: never,
     _fallback: (...args: never[]) => ReactNode,
   ) => {
     throw new Error('conversation.panel has no local factories')
@@ -590,7 +590,7 @@ describe('ConversationRoot resident composer', () => {
     expect(ordinary.view.container.querySelector('[data-conversation-surface]')).toBeNull()
     expect(bot.view.container.querySelector('[data-conversation-surface="bots"] [data-composer-seat]')).not.toBeNull()
     expect(bot.seatOwners).toContainEqual({
-      key: 'conversation.view', owner: expect.objectContaining({ bot: { name: 'Atlas' } }),
+      key: 'conversation.view', owner: expect.objectContaining({ bot: { name: 'Atlas' } }) as { bot: { name: string } },
     })
     expect(bot.seatOwners).toContainEqual({ key: 'conversation.composer.dock', owner: { botChat: true } })
   })

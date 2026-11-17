@@ -99,7 +99,7 @@ import type { HostObservable } from '@yharness/client-ui-slots'
 import type { RemoteResult } from '@yharness/api-remotes/client'
 import { randomUUID } from '@yharness/util-crypto'
 import type { SharedBotsClient } from './shared-client.ts'
-import { admitBotGroupAttachments, isBotGroupImageType, type BotAttachmentFetch } from './attachment-client.ts'
+import { admitBotGroupAttachments, groupAttachmentsMatchDrafts, isBotGroupImageType, type BotAttachmentFetch } from './attachment-client.ts'
 import type { BotGroupAttachmentDraft } from './types.ts'
 import type {
   BotAccent, BotAvatarEditorActions, BotConnectedAppAccess, BotCreation, BotGroupCreation, BotGroupDetailData,
@@ -1568,7 +1568,7 @@ export class BotWorkspaceController {
     let result: RemoteResult<BotGroupSendValue>
     try {
       if (existing !== undefined) {
-        if (!groupAttachmentMatchesDrafts(existing, attachments)) {
+        if (!groupAttachmentsMatchDrafts(existing.attachments, attachments)) {
           throw new Error(`Cannot safely retry Bot message ${String(messageId)} because its attachments differ.`)
         }
         const request: BotGroupSendRemoteRequest & { readonly replyToMessageId?: BotGroupMessageIdType } = {
@@ -2318,23 +2318,6 @@ function sameStringIdSet(left: readonly string[], right: readonly string[]): boo
 
 function canonicalTargetIds(ids: readonly string[] | undefined): readonly string[] {
   return ids === undefined ? [] : [...new Set(ids)].sort()
-}
-
-function groupAttachmentMatchesDrafts(
-  message: BotGroupMessageView,
-  drafts: readonly BotGroupAttachmentDraft[],
-): boolean {
-  const admitted = message.attachments
-  if (admitted === undefined || admitted.length !== drafts.length || admitted.length === 0) return false
-  return drafts.every((draft, index) => {
-    const current = admitted[index]
-    if (current === undefined || current.bytes !== draft.file.size) return false
-    if (current.type === 'file') return current.name === (draft.file.name || current.name)
-    return current.type === 'image'
-      && isBotGroupImageType(draft.file.type)
-      && current.mediaType === draft.file.type
-      && (draft.file.name === '' || current.name === draft.file.name || current.name === undefined)
-  })
 }
 
 function groupDetail(value: BotGroupInspectValue): BotGroupDetailData {

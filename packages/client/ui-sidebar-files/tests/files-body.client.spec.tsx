@@ -87,8 +87,11 @@ describe('FilesBody', () => {
       fireEvent.click(view.getByRole('button', { name: zh['upload.label'] }))
       fireEvent.change(input, { target: { files: [new File(['contents'], 'shared.txt')] } })
       await waitFor(() => { expect(fetchMock).toHaveBeenCalledTimes(1) })
-      expect(String(fetchMock.mock.calls[0]?.[0])).toContain('directory=%2Fworkspace')
-      expect(String(fetchMock.mock.calls[0]?.[0])).toContain('name=shared.txt')
+      const target = fetchMock.mock.calls[0]?.[0]
+      if (target === undefined) throw new Error('expected the upload request')
+      const url = typeof target === 'string' ? target : target instanceof URL ? target.href : target.url
+      expect(url).toContain('directory=%2Fworkspace')
+      expect(url).toContain('name=shared.txt')
     } finally {
       vi.unstubAllGlobals()
     }

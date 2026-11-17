@@ -234,7 +234,9 @@ describe('HTTP bridge abort', () => {
           requestStillOpen.resolve(!request.destroyed)
           return new Response('Upload rejected', { status: 415 })
         },
-      }, 1).catch((error: Error) => { response.destroy(error) })
+      }, 1).catch((error: unknown) => {
+        response.destroy(error instanceof Error ? error : new Error(String(error)))
+      })
     })
     try {
       server.listen(0, '127.0.0.1')
