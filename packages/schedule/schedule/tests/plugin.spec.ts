@@ -88,9 +88,9 @@ describe('shared Schedule management', () => {
     const domain = test.ctx.storageDomain.get('schedule')
     if (domain === undefined) throw new Error('Schedule domain not initialized')
     const tasks = domain.table('tasks')
-    expect(tasks.get(first.id)).toMatchObject({
-      idempotencyKey: 'operation-one', requestFingerprint: expect.stringMatching(/^[0-9a-f]{64}$/),
-    })
+    const persisted = tasks.get(first.id)
+    expect(persisted?.idempotencyKey).toBe('operation-one')
+    expect(persisted?.requestFingerprint).toMatch(/^[0-9a-f]{64}$/)
     await tasks.put(first.id, { ...tasks.get(first.id)!, status: 'inactive' })
     const recreated = await test.service.create(sessionId, request, undefined, { idempotencyKey: 'operation-three' })
     expect(recreated.id).not.toBe(first.id)

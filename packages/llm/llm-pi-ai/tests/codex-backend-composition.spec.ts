@@ -81,7 +81,7 @@ it('routes native approvals and questions to the calling session through a real 
       }
     },
   })
-  onTestFinished(() => { runtime.close() })
+  onTestFinished(() => runtime.close())
   const registration = ctx.llm.registerAdapter(['codex-backend'], new CodexBackendAdapter(runtime))
   onTestFinished(() => { registration() })
   const agent = await ctx.agentLoop.create(SessionId('native-composition'), { provider: 'codex-backend', model: 'native' }, { cwd: process.cwd() })

@@ -905,7 +905,7 @@ describe('writeFileAtomic — temp-file safety', () => {
     await writeFile(join(dir, tempDirName, 'PRECIOUS'), 'keep')
     await expect(
       writeFileAtomic(file, 'hello', undefined, undefined, { tempDirName: () => tempDirName }),
-    ).rejects.toMatchObject({ code: 'FS_IO_ERROR', cause: expect.objectContaining({ code: 'EEXIST' }) })
+    ).rejects.toMatchObject({ code: 'FS_IO_ERROR', cause: { code: 'EEXIST' } })
     expect(await readFile(join(dir, tempDirName, 'PRECIOUS'), 'utf8')).toBe('keep')
     await expect(stat(file)).rejects.toMatchObject({ code: 'ENOENT' })
   })

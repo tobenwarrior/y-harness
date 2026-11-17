@@ -53,7 +53,8 @@ vi.mock('node:fs/promises', async (importOriginal) => {
       return new Proxy(handle, {
         get(target, property, receiver) {
           if (property === 'close') return async () => { logHandle.close(); return target.close() }
-          return Reflect.get(target, property, receiver)
+          const value: unknown = Reflect.get(target, property, receiver)
+          return value
         },
       })
     },

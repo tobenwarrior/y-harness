@@ -366,7 +366,7 @@ export async function runProfilePnpm(
         }
       } catch (error) { void error; continue }
     }
-    if (preflight.length > 0) return rejected(preflight, 'nothing was installed')
+    if (preflight.length > 0) return await rejected(preflight, 'nothing was installed')
     const cancellation = new AbortController()
     // A service run captures output, so execa terminates the tree it leads when the
     // run is killed: a lifecycle script outlives the pnpm process that started it.

@@ -396,7 +396,7 @@ async function startMigrationStream(
   const sourceAdmission = format.assertHistoricalRowAdmission
   const assertRowAdmission = sourceAdmission === undefined
     ? undefined
-    : (row: unknown) => sourceAdmission(row, sourceVersion)
+    : (row: unknown) => { sourceAdmission(row, sourceVersion) }
   return { parser: new MigratingJsonlRows(stream, assertRowAdmission) }
 }
 

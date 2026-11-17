@@ -19,7 +19,7 @@ function text(value: unknown): string { return typeof value === 'string' ? value
 function parseDynamicToolArguments(value: unknown): Obj | undefined {
   if (typeof value === 'string') {
     try {
-      const parsed = JSON.parse(value)
+      const parsed: unknown = JSON.parse(value)
       return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Obj : undefined
     } catch { return undefined }
   }
@@ -609,7 +609,8 @@ export class CodexBackendRuntime {
     this.options.preferences.models = nextModels
     try {
       await this.options.persist(this.options.preferences)
-      if (this.disposed || peer !== this.peer) throw new Error('Codex backend is closed.')
+      this.assertOpen()
+      if (peer !== this.peer) throw new Error('Codex backend is closed.')
     } catch (error) {
       this.options.preferences.models = previousModels
       throw error

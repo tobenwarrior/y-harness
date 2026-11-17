@@ -59,7 +59,8 @@ describe('Schedule model tools', () => {
     const resumed = await execute(test, 'schedule_resume', { id: record.id })
     expect(resumed.value).toMatchObject({ id: record.id, resumed: true, status: 'active' })
     const history = await execute(test, 'schedule_history', { id: record.id, limit: 10 })
-    expect(history.value).toMatchObject({ id: record.id, records: [], retention: expect.any(Object) })
+    expect(history.value).toMatchObject({ id: record.id, records: [] })
+    expect(history.value).toHaveProperty('retention', expect.any(Object))
   })
 
   it('refuses a call dispatched without a caller Agent in every tool', async () => {

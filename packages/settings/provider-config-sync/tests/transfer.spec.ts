@@ -23,9 +23,10 @@ describe('copy provider model catalogs to Cloud', () => {
       revision: 7, retained: 0, skipped: 0,
       changes: [{ op: 'set', path: ['providers', 'model-lab'], value: {
         displayName: 'Model Lab', api: 'openai-completions', baseURL: 'https://example.com/v1',
-        models: [{ id: 'fixture-model', maxTokens: 2048 }], apiKeyEnv: expect.stringMatching(/^YH_SYNC_UNCONFIGURED_[0-9A-F]{32}$/u),
+        models: [{ id: 'fixture-model', maxTokens: 2048 }],
       } }],
     })
+    expect(plan).toHaveProperty('changes.0.value.apiKeyEnv', expect.stringMatching(/^YH_SYNC_UNCONFIGURED_[0-9A-F]{32}$/u))
     expect(JSON.stringify(plan)).not.toMatch(/MAC_ONLY|fixture-secret|base-only/u)
   })
 
