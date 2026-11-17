@@ -1,8 +1,21 @@
 import { chmod, lstat, link, mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises'
+import * as fsPromises from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { VpsBotComputerSetting } from '../src/vps-bot-computer-setting.ts'
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  return {
+    ...actual,
+    lstat: vi.fn(actual.lstat),
+    mkdir: vi.fn(actual.mkdir),
+    open: vi.fn(actual.open),
+    rename: vi.fn(actual.rename),
+    unlink: vi.fn(actual.unlink),
+  }
+})
 
 const SESSION = 'bot-session-12345678-1234-4abc-8def-1234567890ab'
 const OTHER_SESSION = 'bot-session-abcdefab-cdef-4abc-9abc-abcdefabcdef'
@@ -44,10 +57,35 @@ describe.skipIf(process.platform === 'win32')('VPS Bot Computer setting', () => 
     }
   })
 
+  it('rejects invalid roots and values before exposing a policy', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'yh-network-policy-'))
+    try {
+      expect(() => new VpsBotComputerSetting('', 'network')).toThrow('invalid')
+      expect(() => new VpsBotComputerSetting('relative-root', 'network')).toThrow('invalid')
+      expect(() => new VpsBotComputerSetting(`${root}\u0000unsafe`, 'network')).toThrow('invalid')
+      const policy = new VpsBotComputerSetting(root, 'network')
+      const unchecked = policy as { set(sessionId: string, enabled: string): Promise<void> }
+      await expect(unchecked.set(SESSION, 'true')).rejects.toThrow('invalid')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects a write when the owner root is missing', async () => {
+    const base = await mkdtemp(join(tmpdir(), 'yh-network-policy-'))
+    const root = join(base, 'cold')
+    try {
+      await expect(new VpsBotComputerSetting(root, 'network').set(SESSION, true)).rejects.toThrow('invalid')
+    } finally {
+      await rm(base, { recursive: true, force: true })
+    }
+  })
+
   it('persists both decisions and reloads them through a fresh instance', async () => {
     const root = await mkdtemp(join(tmpdir(), 'yh-network-policy-'))
     try {
       const policy = new VpsBotComputerSetting(root, 'network')
+      await policy.set(SESSION, true)
       await policy.set(SESSION, true)
       await policy.set(OTHER_SESSION, false)
       const reloaded = new VpsBotComputerSetting(root, 'network')
@@ -100,6 +138,35 @@ describe.skipIf(process.platform === 'win32')('VPS Bot Computer setting', () => 
     }
   })
 
+  it('rejects a syntactically malformed policy record', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'yh-network-policy-'))
+    const directory = join(root, '.network-access')
+    try {
+      await mkdir(directory, { mode: 0o700 })
+      await writeFile(join(directory, SESSION), '{', { mode: 0o600 })
+      await expect(new VpsBotComputerSetting(root, 'network').get(SESSION)).rejects.toThrow('invalid')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects oversized and non-object policy records, while accepting canonical JSON without a newline', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'yh-network-policy-'))
+    const directory = join(root, '.network-access')
+    const target = join(directory, SESSION)
+    try {
+      await mkdir(directory, { mode: 0o700 })
+      await writeFile(target, '{"version":1,"enabled":true}', { mode: 0o600 })
+      await expect(new VpsBotComputerSetting(root, 'network').get(SESSION)).resolves.toBe(true)
+      await writeFile(target, 'null', { mode: 0o600 })
+      await expect(new VpsBotComputerSetting(root, 'network').get(SESSION)).rejects.toThrow('invalid')
+      await writeFile(target, 'x'.repeat(129), { mode: 0o600 })
+      await expect(new VpsBotComputerSetting(root, 'network').get(SESSION)).rejects.toThrow('invalid')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('rejects symlinked roots, directories, files, and hard-linked files', async () => {
     const base = await mkdtemp(join(tmpdir(), 'yh-network-policy-'))
     const root = join(base, 'root')
@@ -137,6 +204,241 @@ describe.skipIf(process.platform === 'win32')('VPS Bot Computer setting', () => 
       await writeFile(join(directory, SESSION), '{"version":1,"enabled":true}\n', { mode: 0o644 })
       await expect(new VpsBotComputerSetting(root, 'network').get(SESSION)).rejects.toThrow('invalid')
     } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects an existing directory at the exact policy filename', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'yh-network-policy-'))
+    const directory = join(root, '.network-access')
+    try {
+      await mkdir(directory, { mode: 0o700 })
+      await mkdir(join(directory, SESSION), { mode: 0o700 })
+      await expect(new VpsBotComputerSetting(root, 'network').set(SESSION, true)).rejects.toThrow('invalid')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('handles directory creation races and rejects other creation failures', async () => {
+    const realFs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+    const mkdirMock = vi.mocked(fsPromises.mkdir)
+    const lstatMock = vi.mocked(fsPromises.lstat)
+    const base = await mkdtemp(join(tmpdir(), 'yh-network-policy-'))
+    const root = join(base, 'raced')
+    try {
+      await mkdir(root, { mode: 0o700 })
+      lstatMock.mockImplementationOnce((path, options) => realFs.lstat(path, options))
+      lstatMock.mockRejectedValueOnce(Object.assign(new Error('directory not found'), { code: 'ENOENT' }))
+      mkdirMock.mockImplementationOnce(async (path, options) => {
+        await realFs.mkdir(path, options)
+        throw Object.assign(new Error('directory already exists'), { code: 'EEXIST' })
+      })
+      lstatMock.mockImplementationOnce((path, options) => realFs.lstat(path, options))
+      await new VpsBotComputerSetting(root, 'network').set(SESSION, true)
+      await expect(new VpsBotComputerSetting(root, 'network').get(SESSION)).resolves.toBe(true)
+
+      const failedRoot = join(base, 'failed')
+      await mkdir(failedRoot, { mode: 0o700 })
+      mkdirMock.mockRejectedValueOnce(Object.assign(new Error('permission denied'), { code: 'EACCES' }))
+      await expect(new VpsBotComputerSetting(failedRoot, 'network').set(SESSION, true)).rejects.toThrow('invalid')
+    } finally {
+      await rm(base, { recursive: true, force: true })
+    }
+  })
+
+  it('normalizes read failures and closes a handle even when close also fails', async () => {
+    const realFs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+    const openMock = vi.mocked(fsPromises.open)
+    const root = await mkdtemp(join(tmpdir(), 'yh-network-policy-'))
+    const directory = join(root, '.network-access')
+    const target = join(directory, SESSION)
+    try {
+      await mkdir(directory, { mode: 0o700 })
+      await writeFile(target, '{"version":1,"enabled":true}\n', { mode: 0o600 })
+      openMock.mockRejectedValueOnce(new Error('read denied'))
+      await expect(new VpsBotComputerSetting(root, 'network').get(SESSION)).rejects.toThrow('invalid')
+
+      const handle = await realFs.open(target, 'r')
+      const originalClose = handle.close.bind(handle)
+      vi.spyOn(handle, 'stat').mockRejectedValueOnce(new Error('stat failed'))
+      vi.spyOn(handle, 'close').mockRejectedValueOnce(new Error('close failed'))
+      openMock.mockResolvedValueOnce(handle)
+      await expect(new VpsBotComputerSetting(root, 'network').get(SESSION)).rejects.toThrow('invalid')
+      await originalClose()
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects a policy whose bytes exceed the parser limit after a small stat', async () => {
+    const realFs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+    const openMock = vi.mocked(fsPromises.open)
+    const root = await mkdtemp(join(tmpdir(), 'yh-network-policy-'))
+    const directory = join(root, '.network-access')
+    const target = join(directory, SESSION)
+    try {
+      await mkdir(directory, { mode: 0o700 })
+      await writeFile(target, 'x', { mode: 0o600 })
+      openMock.mockImplementationOnce(async (path, flags, mode) => {
+        const handle = await realFs.open(path, flags, mode)
+        vi.spyOn(handle, 'readFile').mockResolvedValueOnce('x'.repeat(129))
+        return handle
+      })
+      await expect(new VpsBotComputerSetting(root, 'network').get(SESSION)).rejects.toThrow('invalid')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects target replacement during publication and attempts temporary cleanup', async () => {
+    const realFs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+    const lstatMock = vi.mocked(fsPromises.lstat)
+    const unlinkMock = vi.mocked(fsPromises.unlink)
+    const root = await mkdtemp(join(tmpdir(), 'yh-network-policy-'))
+    const directory = join(root, '.network-access')
+    try {
+      await mkdir(directory, { mode: 0o700 })
+      const directoryInfo = await realFs.lstat(directory)
+      lstatMock.mockImplementationOnce((path, options) => realFs.lstat(path, options))
+      lstatMock.mockImplementationOnce((path, options) => realFs.lstat(path, options))
+      lstatMock.mockRejectedValueOnce(Object.assign(new Error('target absent'), { code: 'ENOENT' }))
+      lstatMock.mockResolvedValueOnce(directoryInfo)
+      await expect(new VpsBotComputerSetting(root, 'network').set(SESSION, true)).rejects.toThrow('invalid')
+
+      lstatMock.mockImplementationOnce((path, options) => realFs.lstat(path, options))
+      lstatMock.mockImplementationOnce((path, options) => realFs.lstat(path, options))
+      lstatMock.mockRejectedValueOnce(Object.assign(new Error('target absent'), { code: 'ENOENT' }))
+      lstatMock.mockRejectedValueOnce(Object.assign(new Error('target absent'), { code: 'ENOENT' }))
+      lstatMock.mockResolvedValueOnce(directoryInfo)
+      unlinkMock.mockRejectedValueOnce(Object.assign(new Error('temporary cleanup raced'), { code: 'ENOENT' }))
+      await expect(new VpsBotComputerSetting(root, 'network').set(SESSION, true)).rejects.toThrow('invalid')
+
+      lstatMock.mockImplementationOnce((path, options) => realFs.lstat(path, options))
+      lstatMock.mockImplementationOnce((path, options) => realFs.lstat(path, options))
+      lstatMock.mockRejectedValueOnce(Object.assign(new Error('target absent'), { code: 'ENOENT' }))
+      lstatMock.mockRejectedValueOnce(Object.assign(new Error('target absent'), { code: 'ENOENT' }))
+      lstatMock.mockResolvedValueOnce(directoryInfo)
+      unlinkMock.mockRejectedValueOnce(Object.assign(new Error('temporary cleanup denied'), { code: 'EACCES' }))
+      await expect(new VpsBotComputerSetting(root, 'network').set(SESSION, true)).rejects.toThrow('invalid')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('normalizes a failed temporary write and contains close failures', async () => {
+    const realFs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+    const openMock = vi.mocked(fsPromises.open)
+    const root = await mkdtemp(join(tmpdir(), 'yh-network-policy-'))
+    const directory = join(root, '.network-access')
+    let release: (() => Promise<void>) | undefined
+    try {
+      await mkdir(directory, { mode: 0o700 })
+      openMock.mockImplementationOnce(async (path, flags, mode) => {
+        const handle = await realFs.open(path, flags, mode)
+        const originalClose = handle.close.bind(handle)
+        release = originalClose
+        vi.spyOn(handle, 'writeFile').mockRejectedValueOnce(new Error('disk full'))
+        vi.spyOn(handle, 'close').mockRejectedValueOnce(new Error('close failed'))
+        return handle
+      })
+      await expect(new VpsBotComputerSetting(root, 'network').set(SESSION, true)).rejects.toThrow('invalid')
+      await release?.()
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('normalizes a temporary open failure before a handle is created', async () => {
+    const openMock = vi.mocked(fsPromises.open)
+    const root = await mkdtemp(join(tmpdir(), 'yh-network-policy-'))
+    try {
+      await mkdir(join(root, '.network-access'), { mode: 0o700 })
+      openMock.mockRejectedValueOnce(new Error('temporary open failed'))
+      await expect(new VpsBotComputerSetting(root, 'network').set(SESSION, true)).rejects.toThrow('invalid')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects a directory sync that returns unsafe metadata or fails to open', async () => {
+    const realFs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+    const openMock = vi.mocked(fsPromises.open)
+    const root = await mkdtemp(join(tmpdir(), 'yh-network-policy-'))
+    const directory = join(root, '.network-access')
+    let release: (() => Promise<void>) | undefined
+    try {
+      await mkdir(directory, { mode: 0o700 })
+      openMock.mockImplementationOnce((path, flags, mode) => realFs.open(path, flags, mode))
+      openMock.mockImplementationOnce(async (path, flags, mode) => {
+        const handle = await realFs.open(path, flags, mode)
+        const info = await realFs.lstat(directory)
+        vi.spyOn(info, 'isDirectory').mockReturnValue(false)
+        const originalClose = handle.close.bind(handle)
+        release = originalClose
+        vi.spyOn(handle, 'stat').mockResolvedValueOnce(info)
+        vi.spyOn(handle, 'close').mockRejectedValueOnce(new Error('sync close failed'))
+        return handle
+      })
+      await expect(new VpsBotComputerSetting(root, 'network').set(SESSION, true)).rejects.toThrow('invalid')
+      await release?.()
+
+      openMock.mockImplementationOnce((path, flags, mode) => realFs.open(path, flags, mode))
+      openMock.mockRejectedValueOnce(new Error('sync open failed'))
+      await expect(new VpsBotComputerSetting(root, 'network').set(OTHER_SESSION, true)).rejects.toThrow('invalid')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('accepts a numeric stat mode represented as text and rejects malformed error codes', async () => {
+    const realFs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+    const lstatMock = vi.mocked(fsPromises.lstat)
+    const root = await mkdtemp(join(tmpdir(), 'yh-network-policy-'))
+    const directory = join(root, '.network-access')
+    const target = join(directory, SESSION)
+    try {
+      await mkdir(directory, { mode: 0o700 })
+      await writeFile(target, '{"version":1,"enabled":true}\n', { mode: 0o600 })
+      const info = await realFs.lstat(target)
+      Object.defineProperty(info, 'mode', { value: String(info.mode) })
+      lstatMock.mockImplementationOnce((path, options) => realFs.lstat(path, options))
+      lstatMock.mockImplementationOnce((path, options) => realFs.lstat(path, options))
+      lstatMock.mockResolvedValueOnce(info)
+      await expect(new VpsBotComputerSetting(root, 'network').get(SESSION)).resolves.toBe(true)
+
+      lstatMock.mockRejectedValueOnce({ code: 123 })
+      await expect(new VpsBotComputerSetting(root, 'network').get(SESSION)).rejects.toThrow('invalid')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('normalizes a primitive filesystem failure without inspecting a code property', async () => {
+    const lstatMock = vi.mocked(fsPromises.lstat)
+    const root = await mkdtemp(join(tmpdir(), 'yh-network-policy-'))
+    try {
+      await mkdir(join(root, '.network-access'), { mode: 0o700 })
+      lstatMock.mockRejectedValueOnce('filesystem failed')
+      await expect(new VpsBotComputerSetting(root, 'network').get(SESSION)).rejects.toThrow('invalid')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('loads without a no-follow flag on the Windows import path', async () => {
+    const platform = process.platform
+    const root = await mkdtemp(join(tmpdir(), 'yh-network-policy-'))
+    try {
+      Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+      vi.resetModules()
+      const { VpsBotComputerSetting: WindowsSetting } = await import('../src/vps-bot-computer-setting.ts')
+      const policy = new WindowsSetting(root, 'network')
+      await policy.set(SESSION, true)
+      await expect(policy.get(SESSION)).resolves.toBe(true)
+    } finally {
+      Object.defineProperty(process, 'platform', { configurable: true, value: platform })
+      vi.resetModules()
       await rm(root, { recursive: true, force: true })
     }
   })

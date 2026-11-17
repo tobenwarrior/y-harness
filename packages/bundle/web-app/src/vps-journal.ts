@@ -21,6 +21,9 @@ const TIMED_OUT = 'VPS journal request timed out.'
 const UNAVAILABLE = 'VPS journal is unavailable.'
 const INVALID = 'VPS journal response is invalid.'
 
+type ParsedJsonObject = { readonly [key: string]: ParsedJsonValue }
+type ParsedJsonValue = null | boolean | number | string | readonly ParsedJsonValue[] | ParsedJsonObject
+
 /** Trusted owner configuration for one read-only VPS journal socket. */
 export interface VpsJournalConfig {
   /** Absolute Unix-domain socket path owned by the VPS journal service. */
@@ -53,8 +56,12 @@ export interface VpsJournalSnapshot {
   readonly primaryAudit: readonly VpsJournalEntry[]
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+function isRecord(value: ParsedJsonValue | undefined): value is ParsedJsonObject {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function isJsonArray(value: ParsedJsonValue | undefined): value is readonly ParsedJsonValue[] {
+  return Array.isArray(value)
 }
 
 function boundedInteger(value: unknown, max: number): value is number {
@@ -65,12 +72,12 @@ function boundedString(value: unknown): value is string {
   return typeof value === 'string' && Buffer.byteLength(value, 'utf8') <= MAX_JSON_STRING_BYTES
 }
 
-function boundedJson(value: unknown, depth: number): VpsJournalValue | undefined {
+function boundedJson(value: ParsedJsonValue, depth: number): VpsJournalValue | undefined {
   if (value === null || typeof value === 'boolean') return value
   if (typeof value === 'number') return Number.isFinite(value) ? value : undefined
   if (typeof value === 'string') return boundedString(value) ? value : undefined
   if (depth >= MAX_JSON_DEPTH) return undefined
-  if (Array.isArray(value)) {
+  if (isJsonArray(value)) {
     if (value.length > MAX_JSON_ARRAY_LENGTH) return undefined
     const result: VpsJournalValue[] = []
     for (const child of value) {
@@ -80,21 +87,20 @@ function boundedJson(value: unknown, depth: number): VpsJournalValue | undefined
     }
     return Object.freeze(result)
   }
-  if (!isRecord(value)) return undefined
   const keys = Object.keys(value)
   if (keys.length > MAX_JSON_KEYS) return undefined
   const result: Record<string, VpsJournalValue> = Object.create(null) as Record<string, VpsJournalValue>
-  for (const key of keys) {
+  for (const [key, child] of Object.entries(value)) {
     if (Buffer.byteLength(key, 'utf8') > MAX_JSON_STRING_BYTES) return undefined
-    const bounded = boundedJson(value[key], depth + 1)
+    const bounded = boundedJson(child, depth + 1)
     if (bounded === undefined) return undefined
     result[key] = bounded
   }
   return Object.freeze(result)
 }
 
-function boundedEntries(value: unknown, maxEntries: number): readonly VpsJournalEntry[] | undefined {
-  if (!Array.isArray(value) || value.length > maxEntries) return undefined
+function boundedEntries(value: ParsedJsonValue | undefined, maxEntries: number): readonly VpsJournalEntry[] | undefined {
+  if (!isJsonArray(value) || value.length > maxEntries) return undefined
   const entries: VpsJournalEntry[] = []
   for (const item of value) {
     if (!isRecord(item)) return undefined
@@ -106,9 +112,9 @@ function boundedEntries(value: unknown, maxEntries: number): readonly VpsJournal
 }
 
 function decode(serialized: Buffer, maxEntries: number): VpsJournalSnapshot {
-  let value: unknown
+  let value: ParsedJsonValue
   try {
-    value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(serialized))
+    value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(serialized)) as ParsedJsonValue
   } catch {
     throw new Error(INVALID)
   }

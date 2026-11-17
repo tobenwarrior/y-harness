@@ -19,7 +19,7 @@ import { isVpsSharedPath } from './vps-runtime.ts'
 export function registerVpsProjectTool(
   ctx: Context,
   agent: NonNullable<ToolExecution['agent']>,
-  workspaceFiles: Context['workspaceFiles'],
+  workspaceFiles: Pick<Context['workspaceFiles'], 'list' | 'read'>,
   access: (signal: AbortSignal) => Promise<WorkspaceFileAccess | undefined>,
 ): (granted: boolean) => Promise<void> {
   const definition = defineTool({

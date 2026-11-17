@@ -247,6 +247,26 @@ describe('isolated browser saved-login registry', () => {
       .resolves.toEqual({ state: 'unavailable' })
   })
 
+  it('rejects unsupported shared and routine admissions before starting a login', async () => {
+    const browser = new VpsIsolatedBrowser({
+      socketPath: '/run/browser-login-fixture.sock', bots: [BOT], sharedBots: [BOT], savedLogins: true,
+    })
+    const requestLogin = vi.spyOn(browser, 'requestLogin')
+    const logins = new VpsBrowserLogin(browser)
+    const lease: VpsBrowserLoginLease = operation => operation()
+    try {
+      await expect(logins.request(BOT, SHARED_SESSION, lease, new AbortController().signal))
+        .rejects.toThrow('not authorized')
+      await expect(logins.requestForRoutine(BOT, SHARED_SESSION, lease, new AbortController().signal))
+        .rejects.toThrow('not authorized')
+      await expect(logins.requestForRoutine(BOT, SESSION, lease, new AbortController().signal))
+        .resolves.toEqual({ state: 'approval-required' })
+      expect(requestLogin).not.toHaveBeenCalled()
+    } finally {
+      await logins.dispose()
+    }
+  })
+
   it('requires the Cloud allowlist before opening a shared browser', async () => {
     const socket = vi.fn(() => { throw new Error('unexpected connection') })
     const socketPath = '/run/browser-fixture.sock'
@@ -296,6 +316,157 @@ describe('isolated browser saved-login registry', () => {
       await expect((await fetch(SESSION)).json()).resolves.toEqual({ request: null })
     } finally {
       controller.abort()
+      await logins.dispose()
+    }
+  })
+
+  it('withdraws expired shared metadata from the owner lookup', async () => {
+    const browser = new VpsIsolatedBrowser({
+      socketPath: '/run/browser-login-fixture.sock', bots: [BOT], sharedBots: [BOT], savedLogins: true,
+    })
+    vi.spyOn(browser, 'requestLogin').mockResolvedValue({
+      id: LOGIN_ID, origin: 'https://example.test', destination: 'https://example.test/login', state: 'pending',
+    })
+    vi.spyOn(browser, 'loginStatus').mockResolvedValue('pending')
+    vi.spyOn(browser, 'cancelLogin').mockResolvedValue('unavailable')
+    let now = 0
+    let releaseSleep: (() => void) | undefined
+    const logins = new VpsBrowserLogin(browser, {
+      sleep: () => new Promise<void>((resolve) => { releaseSleep = resolve }), now: () => now,
+    })
+    const controller = new AbortController()
+    const admit = async (_signal: AbortSignal, start?: () => void): Promise<boolean> => {
+      start?.()
+      return true
+    }
+    const pending = logins.request(BOT, SHARED_SESSION, operation => operation(), controller.signal, admit)
+    await expect.poll(() => logins.current(SHARED_SESSION)).toMatchObject({ id: LOGIN_ID, scope: 'shared' })
+    expect(logins.currentForOwner(BOT, SESSION)).toMatchObject({ id: LOGIN_ID, scope: 'shared' })
+    now = Number.MAX_SAFE_INTEGER
+    expect(logins.currentForOwner(BOT, SESSION)).toBeUndefined()
+    controller.abort()
+    releaseSleep?.()
+    await expect(pending).resolves.toEqual({ state: 'unavailable' })
+    expect(logins.hasPending(SHARED_SESSION)).toBe(false)
+  })
+
+  it('returns a purpose when a shared form cannot be submitted and cancels it', async () => {
+    const browser = new VpsIsolatedBrowser({
+      socketPath: '/run/browser-login-fixture.sock', bots: [BOT], sharedBots: [BOT], savedLogins: true,
+    })
+    vi.spyOn(browser, 'requestLogin').mockResolvedValue({
+      id: LOGIN_ID, origin: 'https://example.test', destination: 'https://example.test/signup',
+      purpose: 'signup', state: 'pending',
+    })
+    const cancel = vi.spyOn(browser, 'cancelLogin').mockResolvedValue('unavailable')
+    const logins = new VpsBrowserLogin(browser)
+    const admit = async (_signal: AbortSignal, start?: () => void): Promise<boolean> => {
+      start?.()
+      return true
+    }
+    try {
+      await expect(logins.request(BOT, SHARED_SESSION, operation => operation(), new AbortController().signal, admit))
+        .resolves.toEqual({ state: 'unavailable', purpose: 'signup' })
+      expect(cancel).toHaveBeenCalledExactlyOnceWith(BOT, SHARED_SESSION, LOGIN_ID, expect.any(AbortSignal))
+      expect(logins.hasPending(SHARED_SESSION)).toBe(false)
+    } finally {
+      await logins.dispose()
+    }
+  })
+
+  it('cleans the pending marker when a lease does not start the broker request', async () => {
+    const browser = new VpsIsolatedBrowser({ socketPath: '/run/browser-login-fixture.sock', bots: [BOT] })
+    const requestLogin = vi.spyOn(browser, 'requestLogin')
+    const logins = new VpsBrowserLogin(browser)
+    const lease: VpsBrowserLoginLease = async <T>(_operation: () => Promise<T>): Promise<T> => undefined as T
+    try {
+      await expect(logins.request(BOT, SESSION, lease, new AbortController().signal))
+        .resolves.toEqual({ state: 'unavailable' })
+      expect(requestLogin).not.toHaveBeenCalled()
+      expect(logins.hasPending(SESSION)).toBe(false)
+    } finally {
+      await logins.dispose()
+    }
+  })
+
+  it('maps automatic owner outcomes for direct and routine requests', async () => {
+    const browser = new VpsIsolatedBrowser({ socketPath: '/run/browser-login-fixture.sock', bots: [BOT], savedLogins: true })
+    vi.spyOn(browser, 'requestLogin').mockResolvedValue({
+      id: LOGIN_ID, origin: 'https://example.test', destination: 'https://example.test/login', state: 'pending',
+    })
+    const cancel = vi.spyOn(browser, 'cancelLogin').mockResolvedValue('unavailable')
+    const lease: VpsBrowserLoginLease = operation => operation()
+    const direct = new VpsBrowserLogin(browser, { automaticLogin: async () => 'needs-owner' })
+    await expect(direct.request(BOT, 'private-session', lease, new AbortController().signal))
+      .resolves.toEqual({ state: 'needs-owner' })
+    await direct.dispose()
+
+    const admittedDirect = new VpsBrowserLogin(browser, { automaticLogin: async () => 'needs-owner' })
+    const admitPrivate = async (_signal: AbortSignal, start?: () => void): Promise<boolean> => {
+      start?.()
+      return true
+    }
+    await expect(admittedDirect.request(BOT, 'private-session', lease, new AbortController().signal, admitPrivate))
+      .resolves.toEqual({ state: 'needs-owner' })
+    await admittedDirect.dispose()
+
+    const routineNeedsOwner = new VpsBrowserLogin(browser, { automaticLogin: async () => 'needs-owner' })
+    await expect(routineNeedsOwner.requestForRoutine(BOT, 'private-session', lease, new AbortController().signal))
+      .resolves.toEqual({ state: 'approval-required' })
+    await routineNeedsOwner.dispose()
+
+    const routine = new VpsBrowserLogin(browser, { automaticLogin: async () => 'unavailable' })
+    try {
+      await expect(routine.requestForRoutine(BOT, 'private-session', lease, new AbortController().signal))
+        .resolves.toEqual({ state: 'unavailable' })
+      expect(cancel).toHaveBeenCalledExactlyOnceWith(BOT, 'private-session', LOGIN_ID, expect.any(AbortSignal))
+    } finally {
+      await routine.dispose()
+    }
+  })
+
+  it('returns a purpose when a private broker sends a shared approval challenge', async () => {
+    const browser = new VpsIsolatedBrowser({ socketPath: '/run/browser-login-fixture.sock', bots: [BOT], savedLogins: true })
+    vi.spyOn(browser, 'requestLogin').mockResolvedValue({
+      id: LOGIN_ID, origin: 'https://example.test', destination: 'https://example.test/verify',
+      purpose: 'verification', state: 'pending',
+    })
+    vi.spyOn(browser, 'loginStatus').mockResolvedValue({ state: 'approval-pending', challenge: LOGIN_ID })
+    const cancel = vi.spyOn(browser, 'cancelLogin').mockResolvedValue('unavailable')
+    const logins = new VpsBrowserLogin(browser)
+    try {
+      await expect(logins.request(BOT, SESSION, operation => operation(), new AbortController().signal))
+        .resolves.toEqual({ state: 'unavailable', purpose: 'verification' })
+      expect(cancel).toHaveBeenCalledExactlyOnceWith(BOT, SESSION, LOGIN_ID, expect.any(AbortSignal))
+    } finally {
+      await logins.dispose()
+    }
+  })
+
+  it('cancels a shared login when access is revoked before polling', async () => {
+    const browser = new VpsIsolatedBrowser({
+      socketPath: '/run/browser-login-fixture.sock', bots: [BOT], sharedBots: [BOT], savedLogins: true,
+    })
+    vi.spyOn(browser, 'requestLogin').mockResolvedValue({
+      id: LOGIN_ID, origin: 'https://example.test', destination: 'https://example.test/login', state: 'pending',
+    })
+    const status = vi.spyOn(browser, 'loginStatus')
+    const cancel = vi.spyOn(browser, 'cancelLogin').mockResolvedValue('unavailable')
+    const access = vi.fn(async (_signal: AbortSignal, start?: () => void): Promise<boolean> => {
+      if (start !== undefined) {
+        start()
+        return true
+      }
+      return false
+    })
+    const logins = new VpsBrowserLogin(browser, { sleep: async () => {} })
+    try {
+      await expect(logins.request(BOT, SHARED_SESSION, operation => operation(), new AbortController().signal, access))
+        .resolves.toEqual({ state: 'unavailable' })
+      expect(access).toHaveBeenCalledTimes(2)
+      expect(status).not.toHaveBeenCalled()
+      expect(cancel).toHaveBeenCalledExactlyOnceWith(BOT, SHARED_SESSION, LOGIN_ID, expect.any(AbortSignal))
+    } finally {
       await logins.dispose()
     }
   })
