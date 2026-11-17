@@ -262,6 +262,14 @@ function userEvent(): SessionEvent<'user/message'> {
 }
 
 describe('canonical event-local surface metadata', () => {
+  it.each([null, [], 'append'])('rejects a malformed append options value (%j)', (options) => {
+    const session = Session.create(id)
+    const event = userEvent()
+    expect(() => session.append(event.type, event.data, options as never)).toThrow(/invalid surface metadata/)
+    expect(session.seq).toBe(0)
+    expect(session.deriveMessages()).toEqual([])
+  })
+
   for (const [path, accept] of Object.entries(entryPaths)) {
     it.each(invalidOps)(path + ' rejects noncanonical replace keys (%j)', (surfaceOp) => {
       expect(() => accept({ ...userEvent(), surfaceOp } as unknown as SessionEvent)).toThrow(/invalid replace surfaceOp/)

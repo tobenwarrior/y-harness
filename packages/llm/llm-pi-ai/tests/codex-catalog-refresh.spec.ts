@@ -68,7 +68,7 @@ describe('automatic ChatGPT catalog refresh', () => {
     const { runtime, request } = fixture()
     try {
       runtime.startAutomaticRefresh()
-      await vi.waitFor(() => expect(request.mock.calls.map(([method]) => method)).toContain('model/list'))
+      await vi.waitFor(() => { expect(request.mock.calls.map(([method]) => method)).toContain('model/list') })
       expect(runtime.models()).toEqual([{ id: 'fresh-model', name: 'Fresh', description: 'Fresh catalog', efforts: [], serviceTiers: [], inputModalities: ['text', 'image'] }])
     } finally {
       runtime.close()
@@ -153,7 +153,7 @@ describe('automatic ChatGPT catalog refresh', () => {
     f.persist.mockImplementation(async () => persisted.promise)
     const refresh = f.runtime.refresh()
     try {
-      await vi.waitFor(() => expect(f.persist).toHaveBeenCalled())
+      await vi.waitFor(() => { expect(f.persist).toHaveBeenCalled() })
       const closing = f.runtime.close()
       let settled = false
       void closing.then(() => { settled = true })
@@ -180,7 +180,7 @@ describe('automatic ChatGPT catalog refresh', () => {
     })
     const refresh = f.runtime.refresh()
     try {
-      await vi.waitFor(() => expect(f.request.mock.calls.map(([method]) => method)).toContain('model/list'))
+      await vi.waitFor(() => { expect(f.request.mock.calls.map(([method]) => method)).toContain('model/list') })
       f.runtime.close()
       gate.resolve(refreshedCatalog)
       await expect(refresh).rejects.toThrow('closed')
@@ -202,7 +202,7 @@ describe('automatic ChatGPT catalog refresh', () => {
     })
     try {
       const refresh = f.runtime.refresh()
-      await vi.waitFor(() => expect(f.request.mock.calls.map(([method]) => method)).toContain('model/list'))
+      await vi.waitFor(() => { expect(f.request.mock.calls.map(([method]) => method)).toContain('model/list') })
       const disable = f.runtime.configure(false)
       await Promise.resolve()
       expect(f.runtime.view().enabled).toBe(true)
@@ -223,7 +223,7 @@ describe('automatic ChatGPT catalog refresh', () => {
     f.runtime.startAutomaticRefresh()
     try {
       await vi.advanceTimersByTimeAsync(0)
-      await vi.waitFor(() => expect(f.request.mock.calls.filter(([method]) => method === 'model/list')).toHaveLength(2))
+      await vi.waitFor(() => { expect(f.request.mock.calls.filter(([method]) => method === 'model/list')).toHaveLength(2) })
       const beforeLogout = f.request.mock.calls.filter(([method]) => method === 'model/list').length
       const logoutRequest = Promise.withResolvers<unknown>()
       f.request.mockImplementation(async (method: string) => {
@@ -233,7 +233,7 @@ describe('automatic ChatGPT catalog refresh', () => {
         return {}
       })
       const logout = f.runtime.logout()
-      await vi.waitFor(() => expect(f.request.mock.calls.map(([method]) => method)).toContain('account/logout'))
+      await vi.waitFor(() => { expect(f.request.mock.calls.map(([method]) => method)).toContain('account/logout') })
       await vi.advanceTimersByTimeAsync(100)
       expect(f.request.mock.calls.filter(([method]) => method === 'model/list')).toHaveLength(beforeLogout)
       logoutRequest.resolve({})
@@ -258,7 +258,7 @@ describe('automatic ChatGPT catalog refresh', () => {
     try {
       const logout = f.runtime.logout()
       void logout.catch(() => {})
-      await vi.waitFor(() => expect(f.request.mock.calls.map(([method]) => method)).toContain('account/logout'))
+      await vi.waitFor(() => { expect(f.request.mock.calls.map(([method]) => method)).toContain('account/logout') })
       await expect(f.runtime.refresh()).rejects.toThrow('disconnect')
       await expect(f.runtime.publish()).rejects.toThrow('disconnect')
       await expect(f.runtime.configure(true)).rejects.toThrow('disconnect')
@@ -281,7 +281,7 @@ describe('automatic ChatGPT catalog refresh', () => {
     f.persist.mockImplementation(async () => write.promise)
     try {
       const configure = f.runtime.configure(true)
-      await vi.waitFor(() => expect(f.persist).toHaveBeenCalledOnce())
+      await vi.waitFor(() => { expect(f.persist).toHaveBeenCalledOnce() })
       await expect(f.runtime.logout()).rejects.toThrow('operation')
       write.resolve(undefined)
       await configure

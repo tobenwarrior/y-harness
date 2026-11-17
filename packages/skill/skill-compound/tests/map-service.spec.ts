@@ -109,13 +109,16 @@ describe('loopback proxy', () => {
     expect(forwards.mock.calls[0]?.[2]).toEqual({ accept: 'application/json' })
   })
 
-  it('fails closed when an existing runtime is not private', async () => {
-    if (process.platform === 'win32') return
+  it('fails closed when an existing runtime is not a private regular file', async () => {
     const stateDir = await mkdtemp(join(tmpdir(), 'dsh-map-runtime-'))
     const runtimeDir = join(stateDir, 'code-map')
     const runtimePath = join(runtimeDir, 'runtime.json')
     await mkdir(runtimeDir)
-    await writeFile(runtimePath, JSON.stringify({ pid: process.pid, port: 43127, token: 'server-token', build_signature: 'test' }), { mode: 0o644 })
+    if (process.platform === 'win32') {
+      await mkdir(runtimePath)
+    } else {
+      await writeFile(runtimePath, JSON.stringify({ pid: process.pid, port: 43127, token: 'server-token', build_signature: 'test' }), { mode: 0o644 })
+    }
     const forwards = vi.fn((_url: string, _request: Request, _headers?: HeadersInit) => Promise.resolve(Response.json({ model: {} })))
     const service = new MapServiceBridge({
       python: '/usr/bin/python3.11', assetRoot: assets, workspaceRoot: '/work/repo', stateDir,
@@ -171,6 +174,7 @@ describe('loopback proxy', () => {
 
   it('switches the service and viewer assets after the active root changes', async () => {
     let current = assets
+    const overlay = '/private/compound-overlay'
     const starts = vi.fn(() => 'http://127.0.0.1:43127/?project=abc123')
     const service = new MapServiceBridge({
       python: '/usr/bin/python3.11',
@@ -182,11 +186,11 @@ describe('loopback proxy', () => {
       forward: () => Promise.resolve(Response.json({ model: {} })),
     })
     await service.proxy('map', new Request('http://localhost/x'))
-    current = '/private/compound-overlay'
+    current = overlay
     service.invalidate()
     await service.proxy('map', new Request('http://localhost/x'))
-    expect(starts).toHaveBeenNthCalledWith(1, '/usr/bin/python3.11', `${assets}compound/scripts/map_server.py`, '/work/repo', expect.any(String))
-    expect(starts).toHaveBeenNthCalledWith(2, '/usr/bin/python3.11', '/private/compound-overlay/compound/scripts/map_server.py', '/work/repo', expect.any(String))
+    expect(starts).toHaveBeenNthCalledWith(1, '/usr/bin/python3.11', join(assets, 'compound', 'scripts', 'map_server.py'), '/work/repo', expect.any(String))
+    expect(starts).toHaveBeenNthCalledWith(2, '/usr/bin/python3.11', join(overlay, 'compound', 'scripts', 'map_server.py'), '/work/repo', expect.any(String))
   })
 
   it('answers 502 with the reason when the service cannot start', async () => {
@@ -243,8 +247,8 @@ describe('service state directory', () => {
   })
 
   it('keeps the cache outside a repository that contains the home directory', () => {
-    expect(resolveStateDir('/work/repo', undefined, '/work/repo/.home', '/tmp')).toBe('/tmp/compound-skills')
-    expect(resolveStateDir('/work/repo', undefined, '/Users/someone', '/tmp')).toBe('/Users/someone/.cache/compound-skills')
+    expect(resolveStateDir('/work/repo', undefined, '/work/repo/.home', '/tmp')).toBe(join('/tmp', 'compound-skills'))
+    expect(resolveStateDir('/work/repo', undefined, '/Users/someone', '/tmp')).toBe(join('/Users/someone', '.cache', 'compound-skills'))
   })
 
   it('respects an explicit directory or environment value', () => {

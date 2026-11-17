@@ -1,11 +1,18 @@
 import { createHash } from 'node:crypto'
-import { chmod, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, symlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { delimiter, join } from 'node:path'
+import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 import { activeOverlay, legacyOverlayRoot, overlayRoot, parseGitTree, resolveOverlayRoot, updateOverlay } from '../src/overlay.ts'
 
-afterEach(() => vi.unstubAllGlobals())
+const fakeGit = await vi.hoisted(async () => (await import('./fake-git.ts')).createFakeGitHarness())
+
+vi.mock('node:child_process', async importOriginal => ({
+  ...await importOriginal<typeof import('node:child_process')>(),
+  spawn: fakeGit.spawn,
+}))
+
+afterEach(() => { vi.unstubAllGlobals(); fakeGit.reset() })
 
 it('parses and validates NUL-delimited Git tree entries', () => {
   const sha = 'a'.repeat(40)
@@ -16,10 +23,6 @@ it('parses and validates NUL-delimited Git tree entries', () => {
 
 it('uses noninteractive Git settings for a rate-limited tree fallback', async () => {
   const root = await mkdtemp(join(tmpdir(), 'compound-overlay-test-'))
-  const bin = await mkdtemp(join(tmpdir(), 'compound-git-bin-'))
-  const git = join(bin, 'git')
-  const environment = join(bin, 'environment')
-  const argumentsPath = join(bin, 'arguments')
   const commit = 'c'.repeat(40)
   const files = new Map(['compound', 'map', 'setup', 'setup-global', 'status-global']
     .map(name => [`skills/${name}/SKILL.md`, `---\nname: ${name}\ndescription: test\n---\ncontent\n`]))
@@ -28,25 +31,7 @@ it('uses noninteractive Git settings for a rate-limited tree fallback', async ()
     const sha = createHash('sha1').update(`blob ${size}\0`).update(text).digest('hex')
     return `100644 blob ${sha}    ${size}\t${path}`
   }).join('\n')
-  const treeOutput = tree.split('\n').map(line => `printf '%s\\000' '${line}'`).join('\n')
-  const script = [
-    '#!/bin/sh',
-    `if [ ! -f ${JSON.stringify(environment)} ]; then printf '%s\\n' "$GIT_TERMINAL_PROMPT|$GIT_ASKPASS|$SSH_ASKPASS|$SSH_ASKPASS_REQUIRE" > ${JSON.stringify(environment)}; fi`,
-    `printf '%s\\n' "$@" >> ${JSON.stringify(argumentsPath)}`,
-    'command="$5"',
-    'last=""',
-    'for arg do last="$arg"; done',
-    'if [ "$command" = clone ]; then mkdir -p "$last"; fi',
-    `if [ "$command" = rev-parse ]; then printf '%s\\n' '${commit}'; fi`,
-    'if [ "$command" = ls-tree ]; then',
-    treeOutput,
-    'fi',
-    '',
-  ].join('\n')
-  await writeFile(git, script)
-  await chmod(git, 0o755)
-  const previousPath = process.env.PATH
-  process.env.PATH = `${bin}${delimiter}${previousPath ?? ''}`
+  fakeGit.configure({ commit, treeRecords: tree.split('\n') })
   vi.stubGlobal('fetch', (url: string) => {
     if (url.includes('/commits/')) return Promise.resolve(Response.json({ sha: commit }))
     if (url.includes('/git/trees/')) return Promise.resolve(new Response('rate limited', { status: 403, headers: { 'x-ratelimit-remaining': '0' } }))
@@ -56,35 +41,20 @@ it('uses noninteractive Git settings for a rate-limited tree fallback', async ()
   })
   try {
     await expect(updateOverlay(root)).resolves.toEqual({ commit, version: '1.0.0' })
-    expect(await readFile(environment, 'utf8')).toBe('0|||never\n')
-    const argumentsLog = await readFile(argumentsPath, 'utf8')
-    expect(argumentsLog).toContain('credential.helper=\n')
-    expect(argumentsLog).toContain('core.askPass=\n')
+    const clone = fakeGit.calls.find(call => call.args.includes('clone'))
+    expect(clone?.env).toMatchObject({ GIT_TERMINAL_PROMPT: '0', GIT_ASKPASS: '', SSH_ASKPASS: '', SSH_ASKPASS_REQUIRE: 'never' })
+    expect(clone?.args).toContain('credential.helper=')
+    expect(clone?.args).toContain('core.askPass=')
   } finally {
-    process.env.PATH = previousPath
-    await Promise.all([
-      rm(root, { recursive: true, force: true }),
-      rm(bin, { recursive: true, force: true }),
-    ])
+    await rm(root, { recursive: true, force: true })
   }
 })
 
 it('caps combined Git stdout and stderr during a rate-limited tree fallback', async () => {
   const root = await mkdtemp(join(tmpdir(), 'compound-overlay-test-'))
-  const bin = await mkdtemp(join(tmpdir(), 'compound-git-bin-'))
-  const git = join(bin, 'git')
   const commit = 'd'.repeat(40)
   const streamSize = 11 * 1024 * 1024
-  const script = [
-    '#!/bin/sh',
-    'command="$5"',
-    `if [ "$command" = clone ]; then head -c ${String(streamSize)} /dev/zero; head -c ${String(streamSize)} /dev/zero >&2; exit 0; fi`,
-    '',
-  ].join('\n')
-  await writeFile(git, script)
-  await chmod(git, 0o755)
-  const previousPath = process.env.PATH
-  process.env.PATH = `${bin}${delimiter}${previousPath ?? ''}`
+  fakeGit.configure({ commit, cloneOutputBytes: streamSize })
   vi.stubGlobal('fetch', (url: string) => {
     if (url.includes('/commits/')) return Promise.resolve(Response.json({ sha: commit }))
     if (url.includes('/git/trees/')) return Promise.resolve(new Response('rate limited', { status: 403, headers: { 'x-ratelimit-remaining': '0' } }))
@@ -94,11 +64,7 @@ it('caps combined Git stdout and stderr during a rate-limited tree fallback', as
     await expect(updateOverlay(root)).rejects.toThrow('git output too large')
     await expect(readFile(join(root, 'current.json'))).rejects.toThrow()
   } finally {
-    process.env.PATH = previousPath
-    await Promise.all([
-      rm(root, { recursive: true, force: true }),
-      rm(bin, { recursive: true, force: true }),
-    ])
+    await rm(root, { recursive: true, force: true })
   }
 })
 

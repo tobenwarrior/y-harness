@@ -89,7 +89,7 @@ describe('full-round radii keep circular corners', () => {
     const unpaired = packageStylesheets()
       .filter(file => !file.includes('/packages/skill/skill-compound/assets/compound/assets/'))
       .flatMap(file =>
-      unpairedFullRound(readFileSync(file, 'utf8')).map(selectors => `${file} ${selectors}`))
+        unpairedFullRound(readFileSync(file, 'utf8')).map(selectors => `${file} ${selectors}`))
     expect(unpaired).toEqual([])
   })
 })

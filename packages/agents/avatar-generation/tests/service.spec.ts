@@ -190,7 +190,7 @@ describe('AvatarGenerationService', () => {
     let cancelled = false
     const fetch = vi.fn<typeof globalThis.fetch>(async () => {
       const response = streamingResponse([new Uint8Array(1)], () => { cancelled = true }, false)
-      return { ...response, ok: false, status: 500 } as Response
+      return { ...response, ok: false, status: 500 }
     })
     const h = harness(fetch, true)
 

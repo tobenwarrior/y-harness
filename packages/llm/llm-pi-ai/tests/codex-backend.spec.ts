@@ -268,7 +268,7 @@ describe('Codex native backend', () => {
       for await (const chunk of f.runtime.stream({ provider: 'codex-backend', model: 'gpt-6.1-sol', sessionId: 'bot-session-alpha' as never, messages: [{ role: 'user', content: [{ type: 'text', text: 'send it' }] }] })) chunks.push(chunk)
       return chunks
     })()
-    await vi.waitFor(() => expect(f.request.mock.calls.some(call => call[0] === 'turn/start')).toBe(true))
+    await vi.waitFor(() => { expect(f.request.mock.calls.some(call => call[0] === 'turn/start')).toBe(true) })
     const threadStart = f.request.mock.calls.find(call => call[0] === 'thread/start')?.[1]
     expect(threadStart).toMatchObject({ dynamicTools: [{ type: 'function', name: 'send_bot_message', description: tool.description, inputSchema: tool.inputSchema }] })
     await expect(f.invoke('item/tool/call', { threadId: 'thread1', turnId: 'turn1', callId: 'call-1', tool: 'send_bot_message', arguments: '{"target":"bot-beta"}' })).resolves.toEqual({

@@ -94,12 +94,7 @@ function pendingStoreFixture(initial: BotGroupPendingState = { creations: {}, me
   }
 }
 
-function remoteFixture(rows: readonly BotView[]): BotWorkspaceRemote & {
-  readonly list: ReturnType<typeof vi.fn>
-  readonly create: ReturnType<typeof vi.fn>
-  readonly createGroup: ReturnType<typeof vi.fn>
-  readonly sendGroupMessage: ReturnType<typeof vi.fn>
-} {
+function remoteFixture(rows: readonly BotView[]) {
   const create = vi.fn<BotWorkspaceRemote['create']>()
   const createGroup = vi.fn<NonNullable<BotWorkspaceRemote['createGroup']>>()
   const sendGroupMessage = vi.fn<NonNullable<BotWorkspaceRemote['sendGroupMessage']>>()
@@ -108,8 +103,8 @@ function remoteFixture(rows: readonly BotView[]): BotWorkspaceRemote & {
     create,
     createGroup,
     sendGroupMessage,
-    rename: vi.fn(),
-  }
+    rename: vi.fn<BotWorkspaceRemote['rename']>(),
+  } satisfies BotWorkspaceRemote
 }
 
 function groupView(id: string, name: string, bots: readonly BotView[]): BotGroupView {
@@ -220,9 +215,9 @@ describe('BotWorkspaceController', () => {
     await controller.face().updateProfile?.(original.id, {
       expectedUpdatedAt: original.updatedAt,
       name: original.name,
-      description: updated.description!,
-      persona: updated.persona!,
-      capabilities: updated.capabilities!,
+      description: updated.description,
+      persona: updated.persona,
+      capabilities: updated.capabilities,
     })
 
     expect(updateProfile).toHaveBeenCalledWith({

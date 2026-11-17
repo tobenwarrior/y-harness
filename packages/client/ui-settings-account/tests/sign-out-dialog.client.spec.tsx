@@ -6,7 +6,7 @@ import { SignOutDialog } from '../src/client/SignOutDialog.tsx'
 import { en, zh } from '../src/client/locales.ts'
 
 afterEach(cleanup)
-function mount(running: boolean | 'unknown', copy: typeof en | typeof zh = en, signOut = vi.fn(async () => {})) {
+function mount(running: boolean | 'unknown', copy: typeof en = en, signOut = vi.fn(async () => {})) {
   const close = vi.fn()
   render(<SignOutDialog running={running} signOut={signOut} close={close} t={key => copy[key]} />)
   return { signOut, close }

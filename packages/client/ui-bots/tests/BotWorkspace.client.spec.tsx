@@ -1246,7 +1246,7 @@ describe('Bot roster and detail', () => {
 
     window.dispatchEvent(new Event('focus'))
     await waitFor(() => { expect(getOwnerCapability).toHaveBeenCalledTimes(2) })
-    expect((screen.getByRole('button', { name: 'Create a shared group' }) as HTMLButtonElement).disabled).toBe(false)
+    expect((screen.getByRole('button', { name: 'Create a shared group' })).disabled).toBe(false)
     window.dispatchEvent(new Event('focus'))
     expect(getOwnerCapability).toHaveBeenCalledTimes(2)
   })
@@ -1296,12 +1296,12 @@ describe('Bot roster and detail', () => {
     />)
 
     await waitFor(() => { expect(capabilityCalls).toBe(1) })
-    expect((screen.getByRole('button', { name: 'Create a shared group' }) as HTMLButtonElement).disabled).toBe(true)
+    expect((screen.getByRole('button', { name: 'Create a shared group' })).disabled).toBe(true)
     if (onGeneration === undefined) throw new Error('Connection generation listener was not registered')
     await act(async () => { onGeneration?.() })
     await waitFor(() => {
       expect(capabilityCalls).toBe(2)
-      expect((screen.getByRole('button', { name: 'Create a shared group' }) as HTMLButtonElement).disabled).toBe(false)
+      expect((screen.getByRole('button', { name: 'Create a shared group' })).disabled).toBe(false)
     })
     view.unmount()
     client.dispose?.()
@@ -1972,7 +1972,7 @@ describe('Bot roster and detail', () => {
     fireEvent.change(screen.getByRole('textbox', { name: 'Message Release room' }), { target: { value: 'Retry this' } })
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
     await waitFor(() => { expect(failed).toHaveBeenCalledWith('Retry this') })
-    expect((screen.getByRole('textbox', { name: 'Message Release room' }) as HTMLTextAreaElement).value).toBe('Retry this')
+    expect((screen.getByRole('textbox', { name: 'Message Release room' })).value).toBe('Retry this')
     expect(screen.getByRole('alert').textContent).toContain('Some Bots could not receive')
   })
 
@@ -2193,7 +2193,7 @@ describe('Bot roster and detail', () => {
     const onSetConnectedAppAccess = vi.fn().mockResolvedValue(undefined)
     renderSplitWorkspace({ onLoadConnectedApps, onSetConnectedAppAccess })
 
-    openConnectedAppsMenu(bots[1]!)
+    openConnectedAppsMenu(bots[1])
     const dialog = await screen.findByRole('dialog', { name: 'Connected apps' })
     await waitFor(() => { expect(onLoadConnectedApps).toHaveBeenCalledWith('release') })
     expect(dialog.querySelector('[data-app-id="github"]')).not.toBeNull()

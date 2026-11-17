@@ -52,7 +52,7 @@ function Invoke-DshCommandPath {
         try { $fingerprint = ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes(($snapshot | ConvertTo-Json -Compress))))).Replace('-','').ToLowerInvariant() }
         finally { $sha.Dispose() }
         if ($Request.operation -ne 'inspect' -and $Request.expected -ne $fingerprint) { Fail 'ESTALE' 'PATH changed after confirmation.' }
-        $parts = if ($null -eq $raw) { @() } else { @($raw.Split(';')) }
+        $parts = @(if ($null -ne $raw) { $raw.Split(';') })
         $current = Comparable $directory
         $old = if ($owned) { Comparable ([string]$owned) } else { $null }
         $kept = $parts
@@ -64,8 +64,9 @@ function Invoke-DshCommandPath {
             }
         }
         if ($Request.operation -eq 'install') {
-            if (-not ((Test-Path -LiteralPath (Join-Path $directory 'yharness.cmd') -PathType Leaf)
-                -or (Test-Path -LiteralPath (Join-Path $directory 'dsh.cmd') -PathType Leaf))) {
+            $canonicalAvailable = Test-Path -LiteralPath (Join-Path $directory 'yharness.cmd') -PathType Leaf
+            $legacyAvailable = Test-Path -LiteralPath (Join-Path $directory 'dsh.cmd') -PathType Leaf
+            if (-not ($canonicalAvailable -or $legacyAvailable)) {
                 Fail 'ENOENT' 'The installed launcher is unavailable.'
             }
             $next = (@($directory) + $kept) -join ';'

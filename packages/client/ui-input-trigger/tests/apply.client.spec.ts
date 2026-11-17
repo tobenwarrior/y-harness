@@ -82,7 +82,7 @@ describe('apply', () => {
     const injectEntry = entries[0]!.inject as unknown as (sessionId: SessionId) => MenuViewInjected
     const injected = injectEntry(sid('a'))
     const controller = inputTriggers.sessionOf(
-      ctx.sessions.scope(sid('a'))!,
+      ctx.sessions.scope(sid('a')),
     )
     expect(injected.menu).toBe(controller.menu)
     expect(injected.headers).toBe(controller.headers)

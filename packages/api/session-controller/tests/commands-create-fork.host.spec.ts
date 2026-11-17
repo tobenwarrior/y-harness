@@ -103,6 +103,34 @@ describe('Session creation failures', () => {
     await failed.fiber.dispose()
   })
 
+  it('stops returning the created Session when the request aborts during workspace attachment', async () => {
+    const ctx = await baseContext()
+    const abort = new AbortController()
+    const cause = new Error('caller disconnected')
+    const sessionId = SessionId('workspace-session-cancelled')
+    const workspace = {
+      id: 'workspace-1' as WorkspaceId,
+      path: '/workspace',
+      attachSession: vi.fn(() => {
+        abort.abort(cause)
+        return Promise.resolve()
+      }),
+    }
+    ctx.provide('workspaceRegistry', {
+      get: () => workspace,
+      list: () => [workspace],
+    } as never)
+    const presetForSession = vi.fn()
+    const controller = new SessionCommandController(ctx, controllerAgents({ presetForSession }), '/default')
+    try {
+      await expect(controller.create({ sessionId, workspaceId: workspace.id }, abort.signal)).rejects.toBe(cause)
+      expect(workspace.attachSession).toHaveBeenCalledExactlyOnceWith(sessionId)
+      expect(presetForSession).not.toHaveBeenCalled()
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
   it.each([
     {
       error: new RemoteError(

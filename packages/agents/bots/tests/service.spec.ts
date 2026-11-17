@@ -578,7 +578,7 @@ async function createHarness({
   if (options.connection !== undefined) ctx.provide('connection', options.connection as never)
   if (scheduleEnabled) await ctx.plugin(ScheduleService)
   if (scheduleEnabled) await Promise.all(agents.map(agent => agent.ctx.inject(
-    ['schedule', 'tools'], (scheduleScope: Context) => registerScheduleTools(scheduleScope),
+    ['schedule', 'tools'], (scheduleScope: Context) => { registerScheduleTools(scheduleScope) },
   )))
   const service = new BotService(ctx, config)
   try {
@@ -1131,7 +1131,7 @@ describe('durable Bot roster', () => {
       if (fence === undefined) throw new Error('event routine roster fence capability was not mounted')
       await started.promise
 
-      const releaseTimer = setTimeout(() => release.resolve(true), 2_500)
+      const releaseTimer = setTimeout(() => { release.resolve(true) }, 2_500)
       const canceled = await harness(pool, undefined, undefined, [String(created.bot.sessionId)], new Map(), records)
       const canceledFollowup = canceled.followups[0]
       if (canceledFollowup === undefined) throw new Error('event routine canceled recovery follow-up was not created')
@@ -1207,7 +1207,7 @@ describe('durable Bot roster', () => {
       await trigger.triggerEventRoutines.call(h.service, owner.id, {
         message: event.data, eventSeq: Number(event.seq), eventTime: event.time, source: 'user',
       })
-      const releaseTimer = setTimeout(() => release.resolve(undefined), 2_000)
+      const releaseTimer = setTimeout(() => { release.resolve(undefined) }, 2_000)
       try {
         await vi.waitFor(() => { expect(followup).toHaveBeenCalledOnce() }, { timeout: 7_000 })
       } finally {
@@ -1287,7 +1287,7 @@ describe('durable Bot roster', () => {
       if (fence === undefined) throw new Error('mid-commit fence capability was not mounted')
       await started.promise
       releaseCommit.resolve(undefined)
-      const releaseTimer = setTimeout(() => release.resolve(undefined), 2_000)
+      const releaseTimer = setTimeout(() => { release.resolve(undefined) }, 2_000)
       try {
         await vi.waitFor(() => { expect(followup).toHaveBeenCalledOnce() }, { timeout: 7_000 })
       } finally {
@@ -1692,7 +1692,7 @@ describe('durable Bot roster', () => {
       if (storedFence?.kind !== 'grant') throw new Error('shared roster fence was not persisted')
       const fenceToken = z.object({
         sharedRosterFence: z.object({ token: z.string() }),
-      }).passthrough().parse(storedFence.payload).sharedRosterFence.token
+      }).loose().parse(storedFence.payload).sharedRosterFence.token
       type SharedRosterRecoveryService = {
         recoverSharedRosterFence: (request: {
           readonly token: string
@@ -1716,7 +1716,7 @@ describe('durable Bot roster', () => {
         .resolves.toEqual({ status: 'busy' })
       expect(z.object({
         sharedRosterFence: z.object({ token: z.string() }),
-      }).passthrough().parse(storedFence.payload).sharedRosterFence.token).toBe(fenceToken)
+      }).loose().parse(storedFence.payload).sharedRosterFence.token).toBe(fenceToken)
       await expect(recovery.recoverSharedRosterFence({ token: fenceToken, confirmQuiescent: true, acceptRaceRisk: true })).resolves.toEqual({ status: 'released' })
       await expect(host.withBotRoster(bots, undefined, async () => 'recovered')).resolves.toEqual({
         valid: true,
@@ -1757,7 +1757,7 @@ describe('durable Bot roster', () => {
       if (storedFence?.kind !== 'grant') throw new Error('shared roster fence was not persisted')
       const fenceToken = z.object({
         sharedRosterFence: z.object({ token: z.string() }),
-      }).passthrough().parse(storedFence.payload).sharedRosterFence.token
+      }).loose().parse(storedFence.payload).sharedRosterFence.token
       await expect(h.service.recoverSharedRosterFence({ token: fenceToken, confirmQuiescent: true, acceptRaceRisk: true }))
         .resolves.toEqual({ status: 'released' })
       await expect(host.withBotRoster([], undefined, async () => 'authority-reconciled')).resolves.toEqual({
@@ -7976,9 +7976,9 @@ describe('durable Bot roster', () => {
         source: { kind: 'bot-group-message', groupId, messageId },
       }), { surfaceOp: 'append' })
       await vi.advanceTimersByTimeAsync(1_000)
-      await vi.waitFor(() => expect(records.get(credentialKey('agent-bots', 'shared-group-message-deliveries'))).toMatchObject({
+      await vi.waitFor(() => { expect(records.get(credentialKey('agent-bots', 'shared-group-message-deliveries'))).toMatchObject({
         payload: { messages: [{ status: 'accepted' }] },
-      }), { timeout: 2_000, interval: 10 })
+      }) }, { timeout: 2_000, interval: 10 })
       expect(h.followups[0]).not.toHaveBeenCalled()
     } finally {
       processKill.mockRestore()
@@ -15257,13 +15257,13 @@ describe('durable Bot roster', () => {
         issuerFingerprint: expect.stringMatching(/^[0-9a-f]{64}$/u),
       })
       await approveTemplate(target.service, published.template.shareCode)
-      const first = await target.service.importTemplate({ shareCode: published.template.shareCode, importId: 'retry-1' } as never)
-      const second = await target.service.importTemplate({ shareCode: published.template.shareCode, importId: 'retry-1' } as never)
+      const first = await target.service.importTemplate({ shareCode: published.template.shareCode, importId: 'retry-1' })
+      const second = await target.service.importTemplate({ shareCode: published.template.shareCode, importId: 'retry-1' })
       expect(second.bot.id).toBe(first.bot.id)
       expect(second.bot.sessionId).toBe(first.bot.sessionId)
       await expect(target.service.importTemplate({
         shareCode: published.template.shareCode, importId: 'retry-1', name: 'Different retry metadata',
-      } as never)).rejects.toMatchObject({ code: 'bot-template/import-conflict' })
+      })).rejects.toMatchObject({ code: 'bot-template/import-conflict' })
       expect(first.bot).toMatchObject({
         name: 'Portable partner', persona: 'Prefer concise evidence-backed answers.',
         capabilities: ['chat', 'collaboration'], avatar: { mediaType: 'image/png' },
@@ -15294,7 +15294,7 @@ describe('durable Bot roster', () => {
       await expect(importedAfterRevocation.service.importTemplate({
         shareCode: published.template.shareCode,
         importId: 'after-revocation',
-      } as never)).resolves.toMatchObject({ bot: { name: 'Portable partner' } })
+      })).resolves.toMatchObject({ bot: { name: 'Portable partner' } })
     } finally {
       await close(importedAfterRevocation.ctx)
     }
@@ -15315,7 +15315,7 @@ describe('durable Bot roster', () => {
       provideResolvedTemplatePreset(target.ctx)
       await approveTemplate(target.service, published.template.shareCode)
       target.readImage.mockRejectedValueOnce(new Error('avatar admission blocked'))
-      await expect(target.service.importTemplate({ shareCode: published.template.shareCode } as never))
+      await expect(target.service.importTemplate({ shareCode: published.template.shareCode }))
         .rejects.toMatchObject({ code: 'bot-template/avatar-invalid' })
       await expect(target.service.list({})).resolves.toMatchObject({ bots: [] })
       expect(target.create).not.toHaveBeenCalled()
@@ -15325,7 +15325,7 @@ describe('durable Bot roster', () => {
       }
       target.saveImage.mockResolvedValue(targetAvatar)
       target.readImage.mockResolvedValue({ ref: targetAvatar, data: Uint8Array.of(1, 2, 3) })
-      const imported = await target.service.importTemplate({ shareCode: published.template.shareCode } as never)
+      const imported = await target.service.importTemplate({ shareCode: published.template.shareCode })
       expect(target.saveImage).toHaveBeenCalledTimes(2)
       expect(target.readImage).toHaveBeenCalledTimes(2)
       expect(imported.bot).toMatchObject({ name: 'Avatar source', avatar: { mediaType: 'image/png' } })
@@ -15382,22 +15382,22 @@ describe('durable Bot roster', () => {
       currentSchemas = changedSchemas
       await expect(target.service.importTemplate({
         shareCode: published.template.shareCode, importId: 'permission-mutation-retry',
-      } as never)).rejects.toMatchObject({ code: 'bot-template/approval-mismatch' })
+      })).rejects.toMatchObject({ code: 'bot-template/approval-mismatch' })
       expect(target.create).not.toHaveBeenCalled()
 
       currentSchemas = initialSchemas
       const first = await target.service.importTemplate({
         shareCode: published.template.shareCode, importId: 'permission-mutation-retry',
-      } as never)
+      })
       currentSchemas = changedSchemas
       await expect(target.service.importTemplate({
         shareCode: published.template.shareCode, importId: 'permission-mutation-retry',
-      } as never)).rejects.toMatchObject({ code: 'bot-template/approval-mismatch' })
+      })).rejects.toMatchObject({ code: 'bot-template/approval-mismatch' })
 
       currentSchemas = initialSchemas
       await expect(target.service.importTemplate({
         shareCode: published.template.shareCode, importId: 'permission-mutation-retry',
-      } as never)).resolves.toMatchObject({ bot: { id: first.bot.id } })
+      })).resolves.toMatchObject({ bot: { id: first.bot.id } })
       expect(target.create).toHaveBeenCalledOnce()
       expect(schemas).toHaveBeenCalled()
     } finally {
@@ -15436,7 +15436,7 @@ describe('durable Bot roster', () => {
       currentSchemas = initialSchemas
       await expect(target.service.importTemplate({
         shareCode: published.template.shareCode, importId: 'preview-race-import',
-      } as never)).rejects.toMatchObject({ code: 'bot-template/untrusted' })
+      })).rejects.toMatchObject({ code: 'bot-template/untrusted' })
 
       await expect(approveTemplate(target.service, published.template.shareCode)).resolves.toMatchObject({
         template: { fingerprint: published.template.fingerprint, approved: true },
@@ -15482,7 +15482,7 @@ describe('durable Bot roster', () => {
 
       await expect(target.service.importTemplate({
         shareCode: published.template.shareCode, importId: 'permission-retry',
-      } as never)).rejects.toMatchObject({ code: 'bot-template/permissions-unavailable' })
+      })).rejects.toMatchObject({ code: 'bot-template/permissions-unavailable' })
       expect(target.create).not.toHaveBeenCalled()
       await expect(target.service.list({})).resolves.toMatchObject({ bots: [] })
     } finally {
@@ -15533,7 +15533,7 @@ describe('durable Bot roster', () => {
       await expect(target.service.importTemplate({
         shareCode: published.template.shareCode,
         importId: 'untrusted-import',
-      } as never)).rejects.toMatchObject({ code: 'bot-template/untrusted' })
+      })).rejects.toMatchObject({ code: 'bot-template/untrusted' })
 
       const preview = await target.service.previewTemplate({ shareCode: published.template.shareCode })
       expect(preview.approvalToken).toBeDefined()
@@ -15549,7 +15549,7 @@ describe('durable Bot roster', () => {
       await expect(target.service.importTemplate({
         shareCode: published.template.shareCode,
         importId: 'untrusted-import',
-      } as never)).resolves.toMatchObject({ bot: { agentPreset: 'dangerous-preset' } })
+      })).resolves.toMatchObject({ bot: { agentPreset: 'dangerous-preset' } })
     } finally {
       await close(target.ctx)
     }
@@ -15574,10 +15574,10 @@ describe('durable Bot roster', () => {
     try {
       const source = await h.service.create({ name: 'Retry source', cwd: '/tmp' })
       const published = await h.service.publishTemplate({ botId: source.bot.id })
-      const first = await h.service.importTemplate({ shareCode: published.template.shareCode, importId: 'edited-retry' } as never)
+      const first = await h.service.importTemplate({ shareCode: published.template.shareCode, importId: 'edited-retry' })
       await h.service.rename({ botId: first.bot.id, name: 'Edited imported Bot' })
 
-      await expect(h.service.importTemplate({ shareCode: published.template.shareCode, importId: 'edited-retry' } as never)).resolves.toMatchObject({
+      await expect(h.service.importTemplate({ shareCode: published.template.shareCode, importId: 'edited-retry' })).resolves.toMatchObject({
         bot: { id: first.bot.id, sessionId: first.bot.sessionId, name: 'Edited imported Bot' },
       })
     } finally {
@@ -15590,10 +15590,10 @@ describe('durable Bot roster', () => {
     try {
       const source = await h.service.create({ name: 'Revoked retry source', cwd: '/tmp' })
       const published = await h.service.publishTemplate({ botId: source.bot.id })
-      const first = await h.service.importTemplate({ shareCode: published.template.shareCode, importId: 'revoked-retry' } as never)
+      const first = await h.service.importTemplate({ shareCode: published.template.shareCode, importId: 'revoked-retry' })
       await h.service.revokeTemplate({ templateId: published.template.id })
 
-      await expect(h.service.importTemplate({ shareCode: published.template.shareCode, importId: 'revoked-retry' } as never)).resolves.toMatchObject({
+      await expect(h.service.importTemplate({ shareCode: published.template.shareCode, importId: 'revoked-retry' })).resolves.toMatchObject({
         bot: { id: first.bot.id, sessionId: first.bot.sessionId },
       })
     } finally {
@@ -15640,7 +15640,7 @@ describe('durable Bot roster', () => {
       await expect(reopened.service.listTemplates({})).resolves.toMatchObject({
         templates: [{ name: 'Signed name', agentPreset: 'signed-preset' }],
       })
-      await expect(reopened.service.importTemplate({ shareCode: published.template.shareCode } as never)).resolves.toMatchObject({
+      await expect(reopened.service.importTemplate({ shareCode: published.template.shareCode })).resolves.toMatchObject({
         bot: { name: 'Signed name', agentPreset: 'signed-preset' },
       })
     } finally {

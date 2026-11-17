@@ -916,6 +916,15 @@ describe('writeFileAtomic — temp-file safety', () => {
     expect(await readFile(file, 'utf8')).toBe('hi')
   })
 
+  it('reports an I/O error when an existing file blocks creation of the parent directory', async () => {
+    const parent = join(dir, 'existing.txt')
+    await writeFile(parent, 'keep')
+    await expect(writeFileAtomic(join(parent, 'child.txt'), 'ours', undefined, undefined))
+      .rejects.toMatchObject({ code: 'FS_IO_ERROR', message: expect.stringContaining('child.txt') })
+    expect(await readFile(parent, 'utf8')).toBe('keep')
+    expect(await readdir(dir)).toEqual(['existing.txt'])
+  })
+
   it('passes a live (non-aborted) signal through the write', async () => {
     const file = join(dir, 'a.txt')
     await writeFileAtomic(file, 'hi', undefined, new AbortController().signal)
