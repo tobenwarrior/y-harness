@@ -338,6 +338,7 @@ function validateSourceSuperset(
  * @param current - Existing durable archive, if any.
  * @param incoming - Newly reviewed archive.
  * @returns The additive archive to persist.
+ * @throws When an import downgrades the version or removes recovered records, metadata, or completeness markers.
  */
 export function mergeGrokHistoryArchives(
   current: BotGrokHistoryArchive,
@@ -348,7 +349,6 @@ export function mergeGrokHistoryArchives(
   if (current.complete === false && incoming.complete !== false) throw new Error('Grok history completeness marker was removed')
   const currentSources = current.version === 2 ? current.sources ?? [] : []
   const incomingSources = incoming.version === 2 ? incoming.sources ?? [] : []
-  if (currentSources.length > 0 && incoming.version !== 2) throw new Error('Grok history supplemental sources cannot be removed')
   const incomingById = new Map(incomingSources.map(source => [source.id, source]))
   for (const source of currentSources) {
     const replacement = incomingById.get(source.id)

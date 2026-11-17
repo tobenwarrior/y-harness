@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { BOT_TEMPLATE_CODE_MAX_LENGTH } from '../src/template-codec.ts'
-import { BotTemplateId, BotTemplateShareCode } from '../src/template-types.ts'
+import { BotTemplateId, BotTemplateImportId, BotTemplateShareCode } from '../src/template-types.ts'
 import {
   BOT_TEMPLATE_APPROVAL_LIMIT,
   BOT_TEMPLATE_IMPORT_BINDING_LIMIT,
@@ -81,6 +81,7 @@ describe('durable Bot templates', () => {
 
   it('normalizes bounded identifiers and rejects malformed durable values', () => {
     expect(normalizeBotTemplateId(BotTemplateId('bot-template-test'))).toBe('bot-template-test')
+    expect(BotTemplateImportId('import-operation-1')).toBe('import-operation-1')
     expect(() => normalizeBotTemplateId(BotTemplateId('template-test'))).toThrow(/bot-template-/)
     expect(() => { Reflect.apply(normalizeBotTemplateId, undefined, [null]) }).toThrow(/bot-template-/)
     expect(normalizeBotTemplateShareCode(BotTemplateShareCode('portable-code'))).toBe('portable-code')
