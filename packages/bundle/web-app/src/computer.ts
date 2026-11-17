@@ -713,7 +713,7 @@ export class VpsComputer {
         } catch (error: unknown) {
           if (failure === undefined) failure = error
         }
-        if (failure !== undefined) throw failure
+        if (failure !== undefined) throw failure as Error
         return
       case 'scroll':
         await move(action.x, action.y)
@@ -748,7 +748,7 @@ export class VpsComputer {
     const operation = this.captureNow(signal)
     const settled = operation.then(() => undefined, () => undefined)
     this.captures.add(settled)
-    void operation.finally(() => { this.captures.delete(settled) }).catch((error) => { void error })
+    void operation.finally(() => { this.captures.delete(settled) }).catch((error: unknown) => { void error })
     return operation
   }
 

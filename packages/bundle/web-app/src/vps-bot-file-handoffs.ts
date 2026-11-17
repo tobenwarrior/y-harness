@@ -136,7 +136,7 @@ export class VpsBotFileHandoffs {
     const workspaceRoot = this.runtimeFor(owner.id).workspace(sessionId)
     if (isVpsSharedPath(path, workspaceRoot)) throw new Error('Use vps_project_files to read a shared project file.')
     const page = await this.ctx.workspaceFiles.read({ sessionId, workspaceRoot }, { computer: path }, { offset, limit: 200 }, signal)
-    return page.text + (page.eof ? '' : '\nContinue at line ' + (offset + page.lines) + '.')
+    return page.eof ? page.text : `${page.text}\nContinue at line ${offset + page.lines}.`
   }
 
   private async ownerWorkspace(sessionId: SessionId, signal: AbortSignal) {

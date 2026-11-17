@@ -13,6 +13,10 @@ interface PendingRequest {
 
 const REQUEST_TIMEOUT_MS = 6_000
 
+function asError(value: unknown): Error {
+  return value instanceof Error ? value : new Error(String(value))
+}
+
 /** Bridge model calls to the desktop process that owns the current sharing grant. */
 export class MacComputerBridge {
   private nextId = 0
@@ -52,7 +56,7 @@ export class MacComputerBridge {
         return true
       }
       const abort = (): void => {
-        if (settle()) reject(signal.reason)
+        if (settle()) reject(asError(signal.reason))
       }
       const timeout = setTimeout(() => {
         if (settle()) reject(new Error('Mac Computer did not respond.'))
@@ -72,7 +76,7 @@ export class MacComputerBridge {
           if (error !== null && settle()) reject(new Error('Mac Computer is unavailable.'))
         })
       } catch (error: unknown) {
-        if (settle()) reject(error)
+        if (settle()) reject(asError(error))
       }
     })
   }

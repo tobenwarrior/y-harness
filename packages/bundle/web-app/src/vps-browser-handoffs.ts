@@ -113,8 +113,7 @@ export class VpsBrowserHandoffs {
     const bounded = AbortSignal.any([signal, this.closed.signal, revoked.signal, AbortSignal.timeout(HANDOFF_TIMEOUT_MS)])
     const stopViewer = new AbortController()
     const ownerLifetime = AbortSignal.any([bounded, stopViewer.signal])
-    let attempted = false
-    let completed = false
+    const handoffState = { attempted: false, completed: false }
     let ownerComputer: VpsComputer | undefined
     let watcher: Promise<void> | undefined
     const closeView = async (): Promise<void> => {
@@ -125,7 +124,7 @@ export class VpsBrowserHandoffs {
     }
     try {
       const origin = await computer.runWhileBotControls(() => runAuthorizedBrowserOperation(authorize, () => {
-        attempted = true
+        handoffState.attempted = true
         return this.browser.beginHandoff(handoff, bounded)
       }, bounded), bounded)
       bounded.throwIfAborted()
@@ -160,12 +159,12 @@ export class VpsBrowserHandoffs {
       await closeView()
       if (result !== 'completed') return result
       await runAuthorizedBrowserOperation(authorize, () => this.browser.endHandoff(handoff, 'complete', bounded), bounded)
-      completed = true
+      handoffState.completed = true
       return 'completed'
     } finally {
       await closeView()
       await watcher
-      if (attempted && !completed) {
+      if (handoffState.attempted && !handoffState.completed) {
         try {
           await this.browser.endHandoff(handoff, 'discard', AbortSignal.timeout(DISCARD_TIMEOUT_MS))
         } catch (error) {

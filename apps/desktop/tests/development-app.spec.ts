@@ -67,7 +67,7 @@ describe.skipIf(process.platform === 'win32')('development bundle executable', (
       managedOpenCommand: '/usr/bin/printf', managedAppPath: appPath,
     }, fixture.bundle))
     const result = execFileSync('/bin/sh', [fixture.launcher], { encoding: 'utf8', env: fixture.environment })
-    expect(result).toBe(`${appPath}`)
+    expect(result).toBe(appPath)
   })
 
   it('persists the prepared runtime for a cold launch without inherited runtime state', () => {

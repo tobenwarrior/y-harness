@@ -100,7 +100,7 @@ it.skipIf(MODE === 'record' || process.platform === 'win32').each([
   const server = createServer({ allowHalfOpen: true }, (socket) => {
     let payload = ''
     socket.setEncoding('utf8')
-    socket.on('data', (chunk) => { payload += chunk })
+    socket.on('data', (chunk) => { payload += chunk.toString() })
     socket.once('end', () => {
       const command = JSON.parse(payload) as Record<string, unknown>
       commands.push(command)
@@ -156,7 +156,11 @@ it.skipIf(MODE === 'record' || process.platform === 'win32').each([
     const initial = await web.hostFetch(ownRoute)
     expect(initial.status).toBe(200)
     expect(await initial.json()).toEqual({ request: null })
-    expect(await page.evaluate(() => Reflect.get(window, '__YH_BOT_VAULT_REQUESTS__'))).toBe(true)
+    expect(await page.evaluate(() => {
+      const value: unknown = Reflect.get(window, '__YH_BOT_VAULT_REQUESTS__')
+      if (typeof value !== 'boolean') throw new Error('The Bot Vault request flag is missing.')
+      return value
+    })).toBe(true)
     await page.locator('[data-yh-part="sidebar"]').getByRole('button', { name: 'Bots', exact: true }).click()
     await page.locator(`[data-bot-id="${BOT}"]`).click()
     const conversation = page.locator('[data-conversation-surface="bots"]')
@@ -220,7 +224,11 @@ it.skipIf(MODE === 'record' || process.platform === 'win32').each([
         return JSON.stringify(view.result.value?.messages ?? [])
       }
 
-      expect(await page.evaluate(() => Reflect.get(window, '__YH_BOT_SHARED_VAULT_REQUESTS__'))).toBe(true)
+      expect(await page.evaluate(() => {
+        const value: unknown = Reflect.get(window, '__YH_BOT_SHARED_VAULT_REQUESTS__')
+        if (typeof value !== 'boolean') throw new Error('The shared Bot Vault request flag is missing.')
+        return value
+      })).toBe(true)
       expect((await chat('Request the shared service key.')).result.ok).toBe(true)
       const selector = 'section[aria-label="Shared secure request"][data-bot-vault-request-state="pending"]'
       const pending = page.locator(selector)

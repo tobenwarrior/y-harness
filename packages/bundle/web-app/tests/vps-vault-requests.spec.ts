@@ -41,7 +41,7 @@ async function withBroker<T>(
   const server: Server = createServer({ allowHalfOpen: true }, (socket) => {
     let input = ''
     socket.setEncoding('utf8')
-    socket.on('data', (chunk) => { input += chunk })
+    socket.on('data', (chunk) => { input += chunk.toString() })
     socket.once('end', () => {
       const request = JSON.parse(input) as Record<string, unknown>
       calls.push(request)

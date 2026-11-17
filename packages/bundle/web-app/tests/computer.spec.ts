@@ -79,7 +79,7 @@ describe('private computer Host', () => {
     try {
       await f.host.takeControl(viewers.alice)
       const waiting = f.host.requestSignIn(new AbortController().signal)
-      await expect.poll(() => f.host.signInRequest()).toMatchObject({ id: expect.any(String) })
+      await expect.poll(() => f.host.signInRequest()?.id).toBeTypeOf('string')
       const request = f.host.signInRequest()!
       const destinations: string[] = []
       const navigate = async (url: string): Promise<void> => { destinations.push(url) }
@@ -89,8 +89,11 @@ describe('private computer Host', () => {
       await expect(f.host.takeControl(viewers.alice)).rejects.toBeInstanceOf(ComputerLeaseError)
       await expect(f.host.navigateAsViewer(viewers.alice, url, signal, navigate)).rejects.toBeInstanceOf(ComputerLeaseError)
       await expect(f.host.answerSignIn(request.id, 'take', viewers.alice)).resolves.toEqual({ mode: 'controlling' })
-      await expect(f.host.frame(viewers.bob)).resolves.toMatchObject({ jpeg: '', mode: 'other', signIn: request.id })
-      await expect(f.host.frame(viewers.alice)).resolves.toMatchObject({ jpeg: expect.not.stringMatching(/^$/u), mode: 'controlling' })
+      const bobFrame = await f.host.frame(viewers.bob)
+      expect(bobFrame).toMatchObject({ jpeg: '', mode: 'other', signIn: request.id })
+      const aliceFrame = await f.host.frame(viewers.alice)
+      expect(aliceFrame.jpeg).not.toBe('')
+      expect(aliceFrame.mode).toBe('controlling')
       await expect(f.host.navigateAsBot(url, signal, navigate)).rejects.toBeInstanceOf(ComputerLeaseError)
       await expect(f.host.navigateAsViewer(viewers.bob, url, signal, navigate)).rejects.toBeInstanceOf(ComputerLeaseError)
       await expect(f.host.navigateAsViewer(viewers.alice, url, signal, navigate)).resolves.toEqual({ mode: 'controlling' })

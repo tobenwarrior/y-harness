@@ -38,7 +38,7 @@ describe('Y Harness badge assembled snapshot', () => {
     const enabledSnapshot: unknown = JSON.parse(
       enabled.stdout.replaceAll(badgeAssetsPath, '{{badgeAssetsPath}}'),
     )
-    const legacySnapshot: { directLoad?: unknown } = JSON.parse(
+    const legacySnapshot: unknown = JSON.parse(
       legacy.stdout.replaceAll(badgeAssetsPath, '{{badgeAssetsPath}}'),
     )
 
@@ -58,7 +58,9 @@ describe('Y Harness badge assembled snapshot', () => {
         invocation: { modelInvocable: false, userInvocable: true },
       },
     })
-    expect(JSON.stringify(legacySnapshot.directLoad)).toContain('# Y Harness Badge')
+    const directLoad = typeof legacySnapshot === 'object' && legacySnapshot !== null && 'directLoad' in legacySnapshot
+      ? legacySnapshot.directLoad : undefined
+    expect(JSON.stringify(directLoad)).toContain('# Y Harness Badge')
     expect(disabledSnapshot).toMatchInlineSnapshot(`
       {
         "catalog": [

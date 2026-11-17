@@ -147,7 +147,11 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('changes a private 
     const { bot: imported } = await web.ctx.bots.create({ id: IMPORTED_BOT, name: 'Imported Scout', cwd: web.workspaceCwd })
     expect(imported.cwd).toBe(web.workspaceCwd)
     await page.goto(web.authenticatedUrl, { waitUntil: 'load' })
-    expect(await page.evaluate(() => Reflect.get(window, '__YH_BOT_COMPUTER_SIGN_IN__'))).toBe(true)
+    expect(await page.evaluate(() => {
+      const value: unknown = Reflect.get(window, '__YH_BOT_COMPUTER_SIGN_IN__')
+      if (typeof value !== 'boolean') throw new Error('The Bot Computer sign-in flag is missing.')
+      return value
+    })).toBe(true)
     await page.locator('[data-yh-part="sidebar"]').getByRole('button', { name: 'Bots', exact: true }).click()
     const panelSelector = '[data-computer-panel]'
     const panel = page.locator(panelSelector)
@@ -227,8 +231,15 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('changes a private 
     const api = { method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ action: 'status', sessionId: bot.sessionId }) }
     await expect.poll(() => adapter.requestCount, { timeout: 5_000 }).toBeGreaterThan(0)
-    await expect.poll(async () => (await web.hostFetch('/api/computer/sign-in', api)).json(), { timeout: 5_000 })
-      .toMatchObject({ request: { id: expect.any(String), canCancel: true } })
+    await expect.poll(async () => {
+      const response = await web.hostFetch('/api/computer/sign-in', api)
+      const result: unknown = await response.json()
+      if (typeof result !== 'object' || result === null || !('request' in result)) return undefined
+      const request = result.request
+      if (typeof request !== 'object' || request === null || !('id' in request) || !('canCancel' in request)
+        || request.canCancel !== true || typeof request.id !== 'string') return undefined
+      return request.id
+    }, { timeout: 5_000 }).toBeTypeOf('string')
     await card.waitFor({ state: 'visible', timeout: 12_000 })
     expect(adapter.sawReceipt).toBe(false)
     expect((await fetch(new URL('/api/computer/sign-in', web.baseUrl), api)).status).toBe(401)

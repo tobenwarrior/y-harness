@@ -320,7 +320,7 @@ describe('isolated browser broker client', () => {
       const browser = new VpsIsolatedBrowser({ socketPath: path, bots: [BOT] })
       const pending = browser.status(BOT, SESSION, new AbortController().signal).then(
         () => new Error('expected timeout'),
-        error => error,
+        (error: unknown) => error,
       )
       await vi.advanceTimersByTimeAsync(30_000)
       await expect(pending).resolves.toMatchObject({ message: 'The isolated browser request timed out.' })
