@@ -3977,7 +3977,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         signature: 'bindWorkspace(agent: Agent, workspace: TerminalWorkspace): () => Promise<void>',
         description: 'Bind one Agent\'s owner terminals to a workspace.',
         parameters: [{ name: 'agent', description: 'Agent whose terminal uses the supplied workspace.' }, { name: 'workspace', description: 'Shell provider and initial directory for owner terminals.' }],
-        returns: 'A disposer that closes the Agent\'s terminals and disables new shells in this scope.',
+        returns: 'A disposer that closes the terminals for this binding and disables new shells until the workspace is rebound.',
       },
       {
         signature: '@Remote environment(agent: Agent, signal: AbortSignal): TerminalEnvironment',
