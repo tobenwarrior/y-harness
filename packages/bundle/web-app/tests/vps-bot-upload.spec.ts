@@ -13,6 +13,45 @@ const OWNER = 'bot-session-784d3dc2-74aa-4456-9262-07d312084bad'
 const limits = resolveVpsFileUploadLimits({ maxBytes: 1024, reserveBytes: 0 })
 const requestSignal = (): AbortSignal => new AbortController().signal
 
+// Windows does not provide the Linux-only Python worker tools used by the VPS
+// image. This Node worker preserves the fixture's filesystem outcomes while
+// the Linux lane executes the real container worker unchanged.
+const portableUploadWorker = `
+const fs = require('node:fs')
+const path = require('node:path')
+const [root, folder, name, lengthText, reserveText] = process.argv.slice(1)
+const reply = value => process.stdout.write(value + '\\n')
+const isFolderError = error => error?.code === 'ENOENT' || error?.code === 'ENOTDIR' || error?.code === 'ELOOP'
+const input = []
+process.stdin.on('data', chunk => input.push(chunk))
+process.stdin.on('end', () => {
+  try {
+    const body = Buffer.concat(input)
+    const length = Number(lengthText)
+    if (body.length !== length + 1 || body.at(-1) !== 1) return reply('incomplete')
+    if (Number(reserveText) > 1_000_000_000_000) return reply('no-space')
+    let directory = root
+    const segments = folder === '.' ? [] : folder.split('/')
+    for (const segment of segments) {
+      directory = path.join(directory, segment)
+      const info = fs.lstatSync(directory)
+      if (!info.isDirectory() || info.isSymbolicLink()) return reply('folder-unavailable')
+    }
+    const handle = fs.openSync(path.join(directory, name), 'wx')
+    try { fs.writeFileSync(handle, body.subarray(0, length)) } finally { fs.closeSync(handle) }
+    return reply('stored')
+  } catch (error) {
+    if (error?.code === 'EEXIST') return reply('exists')
+    return reply(isFolderError(error) ? 'folder-unavailable' : 'unavailable')
+  }
+})
+`
+
+function workerCommand(argv: readonly string[], root = argv[4] ?? ''): ReturnType<VpsRuntime['execArgv']> {
+  if (process.platform !== 'win32') return ['python3', ...argv.slice(1, 4), root, ...argv.slice(5)]
+  return [process.execPath, '-e', portableUploadWorker, root, ...argv.slice(5)]
+}
+
 interface UploadProcessMocks {
   readonly ensure: MockInstance<VpsRuntime['ensure']>
   readonly execArgv: MockInstance<VpsRuntime['execArgv']>
@@ -27,7 +66,7 @@ async function withWorkspace<T>(
     const workspace = runtime.workspace(OWNER)
     await mkdir(workspace)
     const ensure = vi.spyOn(runtime, 'ensure').mockResolvedValue(undefined)
-    const execArgv = vi.spyOn(runtime, 'execArgv').mockImplementation((_sessionId, argv) => ['python3', ...argv.slice(1)])
+    const execArgv = vi.spyOn(runtime, 'execArgv').mockImplementation((_sessionId, argv) => workerCommand(argv))
     return await run(runtime, workspace, { ensure, execArgv })
   } finally {
     await rm(root, { recursive: true, force: true })
@@ -84,7 +123,7 @@ describe('private Computer upload', () => {
       vi.spyOn(runtime, 'sharedWorkspaceFor').mockResolvedValueOnce(undefined)
       execArgv.mockImplementation((_sessionId, argv) => {
         expect(argv[4]).toBe(projectRoot)
-        return ['python3', ...argv.slice(1, 4), project, ...argv.slice(5)]
+        return workerCommand(argv, project)
       })
       const send = (directory: string, name: string) => uploadComputerFile(runtime, OWNER, {
         directory, name, bytes: 3, body: new Response('new').body,

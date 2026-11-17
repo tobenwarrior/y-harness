@@ -9,6 +9,20 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { VpsBotSubprocess } from '../src/vps-bot-process.ts'
 import { VpsRuntime, VpsRuntimeError, type VpsCommandResult } from '../src/vps-runtime.ts'
 
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  if (process.platform !== 'win32') return actual
+  const lstat = async (...args: Parameters<typeof actual.lstat>) => {
+    const info = await actual.lstat(...args)
+    if (typeof info.mode !== 'number') return info
+    const privateMode = info.isDirectory() ? 0o700 : info.isFile() ? 0o600 : info.mode & 0o777
+    Object.defineProperty(info, 'mode', { configurable: true, value: (info.mode & ~0o777) | privateMode })
+    Object.defineProperty(info, 'uid', { configurable: true, value: typeof process.getuid === 'function' ? process.getuid() : 0 })
+    return info
+  }
+  return { ...actual, lstat }
+})
+
 const sessions = {
   alice: 'bot-session-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
   bob: 'bot-session-bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
@@ -24,6 +38,20 @@ interface Fixture {
   root: string
   calls: string[][]
   runtime: VpsRuntime
+}
+
+interface FixtureMount {
+  Name: string
+  Destination: string
+  Type: 'volume'
+  RW: true
+  Options: string[]
+}
+
+function fixtureMount(value: string, destination: string, mode: string): FixtureMount | undefined {
+  const suffix = `:${destination}:${mode}`
+  if (!value.endsWith(suffix)) return undefined
+  return { Name: value.slice(0, -suffix.length), Destination: destination, Type: 'volume', RW: true, Options: mode.split(',') }
 }
 
 function result(code = 0, stdout = ''): VpsCommandResult {
@@ -81,6 +109,7 @@ function fixture(run: (argv: readonly string[], signal: AbortSignal) => Promise<
     }))
   }
   const runtime = new VpsRuntime(root, 'localhost/yharness-vps-bot:24.04', {
+    ...(process.platform === 'win32' ? { uid: () => typeof process.getuid === 'function' ? process.getuid() : 0 } : {}),
     userService,
     networkHelperAvailable: () => true,
     run: async (argv, signal) => {
@@ -288,7 +317,8 @@ describe('VpsRuntime', () => {
     expect(run).not.toContain('--mount')
     expect(run).not.toContain('--socket')
     expect(run?.at(-1)).toBe('localhost/yharness-vps-bot:24.04')
-    expect(statSync(workspace).mode & 0o777).toBe(0o700)
+    expect(statSync(workspace).isDirectory()).toBe(true)
+    if (process.platform !== 'win32') expect(statSync(workspace).mode & 0o777).toBe(0o700)
   })
 
   it('keeps the existing workspace and mounts a separate browser profile for each session', async () => {
@@ -341,8 +371,10 @@ describe('VpsRuntime', () => {
       const workspace = f.runtime.workspace(sessions.alice)
       const image = 'localhost/yharness-vps-bot:24.04'
       const mounts = launch.filter((_, index) => launch?.[index - 1] === '--volume').map((mount) => {
-        const [Name, Destination, mode] = mount.split(':')
-        return { Name, Destination, Type: 'volume', RW: true, Options: mode?.split(',') }
+        const parsed = fixtureMount(mount, workspace, 'rw,nodev,nosuid')
+          ?? fixtureMount(mount, '/workspace', 'rw,nodev,nosuid,nocopy')
+        if (parsed === undefined) throw new Error(`fixture mount is invalid: ${mount}`)
+        return parsed
       })
       return result(0, JSON.stringify({
         ImageName: image,
@@ -457,8 +489,10 @@ describe('VpsRuntime', () => {
       .filter(argv => argv[1] === 'run')
       .map(argv => argv[argv.indexOf('--volume') + 1])
     expect(mounts).toHaveLength(2)
-    expect(mounts[0]).toMatch(new RegExp(`^yharness-bot-volume-[0-9a-f]{16}-botsessiona+4aaa8a+:${f.runtime.workspace(sessions.alice)}:rw,nodev,nosuid$`, 'u'))
-    expect(mounts[1]).toMatch(new RegExp(`^yharness-bot-volume-[0-9a-f]{16}-botsessionbbbbbbbbbbbb4bbb8bbbbbbbbbbbbbbb:${f.runtime.workspace(sessions.bob)}:rw,nodev,nosuid$`, 'u'))
+    expect(mounts[0]).toMatch(/^yharness-bot-volume-[0-9a-f]{16}-botsessiona+4aaa8a+:/u)
+    expect(mounts[0]).toContain(`:${f.runtime.workspace(sessions.alice)}:rw,nodev,nosuid`)
+    expect(mounts[1]).toMatch(/^yharness-bot-volume-[0-9a-f]{16}-botsessionbbbbbbbbbbbb4bbb8bbbbbbbbbbbbbbb:/u)
+    expect(mounts[1]).toContain(`:${f.runtime.workspace(sessions.bob)}:rw,nodev,nosuid`)
   })
 
   it.each([
@@ -590,13 +624,13 @@ describe('VpsRuntime', () => {
   })
 
   it('rejects broad, shared, or symlinked private roots and workspaces', async () => {
-    expect(() => new VpsRuntime('/', 'image')).toThrow('dedicated private directory')
-    expect(() => new VpsRuntime('/tmp', 'image')).toThrow('dedicated private directory')
+    expect(() => new VpsRuntime(resolve('/'), 'image')).toThrow('dedicated private directory')
+    if (process.platform !== 'win32') expect(() => new VpsRuntime('/tmp', 'image')).toThrow('dedicated private directory')
     const f = fixture()
     const workspace = f.runtime.workspace(sessions.alice)
     const elsewhere = join(f.root, 'elsewhere')
     mkdirSync(elsewhere)
-    symlinkSync(elsewhere, workspace)
+    symlinkSync(elsewhere, workspace, process.platform === 'win32' ? 'junction' : 'dir')
     await expect(f.runtime.ensure(sessions.alice)).rejects.toThrow('owner-only directory')
     const file = join(f.root, 'file')
     writeFileSync(file, 'not a directory')

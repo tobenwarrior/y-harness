@@ -6,6 +6,20 @@ import { PassThrough } from 'node:stream'
 import { describe, expect, it, vi } from 'vitest'
 import { VpsRuntime } from '../src/vps-runtime.ts'
 
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  if (process.platform !== 'win32') return actual
+  const lstat = async (...args: Parameters<typeof actual.lstat>) => {
+    const info = await actual.lstat(...args)
+    if (typeof info.mode !== 'number') return info
+    const privateMode = info.isDirectory() ? 0o700 : info.isFile() ? 0o600 : info.mode & 0o777
+    Object.defineProperty(info, 'mode', { configurable: true, value: (info.mode & ~0o777) | privateMode })
+    Object.defineProperty(info, 'uid', { configurable: true, value: typeof process.getuid === 'function' ? process.getuid() : 0 })
+    return info
+  }
+  return { ...actual, lstat }
+})
+
 const { spawn } = vi.hoisted(() => ({ spawn: vi.fn<() => Child>() }))
 vi.mock('node:child_process', async importOriginal => ({
   ...await importOriginal<typeof import('node:child_process')>(),
