@@ -7,6 +7,8 @@
   - group "Computer view":
     - button "Browser" [disabled] [pressed]
     - button "Desktop" [disabled]
+  - text: Internet for Terminal & apps Controls Internet access for this Bot’s terminal and apps.
+  - switch "Allow Internet for Terminal & apps"
   - text: Shared workspace Grants this Bot access to common project files.
   - switch "Allow access to common project files" [disabled]
   - textbox "Website address":
@@ -27,6 +29,8 @@
   - group "Computer view":
     - button "Browser" [pressed]
     - button "Desktop"
+  - text: Internet for Terminal & apps Controls Internet access for this Bot’s terminal and apps.
+  - switch "Allow Internet for Terminal & apps"
   - text: Shared workspace Grants this Bot access to common project files.
   - switch "Allow access to common project files"
   - img "Live computer screen"
@@ -43,6 +47,8 @@
   - group "Computer view":
     - button "Browser"
     - button "Desktop" [pressed]
+  - text: Internet for Terminal & apps Controls Internet access for this Bot’s terminal and apps.
+  - switch "Allow Internet for Terminal & apps"
   - text: Shared workspace Grants this Bot access to common project files.
   - switch "Allow access to common project files"
   - img "Live computer screen"

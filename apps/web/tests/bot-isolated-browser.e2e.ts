@@ -267,6 +267,7 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('opens websites for
           const original = VpsIsolatedBrowser.prototype.usesManagedSharing
           const ensure = VpsRuntime.prototype.ensure
           const command = VpsRuntime.prototype.desktopCommand
+          const network = VpsRuntime.prototype.supportsNetworkControl
           VpsIsolatedBrowser.prototype.usesManagedSharing = () => true
           VpsRuntime.prototype.ensure = () => Promise.resolve()
           VpsRuntime.prototype.desktopCommand = async (sessionId, argv) => {
@@ -276,10 +277,12 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('opens websites for
             await appendFile(${JSON.stringify(desktopInput)}, JSON.stringify({ sessionId, argv }) + '\\n')
             return Buffer.alloc(0)
           }
+          VpsRuntime.prototype.supportsNetworkControl = () => true
           return () => {
             VpsIsolatedBrowser.prototype.usesManagedSharing = original
             VpsRuntime.prototype.ensure = ensure
             VpsRuntime.prototype.desktopCommand = command
+            VpsRuntime.prototype.supportsNetworkControl = network
           }
         })
         mountVpsBots(ctx, config, [], undefined, undefined, (bot, session, id, signal) =>
@@ -327,6 +330,10 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('opens websites for
     const panelSelector = '[data-computer-panel]'
     const panel = page.locator(panelSelector)
     await panel.getByRole('img', { name: 'Live computer screen' }).waitFor()
+    const networkSwitch = panel.getByRole('switch', { name: 'Allow Internet for Terminal & apps', exact: true })
+    await networkSwitch.waitFor()
+    expect(await networkSwitch.isVisible()).toBe(true)
+    expect(await networkSwitch.isChecked()).toBe(false)
     expect(await panel.getByRole('textbox', { name: 'Website address' }).count()).toBe(0)
     await panel.getByRole('button', { name: 'Take control', exact: true }).click()
     const address = panel.getByRole('textbox', { name: 'Website address' })
