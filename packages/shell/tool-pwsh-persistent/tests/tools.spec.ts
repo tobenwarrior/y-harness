@@ -103,6 +103,8 @@ type StubMode =
   | 'paged-scrollback'
   | 'with-echo'
   | 'exit-after-send'
+  | 'exit-after-stdin-read'
+  | 'exit-on-observation-send'
   | 'late-completion'
   | 'late-exit'
   | 'exit-with-end'
@@ -128,6 +130,8 @@ class StubTerminalSession implements TerminalBackendSession {
   lateCompletion: { start: string; end: string } | undefined
   lateCompletionReads = 0
   lateExitPolls = 0
+  exitObservation = false
+  observationStarted = false
   readCount = 0
   abortOnRead: { controller: AbortController; read: number } | undefined
 
@@ -185,7 +189,7 @@ class StubTerminalSession implements TerminalBackendSession {
         this.lateCompletionReads = 0
         return this.operation(Promise.resolve(this.result(this.motd, 'stdin_read')))
       }
-      throw new Error('late completion must arrive through scrollback')
+      return this.operation(Promise.resolve(this.result('', 'stdin_read')))
     }
     if (this.mode === 'late-exit') {
       this.lateExitPolls = 0
@@ -220,6 +224,24 @@ class StubTerminalSession implements TerminalBackendSession {
       this.statusValue = { kind: 'exited', exitCode: 9, signal: null }
       this.throwOnSend = true
       return this.operation(Promise.resolve(settled))
+    }
+    if (this.mode === 'exit-after-stdin-read') {
+      if (!this.exitObservation) {
+        this.exitObservation = true
+        this.scrollback += `${start ?? ''}\n`
+        return this.operation(Promise.resolve(this.result(`${start ?? ''}\n`, 'stdin_read')))
+      }
+      this.observationStarted = true
+      return this.operation(Promise.resolve(this.result('', 'inferred_idle')))
+    }
+    if (this.mode === 'exit-on-observation-send') {
+      if (!this.exitObservation) {
+        this.exitObservation = true
+        this.scrollback += `${start ?? ''}\n`
+        return this.operation(Promise.resolve(this.result(`${start ?? ''}\n`, 'stdin_read')))
+      }
+      this.statusValue = { kind: 'exited', exitCode: 9, signal: null }
+      throw new Error('PTY session has exited')
     }
     if (this.mode === 'incremental-fallback') {
       const incremental = `${start ?? ''}\nincrement\n${this.motd}`
@@ -289,7 +311,7 @@ class StubTerminalSession implements TerminalBackendSession {
     }
     if (this.mode === 'late-completion' && this.lateCompletion !== undefined) {
       this.lateCompletionReads += 1
-      if (this.lateCompletionReads >= 2) {
+      if (this.lateCompletionReads >= 3) {
         const output = `${this.lateCompletion.start}\nlate completion\n${this.lateCompletion.end}0\n${this.motd}`
         this.scrollback += output
         this.lateCompletion = undefined
@@ -323,6 +345,9 @@ class StubTerminalSession implements TerminalBackendSession {
   }
 
   status() {
+    if (this.mode === 'exit-after-stdin-read' && this.observationStarted && this.statusValue.kind === 'running') {
+      this.statusValue = { kind: 'exited', exitCode: 9, signal: null }
+    }
     if (this.mode === 'late-exit' && this.statusValue.kind === 'running') {
       this.lateExitPolls += 1
       if (this.lateExitPolls >= 2) this.statusValue = { kind: 'exited', exitCode: 9, signal: null }
@@ -497,7 +522,7 @@ describe('tool-pwsh-persistent', () => {
     session.mode = 'late-completion'
 
     expect(text(await call(ctx, owner, 'late output'))).toBe('late completion')
-    expect(session.sends).toBe(2)
+    expect(session.sends).toBe(3)
 
     session.mode = 'normal'
     expect(text(await call(ctx, owner, 'next command'))).toBe('hello from stub')
@@ -509,6 +534,30 @@ describe('tool-pwsh-persistent', () => {
     await call(ctx, owner, 'warm up')
     const session = stub.sessions[0]!
     session.mode = 'late-exit'
+
+    const result = text(await call(ctx, owner, 'exit'))
+    expect(result).toContain('[shell exited: code 9]')
+    expect(result).toContain('next pwsh call starts from the workspace')
+    expect(session.closed).toContain('persistent pwsh shell exited')
+  })
+
+  it('observes a shell exit after an early stdin readiness result', async () => {
+    const { ctx, owner, stub } = await setup({ backendType: 'stub' })
+    await call(ctx, owner, 'warm up')
+    const session = stub.sessions[0]!
+    session.mode = 'exit-after-stdin-read'
+
+    const result = text(await call(ctx, owner, 'exit'))
+    expect(result).toContain('[shell exited: code 9]')
+    expect(result).toContain('next pwsh call starts from the workspace')
+    expect(session.closed).toContain('persistent pwsh shell exited')
+  })
+
+  it('reports an exit when observation starts as the backend closes', async () => {
+    const { ctx, owner, stub } = await setup({ backendType: 'stub' })
+    await call(ctx, owner, 'warm up')
+    const session = stub.sessions[0]!
+    session.mode = 'exit-on-observation-send'
 
     const result = text(await call(ctx, owner, 'exit'))
     expect(result).toContain('[shell exited: code 9]')

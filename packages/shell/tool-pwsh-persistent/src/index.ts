@@ -330,6 +330,7 @@ async function executeCommand(
   const marker = markers()
   const wrapped = wrapCommand(command, marker)
   let first = true
+  let observingStdin = false
   let fallback = ''
   let fallbackTruncated = false
 
@@ -387,6 +388,7 @@ async function executeCommand(
     }
     let operation
     let result
+    const submitted = first
     try {
       operation = ctx.terminals.startSend(owner, id, {
         text: first ? wrapped : '',
@@ -396,11 +398,18 @@ async function executeCommand(
       first = false
       result = await operation.done
     } catch (error: unknown) {
+      const sendStatus = ctx.terminals.list(owner).find(session => session.sessionId === id)?.status
+      if (sendStatus?.kind === 'exited') {
+        return await respondToSessionExit(
+          ctx, shells, owner, id, sendStatus, marker, wrapped, fallback, fallbackTruncated, config,
+        )
+      }
       await shells.reset(owner, 'persistent pwsh send failed')
       throw error
     }
     const incremental = operation.readOutput()
-    fallback = incremental.delta.length > 0 ? fallback + incremental.delta : result.viewport
+    if (incremental.delta.length > 0) fallback += incremental.delta
+    else if (result.viewport.length > 0) fallback = result.viewport
     fallbackTruncated ||= incremental.truncated || result.truncated
     const latest = ctx.terminals.read(owner, id, { offset: 0, count: SCROLLBACK_PAGE_LINES })
     const deadlineResult = await settleDeadline(latest)
@@ -418,7 +427,16 @@ async function executeCommand(
     // pwsh handoff where stdin readiness wins the race with the final marker
     // or an exit event; Read-Host still returns its prompt after the bounded
     // grace rather than waiting for the command deadline.
-    if (result.waitReason === 'stdin_read') {
+    if (result.waitReason === 'stdin_read' && submitted) {
+      // A provider can settle the submitted send from stale foreground
+      // evidence just before a command that exits delivers its final PTY
+      // bytes. The next loop iteration is an observation-only send, so the
+      // terminal backend owns the handoff: an exiting session settles it as
+      // `session_exit`, while an interactive child still returns readiness.
+      observingStdin = true
+      continue
+    }
+    if (observingStdin || result.waitReason === 'stdin_read') {
       let latestAfterGrace = latest
       for (let poll = 0; poll < MARKER_GRACE_POLLS; poll += 1) {
         await pause()
