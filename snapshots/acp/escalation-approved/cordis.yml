@@ -16,13 +16,13 @@
 - id: sandbox-policy
   name: '@yharness/sandbox-policy'
   config:
-    mode: !!js "process.env.DSH_PERMISSION_MODE ?? (process.env.DSH_SNAPSHOT === undefined ? 'workspace-write' : 'danger-full-access')"
+    mode: !!js "process.env.DSH_SNAPSHOT_PERMISSION_PRESET === 'approve-for-me' ? 'workspace-write' : (process.env.DSH_PERMISSION_MODE ?? (process.env.DSH_SNAPSHOT === undefined ? 'workspace-write' : 'danger-full-access'))"
     workspaceRoot: !!js process.cwd()
 
 - id: approval
   name: '@yharness/user-approval'
   config:
-    policy: !!js "(process.env.DSH_PERMISSION_MODE ?? (process.env.DSH_SNAPSHOT === undefined ? 'workspace-write' : 'danger-full-access')) === 'danger-full-access' ? 'never' : 'ask'"
+    policy: !!js "process.env.DSH_SNAPSHOT_PERMISSION_PRESET === 'approve-for-me' || (process.env.DSH_PERMISSION_MODE ?? (process.env.DSH_SNAPSHOT === undefined ? 'workspace-write' : 'danger-full-access')) === 'danger-full-access' ? 'never' : 'ask'"
 
 # Use each recorded scenario's sandbox and approval settings as the preset.
 - id: permission
@@ -31,6 +31,9 @@
       workspace-write:
         sandbox: workspace-write
         approval: ask
+      approve-for-me:
+        sandbox: workspace-write
+        approval: never
       danger-full-access:
         sandbox: danger-full-access
         approval: never
