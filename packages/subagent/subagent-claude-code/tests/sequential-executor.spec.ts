@@ -1,6 +1,7 @@
 /** Real idle Y root and persistence composition; only native SDK and process enforcement are substituted. */
 import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { PassThrough } from 'node:stream'
@@ -70,7 +71,7 @@ async function* normalFrames(input: SDKUserMessage, options: Options): AsyncGene
   yield { type: 'system', subtype: 'session_state_changed', state: 'idle', uuid: frameIds.idle, session_id }
 }
 async function fixture(script: Script = normalFrames, diagnostics = '') {
-  const root = await realpath(await mkdtemp('/tmp/dsh-sequential-claude-'))
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'dsh-sequential-claude-')))
   const ctx = new Context()
   const owner: { fixtureHome?: string; executor?: ClaudeSequentialExecutor } = {}
   let stop = () => {}; let detach = () => {}
