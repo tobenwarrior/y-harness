@@ -70,6 +70,18 @@ describe('file provider — the address', () => {
     await expect(it.next()).resolves.toMatchObject({ done: true })
   })
 
+  it('does not publish Computer metadata that arrives after cancellation', async () => {
+    const { remote, it, controller } = opened(computerFileAddress(S1, REL_PATH))
+    const first = it.next()
+    const request = await remote.waitForStat(0)
+    controller.abort()
+    expect(request.signal?.aborted).toBe(true)
+    request.resolve({ ok: true, value: stat('late', 4) })
+
+    await expect(first).resolves.toEqual({ done: true, value: undefined })
+    expect(remote.calls).toEqual(['stat'])
+  })
+
   it.each([
     ['another scope', 'dsh-resource://file/shared/x/w/a.txt'],
     ['no path', 'dsh-resource://file/session/s1'],
