@@ -49,7 +49,7 @@ export function apply(ctx: Context): void {
     key => ctx.locale.bind('bots')(key),
     sharedClient,
   )
-  const computer = createComputerClient()
+  const computer = createComputerClient(connection.fetch)
   const computerAvailability = createComputerAvailability(computer)
   const computerTarget = createSnapshotStore<string | null>(null)
   const computerSignIn = createSnapshotStore<ComputerSignInTarget | undefined>(undefined)

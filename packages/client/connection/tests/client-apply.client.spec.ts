@@ -494,6 +494,7 @@ describe('connection client apply', () => {
 
   it('exposes a worker-local Gateway stream through connection.rpc.open', async () => {
     ;(globalThis as Win).location = { hostname: 'preview.example' }
+    const fetchHost = vi.fn<RpcFetch>().mockResolvedValue(Response.json({ available: false }))
     const openStream = vi.fn<NonNullable<ClientTransportHooks['openStream']>>(
       (endpoint, payload, signal, uplink) => (async function *(): AsyncGenerator {
         signal.throwIfAborted()
@@ -502,11 +503,14 @@ describe('connection client apply', () => {
       })(),
     )
     ;(globalThis as Win).__DSH_TRANSPORT__ = {
-      fetch: vi.fn<RpcFetch>(),
+      fetch: fetchHost,
       openStream,
       ownsHost: true,
     }
     const handle = await mount()
+    const status = await handle.fetch?.('api/computer/status', { method: 'POST' })
+    expect(await status?.json()).toEqual({ available: false })
+    expect(fetchHost).toHaveBeenCalledExactlyOnceWith('api/computer/status', { method: 'POST' })
     const abort = new AbortController()
     const open = handle.rpc.open
     if (open === undefined) throw new Error('worker-local stream carrier was not installed')

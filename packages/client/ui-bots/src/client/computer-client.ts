@@ -286,45 +286,51 @@ function sharedWorkspaceOf(value: unknown): ComputerSharedWorkspaceResult | unde
   return networkOf(value)
 }
 
-async function post<T>(
-  path: string,
-  payload: unknown,
-  parse: (value: unknown) => T | undefined,
-  options: { readonly signal?: AbortSignal; readonly keepalive?: boolean } = {},
-): Promise<T> {
-  const response = await fetch(path, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(payload),
-    ...(options.signal === undefined ? {} : { signal: options.signal }),
-    ...(options.keepalive === undefined ? {} : { keepalive: options.keepalive }),
-  })
-  if (!response.ok) {
-    throw new ComputerApiError(response.status, `Computer request failed (${response.status})`)
+type ComputerFetch = (input: string, init: RequestInit) => Promise<Response>
+const browserFetch: ComputerFetch = (input, init) => globalThis.fetch(input, init)
+
+function computerPost(fetchHost: ComputerFetch) {
+  return async function post<T>(
+    path: string,
+    payload: unknown,
+    parse: (value: unknown) => T | undefined,
+    options: { readonly signal?: AbortSignal; readonly keepalive?: boolean } = {},
+  ): Promise<T> {
+    const response = await fetchHost(path, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+      ...(options.keepalive === undefined ? {} : { keepalive: options.keepalive }),
+    })
+    if (!response.ok) {
+      throw new ComputerApiError(response.status, `Computer request failed (${response.status})`)
+    }
+    let value: unknown
+    try {
+      value = await response.json()
+    } catch (error: unknown) {
+      // A non-JSON success body cannot satisfy the endpoint's direct JSON contract.
+      void error
+      throw new ComputerApiError(response.status, 'Computer returned an invalid response')
+    }
+    const parsed = parse(value)
+    if (parsed === undefined) throw new ComputerApiError(response.status, 'Computer returned an invalid response')
+    return parsed
   }
-  let value: unknown
-  try {
-    value = await response.json()
-  } catch (error: unknown) {
-    // A non-JSON success body cannot satisfy the endpoint's direct JSON contract.
-    void error
-    throw new ComputerApiError(response.status, 'Computer returned an invalid response')
-  }
-  const parsed = parse(value)
-  if (parsed === undefined) throw new ComputerApiError(response.status, 'Computer returned an invalid response')
-  return parsed
 }
 
 /**
  * Create the default fetch-backed Computer client.
  *
- * @returns a client that uses relative authenticated Computer routes
+ * @param fetchHost - the active Connection carrier, defaulting to browser HTTP.
+ * @returns a client that uses relative authenticated Computer routes.
  */
-export function createComputerClient(): ComputerClient {
-  return computerClientFor()
+export function createComputerClient(fetchHost: ComputerFetch = browserFetch): ComputerClient {
+  return computerClientFor(computerPost(fetchHost))
 }
 
-function computerClientFor(surface?: 'desktop'): ComputerClient {
+function computerClientFor(post: ReturnType<typeof computerPost>, surface?: 'desktop'): ComputerClient {
   const select = (payload: Record<string, unknown>, sessionId: string | undefined): Record<string, unknown> => ({
     ...payload,
     ...(sessionId === undefined || sessionId === '' ? {} : { sessionId }),
@@ -354,7 +360,7 @@ function computerClientFor(surface?: 'desktop'): ComputerClient {
   if (surface === 'desktop') return client
   return {
     ...client,
-    desktop: computerClientFor('desktop'),
+    desktop: computerClientFor(post, 'desktop'),
     navigate: (viewerId, url, sessionId, signal) => post(
       NAVIGATE_PATH, { viewerId, url, sessionId }, controlOf, requestOptions(signal),
     ),
@@ -400,6 +406,7 @@ interface MacComputerClient {
  * @returns local setup and viewing operations.
  */
 export function createMacComputerClient(sessionId: string, viewerId: string): MacComputerClient {
+  const post = computerPost(browserFetch)
   const owner = { sessionId, viewerId }
   const path = (operation: string): string => 'api/computer/mac/' + operation
   const computer: ComputerClient = {

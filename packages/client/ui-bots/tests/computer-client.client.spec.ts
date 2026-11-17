@@ -116,8 +116,7 @@ describe('Computer HTTP client', () => {
       kind: 'vps',
       computer: { id: 'bot-id-owner', location: 'vps', permissionScope: 'bot', files: true, sharedFiles: true },
     }))
-    vi.stubGlobal('fetch', fetchMock)
-    const client = createComputerClient()
+    const client = createComputerClient(fetchMock)
 
     await expect(client.status(undefined, 'bot-session-owner')).resolves.toEqual({
       available: true,

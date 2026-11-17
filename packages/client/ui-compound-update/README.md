@@ -22,7 +22,7 @@ The sidebar foot shows a circular status action when a Compound skills update is
 <a id="use this package"></a>
 ## Use this package
 
-Mount beside `@yharness/skill-compound`, which registers the `api/skill-compound.update` reading route and the `api/skill-compound.update.apply` route the button posts to.
+Mount beside `@yharness/skill-compound`, which registers the `api/skill-compound.update` reading route and the `api/skill-compound.update.apply` route the button posts to. Both use the active Connection's HTTP carrier.
 
 ```yaml
 - name: '@yharness/client-ui-compound-update'
