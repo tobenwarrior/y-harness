@@ -421,6 +421,12 @@ function bootPatches(
     const config = configOf(bots.config)
     patches.push({ id: 'agent-bots', config: { ...config, shared: { ...configOf(config.shared), enabled: false } } })
   }
+  // Package updates need the Node-hosted package manager.
+  const compound = find(rows, 'skill-compound')
+  if (compound !== undefined) {
+    patches.push({ id: 'skill-compound', config: { ...configOf(compound.config), autoUpdate: false } })
+  }
+  if (find(rows, 'ui-compound-update') !== undefined) patches.push({ id: 'ui-compound-update', disabled: true })
   const dir = join(root, IMAGE_HOME_DIRECTORY, 'profiles/preview')
   const profile: ProfileContext = {
     name: 'preview', dir, patchPath: join(dir, 'cordis.patch.yml'),
