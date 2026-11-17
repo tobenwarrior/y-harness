@@ -156,6 +156,41 @@ await truncHandle.truncate(4)
 await truncHandle.close()
 check('handle.truncate cuts the tail', fs.readFileSync('/dsh/log-handle.jsonl', 'utf8'), 'repl')
 
+test('reopens an existing lock with safe numeric read/write flags', async () => {
+  const path = '/dsh/numeric-open.lock'
+  const flags = fs.constants.O_RDWR | fs.constants.O_NONBLOCK | fs.constants.O_NOFOLLOW
+  expect(flags).not.toBe(fs.constants.O_RDWR)
+  await expect(fsp.open(path, flags)).rejects.toMatchObject({ code: 'ENOENT' })
+  const created = await fsp.open(path, 'wx+', 0o600)
+  try {
+    await created.writeFile('lock marker')
+  } finally {
+    await created.close()
+  }
+  const reopened = await fsp.open(path, flags)
+  try {
+    expect(await reopened.readFile('utf8')).toBe('lock marker')
+    await reopened.truncate(4)
+  } finally {
+    await reopened.close()
+  }
+  expect(await fsp.readFile(path, 'utf8')).toBe('lock')
+  expect(plainMode(path)).toBe(0o600)
+})
+
+test('checks numeric flag combinations before opening a file or directory', async () => {
+  const handle = await fsp.open('/dsh/config', fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW)
+  try {
+    expect((await handle.stat()).isDirectory()).toBe(true)
+  } finally {
+    await handle.close()
+  }
+  await expect(fsp.open('/dsh/config', fs.constants.O_RDWR)).rejects.toMatchObject({ code: 'EISDIR' })
+  await expect(fsp.open('/dsh/config/cordis.yml', fs.constants.O_RDWR | fs.constants.O_TRUNC))
+    .rejects.toMatchObject({ code: 'ERR_INVALID_ARG_VALUE' })
+  expect(await fsp.readFile('/dsh/config/cordis.yml', 'utf8')).toBe('- id: timer\n- id: llm\n')
+})
+
 check('promises.readFile', await fsp.readFile('/dsh/config/cordis.yml', 'utf8'), '- id: timer\n- id: llm\n')
 await fsp.writeFile('/dsh/promise.txt', 'p')
 check('promises.writeFile', fs.readFileSync('/dsh/promise.txt', 'utf8'), 'p')

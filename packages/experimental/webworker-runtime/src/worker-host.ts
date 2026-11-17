@@ -405,17 +405,21 @@ function bootPatches(
     }
     return undefined
   }
-  const configOf = (row: Record<string, unknown>): Record<string, unknown> =>
-    (typeof row.config === 'object' && row.config !== null && !Array.isArray(row.config)
-      ? row.config
-      : {}) as Record<string, unknown>
+  const configOf = (value: unknown): Record<string, unknown> =>
+    (typeof value === 'object' && value !== null && !Array.isArray(value) ? value : {}) as Record<string, unknown>
 
   const patches: Array<ProfileContext['overlays'][number]> = []
   // The worker carries no compression codec, and the VFS is in-memory anyway:
   // the JSONL backend's plaintext path is the composition's one legal encoding.
   const jsonl = find(rows, 'session-persistence-jsonl')
   if (jsonl !== undefined) {
-    patches.push({ id: 'session-persistence-jsonl', config: { ...configOf(jsonl), compression: 'none' } })
+    patches.push({ id: 'session-persistence-jsonl', config: { ...configOf(jsonl.config), compression: 'none' } })
+  }
+  // The preview worker answers only its owning page's tunnel.
+  const bots = find(rows, 'agent-bots')
+  if (bots !== undefined) {
+    const config = configOf(bots.config)
+    patches.push({ id: 'agent-bots', config: { ...config, shared: { ...configOf(config.shared), enabled: false } } })
   }
   const dir = join(root, IMAGE_HOME_DIRECTORY, 'profiles/preview')
   const profile: ProfileContext = {

@@ -103,6 +103,19 @@ export const constants = {
   O_CREAT: 64,
   O_TRUNC: 512,
   O_APPEND: 1024,
+  O_NONBLOCK: 2048,
+  O_NOFOLLOW: 131072,
+}
+
+function descriptorFlags(flags: string | number): string {
+  if (typeof flags === 'string') return flags
+  // VFS entries cannot be symbolic links or host devices that block on open.
+  const safety = flags & (constants.O_NONBLOCK | constants.O_NOFOLLOW)
+  if (flags === (constants.O_RDONLY | safety)) return 'r'
+  if (flags === (constants.O_RDWR | safety)) return 'r+'
+  const error = new TypeError('Unsupported numeric filesystem open flags: ' + String(flags)) as TypeError & { code: string }
+  error.code = 'ERR_INVALID_ARG_VALUE'
+  throw error
 }
 
 /**
@@ -328,14 +341,14 @@ let nextFd = 3
 /**
  * Open a file descriptor.
  * @param path - file path.
- * @param flags - Node flag string: 'r', 'w', 'a', with optional '+' and the
- * exclusive 'x' (create-only) modifier.
+ * @param flags - Node flag string or numeric read/read-write access with optional
+ * O_NONBLOCK and O_NOFOLLOW.
  * @param mode - creation permission bits.
  * @returns the descriptor.
  */
-export function openSync(path: PathArg, flags = 'r', mode?: number): number {
+export function openSync(path: PathArg, flags: string | number = 'r', mode?: number): number {
   const target = asPath(path)
-  const file = vfs().openFileSync(target, flags, mode)
+  const file = vfs().openFileSync(target, descriptorFlags(flags), mode)
   const fd = nextFd++
   openFiles.set(fd, { file, position: 0 })
   return fd
@@ -433,14 +446,15 @@ export interface FileHandle {
  * Open a file handle. Directories open read-only, which is what the durability
  * helpers do before an fsync.
  * @param path - file or directory path.
- * @param flags - Node flag string.
+ * @param flags - Node flag string or a numeric access mode supported by openSync.
  * @param mode - creation permission bits.
  * @returns the handle.
  */
-export function openHandleSync(path: PathArg, flags = 'r', mode?: number): FileHandle {
+export function openHandleSync(path: PathArg, flags: string | number = 'r', mode?: number): FileHandle {
   const target = asPath(path)
+  const access = descriptorFlags(flags)
   const directory = vfs().existsSync(target) && vfs().statSync(target).isDirectory()
-  const fd = directory ? -1 : openSync(target, flags, mode)
+  const fd = directory && (access === 'r' || access === 'rs') ? -1 : openSync(target, access, mode)
   let closed = false
   const descriptor = (syscall: string): OpenFile => fileOf(fd, syscall)
   return {
@@ -830,7 +844,7 @@ export const promises = {
   },
   // The VFS keeps both names attached to one file identity until either name is removed.
   link: async (from: PathArg, to: PathArg): Promise<void> => { linkSync(from, to) },
-  open: async (path: PathArg, flags?: string, mode?: number): Promise<FileHandle> => openHandleSync(path, flags, mode),
+  open: async (path: PathArg, flags?: string | number, mode?: number): Promise<FileHandle> => openHandleSync(path, flags, mode),
   opendir: async (path: PathArg): Promise<Dir> => opendirSync(path),
   truncate: async (path: PathArg, length = 0): Promise<void> => {
     vfs().truncateSync(asPath(path), length)

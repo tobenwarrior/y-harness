@@ -1,15 +1,6 @@
 /** Signed, self-contained Bot template codes and their boundary validation. */
 
-import {
-  createHash,
-  createPrivateKey,
-  createPublicKey,
-  generateKeyPairSync,
-  randomBytes,
-  sign,
-  verify,
-  type KeyObject,
-} from 'node:crypto'
+import { createHash, randomBytes, webcrypto } from 'node:crypto'
 import { z } from 'zod'
 import { BOT_ACCENTS, BOT_IDENTITIES } from './types.ts'
 import { BotTemplateShareCode } from './template-types.ts'
@@ -62,7 +53,7 @@ export interface DecodedBotTemplateCode {
 /** Ed25519 key material used only by the publishing Host. */
 export interface BotTemplateSigningKeys {
   /** Private key kept in Host storage and never included in a code. */
-  readonly privateKey: KeyObject
+  readonly privateKey: webcrypto.CryptoKey
   /** Public verification key embedded in signed codes. */
   readonly publicKey: string
 }
@@ -81,11 +72,11 @@ export const botTemplateAvatarSchema = z.object({
   height: z.number().int().positive().max(8192),
   name: z.string().min(1).max(255).refine(value => value.trim() === value && !/[\\/\0]/u.test(value)).optional(),
 }).strict().superRefine((value, context) => {
-  let decoded: Buffer
+  let decoded: Buffer<ArrayBuffer>
   try {
-    decoded = decodeBase64Url(value.data, 'avatar data')
-  } catch (error: unknown) {
-    context.addIssue({ code: 'custom', message: error instanceof Error ? error.message : 'Invalid avatar data', path: ['data'] })
+    decoded = decodeBotTemplateBytes(value.data, 'avatar data')
+  } catch {
+    context.addIssue({ code: 'custom', message: 'Invalid avatar data', path: ['data'] })
     return
   }
   if (decoded.byteLength !== value.bytes) {
@@ -123,49 +114,56 @@ const envelopeSchema = z.object({
 /** Generate one Host-local signing key pair.
  * @returns An Ed25519 key pair whose private key stays in Host storage.
  */
-export function createBotTemplateSigningKeys(): BotTemplateSigningKeys {
-  const keys = generateKeyPairSync('ed25519')
-  return { privateKey: keys.privateKey, publicKey: publicKeyBytes(keys.privateKey) }
+export async function createBotTemplateSigningKeys(): Promise<BotTemplateSigningKeys> {
+  const crypto = templateCrypto()
+  const keys = await crypto.generateKey('Ed25519', true, ['sign', 'verify']) as webcrypto.CryptoKeyPair
+  return {
+    privateKey: keys.privateKey,
+    publicKey: encodeBotTemplateBytes(new Uint8Array(await crypto.exportKey('spki', keys.publicKey))),
+  }
 }
 
 /** Serialize the private signing key for durable Host-local storage.
  * @param privateKey - Host-local Ed25519 private key.
  * @returns Base64url PKCS#8 key bytes.
  */
-export function serializeBotTemplatePrivateKey(privateKey: KeyObject): string {
-  requireEd25519(privateKey, 'private key')
-  return privateKey.export({ type: 'pkcs8', format: 'der' }).toString('base64url')
+export async function serializeBotTemplatePrivateKey(privateKey: webcrypto.CryptoKey): Promise<string> {
+  return encodeBotTemplateBytes(new Uint8Array(await templateCrypto().exportKey('pkcs8', privateKey)))
 }
 
-/** Restore a Host-local signing key from its storage representation.
+/** Restore the signing identity from the private bytes saved by the Host.
  * @param value - Base64url PKCS#8 key bytes.
- * @returns Restored Ed25519 private key.
+ * @returns The restored Ed25519 key pair.
  */
-export function restoreBotTemplatePrivateKey(value: string): KeyObject {
+export async function restoreBotTemplateSigningKeys(value: string): Promise<BotTemplateSigningKeys> {
+  const crypto = templateCrypto()
   const encoded = base64Url.max(1024).parse(value)
-  return requireEd25519(createPrivateKey({ key: decodeBase64Url(encoded, 'private key'), format: 'der', type: 'pkcs8' }), 'private key')
+  const privateKey = await crypto.importKey('pkcs8', decodeBotTemplateBytes(encoded, 'private key'), 'Ed25519', true, ['sign'])
+  const publicJwk = await crypto.exportKey('jwk', privateKey)
+  delete publicJwk.d
+  publicJwk.key_ops = ['verify']
+  const publicKey = await crypto.importKey('jwk', publicJwk, 'Ed25519', true, ['verify'])
+  return { privateKey, publicKey: encodeBotTemplateBytes(new Uint8Array(await crypto.exportKey('spki', publicKey))) }
 }
 
 /** Sign one validated payload into a portable code.
  * @param payload - Safe profile and data to include in the code.
- * @param privateKey - Host-local Ed25519 private key.
+ * @param keys - Host-local Ed25519 key pair.
  * @returns Signed self-contained template code.
  */
-export function encodeBotTemplateCode(
+export async function encodeBotTemplateCode(
   payload: BotTemplateArtifactPayload,
-  privateKey: KeyObject,
-): BotTemplateShareCodeType {
-  requireEd25519(privateKey, 'private key')
+  keys: BotTemplateSigningKeys,
+): Promise<BotTemplateShareCodeType> {
   const valid = payloadSchema.parse({
     ...payload,
-    nonce: payload.nonce ?? randomBytes(16).toString('base64url'),
+    nonce: payload.nonce ?? encodeBotTemplateBytes(randomBytes(16)),
   }) as BotTemplateArtifactPayload
-  const publicKey = publicKeyBytes(privateKey)
-  const unsigned = { version: BOT_TEMPLATE_FORMAT_VERSION, publicKey, payload: valid }
+  const unsigned = { version: BOT_TEMPLATE_FORMAT_VERSION, publicKey: keys.publicKey, payload: valid }
   const canonical = canonicalJson(unsigned)
-  const signature = sign(null, Buffer.from(canonical), privateKey).toString('base64url')
-  const envelope = { ...unsigned, signature }
-  const encoded = `${BOT_TEMPLATE_CODE_PREFIX}${Buffer.from(canonicalJson(envelope)).toString('base64url')}`
+  const signature = await templateCrypto().sign('Ed25519', keys.privateKey, Buffer.from(canonical))
+  const envelope = { ...unsigned, signature: encodeBotTemplateBytes(new Uint8Array(signature)) }
+  const encoded = `${BOT_TEMPLATE_CODE_PREFIX}${encodeBotTemplateBytes(Buffer.from(canonicalJson(envelope)))}`
   if (encoded.length > BOT_TEMPLATE_CODE_MAX_LENGTH) throw new Error('Bot template code is too large')
   return BotTemplateShareCode(encoded)
 }
@@ -174,7 +172,7 @@ export function encodeBotTemplateCode(
  * @param code - Candidate signed template code.
  * @returns Verified payload and its content fingerprint.
  */
-export function decodeBotTemplateCode(code: string | BotTemplateShareCodeType): DecodedBotTemplateCode {
+export async function decodeBotTemplateCode(code: string | BotTemplateShareCodeType): Promise<DecodedBotTemplateCode> {
   if (typeof code !== 'string' || code.length === 0) throw new Error('Bot template code is empty')
   if (code.length > BOT_TEMPLATE_CODE_MAX_LENGTH || !code.startsWith(BOT_TEMPLATE_CODE_PREFIX)) {
     throw new Error('Bot template code is invalid')
@@ -182,7 +180,7 @@ export function decodeBotTemplateCode(code: string | BotTemplateShareCodeType): 
   const encoded = code.slice(BOT_TEMPLATE_CODE_PREFIX.length)
   let parsed: unknown
   try {
-    parsed = JSON.parse(decodeBase64Url(encoded, 'template code').toString('utf8'))
+    parsed = JSON.parse(decodeBotTemplateBytes(encoded, 'template code').toString('utf8'))
   } catch (error: unknown) {
     throw new Error('Bot template code is invalid', { cause: error })
   }
@@ -194,14 +192,13 @@ export function decodeBotTemplateCode(code: string | BotTemplateShareCodeType): 
   }
   const unsigned = { version: envelope.version, publicKey: envelope.publicKey, payload: envelope.payload }
   const canonical = canonicalJson(unsigned)
-  let valid = false
+  const crypto = templateCrypto()
+  let publicKeyBytes: Buffer<ArrayBuffer>
+  let valid: boolean
   try {
-    const publicKeyBytes = decodeBase64Url(envelope.publicKey, 'public key')
-    const publicKey = requireEd25519(
-      createPublicKey({ key: publicKeyBytes, format: 'der', type: 'spki' }),
-      'public key',
-    )
-    valid = verify(null, Buffer.from(canonical), publicKey, decodeBase64Url(envelope.signature, 'signature'))
+    publicKeyBytes = decodeBotTemplateBytes(envelope.publicKey, 'public key')
+    const publicKey = await crypto.importKey('spki', publicKeyBytes, 'Ed25519', false, ['verify'])
+    valid = await crypto.verify('Ed25519', publicKey, decodeBotTemplateBytes(envelope.signature, 'signature'), Buffer.from(canonical))
   } catch (error: unknown) {
     throw new Error('Bot template signature is invalid', { cause: error })
   }
@@ -209,27 +206,39 @@ export function decodeBotTemplateCode(code: string | BotTemplateShareCodeType): 
   return {
     payload: envelope.payload as BotTemplateArtifactPayload,
     publicKey: envelope.publicKey,
-    issuerFingerprint: createHash('sha256').update(decodeBase64Url(envelope.publicKey, 'public key')).digest('hex'),
+    issuerFingerprint: createHash('sha256').update(publicKeyBytes).digest('hex'),
     fingerprint: createHash('sha256').update(canonical).digest('hex'),
   }
 }
 
-function publicKeyBytes(privateKey: KeyObject): string {
-  return createPublicKey(privateKey).export({ type: 'spki', format: 'der' }).toString('base64url')
-}
-
-function requireEd25519(key: KeyObject, subject: string): KeyObject {
-  if (key.asymmetricKeyType !== 'ed25519') throw new Error(`Invalid ${subject}`)
-  return key
+function templateCrypto(): webcrypto.SubtleCrypto {
+  const { subtle }: { readonly subtle?: webcrypto.SubtleCrypto } = webcrypto
+  if (subtle === undefined) throw new Error('Bot templates require Web Crypto in a secure context')
+  return subtle
 }
 
 function canonicalJson(value: object): string {
   return JSON.stringify(value)
 }
 
-function decodeBase64Url(value: string, subject: string): Buffer {
+/**
+ * Encode portable bytes with the base64 support shared by Node and the preview worker.
+ * @param value - Template, key, or avatar bytes.
+ * @returns Unpadded base64url text.
+ */
+export function encodeBotTemplateBytes(value: Uint8Array): string {
+  return Buffer.from(value).toString('base64').replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/u, '')
+}
+
+/**
+ * Decode bytes from their canonical portable representation.
+ * @param value - Unpadded base64url text.
+ * @param subject - Data field named in a validation error.
+ * @returns Decoded bytes.
+ */
+export function decodeBotTemplateBytes(value: string, subject: string): Buffer<ArrayBuffer> {
   if (!/^[A-Za-z0-9_-]+$/.test(value) || value.length % 4 === 1) throw new Error(`Invalid ${subject}`)
-  const decoded = Buffer.from(value, 'base64url')
-  if (decoded.toString('base64url') !== value) throw new Error(`Invalid ${subject}`)
+  const decoded = Buffer.from(value.replaceAll('-', '+').replaceAll('_', '/'), 'base64')
+  if (encodeBotTemplateBytes(decoded) !== value) throw new Error(`Invalid ${subject}`)
   return decoded
 }

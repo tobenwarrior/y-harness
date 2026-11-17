@@ -316,9 +316,6 @@ async function bootPreview(origin: string, browser: Browser): Promise<void> {
     const continueButton = page.getByRole('button', { name: 'Continue' })
     await continueButton.waitFor({ timeout: HERO_TIMEOUT_MS })
     await continueButton.click()
-    const configureLater = page.getByRole('button', { name: 'Configure later' })
-    await configureLater.waitFor({ timeout: 30_000 })
-    await configureLater.click()
     await page.locator('[data-composer-input][data-placeholder="Describe what you want to build, / commands, @ files or sessions"]')
       .waitFor({ timeout: 30_000 })
 
@@ -376,6 +373,22 @@ async function bootPreview(origin: string, browser: Browser): Promise<void> {
         )
       }
       await createDirectory('/dsh/workspace/.agents/skills', 'runtime-created')
+      const source = await remote<{ bot: { id: string } }>('bots/create', {
+        request: { name: 'Preview research bot', cwd: '/dsh/workspace' },
+      })
+      const collaboratorAvailability = await remote('bots/listShareMembers', {
+        request: { botId: source.bot.id },
+      }).then(() => 'available', (error: Error) => error.message)
+      interface Template { shareCode: string; issuerFingerprint: string; name: string }
+      const published = await remote<{ template: Template }>('bots/publishTemplate', {
+        request: { botId: source.bot.id, name: 'Preview research template' },
+      })
+      const secondPublication = await remote<{ template: Template }>('bots/publishTemplate', {
+        request: { botId: source.bot.id },
+      })
+      const preview = await remote<{ template: Template }>('bots/previewTemplate', {
+        request: { shareCode: published.template.shareCode },
+      })
       // Settings and credentials both answer over the Remote carrier, so this
       // half of the sweep posts the generated endpoints directly like the
       // session read above.
@@ -403,6 +416,10 @@ async function bootPreview(origin: string, browser: Browser): Promise<void> {
       await remote('credentials/unset', { ref: 'PREVIEW_TEST_SECRET' })
       await new Promise((resolve) => { setTimeout(resolve, 250) })
       return {
+        collaboratorAvailability,
+        templateName: preview.template.name,
+        templateIssuer: preview.template.issuerFingerprint,
+        secondTemplateIssuer: secondPublication.template.issuerFingerprint,
         settingsWritable: settings.writable,
         settingIds: settings.namespaces.map(namespace => namespace.ns),
         savedTimeout: saved.value.timeoutMs,
@@ -419,6 +436,10 @@ async function bootPreview(origin: string, browser: Browser): Promise<void> {
       seededSessionId: VFS_EXAMPLE_SESSION_IDS.main,
       seededSessionTitle: SHOWCASE_TITLE,
     })
+    expect(exercised.collaboratorAvailability).toContain('Shared Bot access is not enabled')
+    expect(exercised.templateName).toBe('Preview research template')
+    expect(exercised.templateIssuer).toMatch(/^[0-9a-f]{64}$/u)
+    expect(exercised.secondTemplateIssuer).toBe(exercised.templateIssuer)
     expect(exercised.settingsWritable).toBe(true)
     expect(exercised.settingIds).toEqual(expect.arrayContaining([
       'bash-sandbox', 'locale', 'ui-theme', 'ui-chat', 'ui-conversation', 'ui-settings', 'ui-settings-general',

@@ -1,7 +1,7 @@
 /** Durable user-owned Bot roster with one ordinary Session per Bot. */
 
 import { mkdir } from 'node:fs/promises'
-import { createHash, randomUUID, type KeyObject } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { Readable } from 'node:stream'
@@ -275,9 +275,11 @@ import {
   BOT_TEMPLATE_CODE_PREFIX,
   BOT_TEMPLATE_FORMAT_VERSION,
   createBotTemplateSigningKeys,
+  decodeBotTemplateBytes,
   decodeBotTemplateCode,
+  encodeBotTemplateBytes,
   encodeBotTemplateCode,
-  restoreBotTemplatePrivateKey,
+  restoreBotTemplateSigningKeys,
   serializeBotTemplatePrivateKey,
 } from './template-codec.ts'
 import {
@@ -287,7 +289,7 @@ import {
   botTemplateDomain,
   normalizeBotTemplateShareCode,
 } from './template-storage.ts'
-import type { BotTemplateArtifactPayload } from './template-codec.ts'
+import type { BotTemplateArtifactPayload, BotTemplateSigningKeys, DecodedBotTemplateCode } from './template-codec.ts'
 import type {
   BotTemplateApproval,
   BotTemplateApprovalPermissions,
@@ -1623,9 +1625,9 @@ function signedTemplateView(
   }
 }
 
-function storedTemplateView(record: BotTemplateStoredRecord): BotTemplateView {
+async function storedTemplateView(record: BotTemplateStoredRecord): Promise<BotTemplateView> {
   try {
-    const decoded = decodeBotTemplateCode(record.shareCode)
+    const decoded = await decodeBotTemplateCode(record.shareCode)
     return signedTemplateView(
       decoded.payload,
       record.shareCode,
@@ -2783,7 +2785,6 @@ export class BotService extends TypertRemoteService {
   private readonly groupService: Promise<BotGroupService>
   private readonly attachmentDomain: Promise<Domain<typeof botAttachmentDomain>>
   private readonly templateDomain: Promise<Domain<typeof botTemplateDomain>>
-  private readonly templateSigningKey: Promise<KeyObject>
   private readonly templateApprovalPreviews = new Map<string, TemplateApprovalPreview>()
   private readonly ownerId: string
   private readonly initialized: PromiseLike<unknown>
@@ -3082,13 +3083,6 @@ export class BotService extends TypertRemoteService {
       }
     })
     this.templateDomain = ctx.storageDomain.open(botTemplateDomain)
-    this.templateSigningKey = this.templateDomain.then(async (domain) => {
-      const current = domain.global.get()
-      if (current.signingKey !== undefined) return restoreBotTemplatePrivateKey(current.signingKey)
-      const keys = createBotTemplateSigningKeys()
-      await domain.global.set({ ...current, signingKey: serializeBotTemplatePrivateKey(keys.privateKey) })
-      return keys.privateKey
-    })
     ctx.on('session/event', (session, event) => {
       const sessionKey = String(session.id)
       if (this.sharedSessionIds.has(sessionKey)) {
@@ -3490,7 +3484,6 @@ export class BotService extends TypertRemoteService {
         groupDomain = await this.groupDomain
         attachmentDomain = await this.attachmentDomain
         templateDomain = await this.templateDomain
-        await this.templateSigningKey
         const openedDomain = domain
         const openedNoCredentialIntent = noCredentialIntent
         const openedGrokHistoryDomain = grokHistoryDomain
@@ -6594,14 +6587,11 @@ export class BotService extends TypertRemoteService {
    */
   @Remote('listTemplates')
   async listTemplates(_request: BotTemplateListRequest): Promise<BotTemplateListValue> {
-    const templates = (await this.templateDomain).table('templates')
-    return {
-      templates: [...templates.entries()]
-        .map(([, template]) => template)
-        .filter(template => template.ownerId === this.ownerId)
-        .map(template => storedTemplateView(template))
-        .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id)),
+    const templates: BotTemplateView[] = []
+    for (const [, record] of (await this.templateDomain).table('templates').entries()) {
+      if (record.ownerId === this.ownerId) templates.push(await storedTemplateView(record))
     }
+    return { templates: templates.sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id)) }
   }
 
   /**
@@ -6643,8 +6633,10 @@ export class BotService extends TypertRemoteService {
         ...(avatar === undefined ? {} : { avatar }),
         issuedAt: Date.now(),
       }
-      const shareCode = encodeBotTemplateCode(payload, await this.templateSigningKey)
-      const decoded = decodeBotTemplateCode(shareCode)
+      const templateDomain = await this.templateDomain
+      const keys = await this.getTemplateSigningKeys(templateDomain)
+      const shareCode = await encodeBotTemplateCode(payload, keys)
+      const decoded = await decodeBotTemplateCode(shareCode)
       const id = BotTemplateId(`bot-template-${randomUUID()}`)
       const template: BotTemplateStoredRecord = {
         id,
@@ -6663,9 +6655,13 @@ export class BotService extends TypertRemoteService {
         portableVersion: BOT_TEMPLATE_FORMAT_VERSION,
         createdAt: payload.issuedAt,
       }
-      await (await this.templateDomain).table('templates').put(id, template)
+      await templateDomain.table('templates').put(id, template)
       this.emitChanged()
-      return { template: storedTemplateView(template) }
+      return {
+        template: signedTemplateView(
+          decoded.payload, shareCode, decoded.fingerprint, decoded.issuerFingerprint, id, payload.issuedAt, undefined, true,
+        ),
+      }
     })
   }
 
@@ -6698,7 +6694,7 @@ export class BotService extends TypertRemoteService {
         if (candidate.id === current.id) template = next
       }
       this.emitChanged()
-      return { template: storedTemplateView(template) }
+      return { template: await storedTemplateView(template) }
     })
   }
 
@@ -9217,15 +9213,25 @@ export class BotService extends TypertRemoteService {
     return current
   }
 
+  /** Load the publishing key under the Bot writer, creating it on first publication. */
+  private async getTemplateSigningKeys(domain: Domain<typeof botTemplateDomain>): Promise<BotTemplateSigningKeys> {
+    const current = domain.global.get()
+    if (current.signingKey !== undefined) return restoreBotTemplateSigningKeys(current.signingKey)
+    const keys = await createBotTemplateSigningKeys()
+    const signingKey = await serializeBotTemplatePrivateKey(keys.privateKey)
+    await domain.global.set({ ...current, signingKey })
+    return keys
+  }
+
   private async activeTemplate(
     request: BotTemplatePreviewRequest | BotTemplateApproveRequest | BotTemplateImportRequest,
     options: { readonly allowRevoked?: boolean } = {},
   ): Promise<ActiveBotTemplate> {
     if (!isRequestObject(request)) return badRequest('Bot template request must be an object')
     const shareCode = normalizeTemplateShareCode(request.shareCode)
-    let decoded: ReturnType<typeof decodeBotTemplateCode>
+    let decoded: DecodedBotTemplateCode
     try {
-      decoded = decodeBotTemplateCode(shareCode)
+      decoded = await decodeBotTemplateCode(shareCode)
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error)
       const reason = /signature/i.test(message)
@@ -9339,7 +9345,7 @@ export class BotService extends TypertRemoteService {
       }
       return {
         mediaType: canonical.data.mediaType,
-        data: Buffer.from(stored.data).toString('base64url'),
+        data: encodeBotTemplateBytes(stored.data),
         bytes: stored.data.byteLength,
         width: canonical.data.width,
         height: canonical.data.height,
@@ -9360,8 +9366,8 @@ export class BotService extends TypertRemoteService {
   private async prepareImportedAvatar(botId: BotRecord['id'], avatar: BotTemplateAvatar): Promise<ImageAttachmentRef> {
     let reference: ImageAttachmentRef
     try {
-      const data = Buffer.from(avatar.data, 'base64url')
-      if (data.toString('base64url') !== avatar.data || data.byteLength !== avatar.bytes || data.byteLength > BOT_TEMPLATE_AVATAR_MAX_BYTES) {
+      const data = decodeBotTemplateBytes(avatar.data, 'avatar data')
+      if (data.byteLength !== avatar.bytes || data.byteLength > BOT_TEMPLATE_AVATAR_MAX_BYTES) {
         throw new Error('Portable avatar bytes failed validation')
       }
       reference = await this.ctx.attachments.saveImage({
