@@ -464,19 +464,13 @@ function ComputerViewer({
       if (error instanceof ComputerApiError && error.status === 409) {
         applyMode('other')
         setFeedback('computerControlBusy')
-      } else if (error instanceof ComputerApiError && error.status === 404) {
-        if (sharedSignIn) {
-          frameRef.current = undefined
-          setFrame(undefined)
-        }
-        setPhase('unavailable')
-      } else {
-        if (sharedSignIn) {
-          frameRef.current = undefined
-          setFrame(undefined)
-        }
-        setPhase('disconnected')
+        return
       }
+      if (sharedSignIn) {
+        frameRef.current = undefined
+        setFrame(undefined)
+      }
+      setPhase(error instanceof ComputerApiError && error.status === 404 ? 'unavailable' : 'disconnected')
     })
   }, [applyMode, computer, frameSessionId, sharedSignIn, signInApi, viewerId])
 
@@ -539,19 +533,14 @@ function ComputerViewer({
         if (error instanceof ComputerApiError && error.status === 409) {
           applyMode('other')
           setFeedback('computerControlBusy')
-        } else if (error instanceof ComputerApiError && error.status === 404) {
-          if (sharedSignIn) {
-            frameRef.current = undefined
-            setFrame(undefined)
-          }
-          setPhase('unavailable')
-        } else {
-          if (sharedSignIn) {
-            frameRef.current = undefined
-            setFrame(undefined)
-          }
-          setFeedback('computerInputRejected')
+          return
         }
+        if (sharedSignIn) {
+          frameRef.current = undefined
+          setFrame(undefined)
+        }
+        if (error instanceof ComputerApiError && error.status === 404) setPhase('unavailable')
+        else setFeedback('computerInputRejected')
       }
     }).finally(() => { queue.pending-- })
   }

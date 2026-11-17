@@ -134,29 +134,42 @@ export async function bridge(
     const requestUnread = bodyMode === 'streaming' && !req.readableEnded
     const responseHeaders = Object.fromEntries(response.headers.entries())
     res.writeHead(response.status, requestUnread ? { ...responseHeaders, connection: 'close' } : responseHeaders)
-    if (response.body !== null) {
-      for await (const chunk of response.body) {
-        // Drain without writing after disconnect: cancelling Node multipart bodies
-        // can race their producer and reject with ERR_INVALID_STATE.
-        if (abort.signal.aborted) continue
-        // Backpressure: a false return means the socket buffer is full — wait for drain
-        // instead of buffering unboundedly (slow or suspended consumers). 'close' also
-        // resolves so a mid-wait disconnect cannot park this loop forever.
-        if (!res.write(chunk) && !res.destroyed) {
-          await new Promise<void>((resolve) => {
-            const done = (): void => {
-              res.off('drain', done)
-              res.off('close', done)
-              resolve()
-            }
-            res.once('drain', done)
-            res.once('close', done)
-          })
-        }
-      }
-    }
+    if (response.body !== null) await writeFetchResponseBody(response.body, res, abort.signal)
     res.end()
   } finally {
     releaseBody?.()
+  }
+}
+
+/**
+ * Copy a Fetch body to an HTTP response while honoring socket backpressure.
+ * @param body - Body of an admitted Fetch response.
+ * @param res - Destination with headers already written.
+ * @param signal - Downstream disconnect. The body drains without further writes after abort.
+ * @returns When the body has ended. The caller owns response termination.
+ */
+export async function writeFetchResponseBody(
+  body: ReadableStream<Uint8Array>,
+  res: Pick<BridgeServerResponse, 'destroyed' | 'off' | 'once' | 'write'>,
+  signal: AbortSignal,
+): Promise<void> {
+  for await (const chunk of body) {
+    // Drain without writing after disconnect: cancelling Node multipart bodies
+    // can race their producer and reject with ERR_INVALID_STATE.
+    if (signal.aborted) continue
+    // Backpressure: a false return means the socket buffer is full — wait for drain
+    // instead of buffering unboundedly (slow or suspended consumers). 'close' also
+    // resolves so a mid-wait disconnect cannot park this loop forever.
+    if (!res.write(chunk) && !res.destroyed) {
+      await new Promise<void>((resolve) => {
+        const done = (): void => {
+          res.off('drain', done)
+          res.off('close', done)
+          resolve()
+        }
+        res.once('drain', done)
+        res.once('close', done)
+      })
+    }
   }
 }

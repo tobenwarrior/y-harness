@@ -510,7 +510,7 @@ export interface BotSharedConfig {
 ## `@yharness/client-connection`
 
 - `inject`: `credentials`
-- `source`: [`packages/client/connection/src/index.ts:121`](../packages/client/connection/src/index.ts)
+- `source`: [`packages/client/connection/src/index.ts:122`](../packages/client/connection/src/index.ts)
 
 ```ts config-catalog
 /** Browser authentication, request limits, and connection recovery configuration. */

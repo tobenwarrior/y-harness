@@ -326,6 +326,17 @@ async function readPayload(request: Request): Promise<unknown> {
   return JSON.parse(text)
 }
 
+async function readComputerRequest(request: Request): Promise<Record<string, unknown> | undefined> {
+  try {
+    const payload = await readPayload(request)
+    return isRecord(payload) ? payload : undefined
+  } catch (error: unknown) {
+    // Malformed or interrupted input never reaches the controller.
+    void error
+    return undefined
+  }
+}
+
 interface RouteOptions {
   readonly managed: boolean
   /** Permit the old shared route's omitted session id during an allowlisted rollout. */
@@ -355,15 +366,8 @@ function routesFor(
       methods: ['POST'],
       requestBody: 'streaming',
       fetch: async (request) => {
-        let payload: unknown
-        try {
-          payload = await readPayload(request)
-        } catch (error) {
-          // Ignore malformed or interrupted probe requests.
-          void error
-          return json({ error: 'invalid-request' }, 400)
-        }
-        if (!isRecord(payload)) return json({ error: 'invalid-request' }, 400)
+        const payload = await readComputerRequest(request)
+        if (payload === undefined) return json({ error: 'invalid-request' }, 400)
         const target = sessionTarget(payload, options.managed && options.allowMissingSession !== true, options.allowDesktop)
         if (target === undefined) return json({ error: 'invalid-request' }, 400)
         try {
@@ -380,15 +384,8 @@ function routesFor(
       methods: ['POST'],
       requestBody: 'streaming',
       fetch: async (request) => {
-        let payload: unknown
-        try {
-          payload = await readPayload(request)
-        } catch (error) {
-          // Malformed or interrupted browser uploads never reach the controller.
-          void error
-          return json({ error: 'invalid-request' }, 400)
-        }
-        if (!isRecord(payload)) return json({ error: 'invalid-request' }, 400)
+        const payload = await readComputerRequest(request)
+        if (payload === undefined) return json({ error: 'invalid-request' }, 400)
         const id = viewerId(payload.viewerId)
         const target = sessionTarget(payload, options.managed && options.allowMissingSession !== true, options.allowDesktop)
         if (id === undefined || target === undefined) return json({ error: 'invalid-request' }, 400)
@@ -652,15 +649,8 @@ export function computerSignInRoute(
     methods: ['POST'],
     requestBody: 'streaming',
     async fetch(request) {
-      let payload: unknown
-      try {
-        payload = await readPayload(request)
-      } catch (error) {
-        // Malformed or interrupted input never reaches the controller.
-        void error
-        return json({ error: 'invalid-request' }, 400)
-      }
-      if (!isRecord(payload)) return json({ error: 'invalid-request' }, 400)
+      const payload = await readComputerRequest(request)
+      if (payload === undefined) return json({ error: 'invalid-request' }, 400)
       const target = sessionTarget(payload, true)
       if (target === undefined) return json({ error: 'invalid-request' }, 400)
       const action = payload.action

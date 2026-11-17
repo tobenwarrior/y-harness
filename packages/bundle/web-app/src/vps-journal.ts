@@ -1,6 +1,7 @@
 /** Read-only owner-filtered journal access for managed VPS Bots. */
 
-import { createConnection, type Socket } from 'node:net'
+import { createConnection } from 'node:net'
+import { readVpsSocketReply } from './vps-socket-reply.ts'
 import { isAbsolute } from 'node:path'
 import type { Context } from '@yharness/cordis'
 import { ToolArgsError, validateJsonSchemaValue } from '@yharness/tools'
@@ -202,54 +203,19 @@ export class VpsJournal {
    */
   async read(bot: string, signal: AbortSignal): Promise<VpsJournalSnapshot> {
     if (!this.authorized(bot)) throw new Error(UNAUTHORIZED)
-    if (signal.aborted) throw new Error(ABORTED)
-    return await new Promise<VpsJournalSnapshot>((resolve, reject) => {
-      let socket: Socket | undefined
-      let settled = false
-      let receivedBytes = 0
-      const chunks: Buffer[] = []
-      const finish = (result: { value: VpsJournalSnapshot } | { error: Error }): void => {
-        if (settled) return
-        settled = true
-        clearTimeout(deadline)
-        signal.removeEventListener('abort', onAbort)
-        socket?.destroy()
-        if ('error' in result) reject(result.error)
-        else resolve(result.value)
-      }
-      const onAbort = (): void => { finish({ error: new Error(ABORTED) }) }
-      const onData = (chunk: Buffer): void => {
-        receivedBytes += chunk.byteLength
-        if (receivedBytes > this.maxBytes) {
-          finish({ error: new Error(INVALID) })
-          return
-        }
-        chunks.push(chunk)
-      }
-      const onEnd = (): void => {
-        if (receivedBytes === 0) {
-          finish({ error: new Error(UNAVAILABLE) })
-          return
-        }
-        try {
-          finish({ value: decode(Buffer.concat(chunks, receivedBytes), this.maxEntries) })
-        } catch (error) {
-          finish({ error: safeFailure(error) })
-        }
-      }
-      const onClose = (): void => { finish({ error: new Error(UNAVAILABLE) }) }
-      const deadline = setTimeout(() => finish({ error: new Error(TIMED_OUT) }), this.timeoutMs)
-      signal.addEventListener('abort', onAbort, { once: true })
-      try {
-        socket = createConnection({ path: this.socketPath })
-        socket.on('data', onData)
-        socket.once('end', onEnd)
-        socket.once('close', onClose)
-        socket.once('error', error => finish({ error: safeFailure(error) }))
-      } catch (error) {
-        finish({ error: safeFailure(error) })
-      }
-    })
+    const reply = await readVpsSocketReply({
+      path: this.socketPath,
+      maxBytes: this.maxBytes,
+      timeoutMs: this.timeoutMs,
+      connect: createConnection,
+      errors: { aborted: ABORTED, timedOut: TIMED_OUT, unavailable: UNAVAILABLE, invalid: INVALID },
+      safeFailure,
+    }, signal)
+    try {
+      return decode(Buffer.concat(reply), this.maxEntries)
+    } catch (error) {
+      throw safeFailure(error)
+    }
   }
 }
 

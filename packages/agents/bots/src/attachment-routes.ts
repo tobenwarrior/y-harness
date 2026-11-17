@@ -2,6 +2,7 @@
 
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { Readable } from 'node:stream'
+import { writeFetchResponseBody } from '@yharness/client-connection'
 import { BotGroupError, BotGroupId, BotGroupMessageId } from './group-chat.ts'
 import { BotAttachmentGrantError, BotPrivateMessageId } from './attachment-grants.ts'
 import type { BotAttachmentGrantValue } from './attachment-grants.ts'
@@ -194,20 +195,7 @@ export async function bridgeBotAttachmentRequest(
     return
   }
   try {
-    for await (const chunk of response.body) {
-      if (abort.signal.aborted) continue
-      if (!res.write(chunk) && !res.destroyed) {
-        await new Promise<void>((resolve) => {
-          const done = (): void => {
-            res.off('drain', done)
-            res.off('close', done)
-            resolve()
-          }
-          res.once('drain', done)
-          res.once('close', done)
-        })
-      }
-    }
+    await writeFetchResponseBody(response.body, res, abort.signal)
     res.end()
   } catch (error: unknown) {
     res.destroy(error instanceof Error ? error : new Error('Attachment stream failed'))

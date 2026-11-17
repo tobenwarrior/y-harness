@@ -143,6 +143,30 @@ describe('VPS Bot journal', () => {
     }
   })
 
+  it('closes the read-only connection when the calling turn aborts', async () => {
+    const path = await socketPath()
+    const bot = randomUUID()
+    const connected = Promise.withResolvers<undefined>()
+    const disconnected = Promise.withResolvers<undefined>()
+    const server = createServer((socket) => {
+      socket.once('close', () => disconnected.resolve(undefined))
+      connected.resolve(undefined)
+    })
+    await listen(server, path)
+    const controller = new AbortController()
+    try {
+      const journal = new VpsJournal({ socketPath: path, bots: [bot] })
+      const cancelled = expect(journal.read(bot, controller.signal)).rejects.toThrow('VPS journal request was cancelled.')
+      await connected.promise
+      controller.abort()
+      await cancelled
+      await disconnected.promise
+    } finally {
+      controller.abort()
+      await close(server)
+    }
+  })
+
   it('uses fixed safe failures for authorization, abort, timeout, close, and invalid data', async () => {
     const path = await socketPath()
     const bot = randomUUID()

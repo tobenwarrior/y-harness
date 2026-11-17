@@ -371,6 +371,11 @@ export const internals: {
   openBrowser: (url: string) => Promise<void>
 } = { resolveDistIndex, openBrowser }
 
+function canUseComputer(ctx: Context, agentContext: Context): boolean {
+  const preset = ctx.get('agentPresets')?.composedPreset(agentContext)
+  return preset !== undefined && COMPUTER_PRESETS.test(preset)
+}
+
 /**
  * Mount the Web runtime: dist serving, surface prompt, the bash runtime
  * variable, the URL line, and the default-browser handoff.
@@ -394,14 +399,10 @@ export function apply(ctx: Context, config: Config): void {
     const computer = new MacComputerBridge()
     ctx.effect(() => () => computer.dispose(), 'mac-computer: local desktop')
     ctx.on('agent/created', ({ agent }) => {
-      const canUseComputer = (): boolean => {
-        const preset = ctx.get('agentPresets')?.composedPreset(agent.ctx)
-        return preset !== undefined && COMPUTER_PRESETS.test(preset)
-      }
-      if (!canUseComputer()) return
+      if (!canUseComputer(ctx, agent.ctx)) return
       agent.ctx.inject(['tools', 'attachments', 'llm'], (scope) => {
         ComputerTool.applyMacComputer(scope, computer)
-        scope.effect(() => scope.tools.guard(exec => exec.name === 'mac_computer' && !canUseComputer()
+        scope.effect(() => scope.tools.guard(exec => exec.name === 'mac_computer' && !canUseComputer(ctx, agent.ctx)
           ? 'This Agent preset cannot access the Mac Computer.'
           : undefined))
       })
@@ -434,14 +435,10 @@ export function apply(ctx: Context, config: Config): void {
   } else if (legacyComputer !== undefined) {
     const computer = legacyComputer
     ctx.on('agent/created', ({ agent }) => {
-      const canUseComputer = (): boolean => {
-        const preset = ctx.get('agentPresets')?.composedPreset(agent.ctx)
-        return preset !== undefined && COMPUTER_PRESETS.test(preset)
-      }
-      if (!canUseComputer()) return
+      if (!canUseComputer(ctx, agent.ctx)) return
       agent.ctx.inject(ComputerTool.inject, (scope) => {
         ComputerTool.apply(scope)
-        scope.effect(() => scope.tools.guard(exec => exec.name === 'vps_computer' && !canUseComputer()
+        scope.effect(() => scope.tools.guard(exec => exec.name === 'vps_computer' && !canUseComputer(ctx, agent.ctx)
           ? 'This Agent preset cannot access the private Computer.'
           : undefined))
       })

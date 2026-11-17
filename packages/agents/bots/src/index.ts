@@ -8359,17 +8359,7 @@ export class BotService extends TypertRemoteService {
         }, { prepend: true })
         scope.on('tools/pre-execute', async (exec, next) => {
           await refreshConnectedAppRestriction()
-          if (exec.name === SHARED_BOT_BROWSER_TOOL_NAME) {
-            const denial = capabilityFailure(exec)
-            return denial === undefined
-              ? next()
-              : Promise.resolve<PreToolDecision>({
-                kind: 'deny',
-                reason: denial.message,
-                ...(denial.info === undefined ? {} : { info: denial.info }),
-              })
-          }
-          if (exec.name === VPS_VAULT_REQUEST_TOOL) {
+          if (exec.name === SHARED_BOT_BROWSER_TOOL_NAME || exec.name === VPS_VAULT_REQUEST_TOOL) {
             const denial = capabilityFailure(exec)
             return denial === undefined
               ? next()

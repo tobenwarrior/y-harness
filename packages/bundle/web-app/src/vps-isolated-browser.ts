@@ -1,6 +1,7 @@
 /** Client for the owner-managed isolated browser broker used by VPS Bots. */
 
 import { createConnection, type Socket } from 'node:net'
+import { readVpsSocketReply } from './vps-socket-reply.ts'
 import { isAbsolute } from 'node:path'
 import type { Branded } from '@yharness/brand'
 import type { ComputerAction, ComputerCaptureRunner, VpsComputer } from './computer.ts'
@@ -641,53 +642,20 @@ export class VpsIsolatedBrowser {
     requireBrowserSignal(signal)
     const body = Buffer.from(JSON.stringify(request), 'utf8')
     if (body.byteLength > MAX_REQUEST_BYTES) throw new Error(INVALID_RESPONSE)
-    return await new Promise<T>((resolve, reject) => {
-      let socket: Socket | undefined
-      let settled = false
-      let receivedBytes = 0
-      const chunks: Buffer[] = []
-      const finish = (result: { value: T } | { error: Error }): void => {
-        if (settled) return
-        settled = true
-        clearTimeout(deadline)
-        signal.removeEventListener('abort', onAbort)
-        socket?.destroy()
-        if ('error' in result) reject(result.error)
-        else resolve(result.value)
-      }
-      const onAbort = (): void => { finish({ error: new Error(ABORTED) }) }
-      const onData = (chunk: Buffer): void => {
-        receivedBytes += chunk.byteLength
-        if (receivedBytes > MAX_RESPONSE_BYTES) {
-          finish({ error: new Error(INVALID_RESPONSE) })
-          return
-        }
-        chunks.push(chunk)
-      }
-      const onEnd = (): void => {
-        if (receivedBytes === 0) {
-          finish({ error: new Error(UNAVAILABLE) })
-          return
-        }
-        try {
-          finish({ value: decode(decodeJson(Buffer.concat(chunks, receivedBytes))) })
-        } catch (error) {
-          finish({ error: safeSocketError(error) })
-        }
-      }
-      const deadline = setTimeout(() => { finish({ error: new Error(TIMED_OUT) }) }, SOCKET_TIMEOUT_MS)
-      signal.addEventListener('abort', onAbort, { once: true })
-      try {
-        socket = this.connect({ path: this.socketPath })
-        socket.once('connect', () => { socket?.end(body) })
-        socket.on('data', onData)
-        socket.once('end', onEnd)
-        socket.once('close', () => { finish({ error: new Error(UNAVAILABLE) }) })
-        socket.once('error', (error) => { finish({ error: safeSocketError(error) }) })
-      } catch (error) {
-        finish({ error: safeSocketError(error) })
-      }
-    })
+    const reply = await readVpsSocketReply({
+      path: this.socketPath,
+      request: body,
+      maxBytes: MAX_RESPONSE_BYTES,
+      timeoutMs: SOCKET_TIMEOUT_MS,
+      connect: this.connect,
+      errors: { aborted: ABORTED, timedOut: TIMED_OUT, unavailable: UNAVAILABLE, invalid: INVALID_RESPONSE },
+      safeFailure: safeSocketError,
+    }, signal)
+    try {
+      return decode(decodeJson(Buffer.concat(reply)))
+    } catch (error) {
+      throw safeSocketError(error)
+    }
   }
 }
 
