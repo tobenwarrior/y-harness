@@ -1,6 +1,6 @@
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { Context } from '@yharness/cordis'
-import { SessionId } from '@yharness/session'
+import { SessionId, type SessionHeader } from '@yharness/session'
 import { ToolCallId } from '@yharness/llm'
 import { mountAgentLoopTestDependencies, mountAgentLoopTestHarness } from '@yharness/agent-loop-testkit'
 import SandboxPolicy, { setSandboxMode } from '@yharness/sandbox-policy'
@@ -9,21 +9,21 @@ import Approval, { setApprovalPolicy } from '@yharness/user-approval'
 import Questions from '@yharness/user-questions'
 import { resolveCodexAccess } from '../src/codex-backend-access.ts'
 
-async function fixture() {
+async function fixture(session: Pick<SessionHeader, 'agentPreset' | 'cwd'> = { cwd: process.cwd() }) {
   const ctx = new Context()
   onTestFinished(() => ctx.fiber.dispose())
   await mountAgentLoopTestDependencies(ctx)
-  await ctx.plugin(SandboxPolicy, { mode: 'workspace-write' })
+  const sandbox = await ctx.plugin(SandboxPolicy, { mode: 'workspace-write' })
   await ctx.plugin(Approval, { policy: 'ask' })
-  await ctx.plugin(Questions)
+  const questions = await ctx.plugin(Questions)
   const harness = await mountAgentLoopTestHarness(ctx)
-  const agent = await harness.create(SessionId('native-access'), {}, { cwd: process.cwd() })
+  const agent = await harness.create(SessionId('native-access'), {}, session)
   agent.session.append('turn/start', { turn: 1 })
   const signal = new AbortController()
   const resolve = () => ctx.agents.withInitiator(agent, () => resolveCodexAccess(ctx, {
     provider: 'codex-backend', model: 'native', sessionId: agent.session.id, messages: [], signal: signal.signal,
   }))
-  return { ctx, agent, resolve, signal }
+  return { ctx, agent, resolve, signal, sandbox, questions }
 }
 
 describe('native Codex session authority', () => {
@@ -38,6 +38,32 @@ describe('native Codex session authority', () => {
       sandboxPolicy: { type: 'readOnly', networkAccess: true } })
     setSandboxMode(agent.session, 'danger-full-access')
     expect(resolve().sandboxPolicy).toEqual({ type: 'dangerFullAccess' })
+  })
+
+  it('uses the policy workspace and ask approval when the session leaves them unset', async () => {
+    const { ctx, resolve } = await fixture({})
+    ctx.approval.config = {}
+    expect(resolve()).toMatchObject({ cwd: process.cwd(), approvalPolicy: 'on-request' })
+  })
+
+  it('requires the sandbox policy service before starting a native turn', async () => {
+    const { sandbox, resolve } = await fixture()
+    await sandbox.dispose()
+    expect(resolve).toThrow('Native Codex requires Harness sandbox and approval services.')
+  })
+
+  it('rejects shared Bot session authority before resolving native policy', async () => {
+    const { ctx, resolve } = await fixture({ agentPreset: 'shared-bot' })
+    const resolvePolicy = vi.spyOn(ctx.sandboxPolicy, 'resolve')
+    expect(resolve).toThrow('Native Codex does not support shared Bot sessions.')
+    expect(resolvePolicy).not.toHaveBeenCalled()
+  })
+
+  it('rejects a relative workspace root from a custom sandbox policy', async () => {
+    const { ctx, resolve } = await fixture({})
+    const policy = ctx.sandboxPolicy.resolve()
+    vi.spyOn(ctx.sandboxPolicy, 'resolve').mockReturnValueOnce({ ...policy, workspaceRoot: 'relative-workspace' })
+    expect(resolve).toThrow('Native Codex requires an absolute Harness session working directory.')
   })
 
   it('rejects missing initiators and mismatched request identities before native execution', async () => {
@@ -101,6 +127,50 @@ describe('native Codex session authority', () => {
     await expect(resolve().request('item/tool/requestUserInput', { questions: [{
       id: 'secret', header: '', question: 'Token?', isSecret: true,
     }] })).rejects.toThrow('credential flow')
+  })
+
+  it('requires the question service for a native question', async () => {
+    const { questions, resolve } = await fixture()
+    await questions.dispose()
+    await expect(resolve().request('item/tool/requestUserInput', {
+      questions: [{ id: 'choice', header: 'Choice', question: 'Which?' }],
+    })).rejects.toThrow('Native Codex questions require the Harness user-questions service.')
+  })
+
+  it('forwards free-form questions and preserves answers that contain only a selection', async () => {
+    const { ctx, agent } = await fixture()
+    const notes = { id: 'notes', header: 'Notes', question: 'Any notes?' }
+    const choice = {
+      id: 'choice', header: 'Choice', question: 'Which?',
+      options: [{ label: 'first', description: 'First option' }],
+    }
+    const answer = vi.fn(async (_request: import('@yharness/user-questions').AskUserQuestionRequest) => ({
+      answers: [{ id: 'notes', selected: [], custom: 'detail' }, { id: 'choice', selected: ['first'] }],
+    }))
+    ctx.on('user-questions/request', answer)
+    const access = ctx.agents.withInitiator(agent, () => resolveCodexAccess(ctx, {}))
+    await expect(access.request('item/tool/requestUserInput', { questions: [notes, choice] }))
+      .resolves.toEqual({ answers: { notes: { answers: ['detail'] }, choice: { answers: ['first'] } } })
+    expect(answer.mock.calls[0]?.[0]).toMatchObject({ questions: [notes, choice] })
+  })
+
+  it('uses the approval service when native request metadata is omitted', async () => {
+    const { ctx, agent } = await fixture()
+    ctx.on('approval/request', async () => 'allowed-once')
+    const access = ctx.agents.withInitiator(agent, () => resolveCodexAccess(ctx, {}))
+    await expect(access.requestApproval?.('Send a preview')).resolves.toBe(true)
+    await expect(access.request('item/fileChange/requestApproval', {})).resolves.toEqual({ decision: 'accept' })
+  })
+
+  it('declines permission requests for a turn that already ended by cancellation', async () => {
+    const { ctx, resolve, signal } = await fixture()
+    const decide = vi.fn(async () => 'allowed-once' as const)
+    ctx.on('approval/request', decide)
+    const access = resolve()
+    signal.abort()
+    await expect(access.requestApproval?.('Send a preview')).resolves.toBe(false)
+    await expect(access.request('item/fileChange/requestApproval', {})).resolves.toEqual({ decision: 'decline' })
+    expect(decide).not.toHaveBeenCalled()
   })
 
   it('withdraws pending approvals when the native turn is cancelled', async () => {

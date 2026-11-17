@@ -1,8 +1,9 @@
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { createHash, randomUUID } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { Context, Service } from '@yharness/cordis'
 import { SharedAccessAuthority, sharedPrincipalOf, type ConnectionFetchRoute } from '@yharness/client-connection'
@@ -914,7 +915,7 @@ describe('durable Bot roster', () => {
     }
   })
 
-  it('does not hold the profile credential queue while shared authority commits', async () => {
+  it('releases the profile credential queue before shared authority commits', async () => {
     const root = await mkdtemp(join(tmpdir(), 'yh-bot-roster-fence-'))
     const h = await harness(
       undefined,
@@ -928,25 +929,31 @@ describe('durable Bot roster', () => {
       false,
       { credentialPath: join(root, 'credentials.yaml') },
     )
+    const credentialMutation = new AsyncLocalStorage<true>()
+    const modifyRecord = h.credentials.modifyRecord.bind(h.credentials)
+    const observeQueue = vi.spyOn(h.credentials, 'modifyRecord').mockImplementation((key, mutate) =>
+      modifyRecord(key, current => credentialMutation.run(true, () => mutate(current))))
     let authority: SharedAccessAuthority | undefined
     try {
       await h.service.create({ name: 'Roster fence deadlock', cwd: '/tmp' })
-      authority = await SharedAccessAuthority.create(h.ctx, h.credentials, {
+      const sharedAuthority = await SharedAccessAuthority.create(h.ctx, h.credentials, {
         sessionMaxAgeMs: 60_000,
         inviteMaxAgeMs: 60_000,
       })
+      authority = sharedAuthority
       const host = productionSharedHost(h.service)
       const bots = (await h.service.list({ includeHidden: true })).bots
-      const operation = host.withBotRoster(
-        bots,
-        undefined,
-        () => authority!.mutateExtension('test/shared-roster-fence', current => ({ value: undefined, next: current ?? null })),
-      )
-      const timeout = new Promise<'timed-out'>((resolve) => {
-        setTimeout(() => { resolve('timed-out') }, 250).unref()
-      })
-      await expect(Promise.race([operation.then(() => 'completed' as const), timeout])).resolves.toBe('completed')
+      const commitAuthority = async () => {
+        expect(credentialMutation.getStore()).toBeUndefined()
+        return sharedAuthority.mutateExtension('test/shared-roster-fence', current => ({
+          value: 'committed',
+          next: current ?? null,
+        }))
+      }
+      await expect(host.withBotRoster(bots, undefined, commitAuthority))
+        .resolves.toEqual({ valid: true, value: 'committed' })
     } finally {
+      observeQueue.mockRestore()
       await authority?.dispose()
       await close(h.ctx)
       await rm(root, { recursive: true, force: true })
@@ -1591,11 +1598,8 @@ describe('durable Bot roster', () => {
       })
       child.kill('SIGKILL')
       const [exitCode, signal] = await closePromise
-      // Windows terminates through taskkill and reports an exit code instead
-      // of the POSIX signal; both forms prove the child was stopped.
-      if (process.platform === 'win32') {
+      if (process.platform === 'win32' && signal === null) {
         expect(exitCode).not.toBeNull()
-        expect(signal).toBeNull()
       } else {
         expect(exitCode).toBeNull()
         expect(signal).toBe('SIGKILL')
@@ -4864,7 +4868,7 @@ describe('durable Bot roster', () => {
       expect((await create.execute({ name: 'Research', identity: 'heart', accent: 'rose' }, context)).success).toBe(true)
       const bots = (await h.service.list({})).bots
       const research = bots.find(bot => bot.name === 'Research')!
-      expect(research).toMatchObject({ identity: 'heart', accent: 'rose', cwd: '/tmp' })
+      expect(research).toMatchObject({ identity: 'heart', accent: 'rose', cwd: resolve('/tmp') })
       expect((await create.execute({ name: 'Research', identity: 'heart', accent: 'rose' }, context)).success).toBe(true)
       expect((await h.service.list({})).bots.filter(bot => bot.name === 'Research')).toHaveLength(1)
       const edit = tools.find(tool => tool.name === 'edit_bot_profile')!
@@ -9015,7 +9019,7 @@ describe('durable Bot roster', () => {
       expect(created.bot.accent).toBe('blue')
       expect(created.bot.sessionId).toMatch(/^bot-session-/)
       expect(h.create).toHaveBeenCalledWith(
-        { sessionId: created.bot.sessionId, cwd: '/tmp' },
+        { sessionId: created.bot.sessionId, cwd: resolve('/tmp') },
         expect.any(AbortSignal),
       )
 
@@ -14004,7 +14008,7 @@ describe('durable Bot roster', () => {
       expect(retried.bot.state).toBe('active')
       expect(create).toHaveBeenNthCalledWith(
         2,
-        { sessionId: firstSessionId, cwd: '/tmp' },
+        { sessionId: firstSessionId, cwd: resolve('/tmp') },
         expect.any(AbortSignal),
       )
     } finally {
