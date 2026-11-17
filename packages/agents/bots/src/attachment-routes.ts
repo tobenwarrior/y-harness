@@ -43,20 +43,21 @@ export async function* boundedBotAttachmentStream(
       const result = signal === undefined
         ? await iterator.next()
         : await nextAttachmentChunk(iterator, signal)
-      if (result.done) {
+      if (result.done === true) {
         completed = true
         return
+      } else {
+        const chunk = result.value
+        signal?.throwIfAborted()
+        if (!(chunk instanceof Uint8Array)) {
+          throw new BotAttachmentGrantError('invalid', 'attachment upload data is invalid')
+        }
+        bytes += chunk.byteLength
+        if (bytes > maxBytes) {
+          throw new BotAttachmentGrantError('invalid', 'attachment upload exceeds the byte limit')
+        }
+        yield chunk
       }
-      const chunk = result.value
-      signal?.throwIfAborted()
-      if (!(chunk instanceof Uint8Array)) {
-        throw new BotAttachmentGrantError('invalid', 'attachment upload data is invalid')
-      }
-      bytes += chunk.byteLength
-      if (bytes > maxBytes) {
-        throw new BotAttachmentGrantError('invalid', 'attachment upload exceeds the byte limit')
-      }
-      yield chunk
     }
   } finally {
     if (!completed && iterator.return !== undefined) {

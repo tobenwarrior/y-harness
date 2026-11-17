@@ -619,22 +619,24 @@ function normalizePrivateScope(
 
 function sameMessageScope(left: BotAttachmentScope, right: BotAttachmentScope): boolean {
   if (left.kind !== right.kind) return false
-  if (left.kind === 'local-group' && right.kind === 'local-group') {
-    return left.ownerId === right.ownerId
-      && left.groupId === right.groupId
-      && left.messageId === right.messageId
-      && isDeepStrictEqual(left.targetBotIds, right.targetBotIds)
+  if (left.kind === 'local-group') {
+    const rightLocal = right as Extract<BotAttachmentScope, { readonly kind: 'local-group' }>
+    return left.ownerId === rightLocal.ownerId
+      && left.groupId === rightLocal.groupId
+      && left.messageId === rightLocal.messageId
+      && isDeepStrictEqual(left.targetBotIds, rightLocal.targetBotIds)
   }
-  if (left.kind === 'shared-group' && right.kind === 'shared-group') {
-    return left.principalId === right.principalId
-      && left.groupId === right.groupId
-      && left.messageId === right.messageId
-      && isDeepStrictEqual(left.targetBotIds, right.targetBotIds)
+  if (left.kind === 'shared-group') {
+    const rightSharedGroup = right as Extract<BotAttachmentScope, { readonly kind: 'shared-group' }>
+    return left.principalId === rightSharedGroup.principalId
+      && left.groupId === rightSharedGroup.groupId
+      && left.messageId === rightSharedGroup.messageId
+      && isDeepStrictEqual(left.targetBotIds, rightSharedGroup.targetBotIds)
   }
-  if (left.kind !== 'shared-private' || right.kind !== 'shared-private') return false
-  return left.principalId === right.principalId
-    && left.botId === right.botId
-    && left.messageId === right.messageId
+  const rightPrivate = right as Extract<BotAttachmentScope, { readonly kind: 'shared-private' }>
+  return left.principalId === rightPrivate.principalId
+    && left.botId === rightPrivate.botId
+    && left.messageId === rightPrivate.messageId
 }
 
 /** Open-domain type exported for consumers that retain the provider. */
