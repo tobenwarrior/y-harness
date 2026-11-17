@@ -309,7 +309,7 @@ it.skipIf(MODE === 'record' || process.platform === 'win32').each([
     finally {
       try { await scaffold?.close() }
       finally {
-        if (server.listening) await new Promise<void>((resolve) => { server.close(() => resolve()) })
+        if (server.listening) await new Promise<void>((resolve) => { server.close(() => { resolve() }) })
         await rm(root, { recursive: true, force: true })
       }
     }

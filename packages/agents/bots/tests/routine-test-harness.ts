@@ -124,7 +124,7 @@ export async function routineHarness(
     cancel() {},
     runMaintenance: task => task(new AbortController().signal),
     whenIdle: () => Promise.resolve(),
-  } as Agent
+  }
   const scope = createScope(ctx, agent)
   Object.defineProperty(agent, 'ctx', { value: scope.ctx })
   const agents = [agent]

@@ -101,7 +101,7 @@ async function readRpcResponse(iterator: AsyncIterator<string>, id: number): Pro
       const result = await Promise.race([
         next,
         new Promise<never>((_, reject) => {
-          timer = setTimeout(() => reject(new Error(`Timed out waiting for Codex JSON-RPC response ${id}.`)), remaining)
+          timer = setTimeout(() => { reject(new Error(`Timed out waiting for Codex JSON-RPC response ${id}.`)) }, remaining)
         }),
       ])
       if (result.done) throw new Error('Codex app-server closed its protocol stream before replying.')
@@ -121,7 +121,7 @@ function sendRpcRequest(child: ChildProcess, id: number, method: string, params:
 
 async function stopChild(child: ChildProcess): Promise<void> {
   if (child.exitCode !== null || child.signalCode !== null) return
-  const closed = new Promise<void>(resolve => child.once('close', () => resolve()))
+  const closed = new Promise<void>(resolve => child.once('close', () => { resolve() }))
   child.kill('SIGTERM')
   const timeout = setTimeout(() => {
     if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')

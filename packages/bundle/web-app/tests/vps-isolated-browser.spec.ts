@@ -20,7 +20,7 @@ afterEach(async () => {
       resolve()
       return
     }
-    server.close(() => resolve())
+    server.close(() => { resolve() })
   })))
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
 })
@@ -271,7 +271,7 @@ describe('isolated browser broker client', () => {
     const browser = new VpsIsolatedBrowser({ socketPath: '/run/does-not-exist-yharness-browser.sock', bots: [BOT] })
     await expect(browser.status(BOT, SESSION, new AbortController().signal))
       .rejects.toThrow('The isolated browser is unavailable.')
-    await expect(browser.status(BOT, '' as never, new AbortController().signal))
+    await expect(browser.status(BOT, '', new AbortController().signal))
       .rejects.toThrow('The isolated browser is unavailable.')
     const controller = new AbortController()
     controller.abort()

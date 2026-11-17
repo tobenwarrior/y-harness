@@ -149,7 +149,7 @@ describe('VPS Bot journal', () => {
     const connected = Promise.withResolvers<undefined>()
     const disconnected = Promise.withResolvers<undefined>()
     const server = createServer((socket) => {
-      socket.once('close', () => disconnected.resolve(undefined))
+      socket.once('close', () => { disconnected.resolve(undefined) })
       connected.resolve(undefined)
     })
     await listen(server, path)
@@ -200,7 +200,7 @@ describe('VPS Bot journal', () => {
         clearInterval(heartbeat)
         if (error.code !== 'EPIPE' && error.code !== 'ECONNRESET') throw error
       })
-      socket.once('close', () => clearInterval(heartbeat))
+      socket.once('close', () => { clearInterval(heartbeat) })
     })
     await listen(incrementalServer, path)
     try {

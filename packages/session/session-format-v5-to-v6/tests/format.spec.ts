@@ -69,7 +69,7 @@ describe('released V6 Session format', () => {
   })
 
   it('rejects malformed routine fields before recovery can discard a suffix', () => {
-    expect(() => assertV6RowAdmission(malformedRoutineMessage)).toThrow(
+    expect(() => { assertV6RowAdmission(malformedRoutineMessage) }).toThrow(
       'format v6 bot-event-routine source requires a non-negative triggerEventSeq',
     )
     expect(() => restoreReleasedV6Artifact({
@@ -89,23 +89,29 @@ describe('released V6 Session format', () => {
       [{ ...routineSource, depth: 5 }, 'depth must be at most 4'],
       [{ ...routineSource, summary: `Routine "${'a'.repeat(121)}" triggered` }, 'requires a non-empty summary'],
     ] as const) {
-      expect(() => assertV6RowAdmission({ ...routineMessage, data: {
-        ...routineMessage.data as Record<string, unknown>, source,
-      } })).toThrow(`format v6 bot-event-routine source ${diagnostic}`)
+      expect(() => {
+        assertV6RowAdmission({ ...routineMessage, data: {
+          ...routineMessage.data as Record<string, unknown>, source,
+        } })
+      }).toThrow(`format v6 bot-event-routine source ${diagnostic}`)
     }
-    expect(() => assertV6RowAdmission({ ...routineMessage, data: {
-      ...routineMessage.data as Record<string, unknown>, source: {
-        kind: 'agent-message', form: 'relay', senderSessionId: 'sender',
-        botEventRoutine: { chainId: 'chain-1', depth: 5 },
-      },
-    } })).toThrow('format v6 agent-message botEventRoutine depth must be at most 4')
-    for (const chainId of ['', ' '.repeat(256), 'a'.repeat(257)]) {
-      expect(() => assertV6RowAdmission({ ...routineMessage, data: {
+    expect(() => {
+      assertV6RowAdmission({ ...routineMessage, data: {
         ...routineMessage.data as Record<string, unknown>, source: {
           kind: 'agent-message', form: 'relay', senderSessionId: 'sender',
-          botEventRoutine: { chainId, depth: 0 },
+          botEventRoutine: { chainId: 'chain-1', depth: 5 },
         },
-      } })).toThrow('format v6 bot-event-routine source')
+      } })
+    }).toThrow('format v6 agent-message botEventRoutine depth must be at most 4')
+    for (const chainId of ['', ' '.repeat(256), 'a'.repeat(257)]) {
+      expect(() => {
+        assertV6RowAdmission({ ...routineMessage, data: {
+          ...routineMessage.data as Record<string, unknown>, source: {
+            kind: 'agent-message', form: 'relay', senderSessionId: 'sender',
+            botEventRoutine: { chainId, depth: 0 },
+          },
+        } })
+      }).toThrow('format v6 bot-event-routine source')
     }
   })
 
@@ -123,7 +129,7 @@ describe('released V6 Session format', () => {
       event('skill/learning-request', { messages: [message] }),
       event('future/event', { source: { kind: 'bot-event-routine' } }),
     ]) {
-      expect(() => assertV6MessageSources(candidate)).not.toThrow()
+      expect(() => { assertV6MessageSources(candidate) }).not.toThrow()
     }
   })
 
@@ -159,11 +165,11 @@ describe('released V6 Session format', () => {
       sourceInheritedEventCount: 0,
       sourceKind: 'decoded',
     })
-    expect(() => stage.transformEvent(marker, output)).toThrow('claims target format v6')
+    expect(() => { stage.transformEvent(marker, output) }).toThrow('claims target format v6')
   })
 
   it('rejects headers from another generation', () => {
-    expect(() => assertReleasedV6Header(v5Header)).toThrow('expected format v6 header')
+    expect(() => { assertReleasedV6Header(v5Header) }).toThrow('expected format v6 header')
     expect(() => releasedV6SessionFormatCodec.decodeHeader({ type: 'session', ...v5Header })).toThrow('v6 physical')
   })
 })

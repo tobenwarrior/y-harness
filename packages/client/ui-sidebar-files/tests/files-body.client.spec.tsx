@@ -86,7 +86,7 @@ describe('FilesBody', () => {
       if (input === null) throw new Error('expected the Computer file picker')
       fireEvent.click(view.getByRole('button', { name: zh['upload.label'] }))
       fireEvent.change(input, { target: { files: [new File(['contents'], 'shared.txt')] } })
-      await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+      await waitFor(() => { expect(fetchMock).toHaveBeenCalledTimes(1) })
       expect(String(fetchMock.mock.calls[0]?.[0])).toContain('directory=%2Fworkspace')
       expect(String(fetchMock.mock.calls[0]?.[0])).toContain('name=shared.txt')
     } finally {
@@ -107,10 +107,10 @@ describe('FilesBody', () => {
       if (input === null) throw new Error('expected the Computer file picker')
       fireEvent.click(view.getByRole('button', { name: zh['upload.label'] }))
       fireEvent.change(input, { target: { files: [new File(['contents'], 'cancel.txt')] } })
-      await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+      await waitFor(() => { expect(fetchMock).toHaveBeenCalledTimes(1) })
       expect(view.getByRole('status')).toBeTruthy()
       fireEvent.click(view.getByRole('button', { name: zh['upload.cancel'] }))
-      await waitFor(() => expect(view.queryByRole('status')).toBeNull())
+      await waitFor(() => { expect(view.queryByRole('status')).toBeNull() })
     } finally {
       vi.unstubAllGlobals()
     }

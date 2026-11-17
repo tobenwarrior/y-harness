@@ -247,9 +247,9 @@ describe('HTTP bridge abort', () => {
           headers: { 'content-type': 'application/octet-stream', 'content-length': '1024' },
           signal: AbortSignal.timeout(4000),
         }, (response) => {
-          void text(response).then(body => resolve({
-            status: response.statusCode, close: response.headers.connection, body,
-          }), reject)
+          void text(response).then((body) => {
+            resolve({ status: response.statusCode, close: response.headers.connection, body })
+          }, reject)
         })
         client.on('error', reject)
         client.write(Buffer.alloc(1))

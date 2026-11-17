@@ -25,7 +25,7 @@ async function fixture() {
     catalog: vi.fn(async () => []),
   }
   ctx.provide('schedule', schedule as never)
-  const scheduleTools = agent.ctx.inject(['schedule', 'tools'], (scheduleScope: Context) => registerScheduleTools(scheduleScope))
+  const scheduleTools = agent.ctx.inject(['schedule', 'tools'], (scheduleScope: Context) => { registerScheduleTools(scheduleScope) })
   await scheduleTools
   const fiber = installBotRoutineTools(agent.ctx)
   await fiber
