@@ -5,9 +5,9 @@
 
 - insert:
     - id: lsp
-      name: '@deepseek-ai/dsh-lsp'
+      name: '@yharness/lsp'
     - id: lsp-stdio
-      name: '@deepseek-ai/dsh-lsp-stdio'
+      name: '@yharness/lsp-stdio'
       config:
         servers:
           fixture:
@@ -16,7 +16,7 @@
             extensionToLanguage:
               '.ts': typescript
     - id: tool-lsp
-      name: '@deepseek-ai/dsh-tool-lsp'
+      name: '@yharness/tool-lsp'
       config:
         maxLocations: 1
     - id: llm-replay

@@ -94,21 +94,45 @@ importers:
       '@yharness/experimental-computer-use-cua-driver-native':
         specifier: workspace:*
         version: link:packages/experimental/computer-use-cua-driver-native
+      '@yharness/experimental-ptc-runtime-python':
+        specifier: workspace:*
+        version: link:packages/experimental/ptc-runtime-python
       '@yharness/llm-replay':
         specifier: workspace:*
         version: link:packages/test-support/llm-replay
+      '@yharness/lsp':
+        specifier: workspace:*
+        version: link:packages/lsp/lsp
+      '@yharness/lsp-stdio':
+        specifier: workspace:*
+        version: link:packages/lsp/lsp-stdio
       '@yharness/mcp-client':
         specifier: workspace:*
         version: link:packages/mcp/mcp-client
       '@yharness/skill-office':
         specifier: workspace:*
         version: link:packages/skill/skill-office
+      '@yharness/subagent-acp':
+        specifier: workspace:*
+        version: link:packages/subagent/subagent-acp
+      '@yharness/subagent-claude-code':
+        specifier: workspace:*
+        version: link:packages/subagent/subagent-claude-code
+      '@yharness/subagent-codex':
+        specifier: workspace:*
+        version: link:packages/subagent/subagent-codex
       '@yharness/subagent-dsh-sdk':
         specifier: workspace:*
         version: link:packages/subagent/subagent-dsh-sdk
+      '@yharness/tool-lsp':
+        specifier: workspace:*
+        version: link:packages/lsp/tool-lsp
       '@yharness/tool-session-query':
         specifier: workspace:*
         version: link:packages/session-query/tool-session-query
+      '@yharness/tool-terminal':
+        specifier: workspace:*
+        version: link:packages/terminal/tool-terminal
       '@yharness/tool-workspace-dependencies':
         specifier: workspace:*
         version: link:packages/skill/tool-workspace-dependencies

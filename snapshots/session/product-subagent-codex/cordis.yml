@@ -3,12 +3,12 @@
 # pins both assembled request schemas without starting Codex.
 - insert:
     - id: subagent-codex-primary
-      name: '@deepseek-ai/dsh-subagent-codex'
+      name: '@yharness/subagent-codex'
       config:
         providerName: codex-primary
         model: codex-primary-model
     - id: subagent-codex-secondary
-      name: '@deepseek-ai/dsh-subagent-codex'
+      name: '@yharness/subagent-codex'
       config:
         providerName: codex-secondary
         model: codex-secondary-model

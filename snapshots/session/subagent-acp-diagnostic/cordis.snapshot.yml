@@ -17,7 +17,7 @@
               - id: deepseek-v4-flash
               - id: deepseek-v4-pro
     - id: subagent-acp-diagnostic
-      name: '@deepseek-ai/dsh-subagent-acp'
+      name: '@yharness/subagent-acp'
       config:
         providerName: acp-diagnostic
         command: !!js process.execPath
