@@ -59,6 +59,14 @@ describe('resolveSpec', () => {
 })
 
 describe('create-only credential storage', () => {
+  it('rejects an empty credential before creating a file', async () => {
+    const filename = join(await tempDir(), 'credentials.yaml')
+    const ctx = await boot({ path: filename, watch: false })
+
+    await expect(ctx.credentials.setIfAbsent?.(KEY, '')).rejects.toThrow('cannot store an empty value')
+    await expect(stat(filename)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
   it('preserves a key added by another host after this store opened', async () => {
     const filename = join(await tempDir(), 'credentials.yaml')
     const first = await boot({ path: filename, watch: false })

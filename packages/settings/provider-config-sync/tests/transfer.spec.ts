@@ -36,13 +36,14 @@ describe('copy provider model catalogs to Cloud', () => {
       'inherited-in-cloud': { baseURL: 'https://example.com/v2' },
       nous: { displayName: 'Nous' },
       chatgpt: { displayName: 'ChatGPT' },
+      'invalid/route': { baseURL: 'https://example.org/v1' },
       'key-in-url': { baseURL: 'https://example.com/v1?token=fixture' },
       'new-provider': { displayName: 'New provider', api: 'openai-completions', baseURL: 'https://example.org/v1' },
     })
     const plan = planProviderCatalogCopy(source,
       settings({ 'already-configured': { apiKeyEnv: 'CLOUD_ONLY' } }, { 'inherited-in-cloud': { displayName: 'Cloud' } }))
     expect(plan.retained).toBe(2)
-    expect(plan.skipped).toBe(3)
+    expect(plan.skipped).toBe(4)
     expect(plan.changes.map(change => change.path)).toEqual([['providers', 'new-provider']])
   })
 
@@ -53,5 +54,38 @@ describe('copy provider model catalogs to Cloud', () => {
     for (const target of [incompatible, settings({}, {}, false), { writable: true, namespaces: [] }]) {
       expect(() => planProviderCatalogCopy(source, target)).toThrow()
     }
+  })
+
+  it('treats omitted settings and settings without providers as empty catalogs', () => {
+    const [namespace] = settings({}).namespaces
+    const source = { namespaces: [{ ...namespace, user: {} }] }
+    const destination = {
+      writable: true,
+      namespaces: [{ ns: 'llm-pi-ai', schema: namespace?.schema, revision: 0 }],
+    }
+
+    expect(planProviderCatalogCopy(source, destination)).toEqual({
+      revision: 0, changes: [], retained: 0, skipped: 0,
+    })
+  })
+
+  it('rejects malformed responses and provider settings before planning a write', () => {
+    const [namespace] = settings({}).namespaces
+    const invalidNamespace = {
+      writable: true, namespaces: [{ ...namespace, value: { providers: ['fixture'] } }],
+    }
+
+    expect(() => planProviderCatalogCopy(null, settings({}))).toThrow('Invalid provider catalog response')
+    expect(() => planProviderCatalogCopy(settings({}), { namespaces: {} })).toThrow('Invalid provider catalog response')
+    expect(() => planProviderCatalogCopy(settings({}), invalidNamespace)).toThrow('Invalid provider catalog settings')
+  })
+
+  it('rejects a copy that exceeds the request size limit', () => {
+    const models = Array.from({ length: 2_100 }, (_, index) => ({
+      id: `fixture-model-${index}`.padEnd(512, 'x'),
+    }))
+    const source = settings({ 'large-catalog': { models } })
+
+    expect(() => planProviderCatalogCopy(source, settings({}))).toThrow('Provider catalog copy exceeds the supported size')
   })
 })
