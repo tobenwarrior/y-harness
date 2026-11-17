@@ -623,8 +623,18 @@ export async function launchWebScaffold(options: LaunchOptions = {}): Promise<We
         watch: false,
       },
     },
-    // Run against the shipped Compound catalog for the lifetime of this fixture.
-    { id: 'skill-compound', config: { overlayRoot: join(workspaceCwd, '.compound-overlay'), autoUpdate: false } },
+    // These recorded owners pin the catalog used to produce their current-writer output.
+    {
+      id: 'skill-compound',
+      config: {
+        overlayRoot: join(workspaceCwd, '.compound-overlay'),
+        autoUpdate: false,
+        ...mode !== 'record' && replayFixture !== undefined
+          && ['permission-policy-context', 'ptc-escalation-approved'].includes(basename(dirname(replayFixture)))
+          ? { assetRoot: join(REPO_ROOT, 'apps/web/tests/fixtures/replay-compound-skills') }
+          : {},
+      },
+    },
     // fs/bash cwd default to process.cwd(); the gateway injects the same
     // value into session.cwd — chdir below anchors all three to the temp
     // workspace, keeping the composition untouched.
