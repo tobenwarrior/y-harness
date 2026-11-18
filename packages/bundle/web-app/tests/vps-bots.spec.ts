@@ -1,14 +1,18 @@
 import { setImmediate } from 'node:timers/promises'
+import { chmod, mkdtemp, rm } from 'node:fs/promises'
+import { createServer, type Server } from 'node:net'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { Context } from '@yharness/cordis'
 import AgentRegistry from '@yharness/agent'
 import AgentLoop from '@yharness/agent-loop'
 import { BotId } from '@yharness/bots'
 import LlmRuntime, { ToolCallId } from '@yharness/llm'
-import { managedBotExecutionFor, SandboxPolicyService } from '@yharness/sandbox-policy'
+import { managedBotExecutionFor, SandboxPolicyService, setSandboxMode } from '@yharness/sandbox-policy'
 import SessionStore, { SessionId } from '@yharness/session'
 import SessionProjections from '@yharness/session-projection'
 import SystemPrompt, { renderPrompt } from '@yharness/system-prompt'
-import ToolRuntime, { defineTool } from '@yharness/tools'
+import ToolRuntime, { defineTool, type ToolDefinition } from '@yharness/tools'
 import { LocalSubprocessRuntime } from '@yharness/subprocess-local'
 import type { ConnectionFetchRoute } from '@yharness/client-connection'
 import type { IndexInjection } from '@yharness/host-webserver'
@@ -20,6 +24,8 @@ import { VpsBrowserHandoffs } from '../src/vps-browser-handoffs.ts'
 import { VpsBrowserLogin } from '../src/vps-browser-login.ts'
 import { VpsIsolatedBrowser } from '../src/vps-isolated-browser.ts'
 import { VpsRuntime } from '../src/vps-runtime.ts'
+import { ComputerLeaseError, VpsComputer } from '../src/computer.ts'
+import * as VpsUpload from '../src/vps-bot-upload.ts'
 
 const BOT_SESSION = SessionId('bot-session-0e9beecd-b6f5-40b1-8d52-f97259bdcf76')
 const DESKTOP_SESSION = SessionId('bot-session-5f3ec8e4-4c34-4ec6-a38f-aad6d07cb337')
@@ -384,6 +390,18 @@ describe('managed VPS Bot composition', () => {
       const target = { sessionId: request.targetSessionId, requestId: request.id, viewerId }
       expect((await post('sign-in', { ...target, sessionId: BOT_SESSION, action: 'take' })).status).toBe(409)
       expect((await post('take-control', { sessionId: target.sessionId, viewerId })).status).toBe(409)
+      const targetMethod = Reflect.get(VpsBrowserHandoffs.prototype, 'target')
+      let targetLookups = 0
+      const staleTarget = vi.spyOn(VpsBrowserHandoffs.prototype, 'target').mockImplementation(function (
+        this: VpsBrowserHandoffs, targetId: string,
+      ) {
+        const view = Reflect.apply(targetMethod, this, [targetId])
+        targetLookups += 1
+        return view === undefined || targetLookups !== 2 ? view : { ...view }
+      })
+      expect((await post('take-control', { sessionId: target.sessionId, viewerId })).status).toBe(409)
+      expect(targetLookups).toBe(2)
+      staleTarget.mockRestore()
       const before = await post('frame', { sessionId: target.sessionId, viewerId })
       await expect(before.json()).resolves.toMatchObject({ jpeg: '', mode: 'other' })
       expect((await post('sign-in', { ...target, action: 'take' })).status).toBe(200)
@@ -485,6 +503,14 @@ describe('managed VPS Bot composition', () => {
     }, []) }).toThrow('VPS internet access must select private Computer Bots.')
   })
 
+  it('requires journal grants to select private Computer Bots', () => {
+    expect(() => { mountVpsBots(new Context(), {
+      root: '/yharness-test-bots', image: 'localhost/yharness-test', bots: ['bot-private'],
+    }, [], undefined, { socketPath: '/run/yharness-journal.sock', bots: ['bot-unselected'] }) }).toThrow(
+      'VPS journal grants must select Computer Bots.',
+    )
+  })
+
   it('only connects the private Computers selected by the explicit internet allowlist', async () => {
     const ctx = new Context()
     const ensure = vi.spyOn(VpsRuntime.prototype, 'ensure').mockResolvedValue(undefined)
@@ -540,7 +566,10 @@ describe('managed VPS Bot composition', () => {
   it('binds the shared browser to one admitted Agent and rechecks access on each action', async () => {
     const ctx = new Context()
     const navigate = vi.spyOn(VpsIsolatedBrowser.prototype, 'navigate').mockResolvedValue(undefined)
-    const login = vi.spyOn(VpsBrowserLogin.prototype, 'request').mockResolvedValue({ state: 'submitted' })
+    const login = vi.spyOn(VpsBrowserLogin.prototype, 'request').mockImplementation(async (_bot, _session, lease, signal) => {
+      await lease(async () => undefined, signal)
+      return { state: 'submitted' }
+    })
     const botId = BotId('bot-team')
     const agent = { id: SHARED_BROWSER_SESSION, session: { id: SHARED_BROWSER_SESSION } } as never
     const signal = new AbortController().signal
@@ -620,6 +649,370 @@ describe('managed VPS Bot composition', () => {
     }
   })
 
+  it('publishes the exact owner roster and refuses a stale browser assignment', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'yh-vps-bots-roster-'))
+    const rosterPath = join(directory, 'owners.json')
+    const ctx = new Context()
+    const routes: ConnectionFetchRoute[] = []
+    const bot = { id: BotId('bot-roster'), sessionId: BOT_SESSION, state: 'active' as const }
+    const creating = { id: BotId('bot-creating'), sessionId: DESKTOP_SESSION, state: 'creating' as const }
+    const stale = { id: BotId('bot-stale'), sessionId: LEGACY_SESSION, state: 'active' as const }
+    const rows = [bot, creating, stale]
+    const list = vi.fn(async () => ({ bots: rows }))
+    const ownerBotForSession = vi.fn(async (sessionId: string) => {
+      if (sessionId === BOT_SESSION) return bot
+      if (sessionId === LEGACY_SESSION) return { ...stale, id: BotId('bot-other') }
+      return undefined
+    })
+    const socketPath = join(directory, 'browser.sock')
+    const server: Server = createServer((socket) => {
+      const chunks: Buffer[] = []
+      socket.on('data', chunk => chunks.push(chunk))
+      socket.once('end', () => {
+        const request = JSON.parse(Buffer.concat(chunks).toString('utf8')) as { action?: string }
+        socket.end(JSON.stringify(request.action === 'status'
+          ? { available: true }
+          : request.action === 'frame'
+            ? { jpeg: Buffer.from([0xff, 0xd8, 0xff, 0xd9]).toString('base64'), width: 1280, height: 800 }
+            : { ok: true }))
+      })
+    })
+    const automaticLogin = vi.fn(async () => 'unavailable' as const)
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once('error', reject)
+        server.listen(socketPath, resolve)
+      })
+      await chmod(directory, 0o2750)
+      ctx.provide('connection', { fetch: { register: (route: ConnectionFetchRoute) => {
+        routes.push(route)
+        return () => { routes.splice(routes.indexOf(route), 1) }
+      } } } as never)
+      ctx.provide('bots', { list, ownerBotForSession } as never)
+      await ctx.plugin((scope) => { mountVpsBots(scope, {
+        root: '/yharness-test-bots', image: 'localhost/yharness-test', bots: [bot.id], sharedWorkspace: null,
+        isolatedBrowser: {
+          socketPath, bots: [bot.id], sharedBots: [bot.id], savedLogins: true,
+          ownerRosterPath: rosterPath,
+        },
+      }, [], undefined, undefined, automaticLogin) })
+      await expect.poll(() => list).toHaveBeenCalledOnce()
+      const injections: IndexInjection[] = []
+      ctx.emit('webserver/index-inject', injections)
+      expect(injections).toContainEqual({ kind: 'global', name: '__YH_BOT_SHARED_BROWSER__', value: true })
+      expect(injections).toContainEqual({ kind: 'global', name: '__YH_BOT_COMPUTER_SIGN_IN__', value: true })
+      expect(injections).toContainEqual({ kind: 'global', name: '__YH_BOT_WEBSITE_LOGIN__', value: true })
+      const shared = ctx.get('botSharedBrowser')
+      if (shared === undefined) throw new Error('shared browser provider was not mounted')
+      await expect(shared.available(BotId('bot-not-isolated'), SHARED_BROWSER_SESSION, BOT_SESSION,
+        new AbortController().signal)).resolves.toBe(false)
+      await expect(shared.available(bot.id, SHARED_BROWSER_SESSION, BOT_SESSION,
+        new AbortController().signal)).resolves.toBe(true)
+      const frameRoute = routes.find(route => route.path === '/api/computer/frame')
+      if (frameRoute === undefined) throw new Error('owner frame route was not mounted')
+      await expect(frameRoute.fetch(new Request('http://127.0.0.1/api/computer/frame', {
+        method: 'POST', body: JSON.stringify({ sessionId: BOT_SESSION,
+          viewerId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' }),
+      }))).resolves.toHaveProperty('status', 200)
+      const takeControl = routes.find(route => route.path === '/api/computer/take-control')
+      const navigate = routes.find(route => route.path === '/api/computer/navigate')
+      if (takeControl === undefined || navigate === undefined) throw new Error('browser routes were not mounted')
+      await expect(takeControl.fetch(new Request('http://127.0.0.1/api/computer/take-control', {
+        method: 'POST', body: JSON.stringify({ sessionId: BOT_SESSION,
+          viewerId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' }),
+      }))).resolves.toHaveProperty('status', 200)
+      await expect(navigate.fetch(new Request('http://127.0.0.1/api/computer/navigate', {
+        method: 'POST', body: JSON.stringify({ sessionId: BOT_SESSION,
+          viewerId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', url: 'https://example.test/' }),
+      }))).resolves.toHaveProperty('status', 200)
+      expect(() => shared.toolForSession(ctx, { id: SHARED_BROWSER_SESSION } as never, bot.id,
+        async () => true, BOT_SESSION)).toThrow('attachment and model services')
+
+      await rm(directory, { recursive: true, force: true })
+      rows[0] = { ...bot, id: BotId('bot-roster-new') }
+      ctx.emit('bots/changed')
+      await expect.poll(() => list).toHaveBeenCalledTimes(2)
+      await expect(frameRoute.fetch(new Request('http://127.0.0.1/api/computer/frame', {
+        method: 'POST', body: JSON.stringify({ sessionId: BOT_SESSION,
+          viewerId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' }),
+      }))).resolves.toHaveProperty('status', 409)
+      expect(routes.some(route => route.path === '/api/computer/sign-in')).toBe(true)
+    } finally {
+      await ctx.fiber.dispose()
+      await rm(directory, { recursive: true, force: true })
+      await new Promise<void>((resolve) => {
+        if (!server.listening) { resolve(); return }
+        server.close(() => { resolve() })
+      })
+    }
+
+    const unavailable = new Context()
+    try {
+      await unavailable.plugin((scope) => { mountVpsBots(scope, {
+        root: '/yharness-test-bots', image: 'localhost/yharness-test', bots: [bot.id], isolatedBrowser: {
+          socketPath: '/run/yharness-browser/control.sock', bots: [bot.id], sharedBots: [bot.id], ownerRosterPath: rosterPath,
+        },
+      }, []) })
+      const provider = unavailable.get('botSharedBrowser')
+      if (provider === undefined) throw new Error('shared browser provider was not mounted')
+      await expect(provider.available(bot.id, SHARED_BROWSER_SESSION, BOT_SESSION,
+        new AbortController().signal)).resolves.toBe(false)
+    } finally {
+      await unavailable.fiber.dispose()
+    }
+  })
+
+  it('keeps owner setting, file, and restart routes scoped to an active desktop Bot', async () => {
+    const ctx = new Context()
+    const routes: ConnectionFetchRoute[] = []
+    const selected = { id: BotId('bot-route'), sessionId: BOT_SESSION, state: 'active' as const }
+    const stale = { id: BotId('bot-stale-route'), sessionId: DESKTOP_SESSION, state: 'creating' as const }
+    const unselected = { id: BotId('bot-unselected-route'), sessionId: LEGACY_SESSION, state: 'active' as const }
+    const ownerBotForSession = vi.fn(async (sessionId: string) => [selected, stale, unselected]
+      .find(bot => bot.sessionId === sessionId))
+    const terminalList = vi.fn(() => [] as never[])
+    const downloadComputer = vi.fn(async () => new Response('fixture-download'))
+    const ensure = vi.spyOn(VpsRuntime.prototype, 'ensure').mockResolvedValue(undefined)
+    const internetFor = vi.spyOn(VpsRuntime.prototype, 'internetFor').mockResolvedValue(true)
+    const sharedWorkspaceFor = vi.spyOn(VpsRuntime.prototype, 'sharedWorkspaceFor').mockResolvedValue('/workspace')
+    const supportsNetworkControl = vi.spyOn(VpsRuntime.prototype, 'supportsNetworkControl').mockReturnValue(true)
+    const supportsSharedWorkspaceControl = vi.spyOn(VpsRuntime.prototype, 'supportsSharedWorkspaceControl').mockReturnValue(true)
+    const setInternetAccess = vi.spyOn(VpsRuntime.prototype, 'setInternetAccess').mockResolvedValue('applied')
+    const setSharedWorkspaceAccess = vi.spyOn(VpsRuntime.prototype, 'setSharedWorkspaceAccess').mockResolvedValue('applied')
+    const restart = vi.spyOn(VpsRuntime.prototype, 'restart').mockResolvedValue('restarted')
+    const desktopCommand = vi.spyOn(VpsRuntime.prototype, 'desktopCommand').mockResolvedValue(Buffer.from([0xff, 0xd8, 0xff, 0xd9]))
+    const runWhileBotControls = vi.spyOn(VpsComputer.prototype, 'runWhileBotControls')
+      .mockRejectedValue(new ComputerLeaseError('fixture lease'))
+    const dispose = vi.spyOn(VpsRuntime.prototype, 'dispose').mockResolvedValue(undefined)
+    const uploadComputerFile = vi.spyOn(VpsUpload, 'uploadComputerFile').mockResolvedValue('stored')
+    try {
+      ctx.provide('connection', { fetch: { register: (route: ConnectionFetchRoute) => {
+        routes.push(route)
+        return () => { routes.splice(routes.indexOf(route), 1) }
+      } } } as never)
+      ctx.provide('bots', { ownerBotForSession } as never)
+      ctx.provide('terminalController', { list: terminalList } as never)
+      ctx.provide('workspaceFiles', {
+        downloadComputer, list: vi.fn(async () => ({ entries: [], truncated: false })),
+        read: vi.fn(async () => ({ text: '', version: 'fixture-version', offset: 1, lines: 0, eof: true })),
+      } as never)
+      await ctx.plugin((scope) => { mountVpsBots(scope, {
+        root: '/yharness-test-bots', image: 'localhost/yharness-test', bots: [selected.id, stale.id],
+        sharedWorkspace: { bots: [selected.id] }, network: { bots: [selected.id] },
+      }, []) })
+      const request = async (path: string, body: object): Promise<Response> => {
+        const route = routes.find(candidate => candidate.path === path)
+        if (route === undefined) throw new Error(`Route ${path} was not mounted`)
+        return route.fetch(new Request('http://127.0.0.1' + path, {
+          method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+        }))
+      }
+      const status = await request('/api/computer/status', { sessionId: BOT_SESSION })
+      await expect(status.json()).resolves.toMatchObject({
+        available: true,
+        computer: {
+          id: selected.id, location: 'vps', permissionScope: 'bot', terminal: true, terminalInternet: true,
+          networkControl: true, restart: true, files: true, sharedFiles: true, sharedWorkspaceControl: true,
+        },
+      })
+      await expect((await request('/api/computer/status', {})).json()).resolves.toMatchObject({ available: false })
+      await expect((await request('/api/computer/status', { sessionId: LEGACY_SESSION })).json())
+        .resolves.toMatchObject({ available: false })
+      expect(ctx.botWorkspaces.workspace(BOT_SESSION)).toBe(`/yharness-test-bots/${BOT_SESSION}`)
+      await ctx.botWorkspaces.prepare(BOT_SESSION, selected.id)
+      expect(ensure).toHaveBeenCalledWith(BOT_SESSION)
+
+      const invalid = await request('/api/computer/network', { sessionId: BOT_SESSION, enabled: true, extra: false })
+      expect(invalid.status).toBe(400)
+      await expect((await request('/api/computer/network', { sessionId: BOT_SESSION, enabled: true })).json())
+        .resolves.toEqual({ status: 'applied', enabled: true })
+      supportsSharedWorkspaceControl.mockReturnValueOnce(false)
+      await expect((await request('/api/computer/shared-workspace', { sessionId: BOT_SESSION, enabled: true })).json())
+        .resolves.toEqual({ status: 'unavailable' })
+      await expect((await request('/api/computer/shared-workspace', { sessionId: BOT_SESSION, enabled: true })).json())
+        .resolves.toEqual({ status: 'applied', enabled: true })
+      expect(setInternetAccess).toHaveBeenCalledWith(BOT_SESSION, true, expect.any(AbortSignal))
+      expect(setSharedWorkspaceAccess).toHaveBeenCalledWith(BOT_SESSION, true, expect.any(AbortSignal))
+      await expect((await request('/api/computer/network', { sessionId: LEGACY_SESSION, enabled: true })).json())
+        .resolves.toEqual({ status: 'unavailable' })
+      await expect((await request('/api/computer/shared-workspace', { sessionId: DESKTOP_SESSION, enabled: true })).json())
+        .resolves.toEqual({ status: 'unavailable' })
+
+      await expect((await request('/api/computer/restart', { sessionId: BOT_SESSION })).json())
+        .resolves.toEqual({ status: 'restarted' })
+      await expect((await request('/api/computer/restart', { sessionId: BOT_SESSION, surface: 'desktop' })).json())
+        .resolves.toEqual({ status: 'unavailable' })
+      await expect((await request('/api/computer/restart', { sessionId: LEGACY_SESSION })).json())
+        .resolves.toEqual({ status: 'unavailable' })
+      expect(restart).toHaveBeenCalledWith(BOT_SESSION, expect.any(AbortSignal))
+
+      const download = routes.find(route => route.path === '/api/computer/files/download')
+      if (download === undefined) throw new Error('download route was not mounted')
+      const downloaded = await download.fetch(new Request(
+        'http://127.0.0.1/api/computer/files/download?sessionId=' + BOT_SESSION + '&path=notes.txt',
+      ))
+      expect(await downloaded.text()).toBe('fixture-download')
+      expect(downloadComputer).toHaveBeenCalledWith(BOT_SESSION, 'notes.txt', expect.any(AbortSignal))
+      const upload = routes.find(route => route.path === '/api/computer/files/upload')
+      if (upload === undefined) throw new Error('upload route was not mounted')
+      const unavailableUpload = await upload.fetch(new Request(
+        'http://127.0.0.1/api/computer/files/upload?sessionId=' + DESKTOP_SESSION + '&directory=.&name=notes.txt&bytes=0',
+        { method: 'POST', headers: { 'content-type': 'application/octet-stream', 'content-length': '0' }, body: '' },
+      ))
+      expect(unavailableUpload.status).toBe(404)
+      const storedUpload = await upload.fetch(new Request(
+        'http://127.0.0.1/api/computer/files/upload?sessionId=' + BOT_SESSION + '&directory=.&name=notes.txt&bytes=0',
+        { method: 'POST', headers: { 'content-type': 'application/octet-stream', 'content-length': '0' }, body: '' },
+      ))
+      expect(storedUpload.status).toBe(201)
+      expect(uploadComputerFile).toHaveBeenCalledWith(expect.any(VpsRuntime), BOT_SESSION,
+        expect.objectContaining({ directory: '.', name: 'notes.txt', bytes: 0 }), expect.any(Object), expect.any(AbortSignal))
+
+      const privateFiles = await ctx.workspaceFileAccess.forComputer?.(BOT_SESSION, new AbortController().signal, 'notes.txt')
+      const privateFilesAgain = await ctx.workspaceFileAccess.forComputer?.(BOT_SESSION, new AbortController().signal, 'notes.txt')
+      expect(privateFilesAgain?.fs === privateFiles?.fs).toBe(true)
+      const sharedFiles = await ctx.workspaceFileAccess.forComputer?.(BOT_SESSION, new AbortController().signal, '/workspace/notes.txt')
+      expect(sharedFiles?.workspaceRoot).toBe('/workspace')
+      await expect(ctx.workspaceFileAccess.forComputer?.(DESKTOP_SESSION, new AbortController().signal))
+        .rejects.toThrow('workspace is not ready')
+
+      terminalList.mockReturnValue([{ state: 'running' }] as never[])
+      await expect((await request('/api/computer/network', { sessionId: BOT_SESSION, enabled: false })).json())
+        .resolves.toEqual({ status: 'busy' })
+      terminalList.mockReturnValue([])
+      const frame = await request('/api/computer/frame', {
+        sessionId: BOT_SESSION, viewerId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      })
+      expect(frame.status).toBe(200)
+      await expect((await request('/api/computer/network', { sessionId: BOT_SESSION, enabled: false })).json())
+        .resolves.toEqual({ status: 'busy' })
+      expect(runWhileBotControls).toHaveBeenCalled()
+      runWhileBotControls.mockRejectedValueOnce(new Error('fixture control failure'))
+      await expect((await request('/api/computer/network', { sessionId: BOT_SESSION, enabled: false })).json())
+        .resolves.toEqual({ status: 'unavailable' })
+      expect(internetFor).toHaveBeenCalledWith(BOT_SESSION)
+      expect(sharedWorkspaceFor).toHaveBeenCalledWith(BOT_SESSION)
+      expect(supportsNetworkControl).toHaveBeenCalled()
+      expect(supportsSharedWorkspaceControl).toHaveBeenCalled()
+      expect(desktopCommand).toHaveBeenCalled()
+    } finally {
+      await ctx.fiber.dispose()
+      ensure.mockRestore()
+      internetFor.mockRestore()
+      sharedWorkspaceFor.mockRestore()
+      supportsNetworkControl.mockRestore()
+      supportsSharedWorkspaceControl.mockRestore()
+      setInternetAccess.mockRestore()
+      setSharedWorkspaceAccess.mockRestore()
+      restart.mockRestore()
+      desktopCommand.mockRestore()
+      runWhileBotControls.mockRestore()
+      dispose.mockRestore()
+      uploadComputerFile.mockRestore()
+    }
+  })
+
+  it('reports runtime failures after all VPS Bot resources have been asked to stop', async () => {
+    const ctx = new Context()
+    const dispose = vi.spyOn(VpsRuntime.prototype, 'dispose').mockRejectedValue(new Error('fixture runtime close'))
+    try {
+      const mounted = await ctx.plugin((scope) => { mountVpsBots(scope, {
+        root: '/yharness-test-bots', image: 'localhost/yharness-test', bots: ['bot-close'],
+      }, []) })
+      await mounted.dispose()
+      expect(dispose).toHaveBeenCalled()
+    } finally {
+      dispose.mockRestore()
+    }
+  })
+
+  it('keeps a Bot binding failure local to its admission attempt', async () => {
+    const ctx = new Context()
+    const session = SessionId('bot-session-47888424-5b3d-4a8c-81f5-751ed2d24f95')
+    const bot = { id: BotId('bot-rebind'), sessionId: session, state: 'active' as const }
+    const bindWorkspace = vi.fn<Context['terminalController']['bindWorkspace']>(() => () => undefined)
+    const sharedWorkspaceFor = vi.spyOn(VpsRuntime.prototype, 'sharedWorkspaceFor')
+      .mockRejectedValue(new Error('fixture rebind failure'))
+    try {
+      await ctx.plugin(LlmRuntime)
+      await ctx.plugin(SessionStore)
+      await ctx.plugin(SessionProjections)
+      await ctx.plugin(AgentRegistry)
+      await ctx.plugin(SystemPrompt)
+      await ctx.plugin(ToolRuntime)
+      await ctx.plugin(SandboxPolicyService, { mode: 'danger-full-access' })
+      await ctx.plugin(LocalSubprocessRuntime)
+      await ctx.plugin(AgentLoop, { agents: [] })
+      ctx.provide('attachments', {} as never)
+      ctx.provide('workspaceFiles', {
+        downloadComputer: vi.fn(async () => new Response('fixture-download')),
+        list: vi.fn(async () => ({ entries: [], truncated: false })),
+        read: vi.fn(async () => ({ text: '', version: 'fixture-version', offset: 1, lines: 0, eof: true })),
+      } as never)
+      ctx.provide('terminalController', { bindWorkspace } as never)
+      ctx.provide('bots', { ownerBotForSession: async (id: string) => id === session ? bot : undefined } as never)
+      const mounted = await ctx.plugin((scope) => { mountVpsBots(scope, {
+        root: '/yharness-test-bots', image: 'localhost/yharness-test', bots: [bot.id],
+        sharedWorkspace: { bots: [bot.id] },
+      }, []) })
+      await expect(ctx.agentLoop.create(session, { provider: 'fixture', model: 'fixture' }))
+        .rejects.toThrow('fixture rebind failure')
+      await mounted.dispose()
+    } finally {
+      sharedWorkspaceFor.mockRestore()
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('binds the opted-in legacy Computer only for supported Agent presets', async () => {
+    const ctx = new Context()
+    const routes: ConnectionFetchRoute[] = []
+    const legacy = new VpsComputer({ display: ':0', authorityPath: '/tmp/yharness-test.Xauthority' })
+    const computer = { observe: vi.fn(async () => ({ jpeg: '', width: 1280, height: 800 })), actAsBot: vi.fn(async () => undefined) }
+    let preset = 'standard'
+    try {
+      await ctx.plugin(LlmRuntime)
+      await ctx.plugin(SystemPrompt)
+      await ctx.plugin(ToolRuntime)
+      ctx.provide('attachments', {} as never)
+      ctx.provide('connection', { fetch: { register: (route: ConnectionFetchRoute) => {
+        routes.push(route)
+        return () => { routes.splice(routes.indexOf(route), 1) }
+      } } } as never)
+      ctx.provide('vpsComputer', computer as never)
+      ctx.provide('agentPresets', { composedPreset: () => preset } as never)
+      ctx.provide('bots', { ownerBotForSession: async (sessionId: string) => sessionId === 'unowned-session'
+        ? { id: 'bot-legacy-route', sessionId, state: 'active' } : undefined } as never)
+      const mounted = await ctx.plugin((scope) => { mountVpsBots(scope, {
+        root: '/yharness-test-bots', image: 'localhost/yharness-test', bots: ['bot-managed'],
+      }, [], legacy) })
+      const agent = { id: LEGACY_SESSION, ctx, session: { id: LEGACY_SESSION } } as never
+      await ctx.serial('agent/created', { agent, source: 'resume' })
+      const status = routes.find(route => route.path === '/api/computer/status')
+      if (status === undefined) throw new Error('Legacy Computer route was not registered')
+      await expect((await status.fetch(new Request('http://127.0.0.1/api/computer/status', {
+        method: 'POST', body: JSON.stringify({ sessionId: 'unowned-session' }),
+      }))).json()).resolves.toMatchObject({ available: true, computer: { id: 'shared-vps' } })
+      expect(ctx.tools.get('vps_computer', agent)).toBeDefined()
+      await expect(ctx.tools.execute({
+        name: 'vps_computer', callId: ToolCallId('legacy-computer'), arguments: { action: 'key', key: 'Escape' }, agent,
+        signal: new AbortController().signal,
+      })).resolves.toMatchObject({ isError: false })
+      expect(computer.actAsBot).toHaveBeenCalled()
+      preset = 'minimal'
+      const unsupported = { id: LEGACY_SESSION, ctx, session: { id: LEGACY_SESSION } } as never
+      await ctx.serial('agent/created', { agent: unsupported, source: 'resume' })
+      await expect(ctx.tools.execute({
+        name: 'vps_computer', callId: ToolCallId('legacy-computer-denied'), arguments: { action: 'key', key: 'Escape' }, agent: unsupported,
+        signal: new AbortController().signal,
+      })).resolves.toMatchObject({ isError: true })
+      await mounted.dispose()
+    } finally {
+      await ctx.fiber.dispose()
+      await legacy.dispose()
+    }
+  })
+
   // The managed shell fixture executes /usr/bin/env and bash on the test host.
   it.skipIf(process.platform === 'win32')('binds the real Agent scope and fences host tools without changing ordinary sessions', async () => {
     const ctx = new Context()
@@ -633,6 +1026,10 @@ describe('managed VPS Bot composition', () => {
     const browserStatus = vi.spyOn(VpsIsolatedBrowser.prototype, 'status').mockResolvedValue({ available: true })
     const browserNavigate = vi.spyOn(VpsIsolatedBrowser.prototype, 'navigate').mockResolvedValue(undefined)
     const browserLogin = vi.spyOn(VpsBrowserLogin.prototype, 'request').mockResolvedValue({ state: 'submitted' })
+    const browserComputer = vi.spyOn(VpsIsolatedBrowser.prototype, 'computer').mockImplementation(() => new VpsComputer(
+      { display: ':0', authorityPath: '/tmp/yharness-test.Xauthority' },
+      { capture: async () => Buffer.from([0xff, 0xd8, 0xff, 0xd9]), input: async () => undefined },
+    ))
     const routes: ConnectionFetchRoute[] = []
     const terminalClosing = Promise.withResolvers<undefined>()
     const releaseTerminalClose = Promise.withResolvers<undefined>()
@@ -656,6 +1053,11 @@ describe('managed VPS Bot composition', () => {
       await ctx.plugin(LocalSubprocessRuntime)
       await ctx.plugin(AgentLoop, { agents: [] })
       ctx.provide('attachments', {} as never)
+      ctx.provide('workspaceFiles', {
+        downloadComputer: vi.fn(async () => new Response('fixture-download')),
+        list: vi.fn(async () => ({ entries: [], truncated: false })),
+        read: vi.fn(async () => ({ text: '', version: 'fixture-version', offset: 1, lines: 0, eof: true })),
+      } as never)
       ctx.provide('terminalController', { bindWorkspace } as never)
       ctx.provide('connection', { fetch: {
         register(route: ConnectionFetchRoute) {
@@ -716,12 +1118,40 @@ describe('managed VPS Bot composition', () => {
         output: { schema: { type: 'string' }, render: (_args, text) => [{ type: 'text', text }] },
         async execute() { return 'host fixture' },
       }))
+      const mcpFixture: ToolDefinition = {
+        name: 'mcp_fixture',
+        description: 'Fixture MCP operation.',
+        source: { kind: 'mcp', serverName: 'fixture' },
+        parameters: {},
+        output: { schema: { type: 'string' }, render: (_args, text) => [{ type: 'text', text }] },
+        async execute() { return 'mcp fixture' },
+      }
+      ctx.effect(() => ctx.tools.register(mcpFixture), 'fixture MCP tool')
+      for (const name of ['bash', 'grep'] as const) {
+        ctx.effect(() => ctx.tools.register(defineTool({
+          name,
+          description: `Fixture ${name} operation.`,
+          parameters: {},
+          output: { schema: { type: 'string' }, render: (_args, text) => [{ type: 'text', text }] },
+          async execute() { return `${name} fixture` },
+        })), `fixture ${name} tool`)
+      }
 
       const options = { provider: 'fixture', model: 'fixture' }
       const bot = await ctx.agentLoop.create(BOT_SESSION, options)
       const desktop = await ctx.agentLoop.create(DESKTOP_SESSION, options)
       const legacy = await ctx.agentLoop.create(LEGACY_SESSION, options)
       const regular = await ctx.agentLoop.create(SessionId('regular-session'), options)
+      const disposedAgent = await ctx.agentLoop.create(SessionId('d1e5a9b8-8c33-4d4a-9df3-0d8fd2f2c1e7'), options)
+      await disposedAgent.ctx.fiber.dispose()
+      await ctx.serial('agent/created', {
+        agent: disposedAgent,
+        source: 'resume',
+      })
+      await Promise.all([
+        ctx.serial('agent/created', { agent: bot, source: 'resume' }),
+        ctx.serial('agent/created', { agent: bot, source: 'resume' }),
+      ])
       const call = { signal: new AbortController().signal, name: 'host_probe', arguments: {} }
       const execution = managedBotExecutionFor({ agent: bot })
       if (execution === undefined) throw new Error('managed Bot execution was not bound')
@@ -741,12 +1171,32 @@ describe('managed VPS Bot composition', () => {
       const desktopPrompt = renderPrompt(await ctx.systemPrompt.assemble({ scope: desktop }))
       expect(desktopPrompt).toContain('Bash and file tools use your existing Session workspace and permissions.')
       expect(desktopPrompt).not.toContain('managed runtime workspace')
+      const botPrompt = renderPrompt(await ctx.systemPrompt.assemble({ scope: bot }))
+      expect(botPrompt).toContain('managed runtime workspace')
       expect(ctx.tools.get('vps_computer', bot)).toBeDefined()
       expect(ctx.tools.get('vps_computer', desktop)).toBeDefined()
       expect(ctx.tools.get('vps_computer', regular)).toBeUndefined()
       expect(ctx.tools.get('vps_computer', bot)?.parameters).toMatchObject({
         properties: { surface: { enum: ['desktop'] } },
       })
+      const projectTool = ctx.tools.get('vps_project_files', desktop)
+      if (projectTool === undefined) throw new Error('shared project tool was not registered')
+      await expect(ctx.tools.execute({
+        ...call, name: 'vps_project_files', callId: ToolCallId('project-list'), agent: desktop,
+        arguments: { action: 'list' },
+      })).resolves.toMatchObject({ isError: false })
+      const mismatched = desktop
+      const computerTool = ctx.tools.get('vps_computer', bot)
+      if (computerTool === undefined) throw new Error('managed Computer tool was not registered')
+      await expect(computerTool.execute({ action: 'key', key: 'Escape' }, {
+        agent: mismatched, signal: call.signal,
+      } as never)).rejects.toThrow('owning Bot Session')
+      await expect(computerTool.execute({ action: 'navigate', url: 'https://example.test/' }, {
+        agent: mismatched, signal: call.signal,
+      } as never)).rejects.toThrow('owning Bot Session')
+      await expect(computerTool.execute({ action: 'key', key: 'Escape', surface: 'desktop' }, {
+        agent: mismatched, signal: call.signal,
+      } as never)).rejects.toThrow('owning Bot Session')
       await expect(ctx.tools.execute({
         ...call, name: 'vps_computer', callId: ToolCallId('desktop-input'), agent: bot,
         arguments: { action: 'key', surface: 'desktop', key: 'Escape' },
@@ -801,6 +1251,10 @@ describe('managed VPS Bot composition', () => {
       expect(browserNavigate).toHaveBeenCalledWith(
         'bot-test', BOT_SESSION, 'https://example.test/path', expect.any(AbortSignal),
       )
+      browserLogin.mockImplementationOnce(async (_bot, _session, lease, signal) => {
+        await lease(async () => undefined, signal)
+        return { state: 'submitted' }
+      })
       await expect(ctx.tools.execute({
         ...call,
         name: 'vps_computer',
@@ -860,8 +1314,29 @@ describe('managed VPS Bot composition', () => {
       expect(readJournal).toHaveBeenNthCalledWith(3, 'bot-desktop', expect.any(AbortSignal))
       await expect(ctx.tools.execute({ ...call, callId: ToolCallId('bot-call'), agent: bot }))
         .resolves.toMatchObject({ isError: true })
+      await expect(ctx.tools.execute({ ...call, agent: undefined, callId: ToolCallId('host-call-without-agent') }))
+        .resolves.toMatchObject({ isError: false })
+      const mcpResult = await ctx.tools.execute({ ...call, name: 'mcp_fixture', callId: ToolCallId('mcp-call'), agent: bot })
+      expect(ctx.tools.get('mcp_fixture', bot)?.source).toEqual({ kind: 'mcp', serverName: 'fixture' })
+      expect(mcpResult).toMatchObject({ isError: false })
+      const denied = await ctx.waterfall('tools/pre-execute', {
+        ...call, agent: { id: BOT_SESSION } as never,
+      } as never, () => Promise.resolve(undefined as never))
+      expect(denied).toMatchObject({ kind: 'deny' })
+      await expect(ctx.waterfall('tools/pre-execute', {
+        ...call, name: 'grep', agent: bot,
+      } as never, () => Promise.resolve(undefined as never))).resolves.toBeUndefined()
+      await expect(ctx.tools.execute({ ...call, name: 'grep', callId: ToolCallId('grep-call'), agent: bot }))
+        .resolves.toMatchObject({ isError: false })
+      setSandboxMode(bot.session, 'read-only')
+      await expect(ctx.tools.execute({ ...call, name: 'bash', callId: ToolCallId('read-only-bash'), agent: bot }))
+        .resolves.toMatchObject({ isError: true })
       await expect(ctx.tools.execute({ ...call, callId: ToolCallId('desktop-call'), agent: desktop }))
         .resolves.toMatchObject({ isError: false })
+      await expect(ctx.tools.execute({
+        ...call, name: 'vps_computer', callId: ToolCallId('primary-input'), agent: bot,
+        arguments: { action: 'key', key: 'Escape' },
+      })).resolves.toMatchObject({ isError: false })
       await expect(ctx.tools.execute({ ...call, callId: ToolCallId('regular-call'), agent: regular }))
         .resolves.toMatchObject({ isError: false })
 
@@ -870,6 +1345,13 @@ describe('managed VPS Bot composition', () => {
       await lateLookup.promise
       const unloading = mounted.dispose()
       try {
+        await ctx.serial('agent/created', {
+          agent: {
+            id: SessionId('a1b2c3d4-e5f6-47a8-89ab-cdef01234567'), ctx,
+            session: { id: SessionId('a1b2c3d4-e5f6-47a8-89ab-cdef01234567') },
+          } as never,
+          source: 'resume',
+        })
         await terminalClosing.promise
         await expect(execution.subprocess.resolveExecutable('/bin/bash')).rejects.toThrow('VPS Bot Computer scope is closed')
         await expect(execution.fs.lstat('notes.txt')).rejects.toThrow('VPS Bot Computer scope is closed')
@@ -903,6 +1385,7 @@ describe('managed VPS Bot composition', () => {
       browserStatus.mockRestore()
       browserNavigate.mockRestore()
       browserLogin.mockRestore()
+      browserComputer.mockRestore()
       await ctx.fiber.dispose()
     }
   })
