@@ -8,18 +8,22 @@ import {
   applyVpsBotComputer,
   sharedVpsBrowserTool,
 } from '../src/computer-tool.ts'
+import type { VpsBrowserLoginResult } from '../src/vps-browser-login.ts'
+import type { ComputerSignInResult } from '../src/computer.ts'
 
 const SESSION = 'bot-session-computer-tool'
 
 interface FixtureControls {
-  observe: ReturnType<typeof vi.fn>
-  actAsBot: ReturnType<typeof vi.fn>
+  observe: (signal: AbortSignal) => Promise<{ readonly jpeg: string; readonly width: number; readonly height: number }>
+  actAsBot: (action: unknown, signal: AbortSignal) => Promise<unknown>
 }
 
 function controls(): FixtureControls {
   return {
-    observe: vi.fn(async () => ({ jpeg: Buffer.from([0xff, 0xd8, 0xff, 0xd9]).toString('base64'), width: 1280, height: 800 })),
-    actAsBot: vi.fn(async () => undefined),
+    observe: vi.fn<(signal: AbortSignal) => Promise<{ readonly jpeg: string; readonly width: number; readonly height: number }>>(
+      async () => ({ jpeg: Buffer.from([0xff, 0xd8, 0xff, 0xd9]).toString('base64'), width: 1280, height: 800 }),
+    ),
+    actAsBot: vi.fn<(action: unknown, signal: AbortSignal) => Promise<unknown>>(async () => undefined),
   }
 }
 
@@ -28,7 +32,9 @@ async function context() {
   await ctx.plugin(SystemPrompt)
   await ctx.plugin(ToolRuntime)
   const saveImage = vi.fn(async () => ({ attachmentId: 'fixture-attachment', mediaType: 'image/jpeg' as const, bytes: 4, width: 1280, height: 800 }))
-  const resolveModelInfo = vi.fn(async () => ({ inputModalities: ['image'] as const }))
+  const resolveModelInfo = vi.fn<() => Promise<{ readonly inputModalities: readonly string[] }>>(
+    async () => ({ inputModalities: ['image'] }),
+  )
   ctx.provide('attachments', { saveImage } as never)
   ctx.provide('llm', { resolveModelInfo } as never)
   return { ctx, saveImage, resolveModelInfo }
@@ -82,9 +88,9 @@ describe('Computer tool definitions', () => {
     const desktop = controls()
     const resolve = vi.fn(async () => primary)
     const desktopResolve = vi.fn(async () => desktop)
-    const signIn = vi.fn(async () => 'completed' as const)
+    const signIn = vi.fn<() => Promise<ComputerSignInResult>>(async () => 'completed')
     const navigate = vi.fn(async () => {})
-    const savedLogin = vi.fn(async () => ({ state: 'submitted' as const }))
+    const savedLogin = vi.fn<() => Promise<VpsBrowserLoginResult>>(async () => ({ state: 'submitted' }))
     applyVpsBotComputer(ctx, resolve, signIn, navigate, savedLogin, desktopResolve)
     const definition = ctx.tools.get('vps_computer')
     if (definition === undefined) throw new Error('VPS Computer tool was not registered')
@@ -107,7 +113,7 @@ describe('Computer tool definitions', () => {
         interrupted: 'The sign-in wait ended. Wait for the owner before continuing with the site.',
       }[result] })
     }
-    for (const result of [
+    const savedLoginResults: VpsBrowserLoginResult[] = [
       { purpose: 'verification' as const, state: 'submitted' as const },
       { purpose: 'verification' as const, state: 'approval-required' as const },
       { purpose: 'verification' as const, state: 'needs-owner' as const },
@@ -120,7 +126,8 @@ describe('Computer tool definitions', () => {
       { state: 'approval-required' as const },
       { state: 'needs-owner' as const },
       { state: 'unavailable' as const },
-    ]) {
+    ]
+    for (const result of savedLoginResults) {
       savedLogin.mockResolvedValueOnce(result)
       await expect(definition.execute({ action: 'request_saved_login' }, execution())).resolves.toHaveProperty('message')
     }
@@ -169,8 +176,7 @@ describe('Computer tool definitions', () => {
     const desktopTool = sharedVpsBrowserTool(ctx, desktop, async () => true, navigate,
       vi.fn(async () => ({ state: 'submitted' as const })), vi.fn(async () => 'completed' as const))
     await expect(desktopTool.execute({ action: 'observe', surface: 'desktop' }, allowed)).rejects.toThrow('desktop selection')
-    const modelInfo = resolveModelInfo.mockResolvedValue({ inputModalities: [] })
-    void modelInfo
+    resolveModelInfo.mockResolvedValue({ inputModalities: [] })
     await ctx.fiber.dispose()
     void desktop
     void saveImage

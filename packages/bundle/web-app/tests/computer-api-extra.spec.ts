@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
+import { BotId } from '@yharness/bots'
 import type { ConnectionFetchRoute } from '@yharness/client-connection'
+import { brandString } from '@yharness/brand'
 import { SessionId } from '@yharness/session/types'
 import {
   botComputerRoutes,
@@ -13,7 +15,10 @@ import {
   computerSignInRoute,
   type BotComputerRouteTarget,
 } from '../src/computer-api.ts'
+import type { ComputerFileCopyRequest, ComputerFileRecipient } from '../src/vps-bot-file-handoffs.ts'
+import type { ComputerSignInId, ComputerSignInRequest } from '../src/computer.ts'
 import { ComputerHost } from '../src/computer.ts'
+import type { ComputerFileCopyResult } from '../src/vps-bot-file-handoffs.ts'
 
 const VIEWER = '11111111-1111-4111-8111-111111111111'
 const SESSION = 'bot-session-fixture'
@@ -26,7 +31,8 @@ function route(routes: readonly ConnectionFetchRoute[], path: string): Connectio
 
 function post(path: string, body: unknown, signal?: AbortSignal): Request {
   return new Request(`http://127.0.0.1${path}`, {
-    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), signal,
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+    ...(signal === undefined ? {} : { signal }),
   })
 }
 
@@ -112,10 +118,11 @@ describe('Computer file HTTP routes', () => {
   })
 
   it('maps recipient and private copy routes without exposing operation errors', async () => {
-    const recipients = vi.fn<(sessionId: SessionId, signal: AbortSignal) => Promise<readonly { id: string; name: string }[] | undefined>>()
-      .mockResolvedValue([{ id: 'target', name: 'Target' }])
-    const copy = vi.fn<(request: { readonly sessionId: SessionId; readonly targetBotId: string; readonly path: string; readonly version?: string }, signal: AbortSignal) => Promise<{ readonly status: 'copied' | 'source-unavailable' | 'source-changed' | 'target-unavailable' | 'exists' | 'too-large' | 'no-space' | 'unavailable' }>>()
-      .mockResolvedValue({ status: 'copied' })
+    const targetBotId = BotId('target')
+    const recipients = vi.fn<(sessionId: SessionId, signal: AbortSignal) => Promise<readonly ComputerFileRecipient[] | undefined>>()
+      .mockResolvedValue([{ id: targetBotId, name: 'Target' }])
+    const copy = vi.fn<(request: ComputerFileCopyRequest, signal: AbortSignal) => Promise<ComputerFileCopyResult>>()
+      .mockResolvedValue({ status: 'copied', name: 'source.bin', recipient: { id: targetBotId, name: 'Target' } })
     const endpoints = computerFileHandoffRoutes({ recipients, copy })
     const recipientsRoute = route(endpoints, '/api/computer/files/recipients')
     const copyRoute = route(endpoints, '/api/computer/files/copy')
@@ -143,7 +150,9 @@ describe('Computer file HTTP routes', () => {
       expect(response.status, JSON.stringify(body)).toBe(400)
     }
     for (const status of ['copied', 'source-unavailable', 'source-changed', 'target-unavailable', 'exists', 'too-large', 'no-space', 'unavailable'] as const) {
-      copy.mockResolvedValueOnce({ status })
+      copy.mockResolvedValueOnce(status === 'copied'
+        ? { status, name: 'source.bin', recipient: { id: targetBotId, name: 'Target' } }
+        : { status })
       const response = await copyRoute.fetch(post('/api/computer/files/copy', { sessionId: SESSION, targetBotId: 'target', path: 'x', version: 'v1' }))
       expect(response.status).toBe({ copied: 201, 'source-unavailable': 404, 'source-changed': 409, 'target-unavailable': 404, exists: 409, 'too-large': 413, 'no-space': 507, unavailable: 503 }[status])
       expect(copy).toHaveBeenLastCalledWith({ sessionId: SessionId(SESSION), targetBotId: 'target', path: 'x', version: 'v1' }, expect.any(AbortSignal))
@@ -157,8 +166,8 @@ describe('Computer owner route lifecycle', () => {
   it('covers lazy targets, desktop metadata, origin forwarding, and unavailable providers', async () => {
     const primary = new ComputerHost({ display: ':api-primary', authorityPath: '/dev/null' }, { run: async () => {} })
     const desktop = new ComputerHost({ display: ':api-desktop', authorityPath: '/dev/null' }, { run: async () => {} })
-    const restart = vi.fn(async () => true)
-    const navigate = vi.fn(async () => ({ mode: 'controlling' as const }))
+    const restart = vi.fn<(signal: AbortSignal) => Promise<boolean>>(async () => true)
+    const navigate = vi.fn<(url: string, signal: AbortSignal) => Promise<void>>(async () => {})
     const resolve = vi.fn(async (id: string): Promise<BotComputerRouteTarget | undefined> => id === SESSION ? {
       computer: async () => primary,
       desktop: async () => desktop,
@@ -206,7 +215,9 @@ describe('Computer owner route lifecycle', () => {
   })
 
   it('maps setting and restart outcomes, including malformed and aborted requests', async () => {
-    const apply = vi.fn(async (_session: SessionId, enabled: boolean) => enabled ? 'applied' as const : 'busy' as const)
+    const apply = vi.fn<(sessionId: SessionId, enabled: boolean, signal: AbortSignal) => Promise<'applied' | 'busy' | undefined>>(
+      async (_session, enabled) => enabled ? 'applied' : 'busy',
+    )
     const setting = computerSettingRoute('network', apply)
     expect((await setting.fetch(post(setting.path, {}))).status).toBe(400)
     expect((await setting.fetch(new Request(`http://127.0.0.1${setting.path}`, { method: 'POST', body: '{' }))).status).toBe(400)
@@ -219,7 +230,11 @@ describe('Computer owner route lifecycle', () => {
     apply.mockRejectedValueOnce(new Error('private setting detail'))
     expect((await setting.fetch(post(setting.path, { sessionId: SESSION, enabled: true }))).status).toBe(503)
 
-    const restart = vi.fn(async (_session: SessionId, surface: 'primary' | 'desktop') => surface === 'desktop' ? 'busy' as const : 'restarted' as const)
+    const restart = vi.fn<(
+      sessionId: SessionId, surface: 'primary' | 'desktop', signal: AbortSignal,
+    ) => Promise<'restarted' | 'busy' | undefined>>(
+      async (_session, surface) => surface === 'desktop' ? 'busy' : 'restarted',
+    )
     const restartRoute = computerRestartRoute(restart)
     expect((await restartRoute.fetch(post(restartRoute.path, {}))).status).toBe(400)
     expect((await restartRoute.fetch(post(restartRoute.path, 'not-an-object'))).status).toBe(400)
@@ -242,8 +257,11 @@ describe('Computer owner route lifecycle', () => {
 
   it('rejects malformed and provider-failing sign-in requests', async () => {
     const answer = vi.fn(async () => ({ mode: 'controlling' as const }))
-    const resolve = vi.fn(async (sessionId: string) => sessionId === SESSION ? {
-      status: () => ({ id: 'request-id', canCancel: true }), answer,
+    const resolve = vi.fn<(sessionId: string) => Promise<{
+      status: () => ComputerSignInRequest
+      answer: typeof answer
+    } | undefined>>(async sessionId => sessionId === SESSION ? {
+      status: () => ({ id: brandString<ComputerSignInId>('request-id'), canCancel: true }), answer,
     } : undefined)
     const endpoint = computerSignInRoute(resolve)
     expect((await endpoint.fetch(new Request(`http://127.0.0.1${endpoint.path}`, { method: 'POST', body: '{' }))).status).toBe(400)
