@@ -1011,6 +1011,37 @@ describe('Bot group delivery with a running Agent', () => {
     }
   })
 
+  it('preserves repeated recipient entries when retrying a schema-valid legacy message', async () => {
+    const storage = await openGroupDomain(new MemoryMediaPool())
+    const alpha = botView(BotId('bot-legacy-target-alpha'), SessionId('session-legacy-target-alpha'), 'Legacy alpha')
+    const beta = botView(BotId('bot-legacy-target-beta'), SessionId('session-legacy-target-beta'), 'Legacy beta')
+    const deliverToBot = vi.fn<BotGroupDeliveryHost['deliverToBot']>(async () => 'accepted')
+    const service = new BotGroupService(storage.domain, {
+      listBots: async () => [alpha, beta],
+      deliverToBot,
+    })
+    const groupId = BotGroupId('bot-group-legacy-targets')
+    const messageId = BotGroupMessageId('bot-group-message-legacy-targets')
+    const targetBotIds = [beta.id, alpha.id, beta.id]
+    const text = 'Keep the stored recipient order.'
+    try {
+      await service.create({ id: groupId, name: 'Legacy recipients', botIds: [alpha.id, beta.id] })
+      await storage.domain.table('messages').put(messageId, {
+        id: messageId, groupId, sender: { kind: 'user' }, text, targetBotIds, createdAt: 1,
+      })
+      const first = await service.send({ groupId, messageId, text })
+      expect(first.deliveries.map(delivery => delivery.botId)).toEqual(targetBotIds)
+      expect(deliverToBot).toHaveBeenCalledTimes(2)
+      const retry = await service.send({ groupId, messageId, text })
+      expect(retry.status).toBe('duplicate')
+      expect(retry.deliveries.map(delivery => delivery.botId)).toEqual(targetBotIds)
+      expect(deliverToBot).toHaveBeenCalledTimes(2)
+    } finally {
+      await service.whenIdle()
+      await storage.ctx.fiber.dispose()
+    }
+  })
+
   it('routes principal and Bot sends through their selected delivery providers', async () => {
     const storage = await openGroupDomain(new MemoryMediaPool())
     const alpha = botView(BotId('bot-routing-alpha'), SessionId('session-routing-alpha'), 'Routing alpha')
