@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { appendFileSync, writeFileSync } from 'node:fs'
-import { chmod, mkdir, mkdtemp, readFile, readdir, rm, symlink, unlink, writeFile } from 'node:fs/promises'
+import { chmod, link, mkdir, mkdtemp, readFile, readdir, rm, symlink, unlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { EventEmitter } from 'node:events'
@@ -351,6 +351,30 @@ it.skipIf(typeof process.getuid !== 'function')('rejects resources owned by anot
   } finally {
     owner.mockRestore()
     await rm(root, { recursive: true, force: true })
+  }
+})
+
+it.skipIf(process.platform === 'win32')('rejects a POSIX resource writable through an external hard link', async () => {
+  const root = await privateOverlayRoot('compound-resource-hardlink-')
+  const external = await mkdtemp(join(tmpdir(), 'compound-resource-alias-'))
+  try {
+    upstream('e'.repeat(40), '2.0.0')
+    await updateOverlay(root)
+    const overlay = activeOverlay(root)
+    if (overlay === undefined) throw new Error('Expected the published overlay')
+    const scripts = join(overlay.assetRoot, 'compound', 'scripts')
+    await mkdir(scripts, { mode: 0o700 })
+    const alias = join(external, 'helper.py')
+    await writeFile(alias, '# linked resource\n', { mode: 0o644 })
+    await chmod(alias, 0o644)
+    await link(alias, join(scripts, 'helper.py'))
+    expect(activeOverlay(root)?.commit).toBe(overlay.commit)
+
+    await chmod(alias, 0o664)
+    expect(activeOverlay(root)).toBeUndefined()
+  } finally {
+    await rm(root, { recursive: true, force: true })
+    await rm(external, { recursive: true, force: true })
   }
 })
 

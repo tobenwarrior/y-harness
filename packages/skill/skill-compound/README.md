@@ -43,7 +43,7 @@ Each loaded skill body ends with a `Compound runtime` section naming the absolut
 
 On Windows, the configured `overlayRoot` is created with a protected DACL limited to the current user, SYSTEM, and local Administrators; an existing root is accepted only when its owner, ACL, and path components satisfy the same private policy. A missing root checks every existing ancestor for untrusted replacement rights, allowing inherited read/traverse/create-child access but failing closed on writable or untrusted ownership paths.
 
-Active revisions validate resource ownership and file types before exposing skill paths or starting the code-map service. Windows also validates every resource's private DACL. Owner-created Python caches keep their account's normal permissions within the private POSIX root. Links, reparse points and special files are rejected.
+Active revisions validate resource ownership and file types before exposing skill paths or starting the code-map service. Windows also validates every resource's private DACL. Owner-created Python caches keep their account's normal permissions within the private POSIX root. Symbolic links, reparse points, special files and POSIX hard links writable by other accounts are rejected.
 
 ### What the skills do
 
