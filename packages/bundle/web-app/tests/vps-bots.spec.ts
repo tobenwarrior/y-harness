@@ -1147,6 +1147,7 @@ describe('managed VPS Bot composition', () => {
     const ctx = new Context()
     const bot = { id: BotId('bot-managed-basic'), sessionId: BOT_SESSION, state: 'active' as const }
     const desktop = { id: BotId('bot-desktop-basic'), sessionId: DESKTOP_SESSION, state: 'active' as const }
+    const routes: ConnectionFetchRoute[] = []
     const bindWorkspace = vi.fn<Context['terminalController']['bindWorkspace']>(() => async () => {})
     try {
       await ctx.plugin(LlmRuntime)
@@ -1165,6 +1166,12 @@ describe('managed VPS Bot composition', () => {
         read: vi.fn(async () => ({ text: '', version: 'fixture-version', offset: 1, lines: 0, eof: true })),
       } as never)
       ctx.provide('terminalController', { bindWorkspace } as never)
+      ctx.provide('connection', { fetch: {
+        register(route: ConnectionFetchRoute) {
+          routes.push(route)
+          return () => { routes.splice(routes.indexOf(route), 1) }
+        },
+      } } as never)
       ctx.provide('bots', { ownerBotForSession: async (id: string) => {
         if (id === BOT_SESSION) return bot
         if (id === DESKTOP_SESSION) return desktop
