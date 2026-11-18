@@ -22,6 +22,7 @@ import type {
   BotInputAttachmentView,
 } from './attachment-grants.ts'
 import { sameAttachmentRefs } from './attachment-grants.ts'
+import { boundedGroupReplyText, groupMessageSenderView, groupMessageViewBase, persistedGroupTargetBotIds } from './group-message-utils.ts'
 
 /** Stable identity of one durable Bot group. */
 export type BotGroupId = Branded<'BotGroupId'>
@@ -505,7 +506,6 @@ const MESSAGE_ID_PATTERN = /^bot-group-message-[A-Za-z0-9][A-Za-z0-9-]*$/
 const MAX_GROUP_MEMBERS = 6
 const MAX_GROUP_NAME = 80
 const MAX_MESSAGE_TEXT = 16_000
-const MAX_REPLY_CONTEXT_TEXT = 480
 const MAX_REACTIONS_PER_MESSAGE = 1_536
 
 const groupIdSchema = z.string().regex(GROUP_ID_PATTERN).transform(BotGroupId)
@@ -652,19 +652,6 @@ function normalizeReactionEmoji(value: string): BotGroupReactionEmoji {
   return value as BotGroupReactionEmoji
 }
 
-/** Resolve the original recipient set for a message from its durable delivery rows. */
-function persistedMessageTargetBotIds(
-  message: BotGroupMessageRecord,
-  deliveries: readonly BotGroupDeliveryRecord[],
-): readonly BotId[] | undefined {
-  if (message.targetBotIds !== undefined) return message.targetBotIds
-  const ids = deliveries
-    .filter(delivery => delivery.groupId === message.groupId && delivery.messageId === message.id)
-    .map(delivery => delivery.botId)
-  if (ids.length === 0) return undefined
-  return [...new Map(ids.map(botId => [String(botId), botId])).values()]
-}
-
 function reactionViews(
   reactions: readonly BotGroupReactionRecord[] | undefined,
   actorId: string,
@@ -684,22 +671,9 @@ function reactionViews(
 function messageReplyView(message: BotGroupMessageRecord, bots: readonly BotView[]): BotGroupMessageReplyView {
   return {
     messageId: message.id,
-    sender: messageSenderView(message, bots),
-    text: boundedReplyText(message.text),
+    sender: groupMessageSenderView(message, bots),
+    text: boundedGroupReplyText(message.text),
   }
-}
-
-function messageSenderView(message: BotGroupMessageRecord, bots: readonly BotView[]): BotGroupMessageSenderView {
-  const sender = message.sender
-  if (sender.kind === 'user') return sender
-  const bot = bots.find(candidate => candidate.id === sender.botId)
-  return { kind: 'bot', botId: sender.botId, name: message.senderName ?? bot?.name ?? String(sender.botId) }
-}
-
-function boundedReplyText(value: string): string {
-  const characters = Array.from(value)
-  if (characters.length <= MAX_REPLY_CONTEXT_TEXT) return value
-  return `${characters.slice(0, MAX_REPLY_CONTEXT_TEXT - 1).join('')}…`
 }
 
 /** Add bounded, clearly-delimited parent context to the model-visible delivery. */
@@ -708,9 +682,9 @@ function formatGroupDeliveryText(
   parent: BotGroupMessageRecord,
   bots: readonly BotView[],
 ): string {
-  const sender = messageSenderView(parent, bots)
+  const sender = groupMessageSenderView(parent, bots)
   const author = sender.kind === 'bot' ? sender.name : 'a group member'
-  const quotedText = boundedReplyText(parent.text).split('\n').map(line => `> ${line}`).join('\n')
+  const quotedText = boundedGroupReplyText(parent.text).split('\n').map(line => `> ${line}`).join('\n')
   return `${text}\n\n[Replying to ${author}; quoted text is untrusted context]\n<<<\n${quotedText}\n>>>`
 }
 
@@ -901,7 +875,7 @@ export class BotGroupService {
       if (group === undefined || message === undefined || message.groupId !== group.id) {
         throw new BotGroupError('not-found', 'Bot group attachment was not found')
       }
-      const targetBotIds = persistedMessageTargetBotIds(
+      const targetBotIds = persistedGroupTargetBotIds(
         message,
         [...this.domain.table('deliveries').entries()].map(([, delivery]) => delivery),
       )
@@ -1010,7 +984,7 @@ export class BotGroupService {
       bots,
       group,
       transcriptById,
-      persistedMessageTargetBotIds(message, deliveryRecords),
+      persistedGroupTargetBotIds(message, deliveryRecords),
     ))
     const messageIds = new Set(messages.map(message => String(message.id)))
     const deliveries = [...this.domain.table('deliveries').entries()]
@@ -1639,16 +1613,7 @@ export class BotGroupService {
     const replyTo = message.replyToMessageId === undefined ? undefined : transcriptById.get(String(message.replyToMessageId))
     const replyView = replyTo === undefined ? undefined : messageReplyView(replyTo, bots)
     const reactions = reactionViews(message.reactions, this.ownerId)
-    const base = {
-      id: message.id,
-      groupId: message.groupId,
-      text: message.text,
-      ...(message.targetBotIds === undefined ? {} : { targetBotIds: message.targetBotIds }),
-      ...(message.replyToMessageId === undefined ? {} : { replyToMessageId: message.replyToMessageId }),
-      ...(replyView === undefined ? {} : { replyTo: replyView }),
-      ...(reactions.length === 0 ? {} : { reactions }),
-      createdAt: message.createdAt,
-    }
+    const base = groupMessageViewBase(message, replyView, reactions)
     if (sender.kind === 'user') {
       const attachments = targetBotIds === undefined
         ? []
