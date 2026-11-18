@@ -22,6 +22,6 @@
     - button "Steer queued message"
 - textbox "Parent session offline; sending is unavailable but you can still stop the run" [disabled]
 - button "Add files or run commands" [disabled]
-- 'button "Access mode, current: Custom" [disabled]': Custom
+- 'button "Access mode, current: Approve for me" [disabled]': Approve for me
 - button "Stop generating"
 - button "Send message" [disabled]

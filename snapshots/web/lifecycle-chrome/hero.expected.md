@@ -23,7 +23,8 @@
 - text: Into the Unknown Preview
 - button "Choose workspace": workspace
 - button "Standard mode"
-- textbox "Describe what you want to build, / commands, @ files or sessions"
+- textbox "Describe what you want to build, / commands, @ files or sessions":
+  - paragraph
 - button "Add files or run commands"
 - 'button "Access mode, current: Approve for me"': Approve for me
 - button "Select model, current DeepSeek-V4-Flash": DeepSeek-V4-Flash
