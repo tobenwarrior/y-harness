@@ -2949,9 +2949,13 @@ describe('BotWorkspaceController', () => {
     remote.revokeTemplate = vi.fn(async () => revokeResult.promise)
     const revoking = actions.revokeTemplate(String(template.id))
     await vi.waitFor(() => { expect(remote.revokeTemplate).toHaveBeenCalledOnce() })
+    const beforeDisposedRevoke = controller.source.getSnapshot()
+    const templateReadsBeforeRevoke = remote.listTemplates?.mock.calls.length ?? 0
     controller.dispose()
     revokeResult.resolve({ ok: true, value: { template } })
     await expect(revoking).resolves.toBeUndefined()
+    expect(controller.source.getSnapshot()).toEqual(beforeDisposedRevoke)
+    expect(remote.listTemplates?.mock.calls.length ?? 0).toBe(templateReadsBeforeRevoke)
   })
 
   it('guards disposed selections and group actions across remote lifecycle failures', async () => {
@@ -3049,9 +3053,12 @@ describe('BotWorkspaceController', () => {
     await expect(createFace.createGroup(creation('explicit-create-rejected'))).rejects.toThrow('create rejected')
     const creating = createFace.createGroup(creation('explicit-create-disposed'))
     await vi.waitFor(() => { expect(createRemote.createGroup).toHaveBeenCalledTimes(3) })
+    const beforeDisposedCreate = createController.source.getSnapshot()
     createController.dispose()
     createResult.resolve({ ok: true, value: { group } })
     await expect(creating).resolves.toBeUndefined()
+    expect(createController.source.getSnapshot()).toEqual(beforeDisposedCreate)
+    expect(createRemote.list).not.toHaveBeenCalled()
 
     const updateRemote = remoteFixture([first, second])
     const updateResult = Promise.withResolvers<Awaited<ReturnType<NonNullable<BotWorkspaceRemote['updateGroup']>>>>()
@@ -3066,9 +3073,12 @@ describe('BotWorkspaceController', () => {
     await expect(updateFace.updateGroup(update)).rejects.toThrow('update rejected')
     const updating = updateFace.updateGroup(update)
     await vi.waitFor(() => { expect(updateRemote.updateGroup).toHaveBeenCalledTimes(3) })
+    const beforeDisposedUpdate = updateController.source.getSnapshot()
     updateController.dispose()
     updateResult.resolve({ ok: true, value: { group } })
     await expect(updating).resolves.toBeUndefined()
+    expect(updateController.source.getSnapshot()).toEqual(beforeDisposedUpdate)
+    expect(updateRemote.list).not.toHaveBeenCalled()
 
     const sendRemote = remoteFixture([first, second])
     sendRemote.listGroups = vi.fn(async () => ({ ok: true as const, value: { groups: [group] } }))
@@ -3094,9 +3104,19 @@ describe('BotWorkspaceController', () => {
     await expect(react('reaction-message', '👍', 'add')).rejects.toThrow('unexpected response')
     const sending = sendFace.sendGroupMessage('Disposed send', 'explicit-disposed-message')
     await vi.waitFor(() => { expect(sendRemote.sendGroupMessage).toHaveBeenCalledTimes(2) })
+    const beforeDisposedSend = sendController.source.getSnapshot()
+    const sendReadsBeforeDispose = {
+      list: sendRemote.list.mock.calls.length,
+      groups: sendRemote.listGroups?.mock.calls.length ?? 0,
+      inspect: sendRemote.inspectGroup?.mock.calls.length ?? 0,
+    }
     sendController.dispose()
     sendResult.resolve({ ok: true, value: { messageId: brandString<BotGroupMessageId>('explicit-disposed-message'), status: 'accepted', deliveries: [] } })
     await expect(sending).resolves.toBeUndefined()
+    expect(sendController.source.getSnapshot()).toEqual(beforeDisposedSend)
+    expect(sendRemote.list.mock.calls.length).toBe(sendReadsBeforeDispose.list)
+    expect(sendRemote.listGroups?.mock.calls.length ?? 0).toBe(sendReadsBeforeDispose.groups)
+    expect(sendRemote.inspectGroup?.mock.calls.length ?? 0).toBe(sendReadsBeforeDispose.inspect)
   })
 
   it('fails closed for attachment sends before admission, reconciliation, and delivery', async () => {
@@ -3171,11 +3191,15 @@ describe('BotWorkspaceController', () => {
       .mockImplementation(async () => deferred.promise)
     const sending = send('Disposed attachment send', [fileDraft], 'bot-group-message-attachment-disposed')
     await vi.waitFor(() => { expect(remote.sendGroupMessage).toHaveBeenCalledOnce() })
+    const beforeDisposedAttachmentSend = controller.source.getSnapshot()
+    const attachmentReadsBeforeDispose = remote.inspectGroup?.mock.calls.length ?? 0
     controller.dispose()
     deferred.resolve({ ok: true, value: {
       messageId: brandString<BotGroupMessageId>('bot-group-message-attachment-disposed'), status: 'accepted', deliveries: [],
     } })
     await expect(sending).resolves.toBeUndefined()
+    expect(controller.source.getSnapshot()).toEqual(beforeDisposedAttachmentSend)
+    expect(remote.inspectGroup?.mock.calls.length ?? 0).toBe(attachmentReadsBeforeDispose)
   })
 
   it('preserves callback ownership when group persistence and refreshes fail', async () => {
@@ -3241,12 +3265,16 @@ describe('BotWorkspaceController', () => {
     await vi.waitFor(() => { expect(reactionController.source.getSnapshot().selectedGroup).not.toBeNull() })
     const reacting = reactionFace.reactGroupMessage?.('bot-group-message-callback', '👍', 'add')
     await vi.waitFor(() => { expect(reactionRemote.reactGroupMessage).toHaveBeenCalledOnce() })
+    const beforeDisposedReaction = reactionController.source.getSnapshot()
+    const reactionReadsBeforeDispose = reactionRemote.inspectGroup?.mock.calls.length ?? 0
     reactionController.dispose()
     reactionResult.resolve({ ok: true, value: {
       messageId: brandString<BotGroupMessageId>('bot-group-message-callback'),
       reactions: [{ emoji: '👍', count: 1, viewerReacted: true }],
     } })
     await expect(reacting).resolves.toBeUndefined()
+    expect(reactionController.source.getSnapshot()).toEqual(beforeDisposedReaction)
+    expect(reactionRemote.inspectGroup?.mock.calls.length ?? 0).toBe(reactionReadsBeforeDispose)
 
     const retryRemote = remoteFixture([])
     const retryController = new BotWorkspaceController(retryRemote, sessionsFixture().sessions, () => 'unexpected response')
@@ -3274,24 +3302,17 @@ describe('BotWorkspaceController', () => {
     const disposedInspect = Promise.withResolvers<RemoteResult<BotGroupInspectValue>>()
     const disposedInspectRemote = remoteFixture([first, second])
     disposedInspectRemote.listGroups = vi.fn(async () => ({ ok: true as const, value: { groups: [group] } }))
-    let disposedInspectCall: Promise<RemoteResult<BotGroupInspectValue>> | undefined
-    disposedInspectRemote.inspectGroup = vi.fn(() => {
-      disposedInspectCall = disposedInspect.promise
-      return disposedInspect.promise
-    })
+    disposedInspectRemote.inspectGroup = vi.fn(() => disposedInspect.promise)
     const disposedInspectController = new BotWorkspaceController(disposedInspectRemote, sessionsFixture().sessions, () => 'unexpected response')
     await disposedInspectController.load()
     disposedInspectController.face().selectGroup(String(group.id))
     await vi.waitFor(() => { expect(disposedInspectRemote.inspectGroup).toHaveBeenCalledOnce() })
+    const beforeDisposedInspect = disposedInspectController.source.getSnapshot()
     disposedInspectController.dispose()
-    const disposedInspectComplete = Promise.withResolvers<undefined>()
-    if (disposedInspectCall === undefined) throw new Error('disposed group inspection did not start')
-    void disposedInspectCall.then(
-      () => { disposedInspectComplete.resolve(undefined) },
-      () => { disposedInspectComplete.resolve(undefined) },
-    )
     disposedInspect.reject(new Error('disposed group failed'))
-    await disposedInspectComplete.promise
+    await expect(disposedInspect.promise).rejects.toThrow('disposed group failed')
+    expect(disposedInspectController.source.getSnapshot()).toEqual(beforeDisposedInspect)
+    expect(disposedInspectRemote.inspectGroup).toHaveBeenCalledOnce()
   })
 
   it('reconciles lost Bot creation responses and releases stale Session callbacks', async () => {
@@ -3348,14 +3369,10 @@ describe('BotWorkspaceController', () => {
     const retainController = new BotWorkspaceController(remoteFixture([first, second]), retainSessions.sessions, () => 'unexpected response')
     await retainController.load()
     retainController.face().select(second.id)
-    const staleReferenceComplete = Promise.withResolvers<undefined>()
-    void firstReference.ready.then(
-      () => { staleReferenceComplete.resolve(undefined) },
-      () => { staleReferenceComplete.resolve(undefined) },
-    )
+    const beforeStaleReference = retainController.source.getSnapshot()
     staleReady.reject(new Error('stale reference failed'))
-    await staleReferenceComplete.promise
-    expect(retainController.source.getSnapshot().error).toBeNull()
+    await expect(staleReady.promise).rejects.toThrow('stale reference failed')
+    expect(retainController.source.getSnapshot()).toEqual(beforeStaleReference)
     retainController.dispose()
 
     const disposedOrganization = Promise.withResolvers<Awaited<ReturnType<NonNullable<BotWorkspaceRemote['updateOrganization']>>>>()
@@ -3363,9 +3380,12 @@ describe('BotWorkspaceController', () => {
     organizationRemote.updateOrganization = vi.fn(async () => disposedOrganization.promise)
     const organizationController = new BotWorkspaceController(organizationRemote, sessionsFixture().sessions, () => 'unexpected response')
     const organizing = organizationController.face().organize?.(source.id, { pinned: true })
+    const beforeDisposedOrganization = organizationController.source.getSnapshot()
     organizationController.dispose()
     disposedOrganization.reject('organization transport failed')
     await expect(organizing).resolves.toBeUndefined()
+    expect(organizationController.source.getSnapshot()).toEqual(beforeDisposedOrganization)
+    expect(organizationRemote.list).not.toHaveBeenCalled()
   })
 
   it('covers optional action identity checks and omitted lifecycle remotes', async () => {
@@ -3464,9 +3484,12 @@ describe('BotWorkspaceController', () => {
     const disposedSkills = disposedSkillController.face().skillManager
     if (disposedSkills === undefined) throw new Error('disposed skill manager is not mounted')
     const updatingSkill = disposedSkills.update(original.id, policy, 1)
+    const beforeDisposedSkill = disposedSkillController.source.getSnapshot()
     disposedSkillController.dispose()
     skillResult.resolve({ ok: true, value: { bot: original, policy, revision: 2 } })
     await expect(updatingSkill).resolves.toEqual({ policy })
+    expect(disposedSkillController.source.getSnapshot()).toEqual(beforeDisposedSkill)
+    expect(disposedSkillRemote.listSkills?.mock.calls.length ?? 0).toBe(0)
 
     const profileRemote = remoteFixture([original])
     profileRemote.updateProfile = vi.fn(async () => ({ ok: true as const, value: { bot: original } }))
@@ -3488,12 +3511,15 @@ describe('BotWorkspaceController', () => {
     const firstCreate = createFace.create(createRequest)
     await vi.waitFor(() => { expect(createRemote.create).toHaveBeenCalledOnce() })
     const secondCreate = createFace.create({ ...createRequest, name: 'Ignored while pending' })
+    const beforeDisposedCreateRequest = createController.source.getSnapshot()
     createController.dispose()
     await createFace.create(createRequest)
     createFace.retry()
     createResult.resolve({ ok: true, value: { bot: original } })
     await expect(firstCreate).resolves.toBeUndefined()
     await expect(secondCreate).resolves.toBeUndefined()
+    expect(createController.source.getSnapshot()).toEqual(beforeDisposedCreateRequest)
+    expect(createRemote.list).not.toHaveBeenCalled()
 
     const retryRemote = remoteFixture([original])
     const retryController = new BotWorkspaceController(retryRemote, sessionsFixture().sessions, () => 'unexpected response')
@@ -3553,9 +3579,12 @@ describe('BotWorkspaceController', () => {
     const disposedController = new BotWorkspaceController(disposedRemote, sessionsFixture().sessions, () => 'unexpected response')
     const disposedLoad = disposedController.load()
     await vi.waitFor(() => { expect(disposedRemote.list).toHaveBeenCalledOnce() })
+    const beforeDisposedRoster = disposedController.source.getSnapshot()
     disposedController.dispose()
     disposedList.resolve({ ok: true, value: { bots: [first] } })
     await expect(disposedLoad).resolves.toBeUndefined()
+    expect(disposedController.source.getSnapshot()).toEqual(beforeDisposedRoster)
+    expect(disposedRemote.list).toHaveBeenCalledOnce()
 
     const group = groupView('bot-group-stale-roster', 'Stale roster', [first])
     const removedRemote = remoteFixture([first])
@@ -3578,9 +3607,12 @@ describe('BotWorkspaceController', () => {
     const sessionDisposedController = new BotWorkspaceController(sessionDisposedRemote, sessionDisposed.sessions, () => 'unexpected response')
     const sessionLoading = sessionDisposedController.load()
     await vi.waitFor(() => { expect(sessionDisposed.refresh).toHaveBeenCalledOnce() })
+    const beforeDisposedSessionRefresh = sessionDisposedController.source.getSnapshot()
     sessionDisposedController.dispose()
     sessionRefresh.resolve(undefined)
     await expect(sessionLoading).resolves.toBeUndefined()
+    expect(sessionDisposedController.source.getSnapshot()).toEqual(beforeDisposedSessionRefresh)
+    expect(sessionDisposedRemote.list).toHaveBeenCalledOnce()
 
     const revisionRemote = remoteFixture([first])
     const revisionSessions = sessionsFixture()
@@ -3640,44 +3672,34 @@ describe('BotWorkspaceController', () => {
     const refreshResult = Promise.withResolvers<undefined>()
     const selectionSessions = sessionsFixture()
     const selectionService = sessionsWithList(selectionSessions, sessionList(first.sessionId, () => true))
-    let selectionRefreshCall: Promise<undefined> | undefined
     selectionSessions.refresh
       .mockResolvedValueOnce(undefined)
-      .mockImplementationOnce(() => {
-        selectionRefreshCall = refreshResult.promise
-        return refreshResult.promise
-      })
+      .mockImplementationOnce(() => refreshResult.promise)
     selectionSessions.retain.mockImplementation((target) => {
       const sessionId = target
       if (sessionId === second.sessionId) throw new Error('selection catalog is stale')
       return reference(sessionId)
     })
+    const selectionRemote = remoteFixture([first, second])
     const selectionController = new BotWorkspaceController(
-      remoteFixture([first, second]), selectionService, () => 'unexpected response',
+      selectionRemote, selectionService, () => 'unexpected response',
     )
     await selectionController.load()
     selectionController.face().select(second.id)
     await vi.waitFor(() => { expect(selectionSessions.refresh).toHaveBeenCalledTimes(2) })
+    const beforeDisposedSelection = selectionController.source.getSnapshot()
     selectionController.dispose()
-    const selectionRefreshComplete = Promise.withResolvers<undefined>()
-    if (selectionRefreshCall === undefined) throw new Error('disposed selection refresh did not start')
-    void selectionRefreshCall.then(
-      () => { selectionRefreshComplete.resolve(undefined) },
-      () => { selectionRefreshComplete.resolve(undefined) },
-    )
     refreshResult.reject('disposed selection refresh')
-    await selectionRefreshComplete.promise
+    await expect(refreshResult.promise).rejects.toBe('disposed selection refresh')
+    expect(selectionController.source.getSnapshot()).toEqual(beforeDisposedSelection)
+    expect(selectionRemote.list).toHaveBeenCalledOnce()
 
     const staleRefresh = Promise.withResolvers<undefined>()
     const staleSessions = sessionsFixture()
     const staleService = sessionsWithList(staleSessions, sessionList(first.sessionId, () => true))
-    let staleRefreshCall: Promise<undefined> | undefined
     staleSessions.refresh
       .mockResolvedValueOnce(undefined)
-      .mockImplementationOnce(() => {
-        staleRefreshCall = staleRefresh.promise
-        return staleRefresh.promise
-      })
+      .mockImplementationOnce(() => staleRefresh.promise)
     staleSessions.retain.mockImplementation((target) => {
       const sessionId = target
       if (sessionId === second.sessionId) throw new Error('stale selection catalog')
@@ -3690,15 +3712,10 @@ describe('BotWorkspaceController', () => {
     staleController.face().select(second.id)
     await vi.waitFor(() => { expect(staleSessions.refresh).toHaveBeenCalledTimes(2) })
     staleController.face().select(first.id)
-    const staleRefreshComplete = Promise.withResolvers<undefined>()
-    if (staleRefreshCall === undefined) throw new Error('stale selection refresh did not start')
-    void staleRefreshCall.then(
-      () => { staleRefreshComplete.resolve(undefined) },
-      () => { staleRefreshComplete.resolve(undefined) },
-    )
+    const beforeStaleSelectionRefresh = staleController.source.getSnapshot()
     staleRefresh.reject('stale selection refresh')
-    await staleRefreshComplete.promise
-    expect(staleController.source.getSnapshot().selectedBotId).toBe(first.id)
+    await expect(staleRefresh.promise).rejects.toBe('stale selection refresh')
+    expect(staleController.source.getSnapshot()).toEqual(beforeStaleSelectionRefresh)
     staleController.dispose()
 
     const group = groupView('bot-group-disposed-send', 'Disposed send', [first, second])
@@ -3716,9 +3733,13 @@ describe('BotWorkspaceController', () => {
     await vi.waitFor(() => { expect(groupController.source.getSnapshot().selectedGroup).not.toBeNull() })
     const sending = groupFace.sendGroupMessage('Disposed send', 'bot-group-message-disposed-error')
     await vi.waitFor(() => { expect(groupRemote.sendGroupMessage).toHaveBeenCalledOnce() })
+    const beforeDisposedGroupSend = groupController.source.getSnapshot()
+    const groupReadsBeforeDispose = groupRemote.inspectGroup?.mock.calls.length ?? 0
     groupController.dispose()
     sendResult.reject('send failed after disposal')
     await expect(sending).rejects.toThrow('send failed after disposal')
+    expect(groupController.source.getSnapshot()).toEqual(beforeDisposedGroupSend)
+    expect(groupRemote.inspectGroup?.mock.calls.length ?? 0).toBe(groupReadsBeforeDispose)
   })
 
   it('propagates non-Error image admission failures through the group send boundary', async () => {
@@ -3821,13 +3842,9 @@ describe('BotWorkspaceController', () => {
     const disposedRefreshRemote = remoteFixture([first, second])
     const disposedRefreshSessions = sessionsFixture()
     const disposedRefreshService = sessionsWithList(disposedRefreshSessions, sessionList(second.sessionId, () => false))
-    let disposedRefreshCall: Promise<undefined> | undefined
     disposedRefreshSessions.refresh
       .mockResolvedValueOnce(undefined)
-      .mockImplementationOnce(() => {
-        disposedRefreshCall = disposedRefresh.promise
-        return disposedRefresh.promise
-      })
+      .mockImplementationOnce(() => disposedRefresh.promise)
     disposedRefreshSessions.retain.mockImplementation((sessionId) => {
       if (sessionId === second.sessionId) throw new Error('Session catalog is stale')
       return reference(sessionId)
@@ -3836,15 +3853,12 @@ describe('BotWorkspaceController', () => {
     await disposedRefreshController.load()
     disposedRefreshController.face().select(second.id)
     await vi.waitFor(() => { expect(disposedRefreshSessions.refresh).toHaveBeenCalledTimes(2) })
+    const beforeDisposedCatalogRefresh = disposedRefreshController.source.getSnapshot()
     disposedRefreshController.dispose()
-    const disposedRefreshComplete = Promise.withResolvers<undefined>()
-    if (disposedRefreshCall === undefined) throw new Error('disposed catalog refresh did not start')
-    void disposedRefreshCall.then(
-      () => { disposedRefreshComplete.resolve(undefined) },
-      () => { disposedRefreshComplete.resolve(undefined) },
-    )
     disposedRefresh.resolve(undefined)
-    await disposedRefreshComplete.promise
+    await expect(disposedRefresh.promise).resolves.toBeUndefined()
+    expect(disposedRefreshController.source.getSnapshot()).toEqual(beforeDisposedCatalogRefresh)
+    expect(disposedRefreshRemote.list).toHaveBeenCalledOnce()
 
     const avatar = { attachmentId: AttachmentId('avatar-cache'), mediaType: 'image/png' as const, bytes: 3, width: 1, height: 1 }
     const otherAvatar = { attachmentId: AttachmentId('avatar-error'), mediaType: 'image/png' as const, bytes: 3, width: 1, height: 1 }
@@ -3911,7 +3925,12 @@ describe('BotWorkspaceController', () => {
     controller.dispose()
 
     const staleSource = bot('bot-template-stale-catalog-boundary', 'session-template-stale-catalog-boundary')
-    const staleTemplate = templateView('bot-template-stale-catalog-boundary', 'bot-template-stale-catalog-code')
+    const staleTemplate = templateView('bot-template-stale-catalog-boundary', 'bot-template-stale-catalog-code', {
+      description: 'Old catalog entry',
+    })
+    const currentTemplate = templateView('bot-template-stale-catalog-boundary', 'bot-template-stale-catalog-code', {
+      description: 'Current catalog entry',
+    })
     const staleRemote = remoteFixture([staleSource])
     const staleCatalog = Promise.withResolvers<Awaited<ReturnType<NonNullable<BotWorkspaceRemote['listTemplates']>>>>()
     const currentCatalog = Promise.withResolvers<Awaited<ReturnType<NonNullable<BotWorkspaceRemote['listTemplates']>>>>()
@@ -3933,8 +3952,12 @@ describe('BotWorkspaceController', () => {
     await vi.waitFor(() => { expect(staleRemote.listTemplates).toHaveBeenCalledTimes(3) })
     staleCatalog.resolve({ ok: true, value: { templates: [staleTemplate] } })
     await loading
-    currentCatalog.resolve({ ok: true, value: { templates: [staleTemplate] } })
+    currentCatalog.resolve({ ok: true, value: { templates: [currentTemplate] } })
     await publishing
+    expect(staleController.source.getSnapshot().templates.templates[0]?.description).toBe('Current catalog entry')
+    expect(staleController.source.getSnapshot().templates.phase).toBe('ready')
+    expect(staleController.source.getSnapshot().templates.busy).toBe(false)
+    expect(staleController.source.getSnapshot().templates.error).toBeNull()
     staleController.dispose()
 
     const rejectedStaleRemote = remoteFixture([staleSource])
@@ -3962,11 +3985,15 @@ describe('BotWorkspaceController', () => {
     const previewing = rejectedActions.previewTemplate()
     await vi.waitFor(() => { expect(rejectedStaleRemote.previewTemplate).toHaveBeenCalledOnce() })
     rejectedCatalog.reject('old catalog failed')
-    rejectedCurrentCatalog.resolve({ ok: true, value: { templates: [staleTemplate] } })
+    rejectedCurrentCatalog.resolve({ ok: true, value: { templates: [currentTemplate] } })
     await rejectedLoading
     await rejectedPublishing
     pendingPreview.resolve({ ok: true, value: { template: staleTemplate, localPermissions, approvalToken: 'preview-token' } })
     await previewing
+    expect(rejectedStaleController.source.getSnapshot().templates.templates[0]?.description).toBe('Old catalog entry')
+    expect(rejectedStaleController.source.getSnapshot().templates.phase).toBe('loading')
+    expect(rejectedStaleController.source.getSnapshot().templates.busy).toBe(false)
+    expect(rejectedStaleController.source.getSnapshot().templates.error).toBeNull()
     rejectedStaleController.dispose()
 
     const noCatalogRemote = remoteFixture([source])
@@ -3981,8 +4008,12 @@ describe('BotWorkspaceController', () => {
     disposedPublishRemote.listTemplates = vi.fn(async () => ({ ok: true as const, value: { templates: [] } }))
     const disposedPublishController = new BotWorkspaceController(disposedPublishRemote, sessionsFixture().sessions, () => 'unexpected response')
     const disposedPublishing = disposedPublishController.face().templateActions?.publishTemplate({ botId: source.id })
+    const beforeDisposedPublish = disposedPublishController.source.getSnapshot()
+    const templateReadsBeforePublish = disposedPublishRemote.listTemplates?.mock.calls.length ?? 0
     disposedPublishController.dispose()
     publishResult.resolve({ ok: true, value: { template } })
     await expect(disposedPublishing).resolves.toBeUndefined()
+    expect(disposedPublishController.source.getSnapshot()).toEqual(beforeDisposedPublish)
+    expect(disposedPublishRemote.listTemplates?.mock.calls.length ?? 0).toBe(templateReadsBeforePublish)
   })
 })
