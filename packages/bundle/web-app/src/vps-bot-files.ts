@@ -12,6 +12,7 @@ import type { SandboxExecutionPolicy } from '@yharness/sandbox'
 import { z } from 'zod'
 import { VpsRuntimeError, type VpsRuntime } from './vps-runtime.ts'
 import { vpsProjectWorker } from './vps-project-worker.ts'
+import { settleVpsCommand } from './vps-command.ts'
 
 const exec = promisify(execFile)
 const MAX_TEXT_BYTES = 8 * 1024 * 1024
@@ -267,9 +268,10 @@ export class VpsBotFileSystem extends FileSystem {
       const [program, ...argv] = this.runtime.execArgv(this.sessionId, command, { stdin: true })
       try {
         const child = exec(program, argv, { signal: operationSignal, timeout: 30_000, maxBuffer: MAX_TEXT_BYTES * 2 })
+        const settled = settleVpsCommand(child)
         child.child.stdin?.on('error', (error) => { void error })
         child.child.stdin?.end(JSON.stringify({ operation, path, ...arguments_ }))
-        const { stdout } = await child
+        const { stdout } = await settled
         const response: unknown = JSON.parse(stdout)
         const failure = workerFailure.safeParse(response)
         if (failure.success) throw new FsError(failure.data.message, failure.data.error)

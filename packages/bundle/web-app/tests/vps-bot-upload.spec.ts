@@ -1,6 +1,6 @@
 /** Exercise upload byte, lifetime, and collision behavior through the real worker. */
 
-import type { ChildProcess, ExecFileOptions } from 'node:child_process'
+import { ChildProcess, type ExecFileOptions } from 'node:child_process'
 import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -170,9 +170,11 @@ describe('private Computer upload', () => {
   it('holds the workspace until a worker without an input pipe has settled', async () => {
     const started = Promise.withResolvers<true>()
     const finished = Promise.withResolvers<{ stdout: string; stderr: string }>()
+    const child = new ChildProcess()
+    child.stdin = null
     const launch = vi.fn(() => {
       started.resolve(true)
-      return Object.assign(finished.promise, { child: { stdin: null } })
+      return Object.assign(finished.promise, { child })
     })
     vi.resetModules()
     vi.doMock('node:child_process', async loadActual => ({
@@ -192,6 +194,7 @@ describe('private Computer upload', () => {
         })])
         const releasedEarly = release.mock.calls.length
         finished.reject(new Error('The worker input pipe could not be opened.'))
+        child.emit('close', 1, null)
         await expect(result).resolves.toBe('unavailable')
         expect(releasedEarly).toBe(0)
         expect(release).toHaveBeenCalledOnce()

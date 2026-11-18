@@ -16,6 +16,7 @@ import {
 } from '@yharness/subprocess'
 import { VpsRuntimeError, type VpsRuntime } from './vps-runtime.ts'
 import { scopedBotTerminal, TERMINAL_SCOPE_COMMAND } from './vps-bot-terminal.ts'
+import { settleVpsCommand } from './vps-command.ts'
 
 const exec = promisify(execFile)
 
@@ -48,7 +49,7 @@ export class VpsBotSubprocess extends SubprocessRuntime {
         '/bin/bash', '-c', 'if [[ "$1" == /* ]]; then [[ -f "$1" && -x "$1" ]] && printf "%s\\n" "$1"; else type -P -- "$1"; fi', 'bash', command,
       ])
       try {
-        const { stdout } = await exec(program, argv, { signal: operationSignal, timeout: 10_000, maxBuffer: 4096 })
+        const { stdout } = await settleVpsCommand(exec(program, argv, { signal: operationSignal, timeout: 10_000, maxBuffer: 4096 }))
         const path = stdout.trim()
         if (isAbsolute(path)) return path
       } catch (error) {

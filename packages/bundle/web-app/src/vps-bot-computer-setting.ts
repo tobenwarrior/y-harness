@@ -53,16 +53,20 @@ export class VpsBotComputerSetting {
    * Store one owner-selected override with an atomic, durable replacement.
    * @param sessionId - Canonical Bot Session UUIDv4 used as the exact filename.
    * @param enabled - Whether the owner enabled this setting.
+   * @param signal - Cancellation permitted before atomic replacement.
    * @returns A promise settled after the file and containing directory are synced.
    */
-  async set(sessionId: string, enabled: boolean): Promise<void> {
+  async set(sessionId: string, enabled: boolean, signal?: AbortSignal): Promise<void> {
     validateSession(sessionId)
     if (typeof enabled !== 'boolean') throw invalidPolicy()
+    signal?.throwIfAborted()
     await serialize(this.queueKey, async () => {
+      signal?.throwIfAborted()
       await this.ensureDirectory(true)
       const current = await this.readEntry(sessionId)
+      signal?.throwIfAborted()
       if (current === enabled) return
-      await this.writeEntry(sessionId, enabled)
+      await this.writeEntry(sessionId, enabled, signal)
     })
   }
 
@@ -114,7 +118,7 @@ export class VpsBotComputerSetting {
     }
   }
 
-  private async writeEntry(sessionId: string, enabled: boolean): Promise<void> {
+  private async writeEntry(sessionId: string, enabled: boolean, signal?: AbortSignal): Promise<void> {
     const target = join(this.directory, sessionId)
     const existing = await optionalLstat(target)
     if (existing !== undefined && !safeFile(existing)) throw invalidPolicy()
@@ -123,6 +127,7 @@ export class VpsBotComputerSetting {
     let handle: FileHandle | undefined
     let created = false
     try {
+      signal?.throwIfAborted()
       handle = await open(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | NOFOLLOW, 0o600)
       created = true
       await handle.chmod(0o600)
@@ -133,6 +138,7 @@ export class VpsBotComputerSetting {
 
       const current = await optionalLstat(target)
       if (current !== undefined && !safeFile(current)) throw invalidPolicy()
+      signal?.throwIfAborted()
       await rename(temporary, target)
       await syncDirectory(this.directory)
     } catch (error) {
@@ -150,7 +156,7 @@ export class VpsBotComputerSetting {
           if (errorCode(cleanupError) !== 'ENOENT') void cleanupError
         }
       }
-      if (isPolicyError(error)) throw error
+      if (isPolicyError(error) || (signal?.aborted && error === signal.reason)) throw error
       throw invalidPolicy()
     }
   }

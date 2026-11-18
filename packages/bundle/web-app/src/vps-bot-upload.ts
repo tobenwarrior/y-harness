@@ -5,6 +5,7 @@ import { pipeline } from 'node:stream/promises'
 import { promisify } from 'node:util'
 import { z } from 'zod'
 import { isVpsSharedPath, type VpsRuntime } from './vps-runtime.ts'
+import { settleVpsCommand } from './vps-command.ts'
 
 const exec = promisify(execFile)
 const outcomes = z.enum(['stored', 'exists', 'folder-unavailable', 'no-space', 'incomplete', 'unavailable'])
@@ -200,8 +201,8 @@ export async function uploadComputerFile(
     ], { stdin: true })
     const closed = new AbortController()
     const transfer = AbortSignal.any([operationSignal, AbortSignal.timeout(limits.timeoutMs), closed.signal])
-    const child = exec(program, argv, { env: {}, maxBuffer: 1024, timeout: seconds * 1000 + 5000 })
-    const finished = child.finally(() => { closed.abort() })
+    const child = exec(program, argv, { env: {}, maxBuffer: 1024, timeout: seconds * 1000 + 5000, signal: transfer })
+    const finished = settleVpsCommand(child).finally(() => { closed.abort() })
     const input = child.child.stdin
     const sending = input === null
       ? Promise.reject(new Error('The VPS transfer pipe is unavailable.'))

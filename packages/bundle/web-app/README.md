@@ -81,7 +81,7 @@ The authenticated owner can restart an idle private Computer. The desktop runtim
 
 The optional `computer` configuration supplies one shared X11 display for a custom Web deployment. It uses `YH_VPS_DISPLAY` and `YH_VPS_XAUTHORITY`. Set `botComputers.bots` to select owner Bots for private computers while keeping the shared display for other Bots. See [VPS setup and service grants](../../../docs/user/guide/vps.md#give-a-bot-access-to-service-diagnostics).
 
-Reloading the Web configuration detaches expired Computer and service grants and rebinds active owner Bots. A managed Bot needs a live VPS binding to execute tools. Web cancels desktop, file, and subprocess requests when the configuration closes. It closes active Bot terminals before disposing their runtimes. Service diagnostics and restarts require the owning Bot Session. Each restart requires one-time approval.
+Reloading the Web configuration detaches expired Computer and service grants and rebinds active owner Bots. A managed Bot needs a live VPS binding to execute tools. Web cancels desktop, file, and subprocess requests when the configuration closes. It closes active Bot terminals before disposing their runtimes. Disposal waits for admitted Computer operations, worker process closure, and setting changes. Configuration cancellation prevents queued or staged settings from replacing the saved choice. Service diagnostics and restarts require the owning Bot Session. Each restart requires one-time approval.
 
 `botComputers.desktopOnlyBots` selects Bots whose private Computer should use the isolated desktop while their shell and file tools retain the existing Host workspace and policy. The list contains only Bots selected by `botComputers`.
 

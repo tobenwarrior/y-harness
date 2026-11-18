@@ -18,6 +18,7 @@ import { isAbsolute, parse, relative, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
 import type { VpsBotComputerSetting } from './vps-bot-computer-setting.ts'
 import { TERMINAL_SCOPE_COMMAND } from './vps-bot-terminal.ts'
+import { settleVpsCommand } from './vps-command.ts'
 
 const PODMAN = '/usr/bin/podman'
 const USER_COMPUTER_SCOPE = [
@@ -148,8 +149,8 @@ export class VpsRuntime {
   private readonly pending = new Map<string, Promise<void>>()
   private readonly pendingCommands = new Set<Promise<VpsCommandResult>>()
   private readonly healthyUntil = new Map<string, number>()
-  private readonly active = new Map<string, number>()
-  private readonly replacing = new Set<string>()
+  private readonly active = new Map<string, Set<Promise<void>>>()
+  private readonly replacing = new Map<string, Promise<void>>()
   private readonly mountedProjects = new Set<string>()
 
   /**
@@ -195,11 +196,16 @@ export class VpsRuntime {
     return signal === undefined ? this.requests : AbortSignal.any([signal, this.requests])
   }
 
-  /** Cancel and drain pending computer preparation and Podman commands. */
+  /** Cancel and drain Computer preparation, commands, uses, and setting changes. */
   async dispose(): Promise<void> {
     this.lifetime.abort(new VpsRuntimeError(RUNTIME_CLOSED))
     this.healthyUntil.clear()
-    await Promise.allSettled([...this.pending.values(), ...this.pendingCommands])
+    await Promise.allSettled([
+      ...this.pending.values(),
+      ...this.pendingCommands,
+      ...this.replacing.values(),
+      ...[...this.active.values()].flatMap(uses => [...uses]),
+    ])
   }
 
   /**
@@ -260,14 +266,14 @@ export class VpsRuntime {
     this.signal.throwIfAborted()
     validateSessionId(sessionId)
     this.requireStableComputer(sessionId)
-    this.active.set(sessionId, (this.active.get(sessionId) ?? 0) + 1)
-    let released = false
+    const uses = this.active.get(sessionId) ?? new Set<Promise<void>>()
+    const held = Promise.withResolvers<void>()
+    uses.add(held.promise)
+    this.active.set(sessionId, uses)
     return () => {
-      if (released) return
-      released = true
-      const count = this.active.get(sessionId) ?? 0
-      if (count > 1) this.active.set(sessionId, count - 1)
-      else this.active.delete(sessionId)
+      if (!uses.delete(held.promise)) return
+      held.resolve()
+      if (uses.size === 0) this.active.delete(sessionId)
     }
   }
 
@@ -289,7 +295,8 @@ export class VpsRuntime {
       if (current === enabled) return 'applied'
       await ensurePrivateDirectory(this.rootPath, this.internals.uid)
       if (!await this.removeIdleContainer(sessionId, current, signal)) return 'busy'
-      await policy.set(sessionId, enabled)
+      this.requests.throwIfAborted()
+      await policy.set(sessionId, enabled, this.requests)
       return 'applied'
     })
   }
@@ -311,7 +318,8 @@ export class VpsRuntime {
       await ensurePrivateDirectory(this.rootPath, this.internals.uid)
       if (enabled) await this.ensureSharedVolume(volume)
       if (!await this.removeIdleContainer(sessionId, await this.internetFor(sessionId), signal)) return 'busy'
-      await policy.set(sessionId, enabled)
+      this.requests.throwIfAborted()
+      await policy.set(sessionId, enabled, this.requests)
       return 'applied'
     })
   }
@@ -335,11 +343,13 @@ export class VpsRuntime {
     this.operationSignal(signal).throwIfAborted()
     validateSessionId(sessionId)
     if (this.replacing.has(sessionId) || this.pending.has(sessionId) || this.active.has(sessionId)) return 'busy'
-    this.replacing.add(sessionId)
+    const held = Promise.withResolvers<void>()
+    this.replacing.set(sessionId, held.promise)
     try {
       return await change()
     } finally {
       this.replacing.delete(sessionId)
+      held.resolve()
     }
   }
 
@@ -471,11 +481,12 @@ export class VpsRuntime {
     const finished = this.beginUse(sessionId)
     try {
       const child = exec(program, args, { encoding: 'buffer', maxBuffer: 4 * 1024 * 1024, timeout: 12_000, signal })
+      const settled = settleVpsCommand(child)
       if (stdin !== undefined) {
         child.child.stdin?.on('error', (error) => { void error })
         child.child.stdin?.end(stdin)
       }
-      return (await child).stdout
+      return (await settled).stdout
     } catch (error) {
       signal.throwIfAborted()
       if (stdin === undefined) throw error

@@ -1,4 +1,5 @@
 import { PassThrough } from 'node:stream'
+import { promisify } from 'node:util'
 import { Context } from '@yharness/cordis'
 import { SubprocessExecutableNotFoundError } from '@yharness/subprocess'
 import type {
@@ -23,10 +24,21 @@ type ExecFileMock = (
 
 const { execFileMock } = vi.hoisted(() => ({ execFileMock: vi.fn<ExecFileMock>() }))
 
-vi.mock('node:child_process', async importOriginal => ({
-  ...await importOriginal<typeof import('node:child_process')>(),
-  execFile: execFileMock,
-}))
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>()
+  const launch = (command: string, args: readonly string[], options: Parameters<ExecFileMock>[2]) => {
+    const child = new actual.ChildProcess()
+    const result = new Promise<{ readonly stdout: string; readonly stderr: string }>((resolve, reject) => {
+      execFileMock(command, args, options, (error, output) => {
+        if (error === null) resolve(output)
+        else reject(error)
+        queueMicrotask(() => { child.emit('close', error === null ? 0 : 1, null) })
+      })
+    })
+    return Object.assign(result, { child })
+  }
+  return { ...actual, execFile: Object.assign(execFileMock, { [promisify.custom]: launch }) }
+})
 
 const SESSION = 'bot-session-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
 const outcome: SubprocessOutcome = { exitCode: 0, signal: null }
