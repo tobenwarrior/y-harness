@@ -172,13 +172,13 @@ describe('BotTemplatesPanel', () => {
     const revokeTemplate = vi.fn().mockRejectedValue(new Error('revoke failed'))
     const revoked: BotTemplateSummary = { ...activeTemplate, id: 'template-revoked', shareCode: 'revoked-code', revokedAt: 4 }
     const preview: BotTemplateSummary = {
-      ...activeTemplate,
-      description: undefined,
-      issuerFingerprint: undefined,
-      fingerprint: undefined,
-      persona: undefined,
+      id: activeTemplate.id,
+      shareCode: activeTemplate.shareCode,
+      name: activeTemplate.name,
+      identity: activeTemplate.identity,
+      accent: activeTemplate.accent,
+      createdAt: activeTemplate.createdAt,
       capabilities: [],
-      agentPreset: undefined,
       localPermissions: { status: 'unavailable', tools: [] },
     }
     const view = renderPanel(state({ templates: [activeTemplate, revoked], preview }), actions({ revokeTemplate }))
@@ -200,7 +200,6 @@ describe('BotTemplatesPanel', () => {
   it('shows controller errors and busy labels for a resolved host with no tools', () => {
     const preview: BotTemplateSummary = {
       ...activeTemplate,
-      capabilities: undefined,
       localPermissions: { status: 'resolved', tools: [] },
     }
     renderPanel(state({ error: 'Template could not be checked.', preview, busy: true }))
