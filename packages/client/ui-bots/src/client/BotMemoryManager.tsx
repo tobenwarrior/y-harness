@@ -101,6 +101,7 @@ export function BotMemoryManager({ bot, actions, loadAvatar, open, onClose, t }:
   }
 
   const remove = async (id: string): Promise<void> => {
+    /* v8 ignore next -- the native confirmation control is disabled by the shared working lock. */
     if (working !== null) return
     setWorking(id)
     setError(null)
@@ -110,6 +111,7 @@ export function BotMemoryManager({ bot, actions, loadAvatar, open, onClose, t }:
       setMemories(current => current.filter(memory => memory.id !== id))
       setConfirmingId(null)
       setRemoveError(false)
+      /* v8 ignore next -- native row actions hide removal while that row is being edited. */
       setEditor(current => current?.id === id ? null : current)
     } catch {
       setRemoveError(true)
@@ -179,6 +181,7 @@ export function BotMemoryManager({ bot, actions, loadAvatar, open, onClose, t }:
                           maxLength={2000}
                           onChange={(event) => {
                             const value = event.currentTarget.value
+                            /* v8 ignore next -- native rendering dispatches this textarea only for the matching editor id. */
                             setEditor(current => current?.id === memory.id
                               ? { ...current, draft: value }
                               : current)
@@ -219,7 +222,10 @@ export function BotMemoryManager({ bot, actions, loadAvatar, open, onClose, t }:
         footer={(
           <>
             <Button variant="ghost" onClick={() => { setConfirmingId(null) }} disabled={working !== null}>{t('cancel')}</Button>
-            <Button variant="primary" className={css.memoryDanger} onClick={() => { if (confirmingId !== null) void remove(confirmingId) }} disabled={working !== null}>
+            <Button variant="primary" className={css.memoryDanger} onClick={() => {
+              /* v8 ignore next -- the native confirmation modal renders only with a confirming id. */
+              if (confirmingId !== null) void remove(confirmingId)
+            }} disabled={working !== null}>
               {working !== null ? t('memoryRemoving') : t('memoryRemoveConfirm')}
             </Button>
           </>

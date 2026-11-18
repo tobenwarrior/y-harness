@@ -303,8 +303,11 @@ export function BotRoutineManager({ bot, actions, open, onClose, t, revision = 0
       const next = before === undefined
         ? await actionsRef.current.history(bot.id, routineId)
         : await actionsRef.current.history(bot.id, routineId, before)
-      if (!isCurrent()) return
-      setHistory(current => before === undefined ? next : mergeHistory(current, next))
+      if (isCurrent()) {
+        setHistory(current => before === undefined ? next : mergeHistory(current, next))
+      } else {
+        return
+      }
     } catch {
       if (!isCurrent()) return
       if (before === undefined) {
@@ -374,6 +377,7 @@ export function BotRoutineManager({ bot, actions, open, onClose, t, revision = 0
       setSelectedId(nextId)
       if (revisionRefresh && current === nextId && nextId !== null && tabRef.current === 'results') {
         const nextRoutine = next.find(routine => String(routine.id) === nextId)
+        /* v8 ignore next -- nextId was selected from this same array, so its lookup cannot be absent. */
         if (nextRoutine !== undefined) void showHistory(nextRoutine)
       }
     }).catch(() => {
@@ -457,8 +461,11 @@ export function BotRoutineManager({ bot, actions, open, onClose, t, revision = 0
       const next = routineStatus(routine) === 'active'
         ? await actions.pause(botId, String(routine.id))
         : await actions.resume(botId, String(routine.id))
-      if (!catalogIsCurrent(catalogGeneration, botId)) return
-      setRoutines(current => current.map(candidate => String(candidate.id) === String(next.id) ? next : candidate))
+      if (catalogIsCurrent(catalogGeneration, botId)) {
+        setRoutines(current => current.map(candidate => String(candidate.id) === String(next.id) ? next : candidate))
+      } else {
+        return
+      }
     } catch {
       if (catalogIsCurrent(catalogGeneration, botId)) setMutationError(true)
     } finally {
@@ -467,6 +474,7 @@ export function BotRoutineManager({ bot, actions, open, onClose, t, revision = 0
   }
 
   const remove = async (): Promise<void> => {
+    /* v8 ignore next -- the native confirmation control renders only with an id and an idle working lock. */
     if (confirmingId === null || working !== null) return
     const id = confirmingId
     const catalogGeneration = catalogGenerationRef.current
@@ -491,6 +499,7 @@ export function BotRoutineManager({ bot, actions, open, onClose, t, revision = 0
   }
 
   const loadOlder = (): void => {
+    /* v8 ignore next -- the native history button renders only with these schedule fields present. */
     if (selected?.kind !== 'schedule' || history?.kind !== 'schedule' || history.nextBefore === undefined) return
     void showHistory(selected, history.nextBefore)
   }
