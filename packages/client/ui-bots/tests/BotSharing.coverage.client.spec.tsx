@@ -3,16 +3,18 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { brandString } from '@yharness/brand'
 import { BotId } from '@yharness/bots/client'
-import type { BotGroupId, BotGroupView, BotSharedGroupDeliveryFenceView } from '@yharness/bots/client'
+import type { BotGroupId, BotGroupMessageId, BotGroupView, BotSharedGroupDeliveryFenceView } from '@yharness/bots/client'
 import { makeTranslate } from '@yharness/client-test-runtime'
 import { BotShareDialog, SharedBotsDialog } from '../src/client/BotSharing.tsx'
 import { en } from '../src/client/locales.ts'
 import type { BotShareActions } from '../src/client/controller.ts'
 import type { BotSummary } from '../src/client/types.ts'
+import { createSharedGroupPendingQueue } from '../src/client/pending-group-queue.ts'
 import type { SharedBotsClient } from '../src/client/shared-client.ts'
 
 afterEach(() => {
   cleanup()
+  localStorage.clear()
   vi.useRealTimers()
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
@@ -216,7 +218,7 @@ describe('BotSharing defensive UI paths', () => {
       groupId: brandString<BotGroupId>('group-delivery-refresh-error'),
       botId: BotId(bot.id),
       sessionId: 'session-delivery-refresh-error',
-      messageId: brandString('message-delivery-refresh-error'),
+      messageId: brandString<BotGroupMessageId>('message-delivery-refresh-error'),
     }
     const inspectDeliveryFences: NonNullable<BotShareActions['inspectDeliveryFences']> = vi.fn()
       .mockResolvedValueOnce({ fences: [fence] })
@@ -484,7 +486,7 @@ describe('BotSharing defensive UI paths', () => {
       groupId: brandString<BotGroupId>('group-recovery-errors'),
       botId: BotId(bot.id),
       sessionId: 'session-recovery-errors',
-      messageId: brandString('message-recovery-errors'),
+      messageId: brandString<BotGroupMessageId>('message-recovery-errors'),
     }
     const inspectRosterFence: NonNullable<BotShareActions['inspectRosterFence']> = vi.fn().mockResolvedValue({
       status: 'held' as const, token: 'recovery-error-token',
@@ -550,7 +552,7 @@ describe('BotSharing defensive UI paths', () => {
       groupId: brandString<BotGroupId>('group-owner-controls'),
       botId: BotId(bot.id),
       sessionId: 'session-owner-controls',
-      messageId: brandString('message-owner-controls'),
+      messageId: brandString<BotGroupMessageId>('message-owner-controls'),
     }
     const revokeMember: NonNullable<BotShareActions['revokeMember']> = vi.fn()
       .mockRejectedValueOnce(new Error('member revoke unavailable'))
@@ -680,5 +682,358 @@ describe('BotSharing defensive UI paths', () => {
     const failedClient = sharedClient({ enrollOwner, getOwnerCapability: vi.fn().mockResolvedValue({ ownerBootstrap: true }) })
     render(<SharedBotsDialog client={failedClient} ownerMode open onClose={vi.fn()} t={t} />)
     expect(await screen.findByText('owner enrollment rejected')).toBeTruthy()
+  })
+
+  it('keeps optional approval mutations inert when either callback is omitted', async () => {
+    const listApprovals = vi.fn().mockResolvedValue({
+      ok: true,
+      value: {
+        approvals: [{ id: 'approval-optional-decision', botId: bot.id, appId: 'Calendar', toolName: 'events.list', action: 'List events' }],
+        grants: [],
+      },
+    })
+    const revokeApprovalGrant = vi.fn()
+    const decisionOmitted = sharedClient({ listApprovals, revokeApprovalGrant })
+    render(<SharedBotsDialog client={decisionOmitted} open onClose={vi.fn()} t={t} />)
+
+    const approve = await screen.findByRole('button', { name: 'Approve Calendar events.list' })
+    fireEvent.click(approve)
+    expect(revokeApprovalGrant).not.toHaveBeenCalled()
+
+    cleanup()
+    const decideApproval = vi.fn()
+    const revokeOmitted = sharedClient({
+      listApprovals: vi.fn().mockResolvedValue({
+        ok: true,
+        value: {
+          approvals: [],
+          grants: [{ id: 'grant-optional-revoke', botId: bot.id, appId: 'Calendar', toolName: 'events.list', createdAt: 1 }],
+        },
+      }),
+      decideApproval,
+    })
+    render(<SharedBotsDialog client={revokeOmitted} open onClose={vi.fn()} t={t} />)
+    const revoke = await screen.findByRole('button', { name: 'Revoke remembered approval for events.list' })
+    fireEvent.click(revoke)
+    expect(decideApproval).not.toHaveBeenCalled()
+  })
+
+  it('ignores a late owner roster inspection after switching Bots', async () => {
+    const staleRoster = Promise.withResolvers<Awaited<ReturnType<NonNullable<BotShareActions['inspectRosterFence']>>>>()
+    const inspectRosterFence: NonNullable<BotShareActions['inspectRosterFence']> = vi.fn()
+      .mockReturnValueOnce(staleRoster.promise)
+      .mockResolvedValue({ status: 'clear' as const })
+    const actions = ownerActions({ inspectRosterFence })
+    const view = render(<BotShareDialog bot={bot} actions={actions} open onClose={vi.fn()} t={t} />)
+
+    await waitFor(() => { expect(inspectRosterFence).toHaveBeenCalledTimes(1) })
+    view.rerender(<BotShareDialog bot={analystBot} actions={actions} open onClose={vi.fn()} t={t} />)
+    await waitFor(() => { expect(inspectRosterFence).toHaveBeenCalledTimes(2) })
+    await act(async () => {
+      staleRoster.resolve({ status: 'held', token: 'stale-roster-token' })
+      await Promise.resolve()
+    })
+    expect(screen.queryByText('stale-roster-token')).toBeNull()
+  })
+
+  it('ignores a late owner delivery inspection failure after switching Bots', async () => {
+    const staleDelivery = Promise.withResolvers<Awaited<ReturnType<NonNullable<BotShareActions['inspectDeliveryFences']>>>>()
+    const inspectDeliveryFences: NonNullable<BotShareActions['inspectDeliveryFences']> = vi.fn()
+      .mockReturnValueOnce(staleDelivery.promise)
+      .mockResolvedValue({ fences: [] })
+    const actions = ownerActions({ inspectDeliveryFences })
+    const view = render(<BotShareDialog bot={bot} actions={actions} open onClose={vi.fn()} t={t} />)
+
+    await waitFor(() => { expect(inspectDeliveryFences).toHaveBeenCalledWith(bot.id) })
+    view.rerender(<BotShareDialog bot={analystBot} actions={actions} open onClose={vi.fn()} t={t} />)
+    await waitFor(() => { expect(inspectDeliveryFences).toHaveBeenCalledWith(analystBot.id) })
+    await act(async () => {
+      staleDelivery.reject(new Error('stale delivery inspection'))
+      await Promise.resolve()
+    })
+    expect(screen.queryByText('stale delivery inspection')).toBeNull()
+  })
+
+  it('does not apply group settings from a room that was replaced while loading', async () => {
+    const groupA = groupFixture('group-settings-stale-a', 'Settings alpha')
+    const groupB = groupFixture('group-settings-stale-b', 'Settings beta')
+    const settingsA = { groupId: String(groupA.id), name: groupA.name, updatedAt: 1, canManage: true, members: [] }
+    const settingsB = { groupId: String(groupB.id), name: groupB.name, updatedAt: 1, canManage: true, members: [] }
+    const pendingSettings = Promise.withResolvers<Awaited<ReturnType<NonNullable<SharedBotsClient['readGroupSettings']>>>>()
+    const readGroupSettings: NonNullable<SharedBotsClient['readGroupSettings']> = vi.fn(groupId => (
+      groupId === String(groupA.id)
+        ? pendingSettings.promise
+        : Promise.resolve({ ok: true, value: settingsB })
+    ))
+    const client = sharedClient({
+      retryScope: 'principal-owner',
+      listGroups: vi.fn().mockResolvedValue({ ok: true, value: { groups: [groupA, groupB] } }),
+      inspectGroup: vi.fn().mockImplementation(async (groupId: string) => ({
+        ok: true,
+        value: { group: groupId === String(groupA.id) ? groupA : groupB, messages: [] },
+      })),
+      readGroupSettings,
+    })
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+
+    await waitFor(() => { expect(screen.getByPlaceholderText('Message Settings alpha')).toBeTruthy() })
+    fireEvent.click(screen.getByTestId('shared-group-settings-open'))
+    await waitFor(() => { expect(readGroupSettings).toHaveBeenCalledWith(String(groupA.id)) })
+    fireEvent.click(screen.getByRole('button', { name: /Settings beta/ }))
+    await waitFor(() => { expect(screen.getByPlaceholderText('Message Settings beta')).toBeTruthy() })
+    await act(async () => {
+      pendingSettings.resolve({ ok: true, value: settingsA })
+      await Promise.resolve()
+    })
+    expect(screen.queryByRole('dialog', { name: 'Group settings' })).toBeNull()
+
+    fireEvent.click(screen.getByTestId('shared-group-settings-open'))
+    const dialog = await screen.findByRole('dialog', { name: 'Group settings' })
+    expect(within(dialog).getByRole('textbox', { name: 'Group name' })).toHaveProperty('value', groupB.name)
+  })
+
+  it('ignores a late shared-group read after switching rooms', async () => {
+    const groupA = groupFixture('group-read-stale-a', 'Read alpha')
+    const groupB = groupFixture('group-read-stale-b', 'Read beta')
+    const pendingRead = Promise.withResolvers<Awaited<ReturnType<NonNullable<SharedBotsClient['inspectGroup']>>>>()
+    const inspectGroup: NonNullable<SharedBotsClient['inspectGroup']> = vi.fn(groupId => (
+      groupId === String(groupB.id)
+        ? pendingRead.promise
+        : Promise.resolve({ ok: true, value: { group: groupA, messages: [{
+          id: brandString<BotGroupMessageId>('bot-group-message-read-alpha'),
+          groupId: groupA.id,
+          sender: { kind: 'user', principalId: 'principal-member' },
+          text: 'Alpha message',
+          createdAt: 1,
+        }] } })
+    ))
+    const client = sharedClient({
+      listGroups: vi.fn().mockResolvedValue({ ok: true, value: { groups: [groupA, groupB] } }),
+      inspectGroup,
+    })
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+
+    await screen.findByText('Alpha message')
+    fireEvent.click(screen.getByRole('button', { name: /Read beta/ }))
+    await waitFor(() => { expect(inspectGroup).toHaveBeenCalledWith(String(groupB.id)) })
+    fireEvent.click(screen.getByRole('button', { name: /Read alpha/ }))
+    await waitFor(() => { expect(screen.getByText('Alpha message')).toBeTruthy() })
+    await act(async () => {
+      pendingRead.resolve({ ok: true, value: { group: groupB, messages: [{
+        id: brandString<BotGroupMessageId>('bot-group-message-read-beta'),
+        groupId: groupB.id,
+        sender: { kind: 'user', principalId: 'principal-member' },
+        text: 'Stale beta message',
+        createdAt: 2,
+      }] } })
+      await Promise.resolve()
+    })
+    expect(screen.queryByText('Stale beta message')).toBeNull()
+    expect(screen.getByText('Alpha message')).toBeTruthy()
+  })
+
+  it('keeps a failed recovered group creation available for a later retry', async () => {
+    localStorage.clear()
+    const queue = createSharedGroupPendingQueue('principal-member')
+    const pending = await queue.reserveCreation('coverage-recover-failed', 'Recover failed', [bot.id, analystBot.id])
+    const createGroup: NonNullable<SharedBotsClient['createGroup']> = vi.fn().mockResolvedValue({
+      ok: false,
+      error: { code: 'gateway/unavailable', message: 'recover create unavailable', details: {} },
+    })
+    const client = sharedClient({
+      list: vi.fn().mockResolvedValue({ ok: true, value: { bots: [{ ...bot, role: 'owner' }, { ...analystBot, role: 'owner' }] } }),
+      listGroups: vi.fn().mockResolvedValue({ ok: true, value: { groups: [] } }),
+      createGroup,
+    })
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+
+    await waitFor(() => { expect(screen.getByRole('button', { name: 'Create shared group' })).toBeTruthy() })
+    fireEvent.click(screen.getByRole('button', { name: 'Create shared group' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Create a shared group' })
+    expect(within(dialog).getByText('Interrupted group creation')).toBeTruthy()
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Discard' }))
+    const discardDialog = await screen.findByRole('dialog', { name: 'Discard this retry record?' })
+    fireEvent.click(within(discardDialog).getAllByRole('button', { name: 'Cancel' }).at(-1)!)
+    expect(within(dialog).getByText('Interrupted group creation')).toBeTruthy()
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Recover' }))
+    await waitFor(() => {
+      expect(createGroup).toHaveBeenCalledWith({
+        id: pending.id,
+        name: 'Recover failed',
+        botIds: [BotId(analystBot.id), BotId(bot.id)],
+      })
+    })
+    expect(await within(dialog).findByRole('alert')).toHaveProperty('textContent', 'recover create unavailable')
+    await expect(queue.listCreations()).resolves.toHaveLength(1)
+  })
+
+  it('refuses a recovered group whose server metadata changed', async () => {
+    localStorage.clear()
+    const queue = createSharedGroupPendingQueue('principal-member')
+    const pending = await queue.reserveCreation('coverage-recover-conflict', 'Recover conflict', [bot.id, analystBot.id])
+    const serverGroup = { ...groupFixture(pending.id, 'Server renamed room') }
+    const listGroups = vi.fn()
+      .mockResolvedValueOnce({ ok: true, value: { groups: [] } })
+      .mockResolvedValue({ ok: true, value: { groups: [serverGroup] } })
+    const createGroup: NonNullable<SharedBotsClient['createGroup']> = vi.fn()
+    const client = sharedClient({
+      list: vi.fn().mockResolvedValue({ ok: true, value: { bots: [{ ...bot, role: 'owner' }, { ...analystBot, role: 'owner' }] } }),
+      listGroups,
+      createGroup,
+    })
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+
+    await waitFor(() => { expect(screen.getByRole('button', { name: 'Create shared group' })).toBeTruthy() })
+    fireEvent.click(screen.getByRole('button', { name: 'Create shared group' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Create a shared group' })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Recover' }))
+    expect(await within(dialog).findByRole('alert')).toHaveProperty('textContent', 'The saved shared-group retry does not match the current room details. Nothing was sent.')
+    expect(createGroup).not.toHaveBeenCalled()
+  })
+
+  it('asks for an expired shared message again instead of replaying missing text', async () => {
+    localStorage.clear()
+    const group = groupFixture('group-expired-message', 'Expired message room')
+    localStorage.setItem('yharness.client-ui-bots.shared-group-pending.v2.principal-member.message.deadbeef', JSON.stringify({
+      version: 1,
+      kind: 'message',
+      status: 'expired',
+      id: 'bot-group-message-expired',
+      operationHash: 'deadbeef',
+      groupId: String(group.id),
+      createdAt: 1,
+      expiresAt: 2,
+    }))
+    const client = sharedClient({
+      listGroups: vi.fn().mockResolvedValue({ ok: true, value: { groups: [group] } }),
+      inspectGroup: vi.fn().mockResolvedValue({ ok: true, value: { group, messages: [] } }),
+      sendGroupMessage: vi.fn(),
+    })
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+
+    expect(await screen.findByText(/Expired message retry/)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Recover' }))
+    expect(await screen.findByRole('alert')).toHaveProperty('textContent', 'Re-enter the exact saved message in this room to recover its original id. The expired record does not retain message text.')
+  })
+
+  it('jumps to shared replies, clears the reply draft, and downloads saved attachments', async () => {
+    const group = groupFixture('group-reply-download', 'Reply download room')
+    const parentId = brandString<BotGroupMessageId>('bot-group-message-reply-parent')
+    const childId = brandString<BotGroupMessageId>('bot-group-message-reply-child')
+    const inspectGroup: NonNullable<SharedBotsClient['inspectGroup']> = vi.fn().mockResolvedValue({
+      ok: true,
+      value: {
+        group,
+        messages: [
+          {
+            id: parentId,
+            groupId: group.id,
+            sender: { kind: 'user', principalId: 'principal-member' },
+            text: 'Parent message to quote',
+            createdAt: 1,
+          },
+          {
+            id: childId,
+            groupId: group.id,
+            sender: { kind: 'bot', botId: BotId(bot.id), name: bot.name },
+            text: 'Child response with a saved file',
+            createdAt: 2,
+            replyToMessageId: parentId,
+            attachments: [{ attachmentId: 'attachment-report', name: 'report.txt', bytes: 12 }],
+          },
+        ],
+      },
+    })
+    const client = sharedClient({
+      listGroups: vi.fn().mockResolvedValue({ ok: true, value: { groups: [group] } }),
+      inspectGroup,
+    })
+    const scrollIntoView = vi.fn()
+    const scrollDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollIntoView')
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: scrollIntoView })
+    try {
+      render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+      await screen.findByText('Child response with a saved file')
+
+      fireEvent.click(screen.getByRole('button', { name: 'Jump to You’s message' }))
+      expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'center' })
+      expect(screen.getByRole('link', { name: 'Download report.txt' }).getAttribute('href')).toBe(
+        `/shared-bots/bots/share/downloadAttachment?groupId=${group.id}&messageId=${childId}&attachmentId=attachment-report`,
+      )
+
+      fireEvent.click(screen.getByRole('button', { name: 'Reply to Chief of staff' }))
+      expect(screen.getByRole('status').textContent).toContain('Replying to Chief of staff')
+      fireEvent.click(screen.getByRole('button', { name: 'Clear reply' }))
+      expect(screen.queryByText('Replying to Chief of staff')).toBeNull()
+
+      const input = screen.getByPlaceholderText('Message Reply download room')
+      fireEvent.focus(input)
+      fireEvent.change(input, { target: { value: '@A' } })
+      const option = await screen.findByRole('option', { name: /Analyst/ })
+      fireEvent.mouseDown(option)
+      fireEvent.click(option)
+      fireEvent.blur(input)
+      expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' })
+    } finally {
+      if (scrollDescriptor === undefined) Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView')
+      else Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', scrollDescriptor)
+    }
+  })
+
+  it('clears shared-room controls when selecting a private Bot', async () => {
+    const group = groupFixture('group-selection-cleanup', 'Selection cleanup room')
+    const client = sharedClient({
+      list: vi.fn().mockResolvedValue({ ok: true, value: { bots: [{ ...bot, role: 'collaborator' }, { ...analystBot, role: 'collaborator' }] } }),
+      listGroups: vi.fn().mockResolvedValue({ ok: true, value: { groups: [group] } }),
+      inspectGroup: vi.fn().mockResolvedValue({ ok: true, value: { group, messages: [] } }),
+      readGroupSettings: vi.fn().mockResolvedValue({
+        ok: true,
+        value: { groupId: String(group.id), name: group.name, updatedAt: 1, canManage: true, members: [] },
+      }),
+    })
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+
+    await waitFor(() => { expect(screen.getByPlaceholderText('Message Selection cleanup room')).toBeTruthy() })
+    fireEvent.click(screen.getByTestId('shared-group-settings-open'))
+    expect(await screen.findByRole('dialog', { name: 'Group settings' })).toBeTruthy()
+    const privateBotButton = screen.getAllByRole('button').find((button) => {
+      const text = button.textContent ?? ''
+      return text.includes(bot.name) && text.includes('Collaborator')
+    })
+    if (privateBotButton === undefined) throw new Error('private Bot selector is missing')
+    fireEvent.click(privateBotButton)
+
+    await waitFor(() => { expect(screen.getByRole('textbox', { name: 'Message this shared bot' })).toBeTruthy() })
+    expect(screen.queryByRole('dialog', { name: 'Group settings' })).toBeNull()
+    expect(screen.queryByPlaceholderText('Message Selection cleanup room')).toBeNull()
+  })
+
+  it('reports durable retry loss after the cached queue becomes unavailable', async () => {
+    const group = groupFixture('group-retry-unavailable', 'Retry unavailable room')
+    const createGroup: NonNullable<SharedBotsClient['createGroup']> = vi.fn()
+    const client = sharedClient({
+      list: vi.fn().mockResolvedValue({ ok: true, value: { bots: [{ ...bot, role: 'owner' }, { ...analystBot, role: 'owner' }] } }),
+      listGroups: vi.fn().mockResolvedValue({ ok: true, value: { groups: [group] } }),
+      inspectGroup: vi.fn().mockResolvedValue({ ok: true, value: { group, messages: [] } }),
+      createGroup,
+    })
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+    await waitFor(() => { expect(screen.getByPlaceholderText('Message Retry unavailable room')).toBeTruthy() })
+
+    const locks = navigator.locks
+    const request = vi.spyOn(locks, 'request').mockRejectedValue(new Error('locks unavailable'))
+    try {
+      fireEvent.click(screen.getByRole('button', { name: 'Create shared group' }))
+      const dialog = await screen.findByRole('dialog', { name: 'Create a shared group' })
+      fireEvent.change(within(dialog).getByRole('textbox', { name: 'Group name' }), { target: { value: 'No durable retry' } })
+      fireEvent.click(within(dialog).getByRole('checkbox', { name: bot.name }))
+      fireEvent.click(within(dialog).getByRole('checkbox', { name: analystBot.name }))
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Create shared group' }))
+      expect(await within(dialog).findByRole('alert')).toHaveProperty('textContent', 'This shared-group action cannot be retried safely because this browser does not provide durable storage and Web Locks, or the group catalog is unavailable.')
+      expect(createGroup).not.toHaveBeenCalled()
+    } finally {
+      request.mockRestore()
+    }
   })
 })
