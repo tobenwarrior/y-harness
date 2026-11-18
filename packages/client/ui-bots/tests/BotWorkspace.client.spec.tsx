@@ -2,7 +2,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AttachmentId } from '@yharness/attachment'
-import { BotId } from '@yharness/bots'
+import { BotId, type BotView } from '@yharness/bots'
 import { ScheduleId } from '@yharness/schedule'
 import { SessionId } from '@yharness/session'
 import { makeTranslate } from '@yharness/client-test-runtime'
@@ -20,7 +20,7 @@ import { MessageId } from '@yharness/llm/brand'
 import { createSharedBotsClient, type SharedBotsClient } from '../src/client/shared-client.ts'
 import type {
   BotGroupDetailData, BotGroupSummary, BotMemoryManagerActions, BotMemorySummary, BotRoutineHistory, BotSummary,
-  BotSkillManagerActions, BotSkillPolicy, BotTemplateActions, BotTemplateState, BotWorkspaceProps,
+  BotSkillManagerActions, BotSkillPolicy, BotSkillSummary, BotTemplateActions, BotTemplateState, BotWorkspaceProps,
 } from '../src/client/types.ts'
 import { BotSkillPolicyConflictError } from '../src/client/types.ts'
 
@@ -39,6 +39,39 @@ function memoryController(memories: readonly BotMemorySummary[]): BotWorkspaceCo
     listMemory: vi.fn<NonNullable<BotWorkspaceRemote['listMemory']>>(async () => ({ ok: true, value: { memories } })),
     updateMemory: vi.fn<NonNullable<BotWorkspaceRemote['updateMemory']>>(),
     forgetMemory: vi.fn<NonNullable<BotWorkspaceRemote['forgetMemory']>>(),
+  }
+  const sessions = {
+    retain: vi.fn(),
+    refresh: vi.fn(async () => {}),
+  } as Pick<ISessions, 'retain' | 'refresh'> as ISessions
+  return new BotWorkspaceController(remote, sessions, () => 'unexpected response')
+}
+
+function skillController(skills: readonly BotSkillSummary[]): BotWorkspaceController {
+  const persisted: BotView = {
+    id: BotId('research'),
+    sessionId: 'session-research' as SessionId,
+    name: 'Research partner',
+    identity: 'browse',
+    accent: 'teal',
+    cwd: '/workspace',
+    state: 'active',
+    createdAt: 1,
+    updatedAt: 1,
+    availability: 'idle',
+    pinned: false,
+    hidden: false,
+  }
+  const policy: BotSkillPolicy = { mode: 'all', enabled: [], disabled: [] }
+  const remote: BotWorkspaceRemote = {
+    list: vi.fn<BotWorkspaceRemote['list']>(),
+    create: vi.fn<BotWorkspaceRemote['create']>(),
+    rename: vi.fn<BotWorkspaceRemote['rename']>(),
+    listSkills: vi.fn<NonNullable<BotWorkspaceRemote['listSkills']>>(async () => ({
+      ok: true,
+      value: { bot: persisted, policy, revision: 0, skills },
+    })),
+    updateSkills: vi.fn<NonNullable<BotWorkspaceRemote['updateSkills']>>(),
   }
   const sessions = {
     retain: vi.fn(),
@@ -2050,6 +2083,47 @@ describe('Bot roster and detail', () => {
       expect(actions.update).toHaveBeenCalledWith('research', { mode: 'selected', enabled: ['code-review'], disabled: [] }, 0)
     })
     expect(screen.queryByRole('dialog', { name: 'Bot skills' })).toBeNull()
+  })
+
+  it('keeps focused skill selection when the Controller re-renders equivalent actions', async () => {
+    const controller = skillController([{
+      name: 'code-review', description: 'Review code', enabled: true, available: true,
+    }])
+    const actions = controller.face().skillManager
+    if (actions === undefined) throw new Error('skill manager was not mounted')
+    const view = render(<BotDetail
+      bot={bots[0]}
+      loading={false}
+      loadAvatar={undefined}
+      skillManager={actions}
+      t={t}
+    >
+      <p>Persistent session surface</p>
+    </BotDetail>)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Manage skills' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Bot skills' })
+    fireEvent.click(within(dialog).getByRole('radio', { name: 'Only selected skills' }))
+    const checkbox = within(dialog).getByRole('checkbox', { name: 'Allow code-review' })
+    fireEvent.click(checkbox)
+    checkbox.focus()
+    expect(document.activeElement).toBe(checkbox)
+
+    const refreshedActions = controller.face().skillManager
+    if (refreshedActions === undefined) throw new Error('skill manager was not mounted')
+    expect(refreshedActions).toBe(actions)
+    view.rerender(<BotDetail
+      bot={bots[0]}
+      loading={false}
+      loadAvatar={undefined}
+      skillManager={refreshedActions}
+      t={t}
+    >
+      <p>Persistent session surface</p>
+    </BotDetail>)
+    expect(document.activeElement).toBe(checkbox)
+    expect(within(screen.getByRole('dialog', { name: 'Bot skills' })).getByRole('checkbox', { name: 'Do not allow code-review' })).toHaveProperty('checked', true)
+    controller.dispose()
   })
 
   it('shows selected-mode denied skills as disabled and clears the deny when granted', async () => {

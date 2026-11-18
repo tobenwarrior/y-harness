@@ -308,6 +308,7 @@ describe('BotWorkspaceController', () => {
 
     const manager = controller.face().skillManager
     expect(manager).toBeDefined()
+    expect(controller.face().skillManager).toBe(manager)
     await expect(manager?.list(original.id)).resolves.toMatchObject({ policy })
     await manager?.update(original.id, { mode: 'selected' as const, enabled: ['code-review'], disabled: [] }, 0)
     expect(listSkills).toHaveBeenCalledWith({ botId: original.id })

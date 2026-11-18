@@ -452,6 +452,7 @@ export class BotWorkspaceController {
   private pendingCreation: BotCreateRequest | undefined
   private creating: Promise<void> | undefined
   private memoryManagerActions: BotMemoryManagerActions | undefined
+  private skillManagerActions: BotSkillManagerActions | undefined
   private readonly avatarLoads = new Map<string, Promise<string>>()
   private readonly templateImportIds = new Map<string, string>()
   private templatePreviewGeneration = 0
@@ -2008,6 +2009,7 @@ export class BotWorkspaceController {
   }
 
   private skillManager(): BotSkillManagerActions {
+    if (this.skillManagerActions !== undefined) return this.skillManagerActions
     const listSkills = this.remote.listSkills
     const updateSkills = this.remote.updateSkills
     if (listSkills === undefined || updateSkills === undefined) {
@@ -2021,7 +2023,7 @@ export class BotWorkspaceController {
       if (String(value.bot.id) !== id) throw new Error(this.unexpectedResponse())
       return { policy: value.policy, revision: value.revision, skills: value.skills }
     }
-    return {
+    const actions: BotSkillManagerActions = {
       list: async (botId) => {
         const result = await listSkills({ botId: brandString<BotIdType>(botId) })
         if (!result.ok) throw new Error(result.error.message)
@@ -2055,6 +2057,8 @@ export class BotWorkspaceController {
         return { policy: result.value.policy }
       },
     }
+    this.skillManagerActions = actions
+    return actions
   }
 
   private routineManager(): BotRoutineManagerActions {
