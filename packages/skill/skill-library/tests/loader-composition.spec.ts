@@ -67,13 +67,13 @@ describe('skill library real Loader composition', () => {
       },
     })
     const maintenanceTicks: Array<() => void> = []
-    const schedule = globalThis.setInterval
+    const schedule: typeof import('node:timers').setInterval = globalThis.setInterval
     // The Windows bundle rename requires maintenance to close its skill files first.
-    const interval = vi.spyOn(globalThis, 'setInterval').mockImplementation((callback, delay, ...args: unknown[]) => {
-      const timer = schedule(callback, delay, ...args)
+    const interval = vi.spyOn(globalThis, 'setInterval').mockImplementation((callback, delay) => {
+      const timer = schedule(callback, delay)
       if (delay === maintenanceIntervalMs) {
         clearInterval(timer)
-        maintenanceTicks.push(() => { callback(...args) })
+        maintenanceTicks.push(() => { callback() })
       }
       return timer
     })

@@ -60,7 +60,7 @@ const session = 'bot-session-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
 describe('VPS provisioning processes', () => {
   it('returns desktop output and reports input failures through the command boundary', async () => {
     const root = await mkdtemp(join(tmpdir(), 'yh-vps-process-'))
-    const runtime = new VpsRuntime(root, 'localhost/fixture', undefined, { userService: false })
+    const runtime = new VpsRuntime(root, 'localhost/fixture', { userService: false })
     const argv = vi.spyOn(runtime, 'execArgv')
     try {
       argv.mockReturnValue([process.execPath, '-e', 'process.stdout.write("output")'])
@@ -80,7 +80,7 @@ describe('VPS provisioning processes', () => {
 
   it('contains a terminal stdin error without changing command completion', async () => {
     const root = await mkdtemp(join(tmpdir(), 'yh-vps-process-'))
-    const runtime = new VpsRuntime(root, 'localhost/fixture', undefined, { userService: false })
+    const runtime = new VpsRuntime(root, 'localhost/fixture', { userService: false })
     const argv = vi.spyOn(runtime, 'execArgv').mockReturnValue([
       process.execPath, '-e', 'setTimeout(() => process.stdout.write("done"), 25)',
     ])
@@ -100,7 +100,7 @@ describe('VPS provisioning processes', () => {
 
   it('captures Podman output and returns its exit status through the process seam', async () => {
     const root = await mkdtemp(join(tmpdir(), 'yh-vps-process-'))
-    const runtime = new VpsRuntime(root, 'localhost/fixture', undefined, { userService: false })
+    const runtime = new VpsRuntime(root, 'localhost/fixture', { userService: false })
     const child = new Child()
     spawn.mockImplementationOnce(() => {
       queueMicrotask(() => {
@@ -122,7 +122,7 @@ describe('VPS provisioning processes', () => {
 
   it('reports a Podman start error and ignores its subsequent close event', async () => {
     const root = await mkdtemp(join(tmpdir(), 'yh-vps-process-'))
-    const runtime = new VpsRuntime(root, 'localhost/fixture', undefined, { userService: false })
+    const runtime = new VpsRuntime(root, 'localhost/fixture', { userService: false })
     const child = new Child()
     spawn.mockImplementationOnce(() => {
       queueMicrotask(() => {
@@ -143,7 +143,7 @@ describe('VPS provisioning processes', () => {
 
   it('reports a Podman child that closes without an exit status', async () => {
     const root = await mkdtemp(join(tmpdir(), 'yh-vps-process-'))
-    const runtime = new VpsRuntime(root, 'localhost/fixture', undefined, { userService: false })
+    const runtime = new VpsRuntime(root, 'localhost/fixture', { userService: false })
     const child = new Child()
     spawn.mockImplementationOnce(() => {
       queueMicrotask(() => { child.closeWith(null) })
@@ -162,8 +162,8 @@ describe('VPS provisioning processes', () => {
   it.each(['stdout', 'stderr'] as const)('terminates a Podman child that exceeds the %s output limit', async (stream) => {
     const root = await mkdtemp(join(tmpdir(), 'yh-vps-process-'))
     const configuration = new AbortController()
-    const runtime = new VpsRuntime(root, 'localhost/fixture', undefined, {
-      userService: false, configurationSignal: configuration.signal,
+    const runtime = new VpsRuntime(root, 'localhost/fixture', { userService: false }, {
+      configurationSignal: configuration.signal,
     })
     const child = new Child()
     spawn.mockImplementationOnce(() => {
@@ -194,8 +194,8 @@ describe('VPS provisioning processes', () => {
     vi.useFakeTimers()
     const root = await mkdtemp(join(tmpdir(), 'yh-vps-process-'))
     const configuration = new AbortController()
-    const runtime = new VpsRuntime(root, 'localhost/fixture', undefined, {
-      userService: false, configurationSignal: configuration.signal,
+    const runtime = new VpsRuntime(root, 'localhost/fixture', { userService: false }, {
+      configurationSignal: configuration.signal,
     })
     const child = new Child()
     const spawned = Promise.withResolvers<undefined>()
@@ -225,8 +225,8 @@ describe('VPS provisioning processes', () => {
   it('honors an already-aborted signal after the child is created', async () => {
     const root = await mkdtemp(join(tmpdir(), 'yh-vps-process-'))
     const configuration = new AbortController()
-    const runtime = new VpsRuntime(root, 'localhost/fixture', undefined, {
-      userService: false, configurationSignal: configuration.signal,
+    const runtime = new VpsRuntime(root, 'localhost/fixture', { userService: false }, {
+      configurationSignal: configuration.signal,
     })
     const child = new Child()
     spawn.mockImplementationOnce(() => {
@@ -248,7 +248,7 @@ describe('VPS provisioning processes', () => {
   it('times out a Podman child after its command deadline', async () => {
     vi.useFakeTimers()
     const root = await mkdtemp(join(tmpdir(), 'yh-vps-process-'))
-    const runtime = new VpsRuntime(root, 'localhost/fixture', undefined, { userService: false })
+    const runtime = new VpsRuntime(root, 'localhost/fixture', { userService: false })
     const child = new Child()
     const spawned = Promise.withResolvers<undefined>()
     spawn.mockImplementationOnce(() => {
@@ -278,7 +278,7 @@ describe('VPS provisioning processes', () => {
     const previousHome = process.env.HOME
     const previousRuntime = process.env.XDG_RUNTIME_DIR
     const root = await mkdtemp(join(tmpdir(), 'yh-vps-process-'))
-    const runtime = new VpsRuntime(root, 'localhost/fixture', undefined, { userService: false })
+    const runtime = new VpsRuntime(root, 'localhost/fixture', { userService: false })
     const child = new Child()
     let observed: NodeJS.ProcessEnv | undefined
     process.env.HOME = 'unsafe\npath'
@@ -307,7 +307,7 @@ describe('VPS provisioning processes', () => {
   it('passes a safe runtime directory through the scrubbed environment', async () => {
     const previousRuntime = process.env.XDG_RUNTIME_DIR
     const root = await mkdtemp(join(tmpdir(), 'yh-vps-process-'))
-    const runtime = new VpsRuntime(root, 'localhost/fixture', undefined, { userService: false })
+    const runtime = new VpsRuntime(root, 'localhost/fixture', { userService: false })
     const child = new Child()
     let observed: NodeJS.ProcessEnv | undefined
     process.env.XDG_RUNTIME_DIR = '/tmp/yharness-runtime-fixture'

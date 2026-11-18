@@ -480,7 +480,7 @@ describe('BotAvatarEditor appearance controls', () => {
     cleanup()
 
     const updateAppearance = vi.fn().mockRejectedValue(new Error('appearance failed'))
-    const appearanceView = renderEditor({ updateAppearance }, vi.fn(), { ...bot, identity: undefined, accent: undefined })
+    const appearanceView = renderEditor({ updateAppearance }, vi.fn(), { id: bot.id, name: bot.name })
     const appearanceDialog = await screen.findByRole('dialog', { name: 'Customize avatar' })
     fireEvent.click(within(appearanceDialog).getByRole('radio', { name: 'Amber' }))
     fireEvent.click(within(appearanceDialog).getByRole('button', { name: 'Save character' }))
