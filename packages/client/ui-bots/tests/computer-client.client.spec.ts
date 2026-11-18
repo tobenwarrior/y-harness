@@ -144,6 +144,91 @@ describe('Computer HTTP client', () => {
     })
   })
 
+  it('rejects malformed status and frame metadata instead of widening the Computer scope', async () => {
+    const invalidStatuses: readonly unknown[] = [
+      null,
+      { available: 'yes' },
+      { available: true, computer: { location: 'other', permissionScope: 'bot' } },
+      { available: true, computer: { location: 'vps', permissionScope: 'other' } },
+      { available: true, computer: { location: 'mac', permissionScope: 'workspace', id: '\u0000' } },
+      { available: true, kind: 'mac', computer: {
+        location: 'mac', permissionScope: 'workspace', browser: true, desktop: true, terminal: true,
+        terminalInternet: true, networkControl: true, restart: true, sharedWorkspaceControl: true, files: true, sharedFiles: true,
+      } },
+      { available: true, kind: 'vps', computer: {
+        id: 'bot-scope', location: 'vps', permissionScope: 'bot', desktop: true, terminal: true, terminalInternet: 'enabled',
+        networkControl: true, restart: true, sharedWorkspaceControl: true, files: true, sharedFiles: false,
+      } },
+    ]
+    for (const value of invalidStatuses.slice(0, 2)) {
+      const client = createComputerClient(async () => response(value))
+      await expect(client.status()).rejects.toMatchObject({ status: 200 })
+    }
+    for (const value of invalidStatuses.slice(2, 4)) {
+      const client = createComputerClient(async () => response(value))
+      await expect(client.status()).resolves.toEqual({ available: true })
+    }
+
+    const invalidIdClient = createComputerClient(async () => response(invalidStatuses[4]))
+    await expect(invalidIdClient.status()).resolves.toEqual({
+      available: true, computer: { location: 'mac', permissionScope: 'workspace' },
+    })
+    const macClient = createComputerClient(async () => response(invalidStatuses[5]))
+    await expect(macClient.status()).resolves.toEqual({
+      available: true, kind: 'mac', computer: { location: 'mac', permissionScope: 'workspace' },
+    })
+    const vpsClient = createComputerClient(async () => response(invalidStatuses[6]))
+    await expect(vpsClient.status()).resolves.toEqual({
+      available: true, kind: 'vps', computer: {
+        id: 'bot-scope', location: 'vps', permissionScope: 'bot', desktop: true, terminal: true, networkControl: true,
+        restart: true, sharedWorkspaceControl: true, files: true,
+      },
+    })
+
+    const invalidFrames: readonly unknown[] = [
+      null,
+      { jpeg: '', width: 0, height: 1, mode: 'watching', botActive: false },
+      { jpeg: '', width: 1, height: 1, mode: 'invalid', botActive: false },
+      { jpeg: '', width: 1, height: 1, mode: 'watching', botActive: false, browserOrigin: ' https://example.test' },
+      { jpeg: '', width: 1, height: 1, mode: 'watching', botActive: false, browserOrigin: 'not a URL' },
+      { jpeg: '', width: 1, height: 1, mode: 'watching', botActive: false, browserOrigin: 'https://example.test/path' },
+    ]
+    for (const value of invalidFrames) {
+      const client = createComputerClient(async () => response(value))
+      await expect(client.frame('viewer-id')).rejects.toMatchObject({ status: 200 })
+    }
+  })
+
+  it('forwards cancellation and rejects malformed successful replies and HTTP denials', async () => {
+    const controller = new AbortController()
+    const fetchMock = vi.fn(async (_input: string, init: RequestInit) => {
+      expect(init.signal).toBe(controller.signal)
+      throw new DOMException('synthetic abort', 'AbortError')
+    })
+    const client = createComputerClient(fetchMock)
+    await expect(client.status(controller.signal)).rejects.toThrow('synthetic abort')
+
+    const malformed = vi.fn()
+      .mockResolvedValueOnce(response(null))
+      .mockResolvedValueOnce(response({ mode: 'invalid' }))
+      .mockResolvedValueOnce(response({ status: 'applied', enabled: true, extra: true }))
+      .mockResolvedValueOnce(response(null))
+      .mockResolvedValueOnce(response({ status: 'restarted', extra: true }))
+      .mockResolvedValueOnce(response({ error: 'denied' }, 403))
+      .mockResolvedValueOnce(new Response('not-json', { status: 200 }))
+    const malformedClient = createComputerClient(malformed)
+    await expect(malformedClient.takeControl('viewer-id')).rejects.toMatchObject({ status: 200 })
+    await expect(malformedClient.releaseControl('viewer-id', { keepalive: true }, '')).rejects.toMatchObject({ status: 200 })
+    await expect(malformedClient.network?.('bot-session', true)).rejects.toMatchObject({ status: 200 })
+    await expect(malformedClient.sharedWorkspace?.('bot-session', true)).rejects.toMatchObject({ status: 200 })
+    await expect(malformedClient.restart?.('bot-session')).rejects.toMatchObject({ status: 200 })
+    await expect(malformedClient.input('viewer-id', { kind: 'key', key: 'Escape' })).rejects.toMatchObject({ status: 403 })
+    await expect(malformedClient.status()).rejects.toMatchObject({ status: 200 })
+    expect(malformed).toHaveBeenNthCalledWith(2, 'api/computer/release-control', expect.objectContaining({
+      body: JSON.stringify({ viewerId: 'viewer-id' }), keepalive: true,
+    }))
+  })
+
   it('reads internet policy only for an advertised private VPS terminal', async () => {
     const fetchMock = vi.fn()
     const base = { available: true, kind: 'vps' }
@@ -266,6 +351,26 @@ describe('Computer HTTP client', () => {
     await expect(client.signIn.status('owner-session', new AbortController().signal)).rejects.toMatchObject({ status: 200 })
   })
 
+  it('rejects malformed sign-in status while accepting null and owner-only requests', async () => {
+    const id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+    const values: readonly unknown[] = [
+      {},
+      { request: null },
+      { request: { canCancel: 'yes' } },
+      { request: { id: 'invalid', canCancel: true } },
+      { request: { id, canCancel: true } },
+      { request: { id, canCancel: true, extra: true } },
+    ]
+    for (const [index, value] of values.entries()) {
+      const client = createComputerClient(async () => response(value))
+      if (client.signIn === undefined) throw new Error('Computer sign-in client is unavailable')
+      const status = client.signIn.status('owner-session', new AbortController().signal)
+      if (index === 1) await expect(status).resolves.toEqual({ request: null })
+      else if (index === 4) await expect(status).resolves.toEqual({ request: { id, canCancel: true } })
+      else await expect(status).rejects.toMatchObject({ status: 200 })
+    }
+  })
+
   it('decodes current browser origins and sends shared target origin with input', async () => {
     const targetSessionId = 'handoff-bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
     const requestId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
@@ -275,6 +380,8 @@ describe('Computer HTTP client', () => {
       .mockResolvedValueOnce(response({ jpeg: '', width: 1280, height: 800, mode: 'controlling', botActive: false, browserOrigin: null }))
       .mockResolvedValueOnce(response({ mode: 'controlling' }))
       .mockResolvedValueOnce(response({ mode: 'controlling' }))
+      .mockResolvedValueOnce(response({ mode: 'watching' }))
+      .mockResolvedValueOnce(response({ mode: 'other' }))
     vi.stubGlobal('fetch', fetchMock)
     const client = createComputerClient()
     if (client.signIn === undefined) throw new Error('Computer sign-in client is unavailable')
@@ -283,6 +390,8 @@ describe('Computer HTTP client', () => {
     await expect(client.frame('viewer-id', undefined, targetSessionId)).resolves.toMatchObject({ browserOrigin: null })
     await client.signIn.take(targetSessionId, requestId, 'viewer-id')
     await client.input('viewer-id', { kind: 'key', key: 'a' }, undefined, targetSessionId, origin)
+    await client.signIn.complete(targetSessionId, requestId, 'viewer-id')
+    await client.signIn.cancel(targetSessionId, requestId, 'viewer-id')
     expect(fetchMock).toHaveBeenNthCalledWith(3, 'api/computer/sign-in', expect.objectContaining({
       body: JSON.stringify({ action: 'take', sessionId: targetSessionId, requestId, viewerId: 'viewer-id' }),
     }))
@@ -290,6 +399,12 @@ describe('Computer HTTP client', () => {
     expect(parsedBody(fetchMock.mock.calls[3]?.[1])).toEqual({
       viewerId: 'viewer-id', action: { kind: 'key', key: 'a' }, sessionId: targetSessionId, origin,
     })
+    expect(fetchMock).toHaveBeenNthCalledWith(5, 'api/computer/sign-in', expect.objectContaining({
+      body: JSON.stringify({ action: 'complete', sessionId: targetSessionId, requestId, viewerId: 'viewer-id' }),
+    }))
+    expect(fetchMock).toHaveBeenNthCalledWith(6, 'api/computer/sign-in', expect.objectContaining({
+      body: JSON.stringify({ action: 'cancel', sessionId: targetSessionId, requestId, viewerId: 'viewer-id' }),
+    }))
   })
 
   it('reads the isolated browser capability and sends a website to that viewer lease', async () => {
@@ -302,6 +417,15 @@ describe('Computer HTTP client', () => {
     await expect(client.navigate?.('viewer-id', 'https://example.test/', 'bot-session')).resolves.toEqual({ mode: 'controlling' })
     expect(fetchMock).toHaveBeenNthCalledWith(2, 'api/computer/navigate', expect.objectContaining({
       body: JSON.stringify({ viewerId: 'viewer-id', url: 'https://example.test/', sessionId: 'bot-session' }),
+    }))
+  })
+
+  it('binds the desktop client to the selected surface while retaining the Bot session', async () => {
+    const fetchMock = vi.fn(async () => response({ available: false }))
+    const client = createComputerClient(fetchMock)
+    await expect(client.desktop?.status(undefined, 'bot-session')).resolves.toEqual({ available: false })
+    expect(fetchMock).toHaveBeenCalledWith('api/computer/status', expect.objectContaining({
+      body: JSON.stringify({ sessionId: 'bot-session', surface: 'desktop' }),
     }))
   })
 
@@ -322,6 +446,41 @@ describe('Computer HTTP client', () => {
       body: JSON.stringify({ sessionId: 'bot-session', viewerId: 'mac-panel' }),
     }))
     expect(fetchMock).toHaveBeenNthCalledWith(3, 'api/computer/mac/stop', expect.objectContaining({ keepalive: true }))
+  })
+
+  it('covers Mac status, frame, lease release, cancellation, and setup validation', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response({ available: true, kind: 'mac', computer: { location: 'mac', permissionScope: 'workspace' } }))
+      .mockResolvedValueOnce(response({ jpeg: 'mac', width: 1, height: 1, mode: 'watching', botActive: false,
+        signIn: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' }))
+      .mockResolvedValueOnce(response({ mode: 'controlling' }))
+      .mockResolvedValueOnce(response({ mode: 'watching' }))
+      .mockResolvedValueOnce(response({ screenRecording: true, accessibility: true, shared: false }))
+      .mockResolvedValueOnce(response({ screenRecording: true }))
+    vi.stubGlobal('fetch', fetchMock)
+    const signal = new AbortController().signal
+    const client = createMacComputerClient('bot-session', 'mac-panel')
+
+    await expect(client.computer.status(signal, 'ignored')).resolves.toEqual({
+      available: true, kind: 'mac', computer: { location: 'mac', permissionScope: 'workspace' },
+    })
+    await expect(client.computer.frame('ignored', signal, 'ignored')).resolves.toEqual({
+      jpeg: 'mac', width: 1, height: 1, mode: 'watching', botActive: false,
+      signIn: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    })
+    await expect(client.computer.takeControl('ignored', signal, 'ignored')).resolves.toEqual({ mode: 'controlling' })
+    await expect(client.computer.releaseControl('ignored', { keepalive: true }, 'ignored')).resolves.toEqual({ mode: 'watching' })
+    await expect(client.setup('start', 'screenRecording', signal)).resolves.toEqual({
+      screenRecording: true, accessibility: true, deviceControlLabel: false, shared: false,
+    })
+    await expect(client.setup('settings')).rejects.toMatchObject({ status: 200 })
+    await expect(client.computer.input('ignored', { kind: 'key', key: 'Escape' })).rejects.toThrow('Mac keyboard and mouse')
+    expect(fetchMock).toHaveBeenNthCalledWith(1, 'api/computer/status', expect.objectContaining({
+      body: '{}', signal,
+    }))
+    expect(fetchMock).toHaveBeenNthCalledWith(4, 'api/computer/mac/release-control', expect.objectContaining({
+      body: JSON.stringify({ sessionId: 'bot-session', viewerId: 'mac-panel' }), keepalive: true,
+    }))
   })
 
   it('preserves HTTP conflict status for lease feedback', async () => {
