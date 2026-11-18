@@ -825,6 +825,55 @@ describe('managed VPS Bot composition', () => {
     }
   })
 
+  it('waits for an old Bot roster to close before reloading a replacement provider', async () => {
+    const ctx = new Context()
+    const entered = Promise.withResolvers<undefined>()
+    const release = Promise.withResolvers<undefined>()
+    const sync = vi.spyOn(VpsBrowserRoster.prototype, 'sync').mockResolvedValue(undefined)
+    const close = vi.spyOn(VpsBrowserRoster.prototype, 'close').mockImplementation(async () => {
+      entered.resolve(undefined)
+      await release.promise
+    })
+    let mounted: Awaited<ReturnType<typeof ctx.plugin>> | undefined
+    try {
+      const firstBots = {
+        list: async () => ({ bots: [] }),
+        ownerBotForSession: async () => undefined,
+      }
+      const removeFirst = ctx.provide('bots', firstBots as never)
+      mounted = await ctx.plugin((scope) => { mountVpsBots(scope, {
+        root: '/yharness-test-bots', image: 'localhost/yharness-test', bots: ['bot-roster-reload'],
+        isolatedBrowser: {
+          socketPath: '/run/yharness-browser/control.sock', bots: ['bot-roster-reload'],
+          ownerRosterPath: '/run/yharness-browser/owners.json',
+        },
+      }, []) })
+      await expect.poll(() => sync.mock.calls.length).toBe(1)
+
+      removeFirst()
+      await entered.promise
+      const secondBots = {
+        list: async () => ({ bots: [] }),
+        ownerBotForSession: async () => undefined,
+      }
+      const removeSecond = ctx.provide('bots', secondBots as never)
+      await setImmediate()
+      expect(sync).toHaveBeenCalledOnce()
+
+      release.resolve(undefined)
+      await expect.poll(() => sync.mock.calls.length).toBe(2)
+      removeSecond()
+      await mounted.dispose()
+      mounted = undefined
+    } finally {
+      release.resolve(undefined)
+      await mounted?.dispose().catch(() => {})
+      sync.mockRestore()
+      close.mockRestore()
+      await ctx.fiber.dispose()
+    }
+  })
+
   it('keeps owner setting, file, and restart routes scoped to an active desktop Bot', async () => {
     const ctx = new Context()
     const routes: ConnectionFetchRoute[] = []
@@ -1139,6 +1188,69 @@ describe('managed VPS Bot composition', () => {
       warning.mockRestore()
       sharedWorkspaceFor.mockRestore()
       release.resolve(undefined)
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('keeps a same-session project grant replacement behind the retiring Agent', async () => {
+    const ctx = new Context()
+    const bot = { id: BotId('bot-same-session'), sessionId: BOT_SESSION, state: 'active' as const }
+    const bindWorkspace = vi.fn<Context['terminalController']['bindWorkspace']>(() => async () => {})
+    const sharedWorkspaceFor = vi.spyOn(VpsRuntime.prototype, 'sharedWorkspaceFor').mockResolvedValue('/workspace')
+    const teardownEntered = Promise.withResolvers<undefined>()
+    const releaseTeardown = Promise.withResolvers<undefined>()
+    let first: Awaited<ReturnType<typeof ctx.agents.create>> | undefined
+    let second: Awaited<ReturnType<typeof ctx.agents.create>> | undefined
+    let mounted: Awaited<ReturnType<typeof ctx.plugin>> | undefined
+    try {
+      await ctx.plugin(LlmRuntime)
+      await ctx.plugin(SessionStore)
+      await ctx.plugin(SessionProjections)
+      await ctx.plugin(AgentRegistry)
+      await ctx.plugin(SystemPrompt)
+      await ctx.plugin(ToolRuntime)
+      await ctx.plugin(SandboxPolicyService, { mode: 'danger-full-access' })
+      await ctx.plugin(LocalSubprocessRuntime)
+      await ctx.plugin(AgentLoop, { agents: [] })
+      ctx.provide('attachments', {} as never)
+      ctx.provide('workspaceFiles', {
+        downloadComputer: vi.fn(async () => new Response('fixture-download')),
+        list: vi.fn(async () => ({ entries: [], truncated: false })),
+        read: vi.fn(async () => ({ text: '', version: 'fixture-version', offset: 1, lines: 0, eof: true })),
+      } as never)
+      ctx.provide('terminalController', { bindWorkspace } as never)
+      ctx.provide('bots', { ownerBotForSession: async (id: string) => id === BOT_SESSION ? bot : undefined } as never)
+      mounted = await ctx.plugin((scope) => { mountVpsBots(scope, {
+        root: '/yharness-test-bots', image: 'localhost/yharness-test', bots: [bot.id],
+        sharedWorkspace: { bots: [bot.id] },
+      }, []) })
+
+      first = await ctx.agents.create({ sessionId: BOT_SESSION, agentOptions: { provider: 'fixture', model: 'fixture' } })
+      await expect.poll(() => ctx.tools.get('vps_project_files', first?.agent)).toBeDefined()
+      first.agent.ctx.effect(() => async () => {
+        teardownEntered.resolve(undefined)
+        await releaseTeardown.promise
+      }, 'fixture: hold Agent teardown')
+      const retiring = first.dispose()
+      await teardownEntered.promise
+      expect(ctx.agents.get(BOT_SESSION)).toBe(first.agent)
+      await expect(ctx.agents.create({ sessionId: BOT_SESSION, agentOptions: { provider: 'fixture', model: 'fixture' } }))
+        .rejects.toThrow(/already registered|already exists/u)
+      releaseTeardown.resolve(undefined)
+      await retiring
+
+      second = await ctx.agents.create({ sessionId: BOT_SESSION, agentOptions: { provider: 'fixture', model: 'fixture' } })
+      expect(ctx.tools.get('vps_project_files', second.agent)).toBeDefined()
+      await second.dispose()
+      second = undefined
+      await mounted.dispose()
+      mounted = undefined
+    } finally {
+      releaseTeardown.resolve(undefined)
+      await first?.dispose().catch(() => {})
+      await second?.dispose().catch(() => {})
+      await mounted?.dispose().catch(() => {})
+      sharedWorkspaceFor.mockRestore()
       await ctx.fiber.dispose()
     }
   })
