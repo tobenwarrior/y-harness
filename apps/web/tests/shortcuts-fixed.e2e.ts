@@ -10,6 +10,7 @@ import { fixtureUserPrompts, launchWebScaffold, watchConsole, webSnapshotMode, t
 import { connectFreshWorkspace, newEnglishPage } from './support.ts'
 
 const FIXTURE = fileURLToPath(new URL('../../../snapshots/web/approval-composer/session.v3.jsonl', import.meta.url))
+const PERMISSION_PRESETS = fileURLToPath(new URL('./fixtures/permission-presets.patch.yml', import.meta.url))
 
 describe('web e2e: fixed approval rejection keys', () => {
   let scaffold: WebScaffold | undefined
@@ -26,7 +27,11 @@ describe('web e2e: fixed approval rejection keys', () => {
   it.skipIf(webSnapshotMode() === 'record').each(['reject-button-enter', 'container-escape'] as const)(
     'rejects through %s without running the requested write', async (method) => {
       const events: SessionEvent[] = []
-      scaffold = await launchWebScaffold({ replayFixture: FIXTURE, compareReplaySession: false })
+      scaffold = await launchWebScaffold({
+        extraOverlayPath: PERMISSION_PRESETS,
+        replayFixture: FIXTURE,
+        compareReplaySession: false,
+      })
       scaffold.ctx.on('session/event', (_session, event: SessionEvent) => { events.push(event) })
       browser = await chromium.launch()
       page = await newEnglishPage(browser)
