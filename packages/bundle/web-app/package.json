@@ -178,6 +178,7 @@
     "@yharness/skill-library": "workspace:*",
     "@yharness/subprocess": "workspace:*",
     "@yharness/tools": "workspace:*",
+    "@yharness/util-values": "workspace:*",
     "@yharness/terminal": "workspace:*",
     "@yharness/terminal-bash": "workspace:*",
     "@yharness/time-context": "workspace:*",

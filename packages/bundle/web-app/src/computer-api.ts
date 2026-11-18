@@ -2,6 +2,7 @@
 
 import type { Branded } from '@yharness/brand'
 import type { ConnectionFetchRoute } from '@yharness/client-connection'
+import { assertNever } from '@yharness/util-values'
 import type { ComputerSignInAction, ComputerSignInRequest, VpsComputer } from './computer.ts'
 import { validateIsolatedBrowserUrl } from './vps-isolated-browser.ts'
 
@@ -358,6 +359,8 @@ function routesFor(
       case 'input': return (id: ViewerId, payload: Record<string, unknown>, signal: AbortSignal): Promise<unknown> =>
         typeof payload.origin === 'string' ? computer.input(id, payload.action, signal, payload.origin)
           : computer.input(id, payload.action, signal)
+      /* v8 ignore next -- ComputerEndpoint is closed; assertNever enforces exhaustiveness. */
+      default: return assertNever(endpoint, 'computer endpoint')
     }
   }
   return [
