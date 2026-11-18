@@ -70,6 +70,16 @@ async function inWorld(
     const executablePath = process.env.DSH_PLAYWRIGHT_EXECUTABLE_PATH
     browser = await chromium.launch(executablePath === undefined ? {} : { executablePath })
     const page = await newEnglishPage(browser)
+    // This composition intentionally omits the Computer routes; return the authenticated unavailable status
+    // so the browser exercises the no-Computer state without turning the fixture into a console error.
+    await page.route('**/api/computer/status', async (route) => {
+      if (route.request().method() !== 'POST') return route.fallback()
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ available: false, kind: 'vps', computer: { id: 'remaining-feature-fixture', location: 'vps', permissionScope: 'workspace' } }),
+      })
+    })
     const tripwire = watchConsole(page)
     const consoleProblems: string[] = []
     const remoteRequests: string[] = []
@@ -124,18 +134,17 @@ async function capturePalettes(world: World, name: string): Promise<void> {
   await expect.poll(() => world.page.evaluate(() => document.body.hasAttribute('data-ds-dark-theme'))).toBe(true)
 }
 
-/** Change language through the stored Settings control, then return to the previous product surface. */
+/** Select a requested UI language through Settings; the retired Chinese id resolves to English. */
 async function changeLanguage(page: Page, language: 'en' | 'zh', settingsOpen = false): Promise<void> {
-  const previous = language === 'zh' ? 'en' : 'zh'
-  if (!settingsOpen) await openSettings(page, previous)
-  const dialog = page.getByRole('dialog', { name: previous === 'en' ? 'Settings' : '\u{8BBE}\u{7F6E}', exact: true })
-  await dialog.getByRole('button', { name: previous === 'en' ? 'General' : '\u{901A}\u{7528}\u{8BBE}\u{7F6E}', exact: true }).click()
-  await dialog.getByRole('button', { name: previous === 'en' ? 'English' : '\u{4E2D}\u{6587}', exact: true }).click()
-  await page.getByRole('menuitem', { name: language === 'en' ? 'English' : '\u{4E2D}\u{6587}', exact: true }).click()
-  await expect.poll(() => page.evaluate(() => document.documentElement.lang)).toBe(language === 'en' ? 'en' : 'zh-CN')
+  const selected = language === 'zh' ? 'en' : language
+  if (!settingsOpen) await openSettings(page, 'en')
+  const dialog = page.getByRole('dialog', { name: 'Settings', exact: true })
+  await dialog.getByRole('button', { name: 'General', exact: true }).click()
+  await dialog.getByRole('button', { name: 'English', exact: true }).click()
+  await page.getByRole('menuitem', { name: selected === 'en' ? 'English' : selected, exact: true }).click()
+  await expect.poll(() => page.evaluate(() => document.documentElement.lang)).toBe('en')
   if (!settingsOpen) {
-    await page.getByRole('dialog', { name: language === 'en' ? 'Settings' : '\u{8BBE}\u{7F6E}', exact: true })
-      .getByRole('button', { name: language === 'en' ? 'Close' : '\u{5173}\u{95ED}', exact: true }).click()
+    await page.getByRole('dialog', { name: 'Settings', exact: true }).getByRole('button', { name: 'Close', exact: true }).click()
   }
 }
 
@@ -216,7 +225,9 @@ it('approves an empty native project, records fixture facts and updates one reve
     const { scaffold, page } = world
     const project = await fixtureProject(world)
     const library = scaffold.ctx.skillLibrary
-    expect((await library.list({ projectId: project.id })).items).toEqual([])
+    const projectItems = async (): Promise<readonly SkillLibraryItem[]> =>
+      (await library.list({ projectId: project.id })).items.filter(item => item.projectIds.includes(project.id))
+    expect(await projectItems()).toEqual([])
     await openSkills(page)
     await chooseProject(page)
     await page.getByRole('button', { name: 'Project learning', exact: true }).click()
@@ -228,7 +239,7 @@ it('approves an empty native project, records fixture facts and updates one reve
     await consent.getByRole('button', { name: 'Approve project learning', exact: true }).click()
     await consent.waitFor({ state: 'hidden' })
     await expect.poll(() => library.learningStatus({}).policies.filter(policy => policy.projectId === project.id).length).toBe(1)
-    expect((await library.list({ projectId: project.id })).items).toEqual([])
+    expect(await projectItems()).toEqual([])
     const adapter = new NativeObservationFixture(scaffold)
     const registration = scaffold.ctx.llm.registerAdapter([NATIVE_FIXTURE_PROVIDER], adapter)
     const { agent } = await scaffold.ctx.agents.create({
@@ -247,8 +258,8 @@ it('approves an empty native project, records fixture facts and updates one reve
     await run(1)
     await expect.poll(() => library.listProposals({ projectId: project.id })
       .filter(proposal => proposal.operation === 'learn' && proposal.state === 'applied')).toHaveLength(1)
-    await expect.poll(async () => (await library.list({ projectId: project.id })).items.length).toBe(1)
-    const created = (await library.list({ projectId: project.id })).items[0]!
+    await expect.poll(async () => (await projectItems()).length).toBe(1)
+    const created = (await projectItems())[0]!
     expect(created).toMatchObject({ scope: 'project', ownership: 'y-managed', usage: { coverage: 'unknown', loadCount: 0 } })
     const first = await library.detail({ id: created.id })
     const registry = scaffold.ctx.get('agentPresets')?.serviceFor(agent, 'skills') ?? scaffold.ctx.get('skills')
@@ -265,7 +276,7 @@ it('approves an empty native project, records fixture facts and updates one reve
     expect(first.content).toContain('1. Read `src/source.ts`')
     expect(first.content).toContain('2. Run `pnpm run test`')
     await run(2)
-    expect((await library.list({ projectId: project.id })).items.map(item => item.id)).toEqual([created.id])
+    expect((await projectItems()).map(item => item.id)).toEqual([created.id])
     expect((await library.detail({ id: created.id })).content).toBe(first.content)
     await run(3)
     await expect.poll(() => library.listProposals({ projectId: project.id })
@@ -275,7 +286,7 @@ it('approves an empty native project, records fixture facts and updates one reve
     expect(updated.content.match(/## Observed procedure/g)).toHaveLength(2)
     expect(updated.content).toContain('1. Run `pnpm run test`')
     await assertInvocable(updated.content)
-    expect((await library.list({ projectId: project.id })).items.map(item => item.id)).toEqual([created.id])
+    expect((await projectItems()).map(item => item.id)).toEqual([created.id])
     const evidence = library.listLearningEvidence({ projectId: project.id })
     expect(evidence.every(row => row.checks.length === 0 && row.native?.actions.length === 2)).toBe(true)
     await page.getByRole('button', { name: 'Refresh', exact: true }).click()
@@ -296,9 +307,9 @@ it('approves an empty native project, records fixture facts and updates one reve
     assertRemote(world, 'approveLearningPolicy')
     assertRemote(world, 'rollback')
     await changeLanguage(page, 'zh')
-    await page.getByRole('button', { name: '\u{9879}\u{76EE}\u{5B66}\u{4E60}', exact: true }).click()
-    await page.getByRole('dialog', { name: '\u{9879}\u{76EE}\u{5B66}\u{4E60}', exact: true }).getByRole('button', { name: '\u{64A4}\u{9500}\u{9879}\u{76EE}\u{5B66}\u{4E60}', exact: true }).waitFor()
-    await page.screenshot({ path: join(world.shots, 'remaining-native-project-policy-zh-dark.png'), animations: 'disabled' })
+    await page.getByRole('button', { name: 'Project learning', exact: true }).click()
+    await page.getByRole('dialog', { name: 'Project learning', exact: true }).getByRole('button', { name: 'Revoke project learning', exact: true }).waitFor()
+    await page.screenshot({ path: join(world.shots, 'remaining-native-project-policy-en-dark.png'), animations: 'disabled' })
     await page.keyboard.press('Escape')
     registration()
   })
@@ -436,8 +447,8 @@ it('forces only consented reference reduction, protects pinned and edited bundle
     assertRemote(world, 'archive')
     assertRemote(world, 'restore')
     await changeLanguage(page, 'zh')
-    await page.getByRole('button', { name: '\u{5DF2}\u{5220}\u{9664}\u{6280}\u{80FD}', exact: true }).waitFor()
-    await page.screenshot({ path: join(world.shots, 'remaining-maintenance-restored-zh-dark.png'), animations: 'disabled' })
+    await page.getByRole('button', { name: 'Deleted skills', exact: true }).waitFor()
+    await page.screenshot({ path: join(world.shots, 'remaining-maintenance-restored-en-dark.png'), animations: 'disabled' })
   })
 })
 
@@ -662,10 +673,9 @@ it('imports original fixture identities, refreshes append-only history idempoten
     assertRemote(world, 'importSession')
     assertRemote(world, 'refreshMirror')
     await changeLanguage(page, 'zh', true)
-    const chinese = page.getByRole('dialog', { name: '\u{8BBE}\u{7F6E}', exact: true })
-    await chinese.getByRole('button', { name: '\u{7F16}\u{7A0B}\u{4F1A}\u{8BDD}', exact: true }).click()
-    await chinese.getByRole('region', { name: '\u{4F1A}\u{8BDD}\u{8BB0}\u{5F55}', exact: true }).getByText(appended.text, { exact: true }).waitFor()
-    await page.screenshot({ path: join(world.shots, 'remaining-coding-mirror-zh-dark.png'), animations: 'disabled' })
+    await settings.getByRole('button', { name: 'Coding sessions', exact: true }).click()
+    await settings.getByRole('region', { name: 'Session history', exact: true }).getByText(appended.text, { exact: true }).waitFor()
+    await page.screenshot({ path: join(world.shots, 'remaining-coding-mirror-en-dark.png'), animations: 'disabled' })
     await unregister()
     expect((await scaffold.ctx.codingSessions.getState()).sources.some(candidate => candidate.profileId === source.profileId)).toBe(false)
     expect((await scaffold.ctx.codingSessions.detail(initial.id)).events).toEqual(refreshed.events)
@@ -813,12 +823,10 @@ it('saves independent Decision controls, previews admitted order and falls back 
     assertRemote(world, 'configureDecision')
     assertRemote(world, 'retrieve')
     await changeLanguage(page, 'zh', true)
-    const chinese = page.getByRole('dialog', { name: '\u{8BBE}\u{7F6E}', exact: true })
-    await chinese.getByRole('button', { name: '\u{6A21}\u{578B}', exact: true }).click()
-    const chineseDecision = chinese.getByRole('region', { name: 'Decision \u{5EFA}\u{8BAE}', exact: true })
-    await chineseDecision.waitFor()
-    await chineseDecision.getByRole('heading', { name: 'Decision \u{5EFA}\u{8BAE}', exact: true }).scrollIntoViewIfNeeded()
-    await page.screenshot({ path: join(world.shots, 'remaining-decision-footer-zh-dark.png'), animations: 'disabled' })
+    await settings.getByRole('button', { name: 'Models', exact: true }).click()
+    await decision.waitFor()
+    await decision.getByRole('heading', { name: 'Decision advice', exact: true }).scrollIntoViewIfNeeded()
+    await page.screenshot({ path: join(world.shots, 'remaining-decision-footer-en-dark.png'), animations: 'disabled' })
     apiRegistration()
     nativeRegistration()
   })
@@ -1020,11 +1028,11 @@ it('hands the exact original fixture conversation to Y and waits for release evi
     assertRemote(world, 'continueSequential')
     assertRemote(world, 'releaseSequential')
     await changeLanguage(world.page, 'zh', true)
-    const chinese = world.page.getByRole('dialog', { name: '\u{8BBE}\u{7F6E}', exact: true })
-    await chinese.getByRole('button', { name: '\u{7F16}\u{7A0B}\u{4F1A}\u{8BDD}', exact: true }).click()
-    await chinese.getByRole('region', { name: '\u{4F1A}\u{8BDD}\u{8BB0}\u{5F55}', exact: true }).getByText(fixture.source.nativeSessionId, { exact: true }).waitFor()
-    await chinese.getByRole('button', { name: '\u{4EA4}\u{7ED9} Y \u{7EE7}\u{7EED}', exact: true }).scrollIntoViewIfNeeded()
-    await world.page.screenshot({ path: join(world.shots, 'remaining-sequential-external-ready-zh-dark.png'), animations: 'disabled' })
+    const settings = world.page.getByRole('dialog', { name: 'Settings', exact: true })
+    await settings.getByRole('button', { name: 'Coding sessions', exact: true }).click()
+    await settings.getByRole('region', { name: 'Session history', exact: true }).getByText(fixture.source.nativeSessionId, { exact: true }).waitFor()
+    await settings.getByRole('button', { name: 'Continue native conversation', exact: true }).scrollIntoViewIfNeeded()
+    await world.page.screenshot({ path: join(world.shots, 'remaining-sequential-external-ready-en-dark.png'), animations: 'disabled' })
     await fixture.unregister()
   }, { enableSequentialHandoff: true })
 })
@@ -1105,10 +1113,9 @@ it('retains original history and blocked ownership after conflicting native chan
     assertRemote(world, 'continueSequential')
     assertRemote(world, 'releaseSequential')
     await changeLanguage(world.page, 'zh', true)
-    const chinese = world.page.getByRole('dialog', { name: '\u{8BBE}\u{7F6E}', exact: true })
-    await chinese.getByRole('button', { name: '\u{7F16}\u{7A0B}\u{4F1A}\u{8BDD}', exact: true }).click()
-    await chinese.getByRole('button', { name: '\u{4EA4}\u{8FD8}\u{539F}\u{751F}\u{5E94}\u{7528}', exact: true }).scrollIntoViewIfNeeded()
-    await world.page.screenshot({ path: join(world.shots, 'remaining-sequential-release-uncertain-zh-dark.png'), animations: 'disabled' })
+    await settings.getByRole('button', { name: 'Coding sessions', exact: true }).click()
+    await settings.getByRole('button', { name: 'Release to native app', exact: true }).scrollIntoViewIfNeeded()
+    await world.page.screenshot({ path: join(world.shots, 'remaining-sequential-release-uncertain-en-dark.png'), animations: 'disabled' })
     // Owned cleanup restores the external double before awaiting this intentionally blocked source disposal.
   }, { enableSequentialHandoff: true })
 })
