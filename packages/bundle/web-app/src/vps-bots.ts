@@ -113,7 +113,8 @@ export function mountVpsBots(
   }
   const sharesProject = (botId: string): boolean => config.sharedWorkspace != null && isDesktopBot(botId)
     && (sharedBotIds === undefined ? isSelectedDesktop(botId) : sharedBotIds.has(botId))
-  const browserBotIds = new Set(config.browser?.bots)
+  const browserOptions = config.browser ?? undefined
+  const browserBotIds = new Set(browserOptions?.bots)
   const networkBotIds = config.network == null ? undefined : new Set(config.network.bots)
   const isolatedBrowserBotIds = new Set(config.isolatedBrowser?.bots)
   const ownerRosterPath = config.isolatedBrowser?.ownerRosterPath
@@ -248,7 +249,7 @@ export function mountVpsBots(
     })
   }
   const runtimeFor = (botId: string): VpsRuntime => {
-    const browser = browserBotIds.has(botId) ? config.browser ?? undefined : undefined
+    const browser = browserBotIds.has(botId) ? browserOptions : undefined
     const internet = networkBotIds === undefined ? browser !== undefined : networkBotIds.has(botId)
     return runtimeWith(browser, sharesProject(botId), internet)
   }
