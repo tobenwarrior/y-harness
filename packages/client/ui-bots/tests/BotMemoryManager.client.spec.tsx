@@ -131,7 +131,7 @@ describe('BotMemoryManager', () => {
     await rejected.promise.catch(() => undefined)
   })
 
-  it('does not start a second edit while the first save is pending', async () => {
+  it('preserves a second draft while the first save is pending', async () => {
     const first = { id: 'memory-first', text: 'First memory.', createdAt: 1 }
     const second = { id: 'memory-second', text: 'Second memory.', createdAt: 2 }
     const pending = Promise.withResolvers<BotMemorySummary>()
@@ -144,7 +144,7 @@ describe('BotMemoryManager', () => {
       remove: vi.fn(async () => {}),
     }
 
-    renderManager(actions)
+    const view = renderManager(actions)
     const firstRow = await screen.findByRole('listitem', { name: /memory-first/ })
     fireEvent.click(within(firstRow).getByRole('button', { name: 'Edit memory memory-first' }))
     fireEvent.change(within(firstRow).getByRole('textbox', { name: 'Memory text' }), { target: { value: 'Updated first memory.' } })
@@ -157,8 +157,18 @@ describe('BotMemoryManager', () => {
     fireEvent.click(within(secondRow).getByRole('button', { name: 'Save memory' }))
     expect(update).toHaveBeenCalledOnce()
 
+    const recreatedActions: BotMemoryManagerActions = {
+      list: vi.fn(async () => [first, second]),
+      update,
+      remove: actions.remove,
+    }
+    view.rerender(<BotMemoryManager bot={bot} actions={recreatedActions} open onClose={vi.fn()} t={t} />)
+    await waitFor(() => { expect(recreatedActions.list).toHaveBeenCalledWith(bot.id) })
+
     pending.resolve({ ...first, text: 'Updated first memory.', createdAt: 3 })
     expect(await screen.findByText('Updated first memory.')).toBeTruthy()
+    const preservedSecondRow = screen.getByRole('listitem', { name: /memory-second/ })
+    expect(within(preservedSecondRow).getByRole('textbox', { name: 'Memory text' })).toHaveProperty('value', 'Updated second memory.')
   })
 
   it('supports remove dialog cancellation and keeps it open while removal is pending', async () => {

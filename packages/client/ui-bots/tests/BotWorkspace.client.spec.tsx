@@ -1747,6 +1747,48 @@ describe('Bot roster and detail', () => {
     await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Bot memory' })).toBeNull() })
   })
 
+  it('preserves a new draft after closing and reopening during a pending save', async () => {
+    const first = { id: 'memory-first', text: 'First memory.', createdAt: 1 }
+    const second = { id: 'memory-second', text: 'Second memory.', createdAt: 2 }
+    const pendingUpdate = Promise.withResolvers<BotMemorySummary>()
+    const actions: BotMemoryManagerActions = {
+      list: vi.fn(async () => [first, second]),
+      update: vi.fn(async () => pendingUpdate.promise),
+      remove: vi.fn(async () => {}),
+    }
+    render(<BotDetail
+      bot={bots[0]}
+      loading={false}
+      loadAvatar={undefined}
+      memoryManager={actions}
+      t={t}
+    >
+      <p>Persistent session surface</p>
+    </BotDetail>)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Manage memories' }))
+    const firstRow = await screen.findByRole('listitem', { name: 'memory-first' })
+    fireEvent.click(within(firstRow).getByRole('button', { name: 'Edit memory memory-first' }))
+    fireEvent.change(within(firstRow).getByRole('textbox', { name: 'Memory text' }), { target: { value: 'Updated first memory.' } })
+    fireEvent.click(within(firstRow).getByRole('button', { name: 'Save memory' }))
+    await waitFor(() => { expect(actions.update).toHaveBeenCalledWith('research', 'memory-first', 'Updated first memory.') })
+
+    const dialog = screen.getByRole('dialog', { name: 'Bot memory' })
+    fireEvent.click(within(dialog).getAllByRole('button', { name: /^Close$/ }).at(-1)!)
+    await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Bot memory' })).toBeNull() })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Manage memories' }))
+    await screen.findByRole('dialog', { name: 'Bot memory' })
+    const secondRow = screen.getByRole('listitem', { name: 'memory-second' })
+    fireEvent.click(within(secondRow).getByRole('button', { name: 'Edit memory memory-second' }))
+    fireEvent.change(within(secondRow).getByRole('textbox', { name: 'Memory text' }), { target: { value: 'Updated second memory.' } })
+
+    pendingUpdate.resolve({ ...first, text: 'Updated first memory.', createdAt: 3 })
+    expect(await screen.findByText('Updated first memory.')).toBeTruthy()
+    const preservedSecondRow = screen.getByRole('listitem', { name: 'memory-second' })
+    expect(within(preservedSecondRow).getByRole('textbox', { name: 'Memory text' })).toHaveProperty('value', 'Updated second memory.')
+  })
+
   it('does not apply a pending edit from the previous Bot after selection changes', async () => {
     let resolveUpdate!: (memory: BotMemorySummary) => void
     const pendingUpdate = new Promise<BotMemorySummary>((resolve) => { resolveUpdate = resolve })
@@ -1788,6 +1830,92 @@ describe('Bot roster and detail', () => {
     resolveUpdate({ id: 'memory-shared', text: 'Updated research note', createdAt: 3 })
     await waitFor(() => { expect(screen.getByText('Release note')).toBeTruthy() })
     expect(screen.queryByText('Updated research note')).toBeNull()
+  })
+
+  it('does not show a pending save error from the previous Bot after selection changes', async () => {
+    const pendingUpdate = Promise.withResolvers<BotMemorySummary>()
+    const actions: BotMemoryManagerActions = {
+      list: vi.fn(async (botId: string) => botId === 'research'
+        ? [{ id: 'memory-shared', text: 'Research note', createdAt: 1 }]
+        : [{ id: 'memory-shared', text: 'Release note', createdAt: 2 }]),
+      update: vi.fn(async () => pendingUpdate.promise),
+      remove: vi.fn(async () => {}),
+    }
+    const view = render(<BotDetail
+      bot={bots[0]}
+      loading={false}
+      loadAvatar={undefined}
+      memoryManager={actions}
+      t={t}
+    >
+      <p>Persistent session surface</p>
+    </BotDetail>)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Manage memories' }))
+    const researchRow = await screen.findByRole('listitem', { name: 'memory-shared' })
+    fireEvent.click(within(researchRow).getByRole('button', { name: 'Edit memory memory-shared' }))
+    fireEvent.change(within(researchRow).getByRole('textbox', { name: 'Memory text' }), { target: { value: 'Updated research note' } })
+    fireEvent.click(within(researchRow).getByRole('button', { name: 'Save memory' }))
+    await waitFor(() => { expect(actions.update).toHaveBeenCalledWith('research', 'memory-shared', 'Updated research note') })
+
+    view.rerender(<BotDetail
+      bot={bots[1]}
+      loading={false}
+      loadAvatar={undefined}
+      memoryManager={actions}
+      t={t}
+    >
+      <p>Persistent session surface</p>
+    </BotDetail>)
+    expect(await screen.findByText('Release note')).toBeTruthy()
+
+    pendingUpdate.reject(new Error('stale update'))
+    await pendingUpdate.promise.catch(() => undefined)
+    await waitFor(() => { expect(screen.queryByRole('alert')).toBeNull() })
+    expect(screen.getByText('Release note')).toBeTruthy()
+  })
+
+  it('does not apply a pending removal from the previous Bot after selection changes', async () => {
+    const pendingRemove = Promise.withResolvers<undefined>()
+    const actions: BotMemoryManagerActions = {
+      list: vi.fn(async (botId: string) => botId === 'research'
+        ? [{ id: 'memory-shared', text: 'Research note', createdAt: 1 }]
+        : [{ id: 'memory-shared', text: 'Release note', createdAt: 2 }]),
+      update: vi.fn(),
+      remove: vi.fn(async () => pendingRemove.promise),
+    }
+    const view = render(<BotDetail
+      bot={bots[0]}
+      loading={false}
+      loadAvatar={undefined}
+      memoryManager={actions}
+      t={t}
+    >
+      <p>Persistent session surface</p>
+    </BotDetail>)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Manage memories' }))
+    const researchRow = await screen.findByRole('listitem', { name: 'memory-shared' })
+    fireEvent.click(within(researchRow).getByRole('button', { name: 'Remove memory memory-shared' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Remove memory' }))
+    await waitFor(() => { expect(actions.remove).toHaveBeenCalledWith('research', 'memory-shared') })
+
+    view.rerender(<BotDetail
+      bot={bots[1]}
+      loading={false}
+      loadAvatar={undefined}
+      memoryManager={actions}
+      t={t}
+    >
+      <p>Persistent session surface</p>
+    </BotDetail>)
+    expect(await screen.findByText('Release note')).toBeTruthy()
+
+    pendingRemove.resolve(undefined)
+    await pendingRemove.promise
+    await waitFor(() => { expect(screen.getByText('Release note')).toBeTruthy() })
+    expect(screen.queryByText('Research note')).toBeNull()
+    expect(screen.queryByRole('alert')).toBeNull()
   })
 
   it('edits the selected Bot skill policy from its detail header', async () => {

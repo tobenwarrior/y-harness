@@ -7,7 +7,7 @@ kind: "package-reference"
 
 ## Summary
 
-Use a Bot workspace with a roster, persistent Sessions, animated avatars, profile editing, routines, and optional host-local skill assignment. Profile edits preserve the existing Session, working directory, and preset; capability labels do not grant permissions. Host callbacks provide connected apps, images, skills, and optional templates. Template imports require approval and the required permissions. Missing callbacks hide their controls, and request guards preserve newer drafts.
+Use a Bot workspace with a roster, persistent Sessions, animated avatars, profile editing, routines, and optional host-local skill assignment. Profile edits preserve the existing Session, working directory, and preset; capability labels do not grant permissions. Host callbacks provide connected apps, images, skills, and optional templates. Template imports require approval and the required permissions. Missing callbacks hide their controls, and request guards preserve newer drafts. The private memory manager keeps a draft intact while another row's save or removal settles, and the selected-Bot key prevents late work from updating a different Bot's view.
 
 ## Table of Contents
 
