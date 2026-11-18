@@ -18,7 +18,7 @@ import {
 } from '@yharness/skill'
 import { parse as parseYaml } from 'yaml'
 import { MapServiceBridge, registerMapRoutes } from './map-service.ts'
-import { activeOverlay, overlayRoot as defaultOverlayRoot } from './overlay.ts'
+import { activeOverlay, resolveOverlayRoot } from './overlay.ts'
 import {
   compareReleases,
   recordedCommit,
@@ -171,7 +171,7 @@ function harnessActivation(): string {
 export function apply(ctx: Context, config: Config = {}): void {
   const assetRoot = config.assetRoot ?? fileURLToPath(new URL('../assets/', import.meta.url))
   if (!isAbsolute(assetRoot)) throw new Error('skill-compound: assetRoot must be an absolute directory')
-  const updateRoot = config.overlayRoot ?? defaultOverlayRoot()
+  const updateRoot = config.overlayRoot ?? resolveOverlayRoot()
   if (!isAbsolute(updateRoot)) throw new Error('skill-compound: overlayRoot must be an absolute directory')
   const { python, supported } = resolvePython(config.python)
   const bundledCommit = recordedCommit(readFileSync(join(PACKAGE_ROOT, 'UPSTREAM.md'), 'utf8'))

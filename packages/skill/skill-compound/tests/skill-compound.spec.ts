@@ -5,11 +5,18 @@ import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { describe, expect, it, vi } from 'vitest'
 
-const { spawnSyncMock } = vi.hoisted(() => ({ spawnSyncMock: vi.fn() }))
+const { homeOverride, spawnSyncMock } = vi.hoisted(() => ({
+  homeOverride: { value: undefined as string | undefined },
+  spawnSyncMock: vi.fn(),
+}))
 vi.mock('node:child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:child_process')>()
   spawnSyncMock.mockImplementation(actual.spawnSync)
   return { ...actual, spawnSync: spawnSyncMock }
+})
+vi.mock('node:os', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:os')>()
+  return { ...actual, homedir: () => homeOverride.value ?? actual.homedir() }
 })
 
 import { Context } from '@yharness/cordis'
@@ -18,7 +25,7 @@ import Loader from '@yharness/cordis-plugin-loader'
 import type { ConnectionFetchRoute } from '@yharness/client-connection'
 import SkillRegistry from '@yharness/skill'
 import * as SkillCompound from '@yharness/skill-compound'
-import { activeOverlay } from '../src/overlay.ts'
+import { activeOverlay, legacyOverlayRoot, overlayRoot } from '../src/overlay.ts'
 import { AUTO_UPDATE_INTERVAL_MS } from '../src/index.ts'
 import { VENDORED_VERSION } from '../src/upstream.ts'
 import { privateOverlayRoot } from './private-overlay-root.ts'
@@ -137,6 +144,69 @@ describe('bundled Compound skills', () => {
     } finally {
       await ctx.fiber.dispose()
       await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('uses an active legacy overlay when the default root is omitted', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'dsh-compound-legacy-home-'))
+    const root = legacyOverlayRoot(home)
+    const commit = 'e'.repeat(40)
+    const nextCommit = 'f'.repeat(40)
+    const routes: ConnectionFetchRoute[] = []
+    const ctx = new Context()
+    const upstreamVersion = '2.1.0'
+    const files = new Map(names.map(name => [
+      `skills/${name}/SKILL.md`,
+      `---\nname: ${name}\ndescription: upstream ${name}\n---\n\nUpdated legacy body ${name}.\n`,
+    ]))
+    const tree = [...files].map(([path, text]) => ({
+      path, type: 'blob' as const, mode: '100644' as const, size: Buffer.byteLength(text),
+      sha: createHash('sha1').update(`blob ${Buffer.byteLength(text)}\0`).update(text).digest('hex'),
+    }))
+    const previousHome = homeOverride.value
+    homeOverride.value = home
+    try {
+      const skills = join(root, 'revisions', commit, 'skills')
+      for (const name of names) {
+        const directory = join(skills, name)
+        await mkdir(directory, { recursive: true, mode: 0o700 })
+        await writeFile(join(directory, 'SKILL.md'), `---\nname: ${name}\ndescription: legacy ${name}\n---\n\nLegacy body ${name}.\n`, { mode: 0o600 })
+      }
+      await writeFile(join(root, 'current.json'), JSON.stringify({ commit, version: '2.0.0' }), { mode: 0o600 })
+      vi.stubGlobal('fetch', (url: string) => {
+        if (url.includes('/commits/')) return Promise.resolve(Response.json({ sha: nextCommit }))
+        if (url.endsWith('/.codex-plugin/plugin.json')) return Promise.resolve(Response.json({ version: upstreamVersion }))
+        if (url.endsWith('/plugin.json')) return Promise.resolve(new Response(null, { status: 404 }))
+        if (url.includes('/git/trees/')) return Promise.resolve(Response.json({ truncated: false, tree }))
+        const path = [...files.keys()].find(key => url.endsWith(key))
+        return Promise.resolve(new Response(path === undefined ? 'missing' : files.get(path)))
+      })
+      ctx.provide('connection', {
+        fetch: { register: (route: ConnectionFetchRoute) => { routes.push(route); return () => {} } },
+      } as never)
+      await ctx.plugin(SkillRegistry)
+      await ctx.plugin(SkillCompound, { autoUpdate: false })
+
+      const loaded = await ctx.skills.get('compound')
+      expect(loaded?.resourceBase).toEqual({ kind: 'directory', path: join(skills, 'compound') })
+      expect(loaded?.content).toContain('Legacy body compound.')
+
+      const applyRoute = routes.find(route => route.path === '/api/skill-compound.update.apply')
+      expect(applyRoute).toBeDefined()
+      const response = await applyRoute!.fetch(new Request('http://localhost/api/skill-compound.update.apply', { method: 'POST' }))
+      await expect(response.json()).resolves.toMatchObject({ status: 'updated', upstream: upstreamVersion, error: null })
+      expect(activeOverlay(root)?.version).toBe(upstreamVersion)
+      expect(activeOverlay(overlayRoot(home))).toBeUndefined()
+      const updated = await ctx.skills.get('compound')
+      expect(updated?.content).toContain('Updated legacy body compound.')
+    } finally {
+      try {
+        await ctx.fiber.dispose()
+      } finally {
+        homeOverride.value = previousHome
+        vi.unstubAllGlobals()
+        await rm(home, { recursive: true, force: true })
+      }
     }
   })
 
