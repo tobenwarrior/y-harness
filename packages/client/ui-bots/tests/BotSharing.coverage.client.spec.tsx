@@ -1038,4 +1038,192 @@ describe('BotSharing defensive UI paths', () => {
       request.mockRestore()
     }
   })
+
+  it('ignores stale shared-app loads and saves while showing supported catalog states', async () => {
+    const staleLoad = Promise.withResolvers<Awaited<ReturnType<NonNullable<BotShareActions['listSharedAppAccess']>>>>()
+    const listSharedAppAccess: NonNullable<BotShareActions['listSharedAppAccess']> = vi.fn((botId: string) => (
+      botId === bot.id
+        ? staleLoad.promise
+        : Promise.resolve({ botId, revision: 2, apps: [] })
+    ))
+    const loadActions = ownerActions({ listSharedAppAccess, setSharedAppAccess: vi.fn() })
+    const loadView = render(<BotShareDialog bot={bot} actions={loadActions} open onClose={vi.fn()} t={t} />)
+    await waitFor(() => { expect(listSharedAppAccess).toHaveBeenCalledWith(bot.id) })
+    loadView.rerender(<BotShareDialog bot={analystBot} actions={loadActions} open onClose={vi.fn()} t={t} />)
+    expect(await screen.findByText('Connect an app to manage shared access here.')).toBeTruthy()
+    await act(async () => {
+      staleLoad.reject(new Error('stale shared-app load'))
+      await Promise.resolve()
+    })
+    expect(screen.queryByText('Could not load shared app access. Try again.')).toBeNull()
+
+    cleanup()
+    const staleSave = Promise.withResolvers<Awaited<ReturnType<NonNullable<BotShareActions['setSharedAppAccess']>>>>()
+    const saveList: NonNullable<BotShareActions['listSharedAppAccess']> = vi.fn((botId: string) => Promise.resolve({
+      botId,
+      revision: 4,
+      apps: [
+        { id: 'calendar', name: 'Calendar', description: 'Calendar access', allowed: false },
+        { id: 'weather', allowed: false },
+      ],
+    }))
+    const setSharedAppAccess: NonNullable<BotShareActions['setSharedAppAccess']> = vi.fn().mockReturnValue(staleSave.promise)
+    const saveActions = ownerActions({ listSharedAppAccess: saveList, setSharedAppAccess })
+    const saveView = render(<BotShareDialog bot={bot} actions={saveActions} open onClose={vi.fn()} t={t} />)
+    expect(await screen.findByText('Calendar access')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Allow Calendar in shared sessions' }))
+    await waitFor(() => { expect(setSharedAppAccess).toHaveBeenCalledWith(bot.id, 'calendar', true, 4) })
+    saveView.rerender(<BotShareDialog bot={analystBot} actions={saveActions} open onClose={vi.fn()} t={t} />)
+    await act(async () => {
+      staleSave.reject(new Error('stale shared-app save'))
+      await Promise.resolve()
+    })
+    expect(screen.queryByText('Could not update shared app access. Try again.')).toBeNull()
+  })
+
+  it('preserves owner delivery diagnostics when membership loading rejects with a non-Error', async () => {
+    const inspectDeliveryFences: NonNullable<BotShareActions['inspectDeliveryFences']> = vi.fn().mockResolvedValue({ fences: [] })
+    const listMembers = vi.fn()
+      .mockRejectedValueOnce('membership transport unavailable')
+      .mockRejectedValueOnce(new Error('membership Error unavailable'))
+    const actions = ownerActions({
+      listMembers,
+      inspectDeliveryFences,
+    })
+    const view = render(<BotShareDialog bot={bot} actions={actions} open onClose={vi.fn()} t={t} />)
+
+    expect(await screen.findByRole('alert')).toHaveProperty('textContent', 'Sharing could not be completed. Try again.')
+    expect(screen.getByText('Recipient delivery status is unavailable.')).toBeTruthy()
+    view.rerender(<BotShareDialog bot={analystBot} actions={actions} open onClose={vi.fn()} t={t} />)
+    expect(await screen.findByRole('alert')).toHaveProperty('textContent', 'membership Error unavailable')
+  })
+
+  it('renders manager role, optional profile description, and both transcript entry roles', async () => {
+    const manager = {
+      id: 'bot-manager',
+      name: 'Operations manager',
+      identity: 'agent' as const,
+      accent: 'violet' as const,
+      role: 'manager' as const,
+    }
+    const client = sharedClient({
+      list: vi.fn().mockResolvedValue({ ok: true, value: { bots: [manager] } }),
+      readPrivateChat: vi.fn().mockResolvedValue({
+        ok: true,
+        value: { botId: manager.id, recent: [{ role: 'user' as const, text: 'A question' }, { role: 'assistant' as const, text: 'An answer' }] },
+      }),
+    })
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+
+    expect((await screen.findAllByText('Operations manager')).length).toBeGreaterThan(0)
+    expect(screen.getAllByText('Manager').length).toBeGreaterThan(0)
+    expect(screen.getByText('A question')).toBeTruthy()
+    expect(screen.getByText('An answer')).toBeTruthy()
+  })
+
+  it('keeps a group readable when optional inspection and settings services are absent', async () => {
+    const group = groupFixture('group-optional-services', 'Optional services room')
+    const client = sharedClient({
+      listGroups: vi.fn().mockResolvedValue({ ok: true, value: { groups: [group] } }),
+    })
+    Reflect.deleteProperty(client, 'inspectGroup')
+    Reflect.deleteProperty(client, 'readGroupSettings')
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+
+    expect(await screen.findByPlaceholderText('Message Optional services room')).toBeTruthy()
+    expect(screen.getByText('No messages in this room yet.')).toBeTruthy()
+    expect(screen.queryByTestId('shared-group-settings-open')).toBeNull()
+  })
+
+  it('ignores a late approval load after switching shared rooms', async () => {
+    const groupA = groupFixture('group-approvals-stale-a', 'Approvals alpha')
+    const groupB = groupFixture('group-approvals-stale-b', 'Approvals beta')
+    const staleApprovals = Promise.withResolvers<Awaited<ReturnType<NonNullable<SharedBotsClient['listApprovals']>>>>()
+    const listApprovals = vi.fn<NonNullable<SharedBotsClient['listApprovals']>>(scope =>
+      scope?.groupId === String(groupA.id)
+        ? staleApprovals.promise
+        : Promise.resolve({
+          ok: true,
+          value: { approvals: [{ id: 'approval-beta', botId: bot.id, groupId: String(groupB.id), appId: 'Calendar', toolName: 'events.list', action: 'List events' }], grants: [] },
+        }),
+    )
+    const client = sharedClient({
+      listGroups: vi.fn().mockResolvedValue({ ok: true, value: { groups: [groupA, groupB] } }),
+      inspectGroup: vi.fn().mockResolvedValue({ ok: true, value: { group: groupA, messages: [] } }),
+      listApprovals,
+      decideApproval: vi.fn(),
+    })
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+
+    await waitFor(() => { expect(listApprovals).toHaveBeenCalledWith({ groupId: String(groupA.id) }) })
+    fireEvent.click(screen.getByRole('button', { name: /Approvals beta/ }))
+    expect(await screen.findByRole('button', { name: 'Approve Calendar events.list' })).toBeTruthy()
+    await act(async () => {
+      staleApprovals.reject(new Error('stale approvals load'))
+      await Promise.resolve()
+    })
+    expect(screen.queryByText('Pending approvals could not be loaded. Try again.')).toBeNull()
+  })
+
+  it('sends an add reaction from an unselected reaction chip', async () => {
+    const group = groupFixture('group-reaction-add', 'Reaction add room')
+    const messageId = brandString<BotGroupMessageId>('bot-group-message-reaction-add')
+    const reactGroupMessage: NonNullable<SharedBotsClient['reactGroupMessage']> = vi.fn().mockResolvedValue({
+      ok: true,
+      value: { groupId: group.id, messageId, emoji: '👍', action: 'add' as const, count: 2, viewerReacted: true },
+    })
+    const client = sharedClient({
+      listGroups: vi.fn().mockResolvedValue({ ok: true, value: { groups: [group] } }),
+      inspectGroup: vi.fn().mockResolvedValue({
+        ok: true,
+        value: {
+          group,
+          messages: [{ id: messageId, groupId: group.id, sender: { kind: 'user', principalId: 'principal-member' }, text: 'React here', createdAt: 1, reactions: [{ emoji: '👍', count: 1 }] }],
+        },
+      }),
+      reactGroupMessage,
+    })
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+
+    const chip = await screen.findByRole('button', { name: '👍, 1 reactions' })
+    fireEvent.click(chip)
+    await waitFor(() => {
+      expect(reactGroupMessage).toHaveBeenCalledWith({ groupId: group.id, messageId: String(messageId), emoji: '👍', action: 'add' })
+    })
+  })
+
+  it('resets an attachment retry id when the draft text changes', async () => {
+    const group = groupFixture('group-attachment-draft-change', 'Attachment draft room')
+    const sendGroupMessageWithAttachments = vi.fn<NonNullable<SharedBotsClient['sendGroupMessageWithAttachments']>>()
+      .mockResolvedValueOnce({ ok: false, error: { code: 'gateway/unavailable', message: 'attachment send unavailable', details: {} } })
+      .mockResolvedValue({ ok: true, value: { messageId: brandString<BotGroupMessageId>('accepted-attachment'), status: 'accepted', deliveries: [] } })
+    const client = sharedClient({
+      listGroups: vi.fn().mockResolvedValue({ ok: true, value: { groups: [group] } }),
+      inspectGroup: vi.fn().mockResolvedValue({ ok: true, value: { group, messages: [] } }),
+      sendGroupMessageWithAttachments,
+    })
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+
+    const input = await screen.findByPlaceholderText('Message Attachment draft room')
+    fireEvent.change(input, { target: { value: 'first draft' } })
+    fireEvent.change(screen.getByLabelText('Choose files'), { target: { files: [new File(['notes'], 'notes.txt', { type: 'text/plain' })] } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send to group' }))
+    expect(await screen.findByRole('alert')).toHaveProperty('textContent', expect.stringContaining('attachment send unavailable'))
+
+    fireEvent.change(input, { target: { value: 'second draft' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send to group' }))
+    await waitFor(() => { expect(sendGroupMessageWithAttachments).toHaveBeenCalledTimes(2) })
+    const firstRequest = sendGroupMessageWithAttachments.mock.calls[0]?.[0]
+    const secondRequest = sendGroupMessageWithAttachments.mock.calls[1]?.[0]
+    expect(firstRequest?.messageId).toBeDefined()
+    expect(secondRequest?.messageId).toBeDefined()
+    expect(secondRequest?.messageId).not.toBe(firstRequest?.messageId)
+  })
+
+  it('uses the shared-chat fallback for a non-Error private read rejection', async () => {
+    const client = sharedClient({ readPrivateChat: vi.fn().mockRejectedValue('private transcript transport unavailable') })
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+
+    expect(await screen.findByRole('alert')).toHaveProperty('textContent', 'The message could not be sent.')
+  })
 })
