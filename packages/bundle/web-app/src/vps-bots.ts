@@ -364,6 +364,7 @@ export function mountVpsBots(
       () => isolatedBrowser.computer(botId, sessionId))
   }
   const navigateFor = async (botId: string, sessionId: string, url: string, signal: AbortSignal): Promise<void> => {
+    /* v8 ignore if -- the only receiver installs this callback after the immutable isolated-browser admission check. */
     if (isolatedBrowser === undefined || !isIsolatedBrowserBot(botId)) {
       throw new Error('Browser navigation is unavailable for this Bot.')
     }
