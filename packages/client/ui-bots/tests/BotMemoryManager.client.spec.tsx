@@ -5,7 +5,7 @@ import { makeTranslate } from '@yharness/client-test-runtime'
 import { useState } from 'react'
 import { BotMemoryManager } from '../src/client/BotMemoryManager.tsx'
 import { en } from '../src/client/locales.ts'
-import type { BotMemoryManagerActions, BotSummary } from '../src/client/types.ts'
+import type { BotMemoryManagerActions, BotMemorySummary, BotSummary } from '../src/client/types.ts'
 
 afterEach(cleanup)
 
@@ -87,6 +87,111 @@ describe('BotMemoryManager', () => {
     expect((await screen.findByRole('alert')).textContent).toContain('The memory could not be removed. Try again.')
     expect(screen.getByRole('heading', { name: 'Remove memory?' })).toBeTruthy()
     expect(screen.getByRole('listitem', { name: /memory-one/ })).toBeTruthy()
+  })
+
+  it('retries a failed memory load through the manager controls', async () => {
+    const memory: BotMemorySummary = { id: 'memory-retry', text: 'Retry this memory.', createdAt: 0 }
+    const actions: BotMemoryManagerActions = {
+      list: vi.fn()
+        .mockRejectedValueOnce(new Error('memory service unavailable'))
+        .mockResolvedValueOnce([memory]),
+      update: vi.fn(),
+      remove: vi.fn(),
+    }
+
+    renderManager(actions)
+
+    expect((await screen.findByRole('alert')).textContent).toContain('The bot’s memories could not be loaded. Try again.')
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
+    expect(await screen.findByRole('listitem', { name: /memory-retry/ })).toBeTruthy()
+    expect(actions.list).toHaveBeenCalledTimes(2)
+  })
+
+  it('ignores list responses that settle after the manager unmounts', async () => {
+    const settled = Promise.withResolvers<readonly BotMemorySummary[]>()
+    const rejected = Promise.withResolvers<readonly BotMemorySummary[]>()
+    const actions: BotMemoryManagerActions = {
+      list: vi.fn()
+        .mockReturnValueOnce(settled.promise)
+        .mockReturnValueOnce(rejected.promise),
+      update: vi.fn(),
+      remove: vi.fn(),
+    }
+
+    const first = renderManager(actions)
+    await waitFor(() => { expect(actions.list).toHaveBeenCalledTimes(1) })
+    first.unmount()
+    settled.resolve([])
+    await settled.promise
+
+    const second = renderManager(actions)
+    await waitFor(() => { expect(actions.list).toHaveBeenCalledTimes(2) })
+    second.unmount()
+    rejected.reject(new Error('stale memory load failure'))
+    await rejected.promise.catch(() => undefined)
+  })
+
+  it('does not start a second edit while the first save is pending', async () => {
+    const first = { id: 'memory-first', text: 'First memory.', createdAt: 1 }
+    const second = { id: 'memory-second', text: 'Second memory.', createdAt: 2 }
+    const pending = Promise.withResolvers<BotMemorySummary>()
+    const update = vi.fn((_botId: string, memoryId: string, text: string) => memoryId === first.id
+      ? pending.promise
+      : Promise.resolve({ ...second, text }))
+    const actions: BotMemoryManagerActions = {
+      list: vi.fn(async () => [first, second]),
+      update,
+      remove: vi.fn(async () => {}),
+    }
+
+    renderManager(actions)
+    const firstRow = await screen.findByRole('listitem', { name: /memory-first/ })
+    fireEvent.click(within(firstRow).getByRole('button', { name: 'Edit memory memory-first' }))
+    fireEvent.change(within(firstRow).getByRole('textbox', { name: 'Memory text' }), { target: { value: 'Updated first memory.' } })
+    fireEvent.click(within(firstRow).getByRole('button', { name: 'Save memory' }))
+    await waitFor(() => { expect(update).toHaveBeenCalledWith(bot.id, first.id, 'Updated first memory.') })
+
+    const secondRow = screen.getByRole('listitem', { name: /memory-second/ })
+    fireEvent.click(within(secondRow).getByRole('button', { name: 'Edit memory memory-second' }))
+    fireEvent.change(within(secondRow).getByRole('textbox', { name: 'Memory text' }), { target: { value: 'Updated second memory.' } })
+    fireEvent.click(within(secondRow).getByRole('button', { name: 'Save memory' }))
+    expect(update).toHaveBeenCalledOnce()
+
+    pending.resolve({ ...first, text: 'Updated first memory.', createdAt: 3 })
+    expect(await screen.findByText('Updated first memory.')).toBeTruthy()
+  })
+
+  it('supports remove dialog cancellation and keeps it open while removal is pending', async () => {
+    const memory: BotMemorySummary = { id: 'memory-dialog', text: 'Dialog memory.', createdAt: 1 }
+    const pending = Promise.withResolvers<undefined>()
+    const remove = vi.fn(() => pending.promise)
+    const actions: BotMemoryManagerActions = {
+      list: vi.fn(async () => [memory]),
+      update: vi.fn(),
+      remove,
+    }
+
+    renderManager(actions)
+    const row = await screen.findByRole('listitem', { name: /memory-dialog/ })
+    fireEvent.click(within(row).getByRole('button', { name: 'Remove memory memory-dialog' }))
+    let confirmation = screen.getByRole('dialog', { name: 'Remove memory?' })
+    fireEvent.click(within(confirmation).getAllByRole('button', { name: 'Cancel' }).at(-1)!)
+    expect(screen.queryByRole('dialog', { name: 'Remove memory?' })).toBeNull()
+
+    fireEvent.click(within(row).getByRole('button', { name: 'Remove memory memory-dialog' }))
+    confirmation = screen.getByRole('dialog', { name: 'Remove memory?' })
+    fireEvent.click(within(confirmation).getAllByRole('button', { name: 'Cancel' })[0]!)
+    expect(screen.queryByRole('dialog', { name: 'Remove memory?' })).toBeNull()
+
+    fireEvent.click(within(row).getByRole('button', { name: 'Remove memory memory-dialog' }))
+    confirmation = screen.getByRole('dialog', { name: 'Remove memory?' })
+    fireEvent.click(within(confirmation).getByRole('button', { name: 'Remove memory' }))
+    await waitFor(() => { expect(remove).toHaveBeenCalledOnce() })
+    confirmation = screen.getByRole('dialog', { name: 'Remove memory?' })
+    fireEvent.click(within(confirmation).getAllByRole('button', { name: 'Cancel' })[0]!)
+    expect(screen.getByRole('dialog', { name: 'Remove memory?' })).toBeTruthy()
+    pending.resolve(undefined)
+    await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Remove memory?' })).toBeNull() })
   })
 
   it('closes the manager when its footer Close action is clicked', async () => {
