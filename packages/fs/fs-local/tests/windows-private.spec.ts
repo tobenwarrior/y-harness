@@ -2,7 +2,7 @@
 
 import { lstatSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir as systemTmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join, resolve, toNamespacedPath } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { NativePtr } from '@yharness/win32-process'
 
@@ -497,6 +497,32 @@ afterEach(() => {
 })
 
 describe('owner-private Windows security', () => {
+  it.each([
+    { owner: 'local Administrators', sid: 'administratorsSid' },
+    { owner: 'SYSTEM', sid: 'systemSid' },
+  ] as const)('accepts a private file with $owner as its default owner', async ({ sid }) => {
+    const fixture = createFixture()
+    const directory = mkdtempSync(join(tmpdir(), 'yh-windows-private-'))
+    const file = join(directory, 'staged.json')
+    try {
+      writeFileSync(file, '{}')
+      fixture.behavior.securityByPath.set(toNamespacedPath(file), { ...fixture.security, owner: fixture[sid] })
+      const { assertOwnerPrivateWin32 } = await importWithFixture(fixture)
+      expect(() => { assertOwnerPrivateWin32(file, 'file') }).not.toThrow()
+
+      const everyone = fixture.makeSid([0])
+      const everyoneBytes = fixture.memory.get(everyone)!
+      everyoneBytes.writeUInt8(1, 7)
+      fixture.behavior.securityByPath.set(toNamespacedPath(file), {
+        ...fixture.security, owner: fixture[sid], dacl: fixture.makeAcl([{ type: 0, sid: everyone }]),
+      })
+      expect(() => { assertOwnerPrivateWin32(file, 'file') }).toThrow(/untrusted ACE/u)
+      expectNoKoffiLeaks(fixture)
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
   it('accepts a current-user protected ACL containing only trusted trustees', async () => {
     const fixture = createFixture()
     const directory = mkdtempSync(join(tmpdir(), 'yh-windows-private-'))
@@ -603,30 +629,30 @@ describe('owner-private Windows security', () => {
   it('rejects owner mismatches, identifier-authority mismatches, and close failures safely', async () => {
     const ownerFixture = createFixture()
     const ownerDirectory = mkdtempSync(join(tmpdir(), 'yh-windows-private-'))
-    ownerFixture.behavior.securityByPath.set(ownerDirectory, {
+    ownerFixture.behavior.securityByPath.set(toNamespacedPath(ownerDirectory), {
       owner: ownerFixture.makeSid([21, 42, 1002]),
       dacl: ownerFixture.security.dacl,
       descriptor: ownerFixture.security.descriptor,
     })
     try {
       const { assertOwnerPrivateWin32 } = await importWithFixture(ownerFixture)
-      expect(() => { assertOwnerPrivateWin32(ownerDirectory, 'directory') }).toThrow(/owner is not the current user/u)
+      expect(() => { assertOwnerPrivateWin32(ownerDirectory, 'directory') }).toThrow(/owner is not trusted/u)
     } finally {
       rmSync(ownerDirectory, { recursive: true, force: true })
     }
 
-    const trustedNonOwnerFixture = createFixture()
-    const trustedNonOwnerDirectory = mkdtempSync(join(tmpdir(), 'yh-windows-private-'))
-    trustedNonOwnerFixture.behavior.securityByPath.set(trustedNonOwnerDirectory, {
-      owner: trustedNonOwnerFixture.systemSid,
-      dacl: trustedNonOwnerFixture.security.dacl,
-      descriptor: trustedNonOwnerFixture.security.descriptor,
+    const installerFixture = createFixture()
+    const installerDirectory = mkdtempSync(join(tmpdir(), 'yh-windows-private-'))
+    installerFixture.behavior.securityByPath.set(toNamespacedPath(installerDirectory), {
+      owner: installerFixture.makeSid([80, 956008885, 3418522649, 1831038044, 1853292631, 2271478464]),
+      dacl: installerFixture.security.dacl,
+      descriptor: installerFixture.security.descriptor,
     })
     try {
-      const { assertOwnerPrivateWin32 } = await importWithFixture(trustedNonOwnerFixture)
-      expect(() => { assertOwnerPrivateWin32(trustedNonOwnerDirectory, 'directory') }).toThrow(/owner is not the current user/u)
+      const { assertOwnerPrivateWin32 } = await importWithFixture(installerFixture)
+      expect(() => { assertOwnerPrivateWin32(installerDirectory, 'directory') }).toThrow(/owner is not trusted/u)
     } finally {
-      rmSync(trustedNonOwnerDirectory, { recursive: true, force: true })
+      rmSync(installerDirectory, { recursive: true, force: true })
     }
 
     const authorityFixture = createFixture()
@@ -650,14 +676,14 @@ describe('owner-private Windows security', () => {
     const revisionBytes = revisionFixture.memory.get(revisionSid)
     if (revisionBytes === undefined) throw new Error('missing revision SID fixture')
     revisionBytes.writeUInt8(2, 0)
-    revisionFixture.behavior.securityByPath.set(revisionDirectory, {
+    revisionFixture.behavior.securityByPath.set(toNamespacedPath(revisionDirectory), {
       owner: revisionSid,
       dacl: revisionFixture.security.dacl,
       descriptor: revisionFixture.security.descriptor,
     })
     try {
       const { assertOwnerPrivateWin32 } = await importWithFixture(revisionFixture)
-      expect(() => { assertOwnerPrivateWin32(revisionDirectory, 'directory') }).toThrow(/owner is not the current user/u)
+      expect(() => { assertOwnerPrivateWin32(revisionDirectory, 'directory') }).toThrow(/owner is not trusted/u)
     } finally {
       rmSync(revisionDirectory, { recursive: true, force: true })
     }
@@ -1051,7 +1077,7 @@ describe('owner-private Windows security', () => {
     const directory = mkdtempSync(join(tmpdir(), 'yh-windows-private-'))
     const reparsePath = join(directory, 'reparse')
     mkdirSync(reparsePath)
-    fixture.reparseComponents.add(reparsePath)
+    fixture.reparseComponents.add(toNamespacedPath(reparsePath))
     try {
       const { assertOwnerPrivateWin32 } = await importWithFixture(fixture)
       expect(() => { assertOwnerPrivateWin32(reparsePath, 'directory') }).toThrow(/reparse path component/u)
@@ -1144,7 +1170,7 @@ describe('owner-private Windows security', () => {
     const parent = mkdtempSync(join(tmpdir(), 'yh-windows-private-'))
     const missingRoot = join(parent, 'missing-overlay')
     const unsafeAcl = fixture.makeAcl([{ type: 0, sid: fixture.makeSid([32, 545]) }])
-    fixture.behavior.securityByPath.set(parent, {
+    fixture.behavior.securityByPath.set(toNamespacedPath(parent), {
       owner: fixture.currentSid,
       dacl: unsafeAcl,
       descriptor: fixture.security.descriptor,
@@ -1176,12 +1202,12 @@ describe('owner-private Windows security', () => {
       { type: 1, sid: harmlessSid, flags: INHERITED_ACE },
       { type: 0, sid: harmlessSid, flags: INHERITED_ACE | 0x08 },
     ])
-    fixture.behavior.securityByPath.set(safeParent, {
+    fixture.behavior.securityByPath.set(toNamespacedPath(safeParent), {
       owner: fixture.currentSid,
       dacl: inheritedAcl,
       descriptor: fixture.security.descriptor,
     })
-    fixture.behavior.securityByPath.set(grandparent, {
+    fixture.behavior.securityByPath.set(toNamespacedPath(grandparent), {
       owner: trustedInstaller,
       dacl: fixture.security.dacl,
       descriptor: fixture.security.descriptor,
@@ -1195,7 +1221,7 @@ describe('owner-private Windows security', () => {
         const dangerousFixture = createFixture()
         const dangerousSid = dangerousFixture.makeSid([32, 545])
         const dangerousAcl = dangerousFixture.makeAcl([{ type: 0, sid: dangerousSid, mask }])
-        dangerousFixture.behavior.securityByPath.set(grandparent, {
+        dangerousFixture.behavior.securityByPath.set(toNamespacedPath(grandparent), {
           owner: dangerousFixture.currentSid,
           dacl: dangerousAcl,
           descriptor: dangerousFixture.security.descriptor,
@@ -1210,7 +1236,7 @@ describe('owner-private Windows security', () => {
 
       const ownerFixture = createFixture()
       const untrustedOwner = ownerFixture.makeSid([32, 545])
-      ownerFixture.behavior.securityByPath.set(grandparent, {
+      ownerFixture.behavior.securityByPath.set(toNamespacedPath(grandparent), {
         owner: untrustedOwner,
         dacl: ownerFixture.security.dacl,
         descriptor: ownerFixture.security.descriptor,

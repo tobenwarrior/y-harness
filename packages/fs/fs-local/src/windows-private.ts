@@ -524,17 +524,12 @@ function assertOwnerPrivateWith(
   const security = readSecurity(api, path)
   let operationFailed = false
   try {
-    const ownerTrusted = [sids.current.pointer, sids.system, sids.administrators, TRUSTED_INSTALLER_SID]
-      .some(trustedSid => sameSid(security.owner, 0, trustedSid, 0))
-    if (!ownerTrusted) {
-      throw policyError(path, ancestor ? 'ancestor owner is not trusted' : 'owner is not the current user')
-    }
-    if (!ancestor && !sameSid(security.owner, 0, sids.current.pointer, 0)) {
-      throw policyError(path, 'owner is not the current user')
-    }
     const trusted = ancestor
       ? [sids.current.pointer, sids.system, sids.administrators, TRUSTED_INSTALLER_SID]
       : [sids.current.pointer, sids.system, sids.administrators]
+    if (!trusted.some(sid => sameSid(security.owner, 0, sid, 0))) {
+      throw policyError(path, ancestor ? 'ancestor owner is not trusted' : 'owner is not trusted')
+    }
     assertDacl(
       api,
       path,
@@ -631,8 +626,9 @@ function createPrivateDirectory(api: FileSecurityBindings, path: string, sids: T
 }
 
 /**
- * Assert that an existing Windows path is owned by the current user and has a
- * DACL containing only the current user, SYSTEM, and local Administrators.
+ * Assert that an existing Windows path's owner and DACL are limited to the
+ * current user, SYSTEM, and local Administrators. A Windows token can use one
+ * of these trusted group or service identities as the default owner.
  *
  * The caller must invoke this only for Windows paths. The check is synchronous
  * so it can guard the synchronous overlay read API. A protected DACL is

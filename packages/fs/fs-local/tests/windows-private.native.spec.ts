@@ -1,7 +1,7 @@
 /** Native Windows coverage for owner-private ACL creation and refusal. */
 
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -19,9 +19,9 @@ describe('native Windows owner-private security', () => {
       writeFileSync(file, '{}', { mode: 0o600 })
       expect(() => { assertOwnerPrivateWin32(file, 'file') }).not.toThrow()
 
-      mkdirSync(unsafe)
+      createOwnerPrivateDirectoryWin32(unsafe)
       execFileSync('icacls.exe', [unsafe, '/grant', '*S-1-1-0:(OI)(CI)F'], { stdio: 'ignore' })
-      expect(() => { assertOwnerPrivateWin32(unsafe, 'directory', true) }).toThrow(/unsafe Windows private path/u)
+      expect(() => { assertOwnerPrivateWin32(unsafe, 'directory', true) }).toThrow(/untrusted ACE/u)
     } finally {
       rmSync(parent, { recursive: true, force: true })
     }
