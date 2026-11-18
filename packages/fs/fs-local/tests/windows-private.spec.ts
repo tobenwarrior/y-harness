@@ -127,7 +127,17 @@ interface NativeFunctions {
   FormatMessageW: (flags: number, source: null, id: number, language: number, buffer: Buffer, size: number, args: null) => number
 }
 
-type FsOverrides = Partial<Pick<typeof import('node:fs'), 'lstatSync'>>
+interface FsOverrides {
+  lstatSync?(path: Parameters<typeof lstatSync>[0]): ReturnType<typeof lstatSync>
+}
+
+function fixtureAcl(fixture: NativeFixture): AclState {
+  const pointer = fixture.security.dacl
+  if (pointer === null) throw new Error('missing ACL fixture')
+  const state = fixture.aclStates.get(pointer)
+  if (state === undefined) throw new Error('missing ACL fixture')
+  return state
+}
 
 function createFixture(): NativeFixture {
   const fixture = {} as NativeFixture
@@ -703,8 +713,7 @@ describe('owner-private Windows security', () => {
       {
         name: 'ACL shorter than its header',
         configure: (fixture: NativeFixture) => {
-          const state = fixture.aclStates.get(fixture.security.dacl)
-          if (state === undefined) throw new Error('missing ACL fixture')
+          const state = fixtureAcl(fixture)
           state.bytesInUse = 0
         },
         expected: /malformed ACL/u,
@@ -712,8 +721,7 @@ describe('owner-private Windows security', () => {
       {
         name: 'ACE shorter than its header',
         configure: (fixture: NativeFixture) => {
-          const state = fixture.aclStates.get(fixture.security.dacl)
-          if (state === undefined) throw new Error('missing ACL fixture')
+          const state = fixtureAcl(fixture)
           const ace = state.aces[0]
           if (ace === undefined) throw new Error('missing ACE fixture')
           const bytes = fixture.memory.get(ace)
@@ -725,8 +733,7 @@ describe('owner-private Windows security', () => {
       {
         name: 'ACE with unaligned size',
         configure: (fixture: NativeFixture) => {
-          const state = fixture.aclStates.get(fixture.security.dacl)
-          if (state === undefined) throw new Error('missing ACL fixture')
+          const state = fixtureAcl(fixture)
           const ace = state.aces[0]
           if (ace === undefined) throw new Error('missing ACE fixture')
           const bytes = fixture.memory.get(ace)
@@ -738,8 +745,7 @@ describe('owner-private Windows security', () => {
       {
         name: 'ACE extending beyond ACL bytes',
         configure: (fixture: NativeFixture) => {
-          const state = fixture.aclStates.get(fixture.security.dacl)
-          if (state === undefined) throw new Error('missing ACL fixture')
+          const state = fixtureAcl(fixture)
           const ace = state.aces[0]
           if (ace === undefined) throw new Error('missing ACE fixture')
           const bytes = fixture.memory.get(ace)
@@ -760,8 +766,7 @@ describe('owner-private Windows security', () => {
       {
         name: 'SID with too many sub-authorities',
         configure: (fixture: NativeFixture) => {
-          const state = fixture.aclStates.get(fixture.security.dacl)
-          if (state === undefined) throw new Error('missing ACL fixture')
+          const state = fixtureAcl(fixture)
           const ace = state.aces[0]
           if (ace === undefined) throw new Error('missing ACE fixture')
           const bytes = fixture.memory.get(ace)
@@ -773,8 +778,7 @@ describe('owner-private Windows security', () => {
       {
         name: 'SID extending beyond ACE',
         configure: (fixture: NativeFixture) => {
-          const state = fixture.aclStates.get(fixture.security.dacl)
-          if (state === undefined) throw new Error('missing ACL fixture')
+          const state = fixtureAcl(fixture)
           const ace = state.aces[0]
           if (ace === undefined) throw new Error('missing ACE fixture')
           const bytes = fixture.memory.get(ace)
@@ -786,8 +790,7 @@ describe('owner-private Windows security', () => {
       {
         name: 'SID with an invalid revision',
         configure: (fixture: NativeFixture) => {
-          const state = fixture.aclStates.get(fixture.security.dacl)
-          if (state === undefined) throw new Error('missing ACL fixture')
+          const state = fixtureAcl(fixture)
           const ace = state.aces[0]
           if (ace === undefined) throw new Error('missing ACE fixture')
           const bytes = fixture.memory.get(ace)
@@ -799,8 +802,7 @@ describe('owner-private Windows security', () => {
       {
         name: 'ACL with trailing bytes',
         configure: (fixture: NativeFixture) => {
-          const state = fixture.aclStates.get(fixture.security.dacl)
-          if (state === undefined) throw new Error('missing ACL fixture')
+          const state = fixtureAcl(fixture)
           state.bytesInUse += 4
         },
         expected: /malformed ACL/u,
