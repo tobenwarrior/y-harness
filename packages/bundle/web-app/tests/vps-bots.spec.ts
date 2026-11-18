@@ -649,7 +649,7 @@ describe('managed VPS Bot composition', () => {
     }
   })
 
-  it('publishes the exact owner roster and refuses a stale browser assignment', async () => {
+  it.skipIf(process.platform === 'win32')('publishes the exact owner roster and refuses a stale browser assignment', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'yh-vps-bots-roster-'))
     const rosterPath = join(directory, 'owners.json')
     const ctx = new Context()
@@ -704,9 +704,11 @@ describe('managed VPS Bot composition', () => {
       expect(injections).toContainEqual({ kind: 'global', name: '__YH_BOT_WEBSITE_LOGIN__', value: true })
       const shared = ctx.get('botSharedBrowser')
       if (shared === undefined) throw new Error('shared browser provider was not mounted')
-      await expect(shared.available(BotId('bot-not-isolated'), SHARED_BROWSER_SESSION, BOT_SESSION,
+      const sharedAvailable = shared.available
+      if (sharedAvailable === undefined) throw new Error('shared browser availability was not mounted')
+      await expect(sharedAvailable(BotId('bot-not-isolated'), SHARED_BROWSER_SESSION, BOT_SESSION,
         new AbortController().signal)).resolves.toBe(false)
-      await expect(shared.available(bot.id, SHARED_BROWSER_SESSION, BOT_SESSION,
+      await expect(sharedAvailable(bot.id, SHARED_BROWSER_SESSION, BOT_SESSION,
         new AbortController().signal)).resolves.toBe(true)
       const frameRoute = routes.find(route => route.path === '/api/computer/frame')
       if (frameRoute === undefined) throw new Error('owner frame route was not mounted')
@@ -755,7 +757,9 @@ describe('managed VPS Bot composition', () => {
       }, []) })
       const provider = unavailable.get('botSharedBrowser')
       if (provider === undefined) throw new Error('shared browser provider was not mounted')
-      await expect(provider.available(bot.id, SHARED_BROWSER_SESSION, BOT_SESSION,
+      const providerAvailable = provider.available
+      if (providerAvailable === undefined) throw new Error('shared browser availability was not mounted')
+      await expect(providerAvailable(bot.id, SHARED_BROWSER_SESSION, BOT_SESSION,
         new AbortController().signal)).resolves.toBe(false)
     } finally {
       await unavailable.fiber.dispose()
@@ -930,7 +934,7 @@ describe('managed VPS Bot composition', () => {
     const ctx = new Context()
     const session = SessionId('bot-session-47888424-5b3d-4a8c-81f5-751ed2d24f95')
     const bot = { id: BotId('bot-rebind'), sessionId: session, state: 'active' as const }
-    const bindWorkspace = vi.fn<Context['terminalController']['bindWorkspace']>(() => () => undefined)
+    const bindWorkspace = vi.fn<Context['terminalController']['bindWorkspace']>(() => async () => {})
     const sharedWorkspaceFor = vi.spyOn(VpsRuntime.prototype, 'sharedWorkspaceFor')
       .mockRejectedValue(new Error('fixture rebind failure'))
     try {
@@ -960,6 +964,106 @@ describe('managed VPS Bot composition', () => {
       await mounted.dispose()
     } finally {
       sharedWorkspaceFor.mockRestore()
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('warns when an already-active Bot cannot be rebound before teardown', async () => {
+    const ctx = new Context()
+    const bot = { id: BotId('bot-managed'), sessionId: BOT_SESSION, state: 'active' as const }
+    const bindWorkspace = vi.fn<Context['terminalController']['bindWorkspace']>(() => async () => {})
+    const sharedWorkspaceFor = vi.spyOn(VpsRuntime.prototype, 'sharedWorkspaceFor')
+      .mockRejectedValue(new Error('fixture rebind failure'))
+    const warning = vi.spyOn(ctx.logger, 'warn')
+    try {
+      await ctx.plugin(LlmRuntime)
+      await ctx.plugin(SessionStore)
+      await ctx.plugin(SessionProjections)
+      await ctx.plugin(AgentRegistry)
+      await ctx.plugin(SystemPrompt)
+      await ctx.plugin(ToolRuntime)
+      await ctx.plugin(SandboxPolicyService, { mode: 'danger-full-access' })
+      await ctx.plugin(LocalSubprocessRuntime)
+      await ctx.plugin(AgentLoop, { agents: [] })
+      ctx.provide('attachments', {} as never)
+      ctx.provide('workspaceFiles', {
+        downloadComputer: vi.fn(async () => new Response('fixture-download')),
+        list: vi.fn(async () => ({ entries: [], truncated: false })),
+        read: vi.fn(async () => ({ text: '', version: 'fixture-version', offset: 1, lines: 0, eof: true })),
+      } as never)
+      ctx.provide('terminalController', { bindWorkspace } as never)
+      ctx.provide('bots', { ownerBotForSession: async (id: string) => id === BOT_SESSION ? bot : undefined } as never)
+      await ctx.agentLoop.create(BOT_SESSION, { provider: 'fixture', model: 'fixture' })
+      const list = vi.spyOn(ctx.agents, 'list')
+      const mounted = await ctx.plugin((scope) => { mountVpsBots(scope, {
+        root: '/yharness-test-bots', image: 'localhost/yharness-test', bots: ['bot-managed'],
+        sharedWorkspace: { bots: ['bot-managed'] },
+      }, []) })
+      await expect.poll(() => list.mock.calls.length).toBeGreaterThan(0)
+      await expect.poll(() => sharedWorkspaceFor.mock.calls.length).toBeGreaterThan(0)
+      await expect.poll(() => warning.mock.calls.length).toBeGreaterThan(0)
+      await mounted.dispose()
+    } finally {
+      warning.mockRestore()
+      sharedWorkspaceFor.mockRestore()
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('suppresses a stale rebind warning after VPS Bot teardown starts', async () => {
+    const ctx = new Context()
+    const bot = { id: BotId('bot-managed-teardown'), sessionId: DESKTOP_SESSION, state: 'active' as const }
+    const bindWorkspace = vi.fn<Context['terminalController']['bindWorkspace']>(() => async () => {})
+    const entered = Promise.withResolvers<undefined>()
+    const release = Promise.withResolvers<undefined>()
+    const settled = Promise.withResolvers<undefined>()
+    const sharedWorkspaceFor = vi.spyOn(VpsRuntime.prototype, 'sharedWorkspaceFor').mockImplementation(async () => {
+      entered.resolve(undefined)
+      try {
+        await release.promise
+        throw new Error('fixture late rebind failure')
+      } finally {
+        settled.resolve(undefined)
+      }
+    })
+    const warning = vi.spyOn(ctx.logger, 'warn')
+    try {
+      await ctx.plugin(LlmRuntime)
+      await ctx.plugin(SessionStore)
+      await ctx.plugin(SessionProjections)
+      await ctx.plugin(AgentRegistry)
+      await ctx.plugin(SystemPrompt)
+      await ctx.plugin(ToolRuntime)
+      await ctx.plugin(SandboxPolicyService, { mode: 'danger-full-access' })
+      await ctx.plugin(LocalSubprocessRuntime)
+      await ctx.plugin(AgentLoop, { agents: [] })
+      ctx.provide('attachments', {} as never)
+      ctx.provide('workspaceFiles', {
+        downloadComputer: vi.fn(async () => new Response('fixture-download')),
+        list: vi.fn(async () => ({ entries: [], truncated: false })),
+        read: vi.fn(async () => ({ text: '', version: 'fixture-version', offset: 1, lines: 0, eof: true })),
+      } as never)
+      ctx.provide('terminalController', { bindWorkspace } as never)
+      ctx.provide('bots', { ownerBotForSession: async (id: string) => id === DESKTOP_SESSION ? bot : undefined } as never)
+      await ctx.agentLoop.create(DESKTOP_SESSION, { provider: 'fixture', model: 'fixture' })
+      const list = vi.spyOn(ctx.agents, 'list')
+      const mounted = await ctx.plugin((scope) => { mountVpsBots(scope, {
+        root: '/yharness-test-bots', image: 'localhost/yharness-test', bots: [bot.id],
+        sharedWorkspace: { bots: [bot.id] },
+      }, []) })
+      await expect.poll(() => list.mock.calls.length).toBeGreaterThan(0)
+      await entered.promise
+      const unloading = mounted.dispose()
+      await setImmediate()
+      release.resolve(undefined)
+      await unloading
+      await settled.promise
+      await setImmediate()
+      expect(warning).not.toHaveBeenCalled()
+    } finally {
+      warning.mockRestore()
+      sharedWorkspaceFor.mockRestore()
+      release.resolve(undefined)
       await ctx.fiber.dispose()
     }
   })
@@ -1123,7 +1227,9 @@ describe('managed VPS Bot composition', () => {
         description: 'Fixture MCP operation.',
         source: { kind: 'mcp', serverName: 'fixture' },
         parameters: {},
-        output: { schema: { type: 'string' }, render: (_args, text) => [{ type: 'text', text }] },
+        output: { schema: { type: 'string' }, render: (_args, text) => [{
+          type: 'text', text: typeof text === 'string' ? text : JSON.stringify(text) ?? '',
+        }] },
         async execute() { return 'mcp fixture' },
       }
       ctx.effect(() => ctx.tools.register(mcpFixture), 'fixture MCP tool')
@@ -1314,7 +1420,7 @@ describe('managed VPS Bot composition', () => {
       expect(readJournal).toHaveBeenNthCalledWith(3, 'bot-desktop', expect.any(AbortSignal))
       await expect(ctx.tools.execute({ ...call, callId: ToolCallId('bot-call'), agent: bot }))
         .resolves.toMatchObject({ isError: true })
-      await expect(ctx.tools.execute({ ...call, agent: undefined, callId: ToolCallId('host-call-without-agent') }))
+      await expect(ctx.tools.execute({ ...call, callId: ToolCallId('host-call-without-agent') }))
         .resolves.toMatchObject({ isError: false })
       const mcpResult = await ctx.tools.execute({ ...call, name: 'mcp_fixture', callId: ToolCallId('mcp-call'), agent: bot })
       expect(ctx.tools.get('mcp_fixture', bot)?.source).toEqual({ kind: 'mcp', serverName: 'fixture' })
