@@ -637,6 +637,8 @@ export async function launchWebScaffold(options: LaunchOptions = {}): Promise<We
             'feedback-command',
             'web-search-round',
             'turn-tail-actions',
+            'file-upload-round',
+            'ptc-round',
           ].includes(basename(dirname(replayFixture)))
           ? { assetRoot: join(REPO_ROOT, 'apps/web/tests/fixtures/replay-compound-skills') }
           : {},
