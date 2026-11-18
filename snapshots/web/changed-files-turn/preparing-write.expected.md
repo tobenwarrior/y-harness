@@ -1,2 +1,2 @@
-- text: 正在准备调用 写入
+- text: Preparing tool call Write
 - button "src/util.ts"

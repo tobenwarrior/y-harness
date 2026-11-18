@@ -1,3 +1,3 @@
-- text: 正在准备调用 编辑
+- text: Preparing tool call Edit
 - button "intro.md"
 - text: 1KB
