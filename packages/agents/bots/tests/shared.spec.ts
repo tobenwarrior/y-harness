@@ -99,6 +99,35 @@ describe('shared Bot authorization', () => {
     })
   })
 
+  it('fails closed for mismatched Bot, timestamp, and owner-grantor records', () => {
+    const mismatchedBot: SharedBotRoster = {
+      botId,
+      memberships: [{ ...membership(owner, 'owner'), botId: BotId('bot-other') }],
+    }
+    expect(authorizeBotShare(mismatchedBot, { actor: owner, operation: 'chat' })).toEqual({
+      allowed: false,
+      reason: 'invalid-roster',
+    })
+
+    const invalidTimestamp: SharedBotRoster = {
+      botId,
+      memberships: [{ ...membership(owner, 'owner'), createdAt: -1 }],
+    }
+    expect(authorizeBotShare(invalidTimestamp, { actor: owner, operation: 'chat' })).toEqual({
+      allowed: false,
+      reason: 'invalid-roster',
+    })
+
+    const invalidOwnerGrantor: SharedBotRoster = {
+      botId,
+      memberships: [{ ...membership(owner, 'owner'), grantedBy: collaborator }],
+    }
+    expect(authorizeBotShare(invalidOwnerGrantor, { actor: owner, operation: 'chat' })).toEqual({
+      allowed: false,
+      reason: 'invalid-roster',
+    })
+  })
+
   it('allows a person to read only their own private Bot conversation', () => {
     const shared = roster()
     expect(authorizeBotShare(shared, { actor: collaborator, operation: 'read-private-chat' })).toEqual({
