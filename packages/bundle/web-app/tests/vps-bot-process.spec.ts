@@ -37,10 +37,10 @@ interface ExecArgvCall {
   readonly options: VpsExecOptions
 }
 
-interface DesktopCommandCall {
+interface TerminalStopCall {
   readonly sessionId: string
-  readonly argv: readonly string[]
-  readonly signal: AbortSignal
+  readonly scope: string
+  readonly graceMs: number
 }
 
 class FixtureRuntime extends VpsRuntime {
@@ -49,9 +49,9 @@ class FixtureRuntime extends VpsRuntime {
   readonly execArgvCalls: ExecArgvCall[] = []
   readonly beginUseCalls: string[] = []
   readonly releases: Array<ReturnType<typeof vi.fn<() => void>>> = []
-  readonly desktopCommandCalls: DesktopCommandCall[] = []
+  readonly terminalStops: TerminalStopCall[] = []
   ensureGate: Promise<void> | undefined
-  desktopFailure: Error | undefined
+  stopFailure: Error | undefined
 
   constructor() {
     super('/private/tmp/yh-vps-bot-process-fixture', 'fixture-image', { userService: false })
@@ -78,10 +78,9 @@ class FixtureRuntime extends VpsRuntime {
     return ['fixture-runtime', ...argv]
   }
 
-  override async desktopCommand(sessionId: string, argv: readonly string[], signal: AbortSignal): Promise<Buffer> {
-    this.desktopCommandCalls.push({ sessionId, argv: [...argv], signal })
-    if (this.desktopFailure !== undefined) throw this.desktopFailure
-    return Buffer.alloc(0)
+  override async stopTerminal(sessionId: string, scope: string, graceMs: number): Promise<void> {
+    this.terminalStops.push({ sessionId, scope, graceMs })
+    if (this.stopFailure !== undefined) throw this.stopFailure
   }
 }
 
@@ -278,10 +277,7 @@ describe('VpsBotSubprocess terminal spawning', () => {
     expect(runtime.execArgvCalls.at(-1)?.options).toEqual({ workdir: '/workspace', interactive: true })
 
     await expect(scoped.terminate()).resolves.toBeUndefined()
-    expect(runtime.desktopCommandCalls).toHaveLength(1)
-    expect(runtime.desktopCommandCalls[0]?.argv.slice(0, 3)).toEqual(['/usr/bin/python3', '-I', '-c'])
-    expect(runtime.desktopCommandCalls[0]?.argv.at(-3)).toBe('stop')
-    expect(runtime.desktopCommandCalls[0]?.argv.at(-1)).toBe('250')
+    expect(runtime.terminalStops).toEqual([{ sessionId: SESSION, scope: passed.argv.at(-4), graceMs: 250 }])
     expect(fixture.terminate).toHaveBeenCalledOnce()
 
     hostDone.resolve(outcome)
@@ -302,19 +298,19 @@ describe('VpsBotSubprocess terminal spawning', () => {
     const launchFailure = new Error('terminal launch failed')
     spawnTerminal.mockRejectedValueOnce(launchFailure)
     await expect(provider.spawnTerminal(spec)).rejects.toBe(launchFailure)
-    expect(runtime.desktopCommandCalls).toHaveLength(1)
+    expect(runtime.terminalStops).toHaveLength(1)
     expect(runtime.releases.at(-1)).toHaveBeenCalledOnce()
   })
 
   it('reports both launch and terminal cleanup failures', async () => {
     const { host, provider, runtime } = providerFixture()
     vi.spyOn(host, 'spawnTerminal').mockRejectedValue(new Error('terminal launch failed'))
-    runtime.desktopFailure = new Error('container stop failed')
+    runtime.stopFailure = new Error('container stop failed')
     const failure = await provider.spawnTerminal(terminalSpec()).then(() => undefined, (error: unknown) => error)
     expect(failure).toBeInstanceOf(AggregateError)
     if (!(failure instanceof AggregateError)) throw new Error('expected aggregate launch cleanup failure')
     expect(failure.errors).toHaveLength(2)
-    expect(runtime.desktopCommandCalls).toHaveLength(1)
+    expect(runtime.terminalStops).toHaveLength(1)
     expect(runtime.releases.at(-1)).toHaveBeenCalledOnce()
   })
 })

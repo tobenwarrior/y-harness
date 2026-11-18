@@ -634,7 +634,13 @@ describe('managed VPS Bot composition', () => {
     const browserNavigate = vi.spyOn(VpsIsolatedBrowser.prototype, 'navigate').mockResolvedValue(undefined)
     const browserLogin = vi.spyOn(VpsBrowserLogin.prototype, 'request').mockResolvedValue({ state: 'submitted' })
     const routes: ConnectionFetchRoute[] = []
-    const bindWorkspace = vi.fn<Context['terminalController']['bindWorkspace']>().mockReturnValue(() => Promise.resolve())
+    const terminalClosing = Promise.withResolvers<undefined>()
+    const releaseTerminalClose = Promise.withResolvers<undefined>()
+    const bindWorkspace = vi.fn<Context['terminalController']['bindWorkspace']>(agent => async () => {
+      if (agent.id !== BOT_SESSION) return
+      terminalClosing.resolve(undefined)
+      await releaseTerminalClose.promise
+    })
     const lateSession = SessionId('bot-session-c5496e76-4558-4cf8-a45a-0e59d0723527')
     const lateLookup = Promise.withResolvers<undefined>()
     const releaseLookup = Promise.withResolvers<undefined>()
@@ -729,7 +735,8 @@ describe('managed VPS Bot composition', () => {
       expect(managedBotExecutionFor({ agent: regular })).toBeUndefined()
       expect(managedBotExecutionFor({ agent: legacy })).toBeUndefined()
       expect(managedBotExecutionFor({ agent: desktop })).toBeUndefined()
-      expect(bindWorkspace).toHaveBeenCalledOnce()
+      expect(bindWorkspace).toHaveBeenCalledTimes(2)
+      expect(bindWorkspace).toHaveBeenCalledWith(bot, { cwd: execution.workspaceRoot, subprocess: execution.subprocess })
       expect(bindWorkspace).toHaveBeenCalledWith(desktop, expect.objectContaining({ cwd: '/yharness-test-bots/' + DESKTOP_SESSION }))
       const desktopPrompt = renderPrompt(await ctx.systemPrompt.assemble({ scope: desktop }))
       expect(desktopPrompt).toContain('Bash and file tools use your existing Session workspace and permissions.')
@@ -861,9 +868,17 @@ describe('managed VPS Bot composition', () => {
       const opening = ctx.agentLoop.create(lateSession, options)
       const refused = expect(opening).rejects.toThrow('VPS Bot Computer scope is closed')
       await lateLookup.promise
-      await mounted.dispose()
-      releaseLookup.resolve(undefined)
-      await refused
+      const unloading = mounted.dispose()
+      try {
+        await terminalClosing.promise
+        await expect(execution.subprocess.resolveExecutable('/bin/bash')).rejects.toThrow('VPS Bot Computer scope is closed')
+        await expect(execution.fs.lstat('notes.txt')).rejects.toThrow('VPS Bot Computer scope is closed')
+      } finally {
+        releaseTerminalClose.resolve(undefined)
+        await unloading
+        releaseLookup.resolve(undefined)
+        await refused
+      }
       expect(managedBotExecutionFor({ agent: bot }) === undefined).toBe(true)
       expect(readJournal.mock.calls.map(([, requestSignal]) => requestSignal.aborted)).toEqual([true, true, true])
       await expect(execution.subprocess.resolveExecutable('/bin/bash')).rejects.toThrow('VPS Bot Computer scope is closed')
@@ -877,9 +892,10 @@ describe('managed VPS Bot composition', () => {
       await mount()
       await expect.poll(() => managedBotExecutionFor({ agent: bot })).toBeDefined()
       await expect.poll(() => ctx.tools.get('vps_computer', desktop)).toBeDefined()
-      expect(bindWorkspace).toHaveBeenCalledTimes(2)
+      expect(bindWorkspace).toHaveBeenCalledTimes(4)
     } finally {
       releaseLookup.resolve(undefined)
+      releaseTerminalClose.resolve(undefined)
       argv.mockRestore()
       readJournal.mockRestore()
       startDesktop.mockRestore()

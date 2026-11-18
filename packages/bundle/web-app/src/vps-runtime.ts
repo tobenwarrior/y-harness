@@ -17,6 +17,7 @@ import { mkdir, lstat } from 'node:fs/promises'
 import { isAbsolute, parse, relative, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
 import type { VpsBotComputerSetting } from './vps-bot-computer-setting.ts'
+import { TERMINAL_SCOPE_COMMAND } from './vps-bot-terminal.ts'
 
 const PODMAN = '/usr/bin/podman'
 const USER_COMPUTER_SCOPE = [
@@ -73,6 +74,8 @@ export interface VpsBrowserOptions {
 
 /** Provisioning options for a private Bot desktop. */
 export interface VpsRuntimeOptions {
+  /** Cancel requests when their Web configuration retires. */
+  readonly configurationSignal?: AbortSignal
   /** Local Firefox image and its syscall policy. */
   readonly browser?: VpsBrowserOptions
   /** Default access to the installation's shared project volume. */
@@ -141,6 +144,7 @@ export class VpsRuntime {
   /** Project mount point for this runtime when a Session has access. */
   readonly sharedRoot?: string
   private readonly lifetime = new AbortController()
+  private readonly requests: AbortSignal
   private readonly pending = new Map<string, Promise<void>>()
   private readonly pendingCommands = new Set<Promise<VpsCommandResult>>()
   private readonly healthyUntil = new Map<string, number>()
@@ -152,12 +156,13 @@ export class VpsRuntime {
    * @param root - Absolute owner-only directory containing all Bot workspaces.
    * @param image - Standard desktop image and existing workspace label.
    * @param internals - Optional command seam used by tests.
-   * @param options - Provisioned resources, project access, and outbound network access.
+   * @param options - Configuration lifetime, provisioned resources, and access settings.
    */
   constructor(
     root: string, image: string, internals: VpsRuntimeInternals = {}, options: VpsRuntimeOptions = {},
   ) {
-    const { browser, sharedWorkspace } = options
+    const { browser, configurationSignal, sharedWorkspace } = options
+    this.requests = configurationSignal === undefined ? this.signal : AbortSignal.any([configurationSignal, this.signal])
     this.rootPath = privatePath(root, 'VPS Bot root')
     this.workspaceImage = imageReference(image)
     this.imageName = browser === undefined ? this.workspaceImage : imageReference(browser.image)
@@ -176,7 +181,7 @@ export class VpsRuntime {
     }
   }
 
-  /** Cancellation shared by operations owned by this VPS configuration. */
+  /** Cancellation when the runtime is disposed. */
   get signal(): AbortSignal {
     return this.lifetime.signal
   }
@@ -187,7 +192,7 @@ export class VpsRuntime {
    * @returns Cancellation when either the request or the configuration ends.
    */
   operationSignal(signal?: AbortSignal): AbortSignal {
-    return signal === undefined ? this.signal : AbortSignal.any([signal, this.signal])
+    return signal === undefined ? this.requests : AbortSignal.any([signal, this.requests])
   }
 
   /** Cancel and drain pending computer preparation and Podman commands. */
@@ -377,7 +382,7 @@ export class VpsRuntime {
    * @returns A promise settled after the container is running.
    */
   async ensure(sessionId: string): Promise<void> {
-    this.signal.throwIfAborted()
+    this.requests.throwIfAborted()
     validateSessionId(sessionId)
     this.requireStableComputer(sessionId)
     const existing = this.pending.get(sessionId)
@@ -385,10 +390,10 @@ export class VpsRuntime {
     const now = Date.now()
     if ((this.healthyUntil.get(sessionId) ?? 0) > now) return
     const task = Promise.resolve().then(async () => {
-      this.signal.throwIfAborted()
+      this.requests.throwIfAborted()
       this.mountedProjects.delete(sessionId)
       await this.ensureOne(sessionId)
-      this.signal.throwIfAborted()
+      this.requests.throwIfAborted()
       this.healthyUntil.set(sessionId, Date.now() + DESKTOP_HEALTH_CACHE_MS)
     })
     this.pending.set(sessionId, task)
@@ -447,19 +452,32 @@ export class VpsRuntime {
    * @returns Command output bytes for the Computer controller.
    */
   async desktopCommand(sessionId: string, argv: readonly string[], signal: AbortSignal, stdin?: string): Promise<Buffer> {
-    const operationSignal = this.operationSignal(signal)
-    operationSignal.throwIfAborted()
+    return this.runContainerCommand(sessionId, argv, this.operationSignal(signal), stdin)
+  }
+
+  /**
+   * Stop an existing terminal group, including during Web shutdown before runtime disposal.
+   * @param sessionId - Owning Bot Session.
+   * @param scope - Identity assigned when the terminal group started.
+   * @param graceMs - Grace period before killing the remaining processes.
+   */
+  async stopTerminal(sessionId: string, scope: string, graceMs: number): Promise<void> {
+    await this.runContainerCommand(sessionId, [...TERMINAL_SCOPE_COMMAND, 'stop', scope, String(graceMs)], this.signal)
+  }
+
+  private async runContainerCommand(sessionId: string, argv: readonly string[], signal: AbortSignal, stdin?: string): Promise<Buffer> {
+    signal.throwIfAborted()
     const [program, ...args] = this.execArgv(sessionId, argv, { stdin: stdin !== undefined })
     const finished = this.beginUse(sessionId)
     try {
-      const child = exec(program, args, { encoding: 'buffer', maxBuffer: 4 * 1024 * 1024, timeout: 12_000, signal: operationSignal })
+      const child = exec(program, args, { encoding: 'buffer', maxBuffer: 4 * 1024 * 1024, timeout: 12_000, signal })
       if (stdin !== undefined) {
         child.child.stdin?.on('error', (error) => { void error })
         child.child.stdin?.end(stdin)
       }
       return (await child).stdout
     } catch (error) {
-      operationSignal.throwIfAborted()
+      signal.throwIfAborted()
       if (stdin === undefined) throw error
       throw new VpsRuntimeError('The private Computer input could not be sent')
     } finally {
@@ -606,16 +624,16 @@ export class VpsRuntime {
   }
 
   private async runPodman(args: readonly string[]): Promise<VpsCommandResult> {
-    this.signal.throwIfAborted()
+    this.requests.throwIfAborted()
     const startsComputer = args[0] === 'run' || args[0] === 'start'
     const argv = this.scopedLaunch && startsComputer
       ? [...USER_COMPUTER_SCOPE, PODMAN, ...args]
       : [PODMAN, ...args]
-    const command = (this.internals.run ?? runPodmanProcess)(argv, this.signal)
+    const command = (this.internals.run ?? runPodmanProcess)(argv, this.requests)
     this.pendingCommands.add(command)
     try {
       const result = await command
-      this.signal.throwIfAborted()
+      this.requests.throwIfAborted()
       if (!Number.isInteger(result.code) || typeof result.stdout !== 'string' || typeof result.stderr !== 'string') {
         throw new VpsRuntimeError('VPS Bot Podman returned invalid command facts')
       }

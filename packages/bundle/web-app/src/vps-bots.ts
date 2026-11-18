@@ -144,7 +144,7 @@ export function mountVpsBots(
     if (runtime === undefined) {
       runtime = new VpsRuntime(config.root, config.image, undefined, {
         ...(browser === undefined ? {} : { browser }),
-        sharedWorkspace, internet, networkPolicy,
+        configurationSignal: lifetime.signal, sharedWorkspace, internet, networkPolicy,
         ...(sharedWorkspacePolicy === undefined ? {} : { sharedWorkspacePolicy }),
       })
       runtimes.set(key, runtime)
@@ -680,6 +680,10 @@ export function mountVpsBots(
           shellEnv: {},
         })
         agentCtx.effect(() => bindManagedBotExecution(agent.ctx, execution), 'vps-bots: bind execution')
+        agentCtx.inject(['terminalController'], (terminalCtx) => {
+          terminalCtx.effect(() => terminalCtx.terminalController.bindWorkspace(agent, { cwd: workspace, subprocess }),
+            'vps-bots: bind owner terminal')
+        })
         agentCtx.on('tools/pre-execute', async (call, next) => {
           if (call.name === 'bash' || call.name === 'grep' || call.name === 'glob') {
             if (call.name === 'bash' && execution.sandboxPolicy.resolve({ session: agent.session }).mode === 'read-only') {

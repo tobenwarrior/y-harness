@@ -177,13 +177,14 @@ except OSError as error:
  * @param sessionId - roster Session of the selected Bot.
  * @param file - validated destination and raw request body.
  * @param limits - validated deployment limits.
- * @param signal - request lifetime.
+ * @param signal - request lifetime. The runtime's Web configuration can also cancel the transfer.
  * @returns worker outcome after the byte pipe and process have settled.
  */
 export async function uploadComputerFile(
   runtime: VpsRuntime, sessionId: string, file: ComputerFileUpload, limits: VpsFileUploadLimits, signal: AbortSignal,
 ): Promise<ComputerFileUploadOutcome> {
-  signal.throwIfAborted()
+  const operationSignal = runtime.operationSignal(signal)
+  operationSignal.throwIfAborted()
   const shared = isVpsSharedPath(file.directory)
   const release = runtime.beginUse(sessionId)
   try {
@@ -191,14 +192,14 @@ export async function uploadComputerFile(
     if (root === undefined) return 'folder-unavailable'
     const directory = shared ? file.directory.slice(root.length + 1) || '.' : file.directory
     await runtime.ensure(sessionId)
-    signal.throwIfAborted()
+    operationSignal.throwIfAborted()
     const seconds = Math.ceil(limits.timeoutMs / 1000)
     const [program, ...argv] = runtime.execArgv(sessionId, [
       '/usr/bin/python3', '-I', '-c', uploadWorker, root, directory, file.name,
       String(file.bytes), String(limits.reserveBytes), String(seconds),
     ], { stdin: true })
     const closed = new AbortController()
-    const transfer = AbortSignal.any([signal, AbortSignal.timeout(limits.timeoutMs), closed.signal])
+    const transfer = AbortSignal.any([operationSignal, AbortSignal.timeout(limits.timeoutMs), closed.signal])
     const child = exec(program, argv, { env: {}, maxBuffer: 1024, timeout: seconds * 1000 + 5000 })
     const finished = child.finally(() => { closed.abort() })
     const input = child.child.stdin
@@ -206,7 +207,7 @@ export async function uploadComputerFile(
       ? Promise.reject(new Error('The VPS transfer pipe is unavailable.'))
       : pipeline(committedChunks(file, transfer), input, { signal: transfer })
     const [settled, sent] = await Promise.allSettled([finished, sending])
-    signal.throwIfAborted()
+    operationSignal.throwIfAborted()
     if (sent.status === 'rejected' && sent.reason instanceof LengthMismatch) return 'incomplete'
     if (settled.status === 'rejected') return 'unavailable'
     const result = outcomes.safeParse(settled.value.stdout.trim())

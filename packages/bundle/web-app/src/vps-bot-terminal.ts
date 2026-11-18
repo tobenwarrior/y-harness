@@ -6,8 +6,7 @@
 
 import type { SubprocessTerminalHandle } from '@yharness/subprocess'
 
-/** The desktop image supplies Python and an isolated Linux process namespace. */
-export const TERMINAL_SCOPE_SCRIPT = String.raw`
+const terminalScopeScript = String.raw`
 import contextlib, fcntl, os, re, signal, stat, sys, time
 
 operation, key, *args = sys.argv[1:]
@@ -82,6 +81,9 @@ with os.fdopen(os.open(path, flags, 0o600), 'r+', encoding='ascii') as record:
     else:
         raise ValueError('Invalid terminal operation')
 `
+
+/** Terminal group control command for the desktop image's Linux process namespace. */
+export const TERMINAL_SCOPE_COMMAND = ['/usr/bin/python3', '-I', '-c', terminalScopeScript] as const
 
 /**
  * Pair a Podman client with its exact in-container terminal session.

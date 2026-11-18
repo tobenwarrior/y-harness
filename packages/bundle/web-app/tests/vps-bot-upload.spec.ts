@@ -189,9 +189,11 @@ describe('private Computer upload', () => {
     }
   })
 
-  it('releases a stalled transfer even if its body rejects cancellation', async () => {
+  it.each(['request', 'configuration'])('releases a stalled transfer when the %s closes even if its body rejects cancellation', async (lifetime) => {
+    const request = new AbortController()
+    const configuration = new AbortController()
+    const selected = lifetime === 'request' ? request : configuration
     await withWorkspace(async (runtime, workspace) => {
-      const selected = new AbortController()
       const reading = Promise.withResolvers<boolean>()
       const cancelled = vi.fn().mockRejectedValue(new Error('The source stream has already closed.'))
       const body = new ReadableStream<Uint8Array>({
@@ -200,14 +202,14 @@ describe('private Computer upload', () => {
         cancel: cancelled,
       }, { highWaterMark: 0 })
       const upload = uploadComputerFile(runtime, OWNER, { directory: '.', name: 'partial.bin', bytes: 9, body },
-        limits, selected.signal)
+        limits, request.signal)
       const assertion = expect(upload).rejects.toMatchObject({ name: 'AbortError' })
       await reading.promise
       selected.abort()
       await assertion
       expect(cancelled).toHaveBeenCalledOnce()
       expect(await readdir(workspace)).toEqual([])
-    })
+    }, { configurationSignal: configuration.signal })
   })
 
   it('validates request media, size and path before opening a bot workspace', async () => {

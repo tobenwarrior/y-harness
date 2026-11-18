@@ -15,7 +15,7 @@ import {
   type SubprocessTerminalSpawnSpec,
 } from '@yharness/subprocess'
 import { VpsRuntimeError, type VpsRuntime } from './vps-runtime.ts'
-import { scopedBotTerminal, TERMINAL_SCOPE_SCRIPT } from './vps-bot-terminal.ts'
+import { scopedBotTerminal, TERMINAL_SCOPE_COMMAND } from './vps-bot-terminal.ts'
 
 const exec = promisify(execFile)
 
@@ -91,10 +91,9 @@ export class VpsBotSubprocess extends SubprocessRuntime {
     const signal = runtime.operationSignal(spec.signal)
     signal.throwIfAborted()
     const scope = randomUUID().replaceAll('-', '')
-    const control = ['/usr/bin/python3', '-I', '-c', TERMINAL_SCOPE_SCRIPT]
     const stop = async (): Promise<void> => {
       try {
-        await runtime.desktopCommand(sessionId, [...control, 'stop', scope, String(spec.graceMs)], new AbortController().signal)
+        await runtime.stopTerminal(sessionId, scope, spec.graceMs)
       } catch (error) {
         void error
         throw new VpsRuntimeError('The VPS Bot terminal session could not be closed.')
@@ -104,7 +103,7 @@ export class VpsBotSubprocess extends SubprocessRuntime {
     try {
       await runtime.ensure(sessionId)
       signal.throwIfAborted()
-      const argv = runtime.execArgv(sessionId, [...control, 'start', scope, spec.terminalType, ...spec.argv], {
+      const argv = runtime.execArgv(sessionId, [...TERMINAL_SCOPE_COMMAND, 'start', scope, spec.terminalType, ...spec.argv], {
         workdir: spec.cwd, interactive: true,
       })
       try {

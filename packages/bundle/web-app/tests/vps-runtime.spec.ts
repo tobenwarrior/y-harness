@@ -663,7 +663,7 @@ describe('VpsBotSubprocess terminal', () => {
         inspectActivity: async () => ({ state: 'unknown', revision: 0 }),
       }
       const start = vi.spyOn(host, 'spawnTerminal').mockResolvedValue(terminal)
-      const stopContainer = vi.spyOn(runtime, 'desktopCommand').mockResolvedValue(Buffer.alloc(0))
+      const stopContainer = vi.spyOn(runtime, 'stopTerminal').mockResolvedValue(undefined)
       const ensure = vi.spyOn(runtime, 'ensure')
       const provider = new VpsBotSubprocess(ctx.isolate('subprocess'), { runtime, sessionId: sessions.alice, host })
       const cwd = runtime.workspace(sessions.alice)
@@ -683,9 +683,7 @@ describe('VpsBotSubprocess terminal', () => {
       const protocol = passed?.argv.slice(-5)
       expect(protocol).toEqual(['start', expect.stringMatching(/^[a-f0-9]{32}$/u), 'xterm-256color', '/bin/bash', '-i'])
       await Promise.all([scoped.terminate(), scoped.terminate()])
-      expect(stopContainer).toHaveBeenCalledOnce()
-      expect(stopContainer.mock.calls[0]?.[0]).toBe(sessions.alice)
-      expect(stopContainer.mock.calls[0]?.[1].slice(-3)).toEqual(['stop', protocol?.[1], '1000'])
+      expect(stopContainer).toHaveBeenCalledExactlyOnceWith(sessions.alice, protocol?.[1], 1000)
       expect(stopLocal).toHaveBeenCalledOnce()
       await expect(provider.spawnTerminal({ ...spec, cwd: runtime.workspace(sessions.bob) })).rejects.toThrow('workspace')
       expect(start).toHaveBeenCalledOnce()
