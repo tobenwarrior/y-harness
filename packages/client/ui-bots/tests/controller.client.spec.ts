@@ -88,6 +88,13 @@ function sessionsFixture() {
   return { retain, refresh, sessions }
 }
 
+function sessionsWithList(
+  fixture: ReturnType<typeof sessionsFixture>,
+  list: ISessions['list'],
+): ISessions {
+  return { retain: fixture.retain, refresh: fixture.refresh, list } as Pick<ISessions, 'retain' | 'refresh' | 'list'> as ISessions
+}
+
 function pendingStoreFixture(initial: BotGroupPendingState = { creations: {}, messages: {} }): BotGroupPendingStore {
   let state = initial
   return {
@@ -95,6 +102,10 @@ function pendingStoreFixture(initial: BotGroupPendingState = { creations: {}, me
     read: () => state,
     write: (next) => { state = next; return true },
   }
+}
+
+function wireFixture<T>(value: object | T): T {
+  return JSON.parse(JSON.stringify(value)) as T
 }
 
 type BotRemoteMocks = {
@@ -316,7 +327,7 @@ describe('BotWorkspaceController', () => {
     await expect(face.loadConnectedApps?.(original.id)).rejects.toThrow('unexpected response')
     setConnectedAppAccess.mockResolvedValueOnce({ ok: false, error: new RemoteError('gateway/internal', 'app update rejected', {}) })
     await expect(face.setConnectedAppAccess?.(original.id, 'github', false)).rejects.toThrow('app update rejected')
-    setConnectedAppAccess.mockResolvedValueOnce({ ok: true, value: { bot: bot('different-apps-bot', 'Different apps'), updatedAt: 2, app: { id: 'github', allowed: false } } })
+    setConnectedAppAccess.mockResolvedValueOnce({ ok: true, value: { bot: bot('different-apps-bot', 'Different apps'), updatedAt: 2, app: { id: 'github', name: 'GitHub', allowed: false } } })
     await expect(face.setConnectedAppAccess?.(original.id, 'github', false)).rejects.toThrow('unexpected response')
     expect(controller.face().reference()?.sessionId).toBe(original.sessionId)
     controller.dispose()
@@ -1601,6 +1612,72 @@ describe('BotWorkspaceController', () => {
     expect(store.write({ creations: {}, messages: {} })).toBe(false)
   })
 
+  it('rejects malformed persisted retry records and recovers after storage errors', () => {
+    const backing = new Map<string, string>()
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => backing.get(key) ?? null,
+      setItem: (key: string, value: string) => { backing.set(key, value) },
+    })
+    const invalidRecords: readonly unknown[] = [
+      { creations: { '': 'bot-group-invalid' }, messages: {} },
+      { creations: { retry: '' }, messages: {} },
+      { creations: {}, messages: { retry: { text: '', messageId: 'bot-group-message-invalid' } } },
+      { creations: {}, messages: { retry: { text: 'Retry', messageId: 'bot-group-message-invalid', targetBotIds: [] } } },
+      { creations: {}, messages: { retry: { text: 'Retry', messageId: 'bot-group-message-invalid', targetBotIds: [' '] } } },
+      { creations: {}, messages: { retry: { text: 'Retry', messageId: 'bot-group-message-invalid', replyToMessageId: 'invalid-parent' } } },
+      { creations: {}, messages: { retry: { text: 'Retry', messageId: 'bot-group-message-invalid', replyToMessageId: 'bot-group-message-invalid' } } },
+    ]
+    for (const [index, record] of invalidRecords.entries()) {
+      backing.set(`invalid-${index}`, JSON.stringify(record))
+      const store = createPendingGroupStore(`invalid-${index}`)
+      expect(store.read()).toEqual({ creations: {}, messages: {} })
+      expect(store.durable).toBe(false)
+      expect(store.read()).toEqual({ creations: {}, messages: {} })
+      expect(store.write({ creations: {}, messages: {} })).toBe(false)
+    }
+
+    const valid = createPendingGroupStore('valid-pending')
+    expect(valid.write({
+      creations: { retry: 'bot-group-valid' },
+      messages: {
+        retry: {
+          text: 'Retry', messageId: 'bot-group-message-valid',
+          targetBotIds: ['bot-a'], replyToMessageId: 'bot-group-message-parent',
+        },
+      },
+    })).toBe(true)
+    expect(valid.read()).toEqual({
+      creations: { retry: 'bot-group-valid' },
+      messages: {
+        retry: {
+          text: 'Retry', messageId: 'bot-group-message-valid',
+          targetBotIds: ['bot-a'], replyToMessageId: 'bot-group-message-parent',
+        },
+      },
+    })
+
+    let writeAttempts = 0
+    vi.stubGlobal('localStorage', {
+      getItem: () => null,
+      setItem: () => { writeAttempts++; throw new Error('storage write failed') },
+    })
+    const writeThrowing = createPendingGroupStore('storage-write-throws')
+    expect(writeThrowing.durable).toBe(true)
+    expect(writeThrowing.write({ creations: {}, messages: {} })).toBe(false)
+    expect(writeAttempts).toBe(1)
+    expect(writeThrowing.durable).toBe(false)
+    expect(writeThrowing.write({ creations: {}, messages: {} })).toBe(false)
+
+    vi.stubGlobal('localStorage', {
+      getItem: () => { throw new Error('storage read failed') },
+      setItem: () => { throw new Error('storage write failed') },
+    })
+    const throwing = createPendingGroupStore('storage-throws')
+    expect(throwing.durable).toBe(false)
+    expect(throwing.read()).toEqual({ creations: {}, messages: {} })
+    expect(throwing.write({ creations: {}, messages: {} })).toBe(false)
+  })
+
   it('uses the default localStorage store to recover a group message after restart', async () => {
     const backing = new Map<string, string>()
     vi.stubGlobal('localStorage', {
@@ -1742,6 +1819,30 @@ describe('BotWorkspaceController', () => {
     controller.dispose()
   })
 
+  it('fails safely on rejected or mismatched pending group reconciliation', async () => {
+    const first = bot('bot-reconcile-first', 'session-reconcile-first')
+    const second = bot('bot-reconcile-second', 'session-reconcile-second')
+    const group = groupView('bot-group-reconcile', 'Reconcile room', [first, second])
+    const remote = remoteFixture([first, second])
+    remote.listGroups = vi.fn()
+      .mockResolvedValueOnce({ ok: false as const, error: new RemoteError('gateway/internal', 'catalog rejected', {}) })
+      .mockResolvedValueOnce({ ok: true as const, value: { groups: [groupView('bot-group-reconcile', 'Wrong room', [first])] } })
+      .mockResolvedValueOnce({ ok: true as const, value: { groups: [group] } })
+    remote.inspectGroup = vi.fn(async () => ({ ok: true as const, value: { group, messages: [] } }))
+    const pendingKey = `Reconcile room\u0000${[String(first.id), String(second.id)].sort().join('\u0000')}`
+    const controller = new BotWorkspaceController(
+      remote, sessionsFixture().sessions, () => 'unexpected response', undefined, undefined,
+      pendingStoreFixture({ creations: { [pendingKey]: String(group.id) }, messages: {} }),
+    )
+    const creation = { name: group.name, botIds: [String(first.id), String(second.id)] }
+    await expect(controller.face().createGroup(creation)).rejects.toThrow('catalog rejected')
+    await expect(controller.face().createGroup(creation)).rejects.toThrow('different metadata')
+    await expect(controller.face().createGroup(creation)).resolves.toBeUndefined()
+    expect(remote.createGroup).not.toHaveBeenCalled()
+    expect(controller.source.getSnapshot().selectedGroupId).toBe(String(group.id))
+    controller.dispose()
+  })
+
   it('fails closed before a new group operation when persistence is unavailable', async () => {
     const first = bot('bot-first-create-no-store', 'session-first-create-no-store')
     const second = bot('bot-second-create-no-store', 'session-second-create-no-store')
@@ -1872,6 +1973,42 @@ describe('BotWorkspaceController', () => {
     delete remote.inspectGroup
     await expect(controller.face().sendGroupMessage('Fail closed.')).rejects.toThrow('group transcript is unavailable')
     expect(remote.sendGroupMessage).toHaveBeenCalledOnce()
+    controller.dispose()
+  })
+
+  it('rejects pending message retries when the transcript is rejected or differs', async () => {
+    const first = bot('bot-message-reconcile-first', 'session-message-reconcile-first')
+    const second = bot('bot-message-reconcile-second', 'session-message-reconcile-second')
+    const group = groupView('bot-group-message-reconcile', 'Message reconcile room', [first, second])
+    const messageId = brandString<BotGroupMessageId>('bot-group-message-reconcile')
+    const existing = {
+      id: messageId, groupId: group.id, sender: { kind: 'user' as const }, text: 'Retry me', createdAt: 1,
+    }
+    const mismatch = { ...existing, text: 'Different text' }
+    const remote = remoteFixture([first, second])
+    remote.listGroups = vi.fn(async () => ({ ok: true as const, value: { groups: [group] } }))
+    remote.inspectGroup = vi.fn()
+      .mockResolvedValueOnce({ ok: true as const, value: { group, messages: [] } })
+      .mockResolvedValueOnce({ ok: false as const, error: new RemoteError('gateway/internal', 'transcript rejected', {}) })
+      .mockResolvedValueOnce({ ok: true as const, value: { group, messages: [mismatch] } })
+      .mockResolvedValue({ ok: true as const, value: { group, messages: [existing] } })
+    remote.sendGroupMessage = vi.fn(async request => ({ ok: true as const, value: {
+      messageId: request.messageId!, status: 'accepted' as const, deliveries: [],
+    } }))
+    const pendingKey = `${group.id}\u0000Retry me\u0000`
+    const controller = new BotWorkspaceController(
+      remote, sessionsFixture().sessions, () => 'unexpected response', undefined, undefined,
+      pendingStoreFixture({ creations: {}, messages: {
+        [pendingKey]: { text: 'Retry me', messageId: String(messageId) },
+      } }),
+    )
+    await controller.load()
+    controller.face().selectGroup(String(group.id))
+    await vi.waitFor(() => { expect(controller.source.getSnapshot().selectedGroup).not.toBeNull() })
+    await expect(controller.face().sendGroupMessage('Retry me')).rejects.toThrow('transcript rejected')
+    await expect(controller.face().sendGroupMessage('Retry me')).rejects.toThrow('content differs')
+    await expect(controller.face().sendGroupMessage('Retry me')).resolves.toBeUndefined()
+    expect(remote.sendGroupMessage).toHaveBeenCalledWith(expect.objectContaining({ messageId }))
     controller.dispose()
   })
 
@@ -2712,5 +2849,1095 @@ describe('BotWorkspaceController', () => {
       messageId: 'bot-group-message-file', attachmentGrants: ['bot-attachment-grant-file'],
     }))
     controller.dispose()
+  })
+
+  it('covers omitted and rejected template actions at their remote boundary', async () => {
+    const source = bot('bot-template-action-boundaries', 'session-template-action-boundaries')
+    const template = templateView('bot-template-action-boundaries', 'bot-template-action-code')
+    const remote = remoteFixture([source])
+    remote.listTemplates = vi.fn(async () => ({ ok: true as const, value: { templates: [template] } }))
+    const controller = new BotWorkspaceController(remote, sessionsFixture().sessions, () => 'unexpected response')
+    await controller.load()
+    const actions = controller.face().templateActions
+    if (actions === undefined) throw new Error('template actions are not mounted')
+
+    await expect(actions.publishTemplate({ botId: source.id })).rejects.toThrow('unexpected response')
+    remote.publishTemplate = vi.fn<NonNullable<BotWorkspaceRemote['publishTemplate']>>()
+      .mockRejectedValueOnce('publish failed')
+      .mockResolvedValueOnce({ ok: false, error: new RemoteError('gateway/internal', 'publish rejected', {}) })
+    await expect(actions.publishTemplate({ botId: source.id })).rejects.toThrow('publish failed')
+    await expect(actions.publishTemplate({ botId: source.id })).rejects.toThrow('publish rejected')
+
+    await expect(actions.revokeTemplate(String(template.id))).rejects.toThrow('unexpected response')
+    remote.revokeTemplate = vi.fn<NonNullable<BotWorkspaceRemote['revokeTemplate']>>()
+      .mockRejectedValueOnce('revoke failed')
+      .mockResolvedValueOnce({ ok: false, error: new RemoteError('gateway/internal', 'revoke rejected', {}) })
+    await expect(actions.revokeTemplate(String(template.id))).rejects.toThrow('revoke failed')
+    await expect(actions.revokeTemplate(String(template.id))).rejects.toThrow('revoke rejected')
+
+    await expect(actions.previewTemplate('')).rejects.toThrow('unexpected response')
+    await expect(actions.previewTemplate('bot-template-action-code')).rejects.toThrow('unexpected response')
+    remote.previewTemplate = vi.fn<NonNullable<BotWorkspaceRemote['previewTemplate']>>()
+      .mockRejectedValueOnce('preview failed')
+      .mockResolvedValueOnce({ ok: false, error: new RemoteError('gateway/internal', 'preview rejected', {}) })
+    await expect(actions.previewTemplate()).rejects.toThrow('preview failed')
+    await expect(actions.previewTemplate()).rejects.toThrow('preview rejected')
+
+    const malformedPermissions = wireFixture<Awaited<ReturnType<NonNullable<BotWorkspaceRemote['previewTemplate']>>>>({
+      ok: true,
+      value: { template, localPermissions: { status: 'resolved', tools: ['chat', 'chat'] }, approvalToken: 'preview-token' },
+    })
+    remote.previewTemplate = vi.fn(async () => malformedPermissions)
+    await expect(actions.previewTemplate()).rejects.toThrow('unexpected response')
+
+    remote.previewTemplate = vi.fn(async () => ({
+      ok: true as const, value: { template, localPermissions, approvalToken: 'invalid token' },
+    }))
+    await expect(actions.previewTemplate()).rejects.toThrow('unexpected response')
+    remote.previewTemplate = vi.fn(async () => ({
+      ok: true as const,
+      value: { template: { ...template, shareCode: brandString<BotTemplateShareCode>('other-code') }, localPermissions, approvalToken: 'preview-token' },
+    }))
+    await expect(actions.previewTemplate()).rejects.toThrow('unexpected response')
+
+    remote.previewTemplate = vi.fn(async () => ({ ok: true as const, value: { template, localPermissions, approvalToken: 'preview-token' } }))
+    actions.setTemplateCode(String(template.shareCode))
+    await actions.previewTemplate()
+    await expect(actions.importTemplate()).rejects.toThrow('unexpected response')
+    remote.importTemplate = vi.fn<NonNullable<BotWorkspaceRemote['importTemplate']>>()
+      .mockResolvedValue({ ok: true, value: { bot: source, template } })
+
+    actions.setTemplateCode('')
+    await expect(actions.importTemplate()).rejects.toThrow('unexpected response')
+    actions.setTemplateCode(String(template.shareCode))
+    await actions.previewTemplate()
+    await expect(actions.importTemplate()).rejects.toThrow('unexpected response')
+
+    remote.approveTemplate = vi.fn<NonNullable<BotWorkspaceRemote['approveTemplate']>>()
+      .mockRejectedValueOnce('approval failed')
+      .mockResolvedValueOnce({ ok: false, error: new RemoteError('gateway/internal', 'approval rejected', {}) })
+    await expect(actions.importTemplate()).rejects.toThrow('approval failed')
+    await expect(actions.importTemplate()).rejects.toThrow('approval rejected')
+
+    const malformedApproval = wireFixture<Awaited<ReturnType<NonNullable<BotWorkspaceRemote['approveTemplate']>>>>({
+      ok: true,
+      value: { template: { ...template, approved: true }, localPermissions: { status: 'resolved', tools: ['chat', 'chat'] } },
+    })
+    remote.approveTemplate = vi.fn(async () => malformedApproval)
+    await expect(actions.importTemplate()).rejects.toThrow('unexpected response')
+
+    remote.approveTemplate = vi.fn(async () => ({
+      ok: true as const, value: { template: { ...template, approved: true }, localPermissions },
+    }))
+    remote.importTemplate = vi.fn<NonNullable<BotWorkspaceRemote['importTemplate']>>()
+      .mockRejectedValueOnce('import failed')
+      .mockResolvedValueOnce({ ok: false, error: new RemoteError('gateway/internal', 'import rejected', {}) })
+    await expect(actions.importTemplate()).rejects.toThrow('import failed')
+    await expect(actions.importTemplate()).rejects.toThrow('import rejected')
+    const approvalResult = Promise.withResolvers<Awaited<ReturnType<NonNullable<BotWorkspaceRemote['approveTemplate']>>>>()
+    remote.approveTemplate = vi.fn(async () => approvalResult.promise)
+    remote.importTemplate = vi.fn(async () => ({ ok: true as const, value: { bot: source, template } }))
+    actions.setTemplateCode(String(template.shareCode))
+    await actions.previewTemplate()
+    const importing = actions.importTemplate()
+    await vi.waitFor(() => { expect(remote.approveTemplate).toHaveBeenCalledOnce() })
+    actions.setTemplateCode('changed while approval is pending')
+    approvalResult.resolve({ ok: true, value: { template: { ...template, approved: true }, localPermissions } })
+    await expect(importing).rejects.toThrow('unexpected response')
+
+    const revokeResult = Promise.withResolvers<Awaited<ReturnType<NonNullable<BotWorkspaceRemote['revokeTemplate']>>>>()
+    remote.revokeTemplate = vi.fn(async () => revokeResult.promise)
+    const revoking = actions.revokeTemplate(String(template.id))
+    await vi.waitFor(() => { expect(remote.revokeTemplate).toHaveBeenCalledOnce() })
+    controller.dispose()
+    revokeResult.resolve({ ok: true, value: { template } })
+    await expect(revoking).resolves.toBeUndefined()
+  })
+
+  it('guards disposed selections and group actions across remote lifecycle failures', async () => {
+    const first = bot('bot-group-boundary-first', 'session-group-boundary-first')
+    const second = bot('bot-group-boundary-second', 'session-group-boundary-second')
+    const group = groupView('bot-group-boundary', 'Boundary room', [first, second])
+
+    const renameRemote = remoteFixture([first])
+    renameRemote.rename
+      .mockResolvedValueOnce({ ok: false, error: new RemoteError('gateway/internal', 'rename rejected', {}) })
+      .mockResolvedValueOnce({ ok: true, value: { bot: { ...first, updatedAt: 0, name: 'stale name' } } })
+    const renameController = new BotWorkspaceController(renameRemote, sessionsFixture().sessions, () => 'unexpected response')
+    await renameController.load()
+    await expect(renameController.face().rename(first.id, 'Rejected')).rejects.toThrow('rename rejected')
+    await renameController.face().rename(first.id, 'stale name')
+    expect(renameController.source.getSnapshot().bots[0]?.name).toBe(first.name)
+    renameController.dispose()
+
+    const disposedRemote = remoteFixture([first])
+    disposedRemote.listTemplates = vi.fn(async () => ({ ok: true as const, value: { templates: [] } }))
+    const disposedController = new BotWorkspaceController(disposedRemote, sessionsFixture().sessions, () => 'unexpected response')
+    const disposedFace = disposedController.face()
+    disposedController.dispose()
+    await disposedController.load()
+    disposedFace.select(first.id)
+    disposedFace.selectGroup(String(group.id))
+    disposedFace.retry()
+    disposedController.bumpRoutineRevision()
+    disposedFace.templateActions?.setTemplateCode('ignored after disposal')
+    await disposedFace.templateActions?.publishTemplate({ botId: first.id })
+    await disposedFace.createGroup({ name: group.name, botIds: [first.id], groupId: 'disposed-group-create' })
+
+    const missingRemote: BotRemoteMocks = remoteFixture([first, second])
+    missingRemote.listGroups = vi.fn(async () => ({ ok: true as const, value: { groups: [group] } }))
+    missingRemote.inspectGroup = vi.fn(async () => ({ ok: true as const, value: { group, messages: [] } }))
+    delete missingRemote.createGroup
+    delete missingRemote.updateGroup
+    const missingController = new BotWorkspaceController(missingRemote, sessionsFixture().sessions, () => 'unexpected response')
+    const missingFace = missingController.face()
+    await missingController.load()
+    missingFace.select('unknown-bot')
+    missingFace.select(first.id)
+    await expect(missingFace.createGroup({ name: group.name, botIds: [first.id], groupId: 'explicit-missing-create' }))
+      .rejects.toThrow('unexpected response')
+    await expect(missingFace.updateGroup({ groupId: String(group.id), name: group.name, botIds: [first.id] }))
+      .rejects.toThrow('unexpected response')
+    missingFace.selectGroup(String(group.id))
+    await vi.waitFor(() => { expect(missingController.source.getSnapshot().selectedGroup).not.toBeNull() })
+    await expect(missingFace.sendGroupMessage('Bad reply', undefined, undefined, 'invalid-parent'))
+      .rejects.toThrow('unexpected response')
+    const missingSend = missingFace.sendGroupMessage
+    delete missingRemote.sendGroupMessage
+    await expect(missingSend('No sender')).rejects.toThrow('unexpected response')
+    missingController.dispose()
+
+    const inspectMissingRemote = remoteFixture([first, second])
+    inspectMissingRemote.listGroups = vi.fn(async () => ({ ok: true as const, value: { groups: [group] } }))
+    delete inspectMissingRemote.inspectGroup
+    const inspectMissingController = new BotWorkspaceController(inspectMissingRemote, sessionsFixture().sessions, () => 'unexpected response')
+    await inspectMissingController.load()
+    inspectMissingController.face().selectGroup(String(group.id))
+    await vi.waitFor(() => { expect(inspectMissingController.source.getSnapshot().groupError).toBe('unexpected response') })
+    inspectMissingController.dispose()
+
+    const inspectRemote = remoteFixture([first, second])
+    const otherGroup = groupView('bot-group-boundary-other', 'Other room', [first, second])
+    const thirdGroup = groupView('bot-group-boundary-third', 'Third room', [first, second])
+    inspectRemote.listGroups = vi.fn(async () => ({ ok: true as const, value: { groups: [group, otherGroup, thirdGroup] } }))
+    const firstInspect = Promise.withResolvers<RemoteResult<BotGroupInspectValue>>()
+    inspectRemote.inspectGroup = vi.fn()
+      .mockImplementationOnce(async () => firstInspect.promise)
+      .mockRejectedValueOnce('inspect failed')
+      .mockResolvedValueOnce({ ok: false, error: new RemoteError('gateway/internal', 'inspect rejected', {}) })
+    const inspectController = new BotWorkspaceController(inspectRemote, sessionsFixture().sessions, () => 'unexpected response')
+    await inspectController.load()
+    const inspectFace = inspectController.face()
+    inspectFace.selectGroup(String(group.id))
+    inspectFace.selectGroup(String(otherGroup.id))
+    firstInspect.resolve({ ok: true, value: { group, messages: [] } })
+    await vi.waitFor(() => { expect(inspectController.source.getSnapshot().groupError).toBe('inspect failed') })
+    inspectFace.selectGroup(String(thirdGroup.id))
+    await vi.waitFor(() => { expect(inspectController.source.getSnapshot().groupError).toBe('inspect rejected') })
+    inspectController.dispose()
+
+    const createRemote = remoteFixture([first, second])
+    const createResult = Promise.withResolvers<Awaited<ReturnType<NonNullable<BotWorkspaceRemote['createGroup']>>>>()
+    createRemote.createGroup
+      .mockRejectedValueOnce('create failed')
+      .mockResolvedValueOnce({ ok: false, error: new RemoteError('gateway/internal', 'create rejected', {}) })
+      .mockImplementationOnce(async () => createResult.promise)
+    const createController = new BotWorkspaceController(createRemote, sessionsFixture().sessions, () => 'unexpected response', undefined, undefined, pendingStoreFixture())
+    const createFace = createController.face()
+    const creation = (groupId: string) => ({ name: group.name, botIds: [first.id, second.id], groupId })
+    await expect(createFace.createGroup(creation('explicit-create-error'))).rejects.toThrow('create failed')
+    await expect(createFace.createGroup(creation('explicit-create-rejected'))).rejects.toThrow('create rejected')
+    const creating = createFace.createGroup(creation('explicit-create-disposed'))
+    await vi.waitFor(() => { expect(createRemote.createGroup).toHaveBeenCalledTimes(3) })
+    createController.dispose()
+    createResult.resolve({ ok: true, value: { group } })
+    await expect(creating).resolves.toBeUndefined()
+
+    const updateRemote = remoteFixture([first, second])
+    const updateResult = Promise.withResolvers<Awaited<ReturnType<NonNullable<BotWorkspaceRemote['updateGroup']>>>>()
+    updateRemote.updateGroup = vi.fn<NonNullable<BotWorkspaceRemote['updateGroup']>>()
+      .mockRejectedValueOnce('update failed')
+      .mockResolvedValueOnce({ ok: false, error: new RemoteError('gateway/internal', 'update rejected', {}) })
+      .mockImplementationOnce(async () => updateResult.promise)
+    const updateController = new BotWorkspaceController(updateRemote, sessionsFixture().sessions, () => 'unexpected response')
+    const updateFace = updateController.face()
+    const update = { groupId: String(group.id), name: group.name, botIds: [first.id, second.id] }
+    await expect(updateFace.updateGroup(update)).rejects.toThrow('update failed')
+    await expect(updateFace.updateGroup(update)).rejects.toThrow('update rejected')
+    const updating = updateFace.updateGroup(update)
+    await vi.waitFor(() => { expect(updateRemote.updateGroup).toHaveBeenCalledTimes(3) })
+    updateController.dispose()
+    updateResult.resolve({ ok: true, value: { group } })
+    await expect(updating).resolves.toBeUndefined()
+
+    const sendRemote = remoteFixture([first, second])
+    sendRemote.listGroups = vi.fn(async () => ({ ok: true as const, value: { groups: [group] } }))
+    sendRemote.inspectGroup = vi.fn(async () => ({ ok: true as const, value: { group, messages: [] } }))
+    const sendResult = Promise.withResolvers<Awaited<ReturnType<NonNullable<BotWorkspaceRemote['sendGroupMessage']>>>>()
+    sendRemote.sendGroupMessage = vi.fn<NonNullable<BotWorkspaceRemote['sendGroupMessage']>>()
+      .mockResolvedValueOnce({ ok: false, error: new RemoteError('gateway/internal', 'send rejected', {}) })
+      .mockImplementationOnce(async () => sendResult.promise)
+    sendRemote.reactGroupMessage = vi.fn<NonNullable<BotWorkspaceRemote['reactGroupMessage']>>()
+      .mockResolvedValue({ ok: true, value: {
+        messageId: brandString<BotGroupMessageId>('reaction-message'),
+        reactions: [{ emoji: '👍', count: 1, viewerReacted: true }],
+      } })
+    const sendController = new BotWorkspaceController(sendRemote, sessionsFixture().sessions, () => 'unexpected response', undefined, undefined, pendingStoreFixture())
+    await sendController.load()
+    const sendFace = sendController.face()
+    sendFace.selectGroup(String(group.id))
+    await vi.waitFor(() => { expect(sendController.source.getSnapshot().selectedGroup).not.toBeNull() })
+    await expect(sendFace.sendGroupMessage('Rejected send')).rejects.toThrow('send rejected')
+    const react = sendFace.reactGroupMessage
+    if (react === undefined) throw new Error('reaction action is not mounted')
+    delete sendRemote.reactGroupMessage
+    await expect(react('reaction-message', '👍', 'add')).rejects.toThrow('unexpected response')
+    const sending = sendFace.sendGroupMessage('Disposed send', 'explicit-disposed-message')
+    await vi.waitFor(() => { expect(sendRemote.sendGroupMessage).toHaveBeenCalledTimes(2) })
+    sendController.dispose()
+    sendResult.resolve({ ok: true, value: { messageId: brandString<BotGroupMessageId>('explicit-disposed-message'), status: 'accepted', deliveries: [] } })
+    await expect(sending).resolves.toBeUndefined()
+  })
+
+  it('fails closed for attachment sends before admission, reconciliation, and delivery', async () => {
+    const first = bot('bot-attachment-boundary-first', 'session-attachment-boundary-first')
+    const second = bot('bot-attachment-boundary-second', 'session-attachment-boundary-second')
+    const group = groupView('bot-group-attachment-boundary', 'Attachment boundary', [first, second])
+    const fileDraft = { id: 'boundary-file', file: new File(['hello'], 'notes.txt', { type: 'text/plain' }), state: 'ready' as const }
+    const imageDraft = { id: 'boundary-image', file: new File([new Uint8Array([1, 2, 3])], 'photo.png', { type: 'image/png' }), state: 'ready' as const }
+
+    const noSelectionRemote = remoteFixture([first, second])
+    const noSelectionController = new BotWorkspaceController(noSelectionRemote, sessionsFixture().sessions, () => 'unexpected response')
+    await expect(noSelectionController.face().sendGroupMessageWithAttachments('No group', [fileDraft]))
+      .rejects.toThrow('unexpected response')
+    noSelectionController.dispose()
+
+    const remote: BotRemoteMocks = remoteFixture([first, second])
+    remote.listGroups = vi.fn(async () => ({ ok: true as const, value: { groups: [group] } }))
+    remote.inspectGroup = vi.fn(async () => ({ ok: true as const, value: { group, messages: [] } }))
+    remote.sendGroupMessage = vi.fn<NonNullable<BotWorkspaceRemote['sendGroupMessage']>>()
+      .mockResolvedValueOnce({ ok: false, error: new RemoteError('gateway/internal', 'attachment send rejected', {}) })
+      .mockResolvedValueOnce({ ok: true, value: {
+        messageId: brandString<BotGroupMessageId>('bot-group-message-attachment-partial'), status: 'partial', deliveries: [],
+      } })
+    const controller = new BotWorkspaceController(remote, sessionsFixture().sessions, () => 'unexpected response', undefined, () => 'delivery failed')
+    await controller.load()
+    const face = controller.face()
+    face.selectGroup(String(group.id))
+    await vi.waitFor(() => { expect(controller.source.getSnapshot().selectedGroup).not.toBeNull() })
+    await expect(face.sendGroupMessageWithAttachments('Empty', [])).rejects.toThrow('unexpected response')
+
+    const send = face.sendGroupMessageWithAttachments
+    delete remote.sendGroupMessage
+    await expect(send('No sender', [fileDraft])).rejects.toThrow('unexpected response')
+    remote.sendGroupMessage = vi.fn<NonNullable<BotWorkspaceRemote['sendGroupMessage']>>()
+      .mockResolvedValueOnce({ ok: true, value: {
+        messageId: brandString<BotGroupMessageId>('bot-group-message-admission'), status: 'accepted', deliveries: [],
+      } })
+    delete remote.admitGroupImage
+    await expect(send('No image admission', [imageDraft])).rejects.toThrow('unexpected response')
+
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      ok: true, value: { grantId: 'bot-attachment-grant-boundary', attachments: [{ type: 'file', name: 'notes.txt', bytes: 5 }] },
+    }), { status: 200, headers: { 'content-type': 'application/json' } })))
+    remote.sendGroupMessage = vi.fn<NonNullable<BotWorkspaceRemote['sendGroupMessage']>>()
+      .mockResolvedValueOnce({ ok: false, error: new RemoteError('gateway/internal', 'attachment send rejected', {}) })
+      .mockResolvedValueOnce({ ok: true, value: {
+        messageId: brandString<BotGroupMessageId>('bot-group-message-attachment-partial'), status: 'partial', deliveries: [],
+      } })
+
+    remote.inspectGroup = vi.fn(async () => { throw 'transcript transport failed' })
+    await expect(send('Transcript unavailable', [fileDraft])).rejects.toThrow('transcript transport failed')
+
+    const existingId = brandString<BotGroupMessageId>('bot-group-message-attachment-mismatch')
+    remote.inspectGroup = vi.fn<NonNullable<BotWorkspaceRemote['inspectGroup']>>(async () => ({ ok: true as const, value: {
+      group,
+      messages: [{
+        id: existingId, groupId: group.id, sender: { kind: 'user' as const }, text: 'Existing file', createdAt: 1,
+        targetBotIds: [first.id, second.id],
+        attachments: [{ type: 'file' as const, attachmentId: 'attachment-other', name: 'other.txt', bytes: 5 }],
+      }],
+    } }))
+    await expect(send('Existing file', [fileDraft], String(existingId))).rejects.toThrow('attachments differ')
+
+    remote.inspectGroup = vi.fn(async () => ({ ok: true as const, value: { group, messages: [] } }))
+    await expect(send('Rejected attachment send', [fileDraft], 'bot-group-message-attachment-rejected'))
+      .rejects.toThrow('attachment send rejected')
+    await expect(send('Partial attachment send', [fileDraft], 'bot-group-message-attachment-partial'))
+      .rejects.toThrow('delivery failed')
+
+    const deferred = Promise.withResolvers<Awaited<ReturnType<NonNullable<BotWorkspaceRemote['sendGroupMessage']>>>>()
+    remote.sendGroupMessage = vi.fn<NonNullable<BotWorkspaceRemote['sendGroupMessage']>>()
+      .mockImplementation(async () => deferred.promise)
+    const sending = send('Disposed attachment send', [fileDraft], 'bot-group-message-attachment-disposed')
+    await vi.waitFor(() => { expect(remote.sendGroupMessage).toHaveBeenCalledOnce() })
+    controller.dispose()
+    deferred.resolve({ ok: true, value: {
+      messageId: brandString<BotGroupMessageId>('bot-group-message-attachment-disposed'), status: 'accepted', deliveries: [],
+    } })
+    await expect(sending).resolves.toBeUndefined()
+  })
+
+  it('preserves callback ownership when group persistence and refreshes fail', async () => {
+    const first = bot('bot-group-callback-first', 'session-group-callback-first')
+    const second = bot('bot-group-callback-second', 'session-group-callback-second')
+    const group = groupView('bot-group-callback', 'Callback room', [first, second])
+    const failingStore: BotGroupPendingStore = {
+      durable: true,
+      read: () => ({ creations: {}, messages: {} }),
+      write: () => false,
+    }
+    const sendRemote = remoteFixture([first, second])
+    sendRemote.listGroups = vi.fn(async () => ({ ok: true as const, value: { groups: [group] } }))
+    sendRemote.inspectGroup = vi.fn(async () => ({ ok: true as const, value: { group, messages: [] } }))
+    sendRemote.sendGroupMessage = vi.fn(async request => ({ ok: true as const, value: {
+      messageId: request.messageId!, status: 'accepted' as const, deliveries: [],
+    } }))
+    const sendController = new BotWorkspaceController(
+      sendRemote, sessionsFixture().sessions, () => 'unexpected response', undefined, undefined,
+      failingStore, key => `localized:${key}`,
+    )
+    await sendController.load()
+    const sendFace = sendController.face()
+    sendFace.selectGroup(String(group.id))
+    await vi.waitFor(() => { expect(sendController.source.getSnapshot().selectedGroup).not.toBeNull() })
+    await expect(sendFace.sendGroupMessage('Storage refuses')).rejects.toThrow('localized:groupSendRetryUnavailable')
+    sendController.dispose()
+
+    const mismatchRemote = remoteFixture([first, second])
+    const mismatchMessageId = brandString<BotGroupMessageId>('bot-group-message-target-mismatch')
+    mismatchRemote.listGroups = vi.fn(async () => ({ ok: true as const, value: { groups: [group] } }))
+    mismatchRemote.inspectGroup = vi.fn(async () => ({ ok: true as const, value: {
+      group,
+      messages: [{
+        id: mismatchMessageId, groupId: group.id, sender: { kind: 'user' as const }, text: 'Target mismatch',
+        targetBotIds: [first.id], createdAt: 1,
+      }],
+    } }))
+    mismatchRemote.sendGroupMessage = vi.fn(async request => ({ ok: true as const, value: {
+      messageId: request.messageId!, status: 'accepted' as const, deliveries: [],
+    } }))
+    const mismatchKey = `${group.id}\u0000Target mismatch\u0000`
+    const mismatchStore = pendingStoreFixture({ creations: {}, messages: {
+      [mismatchKey]: { text: 'Target mismatch', messageId: String(mismatchMessageId) },
+    } })
+    const retryMismatchController = new BotWorkspaceController(mismatchRemote, sessionsFixture().sessions, () => 'unexpected response', undefined, undefined, mismatchStore)
+    await retryMismatchController.load()
+    const mismatchFace = retryMismatchController.face()
+    mismatchFace.selectGroup(String(group.id))
+    await vi.waitFor(() => { expect(retryMismatchController.source.getSnapshot().selectedGroup).not.toBeNull() })
+    await expect(mismatchFace.sendGroupMessage('Target mismatch', String(mismatchMessageId))).rejects.toThrow('content differs')
+    retryMismatchController.dispose()
+
+    const reactionResult = Promise.withResolvers<Awaited<ReturnType<NonNullable<BotWorkspaceRemote['reactGroupMessage']>>>>()
+    const reactionRemote = remoteFixture([first, second])
+    reactionRemote.listGroups = vi.fn(async () => ({ ok: true as const, value: { groups: [group] } }))
+    reactionRemote.inspectGroup = vi.fn(async () => ({ ok: true as const, value: { group, messages: [] } }))
+    reactionRemote.reactGroupMessage = vi.fn(async () => reactionResult.promise)
+    const reactionController = new BotWorkspaceController(reactionRemote, sessionsFixture().sessions, () => 'unexpected response')
+    await reactionController.load()
+    const reactionFace = reactionController.face()
+    reactionFace.selectGroup(String(group.id))
+    await vi.waitFor(() => { expect(reactionController.source.getSnapshot().selectedGroup).not.toBeNull() })
+    const reacting = reactionFace.reactGroupMessage?.('bot-group-message-callback', '👍', 'add')
+    await vi.waitFor(() => { expect(reactionRemote.reactGroupMessage).toHaveBeenCalledOnce() })
+    reactionController.dispose()
+    reactionResult.resolve({ ok: true, value: {
+      messageId: brandString<BotGroupMessageId>('bot-group-message-callback'),
+      reactions: [{ emoji: '👍', count: 1, viewerReacted: true }],
+    } })
+    await expect(reacting).resolves.toBeUndefined()
+
+    const retryRemote = remoteFixture([])
+    const retryController = new BotWorkspaceController(retryRemote, sessionsFixture().sessions, () => 'unexpected response')
+    await retryController.load()
+    retryController.face().retryGroup()
+    await vi.waitFor(() => { expect(retryRemote.list).toHaveBeenCalledTimes(2) })
+    retryController.dispose()
+
+    const firstInspect = Promise.withResolvers<RemoteResult<BotGroupInspectValue>>()
+    const staleRemote = remoteFixture([first, second])
+    const secondGroup = groupView('bot-group-callback-second', 'Second callback room', [first, second])
+    staleRemote.listGroups = vi.fn(async () => ({ ok: true as const, value: { groups: [group, secondGroup] } }))
+    staleRemote.inspectGroup = vi.fn()
+      .mockImplementationOnce(async () => firstInspect.promise)
+      .mockResolvedValue({ ok: true, value: { group: secondGroup, messages: [] } })
+    const staleController = new BotWorkspaceController(staleRemote, sessionsFixture().sessions, () => 'unexpected response')
+    await staleController.load()
+    const staleFace = staleController.face()
+    staleFace.selectGroup(String(group.id))
+    staleFace.selectGroup(String(secondGroup.id))
+    firstInspect.reject(new Error('stale group failed'))
+    await vi.waitFor(() => { expect(staleController.source.getSnapshot().selectedGroup?.id).toBe(String(secondGroup.id)) })
+    staleController.dispose()
+
+    const disposedInspect = Promise.withResolvers<RemoteResult<BotGroupInspectValue>>()
+    const disposedInspectRemote = remoteFixture([first, second])
+    disposedInspectRemote.listGroups = vi.fn(async () => ({ ok: true as const, value: { groups: [group] } }))
+    disposedInspectRemote.inspectGroup = vi.fn(async () => disposedInspect.promise)
+    const disposedInspectController = new BotWorkspaceController(disposedInspectRemote, sessionsFixture().sessions, () => 'unexpected response')
+    await disposedInspectController.load()
+    disposedInspectController.face().selectGroup(String(group.id))
+    await vi.waitFor(() => { expect(disposedInspectRemote.inspectGroup).toHaveBeenCalledOnce() })
+    disposedInspectController.dispose()
+    disposedInspect.reject(new Error('disposed group failed'))
+    await new Promise<void>((resolve) => { setTimeout(resolve, 0) })
+  })
+
+  it('reconciles lost Bot creation responses and releases stale Session callbacks', async () => {
+    const source = bot('bot-create-reconcile-source', 'session-create-reconcile-source')
+    let requestId: BotView['id'] | undefined
+    const reconciledRemote = remoteFixture([])
+    reconciledRemote.create.mockImplementation(async (request) => {
+      requestId = request.id
+      return { ok: false, error: new RemoteError('gateway/internal', 'response lost', {}) }
+    })
+    reconciledRemote.list.mockImplementation(async () => ({
+      ok: true as const,
+      value: { bots: requestId === undefined ? [] : [bot(String(requestId), 'session-reconciled')] },
+    }))
+    const reconciledController = new BotWorkspaceController(reconciledRemote, sessionsFixture().sessions, () => 'unexpected response')
+    await expect(reconciledController.face().create({ name: 'Reconciled', identity: 'agent', accent: 'violet' })).resolves.toBeUndefined()
+    expect(reconciledController.source.getSnapshot().bots[0]?.id).toBe(requestId)
+    reconciledController.dispose()
+
+    const rejectedRemote = remoteFixture([])
+    rejectedRemote.create.mockResolvedValue({ ok: false, error: new RemoteError('gateway/internal', 'create rejected', {}) })
+    const rejectedController = new BotWorkspaceController(rejectedRemote, sessionsFixture().sessions, () => 'unexpected response')
+    await expect(rejectedController.face().create({ name: 'Rejected', identity: 'agent', accent: 'violet' }))
+      .rejects.toThrow('create rejected')
+    rejectedController.dispose()
+
+    const mismatchRemote = remoteFixture([])
+    mismatchRemote.create.mockResolvedValue({ ok: true, value: { bot: source } })
+    const mismatchController = new BotWorkspaceController(mismatchRemote, sessionsFixture().sessions, () => 'unexpected response')
+    await expect(mismatchController.face().create({ name: 'Mismatch', identity: 'agent', accent: 'violet' }))
+      .rejects.toThrow('unexpected response')
+    mismatchController.dispose()
+
+    const active = bot('bot-create-active', 'session-create-active')
+    const retryRemote = remoteFixture([])
+    retryRemote.create.mockImplementation(async request => ({
+      ok: true as const, value: { bot: { ...active, id: request.id ?? active.id } },
+    }))
+    const retrySessions = sessionsFixture()
+    const retrySessionService = sessionsWithList(retrySessions, sessionList(active.sessionId, () => false))
+    retrySessions.refresh.mockRejectedValueOnce('session catalog unavailable')
+    retrySessions.retain.mockImplementation(() => { throw 'session catalog unavailable' })
+    const retryController = new BotWorkspaceController(retryRemote, retrySessionService, () => 'unexpected response')
+    await retryController.face().create({ name: 'Active', identity: 'agent', accent: 'violet' })
+    expect(retryController.source.getSnapshot().error).toBe('session catalog unavailable')
+    retryController.dispose()
+
+    const staleReady = Promise.withResolvers<SessionBinding>()
+    const first = bot('bot-stale-reference-first', 'session-stale-reference-first')
+    const second = bot('bot-stale-reference-second', 'session-stale-reference-second')
+    const firstReference = reference(first.sessionId, staleReady.promise)
+    const retainSessions = sessionsFixture()
+    retainSessions.retain.mockImplementation(sessionId => sessionId === first.sessionId ? firstReference : reference(sessionId))
+    const retainController = new BotWorkspaceController(remoteFixture([first, second]), retainSessions.sessions, () => 'unexpected response')
+    await retainController.load()
+    retainController.face().select(second.id)
+    staleReady.reject(new Error('stale reference failed'))
+    await new Promise<void>((resolve) => { setTimeout(resolve, 0) })
+    expect(retainController.source.getSnapshot().error).toBeNull()
+    retainController.dispose()
+
+    const disposedOrganization = Promise.withResolvers<Awaited<ReturnType<NonNullable<BotWorkspaceRemote['updateOrganization']>>>>()
+    const organizationRemote = remoteFixture([source])
+    organizationRemote.updateOrganization = vi.fn(async () => disposedOrganization.promise)
+    const organizationController = new BotWorkspaceController(organizationRemote, sessionsFixture().sessions, () => 'unexpected response')
+    const organizing = organizationController.face().organize?.(source.id, { pinned: true })
+    organizationController.dispose()
+    disposedOrganization.reject('organization transport failed')
+    await expect(organizing).resolves.toBeUndefined()
+  })
+
+  it('covers optional action identity checks and omitted lifecycle remotes', async () => {
+    const original = bot('bot-optional-boundary', 'session-optional-boundary')
+    const other = bot('bot-optional-boundary-other', 'session-optional-boundary-other')
+    const principal = BotPrincipalId('principal-optional-boundary')
+    const fence = {
+      groupId: brandString<BotGroupId>('bot-group-optional-boundary'), botId: original.id,
+      sessionId: original.sessionId, messageId: brandString<BotGroupMessageId>('bot-group-message-optional-boundary'),
+    }
+    const routine = {
+      kind: 'event' as const, id: 'routine-optional-boundary', title: 'Review', prompt: 'Review.',
+      trigger: { type: 'message' as const, source: 'user' as const }, status: 'active' as const,
+      createdAt: 1, updatedAt: 1, state: 'waiting' as const, deliveryMode: 'host' as const,
+      botId: original.id, sessionId: original.sessionId,
+    }
+    const policy: BotSkillPolicy = { mode: 'all', enabled: [], disabled: [] }
+    const remote = remoteFixture([original])
+    remote.updateAppearance = vi.fn(async () => ({ ok: true as const, value: { bot: other } }))
+    remote.updateOrganization = vi.fn(async () => ({ ok: true as const, value: { bot: original } }))
+    remote.listShareMembers = vi.fn(async () => ({ ok: true as const, value: { botId: original.id, members: [] } }))
+    remote.createShareInvite = vi.fn(async () => ({ ok: true as const, value: { code: 'invite', expiresAt: 1 } }))
+    remote.revokeShareMember = vi.fn(async () => ({
+      ok: true as const, value: { botId: original.id, principalId: principal, revoked: true },
+    }))
+    remote.listSharedAppAccess = vi.fn<NonNullable<BotWorkspaceRemote['listSharedAppAccess']>>()
+      .mockResolvedValueOnce({ ok: false, error: new RemoteError('gateway/internal', 'shared app read failed', {}) })
+      .mockResolvedValueOnce({ ok: true, value: { botId: BotId('wrong-shared-app-bot'), revision: 1, apps: [] } })
+    remote.setSharedAppAccess = vi.fn(async () => ({ ok: true as const, value: { botId: original.id, revision: 2, apps: [] } }))
+    remote.inspectSharedGroupDeliveryFences = vi.fn(async () => ({ ok: true as const, value: { fences: [fence] } }))
+    remote.recoverSharedGroupDelivery = vi.fn(async () => ({ ok: true as const, value: { botId: other.id, messageId: fence.messageId, status: 'released' as const } }))
+    remote.listConnectedApps = vi.fn(async () => ({ ok: true as const, value: { bot: original, apps: [] } }))
+    remote.setConnectedAppAccess = vi.fn(async () => ({ ok: true as const, value: { bot: original, app: { id: 'github', name: 'GitHub', allowed: true } } }))
+    remote.listMemory = vi.fn(async () => ({ ok: true as const, value: { memories: [] } }))
+    remote.updateMemory = vi.fn(async () => ({ ok: true as const, value: { memory: { id: 'other-memory', text: 'Unexpected', createdAt: 1 } } }))
+    remote.forgetMemory = vi.fn(async () => ({ ok: true as const, value: { removed: true as const } }))
+    remote.listSkills = vi.fn(async () => ({ ok: true as const, value: { bot: other, policy, revision: 1, skills: [] } }))
+    remote.updateSkills = vi.fn<NonNullable<BotWorkspaceRemote['updateSkills']>>()
+      .mockResolvedValueOnce({ ok: false, error: new RemoteError('gateway/internal', 'skill update failed', {}) })
+      .mockResolvedValueOnce({ ok: true, value: { bot: original, policy, revision: 2 } })
+      .mockResolvedValueOnce({ ok: true, value: { bot: other, policy, revision: 3 } })
+      .mockResolvedValueOnce({ ok: true, value: { bot: original, policy, revision: 4 } })
+    remote.listRoutines = vi.fn(async () => ({ ok: false as const, error: new RemoteError('gateway/internal', 'routine list failed', {}) }))
+    remote.pauseRoutine = vi.fn(async () => ({ ok: false as const, error: new RemoteError('gateway/internal', 'routine pause failed', {}) }))
+    remote.resumeRoutine = vi.fn(async () => ({ ok: false as const, error: new RemoteError('gateway/internal', 'routine resume failed', {}) }))
+    remote.deleteRoutine = vi.fn(async () => ({ ok: false as const, error: new RemoteError('gateway/internal', 'routine delete failed', {}) }))
+    remote.routineHistory = vi.fn(async () => ({ ok: false as const, error: new RemoteError('gateway/internal', 'routine history failed', {}) }))
+    const controller = new BotWorkspaceController(remote, sessionsFixture().sessions, () => 'unexpected response')
+    await controller.load()
+    const face = controller.face()
+    await expect(face.avatarEditor?.updateAppearance?.(original.id, { identity: 'agent', accent: 'violet', clearAvatar: false }))
+      .rejects.toThrow('unexpected response')
+    const organize = face.organize
+    if (organize === undefined) throw new Error('organization action is not mounted')
+    delete remote.updateOrganization
+    await expect(organize(original.id, { pinned: false })).resolves.toBeUndefined()
+
+    const share = face.share
+    if (share?.listSharedAppAccess === undefined || share.setSharedAppAccess === undefined
+      || share.recoverDeliveryFence === undefined) throw new Error('shared app actions are not mounted')
+    await expect(share.listSharedAppAccess(original.id)).rejects.toThrow('shared app read failed')
+    await expect(share.listSharedAppAccess(original.id)).rejects.toThrow('unexpected response')
+    await expect(share.recoverDeliveryFence(fence)).rejects.toThrow('unexpected response')
+
+    const loadApps = face.loadConnectedApps
+    const setApp = face.setConnectedAppAccess
+    if (loadApps === undefined || setApp === undefined) throw new Error('connected app actions are not mounted')
+    delete remote.listConnectedApps
+    delete remote.setConnectedAppAccess
+    await expect(loadApps(original.id)).resolves.toEqual([])
+    await expect(setApp(original.id, 'github', false)).resolves.toBeUndefined()
+
+    const memory = face.memoryManager
+    if (memory === undefined) throw new Error('memory manager is not mounted')
+    await expect(memory.update(original.id, 'memory-one', 'Unexpected')).rejects.toThrow('unexpected response')
+    const skills = face.skillManager
+    if (skills === undefined) throw new Error('skill manager is not mounted')
+    await expect(skills.list(original.id)).rejects.toThrow('unexpected response')
+    await expect(skills.update(original.id, policy, 1)).rejects.toThrow('skill update failed')
+    await expect(skills.update(original.id, policy, 2)).resolves.toEqual({ policy })
+    await expect(skills.update(original.id, policy, 3)).rejects.toThrow('unexpected response')
+    const routines = face.routineManager
+    if (routines === undefined) throw new Error('routine manager is not mounted')
+    await expect(routines.list(original.id)).rejects.toThrow('routine list failed')
+    await expect(routines.pause(original.id, routine.id)).rejects.toThrow('routine pause failed')
+    await expect(routines.resume(original.id, routine.id)).rejects.toThrow('routine resume failed')
+    await expect(routines.remove(original.id, routine.id)).rejects.toThrow('routine delete failed')
+    await expect(routines.history(original.id, routine.id)).rejects.toThrow('routine history failed')
+    controller.dispose()
+
+    const disposedSkillRemote = remoteFixture([original])
+    disposedSkillRemote.listSkills = vi.fn(async () => ({ ok: true as const, value: { bot: original, policy, revision: 1, skills: [] } }))
+    const skillResult = Promise.withResolvers<Awaited<ReturnType<NonNullable<BotWorkspaceRemote['updateSkills']>>>>()
+    disposedSkillRemote.updateSkills = vi.fn(async () => skillResult.promise)
+    const disposedSkillController = new BotWorkspaceController(disposedSkillRemote, sessionsFixture().sessions, () => 'unexpected response')
+    const disposedSkills = disposedSkillController.face().skillManager
+    if (disposedSkills === undefined) throw new Error('disposed skill manager is not mounted')
+    const updatingSkill = disposedSkills.update(original.id, policy, 1)
+    disposedSkillController.dispose()
+    skillResult.resolve({ ok: true, value: { bot: original, policy, revision: 2 } })
+    await expect(updatingSkill).resolves.toEqual({ policy })
+
+    const profileRemote = remoteFixture([original])
+    profileRemote.updateProfile = vi.fn(async () => ({ ok: true as const, value: { bot: original } }))
+    const profileController = new BotWorkspaceController(profileRemote, sessionsFixture().sessions, () => 'unexpected response')
+    const profileFace = profileController.face()
+    const updateProfile = profileFace.updateProfile
+    if (updateProfile === undefined) throw new Error('profile action is not mounted')
+    delete profileRemote.updateProfile
+    await expect(updateProfile(original.id, { name: original.name, description: '', persona: '', capabilities: [] }))
+      .rejects.toThrow('not mounted')
+    profileController.dispose()
+
+    const createRemote = remoteFixture([])
+    const createResult = Promise.withResolvers<Awaited<ReturnType<BotWorkspaceRemote['create']>>>()
+    createRemote.create.mockImplementation(async () => createResult.promise)
+    const createController = new BotWorkspaceController(createRemote, sessionsFixture().sessions, () => 'unexpected response')
+    const createFace = createController.face()
+    const createRequest = { name: 'Pending', identity: 'agent' as const, accent: 'violet' as const }
+    const firstCreate = createFace.create(createRequest)
+    await vi.waitFor(() => { expect(createRemote.create).toHaveBeenCalledOnce() })
+    const secondCreate = createFace.create({ ...createRequest, name: 'Ignored while pending' })
+    createController.dispose()
+    await createFace.create(createRequest)
+    createFace.retry()
+    createResult.resolve({ ok: true, value: { bot: original } })
+    await expect(firstCreate).resolves.toBeUndefined()
+    await expect(secondCreate).resolves.toBeUndefined()
+
+    const retryRemote = remoteFixture([original])
+    const retryController = new BotWorkspaceController(retryRemote, sessionsFixture().sessions, () => 'unexpected response')
+    retryController.face().retry()
+    expect(retryRemote.list).toHaveBeenCalledOnce()
+    retryController.dispose()
+  })
+
+  it('surfaces non-Error failures from queued roster and retry callbacks', async () => {
+    const first = bot('bot-retry-boundary', 'session-retry-boundary')
+    const group = groupView('bot-group-retry-boundary', 'Retry boundary', [first])
+    const groupRemote = remoteFixture([first])
+    groupRemote.listGroups = vi.fn(async () => ({ ok: true as const, value: { groups: [group] } }))
+    groupRemote.inspectGroup = vi.fn<NonNullable<BotWorkspaceRemote['inspectGroup']>>()
+      .mockResolvedValueOnce({ ok: true, value: { group, messages: [] } })
+      .mockRejectedValueOnce('group retry transport failed')
+    const groupController = new BotWorkspaceController(groupRemote, sessionsFixture().sessions, () => 'unexpected response')
+    await groupController.load()
+    const groupFace = groupController.face()
+    groupFace.selectGroup(String(group.id))
+    await vi.waitFor(() => { expect(groupController.source.getSnapshot().selectedGroup).not.toBeNull() })
+    groupFace.retryGroup()
+    await vi.waitFor(() => { expect(groupController.source.getSnapshot().groupError).toBe('group retry transport failed') })
+    groupController.dispose()
+
+    const provisioning = bot('bot-retry-create-boundary', 'session-retry-create-boundary', { state: 'provisioning' })
+    const createRemote = remoteFixture([provisioning])
+    createRemote.create.mockRejectedValueOnce('create retry transport failed')
+    const createController = new BotWorkspaceController(createRemote, sessionsFixture().sessions, () => 'unexpected response')
+    await createController.load()
+    createController.face().retry()
+    await vi.waitFor(() => { expect(createController.source.getSnapshot().error).toBe('create retry transport failed') })
+    createController.dispose()
+
+    const queuedList = Promise.withResolvers<Awaited<ReturnType<BotWorkspaceRemote['list']>>>()
+    const queuedRemote = remoteFixture([first])
+    queuedRemote.list
+      .mockImplementationOnce(async () => queuedList.promise)
+      .mockRejectedValueOnce('queued roster transport failed')
+    const queuedController = new BotWorkspaceController(queuedRemote, sessionsFixture().sessions, () => 'unexpected response')
+    const initialLoad = queuedController.load()
+    await vi.waitFor(() => { expect(queuedRemote.list).toHaveBeenCalledOnce() })
+    const queuedLoad = queuedController.load()
+    queuedList.resolve({ ok: true, value: { bots: [first] } })
+    await expect(initialLoad).resolves.toBeUndefined()
+    await expect(queuedLoad).resolves.toBeUndefined()
+    await vi.waitFor(() => { expect(queuedController.source.getSnapshot().error).toBe('queued roster transport failed') })
+    queuedController.dispose()
+  })
+
+  it('does not commit stale roster reads after disposal or roster revisions', async () => {
+    const first = bot('bot-stale-roster-first', 'session-stale-roster-first')
+
+    const disposedRemote = remoteFixture([first])
+    const disposedList = Promise.withResolvers<Awaited<ReturnType<BotWorkspaceRemote['list']>>>()
+    disposedRemote.list.mockImplementationOnce(async () => disposedList.promise)
+    const disposedController = new BotWorkspaceController(disposedRemote, sessionsFixture().sessions, () => 'unexpected response')
+    const disposedLoad = disposedController.load()
+    await vi.waitFor(() => { expect(disposedRemote.list).toHaveBeenCalledOnce() })
+    disposedController.dispose()
+    disposedList.resolve({ ok: true, value: { bots: [first] } })
+    await expect(disposedLoad).resolves.toBeUndefined()
+
+    const group = groupView('bot-group-stale-roster', 'Stale roster', [first])
+    const removedRemote = remoteFixture([first])
+    removedRemote.listGroups = vi.fn()
+      .mockResolvedValueOnce({ ok: true, value: { groups: [group] } })
+      .mockResolvedValueOnce({ ok: true, value: { groups: [] } })
+    removedRemote.inspectGroup = vi.fn(async () => ({ ok: true as const, value: { group, messages: [] } }))
+    const removedController = new BotWorkspaceController(removedRemote, sessionsFixture().sessions, () => 'unexpected response')
+    await removedController.load()
+    removedController.face().selectGroup(String(group.id))
+    await vi.waitFor(() => { expect(removedController.source.getSnapshot().selectedGroup).not.toBeNull() })
+    await removedController.load()
+    expect(removedController.source.getSnapshot().selectedGroupId).toBeNull()
+    removedController.dispose()
+
+    const sessionDisposedRemote = remoteFixture([first])
+    const sessionDisposed = sessionsFixture()
+    const sessionRefresh = Promise.withResolvers<undefined>()
+    sessionDisposed.refresh.mockImplementationOnce(async () => sessionRefresh.promise)
+    const sessionDisposedController = new BotWorkspaceController(sessionDisposedRemote, sessionDisposed.sessions, () => 'unexpected response')
+    const sessionLoading = sessionDisposedController.load()
+    await vi.waitFor(() => { expect(sessionDisposed.refresh).toHaveBeenCalledOnce() })
+    sessionDisposedController.dispose()
+    sessionRefresh.resolve(undefined)
+    await expect(sessionLoading).resolves.toBeUndefined()
+
+    const revisionRemote = remoteFixture([first])
+    const revisionSessions = sessionsFixture()
+    const revisionInitialRefresh = Promise.withResolvers<undefined>()
+    revisionSessions.refresh
+      .mockImplementationOnce(async () => revisionInitialRefresh.promise)
+      .mockResolvedValue(undefined)
+    revisionRemote.updateOrganization = vi.fn(async () => ({ ok: true as const, value: { bot: { ...first, pinned: true } } }))
+    const revisionController = new BotWorkspaceController(revisionRemote, revisionSessions.sessions, () => 'unexpected response')
+    const revisionLoading = revisionController.load()
+    await vi.waitFor(() => { expect(revisionSessions.refresh).toHaveBeenCalledOnce() })
+    const organizing = revisionController.face().organize?.(first.id, { pinned: true })
+    await expect(organizing).resolves.toBeUndefined()
+    revisionInitialRefresh.resolve(undefined)
+    await expect(revisionLoading).resolves.toBeUndefined()
+    await vi.waitFor(() => { expect(revisionRemote.list).toHaveBeenCalledTimes(2) })
+    revisionController.dispose()
+
+    const retainRevisionRemote = remoteFixture([first])
+    const retainRevisionSessions = sessionsFixture()
+    const retainRevisionService = sessionsWithList(retainRevisionSessions, sessionList(first.sessionId, () => false))
+    const retainRevisionRefresh = Promise.withResolvers<undefined>()
+    let retains = 0
+    retainRevisionSessions.retain.mockImplementation((sessionId) => {
+      retains++
+      if (retains === 1) throw new Error('session catalog stale')
+      return reference(sessionId)
+    })
+    retainRevisionSessions.refresh
+      .mockResolvedValueOnce(undefined)
+      .mockImplementationOnce(async () => retainRevisionRefresh.promise)
+    retainRevisionRemote.updateOrganization = vi.fn(async () => ({ ok: true as const, value: { bot: { ...first, pinned: true } } }))
+    const retainRevisionController = new BotWorkspaceController(retainRevisionRemote, retainRevisionService, () => 'unexpected response')
+    const retainRevisionLoading = retainRevisionController.load()
+    await vi.waitFor(() => { expect(retainRevisionSessions.refresh).toHaveBeenCalledTimes(2) })
+    const retainOrganizing = retainRevisionController.face().organize?.(first.id, { pinned: true })
+    await expect(retainOrganizing).resolves.toBeUndefined()
+    retainRevisionRefresh.resolve(undefined)
+    await expect(retainRevisionLoading).resolves.toBeUndefined()
+    await vi.waitFor(() => { expect(retainRevisionRemote.list).toHaveBeenCalledTimes(2) })
+    retainRevisionController.dispose()
+  })
+
+  it('keeps disposed roster, selection, and group failures from committing stale state', async () => {
+    const first = bot('bot-disposed-roster', 'session-disposed-roster')
+    const listResult = Promise.withResolvers<Awaited<ReturnType<BotWorkspaceRemote['list']>>>()
+    const rosterRemote = remoteFixture([first])
+    rosterRemote.list.mockImplementation(async () => listResult.promise)
+    const rosterController = new BotWorkspaceController(rosterRemote, sessionsFixture().sessions, () => 'unexpected response')
+    const rosterLoading = rosterController.load()
+    await vi.waitFor(() => { expect(rosterRemote.list).toHaveBeenCalledOnce() })
+    rosterController.dispose()
+    listResult.reject('disposed roster read')
+    await expect(rosterLoading).resolves.toBeUndefined()
+
+    const second = bot('bot-disposed-selection', 'session-disposed-selection')
+    const refreshResult = Promise.withResolvers<undefined>()
+    const selectionSessions = sessionsFixture()
+    const selectionService = sessionsWithList(selectionSessions, sessionList(first.sessionId, () => true))
+    selectionSessions.refresh
+      .mockResolvedValueOnce(undefined)
+      .mockImplementationOnce(async () => refreshResult.promise)
+    selectionSessions.retain.mockImplementation((target) => {
+      const sessionId = target
+      if (sessionId === second.sessionId) throw new Error('selection catalog is stale')
+      return reference(sessionId)
+    })
+    const selectionController = new BotWorkspaceController(
+      remoteFixture([first, second]), selectionService, () => 'unexpected response',
+    )
+    await selectionController.load()
+    selectionController.face().select(second.id)
+    await vi.waitFor(() => { expect(selectionSessions.refresh).toHaveBeenCalledTimes(2) })
+    selectionController.dispose()
+    refreshResult.reject('disposed selection refresh')
+    await new Promise<void>((resolve) => { setTimeout(resolve, 0) })
+
+    const staleRefresh = Promise.withResolvers<undefined>()
+    const staleSessions = sessionsFixture()
+    const staleService = sessionsWithList(staleSessions, sessionList(first.sessionId, () => true))
+    staleSessions.refresh
+      .mockResolvedValueOnce(undefined)
+      .mockImplementationOnce(async () => staleRefresh.promise)
+    staleSessions.retain.mockImplementation((target) => {
+      const sessionId = target
+      if (sessionId === second.sessionId) throw new Error('stale selection catalog')
+      return reference(sessionId)
+    })
+    const staleController = new BotWorkspaceController(
+      remoteFixture([first, second]), staleService, () => 'unexpected response',
+    )
+    await staleController.load()
+    staleController.face().select(second.id)
+    await vi.waitFor(() => { expect(staleSessions.refresh).toHaveBeenCalledTimes(2) })
+    staleController.face().select(first.id)
+    staleRefresh.reject('stale selection refresh')
+    await new Promise<void>((resolve) => { setTimeout(resolve, 0) })
+    expect(staleController.source.getSnapshot().selectedBotId).toBe(first.id)
+    staleController.dispose()
+
+    const group = groupView('bot-group-disposed-send', 'Disposed send', [first, second])
+    const sendResult = Promise.withResolvers<Awaited<ReturnType<NonNullable<BotWorkspaceRemote['sendGroupMessage']>>>>()
+    const groupRemote = remoteFixture([first, second])
+    groupRemote.listGroups = vi.fn(async () => ({ ok: true as const, value: { groups: [group] } }))
+    groupRemote.inspectGroup = vi.fn(async () => ({ ok: true as const, value: { group, messages: [] } }))
+    groupRemote.sendGroupMessage = vi.fn(async () => sendResult.promise)
+    const groupController = new BotWorkspaceController(
+      groupRemote, sessionsFixture().sessions, () => 'unexpected response', undefined, undefined, pendingStoreFixture(),
+    )
+    await groupController.load()
+    const groupFace = groupController.face()
+    groupFace.selectGroup(String(group.id))
+    await vi.waitFor(() => { expect(groupController.source.getSnapshot().selectedGroup).not.toBeNull() })
+    const sending = groupFace.sendGroupMessage('Disposed send', 'bot-group-message-disposed-error')
+    await vi.waitFor(() => { expect(groupRemote.sendGroupMessage).toHaveBeenCalledOnce() })
+    groupController.dispose()
+    sendResult.reject('send failed after disposal')
+    await expect(sending).rejects.toThrow('send failed after disposal')
+  })
+
+  it('propagates non-Error image admission failures through the group send boundary', async () => {
+    const first = bot('bot-image-admission-first', 'session-image-admission-first')
+    const second = bot('bot-image-admission-second', 'session-image-admission-second')
+    const group = groupView('bot-group-image-admission', 'Image admission', [first, second])
+    const remote = remoteFixture([first, second])
+    remote.listGroups = vi.fn(async () => ({ ok: true as const, value: { groups: [group] } }))
+    remote.inspectGroup = vi.fn(async () => ({ ok: true as const, value: { group, messages: [] } }))
+    remote.admitGroupImage = vi.fn<NonNullable<BotWorkspaceRemote['admitGroupImage']>>(async () => {
+      throw 'image admission transport failed'
+    })
+    remote.sendGroupMessage = vi.fn<NonNullable<BotWorkspaceRemote['sendGroupMessage']>>()
+      .mockResolvedValue({ ok: true, value: {
+        messageId: brandString<BotGroupMessageId>('bot-group-message-image-admission'), status: 'accepted', deliveries: [],
+      } })
+    const controller = new BotWorkspaceController(remote, sessionsFixture().sessions, () => 'unexpected response')
+    await controller.load()
+    const face = controller.face()
+    face.selectGroup(String(group.id))
+    await vi.waitFor(() => { expect(controller.source.getSnapshot().selectedGroup).not.toBeNull() })
+    const image = {
+      id: 'image-admission',
+      file: new File([new Uint8Array([1, 2, 3])], 'admission.png', { type: 'image/png' }),
+      state: 'ready' as const,
+    }
+    await expect(face.sendGroupMessageWithAttachments('Image admission', [image]))
+      .rejects.toThrow('image admission transport failed')
+    controller.dispose()
+  })
+
+  it('retries an active Bot creation after its Session enters the catalog', async () => {
+    const created = bot('bot-create-catalog-retry', 'session-create-catalog-retry')
+    let catalogReady = false
+    const sessions = sessionsFixture()
+    const sessionService = sessionsWithList(sessions, sessionList(created.sessionId, () => catalogReady))
+    sessions.retain.mockImplementation((target) => {
+      const sessionId = target
+      if (!catalogReady) throw new Error('creation Session is not catalogued')
+      return reference(sessionId)
+    })
+    sessions.refresh.mockImplementation(async () => { catalogReady = true })
+    const remote = remoteFixture([])
+    let requestId: BotId | undefined
+    remote.create.mockImplementation(async (request) => {
+      const id = request.id ?? created.id
+      requestId = id
+      return { ok: true as const, value: { bot: { ...created, id } } }
+    })
+    const controller = new BotWorkspaceController(remote, sessionService, () => 'unexpected response')
+    await controller.face().create({ name: 'Catalog retry', identity: 'agent', accent: 'violet' })
+    expect(sessions.refresh).toHaveBeenCalledOnce()
+    expect(requestId).toBeDefined()
+    expect(controller.source.getSnapshot().selectedBotId).toBe(requestId)
+    expect(controller.source.getSnapshot().error).toBeNull()
+    controller.dispose()
+  })
+
+  it('retries missing Session catalogs and reuses in-flight avatar reads safely', async () => {
+    const first = bot('bot-selection-retry-first', 'session-selection-retry-first')
+    const second = bot('bot-selection-retry-second', 'session-selection-retry-second')
+    const refresh = vi.fn<ISessions['refresh']>()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce('catalog retry failed')
+    const retain = vi.fn<ISessions['retain']>((sessionId) => {
+      const resolvedSessionId = typeof sessionId === 'string' ? sessionId : sessionId.childSessionId
+      if (resolvedSessionId === second.sessionId) throw new Error('Session catalog is stale')
+      return reference(resolvedSessionId)
+    })
+    const sessions = {
+      retain, refresh, list: sessionList(second.sessionId, () => false),
+    } as Pick<ISessions, 'retain' | 'refresh' | 'list'> as ISessions
+    const controller = new BotWorkspaceController(remoteFixture([first, second]), sessions, () => 'unexpected response')
+    await controller.load()
+    controller.face().select(second.id)
+    await vi.waitFor(() => { expect(controller.source.getSnapshot().error).toBe('catalog retry failed') })
+    controller.dispose()
+
+    const staleRefresh = Promise.withResolvers<undefined>()
+    const staleRefreshRemote = remoteFixture([first, second])
+    const staleRefreshSessions = sessionsFixture()
+    const staleRefreshService = sessionsWithList(staleRefreshSessions, sessionList(second.sessionId, () => false))
+    staleRefreshSessions.refresh
+      .mockResolvedValueOnce(undefined)
+      .mockImplementationOnce(async () => staleRefresh.promise)
+    staleRefreshSessions.retain.mockImplementation((sessionId) => {
+      if (sessionId === second.sessionId) throw new Error('Session catalog is stale')
+      return reference(sessionId)
+    })
+    const staleController = new BotWorkspaceController(staleRefreshRemote, staleRefreshService, () => 'unexpected response')
+    await staleController.load()
+    staleController.face().select(second.id)
+    await vi.waitFor(() => { expect(staleRefreshSessions.refresh).toHaveBeenCalledTimes(2) })
+    staleController.face().select(first.id)
+    staleRefresh.resolve(undefined)
+    await vi.waitFor(() => { expect(staleController.source.getSnapshot().selectedBotId).toBe(first.id) })
+    staleController.dispose()
+
+    const disposedRefresh = Promise.withResolvers<undefined>()
+    const disposedRefreshRemote = remoteFixture([first, second])
+    const disposedRefreshSessions = sessionsFixture()
+    const disposedRefreshService = sessionsWithList(disposedRefreshSessions, sessionList(second.sessionId, () => false))
+    disposedRefreshSessions.refresh
+      .mockResolvedValueOnce(undefined)
+      .mockImplementationOnce(async () => disposedRefresh.promise)
+    disposedRefreshSessions.retain.mockImplementation((sessionId) => {
+      if (sessionId === second.sessionId) throw new Error('Session catalog is stale')
+      return reference(sessionId)
+    })
+    const disposedRefreshController = new BotWorkspaceController(disposedRefreshRemote, disposedRefreshService, () => 'unexpected response')
+    await disposedRefreshController.load()
+    disposedRefreshController.face().select(second.id)
+    await vi.waitFor(() => { expect(disposedRefreshSessions.refresh).toHaveBeenCalledTimes(2) })
+    disposedRefreshController.dispose()
+    disposedRefresh.resolve(undefined)
+    await new Promise<void>((resolve) => { setTimeout(resolve, 0) })
+
+    const avatar = { attachmentId: AttachmentId('avatar-cache'), mediaType: 'image/png' as const, bytes: 3, width: 1, height: 1 }
+    const otherAvatar = { attachmentId: AttachmentId('avatar-error'), mediaType: 'image/png' as const, bytes: 3, width: 1, height: 1 }
+    const avatarRemote = remoteFixture([first])
+    const avatarResult = Promise.withResolvers<Awaited<ReturnType<NonNullable<BotWorkspaceRemote['readAvatar']>>>>()
+    avatarRemote.readAvatar = vi.fn(async () => avatarResult.promise)
+    const avatarController = new BotWorkspaceController(avatarRemote, sessionsFixture().sessions, () => 'unexpected response')
+    const pendingAvatar = avatarController.face().loadAvatar(first.id, avatar)
+    expect(avatarController.face().loadAvatar(first.id, avatar)).toBe(pendingAvatar)
+    avatarResult.resolve({ ok: true, value: { avatar, data: 'AQID' } })
+    await expect(pendingAvatar).resolves.toBe('data:image/png;base64,AQID')
+    avatarRemote.readAvatar = vi.fn(async () => ({ ok: false as const, error: new RemoteError('gateway/internal', 'avatar read failed', {}) }))
+    await expect(avatarController.face().loadAvatar(first.id, otherAvatar)).rejects.toThrow('avatar read failed')
+    avatarController.dispose()
+  })
+
+  it('rejects malformed template permissions and ignores stale catalog responses', async () => {
+    const source = bot('bot-template-wire-boundary', 'session-template-wire-boundary')
+    const template = templateView('bot-template-wire-boundary', 'bot-template-wire-code')
+    const remote = remoteFixture([source])
+    remote.listTemplates = vi.fn(async () => ({ ok: true as const, value: { templates: [template] } }))
+    const controller = new BotWorkspaceController(remote, sessionsFixture().sessions, () => 'unexpected response')
+    await controller.load()
+    const actions = controller.face().templateActions
+    if (actions === undefined) throw new Error('template actions are not mounted')
+    actions.setTemplateCode(String(template.shareCode))
+    const malformed = (value: object) => wireFixture<Awaited<ReturnType<NonNullable<BotWorkspaceRemote['previewTemplate']>>>>({
+      ok: true, value: { template, localPermissions: value, approvalToken: 'preview-token' },
+    })
+    const invalidAvatarPreview = wireFixture<Awaited<ReturnType<NonNullable<BotWorkspaceRemote['previewTemplate']>>>>({
+      ok: true, value: { template: { ...template, avatar: [] }, localPermissions, approvalToken: 'preview-token' },
+    })
+    const invalidAvatarName = wireFixture<Awaited<ReturnType<NonNullable<BotWorkspaceRemote['previewTemplate']>>>>({
+      ok: true,
+      value: {
+        template: {
+          ...template,
+          avatar: { mediaType: 'image/png', data: 'AQID', bytes: 3, width: 1, height: 1, name: '' },
+        },
+        localPermissions,
+        approvalToken: 'preview-token',
+      },
+    })
+    remote.previewTemplate = vi.fn<NonNullable<BotWorkspaceRemote['previewTemplate']>>()
+      .mockResolvedValueOnce(malformed({ status: 'unknown', tools: [] }))
+      .mockResolvedValueOnce(malformed({ status: 'resolved', preset: ' research-preset', tools: [] }))
+      .mockResolvedValueOnce(malformed({ status: 'resolved', preset: 'research-preset', tools: [1] }))
+      .mockResolvedValueOnce(invalidAvatarPreview)
+      .mockResolvedValueOnce(invalidAvatarName)
+    await expect(actions.previewTemplate()).rejects.toThrow('unexpected response')
+    await expect(actions.previewTemplate()).rejects.toThrow('unexpected response')
+    await expect(actions.previewTemplate()).rejects.toThrow('unexpected response')
+    await expect(actions.previewTemplate()).rejects.toThrow('unexpected response')
+    await expect(actions.previewTemplate()).rejects.toThrow('unexpected response')
+
+    remote.previewTemplate = vi.fn(async () => ({ ok: true as const, value: { template, localPermissions, approvalToken: 'preview-token' } }))
+    await actions.previewTemplate()
+    remote.approveTemplate = vi.fn(async () => ({ ok: true as const, value: {
+      template: { ...template, approved: true },
+      localPermissions: { status: 'resolved' as const, preset: 'research-preset', tools: ['chat'] },
+    } }))
+    remote.importTemplate = vi.fn(async () => ({ ok: true as const, value: { bot: source, template } }))
+    await expect(actions.importTemplate()).rejects.toThrow('unexpected response')
+    controller.dispose()
+
+    const staleSource = bot('bot-template-stale-catalog-boundary', 'session-template-stale-catalog-boundary')
+    const staleTemplate = templateView('bot-template-stale-catalog-boundary', 'bot-template-stale-catalog-code')
+    const staleRemote = remoteFixture([staleSource])
+    const staleCatalog = Promise.withResolvers<Awaited<ReturnType<NonNullable<BotWorkspaceRemote['listTemplates']>>>>()
+    const currentCatalog = Promise.withResolvers<Awaited<ReturnType<NonNullable<BotWorkspaceRemote['listTemplates']>>>>()
+    let catalogCalls = 0
+    staleRemote.listTemplates = vi.fn(async () => {
+      catalogCalls++
+      if (catalogCalls === 1) return { ok: true as const, value: { templates: [staleTemplate] } }
+      if (catalogCalls === 2) return staleCatalog.promise
+      return currentCatalog.promise
+    })
+    staleRemote.publishTemplate = vi.fn(async () => ({ ok: true as const, value: { template: staleTemplate } }))
+    const staleController = new BotWorkspaceController(staleRemote, sessionsFixture().sessions, () => 'unexpected response')
+    await staleController.load()
+    const staleActions = staleController.face().templateActions
+    if (staleActions === undefined) throw new Error('stale template actions are not mounted')
+    const loading = staleController.load()
+    await vi.waitFor(() => { expect(staleRemote.listTemplates).toHaveBeenCalledTimes(2) })
+    const publishing = staleActions.publishTemplate({ botId: staleSource.id })
+    await vi.waitFor(() => { expect(staleRemote.listTemplates).toHaveBeenCalledTimes(3) })
+    staleCatalog.resolve({ ok: true, value: { templates: [staleTemplate] } })
+    await loading
+    currentCatalog.resolve({ ok: true, value: { templates: [staleTemplate] } })
+    await publishing
+    staleController.dispose()
+
+    const rejectedStaleRemote = remoteFixture([staleSource])
+    const rejectedCatalog = Promise.withResolvers<Awaited<ReturnType<NonNullable<BotWorkspaceRemote['listTemplates']>>>>()
+    const rejectedCurrentCatalog = Promise.withResolvers<Awaited<ReturnType<NonNullable<BotWorkspaceRemote['listTemplates']>>>>()
+    const pendingPreview = Promise.withResolvers<Awaited<ReturnType<NonNullable<BotWorkspaceRemote['previewTemplate']>>>>()
+    let rejectedCalls = 0
+    rejectedStaleRemote.listTemplates = vi.fn(async () => {
+      rejectedCalls++
+      if (rejectedCalls === 1) return { ok: true as const, value: { templates: [staleTemplate] } }
+      if (rejectedCalls === 2) return rejectedCatalog.promise
+      return rejectedCurrentCatalog.promise
+    })
+    rejectedStaleRemote.publishTemplate = vi.fn(async () => ({ ok: true as const, value: { template: staleTemplate } }))
+    rejectedStaleRemote.previewTemplate = vi.fn(async () => pendingPreview.promise)
+    const rejectedStaleController = new BotWorkspaceController(rejectedStaleRemote, sessionsFixture().sessions, () => 'unexpected response')
+    await rejectedStaleController.load()
+    const rejectedActions = rejectedStaleController.face().templateActions
+    if (rejectedActions === undefined) throw new Error('rejected stale actions are not mounted')
+    rejectedActions.setTemplateCode(String(staleTemplate.shareCode))
+    const rejectedLoading = rejectedStaleController.load()
+    await vi.waitFor(() => { expect(rejectedStaleRemote.listTemplates).toHaveBeenCalledTimes(2) })
+    const rejectedPublishing = rejectedActions.publishTemplate({ botId: staleSource.id })
+    await vi.waitFor(() => { expect(rejectedStaleRemote.listTemplates).toHaveBeenCalledTimes(3) })
+    const previewing = rejectedActions.previewTemplate()
+    await vi.waitFor(() => { expect(rejectedStaleRemote.previewTemplate).toHaveBeenCalledOnce() })
+    rejectedCatalog.reject('old catalog failed')
+    rejectedCurrentCatalog.resolve({ ok: true, value: { templates: [staleTemplate] } })
+    await rejectedLoading
+    await rejectedPublishing
+    pendingPreview.resolve({ ok: true, value: { template: staleTemplate, localPermissions, approvalToken: 'preview-token' } })
+    await previewing
+    rejectedStaleController.dispose()
+
+    const noCatalogRemote = remoteFixture([source])
+    noCatalogRemote.publishTemplate = vi.fn(async () => ({ ok: true as const, value: { template } }))
+    const noCatalogController = new BotWorkspaceController(noCatalogRemote, sessionsFixture().sessions, () => 'unexpected response')
+    await noCatalogController.face().templateActions?.publishTemplate({ botId: source.id })
+    noCatalogController.dispose()
+
+    const disposedPublishRemote = remoteFixture([source])
+    const publishResult = Promise.withResolvers<Awaited<ReturnType<NonNullable<BotWorkspaceRemote['publishTemplate']>>>>()
+    disposedPublishRemote.publishTemplate = vi.fn(async () => publishResult.promise)
+    disposedPublishRemote.listTemplates = vi.fn(async () => ({ ok: true as const, value: { templates: [] } }))
+    const disposedPublishController = new BotWorkspaceController(disposedPublishRemote, sessionsFixture().sessions, () => 'unexpected response')
+    const disposedPublishing = disposedPublishController.face().templateActions?.publishTemplate({ botId: source.id })
+    disposedPublishController.dispose()
+    publishResult.resolve({ ok: true, value: { template } })
+    await expect(disposedPublishing).resolves.toBeUndefined()
   })
 })
