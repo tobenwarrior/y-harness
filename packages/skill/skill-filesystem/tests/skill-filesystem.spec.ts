@@ -227,7 +227,7 @@ describe('FileSystemSkillProvider', () => {
       expect((await ctx.skills.get('managed-only', options))?.content).toBe('Use the skill.')
     } finally {
       unbind()
-      await agentFiber.dispose()
+      await ctx.fiber.dispose()
     }
   })
 
