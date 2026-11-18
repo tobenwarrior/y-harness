@@ -175,6 +175,10 @@ describe.skipIf(MODE === 'record')('web e2e: Bot conversation presentation', () 
       expect(await surface.locator('[data-yh-part="assistant-prose"]').count()).toBe(0)
       expect(await surface.locator('[data-step-process], [data-turn-process]').count()).toBe(0)
       expect(await surface.textContent()).not.toContain(TOOL_LABEL)
+      // The send button becomes the Stop button under the pointer. Move away
+      // before the stable capture so its normal hover tooltip cannot enter the
+      // waiting-state golden.
+      await page.mouse.move(0, 0)
       waitingSnapshot = await captureStableAria(page, '[data-conversation-surface="bots"]', scaffold.workspaceCwd)
       await captureMedia(page, mediaRoot, 'waiting')
     } finally {

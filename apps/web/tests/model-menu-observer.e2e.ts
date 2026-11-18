@@ -156,7 +156,12 @@ describe.skipIf(webSnapshotMode() === 'record').each([
     expect(await viewport.locator('[data-menu-group-heading]').count()).toBe(0)
     await viewport.evaluate((node) => { node.style.maxHeight = '80px' })
     const ids = await rows.evaluateAll(nodes => nodes.map(node => node.id))
+    await expect.poll(async () => {
+      const active = await search.getAttribute('aria-activedescendant')
+      return active !== null && ids.includes(active)
+    }).toBe(true)
     const initial = ids.indexOf(await search.getAttribute('aria-activedescendant') ?? '')
+    expect(initial).toBeGreaterThanOrEqual(0)
     for (let step = 1; step <= ids.length + 1; step++) {
       await search.press('ArrowDown')
       expect(await search.getAttribute('aria-activedescendant')).toBe(ids[(initial + step) % ids.length])
