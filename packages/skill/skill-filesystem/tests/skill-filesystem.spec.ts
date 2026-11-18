@@ -193,7 +193,17 @@ describe('FileSystemSkillProvider', () => {
     await writeSkill(join(home, '.agents/skills'), 'host-user', 'Host user skill')
     await writeSkill(join(managedRoot, '.agents/skills'), 'managed-only', 'Managed skill')
 
-    const ctx = await setupLocal(home)
+    const executionWorkspaceRoot = '/fixture/managed-workspace'
+    const managedSkillRoot = join(executionWorkspaceRoot, '.agents/skills')
+    const hostSkillRoot = join(managedRoot, '.agents/skills')
+    const ctx = new Context()
+    await ctx.plugin(class extends TestFileSystem {
+      override async resolve(path: string): Promise<FsTarget> {
+        return await super.resolve(path === managedSkillRoot ? hostSkillRoot : path)
+      }
+    })
+    await ctx.plugin(SkillRegistry)
+    await ctx.plugin(SkillFileSystem, { dshHome: join(home, '.dsh'), agentsHome: join(home, '.agents'), watch: false })
     const agentFiber = ctx.plugin(() => {})
     const agentContext = agentFiber.ctx
     const execution = createManagedBotExecution({
@@ -203,9 +213,9 @@ describe('FileSystemSkillProvider', () => {
       subprocess: {} as never,
       sandboxPolicy: {
         defaultMode: 'workspace-write',
-        resolve: () => ({ mode: 'workspace-write', workspaceRoot: managedRoot }),
+        resolve: () => ({ mode: 'workspace-write', workspaceRoot: executionWorkspaceRoot }),
       },
-      workspaceRoot: managedRoot,
+      workspaceRoot: executionWorkspaceRoot,
     })
     const unbind = bindManagedBotExecution(agentContext, execution)
     const scope = { ctx: agentContext }
