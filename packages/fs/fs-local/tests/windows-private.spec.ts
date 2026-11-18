@@ -2,7 +2,7 @@
 
 import { lstatSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir as systemTmpdir } from 'node:os'
-import { dirname, join, resolve, toNamespacedPath } from 'node:path'
+import { dirname, join, resolve, toNamespacedPath, win32 } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { NativePtr } from '@yharness/win32-process'
 
@@ -10,6 +10,10 @@ const INHERITED_ACE = 0x10
 const FILE_ADD_FILE = 0x2
 const FILE_ADD_SUBDIRECTORY = 0x4
 const HARMLESS_ANCESTOR_MASK = 0x001200A9 | FILE_ADD_FILE | FILE_ADD_SUBDIRECTORY
+const SHARE_HANDLE = 12n as NativePtr
+const SHARE_ROOT = '\\\\server.invalid\\skills\\'
+const NAMESPACED_SHARE = win32.toNamespacedPath(SHARE_ROOT)
+const SHARE_CHILD = win32.join(SHARE_ROOT, 'overlay')
 
 function tmpdir(): string {
   return process.platform === 'darwin' ? '/private/tmp' : systemTmpdir()
@@ -57,6 +61,7 @@ interface NativeFixture {
   setEntries: Buffer[]
   createDirectoryAttributes: Buffer[]
   createDirectoryPaths: string[]
+  shareOpens: Array<Parameters<NativeFunctions['CreateFileW']>>
   events: string[]
   reparseComponents: Set<string>
   behavior: NativeBehavior
@@ -105,10 +110,28 @@ interface NativeBehavior {
   closeHandleResult: number
   fileAttributesResult: number | undefined
   fileAttributesThrow: string | undefined
+  fileAttributesByPath: Map<string, number>
+  shareHandle: NativePtr | null
+  shareAttributes: number
+  shareAttributesResult: number
+  shareSecurityResult: number
+  shareCloseResult: number
 }
+
+type SecuritySlots = [owner: NativePtr, group: NativePtr, dacl: NativePtr, sacl: NativePtr, descriptor: NativePtr]
 
 interface NativeFunctions {
   CreateDirectoryW: (path: string, securityAttributes: Buffer) => number
+  CreateFileW: (
+    path: string,
+    access: number,
+    share: number,
+    security: null,
+    disposition: number,
+    flags: number,
+    template: null,
+  ) => NativePtr | null
+  GetFileInformationByHandleEx: (handle: NativePtr, informationClass: number, output: Buffer, length: number) => number
   OpenProcess: () => NativePtr | null
   OpenProcessToken: (process: NativePtr, access: number, slot: NativePtr) => number
   GetTokenInformation: (token: NativePtr, informationClass: number, output: Buffer | null, length: number, needed: NativePtr) => number
@@ -121,12 +144,9 @@ interface NativeFunctions {
     path: string,
     objectType: number,
     information: number,
-    owner: NativePtr,
-    group: NativePtr,
-    dacl: NativePtr,
-    sacl: NativePtr,
-    descriptor: NativePtr,
+    ...slots: SecuritySlots
   ) => number
+  GetSecurityInfo: (handle: NativePtr, objectType: number, information: number, ...slots: SecuritySlots) => number
   GetSecurityDescriptorControl: (descriptor: NativePtr, control: NativePtr, revision: NativePtr) => number
   GetAclInformation: (acl: NativePtr, information: Buffer, length: number, informationClass: number) => number
   GetAce: (acl: NativePtr, index: number, slot: NativePtr) => number
@@ -166,6 +186,7 @@ function createFixture(): NativeFixture {
   fixture.setEntries = []
   fixture.createDirectoryAttributes = []
   fixture.createDirectoryPaths = []
+  fixture.shareOpens = []
   fixture.events = []
   fixture.reparseComponents = new Set()
   fixture.allocateMemory = (value) => {
@@ -264,6 +285,12 @@ function createFixture(): NativeFixture {
     closeHandleResult: 1,
     fileAttributesResult: undefined,
     fileAttributesThrow: undefined,
+    fileAttributesByPath: new Map(),
+    shareHandle: SHARE_HANDLE,
+    shareAttributes: 0x10,
+    shareAttributesResult: 1,
+    shareSecurityResult: 0,
+    shareCloseResult: 1,
   }
   fixture.koffi = {
     pointer: () => 'void-pointer',
@@ -290,6 +317,15 @@ function createFixture(): NativeFixture {
 }
 
 function nativeFunctions(fixture: NativeFixture): NativeFunctions {
+  const writeSecurity = (path: string, [owner, group, dacl, sacl, descriptor]: SecuritySlots) => {
+    const security = fixture.behavior.securityByPath.get(path)
+    const state = fixture.behavior
+    fixture.pointerSlots.set(owner, security === undefined ? state.securityOwner : security.owner)
+    fixture.pointerSlots.set(group, null)
+    fixture.pointerSlots.set(dacl, security === undefined ? state.securityDacl : security.dacl)
+    fixture.pointerSlots.set(sacl, null)
+    fixture.pointerSlots.set(descriptor, security === undefined ? state.securityDescriptor : security.descriptor)
+  }
   return {
     CreateDirectoryW: (path, securityAttributes) => {
       fixture.events.push('CreateDirectoryW')
@@ -301,6 +337,15 @@ function nativeFunctions(fixture: NativeFixture): NativeFunctions {
       }
       if (fixture.behavior.createDirectoryRaceCreatesPath) mkdirSync(path)
       return 0
+    },
+    CreateFileW: (...args) => {
+      fixture.shareOpens.push(args)
+      return fixture.behavior.shareHandle
+    },
+    GetFileInformationByHandleEx: (handle, informationClass, output, length) => {
+      expect([handle, informationClass, length]).toEqual([SHARE_HANDLE, 9, 8])
+      output.writeUInt32LE(fixture.behavior.shareAttributes)
+      return fixture.behavior.shareAttributesResult
     },
     OpenProcess: () => {
       fixture.events.push('OpenProcess')
@@ -341,14 +386,17 @@ function nativeFunctions(fixture: NativeFixture): NativeFunctions {
       fixture.events.push('SetSecurityDescriptorControl')
       return fixture.behavior.setSecurityDescriptorControlResult
     },
-    GetNamedSecurityInfoW: (path, _objectType, _information, owner, group, dacl, sacl, descriptor) => {
-      const security = fixture.behavior.securityByPath.get(path)
-      fixture.pointerSlots.set(owner, security?.owner ?? fixture.behavior.securityOwner)
-      fixture.pointerSlots.set(group, null)
-      fixture.pointerSlots.set(dacl, security?.dacl ?? fixture.behavior.securityDacl)
-      fixture.pointerSlots.set(sacl, null)
-      fixture.pointerSlots.set(descriptor, security?.descriptor ?? fixture.behavior.securityDescriptor)
+    GetNamedSecurityInfoW: (path, _objectType, _information, ...slots) => {
+      writeSecurity(path, slots)
       return fixture.behavior.getNamedSecurityResult
+    },
+    GetSecurityInfo: (handle, objectType, information, ...slots) => {
+      expect([handle, objectType, information]).toEqual([SHARE_HANDLE, 1, 5])
+      const open = fixture.shareOpens.at(-1)
+      if (open === undefined) throw new Error('missing share handle fixture')
+      writeSecurity(open[0], slots)
+      fixture.events.push('GetSecurityInfo')
+      return fixture.behavior.shareSecurityResult
     },
     GetSecurityDescriptorControl: (_descriptor, control) => {
       fixture.uintSlots.set(control, fixture.security.protected ? 0x1000 : 0)
@@ -386,10 +434,12 @@ function nativeFunctions(fixture: NativeFixture): NativeFunctions {
     GetFileAttributesW: (path) => {
       if (fixture.behavior.fileAttributesThrow !== undefined) throw fixture.behavior.fileAttributesThrow
       return fixture.behavior.fileAttributesResult
+        ?? fixture.behavior.fileAttributesByPath.get(path)
         ?? (fixture.reparseComponents.has(path) ? 0x400 : 0)
     },
     CloseHandle: (handle) => {
       fixture.closed.push(handle)
+      if (handle === SHARE_HANDLE) return fixture.behavior.shareCloseResult
       if (fixture.behavior.closeHandleThrows) throw new Error('synthetic CloseHandle failure')
       return fixture.behavior.closeHandleResult
     },
@@ -401,6 +451,8 @@ function nativeFunctions(fixture: NativeFixture): NativeFunctions {
 function nativeFunction(native: NativeFunctions, name: string): NativeFunctions[keyof NativeFunctions] {
   switch (name) {
     case 'CreateDirectoryW': return native.CreateDirectoryW
+    case 'CreateFileW': return native.CreateFileW
+    case 'GetFileInformationByHandleEx': return native.GetFileInformationByHandleEx
     case 'OpenProcess': return native.OpenProcess
     case 'OpenProcessToken': return native.OpenProcessToken
     case 'GetTokenInformation': return native.GetTokenInformation
@@ -410,6 +462,7 @@ function nativeFunction(native: NativeFunctions, name: string): NativeFunctions[
     case 'SetSecurityDescriptorDacl': return native.SetSecurityDescriptorDacl
     case 'SetSecurityDescriptorControl': return native.SetSecurityDescriptorControl
     case 'GetNamedSecurityInfoW': return native.GetNamedSecurityInfoW
+    case 'GetSecurityInfo': return native.GetSecurityInfo
     case 'GetSecurityDescriptorControl': return native.GetSecurityDescriptorControl
     case 'GetAclInformation': return native.GetAclInformation
     case 'GetAce': return native.GetAce
@@ -434,9 +487,14 @@ function invalidSid(fixture: NativeFixture, revision = 2, count = 0): NativePtr 
   return fixture.allocateMemory(sid)
 }
 
-async function importWithFixture(fixture: NativeFixture, fsOverrides: FsOverrides = {}): Promise<typeof import('../src/windows-private.ts')> {
+async function importWithFixture(
+  fixture: NativeFixture,
+  fsOverrides: FsOverrides = {},
+  windowsPaths = false,
+): Promise<typeof import('../src/windows-private.ts')> {
   const native = nativeFunctions(fixture)
   vi.resetModules()
+  if (windowsPaths) vi.doMock('node:path', () => win32)
   if (Object.keys(fsOverrides).length > 0) {
     vi.doMock('node:fs', async () => ({
       ...await vi.importActual<typeof import('node:fs')>('node:fs'),
@@ -489,14 +547,120 @@ function expectNoKoffiLeaks(fixture: NativeFixture): void {
   expect(outstanding).toEqual([])
 }
 
+function importShareFixture(fixture: NativeFixture): Promise<typeof import('../src/windows-private.ts')> {
+  fixture.behavior.fileAttributesByPath.set(NAMESPACED_SHARE, 0xFFFFFFFF)
+  fixture.behavior.createDirectoryError = 53
+  const stat = lstatSync(tmpdir())
+  return importWithFixture(fixture, { lstatSync: () => stat }, true)
+}
+
 afterEach(() => {
   vi.doUnmock('node:fs')
+  vi.doUnmock('node:path')
   vi.doUnmock('@yharness/lazy-require')
   vi.doUnmock('@yharness/win32-process')
   vi.resetModules()
 })
 
 describe('owner-private Windows security', () => {
+  it.each([SHARE_CHILD, win32.toNamespacedPath(SHARE_CHILD)])('checks network share path %s through a root handle', async (path) => {
+    const fixture = createFixture()
+    const { assertOwnerPrivateWin32 } = await importShareFixture(fixture)
+    expect(() => { assertOwnerPrivateWin32(path, 'directory', true) }).not.toThrow()
+    expect(fixture.shareOpens).toContainEqual([NAMESPACED_SHARE, 0x20080, 7, null, 3, 0x02200000, null])
+    expect(fixture.events).toContain('GetSecurityInfo')
+    expect(fixture.closed.filter(handle => handle === SHARE_HANDLE)).toHaveLength(fixture.shareOpens.length)
+    expectNoKoffiLeaks(fixture)
+  })
+
+  it('checks an existing share used as the private directory without creating it', async () => {
+    const fixture = createFixture()
+    const { assertOwnerPrivateWin32, createOwnerPrivateDirectoryWin32 } = await importShareFixture(fixture)
+    expect(() => { createOwnerPrivateDirectoryWin32(SHARE_ROOT) }).not.toThrow()
+    expect(fixture.createDirectoryPaths).toEqual([])
+    expect(() => { assertOwnerPrivateWin32(SHARE_ROOT, 'file') }).toThrow(/expected file/u)
+    expectNoKoffiLeaks(fixture)
+  })
+
+  it('rejects an extended UNC path without a share name', async () => {
+    const fixture = createFixture()
+    const { assertOwnerPrivateWin32 } = await importShareFixture(fixture)
+    expect(() => { assertOwnerPrivateWin32('\\\\?\\UNC\\server.invalid', 'directory') }).toThrow(/invalid UNC share path/u)
+    expect(fixture.shareOpens).toEqual([])
+    expectNoKoffiLeaks(fixture)
+  })
+
+  it('rejects a share root with a foreign owner or an untrusted write grant', async () => {
+    const fixture = createFixture()
+    const outsider = fixture.makeSid([32, 545])
+    const { assertOwnerPrivateWin32 } = await importShareFixture(fixture)
+    fixture.behavior.securityByPath.set(NAMESPACED_SHARE, { ...fixture.security, owner: outsider })
+    expect(() => { assertOwnerPrivateWin32(SHARE_CHILD, 'directory', true) }).toThrow(/ancestor owner is not trusted/u)
+    fixture.behavior.securityByPath.set(NAMESPACED_SHARE, {
+      ...fixture.security,
+      dacl: fixture.makeAcl([{ type: 0, sid: outsider, mask: 0x40000 }]),
+    })
+    expect(() => { assertOwnerPrivateWin32(SHARE_CHILD, 'directory', true) }).toThrow(/untrusted ACE/u)
+    expect(fixture.closed.filter(handle => handle === SHARE_HANDLE)).toHaveLength(fixture.shareOpens.length)
+    expectNoKoffiLeaks(fixture)
+  })
+
+  it.each([
+    { name: 'reparse directory', attributes: 0x410, expected: /reparse share root/u },
+    { name: 'non-directory', attributes: 0x80, expected: /expected directory/u },
+  ])('rejects a share root reported as $name before reading its ACL', async ({ attributes, expected }) => {
+    const fixture = createFixture()
+    fixture.behavior.shareAttributes = attributes
+    const { assertOwnerPrivateWin32 } = await importShareFixture(fixture)
+    expect(() => { assertOwnerPrivateWin32(SHARE_CHILD, 'directory', true) }).toThrow(expected)
+    expect(fixture.events).not.toContain('GetSecurityInfo')
+    expect(fixture.closed).toContain(SHARE_HANDLE)
+    expectNoKoffiLeaks(fixture)
+  })
+
+  it.each([null, 0xFFFFFFFFFFFFFFFFn as NativePtr, -1n as NativePtr])('rejects an invalid share handle %s', async (handle) => {
+    const fixture = createFixture()
+    fixture.behavior.shareHandle = handle
+    const { assertOwnerPrivateWin32 } = await importShareFixture(fixture)
+    expect(() => { assertOwnerPrivateWin32(SHARE_CHILD, 'directory', true) }).toThrow(/CreateFileW/u)
+    expect(fixture.closed).toEqual([11n, 10n])
+    expectNoKoffiLeaks(fixture)
+  })
+
+  it('reports share attribute, security, and close failures', async () => {
+    const fixture = createFixture()
+    const { assertOwnerPrivateWin32 } = await importShareFixture(fixture)
+    fixture.behavior.shareAttributesResult = 0
+    fixture.behavior.shareCloseResult = 0
+    expect(() => { assertOwnerPrivateWin32(SHARE_CHILD, 'directory', true) }).toThrow(/GetFileInformationByHandleEx/u)
+    fixture.behavior.shareAttributesResult = 1
+    expect(() => { assertOwnerPrivateWin32(SHARE_CHILD, 'directory', true) }).toThrow(/Windows handle cleanup failed/u)
+    fixture.behavior.shareCloseResult = 1
+    fixture.behavior.shareSecurityResult = 5
+    expect(() => { assertOwnerPrivateWin32(SHARE_CHILD, 'directory', true) }).toThrow(/GetSecurityInfo \(5\)/u)
+    expect(fixture.closed.filter(handle => handle === SHARE_HANDLE)).toHaveLength(fixture.shareOpens.length)
+    expectNoKoffiLeaks(fixture)
+  })
+
+  it.each([
+    { length: 2, following: 0 },
+    { length: 8, following: 0 },
+    { length: 8, following: 1 },
+  ])('rejects a truncated $length-byte ACE with $following later entries', async ({ length, following }) => {
+    const fixture = createFixture()
+    const acl = fixtureAcl(fixture)
+    const [ace] = acl.aces
+    if (ace === undefined) throw new Error('missing ACE fixture')
+    const entry = Buffer.alloc(length)
+    if (length >= 4) entry.writeUInt16LE(length, 2)
+    fixture.memory.set(ace, entry)
+    acl.aces = acl.aces.slice(0, 1 + following)
+    acl.bytesInUse = 8 + acl.aces.reduce((sum, pointer) => sum + (fixture.memory.get(pointer)?.length ?? 0), 0)
+    const { assertOwnerPrivateWin32 } = await importWithFixture(fixture)
+    expect(() => { assertOwnerPrivateWin32(tmpdir(), 'directory', true) }).toThrow(/malformed ACE/u)
+    expectNoKoffiLeaks(fixture)
+  })
+
   it.each([
     { owner: 'local Administrators', sid: 'administratorsSid' },
     { owner: 'SYSTEM', sid: 'systemSid' },

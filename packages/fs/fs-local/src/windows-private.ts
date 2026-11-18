@@ -22,6 +22,16 @@ const requireKoffi = createLazyRequire<Koffi>('koffi', import.meta.url)
 
 interface FileSecurityBindings extends Win32ProcessBindings {
   createDirectoryW(path: string, securityAttributes: Buffer): number
+  createFileW(
+    path: string,
+    desiredAccess: number,
+    share: number,
+    securityAttributes: null,
+    disposition: number,
+    flags: number,
+    template: null,
+  ): NativePtr | null
+  getFileInformationByHandleEx(handle: NativePtr, informationClass: number, output: Buffer, size: number): number
   openProcess(desiredAccess: number, inheritHandle: number, pid: number): NativePtr | null
   openProcessToken(processHandle: NativePtr, desiredAccess: number, tokenHandle: NativePtr): number
   getTokenInformation(token: NativePtr, informationClass: number, information: Buffer | null, length: number, needed: NativePtr): number
@@ -32,6 +42,16 @@ interface FileSecurityBindings extends Win32ProcessBindings {
   setSecurityDescriptorControl(descriptor: NativePtr, controlBitsOfInterest: number, controlBitsToSet: number): number
   getNamedSecurityInfoW(
     path: string,
+    objectType: number,
+    information: number,
+    owner: NativePtr,
+    group: NativePtr,
+    dacl: NativePtr,
+    sacl: NativePtr,
+    descriptor: NativePtr,
+  ): number
+  getSecurityInfo(
+    handle: NativePtr,
     objectType: number,
     information: number,
     owner: NativePtr,
@@ -60,8 +80,16 @@ const ACCESS_ALLOWED_ACE_TYPE = 0
 const ACCESS_DENIED_ACE_TYPE = 1
 const INHERITED_ACE = 0x10
 const INHERIT_ONLY_ACE = 0x08
+const FILE_ATTRIBUTE_DIRECTORY = 0x0010
 const FILE_ATTRIBUTE_REPARSE_POINT = 0x0400
 const INVALID_FILE_ATTRIBUTES = 0xFFFFFFFF
+const INVALID_HANDLE_VALUE = 0xFFFFFFFFFFFFFFFFn
+const OPEN_EXISTING = 3
+const FILE_SHARE_ALL = 0x7
+const FILE_FLAG_OPEN_REPARSE_POINT = 0x00200000
+const FILE_FLAG_BACKUP_SEMANTICS = 0x02000000
+const FILE_ATTRIBUTE_TAG_INFO = 9
+const UNC_NAMESPACE = '\\\\?\\UNC\\'
 const ERROR_SUCCESS = 0
 const ERROR_ALREADY_EXISTS = 183
 const GRANT_ACCESS = 1
@@ -73,6 +101,9 @@ const FILE_ALL_ACCESS = 0x1F01FF
 const EXPLICIT_ACCESS_W_SIZE = 48
 const SID_MAX_SUB_AUTHORITIES = 15
 const ACL_HEADER_SIZE = 8
+const ACE_SID_OFFSET = 8
+const SID_HEADER_SIZE = 8
+const MINIMUM_ACE_SIZE = ACE_SID_OFFSET + SID_HEADER_SIZE
 const SECURITY_DESCRIPTOR_REVISION = 1
 const SECURITY_DESCRIPTOR_SIZE = 40
 const SECURITY_ATTRIBUTES_SIZE = 24
@@ -141,6 +172,12 @@ function bindings(): FileSecurityBindings {
   if (cachedBindings !== undefined) return cachedBindings
   cachedBindings = extendWin32ProcessBindings(({ kernel32, advapi32, bind }) => ({
     createDirectoryW: bind(kernel32, 'CreateDirectoryW', 'int', ['str16', pointerType()]),
+    createFileW: bind(kernel32, 'CreateFileW', pointerType(), [
+      'str16', 'uint32', 'uint32', pointerType(), 'uint32', 'uint32', pointerType(),
+    ]),
+    getFileInformationByHandleEx: bind(kernel32, 'GetFileInformationByHandleEx', 'int', [
+      pointerType(), 'int', pointerType(), 'uint32',
+    ]),
     openProcess: bind(kernel32, 'OpenProcess', pointerType(), ['uint32', 'int', 'uint32']),
     openProcessToken: bind(advapi32, 'OpenProcessToken', 'int', [pointerType(), 'uint32', requireKoffi().pointer(pointerType())]),
     getTokenInformation: bind(advapi32, 'GetTokenInformation', 'int', [
@@ -153,6 +190,10 @@ function bindings(): FileSecurityBindings {
     setSecurityDescriptorControl: bind(advapi32, 'SetSecurityDescriptorControl', 'int', [pointerType(), 'uint16', 'uint16']),
     getNamedSecurityInfoW: bind(advapi32, 'GetNamedSecurityInfoW', 'uint32', [
       'str16', 'int', 'uint32', requireKoffi().pointer(pointerType()), requireKoffi().pointer(pointerType()),
+      requireKoffi().pointer(pointerType()), requireKoffi().pointer(pointerType()), requireKoffi().pointer(pointerType()),
+    ]),
+    getSecurityInfo: bind(advapi32, 'GetSecurityInfo', 'uint32', [
+      pointerType(), 'int', 'uint32', requireKoffi().pointer(pointerType()), requireKoffi().pointer(pointerType()),
       requireKoffi().pointer(pointerType()), requireKoffi().pointer(pointerType()), requireKoffi().pointer(pointerType()),
     ]),
     getSecurityDescriptorControl: bind(advapi32, 'GetSecurityDescriptorControl', 'int', [
@@ -344,9 +385,52 @@ function withTrustedSids<T>(operation: (api: FileSecurityBindings, sids: Trusted
   }
 }
 
+function resolvePrivatePath(path: string): string {
+  const resolved = resolve(path)
+  if (resolved.slice(0, UNC_NAMESPACE.length).toUpperCase() !== UNC_NAMESPACE) return resolved
+  // Node's dirname treats the namespace prefix as the share of an extended UNC path.
+  const uncPath = '\\\\' + resolved.slice(UNC_NAMESPACE.length)
+  if (!toNamespacedPath(uncPath).startsWith(UNC_NAMESPACE)) throw policyError(path, 'invalid UNC share path')
+  return resolve(uncPath)
+}
+
+function isUncShareRoot(path: string): boolean {
+  return dirname(path) === path && toNamespacedPath(path).startsWith(UNC_NAMESPACE)
+}
+
+function withShareRoot<T>(api: FileSecurityBindings, path: string, check: (handle: NativePtr) => T): T {
+  // GetFileAttributesW cannot query the share itself. Open the directory without following a reparse point.
+  const handle = api.createFileW(
+    toNamespacedPath(path), FILE_READ_ATTRIBUTES | READ_CONTROL, FILE_SHARE_ALL, null, OPEN_EXISTING,
+    FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, null,
+  )
+  if (isNullPtr(handle) || handle === INVALID_HANDLE_VALUE || handle === -1n) throwLastError(api, 'CreateFileW', path)
+  let completed = false
+  try {
+    const information = Buffer.alloc(8)
+    if (api.getFileInformationByHandleEx(handle, FILE_ATTRIBUTE_TAG_INFO, information, information.length) === 0) {
+      throwLastError(api, 'GetFileInformationByHandleEx', path)
+    }
+    const attributes = information.readUInt32LE(0)
+    if ((attributes & FILE_ATTRIBUTE_REPARSE_POINT) !== 0) throw policyError(path, 'reparse share root')
+    if ((attributes & FILE_ATTRIBUTE_DIRECTORY) === 0) throw policyError(path, 'expected directory')
+    const result = check(handle)
+    completed = true
+    return result
+  } finally {
+    const failures: unknown[] = []
+    closeHandleBestEffort(api, handle, failures)
+    if (completed && failures.length > 0) throw new AggregateError(failures, 'Windows handle cleanup failed')
+  }
+}
+
 function assertNoReparsePath(api: FileSecurityBindings, path: string): void {
-  let current = resolve(path)
+  let current = path
   for (;;) {
+    if (isUncShareRoot(current)) {
+      withShareRoot(api, current, () => undefined)
+      return
+    }
     const attributes = api.getFileAttributesW(toNamespacedPath(current))
     if (attributes === INVALID_FILE_ATTRIBUTES) throwLastError(api, 'GetFileAttributesW', current)
     if ((attributes & FILE_ATTRIBUTE_REPARSE_POINT) !== 0) throw policyError(path, `reparse path component ${current}`)
@@ -360,21 +444,21 @@ function isErrorCode(error: unknown, code: string): boolean {
   return typeof error === 'object' && error !== null && 'code' in error && error.code === code
 }
 
-function createPrivateDirectoryPath(api: FileSecurityBindings, path: string, sids: TrustedSids): void {
-  const target = resolve(path)
+function createPrivateDirectoryPath(api: FileSecurityBindings, target: string, sids: TrustedSids): void {
   const missing: string[] = []
   let current = target
   for (;;) {
+    if (isUncShareRoot(current)) break
     try {
       const stat = lstatSync(current)
-      if (!stat.isDirectory()) throw policyError(path, `parent is not a directory: ${current}`)
+      if (!stat.isDirectory()) throw policyError(target, `parent is not a directory: ${current}`)
       assertNoReparsePath(api, current)
       break
     } catch (error) {
       if (!isErrorCode(error, 'ENOENT')) throw error
       missing.push(current)
       const parent = dirname(current)
-      if (parent === current) throw policyError(path, `missing filesystem root: ${current}`)
+      if (parent === current) throw policyError(target, `missing filesystem root: ${current}`)
       current = parent
     }
   }
@@ -391,6 +475,7 @@ function createPrivateDirectoryPath(api: FileSecurityBindings, path: string, sid
 function readSecurity(
   api: FileSecurityBindings,
   path: string,
+  handle?: NativePtr,
 ): { readonly owner: NativePtr; readonly dacl: NativePtr; readonly descriptor: NativePtr } {
   let owner: NativePtr | undefined
   let group: NativePtr | undefined
@@ -403,17 +488,12 @@ function readSecurity(
     dacl = allocPtrSlot()
     sacl = allocPtrSlot()
     descriptor = allocPtrSlot()
-    const result = api.getNamedSecurityInfoW(
-      toNamespacedPath(path),
-      SE_FILE_OBJECT,
-      OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
-      owner,
-      group,
-      dacl,
-      sacl,
-      descriptor,
-    )
-    if (result !== ERROR_SUCCESS) throwWin32(api, 'GetNamedSecurityInfoW', result, path)
+    const information = OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION
+    const slots = [owner, group, dacl, sacl, descriptor] as const
+    const result = handle === undefined
+      ? api.getNamedSecurityInfoW(toNamespacedPath(path), SE_FILE_OBJECT, information, ...slots)
+      : api.getSecurityInfo(handle, SE_FILE_OBJECT, information, ...slots)
+    if (result !== ERROR_SUCCESS) throwWin32(api, handle === undefined ? 'GetNamedSecurityInfoW' : 'GetSecurityInfo', result, path)
     const ownerPointer = decodePtr(owner)
     const daclPointer = decodePtr(dacl)
     const descriptorPointer = decodePtr(descriptor)
@@ -465,6 +545,8 @@ function assertDacl(
   if (aclBytesInUse < ACL_HEADER_SIZE) throw policyError(path, 'malformed ACL')
   let bytesSeen = ACL_HEADER_SIZE
   for (let index = 0; index < aceCount; index += 1) {
+    const remaining = aclBytesInUse - bytesSeen
+    if (remaining < MINIMUM_ACE_SIZE) throw policyError(path, `malformed ACE ${index}`)
     const aceSlot = allocPtrSlot()
     try {
       if (api.getAce(dacl, index, aceSlot) === 0) throwLastError(api, 'GetAce', `${path} ACE ${index}`)
@@ -473,20 +555,19 @@ function assertDacl(
       const type = decodeUint8(ace, 0)
       const flags = decodeUint8(ace, 1)
       const size = decodeUint16(ace, 2)
-      if (size < ACL_HEADER_SIZE || size % 4 !== 0 || bytesSeen + size > aclBytesInUse) {
+      if (size < MINIMUM_ACE_SIZE || size % 4 !== 0 || size > remaining) {
         throw policyError(path, `malformed ACE ${index}`)
       }
       if (type !== ACCESS_ALLOWED_ACE_TYPE && type !== ACCESS_DENIED_ACE_TYPE) {
         throw policyError(path, `unrecognized ACE type ${type}`)
       }
       if (requireProtected && (flags & INHERITED_ACE) !== 0) throw policyError(path, `inherited ACE ${index}`)
-      const sidCount = decodeUint8(ace, 9)
-      const sidLength = 8 + sidCount * 4
-      if (sidCount > SID_MAX_SUB_AUTHORITIES || 8 + sidLength > size || !validSidAt(ace, 8)) {
+      const sidCount = decodeUint8(ace, ACE_SID_OFFSET + 1)
+      const sidLength = SID_HEADER_SIZE + sidCount * 4
+      if (sidCount > SID_MAX_SUB_AUTHORITIES || ACE_SID_OFFSET + sidLength > size || !validSidAt(ace, ACE_SID_OFFSET)) {
         throw policyError(path, `malformed ACE SID ${index}`)
       }
-      const sidOffset = 8
-      if (!trusted.some(trustedSid => sameSid(ace, sidOffset, trustedSid, 0))) {
+      if (!trusted.some(trustedSid => sameSid(ace, ACE_SID_OFFSET, trustedSid, 0))) {
         const accessMask = decodeNativeUint32(ace, 4) >>> 0
         const harmless = (flags & INHERIT_ONLY_ACE) !== 0
           || type === ACCESS_DENIED_ACE_TYPE
@@ -515,13 +596,31 @@ function assertOwnerPrivateWith(
   sids: TrustedSids,
   ancestor = false,
 ): void {
+  if (isUncShareRoot(path)) {
+    if (kind !== 'directory') throw policyError(path, 'expected file')
+    withShareRoot(api, path, (handle) => {
+      assertPrivateSecurity(api, path, requireProtected, sids, ancestor, handle)
+    })
+    return
+  }
   assertNoReparsePath(api, path)
   let stat: ReturnType<typeof lstatSync>
   try { stat = lstatSync(path) } catch { throw policyError(path, 'missing path') }
   if ((kind === 'directory' && !stat.isDirectory()) || (kind === 'file' && !stat.isFile())) {
     throw policyError(path, `expected ${kind}`)
   }
-  const security = readSecurity(api, path)
+  assertPrivateSecurity(api, path, requireProtected, sids, ancestor)
+}
+
+function assertPrivateSecurity(
+  api: FileSecurityBindings,
+  path: string,
+  requireProtected: boolean,
+  sids: TrustedSids,
+  ancestor: boolean,
+  handle?: NativePtr,
+): void {
+  const security = readSecurity(api, path, handle)
   let operationFailed = false
   try {
     const trusted = ancestor
@@ -552,7 +651,7 @@ function assertOwnerPrivateWith(
 }
 
 function assertPrivateAncestry(api: FileSecurityBindings, path: string, sids: TrustedSids): void {
-  let current = resolve(path)
+  let current = path
   for (;;) {
     assertOwnerPrivateWith(api, current, 'directory', false, sids, true)
     const parent = dirname(current)
@@ -636,15 +735,17 @@ function createPrivateDirectory(api: FileSecurityBindings, path: string, sids: T
  * root, while descendants may carry the same trusted entries as inherited ACEs.
  * Reparse components, NULL DACLs, malformed ACLs, and unknown ACE types fail
  * closed.
+ * A UNC share root is checked through a directory handle, including its owner and DACL.
  * @param path - existing path to validate.
  * @param kind - whether the path must be a file or directory.
  * @param requireProtected - require a protected root DACL and no inherited ACEs.
  */
 export function assertOwnerPrivateWin32(path: string, kind: OwnerPrivatePathKind, requireProtected = false): void {
   withTrustedSids((api, sids) => {
-    assertNoReparsePath(api, path)
-    assertPrivateAncestry(api, dirname(resolve(path)), sids)
-    assertOwnerPrivateWith(api, path, kind, requireProtected, sids)
+    const target = resolvePrivatePath(path)
+    assertNoReparsePath(api, target)
+    assertPrivateAncestry(api, dirname(target), sids)
+    assertOwnerPrivateWith(api, target, kind, requireProtected, sids)
   })
 }
 /**
@@ -657,7 +758,8 @@ export function assertOwnerPrivateWin32(path: string, kind: OwnerPrivatePathKind
  */
 export function createOwnerPrivateDirectoryWin32(path: string): void {
   withTrustedSids((api, sids) => {
-    createPrivateDirectoryPath(api, path, sids)
-    assertOwnerPrivateWith(api, path, 'directory', true, sids)
+    const target = resolvePrivatePath(path)
+    createPrivateDirectoryPath(api, target, sids)
+    assertOwnerPrivateWith(api, target, 'directory', true, sids)
   })
 }
