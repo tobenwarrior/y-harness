@@ -224,4 +224,71 @@ describe('BotMemoryManager', () => {
 
     await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Bot memory' })).toBeNull() })
   })
+
+  it('renders a memory with an invalid display date and supports cancelling its edit', async () => {
+    const actions: BotMemoryManagerActions = {
+      list: vi.fn(async () => [{ id: 'memory-invalid-date', text: 'Keep this note.', createdAt: Number.MAX_SAFE_INTEGER }]),
+      update: vi.fn(),
+      remove: vi.fn(),
+    }
+
+    renderManager(actions)
+
+    const row = await screen.findByRole('listitem', { name: 'memory-invalid-date' })
+    expect(within(row).queryByRole('time')).toBeNull()
+    fireEvent.click(within(row).getByRole('button', { name: 'Edit memory memory-invalid-date' }))
+    expect(within(row).getByRole('textbox', { name: 'Memory text' })).toHaveProperty('value', 'Keep this note.')
+    fireEvent.click(within(row).getByRole('button', { name: 'Cancel edit' }))
+    expect(within(row).queryByRole('textbox', { name: 'Memory text' })).toBeNull()
+  })
+
+  it('removes another row without discarding the active draft', async () => {
+    const memories: readonly BotMemorySummary[] = [
+      { id: 'memory-editing', text: 'Keep the draft.', createdAt: 1 },
+      { id: 'memory-remove', text: 'Remove this row.', createdAt: 2 },
+    ]
+    const actions: BotMemoryManagerActions = {
+      list: vi.fn(async () => memories),
+      update: vi.fn(),
+      remove: vi.fn(async () => {}),
+    }
+
+    renderManager(actions)
+
+    const editingRow = await screen.findByRole('listitem', { name: 'memory-editing' })
+    const removeRow = screen.getByRole('listitem', { name: 'memory-remove' })
+    fireEvent.click(within(editingRow).getByRole('button', { name: 'Edit memory memory-editing' }))
+    fireEvent.change(within(editingRow).getByRole('textbox', { name: 'Memory text' }), { target: { value: 'Draft stays here.' } })
+    fireEvent.click(within(removeRow).getByRole('button', { name: 'Remove memory memory-remove' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Remove memory' }))
+
+    await waitFor(() => { expect(actions.remove).toHaveBeenCalledWith(bot.id, 'memory-remove') })
+    expect(within(editingRow).getByRole('textbox', { name: 'Memory text' })).toHaveProperty('value', 'Draft stays here.')
+    expect(screen.queryByRole('listitem', { name: 'memory-remove' })).toBeNull()
+  })
+
+  it('ignores a second confirmation click while removal is pending', async () => {
+    const pending = Promise.withResolvers<undefined>()
+    const memory: BotMemorySummary = { id: 'memory-pending', text: 'Pending removal.', createdAt: 1 }
+    const remove = vi.fn(() => pending.promise)
+    const actions: BotMemoryManagerActions = {
+      list: vi.fn(async () => [memory]),
+      update: vi.fn(),
+      remove,
+    }
+
+    renderManager(actions)
+
+    const row = await screen.findByRole('listitem', { name: 'memory-pending' })
+    fireEvent.click(within(row).getByRole('button', { name: 'Remove memory memory-pending' }))
+    const confirmation = screen.getByRole('dialog', { name: 'Remove memory?' })
+    const confirm = within(confirmation).getByRole('button', { name: 'Remove memory' })
+    fireEvent.click(confirm)
+    await waitFor(() => { expect(remove).toHaveBeenCalledOnce() })
+    fireEvent.click(confirm)
+    expect(remove).toHaveBeenCalledOnce()
+    pending.resolve(undefined)
+    await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Remove memory?' })).toBeNull() })
+  })
+
 })
