@@ -730,6 +730,385 @@ describe('Bot roster and detail', () => {
     expect(within(detail()).getByText('Runs once in 0.5 seconds')).toBeTruthy()
   })
 
+  it('renders optional schedule fields and every event result status', async () => {
+    const schedule = (scheduleKind: 'after' | 'every' | 'daily' | 'weekly' | 'cron', title: string, patch: {
+      readonly afterSeconds?: number
+      readonly everySeconds?: number
+      readonly time?: string
+      readonly timeZone?: string
+      readonly weekdays?: readonly number[]
+      readonly expression?: string
+    } = {}) => ({
+      kind: 'schedule' as const,
+      scheduleKind,
+      id: ScheduleId(`schedule-${title}`),
+      title,
+      prompt: `${title} prompt`,
+      ...patch,
+      scheduledAt: '2026-11-04T03:00:00.000Z',
+      state: 'scheduled' as const,
+      deliveryMode: 'host' as const,
+      status: 'active' as const,
+      botId: BotId('research'),
+      sessionId: SessionId('session-research'),
+    })
+    const event = {
+      kind: 'event' as const,
+      id: 'event-result-statuses',
+      title: 'Result statuses',
+      prompt: 'Inspect result statuses',
+      trigger: { type: 'message' as const, source: 'user' as const },
+      status: 'active' as const,
+      createdAt: 1,
+      updatedAt: 1,
+      state: 'waiting' as const,
+      deliveryMode: 'host' as const,
+      botId: BotId('research'),
+      sessionId: SessionId('session-research'),
+    }
+    const routines = [
+      schedule('after', 'Negative delay', { afterSeconds: -1 }),
+      schedule('after', 'Default delay'),
+      schedule('every', 'Default interval'),
+      schedule('every', 'Minute and second', { everySeconds: 61 }),
+      schedule('daily', 'Default daily'),
+      schedule('weekly', 'Default weekly'),
+      schedule('cron', 'Default cron'),
+      event,
+    ]
+    const actions = {
+      list: vi.fn(async () => routines),
+      pause: vi.fn(async () => routines[0]!),
+      resume: vi.fn(async () => routines[0]!),
+      remove: vi.fn(async () => {}),
+      history: vi.fn(async (_botId: string, routineId: string) => routineId === event.id ? {
+        kind: 'event' as const,
+        id: event.id,
+        deliveries: [],
+        results: [
+          { messageId: MessageId('result-aborted'), status: 'aborted' as const, completedAt: '2026-11-04T00:00:00.000Z', output: 'Stopped output' },
+          { messageId: MessageId('result-blocked'), status: 'blocked' as const, completedAt: '2026-11-04T00:01:00.000Z', error: 'Blocked output' },
+          { messageId: MessageId('result-max-tokens'), status: 'max-tokens' as const, completedAt: '2026-11-04T00:02:00.000Z', output: 'Limited output' },
+          { messageId: MessageId('result-interrupted'), status: 'interrupted' as const, completedAt: '2026-11-04T00:03:00.000Z', output: 'Interrupted output' },
+          { messageId: MessageId('result-forked'), status: 'forked' as const, completedAt: '2026-11-04T00:04:00.000Z', output: 'Forked output' },
+          { messageId: MessageId('result-other'), status: 'other' as const, completedAt: '2026-11-04T00:05:00.000Z' },
+        ],
+      } : { kind: 'event' as const, id: routineId, deliveries: [], results: [] }),
+    }
+    render(<BotRoutineManager bot={bots[0]!} actions={actions} open onClose={vi.fn()} t={t} />)
+    await screen.findByRole('button', { name: 'View results for Negative delay' })
+    const detail = () => screen.getByRole('region', { name: 'Routine details' })
+    const list = screen.getByRole('list', { name: 'Bot routines' })
+    const expectedRules = [
+      ['Negative delay', 'Runs once in -1 seconds'],
+      ['Default delay', 'Runs once in 0 seconds'],
+      ['Default interval', 'Repeats every 0 seconds'],
+      ['Minute and second', 'Repeats every 1 minute 1 second'],
+      ['Default daily', 'Runs daily at ()'],
+      ['Default weekly', 'Runs weekly on at ()'],
+      ['Default cron', 'Cron ()'],
+    ] as const
+    for (const [title, rule] of expectedRules) {
+      fireEvent.click(within(list).getByText(title).closest('button')!)
+      expect(within(detail()).getByText(rule)).toBeTruthy()
+    }
+    fireEvent.click(within(list).getByText(event.title).closest('button')!)
+    fireEvent.click(within(detail()).getByRole('tab', { name: 'Rule' }))
+    fireEvent.click(within(detail()).getByRole('tab', { name: 'Results' }))
+    for (const label of ['Stopped', 'Blocked', 'Output limit reached', 'Interrupted', 'Continued in another conversation', 'Did not complete']) {
+      expect(await screen.findByText(label)).toBeTruthy()
+    }
+  })
+
+  it('merges schedule history pages and replaces mismatched pages safely', async () => {
+    const routine = {
+      kind: 'schedule' as const,
+      scheduleKind: 'every' as const,
+      id: ScheduleId('schedule-pagination'),
+      title: 'Pagination routine',
+      prompt: 'Inspect pagination',
+      everySeconds: 60,
+      scheduledAt: '2026-11-04T03:00:00.000Z',
+      state: 'scheduled' as const,
+      deliveryMode: 'host' as const,
+      status: 'active' as const,
+      botId: BotId('research'),
+      sessionId: SessionId('session-research'),
+    }
+    const firstCursor = MessageId('history-cursor-first')
+    const secondCursor = MessageId('history-cursor-second')
+    const firstPage = {
+      kind: 'schedule' as const,
+      id: routine.id,
+      records: [{ messageId: MessageId('history-new'), scheduledAt: '2026-11-04T00:00:00.000Z', deliveredAt: '2026-11-04T00:01:00.000Z', prompt: 'Newest run' }],
+      earlierRecordsUnavailable: false,
+      earlierRecordsPruned: false,
+      retention: { days: 30, records: 200 },
+      nextBefore: firstCursor,
+    }
+    const secondPage = {
+      kind: 'schedule' as const,
+      id: routine.id,
+      records: [
+        { messageId: MessageId('history-new'), scheduledAt: '2026-11-04T00:00:00.000Z', deliveredAt: '2026-11-04T00:01:00.000Z', prompt: 'Newest run' },
+        { messageId: MessageId('history-old'), scheduledAt: '2026-11-03T00:00:00.000Z', deliveredAt: '2026-11-03T00:01:00.000Z', prompt: 'Older run' },
+      ],
+      earlierRecordsUnavailable: true,
+      earlierRecordsPruned: true,
+      retention: { days: 30, records: 200 },
+      nextBefore: secondCursor,
+    }
+    const replacementPage = {
+      kind: 'schedule' as const,
+      id: ScheduleId('schedule-replacement'),
+      records: [{ messageId: MessageId('history-replacement'), scheduledAt: '2026-11-02T00:00:00.000Z', deliveredAt: '2026-11-02T00:01:00.000Z', prompt: 'Replacement run' }],
+      earlierRecordsUnavailable: false,
+      earlierRecordsPruned: false,
+      retention: { days: 30, records: 200 },
+    }
+    const history = vi.fn(async (_botId: string, _routineId: string, before?: MessageId) => {
+      if (before === undefined) return firstPage
+      if (before === firstCursor) return secondPage
+      return replacementPage
+    })
+    const actions = {
+      list: vi.fn(async () => [routine]),
+      pause: vi.fn(async () => routine),
+      resume: vi.fn(async () => routine),
+      remove: vi.fn(async () => {}),
+      history,
+    }
+    render(<BotRoutineManager bot={bots[0]!} actions={actions} open onClose={vi.fn()} t={t} />)
+    await screen.findByRole('button', { name: 'View results for Pagination routine' })
+    fireEvent.click(screen.getByRole('button', { name: 'View results for Pagination routine' }))
+    expect(await screen.findByText('Newest run')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Load older runs' }))
+    expect(await screen.findByText('Older run')).toBeTruthy()
+    expect(screen.getByText('Some older runs are unavailable.')).toBeTruthy()
+    expect(screen.getByText('Older runs were pruned by retention.')).toBeTruthy()
+    expect(screen.getAllByText('Newest run')).toHaveLength(1)
+    fireEvent.click(screen.getByRole('button', { name: 'Load older runs' }))
+    expect(await screen.findByText('Replacement run')).toBeTruthy()
+    expect(screen.queryByText('Older run')).toBeNull()
+  })
+
+  it('ignores a stale history failure after selecting another routine', async () => {
+    const first = {
+      kind: 'event' as const,
+      id: 'event-stale-history-first',
+      title: 'First history routine',
+      prompt: 'First history prompt',
+      trigger: { type: 'message' as const, source: 'user' as const },
+      status: 'active' as const,
+      createdAt: 1,
+      updatedAt: 1,
+      state: 'waiting' as const,
+      deliveryMode: 'host' as const,
+      botId: BotId('research'),
+      sessionId: SessionId('session-research'),
+    }
+    const second = { ...first, id: 'event-stale-history-second', title: 'Second history routine' }
+    const stale = Promise.withResolvers<BotRoutineHistory>()
+    const staleSuccess = Promise.withResolvers<BotRoutineHistory>()
+    let firstHistoryCalls = 0
+    const actions = {
+      list: vi.fn(async () => [first, second]),
+      pause: vi.fn(async () => first),
+      resume: vi.fn(async () => first),
+      remove: vi.fn(async () => {}),
+      history: vi.fn(async (_botId: string, routineId: string) => routineId === first.id
+        ? (firstHistoryCalls++ === 0 ? stale.promise : staleSuccess.promise)
+        : { kind: 'event' as const, id: second.id, deliveries: [], results: [] }),
+    }
+    render(<BotRoutineManager bot={bots[0]!} actions={actions} open onClose={vi.fn()} t={t} />)
+    await screen.findByRole('button', { name: 'View results for First history routine' })
+    fireEvent.click(screen.getByRole('button', { name: 'View results for First history routine' }))
+    await waitFor(() => { expect(actions.history).toHaveBeenCalledWith('research', first.id) })
+    fireEvent.click(screen.getByRole('button', { name: 'View results for Second history routine' }))
+    expect(await screen.findByText('No deliveries recorded yet.')).toBeTruthy()
+    stale.reject(new Error('stale history failure'))
+    await stale.promise.catch(() => undefined)
+    expect(screen.queryByText('Routine history could not be loaded. Try again.')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'View results for First history routine' }))
+    await waitFor(() => { expect(actions.history).toHaveBeenCalledTimes(3) })
+    fireEvent.click(screen.getByRole('button', { name: 'View results for Second history routine' }))
+    expect(await screen.findByText('No deliveries recorded yet.')).toBeTruthy()
+    staleSuccess.resolve({ kind: 'event', id: first.id, deliveries: [], results: [] })
+    await staleSuccess.promise
+  })
+
+  it('ignores a rejected catalog after the manager unmounts', async () => {
+    const list = Promise.withResolvers<readonly []>()
+    const actions = {
+      list: vi.fn(() => list.promise),
+      pause: vi.fn(async () => { throw new Error('not used') }),
+      resume: vi.fn(async () => { throw new Error('not used') }),
+      remove: vi.fn(async () => {}),
+      history: vi.fn(async () => ({ kind: 'event' as const, id: 'event-rejected-list', deliveries: [], results: [] })),
+    }
+    const view = render(<BotRoutineManager bot={bots[0]!} actions={actions} open onClose={vi.fn()} t={t} />)
+    view.unmount()
+    list.reject(new Error('stale catalog failure'))
+    await list.promise.catch(() => undefined)
+  })
+
+  it('refreshes an active filter and reports an empty paused filter', async () => {
+    const routine = {
+      kind: 'event' as const,
+      id: 'event-filter-refresh',
+      title: 'Filter refresh routine',
+      prompt: 'Filter refresh prompt',
+      trigger: { type: 'message' as const, source: 'user' as const },
+      status: 'active' as const,
+      createdAt: 1,
+      updatedAt: 1,
+      state: 'waiting' as const,
+      deliveryMode: 'host' as const,
+      botId: BotId('research'),
+      sessionId: SessionId('session-research'),
+    }
+    const list = vi.fn(async () => [routine])
+    const actions = {
+      list,
+      pause: vi.fn(async () => routine),
+      resume: vi.fn(async () => routine),
+      remove: vi.fn(async () => {}),
+      history: vi.fn(async () => ({ kind: 'event' as const, id: routine.id, deliveries: [], results: [] })),
+    }
+    const view = render(<BotRoutineManager bot={bots[0]!} actions={actions} open onClose={vi.fn()} t={t} revision={0} />)
+    await screen.findByRole('button', { name: 'View results for Filter refresh routine' })
+    fireEvent.click(screen.getByRole('tab', { name: 'Enabled' }))
+    view.rerender(<BotRoutineManager bot={bots[0]!} actions={actions} open onClose={vi.fn()} t={t} revision={1} />)
+    await waitFor(() => { expect(list).toHaveBeenCalledTimes(2) })
+    fireEvent.click(screen.getByRole('tab', { name: 'Paused' }))
+    expect(await screen.findByText('No routines match this filter')).toBeTruthy()
+  })
+
+  it('ignores concurrent and stale routine status changes', async () => {
+    const first = {
+      kind: 'event' as const,
+      id: 'event-status-first',
+      title: 'First status routine',
+      prompt: 'First status prompt',
+      trigger: { type: 'message' as const, source: 'user' as const },
+      status: 'active' as const,
+      createdAt: 1,
+      updatedAt: 1,
+      state: 'waiting' as const,
+      deliveryMode: 'host' as const,
+      botId: BotId('research'),
+      sessionId: SessionId('session-research'),
+    }
+    const second = { ...first, id: 'event-status-second', title: 'Second status routine' }
+    const pending = Promise.withResolvers<typeof first>()
+    const pause = vi.fn((_botId: string, routineId: string) => routineId === first.id ? pending.promise : Promise.resolve(second))
+    const actions = {
+      list: vi.fn(async () => [first, second]),
+      pause,
+      resume: vi.fn(async () => first),
+      remove: vi.fn(async () => {}),
+      history: vi.fn(async () => ({ kind: 'event' as const, id: first.id, deliveries: [], results: [] })),
+    }
+    const view = render(<BotRoutineManager bot={bots[0]!} actions={actions} open onClose={vi.fn()} t={t} />)
+    await screen.findByRole('button', { name: 'View results for First status routine' })
+    fireEvent.click(screen.getByRole('button', { name: 'Pause First status routine' }))
+    await waitFor(() => { expect(pause).toHaveBeenCalledOnce() })
+    fireEvent.click(screen.getByRole('button', { name: 'Pause Second status routine' }))
+    expect(pause).toHaveBeenCalledOnce()
+    view.unmount()
+    pending.reject(new Error('stale status failure'))
+    await pending.promise.catch(() => undefined)
+  })
+
+  it('ignores a stale routine deletion failure after unmount', async () => {
+    const routine = {
+      kind: 'event' as const,
+      id: 'event-stale-delete',
+      title: 'Stale delete routine',
+      prompt: 'Stale delete prompt',
+      trigger: { type: 'message' as const, source: 'user' as const },
+      status: 'active' as const,
+      createdAt: 1,
+      updatedAt: 1,
+      state: 'waiting' as const,
+      deliveryMode: 'host' as const,
+      botId: BotId('research'),
+      sessionId: SessionId('session-research'),
+    }
+    const pending = Promise.withResolvers<undefined>()
+    const actions = {
+      list: vi.fn(async () => [routine]),
+      pause: vi.fn(async () => routine),
+      resume: vi.fn(async () => routine),
+      remove: vi.fn(() => pending.promise),
+      history: vi.fn(async () => ({ kind: 'event' as const, id: routine.id, deliveries: [], results: [] })),
+    }
+    const view = render(<BotRoutineManager bot={bots[0]!} actions={actions} open onClose={vi.fn()} t={t} />)
+    await screen.findByRole('button', { name: 'View results for Stale delete routine' })
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Stale delete routine' }))
+    const confirmation = screen.getByRole('dialog', { name: 'Delete routine?' })
+    fireEvent.click(within(confirmation).getByRole('button', { name: 'Delete routine' }))
+    await waitFor(() => { expect(actions.remove).toHaveBeenCalledWith('research', routine.id) })
+    view.unmount()
+    pending.reject(new Error('stale delete failure'))
+    await pending.promise.catch(() => undefined)
+  })
+
+  it('handles deletion dialog close and cancel actions around a pending delete', async () => {
+    const routine = {
+      kind: 'event' as const,
+      id: 'event-delete-dialog',
+      title: 'Delete dialog routine',
+      prompt: 'Delete dialog prompt',
+      trigger: { type: 'message' as const, source: 'user' as const },
+      status: 'active' as const,
+      createdAt: 1,
+      updatedAt: 1,
+      state: 'waiting' as const,
+      deliveryMode: 'host' as const,
+      botId: BotId('research'),
+      sessionId: SessionId('session-research'),
+    }
+    const other = { ...routine, id: 'event-delete-other', title: 'Other delete routine' }
+    const pending = Promise.withResolvers<undefined>()
+    const remove = vi.fn((_botId: string, routineId: string) => routineId === other.id ? Promise.resolve() : pending.promise)
+    const actions = {
+      list: vi.fn(async () => [routine, other]),
+      pause: vi.fn(async () => routine),
+      resume: vi.fn(async () => routine),
+      remove,
+      history: vi.fn(async () => ({ kind: 'event' as const, id: routine.id, deliveries: [], results: [] })),
+    }
+    render(<BotRoutineManager bot={bots[0]!} actions={actions} open onClose={vi.fn()} t={t} />)
+    await screen.findByRole('button', { name: 'View results for Delete dialog routine' })
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Other delete routine' }))
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Delete routine?' })).getByRole('button', { name: 'Delete routine' }))
+    await waitFor(() => { expect(remove).toHaveBeenCalledWith('research', other.id) })
+    expect(screen.queryByRole('button', { name: 'Delete Other delete routine' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Delete dialog routine' }))
+    let confirmation = screen.getByRole('dialog', { name: 'Delete routine?' })
+    const cancelButtons = within(confirmation).getAllByRole('button', { name: 'Cancel' })
+    fireEvent.click(cancelButtons.at(-1)!)
+    expect(screen.queryByRole('dialog', { name: 'Delete routine?' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Delete dialog routine' }))
+    confirmation = screen.getByRole('dialog', { name: 'Delete routine?' })
+    fireEvent.click(within(confirmation).getAllByRole('button', { name: 'Cancel' })[0]!)
+    expect(screen.queryByRole('dialog', { name: 'Delete routine?' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Delete dialog routine' }))
+    confirmation = screen.getByRole('dialog', { name: 'Delete routine?' })
+    fireEvent.click(within(confirmation).getByRole('button', { name: 'Delete routine' }))
+    await waitFor(() => { expect(remove).toHaveBeenCalledTimes(2) })
+    confirmation = screen.getByRole('dialog', { name: 'Delete routine?' })
+    fireEvent.click(within(confirmation).getByRole('button', { name: 'Deleting…' }))
+    expect(remove).toHaveBeenCalledTimes(2)
+    fireEvent.click(within(confirmation).getAllByRole('button', { name: 'Cancel' })[0]!)
+    expect(screen.getByRole('dialog', { name: 'Delete routine?' })).toBeTruthy()
+    pending.resolve(undefined)
+    await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Delete routine?' })).toBeNull() })
+  })
+
   it('renders event deliveries and controls older schedule history', async () => {
     const event = {
       kind: 'event' as const,
