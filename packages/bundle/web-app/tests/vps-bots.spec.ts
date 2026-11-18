@@ -620,7 +620,8 @@ describe('managed VPS Bot composition', () => {
     }
   })
 
-  it('binds the real Agent scope and fences host tools without changing ordinary sessions', async () => {
+  // The managed shell fixture executes /usr/bin/env and bash on the test host.
+  it.skipIf(process.platform === 'win32')('binds the real Agent scope and fences host tools without changing ordinary sessions', async () => {
     const ctx = new Context()
     const argv = vi.spyOn(VpsRuntime.prototype, 'execArgv')
       .mockImplementation((_sessionId, command) => ['/usr/bin/env', '-i', 'PATH=/usr/bin:/bin', ...command])

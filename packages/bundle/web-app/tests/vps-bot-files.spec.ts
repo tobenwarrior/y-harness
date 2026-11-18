@@ -23,7 +23,8 @@ describe('VPS Bot file provider', () => {
     }
   })
 
-  it('uses its computer for guarded writes, edits, reads and moves', async () => {
+  // This fixture runs the POSIX worker's fcntl locks and no-follow filesystem opens.
+  it.skipIf(process.platform === 'win32')('uses its computer for guarded writes, edits, reads and moves', async () => {
     const root = await mkdtemp(join(tmpdir(), 'yh-bot-files-'))
     const runtime = new VpsRuntime(root, 'localhost/test')
     const sessionId = 'bot-session-0e9beecd-b6f5-40b1-8d52-f97259bdcf76'
