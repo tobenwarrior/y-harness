@@ -451,6 +451,7 @@ export class BotWorkspaceController {
   private pending: Promise<void> | undefined
   private pendingCreation: BotCreateRequest | undefined
   private creating: Promise<void> | undefined
+  private memoryManagerActions: BotMemoryManagerActions | undefined
   private readonly avatarLoads = new Map<string, Promise<string>>()
   private readonly templateImportIds = new Map<string, string>()
   private templatePreviewGeneration = 0
@@ -1971,13 +1972,14 @@ export class BotWorkspaceController {
   }
 
   private memoryManager(): BotMemoryManagerActions {
+    if (this.memoryManagerActions !== undefined) return this.memoryManagerActions
     const listMemory = this.remote.listMemory
     const updateMemory = this.remote.updateMemory
     const forgetMemory = this.remote.forgetMemory
     if (listMemory === undefined || updateMemory === undefined || forgetMemory === undefined) {
       throw new Error('Bot memory management is not mounted.')
     }
-    return {
+    const actions: BotMemoryManagerActions = {
       list: async (botId) => {
         const result = await listMemory({ botId: brandString<BotIdType>(botId) })
         if (!result.ok) throw new Error(result.error.message)
@@ -2001,6 +2003,8 @@ export class BotWorkspaceController {
         if (!result.ok) throw new Error(result.error.message)
       },
     }
+    this.memoryManagerActions = actions
+    return actions
   }
 
   private skillManager(): BotSkillManagerActions {

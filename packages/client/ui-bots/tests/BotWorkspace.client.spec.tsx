@@ -8,9 +8,11 @@ import { SessionId } from '@yharness/session'
 import { makeTranslate } from '@yharness/client-test-runtime'
 import type { ClientConnectionRpc } from '@yharness/client-connection/client'
 import type { ComponentProps, ReactNode } from 'react'
+import type { ISessions } from '@yharness/api-session-controller/client'
 import { BotAvatar } from '../src/client/BotAvatar.tsx'
 import { BotSkillsManager } from '../src/client/BotSkillsManager.tsx'
 import { BotDetail, BotGroupDetail, BotRoster } from '../src/client/BotWorkspace.tsx'
+import { BotWorkspaceController, type BotWorkspaceRemote } from '../src/client/controller.ts'
 import { BotRoutineManager } from '../src/client/BotRoutineManager.tsx'
 import { BotTemplatesPanel } from '../src/client/BotTemplatesPanel.tsx'
 import { en } from '../src/client/locales.ts'
@@ -28,6 +30,22 @@ afterEach(() => {
 })
 
 const t = makeTranslate(en)
+
+function memoryController(memories: readonly BotMemorySummary[]): BotWorkspaceController {
+  const remote: BotWorkspaceRemote = {
+    list: vi.fn<BotWorkspaceRemote['list']>(),
+    create: vi.fn<BotWorkspaceRemote['create']>(),
+    rename: vi.fn<BotWorkspaceRemote['rename']>(),
+    listMemory: vi.fn<NonNullable<BotWorkspaceRemote['listMemory']>>(async () => ({ ok: true, value: { memories } })),
+    updateMemory: vi.fn<NonNullable<BotWorkspaceRemote['updateMemory']>>(),
+    forgetMemory: vi.fn<NonNullable<BotWorkspaceRemote['forgetMemory']>>(),
+  }
+  const sessions = {
+    retain: vi.fn(),
+    refresh: vi.fn(async () => {}),
+  } as Pick<ISessions, 'retain' | 'refresh'> as ISessions
+  return new BotWorkspaceController(remote, sessions, () => 'unexpected response')
+}
 
 const bots: readonly BotSummary[] = [
   {
@@ -1745,6 +1763,81 @@ describe('Bot roster and detail', () => {
     fireEvent.click(within(dialog).getAllByRole('button', { name: /^Close$/ }).at(-1)!)
 
     await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Bot memory' })).toBeNull() })
+  })
+
+  it('keeps the focused memory editor when the Controller re-renders equivalent actions', async () => {
+    const memory: BotMemorySummary = { id: 'memory-controller', text: 'Controller memory.', createdAt: 1 }
+    const controller = memoryController([memory])
+    const actions = controller.face().memoryManager
+    if (actions === undefined) throw new Error('memory manager was not mounted')
+    const view = render(<BotDetail
+      bot={bots[0]}
+      loading={false}
+      loadAvatar={undefined}
+      memoryManager={actions}
+      t={t}
+    >
+      <p>Persistent session surface</p>
+    </BotDetail>)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Manage memories' }))
+    const row = await screen.findByRole('listitem', { name: 'memory-controller' })
+    fireEvent.click(within(row).getByRole('button', { name: 'Edit memory memory-controller' }))
+    const editor = within(row).getByRole('textbox', { name: 'Memory text' })
+    fireEvent.change(editor, { target: { value: 'Keep this focused.' } })
+    editor.focus()
+    expect(document.activeElement).toBe(editor)
+
+    const refreshedActions = controller.face().memoryManager
+    if (refreshedActions === undefined) throw new Error('memory manager was not mounted')
+    expect(refreshedActions).toBe(actions)
+    view.rerender(<BotDetail
+      bot={bots[0]}
+      loading={false}
+      loadAvatar={undefined}
+      memoryManager={refreshedActions}
+      t={t}
+    >
+      <p>Persistent session surface</p>
+    </BotDetail>)
+    expect(document.activeElement).toBe(editor)
+    controller.dispose()
+  })
+
+  it('keeps memory removal confirmation when the Controller re-renders equivalent actions', async () => {
+    const memory: BotMemorySummary = { id: 'memory-controller', text: 'Controller memory.', createdAt: 1 }
+    const controller = memoryController([memory])
+    const actions = controller.face().memoryManager
+    if (actions === undefined) throw new Error('memory manager was not mounted')
+    const view = render(<BotDetail
+      bot={bots[0]}
+      loading={false}
+      loadAvatar={undefined}
+      memoryManager={actions}
+      t={t}
+    >
+      <p>Persistent session surface</p>
+    </BotDetail>)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Manage memories' }))
+    const row = await screen.findByRole('listitem', { name: 'memory-controller' })
+    fireEvent.click(within(row).getByRole('button', { name: 'Remove memory memory-controller' }))
+    expect(screen.getByRole('dialog', { name: 'Remove memory?' })).toBeTruthy()
+
+    const refreshedActions = controller.face().memoryManager
+    if (refreshedActions === undefined) throw new Error('memory manager was not mounted')
+    expect(refreshedActions).toBe(actions)
+    view.rerender(<BotDetail
+      bot={bots[0]}
+      loading={false}
+      loadAvatar={undefined}
+      memoryManager={refreshedActions}
+      t={t}
+    >
+      <p>Persistent session surface</p>
+    </BotDetail>)
+    expect(screen.getByRole('dialog', { name: 'Remove memory?' })).toBeTruthy()
+    controller.dispose()
   })
 
   it('preserves a new draft after closing and reopening during a pending save', async () => {

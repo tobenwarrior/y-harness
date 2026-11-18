@@ -1725,6 +1725,7 @@ describe('BotWorkspaceController', () => {
 
     const manager = controller.face().memoryManager
     if (manager === undefined) throw new Error('memory manager was not mounted')
+    expect(controller.face().memoryManager).toBe(manager)
     await expect(manager.list(String(persisted.id))).resolves.toEqual([{ id: 'memory-one', text: 'Keep the handoff short.', createdAt: 1 }])
     await expect(manager.update(String(persisted.id), 'memory-one', 'Keep the review short.')).resolves.toEqual({
       id: 'memory-one', text: 'Keep the review short.', createdAt: 2,
