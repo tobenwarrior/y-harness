@@ -7,7 +7,7 @@ kind: "package-reference"
 
 ## Summary
 
-Use a Bot workspace with a roster, persistent Sessions, animated avatars, profile editing, routines, and optional host-local skill assignment. Profile edits preserve the existing Session, working directory, and preset; capability labels do not grant permissions. Host callbacks provide connected apps, images, skills, and optional templates. Template imports require approval and the required permissions. Missing callbacks hide their controls, and request guards preserve newer drafts. The private memory manager keeps a draft intact while another row's save or removal settles, the controller reuses its callbacks across view refreshes so editor focus and removal confirmation remain stable, and the selected-Bot key prevents late work from updating a different Bot's view. The host-local skill editor keeps an unsaved selection and focus across harmless controller refreshes; explicit reloads and backend compare-and-swap conflicts still control policy refresh.
+Use a Bot workspace with a roster, persistent Sessions, animated avatars, profile editing, routines, and optional host-local skill assignment. Profile edits preserve the existing Session, working directory, and preset; capability labels do not grant permissions. Host callbacks provide connected apps, images, skills, and optional templates. Template imports require approval and the required permissions. Missing callbacks hide their controls, and request guards preserve newer drafts.
 
 ## Table of Contents
 
@@ -28,6 +28,8 @@ Mount the Client export alongside the Bot Remote, Session UI, conversation UI, l
 Hover over **Terminal** to see whether the private VPS terminal has internet access configured.
 
 One-to-one conversations place the user's messages on the right, show a small waiting bubble while the Bot works, and identify the final reply by name and avatar. Scheduled replies carry an expandable origin label. Composer approvals and questions stay visible while they await a response. Open the usage icon for token details.
+
+The memory and skill editors preserve unsaved values and focus during workspace refreshes. Memory confirmation dialogs stay open across those refreshes. Saving or deleting a memory preserves a draft for another entry. Selecting another Bot loads its data. Skill policy conflicts provide an explicit reload. Routine selections and delete confirmations persist across callback updates. The `routineRevision` prop triggers a fresh routine catalog.
 
 When the selected owner Bot requests a credential, the composer dock shows only the validated service unit, API key name, and request status. The Client never receives or edits the credential value. In the supported Cloud Desktop app, the pending card links to its native-handled Vault path; in a Web browser it explains how to open the same chat in the desktop app. Saved and cancelled requests use status-only presentation, and a broker response with no request removes the card. An explicitly shared credential request appears in the Bot’s main chat even while the owner’s chat is idle.
 

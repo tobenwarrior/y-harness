@@ -9,6 +9,7 @@ import { makeTranslate } from '@yharness/client-test-runtime'
 import type { ClientConnectionRpc } from '@yharness/client-connection/client'
 import type { ComponentProps, ReactNode } from 'react'
 import type { ISessions } from '@yharness/api-session-controller/client'
+import type { BotRoutineView } from '@yharness/bots/client'
 import { BotAvatar } from '../src/client/BotAvatar.tsx'
 import { BotSkillsManager } from '../src/client/BotSkillsManager.tsx'
 import { BotDetail, BotGroupDetail, BotRoster } from '../src/client/BotWorkspace.tsx'
@@ -78,6 +79,42 @@ function skillController(skills: readonly BotSkillSummary[]): BotWorkspaceContro
     refresh: vi.fn(async () => {}),
   } as Pick<ISessions, 'retain' | 'refresh'> as ISessions
   return new BotWorkspaceController(remote, sessions, () => 'unexpected response')
+}
+
+function routineController(routines: readonly BotRoutineView[]) {
+  const persisted: BotView = {
+    id: BotId('research'),
+    sessionId: 'session-research' as SessionId,
+    name: 'Research partner',
+    identity: 'browse',
+    accent: 'teal',
+    cwd: '/workspace',
+    state: 'active',
+    createdAt: 1,
+    updatedAt: 1,
+    availability: 'idle',
+    pinned: false,
+    hidden: false,
+  }
+  const listRoutines = vi.fn<NonNullable<BotWorkspaceRemote['listRoutines']>>(async () => ({
+    ok: true,
+    value: { bot: persisted, routines },
+  }))
+  const remote: BotWorkspaceRemote = {
+    list: vi.fn<BotWorkspaceRemote['list']>(),
+    create: vi.fn<BotWorkspaceRemote['create']>(),
+    rename: vi.fn<BotWorkspaceRemote['rename']>(),
+    listRoutines,
+    pauseRoutine: vi.fn<NonNullable<BotWorkspaceRemote['pauseRoutine']>>(),
+    resumeRoutine: vi.fn<NonNullable<BotWorkspaceRemote['resumeRoutine']>>(),
+    deleteRoutine: vi.fn<NonNullable<BotWorkspaceRemote['deleteRoutine']>>(),
+    routineHistory: vi.fn<NonNullable<BotWorkspaceRemote['routineHistory']>>(),
+  }
+  const sessions = {
+    retain: vi.fn(),
+    refresh: vi.fn(async () => {}),
+  } as Pick<ISessions, 'retain' | 'refresh'> as ISessions
+  return { controller: new BotWorkspaceController(remote, sessions, () => 'unexpected response'), listRoutines }
 }
 
 const bots: readonly BotSummary[] = [
@@ -406,6 +443,95 @@ describe('Bot roster and detail', () => {
     expect(screen.getByRole('dialog', { name: 'Delete routine?' })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Delete routine' }))
     await waitFor(() => { expect(actions.remove).toHaveBeenCalledWith('research', 'schedule-release') })
+  })
+
+  it('keeps routine focus and confirmation across equivalent Controller actions, then refreshes on revision', async () => {
+    const routine: BotRoutineView = {
+      kind: 'event',
+      id: 'event-controller-routine',
+      title: 'Controller routine',
+      prompt: 'Controller routine prompt',
+      trigger: { type: 'message', source: 'user' },
+      status: 'active',
+      createdAt: 1,
+      updatedAt: 1,
+      state: 'waiting',
+      deliveryMode: 'host',
+      botId: BotId('research'),
+      sessionId: SessionId('session-research'),
+    }
+    const { controller, listRoutines } = routineController([routine])
+    const actions = controller.face().routineManager
+    if (actions === undefined) throw new Error('routine manager was not mounted')
+    const view = render(<BotDetail
+      bot={bots[0]}
+      loading={false}
+      loadAvatar={undefined}
+      routineManager={actions}
+      routineRevision={controller.source.getSnapshot().routineRevision}
+      t={t}
+    >
+      <p>Persistent session surface</p>
+    </BotDetail>)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Manage routines' }))
+    const routineList = await screen.findByRole('list', { name: 'Bot routines' })
+    const row = within(routineList).getAllByRole('button')[0]!
+    row.focus()
+    expect(document.activeElement).toBe(row)
+    expect(listRoutines).toHaveBeenCalledTimes(1)
+
+    const refreshedActions = controller.face().routineManager
+    if (refreshedActions === undefined) throw new Error('routine manager was not mounted')
+    expect(refreshedActions).not.toBe(actions)
+    view.rerender(<BotDetail
+      bot={bots[0]}
+      loading={false}
+      loadAvatar={undefined}
+      routineManager={refreshedActions}
+      routineRevision={controller.source.getSnapshot().routineRevision}
+      t={t}
+    >
+      <p>Persistent session surface</p>
+    </BotDetail>)
+    expect(document.activeElement).toBe(row)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Controller routine' }))
+    expect(screen.getByRole('dialog', { name: 'Delete routine?' })).toBeTruthy()
+    const sameRevisionActions = controller.face().routineManager
+    if (sameRevisionActions === undefined) throw new Error('routine manager was not mounted')
+    view.rerender(<BotDetail
+      bot={bots[0]}
+      loading={false}
+      loadAvatar={undefined}
+      routineManager={sameRevisionActions}
+      routineRevision={controller.source.getSnapshot().routineRevision}
+      t={t}
+    >
+      <p>Persistent session surface</p>
+    </BotDetail>)
+    expect(screen.getByRole('dialog', { name: 'Delete routine?' })).toBeTruthy()
+    expect(listRoutines).toHaveBeenCalledTimes(1)
+    const deleteDialog = screen.getByRole('dialog', { name: 'Delete routine?' })
+    fireEvent.click(within(deleteDialog).getAllByRole('button', { name: 'Cancel' })[1]!)
+
+    controller.bumpRoutineRevision()
+    const revision = controller.source.getSnapshot().routineRevision
+    const revisionActions = controller.face().routineManager
+    if (revisionActions === undefined) throw new Error('routine manager was not mounted')
+    view.rerender(<BotDetail
+      bot={bots[0]}
+      loading={false}
+      loadAvatar={undefined}
+      routineManager={revisionActions}
+      routineRevision={revision}
+      t={t}
+    >
+      <p>Persistent session surface</p>
+    </BotDetail>)
+    await waitFor(() => { expect(listRoutines).toHaveBeenCalledTimes(2) })
+    expect(within(screen.getByRole('list', { name: 'Bot routines' })).getAllByRole('button')[0]).toBeTruthy()
+    controller.dispose()
   })
 
   it('opens routine management from the selected Bot header', async () => {
