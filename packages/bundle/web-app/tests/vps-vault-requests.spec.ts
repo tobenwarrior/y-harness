@@ -18,6 +18,7 @@ const bot = 'bot-example'
 const session = SessionId('bot-session-7e2e3bd7-aec8-4f11-925d-478a83ed004a')
 const other = SessionId('bot-session-2d12d9ae-30aa-4465-83ad-2253c62bbb59')
 const credential = { unit: 'example-worker.service', name: 'EXAMPLE_API_KEY' }
+const unixTest = it.skipIf(process.platform === 'win32')
 
 it.each<{ label: string; config?: VpsVaultRequestsConfig | null; mode: string; scoped?: true }>([
   { label: 'absent requests', mode: 'disabled' },
@@ -37,9 +38,15 @@ it.each<{ label: string; config?: VpsVaultRequestsConfig | null; mode: string; s
   expect(await response.json()).toEqual({ mode })
 })
 
-it('validates Vault configuration and keeps explicit grants isolated by Bot', async () => {
+it('rejects non-Unix Vault socket paths, including valid-looking paths on Windows', () => {
   expect(() => new VpsVaultRequests({ socketPath: 'relative.sock' })).toThrow('absolute Unix path')
   expect(() => new VpsVaultRequests({ socketPath: '/run/vault.sock\u0000' })).toThrow('absolute Unix path')
+  if (process.platform === 'win32') {
+    expect(() => new VpsVaultRequests({ socketPath: '/run/vault.sock' })).toThrow('absolute Unix path')
+  }
+})
+
+unixTest('validates Vault configuration and keeps explicit grants isolated by Bot', async () => {
   expect(() => new VpsVaultRequests({ socketPath: '/run/vault.sock', grants: [] })).toThrow('exact Bot')
   expect(() => new VpsVaultRequests({
     socketPath: '/run/vault.sock', grants: [{ bot: 'not-a-bot', ...credential }],
@@ -115,8 +122,6 @@ async function withBroker<T>(
     } finally { await rm(root, { recursive: true, force: true }) }
   }
 }
-
-const unixTest = it.skipIf(process.platform === 'win32')
 
 unixTest('returns only owner-authenticated request metadata from the chat route', async () => {
   await withBroker(({ action }) => action === 'cancel' ? { state: 'cancelled' } : { state: 'pending' }, async (socketPath) => {
@@ -244,7 +249,7 @@ unixTest('uses a broker-managed custom socket for direct discovery without share
   })
 })
 
-it('publishes the shared Vault provider without admitting a different shared Agent', async () => {
+unixTest('publishes the shared Vault provider without admitting a different shared Agent', async () => {
   const ctx = new Context()
   await ctx.plugin(SystemPrompt)
   await ctx.plugin(ToolRuntime)
