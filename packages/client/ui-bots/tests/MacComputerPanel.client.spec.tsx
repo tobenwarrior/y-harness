@@ -106,7 +106,7 @@ describe('MacComputerPanel', () => {
 
   it('reports action and focus-refresh failures, then aborts the pending refresh on dispose', async () => {
     let setupCalls = 0
-    let pendingSignal: AbortSignal | undefined
+    let pendingSignal: RequestInit['signal']
     let finishPending: ((value: Response) => void) | undefined
     let rejectPending: ((reason?: unknown) => void) | undefined
     const fetchMock = vi.fn(async (input: string, init?: RequestInit): Promise<Response> => {
