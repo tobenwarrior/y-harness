@@ -2,7 +2,7 @@
 
 import { lstatSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir as systemTmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { NativePtr } from '@yharness/win32-process'
 
@@ -13,6 +13,17 @@ const HARMLESS_ANCESTOR_MASK = 0x001200A9 | FILE_ADD_FILE | FILE_ADD_SUBDIRECTOR
 
 function tmpdir(): string {
   return process.platform === 'darwin' ? '/private/tmp' : systemTmpdir()
+}
+
+function securityDescriptorReadCount(path: string): number {
+  let current = dirname(resolve(path))
+  let count = 1
+  for (;;) {
+    count += 1
+    const parent = dirname(current)
+    if (parent === current) return count
+    current = parent
+  }
 }
 
 interface SecurityState {
@@ -494,17 +505,12 @@ describe('owner-private Windows security', () => {
       expect(() => { assertOwnerPrivateWin32(directory, 'directory', true) }).not.toThrow()
       expect(() => { assertOwnerPrivateWin32(directory, 'directory', true) }).not.toThrow()
       expect(fixture.closed).toEqual([11n, 10n, 11n, 10n])
+      const descriptors = Array.from({ length: securityDescriptorReadCount(directory) }, () => fixture.security.descriptor)
       expect(fixture.freed).toEqual([
-        fixture.security.descriptor,
-        fixture.security.descriptor,
-        fixture.security.descriptor,
-        fixture.security.descriptor,
+        ...descriptors,
         fixture.systemSid,
         fixture.administratorsSid,
-        fixture.security.descriptor,
-        fixture.security.descriptor,
-        fixture.security.descriptor,
-        fixture.security.descriptor,
+        ...descriptors,
         fixture.systemSid,
         fixture.administratorsSid,
       ])
@@ -841,11 +847,9 @@ describe('owner-private Windows security', () => {
     try {
       const { assertOwnerPrivateWin32 } = await importWithFixture(fixture)
       expect(() => { assertOwnerPrivateWin32(directory, 'directory') }).toThrow(/Windows SID cleanup failed/u)
+      const descriptors = Array.from({ length: securityDescriptorReadCount(directory) }, () => fixture.security.descriptor)
       expect(fixture.freed).toEqual([
-        fixture.security.descriptor,
-        fixture.security.descriptor,
-        fixture.security.descriptor,
-        fixture.security.descriptor,
+        ...descriptors,
         fixture.systemSid,
         fixture.administratorsSid,
       ])
