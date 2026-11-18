@@ -14,6 +14,7 @@ const SAMPLE_PROJECT_NAMES = {
   engineering: 'Sample data · Engineering', documentation: 'Sample data · Documentation', sandbox: 'Sample data · Sandbox',
 } as const
 const LONG_SAMPLE_SKILL = 'cross-project-compatibility-and-regression-review-checklist'
+const BUNDLED_SKILLS = ['compound', 'map', 'setup', 'setup-global', 'status-global'] as const
 
 const SHOTS = process.env.DSH_SKILL_LIBRARY_ARTIFACT_DIR
   ?? fileURLToPath(new URL('../../../.artifacts/screenshots/skills-library/', import.meta.url))
@@ -133,6 +134,8 @@ it('explores every project and shared skill, with deliberate reversible cleanup 
       return { path, content }
     }))
     expect(samplePaths.size).toBe(48)
+    const skillCount = samplePaths.size + BUNDLED_SKILLS.length
+    const graphNodeCount = skillCount + Object.keys(SAMPLE_PROJECT_NAMES).length + 1
     const explicitRelationshipCount = new Set(sampleReferences.map(reference => [reference.source, reference.target].sort().join('\0'))).size
     expect(explicitRelationshipCount).toBe(89)
 
@@ -171,15 +174,20 @@ it('explores every project and shared skill, with deliberate reversible cleanup 
     for (const title of [...Object.values(SAMPLE_PROJECT_NAMES), 'Shared skills']) {
       await explorer.getByRole('heading', { name: title, exact: true }).waitFor()
     }
-    expect(await explorer.getByRole('button', { name: /^Inspect / }).count()).toBe(48)
+    expect(await explorer.getByRole('button', { name: /^Inspect / }).count()).toBe(skillCount)
     const sampleInventory = await scaffold.ctx.skillLibrary.list({})
-    expect(sampleInventory.items).toHaveLength(48)
+    expect(sampleInventory.items.filter(item => item.source !== 'bundled').map(item => item.name).sort())
+      .toEqual([...samplePaths.keys()].sort())
+    const bundled = sampleInventory.items.filter(item => item.source === 'bundled')
+    expect(bundled.map(item => item.name).sort()).toEqual(BUNDLED_SKILLS)
+    expect(bundled.every(item => item.ownership === 'vendor' && !item.capabilities.cleanup
+      && !item.capabilities.archive)).toBe(true)
     expect(sampleInventory.projects).toHaveLength(5)
     await page.getByRole('button', { name: 'Hide explorer', exact: true }).click()
     await explorer.waitFor({ state: 'hidden' })
     await page.getByRole('button', { name: 'Show explorer', exact: true }).click()
     await explorer.waitFor()
-    expect(await explorer.getByRole('button', { name: /^Inspect / }).count()).toBe(48)
+    expect(await explorer.getByRole('button', { name: /^Inspect / }).count()).toBe(skillCount)
     await page.getByRole('button', { name: 'Inspect release-checklist', exact: true }).click()
     const detail = page.getByRole('complementary', { name: 'Details', exact: true })
     await expect.poll(async () => (await detail.locator('pre').textContent())?.trim()).toBe(originalBody)
@@ -262,9 +270,9 @@ it('explores every project and shared skill, with deliberate reversible cleanup 
     expect(await hasGraphEdge(graph, 'Open skill release-checklist', 'Open skill planning-checklist')).toBe(false)
 
     expect(await explorer.count()).toBe(1)
-    expect(await explorer.getByRole('button', { name: /^Inspect / }).count()).toBe(48)
-    expect(await graph.getByRole('button').count()).toBe(54)
-    expect(await graph.locator('[data-graph-layer="membership"] line').count()).toBe(48)
+    expect(await explorer.getByRole('button', { name: /^Inspect / }).count()).toBe(skillCount)
+    expect(await graph.getByRole('button').count()).toBe(graphNodeCount)
+    expect(await graph.locator('[data-graph-layer="membership"] line').count()).toBe(skillCount)
     expect(await graph.locator('[data-graph-layer="links"] line').count()).toBe(explicitRelationshipCount)
     for (const reference of sampleReferences) {
       expect(await hasGraphEdge(graph, `Open skill ${reference.source}`, `Open skill ${reference.target}`)).toBe(true)
@@ -294,8 +302,8 @@ it('explores every project and shared skill, with deliberate reversible cleanup 
     const visibleLabels = graph.locator('text[data-graph-label][data-label-visible="true"]')
     for (let index = 0; index < 4; index++) await page.getByRole('button', { name: 'Zoom out', exact: true }).click()
     const distantLabelCount = await visibleLabels.count()
-    expect(distantLabelCount).toBeLessThan(54)
-    expect(await graph.getByRole('button').count()).toBe(54)
+    expect(distantLabelCount).toBeLessThan(graphNodeCount)
+    expect(await graph.getByRole('button').count()).toBe(graphNodeCount)
     expect(await graph.locator('[data-graph-layer="links"] line').count()).toBe(explicitRelationshipCount)
     const longNode = graph.getByRole('button', { name: `Open skill ${LONG_SAMPLE_SKILL}`, exact: true })
     await longNode.focus()
@@ -303,7 +311,7 @@ it('explores every project and shared skill, with deliberate reversible cleanup 
     expect(await longNode.locator('text[data-graph-label]').getAttribute('data-label-visible')).toBe('true')
     await page.getByRole('button', { name: 'Fit graph', exact: true }).click()
     for (let index = 0; index < 3; index++) await page.getByRole('button', { name: 'Zoom in', exact: true }).click()
-    await expect.poll(() => visibleLabels.count()).toBe(54)
+    await expect.poll(() => visibleLabels.count()).toBe(graphNodeCount)
     expect(await visibleLabels.count()).toBeGreaterThan(distantLabelCount)
     await page.getByRole('button', { name: 'Fit graph', exact: true }).click()
     await graph.focus()
@@ -346,7 +354,7 @@ it('explores every project and shared skill, with deliberate reversible cleanup 
     console.log(`Skills graph screenshot: ${graphShot}`)
     await detail.getByRole('button', { name: 'Hide inspector', exact: true }).click()
     await detail.waitFor({ state: 'hidden' })
-    expect(await graph.getByRole('button').count()).toBe(54)
+    expect(await graph.getByRole('button').count()).toBe(graphNodeCount)
     await page.screenshot({ path: join(SHOTS, 'skills-graph-expanded.png'), animations: 'disabled' })
     await page.getByRole('button', { name: 'Show inspector', exact: true }).click()
     await expect.poll(async () => (await detail.locator('pre').textContent())?.trim()).toBe(originalBody)
@@ -386,6 +394,18 @@ it('explores every project and shared skill, with deliberate reversible cleanup 
           : [{ kind: 'create' as const, name: 'interface-triage', description: 'Diagnose focused interface regressions', content: '# Interface triage\n\nInspect the reported behavior. Reproduce it in the isolated fixture, then run the focused browser check.\n\nNever publish without approval.' }],
       uncertainty: ['Fixture observations are unverified. Review the procedure before applying it.'],
     }) })
+    const validatorId = 'browser-fixture-validator'
+    library.registerLearningValidator({
+      id: validatorId,
+      trusted: false,
+      validate: async proposal => ({
+        constraintsPreserved: proposal.changes.every(change => change.after.includes('Never publish without approval.')),
+        resourcesPreserved: proposal.changes.every(change => change.resources.length === 0),
+        referenceImpactChecked: proposal.changes.every(change => change.references.length === 0),
+        survivorEquivalent: false,
+        findings: [],
+      }),
+    })
     const evidence = await library.recordLearningEvidence({ projectId: project!.id, sessionId: 'browser-fixture', task: 'Diagnose the interface regression with a focused browser check', completed: true, substantial: true, eventRefs: ['browser-fixture:1', 'browser-fixture:2'], observations: ['The isolated browser fixture exercised the reported interface behavior.'], checks: [] })
     await chooseProject(page, SAMPLE_PROJECT_NAMES.release)
     await page.getByRole('tab', { name: 'Review', exact: true }).click()
@@ -399,9 +419,14 @@ it('explores every project and shared skill, with deliberate reversible cleanup 
     await page.getByRole('button', { name: `Inspect suggestion ${createdProposal.id}`, exact: true }).click()
     const review = page.getByRole('complementary', { name: 'Review', exact: true })
     await review.getByText('No source checks recorded. Task completion does not establish verification.', { exact: true }).waitFor()
-    expect(await review.getByRole('button', { name: 'Validate independently', exact: true }).isEnabled()).toBe(true)
     expect(createdProposal.state).toBe('review')
     const createdPath = join(projectRoot, '.dsh', 'skills', 'interface-triage', 'SKILL.md')
+    expect(existsSync(createdPath)).toBe(false)
+    await review.getByRole('button', { name: 'Validate independently', exact: true }).click()
+    await expect.poll(() => library.detailProposal({ proposalId: createdProposal.id })).toMatchObject({
+      state: 'validated',
+      validation: { validatorId, independent: true, constraintsPreserved: true },
+    })
     expect(existsSync(createdPath)).toBe(false)
     const learningShot = join(SHOTS, 'skills-learning-review.png')
     await page.screenshot({ path: learningShot, animations: 'disabled' })
