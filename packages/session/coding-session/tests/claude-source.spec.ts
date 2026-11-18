@@ -3,7 +3,7 @@ import { PassThrough } from 'node:stream'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
-import { pathToFileURL } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { brandString } from '@yharness/brand'
@@ -78,7 +78,11 @@ describe('explicit original Claude source', () => {
       CLAUDE_CONFIG_DIR: resolve(config.profileRoot), HOME: resolve(config.shellHome),
       NODE_OPTIONS: undefined, ANTHROPIC_API_KEY: undefined,
     })
-    expect(f.specs[0]?.argv).toEqual([resolve('/runtime/node'), expect.stringMatching(/lib\/types\/claude-source-worker\.js$/), '10000'])
+    expect(f.specs[0]?.argv).toEqual([
+      resolve(config.nodePath),
+      fileURLToPath(new URL('../lib/types/claude-source-worker.js', import.meta.url)),
+      '10000',
+    ])
     expect(f.specs.every(spec => spec.cwd === resolve(config.directory))).toBe(true)
     const operations = f.specs.map(spec => typeof spec.stdio.stdin === 'object' ? z.object({ operation: z.string() }).parse(JSON.parse(spec.stdio.stdin.data)).operation : '')
     expect(operations).toEqual(['listSessions', 'getSessionInfo', 'getSessionMessages', 'getSessionInfo', 'getSessionInfo', 'getSessionMessages', 'getSessionInfo'])
