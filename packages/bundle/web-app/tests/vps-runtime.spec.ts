@@ -1,4 +1,5 @@
 import { lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { PassThrough } from 'node:stream'
@@ -7,7 +8,39 @@ import type { SubprocessTerminalHandle, SubprocessTerminalSpawnSpec } from '@yha
 import LocalSubprocessRuntime from '@yharness/subprocess-local'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { VpsBotSubprocess } from '../src/vps-bot-process.ts'
-import { VpsRuntime, VpsRuntimeError, type VpsCommandResult, type VpsRuntimeOptions } from '../src/vps-runtime.ts'
+import { isVpsSharedPath, VpsRuntime, VpsRuntimeError, type VpsCommandResult, type VpsExecOptions, type VpsRuntimeOptions } from '../src/vps-runtime.ts'
+
+const fsControls = vi.hoisted(() => ({
+  cgroup: undefined as string | undefined,
+  cgroupError: false,
+  helper: undefined as boolean | undefined,
+}))
+
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>()
+  const originalReadFileSync = actual.readFileSync.bind(actual)
+  const originalAccessSync = actual.accessSync.bind(actual)
+  return {
+    ...actual,
+    readFileSync: (...args: Parameters<typeof actual.readFileSync>): ReturnType<typeof actual.readFileSync> => {
+      const [path] = args
+      if (path === '/proc/self/cgroup') {
+        if (fsControls.cgroupError) throw new Error('fixture cgroup unreadable')
+        if (fsControls.cgroup !== undefined) return fsControls.cgroup
+      }
+      return originalReadFileSync(...args)
+    },
+    accessSync: (...args: Parameters<typeof actual.accessSync>): ReturnType<typeof actual.accessSync> => {
+      const [path] = args
+      if (path === '/usr/bin/slirp4netns' && fsControls.helper !== undefined) {
+        if (fsControls.helper) return
+        throw new Error('fixture helper unavailable')
+      }
+      originalAccessSync(...args)
+      return
+    },
+  }
+})
 
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>()
@@ -48,6 +81,13 @@ interface FixtureMount {
   Options: string[]
 }
 
+interface InspectionCase {
+  name: string
+  serialized?: string
+  mutate?: (metadata: Record<string, unknown>) => void
+  message: string
+}
+
 function fixtureMount(value: string, destination: string, mode: string): FixtureMount | undefined {
   const suffix = `:${destination}:${mode}`
   if (!value.endsWith(suffix)) return undefined
@@ -70,13 +110,15 @@ function fixture(run: (argv: readonly string[], signal: AbortSignal) => Promise<
   return result()
 }, {
   browser = false, sharedWorkspace = false, hostileSharedVolume = false, internet,
-  userService = false, configurationSignal, networkPolicy, sharedWorkspacePolicy,
+  userService = false, uid, configurationSignal, networkPolicy, sharedWorkspacePolicy, volumeResult,
 }: {
   browser?: boolean
   sharedWorkspace?: boolean
   hostileSharedVolume?: boolean
   internet?: boolean
   userService?: boolean
+  uid?: () => number | undefined
+  volumeResult?: (argv: readonly string[]) => VpsCommandResult | undefined
 } & Pick<VpsRuntimeOptions, 'configurationSignal' | 'networkPolicy' | 'sharedWorkspacePolicy'> = {}): Fixture {
   const root = mkdtempSync(join(tmpdir(), 'dsh-vps-runtime-'))
   roots.push(root)
@@ -115,12 +157,13 @@ function fixture(run: (argv: readonly string[], signal: AbortSignal) => Promise<
   }
   const runtime = new VpsRuntime(root, 'localhost/yharness-vps-bot:24.04', {
     ...(process.platform === 'win32' ? { uid: () => typeof process.getuid === 'function' ? process.getuid() : 0 } : {}),
+    ...(uid === undefined ? {} : { uid }),
     userService,
     networkHelperAvailable: () => true,
     run: async (argv, signal) => {
       calls.push([...argv])
       const podman = argv.slice(argv.indexOf('/usr/bin/podman'))
-      if (podman[1] === 'volume') return await defaultVolumeCommand(podman)
+      if (podman[1] === 'volume') return volumeResult?.(podman) ?? await defaultVolumeCommand(podman)
       return await run(podman, signal)
     },
   }, {
@@ -134,7 +177,558 @@ function fixture(run: (argv: readonly string[], signal: AbortSignal) => Promise<
   return { root, calls, runtime }
 }
 
+function inspectedContainer(f: Fixture, volume: string, overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  const image = 'localhost/yharness-vps-bot:24.04'
+  const workspace = f.runtime.workspace(sessions.alice)
+  return {
+    ImageName: image,
+    Config: {
+      Image: image,
+      User: '1000:1000',
+      Labels: {
+        'io.yharness.vps.root': f.root,
+        'io.yharness.vps.image': image,
+        'io.yharness.vps.session': sessions.alice,
+        'io.yharness.vps.workspace': workspace,
+        'io.yharness.vps.volume': volume,
+      },
+    },
+    State: { Running: false },
+    Mounts: [{ Type: 'volume', Name: volume, Destination: workspace, RW: true, Options: ['nodev', 'nosuid'] }],
+    HostConfig: {
+      NetworkMode: 'none', Privileged: false, SecurityOpt: ['no-new-privileges'], CapDrop: ['ALL'],
+      UsernsMode: 'private', Tmpfs: { '/tmp': 'rw,noexec,nosuid,nodev' },
+    },
+    ...overrides,
+  }
+}
+
+function mutableRecord(value: unknown): Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error('fixture record expected')
+  return value as Record<string, unknown>
+}
+
+function mutableArray(value: unknown): Record<string, unknown>[] {
+  if (!Array.isArray(value) || !value.every(entry => typeof entry === 'object' && entry !== null && !Array.isArray(entry))) {
+    throw new Error('fixture array expected')
+  }
+  return value as Record<string, unknown>[]
+}
+
+function configureBrowserInspection(metadata: Record<string, unknown>, root: string): void {
+  const config = mutableRecord(metadata.Config)
+  const labels = mutableRecord(config.Labels)
+  const image = 'localhost/yharness-vps-bot-browser:24.04-v1'
+  metadata.ImageName = image
+  config.Image = image
+  labels['io.yharness.vps.image'] = image
+  config.CreateCommand = ['podman', 'run', '--network=slirp4netns:allow_host_loopback=false']
+  const volume = String(labels['io.yharness.vps.volume'])
+  const mounts = mutableArray(metadata.Mounts)
+  mounts.push({
+    Type: 'volume', Name: `${volume}-browser`, Destination: '/var/lib/yharness-browser-profile',
+    RW: true, Options: ['nodev', 'nosuid'],
+  })
+  const host = mutableRecord(metadata.HostConfig)
+  host.NetworkMode = 'slirp4netns:allow_host_loopback=false'
+  host.SecurityOpt = ['no-new-privileges', `seccomp=${join(root, 'browser-seccomp.json')}`]
+}
+
+function configureProjectInspection(metadata: Record<string, unknown>, root: string): void {
+  const digest = createHash('sha256').update(resolve(root)).digest('hex').slice(0, 16)
+  mutableArray(metadata.Mounts).push({
+    Type: 'volume', Name: `yharness-bot-project-${digest}`, Destination: '/workspace',
+    RW: true, Options: ['nodev', 'nosuid'],
+  })
+}
+
+function existingContainerFixture(
+  mutate?: (metadata: Record<string, unknown>) => void,
+  serialized?: string,
+  options: Parameters<typeof fixture>[1] = {},
+  command?: (argv: readonly string[]) => VpsCommandResult | undefined,
+): Fixture {
+  const f = fixture(async (argv) => {
+    const override = command?.(argv)
+    if (override !== undefined) return override
+    if (argv[1] === 'container' && argv[2] === 'exists') return result()
+    if (argv[1] === 'inspect') {
+      if (serialized !== undefined) return result(0, serialized)
+      const container = argv.at(-1) ?? ''
+      const volume = `yharness-bot-volume-${container.replace(/^yharness-bot-/u, '')}`
+      const metadata = inspectedContainer(f, volume)
+      mutate?.(metadata)
+      return result(0, JSON.stringify(metadata))
+    }
+    return result()
+  }, options)
+  return f
+}
+
 describe('VpsRuntime', () => {
+  it('reports the installed controls and rejects overlapping shared roots', () => {
+    expect(() => new VpsRuntime('/workspace/private', 'image', {}, { sharedWorkspace: true })).toThrow('distinct')
+
+    const plain = fixture()
+    expect(plain.runtime.supportsSharedWorkspaceControl()).toBe(false)
+    expect(plain.runtime.supportsNetworkControl(true)).toBe(false)
+    expect(plain.runtime.supportsNetworkControl(false)).toBe(false)
+
+    const shared = fixture(undefined, {
+      sharedWorkspacePolicy: { get: async () => undefined, set: async () => {} },
+    })
+    expect(shared.runtime.sharedRoot).toBe('/workspace')
+    expect(shared.runtime.supportsSharedWorkspaceControl()).toBe(true)
+
+    const network = fixture(undefined, {
+      networkPolicy: { get: async () => undefined, set: async () => {} },
+    })
+    expect(network.runtime.supportsNetworkControl(true)).toBe(true)
+    expect(network.runtime.supportsNetworkControl(false)).toBe(true)
+  })
+
+  it('keeps shared-project paths distinct from private paths', () => {
+    expect(isVpsSharedPath('/workspace')).toBe(true)
+    expect(isVpsSharedPath('/workspace/project')).toBe(true)
+    expect(isVpsSharedPath('/workspace', '/workspace')).toBe(false)
+    expect(isVpsSharedPath('/workspace/project', '/workspace')).toBe(false)
+    expect(isVpsSharedPath('/workspace-other')).toBe(false)
+  })
+
+  it('probes the host network helper when no test hook is installed', () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-vps-network-'))
+    roots.push(root)
+    const runtime = new VpsRuntime(root, 'image', {}, {
+      networkPolicy: { get: async () => undefined, set: async () => {} },
+    })
+    expect(typeof runtime.supportsNetworkControl(false)).toBe('boolean')
+  })
+
+  it('evaluates Linux network and systemd metadata without changing the host', () => {
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')
+    const originalControls = { ...fsControls }
+    Object.defineProperty(process, 'platform', { value: 'linux', configurable: true })
+    try {
+      fsControls.cgroup = 'garbage\n0::/other.slice\n'
+      fsControls.cgroupError = false
+      fsControls.helper = false
+      const noServiceRoot = mkdtempSync(join(tmpdir(), 'dsh-vps-linux-'))
+      roots.push(noServiceRoot)
+      const noService = new VpsRuntime(noServiceRoot, 'image', {}, {
+        networkPolicy: { get: async () => undefined, set: async () => {} },
+      })
+      expect(noService.supportsNetworkControl(false)).toBe(false)
+
+      fsControls.helper = true
+      expect(noService.supportsNetworkControl(false)).toBe(true)
+
+      fsControls.cgroup = `0::/user.slice/user-${String(process.getuid?.() ?? 0)}.slice/user@${String(process.getuid?.() ?? 0)}.service/app.service\n`
+      const serviceRoot = mkdtempSync(join(tmpdir(), 'dsh-vps-linux-service-'))
+      roots.push(serviceRoot)
+      new VpsRuntime(serviceRoot, 'image')
+
+      fsControls.cgroup = 'not-a-cgroup-line\n'
+      const invalidRoot = mkdtempSync(join(tmpdir(), 'dsh-vps-linux-invalid-'))
+      roots.push(invalidRoot)
+      new VpsRuntime(invalidRoot, 'image')
+      fsControls.cgroup = undefined
+      fsControls.cgroupError = true
+      const errorRoot = mkdtempSync(join(tmpdir(), 'dsh-vps-linux-error-'))
+      roots.push(errorRoot)
+      new VpsRuntime(errorRoot, 'image')
+    } finally {
+      fsControls.cgroup = originalControls.cgroup
+      fsControls.cgroupError = originalControls.cgroupError
+      fsControls.helper = originalControls.helper
+      if (platform === undefined) delete (process as { platform?: string }).platform
+      else Object.defineProperty(process, 'platform', platform)
+    }
+  })
+
+  it('releases an admitted operation only once', async () => {
+    const { runtime } = fixture()
+    const release = runtime.beginUse(sessions.alice)
+    const disposal = runtime.dispose()
+    release()
+    release()
+    await disposal
+    expect(runtime.signal.aborted).toBe(true)
+  })
+
+  it('rejects unavailable and unchanged policy updates without Podman work', async () => {
+    const unavailable = fixture()
+    await expect(unavailable.runtime.setInternetAccess(sessions.alice, true, new AbortController().signal))
+      .rejects.toThrow('internet settings are unavailable')
+    await expect(unavailable.runtime.setSharedWorkspaceAccess(sessions.alice, true, new AbortController().signal))
+      .rejects.toThrow('Shared workspace settings are unavailable')
+
+    const network = fixture(undefined, {
+      networkPolicy: { get: async () => false, set: async () => {} },
+    })
+    await expect(network.runtime.setInternetAccess(sessions.alice, false, new AbortController().signal)).resolves.toBe('applied')
+
+    const shared = fixture(undefined, {
+      sharedWorkspace: true,
+      sharedWorkspacePolicy: { get: async () => true, set: async () => {} },
+    })
+    await expect(shared.runtime.setSharedWorkspaceAccess(sessions.alice, true, new AbortController().signal)).resolves.toBe('applied')
+    expect(network.calls).toEqual([])
+    expect(shared.calls).toEqual([])
+  })
+
+  it('rejects operations while a Computer is being replaced', async () => {
+    const entered = Promise.withResolvers<undefined>()
+    const release = Promise.withResolvers<undefined>()
+    const f = fixture(undefined, {
+      networkPolicy: {
+        get: async () => false,
+        set: async () => {
+          entered.resolve(undefined)
+          await release.promise
+        },
+      },
+    })
+    const replacing = f.runtime.setInternetAccess(sessions.alice, true, new AbortController().signal)
+    await entered.promise
+    expect(() => f.runtime.beginUse(sessions.alice)).toThrow('being replaced')
+    await expect(f.runtime.setInternetAccess(sessions.alice, true, new AbortController().signal)).resolves.toBe('busy')
+    release.resolve(undefined)
+    await replacing
+  })
+
+  it('reports lookup, launch, restart, and replacement failures', async () => {
+    const lookup = fixture(async argv => argv[1] === 'container' ? result(2) : result())
+    await expect(lookup.runtime.ensure(sessions.alice)).rejects.toThrow('container lookup failed')
+
+    const launch = fixture(async (argv) => {
+      if (argv[1] === 'container' && argv[2] === 'exists') return result(1)
+      if (argv[1] === 'run') return result(125)
+      return result()
+    })
+    await expect(launch.runtime.ensure(sessions.alice)).rejects.toThrow('could not be launched')
+
+    const inspect = fixture(async (argv) => {
+      if (argv[1] === 'container' && argv[2] === 'exists') return result(0)
+      if (argv[1] === 'inspect') return result(125)
+      return result()
+    })
+    await expect(inspect.runtime.ensure(sessions.alice)).rejects.toThrow('inspection failed')
+
+    const start = existingContainerFixture(undefined, undefined, {}, (argv) => {
+      if (argv[1] === 'start') return result(125)
+      return undefined
+    })
+    await expect(start.runtime.ensure(sessions.alice)).rejects.toThrow('could not be restarted')
+
+    const policy = { get: async () => false, set: async () => {} }
+    const image = existingContainerFixture(undefined, undefined, { networkPolicy: policy }, (argv) => {
+      if (argv[1] === 'image') return result(125)
+      return undefined
+    })
+    await expect(image.runtime.setInternetAccess(sessions.alice, true, new AbortController().signal))
+      .rejects.toThrow('image is unavailable')
+
+    const remove = existingContainerFixture(undefined, undefined, { networkPolicy: policy }, (argv) => {
+      if (argv[1] === 'rm') return result(125)
+      return undefined
+    })
+    await expect(remove.runtime.setInternetAccess(sessions.alice, true, new AbortController().signal))
+      .rejects.toThrow('could not be replaced')
+
+    const containerLookup = existingContainerFixture(undefined, undefined, { networkPolicy: policy }, (argv) => {
+      if (argv[1] === 'container' && argv[2] === 'exists') return result(2)
+      return undefined
+    })
+    await expect(containerLookup.runtime.setInternetAccess(sessions.alice, true, new AbortController().signal))
+      .rejects.toThrow('container lookup failed')
+  })
+
+  it('reports workspace and shared-volume lifecycle failures', async () => {
+    const create = fixture(undefined, {
+      volumeResult: argv => argv[2] === 'create' && !argv.includes('--driver') ? result(125) : undefined,
+    })
+    await expect(create.runtime.ensure(sessions.alice)).rejects.toThrow('workspace volume could not be created')
+
+    const exists = fixture(undefined, {
+      volumeResult: argv => argv[2] === 'exists' ? result(2) : undefined,
+    })
+    await expect(exists.runtime.ensure(sessions.alice)).rejects.toThrow('workspace volume lookup failed')
+
+    const inspect = fixture(undefined, {
+      volumeResult: argv => argv[2] === 'inspect' ? result(125) : undefined,
+    })
+    await expect(inspect.runtime.ensure(sessions.alice)).rejects.toThrow('workspace volume ownership')
+
+    const sharedPolicy = { get: async () => true, set: async () => {} }
+    const sharedCreate = fixture(undefined, {
+      sharedWorkspacePolicy: sharedPolicy,
+      volumeResult: argv => argv[2] === 'create' && argv.includes('--driver') ? result(125) : undefined,
+    })
+    await expect(sharedCreate.runtime.ensure(sessions.alice)).rejects.toThrow('Shared project volume could not be created')
+
+    const sharedExists = fixture(undefined, {
+      sharedWorkspacePolicy: sharedPolicy,
+      volumeResult: argv => argv[2] === 'exists' && (argv.at(-1) ?? '').startsWith('yharness-bot-project-') ? result(2) : undefined,
+    })
+    await expect(sharedExists.runtime.ensure(sessions.alice)).rejects.toThrow('Shared project volume lookup failed')
+
+    const sharedInspect = fixture(undefined, {
+      sharedWorkspacePolicy: sharedPolicy,
+      volumeResult: argv => argv[2] === 'inspect' && (argv.at(-1) ?? '').startsWith('yharness-bot-project-') ? result(125) : undefined,
+    })
+    await expect(sharedInspect.runtime.ensure(sessions.alice)).rejects.toThrow('Shared project volume must be a local volume')
+  })
+
+  it('rejects a workspace whose owner does not match the runtime identity', async () => {
+    const f = fixture(undefined, { uid: () => -1 })
+    await expect(f.runtime.ensure(sessions.alice)).rejects.toThrow('owner-only directory')
+
+    const fallback = fixture(undefined, { uid: () => undefined })
+    await expect(fallback.runtime.ensure(sessions.alice)).resolves.toBeUndefined()
+  })
+
+  it('omits runtime user ids when the host does not expose them', async () => {
+    const uid = process.getuid
+    const gid = process.getgid
+    Object.defineProperty(process, 'getuid', { value: undefined, configurable: true, writable: true })
+    Object.defineProperty(process, 'getgid', { value: undefined, configurable: true, writable: true })
+    try {
+      const f = fixture()
+      await f.runtime.ensure(sessions.alice)
+      const launch = f.calls.find(argv => argv[1] === 'run')
+      expect(launch).not.toContain('--user')
+    } finally {
+      Object.defineProperty(process, 'getuid', { value: uid, configurable: true, writable: true })
+      Object.defineProperty(process, 'getgid', { value: gid, configurable: true, writable: true })
+    }
+  })
+
+  it.each([
+    { name: 'malformed JSON', serialized: '{', message: 'metadata is not valid JSON' },
+    { name: 'non-object metadata', serialized: '[]', message: 'metadata is invalid' },
+    { name: 'missing ownership labels', mutate: (metadata) => { delete metadata.Config }, message: 'ownership does not match' },
+    { name: 'invalid state', mutate: (metadata) => { delete metadata.State }, message: 'state is invalid' },
+    { name: 'invalid mount list', mutate: (metadata) => { delete metadata.Mounts }, message: 'mounts are invalid' },
+    { name: 'missing workspace mount', mutate: (metadata) => { metadata.Mounts = [] }, message: 'workspace mount is invalid' },
+    {
+      name: 'unexpected host mount', mutate: (metadata) => {
+        const mounts = mutableArray(metadata.Mounts)
+        mounts.push({ Type: 'bind', Destination: '/other' })
+      }, message: 'unexpected host mount',
+    },
+    {
+      name: 'invalid workspace options', mutate: (metadata) => {
+        const mounts = mutableArray(metadata.Mounts)
+        mounts[0]!.Options = []
+        mounts[0]!.Mode = undefined
+      }, message: 'workspace volume options are invalid',
+    },
+    {
+      name: 'invalid temporary storage', mutate: (metadata) => {
+        mutableRecord(metadata.HostConfig).Tmpfs = 'rw'
+      }, message: 'temporary storage is invalid',
+    },
+    {
+      name: 'invalid privileges', mutate: (metadata) => {
+        mutableRecord(metadata.HostConfig).Privileged = true
+      }, message: 'privileges are invalid',
+    },
+    {
+      name: 'invalid network', mutate: (metadata) => {
+        mutableRecord(metadata.HostConfig).NetworkMode = 'host'
+      }, message: 'network does not match',
+    },
+    {
+      name: 'invalid user', mutate: (metadata) => {
+        mutableRecord(metadata.Config).User = '0'
+      }, message: 'container user is invalid',
+    },
+  ] satisfies InspectionCase[])('rejects $name in an existing container inspection', async ({ mutate, serialized, message }) => {
+    const f = existingContainerFixture(mutate, serialized)
+    await expect(f.runtime.ensure(sessions.alice)).rejects.toThrow(message)
+  })
+
+  it('reuses browser and shared project mounts only when their metadata is complete', async () => {
+    const browser = existingContainerFixture((metadata) => {
+      configureBrowserInspection(metadata, browser.root)
+    }, undefined, { browser: true })
+    await expect(browser.runtime.ensure(sessions.alice)).resolves.toBeUndefined()
+
+    const shared = existingContainerFixture((metadata) => { configureProjectInspection(metadata, shared.root) }, undefined, {
+      sharedWorkspacePolicy: { get: async () => true, set: async () => {} },
+    })
+    await expect(shared.runtime.ensure(sessions.alice)).resolves.toBeUndefined()
+    expect(shared.runtime.execArgv(sessions.alice, ['pwd'], { workdir: '/workspace' })).toContain('/workspace')
+  })
+
+  it('rejects browser policy, profile, and shared project metadata', async () => {
+    const profile = existingContainerFixture((metadata) => {
+      configureBrowserInspection(metadata, profile.root)
+      const mounts = mutableArray(metadata.Mounts)
+      mounts.at(-1)!.Options = []
+    }, undefined, { browser: true })
+    await expect(profile.runtime.ensure(sessions.alice)).rejects.toThrow('browser profile mount is invalid')
+
+    const policy = existingContainerFixture((metadata) => {
+      configureBrowserInspection(metadata, policy.root)
+      mutableRecord(metadata.HostConfig).SecurityOpt = ['no-new-privileges']
+    }, undefined, { browser: true })
+    await expect(policy.runtime.ensure(sessions.alice)).rejects.toThrow('browser container policy is invalid')
+
+    const project = existingContainerFixture((metadata) => {
+      configureProjectInspection(metadata, project.root)
+      const mounts = mutableArray(metadata.Mounts)
+      mounts.at(-1)!.Name = 'foreign-project-volume'
+    }, undefined, { sharedWorkspacePolicy: { get: async () => true, set: async () => {} } })
+    await expect(project.runtime.ensure(sessions.alice)).rejects.toThrow('shared project mount')
+  })
+
+  it('rejects a browser policy that is not a private owner-only file', async () => {
+    const f = fixture(undefined, { browser: true })
+    rmSync(join(f.root, 'browser-seccomp.json'))
+    await expect(f.runtime.ensure(sessions.alice)).rejects.toThrow('browser policy must be an owner-only file')
+  })
+
+  it('reports a busy shared-workspace replacement when the desktop is active', async () => {
+    const f = existingContainerFixture((metadata) => {
+      mutableRecord(metadata.State).Running = true
+    }, undefined, { sharedWorkspacePolicy: { get: async () => false, set: async () => {} } }, (argv) => {
+      if (argv[1] === 'top') {
+        return result(0, [
+          'PID PPID COMMAND COMMAND',
+          '1 0 bash bash /usr/local/bin/yharness-vps-bot-start',
+          '24 1 sleep sleep 300',
+        ].join('\n'))
+      }
+      return undefined
+    })
+    await expect(f.runtime.setSharedWorkspaceAccess(sessions.alice, true, new AbortController().signal)).resolves.toBe('busy')
+  })
+
+  it.each([
+    { name: 'a malformed heading', output: 'not a process table' },
+    { name: 'a malformed entry', output: 'PID PPID COMMAND COMMAND\nnot-an-entry' },
+    { name: 'a non-root launcher', output: 'PID PPID COMMAND COMMAND\n1 1 bash bash /usr/local/bin/yharness-vps-bot-start' },
+    { name: 'a child with the wrong parent', output: 'PID PPID COMMAND COMMAND\n2 99 sleep sleep 1' },
+    { name: 'an unexpected child process', output: 'PID PPID COMMAND COMMAND\n2 1 daemon daemon' },
+  ])('keeps a Computer busy for $name', async ({ output }) => {
+    const f = existingContainerFixture((metadata) => {
+      mutableRecord(metadata.State).Running = true
+    }, undefined, { networkPolicy: { get: async () => false, set: async () => {} } }, (argv) => {
+      if (argv[1] === 'top') return result(0, output)
+      return undefined
+    })
+    await expect(f.runtime.setInternetAccess(sessions.alice, true, new AbortController().signal)).resolves.toBe('busy')
+  })
+
+  it('waits for a desktop readiness retry and reports a readiness timeout', async () => {
+    vi.useFakeTimers()
+    try {
+      let probes = 0
+      const retryProbed = Promise.withResolvers<undefined>()
+      const retry = fixture(async (argv) => {
+        if (argv[1] === 'container' && argv[2] === 'exists') return result(1)
+        if (argv[1] === 'exec') {
+          retryProbed.resolve(undefined)
+          return result(++probes === 1 ? 125 : 0)
+        }
+        return result()
+      })
+      const ready = retry.runtime.ensure(sessions.alice)
+      await retryProbed.promise
+      await vi.advanceTimersByTimeAsync(50)
+      await expect(ready).resolves.toBeUndefined()
+
+      const timeoutProbed = Promise.withResolvers<undefined>()
+      const timeout = fixture(async (argv) => {
+        if (argv[1] === 'container' && argv[2] === 'exists') return result(1)
+        if (argv[1] === 'exec') {
+          timeoutProbed.resolve(undefined)
+          return result(125)
+        }
+        return result()
+      })
+      const neverReady = timeout.runtime.ensure(sessions.alice)
+      const notReady = expect(neverReady).rejects.toThrow('did not become ready')
+      await timeoutProbed.promise
+      await vi.advanceTimersByTimeAsync(30_000)
+      await notReady
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('validates path and image references before provisioning', () => {
+    expect(() => new VpsRuntime('relative', 'image')).toThrow('absolute path')
+    expect(() => new VpsRuntime('/private/vps\u0000root', 'image')).toThrow('control characters')
+    expect(() => new VpsRuntime('/private/vps-root', '-image')).toThrow('safe local image')
+    expect(() => new VpsRuntime('/private/vps-root', 'not a safe image')).toThrow('safe local image')
+  })
+
+  it('rejects invalid terminal mode options at the argv boundary', () => {
+    const f = fixture()
+    expect(() => f.runtime.execArgv(sessions.alice, ['/bin/sh'], Object.assign({} as VpsExecOptions, { stdin: 'yes' })))
+      .toThrow('stdin mode')
+    expect(() => f.runtime.execArgv(sessions.alice, ['/bin/sh'], Object.assign({} as VpsExecOptions, { interactive: 'yes' })))
+      .toThrow('interactive mode')
+    expect(() => f.runtime.execArgv(sessions.alice, ['/bin/sh'], { workdir: '/workspace\u0000bad' }))
+      .toThrow('absolute path')
+  })
+
+  it('reports malformed and mismatched workspace-volume metadata', async () => {
+    const malformed = fixture(undefined, { volumeResult: argv => argv[2] === 'inspect' ? result(0, '{') : undefined })
+    await expect(malformed.runtime.ensure(sessions.alice)).rejects.toThrow('workspace volume ownership')
+
+    const mismatch = fixture(undefined, {
+      volumeResult: argv => argv[2] === 'inspect'
+        ? result(0, JSON.stringify({ Name: 'foreign-volume', Labels: {} }))
+        : undefined,
+    })
+    await expect(mismatch.runtime.ensure(sessions.alice)).rejects.toThrow('workspace volume ownership')
+
+    const shared = fixture(undefined, {
+      sharedWorkspacePolicy: { get: async () => true, set: async () => {} },
+      volumeResult: argv => argv[2] === 'inspect' && (argv.at(-1) ?? '').startsWith('yharness-bot-project-')
+        ? result(0, '{') : undefined,
+    })
+    await expect(shared.runtime.ensure(sessions.alice)).rejects.toThrow('Shared project volume must be a local volume')
+  })
+
+  it('accepts a serialized volume mode and rejects a missing mode', async () => {
+    const mode = existingContainerFixture((metadata) => {
+      const mounts = mutableArray(metadata.Mounts)
+      mounts[0]!.Options = [1]
+      mounts[0]!.Mode = 'nodev,nosuid'
+    })
+    await expect(mode.runtime.ensure(sessions.alice)).resolves.toBeUndefined()
+
+    const missing = existingContainerFixture((metadata) => {
+      const mounts = mutableArray(metadata.Mounts)
+      mounts[0]!.Options = [1]
+      delete mounts[0]!.Mode
+    })
+    await expect(missing.runtime.ensure(sessions.alice)).rejects.toThrow('workspace volume options')
+  })
+
+  it('reuses a running container and reads temporary-storage mount options', async () => {
+    const f = existingContainerFixture((metadata) => {
+      mutableRecord(metadata.State).Running = true
+      const host = mutableRecord(metadata.HostConfig)
+      delete host.Tmpfs
+      mutableArray(metadata.Mounts).push({ Type: 'tmpfs', Destination: '/tmp', Options: ['noexec', 'nosuid', 'nodev'] })
+    })
+    await expect(f.runtime.ensure(sessions.alice)).resolves.toBeUndefined()
+    expect(f.calls.some(argv => argv[1] === 'start')).toBe(false)
+  })
+
+  it('rejects malformed facts from the Podman command seam', async () => {
+    const f = fixture(async (argv) => {
+      if (argv[1] === 'container' && argv[2] === 'exists') return result(1)
+      return Object.assign(result(), { code: Number.NaN })
+    })
+    await expect(f.runtime.ensure(sessions.alice)).rejects.toThrow('invalid command facts')
+  })
+
   it('cancels provisioning and waits for the pending command before closing', async () => {
     const entered = Promise.withResolvers<AbortSignal>()
     const released = Promise.withResolvers<VpsCommandResult>()
