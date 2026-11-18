@@ -160,6 +160,7 @@ function BotActionsMenu({ bot, groups, onOrganize, onSetSection, onOpenConnected
 }) {
   const [open, setOpen] = useState(false)
   const organize = (patch: BotOrganizationPatch): void => {
+    /* v8 ignore next -- organization items are omitted when no organizer is supplied. */
     if (onOrganize === undefined) return
     setOpen(false)
     void onOrganize(bot.id, patch).catch(() => {})
@@ -209,6 +210,7 @@ function BotActionsMenu({ bot, groups, onOrganize, onSetSection, onOpenConnected
         else if (id === 'connected-apps') { setOpen(false); onOpenConnectedApps?.(bot) }
         else {
           const section = sectionChoices.find(choice => choice.id === id)
+          /* v8 ignore else -- menu ids are generated from sectionChoices, so a selected id always resolves. */
           if (section !== undefined) organize({ group: section.group })
         }
       }}
@@ -525,6 +527,7 @@ function deliveryStatusText(
     case 'accepted': return t('groupDeliveryWaiting', { name })
     case 'responded': return t('groupDeliveryResponded', { name })
     case 'failed': return t('groupDeliveryFailed', { name, error: delivery.error ?? t('groupDeliveryFailure') })
+    /* v8 ignore next -- delivery status is a closed, validated union. */
     default: return t('groupDeliveryFailure')
   }
 }
@@ -618,6 +621,7 @@ export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate,
   }
   const removeAttachment = (id: string): void => {
     const removed = attachmentsRef.current.find(attachment => attachment.id === id)
+    /* v8 ignore else -- remove controls emit ids from the current attachment list. */
     if (removed !== undefined) releaseBotGroupAttachment(removed)
     setAttachmentError(null)
     attachmentMessageIdRef.current = null
@@ -626,9 +630,11 @@ export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate,
   }
   const selectMention = (bot: BotSummary): void => {
     const input = composerInputRef.current
+    /* v8 ignore next -- a visible mention option is rendered with its composer textarea mounted. */
     const cursor = input?.selectionStart ?? draft.length
     const before = draft.slice(0, cursor)
     const match = /(?:^|\s)@([^\s@]*)$/.exec(before)
+    /* v8 ignore next -- mention options exist only while mentionQueryAt has matched this draft. */
     const start = match === null ? cursor : cursor - (match[1]?.length ?? 0) - 1
     const next = `${draft.slice(0, start)}@${bot.name} ${draft.slice(cursor)}`
     const nextCursor = start + bot.name.length + 2
@@ -649,6 +655,7 @@ export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate,
       setAttachmentError(t('groupReplyChanged'))
       return
     }
+    /* v8 ignore next -- the undefined-group render returns before the composer exists. */
     const targets = group === undefined ? [] : mentionTargets(text, group.bots)
     setSending(true)
     setAttachmentError(null)
@@ -691,6 +698,7 @@ export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate,
     }
   }
   const setReaction = async (message: BotGroupMessageSummary, emoji: BotGroupReactionSummary['emoji']): Promise<void> => {
+    /* v8 ignore next -- the reaction menu renders only with onReact and disables while working. */
     if (onReact === undefined || reactionWorkingMessageId !== null) return
     const current = message.reactions?.find(reaction => reaction.emoji === emoji)
     setReactionWorkingMessageId(message.id)
@@ -702,6 +710,7 @@ export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate,
     }
   }
   const retryMessage = async (message: BotGroupMessageSummary): Promise<void> => {
+    /* v8 ignore next -- retry controls render only for user deliveries and disable while retrying. */
     if (message.sender.kind !== 'user' || retryingMessageId !== null) return
     setRetryingMessageId(message.id)
     try {
@@ -890,6 +899,7 @@ export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate,
             file: t('groupAttachmentFile'),
             preview: name => t('groupPreviewAttachment', { name }),
             remove: name => t('groupRemoveAttachment', { name }),
+            /* v8 ignore next -- this BotWorkspace call never supplies onRetry; the child invokes retry labels only with that callback. */
             retry: name => t('groupRetryAttachment', { name }),
             failed: t('groupAttachmentFailed'),
             uploading: t('groupAttachmentPreparing'),
@@ -956,6 +966,7 @@ export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate,
             if (mentionQuery !== null && mentionOptions.length > 0 && (event.key === 'Enter' || event.key === 'Tab')) {
               event.preventDefault()
               const option = mentionOptions[mentionIndex]
+              /* v8 ignore else -- mentionIndex is maintained modulo the nonempty option list. */
               if (option !== undefined) selectMention(option)
               return
             }
@@ -1296,6 +1307,7 @@ export function BotDetail({
               variant="primary"
               disabled={profileSaving || profileName.trim() === ''}
               onClick={() => {
+                /* v8 ignore next -- the save control renders only for the open, matching profile target. */
                 if (profileTarget === null || profileTarget !== bot.id) return
                 const target = profileTarget
                 const operationGeneration = ++profileOperationGeneration.current
@@ -1350,6 +1362,7 @@ export function BotDetail({
         title={t('renameBot')} description={t('renameDescription')} closeLabel={t('cancel')}
         footer={<><Button variant="ghost" onClick={() => { setRenameTarget(null) }} disabled={saving}>{t('cancel')}</Button>
           <Button variant="primary" disabled={saving || name.trim() === ''} onClick={() => {
+            /* v8 ignore next -- the save control renders only for the open rename target. */
             if (renameTarget === null) return
             setSaving(true)
             setRenameError(false)
@@ -1520,13 +1533,17 @@ function ConnectedAppsDialog({ bot, open, onClose, onLoad, onSet, t }: {
   const loadingCurrentCatalog = loading || (open && currentCatalog === undefined)
   const savingAppId = saving?.botId === bot.id ? saving.appId : null
   const toggle = async (app: BotConnectedAppAccess): Promise<void> => {
+    /* v8 ignore next -- access controls render only for a loaded catalog and disable while saving. */
     if (savingAppId !== null || currentCatalog === undefined) return
     const allowed = !app.allowed
     const request = { botId: bot.id, requestId: currentCatalog.requestId, appId: app.id }
     setSaving(request)
-    setCatalog(current => current?.botId === request.botId && current.requestId === request.requestId
-      ? { ...current, error: null }
-      : current)
+    setCatalog((current) => {
+      /* v8 ignore else -- this synchronous admission update starts from the same catalog used to build request. */
+      if (current?.botId === request.botId && current.requestId === request.requestId) return { ...current, error: null }
+      /* v8 ignore next -- synchronous admission sees the request's catalog; later async updates keep identity fences. */
+      return current
+    })
     try {
       await onSet(request.botId, request.appId, allowed)
       setCatalog(current => current?.botId === request.botId && current.requestId === request.requestId
@@ -1725,6 +1742,7 @@ export function BotRoster({
     setNewBotOpen(true)
   }
   const openAvatarEditor = (): void => {
+    /* v8 ignore next -- the avatar-editor button is rendered only in the wide header. */
     if (!wide) expandSidebar?.()
     setAvatarEditorOpen(true)
   }
@@ -1751,6 +1769,7 @@ export function BotRoster({
       onConnectApps?.()
       return
     }
+    /* v8 ignore next -- connected-app actions are passed to BotRow only in the wide roster. */
     if (!wide) expandSidebar?.()
     setConnectedAppsBotId(bot.id)
   }
@@ -1805,6 +1824,7 @@ export function BotRoster({
                 )}
               </div>
               <Input
+                /* v8 ignore next -- the CSS module always exports the search class. */
                 className={css.search ?? ''}
                 icon={<IconSidebarSearchOutlineRegular size={16} />}
                 placeholder={t('searchPlaceholder')}
