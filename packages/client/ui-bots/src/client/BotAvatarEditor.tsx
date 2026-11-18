@@ -198,8 +198,8 @@ export function BotAvatarEditor({ bot, actions, loadAvatar, open, onClose, onOpe
     }
   }
 
-  const upload = async (file: File | undefined, nextCrop: AvatarCrop) => {
-    if (file === undefined || (working !== null && working !== 'upload')) return
+  const upload = async (file: File | null | undefined, nextCrop: AvatarCrop) => {
+    if (file === null || file === undefined || (working !== null && working !== 'upload')) return
     request.current?.abort()
     setCommitted(null)
     setError(null)
