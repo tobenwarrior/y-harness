@@ -10,6 +10,7 @@ import type { DesktopRelease } from '../src/release.ts'
 import { developmentRuntimeDirectory, resolveDesktopBuildTarget } from './desktop-build-paths.mjs'
 import { prepareDevelopmentProject } from './development-project.ts'
 import { prepareDevelopmentApp } from './development-app.ts'
+import { prepareManagedDevelopmentApp } from './managed-development-app.ts'
 import { preparePrimaryRuntime } from './prepare-primary-runtime.ts'
 
 const APP_ROOT = resolve(import.meta.dirname, '..')
@@ -83,8 +84,15 @@ async function launchElectron(): Promise<void> {
   console.log(`desktop development: userData=${userData}`)
   console.log(disableInspectors ? 'desktop development: inspectors disabled' : `desktop development: inspectors main=${String(mainPort)}, renderer=${String(rendererPort)}, host=${String(hostPort)}`)
   if (process.platform === 'darwin') {
-    const executable = await prepareDevelopmentApp({ electron, appRoot: APP_ROOT, directory: DEVELOPMENT_ROOT, home, userData,
-      primaryRuntime, mainPort, rendererPort, hostPort, openDevtools: environment.DSH_DESKTOP_OPEN_DEVTOOLS!, disableInspectors, managed })
+    const options = { electron, appRoot: APP_ROOT, directory: DEVELOPMENT_ROOT, home, userData,
+      primaryRuntime, mainPort, rendererPort, hostPort, openDevtools: environment.DSH_DESKTOP_OPEN_DEVTOOLS!, disableInspectors, managed }
+    if (managed) {
+      const executable = await prepareManagedDevelopmentApp(options, environment.DSH_DESKTOP_GITHUB_STATUS,
+        environment.DSH_DESKTOP_GITHUB_BUILD_COMMIT)
+      await run(executable, [`--user-data-dir=${userData}`, APP_ROOT], APP_ROOT, { ...environment, DSH_DESKTOP_DEV_APP: '0' })
+      return
+    }
+    const executable = await prepareDevelopmentApp(options)
     await run(executable, [], APP_ROOT, environment)
     return
   }

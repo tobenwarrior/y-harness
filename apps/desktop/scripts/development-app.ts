@@ -24,6 +24,8 @@ export interface DevelopmentAppOptions {
   readonly openDevtools: string
   readonly disableInspectors?: boolean
   readonly managed?: boolean
+  /** Managed installation identity retained when preparing a new carrier. */
+  readonly bundleIdentifier?: string
   /** Test seam for the managed launch handoff command. */
   readonly managedOpenCommand?: string
   /** Test seam for the managed app path used by the launch handoff. */
@@ -54,7 +56,7 @@ export async function prepareDevelopmentApp(options: DevelopmentAppOptions): Pro
     execFileSync('/usr/bin/ditto', [source, bundle])
     const plist = join(bundle, 'Contents', 'Info.plist')
     const values = {
-      CFBundleIdentifier: `com.yharness.desktop.dev.${createHash('sha256').update(options.appRoot).digest('hex').slice(0, 12)}`,
+      CFBundleIdentifier: options.bundleIdentifier ?? `com.yharness.desktop.dev.${createHash('sha256').update(options.appRoot).digest('hex').slice(0, 12)}`,
       CFBundleName: 'Y harness',
       CFBundleDisplayName: displayName ?? 'Y Harness',
       CFBundleExecutable: 'YHarness',

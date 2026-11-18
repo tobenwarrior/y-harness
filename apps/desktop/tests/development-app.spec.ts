@@ -124,6 +124,8 @@ describe.skipIf(process.platform === 'win32')('development bundle executable', (
       'apps/desktop/scripts/desktop-build-paths.mjs':
         'export const developmentRuntimeDirectory = () => "test-runtime"\nexport const resolveDesktopBuildTarget = () => "mac-arm64"\n',
       'apps/desktop/scripts/development-project.ts': 'export const prepareDevelopmentProject = () => {}\n',
+      'apps/desktop/scripts/managed-development-app.ts':
+        'export const prepareManagedDevelopmentApp = options => options.electron\n',
       'apps/desktop/scripts/prepare-primary-runtime.ts': [
         'export const preparePrimaryRuntime = async () => {',
         '  if (process.env.DSH_DESKTOP_GITHUB_MANAGED === "1") throw new Error("managed launch rebuilt runtime")',
@@ -150,6 +152,7 @@ describe.skipIf(process.platform === 'win32')('development bundle executable', (
       '#!/bin/sh',
       'if [ "$ELECTRON_RUN_AS_NODE" = 1 ]; then printf "26.0.0\\n"; exit 0; fi',
       'printf "%s\\n" "$DSH_DESKTOP_OPEN_DEVTOOLS" "$DSH_DESKTOP_HOST_INSPECT_PORT" "$@" > "$DSH_LAUNCHER_TEST_OUTPUT"',
+      'if [ "$DSH_DESKTOP_GITHUB_MANAGED" = 1 ]; then printf "%s\\n" "$DSH_DESKTOP_DEV_APP" "$DSH_HOME" "$DSH_DESKTOP_PRIMARY_RUNTIME_DIR" >> "$DSH_LAUNCHER_TEST_OUTPUT"; fi',
       '',
     ].join('\n'), { mode: 0o755 })
     rmSync(fixture.launcher)
@@ -167,14 +170,17 @@ describe.skipIf(process.platform === 'win32')('development bundle executable', (
       '--inspect=127.0.0.1:19329', '--remote-debugging-port=19322',
       `--user-data-dir=${join(resolvedAppRoot, '.desktop-build', 'development', 'electron-user-data')}`, resolvedAppRoot])
 
+    rmSync(fixture.launcher)
     const managed = spawnSync(process.execPath, [script, '--skip-build'], {
       encoding: 'utf8',
       env: { ...fixture.environment, ELECTRON_RUN_AS_NODE: '', DSH_LAUNCHER_TEST_OUTPUT: output,
         DSH_HOME: fixture.home, DSH_DESKTOP_GITHUB_MANAGED: '1', DSH_DESKTOP_PRIMARY_RUNTIME_DIR: 'test-runtime' },
     })
     expect(managed.status, managed.stderr).toBe(0)
+    expect(() => readFileSync(fixture.launcher)).toThrow(/ENOENT/)
     expect(readFileSync(output, 'utf8').trimEnd().split('\n')).toEqual(['0', '',
-      `--user-data-dir=${join(resolvedAppRoot, '.desktop-build', 'development', 'electron-user-data')}`, resolvedAppRoot])
+      `--user-data-dir=${join(resolvedAppRoot, '.desktop-build', 'development', 'electron-user-data')}`, resolvedAppRoot,
+      '0', fixture.home, 'test-runtime'])
   })
 
   it('uses captured ports for empty overrides and preserves an empty DevTools override', () => {

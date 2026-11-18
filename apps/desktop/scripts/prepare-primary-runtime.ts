@@ -1,10 +1,11 @@
 /** Desktop resource locations and signing-aware verification for the shared runtime builder. */
 
 import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { preparePrimaryRuntime as preparePayload, smokePrimaryRuntime as smokePayload } from '../../../scripts/primary-runtime/prepare.ts'
 import { parsePrimaryRuntime, workspaceDependencyPaths } from '../../../packages/skill/tool-workspace-dependencies/src/index.ts'
 import { resolveDesktopBuildTarget, resolveDesktopTargetBuildPaths } from './desktop-build-paths.mjs'
+import { captureManagedMacCarrier } from './managed-development-app.ts'
 import { scrubWindowsSigningEnvironment } from './windows-sign.mjs'
 
 /**
@@ -32,4 +33,7 @@ export function smokePrimaryRuntime(root: string): void {
   smokePayload(root, scrubWindowsSigningEnvironment(process.env))
 }
 
-if (import.meta.main) await preparePrimaryRuntime()
+if (import.meta.main) {
+  await preparePrimaryRuntime()
+  if (process.platform === 'darwin') captureManagedMacCarrier(resolve(import.meta.dirname, '..'))
+}
