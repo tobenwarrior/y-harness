@@ -35,7 +35,7 @@ const group: BotGroupDetailData = {
     { id: 'message-1', sender: { kind: 'user' }, text: 'Plan the release together.', createdAt: 1 },
     {
       id: 'message-2', sender: { kind: 'bot', botId: botA.id, name: botA.name }, text: 'I found three useful sources.', createdAt: 2,
-      replyToMessageId: 'message-1', attachments: [{ attachmentId: 'attachment-1', name: 'notes.txt', bytes: 12 }],
+      replyToMessageId: 'message-1', attachments: [{ type: 'file', attachmentId: 'attachment-1', name: 'notes.txt', bytes: 12 }],
     },
   ],
 }
@@ -254,7 +254,7 @@ describe('BotWorkspace supported lifecycle coverage', () => {
       messages: [
         {
           ...group.messages[0]!,
-          reactions: [{ emoji: '👍', count: 1, viewerReacted: true }, { emoji: '🔥', count: 2, viewerReacted: false }],
+          reactions: [{ emoji: '👍', count: 1, viewerReacted: true }, { emoji: '🎉', count: 2, viewerReacted: false }],
         },
         group.messages[1]!,
         { id: 'message-3', sender: { kind: 'user' }, text: 'Follow up on that source.', createdAt: 3, replyToMessageId: 'message-2' },
@@ -292,12 +292,19 @@ describe('BotWorkspace supported lifecycle coverage', () => {
     fireEvent.change(composer, { target: { value: '@Res hello', selectionStart: 4 } })
     fireEvent.keyDown(composer, { key: 'Enter' })
     fireEvent.change(composer, { target: { value: '@Res', selectionStart: 4 } })
+    expect(screen.getByRole('option', { name: /Research partner/ })).toBeTruthy()
+    fireEvent.change(composer, { target: { value: 'plain text', selectionStart: 10 } })
+    expect(screen.queryByRole('listbox', { name: 'Mention a Bot' })).toBeNull()
+    fireEvent.change(composer, { target: { value: '@Res', selectionStart: 4 } })
     const clickedMention = screen.getByRole('option', { name: /Research partner/ })
+    if (clickedMention === null) throw new Error('Expected a visible mention option')
     fireEvent.mouseDown(clickedMention)
     fireEvent.click(clickedMention)
     fireEvent.change(composer, { target: { value: '@Res', selectionStart: 4 } })
     fireEvent.blur(composer, { relatedTarget: composer })
-    fireEvent.blur(composer.parentElement, { relatedTarget: document.body })
+    const composerContainer = composer.parentElement
+    if (composerContainer === null) throw new Error('Expected the composer to have a container')
+    fireEvent.blur(composerContainer, { relatedTarget: document.body })
     expect(screen.queryByRole('listbox', { name: 'Mention a Bot' })).toBeNull()
     fireEvent.click(screen.getAllByRole('button', { name: 'Reply to You' })[0]!)
     fireEvent.change(composer, { target: { value: '@Res hello', selectionStart: 4 } })
@@ -316,8 +323,8 @@ describe('BotWorkspace supported lifecycle coverage', () => {
     await waitFor(() => { expect(onReact).toHaveBeenCalledWith('message-1', '👍', 'remove') })
     fireEvent.click(screen.getByRole('button', { name: '👍, 1 reactions' }))
     await waitFor(() => { expect(onReact).toHaveBeenCalledWith('message-1', '👍', 'remove') })
-    fireEvent.click(screen.getByRole('button', { name: '🔥, 2 reactions' }))
-    await waitFor(() => { expect(onReact).toHaveBeenCalledWith('message-1', '🔥', 'add') })
+    fireEvent.click(screen.getByRole('button', { name: '🎉, 2 reactions' }))
+    await waitFor(() => { expect(onReact).toHaveBeenCalledWith('message-1', '🎉', 'add') })
 
     fireEvent.click(screen.getByRole('button', { name: 'Retry: failed' }))
     await waitFor(() => { expect(onSend).toHaveBeenCalledWith('Plan the release together.', 'message-1', undefined) })
@@ -408,7 +415,10 @@ describe('BotWorkspace supported lifecycle coverage', () => {
   })
 
   it('keeps attachment drafts editable after a failed send and resets stale reply targets', async () => {
-    const sendWithAttachments = vi.fn().mockRejectedValueOnce(new Error('upload failed')).mockResolvedValueOnce(undefined)
+    const sendWithAttachments = vi.fn()
+      .mockRejectedValueOnce('upload failed')
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce({ code: 'upload-offline' })
     const { rerender } = render(<BotGroupDetail
       group={group} loading={false} error={null} onRetry={vi.fn()} onSend={vi.fn()}
       onSendWithAttachments={sendWithAttachments} loadAvatar={undefined} t={t}
@@ -421,10 +431,17 @@ describe('BotWorkspace supported lifecycle coverage', () => {
     })
     fireEvent.click(screen.getByRole('button', { name: 'Remove one.txt' }))
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
-    await waitFor(() => { expect(screen.getByRole('alert').textContent).toContain('upload failed') })
+    await waitFor(() => { expect(screen.getByRole('alert').textContent).toContain('Some Bots could not receive this message. Try again.') })
     fireEvent.change(composer, { target: { value: 'second draft' } })
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
     await waitFor(() => { expect(sendWithAttachments).toHaveBeenCalledTimes(2) })
+
+    fireEvent.change(composer, { target: { value: 'object rejection' } })
+    fireEvent.change(screen.getByLabelText('Choose files'), {
+      target: { files: [new File(['three'], 'three.txt', { type: 'text/plain' })] },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() => { expect(screen.getByRole('alert').textContent).toContain('Some Bots could not receive this message. Try again.') })
 
     fireEvent.click(screen.getByRole('button', { name: 'Reply to You' }))
     rerender(<BotGroupDetail
@@ -521,12 +538,15 @@ describe('BotWorkspace supported lifecycle coverage', () => {
 
   it('shows section save failures and connected-app access failures', async () => {
     const sectionSave = Promise.withResolvers<undefined>()
-    const organize = vi.fn().mockReturnValue(sectionSave.promise)
-    const load = vi.fn().mockResolvedValue<readonly BotConnectedAppAccess[]>([
+    const organize = vi.fn().mockReturnValueOnce(sectionSave.promise).mockRejectedValueOnce(new Error('section unavailable'))
+    const load = vi.fn<(botId: string) => Promise<readonly BotConnectedAppAccess[]>>().mockResolvedValue([
       { id: 'acme', name: 'Acme Tools', allowed: false },
       { id: 'single', name: 'A', allowed: false },
     ])
-    const set = vi.fn().mockRejectedValueOnce(new Error('access unavailable')).mockResolvedValue(undefined)
+    const set = vi.fn()
+      .mockRejectedValueOnce({ code: 'access-unavailable' })
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('access unavailable'))
     render(<BotRoster
       bots={[botA]} selectedBotId={botA.id} onSelectBot={vi.fn()} onCreateBot={vi.fn()} onOrganizeBot={organize}
       onLoadConnectedApps={load} onSetConnectedAppAccess={set} t={t}
@@ -538,7 +558,9 @@ describe('BotWorkspace supported lifecycle coverage', () => {
     fireEvent.keyDown(within(section).getByRole('textbox', { name: 'Section name' }), { key: 'ArrowDown' })
     fireEvent.keyDown(within(section).getByRole('textbox', { name: 'Section name' }), { key: 'Enter' })
     fireEvent.keyDown(within(section).getByRole('textbox', { name: 'Section name' }), { key: 'Enter' })
-    sectionSave.reject(new Error('section unavailable'))
+    sectionSave.reject({ code: 'section-unavailable' })
+    expect((await screen.findByRole('alert')).textContent).toContain('The bot organization could not be saved. Try again.')
+    fireEvent.click(within(section).getByRole('button', { name: 'Save' }))
     expect((await screen.findByRole('alert')).textContent).toContain('section unavailable')
 
     fireEvent.click(within(section).getAllByRole('button', { name: 'Cancel' })[1]!)
@@ -549,10 +571,12 @@ describe('BotWorkspace supported lifecycle coverage', () => {
     expect(apps.querySelector('[data-app-id="acme"]')?.textContent).toContain('AT')
     expect(apps.querySelector('[data-app-id="single"]')?.textContent).toContain('A')
     fireEvent.click(within(apps).getByRole('button', { name: 'Grant access to Acme Tools' }))
-    expect((await within(apps).findByRole('alert')).textContent).toContain('access unavailable')
+    expect((await within(apps).findByRole('alert')).textContent).toContain('That access change could not be saved. Try again.')
     fireEvent.click(within(apps).getByRole('button', { name: 'Grant access to A' }))
     await waitFor(() => { expect(set).toHaveBeenCalledTimes(2) })
     expect(within(apps).getByRole('button', { name: 'Revoke access to A' })).toBeTruthy()
+    fireEvent.click(within(apps).getByRole('button', { name: 'Revoke access to A' }))
+    expect((await within(apps).findByRole('alert')).textContent).toContain('access unavailable')
   })
 
   it('cancels stale connected-app loads when its dialog closes', async () => {
@@ -584,6 +608,17 @@ describe('BotWorkspace supported lifecycle coverage', () => {
     secondLoad.resolve([])
     await act(async () => { await Promise.resolve(); await Promise.resolve() })
     expect(screen.queryByRole('dialog', { name: 'Connected apps' })).toBeNull()
+
+    cleanup()
+    const unavailable = vi.fn().mockRejectedValue('load unavailable')
+    render(<BotRoster
+      bots={[botA]} selectedBotId={botA.id} onSelectBot={vi.fn()} onCreateBot={vi.fn()}
+      onLoadConnectedApps={unavailable} onSetConnectedAppAccess={vi.fn()} t={t}
+    />)
+    fireEvent.click(screen.getByRole('button', { name: 'Bot actions for Research partner' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'App access' }))
+    const unavailableApps = await screen.findByRole('dialog', { name: 'Connected apps' })
+    expect((await within(unavailableApps).findByRole('alert')).textContent).toContain('Connected apps could not be loaded. Try again.')
   })
 
   it('ignores connected-app saves that finish after the dialog is reopened', async () => {
