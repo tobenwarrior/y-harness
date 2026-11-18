@@ -7,11 +7,15 @@
  * and face — and that every registration is gone after dispose, which is what
  * makes a reload safe.
  */
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { Context } from '@yharness/cordis'
+import type { SessionId } from '@yharness/session/types'
+import type { TabId } from '@yharness/client-ui-dockkit'
 import type { ShortcutCommand } from '@yharness/client-shortcuts/client'
 import { SidebarRightTabRegistry } from '@yharness/client-ui-sidebar-right/src/client/tab-registry.ts'
 import { COMPUTER_FILES_KIND, COMPUTER_SHARED_FILES_KIND, FILES_ID, FILES_KIND } from '../src/client/definition.tsx'
+import type { filesFace, WorkspaceFilesListRemote } from '../src/client/face.ts'
+import type { createFilesStore } from '../src/client/store.ts'
 import { apply, inject } from '../src/client/index.ts'
 import { apply as hostApply } from '../src/index.ts'
 import { FilesBody } from '../src/client/FilesBody.tsx'
@@ -21,9 +25,9 @@ import { en } from '../src/client/locales.ts'
 interface Recorded {
   name: string
   key: string
-  locale: string
-  store: unknown
-  inject: unknown
+  locale?: string
+  store?: ReturnType<typeof createFilesStore>
+  inject?: ReturnType<typeof filesFace>
   component: unknown
 }
 
@@ -48,7 +52,9 @@ async function boot() {
       return () => { dictionaries.delete(ns) }
     }),
   }
-  const workspaceFiles = { list: vi.fn() }
+  const list = vi.fn<WorkspaceFilesListRemote['workspaceFiles']['list']>()
+  const stream = vi.fn()
+  const workspaceFiles = { list }
   const sidebar = { commandTarget: vi.fn(), openTabFromTarget: vi.fn() }
   const commands: ShortcutCommand[] = []
   ctx.provide('shortcuts', { register: (command: ShortcutCommand) => {
@@ -59,11 +65,11 @@ async function boot() {
   ctx.provide('sidebarRightTabs', tabs as never)
   ctx.provide('slots', slots as never)
   ctx.provide('locale', locale as never)
-  ctx.provide('remote', { workspaceFiles } as never)
+  ctx.provide('remote', { workspaceFiles, $stream: stream } as never)
   ctx.provide('remote.workspaceFiles', workspaceFiles as never)
   const fiber = ctx.plugin({ inject: [...inject], apply })
   await fiber.await()
-  return { tabs, registered, dictionaries, fiber, sidebar, commands }
+  return { tabs, registered, dictionaries, fiber, sidebar, commands, list, stream }
 }
 
 describe('ui-sidebar-files apply', () => {
@@ -110,6 +116,45 @@ describe('ui-sidebar-files apply', () => {
     ])
     expect(registered[0]?.store).toBeDefined()
     expect(typeof registered[0]?.inject).toBe('function')
+  })
+
+  it.each([
+    { kind: COMPUTER_FILES_KIND, root: '.' },
+    { kind: COMPUTER_SHARED_FILES_KIND, root: '/workspace' },
+  ])('loads $kind on mount and on refresh without opening a workspace watch', async ({ kind, root }) => {
+    const { tabs, registered, fiber, list, stream } = await boot()
+    const controller = new AbortController()
+    onTestFinished(async () => {
+      controller.abort()
+      await fiber.dispose()
+    })
+    const entry = registered.find(item => item.name === 'sidebar.right.pane.tab' && item.key === tabs.get(kind)?.id)
+    if (entry?.store === undefined || entry.inject === undefined) throw new Error('Expected a Computer file tree')
+    const instance = entry.store.create()
+    const tabId = 'computer-files-tab' as TabId
+    const sessionId = 'computer-session' as SessionId
+    const initial = { entries: [{ name: 'initial.md', type: 'file' }], truncated: false } as const
+    const updated = { entries: [{ name: 'updated.md', type: 'file' }], truncated: false } as const
+    list.mockResolvedValueOnce({ ok: true, value: { path: root, ...initial } })
+    list.mockResolvedValueOnce({ ok: true, value: { path: root, ...updated } })
+    const files = entry.inject(sessionId, instance.actions)
+    const level = () => instance.getSnapshot().byTab[tabId]?.levels[root]
+
+    files.start(tabId, root, controller.signal)
+    await expect.poll(level).toEqual({ kind: 'ready', level: initial })
+    const requestSignal = list.mock.calls[0]?.[2]
+    expect(list).toHaveBeenCalledExactlyOnceWith(sessionId, { computer: root }, requestSignal)
+    expect(requestSignal?.aborted).toBe(false)
+
+    files.refresh(tabId)
+    await expect.poll(level).toEqual({ kind: 'ready', level: updated })
+    expect(list).toHaveBeenCalledTimes(2)
+    expect(list).toHaveBeenLastCalledWith(sessionId, { computer: root }, requestSignal)
+    expect(stream).not.toHaveBeenCalled()
+
+    controller.abort()
+    expect(requestSignal?.aborted).toBe(true)
+    expect(instance.getSnapshot().byTab[tabId]).toBeUndefined()
   })
 
   it('takes every registration back when the plugin is disposed', async () => {

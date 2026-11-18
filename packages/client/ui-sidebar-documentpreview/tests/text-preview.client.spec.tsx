@@ -118,13 +118,15 @@ function click(container: HTMLElement, selector: string): void {
 }
 
 describe('TextPreview — pages', () => {
-  it('downloads the selected Computer file under the app mount', async () => {
+  it.each([
+    { path: '/workspace/reports/a #1.md', copy: false },
+    { path: 'reports/a #1.md', copy: true },
+  ])('downloads $path under the app mount and offers copying for private files', async ({ path, copy }) => {
     const base = document.createElement('base')
     base.href = 'https://fixture.example/workspace/'
     document.head.append(base)
     onTestFinished(() => { base.remove() })
 
-    const path = '/workspace/reports/a #1.md'
     const props = harness({ 1: page(1, ['one'], true) }).props()
     const info = props.useTabInfo()
     const contentId = computerFileAddress(SESSION, path)
@@ -137,6 +139,9 @@ describe('TextPreview — pages', () => {
     const url = new URL(link.href)
     expect(url.origin + url.pathname).toBe('https://fixture.example/workspace/api/computer/files/download')
     expect([...url.searchParams]).toEqual([['sessionId', SESSION], ['path', path]])
+    expect(view.queryAllByRole('button', { name: 'copy.label' })).toHaveLength(copy ? 1 : 0)
+    expect(view.container.querySelector('[data-textpreview-path]')?.textContent).toBe(path)
+    expect(view.container.querySelector('[data-slot="sidebar.right.tab.document.actions"]')).toBeNull()
   })
 
   it.each([ABSOLUTE_PATH, 'C:\\work\\project\\notes.md', '\\\\host\\share\\notes.md'])(

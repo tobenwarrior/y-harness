@@ -2,10 +2,11 @@ import { MessageId } from '@yharness/llm/brand'
 // @vitest-environment jsdom
 /** Chat inject factories exercised over independently mounted Conversation and Chat plugins. */
 import { createSnapshotStore } from '@yharness/client-store'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { AttachmentId } from '@yharness/attachment'
 import type { ISession, SessionReference } from '@yharness/api-session-controller/client'
 import { LocaleRuntime } from '@yharness/client-locale/client'
+import { InputTriggerService } from '@yharness/client-ui-input-trigger/client'
 import {
   SlotTestRuntime, stubConfigForm, usePinnedBrowserLanguages,
 } from '@yharness/client-test-runtime'
@@ -353,6 +354,24 @@ describe('Chat inject API', () => {
       open.mockRestore()
       await b.runtime.dispose()
     }
+  })
+
+  it('reads the Bot reference icon from the current trigger service', async () => {
+    const b = await bench()
+    onTestFinished(() => b.runtime.dispose())
+    const { injected: { botIcon } } = b.chatViewApi(b.rootReference)
+    if (botIcon === undefined) throw new Error('Expected the Chat Bot icon callback')
+    expect(botIcon()).toBeUndefined()
+
+    const service = b.runtime.ctx.plugin(InputTriggerService)
+    await service.await()
+    const icon = () => null
+    const remove = b.runtime.ctx.inputTriggers.registerSource({
+      trigger: '@', name: 'bot', candidates: async () => [], onPick: () => undefined, referenceIcon: icon,
+    })
+    expect(botIcon()).toBe(icon)
+    remove()
+    expect(botIcon()).toBeUndefined()
   })
 
   it('routes sent skill previews through the viewed Session source and tolerates an absent provider', async () => {
