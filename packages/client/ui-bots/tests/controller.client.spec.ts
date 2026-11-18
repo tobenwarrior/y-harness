@@ -3950,10 +3950,10 @@ describe('BotWorkspaceController', () => {
     await vi.waitFor(() => { expect(staleRemote.listTemplates).toHaveBeenCalledTimes(2) })
     const publishing = staleActions.publishTemplate({ botId: staleSource.id })
     await vi.waitFor(() => { expect(staleRemote.listTemplates).toHaveBeenCalledTimes(3) })
-    staleCatalog.resolve({ ok: true, value: { templates: [staleTemplate] } })
-    await loading
     currentCatalog.resolve({ ok: true, value: { templates: [currentTemplate] } })
     await publishing
+    staleCatalog.resolve({ ok: true, value: { templates: [staleTemplate] } })
+    await loading
     expect(staleController.source.getSnapshot().templates.templates[0]?.description).toBe('Current catalog entry')
     expect(staleController.source.getSnapshot().templates.phase).toBe('ready')
     expect(staleController.source.getSnapshot().templates.busy).toBe(false)
@@ -3982,16 +3982,17 @@ describe('BotWorkspaceController', () => {
     await vi.waitFor(() => { expect(rejectedStaleRemote.listTemplates).toHaveBeenCalledTimes(2) })
     const rejectedPublishing = rejectedActions.publishTemplate({ botId: staleSource.id })
     await vi.waitFor(() => { expect(rejectedStaleRemote.listTemplates).toHaveBeenCalledTimes(3) })
+    rejectedCurrentCatalog.resolve({ ok: true, value: { templates: [currentTemplate] } })
+    await rejectedPublishing
     const previewing = rejectedActions.previewTemplate()
     await vi.waitFor(() => { expect(rejectedStaleRemote.previewTemplate).toHaveBeenCalledOnce() })
     rejectedCatalog.reject('old catalog failed')
-    rejectedCurrentCatalog.resolve({ ok: true, value: { templates: [currentTemplate] } })
     await rejectedLoading
-    await rejectedPublishing
     pendingPreview.resolve({ ok: true, value: { template: staleTemplate, localPermissions, approvalToken: 'preview-token' } })
     await previewing
-    expect(rejectedStaleController.source.getSnapshot().templates.templates[0]?.description).toBe('Old catalog entry')
-    expect(rejectedStaleController.source.getSnapshot().templates.phase).toBe('loading')
+    expect(rejectedStaleController.source.getSnapshot().templates.templates[0]?.description).toBe('Current catalog entry')
+    expect(rejectedStaleController.source.getSnapshot().templates.preview?.description).toBe('Old catalog entry')
+    expect(rejectedStaleController.source.getSnapshot().templates.phase).toBe('ready')
     expect(rejectedStaleController.source.getSnapshot().templates.busy).toBe(false)
     expect(rejectedStaleController.source.getSnapshot().templates.error).toBeNull()
     rejectedStaleController.dispose()
