@@ -264,13 +264,16 @@ describe('Desktop Codex environment', () => {
     const nodePath = join(root, 'node')
     writeFileSync(nodePath, '')
     chmodSync(nodePath, 0o755)
+    const runtimeDir = runtimeWithCodex(root, undefined, X64_NATIVE_TARGET)
     const result = resolveDesktopCodexEnvironment({
-      runtimeDir: runtimeWithCodex(root, undefined, X64_NATIVE_TARGET),
+      runtimeDir,
       dshHome: join(root, 'home'), cwd: join(root, 'profile'), nodePath,
       targetPlatform: FIXTURE_PLATFORM, targetArch: 'x64',
     })
     expect(result.reason).toBeUndefined()
-    expect(result.environment.DSH_CODEX_BINARY).toContain('codex/bin/codex.js')
+    expect(result.environment.DSH_CODEX_BINARY).toBe(
+      realpathSync(join(runtimeDir, 'node_modules', '@yharness', 'llm-pi-ai', 'node_modules', '@openai', 'codex', 'bin', 'codex.js')),
+    )
   })
 
   it('resolves the wrapper and native package from the physical runtime beside ASAR', () => {

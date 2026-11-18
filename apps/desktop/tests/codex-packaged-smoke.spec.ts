@@ -51,6 +51,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+/** Compare paths after resolving Windows short-name and case differences. */
+function samePath(actual: string, expected: string): boolean {
+  const norm = (value: string) => (
+    process.platform === 'win32' ? realpathSync.native(value).toLowerCase() : realpathSync.native(value)
+  )
+  return norm(actual) === norm(expected)
+}
+
 function asarTools(): AsarTools {
   const appBuilderManifest = realpathSync(join(repository, 'apps', 'desktop', 'node_modules', 'app-builder-lib', 'package.json'))
   return createRequire(appBuilderManifest)('@electron/asar') as AsarTools
@@ -224,7 +232,10 @@ describe('packaged Codex runtime', () => {
       })
       const initialized = await readRpcResponse(lines[Symbol.asyncIterator](), 1)
       expect(initialized.error).toBeUndefined()
-      expect(initialized.result).toMatchObject({ codexHome: realpathSync(codexHome) })
+      if (!isRecord(initialized.result) || typeof initialized.result.codexHome !== 'string') {
+        throw new Error('Codex initialize response omitted its home path.')
+      }
+      expect(samePath(initialized.result.codexHome, codexHome)).toBe(true)
       child.stdin.write('{"jsonrpc":"2.0","method":"initialized","params":{}}\n')
       sendRpcRequest(child, 2, 'account/read', { refreshToken: false })
       const account = await readRpcResponse(lines[Symbol.asyncIterator](), 2)
