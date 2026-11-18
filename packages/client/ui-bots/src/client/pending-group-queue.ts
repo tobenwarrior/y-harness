@@ -377,6 +377,22 @@ export function createSharedGroupPendingQueue(scope: string): SharedGroupPending
     return Promise.resolve()
   }
 
+  const removeCreationRecord = (hash: string, id: string): Promise<void> => withCatalogAndOperationLock('creation', hash, (availableStorage) => {
+    const key = recordKey(scope, 'creation', hash)
+    const current = read(availableStorage, key)
+    if (current?.kind === 'creation' && current.id === id) remove(availableStorage, key)
+    return Promise.resolve()
+  })
+
+  const removeMessageRecord = (hash: string, id: string): Promise<void> => withCatalogAndOperationLock('message', hash, (availableStorage) => {
+    for (const version of RECORD_VERSIONS) {
+      const key = recordKey(scope, 'message', hash, version)
+      const current = read(availableStorage, key)
+      if (current?.kind === 'message' && current.id === id) remove(availableStorage, key)
+    }
+    return Promise.resolve()
+  })
+
   return {
     get durable(): boolean { return healthy },
     listCreations: () => withLock(catalogLockKey(scope), async (availableStorage) => {
@@ -430,18 +446,8 @@ export function createSharedGroupPendingQueue(scope: string): SharedGroupPending
         return { operationHash: hash, id: record.id, recovered: false, expired: false }
       })
     },
-    removeCreation: (hash, id) => withCatalogAndOperationLock('creation', hash, (availableStorage) => {
-      const key = recordKey(scope, 'creation', hash)
-      const current = read(availableStorage, key)
-      if (current?.kind === 'creation' && current.id === id) remove(availableStorage, key)
-      return Promise.resolve()
-    }),
-    completeCreation: (hash, id) => withCatalogAndOperationLock('creation', hash, (availableStorage) => {
-      const key = recordKey(scope, 'creation', hash)
-      const current = read(availableStorage, key)
-      if (current?.kind === 'creation' && current.id === id) remove(availableStorage, key)
-      return Promise.resolve()
-    }),
+    removeCreation: removeCreationRecord,
+    completeCreation: removeCreationRecord,
     reserveMessage: async (operationKey, groupId, text, targetBotIds, replyToMessageId) => {
       const targeted = targetBotIds !== undefined && targetBotIds.length > 0
       const canonicalTargets = targeted ? [...new Set(targetBotIds)].sort() : undefined
@@ -484,21 +490,7 @@ export function createSharedGroupPendingQueue(scope: string): SharedGroupPending
         return { operationHash: hash, id: record.id, recovered: false, expired: false }
       })
     },
-    removeMessage: (hash, id) => withCatalogAndOperationLock('message', hash, (availableStorage) => {
-      for (const version of RECORD_VERSIONS) {
-        const key = recordKey(scope, 'message', hash, version)
-        const current = read(availableStorage, key)
-        if (current?.kind === 'message' && current.id === id) remove(availableStorage, key)
-      }
-      return Promise.resolve()
-    }),
-    completeMessage: (hash, id) => withCatalogAndOperationLock('message', hash, (availableStorage) => {
-      for (const version of RECORD_VERSIONS) {
-        const key = recordKey(scope, 'message', hash, version)
-        const current = read(availableStorage, key)
-        if (current?.kind === 'message' && current.id === id) remove(availableStorage, key)
-      }
-      return Promise.resolve()
-    }),
+    removeMessage: removeMessageRecord,
+    completeMessage: removeMessageRecord,
   }
 }
