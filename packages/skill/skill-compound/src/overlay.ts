@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
-import { lstatSync, readFileSync } from 'node:fs'
+import { lstatSync, readFileSync, readdirSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { assertOwnerPrivateWin32, createOwnerPrivateDirectoryWin32 } from '@yharness/fs-local'
@@ -107,6 +107,7 @@ function activeOverlayAt(root: string): ActiveOverlay | undefined {
       checkPrivateFile(path)
       validateSkill(readFileSync(path, 'utf8'), name)
     }
+    assertPrivateOverlayResources(assetRoot)
     return { commit, version, assetRoot }
   } catch { return undefined }
 }
@@ -132,6 +133,27 @@ function checkPrivateFile(path: string): void {
   const stat = lstatSync(path)
   if (!stat.isFile() || (typeof process.getuid === 'function' && stat.uid !== process.getuid()) || (process.platform !== 'win32' && (stat.mode & 0o077) !== 0)) throw new Error(`unsafe overlay file: ${path}`)
   if (process.platform === 'win32') assertOwnerPrivateWin32(path, 'file')
+}
+
+/**
+ * Check overlay resource ownership before exposing executable or viewer paths.
+ * The enclosing overlay root must already satisfy the owner-private policy.
+ * Resource files and directories permit owner-created readable Python caches,
+ * and reject links, special files, untrusted owners and write access.
+ * @param path - resource file or directory, recursively inspected when a directory.
+ * @throws when an entry fails ownership, permission or file-type checks.
+ */
+export function assertPrivateOverlayResources(path: string): void {
+  const stat = lstatSync(path)
+  if (!stat.isDirectory() && !stat.isFile()) throw new Error(`unsafe overlay resource: ${path}`)
+  if (process.platform === 'win32') {
+    assertOwnerPrivateWin32(path, stat.isDirectory() ? 'directory' : 'file')
+  } else if ((stat.mode & 0o022) !== 0 || (typeof process.getuid === 'function' && stat.uid !== process.getuid())) {
+    throw new Error(`unsafe overlay resource: ${path}`)
+  }
+  if (stat.isDirectory()) {
+    for (const name of readdirSync(path)) assertPrivateOverlayResources(join(path, name))
+  }
 }
 
 function olderVersion(left: string, right: string): boolean {

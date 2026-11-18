@@ -1,11 +1,12 @@
 import { createHash } from 'node:crypto'
 import { appendFileSync, writeFileSync } from 'node:fs'
-import { chmod, mkdir, mkdtemp, readFile, readdir, rm, symlink } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, symlink, unlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { EventEmitter } from 'node:events'
 import { PassThrough } from 'node:stream'
 import { afterEach, expect, it, vi } from 'vitest'
+import * as localFs from '@yharness/fs-local'
 
 const { spawnMock } = vi.hoisted(() => ({ spawnMock: vi.fn() }))
 vi.mock('node:child_process', async importOriginal => ({
@@ -13,7 +14,7 @@ vi.mock('node:child_process', async importOriginal => ({
   spawn: spawnMock,
 }))
 
-import { activeOverlay, legacyOverlayRoot, overlayRoot, parseGitTree, resolveOverlayRoot, updateOverlay } from '../src/overlay.ts'
+import { activeOverlay, assertPrivateOverlayResources, legacyOverlayRoot, overlayRoot, parseGitTree, resolveOverlayRoot, updateOverlay } from '../src/overlay.ts'
 import { privateOverlayRoot } from './private-overlay-root.ts'
 
 type FakeChild = EventEmitter & {
@@ -293,6 +294,106 @@ it('does not reuse an existing revision with unsafe file permissions', async () 
     await expect(updateOverlay(root)).rejects.toThrow('unsafe overlay file')
     expect(activeOverlay(root)?.commit).toBe('a'.repeat(40))
   } finally { await rm(root, { recursive: true, force: true }) }
+})
+
+it.skipIf(process.platform === 'win32').each(['file', 'directory'] as const)(
+  'rejects untrusted writes to an overlay resource %s', async (kind) => {
+    const root = await privateOverlayRoot('compound-resource-mode-')
+    try {
+      upstream('e'.repeat(40), '2.0.0')
+      await updateOverlay(root)
+      const overlay = activeOverlay(root)
+      if (overlay === undefined) throw new Error('Expected the published overlay')
+      const directory = join(overlay.assetRoot, 'compound', 'scripts')
+      const script = join(directory, 'map_server.py')
+      await mkdir(directory, { mode: 0o700 })
+      await writeFile(script, '# private resource\n', { mode: 0o600 })
+      expect(activeOverlay(root)).toBeDefined()
+
+      await chmod(kind === 'file' ? script : directory, kind === 'file' ? 0o666 : 0o777)
+      expect(activeOverlay(root)).toBeUndefined()
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  },
+)
+
+it('rejects a linked overlay resource directory before publishing its resource paths', async () => {
+  const root = await privateOverlayRoot('compound-resource-link-')
+  let linkedDirectory: string | undefined
+  try {
+    upstream('e'.repeat(40), '2.0.0')
+    await updateOverlay(root)
+    const overlay = activeOverlay(root)
+    if (overlay === undefined) throw new Error('Expected the published overlay')
+    const target = join(root, 'external-scripts')
+    await mkdir(target, { mode: 0o700 })
+    await writeFile(join(target, 'map_server.py'), '# external resource\n', { mode: 0o600 })
+    const scripts = join(overlay.assetRoot, 'compound', 'scripts')
+    await symlink(target, scripts, 'junction')
+    linkedDirectory = scripts
+
+    expect(activeOverlay(root)).toBeUndefined()
+  } finally {
+    if (linkedDirectory !== undefined) await unlink(linkedDirectory)
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+it('keeps owner-created readable Python caches usable under a private overlay root', async () => {
+  const root = await privateOverlayRoot('compound-resource-cache-')
+  try {
+    upstream('e'.repeat(40), '2.0.0')
+    await updateOverlay(root)
+    const overlay = activeOverlay(root)
+    if (overlay === undefined) throw new Error('Expected the published overlay')
+    const cache = join(overlay.assetRoot, 'compound', 'scripts', '__pycache__')
+    await mkdir(cache, { recursive: true, mode: 0o755 })
+    await writeFile(join(cache, 'map_engine.cpython-311.pyc'), 'generated cache', { mode: 0o644 })
+    expect(activeOverlay(root)?.commit).toBe(overlay.commit)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+it.skipIf(typeof process.getuid !== 'function')('rejects resources owned by another POSIX user', async () => {
+  const root = await privateOverlayRoot('compound-resource-owner-')
+  const getuid = process.getuid
+  if (getuid === undefined) throw new Error('This case requires POSIX user identifiers')
+  const currentUid = getuid()
+  const owner = vi.spyOn(process, 'getuid').mockReturnValue(currentUid + 1)
+  try {
+    expect(() => { assertPrivateOverlayResources(root) }).toThrow('unsafe overlay resource')
+  } finally {
+    owner.mockRestore()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+it('checks every Windows resource with the native private-file policy', async () => {
+  const root = await privateOverlayRoot('compound-resource-windows-')
+  const descriptor = Object.getOwnPropertyDescriptor(process, 'platform')
+  const nativePolicy = vi.spyOn(localFs, 'assertOwnerPrivateWin32').mockImplementation(() => {})
+  try {
+    if (descriptor === undefined) throw new Error('Expected the Node platform property')
+    const directory = join(root, 'scripts')
+    const script = join(directory, 'map_server.py')
+    await mkdir(directory, { mode: 0o700 })
+    await writeFile(script, '# private resource\n', { mode: 0o600 })
+
+    Object.defineProperty(process, 'platform', { ...descriptor, value: 'win32' })
+    expect(() => { assertPrivateOverlayResources(root) }).not.toThrow()
+    expect(nativePolicy).toHaveBeenCalledWith(directory, 'directory')
+    expect(nativePolicy).toHaveBeenCalledWith(script, 'file')
+    nativePolicy.mockImplementation((path) => {
+      if (path === script) throw new Error('Resource ACL permits an untrusted writer')
+    })
+    expect(() => { assertPrivateOverlayResources(root) }).toThrow('Resource ACL permits an untrusted writer')
+  } finally {
+    if (descriptor !== undefined) Object.defineProperty(process, 'platform', descriptor)
+    nativePolicy.mockRestore()
+    await rm(root, { recursive: true, force: true })
+  }
 })
 
 it('uses the Y Harness data path and keeps a legacy active overlay selected', async () => {

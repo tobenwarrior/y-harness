@@ -24,6 +24,7 @@ import Include from '@yharness/cordis-plugin-include'
 import Loader from '@yharness/cordis-plugin-loader'
 import type { ConnectionFetchRoute } from '@yharness/client-connection'
 import SkillRegistry from '@yharness/skill'
+import { createOwnerPrivateDirectoryWin32 } from '@yharness/fs-local'
 import * as SkillCompound from '@yharness/skill-compound'
 import { activeOverlay, legacyOverlayRoot, overlayRoot } from '../src/overlay.ts'
 import { AUTO_UPDATE_INTERVAL_MS } from '../src/index.ts'
@@ -166,6 +167,7 @@ describe('bundled Compound skills', () => {
     const previousHome = homeOverride.value
     homeOverride.value = home
     try {
+      if (process.platform === 'win32') createOwnerPrivateDirectoryWin32(root)
       const skills = join(root, 'revisions', commit, 'skills')
       for (const name of names) {
         const directory = join(skills, name)

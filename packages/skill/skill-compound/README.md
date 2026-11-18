@@ -43,6 +43,8 @@ Each loaded skill body ends with a `Compound runtime` section naming the absolut
 
 On Windows, the configured `overlayRoot` is created with a protected DACL limited to the current user, SYSTEM, and local Administrators; an existing root is accepted only when its owner, ACL, and path components satisfy the same private policy. A missing root checks every existing ancestor for untrusted replacement rights, allowing inherited read/traverse/create-child access but failing closed on writable or untrusted ownership paths.
 
+Active revisions validate every resource file and directory before exposing skill paths or starting the code-map service. Resource entries reject untrusted owners and write access. Owner-created readable Python caches remain valid within the private root. Links, reparse points and special files are rejected.
+
 ### What the skills do
 
 `compound` routes an engineering request to one of its reference workflows and expects the work to be verified against observable behavior. `map` opens the interactive repository graph. `setup`, `setup-global`, and `status-global` manage the upstream activation model. The bundled `repo_audit.py` reports repository clutter, source-size thresholds, `.gitignore` gaps, and unreferenced scripts without writing to the repository.
