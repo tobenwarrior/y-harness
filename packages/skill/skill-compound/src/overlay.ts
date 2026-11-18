@@ -138,8 +138,9 @@ function checkPrivateFile(path: string): void {
 /**
  * Check overlay resource ownership before exposing executable or viewer paths.
  * The enclosing overlay root must already satisfy the owner-private policy.
- * Resource files and directories permit owner-created readable Python caches,
- * and reject links, special files, untrusted owners and write access.
+ * POSIX traversal remains confined by that root. Windows checks every resource's
+ * private DACL. Owner-created Python caches retain their account's normal umask.
+ * Links, special files and untrusted owners are rejected.
  * @param path - resource file or directory, recursively inspected when a directory.
  * @throws when an entry fails ownership, permission or file-type checks.
  */
@@ -148,7 +149,7 @@ export function assertPrivateOverlayResources(path: string): void {
   if (!stat.isDirectory() && !stat.isFile()) throw new Error(`unsafe overlay resource: ${path}`)
   if (process.platform === 'win32') {
     assertOwnerPrivateWin32(path, stat.isDirectory() ? 'directory' : 'file')
-  } else if ((stat.mode & 0o022) !== 0 || (typeof process.getuid === 'function' && stat.uid !== process.getuid())) {
+  } else if (typeof process.getuid === 'function' && stat.uid !== process.getuid()) {
     throw new Error(`unsafe overlay resource: ${path}`)
   }
   if (stat.isDirectory()) {

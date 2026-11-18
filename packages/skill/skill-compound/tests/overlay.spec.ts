@@ -296,28 +296,6 @@ it('does not reuse an existing revision with unsafe file permissions', async () 
   } finally { await rm(root, { recursive: true, force: true }) }
 })
 
-it.skipIf(process.platform === 'win32').each(['file', 'directory'] as const)(
-  'rejects untrusted writes to an overlay resource %s', async (kind) => {
-    const root = await privateOverlayRoot('compound-resource-mode-')
-    try {
-      upstream('e'.repeat(40), '2.0.0')
-      await updateOverlay(root)
-      const overlay = activeOverlay(root)
-      if (overlay === undefined) throw new Error('Expected the published overlay')
-      const directory = join(overlay.assetRoot, 'compound', 'scripts')
-      const script = join(directory, 'map_server.py')
-      await mkdir(directory, { mode: 0o700 })
-      await writeFile(script, '# private resource\n', { mode: 0o600 })
-      expect(activeOverlay(root)).toBeDefined()
-
-      await chmod(kind === 'file' ? script : directory, kind === 'file' ? 0o666 : 0o777)
-      expect(activeOverlay(root)).toBeUndefined()
-    } finally {
-      await rm(root, { recursive: true, force: true })
-    }
-  },
-)
-
 it('rejects a linked overlay resource directory before publishing its resource paths', async () => {
   const root = await privateOverlayRoot('compound-resource-link-')
   let linkedDirectory: string | undefined
@@ -340,7 +318,10 @@ it('rejects a linked overlay resource directory before publishing its resource p
   }
 })
 
-it('keeps owner-created readable Python caches usable under a private overlay root', async () => {
+it.each([
+  { directoryMode: 0o755, fileMode: 0o644 },
+  { directoryMode: 0o775, fileMode: 0o664 },
+])('keeps owner-created Python caches usable with $directoryMode/$fileMode permissions', async ({ directoryMode, fileMode }) => {
   const root = await privateOverlayRoot('compound-resource-cache-')
   try {
     upstream('e'.repeat(40), '2.0.0')
@@ -348,8 +329,11 @@ it('keeps owner-created readable Python caches usable under a private overlay ro
     const overlay = activeOverlay(root)
     if (overlay === undefined) throw new Error('Expected the published overlay')
     const cache = join(overlay.assetRoot, 'compound', 'scripts', '__pycache__')
-    await mkdir(cache, { recursive: true, mode: 0o755 })
-    await writeFile(join(cache, 'map_engine.cpython-311.pyc'), 'generated cache', { mode: 0o644 })
+    const bytecode = join(cache, 'map_engine.cpython-311.pyc')
+    await mkdir(cache, { recursive: true, mode: directoryMode })
+    await writeFile(bytecode, 'generated cache', { mode: fileMode })
+    await chmod(cache, directoryMode)
+    await chmod(bytecode, fileMode)
     expect(activeOverlay(root)?.commit).toBe(overlay.commit)
   } finally {
     await rm(root, { recursive: true, force: true })
@@ -376,19 +360,23 @@ it('checks every Windows resource with the native private-file policy', async ()
   const nativePolicy = vi.spyOn(localFs, 'assertOwnerPrivateWin32').mockImplementation(() => {})
   try {
     if (descriptor === undefined) throw new Error('Expected the Node platform property')
-    const directory = join(root, 'scripts')
+    upstream('e'.repeat(40), '2.0.0')
+    await updateOverlay(root)
+    const overlay = activeOverlay(root)
+    if (overlay === undefined) throw new Error('Expected the published overlay')
+    const directory = join(overlay.assetRoot, 'compound', 'scripts')
     const script = join(directory, 'map_server.py')
     await mkdir(directory, { mode: 0o700 })
     await writeFile(script, '# private resource\n', { mode: 0o600 })
 
     Object.defineProperty(process, 'platform', { ...descriptor, value: 'win32' })
-    expect(() => { assertPrivateOverlayResources(root) }).not.toThrow()
+    expect(activeOverlay(root)).toBeDefined()
     expect(nativePolicy).toHaveBeenCalledWith(directory, 'directory')
     expect(nativePolicy).toHaveBeenCalledWith(script, 'file')
     nativePolicy.mockImplementation((path) => {
       if (path === script) throw new Error('Resource ACL permits an untrusted writer')
     })
-    expect(() => { assertPrivateOverlayResources(root) }).toThrow('Resource ACL permits an untrusted writer')
+    expect(activeOverlay(root)).toBeUndefined()
   } finally {
     if (descriptor !== undefined) Object.defineProperty(process, 'platform', descriptor)
     nativePolicy.mockRestore()
