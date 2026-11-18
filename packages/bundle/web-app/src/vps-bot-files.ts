@@ -128,8 +128,8 @@ export class VpsBotFileSystem extends FileSystem {
         if (bytes.length < chunkSize) break
         offset += bytes.length
       }
-      const tail = decoder.decode()
-      if (tail !== '') yield tail
+      // Flush the fatal decoder so an incomplete trailing UTF-8 sequence is rejected.
+      void decoder.decode()
     } catch (error) {
       if (!(error instanceof TypeError)) throw error
       throw new FsError('The file is not UTF-8 text.', 'FS_NOT_TEXT', { cause: error })
