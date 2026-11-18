@@ -179,7 +179,7 @@ export function mountVpsBots(
         browserRoster = roster
         publish()
         return async () => {
-          /* v8 ignore if -- bots-injection teardown ordering awaits this roster disposer before reloading a replacement provider. */
+          /* v8 ignore else -- bots-injection teardown ordering awaits this roster disposer before reloading a replacement provider. */
           if (browserRoster === roster) browserRoster = undefined
           await roster.close()
         }
@@ -596,7 +596,7 @@ export function mountVpsBots(
             agentCtx.effect(() => {
               projectToolGrants.set(bot.sessionId, setAccess)
               return () => {
-                /* v8 ignore if -- Session admission serialization keeps the old Agent registered until its scoped disposers drain. */
+                /* v8 ignore else -- Session admission serialization keeps the old Agent registered until its scoped disposers drain. */
                 if (projectToolGrants.get(bot.sessionId) === setAccess) projectToolGrants.delete(bot.sessionId)
               }
             }, 'vps-bots: update the Bot project tool when access changes')
