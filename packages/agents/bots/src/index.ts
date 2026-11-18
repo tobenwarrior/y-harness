@@ -1744,50 +1744,46 @@ function emptyProfileRevisionState(): BotProfileRevisionState {
   return { version: BOT_PROFILE_REVISION_RECORD_VERSION, revisions: {}, profiles: {} }
 }
 
+function profileRevisionStateFromParsed(
+  parsed: {
+    readonly revisions: Record<string, number>
+    readonly profiles?: Record<string, zod.infer<typeof botProfileSnapshotSchema>> | undefined
+    readonly pending?: zod.infer<typeof botProfilePendingSchema> | undefined
+    readonly sharedRosterFence?: zod.infer<typeof botProfileRosterFenceSchema> | undefined
+  },
+): BotProfileRevisionState {
+  return {
+    version: BOT_PROFILE_REVISION_RECORD_VERSION,
+    revisions: { ...parsed.revisions },
+    profiles: { ...parsed.profiles },
+    ...(parsed.pending === undefined ? {} : { pending: parsed.pending }),
+    ...(parsed.sharedRosterFence === undefined ? {} : { sharedRosterFence: parsed.sharedRosterFence }),
+  }
+}
+
 function profileRevisionStateFromLegacy(record: CredentialRecord): BotProfileRevisionState {
   if (record.kind !== 'grant') throw new Error('Bot profile revision record has an unexpected credential kind')
   const parsed = botProfileRevisionRecordV1Schema.safeParse(record.payload)
   if (!parsed.success) throw new Error('Bot profile revision record is invalid')
-  return {
-    version: BOT_PROFILE_REVISION_RECORD_VERSION,
-    revisions: { ...parsed.data.revisions },
-    profiles: { ...parsed.data.profiles },
-    ...(parsed.data.pending === undefined ? {} : { pending: parsed.data.pending }),
-  }
+  return profileRevisionStateFromParsed(parsed.data)
 }
 
 function profileRevisionStateFromV2(record: CredentialRecord): BotProfileRevisionState {
   if (record.kind !== 'grant') throw new Error('Bot profile revision record has an unexpected credential kind')
   const parsed = botProfileRevisionRecordV2Schema.safeParse(record.payload)
   if (parsed.success) {
-    return {
-      version: BOT_PROFILE_REVISION_RECORD_VERSION,
-      revisions: { ...parsed.data.revisions },
-      profiles: { ...parsed.data.profiles },
-      ...(parsed.data.pending === undefined ? {} : { pending: parsed.data.pending }),
-    }
+    return profileRevisionStateFromParsed(parsed.data)
   }
   const routineCompat = botProfileRevisionRecordV2RoutineCompatSchema.safeParse(record.payload)
   if (!routineCompat.success) throw new Error('Bot profile revision v2 record is invalid')
-  return {
-    version: BOT_PROFILE_REVISION_RECORD_VERSION,
-    revisions: { ...routineCompat.data.revisions },
-    profiles: { ...routineCompat.data.profiles },
-    ...(routineCompat.data.pending === undefined ? {} : { pending: routineCompat.data.pending }),
-  }
+  return profileRevisionStateFromParsed(routineCompat.data)
 }
 
 function profileRevisionStateFromV3(record: CredentialRecord): BotProfileRevisionState {
   if (record.kind !== 'grant') throw new Error('Bot profile revision record has an unexpected credential kind')
   const parsed = botProfileRevisionRecordV3Schema.safeParse(record.payload)
   if (!parsed.success) throw new Error('Bot profile revision v3 record is invalid')
-  return {
-    version: BOT_PROFILE_REVISION_RECORD_VERSION,
-    revisions: { ...parsed.data.revisions },
-    profiles: { ...parsed.data.profiles },
-    ...(parsed.data.pending === undefined ? {} : { pending: parsed.data.pending }),
-    ...(parsed.data.sharedRosterFence === undefined ? {} : { sharedRosterFence: parsed.data.sharedRosterFence }),
-  }
+  return profileRevisionStateFromParsed(parsed.data)
 }
 
 function profileRevisionRecordOf(record: CredentialRecord | undefined): BotProfileRevisionState {
@@ -1795,13 +1791,7 @@ function profileRevisionRecordOf(record: CredentialRecord | undefined): BotProfi
   if (record.kind !== 'grant') throw new Error('Bot profile revision record has an unexpected credential kind')
   const parsed = botProfileRevisionRecordSchema.safeParse(record.payload)
   if (!parsed.success) throw new Error('Bot profile revision record is invalid')
-  return {
-    version: BOT_PROFILE_REVISION_RECORD_VERSION,
-    revisions: { ...parsed.data.revisions },
-    profiles: { ...parsed.data.profiles },
-    ...(parsed.data.pending === undefined ? {} : { pending: parsed.data.pending }),
-    ...(parsed.data.sharedRosterFence === undefined ? {} : { sharedRosterFence: parsed.data.sharedRosterFence }),
-  }
+  return profileRevisionStateFromParsed(parsed.data)
 }
 
 function profileRevisionRecordOfState(state: BotProfileRevisionState): CredentialRecord {
