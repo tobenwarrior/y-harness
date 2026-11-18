@@ -244,7 +244,7 @@ export function BotAvatarEditor({ bot, actions, loadAvatar, open, onClose, onOpe
 
   const changeCrop = (next: AvatarCrop) => {
     setCrop(next)
-    if (uploadFile !== null) void upload(uploadFile, next)
+    void upload(uploadFile, next)
   }
 
   const saveAppearance = async () => {
@@ -470,7 +470,7 @@ export function BotAvatarEditor({ bot, actions, loadAvatar, open, onClose, onOpe
             <span className={css.avatarPromptCount}>{description.length}/{DESCRIPTION_LIMIT}</span>
             {working === 'status' && <div className={css.avatarStatus} role="status"><StateDot state="ongoing" size={13} />{t('avatarChecking')}</div>}
             {statusMessage !== undefined && (
-              <div className={css.avatarNotice} role={statusError || unavailable ? 'alert' : 'status'}>
+              <div className={css.avatarNotice} role="alert">
                 <span>{statusMessage}</span>
                 {statusError
                   ? <Button variant="ghost" size="sm" onClick={() => { setStatusAttempt(attempt => attempt + 1) }}>{t('retry')}</Button>
