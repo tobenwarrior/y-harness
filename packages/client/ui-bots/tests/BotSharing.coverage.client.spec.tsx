@@ -2,7 +2,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { brandString } from '@yharness/brand'
-import { BotId } from '@yharness/bots/client'
+import { BotId, BotPrincipalId } from '@yharness/bots/client'
 import type { BotGroupId, BotGroupMessageId, BotGroupView, BotSharedGroupDeliveryFenceView } from '@yharness/bots/client'
 import { makeTranslate } from '@yharness/client-test-runtime'
 import { BotShareDialog, SharedBotsDialog } from '../src/client/BotSharing.tsx'
@@ -757,10 +757,10 @@ describe('BotSharing defensive UI paths', () => {
   it('does not apply group settings from a room that was replaced while loading', async () => {
     const groupA = groupFixture('group-settings-stale-a', 'Settings alpha')
     const groupB = groupFixture('group-settings-stale-b', 'Settings beta')
-    const settingsA = { groupId: String(groupA.id), name: groupA.name, updatedAt: 1, canManage: true, members: [] }
-    const settingsB = { groupId: String(groupB.id), name: groupB.name, updatedAt: 1, canManage: true, members: [] }
+    const settingsA = { groupId: groupA.id, name: groupA.name, updatedAt: 1, canManage: true, members: [] }
+    const settingsB = { groupId: groupB.id, name: groupB.name, updatedAt: 1, canManage: true, members: [] }
     const pendingSettings = Promise.withResolvers<Awaited<ReturnType<NonNullable<SharedBotsClient['readGroupSettings']>>>>()
-    const readGroupSettings: NonNullable<SharedBotsClient['readGroupSettings']> = vi.fn(groupId => (
+    const readGroupSettings = vi.fn<NonNullable<SharedBotsClient['readGroupSettings']>>(groupId => (
       groupId === String(groupA.id)
         ? pendingSettings.promise
         : Promise.resolve({ ok: true, value: settingsB })
@@ -796,15 +796,16 @@ describe('BotSharing defensive UI paths', () => {
     const groupA = groupFixture('group-read-stale-a', 'Read alpha')
     const groupB = groupFixture('group-read-stale-b', 'Read beta')
     const pendingRead = Promise.withResolvers<Awaited<ReturnType<NonNullable<SharedBotsClient['inspectGroup']>>>>()
-    const inspectGroup: NonNullable<SharedBotsClient['inspectGroup']> = vi.fn(groupId => (
+    const inspectGroup = vi.fn<NonNullable<SharedBotsClient['inspectGroup']>>(groupId => (
       groupId === String(groupB.id)
         ? pendingRead.promise
         : Promise.resolve({ ok: true, value: { group: groupA, messages: [{
           id: brandString<BotGroupMessageId>('bot-group-message-read-alpha'),
           groupId: groupA.id,
-          sender: { kind: 'user', principalId: 'principal-member' },
+          sender: { kind: 'user', principalId: BotPrincipalId('principal-member') },
           text: 'Alpha message',
           createdAt: 1,
+          reactions: [],
         }] } })
     ))
     const client = sharedClient({
@@ -822,9 +823,10 @@ describe('BotSharing defensive UI paths', () => {
       pendingRead.resolve({ ok: true, value: { group: groupB, messages: [{
         id: brandString<BotGroupMessageId>('bot-group-message-read-beta'),
         groupId: groupB.id,
-        sender: { kind: 'user', principalId: 'principal-member' },
+        sender: { kind: 'user', principalId: BotPrincipalId('principal-member') },
         text: 'Stale beta message',
         createdAt: 2,
+        reactions: [],
       }] } })
       await Promise.resolve()
     })
