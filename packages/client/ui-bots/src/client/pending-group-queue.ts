@@ -282,8 +282,8 @@ function messageView(record: PendingMessageRecord): SharedPendingGroupMessage {
 /**
  * Create a scoped, per-operation retry queue. The queue refuses to persist when
  * localStorage or Web Locks is unavailable, so callers never claim a retry is safe
- * without both durable storage and cross-tab coordination. Lock-admitted work
- * receives the probed storage adapter; unavailable storage is rejected first.
+ * without both durable storage and cross-tab coordination. Each locked operation
+ * receives the checked storage adapter after unavailable storage is rejected.
  * @param scope - Server-issued principal identifier used to partition local data.
  * @returns Shared-group retry queue for that principal.
  */
