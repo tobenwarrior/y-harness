@@ -539,6 +539,28 @@ describe('private computer Host', () => {
     }
   })
 
+  it('ignores an interrupt queued after an owner answers the same request', async () => {
+    const f = fixture()
+    const controller = new AbortController()
+    let answering: ReturnType<ComputerHost['answerSignIn']> | undefined
+    const answerBeforeInterrupt = (): void => {
+      const request = f.host.signInRequest()
+      if (request !== undefined) answering = f.host.answerSignIn(request.id, 'cancel')
+    }
+    controller.signal.addEventListener('abort', answerBeforeInterrupt)
+    try {
+      const waiting = f.host.requestSignIn(controller.signal)
+      await expect.poll(() => f.host.signInRequest()).toBeDefined()
+      controller.abort()
+      if (answering === undefined) throw new Error('sign-in answer was not queued')
+      await expect(answering).resolves.toEqual({ mode: 'watching' })
+      await expect(waiting).resolves.toBe('cancelled')
+    } finally {
+      controller.signal.removeEventListener('abort', answerBeforeInterrupt)
+      await f.dispose()
+    }
+  })
+
   it('disposes only after an admitted native action reaches quiescence', async () => {
     let release: (() => void) | undefined
     const gate = new Promise<void>((resolve) => { release = resolve })

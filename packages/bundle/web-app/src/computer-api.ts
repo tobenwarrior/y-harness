@@ -284,6 +284,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 type ComputerSurface = 'primary' | 'desktop'
+type ComputerEndpoint = 'frame' | 'take-control' | 'release-control' | 'input'
 
 interface SessionTarget {
   readonly id: string
@@ -349,7 +350,7 @@ function routesFor(
   resolveComputer: (target: SessionTarget, statusSignal?: AbortSignal) => Promise<ResolvedComputer | undefined>,
   options: RouteOptions,
 ): readonly ConnectionFetchRoute[] {
-  const action = (computer: ComputerRouteController, endpoint: string) => {
+  const action = (computer: ComputerRouteController, endpoint: ComputerEndpoint) => {
     switch (endpoint) {
       case 'frame': return (id: ViewerId, _payload: Record<string, unknown>, signal: AbortSignal): Promise<unknown> => computer.frame(id, signal)
       case 'take-control': return (id: ViewerId, _payload: Record<string, unknown>, signal: AbortSignal): Promise<unknown> => computer.takeControl(id, signal)
@@ -357,7 +358,6 @@ function routesFor(
       case 'input': return (id: ViewerId, payload: Record<string, unknown>, signal: AbortSignal): Promise<unknown> =>
         typeof payload.origin === 'string' ? computer.input(id, payload.action, signal, payload.origin)
           : computer.input(id, payload.action, signal)
-      default: return undefined
     }
   }
   return [
@@ -483,9 +483,9 @@ export function botComputerRoutes(
       available: resolved?.available === true,
       kind: 'vps',
       computer: {
-        id: target.managed ? target.id : 'shared-vps',
+        id: target.id,
         location: 'vps',
-        permissionScope: target.managed ? 'bot' : 'workspace',
+        permissionScope: 'bot',
       } satisfies ComputerStatusMetadata,
     }),
   })
