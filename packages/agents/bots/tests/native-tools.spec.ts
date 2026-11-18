@@ -1162,7 +1162,7 @@ describe('native Bot actions', () => {
   it('reads Bot references through list and inspect and fails closed on scope, cancellation, and adapter errors', async () => {
     const sessionId = SessionId('bot-session-alpha')
     const unbound = createBotNativeToolProvider({ bind: async () => undefined, persist: async () => {}, replay: async () => [] })
-    expect(await unbound.resolve({ sessionId: undefined })).toEqual([])
+    expect(await unbound.resolve({})).toEqual([])
     expect(await unbound.resolve({ sessionId })).toEqual([])
 
     const bound = client()
@@ -1315,7 +1315,7 @@ describe('native Bot actions', () => {
     }
     await expect(provider.observe({ ...event, name: 'not_a_bot_action' })).rejects.toThrow('Unknown Bot native action')
     await expect(provider.observe({ ...event, sessionId: undefined })).rejects.toThrow('live Session id')
-    await expect(provider.replay({ sessionId: undefined })).resolves.toEqual([])
+    await expect(provider.replay({})).resolves.toEqual([])
 
     const unbound = createBotNativeToolProvider({ bind: async () => undefined, persist: async () => {}, replay: async () => [] })
     await expect(unbound.replay({ sessionId })).resolves.toEqual([])
