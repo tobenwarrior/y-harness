@@ -645,6 +645,7 @@ export async function launchWebScaffold(options: LaunchOptions = {}): Promise<We
             'lifecycle-chrome',
             'steering',
             'live-interactions',
+            'goal-multi-turn-actions',
           ].includes(basename(dirname(replayFixture)))
           ? { assetRoot: join(REPO_ROOT, 'apps/web/tests/fixtures/replay-compound-skills') }
           : {},
