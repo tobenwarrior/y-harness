@@ -7,19 +7,20 @@ import {
 } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
-import { prepareDevelopmentApp, type DevelopmentAppOptions } from './development-app.ts'
+import { hasManagedLaunchHandoff, prepareDevelopmentApp, type DevelopmentAppOptions } from './development-app.ts'
 
 const OWNER_MARKER = 'github-source-updater-v1\n'
 const RECORD = 'mac-carrier.json'
 const COMMIT = /^[a-f0-9]{40}$/u
 const STAGING = /^[a-f0-9]{32}$/u
-const IDENTIFIER = /^com\.yharness\.desktop\.(?:dev|managed)\.[a-f0-9]{12}$/u
+const IDENTIFIER = /^com\.(?:yharness\.desktop\.(?:dev|managed)|deepseek\.harness\.dev)\.[a-f0-9]{12}$/u
 const ELECTRON_VERSION = /^\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?$/u
 const CD_HASH = /^[a-f0-9]{40}$/u
 const BINARY_DIGEST = /^[a-f0-9]{64}$/u
 const BUNDLE = 'Y harness.app'
 const BUILD = '.desktop-build'
 const ELECTRON = 'Contents/MacOS/Electron'
+const LAUNCHER = 'Contents/MacOS/YHarness'
 
 interface CarrierIdentity {
   readonly bundleIdentifier: string
@@ -237,17 +238,17 @@ export async function prepareManagedDevelopmentApp(
     && previous.electronExecutableDigest === build.electronExecutableDigest) {
     const source = carrierLocation(managed, previous.commit)
     checkPinnedCarrier(source, previous, operations.inspect)
-    if (source !== bundle) copyPinnedCarrier(source, bundle, previous, operations)
-    if (installed === undefined) publishRecord(recordPath, previous)
-  } else {
-    const bundleIdentifier = previous?.bundleIdentifier
-      ?? `com.yharness.desktop.managed.${createHash('sha256').update(managed).digest('hex').slice(0, 12)}`
-    await operations.prepare({ ...options, bundleIdentifier })
-    const identity = examine(bundle, operations.inspect)
-    if (identity.bundleIdentifier !== bundleIdentifier) throw new Error('managed desktop: prepared carrier identity changed')
-    publishRecord(recordPath, {
-      schemaVersion: 1, commit, ...build, ...identity,
-    })
+    if (hasManagedLaunchHandoff(readFileSync(join(source, LAUNCHER), 'utf8'))) {
+      if (source !== bundle) copyPinnedCarrier(source, bundle, previous, operations)
+      if (installed === undefined) publishRecord(recordPath, previous)
+      return join(bundle, ELECTRON)
+    }
   }
+  const bundleIdentifier = previous?.bundleIdentifier
+    ?? `com.yharness.desktop.managed.${createHash('sha256').update(managed).digest('hex').slice(0, 12)}`
+  await operations.prepare({ ...options, bundleIdentifier })
+  const identity = examine(bundle, operations.inspect)
+  if (identity.bundleIdentifier !== bundleIdentifier) throw new Error('managed desktop: prepared carrier identity changed')
+  publishRecord(recordPath, { schemaVersion: 1, commit, ...build, ...identity })
   return join(bundle, ELECTRON)
 }

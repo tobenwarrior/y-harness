@@ -1,11 +1,12 @@
 /** Managed carrier migration through staging, activation, and successive source checkouts. */
+import { execFileSync } from 'node:child_process'
 import {
   cpSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
-import type { DevelopmentAppOptions } from '../scripts/development-app.ts'
+import { developmentLauncher, type DevelopmentAppOptions } from '../scripts/development-app.ts'
 import { captureManagedMacCarrier, prepareManagedDevelopmentApp } from '../scripts/managed-development-app.ts'
 
 const ORIGINAL = 'a'.repeat(40)
@@ -16,6 +17,7 @@ const LEGACY_CODE = '1'.repeat(40)
 const NEW_CODE = '2'.repeat(40)
 const STAMP = 'Contents/signature-fixture.json'
 const EXECUTABLE = 'Contents/MacOS/Electron'
+const LAUNCHER = 'Contents/MacOS/YHarness'
 const RECORD = 'mac-carrier.json'
 
 function write(path: string, text: string): void {
@@ -42,10 +44,12 @@ function installation() {
   const copy = vi.fn((source: string, target: string) => {
     cpSync(source, target, { recursive: true, errorOnExist: true })
   })
-  const prepare = vi.fn(async ({ directory, bundleIdentifier }: DevelopmentAppOptions) => {
+  const prepare = vi.fn(async (options: DevelopmentAppOptions) => {
+    const { directory, bundleIdentifier } = options
     if (bundleIdentifier === undefined) throw new Error('Expected a managed identity')
     const bundle = join(directory, 'Y harness.app')
     writeCarrier(bundle, bundleIdentifier, NEW_CODE)
+    write(join(bundle, LAUNCHER), developmentLauncher(options, bundle))
     return join(bundle, 'Contents/MacOS/YHarness')
   })
   const operations = { inspect, copy, prepare }
@@ -85,6 +89,7 @@ describe.skipIf(process.platform === 'win32')('GitHub-managed Mac carrier', () =
     const h = installation()
     const original = h.version(`versions/${ORIGINAL}`)
     writeCarrier(original.bundle, LEGACY_ID, LEGACY_CODE)
+    write(join(original.bundle, LAUNCHER), developmentLauncher(original.options, original.bundle))
     const staging = h.version(`staging/${'d'.repeat(32)}`)
     h.activate(ORIGINAL)
     captureManagedMacCarrier(staging.options.appRoot, h.managed, h.inspect)
@@ -114,6 +119,39 @@ describe.skipIf(process.platform === 'win32')('GitHub-managed Mac carrier', () =
     expect(h.prepare).not.toHaveBeenCalled()
     expect(h.readRecord().commit).toBe(ORIGINAL)
     expect(lstatSync(h.record).mode & 0o777).toBe(0o600)
+  })
+
+  it('replaces an old signed launcher that cold-starts an embedded checkout', async () => {
+    const h = installation()
+    const originalId = 'com.deepseek.harness.dev.1234567890ab'
+    const original = h.version(`versions/${ORIGINAL}`)
+    writeCarrier(original.bundle, originalId, LEGACY_CODE)
+    const oldLauncher = ['#!/bin/sh', 'unset DSH_DESKTOP_HOST_INSPECT_PORT',
+      'export DSH_DESKTOP_OPEN_DEVTOOLS=0', "export DSH_DESKTOP_DEV_APP='0'",
+      `cd '${original.options.appRoot}'`,
+      `exec '${original.executable}' '--user-data-dir=${original.options.userData}' '${original.options.appRoot}' "$@"`, ''].join('\n')
+    write(join(original.bundle, LAUNCHER), oldLauncher)
+    const staging = h.version(`staging/${'d'.repeat(32)}`)
+    h.activate(ORIGINAL)
+    captureManagedMacCarrier(staging.options.appRoot, h.managed, h.inspect)
+    const updated = h.version(`versions/${UPDATED}`)
+    renameSync(join(staging.build, RECORD), join(updated.build, RECORD))
+    h.activate(UPDATED)
+
+    await expect(h.prepareVersion(updated, UPDATED)).resolves.toBe(updated.executable)
+    expect(h.copy).not.toHaveBeenCalled()
+    expect(h.prepare).toHaveBeenCalledWith(expect.objectContaining({ bundleIdentifier: originalId }))
+    const replacement = readFileSync(join(updated.bundle, LAUNCHER), 'utf8')
+    const probe = join(h.managed, 'cold-launch')
+    const open = join(h.managed, 'record-open')
+    writeFileSync(open, '#!/bin/sh\nprintf "%s\\n" "$DSH_HOME" "$@"\n', { mode: 0o700 })
+    write(probe, replacement.replace("'/usr/bin/open'", `'${open}'`))
+    const home = join(h.managed, "Cold home ' $(false)")
+    const state = 'inherited state'
+    expect(execFileSync('/bin/sh', [probe], { env: { HOME: home, DSH_HOME: state }, encoding: 'utf8' }))
+      .toBe(`${state}\n${home}/Applications/Y Harness GitHub.app\n`)
+    expect(readFileSync(join(original.bundle, LAUNCHER), 'utf8')).toBe(oldLauncher)
+    expect(h.readRecord()).toMatchObject({ commit: UPDATED, bundleIdentifier: originalId, cdHash: NEW_CODE })
   })
 
   it('uses a different stable identity for each fresh managed installation', async () => {
