@@ -20,6 +20,27 @@ vi.mock('node:fs/promises', async (importOriginal) => {
 const SESSION = 'bot-session-12345678-1234-4abc-8def-1234567890ab'
 const OTHER_SESSION = 'bot-session-abcdefab-cdef-4abc-9abc-abcdefabcdef'
 
+async function holdPolicySync(directory: string, sessionId: string) {
+  const realFs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+  const open = vi.mocked(fsPromises.open)
+  const paused = Promise.withResolvers<undefined>()
+  const release = Promise.withResolvers<undefined>()
+  const temporaryPrefix = join(directory, `.${sessionId}.`)
+  open.mockImplementation(async (path, flags, mode) => {
+    const handle = await realFs.open(path, flags, mode)
+    if (typeof path === 'string' && path.startsWith(temporaryPrefix)) {
+      const sync = handle.sync.bind(handle)
+      vi.spyOn(handle, 'sync').mockImplementationOnce(async () => {
+        await sync()
+        paused.resolve(undefined)
+        await release.promise
+      })
+    }
+    return handle
+  })
+  return { paused: paused.promise, release: () => { release.resolve(undefined) }, restore: () => { open.mockImplementation(realFs.open) } }
+}
+
 describe.skipIf(process.platform === 'win32')('VPS Bot Computer setting', () => {
   it('keeps the network and shared workspace choices independent across reloads', async () => {
     const root = await mkdtemp(join(tmpdir(), 'yh-shared-setting-'))
@@ -113,6 +134,50 @@ describe.skipIf(process.platform === 'win32')('VPS Bot Computer setting', () => 
       expect(file.mode & 0o7777).toBe(0o600)
       expect(await readFile(join(directory, SESSION), 'utf8')).toBe('{"version":1,"enabled":false}\n')
     } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it.each(['queued', 'synced'] as const)('preserves the existing policy when cancellation reaches a %s write', async (stage) => {
+    const root = await mkdtemp(join(tmpdir(), 'yh-network-policy-'))
+    const directory = join(root, '.network-access')
+    const policy = new VpsBotComputerSetting(root, 'network')
+    const controller = new AbortController()
+    const reason = new Error('The Web configuration closed.')
+    const set: (sessionId: string, enabled: boolean, signal?: AbortSignal) => Promise<void> = policy.set.bind(policy)
+    let gate: Awaited<ReturnType<typeof holdPolicySync>> | undefined
+    const pending: Promise<void>[] = []
+    try {
+      await policy.set(SESSION, false)
+      const queued = stage === 'queued'
+      gate = await holdPolicySync(directory, queued ? OTHER_SESSION : SESSION)
+      const blocked = queued ? policy.set(OTHER_SESSION, true) : set(SESSION, true, controller.signal)
+      pending.push(blocked)
+      await Promise.race([gate.paused, blocked.then(() => { throw new Error('The write completed before syncing.') })])
+      const opened = vi.mocked(fsPromises.open).mock.calls.length
+      const cancelled = queued ? set(SESSION, true, controller.signal) : blocked
+      if (queued) pending.push(cancelled)
+      const outcome = Promise.allSettled([cancelled])
+      controller.abort(reason)
+      gate.release()
+      const [result] = await outcome
+      if (queued) await blocked
+
+      const target = join(directory, SESSION)
+      const stored = await readFile(target, 'utf8')
+      const files = (await readdir(directory)).sort()
+      const startedQueuedWrite = queued && vi.mocked(fsPromises.open).mock.calls.slice(opened).some(([path]) =>
+        typeof path === 'string' && (path === target || path.startsWith(join(directory, `.${SESSION}.`))))
+      expect({ result, stored, files, startedQueuedWrite }).toEqual({
+        result: { status: 'rejected', reason },
+        stored: '{"version":1,"enabled":false}\n',
+        files: queued ? [SESSION, OTHER_SESSION] : [SESSION],
+        startedQueuedWrite: false,
+      })
+    } finally {
+      gate?.release()
+      await Promise.allSettled(pending)
+      gate?.restore()
       await rm(root, { recursive: true, force: true })
     }
   })

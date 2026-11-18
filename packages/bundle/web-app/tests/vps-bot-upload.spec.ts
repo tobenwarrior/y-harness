@@ -1,10 +1,11 @@
 /** Exercise upload byte, lifetime, and collision behavior through the real worker. */
 
+import type { ChildProcess, ExecFileOptions } from 'node:child_process'
 import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { promisify } from 'node:util'
-import { describe, expect, it, type MockInstance, vi } from 'vitest'
+import { describe, expect, it, onTestFinished, type MockInstance, vi } from 'vitest'
 import { computerFileUploadRoute } from '../src/computer-api.ts'
 import { resolveVpsFileUploadLimits, uploadComputerFile } from '../src/vps-bot-upload.ts'
 import { VpsRuntime, type VpsRuntimeOptions } from '../src/vps-runtime.ts'
@@ -50,6 +51,19 @@ process.stdin.on('end', () => {
 function workerCommand(argv: readonly string[], root = argv[4] ?? ''): ReturnType<VpsRuntime['execArgv']> {
   if (process.platform !== 'win32') return ['python3', ...argv.slice(1, 4), root, ...argv.slice(5)]
   return [process.execPath, '-e', portableUploadWorker, root, ...argv.slice(5)]
+}
+
+const publicationReady = 'fixture-publication-ready'
+
+function pauseBeforeWorkerCommit(argv: readonly string[], gate: string): ReturnType<VpsRuntime['execArgv']> {
+  const script = argv[3]
+  const commitRead = '                if sys.stdin.buffer.read(1)'
+  if (script === undefined || !script.includes(commitRead)) throw new Error('The upload worker has no commit read to pause.')
+  const barrier = `                print('${publicationReady}', file=sys.stderr, flush=True)
+                while not os.path.exists(${JSON.stringify(gate)}):
+                    __import__('time').sleep(0.01)
+`
+  return workerCommand([...argv.slice(0, 3), script.replace(commitRead, barrier + commitRead), ...argv.slice(4)])
 }
 
 interface UploadProcessMocks {
@@ -211,6 +225,74 @@ describe('private Computer upload', () => {
       expect(await readdir(workspace)).toEqual([])
     }, { configurationSignal: configuration.signal })
   })
+
+  // The barrier runs in the VPS image's Python worker. Windows uses the portable fixture above.
+  it.skipIf(process.platform === 'win32').each(['configuration', 'request'] as const)(
+    'stops the worker before it accepts publication when the %s closes after body delivery', async (lifetime) => {
+      const request = new AbortController()
+      const configuration = new AbortController()
+      const selected = lifetime === 'configuration' ? configuration : request
+      const reason = new Error('The upload scope closed.')
+      const atPublication = Promise.withResolvers<undefined>()
+      const inputFinished = Promise.withResolvers<undefined>()
+      let worker: { child: ChildProcess; closed: Promise<undefined> } | undefined
+      let cleaning = false
+      const stopOwnedWorker = async (): Promise<void> => {
+        cleaning = true
+        if (worker?.child.exitCode === null && worker.child.signalCode === null) worker.child.kill('SIGKILL')
+        await worker?.closed
+      }
+      onTestFinished(stopOwnedWorker)
+
+      vi.resetModules()
+      vi.doMock('node:child_process', async (loadActual) => {
+        const actual = await loadActual<typeof import('node:child_process')>()
+        const exec = promisify(actual.execFile)
+        const launch = (file: string, args: readonly string[], options: ExecFileOptions) => {
+          const result = exec(file, args, options)
+          const { child } = result
+          let diagnostics = ''
+          child.stderr?.on('data', (chunk: string | Buffer) => {
+            diagnostics += String(chunk)
+            if (diagnostics.includes(publicationReady)) atPublication.resolve(undefined)
+          })
+          child.stdin?.once('finish', () => { inputFinished.resolve(undefined) })
+          worker = { child, closed: new Promise((resolve) => { child.once('close', () => { resolve(undefined) }) }) }
+          if (cleaning) child.kill('SIGKILL')
+          return result
+        }
+        return { ...actual, execFile: Object.assign(vi.fn(), { [promisify.custom]: launch }) }
+      })
+      try {
+        const { uploadComputerFile: upload } = await import('../src/vps-bot-upload.ts')
+        await withWorkspace(async (runtime, workspace, { execArgv }) => {
+          const gate = join(workspace, '..', 'release-publication')
+          execArgv.mockImplementationOnce((_sessionId, argv) => pauseBeforeWorkerCommit(argv, gate))
+          const name = 'retired-upload.bin'
+          const bytes = Uint8Array.of(7, 8, 9)
+          const pending = upload(runtime, OWNER, { directory: '.', name, bytes: bytes.length, body: new Response(bytes).body },
+            limits, request.signal)
+          const settled = Promise.allSettled([pending])
+          try {
+            await Promise.race([Promise.all([atPublication.promise, inputFinished.promise]), settled.then(() => {
+              throw new Error('The worker exited before the publication barrier.')
+            })])
+            selected.abort(reason)
+            await writeFile(gate, '')
+            await expect(pending).rejects.toBe(reason)
+            await worker?.closed
+            expect(await readdir(workspace)).not.toContain(name)
+          } finally {
+            await stopOwnedWorker()
+            await settled
+          }
+        }, { configurationSignal: configuration.signal })
+      } finally {
+        vi.doUnmock('node:child_process')
+        vi.resetModules()
+      }
+    },
+  )
 
   it('validates request media, size and path before opening a bot workspace', async () => {
     const writer = vi.fn().mockResolvedValue('stored')

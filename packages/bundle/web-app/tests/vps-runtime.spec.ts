@@ -7,7 +7,7 @@ import type { SubprocessTerminalHandle, SubprocessTerminalSpawnSpec } from '@yha
 import LocalSubprocessRuntime from '@yharness/subprocess-local'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { VpsBotSubprocess } from '../src/vps-bot-process.ts'
-import { VpsRuntime, VpsRuntimeError, type VpsCommandResult } from '../src/vps-runtime.ts'
+import { VpsRuntime, VpsRuntimeError, type VpsCommandResult, type VpsRuntimeOptions } from '../src/vps-runtime.ts'
 
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>()
@@ -58,21 +58,26 @@ function result(code = 0, stdout = ''): VpsCommandResult {
   return { code, stdout, stderr: '' }
 }
 
+function settlesThisTurn(promise: Promise<unknown>): Promise<boolean> {
+  return Promise.race([
+    promise.then(() => true),
+    new Promise<boolean>((resolve) => { setImmediate(() => { resolve(false) }) }),
+  ])
+}
+
 function fixture(run: (argv: readonly string[], signal: AbortSignal) => Promise<VpsCommandResult> | VpsCommandResult = async (argv) => {
   if (argv[1] === 'container' && argv[2] === 'exists') return result(1)
   return result()
 }, {
   browser = false, sharedWorkspace = false, hostileSharedVolume = false, internet,
-  userService = false, networkPolicy, sharedWorkspacePolicy,
+  userService = false, configurationSignal, networkPolicy, sharedWorkspacePolicy,
 }: {
   browser?: boolean
   sharedWorkspace?: boolean
   hostileSharedVolume?: boolean
   internet?: boolean
   userService?: boolean
-  networkPolicy?: { get(session: string): Promise<boolean | undefined>; set(session: string, enabled: boolean): Promise<void> }
-  sharedWorkspacePolicy?: { get(session: string): Promise<boolean | undefined>; set(session: string, enabled: boolean): Promise<void> }
-} = {}): Fixture {
+} & Pick<VpsRuntimeOptions, 'configurationSignal' | 'networkPolicy' | 'sharedWorkspacePolicy'> = {}): Fixture {
   const root = mkdtempSync(join(tmpdir(), 'dsh-vps-runtime-'))
   roots.push(root)
   const calls: string[][] = []
@@ -122,6 +127,7 @@ function fixture(run: (argv: readonly string[], signal: AbortSignal) => Promise<
     ...(browser ? { browser: { image: 'localhost/yharness-vps-bot-browser:24.04-v1', seccompProfile } } : {}),
     sharedWorkspace,
     ...(internet === undefined ? {} : { internet }),
+    ...(configurationSignal === undefined ? {} : { configurationSignal }),
     ...(networkPolicy === undefined ? {} : { networkPolicy }),
     ...(sharedWorkspacePolicy === undefined ? {} : { sharedWorkspacePolicy }),
   })
@@ -150,6 +156,63 @@ describe('VpsRuntime', () => {
       released.resolve(result())
       await rejected
       await disposal
+    }
+  })
+
+  it('waits for an admitted Computer operation to release its runtime on disposal', async () => {
+    const { runtime } = fixture()
+    const release = runtime.beginUse(sessions.alice)
+    const disposal = runtime.dispose()
+    try {
+      expect(await settlesThisTurn(disposal)).toBe(false)
+    } finally {
+      release()
+      await disposal
+    }
+  })
+
+  it.each([
+    { setting: 'network', method: 'setInternetAccess', option: 'networkPolicy' },
+    { setting: 'shared workspace', method: 'setSharedWorkspaceAccess', option: 'sharedWorkspacePolicy' },
+  ] as const)('cancels and drains a pending $setting policy write when Web closes', async ({ method, option }) => {
+    const configuration = new AbortController()
+    const reason = new Error('The Web configuration closed.')
+    const started = Promise.withResolvers<AbortSignal | undefined>()
+    const release = Promise.withResolvers<undefined>()
+    const saved = new Map<string, boolean>()
+    const { runtime } = fixture(undefined, {
+      configurationSignal: configuration.signal,
+      [option]: {
+        get: async (id: string) => saved.get(id),
+        set: async (id: string, enabled: boolean, signal?: AbortSignal) => {
+          started.resolve(signal)
+          await release.promise
+          signal?.throwIfAborted()
+          saved.set(id, enabled)
+        },
+      },
+    })
+    const changing = runtime[method](sessions.alice, true, new AbortController().signal)
+    const outcome = Promise.allSettled([changing])
+    let disposal: Promise<void> | undefined
+    try {
+      const policySignal = await Promise.race([started.promise, changing.then(() => {
+        throw new Error('The change completed before writing the policy.')
+      })])
+      configuration.abort(reason)
+      disposal = runtime.dispose()
+      const disposedBeforePolicySettled = await settlesThisTurn(disposal)
+      release.resolve(undefined)
+      const [change] = await outcome
+      await disposal
+      const cancellation: unknown = policySignal?.reason
+      expect({ cancellation, disposedBeforePolicySettled, saved: saved.get(sessions.alice), change }).toEqual({
+        cancellation: reason, disposedBeforePolicySettled: false, saved: undefined, change: { status: 'rejected', reason },
+      })
+    } finally {
+      release.resolve(undefined)
+      await outcome
+      await (disposal ?? runtime.dispose())
     }
   })
 
@@ -184,9 +247,13 @@ describe('VpsRuntime', () => {
 
   it.each([
     { action: 'network', state: 'idle' }, { action: 'network', state: 'busy' }, { action: 'network', state: 'stop failed' },
+    { action: 'network', state: 'request cancelled after removal' },
     { action: 'restart', state: 'idle' }, { action: 'restart', state: 'busy' }, { action: 'restart', state: 'stop failed' },
-  ])('protects the existing Computer during $action when it is $state', async ({ action, state }) => {
+  ])('protects the existing Computer during $action ($state)', async ({ action, state }) => {
     const saved = new Map<string, boolean>()
+    const request = new AbortController()
+    const cancelAfterRemoval = state === 'request cancelled after removal'
+    const removedComputer = state === 'idle' || cancelAfterRemoval
     const processes = [
       'PID   PPID  COMMAND     COMMAND',
       '1     0     bash        bash /usr/local/bin/yharness-vps-bot-start',
@@ -221,22 +288,30 @@ describe('VpsRuntime', () => {
       }
       if (command === 'top') return result(0, processes.join('\n'))
       if (command === 'stop' && state === 'stop failed') return result(125)
-      if (command === 'rm') present = false
+      if (command === 'rm') {
+        present = false
+        if (cancelAfterRemoval) request.abort(new Error('The owner request closed after removal.'))
+      }
       return result()
     }, { networkPolicy: {
-      get: async id => saved.get(id), set: async (id, enabled) => { saved.set(id, enabled) },
+      get: async id => saved.get(id),
+      set: async (id, enabled, signal?: AbortSignal) => {
+        signal?.throwIfAborted()
+        saved.set(id, enabled)
+      },
     } })
     await f.runtime.ensure(sessions.alice)
-    const signal = new AbortController().signal
+    const { signal } = request
     const change = action === 'network'
       ? f.runtime.setInternetAccess(sessions.alice, true, signal)
       : f.runtime.restart(sessions.alice, signal)
     if (state === 'stop failed') await expect(change).rejects.toThrow('could not stop')
     else await expect(change).resolves.toBe(state === 'busy' ? 'busy' : action === 'network' ? 'applied' : 'restarted')
     expect(f.calls.some(argv => argv[1] === 'stop')).toBe(state !== 'busy')
-    expect(f.calls.some(argv => argv[1] === 'rm')).toBe(state === 'idle')
-    expect(saved.has(sessions.alice)).toBe(state === 'idle' && action === 'network')
-    if (state === 'idle') {
+    expect(f.calls.some(argv => argv[1] === 'rm')).toBe(removedComputer)
+    expect(signal.aborted).toBe(cancelAfterRemoval)
+    expect(saved.has(sessions.alice)).toBe(removedComputer && action === 'network')
+    if (removedComputer) {
       const removed = f.calls.find(argv => argv[1] === 'rm')
       expect(removed).toHaveLength(3)
       if (action === 'network') await f.runtime.ensure(sessions.alice)
@@ -368,11 +443,15 @@ describe('VpsRuntime', () => {
 
   it('grants and revokes the shared mount for one Bot while preserving both volumes', async () => {
     const saved = new Map<string, boolean>()
+    const revoking = new AbortController()
     let launch: readonly string[] | undefined
     const f = fixture((argv) => {
       if (argv[1] === 'run') launch = argv
       if (argv[1] === 'container' && argv[2] === 'exists') return result(launch === undefined ? 1 : 0)
-      if (argv[1] === 'rm') launch = undefined
+      if (argv[1] === 'rm') {
+        launch = undefined
+        revoking.abort(new Error('The owner request closed after removal.'))
+      }
       if (argv[1] !== 'inspect' || launch === undefined) return result()
       const workspace = f.runtime.workspace(sessions.alice)
       const image = 'localhost/yharness-vps-bot:24.04'
@@ -396,7 +475,11 @@ describe('VpsRuntime', () => {
           UsernsMode: 'keep-id', Tmpfs: { '/tmp': 'rw,noexec,nosuid,nodev' } },
       }))
     }, { sharedWorkspacePolicy: {
-      get: async id => saved.get(id), set: async (id, enabled) => { saved.set(id, enabled) },
+      get: async id => saved.get(id),
+      set: async (id, enabled, signal?: AbortSignal) => {
+        signal?.throwIfAborted()
+        saved.set(id, enabled)
+      },
     } })
     const signal = new AbortController().signal
     expect(await f.runtime.sharedWorkspaceFor(sessions.alice)).toBeUndefined()
@@ -412,7 +495,8 @@ describe('VpsRuntime', () => {
     } finally {
       finish()
     }
-    await expect(f.runtime.setSharedWorkspaceAccess(sessions.alice, false, signal)).resolves.toBe('applied')
+    await expect(f.runtime.setSharedWorkspaceAccess(sessions.alice, false, revoking.signal)).resolves.toBe('applied')
+    expect(revoking.signal.aborted).toBe(true)
     expect(await f.runtime.sharedWorkspaceFor(sessions.alice)).toBeUndefined()
     await f.runtime.ensure(sessions.alice)
     expect(() => f.runtime.execArgv(sessions.alice, ['pwd'], { workdir: '/workspace' })).toThrow('workspace')
