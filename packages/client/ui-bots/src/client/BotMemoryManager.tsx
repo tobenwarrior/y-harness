@@ -96,7 +96,7 @@ export function BotMemoryManager({ bot, actions, loadAvatar, open, onClose, t }:
     } catch {
       setError('update')
     } finally {
-      setWorking(current => current === id ? null : current)
+      setWorking(null)
     }
   }
 
@@ -114,7 +114,7 @@ export function BotMemoryManager({ bot, actions, loadAvatar, open, onClose, t }:
     } catch {
       setRemoveError(true)
     } finally {
-      setWorking(current => current === id ? null : current)
+      setWorking(null)
     }
   }
 

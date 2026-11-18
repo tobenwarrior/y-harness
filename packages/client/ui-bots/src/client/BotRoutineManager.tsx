@@ -116,9 +116,7 @@ function formatRoutineInterval(seconds: number, t: Translate, omitSingleUnit: bo
     remaining = Number((remaining - count * unit.seconds).toFixed(12))
   }
   if (remaining > 0 || parts.length === 0) {
-    parts.push(remaining === 1
-      ? t('routineDurationCount', { count: '1', unit: t('routineDurationSecond') })
-      : t('routineDurationSeconds', { count: durationNumber(remaining) }))
+    parts.push(t('routineDurationSeconds', { count: durationNumber(remaining) }))
   }
   return parts.join(t('routineDurationJoin'))
 }
@@ -464,7 +462,7 @@ export function BotRoutineManager({ bot, actions, open, onClose, t, revision = 0
     } catch {
       if (catalogIsCurrent(catalogGeneration, botId)) setMutationError(true)
     } finally {
-      if (catalogIsCurrent(catalogGeneration, botId)) setWorking(current => current === String(routine.id) ? null : current)
+      if (catalogIsCurrent(catalogGeneration, botId)) setWorking(null)
     }
   }
 
@@ -488,7 +486,7 @@ export function BotRoutineManager({ bot, actions, open, onClose, t, revision = 0
     } catch {
       if (catalogIsCurrent(catalogGeneration, botId)) setMutationError(true)
     } finally {
-      if (catalogIsCurrent(catalogGeneration, botId)) setWorking(current => current === id ? null : current)
+      if (catalogIsCurrent(catalogGeneration, botId)) setWorking(null)
     }
   }
 

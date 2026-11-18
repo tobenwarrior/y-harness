@@ -34,7 +34,7 @@ export interface BotSkillsManagerProps {
 }
 
 function sortedNames(names: readonly string[]): string[] {
-  return [...new Set(names)].sort((left, right) => left < right ? -1 : left > right ? 1 : 0)
+  return [...new Set(names)].sort()
 }
 
 function hasSkill(policy: BotSkillPolicy, name: string): boolean {

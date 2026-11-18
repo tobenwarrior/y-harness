@@ -32,6 +32,21 @@ function skill(name: string, whenToUse?: string): BotSkillSummary {
 }
 
 describe('BotSkillsManager', () => {
+  it('renders a fallback label for an empty catalog name from a typed Remote result', async () => {
+    const actions: BotSkillManagerActions = {
+      list: vi.fn(async () => ({
+        policy: { mode: 'all' as const, enabled: [], disabled: [] },
+        revision: 0,
+        skills: [skill('')],
+      })),
+      update: vi.fn(),
+    }
+
+    renderManager(actions)
+
+    expect(await screen.findByText('Unnamed skill')).toBeTruthy()
+  })
+
   it('toggles denied skills in all mode and displays optional guidance', async () => {
     const policy: BotSkillPolicy = { mode: 'all', enabled: [], disabled: ['alpha-skill'] }
     const update = vi.fn(async (_botId: string, next: BotSkillPolicy) => ({ policy: next }))
