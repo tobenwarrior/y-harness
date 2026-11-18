@@ -41,6 +41,8 @@ Mount this provider beside the skill registry and `dsh-tool-skill` to expose `co
 
 Each loaded skill body ends with a `Compound runtime` section naming the absolute `skillDir` and `python` the vendored commands must use, because the upstream instructions address `<installed-skill-dir>` and a bare `python3`.
 
+On Windows, the configured `overlayRoot` is created with a protected DACL limited to the current user, SYSTEM, and local Administrators; an existing root is accepted only when its owner, ACL, and path components satisfy the same private policy. A missing root checks every existing ancestor for untrusted replacement rights, allowing inherited read/traverse/create-child access but failing closed on writable or untrusted ownership paths.
+
 ### What the skills do
 
 `compound` routes an engineering request to one of its reference workflows and expects the work to be verified against observable behavior. `map` opens the interactive repository graph. `setup`, `setup-global`, and `status-global` manage the upstream activation model. The bundled `repo_audit.py` reports repository clutter, source-size thresholds, `.gitignore` gaps, and unreferenced scripts without writing to the repository.

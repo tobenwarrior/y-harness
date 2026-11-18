@@ -9362,9 +9362,15 @@ importers:
       '@yharness/fs-patch':
         specifier: workspace:*
         version: link:../fs-patch
+      '@yharness/lazy-require':
+        specifier: workspace:*
+        version: link:../../util/lazy-require
       '@yharness/schemastery':
         specifier: link:../../../vendor/schemastery
         version: link:../../../vendor/schemastery
+      '@yharness/win32-process':
+        specifier: workspace:*
+        version: link:../../subprocess/win32-process
       chokidar:
         specifier: ^4.0.3
         version: 4.0.3
@@ -12940,6 +12946,9 @@ importers:
 
   packages/skill/skill-compound:
     dependencies:
+      '@yharness/fs-local':
+        specifier: workspace:*
+        version: link:../../fs/fs-local
       '@yharness/schemastery':
         specifier: link:../../../vendor/schemastery
         version: link:../../../vendor/schemastery

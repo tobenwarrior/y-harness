@@ -29,6 +29,8 @@ Mount this backend when a composition needs `ctx.fs` backed by the real host fil
 
 Choose `fs-local` for ordinary host-file access in a single process. Choose [`fs-sandbox`](../fs-sandbox/README.md) when a session's writes and edits must be confined to its workspace and temp roots — it extends this backend and adds only the mode fence. `config.cwd` is a resolution default, not a containment boundary: absolute paths and `..` escape it.
 
+The exported synchronous `assertOwnerPrivateWin32` and `createOwnerPrivateDirectoryWin32` helpers validate or create Windows owner-private paths for consumers that must guard synchronous reads; they require the current user, SYSTEM, and local Administrators SIDs, protect the root DACL from inheritance, and reject unrecognized ACLs, NULL DACLs, and reparse components. Creating a missing path checks every existing ancestor for untrusted replacement rights while allowing harmless inherited read/traverse/create-child access; the newly created root remains protected and existing parents are never rewritten.
+
 ### Minimal configuration
 
 Load the backend with a base directory; relative paths resolve against it, and absolute paths ignore it. A relative base is anchored to the provider process working directory, and display paths remain absolute. On POSIX, resolution follows filesystem semantics before lexical normalization: `symlink/..` reaches the parent of the link target, including when the final file does not exist yet. Directory listings preserve the same physical traversal in displayed child paths. Windows retains native drive-relative normalization.
@@ -79,6 +81,7 @@ The backend builds on three ideas:
 | [`src/index.ts`](src/index.ts) | Service wiring: `LocalFileSystem`, `Config`, per-target and multi-target mutation locks |
 | [`src/fsio.ts`](src/fsio.ts) | Cordis-free raw I/O: probe, reads, atomic write, literal edit, line-ending handling |
 | [`src/win32.ts`](src/win32.ts) | Windows-specific DACL preservation for atomic replacement |
+| [`src/windows-private.ts`](src/windows-private.ts) | Synchronous owner-private Windows path creation and validation |
 
 ### Write path
 

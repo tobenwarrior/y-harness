@@ -14,6 +14,7 @@ vi.mock('node:child_process', async importOriginal => ({
 }))
 
 import { activeOverlay, legacyOverlayRoot, overlayRoot, parseGitTree, resolveOverlayRoot, updateOverlay } from '../src/overlay.ts'
+import { privateOverlayRoot } from './private-overlay-root.ts'
 
 type FakeChild = EventEmitter & {
   stdout: PassThrough
@@ -68,7 +69,7 @@ it('parses and validates NUL-delimited Git tree entries', () => {
 })
 
 it('uses noninteractive Git settings for a rate-limited tree fallback', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'compound-overlay-test-'))
+  const root = await privateOverlayRoot('compound-overlay-test-')
   const bin = await mkdtemp(join(tmpdir(), 'compound-git-bin-'))
   const environment = join(bin, 'environment')
   const argumentsPath = join(bin, 'arguments')
@@ -126,7 +127,7 @@ it('uses noninteractive Git settings for a rate-limited tree fallback', async ()
 })
 
 it('caps combined Git stdout and stderr during a rate-limited tree fallback', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'compound-overlay-test-'))
+  const root = await privateOverlayRoot('compound-overlay-test-')
   const commit = 'd'.repeat(40)
   const streamSize = 11 * 1024 * 1024
   spawnMock.mockImplementation((command: string, args: readonly string[]) => {
@@ -172,7 +173,7 @@ function upstream(
 }
 
 it('publishes atomically, repeats updates and preserves the active revision on failure or downgrade', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'compound-overlay-test-'))
+  const root = await privateOverlayRoot('compound-overlay-test-')
   try {
     upstream('a'.repeat(40), '2.0.0')
     await updateOverlay(root)
@@ -193,7 +194,7 @@ it('publishes atomically, repeats updates and preserves the active revision on f
 })
 
 it('rejects a symlinked revisions directory', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'compound-overlay-test-'))
+  const root = await privateOverlayRoot('compound-overlay-test-')
   try {
     await mkdir(join(root, 'elsewhere'))
     await symlink(join(root, 'elsewhere'), join(root, 'revisions'))
@@ -204,7 +205,7 @@ it('rejects a symlinked revisions directory', async () => {
 })
 
 it('rejects symlinked current metadata', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'compound-overlay-test-'))
+  const root = await privateOverlayRoot('compound-overlay-test-')
   try {
     await mkdir(join(root, 'revisions'))
     await symlink(join(root, 'elsewhere'), join(root, 'current.json'))
@@ -213,7 +214,7 @@ it('rejects symlinked current metadata', async () => {
 })
 
 it('rejects a malformed commit without publishing an overlay', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'compound-overlay-test-'))
+  const root = await privateOverlayRoot('compound-overlay-test-')
   try {
     vi.stubGlobal('fetch', () => Promise.resolve(Response.json({ sha: '../escape' })))
     await expect(updateOverlay(root)).rejects.toThrow('no valid commit')
@@ -222,7 +223,7 @@ it('rejects a malformed commit without publishing an overlay', async () => {
 })
 
 it('rejects a truncated tree before publishing an overlay', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'compound-overlay-test-'))
+  const root = await privateOverlayRoot('compound-overlay-test-')
   try {
     vi.stubGlobal('fetch', (url: string) => Promise.resolve(Response.json(url.includes('/commits/') ? { sha: 'a'.repeat(40) } : url.endsWith('/plugin.json') ? { version: '1.0.0' } : { truncated: true, tree: [] })))
     await expect(updateOverlay(root)).rejects.toThrow('truncated')
@@ -231,7 +232,7 @@ it('rejects a truncated tree before publishing an overlay', async () => {
 })
 
 it('aborts during download without replacing the active revision or leaving staging files', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'compound-overlay-test-'))
+  const root = await privateOverlayRoot('compound-overlay-test-')
   try {
     upstream('a'.repeat(40), '1.0.0')
     await updateOverlay(root)
@@ -250,7 +251,7 @@ it('aborts during download without replacing the active revision or leaving stag
 })
 
 it('rejects a release below the bundled baseline without publishing', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'compound-overlay-test-'))
+  const root = await privateOverlayRoot('compound-overlay-test-')
   try {
     upstream('a'.repeat(40), '1.9.9')
     await expect(updateOverlay(root, '2.0.0')).rejects.toThrow('bundled skills')
@@ -259,7 +260,7 @@ it('rejects a release below the bundled baseline without publishing', async () =
 })
 
 it('shares one in-flight update for concurrent callers of the same root', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'compound-overlay-test-'))
+  const root = await privateOverlayRoot('compound-overlay-test-')
   try {
     const observed = upstream('a'.repeat(40), '1.0.0')
     const [first, second] = await Promise.all([updateOverlay(root), updateOverlay(root)])
@@ -271,7 +272,7 @@ it('shares one in-flight update for concurrent callers of the same root', async 
 })
 
 it('serializes different minimum versions on one root and enforces each caller constraint', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'compound-overlay-test-'))
+  const root = await privateOverlayRoot('compound-overlay-test-')
   try {
     upstream('a'.repeat(40), '1.9.9')
     const first = updateOverlay(root, '1.0.0')
@@ -283,7 +284,7 @@ it('serializes different minimum versions on one root and enforces each caller c
 })
 
 it('does not reuse an existing revision with unsafe file permissions', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'compound-overlay-test-'))
+  const root = await privateOverlayRoot('compound-overlay-test-')
   try {
     upstream('a'.repeat(40), '1.0.0', false, true)
     await updateOverlay(root)

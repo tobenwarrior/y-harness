@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promise
 import { lstatSync, readFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
+import { assertOwnerPrivateWin32, createOwnerPrivateDirectoryWin32 } from '@yharness/fs-local'
 import { parse as parseYaml } from 'yaml'
 import { resolveUpstreamCommit, UPSTREAM_REPOSITORY } from './upstream-head.ts'
 import { requestUpstreamManifest, upstreamManifestVersion } from './upstream-manifest.ts'
@@ -91,7 +92,7 @@ export function activeOverlay(root = resolveOverlayRoot()): ActiveOverlay | unde
 
 function activeOverlayAt(root: string): ActiveOverlay | undefined {
   try {
-    checkPrivateDirectory(root)
+    checkPrivateDirectory(root, true)
     checkPrivateDirectory(join(root, 'revisions'))
     const currentPath = join(root, 'current.json')
     checkPrivateFile(currentPath)
@@ -121,14 +122,16 @@ function overlayRootExists(root: string): boolean {
   }
 }
 
-function checkPrivateDirectory(path: string): void {
+function checkPrivateDirectory(path: string, protectedRoot = false): void {
   const stat = lstatSync(path)
-  if (!stat.isDirectory() || (typeof process.getuid === 'function' && stat.uid !== process.getuid()) || (stat.mode & 0o077) !== 0) throw new Error(`unsafe overlay directory: ${path}`)
+  if (!stat.isDirectory() || (typeof process.getuid === 'function' && stat.uid !== process.getuid()) || (process.platform !== 'win32' && (stat.mode & 0o077) !== 0)) throw new Error(`unsafe overlay directory: ${path}`)
+  if (process.platform === 'win32') assertOwnerPrivateWin32(path, 'directory', protectedRoot)
 }
 
 function checkPrivateFile(path: string): void {
   const stat = lstatSync(path)
-  if (!stat.isFile() || (typeof process.getuid === 'function' && stat.uid !== process.getuid()) || (stat.mode & 0o077) !== 0) throw new Error(`unsafe overlay file: ${path}`)
+  if (!stat.isFile() || (typeof process.getuid === 'function' && stat.uid !== process.getuid()) || (process.platform !== 'win32' && (stat.mode & 0o077) !== 0)) throw new Error(`unsafe overlay file: ${path}`)
+  if (process.platform === 'win32') assertOwnerPrivateWin32(path, 'file')
 }
 
 function olderVersion(left: string, right: string): boolean {
@@ -374,8 +377,9 @@ async function updateOverlayOnce(root: string, minimumVersion?: string, signal?:
   if (minimumVersion !== undefined && olderVersion(version, minimumVersion)) throw new Error('upstream version would downgrade bundled skills')
   const current = activeOverlay(root)
   if (current && olderVersion(version, current.version)) throw new Error('upstream version would downgrade active overlay')
-  await mkdir(root, { recursive: true, mode: 0o700 })
-  checkPrivateDirectory(root)
+  if (process.platform === 'win32') createOwnerPrivateDirectoryWin32(root)
+  else await mkdir(root, { recursive: true, mode: 0o700 })
+  checkPrivateDirectory(root, true)
   await mkdir(join(root, 'revisions'), { mode: 0o700 }).catch((error: unknown) => {
     if (typeof error !== 'object' || error === null || !('code' in error) || error.code !== 'EEXIST') throw error
   })

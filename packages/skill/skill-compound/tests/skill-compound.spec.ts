@@ -21,6 +21,7 @@ import * as SkillCompound from '@yharness/skill-compound'
 import { activeOverlay } from '../src/overlay.ts'
 import { AUTO_UPDATE_INTERVAL_MS } from '../src/index.ts'
 import { VENDORED_VERSION } from '../src/upstream.ts'
+import { privateOverlayRoot } from './private-overlay-root.ts'
 
 const assets = fileURLToPath(new URL('../assets/', import.meta.url))
 const names = ['compound', 'map', 'setup', 'setup-global', 'status-global']
@@ -50,7 +51,7 @@ async function writeSkill(root: string, content: string): Promise<void> {
 
 describe('bundled Compound skills', () => {
   it('registers every vendored skill and serves its body with the runtime paths', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'dsh-compound-bundled-'))
+    const root = await privateOverlayRoot('dsh-compound-bundled-')
     const ctx = new Context()
     try {
       await ctx.plugin(SkillRegistry)
@@ -93,7 +94,7 @@ describe('bundled Compound skills', () => {
   })
 
   it('reads relocated assets through the assetRoot config', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'dsh-compound-skills-'))
+    const root = await privateOverlayRoot('dsh-compound-skills-')
     const ctx = new Context()
     try {
       const external = join(root, 'relocated assets')
@@ -116,7 +117,7 @@ describe('bundled Compound skills', () => {
   })
 
   it('loads a valid private overlay and keeps the bundled assets as fallback', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'dsh-compound-overlay-'))
+    const root = await privateOverlayRoot('dsh-compound-overlay-')
     const ctx = new Context()
     try {
       const commit = 'a'.repeat(40)
@@ -141,7 +142,7 @@ describe('bundled Compound skills', () => {
 
   it('automatically applies upstream revisions and stops after disposal', async () => {
     vi.useFakeTimers()
-    const root = await mkdtemp(join(tmpdir(), 'dsh-compound-auto-update-'))
+    const root = await privateOverlayRoot('dsh-compound-auto-update-')
     const routes: ConnectionFetchRoute[] = []
     const ctx = new Context()
     let upstreamVersion = '2.0.0'
@@ -204,7 +205,7 @@ describe('bundled Compound skills', () => {
 
   it('applies an update and reports its status through a real Loader composition', async () => {
     vi.useFakeTimers()
-    const root = await mkdtemp(join(tmpdir(), 'dsh-compound-loader-update-'))
+    const root = await privateOverlayRoot('dsh-compound-loader-update-')
     const configPath = join(root, 'cordis.yml')
     const routes: ConnectionFetchRoute[] = []
     const ctx = new Context()
@@ -276,7 +277,7 @@ describe('bundled Compound skills', () => {
 
   it('updates on request with background updates disabled and waits for disposal', async () => {
     vi.useFakeTimers()
-    const root = await mkdtemp(join(tmpdir(), 'dsh-compound-manual-update-'))
+    const root = await privateOverlayRoot('dsh-compound-manual-update-')
     const routes: ConnectionFetchRoute[] = []
     const ctx = new Context()
     let upstreamVersion = VENDORED_VERSION
@@ -397,7 +398,7 @@ describe('bundled Compound skills', () => {
   })
 
   it('registers relocated resources through a real cordis.yml composition', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'dsh-compound-composition-'))
+    const root = await privateOverlayRoot('dsh-compound-composition-')
     const ctx = new Context()
     try {
       const external = join(root, 'relocated skills')

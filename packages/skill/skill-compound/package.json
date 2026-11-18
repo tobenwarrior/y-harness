@@ -41,6 +41,7 @@
     "@yharness/skill": "workspace:*"
   },
   "dependencies": {
+    "@yharness/fs-local": "workspace:*",
     "@yharness/schemastery": "workspace:~",
     "yaml": "^2.4.2"
   }
