@@ -542,4 +542,53 @@ describe('shared-group browser retry queue', () => {
       getItem.mockRestore()
     }
   })
+
+  it('ignores a record-kind swap between pruning and catalog listing', async () => {
+    const originalGetItem = Storage.prototype.getItem.bind(localStorage)
+    const reads = new Map<string, number>()
+    const getItem = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(function (this: Storage, key: string) {
+      const raw = originalGetItem(key)
+      const readCount = (reads.get(key) ?? 0) + 1
+      reads.set(key, readCount)
+      if (key === 'yharness.client-ui-bots.shared-group-pending.v2.principal-kind-swap-creation.creation.eeeeeeee') {
+        if (readCount === 2) return JSON.stringify({
+          version: 1, kind: 'creation', id: 'bot-group-swap-room', operationHash: 'eeeeeeee',
+          name: 'Swap room', botIds: ['bot-chief', 'bot-analyst'], createdAt: 1, expiresAt: 2,
+        })
+        return JSON.stringify({
+          version: 1, kind: 'message', id: 'bot-group-message-swap', operationHash: 'eeeeeeee',
+          groupId: 'bot-group-room', text: 'draft', createdAt: 1, expiresAt: 2,
+        })
+      }
+      if (key === 'yharness.client-ui-bots.shared-group-pending.v2.principal-kind-swap-message.message.ffffffff') {
+        if (readCount === 2) return JSON.stringify({
+          version: 1, kind: 'message', id: 'bot-group-message-swap', operationHash: 'ffffffff',
+          groupId: 'bot-group-room', text: 'draft', createdAt: 1, expiresAt: 2,
+        })
+        return JSON.stringify({
+          version: 1, kind: 'creation', id: 'bot-group-swap-room', operationHash: 'ffffffff',
+          name: 'Swap room', botIds: ['bot-chief', 'bot-analyst'], createdAt: 1, expiresAt: 2,
+        })
+      }
+      return raw
+    })
+    try {
+      const creationKey = 'yharness.client-ui-bots.shared-group-pending.v2.principal-kind-swap-creation.creation.eeeeeeee'
+      localStorage.setItem(creationKey, JSON.stringify({
+        version: 1, kind: 'message', id: 'bot-group-message-swap', operationHash: 'eeeeeeee',
+        groupId: 'bot-group-room', text: 'draft', createdAt: 1, expiresAt: 2,
+      }))
+      await expect(createSharedGroupPendingQueue('principal-kind-swap-creation').listCreations()).resolves.toEqual([])
+
+      localStorage.clear()
+      const messageKey = 'yharness.client-ui-bots.shared-group-pending.v2.principal-kind-swap-message.message.ffffffff'
+      localStorage.setItem(messageKey, JSON.stringify({
+        version: 1, kind: 'creation', id: 'bot-group-swap-room', operationHash: 'ffffffff',
+        name: 'Swap room', botIds: ['bot-chief', 'bot-analyst'], createdAt: 1, expiresAt: 2,
+      }))
+      await expect(createSharedGroupPendingQueue('principal-kind-swap-message').listMessages()).resolves.toEqual([])
+    } finally {
+      getItem.mockRestore()
+    }
+  })
 })
