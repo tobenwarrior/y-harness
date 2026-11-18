@@ -322,6 +322,28 @@ function freeLocalBestEffort(api: FileSecurityBindings, pointer: NativePtr, deta
   try { freeLocal(api, pointer, detail) } catch (error) { failures.push(error) }
 }
 
+/** Run one owner-private operation with trusted SID acquisition and cleanup. */
+function withTrustedSids<T>(operation: (api: FileSecurityBindings, sids: TrustedSids) => T): T {
+  const api = bindings()
+  const sids = trustedSids(api)
+  let operationError: unknown
+  try {
+    return operation(api, sids)
+  } catch (error) {
+    operationError = error
+    throw error
+  } finally {
+    try {
+      releaseTrustedSids(api, sids)
+    } catch (error) {
+      if (operationError !== undefined) {
+        throw new AggregateError([operationError, error], `${operationFailureMessage(operationError)}; Windows SID cleanup failed`)
+      }
+      throw error
+    }
+  }
+}
+
 function assertNoReparsePath(api: FileSecurityBindings, path: string): void {
   let current = resolve(path)
   for (;;) {
@@ -623,26 +645,11 @@ function createPrivateDirectory(api: FileSecurityBindings, path: string, sids: T
  * @param requireProtected - require a protected root DACL and no inherited ACEs.
  */
 export function assertOwnerPrivateWin32(path: string, kind: OwnerPrivatePathKind, requireProtected = false): void {
-  const api = bindings()
-  const sids = trustedSids(api)
-  let operationError: unknown
-  try {
+  withTrustedSids((api, sids) => {
     assertNoReparsePath(api, path)
     assertPrivateAncestry(api, dirname(resolve(path)), sids)
     assertOwnerPrivateWith(api, path, kind, requireProtected, sids)
-  } catch (error) {
-    operationError = error
-    throw error
-  } finally {
-    try {
-      releaseTrustedSids(api, sids)
-    } catch (error) {
-      if (operationError !== undefined) {
-        throw new AggregateError([operationError, error], `${operationFailureMessage(operationError)}; Windows SID cleanup failed`)
-      }
-      throw error
-    }
-  }
+  })
 }
 /**
  * Create or validate an owner-private overlay root and install its protected
@@ -653,23 +660,8 @@ export function assertOwnerPrivateWin32(path: string, kind: OwnerPrivatePathKind
  * @param path - overlay root directory to create or validate.
  */
 export function createOwnerPrivateDirectoryWin32(path: string): void {
-  const api = bindings()
-  const sids = trustedSids(api)
-  let operationError: unknown
-  try {
+  withTrustedSids((api, sids) => {
     createPrivateDirectoryPath(api, path, sids)
     assertOwnerPrivateWith(api, path, 'directory', true, sids)
-  } catch (error) {
-    operationError = error
-    throw error
-  } finally {
-    try {
-      releaseTrustedSids(api, sids)
-    } catch (error) {
-      if (operationError !== undefined) {
-        throw new AggregateError([operationError, error], `${operationFailureMessage(operationError)}; Windows SID cleanup failed`)
-      }
-      throw error
-    }
-  }
+  })
 }
