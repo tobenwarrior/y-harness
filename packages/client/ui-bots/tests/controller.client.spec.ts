@@ -3274,14 +3274,24 @@ describe('BotWorkspaceController', () => {
     const disposedInspect = Promise.withResolvers<RemoteResult<BotGroupInspectValue>>()
     const disposedInspectRemote = remoteFixture([first, second])
     disposedInspectRemote.listGroups = vi.fn(async () => ({ ok: true as const, value: { groups: [group] } }))
-    disposedInspectRemote.inspectGroup = vi.fn(async () => disposedInspect.promise)
+    let disposedInspectCall: Promise<RemoteResult<BotGroupInspectValue>> | undefined
+    disposedInspectRemote.inspectGroup = vi.fn(() => {
+      disposedInspectCall = disposedInspect.promise
+      return disposedInspect.promise
+    })
     const disposedInspectController = new BotWorkspaceController(disposedInspectRemote, sessionsFixture().sessions, () => 'unexpected response')
     await disposedInspectController.load()
     disposedInspectController.face().selectGroup(String(group.id))
     await vi.waitFor(() => { expect(disposedInspectRemote.inspectGroup).toHaveBeenCalledOnce() })
     disposedInspectController.dispose()
+    const disposedInspectComplete = Promise.withResolvers<undefined>()
+    if (disposedInspectCall === undefined) throw new Error('disposed group inspection did not start')
+    void disposedInspectCall.then(
+      () => { disposedInspectComplete.resolve(undefined) },
+      () => { disposedInspectComplete.resolve(undefined) },
+    )
     disposedInspect.reject(new Error('disposed group failed'))
-    await new Promise<void>((resolve) => { setTimeout(resolve, 0) })
+    await disposedInspectComplete.promise
   })
 
   it('reconciles lost Bot creation responses and releases stale Session callbacks', async () => {
@@ -3338,8 +3348,13 @@ describe('BotWorkspaceController', () => {
     const retainController = new BotWorkspaceController(remoteFixture([first, second]), retainSessions.sessions, () => 'unexpected response')
     await retainController.load()
     retainController.face().select(second.id)
+    const staleReferenceComplete = Promise.withResolvers<undefined>()
+    void firstReference.ready.then(
+      () => { staleReferenceComplete.resolve(undefined) },
+      () => { staleReferenceComplete.resolve(undefined) },
+    )
     staleReady.reject(new Error('stale reference failed'))
-    await new Promise<void>((resolve) => { setTimeout(resolve, 0) })
+    await staleReferenceComplete.promise
     expect(retainController.source.getSnapshot().error).toBeNull()
     retainController.dispose()
 
@@ -3625,9 +3640,13 @@ describe('BotWorkspaceController', () => {
     const refreshResult = Promise.withResolvers<undefined>()
     const selectionSessions = sessionsFixture()
     const selectionService = sessionsWithList(selectionSessions, sessionList(first.sessionId, () => true))
+    let selectionRefreshCall: Promise<undefined> | undefined
     selectionSessions.refresh
       .mockResolvedValueOnce(undefined)
-      .mockImplementationOnce(async () => refreshResult.promise)
+      .mockImplementationOnce(() => {
+        selectionRefreshCall = refreshResult.promise
+        return refreshResult.promise
+      })
     selectionSessions.retain.mockImplementation((target) => {
       const sessionId = target
       if (sessionId === second.sessionId) throw new Error('selection catalog is stale')
@@ -3640,15 +3659,25 @@ describe('BotWorkspaceController', () => {
     selectionController.face().select(second.id)
     await vi.waitFor(() => { expect(selectionSessions.refresh).toHaveBeenCalledTimes(2) })
     selectionController.dispose()
+    const selectionRefreshComplete = Promise.withResolvers<undefined>()
+    if (selectionRefreshCall === undefined) throw new Error('disposed selection refresh did not start')
+    void selectionRefreshCall.then(
+      () => { selectionRefreshComplete.resolve(undefined) },
+      () => { selectionRefreshComplete.resolve(undefined) },
+    )
     refreshResult.reject('disposed selection refresh')
-    await new Promise<void>((resolve) => { setTimeout(resolve, 0) })
+    await selectionRefreshComplete.promise
 
     const staleRefresh = Promise.withResolvers<undefined>()
     const staleSessions = sessionsFixture()
     const staleService = sessionsWithList(staleSessions, sessionList(first.sessionId, () => true))
+    let staleRefreshCall: Promise<undefined> | undefined
     staleSessions.refresh
       .mockResolvedValueOnce(undefined)
-      .mockImplementationOnce(async () => staleRefresh.promise)
+      .mockImplementationOnce(() => {
+        staleRefreshCall = staleRefresh.promise
+        return staleRefresh.promise
+      })
     staleSessions.retain.mockImplementation((target) => {
       const sessionId = target
       if (sessionId === second.sessionId) throw new Error('stale selection catalog')
@@ -3661,8 +3690,14 @@ describe('BotWorkspaceController', () => {
     staleController.face().select(second.id)
     await vi.waitFor(() => { expect(staleSessions.refresh).toHaveBeenCalledTimes(2) })
     staleController.face().select(first.id)
+    const staleRefreshComplete = Promise.withResolvers<undefined>()
+    if (staleRefreshCall === undefined) throw new Error('stale selection refresh did not start')
+    void staleRefreshCall.then(
+      () => { staleRefreshComplete.resolve(undefined) },
+      () => { staleRefreshComplete.resolve(undefined) },
+    )
     staleRefresh.reject('stale selection refresh')
-    await new Promise<void>((resolve) => { setTimeout(resolve, 0) })
+    await staleRefreshComplete.promise
     expect(staleController.source.getSnapshot().selectedBotId).toBe(first.id)
     staleController.dispose()
 
@@ -3786,9 +3821,13 @@ describe('BotWorkspaceController', () => {
     const disposedRefreshRemote = remoteFixture([first, second])
     const disposedRefreshSessions = sessionsFixture()
     const disposedRefreshService = sessionsWithList(disposedRefreshSessions, sessionList(second.sessionId, () => false))
+    let disposedRefreshCall: Promise<undefined> | undefined
     disposedRefreshSessions.refresh
       .mockResolvedValueOnce(undefined)
-      .mockImplementationOnce(async () => disposedRefresh.promise)
+      .mockImplementationOnce(() => {
+        disposedRefreshCall = disposedRefresh.promise
+        return disposedRefresh.promise
+      })
     disposedRefreshSessions.retain.mockImplementation((sessionId) => {
       if (sessionId === second.sessionId) throw new Error('Session catalog is stale')
       return reference(sessionId)
@@ -3798,8 +3837,14 @@ describe('BotWorkspaceController', () => {
     disposedRefreshController.face().select(second.id)
     await vi.waitFor(() => { expect(disposedRefreshSessions.refresh).toHaveBeenCalledTimes(2) })
     disposedRefreshController.dispose()
+    const disposedRefreshComplete = Promise.withResolvers<undefined>()
+    if (disposedRefreshCall === undefined) throw new Error('disposed catalog refresh did not start')
+    void disposedRefreshCall.then(
+      () => { disposedRefreshComplete.resolve(undefined) },
+      () => { disposedRefreshComplete.resolve(undefined) },
+    )
     disposedRefresh.resolve(undefined)
-    await new Promise<void>((resolve) => { setTimeout(resolve, 0) })
+    await disposedRefreshComplete.promise
 
     const avatar = { attachmentId: AttachmentId('avatar-cache'), mediaType: 'image/png' as const, bytes: 3, width: 1, height: 1 }
     const otherAvatar = { attachmentId: AttachmentId('avatar-error'), mediaType: 'image/png' as const, bytes: 3, width: 1, height: 1 }
