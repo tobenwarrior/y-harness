@@ -1,6 +1,27 @@
 # Opt-in GitHub webhook overlay over the shipped Web composition. The second
 # WebServer lives in an isolated realm so exposing it never exposes the UI API.
 
+# Config patches replace the preset table, so keep the standard choices.
+- id: permission
+  config:
+    defaultPreset: approve-for-me
+    presets:
+      workspace-write:
+        sandbox: workspace-write
+        approval: ask
+        description: Ask before editing files outside the workspace or using the internet.
+      approve-for-me:
+        sandbox: workspace-write
+        approval: never
+        description: Work freely inside the workspace without prompts; anything outside it is refused.
+      danger-full-access:
+        sandbox: danger-full-access
+        approval: never
+        description: Unrestricted access to the internet and any file on your computer.
+      read-only:
+        sandbox: read-only
+        approval: ask
+
 - insert:
     - id: webhook-runtime
       name: '@yharness/webhook'
