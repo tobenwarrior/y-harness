@@ -1,8 +1,17 @@
 import { createHash } from 'node:crypto'
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { describe, expect, it, vi } from 'vitest'
+
+const { spawnSyncMock } = vi.hoisted(() => ({ spawnSyncMock: vi.fn() }))
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>()
+  spawnSyncMock.mockImplementation(actual.spawnSync)
+  return { ...actual, spawnSync: spawnSyncMock }
+})
+
 import { Context } from '@yharness/cordis'
 import Include from '@yharness/cordis-plugin-include'
 import Loader from '@yharness/cordis-plugin-loader'
@@ -12,21 +21,19 @@ import * as SkillCompound from '@yharness/skill-compound'
 import { activeOverlay } from '../src/overlay.ts'
 import { AUTO_UPDATE_INTERVAL_MS } from '../src/index.ts'
 import { VENDORED_VERSION } from '../src/upstream.ts'
-import { describe, expect, it, vi } from 'vitest'
 
 const assets = fileURLToPath(new URL('../assets/', import.meta.url))
 const names = ['compound', 'map', 'setup', 'setup-global', 'status-global']
 
 /**
- * Write an executable stand-in that reports one Python release.
+ * Write a path fixture whose typed process double reports one Python release.
  * @param root - directory that receives the script.
  * @param version - release string the script prints.
  * @returns the absolute script path.
  */
 async function fakePython(root: string, version: string): Promise<string> {
   const path = join(root, `python-${version}`)
-  await writeFile(path, `#!/bin/sh\necho "Python ${version}"\n`)
-  await chmod(path, 0o755)
+  await writeFile(path, `Python ${version}\n`)
   return path
 }
 
@@ -338,8 +345,14 @@ describe('bundled Compound skills', () => {
     const ctx = new Context()
     try {
       const python = await fakePython(root, '4.0.1')
+      spawnSyncMock.mockImplementationOnce((command: string, args: readonly string[]) => {
+        expect(command).toBe(python)
+        expect(args).toEqual(['--version'])
+        return { error: undefined, status: 0, stdout: 'Python 4.0.1\n', stderr: '' }
+      })
       await ctx.plugin(SkillRegistry)
       await ctx.plugin(SkillCompound, { python })
+      expect(spawnSyncMock).toHaveBeenCalledWith(python, ['--version'], { encoding: 'utf8' })
       const loaded = await ctx.skills.get('compound')
       expect(loaded?.content).toContain(JSON.stringify(python))
       expect(loaded?.content).not.toContain('older than the required Python')

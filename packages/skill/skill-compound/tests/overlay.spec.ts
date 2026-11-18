@@ -1,11 +1,64 @@
 import { createHash } from 'node:crypto'
-import { chmod, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises'
+import { appendFileSync, writeFileSync } from 'node:fs'
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, symlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { delimiter, join } from 'node:path'
+import { join } from 'node:path'
+import { EventEmitter } from 'node:events'
+import { PassThrough } from 'node:stream'
 import { afterEach, expect, it, vi } from 'vitest'
+
+const { spawnMock } = vi.hoisted(() => ({ spawnMock: vi.fn() }))
+vi.mock('node:child_process', async importOriginal => ({
+  ...await importOriginal<typeof import('node:child_process')>(),
+  spawn: spawnMock,
+}))
+
 import { activeOverlay, legacyOverlayRoot, overlayRoot, parseGitTree, resolveOverlayRoot, updateOverlay } from '../src/overlay.ts'
 
-afterEach(() => vi.unstubAllGlobals())
+type FakeChild = EventEmitter & {
+  stdout: PassThrough
+  stderr: PassThrough
+  killed: boolean
+  kill: () => boolean
+}
+
+function fakeChild(stdout: string | Buffer = '', stderr: string | Buffer = '', code = 0): FakeChild {
+  const child = new EventEmitter() as EventEmitter & Partial<FakeChild>
+  child.stdout = new PassThrough()
+  child.stderr = new PassThrough()
+  child.killed = false
+  child.kill = () => {
+    child.killed = true
+    return true
+  }
+  setImmediate(() => {
+    if (stdout !== '') child.stdout?.emit('data', Buffer.from(stdout))
+    if (stderr !== '') child.stderr?.emit('data', Buffer.from(stderr))
+    child.emit('close', code)
+  })
+  return child as FakeChild
+}
+
+const gitRepository = 'https://github.com/tobenwarrior/compound-skills.git'
+
+function expectGitPrefix(command: string, args: readonly string[]): void {
+  expect(command).toBe('git')
+  expect(args.slice(0, 4)).toEqual(['-c', 'credential.helper=', '-c', 'core.askPass='])
+}
+
+function expectCloneInvocation(command: string, args: readonly string[]): void {
+  expectGitPrefix(command, args)
+  expect(args.slice(4, 14)).toEqual([
+    'clone', '--quiet', '--bare', '--depth', '1', '--single-branch', '--branch', 'main', '--no-tags', gitRepository,
+  ])
+  expect(args).toHaveLength(15)
+  expect(args[14]).toMatch(/(?:^|[\\/])repo$/u)
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+  spawnMock.mockReset()
+})
 
 it('parses and validates NUL-delimited Git tree entries', () => {
   const sha = 'a'.repeat(40)
@@ -17,7 +70,6 @@ it('parses and validates NUL-delimited Git tree entries', () => {
 it('uses noninteractive Git settings for a rate-limited tree fallback', async () => {
   const root = await mkdtemp(join(tmpdir(), 'compound-overlay-test-'))
   const bin = await mkdtemp(join(tmpdir(), 'compound-git-bin-'))
-  const git = join(bin, 'git')
   const environment = join(bin, 'environment')
   const argumentsPath = join(bin, 'arguments')
   const commit = 'c'.repeat(40)
@@ -28,25 +80,30 @@ it('uses noninteractive Git settings for a rate-limited tree fallback', async ()
     const sha = createHash('sha1').update(`blob ${size}\0`).update(text).digest('hex')
     return `100644 blob ${sha}    ${size}\t${path}`
   }).join('\n')
-  const treeOutput = tree.split('\n').map(line => `printf '%s\\000' '${line}'`).join('\n')
-  const script = [
-    '#!/bin/sh',
-    `if [ ! -f ${JSON.stringify(environment)} ]; then printf '%s\\n' "$GIT_TERMINAL_PROMPT|$GIT_ASKPASS|$SSH_ASKPASS|$SSH_ASKPASS_REQUIRE" > ${JSON.stringify(environment)}; fi`,
-    `printf '%s\\n' "$@" >> ${JSON.stringify(argumentsPath)}`,
-    'command="$5"',
-    'last=""',
-    'for arg do last="$arg"; done',
-    'if [ "$command" = clone ]; then mkdir -p "$last"; fi',
-    `if [ "$command" = rev-parse ]; then printf '%s\\n' '${commit}'; fi`,
-    'if [ "$command" = ls-tree ]; then',
-    treeOutput,
-    'fi',
-    '',
-  ].join('\n')
-  await writeFile(git, script)
-  await chmod(git, 0o755)
-  const previousPath = process.env.PATH
-  process.env.PATH = `${bin}${delimiter}${previousPath ?? ''}`
+  const treeOutput = tree.split('\n').map(line => `${line}\0`).join('')
+  let environmentWritten = false
+  spawnMock.mockImplementation((command: string, args: readonly string[], options: { env?: NodeJS.ProcessEnv }) => {
+    const environmentValues = options.env ?? {}
+    if (!environmentWritten) {
+      writeFileSync(environment, `${environmentValues.GIT_TERMINAL_PROMPT ?? ''}|${environmentValues.GIT_ASKPASS ?? ''}|${environmentValues.SSH_ASKPASS ?? ''}|${environmentValues.SSH_ASKPASS_REQUIRE ?? ''}\n`)
+      environmentWritten = true
+    }
+    appendFileSync(argumentsPath, `${args.join('\n')}\n`)
+    switch (args[4]) {
+      case 'clone':
+        expectCloneInvocation(command, args)
+        return fakeChild()
+      case 'rev-parse':
+        expectGitPrefix(command, args)
+        expect(args).toEqual(['-c', 'credential.helper=', '-c', 'core.askPass=', 'rev-parse', 'HEAD'])
+        return fakeChild(`${commit}\n`)
+      case 'ls-tree':
+        expectGitPrefix(command, args)
+        expect(args).toEqual(['-c', 'credential.helper=', '-c', 'core.askPass=', 'ls-tree', '-r', '-l', '-z', commit, '--', 'skills'])
+        return fakeChild(treeOutput)
+      default: throw new Error(`unexpected git subcommand: ${String(args[4])}`)
+    }
+  })
   vi.stubGlobal('fetch', (url: string) => {
     if (url.includes('/commits/')) return Promise.resolve(Response.json({ sha: commit }))
     if (url.includes('/git/trees/')) return Promise.resolve(new Response('rate limited', { status: 403, headers: { 'x-ratelimit-remaining': '0' } }))
@@ -61,7 +118,6 @@ it('uses noninteractive Git settings for a rate-limited tree fallback', async ()
     expect(argumentsLog).toContain('credential.helper=\n')
     expect(argumentsLog).toContain('core.askPass=\n')
   } finally {
-    process.env.PATH = previousPath
     await Promise.all([
       rm(root, { recursive: true, force: true }),
       rm(bin, { recursive: true, force: true }),
@@ -71,20 +127,12 @@ it('uses noninteractive Git settings for a rate-limited tree fallback', async ()
 
 it('caps combined Git stdout and stderr during a rate-limited tree fallback', async () => {
   const root = await mkdtemp(join(tmpdir(), 'compound-overlay-test-'))
-  const bin = await mkdtemp(join(tmpdir(), 'compound-git-bin-'))
-  const git = join(bin, 'git')
   const commit = 'd'.repeat(40)
   const streamSize = 11 * 1024 * 1024
-  const script = [
-    '#!/bin/sh',
-    'command="$5"',
-    `if [ "$command" = clone ]; then head -c ${String(streamSize)} /dev/zero; head -c ${String(streamSize)} /dev/zero >&2; exit 0; fi`,
-    '',
-  ].join('\n')
-  await writeFile(git, script)
-  await chmod(git, 0o755)
-  const previousPath = process.env.PATH
-  process.env.PATH = `${bin}${delimiter}${previousPath ?? ''}`
+  spawnMock.mockImplementation((command: string, args: readonly string[]) => {
+    expectCloneInvocation(command, args)
+    return fakeChild(Buffer.alloc(streamSize), Buffer.alloc(streamSize))
+  })
   vi.stubGlobal('fetch', (url: string) => {
     if (url.includes('/commits/')) return Promise.resolve(Response.json({ sha: commit }))
     if (url.includes('/git/trees/')) return Promise.resolve(new Response('rate limited', { status: 403, headers: { 'x-ratelimit-remaining': '0' } }))
@@ -94,11 +142,7 @@ it('caps combined Git stdout and stderr during a rate-limited tree fallback', as
     await expect(updateOverlay(root)).rejects.toThrow('git output too large')
     await expect(readFile(join(root, 'current.json'))).rejects.toThrow()
   } finally {
-    process.env.PATH = previousPath
-    await Promise.all([
-      rm(root, { recursive: true, force: true }),
-      rm(bin, { recursive: true, force: true }),
-    ])
+    await rm(root, { recursive: true, force: true })
   }
 })
 
