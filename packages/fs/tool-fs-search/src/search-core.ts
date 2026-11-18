@@ -76,7 +76,7 @@ export const SEARCH_META_MAX_BYTES = 65_536
 function routeManagedSearchPath(execution: ReturnType<typeof managedBotExecutionFor>, argv: readonly string[]): readonly string[] {
   if (execution === undefined) return argv
   const separator = argv.indexOf('--')
-  if (separator === -1 || separator + 1 >= argv.length) return argv
+  if (separator === -1) return argv
   const path = argv[separator + 1]
   if (path === undefined) return argv
   return [...argv.slice(0, separator + 1), resolveManagedWorkdir(execution, path), ...argv.slice(separator + 2)]

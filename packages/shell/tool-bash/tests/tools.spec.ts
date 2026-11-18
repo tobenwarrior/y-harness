@@ -18,7 +18,8 @@ import ApprovalService from '@yharness/user-approval'
 import type { ApprovalOutcome } from '@yharness/user-approval'
 import { LocalBashExecutor } from '@yharness/bash-local'
 import LocalSubprocessRuntime from '@yharness/subprocess-local'
-import SandboxPolicyService from '@yharness/sandbox-policy'
+import SandboxPolicyService, { bindManagedBotExecution, createManagedBotExecution } from '@yharness/sandbox-policy'
+import type { ManagedBotExecution } from '@yharness/sandbox-policy'
 import { escalationHintMarker, sandboxDenialMarker } from '@yharness/sandbox'
 import SessionProjectionRegistry from '@yharness/session-projection'
 import * as ToolBash from '@yharness/tool-bash'
@@ -120,12 +121,14 @@ function fakeExecution(proc: ShellProcess, result?: () => Promise<ShellRunResult
 
 class RecordingSandboxExecutor extends ShellExecutor {
   readonly modes: Array<string | undefined> = []
+  readonly requests: ShellExecRequest[] = []
 
   override get sandboxMode() {
     return 'read-only' as const
   }
 
   resolve(request: ShellExecRequest): ShellExecSpec {
+    this.requests.push(request)
     return {
       command: request.command,
       workdir: request.workdir ?? process.cwd(),
@@ -795,6 +798,46 @@ describe('sandbox escalation through the generic task producer', () => {
       expect(bash.modes).toEqual([mode, mode, mode])
       expect(prompted).not.toHaveBeenCalled()
     } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('routes a managed call to its shell, policy, workspace, and environment', async () => {
+    const { ctx, bash } = await setupSandboxed()
+    const agent = sandboxAgent(undefined, ctx)
+    const managedShell = new RecordingSandboxExecutor(new Context())
+    const managed = createManagedBotExecution({
+      context: agent.ctx,
+      shell: managedShell,
+      fs: {} as ManagedBotExecution['fs'],
+      subprocess: ctx.subprocess,
+      sandboxPolicy: {
+        defaultMode: 'workspace-write',
+        resolve: () => ({ mode: 'workspace-write', workspaceRoot: '/managed/workspace' }),
+      },
+      workspaceRoot: '/managed/workspace',
+      shellEnv: { DSH_MANAGED: 'yes' },
+    })
+    const stop = bindManagedBotExecution(agent.ctx, managed)
+    try {
+      const result = await call(ctx, 'bash', {
+        command: 'managed-command',
+        description: 'managed execution fixture',
+        workdir: 'nested',
+      }, agent)
+      expect(result.isError, text(result)).toBe(false)
+      expect(text(result)).toBe('ok')
+      expect(bash.requests).toHaveLength(0)
+      expect(managedShell.requests.length).toBeGreaterThan(0)
+      expect(managedShell.requests.at(-1)).toMatchObject({
+        command: 'managed-command',
+        workdir: '/managed/workspace/nested',
+        dshEnv: { DSH_MANAGED: 'yes' },
+        sandboxPolicy: { mode: 'workspace-write', workspaceRoot: '/managed/workspace' },
+      })
+      expect(managedShell.modes).toEqual(['workspace-write'])
+    } finally {
+      stop()
       await ctx.fiber.dispose()
     }
   })

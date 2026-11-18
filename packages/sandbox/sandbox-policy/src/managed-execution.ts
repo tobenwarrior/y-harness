@@ -9,7 +9,7 @@
 
 import { isAbsolute } from 'node:path'
 import { posix } from 'node:path'
-import { Context } from '@yharness/cordis'
+import type { Context } from '@yharness/cordis'
 import type { FileSystem } from '@yharness/fs'
 import type { DshEnvironment, ShellExecutor } from '@yharness/shell'
 import type { SubprocessRuntime } from '@yharness/subprocess'
@@ -55,7 +55,6 @@ const managedExecutionByContext = new WeakMap<Context, ManagedBotExecution>()
  * @returns a frozen capability whose provider references cannot be replaced.
  */
 export function createManagedBotExecution(options: ManagedBotExecution): ManagedBotExecution {
-  if (!Context.is(options.context)) throw new Error('managed Bot execution requires a Cordis context')
   if (!posix.isAbsolute(options.workspaceRoot)) {
     throw new Error('managed Bot execution workspaceRoot must be an absolute execution-world path')
   }
