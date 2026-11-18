@@ -1159,6 +1159,168 @@ describe('native Bot actions', () => {
     expect(persisted[1]).toMatchObject({ phase: 'settled', result: { success: true } })
   })
 
+  it('reads Bot references through list and inspect and fails closed on scope, cancellation, and adapter errors', async () => {
+    const sessionId = SessionId('bot-session-alpha')
+    const unbound = createBotNativeToolProvider({ bind: async () => undefined, persist: async () => {}, replay: async () => [] })
+    expect(await unbound.resolve({ sessionId: undefined })).toEqual([])
+    expect(await unbound.resolve({ sessionId })).toEqual([])
+
+    const bound = client()
+    const provider = createBotNativeToolProvider({ bind: async () => bound, persist: async () => {}, replay: async () => [] })
+    const tools = await provider.resolve({ sessionId })
+    const list = tools.find(tool => tool.name === 'list_bots')
+    const inspect = tools.find(tool => tool.name === 'inspect_bot')
+    if (list === undefined || inspect === undefined) throw new Error('collaboration tools missing')
+
+    await expect(list.execute({}, context({ sessionId }))).resolves.toMatchObject({ success: true })
+    await expect(inspect.execute({ botId: 'bot-beta' }, context({ sessionId }))).resolves.toMatchObject({ success: true })
+    expect(bound.inspect).toHaveBeenCalledWith(BotId('bot-beta'))
+    await expect(inspect.execute({ botId: '  ' }, context({ sessionId }))).resolves.toMatchObject({ success: false })
+    const cancelled = new AbortController()
+    cancelled.abort()
+    await expect(list.execute({}, context({ sessionId, signal: cancelled.signal }))).resolves.toMatchObject({ success: false })
+    await expect(inspect.execute({ botId: 'bot-beta' }, context({ sessionId, signal: cancelled.signal }))).resolves.toMatchObject({ success: false })
+
+    vi.mocked(bound.list).mockRejectedValueOnce(new BotCollaborationError('target-not-found', 'roster unavailable'))
+    await expect(list.execute({}, context({ sessionId }))).resolves.toMatchObject({ success: false })
+    vi.mocked(bound.inspect).mockRejectedValueOnce(new Error('inspect unavailable'))
+    await expect(inspect.execute({ botId: 'bot-beta' }, context({ sessionId }))).resolves.toMatchObject({ success: false })
+  })
+
+  it('creates and edits Bot profiles only after approval and passes the complete profile request', async () => {
+    const sessionId = SessionId('bot-session-alpha')
+    const manage = vi.fn<NonNullable<BotNativeToolHost['manage']>>(async (action, args) => ({ action, args }))
+    const provider = createBotNativeToolProvider({ bind: async () => client(), persist: async () => {}, replay: async () => [], manage })
+    const tools = await provider.resolve({ sessionId })
+    const create = tools.find(tool => tool.name === 'create_bot')
+    const edit = tools.find(tool => tool.name === 'edit_bot_profile')
+    if (create === undefined || edit === undefined) throw new Error('profile tools missing')
+
+    const approval = vi.fn(async () => true)
+    await expect(create.execute({
+      name: 'Research', description: 'Find evidence', identity: 'sage', accent: 'violet', pictureDescription: 'A paper boat',
+    }, context({ sessionId, requestApproval: approval }))).resolves.toMatchObject({ success: true })
+    await expect(edit.execute({
+      botId: 'bot-beta', name: 'Beta Research', description: 'Review evidence', identity: 'robot', accent: 'blue',
+      pictureDescription: 'A blue compass',
+    }, context({ sessionId, requestApproval: approval }))).resolves.toMatchObject({ success: true })
+    expect(approval).toHaveBeenNthCalledWith(1, 'Create a Bot.')
+    expect(approval).toHaveBeenNthCalledWith(2, 'Change a Bot profile.')
+    expect(manage).toHaveBeenNthCalledWith(1, 'create', {
+      name: 'Research', description: 'Find evidence', identity: 'sage', accent: 'violet', pictureDescription: 'A paper boat',
+    }, expect.objectContaining({ sessionId }))
+    expect(manage).toHaveBeenNthCalledWith(2, 'edit', {
+      botId: 'bot-beta', name: 'Beta Research', description: 'Review evidence', identity: 'robot', accent: 'blue',
+      pictureDescription: 'A blue compass',
+    }, expect.objectContaining({ sessionId }))
+
+    await expect(edit.execute({ name: 'Denied' }, context({ sessionId, approvalPolicy: 'never', requestApproval: approval })))
+      .resolves.toMatchObject({ success: false })
+    await expect(edit.execute({ name: 'Denied' }, context({ sessionId, requestApproval: async () => false })))
+      .resolves.toMatchObject({ success: false })
+    expect(manage).toHaveBeenCalledTimes(2)
+
+    const cancelled = new AbortController()
+    await expect(edit.execute({ name: 'Cancelled' }, context({ sessionId, signal: cancelled.signal, requestApproval: async () => {
+      cancelled.abort()
+      return true
+    } }))).resolves.toMatchObject({ success: false })
+    expect(manage).toHaveBeenCalledTimes(2)
+  })
+
+  it('reports profile management absence and adapter failures without inventing a result', async () => {
+    const sessionId = SessionId('bot-session-alpha')
+    const unavailable = createBotNativeToolProvider({ bind: async () => client(), persist: async () => {}, replay: async () => [] })
+    const unavailableEdit = (await unavailable.resolve({ sessionId })).find(tool => tool.name === 'edit_bot_profile')
+    if (unavailableEdit === undefined) throw new Error('profile edit tool missing')
+    await expect(unavailableEdit.execute({ name: 'Research' }, context({ sessionId }))).resolves.toMatchObject({ success: false })
+
+    const managed = vi.fn<NonNullable<BotNativeToolHost['manage']>>(async () => ({ id: 'bot-updated' }))
+    const provider = createBotNativeToolProvider({
+      bind: async () => client(), persist: async () => {}, replay: async () => [], manage: managed,
+    })
+    const edit = (await provider.resolve({ sessionId })).find(tool => tool.name === 'edit_bot_profile')
+    if (edit === undefined) throw new Error('profile edit tool missing')
+    managed.mockRejectedValueOnce(new BotCollaborationError('target-not-found', 'Bot disappeared'))
+    await expect(edit.execute({ botId: 'bot-beta' }, context({ sessionId }))).resolves.toMatchObject({ success: false })
+    managed.mockRejectedValueOnce(new Error('profile adapter unavailable'))
+    await expect(edit.execute({ botId: 'bot-beta' }, context({ sessionId }))).resolves.toMatchObject({ success: false })
+  })
+
+  it('stops Bot creation when cancellation arrives before or during replay recovery', async () => {
+    const sessionId = SessionId('bot-session-alpha')
+    const manage = vi.fn<NonNullable<BotNativeToolHost['manage']>>(async () => ({ id: 'bot-created' }))
+    const replay = vi.fn<BotNativeToolHost['replay']>(async () => [])
+    const provider = createBotNativeToolProvider({ bind: async () => client(), persist: async () => {}, replay, manage })
+    const create = (await provider.resolve({ sessionId })).find(tool => tool.name === 'create_bot')
+    if (create === undefined) throw new Error('create tool missing')
+    const before = new AbortController()
+    before.abort()
+    await expect(create.execute({ name: 'Cancelled' }, context({ sessionId, signal: before.signal })))
+      .resolves.toMatchObject({ success: false })
+
+    const during = new AbortController()
+    const replayGate = Promise.withResolvers<readonly BotDynamicToolEvent[]>()
+    replay.mockImplementationOnce(async () => replayGate.promise)
+    const running = create.execute({ name: 'Cancelled during replay' }, context({ sessionId, signal: during.signal }))
+    await vi.waitFor(() => { expect(replay).toHaveBeenCalledOnce() })
+    during.abort()
+    replayGate.resolve([])
+    await expect(running).resolves.toMatchObject({ success: false })
+    expect(manage).not.toHaveBeenCalled()
+  })
+
+  it('validates inter-Bot message references, preserves retry identity, and reports provider failures', async () => {
+    const sessionId = SessionId('bot-session-alpha')
+    const bound = client()
+    const replay = vi.fn<BotNativeToolHost['replay']>(async () => [])
+    const provider = createBotNativeToolProvider({ bind: async () => bound, persist: async () => {}, replay })
+    const send = (await provider.resolve({ sessionId })).find(tool => tool.name === 'send_bot_message')
+    if (send === undefined) throw new Error('send tool missing')
+
+    const cancelled = new AbortController()
+    cancelled.abort()
+    await expect(send.execute({ targetBotId: 'bot-beta', text: 'hello' }, context({ sessionId, signal: cancelled.signal })))
+      .resolves.toMatchObject({ success: false })
+    await expect(send.execute({ targetBotId: ' ', text: 'hello' }, context({ sessionId }))).resolves.toMatchObject({ success: false })
+    await expect(send.execute({ targetBotId: 'bot-beta', text: ' ' }, context({ sessionId }))).resolves.toMatchObject({ success: false })
+    await expect(send.execute({ targetBotId: 'bot-beta', text: 'hello' }, context({ sessionId, requestApproval: async () => false })))
+      .resolves.toMatchObject({ success: false })
+    await expect(send.execute({ targetBotId: 'bot-beta', text: 'hello' }, context({ sessionId, requestApproval: async () => {
+      throw new Error('approval unavailable')
+    } }))).resolves.toMatchObject({ success: false })
+
+    replay.mockResolvedValueOnce([{
+      phase: 'started', name: 'send_bot_message', callId: 'prior', threadId: 'thread-prior', turnId: 'turn-prior', sessionId,
+      arguments: { targetBotId: 'bot-beta', text: 'hello', messageId: 'stable-id' },
+    }])
+    await expect(send.execute({ targetBotId: 'bot-beta', text: 'hello', messageId: 'stable-id' }, context({ sessionId })))
+      .resolves.toMatchObject({ success: true })
+    expect(vi.mocked(bound.send).mock.calls.at(-1)?.[0].messageId).toBe(BotMessageId('stable-id'))
+
+    vi.mocked(bound.send).mockRejectedValueOnce(new BotCollaborationError('target-not-found', 'Bot disappeared'))
+    await expect(send.execute({ targetBotId: 'bot-beta', text: 'next' }, context({ sessionId }))).resolves.toMatchObject({ success: false })
+    vi.mocked(bound.send).mockRejectedValueOnce(new Error('delivery unavailable'))
+    await expect(send.execute({ targetBotId: 'bot-beta', text: 'again' }, context({ sessionId }))).resolves.toMatchObject({ success: false })
+    replay.mockRejectedValueOnce(new Error('replay unavailable'))
+    await expect(send.execute({ targetBotId: 'bot-beta', text: 'retry' }, context({ sessionId }))).resolves.toMatchObject({ success: false })
+  })
+
+  it('requires a live Bot identity for native lifecycle observation and replay', async () => {
+    const sessionId = SessionId('bot-session-alpha')
+    const provider = createBotNativeToolProvider({ bind: async () => client(), persist: async () => {}, replay: async () => [] })
+    const event = {
+      phase: 'started' as const, name: 'send_bot_message', callId: 'call-1', threadId: 'thread-1', turnId: 'turn-1',
+      sessionId, arguments: { targetBotId: 'bot-beta', text: 'hello' },
+    }
+    await expect(provider.observe({ ...event, name: 'not_a_bot_action' })).rejects.toThrow('Unknown Bot native action')
+    await expect(provider.observe({ ...event, sessionId: undefined })).rejects.toThrow('live Session id')
+    await expect(provider.replay({ sessionId: undefined })).resolves.toEqual([])
+
+    const unbound = createBotNativeToolProvider({ bind: async () => undefined, persist: async () => {}, replay: async () => [] })
+    await expect(unbound.replay({ sessionId })).resolves.toEqual([])
+  })
+
   it('reuses the durable implicit identity when a native call gets a new call id', async () => {
     const bound = client()
     let replayed: readonly BotDynamicToolEvent[] = []
