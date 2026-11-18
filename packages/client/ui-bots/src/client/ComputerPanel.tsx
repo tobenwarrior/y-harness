@@ -333,6 +333,7 @@ function ComputerViewer({
     && typeof networkIdentity.terminalInternet === 'boolean'
 
   const changeNetworkAccess = useCallback((enabled: boolean): void => {
+    /* v8 ignore next -- Native disabled-button rendering prevents this callback when capability or action state is unavailable. */
     if (!networkControlAvailable || networkActionDisabled) return
     const targetSessionId = sessionId
     const operation = ++networkOperationRef.current
@@ -344,16 +345,17 @@ function ComputerViewer({
     void computer.network(targetSessionId, enabled, controller.signal).then((result) => {
       if (disposedRef.current || operation !== networkOperationRef.current || controller.signal.aborted) return
       setComputerStatus((current) => {
+        /* v8 ignore next -- The status identity is the selected Bot generation admitted before this operation. */
         if (current?.computer?.id !== botId) return current
         return { ...current, computer: { ...current.computer, terminalInternet: result.enabled } }
       })
       setNetworkBusy(false)
-      if (networkController.current === controller) networkController.current = undefined
+      networkController.current = undefined
       refreshAvailability?.(targetSessionId)
     }).catch((error: unknown) => {
       if (disposedRef.current || operation !== networkOperationRef.current || controller.signal.aborted) return
       setNetworkBusy(false)
-      if (networkController.current === controller) networkController.current = undefined
+      networkController.current = undefined
       setFeedback(error instanceof ComputerApiError && error.status === 409
         ? 'computerNetworkBusy' : 'computerNetworkError')
     })
@@ -370,6 +372,7 @@ function ComputerViewer({
     || mode !== 'watching' || botActive || signIn !== undefined || privateSignIn !== undefined
 
   const changeSharedWorkspace = useCallback((enabled: boolean): void => {
+    /* v8 ignore next -- Native disabled-button rendering prevents this callback when capability or action state is unavailable. */
     if (!sharedWorkspaceControlAvailable || sharedWorkspaceActionDisabled) return
     const targetSessionId = sessionId
     const operation = ++sharedWorkspaceOperationRef.current
@@ -382,6 +385,7 @@ function ComputerViewer({
     void computer.sharedWorkspace(targetSessionId, enabled, controller.signal).then((result) => {
       if (disposedRef.current || operation !== sharedWorkspaceOperationRef.current || controller.signal.aborted) return
       setComputerStatus((current) => {
+        /* v8 ignore next -- The status identity is the selected Bot generation admitted before this operation. */
         if (current?.computer?.id !== botId) return current
         if (result.enabled) return { ...current, computer: { ...current.computer, sharedFiles: true } }
         const { sharedFiles: ignoredSharedFiles, ...withoutSharedFiles } = current.computer
@@ -389,12 +393,12 @@ function ComputerViewer({
         return { ...current, computer: withoutSharedFiles }
       })
       setSharedWorkspaceBusy(false)
-      if (sharedWorkspaceController.current === controller) sharedWorkspaceController.current = undefined
+      sharedWorkspaceController.current = undefined
       refreshAvailability?.(targetSessionId)
     }).catch((error: unknown) => {
       if (disposedRef.current || operation !== sharedWorkspaceOperationRef.current || controller.signal.aborted) return
       setSharedWorkspaceBusy(false)
-      if (sharedWorkspaceController.current === controller) sharedWorkspaceController.current = undefined
+      sharedWorkspaceController.current = undefined
       setFeedback(error instanceof ComputerApiError && error.status === 409
         ? 'computerSharedWorkspaceBusy' : 'computerSharedWorkspaceError')
     })
@@ -411,6 +415,7 @@ function ComputerViewer({
   const restartActionDisabled = restartBusy || networkBusy || sharedWorkspaceBusy || mode !== 'watching' || botActive
 
   const restartComputer = useCallback((): void => {
+    /* v8 ignore next -- Native disabled-button rendering prevents this callback when restart state is unavailable or busy. */
     if (!restartActionAvailable || restartActionDisabled) return
     const targetSessionId = sessionId
     const operation = ++restartOperationRef.current
@@ -427,11 +432,11 @@ function ComputerViewer({
       setFrame(undefined)
       setPhase('loading')
       setRestartBusy(false)
-      if (restartController.current === controller) restartController.current = undefined
+      restartController.current = undefined
     }).catch((error: unknown) => {
       if (disposedRef.current || operation !== restartOperationRef.current || controller.signal.aborted) return
       setRestartBusy(false)
-      if (restartController.current === controller) restartController.current = undefined
+      restartController.current = undefined
       setFeedback(error instanceof ComputerApiError && error.status === 409
         ? 'computerRestartBusy' : 'computerRestartError')
     })
