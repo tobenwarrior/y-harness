@@ -9,6 +9,7 @@ import {
   ComputerInputError,
   ComputerLeaseError,
   containerComputer,
+  validateComputerAction,
   type ComputerAction,
   type ComputerCommandRunner,
 } from '../src/computer.ts'
@@ -57,6 +58,21 @@ function fixture(): Fixture {
 }
 
 describe('private computer Host', () => {
+  it('rejects malformed configuration and untrusted action values before execution', () => {
+    expect(() => new ComputerHost({ display: '', authorityPath: '/xauthority' })).toThrow('invalid computer display')
+    expect(() => new ComputerHost({ display: 'fixture\u0000display', authorityPath: '/xauthority' })).toThrow('invalid computer display')
+    expect(() => new ComputerHost({ display: ':99', authorityPath: 'relative' })).toThrow('invalid computer authority path')
+    expect(() => new ComputerHost({ display: ':99', authorityPath: '/xauthority\u0000' })).toThrow('invalid computer authority path')
+    const invalid: unknown[] = [null, [], {}, { kind: 'unknown' }, { kind: 'move', x: -1, y: 0 },
+      { kind: 'click', x: 0, y: 0, button: 4 }, { kind: 'drag', x: 0, y: 0, toX: 1280, toY: 0 },
+      { kind: 'scroll', x: 0, y: 0, delta: 11 }, { kind: 'key', key: '' }, { kind: 'key', key: 'ctrl+' },
+      { kind: 'key', key: 'invalid-key' }, { kind: 'key', key: 'ctrl+🙂' }, { kind: 'key', key: '\t' }, { kind: 'text', text: 'bad\u0000text' },
+      { kind: 'text', text: 'x'.repeat(8193) }]
+    for (const action of invalid) expect(() => validateComputerAction(action), JSON.stringify(action)).toThrow(ComputerInputError)
+    expect(validateComputerAction({ kind: 'key', key: 'CTRL+F1' })).toEqual({ kind: 'key', key: 'ctrl+F1' })
+    expect(validateComputerAction({ kind: 'scroll', x: 0, y: 0, delta: 0 })).toEqual({ kind: 'scroll', x: 0, y: 0, delta: 0 })
+  })
+
   it('admits a browser request only while the Bot controls the Computer', async () => {
     const f = fixture()
     const signal = new AbortController().signal
@@ -85,6 +101,7 @@ describe('private computer Host', () => {
       const navigate = async (url: string): Promise<void> => { destinations.push(url) }
       const signal = new AbortController().signal
       const url = 'https://login.example.test'
+      await expect(f.host.input(viewers.alice, { kind: 'key', key: 'a' })).rejects.toMatchObject({ code: 'lease' })
       await expect(f.host.observe()).rejects.toBeInstanceOf(ComputerLeaseError)
       await expect(f.host.takeControl(viewers.alice)).rejects.toBeInstanceOf(ComputerLeaseError)
       await expect(f.host.navigateAsViewer(viewers.alice, url, signal, navigate)).rejects.toBeInstanceOf(ComputerLeaseError)
@@ -293,6 +310,103 @@ describe('private computer Host', () => {
     await f.dispose()
   })
 
+  it('handles sign-in cancellation, duplicate requests, and aborted admissions', async () => {
+    const f = fixture()
+    try {
+      const controller = new AbortController()
+      controller.abort()
+      await expect(f.host.requestSignIn(controller.signal)).rejects.toThrow('aborted')
+      const waiting = f.host.requestSignIn(new AbortController().signal)
+      await expect.poll(() => f.host.signInRequest()).toBeDefined()
+      await expect(f.host.requestSignIn(new AbortController().signal)).rejects.toBeInstanceOf(ComputerLeaseError)
+      const request = f.host.signInRequest()
+      if (request === undefined) throw new Error('sign-in request missing')
+      await expect(f.host.input(viewers.alice, { kind: 'key', key: 'a' })).rejects.toMatchObject({ code: 'lease' })
+      await expect(f.host.answerSignIn(request.id, 'take')).rejects.toMatchObject({ code: 'lease' })
+      const cancelled = new AbortController()
+      cancelled.abort()
+      await expect(f.host.answerSignIn(request.id, 'cancel', undefined, cancelled.signal)).rejects.toThrow('aborted')
+      await expect(f.host.answerSignIn(request.id, 'cancel')).resolves.toEqual({ mode: 'watching' })
+      await expect(waiting).resolves.toBe('cancelled')
+      const requestController = new AbortController()
+      const interrupted = f.host.requestSignIn(requestController.signal)
+      await expect.poll(() => f.host.signInRequest()).toBeDefined()
+      requestController.abort()
+      await expect(interrupted).resolves.toBe('interrupted')
+      const aborter = new AbortController()
+      aborter.abort()
+      await expect(f.host.takeControl(viewers.alice, aborter.signal)).rejects.toThrow('aborted')
+    } finally {
+      await f.dispose()
+    }
+  })
+
+  it('maps capture failures, object captures, and closed-host operations', async () => {
+    const invalid = new ComputerHost({ display: ':99', authorityPath: '/xauthority' }, {
+      capture: async () => Buffer.from([0x00, 0x01]),
+    })
+    await expect(invalid.observe()).rejects.toMatchObject({ code: 'capture-failed' })
+    await invalid.dispose()
+    await expect(invalid.observe()).rejects.toMatchObject({ code: 'disposed' })
+
+    const failure = new ComputerHost({ display: ':99', authorityPath: '/xauthority' }, {
+      capture: async () => { throw new Error('capture fixture detail') },
+    })
+    await expect(failure.observe()).rejects.toMatchObject({ code: 'capture-failed' })
+    await failure.dispose()
+
+    const aborted = new AbortController()
+    const captureStarted = Promise.withResolvers<undefined>()
+    const abortedCapture = new ComputerHost({ display: ':99', authorityPath: '/xauthority' }, {
+      capture: async () => { captureStarted.resolve(undefined); aborted.abort(); throw new Error('capture fixture detail') },
+    })
+    const pendingCapture = abortedCapture.observe(aborted.signal)
+    await captureStarted.promise
+    await expect(pendingCapture).rejects.toMatchObject({ code: 'aborted' })
+    await abortedCapture.dispose()
+
+    const origin = new ComputerHost({ display: ':99', authorityPath: '/xauthority' }, {
+      capture: async () => ({ bytes: Buffer.from([0xff, 0xd8, 0xff, 0xd9]), browserOrigin: 'https://example.test' }),
+    })
+    await expect(origin.observe()).resolves.toMatchObject({ browserOrigin: 'https://example.test' })
+    await origin.dispose()
+    await expect(origin.botAction({ kind: 'move', x: 0, y: 0 })).rejects.toMatchObject({ code: 'disposed' })
+
+    const invalidFile = new ComputerHost({ display: ':99', authorityPath: '/xauthority' }, {
+      run: async (command, args) => {
+        if (command === 'scrot') {
+          const output = args.at(-1)
+          if (output === undefined) throw new Error('missing output')
+          writeFileSync(output, Buffer.from([0x00, 0x01]))
+        }
+      },
+    })
+    await expect(invalidFile.observe()).rejects.toMatchObject({ code: 'capture-failed' })
+    await invalidFile.dispose()
+    const failedFile = new ComputerHost({ display: ':99', authorityPath: '/xauthority' }, {
+      run: async () => { throw new Error('scrot fixture detail') },
+    })
+    await expect(failedFile.observe()).rejects.toMatchObject({ code: 'capture-failed' })
+    await failedFile.dispose()
+  })
+
+  it('preserves cleanup when drag release fails and handles zero-scroll and lease navigation errors', async () => {
+    const calls: string[][] = []
+    const runner: ComputerCommandRunner = async (_command, args) => {
+      calls.push([...args])
+      if (args[0] === 'mouseup') throw new Error('release failed')
+    }
+    const host = new ComputerHost({ display: ':99', authorityPath: '/xauthority' }, { run: runner })
+    await expect(host.botAction({ kind: 'drag', x: 1, y: 2, toX: 3, toY: 4 })).rejects.toThrow('release failed')
+    await host.botAction({ kind: 'scroll', x: 0, y: 0, delta: 0 })
+    const signal = new AbortController().signal
+    await expect(host.navigateAsBot('https://example.test', signal, async () => { throw new Error('navigate failed') })).rejects.toThrow('navigate failed')
+    await host.takeControl(viewers.alice)
+    await expect(host.navigateAsViewer(viewers.alice, 'https://example.test', signal, async () => { throw new Error('viewer navigate failed') })).rejects.toThrow('viewer navigate failed')
+    await host.dispose()
+    expect(calls.at(-1)?.[0]).toBe('mousemove')
+  })
+
   it('finishes an admitted bot observation before handing the display to a viewer', async () => {
     const started = Promise.withResolvers<undefined>()
     const release = Promise.withResolvers<undefined>()
@@ -360,6 +474,7 @@ describe('private computer Host', () => {
       { kind: 'click', x: 3, y: 4, button: 2 },
       { kind: 'drag', x: 5, y: 6, toX: 7, toY: 8 },
       { kind: 'scroll', x: 9, y: 10, delta: -2 },
+      { kind: 'scroll', x: 11, y: 12, delta: 2 },
       { kind: 'key', key: 'ctrl+shift+Tab' },
       { kind: 'text', text: 'hello\nworld' },
     ]
@@ -374,6 +489,8 @@ describe('private computer Host', () => {
       ['xdotool', 'mouseup', '1'],
       ['xdotool', 'mousemove', '--sync', '9', '10'],
       ['xdotool', 'click', '--repeat', '2', '4'],
+      ['xdotool', 'mousemove', '--sync', '11', '12'],
+      ['xdotool', 'click', '--repeat', '2', '5'],
       ['xdotool', 'key', '--clearmodifiers', 'ctrl+shift+Tab'],
       ['xdotool', 'type', '--clearmodifiers', '--delay', '12', '--', 'hello\nworld'],
     ])
@@ -396,6 +513,30 @@ describe('private computer Host', () => {
     ])
     expect(calls.at(-1)?.aborted).toBe(false)
     await host.dispose()
+
+    const preserved = new ComputerHost({ display: ':99', authorityPath: '/xauthority' }, {
+      run: async (_command, args) => {
+        if (args[0] === 'mousedown') throw new Error('movement failed')
+        if (args[0] === 'mouseup') throw new Error('release failed')
+      },
+    })
+    await expect(preserved.botAction({ kind: 'drag', x: 1, y: 2, toX: 8, toY: 9 })).rejects.toThrow('movement failed')
+    await preserved.dispose()
+  })
+
+  it('ignores a queued sign-in interrupt after disposal', async () => {
+    const f = fixture()
+    const controller = new AbortController()
+    try {
+      const waiting = f.host.requestSignIn(controller.signal)
+      await expect.poll(() => f.host.signInRequest()).toBeDefined()
+      controller.abort()
+      const disposing = f.host.dispose()
+      await expect(waiting).resolves.toBe('interrupted')
+      await disposing
+    } finally {
+      await f.dispose()
+    }
   })
 
   it('disposes only after an admitted native action reaches quiescence', async () => {
