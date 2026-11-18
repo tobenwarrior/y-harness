@@ -14,6 +14,29 @@ import { runMigrationJobs } from './migrate-sessions-to-v4.ts'
 import { removeFixtureSafely } from './test-fixture-cleanup.ts'
 
 const repository = resolve(import.meta.dirname, '..')
+/** Committed source and runtime dependencies for the version-reversed migration subprocess. */
+const V4_FIXTURE_PATHS = [
+  'package.json',
+  'tsconfig.json',
+  'tsconfig.base.json',
+  'scripts/migrate-sessions-to-v4.ts',
+  'scripts/migration-failure-summary.ts',
+  'native/system',
+  'packages/attachment/attachment',
+  'packages/compaction/compaction-image-offload',
+  'packages/core/scope',
+  'packages/core/session',
+  'packages/llm/llm',
+  'packages/session',
+  'packages/typert/protocol',
+  'packages/util/brand',
+  'packages/util/crypto',
+  'packages/util/timeout',
+  'packages/util/values',
+  'vendor/cordis',
+  'vendor/cosmokit',
+  'vendor/schemastery',
+] as const
 /** Committed adjacent format deltas, reversed in order without requiring Git history. */
 const FORMAT_REVERSALS = [
   'scripts/fixtures/migrate-sessions-to-v4/v5-to-v6-format.patch',
@@ -53,7 +76,9 @@ function run(...args: string[]) {
 beforeAll(async () => {
   v4Checkout = mkdtempSync(join(tmpdir(), 'dsh-migrate-v4-checkout-'))
   const archive = join(v4Checkout, 'source.tar')
-  await execa('git', ['archive', '--format=tar', '--output', archive, 'HEAD'], { cwd: repository })
+  await execa('git', ['archive', '--format=tar', '--output', archive, 'HEAD', '--', ...V4_FIXTURE_PATHS], {
+    cwd: repository,
+  })
   await extractTar({ file: archive, cwd: v4Checkout })
   await unlink(archive)
   for (const relativePatch of FORMAT_REVERSALS) {
