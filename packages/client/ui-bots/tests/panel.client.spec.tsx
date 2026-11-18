@@ -4,7 +4,7 @@ import type { ComponentProps } from 'react'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { SessionBinding, SessionListState, SessionReference } from '@yharness/api-session-controller/client'
-import { BotId, type BotView } from '@yharness/bots/client'
+import { BotId, BotPrincipalId, type BotView } from '@yharness/bots/client'
 import { AttachmentId } from '@yharness/attachment'
 import type { GlobalStandardProps } from '@yharness/client-ui-slots'
 import type { WorkspaceSnapshot } from '@yharness/api-workspace-controller/client'
@@ -371,6 +371,12 @@ describe('Bots conversation slot wiring', () => {
     const useSessionStatus: BotsRosterProps['useSessionStatus'] = selector => selector(statuses)
     const props: BotsRosterProps = {
       wide: true,
+      expandSidebar: () => {},
+      usePanelInfo,
+      useSessions,
+      useSessionRetainInfo,
+      useWorkspaces,
+      useResource,
       useWorkspace,
       useSessionStatus,
       reference: () => undefined,
@@ -405,6 +411,12 @@ describe('Bots conversation slot wiring', () => {
     const state = { ...workspaceState([avatarBot], avatarBot.id), phase: 'loading' as const }
     const props: BotsRosterProps = {
       wide: true,
+      expandSidebar: () => {},
+      usePanelInfo,
+      useSessions,
+      useSessionRetainInfo,
+      useWorkspaces,
+      useResource,
       useWorkspace: selector => selector(state),
       useSessionStatus,
       reference: () => undefined,
@@ -474,14 +486,20 @@ describe('Bots conversation slot wiring', () => {
   it('passes sharing and collaborator clients through the roster face', () => {
     const selected = bot('roster-shared', 'Shared Bot')
     const state = workspaceState([selected], selected.id)
-    const sharedClient = createSharedBotsClient({})
+    const sharedClient = createSharedBotsClient({ call: async () => ({ ok: true, value: undefined }) })
     const share: NonNullable<BotsRosterProps['share']> = {
       listMembers: async () => ({ botId: selected.id, members: [] }),
       createInvite: async () => ({ code: 'invite', expiresAt: 1 }),
-      revokeMember: async () => ({ botId: selected.id, principalId: 'principal', revoked: true }),
+      revokeMember: async () => ({ botId: selected.id, principalId: BotPrincipalId('principal'), revoked: true }),
     }
     const props: BotsRosterProps = {
       wide: false,
+      expandSidebar: () => {},
+      usePanelInfo,
+      useSessions,
+      useSessionRetainInfo,
+      useWorkspaces,
+      useResource,
       useWorkspace: selector => selector(state),
       useSessionStatus,
       reference: () => undefined,
@@ -517,9 +535,9 @@ describe('Bots conversation slot wiring', () => {
     const share: NonNullable<BotsPanelProps['share']> = {
       listMembers: async () => ({ botId: selected.id, members: [] }),
       createInvite: async () => ({ code: 'invite', expiresAt: 1 }),
-      revokeMember: async () => ({ botId: selected.id, principalId: 'principal', revoked: true }),
+      revokeMember: async () => ({ botId: selected.id, principalId: BotPrincipalId('principal'), revoked: true }),
     }
-    const refreshComputerAvailability = vi.fn<BotsPanelProps['refreshComputerAvailability']>()
+    const refreshComputerAvailability = vi.fn<NonNullable<BotsPanelProps['refreshComputerAvailability']>>()
     const signIn: ComputerSignInTarget = {
       sessionId: selected.sessionId, requestId: 'sign-in-request', attempt: 1,
       targetSessionId: 'browser-session', origin: 'https://example.test',

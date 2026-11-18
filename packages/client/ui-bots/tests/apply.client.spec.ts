@@ -6,7 +6,7 @@ import { Context } from '@yharness/cordis'
 import type { ConnectionGeneration } from '@yharness/client-connection/client'
 import { LocaleRuntime } from '@yharness/client-locale/client'
 import type { ISessions, SessionBinding, SessionListState, SessionReference } from '@yharness/api-session-controller/client'
-import type { BotGroupInspectValue, BotGroupMessageId, BotGroupView, BotView } from '@yharness/bots/client'
+import type { BotGroupId, BotGroupInspectValue, BotGroupMessageId, BotGroupView, BotView } from '@yharness/bots/client'
 import { BotId } from '@yharness/bots/client'
 import { AttachmentId } from '@yharness/attachment'
 import { brandString } from '@yharness/brand'
@@ -94,7 +94,7 @@ async function boot() {
   const ctx = new Context()
   const registered: Registered[] = []
   const slots = {
-    inject: vi.fn((name: string, setup: () => (() => void) | undefined) => ctx.effect(setup, `test slot: ${name}`)),
+    inject: vi.fn((name: string, setup: () => (() => void) | undefined) => ctx.effect(() => setup() ?? (() => {}), `test slot: ${name}`)),
     register: vi.fn((options: Record<string, unknown>, component: unknown) => {
       const entry: Registered = { options, component, ...(options.inject === undefined ? {} : { inject: options.inject as () => unknown }) }
       registered.push(entry)
@@ -196,7 +196,7 @@ function pick(candidate: InputTriggerSource['candidates'] extends (...args: neve
     position: 'inline',
     via: 'menu',
     action: 'pick',
-    span: { start: 0, end: 1, text: candidate.value ?? candidate.name },
+    span: { start: 0, end: 1, draftRev: 1 },
   }
 }
 
@@ -229,6 +229,7 @@ describe('ui-bots composition', () => {
       value: { avatar: fixture.currentBot.avatar!, data: 'AQID' },
     }))
     const CandidateIcon = candidates[0]!.icon
+    if (CandidateIcon === undefined) throw new Error('bot candidate icon is not mounted')
     render(createElement(CandidateIcon, { size: 16 }))
     await vi.waitFor(() => { expect(screen.getByRole('img', { name: fixture.currentBot.name })).toBeTruthy() })
     expect(botSource.onPick({ ...pick(candidates[0]!, fixture.currentBot.sessionId), action: 'drill' })).toBeUndefined()
@@ -350,7 +351,7 @@ describe('ui-bots composition', () => {
     expect(computer.openReference?.({ sessionId: fixture.currentBot.sessionId }, { ref: '@Computer' })).toBe(true)
     expect(computer.openReference?.({ sessionId: fixture.currentBot.sessionId }, { ref: '@Other' })).toBe(false)
     expect(computer.codec?.clipboardText('@Computer')).toBe('@Computer')
-    await expect(computer.codec?.serialize('@Computer')).resolves.toBe('@Computer')
+    await expect(computer.codec?.serialize('@Computer', new AbortController().signal)).resolves.toBe('@Computer')
     expect(await computer.candidates({ sessionId: fixture.currentBot.sessionId }, { ...request, query: 'x' })).toEqual([])
     expect(await computer.candidates({ sessionId: SessionId('other') }, { ...request, query: 'computer' })).toEqual([])
 
@@ -382,7 +383,7 @@ describe('ui-bots composition', () => {
       name: 'Second Apply Bot',
     }
     const group: BotGroupView = {
-      id: brandString('bot-group-apply'),
+      id: brandString<BotGroupId>('bot-group-apply'),
       name: 'Apply room',
       botIds: [fixture.currentBot.id, second.id],
       createdAt: 1,

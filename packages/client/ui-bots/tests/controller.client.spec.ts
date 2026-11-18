@@ -24,6 +24,7 @@ import { brandString } from '@yharness/brand'
 import { MessageId } from '@yharness/llm/brand'
 import type { RemoteResult } from '@yharness/api-remotes/client'
 import { BotWorkspaceController, createPendingGroupStore, type BotAvatarGenerationRemote, type BotGroupPendingState, type BotGroupPendingStore, type BotWorkspaceRemote } from '../src/client/controller.ts'
+import type { BotAttachmentFetch } from '../src/client/attachment-client.ts'
 
 afterEach(() => { vi.unstubAllGlobals() })
 
@@ -244,7 +245,7 @@ describe('BotWorkspaceController', () => {
     const original = bot('bot-profile-errors', 'session-profile-errors')
     const remote = remoteFixture([original])
     const updateProfile = vi.fn<NonNullable<BotWorkspaceRemote['updateProfile']>>()
-      .mockResolvedValueOnce({ ok: false, error: new RemoteError('gateway/conflict', 'profile changed', {}) })
+      .mockResolvedValueOnce({ ok: false, error: new RemoteError('gateway/conflict', 'profile changed', { botId: original.id }) })
       .mockResolvedValueOnce({ ok: false, error: new RemoteError('gateway/internal', 'profile rejected', {}) })
       .mockResolvedValueOnce({ ok: true, value: { bot: { ...original, id: BotId('different-profile-bot') } } })
     remote.updateProfile = updateProfile
@@ -1228,7 +1229,7 @@ describe('BotWorkspaceController', () => {
     const settingApp = setApp(original.id, 'github', true)
     await vi.waitFor(() => { expect(appRemote.setConnectedAppAccess).toHaveBeenCalledOnce() })
     appController.dispose()
-    appResult.resolve({ ok: true, value: { bot: { ...original, updatedAt: 2 }, app: { id: 'github', allowed: true } } })
+    appResult.resolve({ ok: true, value: { bot: { ...original, updatedAt: 2 }, app: { id: 'github', name: 'GitHub', allowed: true } } })
     await expect(settingApp).resolves.toBeUndefined()
 
     const profileRemote = remoteFixture([original])
@@ -2292,8 +2293,8 @@ describe('BotWorkspaceController', () => {
       ok: true as const,
       value: { messageId: request.messageId!, status: 'accepted' as const, deliveries: [] },
     }))
-    remote.reactGroupMessage = vi.fn<NonNullable<BotWorkspaceRemote['reactGroupMessage']>>(async ({ messageId: id, emoji }) => ({
-      ok: true, value: { messageId: id, reactions: [{ emoji, count: 1, viewerReacted: true }] },
+    remote.reactGroupMessage = vi.fn<NonNullable<BotWorkspaceRemote['reactGroupMessage']>>(async ({ messageId: id }) => ({
+      ok: true, value: { messageId: id, reactions: [{ emoji: '👍', count: 1, viewerReacted: true }] },
     }))
     const sortedIds = [String(first.id), String(second.id)].sort()
     const pendingKey = `${group.id}\u0000Targeted\u0000${sortedIds.join('\u0000')}\u0000${parentId}`
@@ -2324,7 +2325,9 @@ describe('BotWorkspaceController', () => {
     expect(selected?.deliveries).toEqual([{ messageId, botId: second.id, status: 'failed', error: 'offline' }])
 
     await controller.face().sendGroupMessage(' Targeted ', undefined, [second.id, first.id].map(String), String(parentId))
-    expect(remote.inspectGroup).toHaveBeenCalledWith({ groupId: group.id })
+    const inspectGroup = remote.inspectGroup
+    if (inspectGroup === undefined) throw new Error('group inspection is not mounted')
+    expect(inspectGroup).toHaveBeenCalledWith({ groupId: group.id })
     expect(remote.sendGroupMessage).toHaveBeenCalledWith({
       groupId: group.id, text: 'Targeted', messageId,
       targetBotIds: [second.id, first.id], replyToMessageId: parentId,
@@ -2334,7 +2337,7 @@ describe('BotWorkspaceController', () => {
       groupId: group.id, messageId, emoji: '👍', action: 'remove',
     })
     controller.face().retryGroup()
-    await vi.waitFor(() => { expect(remote.inspectGroup.mock.calls.length).toBeGreaterThanOrEqual(4) })
+    await vi.waitFor(() => { expect(inspectGroup.mock.calls.length).toBeGreaterThanOrEqual(4) })
     controller.dispose()
   })
 
@@ -2422,7 +2425,7 @@ describe('BotWorkspaceController', () => {
     const retain = vi.fn<ISessions['retain']>((sessionId) => {
       retainCalls++
       if (retainCalls === 2) throw new Error('Session catalog is stale')
-      return reference(sessionId)
+      return reference(typeof sessionId === 'string' ? sessionId : sessionId.childSessionId)
     })
     const sessions = { retain, refresh, list: sessionList(second.sessionId, () => false) } as Pick<ISessions, 'retain' | 'refresh' | 'list'> as ISessions
     const controller = new BotWorkspaceController(remote, sessions, () => 'unexpected response')
@@ -2684,7 +2687,7 @@ describe('BotWorkspaceController', () => {
       ok: true as const,
       value: { messageId: request.messageId!, status: 'accepted' as const, deliveries: [] },
     }))
-    const fetcher = vi.fn(async () => new Response(JSON.stringify({
+    const fetcher = vi.fn<BotAttachmentFetch>(async () => new Response(JSON.stringify({
       ok: true,
       value: { grantId: 'bot-attachment-grant-file', attachments: [{ type: 'file', name: 'notes.txt', bytes: 5 }] },
     }), { status: 200, headers: { 'content-type': 'application/json' } }))
