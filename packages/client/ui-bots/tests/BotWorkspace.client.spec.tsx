@@ -51,7 +51,7 @@ function memoryController(memories: readonly BotMemorySummary[]): BotWorkspaceCo
 function skillController(skills: readonly BotSkillSummary[]): BotWorkspaceController {
   const persisted: BotView = {
     id: BotId('research'),
-    sessionId: 'session-research' as SessionId,
+    sessionId: SessionId('session-research'),
     name: 'Research partner',
     identity: 'browse',
     accent: 'teal',
@@ -84,7 +84,7 @@ function skillController(skills: readonly BotSkillSummary[]): BotWorkspaceContro
 function routineController(routines: readonly BotRoutineView[]) {
   const persisted: BotView = {
     id: BotId('research'),
-    sessionId: 'session-research' as SessionId,
+    sessionId: SessionId('session-research'),
     name: 'Research partner',
     identity: 'browse',
     accent: 'teal',
