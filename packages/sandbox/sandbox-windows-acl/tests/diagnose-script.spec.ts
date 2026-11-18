@@ -41,7 +41,6 @@ const script = fileURLToPath(new URL('../assets/diagnose-windows-sandbox-acl/scr
 const PACKAGE_SID = 'S-1-15-2-1-2-3-4'
 const OTHER_PACKAGE_SID = 'S-1-15-2-4-3-2-1'
 const CAPABILITY_SID = 'S-1-15-3-1-2-3-4'
-const ADMINISTRATORS_SID = 'S-1-5-32-544'
 const REMOVED_SWITCHES = ['-Fix', '-GrantFullControl', '-Compact']
 // Process creation and Add-Type compilation share the Windows coverage budget.
 const timeout = Math.max(90_000, Number(process.env.DSH_COVERAGE_TEST_TIMEOUT_MS ?? 0))
@@ -149,14 +148,14 @@ describe.skipIf(!isWin32 || !pwshAvailable())('diagnose-windows-sandbox-acl scri
     icacls(path, `/${type}`, `*${sid}:(RX)`)
   }
 
-  function configureMissingWriteOwner(path: string, grant = `*${meSid}:(M)`): void {
-    // Hosted Windows runners execute as an elevated member of Administrators.
-    // Remove that group ACE and make the caller the owner so the fixture still
-    // has WRITE_DAC (owner-implicit) but lacks WRITE_OWNER, which is the repair
-    // contract this suite exercises.
-    icacls(path, '/inheritance:r', '/grant:r', grant)
+  function configureMissingWriteOwner(path: string, sid = meSid): void {
+    // Start with only SYSTEM FullControl and Modify plus Synchronize for the selected SID.
+    // Ownership retains WRITE_DAC. Replacing the DACL removes any existing FullControl grants from the runner.
     icacls(path, '/setowner', `*${meSid}`)
-    icacls(path, '/remove:g', `*${ADMINISTRATORS_SID}`)
+    const dacl = `D:P(A;OICI;FA;;;SY)(A;;0x1301bf;;;${sid})`
+    pwsh(`$acl = Get-Acl -LiteralPath ${quote(path)}; `
+      + `$acl.SetSecurityDescriptorSddlForm(${quote(dacl)}, [System.Security.AccessControl.AccessControlSections]::Access); `
+      + `Set-Acl -LiteralPath ${quote(path)} -AclObject $acl`)
   }
 
   function dispose(root: string): void {
@@ -363,7 +362,7 @@ describe.skipIf(!isWin32 || !pwshAvailable())('diagnose-windows-sandbox-acl scri
       icacls(leaf, '/grant', `*${OTHER_PACKAGE_SID}:(OI)(CI)(RX)`)
       icacls(deep, '/inheritance:r', '/grant:r', `*${meSid}:(F)`)
       icacls(deep, '/grant', `*${PACKAGE_SID}:(OI)(CI)(RX)`)
-      configureMissingWriteOwner(root, '*S-1-5-11:(M)')
+      configureMissingWriteOwner(root, 'S-1-5-11')
 
       const run = runScript(['-Path', root, '-AllowRoot', root, '-Out', join(scratch, 'out')])
       expect(run.code, run.output).toBe(0)
@@ -396,7 +395,7 @@ describe.skipIf(!isWin32 || !pwshAvailable())('diagnose-windows-sandbox-acl scri
     const scratch = newScratch()
     try {
       const target = makeDir(scratch, 'inherit-only')
-      configureMissingWriteOwner(target, '*S-1-5-11:(M)')
+      configureMissingWriteOwner(target, 'S-1-5-11')
       icacls(target, '/grant', '*S-1-5-32-545:(OI)(CI)(IO)(F)')
       const inheritOnlyBefore = aclLines(target).filter(line => line.includes('(IO)'))
       expect(inheritOnlyBefore).toHaveLength(1)
