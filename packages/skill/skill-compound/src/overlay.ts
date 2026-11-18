@@ -348,7 +348,8 @@ function shouldUseGitFallback(error: unknown): boolean {
 }
 
 /**
- * Download and publish a commit-pinned overlay. This does not restart any process.
+ * Download and publish a commit-pinned overlay after validating staged paths.
+ * A rejected revision or pointer leaves the active pointer in place.
  * @param root - overlay root to update.
  * @param minimumVersion - bundled release that the update must not precede.
  * @param signal - optional cancellation signal.
@@ -376,6 +377,14 @@ export function updateOverlay(root = resolveOverlayRoot(), minimumVersion?: stri
   }
   void task.then(release, release)
   return task
+}
+
+function checkPrivateEntry(root: string, path: string): string {
+  const parts = path.split('/')
+  for (let i = 1; i < parts.length; i++) checkPrivateDirectory(join(root, ...parts.slice(0, i)))
+  const file = join(root, ...parts)
+  checkPrivateFile(file)
+  return file
 }
 
 async function updateOverlayOnce(root: string, minimumVersion?: string, signal?: AbortSignal): Promise<OverlayRevision> {
@@ -422,25 +431,28 @@ async function updateOverlayOnce(root: string, minimumVersion?: string, signal?:
       await writeFile(target, bytes, { mode: 0o600, flag: 'wx' })
     }
     throwIfAborted(signal)
-    for (const name of names) validateSkill(await readFile(join(stage, 'skills', name, 'SKILL.md'), 'utf8'), name)
+    checkPrivateDirectory(stage)
+    for (const entry of entries) checkPrivateEntry(stage, entry.path)
+    const stagedAssets = join(stage, 'skills')
+    assertPrivateOverlayResources(stagedAssets)
+    for (const name of names) validateSkill(await readFile(join(stagedAssets, name, 'SKILL.md'), 'utf8'), name)
     const destination = join(root, 'revisions', commit)
     try { await rename(stage, destination) } catch {
       // Reuse only an existing revision whose downloaded files match exactly.
       try {
         checkPrivateDirectory(destination)
         for (const entry of entries) {
-          const parts = entry.path.split('/')
-          for (let i = 1; i < parts.length; i++) checkPrivateDirectory(join(destination, ...parts.slice(0, i)))
-          const target = join(destination, ...parts)
-          checkPrivateFile(target)
-          if (!(await readFile(target)).equals(await readFile(join(stage, ...parts)))) throw new Error('revision differs')
+          const target = checkPrivateEntry(destination, entry.path)
+          if (!(await readFile(target)).equals(await readFile(join(stage, entry.path)))) throw new Error('revision differs')
         }
+        assertPrivateOverlayResources(join(destination, 'skills'))
       } catch (reuseError) { throw new Error(`cannot publish revision: ${String(reuseError)}`) }
     }
     const temporary = join(root, `.current-${randomUUID()}.json`)
     try {
       throwIfAborted(signal)
       await writeFile(temporary, JSON.stringify({ commit, version }), { mode: 0o600, flag: 'wx' })
+      checkPrivateFile(temporary)
       const latest = activeOverlay(root)
       if (latest && olderVersion(version, latest.version)) throw new Error('upstream version would downgrade active overlay')
       throwIfAborted(signal)
