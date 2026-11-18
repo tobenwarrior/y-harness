@@ -29,7 +29,7 @@ Mount this backend when a composition needs `ctx.fs` backed by the real host fil
 
 Choose `fs-local` for ordinary host-file access in a single process. Choose [`fs-sandbox`](../fs-sandbox/README.md) when a session's writes and edits must be confined to its workspace and temp roots — it extends this backend and adds only the mode fence. `config.cwd` is a resolution default, not a containment boundary: absolute paths and `..` escape it.
 
-The synchronous `assertOwnerPrivateWin32` and `createOwnerPrivateDirectoryWin32` helpers restrict target owners and DACL trustees to the current user, SYSTEM, and local Administrators. Files can retain a Windows default owner from that set. The directory creator sets the current user as owner, protects the root DACL from inheritance, and leaves existing parents in place. Validation rejects unrecognized ACLs, NULL DACLs, and reparse components. Creation checks every existing ancestor for untrusted replacement rights while allowing harmless inherited read, traverse, and create-child access.
+The synchronous `assertOwnerPrivateWin32` and `createOwnerPrivateDirectoryWin32` helpers restrict target owners and DACL trustees to the current user, SYSTEM, and local Administrators. Windows token defaults can assign any of these identities as file owners. The directory creator sets the current user as owner and protects the root DACL from inheritance. Existing ancestors undergo read-only validation. Validation rejects unrecognized ACLs, NULL DACLs, and reparse components. Creation checks every existing ancestor for untrusted replacement rights while allowing harmless inherited read, traverse, and create-child access.
 
 ### Minimal configuration
 

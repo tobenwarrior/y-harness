@@ -13,7 +13,7 @@
       approve-for-me:
         sandbox: workspace-write
         approval: never
-        description: Work freely inside the workspace without prompts; anything outside it is refused.
+        description: Work freely inside the workspace without prompts. Requests outside it are refused.
       danger-full-access:
         sandbox: danger-full-access
         approval: never
