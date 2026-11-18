@@ -563,9 +563,9 @@ TryOpen 'DIRECTORY' '${child}' 0x40 0x02000000
 `,
       ], 60_000)
       expect(result.status, `stderr: ${result.stderr}`).toBe(0)
-      expect(result.stdout).toContain('FILE-WRITE: OK')
-      expect(result.stdout).toContain('NESTED-FILE-WRITE: OK')
-      expect(result.stdout).toContain('DIRECTORY: DENIED')
+      expect(result.stdout.split(/\r?\n/u)).toEqual(expect.arrayContaining([
+        'FILE-WRITE: OK', 'NESTED-FILE-WRITE: OK', 'DIRECTORY: DENIED',
+      ]))
 
       // The standing grant stays on disk. Check the host's full access to both files with ordinary file opens.
       const host = spawnSync(resolvePwshPath(), ['-NoLogo', '-NonInteractive', '-NoProfile', '-Command', `${probe}
@@ -573,8 +573,7 @@ TryOpen 'FILE' '${join(granted, 'file.txt')}' 0x10000000 0
 TryOpen 'NESTED-FILE' '${join(child, 'deep.txt')}' 0x10000000 0
 `], { timeout: 30_000, encoding: 'utf8' })
       expect(host.status, `stderr: ${host.stderr}`).toBe(0)
-      expect(host.stdout).toContain('FILE: OK')
-      expect(host.stdout).toContain('NESTED-FILE: OK')
+      expect(host.stdout.split(/\r?\n/u)).toEqual(expect.arrayContaining(['FILE: OK', 'NESTED-FILE: OK']))
     } finally {
       rmSync(granted, { recursive: true, force: true })
     }
