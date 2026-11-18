@@ -14,17 +14,9 @@ Record only sources whose ideas or material affect the toolkit. Keep raw downloa
 
 ## Earlier lucas-skills
 
-The repository hygiene checker originated in lucas-skills and is maintained here under [LICENSE](LICENSE). Private memory integration and platform-specific graph orchestration are outside this package.
+The repository hygiene checker, stdlib code-map indexer, symbol/LSP lookup helpers, and local viewer originated in lucas-skills and are maintained here under [LICENSE](LICENSE). Private memory integration and platform-specific graph orchestration are outside this package.
 
 The earlier guidelines credited [multica-ai/andrej-karpathy-skills](https://github.com/multica-ai/andrej-karpathy-skills), derived from Andrej Karpathy's observations about coding agents. That repository declares MIT in its README, but no standalone license notice was available when inspected. Its guideline and example files are not bundled; the new engineering entrypoint is rewritten. Preserve this lineage rather than presenting those earlier ideas as original.
-
-## Empryo / SoulForge code-map concept
-
-- Source: [public repository](https://github.com/proxysoul/Empryo/tree/c27dac116d2ee1637abfc6634bebf08b5c379454), inspected revision `c27dac116d2ee1637abfc6634bebf08b5c379454`.
-- Inspected: `README.md`, `LICENSE`, `src/core/prompts/shared/soul-map.ts`, `src/core/context/manager.ts`, `src/core/intelligence/repo-map.ts`, and `src/core/intelligence/repo-map-utils.ts`; the current desktop surface description and repository availability notes; [Genome](https://empryo.com/docs/concepts/genome), [desktop](https://empryo.com/docs/surfaces/desktop), and [intelligence](https://empryo.com/docs/concepts/intelligence) documentation inspected 2026-10-16.
-- License: BUSL-1.1. Retained bounded structural orientation, task-focused retrieval, source confirmation, folder/graph/file inspection, Git co-change hints, impact exploration, and import tracing. The current v3 desktop UI is privately developed, as the public README explains. The implementation here is original; no source code, prompts, assets, or runtime from that project are bundled.
-- Adapted into: [code maps](skills/compound/references/map.md), the stdlib helper, and local viewer. Excluded: LSP/Tree-sitter dependencies, watchers, embeddings, databases, provider calls, and claims of complete code understanding.
-- Evidence: ignored fixtures and read-only real-repository checks exercise refresh, aliases, Git state, exclusions, bounded source previews, dependency traversal, output bounds, full-network rendering, and native automatic routing. The package checker reports context cost; map output is bounded separately.
 
 ## Claude-Mem local service concept
 

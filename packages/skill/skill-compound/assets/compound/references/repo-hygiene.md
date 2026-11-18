@@ -9,7 +9,7 @@ python3 <installed-skill-dir>/scripts/repo_audit.py <repo-root>
 
 Audits are read-only. The explicit `--write-baseline` option writes only
 `.repo-audit-baseline.json`; the checker never deletes or rewrites project
-files.
+files. Size and reference checks read regular files within the selected checkout. Links to files inside that checkout still work. A configuration link that resolves outside it returns exit `2`.
 
 ## Commands and exit status
 
@@ -21,13 +21,17 @@ python3 <installed-skill-dir>/scripts/repo_audit.py <repo-root> --no-baseline
 ```
 
 Exit `0` means no active blocking finding, `1` means an active `FAIL` (or a
-`WARN` under `--strict`), and `2` means an invalid path or configuration.
-`--json` emits one object with `status`, `exit_code`, `findings`,
-`baselined`, `fail`, and `warn`. `--help` lists every option.
+`WARN` under `--strict`), and `2` means an invalid path or configuration, or
+an audit or baseline write that could not run.
+An audit with `--json` emits one object with `status`, `exit_code`,
+`findings`, `baselined`, `fail`, and `warn`; `--write-baseline` reports the
+accepted count, and errors report `status`, `error`, and `exit_code`. `--help`
+lists every option.
 
 The checks cover repository-root litter, scratch names, source size, dated or
-scratch directories, ignored loop litter, audit allowlists, worktrees,
-`.gitignore`, and scripts with no inbound textual reference. These are review
+scratch directories, dependency, cache, and build folders in version control,
+ignored loop litter, audit allowlists, worktrees, `.gitignore`, and scripts with
+no inbound textual reference. These are review
 heuristics: they do not prove architecture, correctness, ownership, or dead
 code. A `refs` warning can miss dynamic imports, generated code, plugin
 discovery, external callers, and runtime configuration. Use `rg` and relevant
@@ -43,15 +47,20 @@ Keep tests that protect contracts, regressions, failures, and boundaries. Assess
 Configuration is read from `.repo-audit.toml`, or from `[tool.repo_audit]` in
 `pyproject.toml` when the dedicated file is absent. Known settings include
 size limits, size overrides, worktree limits, root/litter allowlists, and the
-reference check. The checker requires Python 3.11+ (`tomllib`); malformed TOML,
-unsupported runtimes, or unknown/invalid settings return exit `2`.
+reference check. A `litter_ignore` glob matches a path or its basename and
+also exempts a deliberately committed dependency folder, such as a
+`node_modules` test fixture. The checker requires Python 3.11+ (`tomllib`);
+malformed TOML, unsupported runtimes, or unknown/invalid settings return
+exit `2`.
 
 The default ignore recommendations cover virtual environments, caches,
 bytecode, and `.scratch/`. `artifacts/` is project-specific and is not forced
 on repositories that do not use it; add it to `.gitignore` when appropriate.
 
-`--write-baseline` records current finding signatures and oversized-file line
-counts. Later runs keep accepted findings visible as backlog and block new
-findings; a baselined file that grows becomes active again. A baseline is an
-adoption aid, not a cleanliness claim. Use `--no-baseline` to inspect the
-whole repository.
+`--write-baseline` records current finding signatures, plus the line count,
+number of missing ignore entries, or worktree count of comparable findings.
+Later runs report accepted findings only as a count and block new findings; a
+comparable finding becomes active again when its number exceeds the recorded
+one; a baseline from an earlier release accepts gitignore and worktree findings
+by signature until it is rewritten. A baseline is an adoption aid, not a
+cleanliness claim. Use `--no-baseline` to inspect the whole repository.

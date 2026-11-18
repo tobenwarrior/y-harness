@@ -6,4 +6,4 @@ license: MIT
 
 # Global status
 
-Run [Compound](../compound/SKILL.md) as an explicit `compound status global` request. Report the saved defaults through the shared activation guide; keep this check read-only.
+Follow the [global status steps](../compound/references/activation.md#inspect-or-remove-defaults). Resolve `<installed-skill-dir>` to the sibling `compound` directory. Keep the check read-only.

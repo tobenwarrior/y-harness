@@ -15,9 +15,11 @@ vi.mock('node:child_process', async importOriginal => ({
 }))
 
 import {
-  APPLY_ROUTE, compareReleases, registerUpdateRoute, UPDATE_ROUTE, UPSTREAM_REPOSITORY, UpstreamReleaseTracker,
+  APPLY_ROUTE, compareReleases, recordedCommit, registerUpdateRoute, UPDATE_ROUTE, UPSTREAM_REPOSITORY, UpstreamReleaseTracker,
   VENDORED_VERSION,
 } from '../src/upstream.ts'
+
+const NEWER_VERSION = `${Number(VENDORED_VERSION.split('.')[0]) + 1}.0.0`
 
 type FakeChild = EventEmitter & {
   stdout: PassThrough
@@ -67,10 +69,10 @@ describe('release comparison', () => {
 
 describe('upstream release tracker', () => {
   it('reports an available update when upstream publishes a later release', async () => {
-    const tracker = new UpstreamReleaseTracker(() => Promise.resolve('0.12.0'))
+    const tracker = new UpstreamReleaseTracker(() => Promise.resolve(NEWER_VERSION))
     const status = await tracker.status()
     expect(status).toMatchObject({
-      vendored: VENDORED_VERSION, upstream: '0.12.0', updateAvailable: true, repository: UPSTREAM_REPOSITORY, error: null,
+      vendored: VENDORED_VERSION, upstream: NEWER_VERSION, updateAvailable: true, repository: UPSTREAM_REPOSITORY, error: null,
     })
     expect(status.checkedAt).toBeTypeOf('number')
   })
@@ -146,12 +148,14 @@ describe('upstream release tracker', () => {
   })
 
   it('detects a changed commit at the same version and ignores an older version', async () => {
+    const bundledCommit = recordedCommit(await readFile(new URL('../UPSTREAM.md', import.meta.url), 'utf8'))
     const changed = { version: VENDORED_VERSION, commit: 'a'.repeat(40) }
     await expect(new UpstreamReleaseTracker(() => Promise.resolve(changed)).status()).resolves.toMatchObject({
       updateAvailable: true, error: null,
     })
     await expect(new UpstreamReleaseTracker(() => Promise.resolve({ ...changed, version: '0.10.0' })).status()).resolves.toMatchObject({ updateAvailable: false, error: null })
-    await expect(new UpstreamReleaseTracker(() => Promise.resolve({ ...changed, commit: 'd36f372a60624b92e0e364871cae2c50cbf4ba01' })).status()).resolves.toMatchObject({ updateAvailable: false, error: null })
+    await expect(new UpstreamReleaseTracker(() => Promise.resolve({ ...changed, commit: bundledCommit })).status())
+      .resolves.toMatchObject({ updateAvailable: false, error: null })
   })
 
   it('reads a release published only in the Codex plugin manifest', async () => {
@@ -211,11 +215,11 @@ describe('upstream release tracker', () => {
     vi.stubGlobal('fetch', (url: string) => {
       requested.push(url)
       if (url.includes('/commits/')) return Promise.resolve(new Response('rate limited', { status: statusCode, headers: { 'x-ratelimit-remaining': '0' } }))
-      return Promise.resolve(Response.json({ name: 'compound-skills', version: '0.13.0' }))
+      return Promise.resolve(Response.json({ name: 'compound-skills', version: NEWER_VERSION }))
     })
     try {
       const result = await new UpstreamReleaseTracker().status()
-      expect(result).toMatchObject({ upstream: '0.13.0', updateAvailable: true, error: null })
+      expect(result).toMatchObject({ upstream: NEWER_VERSION, updateAvailable: true, error: null })
       expect(requested).toEqual([`https://api.github.com/repos/${UPSTREAM_REPOSITORY}/commits/main`, `https://raw.githubusercontent.com/${UPSTREAM_REPOSITORY}/${commit}/.codex-plugin/plugin.json`])
       expect(await readFile(marker, 'utf8')).toBe('0|||' + 'never\n')
     } finally {
@@ -261,12 +265,12 @@ describe('upstream release tracker', () => {
     ctx.provide('connection', {
       fetch: { register: (route: ConnectionFetchRoute) => { routes.push(route); return () => {} } },
     } as never)
-    registerUpdateRoute(ctx, new UpstreamReleaseTracker(() => Promise.resolve('0.12.0')))
+    registerUpdateRoute(ctx, new UpstreamReleaseTracker(() => Promise.resolve(NEWER_VERSION)))
     expect(routes.map(route => route.path)).toEqual([UPDATE_ROUTE, APPLY_ROUTE])
     expect(routes[0]?.methods).toEqual(['GET'])
     const response = await routes[0]?.fetch(new Request(`http://127.0.0.1${UPDATE_ROUTE}`))
     expect(response?.headers.get('cache-control')).toBe('no-store')
-    await expect(response?.json()).resolves.toMatchObject({ vendored: VENDORED_VERSION, upstream: '0.12.0', updateAvailable: true })
+    await expect(response?.json()).resolves.toMatchObject({ vendored: VENDORED_VERSION, upstream: NEWER_VERSION, updateAvailable: true })
     await ctx.fiber.dispose()
   })
 

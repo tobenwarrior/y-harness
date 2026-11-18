@@ -8,6 +8,16 @@ Inspect status, the intended diff, bounded recent subjects, and the configured c
 - Commit body: explain why and any behavior, compatibility, or validation detail the subject cannot convey. A simple change may need only the subject. Do not narrate tool activity or repeat the diff.
 - PR title: summarize the final change. At the PR stage, find and read the repository's PR template. Draft into its headings; without one, lead with the problem and resulting behavior, then relevant checks and material risks or limits. Validation lists completed checks and results. Carry project-documented unavailable or pending checks into `Not run: <check — reason>`.
 
+## Optional PR reminder
+
+At the PR stage, run the [reminder](../scripts/pr_reminder.py) once alongside the template check.
+
+```sh
+python3 -B <installed-skill-dir>/scripts/pr_reminder.py --repo .
+```
+
+Enable it in a repository with `git config --local compound.prReminder true`. Disable it with `git config --local compound.prReminder false`. An empty result means continue with the PR. If prompted and the change uncovered a reusable diagnosis, invariant, or check, offer to capture it using [Solutions](solutions.md). Write a note only when authorized. The reminder itself is read-only and never blocks publication.
+
 ## Attribution and publication
 
 Preserve configured Git author and committer. Apply a user identity override only when its stated scope matches the task; a remote owner or login alone does not establish that scope. Preserve genuine human `Co-authored-by` and `Signed-off-by` trailers; never invent contributors or substitute an AI/bot identity. Omit AI co-author trailers and generated-by credits, including template/history copies. Required factual AI-use disclosures remain truthful; they are distinct from authorship credits. Leave existing history intact. Report missing identity before committing.
