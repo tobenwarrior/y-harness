@@ -408,7 +408,7 @@ export class VpsRuntime {
     })
     this.pending.set(sessionId, task)
     const clear = (): void => {
-      if (this.pending.get(sessionId) === task) this.pending.delete(sessionId)
+      this.pending.delete(sessionId)
       if ((this.healthyUntil.get(sessionId) ?? 0) <= Date.now()) {
         this.healthyUntil.delete(sessionId)
       }
@@ -637,7 +637,7 @@ export class VpsRuntime {
   private async runPodman(args: readonly string[]): Promise<VpsCommandResult> {
     this.requests.throwIfAborted()
     const startsComputer = args[0] === 'run' || args[0] === 'start'
-    const argv = this.scopedLaunch && startsComputer
+    const argv: readonly [string, ...string[]] = this.scopedLaunch && startsComputer
       ? [...USER_COMPUTER_SCOPE, PODMAN, ...args]
       : [PODMAN, ...args]
     const command = (this.internals.run ?? runPodmanProcess)(argv, this.requests)
@@ -951,9 +951,8 @@ async function ensurePrivateDirectory(path: string, uidHook?: () => number | und
   }
 }
 
-async function runPodmanProcess(argv: readonly string[], signal: AbortSignal): Promise<VpsCommandResult> {
+async function runPodmanProcess(argv: readonly [string, ...string[]], signal: AbortSignal): Promise<VpsCommandResult> {
   const [command, ...args] = argv
-  if (command === undefined) throw new VpsRuntimeError('VPS Bot Podman command is empty')
   signal.throwIfAborted()
   return await new Promise<VpsCommandResult>((resolveResult, reject) => {
     const child = spawn(command, args, {
