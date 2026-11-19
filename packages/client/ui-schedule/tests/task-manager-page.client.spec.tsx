@@ -3445,8 +3445,9 @@ describe('Task detail rule header and run-time card', () => {
     // The tab list needs 120px; the expanded entry takes 120px and the icon 28px,
     // and the tabs get the rest of the strip.
     let strip = 220
+    let expandedWidth = 120
     const compact = (): boolean => document.querySelector(`.${css.detailContext} .${css.detailIconButton}`) !== null
-    const entryWidth = (): number => (compact() ? 28 : 120)
+    const entryWidth = (): number => (compact() ? 28 : expandedWidth)
     // The tab list itself grows into the strip, so only its tabs report the 120px.
     vi.spyOn(Element.prototype, 'clientWidth', 'get').mockImplementation(() => strip - entryWidth())
     vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
@@ -3503,13 +3504,20 @@ describe('Task detail rule header and run-time card', () => {
       expect(compact()).toBe(false)
       expect(within(link()).getByText(en['detail.session'])).toBeDefined()
 
-      // A label changed while compact is measured expanded before shrinking again.
-      strip = 200
+      // A narrow strip collapses the old label. The replacement label is wider,
+      // so the compact reset must measure it before deciding the final layout.
+      strip = 230
       act(() => { stripObserver().fire() })
       expect(compact()).toBe(true)
-      h.view.rerender(<TaskManagerPage {...h.props} t={makeTranslate(zh)} />)
+      expandedWidth = 160
+      strip = 250
+      const relabeled = makeTranslate({ ...en, 'detail.session': 'Linked conversation' })
+      h.view.rerender(<TaskManagerPage {...h.props} t={relabeled} />)
       expect(compact()).toBe(true)
-      expect(within(detail).getByRole('button', { name: zh['detail.openSession'] })).toBeDefined()
+      expect(within(detail).getByRole('button', { name: en['detail.openSession'] })).toBeDefined()
+      fireEvent.mouseEnter(detailContext(detail)!)
+      expect(tooltip()).toBe('Linked conversation')
+      fireEvent.mouseLeave(detailContext(detail)!)
 
       const observer = stripObserver()
       fireEvent.click(within(detail).getByRole('tab', { name: detailViewLabels(zh).records }))
