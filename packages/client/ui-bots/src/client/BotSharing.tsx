@@ -47,6 +47,7 @@ import { compactGroupQuote, GROUP_REACTION_OPTIONS, readGroupReplyToMessageId } 
 import {
   BotGroupAttachments,
   BotGroupSentAttachments,
+  botGroupAttachmentLabels,
   createBotGroupAttachmentDraft,
   releaseBotGroupAttachment,
 } from './BotGroupAttachments.tsx'
@@ -3278,18 +3279,7 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
                   <BotGroupAttachments
                     attachments={groupAttachments}
                     disabled={groupWorking === 'send'}
-                    labels={{
-                      picker: t('groupAttachFiles'),
-                      input: t('groupChooseFiles'),
-                      attachments: t('groupAttachments'),
-                      file: t('groupAttachmentFile'),
-                      preview: name => t('groupPreviewAttachment', { name }),
-                      remove: name => t('groupRemoveAttachment', { name }),
-                      retry: name => t('groupRetryAttachment', { name }),
-                      failed: t('groupAttachmentFailed'),
-                      uploading: t('groupAttachmentPreparing'),
-                      lightbox: { dialog: t('groupAttachmentPreview'), close: t('groupAttachmentClosePreview') },
-                    }}
+                    labels={botGroupAttachmentLabels(t)}
                     onAddFiles={addGroupAttachments}
                     onRemove={removeGroupAttachment}
                   />

@@ -9,6 +9,7 @@ import {
   IconRefreshOutlineRegular,
   ImageLightbox,
 } from '@yharness/client-ui-primitives'
+import type { PropsLocale } from '@yharness/client-ui-slots'
 import { randomUUID } from '@yharness/util-crypto'
 import type { BotGroupAttachmentDraft } from './types.ts'
 import css from './BotWorkspace.module.css'
@@ -63,6 +64,25 @@ export interface BotGroupAttachmentLabels {
   readonly uploading: string
   /** Image-lightbox labels. */
   readonly lightbox: { readonly dialog: string; readonly close: string }
+}
+
+/** Build the locale-owned labels shared by Bot-group composers.
+ * @param t - Bot locale translator.
+ * @returns Labels for the picker, draft rail, and image lightbox.
+ */
+export function botGroupAttachmentLabels(t: PropsLocale<'bots'>['t']): BotGroupAttachmentLabels {
+  return {
+    picker: t('groupAttachFiles'),
+    input: t('groupChooseFiles'),
+    attachments: t('groupAttachments'),
+    file: t('groupAttachmentFile'),
+    preview: name => t('groupPreviewAttachment', { name }),
+    remove: name => t('groupRemoveAttachment', { name }),
+    retry: name => t('groupRetryAttachment', { name }),
+    failed: t('groupAttachmentFailed'),
+    uploading: t('groupAttachmentPreparing'),
+    lightbox: { dialog: t('groupAttachmentPreview'), close: t('groupAttachmentClosePreview') },
+  }
 }
 
 /** Create one local draft without retaining a filesystem path. */

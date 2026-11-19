@@ -22,6 +22,7 @@ import { BotTemplatesPanel } from './BotTemplatesPanel.tsx'
 import {
   BotGroupAttachments,
   BotGroupSentAttachments,
+  botGroupAttachmentLabels,
   createBotGroupAttachmentDraft,
   releaseBotGroupAttachment,
 } from './BotGroupAttachments.tsx'
@@ -892,19 +893,7 @@ export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate,
         <BotGroupAttachments
           attachments={attachments}
           disabled={sending}
-          labels={{
-            picker: t('groupAttachFiles'),
-            input: t('groupChooseFiles'),
-            attachments: t('groupAttachments'),
-            file: t('groupAttachmentFile'),
-            preview: name => t('groupPreviewAttachment', { name }),
-            remove: name => t('groupRemoveAttachment', { name }),
-            /* v8 ignore next -- this BotWorkspace call never supplies onRetry; the child invokes retry labels only with that callback. */
-            retry: name => t('groupRetryAttachment', { name }),
-            failed: t('groupAttachmentFailed'),
-            uploading: t('groupAttachmentPreparing'),
-            lightbox: { dialog: t('groupAttachmentPreview'), close: t('groupAttachmentClosePreview') },
-          }}
+          labels={botGroupAttachmentLabels(t)}
           onAddFiles={addAttachments}
           onRemove={removeAttachment}
         />
