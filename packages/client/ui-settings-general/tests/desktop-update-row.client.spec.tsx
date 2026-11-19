@@ -46,6 +46,13 @@ describe('DesktopUpdateRow', () => {
     expect(openDesktopUpdate).toHaveBeenCalledOnce()
   })
 
+  it('offers a retry when the bridge fails before reporting a status', () => {
+    const { openDesktopUpdate } = show(true, { failed: true, opening: false })
+    expect(screen.getByText('Retry update')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Check for Updates' }))
+    expect(openDesktopUpdate).toHaveBeenCalledOnce()
+  })
+
   it('offers the update when one is available', () => {
     const { openDesktopUpdate } = show(true, {
       failed: false, opening: false, presentation: { phase: 'available', version: '1.0.1' },

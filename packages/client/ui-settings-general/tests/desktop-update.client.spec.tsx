@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { useSyncExternalStore } from 'react'
 import { afterEach, expect, it, vi } from 'vitest'
 import type { PropsLocale } from '@yharness/client-ui-slots'
-import { DesktopUpdateIndicator } from '../src/client/DesktopUpdateIndicator.tsx'
+import { DesktopUpdateIndicator, updateCopy } from '../src/client/DesktopUpdateIndicator.tsx'
 import type { DesktopUpdateBridge, DesktopUpdatePresentation } from '../src/types.ts'
 import { DesktopUpdateSource } from '../src/client/desktop-update-source.ts'
 import { en, zh } from '../src/client/locales.ts'
@@ -49,6 +49,13 @@ function fixture() {
 }
 
 const available = { phase: 'available', version: '1.0.1' } as const
+
+it('describes an unavailable update feed in both status fields', () => {
+  expect(updateCopy({ phase: 'unavailable' }, translate(en))).toEqual({
+    label: 'Updates are not available in this build',
+    detail: 'Updates are not available in this build',
+  })
+})
 
 it('hides the account-row icon when this build has no update feed', async () => {
   const f = fixture()
