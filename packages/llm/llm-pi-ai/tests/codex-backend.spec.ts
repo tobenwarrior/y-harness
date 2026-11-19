@@ -434,6 +434,77 @@ describe('Codex native backend', () => {
       await f.runtime.close()
     }
   })
+  it('keeps a cleared runtime context behind the current request', async () => {
+    const f = fixture(catalog)
+    const request = 'Continue the fixture task.'
+    const cleared = 'Current runtime context: none. Earlier runtime-context snapshots no longer apply.'
+    try {
+      await f.runtime.refresh()
+      await f.runtime.configure(true)
+      const messages = [
+        createUserMessage({ content: [{ type: 'text', text: request }], source: { kind: 'user' } }),
+        createUserMessage({
+          content: [{ type: 'text', text: cleared }],
+          source: { kind: 'runtime-context' } as never,
+        }),
+      ]
+      for await (const _chunk of f.runtime.stream({ provider: 'codex-backend', model: 'gpt-6.1-sol', messages })) { /* drain */ }
+      expect(f.request.mock.calls.find(call => call[0] === 'turn/start')?.[1]).toHaveProperty('input', [
+        { type: 'text', text: `## Current Harness context\n\n${cleared}`, text_elements: [] },
+        { type: 'text', text: `## Current user request\n\n${request}`, text_elements: [] },
+      ])
+    } finally {
+      await f.runtime.close()
+    }
+  })
+  it('keeps trailing instructions, catalog, and recall as current context', async () => {
+    const f = fixture(catalog)
+    const request = 'Continue the fixture task.'
+    const contexts = [
+      { text: 'Follow the fixture instructions.', source: { kind: 'skill-invocation', name: 'fixture', form: 'instructions' } },
+      { text: 'The fixture catalog is current.', source: { kind: 'skill-catalog', form: 'catalog', entries: [] } },
+      { text: 'The fixture recall is relevant.', source: { kind: 'session-reference', form: 'recall', version: 1, references: [] } },
+    ] as const
+    try {
+      await f.runtime.refresh()
+      await f.runtime.configure(true)
+      const messages = [
+        createUserMessage({ content: [{ type: 'text', text: request }], source: { kind: 'user' } }),
+        ...contexts.map(({ text: contextText, source }) => createUserMessage({
+          content: [{ type: 'text', text: contextText }], source: source as never,
+        })),
+      ]
+      for await (const _chunk of f.runtime.stream({ provider: 'codex-backend', model: 'gpt-6.1-sol', messages })) { /* drain */ }
+      expect(f.request.mock.calls.find(call => call[0] === 'turn/start')?.[1]).toHaveProperty('input', [
+        { type: 'text', text: `## Current Harness context\n\n${contexts.map(context => context.text).join('\n\n')}`, text_elements: [] },
+        { type: 'text', text: `## Current user request\n\n${request}`, text_elements: [] },
+      ])
+    } finally {
+      await f.runtime.close()
+    }
+  })
+  it.each([
+    { form: 'notice', text: 'A fixture notice needs attention.', source: { kind: 'plan-mode', form: 'notice', summary: 'Fixture notice' } },
+    { form: 'relay', text: 'A fixture relay needs attention.', source: { kind: 'agent-message', form: 'relay', senderSessionId: 'fixture-sender' } },
+  ] as const)('keeps a trailing $form message actionable', async ({ text, source }) => {
+    const f = fixture(catalog)
+    const prior = 'Earlier fixture request.'
+    try {
+      await f.runtime.refresh()
+      await f.runtime.configure(true)
+      const messages = [
+        createUserMessage({ content: [{ type: 'text', text: prior }], source: { kind: 'user' } }),
+        createUserMessage({ content: [{ type: 'text', text }], source: source as never }),
+      ]
+      for await (const _chunk of f.runtime.stream({ provider: 'codex-backend', model: 'gpt-6.1-sol', messages })) { /* drain */ }
+      expect(f.request.mock.calls.find(call => call[0] === 'turn/start')?.[1]).toHaveProperty('input', [
+        { type: 'text', text: `Conversation context from Harness (quoted transcript; retain each role):\n${JSON.stringify([{ role: 'user', text: prior }])}`, text_elements: [] },
+        { type: 'text', text: `## Current user request\n\n${text}`, text_elements: [] },
+      ])
+    } finally {
+      await f.runtime.close()
+    }
+  })
   it('keeps only the rebuilt current user image as a native input', async () => {
     const historicalRef = { attachmentId: 'historical-image', mediaType: 'image/png', bytes: 3, width: 1, height: 1 }
     const currentRef = { attachmentId: 'current-image', mediaType: 'image/png', bytes: 3, width: 1, height: 1 }
