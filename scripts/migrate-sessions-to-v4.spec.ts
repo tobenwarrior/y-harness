@@ -95,6 +95,11 @@ beforeAll(async () => {
     join(v4Checkout, 'native/system/packages/entry/node_modules'),
     linkType,
   )
+  await symlink(
+    join(repository, 'packages/session/session-persistence-jsonl/node_modules'),
+    join(v4Checkout, 'packages/session/session-persistence-jsonl/node_modules'),
+    linkType,
+  )
   await symlink(join(repository, '.git'), join(v4Checkout, '.git'), linkType)
   v4Script = join(v4Checkout, 'scripts/migrate-sessions-to-v4.ts')
 }, MIGRATION_TEST_TIMEOUT)
