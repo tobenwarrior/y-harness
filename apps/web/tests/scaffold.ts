@@ -640,6 +640,7 @@ export async function launchWebScaffold(options: LaunchOptions = {}): Promise<We
             'file-upload-round',
             'ptc-round',
             'changed-files-turn',
+            'code-language',
             'plan-review',
             'present',
             'lifecycle-chrome',
