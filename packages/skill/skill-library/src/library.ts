@@ -51,14 +51,17 @@ interface LocalEntry {
   readonly raw: string
   readonly item: SkillLibraryItem
 }
+interface InventoryRead {
+  readonly inventory: SkillLibraryList
+  readonly local: ReadonlyMap<SkillLibraryId, LocalEntry>
+  readonly registryOwners: ReadonlySet<SkillLibraryId>
+  readonly nativeOwners: ReadonlyMap<SkillLibraryId, NativeSkillLibraryProvider>
+}
 
 /** Owns metadata discovery and serialized user-authorized source changes. */
 export class SkillLibrary {
   private readonly nativeProviders = new Map<string, NativeSkillLibraryProvider>()
   private readonly previews = new Map<string, SkillCleanupProposal>()
-  private readonly local = new Map<SkillLibraryId, LocalEntry>()
-  private readonly registryOwners = new Set<SkillLibraryId>()
-  private readonly nativeOwners = new Map<SkillLibraryId, NativeSkillLibraryProvider>()
   private operationTail = Promise.resolve()
   private closed = false
   private recovery?: Promise<void>
@@ -82,6 +85,10 @@ export class SkillLibrary {
    * @returns inventory summaries without instruction bodies.
    */
   async list(request: SkillLibraryListRequest = {}): Promise<SkillLibraryList> {
+    return (await this.readInventory(request)).inventory
+  }
+
+  private async readInventory(request: SkillLibraryListRequest = {}): Promise<InventoryRead> {
     this.recovery ??= this.recoverArchives().then(() => this.recoverRevisions()).then(() => this.recoverCreations())
     await this.recovery
     const projects = this.options.projects()
@@ -89,7 +96,9 @@ export class SkillLibrary {
       candidate: SkillCandidate
       projectIds: string[]
     }>()
-    this.local.clear(); this.nativeOwners.clear(); this.registryOwners.clear()
+    const local = new Map<SkillLibraryId, LocalEntry>()
+    const registryOwners = new Set<SkillLibraryId>()
+    const nativeOwners = new Map<SkillLibraryId, NativeSkillLibraryProvider>()
     for (const project of [...projects, { id: '', title: '', path: '' }]) {
       const result = await this.options.provider.list(project.id === '' ? {} : { cwd: project.path })
       const observation = Array.isArray(result) ? result : result.candidates
@@ -139,7 +148,7 @@ export class SkillLibrary {
         capabilities: { adopt: safe, archive: safe, restore: false, cleanup: managed && !state.pinned, native: false },
       }
       items.push(item)
-      this.local.set(id, { candidate: entry.candidate, originalPath, bundlePath: locator.bundlePath, raw, item })
+      local.set(id, { candidate: entry.candidate, originalPath, bundlePath: locator.bundlePath, raw, item })
     }
     for (const [id, state] of this.options.store.entries()) {
       if (state.archive === undefined) continue
@@ -182,7 +191,7 @@ export class SkillLibrary {
           references: [],
           capabilities: { adopt: false, archive: false, restore: false, cleanup: false, native: false },
         })
-        this.registryOwners.add(id)
+        registryOwners.add(id)
       }
     }
     for (const provider of this.nativeProviders.values()) {
@@ -216,7 +225,7 @@ export class SkillLibrary {
           references: entry.references ?? [],
           capabilities: { adopt: false, archive: false, restore: false, cleanup: false, native: true },
         })
-        this.nativeOwners.set(id, provider)
+        nativeOwners.set(id, provider)
       }
     }
     const ranked = [...candidates.entries()].sort((a, b) => a[1].candidate.rank - b[1].candidate.rank)
@@ -231,7 +240,7 @@ export class SkillLibrary {
     }
     const projected = items.map(item => ({
       ...item,
-      shadowed: this.local.has(item.id) && !item.capabilities.native && item.status !== 'archived' && (item.projectIds.length > 0
+      shadowed: local.has(item.id) && !item.capabilities.native && item.status !== 'archived' && (item.projectIds.length > 0
         ? item.projectIds.every(project => winners.get(`${project}:${item.name}`) !== item.id)
         : (projects.length > 0
           ? projects.map(project => project.id)
@@ -245,12 +254,17 @@ export class SkillLibrary {
       }),
     }))
     return {
-      items: projected.filter(item => request.projectId === undefined
-        || item.scope === 'shared'
-        || item.projectIds.includes(request.projectId)),
-      projects,
-      providers,
-      bodyBudgetBytes: this.options.bodyBudgetBytes,
+      inventory: {
+        items: projected.filter(item => request.projectId === undefined
+          || item.scope === 'shared'
+          || item.projectIds.includes(request.projectId)),
+        projects,
+        providers,
+        bodyBudgetBytes: this.options.bodyBudgetBytes,
+      },
+      local,
+      registryOwners,
+      nativeOwners,
     }
   }
 
@@ -260,18 +274,19 @@ export class SkillLibrary {
    * @returns instructions and revision history.
    */
   async detail(request: SkillLibraryIdRequest): Promise<SkillLibraryDetail> {
-    const item = await this.requireItem(request.id)
+    const { inventory, local, registryOwners, nativeOwners } = await this.readInventory()
+    const item = this.requireInventoryItem(request.id, inventory)
     const state = this.record(request.id)
-    const local = this.local.get(request.id)
+    const entry = local.get(request.id)
     let content = ''
     if (state.archive !== undefined) content = instructionBody(await readFile(state.archive.instructionPath, 'utf8'))
-    else if (local !== undefined) content = instructionBody(local.raw)
-    else if (this.registryOwners.has(item.id)) {
+    else if (entry !== undefined) content = instructionBody(entry.raw)
+    else if (registryOwners.has(item.id)) {
       const registry = this.options.registryInventory
       if (registry === undefined) throw new Error('registry skill source is no longer available')
       content = await registry.detail(item.path, item.provider)
     }
-    else content = await this.nativeOwners.get(request.id)?.detail?.(item.path) ?? ''
+    else content = await nativeOwners.get(request.id)?.detail?.(item.path) ?? ''
     return { item, content, revisions: state.revisions.map(({ backupPath: _backupPath, ...revision }) => revision) }
   }
 
@@ -399,7 +414,7 @@ export class SkillLibrary {
    * @returns complete conservative diffs and skipped reasons.
    */
   async previewCleanup(request: SkillLibraryCleanupRequest = {}): Promise<SkillCleanupProposal> {
-    const inventory = await this.list({})
+    const { inventory, local } = await this.readInventory()
     const selected = inventory.items.filter(item => request.ids === undefined || request.ids.includes(item.id))
     const changes: SkillCleanupProposal['changes'][number][] = []; const skipped: SkillCleanupProposal['skipped'][number][] = []
     for (const item of selected) {
@@ -407,7 +422,7 @@ export class SkillLibrary {
         skipped.push({ id: item.id, reason: 'protected, pinned, native or archived skill' })
         continue
       }
-      const entry = this.local.get(item.id)
+      const entry = local.get(item.id)
       if (entry === undefined) throw new Error('skill source changed; refresh and preview again')
       const after = compress(entry.raw)
       if (after === entry.raw) {
@@ -487,7 +502,9 @@ export class SkillLibrary {
    * @returns bounded metadata in descending relevance order.
    */
   async retrieve(request: SkillLibraryRetrieveRequest): Promise<readonly SkillLibraryItem[]> {
-    const items = (await this.list({ ...(request.projectId === undefined ? {} : { projectId: request.projectId }) })).items
+    const { inventory: { items }, local } = await this.readInventory(
+      request.projectId === undefined ? {} : { projectId: request.projectId },
+    )
     const explicit = new Set(request.explicitIds ?? [])
     const words = request.query.toLowerCase().split(/\W+/).filter(Boolean)
     const score = (item: SkillLibraryItem): number => (explicit.has(item.id) ? 10000 : 0) + words.reduce(
@@ -502,13 +519,13 @@ export class SkillLibrary {
     )
     const limit = Math.min(Math.max(request.limit ?? this.options.retrievalLimit, 1), this.options.retrievalLimit)
     const winners = new Map<string, SkillLibraryId>()
-    if (request.projectId !== undefined) for (const item of [...items].sort((a, b) => (this.local.get(a.id)
-      ?.candidate.rank ?? 0) - (this.local.get(b.id)
+    if (request.projectId !== undefined) for (const item of [...items].sort((a, b) => (local.get(a.id)
+      ?.candidate.rank ?? 0) - (local.get(b.id)
       ?.candidate.rank ?? 0))) {
-      if (!this.local.has(item.id) || item.status !== 'active') continue
+      if (!local.has(item.id) || item.status !== 'active') continue
       if (!winners.has(item.name)) winners.set(item.name, item.id)
     }
-    return items.filter(item => (!this.local.has(item.id)
+    return items.filter(item => (!local.has(item.id)
       || request.projectId === undefined
       || winners.get(item.name) === item.id)
       && !item.capabilities.native
@@ -541,9 +558,9 @@ export class SkillLibrary {
       || !('content' in value) || typeof value.content !== 'string' || !('resourceBase' in value)
       || typeof value.resourceBase !== 'object' || value.resourceBase === null || !('kind' in value.resourceBase)
       || value.resourceBase.kind !== 'directory' || !('path' in value.resourceBase) || typeof value.resourceBase.path !== 'string') return
-    await this.list({})
+    const { local } = await this.readInventory()
     const base = resolve(value.resourceBase.path)
-    const matches = [...this.local.values()].filter(entry => entry.item.name === value.name
+    const matches = [...local.values()].filter(entry => entry.item.name === value.name
       && entry.item.provider === value.provider
       && localLocator(entry.candidate.locator)?.directory === base && body(entry.raw) === value.content)
     const [entry] = matches
@@ -859,12 +876,17 @@ export class SkillLibrary {
     }
   }
   private async requireItem(id: SkillLibraryId): Promise<SkillLibraryItem> {
-    const item = (await this.list({})).items.find(item => item.id === id)
+    return this.requireInventoryItem(id, await this.list())
+  }
+  private requireInventoryItem(id: SkillLibraryId, inventory: SkillLibraryList): SkillLibraryItem {
+    const item = inventory.items.find(item => item.id === id)
     if (item === undefined) throw new Error('skill source changed or is no longer available')
     return item
   }
   private async requireLocal(id: SkillLibraryId): Promise<LocalEntry> {
-    const item = await this.requireItem(id); const entry = this.local.get(id)
+    const { inventory, local } = await this.readInventory()
+    const item = this.requireInventoryItem(id, inventory)
+    const entry = local.get(id)
     if (entry === undefined
       || !item.capabilities.archive
       || !await isUnlinked(entry.originalPath)) throw new Error('skill is protected from source changes')

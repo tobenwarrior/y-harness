@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -37,6 +37,48 @@ describe('file-backed skill library', () => {
     expect(inventory.items.find(item => item.scope === 'shared')).toMatchObject({ shadowed: true, automaticCleanup: false })
     expect(inventory.items.every(item => !('content' in item))).toBe(true)
   })
+
+  it('keeps a discovered source available while another inventory scan is still gathering candidates', async () => {
+    const f = await fixture()
+    await f.skill('project', 'deploy', 'Review the release.')
+    const source = (await f.library.list()).items[0]!
+    const nativeStarted = Promise.withResolvers<undefined>()
+    const resumeNative = Promise.withResolvers<undefined>()
+    const inventoryStarted = Promise.withResolvers<undefined>()
+    const resumeInventory = Promise.withResolvers<undefined>()
+    const removeNative = f.library.registerNativeProvider({
+      name: 'fixture-native',
+      list: async () => {
+        nativeStarted.resolve(undefined)
+        await resumeNative.promise
+        return { status: { provider: 'fixture-native', state: 'connected' }, entries: [] }
+      },
+    })
+    const learning = f.library.learningSource(source.id)
+    const list = f.options.provider.list.bind(f.options.provider)
+    const candidateScan = vi.spyOn(f.options.provider, 'list')
+    let inventory: ReturnType<SkillLibrary['list']> | undefined
+    try {
+      await nativeStarted.promise
+      candidateScan.mockImplementationOnce(async (request) => {
+        inventoryStarted.resolve(undefined)
+        await resumeInventory.promise
+        return list(request)
+      })
+      inventory = f.library.list()
+      await inventoryStarted.promise
+      resumeNative.resolve(undefined)
+
+      await expect(learning).resolves.toMatchObject({ item: { id: source.id }, content: '\nReview the release.\n' })
+    } finally {
+      resumeNative.resolve(undefined)
+      resumeInventory.resolve(undefined)
+      await Promise.allSettled([learning, inventory])
+      candidateScan.mockRestore()
+      removeNative()
+    }
+  })
+
   it('requires deliberate adoption and a current hash before compression, preserving code and repeated paragraphs', async () => {
     const f = await fixture(); const dir = await f.skill('project', 'deploy', 'Step one.  \n\n\n\nRepeated.\n\nRepeated.\n\n```\nkeep  \n\n\n```')
     const item = (await f.library.list({})).items[0]!
