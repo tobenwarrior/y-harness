@@ -861,26 +861,23 @@ export class CodexBackendRuntime {
       dynamicTools: dynamicToolMap, signal: options.signal ?? new AbortController().signal, sessionId: options.sessionId, accepting: true,
     }
     const suffix = continuing ? projectCodexHistory(options.messages.slice(markerIndex + 1)) : history
-    const transcript = suffix.map(({ role, text: entryText }) => ({ role, text: entryText }))
     const latest = suffix.at(-1)
-    const currentUser = suffix.length > 1 && latest?.role === 'user' ? latest : undefined
-    const promptBase = suffix.length === 1 && latest?.role === 'user' ? latest.text
-      : `Conversation context from Harness (quoted transcript; retain each role):\n${JSON.stringify(currentUser === undefined ? transcript : transcript.slice(0, -1))}`
-    const prompt = replay === '' ? promptBase : `${replay}\n\n${promptBase}`
-    // A rebuilt turn keeps replay and prior messages in quoted text inputs, then
-    // sends the current user text as the final text input before its own images.
-    const promptInputs = currentUser === undefined
-      ? [{ type: 'text', text: prompt, text_elements: [] }]
-      : [
-        ...(replay === '' ? [] : [{ type: 'text', text: replay, text_elements: [] }]),
-        { type: 'text', text: promptBase, text_elements: [] },
-        { type: 'text', text: currentUser.text, text_elements: [] },
-      ]
+    const currentUser = latest?.role === 'user' ? latest : undefined
+    const prior = currentUser === undefined ? suffix : suffix.slice(0, -1)
+    const texts = replay === '' ? [] : [replay]
+    if (prior.length > 0 || currentUser === undefined) {
+      const transcript = prior.map(({ role, text: entryText }) => ({ role, text: entryText }))
+      texts.push(`Conversation context from Harness (quoted transcript; retain each role):\n${JSON.stringify(transcript)}`)
+    }
+    if (currentUser !== undefined) {
+      texts.push(texts.length === 0 ? currentUser.text : `## Current user request\n\n${currentUser.text}`)
+    }
+    const promptInputs = texts.map(entryText => ({ type: 'text', text: entryText, text_elements: [] }))
     // Only the current user message carries native image inputs; images in a
     // quoted transcript stay text placeholders.
-    const imageInputs = latest === undefined || latest.role !== 'user'
+    const imageInputs = currentUser === undefined
       ? []
-      : await Promise.all(latest.images.map(async reference => ({ type: 'image', url: await this.imageUrl(reference, options.signal) })))
+      : await Promise.all(currentUser.images.map(async reference => ({ type: 'image', url: await this.imageUrl(reference, options.signal) })))
     const queue: Array<{ method: string; params: Obj }> = []
     let wake: (() => void) | undefined
     const unsubscribe = peer.subscribe((method, params) => {

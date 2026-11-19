@@ -358,7 +358,7 @@ describe('Codex native backend', () => {
     const rebuiltTurn = f.request.mock.calls.filter(call => call[0] === 'turn/start')[1]?.[1] as {
       input: { type: string; text?: string; text_elements: readonly unknown[] }[]
     }
-    expect(rebuiltTurn.input.at(-1)).toEqual({ type: 'text', text: 'second', text_elements: [] })
+    expect(rebuiltTurn.input.at(-1)).toEqual({ type: 'text', text: '## Current user request\n\nsecond', text_elements: [] })
     expect(rebuiltTurn.input.slice(0, -1).map(input => input.text).join('\n')).toContain('"role":"assistant"')
     const secondFinish = second.at(-1) as { replayState: unknown }
     await collect([firstUser, {
@@ -370,6 +370,17 @@ describe('Codex native backend', () => {
     }, { role: 'user', content: [{ type: 'text', text: 'third' }] }])
     expect(replay).toHaveBeenCalledTimes(2)
     expect(turnInputs()[2]).toBe('third')
+    f.emit('__closed', {})
+    await collect([{ role: 'user', content: [{ type: 'text', text: 'current after history truncation' }] }])
+    const truncatedTurn = f.request.mock.calls.filter(call => call[0] === 'turn/start')[3]?.[1] as {
+      input: { type: string; text?: string; text_elements: readonly unknown[] }[]
+    }
+    expect(replay).toHaveBeenCalledTimes(3)
+    expect(truncatedTurn.input).toHaveLength(2)
+    expect(truncatedTurn.input[0]?.text).toContain(JSON.stringify(persisted))
+    expect(truncatedTurn.input[1]).toEqual({
+      type: 'text', text: '## Current user request\n\ncurrent after history truncation', text_elements: [],
+    })
     await f.runtime.close()
   })
   it('keeps only the rebuilt current user image as a native input', async () => {
@@ -399,7 +410,7 @@ describe('Codex native backend', () => {
     expect(rebuiltTurn.input[0]?.type).toBe('text')
     expect(rebuiltTurn.input[0]?.text).toContain('first\\n[image attachment]')
     expect(rebuiltTurn.input[0]?.text_elements).toEqual([])
-    expect(rebuiltTurn.input[1]).toEqual({ type: 'text', text: 'second\n[image attachment]', text_elements: [] })
+    expect(rebuiltTurn.input[1]).toEqual({ type: 'text', text: '## Current user request\n\nsecond\n[image attachment]', text_elements: [] })
     expect(rebuiltTurn.input[2]).toEqual({ type: 'image', url: 'data:image/png;base64,AQID' })
     expect(readImage).toHaveBeenCalledTimes(2)
     await f.runtime.close()
