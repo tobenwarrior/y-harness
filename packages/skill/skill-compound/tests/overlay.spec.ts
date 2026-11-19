@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { execFileSync } from 'node:child_process'
 import { appendFileSync, writeFileSync } from 'node:fs'
 import { chmod, link, mkdir, mkdtemp, readFile, readdir, rm, symlink, unlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -290,7 +291,12 @@ it('does not reuse an existing revision with unsafe file permissions', async () 
     upstream('a'.repeat(40), '1.0.0', false, true)
     await updateOverlay(root)
     const reference = join(root, 'revisions', 'a'.repeat(40), 'skills', 'compound', 'references', 'example.txt')
-    await chmod(reference, 0o644)
+    if (process.platform === 'win32') {
+      // Match the native fs-local fixture: chmod changes no Windows DACL, so add an untrusted trustee explicitly.
+      execFileSync('icacls.exe', [reference, '/grant', '*S-1-1-0:F'], { stdio: 'ignore' })
+    } else {
+      await chmod(reference, 0o644)
+    }
     await expect(updateOverlay(root)).rejects.toThrow('unsafe overlay file')
     expect(activeOverlay(root)?.commit).toBe('a'.repeat(40))
   } finally { await rm(root, { recursive: true, force: true }) }
