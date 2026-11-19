@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { AttachmentId, type AttachmentStore } from '@yharness/attachment'
 import { parseCodexModels, declineCodexRequest, projectCodexHistory, projectCodexDynamicToolReplay, CodexBackendAdapter, CodexBackendRuntime } from '../src/codex-backend.ts'
 import type { CodexDynamicTool, CodexDynamicToolEvent, CodexDynamicToolResolver, CodexDynamicToolReplayer } from '../src/codex-backend.ts'
-import { ReasoningEffortId, ServiceTierId } from '@yharness/llm'
+import { createAssistantMessage, createSystemMessage, createUserMessage, ReasoningEffortId, ServiceTierId } from '@yharness/llm'
 import type { SkillLearningNativeItem } from '@yharness/skill-library/types'
 import { codexNativeItem } from '../src/codex-native-evidence.ts'
 
@@ -382,6 +382,57 @@ describe('Codex native backend', () => {
       type: 'text', text: '## Current user request\n\ncurrent after history truncation', text_elements: [],
     })
     await f.runtime.close()
+  })
+  it('keeps the scheduled request current when the step appends a time snapshot', async () => {
+    const f = fixture(catalog)
+    const routine = '[SCHEDULE REMINDER BATCH]\nThis is a scheduled message from the user\nreminders_json: [{"schedule_id":"fixture","occurrence_at":"2026-01-01T00:00:00.000Z","reminder_prompt":"Check the fixture report."}]'
+    const stepTime = 'Time sampled while preparing the current step.'
+    try {
+      await f.runtime.refresh()
+      await f.runtime.configure(true)
+      const messages = [
+        createSystemMessage('Fixture instructions.'),
+        createUserMessage({ content: [{ type: 'text', text: 'earlier request' }], source: { kind: 'user' } }),
+        createUserMessage({ content: [{ type: 'text', text: routine }], source: { kind: 'schedule' } }),
+        createUserMessage({
+          content: [{ type: 'text', text: stepTime }],
+          source: { kind: 'time-context', form: 'snapshot', sections: [{ name: 'time-context', text: stepTime }] },
+        }),
+      ]
+      for await (const _chunk of f.runtime.stream({ provider: 'codex-backend', model: 'gpt-6.1-sol', messages })) { /* drain */ }
+      expect(f.request.mock.calls.find(call => call[0] === 'turn/start')?.[1]).toHaveProperty('input', [
+        { type: 'text', text: 'Conversation context from Harness (quoted transcript; retain each role):\n[{"role":"user","text":"earlier request"}]', text_elements: [] },
+        { type: 'text', text: `## Current Harness context\n\n${stepTime}`, text_elements: [] },
+        { type: 'text', text: `## Current user request\n\n${routine}`, text_elements: [] },
+      ])
+    } finally {
+      await f.runtime.close()
+    }
+  })
+  it('keeps a completed scheduled request in history when only context follows the reply', async () => {
+    const f = fixture(catalog)
+    const routine = 'Check the fixture report.'
+    const reply = 'The report check is complete.'
+    const stepTime = 'Time sampled after the reply.'
+    try {
+      await f.runtime.refresh()
+      await f.runtime.configure(true)
+      const messages = [
+        createUserMessage({ content: [{ type: 'text', text: routine }], source: { kind: 'schedule' } }),
+        createAssistantMessage({ content: [{ type: 'text', text: reply }], source: { provider: 'codex-backend', model: 'gpt-6.1-sol' } }),
+        createUserMessage({
+          content: [{ type: 'text', text: stepTime }],
+          source: { kind: 'time-context', form: 'snapshot', sections: [{ name: 'time-context', text: stepTime }] },
+        }),
+      ]
+      for await (const _chunk of f.runtime.stream({ provider: 'codex-backend', model: 'gpt-6.1-sol', messages })) { /* drain */ }
+      const transcript = [{ role: 'user', text: routine }, { role: 'assistant', text: reply }, { role: 'user', text: stepTime }]
+      expect(f.request.mock.calls.find(call => call[0] === 'turn/start')?.[1]).toHaveProperty('input', [
+        { type: 'text', text: `Conversation context from Harness (quoted transcript; retain each role):\n${JSON.stringify(transcript)}`, text_elements: [] },
+      ])
+    } finally {
+      await f.runtime.close()
+    }
   })
   it('keeps only the rebuilt current user image as a native input', async () => {
     const historicalRef = { attachmentId: 'historical-image', mediaType: 'image/png', bytes: 3, width: 1, height: 1 }

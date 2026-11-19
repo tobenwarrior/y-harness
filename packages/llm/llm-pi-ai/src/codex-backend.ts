@@ -99,6 +99,17 @@ export interface CodexHistoryEntry {
   text: string
   images: ImageAttachmentRef[]
 }
+
+function isCodexContext(message: RequestMessage): boolean {
+  if (message.role !== 'user' || message.source === undefined) return false
+  const source = message.source
+  const kind: string = source.kind
+  // A cleared runtime snapshot has no sections or form.
+  if (kind === 'runtime-context') return true
+  if (!('form' in source)) return false
+  return source.form === 'instructions' || source.form === 'catalog' || source.form === 'snapshot' || source.form === 'recall'
+}
+
 /**
  * Text-and-image history seed, visibly separated from the current user message.
  * Every image also leaves a placeholder in the text, so a quoted transcript
@@ -817,7 +828,8 @@ export class CodexBackendRuntime {
     const access = this.options.resolveAccess(options)
     const observationProjectRoot = this.options.resolveObservationProjectRoot?.(options)
     const accessKey = JSON.stringify([access.cwd, access.sandbox, access.approvalPolicy, access.sandboxPolicy])
-    const history = projectCodexHistory(options.messages)
+    const historyMessages = options.messages.filter(message => message.role !== 'system')
+    const history = projectCodexHistory(historyMessages)
     const instructions = [options.system, ...options.messages.filter(message => message.role === 'system').flatMap(message => message.content.flatMap(block => block.type === 'text' ? [block.text] : [])),
       'Use your native Codex tools. Harness tool descriptions in prior context do not grant access.'].filter(Boolean).join('\n\n')
     const dynamicTools = await this.options.resolveDynamicTools?.(options) ?? []
@@ -836,8 +848,8 @@ export class CodexBackendRuntime {
     if (!this.connected) throw new Error('Sign in to the separate Codex profile before sending a turn.')
     const key = options.purpose === undefined && options.sessionId !== undefined ? `${options.sessionId}/${options.model}` : randomUUID()
     let cursor = this.cursors.get(key)
-    const markerIndex = cursor === undefined ? -1 : options.messages.findLastIndex(message => message.role === 'assistant' && text(obj(obj(message.source.replayState).response).codexMarker) === cursor?.marker)
-    const prefix = markerIndex < 0 ? '' : JSON.stringify(projectCodexHistory(options.messages.slice(0, markerIndex)))
+    const markerIndex = cursor === undefined ? -1 : historyMessages.findLastIndex(message => message.role === 'assistant' && text(obj(obj(message.source.replayState).response).codexMarker) === cursor?.marker)
+    const prefix = markerIndex < 0 ? '' : JSON.stringify(history.slice(0, markerIndex))
     const continuing = cursor !== undefined && prefix === cursor.input
       && cursor.instructions === instructions && cursor.access === accessKey && cursor.dynamicTools === dynamicToolsKey
     const replayEvents = continuing || this.options.replayDynamicTools === undefined
@@ -860,16 +872,20 @@ export class CodexBackendRuntime {
       threadId: activeCursor.id, access, turnId: undefined as string | undefined, items: new Map<string, Obj>(),
       dynamicTools: dynamicToolMap, signal: options.signal ?? new AbortController().signal, sessionId: options.sessionId, accepting: true,
     }
-    const suffix = continuing ? projectCodexHistory(options.messages.slice(markerIndex + 1)) : history
-    const latest = suffix.at(-1)
+    const start = continuing ? markerIndex + 1 : 0
+    const suffix = history.slice(start)
+    const requestIndex = historyMessages.slice(start).findLastIndex(message => !isCodexContext(message))
+    const latest = suffix[requestIndex]
     const currentUser = latest?.role === 'user' ? latest : undefined
-    const prior = currentUser === undefined ? suffix : suffix.slice(0, -1)
+    const prior = currentUser === undefined ? suffix : suffix.slice(0, requestIndex)
     const texts = replay === '' ? [] : [replay]
     if (prior.length > 0 || currentUser === undefined) {
       const transcript = prior.map(({ role, text: entryText }) => ({ role, text: entryText }))
       texts.push(`Conversation context from Harness (quoted transcript; retain each role):\n${JSON.stringify(transcript)}`)
     }
     if (currentUser !== undefined) {
+      const currentContext = suffix.slice(requestIndex + 1).map(entry => entry.text).filter(Boolean).join('\n\n')
+      if (currentContext !== '') texts.push(`## Current Harness context\n\n${currentContext}`)
       texts.push(texts.length === 0 ? currentUser.text : `## Current user request\n\n${currentUser.text}`)
     }
     const promptInputs = texts.map(entryText => ({ type: 'text', text: entryText, text_elements: [] }))
