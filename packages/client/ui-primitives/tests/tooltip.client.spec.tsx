@@ -331,7 +331,7 @@ describe('Tooltip', () => {
     bubbleSize = { inlineSize: 90, blockSize: 40 }
     const spy = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue(rect(54, 82))
     try {
-      render(
+      const view = render(
         <Tooltip label="Update available">
           <button type="button">anchor</button>
         </Tooltip>,
@@ -341,6 +341,13 @@ describe('Tooltip', () => {
       expect(bubble.style.maxWidth).toBe('96px')
       expect(bubble.style.left).toBe('18px')
       expect(visualViewport.addEventListener).toHaveBeenCalledWith('resize', expect.any(Function))
+
+      // A height-only scale change still uses the visual viewport. Keep the
+      // explicit width cap when it is narrower than the available viewport.
+      visualViewport.width = window.innerWidth
+      view.rerender(<Tooltip label="Update available" maxWidth={82}><button type="button">anchor</button></Tooltip>)
+      act(() => { observers.at(-1)?.deliver() })
+      expect(screen.getByRole('tooltip').style.maxWidth).toBe('82px')
     } finally {
       Object.defineProperty(window, 'visualViewport', { configurable: true, value: originalVisualViewport })
       spy.mockRestore()
