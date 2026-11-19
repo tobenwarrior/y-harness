@@ -366,6 +366,32 @@ describe('candidates', () => {
     expect(b.listBots).toHaveBeenCalledWith({ includeHidden: true })
   })
 
+  it('keeps ordinary Session references when the optional Bot Remote fails', async () => {
+    const files = vi.fn(() => Promise.resolve({ ok: true as const, value: [] }))
+    const sessions = vi.fn(() => Promise.resolve({
+      ok: true as const,
+      value: [{
+        sessionId: sid('ordinary-session'),
+        label: 'Ordinary Session',
+        cwd: `${HOME}/project`,
+        sameWorkspace: true,
+        createdAt: CREATED_AT,
+        mention: '@[Ordinary Session](dsh-session:Im9yZGluYXJ5LXNlc3Npb24i)',
+      }],
+    }))
+    const b = await bench(files, sessions, {}, {}, null)
+    const listBots = vi.fn(() => Promise.resolve({
+      ok: false as const,
+      error: new RemoteError('gateway/internal', 'Bot lookup failed', {}),
+    }))
+    b.ctx.provide('remote.bots', { list: listBots })
+
+    await expect(b.source.candidates(session, request('ordinary'))).resolves.toEqual([
+      expect.objectContaining({ name: 'Ordinary Session', icon: 'session' }),
+    ])
+    expect(listBots).toHaveBeenCalledWith({ includeHidden: true })
+  })
+
   it('hides Bot Sessions from generic references while keeping hidden rows out of the picker', async () => {
     const files = vi.fn(() => Promise.resolve({ ok: true as const, value: [] }))
     const sessions = vi.fn(() => Promise.resolve({
