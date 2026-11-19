@@ -355,6 +355,11 @@ describe('Codex native backend', () => {
       .map(call => ((call[1] as { input: { text: string }[] }).input[0]?.text ?? ''))
     expect(replay).toHaveBeenCalledTimes(2)
     expect(turnInputs()[1]).toContain(JSON.stringify(persisted))
+    const rebuiltTurn = f.request.mock.calls.filter(call => call[0] === 'turn/start')[1]?.[1] as {
+      input: { type: string; text?: string; text_elements: readonly unknown[] }[]
+    }
+    expect(rebuiltTurn.input.at(-1)).toEqual({ type: 'text', text: 'second', text_elements: [] })
+    expect(rebuiltTurn.input.slice(0, -1).map(input => input.text).join('\n')).toContain('"role":"assistant"')
     const secondFinish = second.at(-1) as { replayState: unknown }
     await collect([firstUser, {
       role: 'assistant', content: [{ type: 'text', text: 'hello' }],
@@ -365,6 +370,38 @@ describe('Codex native backend', () => {
     }, { role: 'user', content: [{ type: 'text', text: 'third' }] }])
     expect(replay).toHaveBeenCalledTimes(2)
     expect(turnInputs()[2]).toBe('third')
+    await f.runtime.close()
+  })
+  it('keeps only the rebuilt current user image as a native input', async () => {
+    const historicalRef = { attachmentId: 'historical-image', mediaType: 'image/png', bytes: 3, width: 1, height: 1 }
+    const currentRef = { attachmentId: 'current-image', mediaType: 'image/png', bytes: 3, width: 1, height: 1 }
+    const readImage = vi.fn(async () => ({ ref: currentRef, data: new Uint8Array([1, 2, 3]) }))
+    const f = fixture(catalog, () => ({ readImage }) as never)
+    await f.runtime.refresh(); await f.runtime.configure(true)
+    const collect = async (messages: unknown[]) => {
+      const chunks = []
+      for await (const chunk of f.runtime.stream({ provider: 'codex-backend', model: 'gpt-6.1-sol', sessionId: 'bot-session-image-rebuild' as never, messages: messages as never })) chunks.push(chunk)
+      return chunks
+    }
+    const firstUser = { role: 'user', content: [{ type: 'text', text: 'first' }, { type: 'image', attachment: historicalRef }] } as never
+    const first = await collect([firstUser])
+    const firstFinish = first.at(-1) as { replayState: unknown }
+    f.emit('__closed', {})
+    const secondUser = { role: 'user', content: [{ type: 'text', text: 'second' }, { type: 'image', attachment: currentRef }] } as never
+    await collect([firstUser, {
+      role: 'assistant', content: [{ type: 'text', text: 'hello' }],
+      source: { kind: 'model', provider: 'codex-backend', model: 'gpt-6.1-sol', replayState: firstFinish.replayState },
+    }, secondUser])
+    const rebuiltTurn = f.request.mock.calls.filter(call => call[0] === 'turn/start')[1]?.[1] as {
+      input: { type: string; text?: string; url?: string; text_elements?: readonly unknown[] }[]
+    }
+    expect(rebuiltTurn.input).toHaveLength(3)
+    expect(rebuiltTurn.input[0]?.type).toBe('text')
+    expect(rebuiltTurn.input[0]?.text).toContain('first\\n[image attachment]')
+    expect(rebuiltTurn.input[0]?.text_elements).toEqual([])
+    expect(rebuiltTurn.input[1]).toEqual({ type: 'text', text: 'second\n[image attachment]', text_elements: [] })
+    expect(rebuiltTurn.input[2]).toEqual({ type: 'image', url: 'data:image/png;base64,AQID' })
+    expect(readImage).toHaveBeenCalledTimes(2)
     await f.runtime.close()
   })
   it('bounds dynamic-tool replay and discloses omitted records', () => {

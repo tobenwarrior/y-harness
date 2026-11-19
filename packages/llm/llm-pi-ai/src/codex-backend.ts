@@ -862,13 +862,22 @@ export class CodexBackendRuntime {
     }
     const suffix = continuing ? projectCodexHistory(options.messages.slice(markerIndex + 1)) : history
     const transcript = suffix.map(({ role, text: entryText }) => ({ role, text: entryText }))
-    const promptBase = suffix.length === 1 && suffix[0]?.role === 'user' ? suffix[0].text : `Conversation context from Harness (quoted transcript; retain each role):\n${JSON.stringify(transcript)}`
-    // Keep the current Harness request last so replayed audit data is context,
-    // not a competing instruction or a replacement for the user's turn.
-    const prompt = replay === '' ? promptBase : `${replay}\n\n${promptBase}`
-    // Only the turn's own user message carries native image inputs; images in a
-    // quoted transcript stay text placeholders, because the transcript is one text input.
     const latest = suffix.at(-1)
+    const currentUser = suffix.length > 1 && latest?.role === 'user' ? latest : undefined
+    const promptBase = suffix.length === 1 && latest?.role === 'user' ? latest.text
+      : `Conversation context from Harness (quoted transcript; retain each role):\n${JSON.stringify(currentUser === undefined ? transcript : transcript.slice(0, -1))}`
+    const prompt = replay === '' ? promptBase : `${replay}\n\n${promptBase}`
+    // A rebuilt turn keeps replay and prior messages in quoted text inputs, then
+    // sends the current user text as the final text input before its own images.
+    const promptInputs = currentUser === undefined
+      ? [{ type: 'text', text: prompt, text_elements: [] }]
+      : [
+        ...(replay === '' ? [] : [{ type: 'text', text: replay, text_elements: [] }]),
+        { type: 'text', text: promptBase, text_elements: [] },
+        { type: 'text', text: currentUser.text, text_elements: [] },
+      ]
+    // Only the current user message carries native image inputs; images in a
+    // quoted transcript stay text placeholders.
     const imageInputs = latest === undefined || latest.role !== 'user'
       ? []
       : await Promise.all(latest.images.map(async reference => ({ type: 'image', url: await this.imageUrl(reference, options.signal) })))
@@ -899,7 +908,7 @@ export class CodexBackendRuntime {
     try {
       this.activeRequest = activeRequest
       const result = obj(await peer.request('turn/start', { threadId: activeCursor.id, model: options.model, effort, serviceTier: tier === 'priority' ? 'fast' : tier,
-        cwd: access.cwd, input: [{ type: 'text', text: prompt, text_elements: [] }, ...imageInputs],
+        cwd: access.cwd, input: [...promptInputs, ...imageInputs],
         approvalPolicy: access.approvalPolicy, approvalsReviewer: 'user', sandboxPolicy: access.sandboxPolicy }))
       turnId = text(obj(result.turn).id)
       activeRequest.turnId = turnId
