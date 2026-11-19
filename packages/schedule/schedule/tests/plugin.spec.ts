@@ -190,6 +190,49 @@ describe('shared Schedule management', () => {
     expect(await restarted.service.list({ sessionId })).toEqual([record])
   })
 
+  it.each(['reserveCreate', 'releaseCreate', 'reconcileCreate'] as const)(
+    'recovers a task whose receipt was interrupted via %s without creating a second task',
+    async (operation) => {
+      const pool = new MemoryMediaPool()
+      let operationWrites = 0
+      const test = await setup({ pool, backend: gatedScheduleBackend(pool, {
+        putRecord: async (table) => {
+          if (table === 'create_operations' && ++operationWrites === 2) throw new Error('Interrupted receipt write')
+        },
+      }) })
+      const owner = SessionId('routine-owner')
+      const request = { prompt: 'Check the report', title: 'Paper report', every_seconds: 300 }
+      const retry = { idempotencyKey: 'create-paper-report' }
+      await expect(test.service.create(owner, request, undefined, retry)).rejects.toThrow('Interrupted receipt write')
+
+      const tasks = await test.service.list({ sessionId: owner })
+      expect(tasks).toHaveLength(1)
+      await expect(test.service[operation](owner, request, retry.idempotencyKey))
+        .resolves.toEqual({ status: 'committed', record: tasks[0] })
+      await expect(test.service.create(owner, request, undefined, retry)).resolves.toEqual(tasks[0])
+      expect(await test.service.list({ sessionId: owner })).toEqual(tasks)
+      await expect(test.service.reconcileCreate(owner, request, retry.idempotencyKey))
+        .resolves.toEqual({ status: 'committed', record: tasks[0] })
+    },
+  )
+
+  it('declines conflicting recovery of a reserved routine without changing its saved status', async () => {
+    const test = await setup()
+    const owner = SessionId('routine-owner')
+    const request = { prompt: 'Check the report', title: 'Paper report', every_seconds: 300 }
+    const key = 'create-paper-report'
+    await expect(test.service.reserveCreate(owner, request, key)).resolves.toEqual({ status: 'reserved' })
+    const conflict = { ...request, every_seconds: 600 }
+    await expect(test.service.releaseCreate(owner, conflict, key)).rejects.toMatchObject({ code: 'invalid_rule' })
+    await expect(test.service.reconcileCreate(owner, request, key)).resolves.toEqual({ status: 'unknown' })
+    expect(await test.service.list({ sessionId: owner })).toEqual([])
+
+    const committed = await test.service.create(owner, request, undefined, { idempotencyKey: key })
+    await expect(test.service.reserveCreate(owner, request, key))
+      .resolves.toEqual({ status: 'committed', record: committed })
+    expect(await test.service.list({ sessionId: owner })).toEqual([committed])
+  })
+
   it('matches equivalent structured local at inputs through the stored fingerprint', async () => {
     const test = await setup()
     const sessionId = SessionId('structured-at')
