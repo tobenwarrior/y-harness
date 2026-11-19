@@ -16,7 +16,7 @@ import ToolRuntime, { defineTool, type ToolDefinition } from '@yharness/tools'
 import { LocalSubprocessRuntime } from '@yharness/subprocess-local'
 import type { ConnectionFetchRoute } from '@yharness/client-connection'
 import type { IndexInjection } from '@yharness/host-webserver'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { VpsBotFileSystem } from '../src/vps-bot-files.ts'
 import { mountVpsBots } from '../src/vps-bots.ts'
 import { VpsJournal } from '../src/vps-journal.ts'
@@ -34,7 +34,28 @@ const LEGACY_SESSION = SessionId('bot-session-37888424-5b3d-4a8c-81f5-751ed2d24f
 const SHARED_BROWSER_SESSION = SessionId('shared-session-37888424-5b3d-4a8c-81f5-751ed2d24f96')
 const GROUP_BROWSER_SESSION = SessionId('shared-session-group-37888424-5b3d-4a8c-81f5-751ed2d24f97')
 
+function executionWorkspace(sessionId: string): string {
+  return `/yharness-test-bots/${sessionId}`
+}
+
 describe('managed VPS Bot composition', () => {
+  let restoreWindowsWorkspace: (() => void) | undefined
+
+  // The shipped VPS runtime is a Linux execution world. Keep Windows CI's host
+  // fixture native while giving managed capability tests the POSIX path the
+  // container worker receives on a real VPS.
+  beforeEach(() => {
+    if (process.platform !== 'win32') return
+    const workspace = vi.spyOn(VpsRuntime.prototype, 'workspace')
+      .mockImplementation(executionWorkspace)
+    restoreWindowsWorkspace = () => { workspace.mockRestore() }
+  })
+
+  afterEach(() => {
+    restoreWindowsWorkspace?.()
+    restoreWindowsWorkspace = undefined
+  })
+
   it('describes a private Computer without starting it when the owner opens a chat', async () => {
     const ctx = new Context()
     const routes: ConnectionFetchRoute[] = []
@@ -932,7 +953,7 @@ describe('managed VPS Bot composition', () => {
         .resolves.toMatchObject({ available: false })
       await expect((await request('/api/computer/sign-in', { action: 'status', sessionId: BOT_SESSION })).json())
         .resolves.toEqual({ request: null })
-      expect(ctx.botWorkspaces.workspace(BOT_SESSION)).toBe(`/yharness-test-bots/${BOT_SESSION}`)
+      expect(ctx.botWorkspaces.workspace(BOT_SESSION)).toBe(executionWorkspace(BOT_SESSION))
       await ctx.botWorkspaces.prepare(BOT_SESSION, selected.id)
       expect(ensure).toHaveBeenCalledWith(BOT_SESSION)
 
@@ -1467,12 +1488,12 @@ describe('managed VPS Bot composition', () => {
       })
       const mounted = await mount()
       const files = await ctx.workspaceFileAccess.forSession(BOT_SESSION, new AbortController().signal)
-      expect(files?.workspaceRoot).toBe(`/yharness-test-bots/${BOT_SESSION}`)
+      expect(files?.workspaceRoot).toBe(executionWorkspace(BOT_SESSION))
       expect(files?.fs).toBeInstanceOf(VpsBotFileSystem)
       await expect(ctx.workspaceFileAccess.forSession(DESKTOP_SESSION, new AbortController().signal)).resolves.toBeUndefined()
       await expect(ctx.workspaceFileAccess.forSession(LEGACY_SESSION, new AbortController().signal)).resolves.toBeUndefined()
       const desktopFiles = await ctx.workspaceFileAccess.forComputer?.(DESKTOP_SESSION, new AbortController().signal)
-      expect(desktopFiles?.workspaceRoot).toBe(`/yharness-test-bots/${DESKTOP_SESSION}`)
+      expect(desktopFiles?.workspaceRoot).toBe(executionWorkspace(DESKTOP_SESSION))
       expect(desktopFiles?.fs).toBeInstanceOf(VpsBotFileSystem)
       await expect(ctx.workspaceFileAccess.forComputer?.(LEGACY_SESSION, new AbortController().signal)).resolves.toBeUndefined()
       await expect(ctx.workspaceFileAccess.forComputer?.(BOT_SESSION, new AbortController().signal)).resolves.toEqual(files)
@@ -1532,7 +1553,7 @@ describe('managed VPS Bot composition', () => {
       const call = { signal: new AbortController().signal, name: 'host_probe', arguments: {} }
       const execution = managedBotExecutionFor({ agent: bot })
       if (execution === undefined) throw new Error('managed Bot execution was not bound')
-      expect(execution.workspaceRoot).toBe('/yharness-test-bots/' + BOT_SESSION)
+      expect(execution.workspaceRoot).toBe(executionWorkspace(BOT_SESSION))
       expect(execution.sandboxPolicy.resolve().mode).toBe('workspace-write')
       const shell = await execution.shell.execute(execution.shell.resolve({ command: 'printf managed-shell' }))
       await expect(shell.result()).resolves.toMatchObject({ exitCode: 0, stdout: { text: 'managed-shell' } })
@@ -1544,7 +1565,7 @@ describe('managed VPS Bot composition', () => {
       expect(managedBotExecutionFor({ agent: desktop })).toBeUndefined()
       expect(bindWorkspace).toHaveBeenCalledTimes(2)
       expect(bindWorkspace).toHaveBeenCalledWith(bot, { cwd: execution.workspaceRoot, subprocess: execution.subprocess })
-      expect(bindWorkspace).toHaveBeenCalledWith(desktop, expect.objectContaining({ cwd: '/yharness-test-bots/' + DESKTOP_SESSION }))
+      expect(bindWorkspace).toHaveBeenCalledWith(desktop, expect.objectContaining({ cwd: executionWorkspace(DESKTOP_SESSION) }))
       const desktopPrompt = renderPrompt(await ctx.systemPrompt.assemble({ scope: desktop }))
       expect(desktopPrompt).toContain('Bash and file tools use your existing Session workspace and permissions.')
       expect(desktopPrompt).not.toContain('managed runtime workspace')

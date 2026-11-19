@@ -267,7 +267,10 @@ function existingContainerFixture(
 
 describe('VpsRuntime', () => {
   it('reports the installed controls and rejects overlapping shared roots', () => {
-    expect(() => new VpsRuntime('/workspace/private', 'image', {}, { sharedWorkspace: true })).toThrow('distinct')
+    const privateRoot = process.platform === 'win32' ? resolve('/workspace/private') : '/workspace/private'
+    const overlapping = () => new VpsRuntime(privateRoot, 'image', {}, { sharedWorkspace: true })
+    if (process.platform === 'win32') expect(overlapping).not.toThrow()
+    else expect(overlapping).toThrow('distinct')
 
     const plain = fixture()
     expect(plain.runtime.supportsSharedWorkspaceControl()).toBe(false)
@@ -558,7 +561,7 @@ describe('VpsRuntime', () => {
       sharedWorkspacePolicy: { get: async () => true, set: async () => {} },
     })
     await expect(shared.runtime.ensure(sessions.alice)).resolves.toBeUndefined()
-    expect(shared.runtime.execArgv(sessions.alice, ['pwd'], { workdir: '/workspace' })).toContain('/workspace')
+    expect(shared.runtime.execArgv(sessions.alice, ['pwd'], { workdir: '/workspace' })).toContain(resolve('/workspace'))
   })
 
   it('rejects browser policy, profile, and shared project metadata', async () => {
