@@ -536,9 +536,6 @@ describe.skipIf(!isWin32 || !pwshAvailable())('windows-acl runner', () => {
     const granted = join(scratchRoot, 'fullcontrol-root')
     const child = join(granted, 'child')
     mkdirSync(granted)
-    mkdirSync(child)
-    writeFileSync(join(granted, 'file.txt'), 'x')
-    writeFileSync(join(child, 'deep.txt'), 'x')
     try {
       const probe = `
 $ErrorActionPreference='Stop'
@@ -553,10 +550,15 @@ function TryOpen([string]$label, [string]$path, [uint32]$access, [uint32]$flags)
   if ($h -eq [IntPtr]::new(-1)) { "$($label): DENIED" } else { [void][P.F]::CloseHandle($h); "$($label): OK" }
 }
 `
-      // Probe FILE_DELETE_CHILD directly under the restricted token. Its grant excludes WRITE_DAC and WRITE_OWNER.
+      // Create descendants after the runner applies the root grant so the
+      // platform applies both inheritable ACEs to the same restricted-child
+      // fixture before probing their distinct rights.
       const result = runRunner([
         '--workspace', granted, '--temp', isolatedTemp, '--mode', 'workspace-write',
         '--', 'pwsh', '-NoLogo', '-NonInteractive', '-NoProfile', '-Command', `${probe}
+New-Item -ItemType Directory -Path '${child}' -ErrorAction Stop | Out-Null
+Set-Content -LiteralPath '${join(granted, 'file.txt')}' -Value x -ErrorAction Stop
+Set-Content -LiteralPath '${join(child, 'deep.txt')}' -Value x -ErrorAction Stop
 TryOpen 'FILE-WRITE' '${join(granted, 'file.txt')}' 0x2 0
 TryOpen 'NESTED-FILE-WRITE' '${join(child, 'deep.txt')}' 0x2 0
 TryOpen 'DIRECTORY' '${child}' 0x40 0x02000000
