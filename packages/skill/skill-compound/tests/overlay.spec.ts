@@ -290,6 +290,8 @@ it('does not reuse an existing revision with unsafe file permissions', async () 
   try {
     upstream('a'.repeat(40), '1.0.0', false, true)
     await updateOverlay(root)
+    expect(activeOverlay(root)?.commit).toBe('a'.repeat(40))
+    const currentBeforeUnsafeUpdate = await readFile(join(root, 'current.json'), 'utf8')
     const reference = join(root, 'revisions', 'a'.repeat(40), 'skills', 'compound', 'references', 'example.txt')
     if (process.platform === 'win32') {
       // Match the native fs-local fixture: chmod changes no Windows DACL, so add an untrusted trustee explicitly.
@@ -299,7 +301,8 @@ it('does not reuse an existing revision with unsafe file permissions', async () 
     }
     const unsafeError = process.platform === 'win32' ? 'unsafe Windows private path' : 'unsafe overlay file'
     await expect(updateOverlay(root)).rejects.toThrow(unsafeError)
-    expect(activeOverlay(root)?.commit).toBe('a'.repeat(40))
+    expect(await readFile(join(root, 'current.json'), 'utf8')).toBe(currentBeforeUnsafeUpdate)
+    expect(activeOverlay(root)?.commit).toBe(process.platform === 'win32' ? undefined : 'a'.repeat(40))
   } finally { await rm(root, { recursive: true, force: true }) }
 })
 
