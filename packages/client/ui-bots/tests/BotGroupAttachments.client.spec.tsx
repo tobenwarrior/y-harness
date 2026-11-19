@@ -4,9 +4,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as primitives from '@yharness/client-ui-primitives'
 import {
   BotGroupAttachments,
+  botGroupAttachmentLabels,
   createBotGroupAttachmentDraft,
   releaseBotGroupAttachment,
 } from '../src/client/BotGroupAttachments.tsx'
+import { en } from '../src/client/locales.ts'
 import type { BotGroupAttachmentDraft } from '../src/client/types.ts'
 
 afterEach(() => {
@@ -27,6 +29,12 @@ const labels = {
   uploading: 'Preparing attachment',
   lightbox: { dialog: 'Image preview', close: 'Close preview' },
 } as const
+const botDictionary = new Map(Object.entries(en))
+const translate = (key: string, params?: Record<string, unknown>): string => {
+  const template = botDictionary.get(key) ?? key
+  if (params === undefined) return template
+  return template.replace(/\{(\w+)\}/g, (match, name: string) => name in params ? String(params[name]) : match)
+}
 
 function draft(id: string, name: string, state: BotGroupAttachmentDraft['state'] = 'ready'): BotGroupAttachmentDraft {
   return {
@@ -38,6 +46,23 @@ function draft(id: string, name: string, state: BotGroupAttachmentDraft['state']
 }
 
 describe('BotGroupAttachments', () => {
+  it('builds the locale-owned picker and draft labels', () => {
+    const localized = botGroupAttachmentLabels(translate)
+
+    expect(localized).toMatchObject({
+      picker: 'Attach files',
+      input: 'Choose files',
+      attachments: 'Selected attachments',
+      file: 'File',
+      failed: 'Attachment preparation failed',
+      uploading: 'Preparing attachment',
+      lightbox: { dialog: 'Image preview', close: 'Close image preview' },
+    })
+    expect(localized.preview('plan.png')).toBe('Preview plan.png')
+    expect(localized.remove('plan.png')).toBe('Remove plan.png')
+    expect(localized.retry('plan.png')).toBe('Retry plan.png')
+  })
+
   it('picks files, renders an image preview, and removes a draft without exposing a path', () => {
     const onAddFiles = vi.fn()
     const onRemove = vi.fn()
