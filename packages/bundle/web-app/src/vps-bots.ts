@@ -280,6 +280,7 @@ export function mountVpsBots(
           const created = new VpsBotFileSystem(scope.isolate('fs'), runtimeFor(String(botId)), sessionId)
           importFiles.set(key, created)
           return () => {
+            /* v8 ignore else -- Cordis disposes this child before the owning mount can clear its cache. */
             if (importFiles.get(key) === created) importFiles.delete(key)
           }
         })

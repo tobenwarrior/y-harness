@@ -3,7 +3,7 @@ import { chmod, mkdtemp, rm } from 'node:fs/promises'
 import { createServer, type Server } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { Context } from '@yharness/cordis'
+import { Context, type Fiber } from '@yharness/cordis'
 import AgentRegistry from '@yharness/agent'
 import AgentLoop from '@yharness/agent-loop'
 import { BotId } from '@yharness/bots'
@@ -668,6 +668,81 @@ describe('managed VPS Bot composition', () => {
       expect(ensure.mock.contexts[0]).not.toBe(ensure.mock.contexts[1])
     } finally {
       ensure.mockRestore()
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('routes managed Grok skill imports through one mounted filesystem and tears it down with the Computer', async () => {
+    const ctx = new Context()
+    const managed = BotId('bot-grok-managed')
+    const desktopOnly = BotId('bot-grok-desktop')
+    const ensure = vi.spyOn(VpsRuntime.prototype, 'ensure').mockResolvedValue(undefined)
+    const installSkill = vi.spyOn(VpsBotFileSystem.prototype, 'installSkill').mockResolvedValue(true)
+    let disposeImported: (() => Promise<void>) | undefined
+    const importedFibers: Fiber[] = []
+    const stopObserving = ctx.on('internal/plugin', (fiber) => { importedFibers.push(fiber) }, { global: true })
+    let mounted: Awaited<ReturnType<typeof ctx.plugin>> | undefined
+    try {
+      mounted = await ctx.plugin((scope) => { mountVpsBots(scope, {
+        root: '/yharness-test-bots', image: 'localhost/yharness-test', bots: [managed, desktopOnly],
+        desktopOnlyBots: [desktopOnly],
+      }, []) })
+      const workspaces = ctx.get('botWorkspaces')
+      if (workspaces === undefined) throw new Error('VPS Bot workspaces were not registered')
+      const controller = new AbortController()
+      await workspaces.prepare(BOT_SESSION, managed, controller.signal)
+      expect(ensure).toHaveBeenCalledExactlyOnceWith(BOT_SESSION, controller.signal)
+
+      const signal = new AbortController().signal
+      await expect(workspaces.installSkill(BOT_SESSION, managed, 'fixture-skill', 'fixture-content', false, signal))
+        .resolves.toBe(true)
+      await expect(workspaces.installSkill(BOT_SESSION, managed, 'fixture-skill', 'fixture-content', true, signal))
+        .resolves.toBe(true)
+      expect(installSkill).toHaveBeenNthCalledWith(1, 'fixture-skill', 'fixture-content', false, signal)
+      expect(installSkill).toHaveBeenNthCalledWith(2, 'fixture-skill', 'fixture-content', true, signal)
+      expect(installSkill.mock.instances[0]).toBe(installSkill.mock.instances[1])
+
+      disposeImported = importedFibers.find(fiber => fiber.getEffects().some(effect => effect.label === 'ctx.provide("fs")'))?.dispose
+      if (disposeImported === undefined) throw new Error('Managed import filesystem was not registered')
+      const disposeFirst = disposeImported
+      await disposeFirst()
+      await expect(workspaces.installSkill(BOT_SESSION, managed, 'fixture-skill', 'fixture-content', false, signal))
+        .resolves.toBe(true)
+      expect(installSkill.mock.instances[2]).not.toBe(installSkill.mock.instances[0])
+
+      await expect(workspaces.installSkill(BOT_SESSION, desktopOnly, 'fixture-skill', 'fixture-content', false, signal))
+        .rejects.toThrow('Grok skills require a managed Bot workspace.')
+      expect(installSkill).toHaveBeenCalledTimes(3)
+    } finally {
+      await mounted?.dispose()
+      mounted = undefined
+      stopObserving()
+      ensure.mockRestore()
+      installSkill.mockRestore()
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('fails an import that loses its managed filesystem during mount teardown', async () => {
+    const ctx = new Context()
+    const managed = BotId('bot-grok-teardown')
+    const installSkill = vi.spyOn(VpsBotFileSystem.prototype, 'installSkill').mockResolvedValue(true)
+    let mounted: Awaited<ReturnType<typeof ctx.plugin>> | undefined
+    try {
+      mounted = await ctx.plugin((scope) => { mountVpsBots(scope, {
+        root: '/yharness-test-bots', image: 'localhost/yharness-test', bots: [managed],
+      }, []) })
+      const workspaces = ctx.get('botWorkspaces')
+      if (workspaces === undefined) throw new Error('VPS Bot workspaces were not registered')
+      const importing = workspaces.installSkill(BOT_SESSION, managed, 'fixture-skill', 'fixture-content', false)
+      const disposal = mounted.dispose()
+      await expect(importing).rejects.toThrow('The managed Bot workspace filesystem was not initialized.')
+      await disposal
+      expect(installSkill).not.toHaveBeenCalled()
+      mounted = undefined
+    } finally {
+      await mounted?.dispose()
+      installSkill.mockRestore()
       await ctx.fiber.dispose()
     }
   })
