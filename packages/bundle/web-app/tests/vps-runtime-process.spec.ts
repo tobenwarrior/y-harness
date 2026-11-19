@@ -245,6 +245,30 @@ describe('VPS provisioning processes', () => {
     }
   })
 
+  it('cancels caller-owned provisioning while Podman is starting', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'yh-vps-process-'))
+    const request = new AbortController()
+    const runtime = new VpsRuntime(root, 'localhost/fixture', { userService: false })
+    const child = new Child()
+    spawn.mockImplementationOnce(() => {
+      queueMicrotask(() => {
+        request.abort(new Error('fixture import cancelled'))
+        queueMicrotask(() => { child.close() })
+      })
+      return child
+    })
+    try {
+      const preparing = runtime.ensure(session, request.signal)
+      await expect(preparing).rejects.toThrow('VPS Bot Computer scope is closed')
+      expect(child.kill).toHaveBeenCalledWith('SIGTERM')
+    } finally {
+      child.close()
+      await runtime.dispose()
+      spawn.mockReset()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('times out a Podman child after its command deadline', async () => {
     vi.useFakeTimers()
     const root = await mkdtemp(join(tmpdir(), 'yh-vps-process-'))

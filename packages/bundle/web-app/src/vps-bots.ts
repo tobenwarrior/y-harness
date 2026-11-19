@@ -97,6 +97,7 @@ export function mountVpsBots(
   const attachments = new WeakMap<Agent, Promise<void>>()
   const previewFiles = new Map<string, VpsBotFileSystem>()
   const projectFiles = new Map<string, VpsBotFileSystem>()
+  const importFiles = new Map<string, VpsBotFileSystem>()
   const managedBotIds = config.bots == null ? undefined : new Set(config.bots)
   const desktopOnlyBotIds = new Set(config.desktopOnlyBots ?? [])
   const isManagedBot = (botId: string): boolean => !desktopOnlyBotIds.has(botId)
@@ -267,7 +268,26 @@ export function mountVpsBots(
   }
   ctx.provide('botWorkspaces', {
     workspace: sessionId => defaultRuntime.workspace(sessionId),
-    prepare: (sessionId, botId) => runtimeFor(botId).ensure(sessionId),
+    prepare: (sessionId, botId, signal) => signal === undefined
+      ? runtimeFor(botId).ensure(sessionId)
+      : runtimeFor(botId).ensure(sessionId, signal),
+    installSkill: async (sessionId, botId, name, content, preview, signal) => {
+      if (!isManagedBot(String(botId))) throw new Error('Grok skills require a managed Bot workspace.')
+      const key = String(sessionId)
+      let files = importFiles.get(key)
+      if (files === undefined) {
+        await ctx.plugin((scope) => {
+          const created = new VpsBotFileSystem(scope.isolate('fs'), runtimeFor(String(botId)), sessionId)
+          importFiles.set(key, created)
+          return () => {
+            if (importFiles.get(key) === created) importFiles.delete(key)
+          }
+        })
+        files = importFiles.get(key)
+      }
+      if (files === undefined) throw new Error('The managed Bot workspace filesystem was not initialized.')
+      return files.installSkill(name, content, preview, signal)
+    },
     managed: (botId: string) => isManagedBot(botId),
     desktopOnly: isDesktopOnly,
   })
@@ -278,6 +298,7 @@ export function mountVpsBots(
     desktops.clear()
     previewFiles.clear()
     projectFiles.clear()
+    importFiles.clear()
     const preparations = Promise.allSettled(pendingComputerStarts)
     // Terminal bindings close their container process groups before the runtime stops.
     const unbound = await Promise.allSettled([

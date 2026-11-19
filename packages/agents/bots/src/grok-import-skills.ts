@@ -17,6 +17,8 @@ interface GrokSkillImportResult {
   readonly namesBySourceName: Readonly<Record<string, string>>
 }
 
+type GrokSkillInstaller = (name: string, content: string, preview: boolean) => Promise<boolean>
+
 function hasCode(error: unknown, code: string): boolean {
   return typeof error === 'object' && error !== null && 'code' in error && error.code === code
 }
@@ -90,17 +92,23 @@ export function canonicalGrokSkillName(sourceName: string): string {
 export async function importGrokBotSkills(
   botCwd: string,
   skills: readonly GrokImportedSkill[],
-  options: { readonly preview?: boolean; readonly previewMissingDirectory?: boolean } = {},
+  options: {
+    readonly preview?: boolean
+    readonly previewMissingDirectory?: boolean
+    /** Install through the destination workspace when it is not host-backed. */
+    readonly install?: GrokSkillInstaller
+  } = {},
 ): Promise<GrokSkillImportResult> {
   if (!isAbsolute(botCwd)) throw new Error('The destination Bot needs an absolute working directory.')
   const missingPreview = options.preview === true && options.previewMissingDirectory === true
-  let cwd: string
-  try {
-    if (!(await lstat(botCwd)).isDirectory()) throw new Error('The destination Bot needs an existing working directory.')
-    cwd = await realpath(botCwd)
-  } catch (error) {
-    if (!missingPreview || !(error instanceof Error) || !('code' in error) || error.code !== 'ENOENT') throw error
-    cwd = botCwd
+  let cwd = botCwd
+  if (options.install === undefined) {
+    try {
+      if (!(await lstat(botCwd)).isDirectory()) throw new Error('The destination Bot needs an existing working directory.')
+      cwd = await realpath(botCwd)
+    } catch (error) {
+      if (!missingPreview || !(error instanceof Error) || !('code' in error) || error.code !== 'ENOENT') throw error
+    }
   }
   if (cwd === parse(cwd).root) throw new Error('The Bot working directory must not be a filesystem root.')
   const agentsRoot = join(cwd, '.agents')
@@ -116,26 +124,33 @@ export async function importGrokBotSkills(
     names.set(skill.name, name)
     files.set(name, content)
   }
-  await checkDirectory(agentsRoot, false)
-  await checkDirectory(skillRoot, false)
   const created: string[] = []
   const skipped: string[] = []
-  const pending = new Map<string, string>()
-  for (const [name, content] of files) {
-    const directory = join(skillRoot, name)
-    await checkDirectory(directory, false)
-    if (await alreadyInstalled(join(directory, 'SKILL.md'), content)) skipped.push(name)
-    else pending.set(name, content)
-  }
-  if (options.preview === true) created.push(...pending.keys())
-  else if (pending.size > 0) {
-    await checkDirectory(agentsRoot, true)
-    await checkDirectory(skillRoot, true)
-    for (const [name, content] of pending) {
-      const directory = join(skillRoot, name)
-      await checkDirectory(directory, true)
-      if (await installSkill(join(directory, 'SKILL.md'), content)) created.push(name)
+  if (options.install !== undefined) {
+    for (const [name, content] of files) {
+      if (await options.install(name, content, options.preview === true)) created.push(name)
       else skipped.push(name)
+    }
+  } else {
+    const pending = new Map<string, string>()
+    await checkDirectory(agentsRoot, false)
+    await checkDirectory(skillRoot, false)
+    for (const [name, content] of files) {
+      const directory = join(skillRoot, name)
+      await checkDirectory(directory, false)
+      if (await alreadyInstalled(join(directory, 'SKILL.md'), content)) skipped.push(name)
+      else pending.set(name, content)
+    }
+    if (options.preview === true) created.push(...pending.keys())
+    else if (pending.size > 0) {
+      await checkDirectory(agentsRoot, true)
+      await checkDirectory(skillRoot, true)
+      for (const [name, content] of pending) {
+        const directory = join(skillRoot, name)
+        await checkDirectory(directory, true)
+        if (await installSkill(join(directory, 'SKILL.md'), content)) created.push(name)
+        else skipped.push(name)
+      }
     }
   }
   return { created, skipped, namesBySourceName: Object.fromEntries(names) }

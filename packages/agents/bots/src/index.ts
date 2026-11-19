@@ -521,8 +521,19 @@ export { botTemplateDomain, botTemplateRecordSchema } from './template-storage.t
 interface BotWorkspaces {
   /** Compute the server-assigned directory for this Bot's Session. */
   workspace(sessionId: SessionId): string
-  /** Prepare the same computer across retries before publishing a new Session. */
-  prepare(sessionId: SessionId, botId: BotId): Promise<void>
+  /** Prepare the same computer across retries before publishing a new Session; signal cancels provisioning. */
+  prepare(sessionId: SessionId, botId: BotId, signal?: AbortSignal): Promise<void>
+  /**
+   * Inspect or atomically install one validated skill in the Bot's managed workspace.
+   * @param sessionId - exact Bot Session whose private workspace receives the file.
+   * @param botId - exact Bot roster id selecting the workspace provider.
+   * @param name - canonical workspace skill name.
+   * @param content - complete validated `SKILL.md` body.
+   * @param preview - inspect without publishing when true.
+   * @param signal - import cancellation.
+   * @returns true when the file was published, or false when identical content already exists.
+   */
+  installSkill(sessionId: SessionId, botId: BotId, name: string, content: string, preview: boolean, signal?: AbortSignal): Promise<boolean>
   /** Select only the exact Bot ids assigned to an isolated workspace. */
   managed?(botId: string): boolean
   /** Select a dedicated desktop that retains the Bot's existing shell execution. */
@@ -7328,15 +7339,18 @@ export class BotService extends TypertRemoteService {
         return badRequest('The destination Bot has insufficient memory capacity for this export.')
       }
       const workspaces = this.ctx.get('botWorkspaces')
-      const workspace = botWorkspace(workspaces, String(bot.id), bot.sessionId)
-      const skillWorkspace = workspace ?? bot.cwd
-      if (workspace !== undefined && plan.skills.length > 0 && request.preview !== true) {
-        await workspaces?.prepare(bot.sessionId, bot.id)
+      const managedWorkspaces = managedBotWorkspace(workspaces, String(bot.id)) ? workspaces : undefined
+      const skillWorkspace = managedWorkspaces?.workspace(bot.sessionId) ?? bot.cwd
+      if (managedWorkspaces !== undefined && plan.skills.length > 0 && request.preview !== true) {
+        await managedWorkspaces.prepare(bot.sessionId, bot.id, signal)
       }
       const installed = plan.skills.length === 0 ? undefined
         : await importGrokBotSkills(skillWorkspace, plan.skills, {
           preview: request.preview === true,
-          previewMissingDirectory: workspace !== undefined,
+          previewMissingDirectory: managedWorkspaces !== undefined,
+          ...(managedWorkspaces === undefined ? {} : {
+            install: (name, content, preview) => managedWorkspaces.installSkill(bot.sessionId, bot.id, name, content, preview, signal),
+          }),
         })
       const skillNames = new Map(Object.entries(installed?.namesBySourceName ?? {}).map(([source, name]) => [source.toLowerCase(), name]))
       const missingRoutineSkills = [...new Set(plan.routines.flatMap(routine =>

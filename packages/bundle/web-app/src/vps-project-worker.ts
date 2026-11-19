@@ -7,6 +7,7 @@ import errno
 import fcntl
 import json
 import os
+import re
 import stat
 import sys
 from contextlib import contextmanager
@@ -87,6 +88,117 @@ def read(fd, name, offset, limit, whole):
         return base64.b64encode(value).decode('ascii')
 
 
+def read_text(fd, name):
+    descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
+    with os.fdopen(descriptor, 'rb') as stream:
+        entry = os.fstat(stream.fileno())
+        if not stat.S_ISREG(entry.st_mode):
+            raise Failure('FS_NOT_REGULAR_FILE', 'Expected a regular project file.')
+        value = stream.read(LIMIT + 1)
+        if len(value) > LIMIT:
+            raise Failure('FS_TOO_LARGE', 'The project file exceeds the file size limit.')
+        try:
+            return value.decode('utf-8')
+        except UnicodeDecodeError:
+            raise Failure('FS_NOT_TEXT', 'The project file is not UTF-8 text.')
+
+
+def read_text_identity(fd, name):
+    descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
+    with os.fdopen(descriptor, 'rb') as stream:
+        entry = os.fstat(stream.fileno())
+        if not stat.S_ISREG(entry.st_mode):
+            raise Failure('FS_NOT_REGULAR_FILE', 'Expected a regular project file.')
+        value = stream.read(LIMIT + 1)
+        if len(value) > LIMIT:
+            raise Failure('FS_TOO_LARGE', 'The project file exceeds the file size limit.')
+        try:
+            return (entry.st_dev, entry.st_ino), value.decode('utf-8')
+        except UnicodeDecodeError:
+            raise Failure('FS_NOT_TEXT', 'The project file is not UTF-8 text.')
+
+
+def skill_parts(path):
+    if not isinstance(path, str):
+        raise Failure('FS_SANDBOX_DENIED', 'The imported skill destination is invalid.')
+    parts = path.split('/')
+    if (len(parts) != 4 or parts[0] != '.agents' or parts[1] != 'skills'
+            or parts[3] != 'SKILL.md' or len(parts[2]) > 128
+            or re.fullmatch(r'[a-z0-9]+(?:-[a-z0-9]+)*', parts[2]) is None):
+        raise Failure('FS_SANDBOX_DENIED', 'The imported skill destination is not canonical.')
+    return parts
+
+
+@contextmanager
+def private_folder(root_fd, parts, create):
+    try:
+        with folder(root_fd, parts, create=create) as fd:
+            yield fd
+    except OSError as error:
+        if error.errno in (errno.ELOOP, errno.ENOTDIR):
+            raise Failure('FS_SANDBOX_DENIED', 'Grok skill import refuses a symbolic link directory.')
+        raise
+
+
+def verify_skill(root_fd, parts, published, content):
+    try:
+        with private_folder(root_fd, parts[:-1], create=False) as lexical_fd:
+            identity_value, value = read_text_identity(lexical_fd, parts[-1])
+            return identity_value == published and value == content
+    except (Failure, OSError):
+        return False
+
+
+def install_skill(root_fd, path, content, preview):
+    if not isinstance(content, str) or not isinstance(preview, bool):
+        raise Failure('FS_IO_ERROR', 'The imported skill request is invalid.')
+    data = content.encode('utf-8')
+    if len(data) > LIMIT:
+        raise Failure('FS_TOO_LARGE', 'The imported skill exceeds the file size limit.')
+    parts = skill_parts(path)
+    fcntl.flock(root_fd, fcntl.LOCK_EX)
+    try:
+        try:
+            parent = private_folder(root_fd, parts[:-1], create=not preview)
+            with parent as fd:
+                current = at(fd, parts[-1])
+                if current is not None:
+                    if current['type'] == 'symlink':
+                        raise Failure('FS_SANDBOX_DENIED', 'Grok skill import refuses a symbolic link file.')
+                    if current['type'] != 'file' or read_text(fd, parts[-1]) != content:
+                        raise Failure('FS_NOT_OBSERVED', 'A Grok skill file already exists with different content.')
+                    return {'created': False}
+                if preview:
+                    return {'created': True}
+                temporary = '.yharness-' + uuid4().hex
+                descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=fd)
+                try:
+                    with os.fdopen(descriptor, 'wb') as stream:
+                        stream.write(data)
+                        stream.flush()
+                        os.fsync(stream.fileno())
+                        entry = os.fstat(stream.fileno())
+                        published = (entry.st_dev, entry.st_ino)
+                    try:
+                        os.link(temporary, parts[-1], src_dir_fd=fd, dst_dir_fd=fd, follow_symlinks=False)
+                    except FileExistsError:
+                        raise Failure('FS_NOT_OBSERVED', 'A Grok skill file already exists with different content.')
+                finally:
+                    try:
+                        os.unlink(temporary, dir_fd=fd)
+                    except FileNotFoundError:
+                        pass
+                if not verify_skill(root_fd, parts, published, content):
+                    raise Failure('FS_SANDBOX_DENIED', 'The imported Grok skill could not be verified in the Bot workspace.')
+                return {'created': True}
+        except FileNotFoundError:
+            if preview:
+                return {'created': True}
+            raise Failure('FS_NOT_FOUND', 'The Bot workspace is unavailable.')
+    finally:
+        fcntl.flock(root_fd, fcntl.LOCK_UN)
+
+
 def guard(current, expected):
     if current is not None and current['type'] != 'file':
         raise Failure('FS_NOT_REGULAR_FILE', 'Expected a regular project file.')
@@ -131,8 +243,10 @@ def write(root_fd, parts, request):
 
 def handle(root_fd, root, request):
     path = request['path']
-    parts = parts_of(root, path)
     operation = request['operation']
+    if operation == 'install-skill':
+        return install_skill(root_fd, path, request['content'], request['preview'])
+    parts = parts_of(root, path)
     if operation == 'resolve':
         return path
     if operation == 'list':

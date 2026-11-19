@@ -106,6 +106,65 @@ describe('Grok Bot skill import', () => {
     await expect(lstat(cwd)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
+  it('uses a supplied workspace installer without touching the Host placeholder', async () => {
+    const cwd = await botCwd()
+    const installed = new Map<string, string>()
+    const install = vi.fn(async (name: string, content: string, preview: boolean): Promise<boolean> => {
+      const previous = installed.get(name)
+      if (previous !== undefined) {
+        if (previous !== content) throw new Error('A Grok skill file already exists with different content.')
+        return false
+      }
+      if (!preview) installed.set(name, content)
+      return true
+    })
+    const skill = { name: 'Container Skill', description: 'Container', instructions: 'Run in the Computer.' }
+
+    await expect(importGrokBotSkills(cwd, [skill], { preview: true, install })).resolves.toMatchObject({
+      created: ['container-skill'], skipped: [],
+    })
+    expect(installed).toEqual(new Map())
+    await expect(lstat(join(cwd, '.agents'))).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(importGrokBotSkills(cwd, [skill], { install })).resolves.toMatchObject({
+      created: ['container-skill'], skipped: [],
+    })
+    await expect(importGrokBotSkills(cwd, [skill], { install })).resolves.toMatchObject({
+      created: [], skipped: ['container-skill'],
+    })
+    expect(install).toHaveBeenCalledTimes(3)
+  })
+
+  it('retries a partially published workspace batch without replacing the first skill', async () => {
+    const cwd = await botCwd()
+    const installed = new Map<string, string>()
+    let failSecond = true
+    const install = async (name: string, content: string, preview: boolean): Promise<boolean> => {
+      const previous = installed.get(name)
+      if (previous !== undefined) {
+        if (previous !== content) throw new Error('A Grok skill file already exists with different content.')
+        return false
+      }
+      if (name === 'second-skill' && failSecond) {
+        failSecond = false
+        throw new Error('The Computer transfer was interrupted.')
+      }
+      if (!preview) installed.set(name, content)
+      return true
+    }
+    const skills = [
+      { name: 'First Skill', description: '', instructions: 'First.' },
+      { name: 'Second Skill', description: '', instructions: 'Second.' },
+    ]
+
+    await expect(importGrokBotSkills(cwd, skills, { install })).rejects.toThrow('transfer was interrupted')
+    expect([...installed.keys()]).toEqual(['first-skill'])
+    await expect(importGrokBotSkills(cwd, skills, { install })).resolves.toMatchObject({
+      created: ['second-skill'], skipped: ['first-skill'],
+    })
+    expect(installed.has('first-skill')).toBe(true)
+    expect(installed.has('second-skill')).toBe(true)
+  })
+
   it('rejects relative, broad, and non-directory workspace destinations', async () => {
     const cwd = await botCwd()
     await expect(importGrokBotSkills('relative', [])).rejects.toThrow(/absolute working directory/)

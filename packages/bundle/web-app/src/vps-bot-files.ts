@@ -18,6 +18,7 @@ const exec = promisify(execFile)
 const MAX_TEXT_BYTES = 8 * 1024 * 1024
 const entry = z.object({ type: z.enum(['file', 'directory', 'other', 'symlink']), version: z.string(), size: z.number().int().nonnegative() })
 const outcome = z.object({ entry, before: z.string().nullable(), created: z.boolean() })
+const skillOutcome = z.object({ created: z.boolean() })
 const workerFailure = z.object({ error: z.enum(FS_ERROR_CODES), message: z.string() })
 const chunkSize = 256 * 1024
 
@@ -167,6 +168,21 @@ export class VpsBotFileSystem extends FileSystem {
     return writeOutcome(result, content)
   }
 
+  /**
+   * Inspect or atomically install one imported skill in this Computer workspace.
+   * The destination is checked in the Computer before publication, and a successful
+   * create is read back before the caller can report the import as complete.
+   * @param name - canonical workspace skill name.
+   * @param content - complete UTF-8 `SKILL.md` body.
+   * @param preview - inspect without publishing when true.
+   * @param signal - import cancellation.
+   * @returns true when the file was published or would be published, false for identical content.
+   */
+  async installSkill(name: string, content: string, preview: boolean, signal?: AbortSignal): Promise<boolean> {
+    const filePath = posix.join('.agents', 'skills', name, 'SKILL.md')
+    return (await this.call('install-skill', filePath, { content, preview }, skillOutcome, signal)).created
+  }
+
   /** @inheritdoc */
   override editText(
     target: FsTarget, edit: FsEditRequest, expected?: { version: Version },
@@ -261,9 +277,10 @@ export class VpsBotFileSystem extends FileSystem {
       if (this.workspace === 'shared' && await this.runtime.sharedWorkspaceFor(this.sessionId) === undefined) {
         throw new VpsRuntimeError('This Bot does not have shared workspace access.')
       }
-      await this.runtime.ensure(this.sessionId)
+      await this.runtime.ensure(this.sessionId, operationSignal)
       operationSignal.throwIfAborted()
-      const worker = this.workspace === 'shared' ? ['-c', vpsProjectWorker] : ['/usr/local/lib/yharness/files.py']
+      const worker = this.workspace === 'shared' || operation === 'install-skill'
+        ? ['-c', vpsProjectWorker] : ['/usr/local/lib/yharness/files.py']
       const command = ['/usr/bin/python3', '-I', ...worker, this.root]
       const [program, ...argv] = this.runtime.execArgv(this.sessionId, command, { stdin: true })
       try {

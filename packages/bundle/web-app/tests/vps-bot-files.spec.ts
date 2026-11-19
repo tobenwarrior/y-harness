@@ -1,12 +1,13 @@
-import { chmod, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises'
+import { rmSync, symlinkSync } from 'node:fs'
+import { chmod, mkdir, mkdtemp, readFile, realpath, rename, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { setImmediate } from 'node:timers/promises'
 import { Context } from '@yharness/cordis'
 import { parsePatch } from '@yharness/fs-patch'
 import { describe, expect, it, vi } from 'vitest'
 import { VpsBotFileSystem } from '../src/vps-bot-files.ts'
-import { vpsProjectWorker } from '../src/vps-project-worker.ts'
 import { VpsRuntime } from '../src/vps-runtime.ts'
 
 const SESSION_ID = 'bot-session-0e9beecd-b6f5-40b1-8d52-f97259bdcf76'
@@ -16,10 +17,14 @@ function localRuntime(root: string, workspace: 'private' | 'shared' = 'private')
   if (workspace === 'private') vi.spyOn(runtime, 'workspace').mockReturnValue(root)
   else Object.defineProperty(runtime, 'sharedRoot', { configurable: true, value: root })
   vi.spyOn(runtime, 'ensure').mockResolvedValue()
-  vi.spyOn(runtime, 'execArgv').mockImplementation((_sessionId, _command) => [
-    '/usr/bin/env', 'TMPDIR=' + root, 'python3',
-    ...(workspace === 'shared' ? ['-c', vpsProjectWorker] : ['scripts/vps-bot/files.py']), root,
-  ])
+  vi.spyOn(runtime, 'execArgv').mockImplementation((_sessionId, command) => {
+    if (workspace === 'shared' || command[2] === '-c') {
+      const worker = command[3]
+      if (worker === undefined) throw new Error('Missing bundled filesystem worker')
+      return ['/usr/bin/env', 'TMPDIR=' + root, 'python3', '-I', '-c', worker, root]
+    }
+    return ['/usr/bin/env', 'TMPDIR=' + root, 'python3', 'scripts/vps-bot/files.py', root]
+  })
   return runtime
 }
 
@@ -169,6 +174,203 @@ describe('VPS Bot file provider', () => {
       await rm(root, { recursive: true, force: true })
     }
   }, 30_000)
+
+  it.skipIf(process.platform === 'win32')('publishes imported skills in the Computer workspace, not the Host placeholder', async () => {
+    const container = await mkdtemp(join(tmpdir(), 'yh-bot-skill-computer-'))
+    const host = await mkdtemp(join(tmpdir(), 'yh-bot-skill-host-'))
+    const hostFile = join(host, '.agents', 'skills', 'container-skill', 'SKILL.md')
+    await mkdir(join(host, '.agents', 'skills', 'container-skill'), { recursive: true })
+    await writeFile(hostFile, 'host-only')
+    const runtime = localRuntime(container)
+    const ctx = new Context()
+    const content = '---\nname: container-skill\ndescription: "Computer"\n---\n\nRun in the Computer.\n'
+    try {
+      const fs = new VpsBotFileSystem(ctx, runtime, SESSION_ID)
+      await expect(fs.installSkill('container-skill', content, true)).resolves.toBe(true)
+      await expect(fs.lstat('.agents')).resolves.toBeUndefined()
+      await expect(fs.installSkill('container-skill', content, false)).resolves.toBe(true)
+      await expect(readFile(join(container, '.agents', 'skills', 'container-skill', 'SKILL.md'), 'utf8'))
+        .resolves.toBe(content)
+      await expect(fs.installSkill('container-skill', content, false)).resolves.toBe(false)
+      await expect(readFile(hostFile, 'utf8')).resolves.toBe('host-only')
+      await expect(fs.installSkill('container-skill', content + 'changed\n', false))
+        .rejects.toThrow(/already exists with different content/)
+    } finally {
+      await ctx.fiber.dispose()
+      await runtime.dispose()
+      await rm(container, { recursive: true, force: true })
+      await rm(host, { recursive: true, force: true })
+    }
+  })
+
+  it.skipIf(process.platform === 'win32')('preserves one concurrent skill publication and rejects a conflicting one', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'yh-bot-skill-race-'))
+    const runtime = localRuntime(root)
+    const ctx = new Context()
+    const firstContent = '---\nname: race\ndescription: "First"\n---\n\nFirst.\n'
+    const secondContent = '---\nname: race\ndescription: "Second"\n---\n\nSecond.\n'
+    try {
+      const fs = new VpsBotFileSystem(ctx, runtime, SESSION_ID)
+      const identical = await Promise.all([
+        fs.installSkill('race', firstContent, false),
+        fs.installSkill('race', firstContent, false),
+      ])
+      expect(identical.sort()).toEqual([false, true])
+      await expect(readFile(join(root, '.agents', 'skills', 'race', 'SKILL.md'), 'utf8')).resolves.toBe(firstContent)
+
+      const conflicting = await Promise.allSettled([
+        fs.installSkill('conflict', firstContent, false),
+        fs.installSkill('conflict', secondContent, false),
+      ])
+      expect(conflicting.filter(result => result.status === 'fulfilled')).toHaveLength(1)
+      expect(conflicting.filter(result => result.status === 'rejected')).toHaveLength(1)
+      expect(conflicting.some(result => result.status === 'rejected' && result.reason instanceof Error
+        && result.reason.message.includes('different content'))).toBe(true)
+      const conflictFile = await readFile(join(root, '.agents', 'skills', 'conflict', 'SKILL.md'), 'utf8')
+      expect([firstContent, secondContent]).toContain(conflictFile)
+    } finally {
+      await ctx.fiber.dispose()
+      await runtime.dispose()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it.skipIf(process.platform === 'win32')('rejects a Computer skill directory swapped before the bundled worker opens it', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'yh-bot-skill-swap-'))
+    const runtime = localRuntime(root)
+    const ctx = new Context()
+    const skillDirectory = join(root, '.agents', 'skills', 'raced')
+    const replacement = join(root, 'replacement')
+    const content = '---\nname: raced\ndescription: "Raced"\n---\n\nRaced.\n'
+    try {
+      await mkdir(skillDirectory, { recursive: true })
+      await mkdir(replacement, { recursive: true })
+      const fs = new VpsBotFileSystem(ctx, runtime, SESSION_ID)
+      vi.spyOn(runtime, 'execArgv').mockImplementation((_sessionId, command) => {
+        const worker = command[3]
+        if (worker === undefined) throw new Error('Missing bundled filesystem worker')
+        rmSync(skillDirectory, { recursive: true, force: true })
+        symlinkSync(replacement, skillDirectory)
+        return ['/usr/bin/env', 'TMPDIR=' + root, 'python3', '-I', '-c', worker, root]
+      })
+      await expect(fs.installSkill('raced', content, false)).rejects.toMatchObject({ code: 'FS_SANDBOX_DENIED' })
+      await expect(readFile(join(replacement, 'SKILL.md'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    } finally {
+      await ctx.fiber.dispose()
+      await runtime.dispose()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it.skipIf(process.platform === 'win32')('rejects a skill moved after publication but before lexical verification', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'yh-bot-skill-verify-race-'))
+    const runtime = localRuntime(root)
+    const ctx = new Context()
+    const skillDirectory = join(root, '.agents', 'skills', 'raced')
+    const movedDirectory = join(root, 'raced-moved')
+    const marker = join(root, 'worker-published')
+    const gate = join(root, 'worker-release')
+    const content = '---\nname: raced\ndescription: "Raced"\n---\n\nRaced.\n'
+    let pending: Promise<boolean> | undefined
+    try {
+      await mkdir(skillDirectory, { recursive: true })
+      const fs = new VpsBotFileSystem(ctx, runtime, SESSION_ID)
+      vi.spyOn(runtime, 'execArgv').mockImplementation((_sessionId, command) => {
+        const worker = command[3]
+        if (worker === undefined) throw new Error('Missing bundled filesystem worker')
+        const verification = '                if not verify_skill(root_fd, parts, published, content):'
+        if (!worker.includes(verification)) throw new Error('Missing skill verification barrier')
+        const paused = worker.replace(verification,
+          `                with open(${JSON.stringify(marker)}, 'w'):\n                    pass\n                while not os.path.exists(${JSON.stringify(gate)}):\n                    __import__('time').sleep(0.01)\n${verification}`)
+        return ['/usr/bin/env', 'TMPDIR=' + root, 'python3', '-I', '-c', paused, root]
+      })
+      pending = fs.installSkill('raced', content, false)
+      const waitForMarker = async (): Promise<void> => {
+        for (;;) {
+          try {
+            await stat(marker)
+            return
+          } catch (error: unknown) {
+            if (!(typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT')) throw error
+            await setImmediate()
+          }
+        }
+      }
+      await Promise.race([
+        waitForMarker(),
+        pending.then(() => { throw new Error('The worker finished before the publication barrier.') }, (error: unknown) => { throw error }),
+      ])
+      await rename(skillDirectory, movedDirectory)
+      await writeFile(gate, '')
+      await expect(pending).rejects.toMatchObject({ code: 'FS_SANDBOX_DENIED' })
+      await expect(readFile(join(movedDirectory, 'SKILL.md'), 'utf8')).resolves.toBe(content)
+      await expect(readFile(join(skillDirectory, 'SKILL.md'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    } finally {
+      await writeFile(gate, '').catch(() => undefined)
+      await pending?.catch(() => undefined)
+      await ctx.fiber.dispose()
+      await runtime.dispose()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it.skipIf(process.platform === 'win32')('rejects skill directory and file symlinks before publication', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'yh-bot-skill-links-'))
+    const runtime = localRuntime(root)
+    const ctx = new Context()
+    const content = '---\nname: linked\ndescription: "Linked"\n---\n\nLinked.\n'
+    try {
+      const fs = new VpsBotFileSystem(ctx, runtime, SESSION_ID)
+      await mkdir(join(root, 'real-agents'), { recursive: true })
+      await symlink(join(root, 'real-agents'), join(root, '.agents'))
+      await expect(fs.installSkill('linked', content, false)).rejects.toThrow(/symbolic link directory/)
+      await rm(join(root, '.agents'))
+
+      await mkdir(join(root, '.agents', 'skills', 'linked'), { recursive: true })
+      const outside = join(root, 'outside.md')
+      await writeFile(outside, 'outside')
+      await symlink(outside, join(root, '.agents', 'skills', 'linked', 'SKILL.md'))
+      await expect(fs.installSkill('linked', content, false)).rejects.toThrow(/symbolic link file/)
+    } finally {
+      await ctx.fiber.dispose()
+      await runtime.dispose()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it.skipIf(process.platform === 'win32')('honors cancellation before touching the Computer workspace', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'yh-bot-skill-cancel-'))
+    const runtime = localRuntime(root)
+    const ctx = new Context()
+    const controller = new AbortController()
+    controller.abort(new Error('synthetic import cancelled'))
+    try {
+      const fs = new VpsBotFileSystem(ctx, runtime, SESSION_ID)
+      await expect(fs.installSkill('cancelled', 'content', false, controller.signal)).rejects.toThrow('synthetic import cancelled')
+      await expect(fs.lstat('.agents')).resolves.toBeUndefined()
+    } finally {
+      await ctx.fiber.dispose()
+      await runtime.dispose()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it.skipIf(process.platform === 'win32')('reads an existing skill through the protected bundled worker', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'yh-bot-skill-readback-'))
+    const runtime = localRuntime(root)
+    const ctx = new Context()
+    const content = '---\nname: readback\ndescription: "Readback"\n---\n\nRead back.\n'
+    try {
+      const fs = new VpsBotFileSystem(ctx, runtime, SESSION_ID)
+      await expect(fs.installSkill('readback', content, false)).resolves.toBe(true)
+      await writeFile(join(root, '.agents', 'skills', 'readback', 'SKILL.md'), 'tampered')
+      await expect(fs.installSkill('readback', content, false)).rejects.toThrow(/already exists with different content/)
+    } finally {
+      await ctx.fiber.dispose()
+      await runtime.dispose()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
 
   it.skipIf(process.platform === 'win32')('covers private symlinks, moves, policy denials, and worker failures', async () => {
     const root = await mkdtemp(join(tmpdir(), 'yh-bot-files-'))

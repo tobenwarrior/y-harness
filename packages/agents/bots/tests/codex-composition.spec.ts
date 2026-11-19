@@ -165,7 +165,7 @@ it('composes Bot identity and Codex dynamic collaboration with sender-bound deli
   const readJournal = vi.fn(async (_signal: AbortSignal) => journal)
   ctx.provide('botVpsJournal', { forBot: (botId: BotId) => botId === BotId('bot-sender') ? readJournal : undefined })
   ctx.provide('botWorkspaces', {
-    workspace: sessionId => join(root, sessionId), prepare: async () => {}, managed: () => false,
+    workspace: sessionId => join(root, sessionId), prepare: async () => {}, installSkill: async () => true, managed: () => false,
     desktopOnly: botId => botId === 'bot-sender',
   })
   const image = { attachmentId: AttachmentId('fixture-desktop'), mediaType: 'image/jpeg' as const, bytes: 3, width: 1, height: 1 }

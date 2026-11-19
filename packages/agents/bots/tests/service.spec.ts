@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { createHash, randomUUID } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { Context, Service } from '@yharness/cordis'
 import { SharedAccessAuthority, sharedPrincipalOf, type ConnectionFetchRoute } from '@yharness/client-connection'
@@ -69,6 +69,8 @@ import { BotGroupId, BotGroupMessageId, BotGroupService, botGroupDomain } from '
 import type { BotGroupDeliveryHost } from '../src/group-chat.ts'
 import type { SharedBotHost } from '../src/shared-service.ts'
 import { SharedBotService } from '../src/shared-service.ts'
+import { mountVpsBots } from '../../../bundle/web-app/src/vps-bots.ts'
+import { VpsRuntime } from '../../../bundle/web-app/src/vps-runtime.ts'
 import { generateSessionTitleWithLlm } from '../../../session/session-title-llm/src/index.ts'
 import { SessionTitleProviderId } from '../../../session/session-title/src/index.ts'
 import { sharedGroupSnapshotSchema, type SharedGroupSessionBinding } from '../src/shared-group.ts'
@@ -832,7 +834,7 @@ describe('durable Bot roster', () => {
     const prepare = vi.fn(async (sessionId: SessionId, _botId: BotId) => { await mkdir(workspace(sessionId), { mode: 0o700 }) })
     prepare.mockRejectedValueOnce(new Error('Computer unavailable'))
     const h = await harness(undefined, undefined, undefined, [], new Map(), new Map(), true, 'native', false, {
-      beforeService: (ctx) => { ctx.provide('botWorkspaces', { workspace, prepare }) },
+      beforeService: (ctx) => { ctx.provide('botWorkspaces', { workspace, prepare, installSkill: async () => true }) },
     })
     try {
       const request = { id: BotId('bot-managed'), name: 'Managed Bot' }
@@ -864,7 +866,7 @@ describe('durable Bot roster', () => {
     const prepare = vi.fn(async () => {})
     const h = await harness(pool, undefined, undefined, [String(parent.bot.sessionId)], new Map(), new Map(), true, 'native', false, {
       beforeService: (ctx) => {
-        ctx.provide('botWorkspaces', { workspace, prepare, managed: () => true })
+        ctx.provide('botWorkspaces', { workspace, prepare, installSkill: async () => true, managed: () => true })
       },
     })
     try {
@@ -908,6 +910,7 @@ describe('durable Bot roster', () => {
         ctx.provide('botWorkspaces', {
           workspace,
           prepare,
+          installSkill: async () => true,
           managed: (botId: string) => botId === 'bot-research',
         })
       },
@@ -12406,6 +12409,166 @@ describe('durable Bot roster', () => {
       await expect(h.service.listMemory({ botId: bot.id })).resolves.toEqual({ memories: memories.slice(1) })
     } finally {
       await close(h.ctx)
+    }
+  })
+
+  it('imports managed Grok skills through the Computer workspace after a Host migration', async () => {
+    const pool = new MemoryMediaPool()
+    const hostRoot = await mkdtemp(join(tmpdir(), 'yh-grok-import-host-'))
+    const containerRoot = await mkdtemp(join(tmpdir(), 'yh-grok-import-computer-'))
+    await mkdir(join(hostRoot, '.agents', 'skills', 'legacy'), { recursive: true })
+    await writeFile(join(hostRoot, '.agents', 'skills', 'legacy', 'SKILL.md'), 'Retain the old Host file.')
+    const seed = await harness(pool)
+    const created = await seed.service.create({ name: 'Migrated Grok Bot', cwd: hostRoot })
+    const records = seed.records
+    await close(seed.ctx)
+    const prepare = vi.fn(async (sessionId: SessionId) => {
+      await mkdir(join(containerRoot, String(sessionId)), { recursive: true })
+    })
+    let failSecond = true
+    const installSkill = vi.fn(async (
+      sessionId: SessionId, _botId: BotId, name: string, content: string, preview: boolean,
+    ): Promise<boolean> => {
+      const path = join(containerRoot, String(sessionId), '.agents', 'skills', name, 'SKILL.md')
+      let existing: string | undefined
+      try {
+        existing = await readFile(path, 'utf8')
+      } catch (error: unknown) {
+        if (!(error instanceof Error) || !('code' in error) || error.code !== 'ENOENT') throw error
+      }
+      if (existing !== undefined) {
+        if (existing !== content) throw new Error('A Grok skill file already exists with different content.')
+        return false
+      }
+      if (preview) return true
+      if (name === 'second-skill' && failSecond) {
+        failSecond = false
+        throw new Error('The Computer transfer was interrupted.')
+      }
+      await mkdir(dirname(path), { recursive: true })
+      await writeFile(path, content, { flag: 'wx' })
+      expect(await readFile(path, 'utf8')).toBe(content)
+      return true
+    })
+    const h = await harness(pool, undefined, undefined, [String(created.bot.sessionId)], new Map(), records, true, 'native', false, {
+      beforeService: (ctx) => {
+        ctx.provide('botWorkspaces', {
+          workspace: (sessionId: SessionId) => join(containerRoot, String(sessionId)),
+          prepare,
+          installSkill,
+          managed: () => true,
+        })
+      },
+    })
+    try {
+      const document = JSON.stringify({
+        format: 'grok-bot-export', version: 1, bots: [{
+          name: 'Source Bot', skills: [
+            { name: 'First Skill', instructions: 'First.' },
+            { name: 'Second Skill', instructions: 'Second.' },
+          ],
+        }],
+      })
+      const request = { botId: created.bot.id, document }
+      await expect(h.service.importGrokBot({ ...request, preview: true })).resolves.toMatchObject({
+        skills: 2, skillNames: ['first-skill', 'second-skill'],
+      })
+      expect(prepare).not.toHaveBeenCalled()
+      await expect(readFile(join(containerRoot, String(created.bot.sessionId), '.agents/skills/first-skill/SKILL.md')))
+        .rejects.toMatchObject({ code: 'ENOENT' })
+
+      await expect(h.service.importGrokBot(request)).rejects.toThrow('Computer transfer was interrupted')
+      await expect(readFile(join(containerRoot, String(created.bot.sessionId), '.agents/skills/first-skill/SKILL.md'), 'utf8'))
+        .resolves.toContain('First.')
+      await expect(readFile(join(hostRoot, '.agents/skills/legacy/SKILL.md'), 'utf8'))
+        .resolves.toBe('Retain the old Host file.')
+
+      await expect(h.service.importGrokBot(request)).resolves.toMatchObject({
+        skills: 2, skillNames: ['first-skill', 'second-skill'],
+      })
+      expect(prepare).toHaveBeenCalledTimes(2)
+      await expect(readFile(join(containerRoot, String(created.bot.sessionId), '.agents/skills/second-skill/SKILL.md'), 'utf8'))
+        .resolves.toContain('Second.')
+      expect(installSkill.mock.calls.map(call => call[2])).toEqual([
+        'first-skill', 'second-skill', 'first-skill', 'second-skill', 'first-skill', 'second-skill',
+      ])
+    } finally {
+      await close(h.ctx)
+      await rm(hostRoot, { recursive: true, force: true })
+      await rm(containerRoot, { recursive: true, force: true })
+    }
+  })
+
+  it.skipIf(process.platform === 'win32')('imports managed Grok skills through the mounted Computer filesystem', async () => {
+    const pool = new MemoryMediaPool()
+    const hostRoot = await mkdtemp(join(tmpdir(), 'yh-grok-mounted-host-'))
+    const computerRoot = await mkdtemp(join(tmpdir(), 'yh-grok-mounted-computer-'))
+    const seed = await harness(pool)
+    const created = await seed.service.create({ name: 'Mounted Grok Bot', cwd: hostRoot })
+    const records = seed.records
+    await close(seed.ctx)
+    await mkdir(join(computerRoot, String(created.bot.sessionId)), { recursive: true })
+    const ensure = vi.spyOn(VpsRuntime.prototype, 'ensure').mockResolvedValue(undefined)
+    const execArgv = vi.spyOn(VpsRuntime.prototype, 'execArgv').mockImplementation((_sessionId, command) => {
+      const workspace = command[command.length - 1]
+      if (workspace === undefined) throw new Error('Missing fixture Computer workspace')
+      if (command[2] === '-c') {
+        const worker = command[3]
+        if (worker === undefined) throw new Error('Missing bundled filesystem worker')
+        return ['/usr/bin/env', 'TMPDIR=' + computerRoot, 'python3', '-I', '-c', worker, workspace]
+      }
+      return ['/usr/bin/env', 'TMPDIR=' + computerRoot, 'python3', 'scripts/vps-bot/files.py', workspace]
+    })
+    let h: Awaited<ReturnType<typeof harness>> | undefined
+    const parentFs = {}
+    try {
+      h = await harness(pool, undefined, undefined, [String(created.bot.sessionId)], new Map(), records, true, 'native', false, {
+        beforeService: (ctx) => {
+          ctx.provide('fs', parentFs as never)
+          mountVpsBots(ctx, { root: computerRoot, image: 'localhost/yharness-test', bots: [String(created.bot.id)] }, [])
+        },
+      })
+      const request = {
+        botId: created.bot.id,
+        document: JSON.stringify({
+          format: 'grok-bot-export', version: 1, bots: [{
+            name: 'Source Bot', skills: [
+              { name: 'First Skill', instructions: 'First.' },
+              { name: 'Second Skill', instructions: 'Second.' },
+            ],
+          }],
+        }),
+      }
+      await expect(h.service.importGrokBot(request)).resolves.toMatchObject({
+        skills: 2, skillNames: ['first-skill', 'second-skill'],
+      })
+      await expect(h.service.importGrokBot(request)).resolves.toMatchObject({
+        skills: 2, skillNames: ['first-skill', 'second-skill'],
+      })
+      await expect(readFile(join(computerRoot, String(created.bot.sessionId), '.agents/skills/first-skill/SKILL.md'), 'utf8'))
+        .resolves.toContain('First.')
+      await expect(readFile(join(computerRoot, String(created.bot.sessionId), '.agents/skills/second-skill/SKILL.md'), 'utf8'))
+        .resolves.toContain('Second.')
+      await expect(readFile(join(hostRoot, '.agents/skills/first-skill/SKILL.md'), 'utf8'))
+        .rejects.toMatchObject({ code: 'ENOENT' })
+      expect(h.ctx.get('fs')).toBe(parentFs)
+
+      const controller = new AbortController()
+      const preparationSignal = Promise.withResolvers<AbortSignal>()
+      ensure.mockImplementationOnce(async (_sessionId, signal) => {
+        if (signal === undefined) throw new Error('Missing import cancellation signal')
+        preparationSignal.resolve(signal)
+        controller.abort(new Error('synthetic cancellation during Computer preparation'))
+        signal.throwIfAborted()
+      })
+      await expect(h.service.importGrokBot(request, controller.signal)).rejects.toThrow('synthetic cancellation during Computer preparation')
+      await expect(preparationSignal.promise).resolves.toBe(controller.signal)
+    } finally {
+      if (h !== undefined) await close(h.ctx)
+      ensure.mockRestore()
+      execArgv.mockRestore()
+      await rm(hostRoot, { recursive: true, force: true })
+      await rm(computerRoot, { recursive: true, force: true })
     }
   })
 

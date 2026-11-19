@@ -147,6 +147,7 @@ export class VpsRuntime {
   private readonly lifetime = new AbortController()
   private readonly requests: AbortSignal
   private readonly pending = new Map<string, Promise<void>>()
+  private readonly pendingSignals = new Map<string, AbortSignal>()
   private readonly pendingCommands = new Set<Promise<VpsCommandResult>>()
   private readonly healthyUntil = new Map<string, number>()
   private readonly active = new Map<string, Set<Promise<void>>>()
@@ -389,26 +390,42 @@ export class VpsRuntime {
   /**
    * Create and start one session container if it is not already running.
    * @param sessionId - Roster UUID for the Bot session.
+   * @param signal - Optional operation cancellation; healthy concurrent callers retry after caller-owned cancellation.
    * @returns A promise settled after the container is running.
    */
-  async ensure(sessionId: string): Promise<void> {
-    this.requests.throwIfAborted()
+  async ensure(sessionId: string, signal?: AbortSignal): Promise<void> {
+    const operationSignal = this.operationSignal(signal)
+    operationSignal.throwIfAborted()
     validateSessionId(sessionId)
     this.requireStableComputer(sessionId)
     const existing = this.pending.get(sessionId)
-    if (existing !== undefined) return existing
+    if (existing !== undefined) {
+      const pendingSignal = this.pendingSignals.get(sessionId)
+      if (pendingSignal !== undefined && pendingSignal !== this.requests
+        && !this.requests.aborted && !(signal?.aborted ?? false)) {
+        return existing.catch((error: unknown) => {
+          if (!pendingSignal.aborted || this.requests.aborted) throw error
+          return this.ensure(sessionId, signal)
+        })
+      }
+      return existing
+    }
     const now = Date.now()
     if ((this.healthyUntil.get(sessionId) ?? 0) > now) return
     const task = Promise.resolve().then(async () => {
-      this.requests.throwIfAborted()
+      operationSignal.throwIfAborted()
       this.mountedProjects.delete(sessionId)
-      await this.ensureOne(sessionId)
-      this.requests.throwIfAborted()
+      await this.ensureOne(sessionId, operationSignal)
+      operationSignal.throwIfAborted()
       this.healthyUntil.set(sessionId, Date.now() + DESKTOP_HEALTH_CACHE_MS)
     })
     this.pending.set(sessionId, task)
+    this.pendingSignals.set(sessionId, operationSignal)
     const clear = (): void => {
-      this.pending.delete(sessionId)
+      if (this.pending.get(sessionId) === task) {
+        this.pending.delete(sessionId)
+        this.pendingSignals.delete(sessionId)
+      }
       if ((this.healthyUntil.get(sessionId) ?? 0) <= Date.now()) {
         this.healthyUntil.delete(sessionId)
       }
@@ -496,35 +513,39 @@ export class VpsRuntime {
     }
   }
 
-  private async ensureOne(sessionId: string): Promise<void> {
+  private async ensureOne(sessionId: string, signal: AbortSignal = this.requests): Promise<void> {
+    signal.throwIfAborted()
     await ensurePrivateDirectory(this.rootPath, this.internals.uid)
+    signal.throwIfAborted()
     const workspace = this.workspace(sessionId)
     await ensurePrivateDirectory(workspace, this.internals.uid)
+    signal.throwIfAborted()
     const name = containerName(this.rootPath, sessionId)
     const volume = volumeName(this.rootPath, sessionId)
     const projectVolume = await this.sharedWorkspaceFor(sessionId) === undefined ? undefined : this.projectVolume
     const browserPolicy = this.browserPolicy
     const browserVolume = browserPolicy === undefined ? undefined : `${volume}-browser`
     const internet = await this.internetFor(sessionId)
-    await this.checkBrowserPolicy()
-    const exists = await this.runPodman(['container', 'exists', name])
+    signal.throwIfAborted()
+    await this.checkBrowserPolicy(signal)
+    const exists = await this.runPodman(['container', 'exists', name], signal)
     if (exists.code === 0) {
-      const metadata = await this.inspectCurrent(sessionId, internet, projectVolume)
-      await this.ensureVolume(volume, sessionId, workspace)
-      if (browserVolume !== undefined) await this.ensureVolume(browserVolume, sessionId, workspace, 'browser')
-      if (projectVolume !== undefined) await this.ensureSharedVolume(projectVolume)
+      const metadata = await this.inspectCurrent(sessionId, internet, projectVolume, signal)
+      await this.ensureVolume(volume, sessionId, workspace, undefined, signal)
+      if (browserVolume !== undefined) await this.ensureVolume(browserVolume, sessionId, workspace, 'browser', signal)
+      if (projectVolume !== undefined) await this.ensureSharedVolume(projectVolume, signal)
       if (!metadata.running) {
-        const started = await this.runPodman(['start', name])
+        const started = await this.runPodman(['start', name], signal)
         if (started.code !== 0) throw new VpsRuntimeError('VPS Bot container could not be restarted')
       }
-      await this.waitForDesktop(name, workspace)
+      await this.waitForDesktop(name, workspace, signal)
       if (projectVolume !== undefined) this.mountedProjects.add(sessionId)
       return
     }
     if (exists.code !== 1) throw new VpsRuntimeError('VPS Bot container lookup failed')
-    await this.ensureVolume(volume, sessionId, workspace)
-    if (browserVolume !== undefined) await this.ensureVolume(browserVolume, sessionId, workspace, 'browser')
-    if (projectVolume !== undefined) await this.ensureSharedVolume(projectVolume)
+    await this.ensureVolume(volume, sessionId, workspace, undefined, signal)
+    if (browserVolume !== undefined) await this.ensureVolume(browserVolume, sessionId, workspace, 'browser', signal)
+    if (projectVolume !== undefined) await this.ensureSharedVolume(projectVolume, signal)
     const launched = await this.runPodman([
       'run',
       '--detach',
@@ -553,15 +574,17 @@ export class VpsRuntime {
       '--label', `io.yharness.vps.image=${this.imageName}`,
       '--pull=never',
       this.imageName,
-    ])
+    ], signal)
     if (launched.code !== 0) throw new VpsRuntimeError('VPS Bot container could not be launched')
-    await this.waitForDesktop(name, workspace)
+    await this.waitForDesktop(name, workspace, signal)
     if (projectVolume !== undefined) this.mountedProjects.add(sessionId)
   }
 
-  private async inspectCurrent(sessionId: string, internet: boolean, projectVolume: string | undefined): Promise<ContainerMetadata> {
+  private async inspectCurrent(
+    sessionId: string, internet: boolean, projectVolume: string | undefined, signal: AbortSignal = this.requests,
+  ): Promise<ContainerMetadata> {
     const name = containerName(this.rootPath, sessionId)
-    const inspected = await this.runPodman(['inspect', '--format', '{{json .}}', name])
+    const inspected = await this.runPodman(['inspect', '--format', '{{json .}}', name], signal)
     if (inspected.code !== 0) throw new VpsRuntimeError('VPS Bot container inspection failed')
     return inspectContainer(inspected.stdout, this.rootPath, this.imageName, sessionId,
       this.workspace(sessionId), volumeName(this.rootPath, sessionId), {
@@ -569,7 +592,8 @@ export class VpsRuntime {
       })
   }
 
-  private async checkBrowserPolicy(): Promise<void> {
+  private async checkBrowserPolicy(signal: AbortSignal = this.requests): Promise<void> {
+    signal.throwIfAborted()
     if (this.browserPolicy === undefined) return
     const policy = await lstat(this.browserPolicy).catch(() => undefined)
     const uid = this.internals.uid?.() ?? process.getuid?.()
@@ -577,10 +601,13 @@ export class VpsRuntime {
       || (policy.mode & PRIVATE_MODE_MASK) !== 0) {
       throw new VpsRuntimeError('VPS Bot browser policy must be an owner-only file')
     }
+    signal.throwIfAborted()
   }
 
-  private async ensureVolume(volume: string, sessionId: string, workspace: string, purpose?: 'browser'): Promise<void> {
-    const exists = await this.runPodman(['volume', 'exists', volume])
+  private async ensureVolume(
+    volume: string, sessionId: string, workspace: string, purpose?: 'browser', signal: AbortSignal = this.requests,
+  ): Promise<void> {
+    const exists = await this.runPodman(['volume', 'exists', volume], signal)
     if (exists.code === 1) {
       const created = await this.runPodman([
         'volume', 'create',
@@ -590,61 +617,61 @@ export class VpsRuntime {
         '--label', `io.yharness.vps.image=${this.workspaceImage}`,
         ...(purpose === undefined ? [] : ['--label', `io.yharness.vps.purpose=${purpose}`]),
         volume,
-      ])
+      ], signal)
       if (created.code !== 0) throw new VpsRuntimeError('VPS Bot workspace volume could not be created')
     } else if (exists.code !== 0) {
       throw new VpsRuntimeError('VPS Bot workspace volume lookup failed')
     }
-    const inspected = await this.runPodman(['volume', 'inspect', '--format', '{{json .}}', volume])
+    const inspected = await this.runPodman(['volume', 'inspect', '--format', '{{json .}}', volume], signal)
     if (inspected.code !== 0
       || !inspectVolume(inspected.stdout, this.rootPath, this.workspaceImage, sessionId, workspace, volume, purpose)) {
       throw new VpsRuntimeError('VPS Bot workspace volume ownership does not match this runtime')
     }
   }
 
-  private async ensureSharedVolume(name: string): Promise<void> {
-    const exists = await this.runPodman(['volume', 'exists', name])
+  private async ensureSharedVolume(name: string, signal: AbortSignal = this.requests): Promise<void> {
+    const exists = await this.runPodman(['volume', 'exists', name], signal)
     if (exists.code === 1) {
       const created = await this.runPodman([
         'volume', 'create', '--ignore', '--driver', 'local',
         '--label', 'io.yharness.vps.root=' + this.rootPath,
         '--label', 'io.yharness.vps.purpose=' + SHARED_PROJECT_PURPOSE,
         name,
-      ])
+      ], signal)
       if (created.code !== 0) throw new VpsRuntimeError('Shared project volume could not be created')
     } else if (exists.code !== 0) {
       throw new VpsRuntimeError('Shared project volume lookup failed')
     }
-    const inspection = await this.runPodman(['volume', 'inspect', '--format', '{{json .}}', name])
+    const inspection = await this.runPodman(['volume', 'inspect', '--format', '{{json .}}', name], signal)
     if (inspection.code !== 0 || !inspectSharedVolume(inspection.stdout, this.rootPath, name)) {
       throw new VpsRuntimeError('Shared project volume must be a local volume owned by this runtime')
     }
   }
 
-  private async waitForDesktop(name: string, workspace: string): Promise<void> {
+  private async waitForDesktop(name: string, workspace: string, signal: AbortSignal = this.requests): Promise<void> {
     const deadline = Date.now() + DESKTOP_READY_TIMEOUT_MS
     const probe = this.browserPolicy === undefined
       ? ['xdotool', 'getdisplaygeometry']
       : ['test', '-f', BROWSER_READY]
     while (Date.now() < deadline) {
-      const ready = await this.runPodman(['exec', '--workdir', workspace, name, ...probe])
+      const ready = await this.runPodman(['exec', '--workdir', workspace, name, ...probe], signal)
       if (ready.code === 0) return
       await new Promise<void>((resolveReady) => { setTimeout(resolveReady, 50) })
     }
     throw new VpsRuntimeError('VPS Bot desktop did not become ready')
   }
 
-  private async runPodman(args: readonly string[]): Promise<VpsCommandResult> {
-    this.requests.throwIfAborted()
+  private async runPodman(args: readonly string[], signal: AbortSignal = this.requests): Promise<VpsCommandResult> {
+    signal.throwIfAborted()
     const startsComputer = args[0] === 'run' || args[0] === 'start'
     const argv: readonly [string, ...string[]] = this.scopedLaunch && startsComputer
       ? [...USER_COMPUTER_SCOPE, PODMAN, ...args]
       : [PODMAN, ...args]
-    const command = (this.internals.run ?? runPodmanProcess)(argv, this.requests)
+    const command = (this.internals.run ?? runPodmanProcess)(argv, signal)
     this.pendingCommands.add(command)
     try {
       const result = await command
-      this.requests.throwIfAborted()
+      signal.throwIfAborted()
       if (!Number.isInteger(result.code) || typeof result.stdout !== 'string' || typeof result.stderr !== 'string') {
         throw new VpsRuntimeError('VPS Bot Podman returned invalid command facts')
       }

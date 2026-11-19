@@ -1180,6 +1180,28 @@ describe('VpsRuntime', () => {
     expect(mounts[1]).toContain(`:${f.runtime.workspace(sessions.bob)}:rw,nodev,nosuid`)
   })
 
+  it('lets a healthy concurrent ensure retry after a cancelled preparation owner', async () => {
+    const firstLookup = Promise.withResolvers<AbortSignal>()
+    let lookups = 0
+    const f = fixture(async (argv, signal) => {
+      if (argv[1] === 'container' && argv[2] === 'exists' && lookups++ === 0) {
+        firstLookup.resolve(signal)
+        await new Promise<never>((_resolve, reject) => {
+          signal.addEventListener('abort', () => { reject(new Error('fixture import cancelled')) }, { once: true })
+        })
+      }
+      return argv[1] === 'container' && argv[2] === 'exists' ? result(1) : result()
+    })
+    const request = new AbortController()
+    const first = f.runtime.ensure(sessions.alice, request.signal)
+    const second = f.runtime.ensure(sessions.alice)
+    await firstLookup.promise
+    request.abort(new Error('fixture import cancelled'))
+    await expect(first).rejects.toThrow('fixture import cancelled')
+    await expect(second).resolves.toBeUndefined()
+    expect(lookups).toBe(2)
+  })
+
   it.each([
     { report: 'literal ALL', capDrop: ['ALL'], effective: undefined, bounding: undefined, capAdd: [], namespaces: {}, allowed: true },
     { report: 'expanded empty capabilities', capDrop: ['CAP_CHOWN'], effective: null, bounding: null, capAdd: [], namespaces: {}, allowed: true },
