@@ -641,6 +641,7 @@ export async function launchWebScaffold(options: LaunchOptions = {}): Promise<We
             'ptc-round',
             'changed-files-turn',
             'code-language',
+            'approval-composer',
             'plan-review',
             'present',
             'lifecycle-chrome',
