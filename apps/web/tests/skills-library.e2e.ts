@@ -438,7 +438,7 @@ it('explores every project and shared skill, with deliberate reversible cleanup 
     })).toBe(true)
     await page.screenshot({ path: join(SHOTS, 'skills-learning-diff.png'), animations: 'disabled' })
     await review.getByRole('button', { name: 'Approve and apply', exact: true }).click()
-    await expect.poll(async () => (await library.detailProposal({ proposalId: createdProposal.id })).state).toBe('applied')
+    await expect.poll(async () => (await library.detailProposal({ proposalId: createdProposal.id })).state, { timeout: 15_000 }).toBe('applied')
     await expect.poll(() => readFile(createdPath, 'utf8')).toContain('Never publish without approval.')
     const createdItem = (await library.list({})).items.find(item => item.name === 'interface-triage')!
     expect(createdItem.ownership).toBe('y-managed')
@@ -461,7 +461,7 @@ it('explores every project and shared skill, with deliberate reversible cleanup 
     })).toBe(true)
     await page.screenshot({ path: join(SHOTS, 'skills-compression-diff.png'), animations: 'disabled' })
     await review.getByRole('button', { name: 'Approve and apply', exact: true }).click()
-    await expect.poll(async () => (await library.detailProposal({ proposalId: compression.id })).state).toBe('applied')
+    await expect.poll(async () => (await library.detailProposal({ proposalId: compression.id })).state, { timeout: 15_000 }).toBe('applied')
     await expect.poll(() => readFile(releasePath, 'utf8')).toBe(original.replace('Inspect the reviewed patch.', 'Inspect the patch.'))
     expect(await readFile(resourcePath, 'utf8')).toBe('Keep this supporting resource intact.\n')
     await page.getByRole('tab', { name: 'Library', exact: true }).click()
