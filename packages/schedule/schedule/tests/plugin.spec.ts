@@ -162,6 +162,8 @@ describe('shared Schedule management', () => {
     const test = await setup()
     const sessionId = SessionId('approval-pending')
     const request = { prompt: 'Check the build', title: 'Build check', after_seconds: 60 }
+    await expect(test.service.releaseCreate(sessionId, request, 'approval-pending'))
+      .resolves.toEqual({ status: 'unknown' })
     await expect(test.service.reconcileCreate(sessionId, request, 'approval-pending'))
       .resolves.toEqual({ status: 'unknown' })
     expect([...test.ctx.storageDomain.get('schedule')!.table('create_operations').entries()]).toEqual([])
@@ -190,7 +192,7 @@ describe('shared Schedule management', () => {
     expect(await restarted.service.list({ sessionId })).toEqual([record])
   })
 
-  it.each(['reserveCreate', 'releaseCreate', 'reconcileCreate'] as const)(
+  it.each(['create', 'reserveCreate', 'releaseCreate', 'reconcileCreate'] as const)(
     'recovers a task whose receipt was interrupted via %s without creating a second task',
     async (operation) => {
       const pool = new MemoryMediaPool()
@@ -207,8 +209,11 @@ describe('shared Schedule management', () => {
 
       const tasks = await test.service.list({ sessionId: owner })
       expect(tasks).toHaveLength(1)
-      await expect(test.service[operation](owner, request, retry.idempotencyKey))
-        .resolves.toEqual({ status: 'committed', record: tasks[0] })
+      await vi.advanceTimersByTimeAsync(60_000)
+      const recovered = operation === 'create'
+        ? { status: 'committed', record: await test.service.create(owner, request, undefined, retry) }
+        : await test.service[operation](owner, request, retry.idempotencyKey)
+      expect(recovered).toEqual({ status: 'committed', record: tasks[0] })
       await expect(test.service.create(owner, request, undefined, retry)).resolves.toEqual(tasks[0])
       expect(await test.service.list({ sessionId: owner })).toEqual(tasks)
       await expect(test.service.reconcileCreate(owner, request, retry.idempotencyKey))
