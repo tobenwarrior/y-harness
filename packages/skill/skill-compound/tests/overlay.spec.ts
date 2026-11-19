@@ -297,7 +297,8 @@ it('does not reuse an existing revision with unsafe file permissions', async () 
     } else {
       await chmod(reference, 0o644)
     }
-    await expect(updateOverlay(root)).rejects.toThrow('unsafe overlay file')
+    const unsafeError = process.platform === 'win32' ? 'unsafe Windows private path' : 'unsafe overlay file'
+    await expect(updateOverlay(root)).rejects.toThrow(unsafeError)
     expect(activeOverlay(root)?.commit).toBe('a'.repeat(40))
   } finally { await rm(root, { recursive: true, force: true }) }
 })
