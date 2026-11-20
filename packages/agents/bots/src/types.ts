@@ -898,7 +898,7 @@ export interface BotGrokHistoryImportRequest extends BotGrokHistoryRequest {
 export interface BotGrokImportRequest {
   /** Destination Bot with the Session and roster placement to preserve. */
   readonly botId: BotId
-  /** Version-one Grok Bot export JSON. */
+  /** Version-one Grok Bot export or supplemental memory recovery JSON. */
   readonly document: string
   /** Source name required when the document contains more than one Bot. */
   readonly sourceName?: string
@@ -920,6 +920,13 @@ export interface BotGrokImportValue {
   readonly routines: number
   /** Skills referenced by routines without a matching definition in this export. */
   readonly missingRoutineSkills: readonly string[]
+  /** Incomplete source entries omitted when importing a supplemental memory export. */
+  readonly memoryGaps?: {
+    /** Retrieved entries whose text was cut off in the source. */
+    readonly truncated: number
+    /** Entries the source reported without providing text. */
+    readonly unretrieved: number
+  }
 }
 
 /** Browser-safe view of one active memory owned by a Bot. */

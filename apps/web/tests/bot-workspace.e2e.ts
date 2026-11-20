@@ -21,6 +21,7 @@ import { newEnglishPage, saveFailureShot } from './support.ts'
 const SNAPSHOT_DIR = fileURLToPath(new URL('../../../snapshots/web/bot-workspace', import.meta.url))
 const FIXTURE = join(SNAPSHOT_DIR, 'session.v3.jsonl')
 const UI_EXPECTED = fileURLToPath(new URL('./expected/bot-workspace/ui.expected.md', import.meta.url))
+const MEMORY_EXPECTED = fileURLToPath(new URL('./expected/bot-workspace/supplemental-memory.expected.md', import.meta.url))
 const MODE = webSnapshotMode()
 
 describe('web e2e: Bot workspace retains one Conversation Session per Bot', () => {
@@ -350,6 +351,87 @@ describe('web e2e: Bot workspace retains one Conversation Session per Bot', () =
     expect(scaffold.ctx.agents.get(child.id)).toBeUndefined()
     expect(tripwire.pageErrors).toEqual([])
     expect(tripwire.warnings).toEqual([])
+  })
+
+  it('shows recovered memories alongside the existing Bot notes', async () => {
+    const { bot } = await scaffold.ctx.bots.create({
+      name: 'Research archive', identity: 'browse', accent: 'teal', cwd: scaffold.workspaceCwd,
+    })
+    await scaffold.ctx.bots.importGrokBot({
+      botId: bot.id,
+      document: JSON.stringify({
+        format: 'grok-bot-export', version: 1,
+        bots: [{
+          name: bot.name,
+          memories: Array.from({ length: 81 }, (_, index) => `Original reference ${String(index + 1)}`),
+        }],
+      }),
+    })
+    const supplemented = await scaffold.ctx.bots.importGrokBot({
+      botId: bot.id,
+      document: JSON.stringify({
+        format: 'grok-bot-memory-completion', version: 1, bot_name: bot.name,
+        reported_total: 100, retrieved_total: 99,
+        memories: Array.from({ length: 98 }, (_, index) => ({
+          text: `Recovered reference ${String(index + 1)}`, source: 'own_profile', truncated: false,
+        })),
+        user_facts: [{ text: 'Incomplete reference', source: 'own_profile', truncated: true }],
+      }),
+    })
+    expect(supplemented.memoryGaps).toEqual({ truncated: 1, unretrieved: 1 })
+
+    const memoryPage = await newEnglishPage(browser)
+    try {
+      const memoryConsole = watchConsole(memoryPage)
+      await memoryPage.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
+      const sidebar = memoryPage.locator('[data-yh-part="sidebar"]')
+      await sidebar.getByRole('button', { name: 'Bots', exact: true }).click()
+      await sidebar.locator(`[data-bot-id="${bot.id}"]`).click()
+      const detail = memoryPage.getByRole('region', { name: bot.name, exact: true })
+      await detail.getByRole('button', { name: 'Bot options', exact: true }).click()
+      await memoryPage.getByRole('menuitem', { name: 'Manage memories', exact: true }).click()
+      const dialog = memoryPage.getByRole('dialog', { name: 'Bot memory', exact: true })
+      const heading = dialog.getByRole('heading', { name: 'Bot memory', exact: true })
+      const search = dialog.getByRole('searchbox', { name: 'Search memories', exact: true })
+      const list = dialog.getByRole('list', { name: 'Saved memories', exact: true })
+      const recovered = list.getByText('Recovered reference 98', { exact: true })
+      await expect.poll(() => list.getByRole('listitem').count()).toBe(179)
+      await expect.poll(() => list.getByText('Original reference 1', { exact: true }).count()).toBe(1)
+      expect(await list.getByText('Incomplete reference', { exact: true }).count()).toBe(0)
+      await search.fill('Recovered reference 98')
+      await expect.poll(() => list.getByRole('listitem').count()).toBe(1)
+      await compareOrRefreshGolden(MEMORY_EXPECTED, [
+        await heading.ariaSnapshot(),
+        await search.ariaSnapshot(),
+        await dialog.getByText('179 saved', { exact: true }).ariaSnapshot(),
+        await recovered.ariaSnapshot(),
+      ].join('\n'), MODE)
+
+      const screenshots = process.env.DSH_GROK_MEMORY_SCREENSHOTS
+      await search.fill('Recovered reference')
+      await expect.poll(() => list.getByRole('listitem').count()).toBe(98)
+      await memoryPage.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' })
+      await expect.poll(() => memoryPage.evaluate(() => document.body.hasAttribute('data-ds-dark-theme'))).toBe(true)
+      for (const width of [1440, 480]) {
+        await memoryPage.setViewportSize({ width, height: 900 })
+        await recovered.scrollIntoViewIfNeeded()
+        const bounds = await dialog.boundingBox()
+        const titleBounds = await heading.boundingBox()
+        const searchBounds = await search.boundingBox()
+        if (bounds === null || titleBounds === null || searchBounds === null) throw new Error('Memory manager is unavailable')
+        expect(bounds.x).toBeGreaterThanOrEqual(0)
+        expect(bounds.x + bounds.width).toBeLessThanOrEqual(width)
+        expect(titleBounds.y).toBeGreaterThanOrEqual(bounds.y)
+        expect(searchBounds.y).toBeGreaterThan(titleBounds.y)
+        if (screenshots !== undefined) {
+          await memoryPage.screenshot({ path: join(screenshots, 'recovered-memories-' + String(width) + '.png'), animations: 'disabled' })
+        }
+      }
+      expect(memoryConsole.pageErrors).toEqual([])
+      expect(memoryConsole.warnings).toEqual([])
+    } finally {
+      await memoryPage.context().close()
+    }
   })
 
   it('keeps the scenario fixture inventory closed', async () => {

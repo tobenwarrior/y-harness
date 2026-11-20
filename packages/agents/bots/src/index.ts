@@ -68,9 +68,10 @@ import { BOT_ACCENTS, BOT_EVENT_SOURCES, BOT_IDENTITIES, BotId } from './types.t
 import { botMessageWasDelivered, BotCollaborationError, BotCollaborationService, BotMessageId } from './collaboration.ts'
 import type { BotCollaborationClient, BotCollaborationDeliveryEvent, BotCollaborationHost, BotEventRelayContext } from './collaboration.ts'
 import {
-  BOT_MEMORY_ENTRY_LIMIT,
+  assertBotMemoryCapacity,
   BotMemoryError,
   BotMemoryId,
+  fitsBotMemoryCapacity,
   normalizeBotMemoryText,
   parseBotMemoryId,
   projectBotMemoryState,
@@ -2799,7 +2800,7 @@ export class BotService extends TypertRemoteService {
   private readonly recordsBySession = new Map<string, BotStoredRecord>()
   private readonly memoriesBySession = new Map<string, Map<string, BotMemoryRecord>>()
   private readonly forgottenMemoryIdsBySession = new Map<string, Set<string>>()
-  private readonly memoryLoads = new Map<string, Promise<void>>()
+  private readonly memoryLoads = new Map<string, Promise<Map<string, BotMemoryRecord>>>()
   private readonly pendingMemoryFlushes = new Map<string, Map<string, BotMemoryEvent['operation']>>()
   private readonly blockedProfileTransactions = new Set<string>()
   private readonly blockedNoCredentialTransactions = new Set<string>()
@@ -4171,10 +4172,11 @@ export class BotService extends TypertRemoteService {
   }
 
   /** Load one Bot's memory projection from its durable Session log once. */
-  private async ensureMemoryLoaded(record: BotRecord, signal?: AbortSignal): Promise<void> {
+  private async ensureMemoryLoaded(record: BotRecord, signal?: AbortSignal): Promise<Map<string, BotMemoryRecord>> {
     this.throwIfMemoryCancelled(signal)
     const key = String(record.sessionId)
-    if (this.memoriesBySession.has(key)) return
+    const existing = this.memoriesBySession.get(key)
+    if (existing !== undefined) return existing
     const pending = this.memoryLoads.get(key)
     if (pending !== undefined) return pending
     const load = (async () => {
@@ -4185,12 +4187,13 @@ export class BotService extends TypertRemoteService {
       const projection = projectBotMemoryState(inspection.events, record.id)
       this.memoriesBySession.set(key, projection.memories)
       this.forgottenMemoryIdsBySession.set(key, projection.forgotten)
+      return projection.memories
     })()
     this.memoryLoads.set(key, load)
     try {
-      await load
+      return await load
     } finally {
-      if (this.memoryLoads.get(key) === load) this.memoryLoads.delete(key)
+      this.memoryLoads.delete(key)
     }
   }
 
@@ -4381,7 +4384,7 @@ export class BotService extends TypertRemoteService {
       let record = await this.memoryRecord(sessionId)
       const signal = request.signal
       const bots = (await this.getDomain()).table('bots')
-      await this.ensureMemoryLoaded(record, signal)
+      const memories = await this.ensureMemoryLoaded(record, signal)
       if (record.pendingMemoryUpdate !== undefined) record = await this.recoverPendingMemoryUpdate(record, bots)
       await this.reconcilePendingMemory(sessionId, signal)
       this.throwIfMemoryCancelled(signal)
@@ -4389,16 +4392,12 @@ export class BotService extends TypertRemoteService {
       const id = request.memoryId === undefined
         ? BotMemoryId(`memory-${randomUUID()}`)
         : parseBotMemoryId(String(request.memoryId))
-      const memories = this.memoriesBySession.get(String(sessionId))
-      if (memories === undefined) throw new Error('Bot memory projection was not initialized.')
       const current = memories.get(String(id))
       if (current !== undefined) {
         if (current.text === text) return current
         throw new BotMemoryError('memory-id-conflict', `Memory "${id}" already stores different text.`)
       }
-      if (memories.size >= BOT_MEMORY_ENTRY_LIMIT) {
-        throw new BotMemoryError('memory-limit', `A Bot can retain at most ${String(BOT_MEMORY_ENTRY_LIMIT)} active memories.`)
-      }
+      assertBotMemoryCapacity([...Array.from(memories.values(), memory => memory.text), text])
       const appended = await this.appendMemoryEvent(sessionId, { botId: record.id, memoryId: id, operation: 'remember', text }, signal)
       return { id, text, createdAt: appended.time }
     })
@@ -6501,16 +6500,15 @@ export class BotService extends TypertRemoteService {
       let record = await this.memoryRecord(sessionId)
       const text = normalizeBotMemoryText(request.text)
       const bots = (await this.getDomain()).table('bots')
-      await this.ensureMemoryLoaded(record)
+      const memories = await this.ensureMemoryLoaded(record)
       if (record.pendingMemoryUpdate !== undefined) record = await this.recoverPendingMemoryUpdate(record, bots)
       await this.reconcilePendingMemory(sessionId)
       this.throwIfMemoryCancelled()
       const id = parseBotMemoryId(String(request.memoryId))
-      const memories = this.memoriesBySession.get(String(sessionId))
-      if (memories === undefined) throw new Error('Bot memory projection was not initialized.')
       const current = memories.get(String(id))
       if (current === undefined) throw new BotMemoryError('memory-not-found', `Memory "${id}" was not found.`)
       if (current.text === text) return current
+      assertBotMemoryCapacity(Array.from(memories.values(), memory => memory.id === id ? text : memory.text))
       const intent = { memoryId: String(id), text }
       const pendingRecord = await this.savePendingMemoryUpdate(record, intent)
       await this.appendMemoryEvent(sessionId, { botId: pendingRecord.id, memoryId: id, operation: 'forget' })
@@ -7313,9 +7311,9 @@ export class BotService extends TypertRemoteService {
 
   /**
    * Import private memories, workspace skills, and paused cron routines into an existing Bot.
-   * @param request - Destination Bot, version-one export, and optional preview.
+   * @param request - Destination Bot, version-one export or supplemental memories, and optional preview.
    * @param signal - Cancellation between durable entries. Retrying the same export preserves completed entries.
-   * @returns Counts for the selected source Bot and names of missing routine skill definitions.
+   * @returns Selected counts, supplemental memory gaps, and names of missing routine skill definitions.
    */
   @Remote('importGrokBot')
   async importGrokBot(request: BotGrokImportRequest, signal?: AbortSignal): Promise<BotGrokImportValue> {
@@ -7335,7 +7333,7 @@ export class BotService extends TypertRemoteService {
         const id = BotMemoryId(`memory-grok-${createHash('sha256').update(text).digest('hex')}`)
         return knownIds.has(id) || forgotten?.has(String(id)) || knownText.has(text) ? [] : [{ id, text }]
       })
-      if (existing.length + additions.length > BOT_MEMORY_ENTRY_LIMIT) {
+      if (!fitsBotMemoryCapacity([...existing, ...additions].map(memory => memory.text))) {
         return badRequest('The destination Bot has insufficient memory capacity for this export.')
       }
       const workspaces = this.ctx.get('botWorkspaces')
@@ -7373,6 +7371,7 @@ export class BotService extends TypertRemoteService {
         sourceName: plan.name, memories: plan.memories.length, skills: plan.skills.length,
         skillNames: [...new Set(skillNames.values())],
         routines: plan.routines.length, missingRoutineSkills,
+        ...(plan.memoryGaps === undefined ? {} : { memoryGaps: plan.memoryGaps }),
       }
     }, signal)
   }

@@ -830,8 +830,8 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       {
         signature: '@Remote(\'importGrokBot\') async importGrokBot(request: BotGrokImportRequest, signal?: AbortSignal): Promise<BotGrokImportValue>',
         description: 'Import private memories, workspace skills, and paused cron routines into an existing Bot.',
-        parameters: [{ name: 'request', description: 'Destination Bot, version-one export, and optional preview.' }, { name: 'signal', description: 'Cancellation between durable entries. Retrying the same export preserves completed entries.' }],
-        returns: 'Counts for the selected source Bot and names of missing routine skill definitions.',
+        parameters: [{ name: 'request', description: 'Destination Bot, version-one export or supplemental memories, and optional preview.' }, { name: 'signal', description: 'Cancellation between durable entries. Retrying the same export preserves completed entries.' }],
+        returns: 'Selected counts, supplemental memory gaps, and names of missing routine skill definitions.',
       },
       {
         signature: '@Remote(\'listMemory\') async listMemory(request: BotMemoryListRequest): Promise<BotMemoryListValue>',
@@ -5946,7 +5946,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'BotGrokImportValue',
-    declaration: 'export interface BotGrokImportValue {\n    readonly sourceName: string;\n    readonly memories: number;\n    readonly skills: number;\n    readonly skillNames: readonly string[];\n    readonly routines: number;\n    readonly missingRoutineSkills: readonly string[];\n}',
+    declaration: 'export interface BotGrokImportValue {\n    readonly sourceName: string;\n    readonly memories: number;\n    readonly skills: number;\n    readonly skillNames: readonly string[];\n    readonly routines: number;\n    readonly missingRoutineSkills: readonly string[];\n    readonly memoryGaps?: {\n        readonly truncated: number;\n        readonly unretrieved: number;\n    };\n}',
   },
   {
     name: 'BotGroupCreateRequest',
