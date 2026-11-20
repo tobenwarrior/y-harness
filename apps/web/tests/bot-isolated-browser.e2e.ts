@@ -136,6 +136,7 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('opens websites for
   let automaticAttempts = 0
   let sharedApproved = false
   let sharedAuthorized = false
+  let sharedPendingStatusSeen = false
   let sharingOverride: boolean | null = null
   let ownerSession: string | undefined
   let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined
@@ -238,6 +239,7 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('opens websites for
               ? { state: automaticAllowed ? 'submitted' : 'approval-required' } : { state: 'unavailable' }
             break
           case 'login-status':
+            if (shared && !sharedApproved && !sharedAuthorized) sharedPendingStatusSeen = true
             response = shared && sharedApproved && !sharedAuthorized
               ? { state: 'approval-pending', challenge: SHARED_CHALLENGE }
               : { state: (shared ? sharedAuthorized : request.id === LOGIN.id ? loginApproved
@@ -557,8 +559,13 @@ it.skipIf(MODE === 'record' || process.platform === 'win32')('opens websites for
     sharingOverride = true
     sharedApproved = false
     sharedAuthorized = false
+    sharedPendingStatusSeen = false
     expect((await chat('Request the saved login again in this shared chat.')).result.ok).toBe(true)
     await sharedApproval.waitFor({ timeout: 15_000 })
+    // The owner card is published as soon as the broker records metadata. Wait
+    // for the worker's pending status read too, so revocation observes the
+    // active login operation rather than racing the shared Agent's setup.
+    await expect.poll(() => sharedPendingStatusSeen, { timeout: 15_000 }).toBe(true)
     await web.ctx.bots.revokeShareMember({ botId: BOT, principalId: BotPrincipalId(principalId) })
     await sharedApproval.waitFor({ state: 'hidden', timeout: 15_000 })
     await expect.poll(() => sharedRequests).toContainEqual({ action: 'cancel-login', session: sharedSession })
