@@ -106,6 +106,15 @@ describe('explicit sequential native session handoff', () => {
     f.failRelease(false); expect((await f.library.releaseSequential(mirror.id)).handoff?.phase).toBe('external-ready')
     await f.library.close()
   })
+  it('retains uncertain ownership when the mirror disappears during release', async () => {
+    const f = fixture(); const mirror = await f.library.importSession(source)
+    await f.library.claimSequential(mirror.id, f.acknowledgement(mirror)); f.records.delete(mirror.id)
+    await expect(f.library.releaseSequential(mirror.id)).rejects.toThrow('mirror was not found')
+    expect(f.markers.get(mirror.id)?.phase).toBe('blocked-uncertain')
+    f.records.set(mirror.id, mirror)
+    expect((await f.library.releaseSequential(mirror.id)).handoff?.phase).toBe('external-ready')
+    expect(f.counts().releases).toBe(2); await f.library.close()
+  })
   it.each(['processExited', 'streamsDrained', 'expectedPrefixPersisted', 'noObservedPersistenceErrors']
     .flatMap(field => [{ field, missing: false }, { field, missing: true }]))(
     'retains uncertain ownership when native release evidence $field is missing=$missing', async ({ field, missing }) => {
