@@ -693,6 +693,19 @@ describe('shared Bot collaboration surfaces', () => {
     await waitFor(() => { expect(actions.setMemoryPolicy).toHaveBeenCalledWith(bot.id, true) })
   })
 
+  it('shows invitations and members without empty recovery controls', async () => {
+    const actions = ownerActions({
+      inspectRosterFence: async () => ({ status: 'clear' }),
+      inspectDeliveryFences: async () => ({ fences: [] }),
+    })
+    render(<BotShareDialog bot={bot} actions={actions} open onClose={vi.fn()} t={t} />)
+
+    expect(await screen.findByText('principal-owner')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Create invite' })).toBeTruthy()
+    expect(screen.queryByRole('region', { name: 'Shared roster recovery' })).toBeNull()
+    expect(screen.queryByRole('region', { name: 'Shared-group delivery recovery' })).toBeNull()
+  })
+
   it('shows the owner-only roster fence token and requires quiescence confirmation', async () => {
     const inspectRosterFence = vi.fn().mockResolvedValue({ status: 'held' as const, token: 'opaque-fence-token' })
     const recoverRosterFence = vi.fn().mockResolvedValue({ status: 'released' as const })
@@ -766,7 +779,7 @@ describe('shared Bot collaboration surfaces', () => {
     fireEvent.click(confirm)
 
     await waitFor(() => { expect(recoverDeliveryFence).toHaveBeenCalledWith(fence) })
-    await waitFor(() => { expect(screen.getByText('No recipient delivery needs owner recovery.')).toBeTruthy() })
+    await waitFor(() => { expect(screen.queryByRole('region', { name: 'Shared-group delivery recovery' })).toBeNull() })
   })
 
   it('does not report recipient recovery clear when inspection fails', async () => {
@@ -775,7 +788,7 @@ describe('shared Bot collaboration surfaces', () => {
     render(<BotShareDialog bot={bot} actions={actions} open onClose={vi.fn()} t={t} />)
 
     await waitFor(() => { expect(screen.getAllByText('Recipient delivery status is unavailable.')).not.toHaveLength(0) })
-    expect(screen.queryByText('No recipient delivery needs owner recovery.')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Recover delivery' })).toBeNull()
     expect(screen.queryByText('internal fence details')).toBeNull()
   })
 

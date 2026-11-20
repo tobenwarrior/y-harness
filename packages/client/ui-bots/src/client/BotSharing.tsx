@@ -203,12 +203,13 @@ function SharedAppsCard({ botId, list, set, t }: {
         <span className={css.sharedMemoryIcon} aria-hidden="true"><IconLinkOutlineRegular size={16} /></span>
         <div>
           <div className={css.shareSectionHeading}>{t('sharedAppsLabel')}</div>
-          <p className={css.sharedMemoryDescription}>{t('sharedAppsDescription')}</p>
+          <p className={css.sharedMemoryDescription}>
+            {catalog?.apps.length === 0 ? t('sharedAppsEmpty') : t('sharedAppsDescription')}
+          </p>
         </div>
       </div>
       {error !== null && <div className={css.dialogNotice} role="alert">{error} <Button variant="ghost" size="sm" onClick={() => { setReload(value => value + 1) }}>{t('retry')}</Button></div>}
       {catalog === null && error === null && <div className={css.connectedAppsLoading} role="status">{t('sharedAppsLoading')}</div>}
-      {catalog !== null && catalog.apps.length === 0 && <div className={css.connectedAppsEmpty}>{t('sharedAppsEmpty')}</div>}
       {catalog !== null && catalog.apps.length > 0 && <div className={css.connectedAppsList} role="list" aria-label={t('sharedAppsLabel')}>
         {catalog.apps.map((app) => {
           const label = app.name?.trim() ?? ''
@@ -548,7 +549,7 @@ export function BotShareDialog({ bot, actions, open, onClose, t }: {
   const [rosterFenceAcknowledged, setRosterFenceAcknowledged] = useState(false)
   const [rosterFenceWorking, setRosterFenceWorking] = useState(false)
   const [deliveryFences, setDeliveryFences] = useState<readonly BotSharedGroupDeliveryFenceView[]>([])
-  const [deliveryFenceStatus, setDeliveryFenceStatus] = useState<'unknown' | 'ready' | 'error'>('unknown')
+  const [deliveryInspectionFailed, setDeliveryInspectionFailed] = useState(false)
   const [deliveryFenceTarget, setDeliveryFenceTarget] = useState<BotSharedGroupDeliveryFenceView | null>(null)
   const [deliveryFenceAcknowledged, setDeliveryFenceAcknowledged] = useState(false)
   const [deliveryFenceWorking, setDeliveryFenceWorking] = useState(false)
@@ -585,6 +586,7 @@ export function BotShareDialog({ bot, actions, open, onClose, t }: {
     )
     setWorking('load')
     setError(null)
+    setDeliveryInspectionFailed(false)
     try {
       const value = await actions.listMembers(requestedBotId)
       if (!isCurrentLoad()) return
@@ -604,17 +606,16 @@ export function BotShareDialog({ bot, actions, open, onClose, t }: {
           const fences = await actions.inspectDeliveryFences(requestedBotId)
           if (!isCurrentLoad()) return
           setDeliveryFences(fences.fences)
-          setDeliveryFenceStatus('ready')
         } catch {
           if (!isCurrentLoad()) return
           setDeliveryFences([])
-          setDeliveryFenceStatus('error')
+          setDeliveryInspectionFailed(true)
           setError(t('sharedGroupDeliveryFenceUnavailable'))
         }
       }
     } catch (cause: unknown) {
       if (isCurrentLoad()) {
-        if (actions.inspectDeliveryFences !== undefined) setDeliveryFenceStatus('error')
+        setDeliveryInspectionFailed(actions.inspectDeliveryFences !== undefined)
         setError(cause instanceof Error ? cause.message : t('shareError'))
       }
     } finally {
@@ -640,7 +641,7 @@ export function BotShareDialog({ bot, actions, open, onClose, t }: {
       setRosterFenceAcknowledged(false)
       setRosterFenceWorking(false)
       setDeliveryFences([])
-      setDeliveryFenceStatus('unknown')
+      setDeliveryInspectionFailed(false)
       setDeliveryFenceTarget(null)
       setDeliveryFenceAcknowledged(false)
       setDeliveryFenceWorking(false)
@@ -659,7 +660,7 @@ export function BotShareDialog({ bot, actions, open, onClose, t }: {
     setRosterFenceAcknowledged(false)
     setRosterFenceWorking(false)
     setDeliveryFences([])
-    setDeliveryFenceStatus('unknown')
+    setDeliveryInspectionFailed(false)
     setDeliveryFenceTarget(null)
     setDeliveryFenceAcknowledged(false)
     setDeliveryFenceWorking(false)
@@ -749,12 +750,12 @@ export function BotShareDialog({ bot, actions, open, onClose, t }: {
         const fences = await actions.inspectDeliveryFences?.(requestedBotId)
         if (fences !== undefined && isCurrentView(requestedBotId, viewGeneration)) {
           setDeliveryFences(fences.fences)
-          setDeliveryFenceStatus('ready')
+          setDeliveryInspectionFailed(false)
         }
       } catch {
         if (isCurrentView(requestedBotId, viewGeneration)) {
           setDeliveryFences([])
-          setDeliveryFenceStatus('error')
+          setDeliveryInspectionFailed(true)
           setDeliveryFenceTarget(null)
           setDeliveryFenceAcknowledged(false)
           setError(t('sharedGroupDeliveryFenceUnavailable'))
@@ -909,6 +910,27 @@ export function BotShareDialog({ bot, actions, open, onClose, t }: {
             </div>
           )}
         </div>
+        <div className={css.shareMembers}>
+          <div className={css.shareSectionHeading}>{t('membersLabel')}</div>
+          {stateMatchesBot && working === 'load' && <div className={css.shareLoading} role="status"><StateDot state="ongoing" size={12} /></div>}
+          {stateMatchesBot && working !== 'load' && members.length === 0 && <div className={css.shareEmpty}>{t('noMembers')}</div>}
+          {stateMatchesBot && working !== 'load' && members.map(member => (
+            <div className={css.shareMember} key={String(member.principalId)}>
+              <span className={css.shareMemberIdentity}>
+                <span className={css.shareMemberDot} aria-hidden="true" />
+                <span className={css.shareMemberPrincipal}>{String(member.principalId)}</span>
+                <Tag tone={member.role === 'owner' ? 'info' : 'neutral'}>{shareRoleLabel(member.role, t)}</Tag>
+              </span>
+              {member.role === 'owner'
+                ? <span className={css.shareMemberHint}>{t('revokeOwnerDisabled')}</span>
+                : (
+                  <Tooltip label={t('revokeMember')} side="top" portal>
+                    <Button variant="ghost" size="sm" aria-label={`${t('revokeMember')}: ${String(member.principalId)}`} icon={<IconTrashOutlineRegular size={14} />} disabled={working !== null || memoryWorking || rosterFenceWorking} onClick={() => { void revoke(member) }} />
+                  </Tooltip>
+                )}
+            </div>
+          ))}
+        </div>
         {stateMatchesBot && actions.getMemoryPolicy !== undefined && actions.setMemoryPolicy !== undefined && memoryPolicy !== null && (
           <section className={css.sharedMemoryCard} aria-labelledby="yharness-shared-memory-heading">
             <div className={css.sharedMemoryHeader}>
@@ -929,19 +951,13 @@ export function BotShareDialog({ bot, actions, open, onClose, t }: {
         {stateMatchesBot && actions.listSharedAppAccess !== undefined && actions.setSharedAppAccess !== undefined && (
           <SharedAppsCard botId={bot.id} list={actions.listSharedAppAccess} set={actions.setSharedAppAccess} t={t} />
         )}
-        {stateMatchesBot && actions.inspectRosterFence !== undefined && (
+        {stateMatchesBot && actions.inspectRosterFence !== undefined && rosterFence?.status === 'held' && (
           <section className={css.sharedMemoryCard} aria-labelledby="yharness-shared-roster-fence-heading">
             <div className={css.sharedMemoryHeader}>
               <span className={css.sharedMemoryIcon} aria-hidden="true"><IconShieldOutlineRegular size={16} /></span>
               <div>
                 <div className={css.shareSectionHeading} id="yharness-shared-roster-fence-heading">{t('sharedRosterFenceLabel')}</div>
-                <p className={css.sharedMemoryDescription}>
-                  {rosterFence === null
-                    ? t('sharedRosterFenceLoading')
-                    : rosterFence.status === 'held'
-                      ? t('sharedRosterFenceHeld')
-                      : t('sharedRosterFenceClear')}
-                </p>
+                <p className={css.sharedMemoryDescription}>{t('sharedRosterFenceHeld')}</p>
               </div>
             </div>
             {rosterFenceToken !== undefined && (
@@ -962,20 +978,16 @@ export function BotShareDialog({ bot, actions, open, onClose, t }: {
             )}
           </section>
         )}
-        {stateMatchesBot && actions.inspectDeliveryFences !== undefined && (
+        {stateMatchesBot && actions.inspectDeliveryFences !== undefined && (deliveryInspectionFailed || deliveryFences.length > 0) && (
           <section className={css.sharedMemoryCard} aria-labelledby="yharness-shared-delivery-fence-heading">
             <div className={css.sharedMemoryHeader}>
               <span className={css.sharedMemoryIcon} aria-hidden="true"><IconShieldOutlineRegular size={16} /></span>
               <div>
                 <div className={css.shareSectionHeading} id="yharness-shared-delivery-fence-heading">{t('sharedGroupDeliveryFenceLabel')}</div>
                 <p className={css.sharedMemoryDescription}>
-                  {working === 'load'
-                    ? t('sharedGroupDeliveryFenceLoading')
-                    : deliveryFenceStatus === 'error'
-                      ? t('sharedGroupDeliveryFenceUnavailable')
-                      : deliveryFences.length === 0
-                        ? t('sharedGroupDeliveryFenceClear')
-                        : t('sharedGroupDeliveryFenceHeld', { count: deliveryFences.length })}
+                  {deliveryInspectionFailed
+                    ? t('sharedGroupDeliveryFenceUnavailable')
+                    : t('sharedGroupDeliveryFenceHeld', { count: deliveryFences.length })}
                 </p>
               </div>
             </div>
@@ -999,27 +1011,6 @@ export function BotShareDialog({ bot, actions, open, onClose, t }: {
             ))}
           </section>
         )}
-        <div className={css.shareMembers}>
-          <div className={css.shareSectionHeading}>{t('membersLabel')}</div>
-          {stateMatchesBot && working === 'load' && <div className={css.shareLoading} role="status"><StateDot state="ongoing" size={12} /></div>}
-          {stateMatchesBot && working !== 'load' && members.length === 0 && <div className={css.shareEmpty}>{t('noMembers')}</div>}
-          {stateMatchesBot && working !== 'load' && members.map(member => (
-            <div className={css.shareMember} key={String(member.principalId)}>
-              <span className={css.shareMemberIdentity}>
-                <span className={css.shareMemberDot} aria-hidden="true" />
-                <span className={css.shareMemberPrincipal}>{String(member.principalId)}</span>
-                <Tag tone={member.role === 'owner' ? 'info' : 'neutral'}>{shareRoleLabel(member.role, t)}</Tag>
-              </span>
-              {member.role === 'owner'
-                ? <span className={css.shareMemberHint}>{t('revokeOwnerDisabled')}</span>
-                : (
-                  <Tooltip label={t('revokeMember')} side="top" portal>
-                    <Button variant="ghost" size="sm" aria-label={`${t('revokeMember')}: ${String(member.principalId)}`} icon={<IconTrashOutlineRegular size={14} />} disabled={working !== null || memoryWorking || rosterFenceWorking} onClick={() => { void revoke(member) }} />
-                  </Tooltip>
-                )}
-            </div>
-          ))}
-        </div>
       </Modal>
       <RiskConfirmation
         open={stateMatchesBot && memoryTarget !== null}

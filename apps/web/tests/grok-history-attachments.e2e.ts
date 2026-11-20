@@ -26,6 +26,7 @@ const SNAPSHOT_DIR = fileURLToPath(new URL('./expected/grok-history-attachments'
 const FIXTURE = fileURLToPath(new URL('../../../snapshots/web/bot-workspace/session.v3.jsonl', import.meta.url))
 const UI_EXPECTED = join(SNAPSHOT_DIR, 'ui.expected.md')
 const SEARCH_EXPECTED = join(SNAPSHOT_DIR, 'search.expected.md')
+const SHARING_EXPECTED = join(SNAPSHOT_DIR, 'sharing.expected.md')
 const MODE = webSnapshotMode()
 const SOURCE_ID = 'primary'
 const SOURCE_SEQUENCE = 2
@@ -165,6 +166,17 @@ describe('web e2e: owner-only Grok history attachments', () => {
     await openBotOption('Share bot')
     const sharing = page.getByRole('dialog', { name: 'Share this bot', exact: true })
     await sharing.getByRole('button', { name: 'Create invite', exact: true }).waitFor({ state: 'visible' })
+    const members = sharing.getByText('People with access', { exact: true })
+    await members.waitFor()
+    await sharing.getByText('No one has joined yet.', { exact: true }).waitFor()
+    await sharing.getByText('Connect an app to manage shared access here.', { exact: true }).waitFor()
+    expect(await sharing.getByRole('region', { name: 'Shared roster recovery', exact: true }).count()).toBe(0)
+    expect(await sharing.getByRole('region', { name: 'Shared-group delivery recovery', exact: true }).count()).toBe(0)
+    await compareOrRefreshGolden(
+      SHARING_EXPECTED,
+      await captureStableAria(page, '[role="dialog"][aria-label="Share this bot"]', scaffold.workspaceCwd),
+      MODE,
+    )
     if (screenshots !== undefined) {
       await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' })
       await expect.poll(() => page.evaluate(() => document.body.hasAttribute('data-ds-dark-theme'))).toBe(true)
@@ -176,6 +188,9 @@ describe('web e2e: owner-only Grok history attachments', () => {
         if (bounds === null) throw new Error('The sharing dialog disappeared while resizing')
         expect(bounds.x).toBeGreaterThanOrEqual(0)
         expect(bounds.x + bounds.width).toBeLessThanOrEqual(width)
+        const membersBounds = await members.boundingBox()
+        if (membersBounds === null) throw new Error('Sharing members are unavailable')
+        expect(membersBounds.y + membersBounds.height).toBeLessThan(bounds.y + bounds.height)
         await page.screenshot({ path: join(screenshots, 'sharing-with-history-' + String(width) + '.png'), animations: 'disabled' })
       }
       await page.setViewportSize(viewport)
