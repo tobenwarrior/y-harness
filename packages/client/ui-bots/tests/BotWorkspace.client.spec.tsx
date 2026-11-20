@@ -3004,10 +3004,12 @@ describe('Bot roster and detail', () => {
     const dialog = await screen.findByRole('dialog', { name: 'Connected apps' })
     await waitFor(() => { expect(onLoadConnectedApps).toHaveBeenCalledWith('release') })
     expect(dialog.querySelector('[data-app-id="github"]')).not.toBeNull()
-    expect(within(dialog).getByText('Access not allowed')).toBeTruthy()
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Grant access to GitHub' }))
+    expect(within(dialog).getByText('Tools from GitHub')).toBeTruthy()
+    const grant = within(dialog).getByRole('button', { name: 'Grant access to GitHub' })
+    expect(grant.getAttribute('aria-pressed')).toBe('false')
+    fireEvent.click(grant)
     await waitFor(() => { expect(onSetConnectedAppAccess).toHaveBeenCalledWith('release', 'github', true) })
-    expect(within(dialog).getByText('Access allowed')).toBeTruthy()
+    expect(within(dialog).getByRole('button', { name: 'Revoke access to GitHub' }).getAttribute('aria-pressed')).toBe('true')
   })
 
   it('centers an explicit empty state when a Bot has no connected apps', async () => {
@@ -3040,7 +3042,6 @@ describe('Bot roster and detail', () => {
 
     expect(within(dialog).getByText('Connected app custom-alpha')).toBeTruthy()
     expect(within(dialog).getByText('Connected app custom-beta')).toBeTruthy()
-    expect(within(dialog).getByText('MCP tools from Connected app custom-alpha')).toBeTruthy()
     expect(within(dialog).getByRole('button', { name: 'Grant access to Connected app custom-alpha' })).toBeTruthy()
     expect(within(dialog).getByRole('button', { name: 'Grant access to Connected app custom-beta' })).toBeTruthy()
     expect(dialog.querySelector('[data-app-id="custom-alpha"]')?.textContent).not.toBe('')

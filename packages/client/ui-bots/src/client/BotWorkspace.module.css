@@ -2258,6 +2258,26 @@
   margin-top: 16px;
 }
 
+.connectedAppsDialogContent .connectedAppsList {
+  gap: 0;
+  margin-top: 8px;
+  padding-inline: 12px;
+  border: 0.5px solid var(--yh-alias-border-l2);
+  border-radius: var(--yh-radius-md);
+  background: var(--yh-alias-bg-layer-2);
+}
+
+.connectedAppsDialogContent .connectedAppRow {
+  padding-inline: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+}
+
+.connectedAppsDialogContent .connectedAppRow + .connectedAppRow {
+  border-top: 0.5px solid var(--yh-alias-border-l2);
+}
+
 .sharedApprovalsList {
   display: flex;
   min-width: 0;
