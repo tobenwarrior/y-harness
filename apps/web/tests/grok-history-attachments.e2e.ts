@@ -145,7 +145,7 @@ describe('web e2e: owner-only Grok history attachments', () => {
 
   it('downloads only the exact verified attachment and recovers after a vault reload', async () => {
     onTestFailed(() => saveFailureShot(page, 'web-e2e-grok-history-attachments'))
-    const openHistory = async () => {
+    const openBotOption = async (name: 'Share bot' | 'Imported Grok chat') => {
       const sidebar = page.locator('[data-yh-part="sidebar"]')
       const botsMode = sidebar.getByRole('button', { name: 'Bots', exact: true })
       await botsMode.waitFor({ state: 'visible' })
@@ -155,9 +155,33 @@ describe('web e2e: owner-only Grok history attachments', () => {
       await row.click()
       const detail = page.locator(`section[aria-label="${secondBot.name}"]`)
       await detail.getByRole('button', { name: 'Bot options', exact: true }).click()
-      await page.getByRole('menuitem', { name: 'Imported Grok chat', exact: true }).click()
+      await page.getByRole('menuitem', { name, exact: true }).click()
+    }
+    const openHistory = async () => {
+      await openBotOption('Imported Grok chat')
       return page.getByRole('dialog', { name: 'Imported Grok chat' })
     }
+    const screenshots = process.env.DSH_GROK_HISTORY_SCREENSHOTS
+    await openBotOption('Share bot')
+    const sharing = page.getByRole('dialog', { name: 'Share this bot', exact: true })
+    await sharing.getByRole('button', { name: 'Create invite', exact: true }).waitFor({ state: 'visible' })
+    if (screenshots !== undefined) {
+      await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' })
+      await expect.poll(() => page.evaluate(() => document.body.hasAttribute('data-ds-dark-theme'))).toBe(true)
+      const viewport = page.viewportSize()
+      if (viewport === null) throw new Error('Sharing screenshots require a viewport')
+      for (const width of [1440, 480]) {
+        await page.setViewportSize({ width, height: 900 })
+        const bounds = await sharing.boundingBox()
+        if (bounds === null) throw new Error('The sharing dialog disappeared while resizing')
+        expect(bounds.x).toBeGreaterThanOrEqual(0)
+        expect(bounds.x + bounds.width).toBeLessThanOrEqual(width)
+        await page.screenshot({ path: join(screenshots, 'sharing-with-history-' + String(width) + '.png'), animations: 'disabled' })
+      }
+      await page.setViewportSize(viewport)
+    }
+    await page.keyboard.press('Escape')
+    await sharing.waitFor({ state: 'hidden' })
     const downloadName = `Download ${ATTACHMENT_NAME}`
     const dialog = await openHistory()
     const link = dialog.getByRole('link', { name: downloadName, exact: true })
@@ -185,7 +209,6 @@ describe('web e2e: owner-only Grok history attachments', () => {
       await captureStableAria(page, '[role="dialog"][aria-label="Imported Grok chat"]', scaffold.workspaceCwd),
       MODE,
     )
-    const screenshots = process.env.DSH_GROK_HISTORY_SCREENSHOTS
     if (screenshots !== undefined) {
       const viewport = page.viewportSize()
       if (viewport === null) throw new Error('History screenshots require a viewport')
