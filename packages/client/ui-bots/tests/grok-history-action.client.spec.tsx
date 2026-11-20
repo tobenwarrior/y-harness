@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { BotGrokHistoryArchive, BotGrokHistoryView } from '@yharness/bots/client'
 import { makeTranslate } from '@yharness/client-test-runtime'
@@ -150,6 +150,53 @@ describe('Imported chat from Bot options', () => {
     expect(screen.getByRole('combobox', { name: en.grokHistorySource })).toHaveProperty('value', 'primary')
     expect(screen.getByText(en.grokHistoryRecovered)).toBeTruthy()
     expect(screen.getByText('Primary question')).toBeTruthy()
+  })
+
+  it('finds older messages across recovered sources and jumps to the surrounding chat', async () => {
+    const archive = vi.fn<(id: string) => Promise<BotGrokHistoryArchive>>().mockResolvedValue(versionTwoArchive)
+    renderHistory('bot-search', archive)
+    openHistory()
+    await screen.findByText('Primary question')
+
+    const dialog = within(screen.getByRole('dialog', { name: en.grokHistory }))
+    const search = dialog.getByRole('searchbox', { name: en.grokHistorySearch })
+    fireEvent.change(screen.getByRole('combobox', { name: en.grokHistorySource }), { target: { value: 'gap' } })
+    fireEvent.change(search, { target: { value: '  QuEsTiOn  ' } })
+    expect(dialog.getByRole('status').textContent).toBe('2 matches')
+    expect(screen.getByText('Primary question')).toBeTruthy()
+    expect(screen.getByText('Partial source question')).toBeTruthy()
+    expect(screen.queryByText('Gap source answer')).toBeNull()
+
+    fireEvent.change(search, { target: { value: '' } })
+    expect(screen.getByText('Gap source answer')).toBeTruthy()
+    fireEvent.change(search, { target: { value: 'unknown paragraph' } })
+    expect(dialog.getByRole('status').textContent).toBe(en.grokHistoryNoMatches)
+    expect(screen.queryByRole('listitem')).toBeNull()
+
+    fireEvent.change(search, { target: { value: 'question' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Open message in Partial source' }))
+    expect(search).toHaveProperty('value', '')
+    expect(screen.getByRole('combobox', { name: en.grokHistorySource })).toHaveProperty('value', 'partial')
+    expect(document.activeElement).toBe(screen.getByText('Partial source question').closest('li'))
+  })
+
+  it('loads the rest of a broad search without dropping earlier matches', async () => {
+    const archive = vi.fn<(id: string) => Promise<BotGrokHistoryArchive>>().mockResolvedValue({
+      ...versionOneArchive,
+      messages: Array.from({ length: 51 }, (_, index) => ({
+        sourceSequence: index + 1, role: 'assistant', text: 'Release note ' + String(index + 1),
+        timestampMs: 1_700_000_000_000 + index * 1_000,
+      })),
+    })
+    renderHistory('bot-search-many', archive)
+    openHistory()
+    const search = await screen.findByRole('searchbox', { name: en.grokHistorySearch })
+    fireEvent.change(search, { target: { value: 'release note' } })
+    expect(screen.queryByText('Release note 51')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: en.grokHistoryMoreMatches }))
+    expect(screen.getByText('Release note 1')).toBeTruthy()
+    expect(screen.getByText('Release note 51')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: en.grokHistoryMoreMatches })).toBeNull()
   })
 
   it('offers verified attachment downloads scoped to the selected Bot, source, and position', async () => {

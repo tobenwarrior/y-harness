@@ -25,10 +25,13 @@ import { newEnglishPage, saveFailureShot } from './support.ts'
 const SNAPSHOT_DIR = fileURLToPath(new URL('./expected/grok-history-attachments', import.meta.url))
 const FIXTURE = fileURLToPath(new URL('../../../snapshots/web/bot-workspace/session.v3.jsonl', import.meta.url))
 const UI_EXPECTED = join(SNAPSHOT_DIR, 'ui.expected.md')
+const SEARCH_EXPECTED = join(SNAPSHOT_DIR, 'search.expected.md')
 const MODE = webSnapshotMode()
 const SOURCE_ID = 'primary'
 const SOURCE_SEQUENCE = 2
 const ATTACHMENT_NAME = 'research-notes.txt'
+const EARLIER_SOURCE = 'Earlier export'
+const EARLIER_MESSAGE = 'The research handoff is ready for review.'
 const ATTACHMENT_TIMESTAMP = 3_000
 const ATTACHMENT_SIZE_BYTES = 24 * 1024 * 1024
 const ATTACHMENT_BYTES = Buffer.alloc(ATTACHMENT_SIZE_BYTES, 0x53)
@@ -118,6 +121,13 @@ describe('web e2e: owner-only Grok history attachments', () => {
           timestampMs: OVERSIZED_ATTACHMENT_TIMESTAMP,
         },
       ],
+      sources: [{
+        id: 'earlier', label: EARLIER_SOURCE, firstCachedSequence: 1, complete: false,
+        messages: [
+          { sourceSequence: 1, role: 'user', text: 'Can you send the checklist?', timestampMs: null },
+          { sourceSequence: 2, role: 'assistant', text: EARLIER_MESSAGE, timestampMs: null },
+        ],
+      }],
     })
     for (const bot of [firstBot, secondBot]) await scaffold.ctx.bots.importGrokHistory({ botId: bot.id, document })
     browser = await chromium.launch()
@@ -165,6 +175,41 @@ describe('web e2e: owner-only Grok history attachments', () => {
     const download = await downloadPromise
     expect(download.suggestedFilename()).toBe(ATTACHMENT_NAME)
     await expect(summarizeDownload(download)).resolves.toEqual({ size: ATTACHMENT_SIZE_BYTES, sha256: ATTACHMENT_DIGEST })
+
+    const search = dialog.getByRole('searchbox', { name: 'Find in imported chat', exact: true })
+    await search.fill('research')
+    await dialog.getByRole('status').filter({ hasText: '2 matches' }).waitFor()
+    expect(await link.getAttribute('href')).toBe(href)
+    await compareOrRefreshGolden(
+      SEARCH_EXPECTED,
+      await captureStableAria(page, '[role="dialog"][aria-label="Imported Grok chat"]', scaffold.workspaceCwd),
+      MODE,
+    )
+    const screenshots = process.env.DSH_GROK_HISTORY_SCREENSHOTS
+    if (screenshots !== undefined) {
+      const viewport = page.viewportSize()
+      if (viewport === null) throw new Error('History screenshots require a viewport')
+      await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' })
+      await expect.poll(() => page.evaluate(() => document.body.hasAttribute('data-ds-dark-theme'))).toBe(true)
+      for (const width of [1440, 480]) {
+        await page.setViewportSize({ width, height: 900 })
+        const bounds = await dialog.boundingBox()
+        expect(bounds).not.toBeNull()
+        if (bounds === null) throw new Error('The history dialog disappeared while resizing')
+        expect(bounds.x).toBeGreaterThanOrEqual(0)
+        expect(bounds.x + bounds.width).toBeLessThanOrEqual(width)
+        await page.screenshot({ path: join(screenshots, 'imported-chat-search-' + String(width) + '.png'), animations: 'disabled' })
+      }
+      await page.emulateMedia({ colorScheme: 'light' })
+      await expect.poll(() => page.evaluate(() => document.body.hasAttribute('data-ds-dark-theme'))).toBe(false)
+      await page.screenshot({ path: join(screenshots, 'imported-chat-search-light.png'), animations: 'disabled' })
+      await page.setViewportSize(viewport)
+    }
+    await dialog.getByRole('button', { name: 'Open message in ' + EARLIER_SOURCE, exact: true }).click()
+    await expect.poll(() => search.inputValue()).toBe('')
+    await expect.poll(() => dialog.evaluate(element => element.ownerDocument.activeElement?.textContent)).toContain(EARLIER_MESSAGE)
+    await dialog.getByText('Can you send the checklist?', { exact: true }).waitFor()
+    await dialog.getByRole('combobox', { name: 'History source', exact: true }).selectOption(SOURCE_ID)
 
     await dialog.getByText(OVERSIZED_ATTACHMENT_NAME, { exact: true }).waitFor()
     expect(await dialog.getByRole('link', { name: `Download ${OVERSIZED_ATTACHMENT_NAME}`, exact: true }).count()).toBe(0)
