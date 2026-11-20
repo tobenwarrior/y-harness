@@ -178,7 +178,7 @@
   margin-top: 4px;
   padding: 4px 8px;
   border: 0;
-  border-top: 1px solid var(--yh-alias-border-l2);
+  border-top: 0.5px solid var(--yh-alias-border-l2);
   background: transparent;
   color: var(--yh-alias-label-secondary);
   font: inherit;
