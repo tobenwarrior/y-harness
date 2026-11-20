@@ -6,23 +6,39 @@
 .section {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  max-width: 720px;
+  gap: 16px;
+  width: 100%;
+  max-width: 860px;
   color: var(--yh-alias-label-primary);
+}
+
+.sectionHeader {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.sectionHeading {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .title {
   margin: 0;
-  font-size: 16px;
-  line-height: 24px;
+  font-size: 20px;
+  line-height: 28px;
   font-weight: 500;
   color: var(--yh-alias-label-primary);
 }
 
 .intro {
   margin: 0;
-  font-size: 14px;
-  line-height: 22px;
+  max-width: 640px;
+  font-size: 13px;
+  line-height: 20px;
   color: var(--yh-alias-label-tertiary);
 }
 
@@ -42,9 +58,14 @@
 
 .rows {
   list-style: none;
-  /* Extra air between the title/intro block and the first provider card. */
-  margin: 12px 0 0;
+  margin: 0;
   padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.subscriptionRows {
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -55,10 +76,18 @@
   border: 0.5px solid var(--yh-alias-settings-card-stroke);
   background: var(--yh-alias-settings-card-fill);
   border-radius: var(--yh-radius-xl);
-  padding: 12px 14px;
+  padding: 14px 16px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 14px;
+}
+
+.subscriptionCard {
+  min-width: 0;
+  min-height: 56px;
+  justify-content: center;
+  background: var(--yh-alias-bg-module-platform);
+  border-color: var(--yh-alias-border-l3);
 }
 
 .rowHead {
@@ -70,11 +99,72 @@
 .rowIdentity {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 9px;
   min-width: 0;
+  flex-wrap: wrap;
+}
+
+.providerMark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border: 0.5px solid var(--yh-alias-border-l3);
+  border-radius: 10px;
+  background: var(--yh-alias-bg-layer-2);
+  color: var(--yh-alias-label-secondary);
+  font-size: 10px;
+  line-height: 12px;
+  font-weight: 500;
+  letter-spacing: 0.03em;
+}
+
+.providerMark svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.6px;
+}
+
+.providerMarkChatgpt svg path:first-child {
+  fill: currentColor;
+  stroke: none;
+}
+
+.providerMarkChatgpt {
+  color: var(--yh-alias-state-business-primary);
+  background: var(--yh-alias-state-business-tertiary);
+}
+
+.providerMarkNous {
+  color: var(--yh-alias-state-warn-primary);
+  background: var(--yh-alias-state-warn-tertiary);
+}
+
+.providerMarkGrok {
+  color: var(--yh-alias-label-primary);
+  background: var(--yh-alias-bg-layer-2);
+}
+
+.providerMarkGrok svg path {
+  fill: currentColor;
+  stroke: none;
+}
+
+.providerMarkGeneric {
+  color: var(--yh-alias-label-secondary);
 }
 
 .rowName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 14px;
   line-height: 22px;
   font-weight: 500;
@@ -103,6 +193,19 @@
   height: 8px;
   border-radius: 50%;
   corner-shape: round;
+}
+
+.credentialStatus {
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.credentialStatusConfigured {
+  color: var(--yh-alias-state-success-primary);
+}
+
+.credentialStatusMissing {
+  color: var(--yh-alias-state-error-primary);
 }
 
 .credentialDotConfigured {
@@ -647,6 +750,12 @@ select.input {
 
 .deleteConfirm:hover:not(:disabled) {
   background: var(--yh-alias-interactive-bg-hover-danger);
+}
+
+@media (max-width: 760px) {
+  .sectionHeader {
+    align-items: flex-start;
+  }
 }
 
 /* Icon-button label seat: named for assistive tech and for the tests that

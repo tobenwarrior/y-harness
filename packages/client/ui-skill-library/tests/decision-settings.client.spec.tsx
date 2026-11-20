@@ -27,6 +27,7 @@ const fixture = () => {
     saveDecision: vi.fn(), previewDecision: vi.fn(), dismissDecisionNotice: vi.fn(),
   }
   render(<DecisionSettings {...standard} {...callbacks} useDecision={bindSnapshotSelector(source)} t={t} />)
+  fireEvent.click(screen.getByText(en.decisionAdvanced))
   return { source, ...callbacks }
 }
 describe('Decision Models footer', () => {
@@ -40,6 +41,7 @@ describe('Decision Models footer', () => {
     })
     await controller.refresh(); const { hooks: _hooks, ...face } = controller.face()
     render(<DecisionSettings {...standard} {...face} useDecision={bindSnapshotSelector(controller.source)} t={t} />)
+    fireEvent.click(screen.getByText(en.decisionAdvanced))
     try {
       await waitFor(() => { expect(screen.getByRole('option', { name: 'low' })).toBeTruthy() })
       effort = ReasoningEffortId('high')

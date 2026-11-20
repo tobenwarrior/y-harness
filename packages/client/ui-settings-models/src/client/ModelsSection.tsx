@@ -219,6 +219,52 @@ export function providerCopy(template: string, target: ProviderIdentity): string
 }
 
 /**
+ * Create a compact decorative mark for a provider card.
+ * @param value - provider display name.
+ * @returns one or two uppercase initials.
+ */
+function providerMarkLabel(value: string): string {
+  const words = value.trim().split(/\s+/u).filter(Boolean)
+  if (words.length > 1) return words.slice(0, 2).map(word => word[0] ?? '').join('').toUpperCase()
+  return value.trim().slice(0, 2).toUpperCase()
+}
+
+type ProviderMarkKind = 'chatgpt' | 'nous' | 'grok' | 'generic'
+
+/**
+ * Resolve a provider's compact visual identity without exposing credentials.
+ * @param value - provider display name.
+ * @returns the provider mark family.
+ */
+function providerMarkKind(value: string): ProviderMarkKind {
+  const normalized = value.toLocaleLowerCase()
+  if (normalized.includes('chatgpt') || normalized.includes('codex') || normalized.includes('openai')) return 'chatgpt'
+  if (normalized.includes('nous')) return 'nous'
+  if (normalized.includes('grok') || normalized.includes('xai')) return 'grok'
+  return 'generic'
+}
+
+/**
+ * Render the small provider identity used by subscription and configured rows.
+ * @param value - provider display name.
+ * @returns a decorative, provider-specific mark.
+ */
+function ProviderMark({ value }: { value: string }): ReactNode {
+  const kind = providerMarkKind(value)
+  const className = `${styles['providerMark']} ${styles[`providerMark${kind[0]?.toUpperCase() ?? ''}${kind.slice(1)}`]}`
+  if (kind === 'chatgpt') {
+    return <span className={className} aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><path d="M12 3.5a4.6 4.6 0 0 1 4.38 3.18A4.6 4.6 0 0 1 20.5 11a4.6 4.6 0 0 1-2.72 4.2A4.6 4.6 0 0 1 13.5 21a4.6 4.6 0 0 1-4.38-3.18A4.6 4.6 0 0 1 3.5 13a4.6 4.6 0 0 1 2.72-4.2A4.6 4.6 0 0 1 12 3.5Z" /><path d="m8.1 8.2 7.8 4.5m-7.8 0 7.8-4.5m-3.9-2.25v9m-3.9-2.25 7.8-4.5m-7.8 0 7.8 4.5m-3.9-9v9" /></svg></span>
+  }
+  if (kind === 'nous') {
+    return <span className={className} aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><path d="M6 18V6l12 12V6" /></svg></span>
+  }
+  if (kind === 'grok') {
+    return <span className={className} aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><path d="m12 3 2.15 6.85L21 12l-6.85 2.15L12 21l-2.15-6.85L3 12l6.85-2.15L12 3Z" /></svg></span>
+  }
+  return <span className={className} aria-hidden="true">{providerMarkLabel(value)}</span>
+}
+
+/**
  * Render the Models section content column.
  * @param props - slot-delivered injected dependencies.
  * @returns the section, or null while the shell has not injected yet.
@@ -399,8 +445,12 @@ function Loaded({ injected, renderSlot }: { injected: ModelsSectionFace; renderS
 
   return (
     <div className={styles['section']}>
-      <h2 className={styles['title']}>{t('title')}</h2>
-      <p className={styles['intro']}>{t('intro')}</p>
+      <div className={styles['sectionHeader']}>
+        <div className={styles['sectionHeading']}>
+          <h2 className={styles['title']}>{t('title')}</h2>
+          <p className={styles['intro']}>{t('intro')}</p>
+        </div>
+      </div>
       {!state.writable && state.status === 'ready' ? <p className={styles['notice']}>{t('readOnly')}</p> : null}
       {savedIdentity === undefined
         ? null
@@ -409,62 +459,67 @@ function Loaded({ injected, renderSlot }: { injected: ModelsSectionFace; renderS
             {providerCopy(t('savedProvider'), savedIdentity)}
           </p>
         )}
-      <div className={styles['rowCard']}>
-        <div className={styles['rowHead']}>
-          <span className={styles['rowIdentity']}>
-            <span className={styles['rowName']}>{t('codexTitle')}</span>
-          </span>
-          <span className={styles['rowActions']}>
-            <button
-              type="button"
-              className={styles['secondaryButton']}
-              aria-label={providerCopy(t('editProvider'), { provider: t('codexTitle'), displayName: t('codexTitle') })}
-              onClick={() => { setChatgptOpen(!chatgptOpen) }}
-            >
-              {t('edit')}
-            </button>
-          </span>
+      <div className={styles['subscriptionRows']}>
+        <div className={`${styles['rowCard']} ${styles['subscriptionCard']}`}>
+          <div className={styles['rowHead']}>
+            <span className={styles['rowIdentity']}>
+              <ProviderMark value={t('codexTitle')} />
+              <span className={styles['rowName']}>{t('codexTitle')}</span>
+            </span>
+            <span className={styles['rowActions']}>
+              <button
+                type="button"
+                className={styles['secondaryButton']}
+                aria-label={providerCopy(t('editProvider'), { provider: t('codexTitle'), displayName: t('codexTitle') })}
+                onClick={() => { setChatgptOpen(!chatgptOpen) }}
+              >
+                {t('edit')}
+              </button>
+            </span>
+          </div>
+          {chatgptOpen && <CodexBackendCard
+            operations={operations} readOnly={!state.writable} onSaved={() => { void controller.load() }}
+            t={t} open={chatgptOpen}
+          />}
         </div>
-        {chatgptOpen && <CodexBackendCard
-          operations={operations} readOnly={!state.writable} onSaved={() => { void controller.load() }}
-          t={t} open={chatgptOpen}
-        />}
-      </div>
-      <div className={styles['rowCard']}>
-        <div className={styles['rowHead']}>
-          <span className={styles['rowIdentity']}>
-            <span className={styles['rowName']}>{t('nousTitle')}</span>
-          </span>
-          <span className={styles['rowActions']}>
-            <button
-              type="button"
-              className={styles['secondaryButton']}
-              aria-label={providerCopy(t('editProvider'), { provider: t('nousTitle'), displayName: t('nousTitle') })}
-              onClick={() => { setNousOpen(!nousOpen) }}
-            >
-              {t('edit')}
-            </button>
-          </span>
+        <div className={`${styles['rowCard']} ${styles['subscriptionCard']}`}>
+          <div className={styles['rowHead']}>
+            <span className={styles['rowIdentity']}>
+              <ProviderMark value={t('nousTitle')} />
+              <span className={styles['rowName']}>{t('nousTitle')}</span>
+            </span>
+            <span className={styles['rowActions']}>
+              <button
+                type="button"
+                className={styles['secondaryButton']}
+                aria-label={providerCopy(t('editProvider'), { provider: t('nousTitle'), displayName: t('nousTitle') })}
+                onClick={() => { setNousOpen(!nousOpen) }}
+              >
+                {t('edit')}
+              </button>
+            </span>
+          </div>
+          {nousOpen && <NousCard operations={operations} namespace={state.namespaces.get('llm-pi-ai')} readOnly={!state.writable} onSaved={() => { void controller.load() }} t={t} open={nousOpen} />}
         </div>
-        {nousOpen && <NousCard operations={operations} namespace={state.namespaces.get('llm-pi-ai')} readOnly={!state.writable} onSaved={() => { void controller.load() }} t={t} open={nousOpen} />}
-      </div>
-      <div className={styles['rowCard']}>
-        <div className={styles['rowHead']}>
-          <span className={styles['rowIdentity']}>
-            <span className={styles['rowName']}>{t('xaiTitle')}</span>
-          </span>
-          <span className={styles['rowActions']}>
-            <button
-              type="button"
-              className={styles['secondaryButton']}
-              aria-label={providerCopy(t('editProvider'), { provider: t('xaiTitle'), displayName: t('xaiTitle') })}
-              onClick={() => { setXaiOpen(!xaiOpen) }}
-            >
-              {t('edit')}
-            </button>
-          </span>
+        <div className={`${styles['rowCard']} ${styles['subscriptionCard']}`}>
+          <div className={styles['rowHead']}>
+            <span className={styles['rowIdentity']}>
+              <ProviderMark value={t('xaiTitle')} />
+              <span className={styles['rowName']}>{t('xaiTitle')}</span>
+            </span>
+            <span className={styles['rowActions']}>
+              <button
+                type="button"
+                className={styles['secondaryButton']}
+                aria-label={providerCopy(t('editProvider'), { provider: t('xaiTitle'), displayName: t('xaiTitle') })}
+                onClick={() => { setXaiOpen(!xaiOpen) }}
+              >
+                {t('edit')}
+              </button>
+            </span>
+          </div>
+          {xaiOpen && <XaiCard operations={operations} namespace={state.namespaces.get('llm-pi-ai')} readOnly={!state.writable} onSaved={() => { void controller.load() }} t={t} open={xaiOpen} />}
         </div>
-        {xaiOpen && <XaiCard operations={operations} namespace={state.namespaces.get('llm-pi-ai')} readOnly={!state.writable} onSaved={() => { void controller.load() }} t={t} open={xaiOpen} />}
       </div>
       <ul className={styles['rows']}>
         {configured.map((row) => {
@@ -507,6 +562,7 @@ function Loaded({ injected, renderSlot }: { injected: ModelsSectionFace; renderS
             <li key={row.entry.provider} className={styles['rowCard']}>
               <div className={styles['rowHead']}>
                 <span className={styles['rowIdentity']}>
+                  <ProviderMark value={row.entry.displayName} />
                   <span className={styles['rowName']} data-yh-part="provider-model-label">{row.entry.displayName}</span>
                   {/* Only the adapter can tell a hand-declared route from a
                       shipped one it also has a stored profile for, so the tag
@@ -516,21 +572,27 @@ function Loaded({ injected, renderSlot }: { injected: ModelsSectionFace; renderS
                     : null}
                   {credentialConfigured
                     ? (
-                      <span
-                        className={`${styles['credentialDot']} ${styles['credentialDotConfigured']}`}
-                        role="img"
-                        aria-label={t('credentialConfigured')}
-                        title={t('credentialConfigured')}
-                      />
+                      <>
+                        <span
+                          className={`${styles['credentialDot']} ${styles['credentialDotConfigured']}`}
+                          role="img"
+                          aria-label={t('credentialConfigured')}
+                          title={t('credentialConfigured')}
+                        />
+                        <span className={`${styles['credentialStatus']} ${styles['credentialStatusConfigured']}`}>{t('credentialConfigured')}</span>
+                      </>
                     )
                     : credentialMissing
                       ? (
-                        <span
-                          className={`${styles['credentialDot']} ${styles['credentialDotMissing']}`}
-                          role="img"
-                          aria-label={t('credentialMissing')}
-                          title={t('credentialMissing')}
-                        />
+                        <>
+                          <span
+                            className={`${styles['credentialDot']} ${styles['credentialDotMissing']}`}
+                            role="img"
+                            aria-label={t('credentialMissing')}
+                            title={t('credentialMissing')}
+                          />
+                          <span className={`${styles['credentialStatus']} ${styles['credentialStatusMissing']}`}>{t('credentialMissing')}</span>
+                        </>
                       )
                       : null}
                 </span>
