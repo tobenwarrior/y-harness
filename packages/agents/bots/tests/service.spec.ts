@@ -5665,19 +5665,26 @@ describe('durable Bot roster', () => {
     expect(() => projectBotMemories(conflict, BotId('bot-alpha'))).toThrow(/conflicting text/)
   })
 
-  it('keeps identical text separate when callers choose distinct explicit ids', async () => {
+  it('orders equal-time memories by id and keeps identical text separate', async () => {
     const pool = new MemoryMediaPool()
     const first = await harness(pool)
     const created = await first.service.create({ name: 'Duplicate text owner', cwd: '/tmp' })
     await close(first.ctx)
     const h = await harness(pool, undefined, undefined, [String(created.bot.sessionId)])
+    const fixedTime = Date.now()
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(fixedTime)
     try {
-      const bot = await h.service.collaborationFor({ id: created.bot.sessionId })
-      const firstMemory = await bot.memory!.remember({ memoryId: BotMemoryId('memory-first'), text: 'Same reference.' })
+      const agent = h.agents[0]!
+      const bot = await h.service.collaborationFor(agent)
       const secondMemory = await bot.memory!.remember({ memoryId: BotMemoryId('memory-second'), text: 'Same reference.' })
+      const firstMemory = await bot.memory!.remember({ memoryId: BotMemoryId('memory-first'), text: 'Same reference.' })
+      expect([firstMemory.createdAt, secondMemory.createdAt]).toEqual([fixedTime, fixedTime])
       await expect(bot.memory!.list()).resolves.toEqual([firstMemory, secondMemory])
-      expect(h.agents[0]?.session.snapshotEvents().filter(event => event.type === 'bot/memory')).toHaveLength(2)
+      const prompt = renderPrompt(await h.ctx.systemPrompt.assemble({ scope: agent }))
+      expect(prompt).toContain('- "memory-first": "Same reference."\n- "memory-second": "Same reference."')
+      expect(agent.session.snapshotEvents().filter(event => event.type === 'bot/memory')).toHaveLength(2)
     } finally {
+      clock.mockRestore()
       await close(h.ctx)
     }
   })
