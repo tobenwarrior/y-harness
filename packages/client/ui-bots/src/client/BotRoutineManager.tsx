@@ -230,7 +230,9 @@ function historyRows(history: BotRoutineHistory, t: Translate, options: HistoryR
                 <li key={`result:${String(result.messageId)}`} className={css.routineHistoryRow}>
                   <strong>{historyDate(result.completedAt)}</strong>
                   <span>{result.output ?? result.error ?? t('routineNoOutput')}</span>
-                  <Tag tone={result.status === 'completed' ? 'success' : 'warning'}>{resultStatusLabel(result.status, t)}</Tag>
+                  <Tag className={css.routineHistoryStatus} tone={result.status === 'completed' ? 'success' : 'warning'}>
+                    {resultStatusLabel(result.status, t)}
+                  </Tag>
                 </li>
               ))}
             </ul>
