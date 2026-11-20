@@ -8,7 +8,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Browser, Download, Page } from 'playwright'
 import { chromium } from 'playwright'
-import { afterAll, beforeAll, describe, expect, it, onTestFailed } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, onTestFailed } from 'vitest'
 import { dump } from 'js-yaml'
 import { entryListSchema } from '@yharness/cordis-plugin-include'
 import { BotId, type BotView } from '@yharness/bots'
@@ -132,11 +132,18 @@ describe('web e2e: owner-only Grok history attachments', () => {
     })
     for (const bot of [firstBot, secondBot]) await scaffold.ctx.bots.importGrokHistory({ botId: bot.id, document })
     browser = await chromium.launch()
+  }, 120_000)
+
+  beforeEach(async () => {
     page = await newEnglishPage(browser)
     tripwire = watchConsole(page)
     await page.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
     await page.waitForSelector('[class*="frame"]', { timeout: 30_000 })
   }, 120_000)
+
+  afterEach(async () => {
+    await page?.context().close()
+  })
 
   afterAll(async () => {
     await browser?.close()
@@ -144,25 +151,26 @@ describe('web e2e: owner-only Grok history attachments', () => {
     if (workspaceRoot !== undefined) await rm(workspaceRoot, { recursive: true, force: true })
   })
 
-  it('downloads only the exact verified attachment and recovers after a vault reload', async () => {
-    onTestFailed(() => saveFailureShot(page, 'web-e2e-grok-history-attachments'))
-    const openBotOption = async (name: 'Share bot' | 'Imported Grok chat') => {
-      const sidebar = page.locator('[data-yh-part="sidebar"]')
-      const botsMode = sidebar.getByRole('button', { name: 'Bots', exact: true })
-      await botsMode.waitFor({ state: 'visible' })
-      if (await botsMode.getAttribute('aria-pressed') !== 'true') await botsMode.click()
-      const roster = sidebar.locator('aside[aria-label="Bot workspace"]')
-      const row = roster.locator(`[data-bot-id="${secondBot.id}"]`)
-      await row.click()
-      const detail = page.locator(`section[aria-label="${secondBot.name}"]`)
-      await detail.getByRole('button', { name: 'Bot options', exact: true }).click()
-      await page.getByRole('menuitem', { name, exact: true }).click()
-    }
-    const openHistory = async () => {
-      await openBotOption('Imported Grok chat')
-      return page.getByRole('dialog', { name: 'Imported Grok chat' })
-    }
-    const screenshots = process.env.DSH_GROK_HISTORY_SCREENSHOTS
+  const openBotOption = async (name: 'Share bot' | 'Imported Grok chat') => {
+    const sidebar = page.locator('[data-yh-part="sidebar"]')
+    const botsMode = sidebar.getByRole('button', { name: 'Bots', exact: true })
+    await botsMode.waitFor({ state: 'visible' })
+    if (await botsMode.getAttribute('aria-pressed') !== 'true') await botsMode.click()
+    const roster = sidebar.locator('aside[aria-label="Bot workspace"]')
+    const row = roster.locator(`[data-bot-id="${secondBot.id}"]`)
+    await row.click()
+    const detail = page.locator(`section[aria-label="${secondBot.name}"]`)
+    await detail.getByRole('button', { name: 'Bot options', exact: true }).click()
+    await page.getByRole('menuitem', { name, exact: true }).click()
+  }
+  const openHistory = async () => {
+    await openBotOption('Imported Grok chat')
+    return page.getByRole('dialog', { name: 'Imported Grok chat' })
+  }
+  const screenshots = process.env.DSH_GROK_HISTORY_SCREENSHOTS
+
+  it('issues role-specific invites and confirms both shared-context changes', async () => {
+    onTestFailed(() => saveFailureShot(page, 'web-e2e-bot-sharing'))
     await openBotOption('Share bot')
     const sharing = page.getByRole('dialog', { name: 'Share this bot', exact: true })
     await sharing.getByRole('button', { name: 'Create invite', exact: true }).waitFor({ state: 'visible' })
@@ -195,8 +203,63 @@ describe('web e2e: owner-only Grok history attachments', () => {
       }
       await page.setViewportSize(viewport)
     }
+
     await page.keyboard.press('Escape')
     await sharing.waitFor({ state: 'hidden' })
+    await page.getByRole('button', { name: 'Bot workspace options', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Create a shared group', exact: true }).click()
+    const owner = page.getByRole('dialog', { name: 'Shared with you', exact: true })
+    await owner.getByRole('button', { name: new RegExp('^' + secondBot.name + '\\b') }).waitFor({ state: 'visible' })
+    await page.keyboard.press('Escape')
+    await owner.waitFor({ state: 'hidden' })
+    await openBotOption('Share bot')
+
+    const createInvite = sharing.getByRole('button', { name: 'Create invite', exact: true })
+    const inviteCode = sharing.getByLabel('Invite code', { exact: true })
+    await sharing.getByRole('tab', { name: 'Manager', exact: true }).click()
+    await createInvite.click()
+    await inviteCode.waitFor({ state: 'visible' })
+    await sharing.getByRole('tab', { name: 'Collaborator', exact: true }).click()
+    await inviteCode.waitFor({ state: 'hidden' })
+
+    const contextSwitch = sharing.getByRole('switch', { name: 'Enable shared context', exact: true })
+    await contextSwitch.click()
+    const enable = page.getByRole('dialog', { name: 'Enable shared context?', exact: true })
+    const enableContext = enable.getByRole('button', { name: 'Enable context', exact: true })
+    expect(await enableContext.isDisabled()).toBe(true)
+    await enable.getByRole('checkbox', { name: /visible to every member/i }).check()
+    await enableContext.click()
+    await enable.waitFor({ state: 'hidden' })
+    expect(await contextSwitch.getAttribute('aria-checked')).toBe('true')
+
+    await contextSwitch.click()
+    const disable = page.getByRole('dialog', { name: 'Disable shared context?', exact: true })
+    const disableContext = disable.getByRole('button', { name: 'Disable and clear', exact: true })
+    expect(await disableContext.isDisabled()).toBe(true)
+    if (screenshots !== undefined) {
+      const viewport = page.viewportSize()
+      if (viewport === null) throw new Error('Sharing confirmation screenshots require a viewport')
+      for (const width of [1440, 480]) {
+        await page.setViewportSize({ width, height: 900 })
+        const bounds = await disable.boundingBox()
+        if (bounds === null) throw new Error('The sharing confirmation disappeared while resizing')
+        expect(bounds.x).toBeGreaterThanOrEqual(0)
+        expect(bounds.x + bounds.width).toBeLessThanOrEqual(width)
+        await page.screenshot({ path: join(screenshots, 'disable-shared-context-' + String(width) + '.png'), animations: 'disabled' })
+      }
+      await page.setViewportSize(viewport)
+    }
+    await disable.getByRole('checkbox', { name: /shared notes will be cleared/i }).check()
+    await disableContext.click()
+    await disable.waitFor({ state: 'hidden' })
+    expect(await contextSwitch.getAttribute('aria-checked')).toBe('false')
+
+    await page.keyboard.press('Escape')
+    await sharing.waitFor({ state: 'hidden' })
+  })
+
+  it('downloads only the exact verified attachment and recovers after a vault reload', async () => {
+    onTestFailed(() => saveFailureShot(page, 'web-e2e-grok-history-attachments'))
     const downloadName = `Download ${ATTACHMENT_NAME}`
     const dialog = await openHistory()
     const link = dialog.getByRole('link', { name: downloadName, exact: true })

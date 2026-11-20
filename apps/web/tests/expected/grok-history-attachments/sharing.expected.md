@@ -1,6 +1,6 @@
 - dialog "Share this bot":
   - heading "Share this bot" [level=2]
-  - button "Cancel"
+  - button "Close"
   - paragraph: Invite people to their own private session with this bot. You can revoke access at any time.
   - text: Access level
   - tablist "Access level":
@@ -16,4 +16,3 @@
   - region "Shared app access":
     - text: Shared app access
     - paragraph: Connect an app to manage shared access here.
-  - button "Cancel"

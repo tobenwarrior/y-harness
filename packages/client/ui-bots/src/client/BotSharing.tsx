@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
 import { brandString } from '@yharness/brand'
 import { randomUUID } from '@yharness/util-crypto'
@@ -528,348 +528,219 @@ function SharedApprovalsCard({ client, scope, botName, groupName, resolveBotName
   )
 }
 
-/** Owner-facing invite and membership controls for one Bot. */
-export function BotShareDialog({ bot, actions, open, onClose, t }: {
+interface BotShareDialogProps {
   readonly bot: BotSummary
   readonly actions: BotShareActions
   readonly open: boolean
   readonly onClose: () => void
   readonly t: Translate
-}) {
+}
+
+/**
+ * Mount the owner sharing controls for the lifetime of one open Bot dialog.
+ * @param props - Selected Bot, sharing actions, and dialog controls.
+ */
+export function BotShareDialog({ open, ...props }: BotShareDialogProps) {
+  return open ? <OpenBotShareDialog key={props.bot.id} {...props} /> : null
+}
+
+type ShareOperation = 'load' | 'invite' | 'revoke' | 'memory' | 'roster' | 'delivery'
+
+// A closed dialog may abort while an owner request is outstanding.
+function signalAborted(signal: AbortSignal): boolean {
+  return signal.aborted
+}
+
+function OpenBotShareDialog({ bot, actions, onClose, t }: Omit<BotShareDialogProps, 'open'>) {
   const [members, setMembers] = useState<readonly BotShareMember[]>([])
   const [role, setRole] = useState<BotShareRole>('collaborator')
   const [invite, setInvite] = useState<BotShareInviteValue | null>(null)
-  const [working, setWorking] = useState<'load' | 'invite' | 'revoke' | null>(null)
+  const [working, setWorking] = useState<ShareOperation | null>('load')
   const [memoryPolicy, setMemoryPolicy] = useState<BotShareMemoryPolicyValue | null>(null)
   const [memoryTarget, setMemoryTarget] = useState<boolean | null>(null)
   const [memoryAcknowledged, setMemoryAcknowledged] = useState(false)
-  const [memoryWorking, setMemoryWorking] = useState(false)
   const [rosterFence, setRosterFence] = useState<BotSharedRosterFenceDiagnosticValue | null>(null)
   const [rosterFenceConfirmOpen, setRosterFenceConfirmOpen] = useState(false)
   const [rosterFenceAcknowledged, setRosterFenceAcknowledged] = useState(false)
-  const [rosterFenceWorking, setRosterFenceWorking] = useState(false)
   const [deliveryFences, setDeliveryFences] = useState<readonly BotSharedGroupDeliveryFenceView[]>([])
   const [deliveryInspectionFailed, setDeliveryInspectionFailed] = useState(false)
   const [deliveryFenceTarget, setDeliveryFenceTarget] = useState<BotSharedGroupDeliveryFenceView | null>(null)
   const [deliveryFenceAcknowledged, setDeliveryFenceAcknowledged] = useState(false)
-  const [deliveryFenceWorking, setDeliveryFenceWorking] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
-  const [stateBotId, setStateBotId] = useState<string | null>(open ? bot.id : null)
-  const botIdRef = useRef(bot.id)
-  botIdRef.current = bot.id
-  const openRef = useRef(open)
-  openRef.current = open
-  const viewGenerationRef = useRef(0)
-  const loadGenerationRef = useRef(0)
-  const workingGenerationRef = useRef(0)
-  const memoryOperationGenerationRef = useRef(0)
+  const lifecycle = useRef({ signal: AbortSignal.abort(), pending: false })
   const inviteGenerationRef = useRef(0)
-  const stateMatchesBot = open && stateBotId === bot.id
+  const busy = working !== null
 
-  const isCurrentView = (botId: string, generation: number): boolean => (
-    openRef.current && botIdRef.current === botId && viewGenerationRef.current === generation
-  )
-  const isCurrentWorking = (botId: string, viewGeneration: number, workingGeneration: number): boolean => (
-    isCurrentView(botId, viewGeneration) && workingGenerationRef.current === workingGeneration
-  )
-  const isCurrentMemoryOperation = (botId: string, viewGeneration: number, operationGeneration: number): boolean => (
-    isCurrentView(botId, viewGeneration) && memoryOperationGenerationRef.current === operationGeneration
-  )
-
-  const load = async (requestedBotId: string, viewGeneration: number): Promise<void> => {
-    if (!isCurrentView(requestedBotId, viewGeneration)) return
-    const loadGeneration = loadGenerationRef.current + 1
-    loadGenerationRef.current = loadGeneration
-    const isCurrentLoad = (): boolean => (
-      isCurrentView(requestedBotId, viewGeneration) && loadGenerationRef.current === loadGeneration
-    )
-    setWorking('load')
+  const perform = async (
+    operation: ShareOperation,
+    action: (signal: AbortSignal) => Promise<void>,
+    fallback = t('shareError'),
+  ): Promise<void> => {
+    const view = lifecycle.current
+    if (view.pending || signalAborted(view.signal)) return
+    view.pending = true
+    setWorking(operation)
     setError(null)
+    try {
+      await action(view.signal)
+    } catch (cause: unknown) {
+      if (!signalAborted(view.signal)) setError(cause instanceof Error ? cause.message : fallback)
+    } finally {
+      view.pending = false
+      if (!signalAborted(view.signal)) setWorking(null)
+    }
+  }
+
+  const load = async (signal: AbortSignal): Promise<void> => {
+    setWorking('load')
     setDeliveryInspectionFailed(false)
     try {
-      const value = await actions.listMembers(requestedBotId)
-      if (!isCurrentLoad()) return
+      const value = await actions.listMembers(bot.id)
+      if (signalAborted(signal)) return
       setMembers(value.members)
       if (actions.getMemoryPolicy !== undefined) {
-        const policy = await actions.getMemoryPolicy(requestedBotId)
-        if (!isCurrentLoad()) return
+        const policy = await actions.getMemoryPolicy(bot.id)
+        if (signalAborted(signal)) return
         setMemoryPolicy(policy)
       }
       if (actions.inspectRosterFence !== undefined) {
         const fence = await actions.inspectRosterFence()
-        if (!isCurrentLoad()) return
+        if (signalAborted(signal)) return
         setRosterFence(fence)
       }
-      if (actions.inspectDeliveryFences !== undefined) {
-        try {
-          const fences = await actions.inspectDeliveryFences(requestedBotId)
-          if (!isCurrentLoad()) return
-          setDeliveryFences(fences.fences)
-        } catch {
-          if (!isCurrentLoad()) return
-          setDeliveryFences([])
-          setDeliveryInspectionFailed(true)
-          setError(t('sharedGroupDeliveryFenceUnavailable'))
-        }
-      }
     } catch (cause: unknown) {
-      if (isCurrentLoad()) {
-        setDeliveryInspectionFailed(actions.inspectDeliveryFences !== undefined)
-        setError(cause instanceof Error ? cause.message : t('shareError'))
-      }
-    } finally {
-      if (isCurrentLoad()) setWorking(current => current === 'load' ? null : current)
+      if (!signalAborted(signal)) setDeliveryInspectionFailed(actions.inspectDeliveryFences !== undefined)
+      throw cause
     }
+    await refreshDeliveryFences(signal)
   }
 
-  useEffect(() => {
-    const viewGeneration = viewGenerationRef.current + 1
-    viewGenerationRef.current = viewGeneration
-    loadGenerationRef.current += 1
-    workingGenerationRef.current += 1
-    memoryOperationGenerationRef.current += 1
-    inviteGenerationRef.current += 1
-    if (!open) {
-      setStateBotId(null)
-      setWorking(null)
-      setMemoryWorking(false)
-      setMemoryTarget(null)
-      setMemoryAcknowledged(false)
-      setRosterFence(null)
-      setRosterFenceConfirmOpen(false)
-      setRosterFenceAcknowledged(false)
-      setRosterFenceWorking(false)
-      setDeliveryFences([])
+  const refreshDeliveryFences = async (signal: AbortSignal): Promise<void> => {
+    if (actions.inspectDeliveryFences === undefined) return
+    try {
+      const fences = await actions.inspectDeliveryFences(bot.id)
+      if (signal.aborted) return
+      setDeliveryFences(fences.fences)
       setDeliveryInspectionFailed(false)
+    } catch {
+      if (signal.aborted) return
+      setDeliveryFences([])
+      setDeliveryInspectionFailed(true)
       setDeliveryFenceTarget(null)
       setDeliveryFenceAcknowledged(false)
-      setDeliveryFenceWorking(false)
-      return
-    }
-    setStateBotId(bot.id)
-    setMembers([])
-    setRole('collaborator')
-    setInvite(null)
-    setCopied(false)
-    setMemoryPolicy(null)
-    setMemoryTarget(null)
-    setMemoryAcknowledged(false)
-    setRosterFence(null)
-    setRosterFenceConfirmOpen(false)
-    setRosterFenceAcknowledged(false)
-    setRosterFenceWorking(false)
-    setDeliveryFences([])
-    setDeliveryInspectionFailed(false)
-    setDeliveryFenceTarget(null)
-    setDeliveryFenceAcknowledged(false)
-    setDeliveryFenceWorking(false)
-    setError(null)
-    void load(bot.id, viewGeneration)
-  }, [bot.id, open])
-
-  const recoverRosterFence = async (): Promise<void> => {
-    const token = rosterFence?.status === 'held' ? rosterFence.token : undefined
-    if (!stateMatchesBot || token === undefined || actions.recoverRosterFence === undefined
-      || rosterFenceWorking || working !== null || memoryWorking) return
-    const requestedBotId = bot.id
-    const viewGeneration = viewGenerationRef.current
-    setRosterFenceWorking(true)
-    setError(null)
-    try {
-      const result = await actions.recoverRosterFence(token)
-      if (!isCurrentView(requestedBotId, viewGeneration)) return
-      if (result.status === 'released' || result.status === 'absent') {
-        setRosterFence({ status: 'clear' })
-        setRosterFenceConfirmOpen(false)
-        setRosterFenceAcknowledged(false)
-        return
-      }
-      setRosterFenceAcknowledged(false)
-      setError(t('sharedRosterFenceBusy'))
-      if (actions.inspectRosterFence !== undefined) {
-        try {
-          const current = await actions.inspectRosterFence()
-          if (isCurrentView(requestedBotId, viewGeneration)) setRosterFence(current)
-        } catch (refreshError: unknown) {
-          if (isCurrentView(requestedBotId, viewGeneration)) {
-            setError(refreshError instanceof Error ? refreshError.message : t('sharedRosterFenceRecoveryFailed'))
-          }
-        }
-      }
-    } catch (cause: unknown) {
-      if (isCurrentView(requestedBotId, viewGeneration)) {
-        setRosterFenceAcknowledged(false)
-        setError(cause instanceof Error ? cause.message : t('sharedRosterFenceRecoveryFailed'))
-      }
-    } finally {
-      if (isCurrentView(requestedBotId, viewGeneration)) setRosterFenceWorking(false)
+      setError(t('sharedGroupDeliveryFenceUnavailable'))
     }
   }
 
-  const recoverDeliveryFence = async (): Promise<void> => {
-    const target = deliveryFenceTarget
-    if (!stateMatchesBot || target === null || target.botId !== bot.id
-      || actions.recoverDeliveryFence === undefined || deliveryFenceWorking
-      || working !== null || memoryWorking || rosterFenceWorking) return
-    const stillListed = deliveryFences.some(fence => (
+  useLayoutEffect(() => {
+    const controller = new AbortController()
+    lifecycle.current = { signal: controller.signal, pending: false }
+    void perform('load', load)
+    return () => { controller.abort() }
+  }, [])
+
+  const recoverRosterFence = (
+    token: string,
+    recover: NonNullable<BotShareActions['recoverRosterFence']>,
+    inspect: NonNullable<BotShareActions['inspectRosterFence']>,
+  ): Promise<void> => perform('roster', async (signal) => {
+    setRosterFenceAcknowledged(false)
+    const result = await recover(token)
+    if (signalAborted(signal)) return
+    if (result.status === 'released' || result.status === 'absent') {
+      setRosterFence({ status: 'clear' })
+      setRosterFenceConfirmOpen(false)
+      return
+    }
+    setError(t('sharedRosterFenceBusy'))
+    const current = await inspect()
+    if (!signalAborted(signal)) setRosterFence(current)
+  }, t('sharedRosterFenceRecoveryFailed'))
+
+  const recoverDeliveryFence = (
+    target: BotSharedGroupDeliveryFenceView,
+    recover: NonNullable<BotShareActions['recoverDeliveryFence']>,
+  ): Promise<void> => perform('delivery', async (signal) => {
+    const matchesTarget = (fence: BotSharedGroupDeliveryFenceView): boolean => (
       fence.groupId === target.groupId
       && fence.botId === target.botId
       && fence.sessionId === target.sessionId
       && fence.messageId === target.messageId
-    ))
-    if (!stillListed) {
+    )
+    setDeliveryFenceAcknowledged(false)
+    if (target.botId !== bot.id || !deliveryFences.some(matchesTarget)) {
       setDeliveryFenceTarget(null)
-      setDeliveryFenceAcknowledged(false)
       setError(t('sharedGroupDeliveryFenceChanged'))
       return
     }
-    const requestedBotId = bot.id
-    const viewGeneration = viewGenerationRef.current
-    setDeliveryFenceWorking(true)
-    setError(null)
-    try {
-      const result = await actions.recoverDeliveryFence(target)
-      if (!isCurrentView(requestedBotId, viewGeneration)) return
-      if (result.status === 'accepted' || result.status === 'released') {
-        setDeliveryFences(current => current.filter(fence => (
-          fence.groupId !== target.groupId
-          || fence.botId !== target.botId
-          || fence.sessionId !== target.sessionId
-          || fence.messageId !== target.messageId
-        )))
-        setDeliveryFenceTarget(null)
-        setDeliveryFenceAcknowledged(false)
-        return
-      }
-      setDeliveryFenceAcknowledged(false)
-      setError(result.status === 'busy'
-        ? t('sharedGroupDeliveryFenceBusy')
-        : t('sharedGroupDeliveryFenceRecoveryFailed'))
-      try {
-        const fences = await actions.inspectDeliveryFences?.(requestedBotId)
-        if (fences !== undefined && isCurrentView(requestedBotId, viewGeneration)) {
-          setDeliveryFences(fences.fences)
-          setDeliveryInspectionFailed(false)
-        }
-      } catch {
-        if (isCurrentView(requestedBotId, viewGeneration)) {
-          setDeliveryFences([])
-          setDeliveryInspectionFailed(true)
-          setDeliveryFenceTarget(null)
-          setDeliveryFenceAcknowledged(false)
-          setError(t('sharedGroupDeliveryFenceUnavailable'))
-        }
-      }
-    } catch (cause: unknown) {
-      if (isCurrentView(requestedBotId, viewGeneration)) {
-        setDeliveryFenceAcknowledged(false)
-        setError(cause instanceof Error ? cause.message : t('sharedGroupDeliveryFenceRecoveryFailed'))
-      }
-    } finally {
-      if (isCurrentView(requestedBotId, viewGeneration)) setDeliveryFenceWorking(false)
+    const result = await recover(target)
+    if (signal.aborted) return
+    if (result.status === 'accepted' || result.status === 'released') {
+      setDeliveryFences(current => current.filter(fence => !matchesTarget(fence)))
+      setDeliveryFenceTarget(null)
+      return
     }
-  }
+    setError(result.status === 'busy'
+      ? t('sharedGroupDeliveryFenceBusy')
+      : t('sharedGroupDeliveryFenceRecoveryFailed'))
+    await refreshDeliveryFences(signal)
+  }, t('sharedGroupDeliveryFenceRecoveryFailed'))
 
-  const createInvite = async (): Promise<void> => {
-    if (!stateMatchesBot || working !== null || memoryWorking || rosterFenceWorking) return
-    const requestedBotId = bot.id
-    const viewGeneration = viewGenerationRef.current
-    const workingGeneration = workingGenerationRef.current + 1
-    workingGenerationRef.current = workingGeneration
+  const createInvite = (): Promise<void> => perform('invite', async (signal) => {
     inviteGenerationRef.current += 1
-    setWorking('invite')
-    setError(null)
     setCopied(false)
-    try {
-      const created = await actions.createInvite(requestedBotId, role)
-      if (!isCurrentWorking(requestedBotId, viewGeneration, workingGeneration)) return
-      inviteGenerationRef.current += 1
-      setInvite(created)
-      await load(requestedBotId, viewGeneration)
-    } catch (cause: unknown) {
-      if (isCurrentWorking(requestedBotId, viewGeneration, workingGeneration)) {
-        setError(cause instanceof Error ? cause.message : t('shareError'))
-      }
-    } finally {
-      if (isCurrentWorking(requestedBotId, viewGeneration, workingGeneration)) {
-        setWorking(current => current === 'invite' ? null : current)
-      }
-    }
-  }
+    const created = await actions.createInvite(bot.id, role)
+    if (signal.aborted) return
+    inviteGenerationRef.current += 1
+    setInvite(created)
+    await load(signal)
+  })
 
-  const revoke = async (member: BotShareMember): Promise<void> => {
-    if (member.role === 'owner' || working !== null || memoryWorking || rosterFenceWorking) return
-    const requestedBotId = bot.id
-    const viewGeneration = viewGenerationRef.current
-    const workingGeneration = workingGenerationRef.current + 1
-    workingGenerationRef.current = workingGeneration
-    setWorking('revoke')
-    setError(null)
-    try {
-      broadcastSharedAuthChanged()
-      await actions.revokeMember(requestedBotId, String(member.principalId))
-      broadcastSharedAuthChanged()
-      if (!isCurrentWorking(requestedBotId, viewGeneration, workingGeneration)) return
-      setMembers(current => current.filter(candidate => candidate.principalId !== member.principalId))
-    } catch (cause: unknown) {
-      if (isCurrentWorking(requestedBotId, viewGeneration, workingGeneration)) {
-        setError(cause instanceof Error ? cause.message : t('shareError'))
-      }
-    } finally {
-      if (isCurrentWorking(requestedBotId, viewGeneration, workingGeneration)) {
-        setWorking(current => current === 'revoke' ? null : current)
-      }
-    }
-  }
+  const revoke = (member: BotShareMember): Promise<void> => perform('revoke', async (signal) => {
+    broadcastSharedAuthChanged()
+    await actions.revokeMember(bot.id, String(member.principalId))
+    broadcastSharedAuthChanged()
+    if (signal.aborted) return
+    setMembers(current => current.filter(candidate => candidate.principalId !== member.principalId))
+  })
 
-  const confirmMemoryPolicy = async (): Promise<void> => {
-    if (!openRef.current || !stateMatchesBot || memoryTarget === null || actions.setMemoryPolicy === undefined
-      || memoryWorking || rosterFenceWorking) return
-    const requestedBotId = bot.id
-    const viewGeneration = viewGenerationRef.current
-    const operationGeneration = memoryOperationGenerationRef.current + 1
-    memoryOperationGenerationRef.current = operationGeneration
-    const target = memoryTarget
-    setMemoryWorking(true)
-    setError(null)
-    try {
-      const policy = await actions.setMemoryPolicy(requestedBotId, target)
-      if (!isCurrentMemoryOperation(requestedBotId, viewGeneration, operationGeneration)) return
-      setMemoryPolicy(policy)
-      setMemoryTarget(null)
-      setMemoryAcknowledged(false)
-    } catch (cause: unknown) {
-      if (isCurrentMemoryOperation(requestedBotId, viewGeneration, operationGeneration)) {
-        setError(cause instanceof Error ? cause.message : t('shareError'))
-      }
-    } finally {
-      if (isCurrentMemoryOperation(requestedBotId, viewGeneration, operationGeneration)) setMemoryWorking(false)
-    }
-  }
+  const confirmMemoryPolicy = (
+    enabled: boolean,
+    save: NonNullable<BotShareActions['setMemoryPolicy']>,
+  ): Promise<void> => perform('memory', async (signal) => {
+    const policy = await save(bot.id, enabled)
+    if (signal.aborted) return
+    setMemoryPolicy(policy)
+    setMemoryTarget(null)
+    setMemoryAcknowledged(false)
+  })
 
   const rosterFenceToken = rosterFence?.status === 'held' ? rosterFence.token : undefined
+  const saveMemory = actions.setMemoryPolicy
+  const inspectRoster = actions.inspectRosterFence
+  const recoverRoster = actions.recoverRosterFence
+  const recoverDelivery = actions.recoverDeliveryFence
 
   return (
     <>
       <Modal
-        open={open}
+        open
         onClose={onClose}
         title={t('shareBotTitle')}
         description={t('shareBotDescription')}
-        closeLabel={t('cancel')}
+        closeLabel={t('close')}
         className={css.shareDialog as string}
         contentClassName={css.shareDialogContent as string}
-        footer={<Button variant="ghost" onClick={onClose}>{t('cancel')}</Button>}
       >
-        {stateMatchesBot && error !== null && <div className={css.dialogNotice} role="alert">{error}</div>}
+        {error !== null && <div className={css.dialogNotice} role="alert">{error}</div>}
         <div className={css.dialogField}>
           <span className={css.dialogLabel}>{t('shareRoleLabel')}</span>
           <SegmentedControl
             id="yharness-bots-share-role"
             label={t('shareRoleLabel')}
-            value={stateMatchesBot ? role : 'collaborator'}
-            disabled={!stateMatchesBot || working === 'invite'}
+            value={role}
+            disabled={working === 'invite'}
             onChange={(value) => { inviteGenerationRef.current += 1; setRole(value); setInvite(null) }}
             options={[
               { value: 'collaborator', label: t('shareRoleCollaborator') },
@@ -879,10 +750,10 @@ export function BotShareDialog({ bot, actions, open, onClose, t }: {
           />
         </div>
         <div className={css.shareInviteRow}>
-          <Button variant="primary" onClick={() => { void createInvite() }} disabled={!stateMatchesBot || working !== null || memoryWorking || rosterFenceWorking} icon={<IconLinkOutlineRegular size={14} />}>
-            {stateMatchesBot && working === 'invite' ? t('creatingInvite') : t('createInvite')}
+          <Button variant="primary" onClick={() => { void createInvite() }} disabled={busy} icon={<IconLinkOutlineRegular size={14} />}>
+            {working === 'invite' ? t('creatingInvite') : t('createInvite')}
           </Button>
-          {stateMatchesBot && invite !== null && (
+          {invite !== null && (
             <div className={css.inviteCode}>
               <code aria-label={t('inviteCodeLabel')}>{invite.code}</code>
               <Tooltip label={copied ? t('copiedInvite') : t('copyInvite')} side="bottom" portal>
@@ -893,14 +764,13 @@ export function BotShareDialog({ bot, actions, open, onClose, t }: {
                   icon={<IconCopyOutlineRegular size={14} />}
                   onClick={() => {
                     const inviteCode = invite.code
-                    const inviteBotId = bot.id
-                    const viewGeneration = viewGenerationRef.current
+                    const { signal } = lifecycle.current
                     const inviteGeneration = ++inviteGenerationRef.current
                     setCopied(false)
                     void writeClipboard(inviteCode).then((success) => {
                       if (
                         success &&
-                        isCurrentView(inviteBotId, viewGeneration) &&
+                        !signal.aborted &&
                         inviteGenerationRef.current === inviteGeneration
                       ) setCopied(true)
                     })
@@ -912,9 +782,9 @@ export function BotShareDialog({ bot, actions, open, onClose, t }: {
         </div>
         <div className={css.shareMembers}>
           <div className={css.shareSectionHeading}>{t('membersLabel')}</div>
-          {stateMatchesBot && working === 'load' && <div className={css.shareLoading} role="status"><StateDot state="ongoing" size={12} /></div>}
-          {stateMatchesBot && working !== 'load' && members.length === 0 && <div className={css.shareEmpty}>{t('noMembers')}</div>}
-          {stateMatchesBot && working !== 'load' && members.map(member => (
+          {working === 'load' && <div className={css.shareLoading} role="status"><StateDot state="ongoing" size={12} /></div>}
+          {working !== 'load' && members.length === 0 && <div className={css.shareEmpty}>{t('noMembers')}</div>}
+          {working !== 'load' && members.map(member => (
             <div className={css.shareMember} key={String(member.principalId)}>
               <span className={css.shareMemberIdentity}>
                 <span className={css.shareMemberDot} aria-hidden="true" />
@@ -925,13 +795,13 @@ export function BotShareDialog({ bot, actions, open, onClose, t }: {
                 ? <span className={css.shareMemberHint}>{t('revokeOwnerDisabled')}</span>
                 : (
                   <Tooltip label={t('revokeMember')} side="top" portal>
-                    <Button variant="ghost" size="sm" aria-label={`${t('revokeMember')}: ${String(member.principalId)}`} icon={<IconTrashOutlineRegular size={14} />} disabled={working !== null || memoryWorking || rosterFenceWorking} onClick={() => { void revoke(member) }} />
+                    <Button variant="ghost" size="sm" aria-label={`${t('revokeMember')}: ${String(member.principalId)}`} icon={<IconTrashOutlineRegular size={14} />} disabled={busy} onClick={() => { void revoke(member) }} />
                   </Tooltip>
                 )}
             </div>
           ))}
         </div>
-        {stateMatchesBot && actions.getMemoryPolicy !== undefined && actions.setMemoryPolicy !== undefined && memoryPolicy !== null && (
+        {actions.getMemoryPolicy !== undefined && saveMemory !== undefined && memoryPolicy !== null && (
           <section className={css.sharedMemoryCard} aria-labelledby="yharness-shared-memory-heading">
             <div className={css.sharedMemoryHeader}>
               <span className={css.sharedMemoryIcon} aria-hidden="true"><IconShieldOutlineRegular size={16} /></span>
@@ -941,17 +811,17 @@ export function BotShareDialog({ bot, actions, open, onClose, t }: {
               </div>
               <Switch
                 checked={memoryPolicy.enabled}
-                disabled={memoryWorking || working !== null || rosterFenceWorking}
+                disabled={busy}
                 label={t('sharedMemoryToggle')}
                 onChange={(next) => { setMemoryTarget(next); setMemoryAcknowledged(false) }}
               />
             </div>
           </section>
         )}
-        {stateMatchesBot && actions.listSharedAppAccess !== undefined && actions.setSharedAppAccess !== undefined && (
+        {actions.listSharedAppAccess !== undefined && actions.setSharedAppAccess !== undefined && (
           <SharedAppsCard botId={bot.id} list={actions.listSharedAppAccess} set={actions.setSharedAppAccess} t={t} />
         )}
-        {stateMatchesBot && actions.inspectRosterFence !== undefined && rosterFence?.status === 'held' && (
+        {inspectRoster !== undefined && rosterFenceToken !== undefined && (
           <section className={css.sharedMemoryCard} aria-labelledby="yharness-shared-roster-fence-heading">
             <div className={css.sharedMemoryHeader}>
               <span className={css.sharedMemoryIcon} aria-hidden="true"><IconShieldOutlineRegular size={16} /></span>
@@ -960,25 +830,23 @@ export function BotShareDialog({ bot, actions, open, onClose, t }: {
                 <p className={css.sharedMemoryDescription}>{t('sharedRosterFenceHeld')}</p>
               </div>
             </div>
-            {rosterFenceToken !== undefined && (
-              <div className={css.shareInviteRow}>
-                <div className={css.inviteCode}>
-                  <code aria-label={t('sharedRosterFenceTokenLabel')}>{rosterFenceToken}</code>
-                </div>
-                {actions.recoverRosterFence !== undefined && (
-                  <Button
-                    variant="outline"
-                    disabled={working !== null || memoryWorking || rosterFenceWorking}
-                    onClick={() => { setRosterFenceAcknowledged(false); setRosterFenceConfirmOpen(true) }}
-                  >
-                    {rosterFenceWorking ? t('recoveringSharedRoster') : t('recoverSharedRoster')}
-                  </Button>
-                )}
+            <div className={css.shareInviteRow}>
+              <div className={css.inviteCode}>
+                <code aria-label={t('sharedRosterFenceTokenLabel')}>{rosterFenceToken}</code>
               </div>
-            )}
+              {recoverRoster !== undefined && (
+                <Button
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() => { setRosterFenceAcknowledged(false); setRosterFenceConfirmOpen(true) }}
+                >
+                  {working === 'roster' ? t('recoveringSharedRoster') : t('recoverSharedRoster')}
+                </Button>
+              )}
+            </div>
           </section>
         )}
-        {stateMatchesBot && actions.inspectDeliveryFences !== undefined && (deliveryInspectionFailed || deliveryFences.length > 0) && (
+        {actions.inspectDeliveryFences !== undefined && (deliveryInspectionFailed || deliveryFences.length > 0) && (
           <section className={css.sharedMemoryCard} aria-labelledby="yharness-shared-delivery-fence-heading">
             <div className={css.sharedMemoryHeader}>
               <span className={css.sharedMemoryIcon} aria-hidden="true"><IconShieldOutlineRegular size={16} /></span>
@@ -996,13 +864,13 @@ export function BotShareDialog({ bot, actions, open, onClose, t }: {
                 <span className={css.inviteCode}>
                   <code aria-label={t('sharedGroupDeliveryFenceIdLabel')}>{String(fence.groupId)} · {String(fence.messageId)}</code>
                 </span>
-                {actions.recoverDeliveryFence !== undefined && (
+                {recoverDelivery !== undefined && (
                   <Button
                     variant="outline"
-                    disabled={working !== null || memoryWorking || rosterFenceWorking || deliveryFenceWorking}
+                    disabled={busy}
                     onClick={() => { setDeliveryFenceTarget(fence); setDeliveryFenceAcknowledged(false) }}
                   >
-                    {deliveryFenceWorking && deliveryFenceTarget?.messageId === fence.messageId
+                    {working === 'delivery' && deliveryFenceTarget?.messageId === fence.messageId
                       ? t('recoveringSharedGroupDeliveryFence')
                       : t('recoverSharedGroupDeliveryFence')}
                   </Button>
@@ -1012,51 +880,57 @@ export function BotShareDialog({ bot, actions, open, onClose, t }: {
           </section>
         )}
       </Modal>
-      <RiskConfirmation
-        open={stateMatchesBot && memoryTarget !== null}
-        title={memoryTarget === true ? t('enableSharedMemoryTitle') : t('disableSharedMemoryTitle')}
-        description={memoryTarget === true ? t('enableSharedMemoryDescription') : t('disableSharedMemoryDescription')}
-        acknowledgeLabel={memoryTarget === true ? t('enableSharedMemoryAcknowledge') : t('disableSharedMemoryAcknowledge')}
-        cancelLabel={t('cancel')}
-        closeLabel={t('cancel')}
-        confirmLabel={memoryTarget === true ? t('enableSharedMemory') : t('disableSharedMemory')}
-        acknowledged={memoryAcknowledged}
-        disabled={!stateMatchesBot || memoryWorking || rosterFenceWorking}
-        onAcknowledgedChange={setMemoryAcknowledged}
-        onCancel={() => { setMemoryTarget(null); setMemoryAcknowledged(false) }}
-        onConfirm={() => { void confirmMemoryPolicy() }}
-      />
-      <RiskConfirmation
-        open={stateMatchesBot && rosterFenceConfirmOpen && rosterFenceToken !== undefined}
-        title={t('recoverSharedRosterTitle')}
-        description={t('recoverSharedRosterDescription', { token: rosterFenceToken ?? '' })}
-        acknowledgeLabel={t('recoverSharedRosterAcknowledge')}
-        cancelLabel={t('cancel')}
-        closeLabel={t('cancel')}
-        confirmLabel={t('recoverRoster')}
-        acknowledged={rosterFenceAcknowledged}
-        disabled={!stateMatchesBot || rosterFenceWorking}
-        onAcknowledgedChange={setRosterFenceAcknowledged}
-        onCancel={() => { setRosterFenceConfirmOpen(false); setRosterFenceAcknowledged(false) }}
-        onConfirm={() => { void recoverRosterFence() }}
-      />
-      <RiskConfirmation
-        open={stateMatchesBot && deliveryFenceTarget !== null}
-        title={t('recoverSharedGroupDeliveryFenceTitle')}
-        description={t('recoverSharedGroupDeliveryFenceDescription', {
-          groupId: deliveryFenceTarget === null ? '' : String(deliveryFenceTarget.groupId),
-          messageId: deliveryFenceTarget === null ? '' : String(deliveryFenceTarget.messageId),
-        })}
-        acknowledgeLabel={t('recoverSharedGroupDeliveryFenceAcknowledge')}
-        cancelLabel={t('cancel')}
-        closeLabel={t('cancel')}
-        confirmLabel={t('recoverSharedGroupDeliveryFence')}
-        acknowledged={deliveryFenceAcknowledged}
-        disabled={!stateMatchesBot || deliveryFenceWorking}
-        onAcknowledgedChange={setDeliveryFenceAcknowledged}
-        onCancel={() => { setDeliveryFenceTarget(null); setDeliveryFenceAcknowledged(false) }}
-        onConfirm={() => { void recoverDeliveryFence() }}
-      />
+      {memoryTarget !== null && saveMemory !== undefined && (
+        <RiskConfirmation
+          open
+          title={memoryTarget ? t('enableSharedMemoryTitle') : t('disableSharedMemoryTitle')}
+          description={memoryTarget ? t('enableSharedMemoryDescription') : t('disableSharedMemoryDescription')}
+          acknowledgeLabel={memoryTarget ? t('enableSharedMemoryAcknowledge') : t('disableSharedMemoryAcknowledge')}
+          cancelLabel={t('cancel')}
+          closeLabel={t('cancel')}
+          confirmLabel={memoryTarget ? t('enableSharedMemory') : t('disableSharedMemory')}
+          acknowledged={memoryAcknowledged}
+          disabled={busy}
+          onAcknowledgedChange={setMemoryAcknowledged}
+          onCancel={() => { setMemoryTarget(null); setMemoryAcknowledged(false) }}
+          onConfirm={() => { void confirmMemoryPolicy(memoryTarget, saveMemory) }}
+        />
+      )}
+      {rosterFenceConfirmOpen && rosterFenceToken !== undefined && recoverRoster !== undefined && inspectRoster !== undefined && (
+        <RiskConfirmation
+          open
+          title={t('recoverSharedRosterTitle')}
+          description={t('recoverSharedRosterDescription', { token: rosterFenceToken })}
+          acknowledgeLabel={t('recoverSharedRosterAcknowledge')}
+          cancelLabel={t('cancel')}
+          closeLabel={t('cancel')}
+          confirmLabel={t('recoverRoster')}
+          acknowledged={rosterFenceAcknowledged}
+          disabled={busy}
+          onAcknowledgedChange={setRosterFenceAcknowledged}
+          onCancel={() => { setRosterFenceConfirmOpen(false); setRosterFenceAcknowledged(false) }}
+          onConfirm={() => { void recoverRosterFence(rosterFenceToken, recoverRoster, inspectRoster) }}
+        />
+      )}
+      {deliveryFenceTarget !== null && recoverDelivery !== undefined && actions.inspectDeliveryFences !== undefined && (
+        <RiskConfirmation
+          open
+          title={t('recoverSharedGroupDeliveryFenceTitle')}
+          description={t('recoverSharedGroupDeliveryFenceDescription', {
+            groupId: String(deliveryFenceTarget.groupId),
+            messageId: String(deliveryFenceTarget.messageId),
+          })}
+          acknowledgeLabel={t('recoverSharedGroupDeliveryFenceAcknowledge')}
+          cancelLabel={t('cancel')}
+          closeLabel={t('cancel')}
+          confirmLabel={t('recoverSharedGroupDeliveryFence')}
+          acknowledged={deliveryFenceAcknowledged}
+          disabled={busy}
+          onAcknowledgedChange={setDeliveryFenceAcknowledged}
+          onCancel={() => { setDeliveryFenceTarget(null); setDeliveryFenceAcknowledged(false) }}
+          onConfirm={() => { void recoverDeliveryFence(deliveryFenceTarget, recoverDelivery) }}
+        />
+      )}
     </>
   )
 }
