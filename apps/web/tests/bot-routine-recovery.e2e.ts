@@ -420,6 +420,12 @@ it.skipIf(webSnapshotMode() === 'record')('tests a paused routine in the same ch
     dialog = await openRoutines(reopened)
     const completed = dialog.getByText('Test completed', { exact: true })
     await completed.waitFor()
+    const completionColors = await completed.evaluate((element) => {
+      const controls = element.parentElement
+      if (controls === null) throw new Error('The routine test controls are missing')
+      return { rendered: getComputedStyle(element).color, label: getComputedStyle(controls).color }
+    })
+    expect(completionColors.rendered).toBe(completionColors.label)
     await dialog.getByRole('button', { name: 'Resume ' + title, exact: true }).waitFor()
     await captureRoutineTest(reopened, 'test-completed', dialog)
     await compareOrRefreshGolden(MANUAL_EXPECTED, [

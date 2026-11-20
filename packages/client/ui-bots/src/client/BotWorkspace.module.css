@@ -1207,7 +1207,7 @@
   overflow-wrap: anywhere;
 }
 
-.routineRule span {
+.routineRule > span {
   color: var(--yh-alias-label-tertiary);
 }
 
