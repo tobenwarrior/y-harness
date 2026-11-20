@@ -12898,18 +12898,16 @@ describe('durable Bot roster', () => {
         ...context, callId: 'event-update-prompt',
       })
       expect(changed.success).toBe(true)
-      await expect(update.execute({ id: routine.id, prompt: 'x'.repeat(16_001) }, {
+      const overLimit = await update.execute({ id: routine.id, prompt: 'x'.repeat(16_001) }, {
         ...context, callId: 'event-update-over-limit',
-      })).resolves.toMatchObject({
-        success: false,
-        contentItems: [{ text: expect.stringContaining('at most 16000 characters') }],
       })
-      await expect(update.execute({ id: routine.id, event: { type: 'message', source: 'bot' }, every_seconds: 30 }, {
+      expect(overLimit.success).toBe(false)
+      expect(overLimit.contentItems[0]?.text).toContain('at most 16000 characters')
+      const conflicting = await update.execute({ id: routine.id, event: { type: 'message', source: 'bot' }, every_seconds: 30 }, {
         ...context, callId: 'event-update-conflicting-triggers',
-      })).resolves.toMatchObject({
-        success: false,
-        contentItems: [{ text: expect.stringContaining('cannot also supply a timing selector') }],
       })
+      expect(conflicting.success).toBe(false)
+      expect(conflicting.contentItems[0]?.text).toContain('cannot also supply a timing selector')
       const request = { botId: created.bot.id, routineId: routine.id }
       await expect(h.service.pauseRoutine(request)).resolves.toMatchObject({ paused: true })
       await expect(h.service.resumeRoutine(request)).resolves.toMatchObject({ resumed: true })

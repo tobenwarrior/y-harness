@@ -5148,6 +5148,33 @@ export class BotService extends TypertRemoteService {
     return Math.max(routine.firstEligibleEventSeq ?? 0, sessionEventSequence(events) + 1)
   }
 
+  /** Resolve and change one routine inside the serialized profile write. */
+  private async mutateEventRoutine(
+    sessionId: SessionId,
+    id: string,
+    signal: AbortSignal | undefined,
+    change: (routine: BotEventRoutine) => Promise<BotEventRoutine>,
+  ): Promise<BotEventRoutine | undefined> {
+    return this.serialize(async () => {
+      const domain = await this.getDomain()
+      const current = await this.refreshBotRecordFromProfile(domain, sessionId)
+      const eventRoutines = current?.eventRoutines
+      const routine = eventRoutines?.find(candidate => candidate.id === id)
+      if (current === undefined || eventRoutines === undefined || routine === undefined || current.sessionId !== sessionId) {
+        return undefined
+      }
+      const nextRoutine = await change(routine)
+      signal?.throwIfAborted()
+      const next: BotRecord = {
+        ...current, eventRoutines: eventRoutines.map(candidate => candidate.id === id ? nextRoutine : candidate),
+        updatedAt: Math.max(Date.now(), current.updatedAt),
+      }
+      await this.commitEventRoutineRecord(current, next, signal)
+      this.emitChanged()
+      return nextRoutine
+    })
+  }
+
   /** Update an event routine in the latest durable Bot profile. */
   private async updateEventRoutine(
     sessionId: SessionId,
@@ -5155,14 +5182,7 @@ export class BotService extends TypertRemoteService {
     change: { readonly title?: string; readonly prompt?: string; readonly event?: BotEventTrigger },
     signal?: AbortSignal,
   ): Promise<BotEventRoutine> {
-    return this.serialize(async () => {
-      const domain = await this.getDomain()
-      const current = await this.refreshBotRecordFromProfile(domain, sessionId)
-      const eventRoutines = current?.eventRoutines
-      const routine = eventRoutines?.find(candidate => candidate.id === id)
-      if (current === undefined || eventRoutines === undefined || routine === undefined || current.sessionId !== sessionId) {
-        throw new BotCollaborationError('target-not-found', `Event routine "${id}" was not found.`)
-      }
+    const updated = await this.mutateEventRoutine(sessionId, id, signal, async (routine) => {
       const title = change.title === undefined ? routine.title : scheduleTitle(change.title)
       const prompt = change.prompt === undefined ? routine.prompt : change.prompt.trim()
       if (prompt.length === 0 || prompt.length > 16_000) {
@@ -5172,19 +5192,13 @@ export class BotService extends TypertRemoteService {
       const cutoff = routine.status === 'active' && trigger.source !== routine.trigger.source
         ? { firstEligibleEventSeq: await this.nextRoutineEventSequence(sessionId, routine, signal) }
         : {}
-      signal?.throwIfAborted()
-      const nextRoutine: BotEventRoutine = {
+      return {
         ...routine, title, prompt, trigger, ...cutoff,
         updatedAt: Math.max(Date.now(), routine.updatedAt),
       }
-      const next: BotRecord = {
-        ...current, eventRoutines: eventRoutines.map(candidate => candidate.id === id ? nextRoutine : candidate),
-        updatedAt: Math.max(Date.now(), current.updatedAt),
-      }
-      await this.commitEventRoutineRecord(current, next, signal)
-      this.emitChanged()
-      return nextRoutine
     })
+    if (updated === undefined) throw new BotCollaborationError('target-not-found', `Event routine "${id}" was not found.`)
+    return updated
   }
 
   /** Delete one event routine and its bounded run history. */
@@ -5229,28 +5243,15 @@ export class BotService extends TypertRemoteService {
     status: 'active' | 'paused',
     signal?: AbortSignal,
   ): Promise<unknown> {
-    return this.serialize(async () => {
-      const domain = await this.getDomain()
-      const current = await this.refreshBotRecordFromProfile(domain, sessionId)
-      const eventRoutines = current?.eventRoutines
-      const routine = eventRoutines?.find(candidate => candidate.id === id)
-      if (current === undefined || eventRoutines === undefined || routine === undefined || current.sessionId !== sessionId) {
-        return { id, [status === 'active' ? 'resumed' : 'paused']: false, code: 'schedule_not_found' as const }
-      }
+    const next = await this.mutateEventRoutine(sessionId, id, signal, async (routine) => {
       const cutoff = status === 'active' && routine.status === 'paused'
         ? { firstEligibleEventSeq: await this.nextRoutineEventSequence(sessionId, routine, signal) }
         : {}
-      signal?.throwIfAborted()
-      const nextRoutine = { ...routine, status, ...cutoff, updatedAt: Math.max(Date.now(), routine.updatedAt) }
-      const next: BotRecord = {
-        ...current,
-        eventRoutines: eventRoutines.map(candidate => candidate.id === id ? nextRoutine : candidate),
-        updatedAt: Math.max(Date.now(), current.updatedAt),
-      }
-      await this.commitEventRoutineRecord(current, next, signal)
-      this.emitChanged()
-      return { ...eventRoutineView(nextRoutine), [status === 'active' ? 'resumed' : 'paused']: true }
+      return { ...routine, status, ...cutoff, updatedAt: Math.max(Date.now(), routine.updatedAt) }
     })
+    const key = status === 'active' ? 'resumed' : 'paused'
+    if (next === undefined) return { id, [key]: false, code: 'schedule_not_found' as const }
+    return { ...eventRoutineView(next), [key]: true }
   }
 
   /** Read bounded event deliveries and completed model results newest first. */
