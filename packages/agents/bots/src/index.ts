@@ -5128,12 +5128,11 @@ export class BotService extends TypertRemoteService {
       if (this.stopping || !this.githubRoutineSources.has(activity.receipt.source)) {
         throw new Error('GitHub routine source is unavailable')
       }
-      const domain = await this.getDomain()
-      for (const projected of this.recordsBySession.values()) {
-        if (projected.state !== 'active' || !projected.eventRoutines?.some(routine => matchesGitHubRoutine(routine, activity))) continue
-        let record = await this.refreshBotRecordFromProfile(domain, projected.sessionId)
-          ?? this.currentBotRecord(domain, projected.sessionId)
-        if (record?.state !== 'active' || record.ownerId !== this.ownerId) continue
+      const bots = (await this.getDomain()).table('bots')
+      const roster = await this.withProfileRevisionState(bots, state => Array.from(
+        bots.entries(), ([id, stored]) => applyProfileSnapshot(stored, state.profiles[String(id)]),
+      ).filter(record => record.state === 'active' && record.ownerId === this.ownerId))
+      for (let record of roster) {
         const routines = (record.eventRoutines ?? []).filter(routine => matchesGitHubRoutine(routine, activity))
         if (routines.length === 0) continue
         const { events } = await this.ctx.sessionController.inspect(record.sessionId)

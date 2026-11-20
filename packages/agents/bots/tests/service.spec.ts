@@ -12667,6 +12667,37 @@ describe('durable Bot roster', () => {
     }
   })
 
+  it('preserves timed Bot routine selectors alongside GitHub triggers', async () => {
+    const h = await routineHarness(undefined, undefined, undefined, [], true)
+    try {
+      const { bot } = await h.service.create({ name: 'Calendar watch', cwd: '/tmp' })
+      const date = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10)
+      const localTime = { time: '09:15:00', time_zone: 'UTC' }
+      const args = { title: 'Check the calendar', prompt: 'Summarize tomorrow.' }
+      const choices = [
+        { input: { at: { ...localTime, date } }, record: { kind: 'at', scheduledAt: date + 'T09:15:00.000Z' } },
+        { input: { daily: localTime }, record: { kind: 'daily', time: '09:15:00.000', timeZone: 'UTC' } },
+        { input: { weekly: { ...localTime, weekdays: [5, 1] } }, record: { kind: 'weekly', weekdays: [1, 5] } },
+        { input: { cron: { expression: '15 9 * * 1-5', time_zone: 'UTC' } }, record: { kind: 'cron', expression: '15 9 * * 1-5' } },
+      ]
+      for (const { input, record } of choices) {
+        await expect(invokeRoutine(h.service, 'create', { ...args, ...input }, bot.sessionId, record.kind)).resolves.toMatchObject(record)
+      }
+      const rejected = [
+        { input: { at: null }, message: 'A routine at value must be' },
+        { input: { daily: '09:15:00' }, message: 'A daily routine needs' },
+        { input: { weekly: [] }, message: 'A weekly routine needs' },
+        { input: { after_seconds: 240, trigger: 'issues' }, message: 'Use the event field' },
+      ]
+      for (const { input, message } of rejected) {
+        await expect(invokeRoutine(h.service, 'create', { ...args, ...input }, bot.sessionId, message)).rejects.toThrow(message)
+      }
+      expect((await h.service.listRoutines({ botId: bot.id })).routines).toHaveLength(choices.length)
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
   it('fails closed for every routine Remote when the V4 roster identity is foreign', async () => {
     const pool = new MemoryMediaPool()
     const h = await routineHarness(pool, undefined, undefined, [], true)
@@ -13138,6 +13169,12 @@ describe('durable Bot roster', () => {
       const create = () => invokeRoutine(live.service, 'create', args, bot.sessionId, 'github-issues')
       const created = await create()
       expect(await create()).toEqual(created)
+      await expect(invokeRoutine(live.service, 'create', {
+        ...args, event: { ...selector, event: 'pull_request.opened' },
+      }, bot.sessionId, 'github-issues')).rejects.toThrow('already used with different arguments')
+      await expect(invokeRoutine(live.service, 'create', {
+        ...args, prompt: 'x'.repeat(16_001),
+      }, bot.sessionId, 'long-github-prompt')).rejects.toThrow('at most 16000 characters')
       const [routine] = (await live.service.listRoutines({ botId: bot.id })).routines
       if (routine?.kind !== 'event') throw new Error('GitHub routine was not created')
       const request = { botId: bot.id, routineId: routine.id, limit: 10 }
@@ -13154,6 +13191,10 @@ describe('durable Bot roster', () => {
           },
         }
       }
+      await live.service.admitGitHubRoutineDelivery({
+        ...issue('unsupported-activity', 8, new Date().toISOString()),
+        event: { name: 'push', payload: {} },
+      })
       await live.service.admitGitHubRoutineDelivery(issue('older', 9, openedAt))
       await live.service.pauseRoutine(request)
       const duringPause = issue('paused', 10, new Date(Date.now() - 1).toISOString())
