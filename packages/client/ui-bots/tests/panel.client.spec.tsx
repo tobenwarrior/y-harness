@@ -225,13 +225,16 @@ describe('Bots conversation slot wiring', () => {
     const calls: Array<{ key: string; props: object }> = []
     const renderSlot: BotsPanelProps['renderSlot'] = (key, props) => {
       calls.push({ key, props })
-      return <span data-testid="conversation-slot">{selected.name}</span>
+      return key === 'bots.conversation' ? <span data-testid="conversation-slot">{selected.name}</span> : null
     }
     const props = panelProps(state, reference, renderSlot)
     render(<BotsPanel {...props} />)
 
     expect(screen.getByTestId('conversation-slot').textContent).toBe(selected.name)
-    expect(calls).toEqual([{ key: 'bots.conversation', props: { bot: { name: selected.name } } }])
+    expect(calls).toEqual([
+      { key: 'bots.conversation', props: { bot: { name: selected.name } } },
+      { key: 'conversation.session.header.agents', props: { beforeOpen: expect.any(Function) } },
+    ])
   })
 
   it('shows the VPS Bot scope beside the Computer affordance before opening it', () => {
@@ -265,19 +268,19 @@ describe('Bots conversation slot wiring', () => {
     })
     render(<BotsPanel {...props} />)
 
-    fireEvent.click(screen.getByRole('button', { name: en.filesOpen }))
+    fireEvent.click(screen.getByRole('button', { name: en.botMenu }))
     expect(screen.getByRole('menuitem', { name: en.filesPrivateWorkspace })).toBeTruthy()
     fireEvent.click(screen.getByRole('menuitem', { name: en.filesSharedWorkspace }))
     expect(openWorkspaceTab).toHaveBeenCalledWith('computer-shared-files')
 
-    fireEvent.click(screen.getByRole('button', { name: en.filesOpen }))
+    fireEvent.click(screen.getByRole('button', { name: en.botMenu }))
     fireEvent.keyDown(document, { key: 'Escape' })
-    fireEvent.click(screen.getByRole('button', { name: en.filesOpen }))
+    fireEvent.click(screen.getByRole('button', { name: en.botMenu }))
     fireEvent.click(screen.getByRole('menuitem', { name: en.filesPrivateWorkspace }))
     expect(openWorkspaceTab).toHaveBeenCalledWith('computer-files')
   })
 
-  it('keeps the Files action as a direct private workspace opener without sharing', () => {
+  it('offers only private files without shared workspace access', () => {
     const selected = bot()
     const state = workspaceState([selected], selected.id)
     const reference = sessionReference(selected.sessionId)
@@ -291,9 +294,10 @@ describe('Bots conversation slot wiring', () => {
       openWorkspaceTab,
     })} />)
 
-    fireEvent.click(screen.getByRole('button', { name: en.filesOpen }))
+    fireEvent.click(screen.getByRole('button', { name: en.botMenu }))
+    expect(screen.queryByRole('menuitem', { name: en.filesSharedWorkspace })).toBeNull()
+    fireEvent.click(screen.getByRole('menuitem', { name: en.filesLabel }))
     expect(openWorkspaceTab).toHaveBeenCalledWith('computer-files')
-    expect(screen.queryByRole('menuitem')).toBeNull()
   })
 
   it('renders Computer and terminal controls for the selected Bot and closes the Computer panel', () => {
@@ -314,7 +318,8 @@ describe('Bots conversation slot wiring', () => {
 
     fireEvent.click(screen.getByRole('button', { name: en.computerOpen }))
     expect(setComputerTarget).toHaveBeenCalledWith(selected.sessionId)
-    fireEvent.click(screen.getByRole('button', { name: en.terminalOpen }))
+    fireEvent.click(screen.getByRole('button', { name: en.botMenu }))
+    fireEvent.click(screen.getByRole('menuitem', { name: en.terminalLabel }))
     expect(openWorkspaceTab).toHaveBeenCalledWith('terminal')
 
     cleanup()
@@ -470,8 +475,8 @@ describe('Bots conversation slot wiring', () => {
       openWorkspaceTab,
     })} />)
 
-    expect(screen.getByRole('button', { name: en.terminalOpen })).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: en.terminalOpen }))
+    fireEvent.click(screen.getByRole('button', { name: en.botMenu }))
+    fireEvent.click(screen.getByRole('menuitem', { name: en.terminalLabel }))
     expect(openWorkspaceTab).toHaveBeenCalledWith('terminal')
 
     cleanup()

@@ -32,6 +32,11 @@ afterEach(() => {
 
 const t = makeTranslate(en)
 
+function chooseBotOption(name: string, menu: string = en.botMenu): void {
+  fireEvent.click(screen.getByRole('button', { name: menu }))
+  fireEvent.click(screen.getByRole('menuitem', { name }))
+}
+
 function memoryController(memories: readonly BotMemorySummary[]): BotWorkspaceController {
   const remote: BotWorkspaceRemote = {
     list: vi.fn<BotWorkspaceRemote['list']>(),
@@ -276,7 +281,7 @@ describe('Bot roster and detail', () => {
       onUpdateProfile={updateProfile}
     ><span>Persistent session surface</span></BotDetail>)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Edit bot profile' }))
+    chooseBotOption('Edit bot profile')
     fireEvent.change(screen.getByRole('textbox', { name: 'What it does' }), { target: { value: 'Source scout updated' } })
     fireEvent.change(screen.getByRole('textbox', { name: 'Instructions' }), { target: { value: 'Lead with evidence.' } })
     fireEvent.change(screen.getByRole('textbox', { name: 'Specialties' }), { target: { value: 'chat, research, release-review' } })
@@ -302,7 +307,7 @@ describe('Bot roster and detail', () => {
       onUpdateProfile={updateProfile}
     ><span /></BotDetail>)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Edit bot profile' }))
+    chooseBotOption('Edit bot profile')
     fireEvent.change(screen.getByRole('textbox', { name: 'Instructions' }), { target: { value: 'Keep the draft.' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save profile' }))
 
@@ -324,7 +329,7 @@ describe('Bot roster and detail', () => {
       onUpdateProfile={updateProfile}
     ><span /></BotDetail>)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Edit bot profile' }))
+    chooseBotOption('Edit bot profile')
     fireEvent.change(screen.getByRole('textbox', { name: 'Instructions' }), { target: { value: 'Keep my newer draft.' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save profile' }))
 
@@ -344,7 +349,7 @@ describe('Bot roster and detail', () => {
       onUpdateProfile={updateProfile}
     ><span /></BotDetail>)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Edit bot profile' }))
+    chooseBotOption('Edit bot profile')
     fireEvent.click(screen.getByRole('button', { name: 'Save profile' }))
     await waitFor(() => { expect(updateProfile).toHaveBeenCalledOnce() })
 
@@ -356,7 +361,7 @@ describe('Bot roster and detail', () => {
       onUpdateProfile={updateProfile}
     ><span /></BotDetail>)
     await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Edit bot profile' })).toBeNull() })
-    fireEvent.click(screen.getByRole('button', { name: 'Edit bot profile' }))
+    chooseBotOption('Edit bot profile')
     expect(screen.getByRole('button', { name: /Save profile|Saving/ })).not.toHaveProperty('disabled', true)
 
     save.resolve(undefined)
@@ -375,7 +380,7 @@ describe('Bot roster and detail', () => {
       onUpdateProfile={updateProfile}
     ><span /></BotDetail>)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Edit bot profile' }))
+    chooseBotOption('Edit bot profile')
     fireEvent.click(screen.getByRole('button', { name: 'Save profile' }))
     await waitFor(() => { expect(updateProfile).toHaveBeenCalledOnce() })
 
@@ -387,7 +392,7 @@ describe('Bot roster and detail', () => {
       onUpdateProfile={updateProfile}
     ><span /></BotDetail>)
     await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Edit bot profile' })).toBeNull() })
-    fireEvent.click(screen.getByRole('button', { name: 'Edit bot profile' }))
+    chooseBotOption('Edit bot profile')
     save.reject(new Error('offline'))
 
     await waitFor(() => { expect(screen.getByRole('dialog', { name: 'Edit bot profile' })).toBeTruthy() })
@@ -474,7 +479,7 @@ describe('Bot roster and detail', () => {
       <p>Persistent session surface</p>
     </BotDetail>)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Manage routines' }))
+    chooseBotOption('Manage routines')
     const routineList = await screen.findByRole('list', { name: 'Bot routines' })
     const row = within(routineList).getAllByRole('button')[0]!
     row.focus()
@@ -543,7 +548,7 @@ describe('Bot roster and detail', () => {
       history: vi.fn(async () => ({ kind: 'event' as const, id: 'event-review', deliveries: [], results: [] })),
     }
     render(<BotDetail bot={bots[0]} loading={false} loadAvatar={undefined} t={t} routineManager={actions}><span /></BotDetail>)
-    fireEvent.click(screen.getByRole('button', { name: 'Manage routines' }))
+    chooseBotOption('Manage routines')
     expect(await screen.findByRole('dialog', { name: 'Bot routines' })).toBeTruthy()
   })
 
@@ -1524,7 +1529,7 @@ describe('Bot roster and detail', () => {
   it('renames the selected bot from its conversation header', async () => {
     const rename = vi.fn(async () => {})
     render(<BotDetail bot={bots[0]} loading={false} loadAvatar={undefined} t={t} onRename={rename}><span /></BotDetail>)
-    fireEvent.click(screen.getByRole('button', { name: 'Rename bot' }))
+    chooseBotOption('Rename bot')
     fireEvent.change(screen.getByRole('textbox', { name: 'Bot name' }), { target: { value: 'Market scout' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save name' }))
     await waitFor(() => { expect(rename).toHaveBeenCalledWith('research', 'Market scout') })
@@ -1533,7 +1538,7 @@ describe('Bot roster and detail', () => {
   it('keeps the rename dialog open when saving fails', async () => {
     const rename = vi.fn(async () => { throw new Error('offline') })
     render(<BotDetail bot={bots[0]} loading={false} loadAvatar={undefined} t={t} onRename={rename}><span /></BotDetail>)
-    fireEvent.click(screen.getByRole('button', { name: 'Rename bot' }))
+    chooseBotOption('Rename bot')
     fireEvent.change(screen.getByRole('textbox', { name: 'Bot name' }), { target: { value: 'Market scout' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save name' }))
     expect((await screen.findByRole('alert')).textContent).toContain('The name could not be saved')
@@ -1588,7 +1593,7 @@ describe('Bot roster and detail', () => {
       t={t}
     />)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Bot templates' }))
+    chooseBotOption('Bot templates', en.rosterMenu)
     expect(screen.getByRole('dialog', { name: 'Bot templates' })).toBeTruthy()
     expect(screen.getByText('Release partner')).toBeTruthy()
     fireEvent.click(screen.getAllByRole('button', { name: 'Share' })[0]!)
@@ -1620,7 +1625,7 @@ describe('Bot roster and detail', () => {
       t={t}
     />)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Bot templates' }))
+    chooseBotOption('Bot templates', en.rosterMenu)
     fireEvent.keyDown(screen.getByRole('textbox', { name: 'Template share code' }), { key: 'Enter' })
 
     expect(actions.previewTemplate).not.toHaveBeenCalled()
@@ -1654,7 +1659,7 @@ describe('Bot roster and detail', () => {
       t={t}
     />)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Bot templates' }))
+    chooseBotOption('Bot templates', en.rosterMenu)
     expect(screen.getByText('issuer-fingerprint-123')).toBeTruthy()
     expect(screen.getByText('artifact-fingerprint-456')).toBeTruthy()
     expect(screen.getByText('Summarize evidence before recommending action.')).toBeTruthy()
@@ -1689,7 +1694,7 @@ describe('Bot roster and detail', () => {
       t={t}
     />)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Bot templates' }))
+    chooseBotOption('Bot templates', en.rosterMenu)
     const importButton = screen.getByRole('button', { name: 'Approve and create Bot' })
     expect(importButton).toHaveProperty('disabled', true)
     expect(screen.getByText('Unavailable on this Host')).toBeTruthy()
@@ -1775,7 +1780,7 @@ describe('Bot roster and detail', () => {
       t={t}
     />)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Join a shared bot' }))
+    chooseBotOption('Join a shared bot', en.rosterMenu)
 
     expect(expandSidebar).toHaveBeenCalledOnce()
     expect(await screen.findByRole('dialog', { name: 'Shared with you' })).toBeTruthy()
@@ -1796,13 +1801,14 @@ describe('Bot roster and detail', () => {
     />)
 
     await waitFor(() => { expect(getOwnerCapability).toHaveBeenCalledOnce() })
-    const ownerButton = screen.getByRole('button', { name: 'Create a shared group' }) as HTMLButtonElement
+    fireEvent.click(screen.getByRole('button', { name: en.rosterMenu }))
+    const ownerButton = screen.getByRole('menuitem', { name: 'Create a shared group' }) as HTMLButtonElement
     expect(ownerButton.disabled).toBe(true)
-    expect(ownerButton.getAttribute('title')).toBe('Shared owner setup is unavailable in this connection.')
+    expect(screen.getByText(en.sharedOwnerSetupUnavailable)).toBeTruthy()
 
     window.dispatchEvent(new Event('focus'))
     await waitFor(() => { expect(getOwnerCapability).toHaveBeenCalledTimes(2) })
-    expect(screen.getByRole('button', { name: 'Create a shared group' })).toHaveProperty('disabled', false)
+    expect(screen.getByRole('menuitem', { name: 'Create a shared group' })).toHaveProperty('disabled', false)
     window.dispatchEvent(new Event('focus'))
     expect(getOwnerCapability).toHaveBeenCalledTimes(2)
   })
@@ -1852,12 +1858,13 @@ describe('Bot roster and detail', () => {
     />)
 
     await waitFor(() => { expect(capabilityCalls).toBe(1) })
-    expect(screen.getByRole('button', { name: 'Create a shared group' })).toHaveProperty('disabled', true)
+    fireEvent.click(screen.getByRole('button', { name: en.rosterMenu }))
+    expect(screen.getByRole('menuitem', { name: 'Create a shared group' })).toHaveProperty('disabled', true)
     if (onGeneration === undefined) throw new Error('Connection generation listener was not registered')
     await act(async () => { onGeneration?.() })
     await waitFor(() => {
       expect(capabilityCalls).toBe(2)
-      expect(screen.getByRole('button', { name: 'Create a shared group' })).toHaveProperty('disabled', false)
+      expect(screen.getByRole('menuitem', { name: 'Create a shared group' })).toHaveProperty('disabled', false)
     })
     view.unmount()
     client.dispose?.()
@@ -1895,7 +1902,7 @@ describe('Bot roster and detail', () => {
       <p>Persistent session surface</p>
     </BotDetail>)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Manage memories' }))
+    chooseBotOption('Manage memories')
     expect(await screen.findByRole('dialog', { name: 'Bot memory' })).toBeTruthy()
     expect(actions.list).toHaveBeenCalledWith('research')
     expect(screen.queryByRole('complementary', { name: 'Bot workspace' })).toBeNull()
@@ -1917,7 +1924,7 @@ describe('Bot roster and detail', () => {
       <p>Persistent session surface</p>
     </BotDetail>)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Manage memories' }))
+    chooseBotOption('Manage memories')
     const dialog = await screen.findByRole('dialog', { name: 'Bot memory' })
     fireEvent.click(within(dialog).getAllByRole('button', { name: /^Close$/ }).at(-1)!)
 
@@ -1939,7 +1946,7 @@ describe('Bot roster and detail', () => {
       <p>Persistent session surface</p>
     </BotDetail>)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Manage memories' }))
+    chooseBotOption('Manage memories')
     const row = await screen.findByRole('listitem', { name: 'memory-controller' })
     fireEvent.click(within(row).getByRole('button', { name: 'Edit memory memory-controller' }))
     const editor = within(row).getByRole('textbox', { name: 'Memory text' })
@@ -1978,7 +1985,7 @@ describe('Bot roster and detail', () => {
       <p>Persistent session surface</p>
     </BotDetail>)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Manage memories' }))
+    chooseBotOption('Manage memories')
     const row = await screen.findByRole('listitem', { name: 'memory-controller' })
     fireEvent.click(within(row).getByRole('button', { name: 'Remove memory memory-controller' }))
     expect(screen.getByRole('dialog', { name: 'Remove memory?' })).toBeTruthy()
@@ -2018,7 +2025,7 @@ describe('Bot roster and detail', () => {
       <p>Persistent session surface</p>
     </BotDetail>)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Manage memories' }))
+    chooseBotOption('Manage memories')
     const firstRow = await screen.findByRole('listitem', { name: 'memory-first' })
     fireEvent.click(within(firstRow).getByRole('button', { name: 'Edit memory memory-first' }))
     fireEvent.change(within(firstRow).getByRole('textbox', { name: 'Memory text' }), { target: { value: 'Updated first memory.' } })
@@ -2029,7 +2036,7 @@ describe('Bot roster and detail', () => {
     fireEvent.click(within(dialog).getAllByRole('button', { name: /^Close$/ }).at(-1)!)
     await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Bot memory' })).toBeNull() })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Manage memories' }))
+    chooseBotOption('Manage memories')
     await screen.findByRole('dialog', { name: 'Bot memory' })
     const secondRow = screen.getByRole('listitem', { name: 'memory-second' })
     fireEvent.click(within(secondRow).getByRole('button', { name: 'Edit memory memory-second' }))
@@ -2061,7 +2068,7 @@ describe('Bot roster and detail', () => {
       <p>Persistent session surface</p>
     </BotDetail>)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Manage memories' }))
+    chooseBotOption('Manage memories')
     const researchRow = await screen.findByRole('listitem', { name: 'memory-shared' })
     fireEvent.click(within(researchRow).getByRole('button', { name: 'Edit memory memory-shared' }))
     fireEvent.change(within(researchRow).getByRole('textbox', { name: 'Memory text' }), { target: { value: 'Updated research note' } })
@@ -2103,7 +2110,7 @@ describe('Bot roster and detail', () => {
       <p>Persistent session surface</p>
     </BotDetail>)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Manage memories' }))
+    chooseBotOption('Manage memories')
     const researchRow = await screen.findByRole('listitem', { name: 'memory-shared' })
     fireEvent.click(within(researchRow).getByRole('button', { name: 'Edit memory memory-shared' }))
     fireEvent.change(within(researchRow).getByRole('textbox', { name: 'Memory text' }), { target: { value: 'Updated research note' } })
@@ -2146,7 +2153,7 @@ describe('Bot roster and detail', () => {
       <p>Persistent session surface</p>
     </BotDetail>)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Manage memories' }))
+    chooseBotOption('Manage memories')
     const researchRow = await screen.findByRole('listitem', { name: 'memory-shared' })
     fireEvent.click(within(researchRow).getByRole('button', { name: 'Remove memory memory-shared' }))
     fireEvent.click(screen.getByRole('button', { name: 'Remove memory' }))
@@ -2199,7 +2206,7 @@ describe('Bot roster and detail', () => {
       <p>Persistent session surface</p>
     </BotDetail>)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Manage skills' }))
+    chooseBotOption('Manage skills')
     const dialog = await screen.findByRole('dialog', { name: 'Bot skills' })
     expect(actions.list).toHaveBeenCalledWith('research')
     fireEvent.click(within(dialog).getByRole('radio', { name: 'Only selected skills' }))
@@ -2227,7 +2234,7 @@ describe('Bot roster and detail', () => {
       <p>Persistent session surface</p>
     </BotDetail>)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Manage skills' }))
+    chooseBotOption('Manage skills')
     const dialog = await screen.findByRole('dialog', { name: 'Bot skills' })
     fireEvent.click(within(dialog).getByRole('radio', { name: 'Only selected skills' }))
     const checkbox = within(dialog).getByRole('checkbox', { name: 'Allow code-review' })
@@ -2276,7 +2283,7 @@ describe('Bot roster and detail', () => {
       <p>Persistent session surface</p>
     </BotDetail>)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Manage skills' }))
+    chooseBotOption('Manage skills')
     const dialog = await screen.findByRole('dialog', { name: 'Bot skills' })
     const denied = within(dialog).getByRole('checkbox', { name: 'Allow code-review' }) as HTMLInputElement
     expect(denied.checked).toBe(false)
@@ -2316,7 +2323,7 @@ describe('Bot roster and detail', () => {
       <p>Persistent session surface</p>
     </BotDetail>)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Manage skills' }))
+    chooseBotOption('Manage skills')
     const dialog = await screen.findByRole('dialog', { name: 'Bot skills' })
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save skills' }))
     await waitFor(() => { expect(screen.getByRole('alert').textContent).toContain('changed elsewhere') })
@@ -2347,7 +2354,7 @@ describe('Bot roster and detail', () => {
       <p>Persistent session surface</p>
     </BotDetail>)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Manage skills' }))
+    chooseBotOption('Manage skills')
     expect(await screen.findByRole('dialog', { name: 'Bot skills' })).toBeTruthy()
     view.rerender(<BotDetail
       bot={bots[1]}
@@ -3114,7 +3121,7 @@ describe('Bot roster and detail', () => {
     const update = vi.fn().mockResolvedValue(undefined)
     renderSplitWorkspace({ avatarEditor: { status, generate, commit, update } })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Edit avatar' }))
+    chooseBotOption('Edit avatar', en.rosterMenu)
     const dialog = screen.getByRole('dialog', { name: 'Customize avatar' })
     fireEvent.click(within(dialog).getByRole('tab', { name: 'Generate' }))
     await waitFor(() => { expect(status).toHaveBeenCalledOnce() })
@@ -3140,7 +3147,7 @@ describe('Bot roster and detail', () => {
     const update = vi.fn()
     renderSplitWorkspace({ avatarEditor: { status, generate, commit, update } })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Edit avatar' }))
+    chooseBotOption('Edit avatar', en.rosterMenu)
     const dialog = screen.getByRole('dialog', { name: 'Customize avatar' })
     fireEvent.click(within(dialog).getByRole('tab', { name: 'Generate' }))
     await waitFor(() => { expect(status).toHaveBeenCalledOnce() })
@@ -3163,7 +3170,7 @@ describe('Bot roster and detail', () => {
     const update = vi.fn()
     renderSplitWorkspace({ avatarEditor: { status, generate, commit, update } })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Edit avatar' }))
+    chooseBotOption('Edit avatar', en.rosterMenu)
     const dialog = screen.getByRole('dialog', { name: 'Customize avatar' })
     fireEvent.click(within(dialog).getByRole('tab', { name: 'Generate' }))
     await waitFor(() => { expect(status).toHaveBeenCalledOnce() })
@@ -3192,7 +3199,7 @@ describe('Bot roster and detail', () => {
     const update = vi.fn().mockRejectedValueOnce(new Error('temporary update failure')).mockResolvedValueOnce(undefined)
     renderSplitWorkspace({ avatarEditor: { status, generate, commit, update } })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Edit avatar' }))
+    chooseBotOption('Edit avatar', en.rosterMenu)
     const dialog = screen.getByRole('dialog', { name: 'Customize avatar' })
     fireEvent.click(within(dialog).getByRole('tab', { name: 'Generate' }))
     await waitFor(() => { expect(status).toHaveBeenCalledOnce() })
@@ -3222,7 +3229,7 @@ describe('Bot roster and detail', () => {
     const onOpenAvatarSettings = vi.fn()
     renderSplitWorkspace({ avatarEditor: { status, generate, commit: vi.fn(), update }, onOpenAvatarSettings })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Edit avatar' }))
+    chooseBotOption('Edit avatar', en.rosterMenu)
     const dialog = screen.getByRole('dialog', { name: 'Customize avatar' })
     fireEvent.click(within(dialog).getByRole('tab', { name: 'Generate' }))
     await waitFor(() => { expect(screen.getByRole('alert').textContent).toContain('OpenAI') })
@@ -3237,7 +3244,7 @@ describe('Bot roster and detail', () => {
     const generate = vi.fn().mockRejectedValue(new Error('provider unavailable'))
     renderSplitWorkspace({ avatarEditor: { status, generate, commit: vi.fn(), update: vi.fn() } })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Edit avatar' }))
+    chooseBotOption('Edit avatar', en.rosterMenu)
     const dialog = screen.getByRole('dialog', { name: 'Customize avatar' })
     fireEvent.click(within(dialog).getByRole('tab', { name: 'Generate' }))
     await waitFor(() => { expect(status).toHaveBeenCalledOnce() })

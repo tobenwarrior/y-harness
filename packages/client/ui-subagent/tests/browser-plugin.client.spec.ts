@@ -64,6 +64,7 @@ async function provideSlotFaces(ctx: Context): Promise<void> {
     name: 'root',
     children: {
       'conversation.session.header.lineage': { kind: 'single', scope: 'session' },
+      'conversation.session.header.agents': { kind: 'single', scope: 'session' },
       'conversation.session.header.actions': { kind: 'list', scope: 'session' },
       'conversation.composer': { kind: 'chain', scope: 'session' },
     },
@@ -139,6 +140,8 @@ describe('apply', () => {
       .find(entry => entry.options.id === 'subagent-catalog')!
     expect(actionEntry.options.order).toBe(-30)
     expect(actionEntry.inject).toBe(catalogEntry.inject)
+    const activity = ctx.slots.entries('conversation.session.header.agents')[0]
+    expect(activity?.inject).toBe(catalogEntry.inject)
 
     const composerEntry = ctx.slots.entries('conversation.composer')
       .find(entry => entry.component === SubagentReadOnlyComposer)!

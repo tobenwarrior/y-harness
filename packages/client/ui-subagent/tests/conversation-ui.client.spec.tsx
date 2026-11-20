@@ -9,7 +9,7 @@ import type { SubagentAddress, SubagentCatalogRow } from '@yharness/subagent/cli
 import type { SessionId } from '@yharness/session/types'
 import type { SessionStatusSnapshot } from '@yharness/client-ui-session/client'
 import {
-  SubagentCatalogAction, SubagentHeaderLineage,
+  SubagentActivity, SubagentCatalogAction, SubagentHeaderLineage,
   type SubagentCatalogActionProps, type SubagentHeaderLineageProps,
 } from '../src/client/SubagentHeaderLineage.tsx'
 import { SubagentReadOnlyComposer } from '../src/client/SubagentReadOnlyComposer.tsx'
@@ -268,6 +268,29 @@ describe('SubagentHeaderLineage', () => {
       parentSessionId: PARENT,
       childSessionId: CHILD, mode: 'continuable',
     })
+  })
+
+  it('shows a Bot’s current agents first and opens agent chats in the sidebar', () => {
+    const input = props(catalog(), {}, {
+      [CHILD]: {
+        ...summary(CHILD, 1),
+        running: true,
+        projectionValues: { modelSelection: { lastUsed: { provider: 'fixture', model: 'Review model' }, next: null } },
+      },
+    })
+    const beforeOpen = vi.fn()
+    render(<SubagentActivity {...input} beforeOpen={beforeOpen} />)
+    const trigger = screen.getByRole('button', { name: 'Agents, 1 running, 2 total' })
+    fireEvent.click(trigger)
+    expect(screen.getByText('Review model · running')).toBeTruthy()
+    expect(screen.queryByRole('treeitem', { name: /reviewer/ })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Previous agents (1)' }))
+    expect(screen.getByRole('treeitem', { name: /reviewer/ })).toBeTruthy()
+    fireEvent.click(screen.getByRole('treeitem', { name: /worker/ }))
+    expect(beforeOpen).toHaveBeenCalledOnce()
+    expect(input.openChildAside).toHaveBeenCalledWith({ parentSessionId: PARENT, childSessionId: CHILD, mode: 'continuable' })
+    expect(input.openChild).not.toHaveBeenCalled()
+    expect(trigger.getAttribute('aria-expanded')).toBe('false')
   })
 
   it('selects singular count keys for one direct child', () => {
