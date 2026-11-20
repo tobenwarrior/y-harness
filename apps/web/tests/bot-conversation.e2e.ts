@@ -162,7 +162,7 @@ describe.skipIf(MODE === 'record')('web e2e: Bot conversation presentation', () 
     await surface.waitFor({ state: 'visible', timeout: 15_000 })
     await page.setViewportSize({ width: 480, height: 1000 })
     await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(480)
-    const composer = surface.locator('[data-composer-input][contenteditable="true"]')
+    const composer = surface.getByRole('textbox', { name: 'Message ' + bot.name, exact: true })
     await composer.fill(USER_PROMPT)
     await surface.getByRole('button', { name: 'Send message', exact: true }).click()
 
