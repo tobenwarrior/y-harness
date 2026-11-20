@@ -828,6 +828,21 @@ function provideResolvedTemplatePreset(ctx: Context): void {
 }
 
 describe('durable Bot roster', () => {
+  it('orders equal-age Bots by stable id for roster display', async () => {
+    const h = await harness()
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(1_234)
+    try {
+      await h.service.create({ id: BotId('bot-zeta'), name: 'Zeta', cwd: '/tmp' })
+      await h.service.create({ id: BotId('bot-alpha'), name: 'Alpha', cwd: '/tmp' })
+      await expect(h.service.list({})).resolves.toMatchObject({
+        bots: [{ id: BotId('bot-alpha') }, { id: BotId('bot-zeta') }],
+      })
+    } finally {
+      clock.mockRestore()
+      await close(h.ctx)
+    }
+  })
+
   it('provisions one managed workspace per Bot and retains it across a failed setup retry', async () => {
     const root = await mkdtemp(join(tmpdir(), 'yh-managed-bot-'))
     const workspace = (sessionId: SessionId) => join(root, sessionId)
