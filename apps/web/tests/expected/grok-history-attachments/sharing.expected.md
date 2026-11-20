@@ -1,0 +1,18 @@
+- dialog "Share this bot":
+  - heading "Share this bot" [level=2]
+  - button "Close"
+  - paragraph: Invite people to their own private session with this bot. You can revoke access at any time.
+  - text: Access level
+  - tablist "Access level":
+    - tab "Collaborator" [selected]
+    - tab "Manager"
+    - tab "Owner"
+  - button "Create invite"
+  - text: People with access No one has joined yet.
+  - region "Shared context":
+    - text: Shared context
+    - paragraph: Publish notes that every member can see. Private sessions stay separate.
+    - switch "Enable shared context"
+  - region "Shared app access":
+    - text: Shared app access
+    - paragraph: Connect an app to manage shared access here.

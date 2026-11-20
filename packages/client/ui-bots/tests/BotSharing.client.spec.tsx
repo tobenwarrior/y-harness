@@ -468,14 +468,22 @@ describe('shared Bot collaboration surfaces', () => {
     expect(screen.queryByRole('button', { name: 'Block GitHub in shared sessions' })).toBeNull()
   })
 
-  it('keeps the invite role fixed while an invite is being created', async () => {
+  it('keeps an in-flight invite fixed and clears its code when the next role changes', async () => {
     const createInvite = Promise.withResolvers<Awaited<ReturnType<BotShareActions['createInvite']>>>()
-    const actions = ownerActions({ createInvite: vi.fn().mockReturnValue(createInvite.promise) })
+    const actions = ownerActions({
+      createInvite: vi.fn()
+        .mockReturnValueOnce(createInvite.promise)
+        .mockResolvedValueOnce({ code: 'manager-invite', expiresAt: 3_000 }),
+    })
     render(<BotShareDialog bot={bot} actions={actions} open onClose={vi.fn()} t={t} />)
 
-    await waitFor(() => { expect(screen.getByRole('tab', { name: 'Collaborator' })).toBeTruthy() })
-    fireEvent.click(screen.getByRole('button', { name: 'Create invite' }))
-    await waitFor(() => { expect(actions.createInvite).toHaveBeenCalledWith(bot.id, 'collaborator') })
+    const create = screen.getByRole('button', { name: 'Create invite' })
+    await waitFor(() => { expect(create).toHaveProperty('disabled', false) })
+    act(() => {
+      create.click()
+      create.click()
+    })
+    expect(actions.createInvite).toHaveBeenCalledExactlyOnceWith(bot.id, 'collaborator')
 
     const manager = screen.getByRole('tab', { name: 'Manager' }) as HTMLButtonElement
     expect(manager.disabled).toBe(true)
@@ -487,9 +495,16 @@ describe('shared Bot collaboration surfaces', () => {
       await Promise.resolve()
     })
     expect(screen.getByLabelText('Invite code').textContent).toContain('invite')
+    fireEvent.click(manager)
+    expect(screen.queryByLabelText('Invite code')).toBeNull()
+    expect(manager.getAttribute('aria-selected')).toBe('true')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Create invite' }))
+    expect(await screen.findByLabelText('Invite code')).toHaveProperty('textContent', 'manager-invite')
+    expect(actions.createInvite).toHaveBeenLastCalledWith(bot.id, 'manager')
   })
 
-  it('ignores owner share data from the previous Bot after switching', async () => {
+  it.each(['succeeds', 'fails'] as const)('ignores a previous Bot membership load that %s after switching', async (result) => {
     const staleMembers = Promise.withResolvers<Awaited<ReturnType<BotShareActions['listMembers']>>>()
     const stalePolicy = Promise.withResolvers<Awaited<ReturnType<NonNullable<BotShareActions['getMemoryPolicy']>>>>()
     const currentMembers = Promise.withResolvers<Awaited<ReturnType<BotShareActions['listMembers']>>>()
@@ -521,14 +536,18 @@ describe('shared Bot collaboration surfaces', () => {
     expect(screen.getByRole('status')).toBeTruthy()
 
     await act(async () => {
-      staleMembers.resolve({ botId: BotId(bot.id), members: [{
-        botId: BotId(bot.id),
-        principalId: BotPrincipalId('principal-chief'),
-        role: 'collaborator',
-        grantedBy: BotPrincipalId('principal-owner'),
-        createdAt: 1,
-        updatedAt: 1,
-      }] })
+      if (result === 'fails') {
+        staleMembers.reject(new Error('Previous Bot membership is unavailable'))
+      } else {
+        staleMembers.resolve({ botId: BotId(bot.id), members: [{
+          botId: BotId(bot.id),
+          principalId: BotPrincipalId('principal-chief'),
+          role: 'collaborator',
+          grantedBy: BotPrincipalId('principal-owner'),
+          createdAt: 1,
+          updatedAt: 1,
+        }] })
+      }
       stalePolicy.resolve({ botId: BotId(bot.id), enabled: false, updatedAt: 1 })
       await Promise.resolve()
       await Promise.resolve()
@@ -676,21 +695,37 @@ describe('shared Bot collaboration surfaces', () => {
     }
   })
 
-  it('gates owner shared-context policy changes behind explicit acknowledgement', async () => {
-    const actions = ownerActions()
+  it.each([false, true])('requires acknowledgement to change shared context when enabled is %s', async (enabled) => {
+    const actions = ownerActions({
+      getMemoryPolicy: vi.fn().mockResolvedValue({ botId: BotId(bot.id), enabled, updatedAt: 1 }),
+      setMemoryPolicy: vi.fn().mockResolvedValue({ botId: BotId(bot.id), enabled: !enabled, updatedAt: 2 }),
+    })
     render(<BotShareDialog bot={bot} actions={actions} open onClose={vi.fn()} t={t} />)
 
     await waitFor(() => { expect(screen.getByRole('switch', { name: 'Enable shared context' })).toBeTruthy() })
     fireEvent.click(screen.getByRole('switch', { name: 'Enable shared context' }))
 
-    const confirmation = screen.getByRole('dialog', { name: 'Enable shared context?' })
-    const confirm = within(confirmation).getByRole('button', { name: 'Enable context' })
+    const confirmation = screen.getByRole('dialog', { name: enabled ? 'Disable shared context?' : 'Enable shared context?' })
+    const confirm = within(confirmation).getByRole('button', { name: enabled ? 'Disable and clear' : 'Enable context' })
     expect((confirm as HTMLButtonElement).disabled).toBe(true)
-    fireEvent.click(within(confirmation).getByRole('checkbox', { name: /visible to every member/i }))
+    fireEvent.click(within(confirmation).getByRole('checkbox', { name: enabled ? /shared notes will be cleared/i : /visible to every member/i }))
     expect((confirm as HTMLButtonElement).disabled).toBe(false)
     fireEvent.click(confirm)
 
-    await waitFor(() => { expect(actions.setMemoryPolicy).toHaveBeenCalledWith(bot.id, true) })
+    await waitFor(() => { expect(actions.setMemoryPolicy).toHaveBeenCalledWith(bot.id, !enabled) })
+  })
+
+  it('shows invitations and members without empty recovery controls', async () => {
+    const actions = ownerActions({
+      inspectRosterFence: async () => ({ status: 'clear' }),
+      inspectDeliveryFences: async () => ({ fences: [] }),
+    })
+    render(<BotShareDialog bot={bot} actions={actions} open onClose={vi.fn()} t={t} />)
+
+    expect(await screen.findByText('principal-owner')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Create invite' })).toBeTruthy()
+    expect(screen.queryByRole('region', { name: 'Shared roster recovery' })).toBeNull()
+    expect(screen.queryByRole('region', { name: 'Shared-group delivery recovery' })).toBeNull()
   })
 
   it('shows the owner-only roster fence token and requires quiescence confirmation', async () => {
@@ -766,7 +801,7 @@ describe('shared Bot collaboration surfaces', () => {
     fireEvent.click(confirm)
 
     await waitFor(() => { expect(recoverDeliveryFence).toHaveBeenCalledWith(fence) })
-    await waitFor(() => { expect(screen.getByText('No recipient delivery needs owner recovery.')).toBeTruthy() })
+    await waitFor(() => { expect(screen.queryByRole('region', { name: 'Shared-group delivery recovery' })).toBeNull() })
   })
 
   it('does not report recipient recovery clear when inspection fails', async () => {
@@ -775,7 +810,7 @@ describe('shared Bot collaboration surfaces', () => {
     render(<BotShareDialog bot={bot} actions={actions} open onClose={vi.fn()} t={t} />)
 
     await waitFor(() => { expect(screen.getAllByText('Recipient delivery status is unavailable.')).not.toHaveLength(0) })
-    expect(screen.queryByText('No recipient delivery needs owner recovery.')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Recover delivery' })).toBeNull()
     expect(screen.queryByText('internal fence details')).toBeNull()
   })
 

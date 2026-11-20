@@ -195,10 +195,13 @@ describe('BotSharing defensive UI paths', () => {
     expect(listApprovals).toHaveBeenCalledTimes(2)
   })
 
-  it('reports a roster recovery refresh failure without hiding the held fence', async () => {
+  it.each([
+    [new Error('roster refresh unavailable'), 'roster refresh unavailable'],
+    ['unavailable', t('sharedRosterFenceRecoveryFailed')],
+  ] as const)('reports a roster recovery refresh failure (%s) without hiding the held fence', async (failure, message) => {
     const inspectRosterFence: NonNullable<BotShareActions['inspectRosterFence']> = vi.fn()
       .mockResolvedValueOnce({ status: 'held' as const, token: 'roster-error-token' })
-      .mockRejectedValueOnce(new Error('roster refresh unavailable'))
+      .mockRejectedValueOnce(failure)
     const recoverRosterFence: NonNullable<BotShareActions['recoverRosterFence']> = vi.fn().mockResolvedValue({ status: 'busy' as const })
     const actions = ownerActions({ inspectRosterFence, recoverRosterFence })
     render(<BotShareDialog bot={bot} actions={actions} open onClose={vi.fn()} t={t} />)
@@ -209,7 +212,7 @@ describe('BotSharing defensive UI paths', () => {
     fireEvent.click(within(confirmation).getByRole('checkbox', { name: /stopped every Host/i }))
     fireEvent.click(within(confirmation).getByRole('button', { name: 'Recover roster' }))
 
-    expect(await screen.findByRole('alert')).toHaveProperty('textContent', 'roster refresh unavailable')
+    expect(await screen.findByRole('alert')).toHaveProperty('textContent', message)
     expect(screen.getByText('roster-error-token')).toBeTruthy()
   })
 
@@ -280,7 +283,7 @@ describe('BotSharing defensive UI paths', () => {
     expect(screen.queryByLabelText('Shared-group delivery identity')).toBeNull()
   })
 
-  it('does not apply a completed owner invite to a newer Bot view', async () => {
+  it.each(['succeeds', 'fails'] as const)('ignores a previous Bot invite that %s after switching', async (result) => {
     const pendingInvite = Promise.withResolvers<Awaited<ReturnType<BotShareActions['createInvite']>>>()
     const createInvite: BotShareActions['createInvite'] = vi.fn().mockReturnValue(pendingInvite.promise)
     const actions = ownerActions({ createInvite })
@@ -291,13 +294,15 @@ describe('BotSharing defensive UI paths', () => {
     await waitFor(() => { expect(createInvite).toHaveBeenCalledWith(bot.id, 'collaborator') })
     view.rerender(<BotShareDialog bot={analystBot} actions={actions} open onClose={vi.fn()} t={t} />)
     await act(async () => {
-      pendingInvite.resolve({ code: 'stale-invite', expiresAt: 2_000 })
+      if (result === 'fails') pendingInvite.reject(new Error('Previous Bot invite failed'))
+      else pendingInvite.resolve({ code: 'stale-invite', expiresAt: 2_000 })
       await Promise.resolve()
     })
     expect(screen.queryByText('stale-invite')).toBeNull()
+    expect(screen.queryByRole('alert')).toBeNull()
   })
 
-  it('ignores a completed owner memory update after switching Bots', async () => {
+  it.each(['succeeds', 'fails'] as const)('keeps shared-context controls available when another Bot’s update %s', async (result) => {
     const pendingPolicy = Promise.withResolvers<Awaited<ReturnType<NonNullable<BotShareActions['setMemoryPolicy']>>>>()
     const setMemoryPolicy: NonNullable<BotShareActions['setMemoryPolicy']> = vi.fn().mockReturnValue(pendingPolicy.promise)
     const getMemoryPolicy: NonNullable<BotShareActions['getMemoryPolicy']> = vi.fn((botId: string) => Promise.resolve({
@@ -314,11 +319,109 @@ describe('BotSharing defensive UI paths', () => {
     await waitFor(() => { expect(setMemoryPolicy).toHaveBeenCalledWith(bot.id, true) })
 
     view.rerender(<BotShareDialog bot={analystBot} actions={actions} open onClose={vi.fn()} t={t} />)
+    await waitFor(() => {
+      expect(screen.getByRole('switch', { name: 'Enable shared context' })).toHaveProperty('disabled', false)
+    })
     await act(async () => {
-      pendingPolicy.resolve({ botId: BotId(bot.id), enabled: true, updatedAt: 2 })
+      if (result === 'fails') pendingPolicy.reject(new Error('Previous Bot policy change failed'))
+      else pendingPolicy.resolve({ botId: BotId(bot.id), enabled: true, updatedAt: 2 })
       await Promise.resolve()
     })
-    expect(screen.getByRole('switch', { name: 'Enable shared context' }).getAttribute('aria-checked')).toBe('false')
+    const toggle = screen.getByRole('switch', { name: 'Enable shared context' })
+    expect(toggle).toHaveProperty('disabled', false)
+    expect(toggle.getAttribute('aria-checked')).toBe('false')
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it.each(['recovery', 'refresh'] as const)('discards an earlier roster %s after selecting another Bot', async (phase) => {
+    const pendingRecovery = Promise.withResolvers<Awaited<ReturnType<NonNullable<BotShareActions['recoverRosterFence']>>>>()
+    const pendingRefresh = Promise.withResolvers<Awaited<ReturnType<NonNullable<BotShareActions['inspectRosterFence']>>>>()
+    const recoverRosterFence = vi.fn().mockReturnValueOnce(pendingRecovery.promise)
+    const inspectRosterFence = vi.fn().mockResolvedValueOnce({ status: 'held', token: 'initial-roster-token' })
+    if (phase === 'refresh') inspectRosterFence.mockReturnValueOnce(pendingRefresh.promise)
+    inspectRosterFence.mockResolvedValue({ status: 'held', token: 'selected-roster-token' })
+    const actions = ownerActions({ recoverRosterFence, inspectRosterFence })
+    const view = render(<BotShareDialog bot={bot} actions={actions} open onClose={vi.fn()} t={t} />)
+
+    await screen.findByText('initial-roster-token')
+    fireEvent.click(screen.getByRole('button', { name: 'Recover shared roster' }))
+    const confirmation = screen.getByRole('dialog', { name: 'Recover shared roster?' })
+    fireEvent.click(within(confirmation).getByRole('checkbox', { name: /stopped every Host/i }))
+    fireEvent.click(within(confirmation).getByRole('button', { name: 'Recover roster' }))
+    expect(recoverRosterFence).toHaveBeenCalledExactlyOnceWith('initial-roster-token')
+
+    if (phase === 'refresh') {
+      await act(async () => { pendingRecovery.resolve({ status: 'busy' }) })
+      expect(inspectRosterFence).toHaveBeenCalledTimes(2)
+    }
+    view.rerender(<BotShareDialog bot={analystBot} actions={actions} open onClose={vi.fn()} t={t} />)
+    await screen.findByText('selected-roster-token')
+    await act(async () => {
+      if (phase === 'refresh') pendingRefresh.resolve({ status: 'held', token: 'late-roster-token' })
+      else pendingRecovery.resolve({ status: 'busy' })
+    })
+
+    expect(screen.getByText('selected-roster-token')).toBeTruthy()
+    expect(screen.queryByText('late-roster-token')).toBeNull()
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(inspectRosterFence).toHaveBeenCalledTimes(phase === 'refresh' ? 3 : 2)
+    expect(screen.getByRole('button', { name: 'Recover shared roster' })).toHaveProperty('disabled', false)
+  })
+
+  it('retains a member on the selected Bot when an earlier revoke settles', async () => {
+    const principalId = BotPrincipalId('principal-shared-across-bots')
+    const pendingRevoke = Promise.withResolvers<Awaited<ReturnType<BotShareActions['revokeMember']>>>()
+    const revokeMember = vi.fn().mockReturnValueOnce(pendingRevoke.promise)
+    const listMembers: BotShareActions['listMembers'] = async botId => ({
+      botId: BotId(botId),
+      members: [{
+        botId: BotId(botId), principalId, role: 'collaborator',
+        grantedBy: BotPrincipalId('principal-owner'), createdAt: 1, updatedAt: 1,
+      }],
+    })
+    const actions = ownerActions({ listMembers, revokeMember })
+    const view = render(<BotShareDialog bot={bot} actions={actions} open onClose={vi.fn()} t={t} />)
+    const label = 'Revoke access: principal-shared-across-bots'
+    fireEvent.click(await screen.findByRole('button', { name: label }))
+    expect(revokeMember).toHaveBeenCalledExactlyOnceWith(bot.id, principalId)
+    view.rerender(<BotShareDialog bot={analystBot} actions={actions} open onClose={vi.fn()} t={t} />)
+    await screen.findByRole('button', { name: label })
+
+    await act(async () => { pendingRevoke.resolve({ botId: BotId(bot.id), principalId, revoked: true }) })
+
+    expect(screen.getByRole('button', { name: label })).toHaveProperty('disabled', false)
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('checks the refreshed delivery identity before resubmitting a recovery', async () => {
+    const fence: BotSharedGroupDeliveryFenceView = {
+      groupId: brandString<BotGroupId>('group-recovered'),
+      botId: BotId(bot.id),
+      sessionId: 'session-original',
+      messageId: brandString<BotGroupMessageId>('message-original'),
+    }
+    const updated = { ...fence, messageId: brandString<BotGroupMessageId>('message-replacement') }
+    const inspectDeliveryFences = vi.fn()
+      .mockResolvedValueOnce({ fences: [fence] })
+      .mockResolvedValueOnce({ fences: [updated] })
+    const recoverDeliveryFence = vi.fn().mockResolvedValue({
+      botId: fence.botId, messageId: fence.messageId, status: 'operator-required',
+    })
+    render(<BotShareDialog bot={bot} actions={ownerActions({ inspectDeliveryFences, recoverDeliveryFence })}
+      open onClose={vi.fn()} t={t} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Recover delivery' }))
+    const confirmation = screen.getByRole('dialog', { name: 'Recover shared-group delivery?' })
+    const consent = within(confirmation).getByRole('checkbox', { name: /stopped every Host/i })
+    const recover = within(confirmation).getByRole('button', { name: 'Recover delivery' })
+    fireEvent.click(consent)
+    fireEvent.click(recover)
+    expect(await screen.findByRole('alert')).toHaveProperty('textContent', t('sharedGroupDeliveryFenceRecoveryFailed'))
+    await screen.findByText(/group-recovered · message-replacement/)
+    fireEvent.click(consent)
+    fireEvent.click(recover)
+    expect(await screen.findByRole('alert')).toHaveProperty('textContent', t('sharedGroupDeliveryFenceChanged'))
+    expect(recoverDeliveryFence).toHaveBeenCalledExactlyOnceWith(fence)
+    expect(screen.queryByRole('dialog', { name: 'Recover shared-group delivery?' })).toBeNull()
   })
 
   it('keeps private and shared-context read failures visible and reports chat failures', async () => {
