@@ -127,19 +127,24 @@ function sendRpcRequest(child: ChildProcess, id: number, method: string, params:
   child.stdin?.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`)
 }
 
-async function stopChild(child: ChildProcess): Promise<void> {
-  if (child.exitCode !== null || child.signalCode !== null) return
-  const closed = new Promise<void>(resolve => child.once('close', () => { resolve() }))
-  child.kill('SIGTERM')
-  const timeout = setTimeout(() => {
-    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
+async function stopChild(child: ChildProcess, closed: Promise<void>): Promise<void> {
+  // The Windows wrapper waits for its separate native child after stdin EOF.
+  if (child.stdin?.writable === true) child.stdin.end()
+  const gracefulTimeout = setTimeout(() => {
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM')
   }, 2_000)
+  const forceTimeout = setTimeout(() => {
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
+  }, 4_000)
   try { await closed }
-  finally { clearTimeout(timeout) }
+  finally {
+    clearTimeout(gracefulTimeout)
+    clearTimeout(forceTimeout)
+  }
 }
 
 afterEach(async () => {
-  for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true })
+  for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
 })
 
 describe('packaged Codex runtime', () => {
@@ -218,10 +223,11 @@ describe('packaged Codex runtime', () => {
       },
       stdio: ['pipe', 'pipe', 'pipe'],
     })
+    const closed = new Promise<void>(resolve => child.once('close', () => { resolve() }))
     child.on('error', () => undefined)
     child.stderr?.resume()
     if (child.stdout === null || child.stdin === null) {
-      await stopChild(child)
+      await stopChild(child, closed)
       throw new Error('The standalone Codex process did not expose protocol streams.')
     }
     const lines = createInterface({ input: child.stdout })
@@ -243,7 +249,7 @@ describe('packaged Codex runtime', () => {
       expect(account.result).toMatchObject({ account: null })
     } finally {
       lines.close()
-      await stopChild(child)
+      await stopChild(child, closed)
     }
   })
 })
