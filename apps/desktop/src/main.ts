@@ -1064,13 +1064,16 @@ async function main(): Promise<void> {
   }
 
   const syncWorkspaceMenu = (): void => {
+    if (cloudWorkspace === undefined) return
     const menu = Menu.getApplicationMenu()
-    const local = menu?.getMenuItemById('workspace-mac')
-    const cloud = menu?.getMenuItemById('workspace-cloud')
-    const vault = menu?.getMenuItemById('workspace-vault')
-    if (local !== null && local !== undefined) local.checked = cloudWorkspace?.isCloudSelected() !== true
-    if (cloud !== null && cloud !== undefined) cloud.checked = cloudWorkspace?.isCloudSelected() === true
-    if (vault !== null && vault !== undefined) vault.enabled = cloudWorkspace?.ownerCloudWorkspace() !== undefined
+    if (menu === null) return
+    const local = menu.getMenuItemById('workspace-mac')
+    const cloud = menu.getMenuItemById('workspace-cloud')
+    const vault = menu.getMenuItemById('workspace-vault')
+    const cloudSelected = cloudWorkspace.isCloudSelected()
+    if (local !== null) local.checked = !cloudSelected
+    if (cloud !== null) cloud.checked = cloudSelected
+    if (vault !== null) vault.enabled = cloudWorkspace.ownerCloudWorkspace() !== undefined
   }
   const cloudWorkspace = process.platform === 'darwin'
     ? new DesktopCloudWorkspace(join(app.getPath('userData'), 'cloud-workspace.json'),

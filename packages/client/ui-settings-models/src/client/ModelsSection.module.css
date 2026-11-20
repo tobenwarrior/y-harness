@@ -112,7 +112,7 @@
   width: 30px;
   height: 30px;
   border: 0.5px solid var(--yh-alias-border-l3);
-  border-radius: 10px;
+  border-radius: var(--yh-radius-sm);
   background: var(--yh-alias-bg-layer-2);
   color: var(--yh-alias-label-secondary);
   font-size: 10px;
