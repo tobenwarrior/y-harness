@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { Context } from '@yharness/cordis'
@@ -101,6 +101,32 @@ describe('file-backed skill library', () => {
     await f.library.restore({ id: item.id })
     expect(await readFile(join(dir, 'reference.txt'), 'utf8')).toBe('precious reference')
     expect((await f.library.list({})).items[0]!.id).toBe(item.id)
+  })
+  it('recovers newly written instructions when discovery was temporarily unavailable', async () => {
+    const f = await fixture()
+    const name = 'verify-release'
+    const content = 'Check the release results.\n'
+    const expectedPath = join(f.project, '.dsh', 'skills', name, 'SKILL.md')
+    const pending = join(f.options.historyDirectory, 'pending-creations')
+    const discovery = vi.spyOn(f.options.provider, 'list').mockResolvedValue([])
+    try {
+      await expect(f.library.createLearning({ projectId: 'p', name, content, expectedPath,
+        description: 'Release verification steps' }, async () => {})).rejects.toThrow('created instructions were not discoverable')
+      expect(await readFile(expectedPath, 'utf8')).toContain(content)
+      expect(await readdir(pending)).toHaveLength(1)
+      expect(f.rows.size).toBe(0)
+    } finally {
+      discovery.mockRestore()
+      await f.library.dispose()
+    }
+
+    const recovered = new SkillLibrary(f.options)
+    const inventory = await recovered.list()
+    expect(inventory.items).toHaveLength(1)
+    const item = inventory.items[0]!
+    expect(item).toMatchObject({ name, ownership: 'y-managed', automaticCleanup: false })
+    await expect(recovered.detail({ id: item.id })).resolves.toMatchObject({ content })
+    expect(await readdir(pending)).toEqual([])
   })
   it('keeps history and performs hash-checked rollback after managed cleanup', async () => {
     const f = await fixture(); const dir = await f.skill('project', 'deploy', 'Do work.  \n\n\n\nFinish.')
