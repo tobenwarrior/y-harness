@@ -1,7 +1,7 @@
-import { closeSync, fstatSync, lstatSync, openSync, renameSync, symlinkSync, writeFileSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { closeSync, constants, fstatSync, lstatSync, openSync, renameSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join, resolve, toNamespacedPath } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const state = {
@@ -33,8 +33,8 @@ const fakeKoffi = {
             if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
           }
           const fd = isSymbolicLink
-            ? openSync(state.fakeFilePath ?? `${canonical}.fake-native-file`, 'a+')
-            : openSync(canonical, 'a+')
+            ? openSync(state.fakeFilePath ?? `${canonical}.fake-native-file`, constants.O_CREAT | constants.O_RDWR)
+            : openSync(canonical, constants.O_CREAT | constants.O_RDWR)
           state.handles.set(handle, { path: canonical, fd })
           state.fds.add(fd)
           state.paths.push(canonical)
@@ -92,6 +92,7 @@ const scratchDirs: string[] = []
 afterEach(async () => {
   vi.restoreAllMocks()
   vi.doUnmock('koffi')
+  vi.doUnmock('node:fs')
   vi.doUnmock('node:fs/promises')
   await Promise.all(scratchDirs.splice(0).map(dir => rm(dir, { force: true, recursive: true })))
   for (const fd of state.fds) {
@@ -122,18 +123,34 @@ function fdIsClosed(fd: number): boolean {
   }
 }
 
-async function waitForLock(lockPath: string): Promise<void> {
-  for (;;) {
-    try {
-      await stat(lockPath)
-      return
-    } catch {
-      await new Promise(resolveDelay => setTimeout(resolveDelay, 5))
-    }
-  }
-}
-
 describe('Windows lock handle', () => {
+  it('fails closed when the native marker write is short', async () => {
+    vi.doMock('koffi', () => ({ default: fakeKoffi }))
+    vi.doMock('node:fs', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('node:fs')>()
+      return {
+        ...actual,
+        write: (_fd: number, buffer: Buffer, _offset: number, length: number, _position: number,
+          callback: (error: NodeJS.ErrnoException | null, bytesWritten: number, buffer: Buffer) => void) => {
+          callback(null, length - 1, buffer)
+        },
+      }
+    })
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
+    vi.resetModules()
+    const entryPath: string = '../src/index.ts?windows-lock-short-write'
+    const { withFileLock } = await import(/* @vite-ignore */ entryPath) as typeof import('../src/index.ts')
+    const dir = await mkdtemp(join(tmpdir(), 'dsh-atomic-write-win32-'))
+    scratchDirs.push(dir)
+    const operation = vi.fn(async () => {})
+
+    await expect(withFileLock(join(dir, 'document'), operation, { waitMs: 0 }))
+      .rejects.toMatchObject({ code: 'EIO' })
+    expect(operation).not.toHaveBeenCalled()
+    expect(state.active.size).toBe(0)
+    expect(Array.from(state.fds).every(fdIsClosed)).toBe(true)
+  })
+
   it('uses one native byte lock for path aliases', async () => {
     vi.doMock('koffi', () => ({ default: fakeKoffi }))
     vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
@@ -146,16 +163,22 @@ describe('Windows lock handle', () => {
     const alias = join(dir, 'alias', '..', 'document')
     const canonical = join(dir, 'document')
     await writeFile(`${canonical}.lock`, '')
-    let release = (): void => {}
-    const holder = withFileLock(alias, () => new Promise<void>((resolveRelease) => { release = resolveRelease }))
-    await waitForLock(`${alias}.lock`)
-
-    const contender = withFileLock(canonical, async () => 'unexpected', { waitMs: 50 })
-    await expect(contender).rejects.toThrow(/timed out waiting for the writer lock/)
-    release()
-    await holder
+    const entered = Promise.withResolvers<undefined>()
+    const release = Promise.withResolvers<undefined>()
+    const holder = withFileLock(alias, async () => {
+      entered.resolve(undefined)
+      await release.promise
+    })
+    try {
+      await Promise.race([entered.promise, holder])
+      const contender = withFileLock(canonical, async () => 'unexpected', { waitMs: 50 })
+      await expect(contender).rejects.toThrow(/timed out waiting for the writer lock/)
+    } finally {
+      release.resolve(undefined)
+      await holder
+    }
     await expect(withFileLock(canonical, async () => 'acquired', { waitMs: 0 })).resolves.toBe('acquired')
-    expect(new Set(state.paths)).toEqual(new Set([resolve(`${canonical}.lock`)]))
+    expect(new Set(state.paths)).toEqual(new Set([toNamespacedPath(resolve(`${canonical}.lock`))]))
     expect(await readFile(`${canonical}.lock`, 'utf8')).toContain('dsh-atomic-write-kernel-lock-v1')
     expect(Array.from(state.fds).every(fdIsClosed)).toBe(true)
   })

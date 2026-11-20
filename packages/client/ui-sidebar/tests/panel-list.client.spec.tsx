@@ -122,6 +122,15 @@ async function mountPanels(runtime: SlotTestRuntime, locale: LocaleRuntime, beta
 }
 
 describe('sidebar global panels', () => {
+  it('places the workspace browser before utility navigation', async () => {
+    const { runtime, locale, view } = await bench()
+    await mountPanels(runtime, locale)
+    const workspaces = view.container.querySelector('[data-slot="sidebar.workspaces"]')
+    const navigation = await view.findByRole('navigation', { name: 'Global panels' })
+    expect(workspaces).not.toBeNull()
+    expect(workspaces!.compareDocumentPosition(navigation) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
   it('adds late registrations, removes each plugin contribution, and leaves no empty panel-list DOM', async () => {
     const { runtime, locale, view } = await bench()
     expect(runtime.slots.entries('sidebar.panellist')).toEqual([])

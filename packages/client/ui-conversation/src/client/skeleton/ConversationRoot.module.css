@@ -398,6 +398,12 @@ button.crumb:hover {
   --dsh-composer-dock-inset: 8px;
 }
 
+.embeddedBody[data-conversation-surface='bots'] {
+  --dsh-chat-content-width: 720px;
+  --dsh-composer-card-max-width: 752px;
+  --dsh-bot-reply-inset: 42px;
+}
+
 .scrollBody {
   display: flex;
   flex: 1;
@@ -466,7 +472,8 @@ button.crumb:hover {
    seat above the back-to-bottom control (z-index 8, ui-chat ChatView) while
    the menu is open. The steady state stays 7 so the control keeps painting
    over the card. */
-.root[data-phase='active'] .composerSeat:has([data-trigger-menu]) {
+.root[data-phase='active'] .composerSeat:has([data-trigger-menu]),
+.embeddedBody[data-conversation-surface='bots'] .composerSeat:has([data-trigger-menu]) {
   z-index: 9;
 }
 

@@ -1,0 +1,3 @@
+- menuitem "Terminal":
+  - img
+  - text: Terminal VPS terminal · Internet disabled

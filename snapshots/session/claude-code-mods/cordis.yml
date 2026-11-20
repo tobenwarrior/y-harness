@@ -6,10 +6,10 @@
 
 - insert:
     - id: claude-code-mods
-      name: '@deepseek-ai/dsh-experimental-claude-code-mods'
+      name: '@yharness/experimental-claude-code-mods'
     - id: claude-code-mod-snapshot-guard
       name: './demo-mod.ts'
     - id: claude-code-mod-replay-theater
-      name: '@deepseek-ai/dsh-experimental-claude-code-mods/examples/replay-theater/index.ts'
+      name: '@yharness/experimental-claude-code-mods/examples/replay-theater/index.ts'
     - id: claude-code-mod-token-weather
-      name: '@deepseek-ai/dsh-experimental-claude-code-mods/examples/token-weather/index.ts'
+      name: '@yharness/experimental-claude-code-mods/examples/token-weather/index.ts'

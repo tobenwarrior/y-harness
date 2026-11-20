@@ -47,4 +47,29 @@ describe('durable peer delivery with event routines', () => {
     const client = await new BotCollaborationService(host).bind({ id: SessionId('session-alpha') })
     await expect(client.send({ targetBotId: BotId('beta'), text: 'Hello' })).rejects.toMatchObject({ code: 'durability-failed' })
   })
+
+  it('does not deliver a message canceled while reading routine relay context', async () => {
+    const reading = Promise.withResolvers<undefined>()
+    const relay = Promise.withResolvers<{ chainId: string; depth: number }>()
+    const deliverMessage = vi.fn<NonNullable<BotCollaborationHost['deliverMessage']>>(async () => 'accepted')
+    const host: BotCollaborationHost = {
+      listBots: async () => [bot('alpha'), bot('beta')],
+      inspectSession: async () => ({ events: [] }),
+      resolveAgent: async () => ({ error: new Error('unexpected resolution') }),
+      flushSession: async () => undefined,
+      deliverMessage,
+      eventRoutineContext: () => {
+        reading.resolve(undefined)
+        return relay.promise
+      },
+    }
+    const client = await new BotCollaborationService(host).bind({ id: SessionId('session-alpha') })
+    const controller = new AbortController()
+    const delivery = client.send({ targetBotId: BotId('beta'), text: 'Hello', signal: controller.signal })
+    await reading.promise
+    controller.abort()
+    relay.resolve({ chainId: 'chain', depth: 1 })
+    await expect(delivery).rejects.toMatchObject({ code: 'cancelled' })
+    expect(deliverMessage).not.toHaveBeenCalled()
+  })
 })

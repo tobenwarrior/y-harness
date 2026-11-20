@@ -237,9 +237,9 @@ describe('ui-model-selection dual entry', () => {
     expect(b.popup().searchMode).toBe('fuzzy-label')
     expect(options[0]?.active).toBe(true)
     expect(options[1]?.active).toBeUndefined()
-    expect(b.popup().searchLabels?.()).toEqual(locale === 'zh'
-      ? { placeholder: 'Search models…', empty: 'No models available.', noResults: 'No matching models.' }
-      : { placeholder: 'Search models…', empty: 'No models available.', noResults: 'No matching models.' })
+    expect(b.popup().searchLabels?.()).toEqual({
+      placeholder: 'Search models…', empty: 'No models available.', noResults: 'No matching models.',
+    })
   })
 
   it('orders popup provider groups account-first while retaining third-party catalog order', async () => {
@@ -305,7 +305,7 @@ describe('ui-model-selection dual entry', () => {
       b.remote.emit('llm/adapters-updated', [])
       b.mint('s1')
       const options = await b.popup().options(projection('s1'), new AbortController().signal)
-      expect(options[0]?.group?.label).toBe(locale === 'zh' ? 'DeepSeek Account' : 'DeepSeek Account')
+      expect(options[0]?.group?.label).toBe('DeepSeek Account')
     } finally {
       await b.ctx.fiber.dispose()
     }

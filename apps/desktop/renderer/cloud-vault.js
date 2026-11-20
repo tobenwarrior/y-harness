@@ -30,6 +30,7 @@ const loginUseDecline = element('login-use-decline')
 const loginUseEntry = element('login-use-entry')
 const loginUseUsername = element('login-use-username')
 const loginUsePassword = element('login-use-password')
+const loginUseCode = element('login-use-code')
 const loginUseSave = element('login-use-save')
 const loginUseSaveLabel = element('login-use-save-label')
 const loginUseSubmit = element('login-use-submit')
@@ -43,6 +44,8 @@ const browserAccessList = element('browser-access-list')
 const websitesNotice = element('websites-notice')
 const loginList = element('logins')
 const loginEditor = element('login-editor')
+const loginImport = element('login-import')
+const importSave = element('login-import-save')
 const loginOriginInput = element('login-origin')
 const loginLabelInput = element('login-label')
 const loginBot = element('login-bot')
@@ -60,6 +63,8 @@ let services = []
 let logins = []
 let botLogins = []
 let loginBots = []
+let loginAutomation
+let loginAutomationReady = false
 let grantAccess
 let grantBots
 let grantAccessReason
@@ -67,6 +72,7 @@ let browserAccess
 let browserAccessReady = false
 let editing
 let editingLogin
+let loginImportDraft
 let revoking
 let removingLogin
 let removingGrant
@@ -145,10 +151,15 @@ function loginUseMetadata(value) {
   if (!record(value) || Object.keys(value).length !== 1 || !record(value.request)) return
   const item = value.request
   const acceptsCredentials = item.acceptsCredentials === true
-  if (Object.keys(item).length !== (acceptsCredentials ? 5 : 4) || item.id !== requestId) return
+  const { purpose } = item
+  const special = purpose !== undefined
+  if (Object.keys(item).length !== (acceptsCredentials || special ? 5 : 4) || item.id !== requestId
+    || (acceptsCredentials && special) || (special && purpose !== 'signup' && purpose !== 'verification')
+    || (item.acceptsCredentials !== undefined && !acceptsCredentials)) return
   const origin = loginUseOrigin(item.origin)
   const destination = loginUseDestination(item.destination, origin)
-  if (origin === undefined || destination === undefined || !Array.isArray(item.logins) || item.logins.length > 64) return
+  if (origin === undefined || destination === undefined || !Array.isArray(item.logins) || item.logins.length > 64
+    || (special && item.logins.length !== 0)) return
   const ids = new Set()
   const logins = []
   for (const login of item.logins) {
@@ -160,7 +171,7 @@ function loginUseMetadata(value) {
     ids.add(login.id)
     logins.push({ id: login.id, label: login.label, generation: login.generation })
   }
-  return { origin, destination, logins, acceptsCredentials }
+  return { origin, destination, logins, acceptsCredentials, purpose }
 }
 
 function requestMetadata(value) {
@@ -180,6 +191,24 @@ function loginMetadata(value, scoped) {
     || !/^https:\/\/[^/?#]+(?::\d+)?$/.test(value.origin) || typeof value.label !== 'string'
     || value.label.trim() !== value.label || value.label.length === 0 || [...value.label].length > 80) return
   return value
+}
+
+function loginAutomationMetadata(value) {
+  if (!record(value) || Object.keys(value).length !== 2 || typeof value.available !== 'boolean'
+    || !Array.isArray(value.enabled) || value.enabled.length > 64) return
+  const ids = new Set()
+  const enabled = []
+  for (const id of value.enabled) {
+    if (typeof id !== 'string' || !/^[a-f0-9]{32}$/.test(id) || ids.has(id)) return
+    ids.add(id)
+    enabled.push(id)
+  }
+  return { available: value.available, enabled }
+}
+
+function loginAutomationReply(value) {
+  if (!record(value) || Object.keys(value).length !== 2 || value.ok !== true) return
+  return loginAutomationMetadata(value.loginAutomation)
 }
 
 function browserAccessBotMetadata(value) {
@@ -270,8 +299,15 @@ function availability() {
   for (const button of secretList.querySelectorAll('button')) button.disabled = busy || !ready
   for (const input of editor.querySelectorAll('input, button')) input.disabled = busy || !ready
   element('add-login').disabled = busy || !websitesReady
+  element('import-logins').disabled = busy || !websitesReady
+  element('login-import-cancel').disabled = busy
+  importSave.disabled = busy || !loginImportDraft?.logins.length
   for (const button of loginList.querySelectorAll('button')) {
     button.disabled = busy || !websitesReady || (button.dataset.botLogin === 'true' && !botLoginsReady)
+  }
+  for (const toggle of loginList.querySelectorAll('input[data-automatic="true"]')) {
+    toggle.disabled = busy || !websitesReady || !botLoginsReady || !loginAutomationReady
+      || (!loginAutomation?.available && !toggle.checked)
   }
   for (const input of loginEditor.querySelectorAll('input, button')) input.disabled = busy || !websitesReady
   loginBot.disabled = busy || !botLoginsReady || editingLogin?.action === 'replace'
@@ -459,6 +495,22 @@ function renderLogins() {
     if (login.bot !== undefined) {
       replace.dataset.botLogin = 'true'
       remove.dataset.botLogin = 'true'
+      if (loginAutomationReady) {
+        const automatic = document.createElement('label')
+        automatic.className = 'website-automatic-toggle'
+        const toggle = document.createElement('input')
+        toggle.type = 'checkbox'
+        toggle.checked = loginAutomation.enabled.includes(login.id)
+        toggle.dataset.automatic = 'true'
+        toggle.dataset.botLogin = 'true'
+        toggle.setAttribute('aria-label', `${messages.cloudVaultWebsiteAutomaticToggle} ${login.label}`)
+        toggle.disabled = !loginAutomation.available && !toggle.checked
+        toggle.addEventListener('change', () => { void changeLoginAutomatic(login, toggle) })
+        const copy = document.createElement('span')
+        copy.textContent = messages.cloudVaultWebsiteAutomaticToggle
+        automatic.append(toggle, copy)
+        actions.append(automatic)
+      }
     }
     actions.append(replace, remove)
     row.append(details, actions)
@@ -466,6 +518,9 @@ function renderLogins() {
   })
   loginList.replaceChildren(...rows)
   element('logins-empty').hidden = rows.length > 0 || !websitesReady || !loginEditor.hidden
+  const automaticNotice = element('websites-automatic-notice')
+  automaticNotice.hidden = !loginAutomationReady || loginAutomation.available
+  automaticNotice.textContent = automaticNotice.hidden ? '' : messages.cloudVaultWebsiteAutomaticUnavailable
   availability()
 }
 
@@ -576,6 +631,8 @@ async function readLogins() {
     logins = []
     botLogins = []
     loginBots = []
+    loginAutomation = undefined
+    loginAutomationReady = false
     renderLogins()
     return false
   }
@@ -586,6 +643,15 @@ async function readLogins() {
     && assigned.botLogins.every(login => loginMetadata(login, true))
   if (botLoginsReady) botLogins = assigned.botLogins
   loginBots = botLoginsReady && Array.isArray(assigned.bots) ? assigned.bots : []
+  loginAutomation = undefined
+  loginAutomationReady = false
+  if (botLoginsReady) {
+    const automation = loginAutomationReply(await send({ action: 'list-login-automation' }))
+    if (automation !== undefined) {
+      loginAutomation = automation
+      loginAutomationReady = true
+    }
+  }
   renderLogins()
   return true
 }
@@ -729,6 +795,93 @@ async function change(request) {
   element(loaded ? 'add' : 'refresh').focus()
 }
 
+function skippedLoginImport({ duplicates, invalid, full, unconfirmed }) {
+  return [
+    duplicates > 0 && messages.cloudVaultLoginImportDuplicate.replace('{count}', String(duplicates)),
+    invalid > 0 && messages.cloudVaultLoginImportSkipped.replace('{count}', String(invalid)),
+    full > 0 && messages.cloudVaultLoginImportFull.replace('{count}', String(full)),
+    unconfirmed > 0 && messages.cloudVaultLoginImportUnconfirmed.replace('{count}', String(unconfirmed)),
+  ].filter(Boolean).join(' ')
+}
+
+async function sendLoginImport(...args) {
+  try { return await api.importLogins(...args) }
+  catch { return { state: 'unavailable' } }
+}
+
+async function chooseLoginImport() {
+  if (busy || !websitesReady) return
+  closeLoginEditor()
+  setWebsitesNotice()
+  busy = true
+  availability()
+  const draft = await sendLoginImport('choose')
+  busy = false
+  if (draft.state === 'ready') {
+    loginImportDraft = draft
+    const count = draft.logins.length
+    element('login-import-detail').textContent = messages[count === 0 ? 'cloudVaultLoginImportEmpty' : 'cloudVaultLoginImportDetail']
+    element('login-import-notes').textContent = skippedLoginImport(draft)
+    importSave.hidden = count === 0
+    importSave.textContent = count === 1 ? messages.cloudVaultLoginImportConfirmOne
+      : messages.cloudVaultLoginImportConfirmMany.replace('{count}', String(count))
+    const rows = draft.logins.map(({ origin, label, username }) => {
+      const row = document.createElement('li')
+      for (const value of [label, origin, username]) {
+        const span = document.createElement('span')
+        span.textContent = value
+        row.append(span)
+      }
+      return row
+    })
+    element('login-import-list').replaceChildren(...rows)
+    loginImport.showModal()
+    element('login-import-cancel').focus()
+  } else if (draft.state !== 'cancelled') {
+    setWebsitesNotice(draft.state === 'invalid-file' ? 'cloudVaultLoginImportInvalid' : 'cloudVaultLoginImportFailed', 'error')
+  }
+  availability()
+}
+
+function closeLoginImport() {
+  loginImportDraft = undefined
+  element('login-import-list').replaceChildren()
+  if (loginImport.open) loginImport.close()
+}
+
+async function dismissLoginImport() {
+  if (busy) return
+  busy = true
+  availability()
+  closeLoginImport()
+  await sendLoginImport('cancel')
+  busy = false
+  availability()
+  element('import-logins').focus()
+}
+
+async function saveLoginImport() {
+  if (busy || !loginImportDraft?.logins.length) return
+  busy = true
+  availability()
+  importSave.textContent = messages.cloudVaultLoginImportWorking
+  const result = await sendLoginImport('confirm', loginImportDraft.id)
+  closeLoginImport()
+  const loaded = result.state !== 'finished' || await readLogins()
+  busy = false
+  availability()
+  if (result.state !== 'finished') {
+    setWebsitesNotice('cloudVaultLoginImportFailed', 'error')
+  } else {
+    const saved = result.imported === 1 ? messages.cloudVaultLoginImportSavedOne
+      : messages.cloudVaultLoginImportSavedMany.replace('{count}', String(result.imported))
+    websitesNotice.textContent = [saved, skippedLoginImport(result), loaded ? '' : messages.cloudVaultWebsitesUnavailable]
+      .filter(Boolean).join(' ')
+    websitesNotice.dataset.tone = result.unconfirmed > 0 || !loaded ? 'error' : ''
+  }
+  element(loaded ? 'import-logins' : 'websites-tab').focus()
+}
+
 async function changeLogin(request) {
   if (busy || !websitesReady) return
   busy = true
@@ -751,6 +904,34 @@ async function changeLogin(request) {
   availability()
   setWebsitesNotice(loaded ? 'cloudVaultWebsiteSaved' : 'cloudVaultWebsitesUnavailable', loaded ? '' : 'error')
   element(loaded ? 'add-login' : 'websites-tab').focus()
+}
+
+async function changeLoginAutomatic(login, toggle) {
+  if (busy || !websitesReady || !loginAutomationReady || login.bot === undefined) return
+  const enabled = toggle.checked
+  if (enabled && loginAutomation.available !== true) {
+    toggle.checked = false
+    availability()
+    return
+  }
+  busy = true
+  availability()
+  setWebsitesNotice('cloudVaultSaving')
+  const result = await send({ action: 'set-login-automatic', id: login.id, bot: login.bot, enabled })
+  if (!acknowledged(result)) {
+    toggle.checked = !enabled
+    busy = false
+    availability()
+    setWebsitesNotice('cloudVaultWebsiteAutomaticFailed', 'error')
+    return
+  }
+  const ids = new Set(loginAutomation.enabled)
+  if (enabled) ids.add(login.id)
+  else ids.delete(login.id)
+  loginAutomation = { ...loginAutomation, enabled: [...ids] }
+  busy = false
+  availability()
+  setWebsitesNotice('cloudVaultWebsiteAutomaticUpdated')
 }
 
 async function removeLoginRequest(login) {
@@ -807,7 +988,8 @@ async function loadRequest() {
 }
 
 function showLoginUseSaveLabel() {
-  const save = loginUseSave.checked
+  const save = loginUseRequest?.purpose === 'signup'
+    || (loginUseRequest?.acceptsCredentials === true && loginUseSave.checked)
   element('login-use-save-label-text').hidden = !save
   loginUseSaveLabel.hidden = !save
   loginUseSaveLabel.required = save
@@ -816,7 +998,23 @@ function showLoginUseSaveLabel() {
 
 function renderLoginUseForm() {
   const hasSaved = (loginUseRequest?.logins.length ?? 0) > 0
-  const canEnter = loginUseRequest?.acceptsCredentials === true
+  const purpose = loginUseRequest?.purpose
+  const special = purpose !== undefined
+  const verification = purpose === 'verification'
+  const canEnter = special || loginUseRequest?.acceptsCredentials === true
+  element('login-use-username-label').hidden = verification
+  loginUseUsername.hidden = verification
+  loginUseUsername.required = !verification
+  element('login-use-password-label').hidden = special
+  loginUsePassword.hidden = special
+  loginUsePassword.required = !special
+  element('login-use-code-label').hidden = !verification
+  loginUseCode.hidden = !verification
+  loginUseCode.required = verification
+  element('login-use-save-toggle').hidden = special
+  loginUseSave.hidden = special
+  loginUseSubmit.textContent = messages[verification ? 'cloudVaultVerificationSubmit'
+    : purpose === 'signup' ? 'cloudVaultSignupSubmit' : 'cloudVaultLoginUseSignIn']
   element('login-use-saved').hidden = !hasSaved || enteringLogin
   loginUseEmpty.hidden = loginUseRequest === undefined || hasSaved || canEnter
   loginUseEntry.hidden = !canEnter || !enteringLogin
@@ -830,7 +1028,10 @@ function renderLoginUseForm() {
 }
 
 function focusLoginUseForm() {
-  if (!loginUseEntry.hidden) loginUseUsername.focus({ preventScroll: true })
+  if (!loginUseEntry.hidden) {
+    const field = loginUseRequest?.purpose === 'verification' ? loginUseCode : loginUseUsername
+    field.focus({ preventScroll: true })
+  }
   else if (!loginUseApprove.hidden) loginChoice.focus({ preventScroll: true })
   else if (!loginUseDecline.hidden) loginUseDecline.focus({ preventScroll: true })
   else loginUseClose.focus({ preventScroll: true })
@@ -848,7 +1049,14 @@ async function loadLoginUse() {
     loginUseOriginValue.textContent = loginUseRequest.origin
     loginUseDestinationValue.textContent = loginUseRequest.destination
     loginChoice.replaceChildren(...loginUseRequest.logins.map(login => new Option(login.label, login.id)))
-    enteringLogin = loginUseRequest.acceptsCredentials && loginUseRequest.logins.length === 0
+    const { purpose } = loginUseRequest
+    enteringLogin = purpose !== undefined || (loginUseRequest.acceptsCredentials && loginUseRequest.logins.length === 0)
+    if (purpose !== undefined) {
+      const title = messages[purpose === 'verification' ? 'cloudVaultVerificationTitle' : 'cloudVaultSignupTitle']
+      document.title = title
+      element('title').textContent = title
+      element('hint').textContent = messages[purpose === 'verification' ? 'cloudVaultVerificationHint' : 'cloudVaultSignupHint']
+    }
     setLoginUseOutcome()
   }
   busy = false
@@ -868,18 +1076,31 @@ function toggleLoginUseEntry() {
 async function submitLoginUse(request) {
   busy = true
   availability()
-  setLoginUseOutcome('cloudVaultLoginUseApproving')
+  const signup = request.action === 'create-login-use'
+  const verification = request.action === 'enter-verification-code'
+  setLoginUseOutcome(verification ? 'cloudVaultVerificationSending'
+    : signup ? 'cloudVaultSignupSending' : 'cloudVaultLoginUseApproving')
   loginUseEntry.reset()
   const result = await send(request)
   busy = false
-  if (request.action === 'enter-login-use' && record(result) && result.ok === false && result.reason === 'invalid') {
-    setLoginUseOutcome('cloudVaultLoginUseInvalid', 'error')
+  if ((signup || verification || request.action === 'enter-login-use')
+    && record(result) && result.ok === false && result.reason === 'invalid') {
+    setLoginUseOutcome(verification ? 'cloudVaultVerificationInvalid'
+      : signup ? 'cloudVaultSignupInvalid' : 'cloudVaultLoginUseInvalid', 'error')
     renderLoginUseForm()
     focusLoginUseForm()
     return
   }
   loginUseRequest = undefined
-  if (record(result) && result.state === 'submitted') {
+  if (verification) {
+    const submitted = record(result) && result.state === 'submitted'
+    setLoginUseOutcome(submitted ? 'cloudVaultVerificationSubmitted' : 'cloudVaultVerificationUnavailable',
+      submitted ? '' : 'error')
+  } else if (signup && record(result) && result.saved === true) {
+    setLoginUseOutcome(result.state === 'submitted' ? 'cloudVaultSignupSubmitted' : 'cloudVaultSignupNeedsOwner')
+  } else if (signup) {
+    setLoginUseOutcome('cloudVaultSignupUnavailable', 'error')
+  } else if (record(result) && result.state === 'submitted') {
     if (request.saveLabel === undefined) setLoginUseOutcome('cloudVaultLoginUseSubmitted')
     else if (result.saved === true) setLoginUseOutcome('cloudVaultLoginUseSubmittedSaved')
     else setLoginUseOutcome('cloudVaultLoginUseSaveFailed', 'error')
@@ -998,6 +1219,13 @@ editor.addEventListener('submit', event => {
   void change(request)
 })
 element('add-login').addEventListener('click', () => openLoginEditor('add'))
+element('import-logins').addEventListener('click', () => { void chooseLoginImport() })
+element('login-import-cancel').addEventListener('click', () => { void dismissLoginImport() })
+importSave.addEventListener('click', () => { void saveLoginImport() })
+loginImport.addEventListener('cancel', (event) => {
+  event.preventDefault()
+  void dismissLoginImport()
+})
 element('login-editor-cancel').addEventListener('click', () => { closeLoginEditor(); element('add-login').focus() })
 loginEditor.addEventListener('submit', event => {
   event.preventDefault()
@@ -1040,7 +1268,22 @@ loginUseToggle.addEventListener('click', toggleLoginUseEntry)
 loginUseSave.addEventListener('change', showLoginUseSaveLabel)
 loginUseEntry.addEventListener('submit', event => {
   event.preventDefault()
-  if (busy || !enteringLogin || loginUseRequest?.acceptsCredentials !== true) return
+  if (busy || !enteringLogin || loginUseRequest === undefined) return
+  if (loginUseRequest.purpose === 'verification') {
+    void submitLoginUse({
+      action: 'enter-verification-code', id: requestId, origin: loginUseRequest.origin, destination: loginUseRequest.destination,
+      code: loginUseCode.value,
+    })
+    return
+  }
+  if (loginUseRequest.purpose === 'signup') {
+    void submitLoginUse({
+      action: 'create-login-use', id: requestId, origin: loginUseRequest.origin, destination: loginUseRequest.destination,
+      username: loginUseUsername.value.trim(), saveLabel: loginUseSaveLabel.value.trim(),
+    })
+    return
+  }
+  if (!loginUseRequest.acceptsCredentials) return
   void submitLoginUse({
     action: 'enter-login-use', id: requestId, origin: loginUseRequest.origin, destination: loginUseRequest.destination,
     username: loginUseUsername.value, password: loginUsePassword.value,
@@ -1050,7 +1293,7 @@ loginUseEntry.addEventListener('submit', event => {
 loginUseDecline.addEventListener('click', () => { void declineLoginUse() })
 loginUseClose.addEventListener('click', () => { void api.close().catch(() => {}) })
 document.addEventListener('keydown', event => {
-  if (event.key !== 'Escape' || confirmation.open) return
+  if (event.key !== 'Escape' || confirmation.open || loginImport.open) return
   event.preventDefault()
   if (mode?.kind === 'request' || mode?.kind === 'login-use') { void api.close().catch(() => {}); return }
   if ((editor.hidden && loginEditor.hidden && grantEditor.hidden) || busy) void api.close().catch(() => {})
@@ -1061,6 +1304,7 @@ document.addEventListener('keydown', event => {
 window.addEventListener('pagehide', () => {
   closeEditor()
   closeLoginEditor()
+  closeLoginImport()
   closeGrantEditor()
   requestValue.value = ''
   loginChoice.replaceChildren()
@@ -1079,7 +1323,9 @@ void Promise.all([api.messages(), api.mode()]).then(([copy, presentation]) => {
     ['grant-name-label', 'cloudVaultRequestName'], ['grant-scope-label', 'cloudVaultBotAccessScope'],
     ['grant-editor-cancel', 'cancel'], ['grant-save', 'cloudVaultBotAccessAdd'],
     ['browser-access-title', 'cloudVaultBrowserAccess'], ['browser-access-hint', 'cloudVaultBrowserAccessHint'],
-    ['websites-hint', 'cloudVaultWebsitesHint'], ['logins-title', 'cloudVaultWebsites'], ['add-login-label', 'cloudVaultWebsiteAdd'],
+    ['websites-hint', 'cloudVaultWebsitesHint'], ['websites-automatic-hint', 'cloudVaultWebsiteAutomaticHint'],
+    ['logins-title', 'cloudVaultWebsites'], ['add-login-label', 'cloudVaultWebsiteAdd'],
+    ['import-logins', 'cloudVaultLoginImportChoose'], ['login-import-title', 'cloudVaultLoginImportTitle'], ['login-import-cancel', 'cancel'],
     ['logins-empty', 'cloudVaultWebsitesEmpty'], ['login-origin-label', 'cloudVaultWebsiteOrigin'], ['login-label-label', 'cloudVaultWebsiteLabel'],
     ['login-bot-label', 'cloudVaultWebsiteBot'],
     ['login-username-label', 'cloudVaultWebsiteUsername'], ['login-password-label', 'cloudVaultWebsitePassword'],
@@ -1093,6 +1339,7 @@ void Promise.all([api.messages(), api.mode()]).then(([copy, presentation]) => {
     ['login-use-login-label', 'cloudVaultLoginUseLogin'], ['login-use-empty', 'cloudVaultLoginUseEmpty'],
     ['login-use-approve', 'cloudVaultLoginUseApprove'], ['login-use-decline', 'cloudVaultLoginUseDecline'],
     ['login-use-username-label', 'cloudVaultWebsiteUsername'], ['login-use-password-label', 'cloudVaultWebsitePassword'],
+    ['login-use-code-label', 'cloudVaultVerificationLabel'],
     ['login-use-save-text', 'cloudVaultLoginUseSave'], ['login-use-save-label-text', 'cloudVaultWebsiteLabel'],
     ['login-use-submit', 'cloudVaultLoginUseSignIn'], ['login-use-close', 'cloudVaultLoginUseDone'],
   ]) element(id).textContent = copy[key]

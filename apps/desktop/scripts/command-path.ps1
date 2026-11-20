@@ -64,8 +64,8 @@ function Invoke-DshCommandPath {
             }
         }
         if ($Request.operation -eq 'install') {
-            if (-not ((Test-Path -LiteralPath (Join-Path $directory 'yharness.cmd') -PathType Leaf)
-                -or (Test-Path -LiteralPath (Join-Path $directory 'dsh.cmd') -PathType Leaf))) {
+            if (-not ((Test-Path -LiteralPath (Join-Path $directory 'yharness.cmd') -PathType Leaf) -or
+                (Test-Path -LiteralPath (Join-Path $directory 'dsh.cmd') -PathType Leaf))) {
                 Fail 'ENOENT' 'The installed launcher is unavailable.'
             }
             $next = (@($directory) + $kept) -join ';'

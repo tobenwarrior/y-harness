@@ -309,6 +309,20 @@ export function SidebarRoot({
 
       {!wide && windowsTitlebar && renderSlot('sidebar.toggle.badge', {})}
 
+      {/* The browsing region fills the column between the controls and the
+          foot in both states; its rail icon column rides the same slot. */}
+      <div className={css.regionArea}>
+        {botMode
+          ? renderSlot('sidebar.bots', {
+            wide,
+            expandSidebar: () => { if (collapsed) toggleSidebar() },
+          })
+          : renderSlot('sidebar.workspaces', {
+            wide,
+            expandSidebar: () => { if (collapsed) toggleSidebar() },
+          })}
+      </div>
+
       {!botMode && panels.filter(({ id }) => id !== BOT_PANEL_ID).length > 0 && (
         <nav className={css.panelList} data-yh-part="sidebar-nav" aria-label={t('panels.label')}>
           {panels.filter(({ id }) => id !== BOT_PANEL_ID).map(({ id, label }) => (
@@ -324,20 +338,6 @@ export function SidebarRoot({
           ))}
         </nav>
       )}
-
-      {/* The browsing region fills the column between the controls and the
-          foot in both states; its rail icon column rides the same slot. */}
-      <div className={css.regionArea}>
-        {botMode
-          ? renderSlot('sidebar.bots', {
-            wide,
-            expandSidebar: () => { if (collapsed) toggleSidebar() },
-          })
-          : renderSlot('sidebar.workspaces', {
-            wide,
-            expandSidebar: () => { if (collapsed) toggleSidebar() },
-          })}
-      </div>
 
       {/* Footer actions stack above Settings in both sidebar widths. */}
       <div className={css.footArea}>

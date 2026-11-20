@@ -97,7 +97,7 @@ export class DesktopUpdateCoordinator {
      * Checkout comparison for a development build, which has no update feed.
      * Absent means such builds simply report `unavailable`.
      */
-    private readonly checkoutUpdate: () => Promise<CheckoutUpdateState | null> = async () => null,
+    private readonly checkoutUpdate: () => Promise<CheckoutUpdateState | null> = () => Promise.resolve(null),
   ) {
     if (updater === autoUpdater) {
       // electron-updater omits this internal transport property from its public declarations.

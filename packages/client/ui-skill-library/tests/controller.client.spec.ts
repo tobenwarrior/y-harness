@@ -175,6 +175,33 @@ describe('skill library controller', () => {
     controller.dispose()
   })
 
+  it('refreshes restored instructions while a learning metadata request is still pending', async () => {
+    const learning = Promise.withResolvers<Awaited<ReturnType<SkillLibraryApi['learningStatus']>>>()
+    const restored = { ...item, contentHash: 'restored-hash' }
+    let current = item
+    const controller = new SkillLibraryController(api({
+      learningStatus: async () => learning.promise,
+      rollback: async () => {
+        current = restored
+        return { ok: true, value: { item: restored } }
+      },
+      detail: async () => ({ ok: true, value: {
+        item: current, content: current === restored ? 'Restored instructions' : 'Edited instructions', revisions: [],
+      } }),
+    }))
+    await controller.loadDetail(id)
+    const pendingLearning = controller.refreshLearning()
+    const rollback = controller.rollback(item, 'revision:original' as SkillRevisionId)
+    try {
+      await vi.waitFor(() => { expect(controller.source.getSnapshot().detail?.content).toBe('Restored instructions') })
+      expect(controller.source.getSnapshot().learning.status).toBe('loading')
+    } finally {
+      learning.resolve({ ok: true, value: learningStatus })
+      await Promise.all([pendingLearning, rollback])
+      controller.dispose()
+    }
+  })
+
   it('previews cleanup without applying it, then applies only the reviewed proposal', async () => {
     const applyCleanup = vi.fn<SkillLibraryApi['applyCleanup']>(async () => ({ ok: true, value: { revised: [id] } }))
     const controller = new SkillLibraryController(api({ applyCleanup }))

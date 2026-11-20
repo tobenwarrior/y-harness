@@ -22,7 +22,7 @@
   name: '@deepseek-ai/dsh-web'
 
 - id: web-fetch-http
-  name: '@deepseek-ai/dsh-web-fetch-http'
+  name: '@yharness/web-fetch-http'
   disabled: true
 
 - id: tool-web

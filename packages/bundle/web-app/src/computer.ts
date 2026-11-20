@@ -4,15 +4,18 @@
  * The controller owns one fixed 1280×800 display. Native commands receive a
  * credential-scrubbed environment and are always started with argv, never a
  * shell. Browser input and model input share one admission queue; an expiring
- * viewer lease excludes model input while a human is controlling the display.
+ * viewer lease excludes model input and observation during human control.
  * @module @yharness/web-app/computer
  */
 
 import { spawn } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { chmod, mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
+import { setTimeout as delay } from 'node:timers/promises'
 import { scrubbedParentEnv } from '@yharness/subprocess'
+import { brandString, type Branded } from '@yharness/brand'
 
 /** Fixed width exposed by the first private Computer panel. */
 export const COMPUTER_WIDTH = 1280
@@ -20,8 +23,11 @@ export const COMPUTER_WIDTH = 1280
 export const COMPUTER_HEIGHT = 800
 
 const LEASE_DURATION_MS = 8_000
+const SIGN_IN_DURATION_MS = 10 * 60_000
 const COMMAND_TIMEOUT_MS = 2_000
 const MAX_TEXT_BYTES = 8_192
+const XDOTOOL_TEXT_INTERVAL_MS = 12
+const XDOTOOL_TEXT_SETTLE_MS = 350
 const MAX_KEY_LENGTH = 64
 const VIEWER_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu
 
@@ -46,12 +52,36 @@ interface ComputerImage {
   readonly jpeg: string
   readonly width: typeof COMPUTER_WIDTH
   readonly height: typeof COMPUTER_HEIGHT
+  readonly browserOrigin?: string | null
 }
 
 /** Frame returned by the Host. `jpeg` is base64 encoded JPEG data. */
 export interface ComputerFrame extends ComputerImage {
   readonly mode: ComputerMode
   readonly botActive: boolean
+  /** An outstanding sign-in handoff. Viewers without its lease receive no JPEG. */
+  readonly signIn?: ComputerSignInId
+}
+
+/** Opaque identifier for one private Computer handoff. */
+export type ComputerSignInId = Branded<'ComputerSignInId'>
+
+/** Metadata for a live owner request. */
+export interface ComputerSignInRequest {
+  readonly id: ComputerSignInId
+  readonly canCancel: boolean
+}
+
+/** Owner actions on an exact sign-in request. */
+export type ComputerSignInAction = 'take' | 'complete' | 'cancel'
+
+/** The only outcomes returned to the model. */
+export type ComputerSignInResult = 'completed' | 'cancelled' | 'interrupted'
+
+interface SignIn {
+  readonly id: ComputerSignInId
+  taken: boolean
+  settle(result: ComputerSignInResult): void
 }
 
 /** Private opt-in X11 settings supplied by the composition owner. */
@@ -66,6 +96,7 @@ export interface ComputerConfig {
  * @param args - Positional argv, never a shell command string.
  * @param env - Credential-scrubbed child environment.
  * @param signal - Cancellation and command deadline signal.
+ * @param stdin - Optional text sent through a pipe, outside process arguments.
  * @returns When the command exits successfully.
  */
 export type ComputerCommandRunner = (
@@ -73,12 +104,30 @@ export type ComputerCommandRunner = (
   args: readonly string[],
   env: Readonly<Record<string, string>>,
   signal: AbortSignal,
+  stdin?: string,
 ) => Promise<void>
+
+/**
+ * Capture one JPEG from an execution environment that owns its display.
+ *
+ * The returned bytes must come from that environment's stdout or equivalent
+ * byte channel. The Host never supplies a shared filesystem path for this
+ * operation.
+ * @param signal - Cancellation and command deadline signal.
+ * @returns JPEG bytes, with a confirmed HTTPS origin when the frame is part of a browser handoff.
+ */
+export type ComputerCaptureRunner = (
+  signal: AbortSignal,
+) => Promise<Buffer | { readonly bytes: Buffer; readonly browserOrigin: string | null }>
 
 /** Deterministic seams for tests; production uses the local clock and child process runner. */
 export interface ComputerInternals {
   readonly now?: () => number
   readonly run?: ComputerCommandRunner
+  /** Optional in-environment screenshot capture used by container-backed Hosts. */
+  readonly capture?: ComputerCaptureRunner
+  /** An isolated browser receives normalized input after Computer lease admission. */
+  readonly input?: (action: ComputerAction, signal: AbortSignal, browserOrigin?: string) => Promise<void>
 }
 
 /** Stable error codes for route and tool owners that need to classify failures. */
@@ -172,9 +221,17 @@ const KEY_NAMES = new Set([
   'Page_Up', 'Page_Down', 'Insert', 'Delete', 'Caps_Lock', 'Num_Lock', 'Scroll_Lock', 'Print', 'Pause', 'Menu',
   'minus', 'equal', 'bracketleft', 'bracketright', 'backslash', 'semicolon', 'apostrophe', 'grave', 'comma',
   'period', 'slash',
+  'plus', 'quotedbl', 'braceleft', 'braceright',
   ...Array.from({ length: 12 }, (_, index) => `F${String(index + 1)}`),
 ])
 const KEY_CHARACTERS = new Set('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_!@#$%^&*()-=[]\\;\',./?:<>|~`'.split(''))
+const SYMBOL_KEYSYMS: Readonly<Record<string, string>> = {
+  _: 'underscore', '!': 'exclam', '@': 'at', '#': 'numbersign', '$': 'dollar', '%': 'percent',
+  '^': 'asciicircum', '&': 'ampersand', '*': 'asterisk', '(': 'parenleft', ')': 'parenright',
+  '-': 'minus', '=': 'equal', '[': 'bracketleft', ']': 'bracketright', '\\': 'backslash',
+  ';': 'semicolon', "'": 'apostrophe', ',': 'comma', '.': 'period', '/': 'slash', '?': 'question',
+  ':': 'colon', '<': 'less', '>': 'greater', '|': 'bar', '~': 'asciitilde', '`': 'grave',
+}
 
 function validKey(value: unknown): string {
   if (typeof value !== 'string' || value.length === 0 || value.length > MAX_KEY_LENGTH) {
@@ -241,14 +298,14 @@ function throwIfAborted(signal: AbortSignal | undefined): void {
 }
 
 /** Start one no-shell command with a private deadline and no captured output. */
-const runNativeCommand: ComputerCommandRunner = (command, args, env, signal) => new Promise((resolve, reject) => {
+const runNativeCommand: ComputerCommandRunner = (command, args, env, signal, stdin) => new Promise((resolve, reject) => {
   if (signal.aborted) {
     reject(abortError())
     return
   }
   let child: ReturnType<typeof spawn>
   try {
-    child = spawn(command, [...args], { env: { ...env }, shell: false, stdio: 'ignore' })
+    child = spawn(command, [...args], { env: { ...env }, shell: false, stdio: [stdin === undefined ? 'ignore' : 'pipe', 'ignore', 'ignore'] })
   } catch (error) {
     void error
     reject(new ComputerError('computer command failed', 'command-failed'))
@@ -284,6 +341,10 @@ const runNativeCommand: ComputerCommandRunner = (command, args, env, signal) => 
     else if (code === 0) settle()
     else settle(new ComputerError('computer command failed', 'command-failed'))
   })
+  if (stdin !== undefined) {
+    child.stdin?.on('error', (error) => { void error })
+    child.stdin?.end(stdin)
+  }
 })
 
 /** The Host-side controller shared by the private browser panel and model tool. */
@@ -291,10 +352,14 @@ export class VpsComputer {
   private readonly config: ComputerConfig
   private readonly now: () => number
   private readonly run: ComputerCommandRunner
+  private readonly captureRunner: ComputerCaptureRunner | undefined
+  private readonly inputRunner: ComputerInternals['input']
   private queue: Promise<void> = Promise.resolve()
   private readonly captures = new Set<Promise<void>>()
   private owner: string | undefined
   private leaseExpiry = 0
+  private signIn: SignIn | undefined
+  private signInRevision = 0
   private pendingBotActions = 0
   private disposed = false
   private disposePromise: Promise<void> | undefined
@@ -307,6 +372,8 @@ export class VpsComputer {
     this.config = validateConfig(config)
     this.now = internals.now ?? Date.now
     this.run = internals.run ?? runNativeCommand
+    this.captureRunner = internals.capture
+    this.inputRunner = internals.input
   }
 
   /**
@@ -315,6 +382,79 @@ export class VpsComputer {
    */
   status(): { readonly available: boolean } {
     return { available: !this.disposed }
+  }
+
+  /**
+   * Read owner-visible sign-in metadata without starting or extending the request.
+   * @returns The current request, if any.
+   */
+  signInRequest(): ComputerSignInRequest | undefined {
+    return this.signIn === undefined ? undefined : { id: this.signIn.id, canCancel: !this.signIn.taken }
+  }
+
+  /**
+   * Suspend Computer access until the owner hands it back or the turn stops.
+   * A Computer already used for sign-in stays private until the owner returns it.
+   * @param signal - Cancellation of the Bot's waiting turn.
+   * @returns The owner's answer, or interruption when the wait ends.
+   */
+  async requestSignIn(signal: AbortSignal): Promise<ComputerSignInResult> {
+    const answer = Promise.withResolvers<ComputerSignInResult>()
+    await this.admit(() => {
+      if (this.signIn !== undefined) throw new ComputerLeaseError('a Computer sign-in is already open')
+      const interrupt = (): void => {
+        void this.admit(() => {
+          if (this.signIn !== request) return
+          if (!request.taken) this.clearSignIn()
+          request.settle('interrupted')
+        }).catch((error: unknown) => { void error })
+      }
+      const timer = setTimeout(interrupt, SIGN_IN_DURATION_MS)
+      timer.unref()
+      const request: SignIn = {
+        id: brandString<ComputerSignInId>(randomUUID()),
+        taken: false,
+        settle(result) {
+          signal.removeEventListener('abort', interrupt)
+          clearTimeout(timer)
+          answer.resolve(result)
+        },
+      }
+      this.signIn = request
+      this.signInRevision++
+      signal.addEventListener('abort', interrupt, { once: true })
+    }, signal)
+    return answer.promise
+  }
+
+  /**
+   * Change an exact sign-in request from the authenticated owner interface.
+   * @param requestId - ID read from the current Bot's request.
+   * @param action - Take control, finish sign-in, or decline the request.
+   * @param viewerId - Viewer claiming or returning its lease. Required to cancel a claimed request.
+   * @param signal - Optional cancellation before the action is admitted.
+   * @returns The viewer mode after the action.
+   */
+  answerSignIn(requestId: string, action: ComputerSignInAction, viewerId?: string, signal?: AbortSignal): Promise<ComputerControlResult> {
+    const id = viewerId === undefined ? undefined : validateViewer(viewerId)
+    return this.admit(() => {
+      const request = this.signIn
+      if (request?.id !== requestId) throw new ComputerLeaseError('Computer sign-in request has ended')
+      this.expireLease()
+      if (action === 'take') {
+        if (id === undefined) invalidViewer()
+        this.grantControl(id)
+        request.taken = true
+        return { mode: 'controlling' }
+      }
+      if (request.taken ? id === undefined || this.owner !== id : action === 'complete') {
+        throw new ComputerLeaseError('viewer does not hold the sign-in lease')
+      }
+      if (request.taken) this.clearLease()
+      this.clearSignIn()
+      request.settle(action === 'complete' ? 'completed' : 'cancelled')
+      return { mode: this.modeFor(id) }
+    }, signal)
   }
 
   /**
@@ -328,25 +468,31 @@ export class VpsComputer {
     this.assertOpen()
     throwIfAborted(signal)
     this.expireLease()
+    const revision = this.signInRevision
+    if (this.signIn !== undefined && (this.owner !== id || !this.signIn.taken)) return this.browserFrame(id)
     if (this.owner === id) this.leaseExpiry = this.now() + LEASE_DURATION_MS
     const image = await this.capture(signal)
-    return { ...image, mode: this.modeFor(id), botActive: this.pendingBotActions > 0 }
+    this.expireLease()
+    return this.browserFrame(id, this.signInRevision !== revision || (this.signIn !== undefined && this.owner !== id)
+      ? undefined : image)
   }
 
   /**
-   * Capture a model/tool frame without claiming or renewing a human lease.
+   * Capture a model/tool frame when no viewer controls the display.
    * @param signal - Optional request cancellation.
    * @returns Base64 JPEG with the non-viewer mode.
    */
-  async observe(signal?: AbortSignal): Promise<ComputerFrame> {
-    this.assertOpen()
-    throwIfAborted(signal)
-    const image = await this.capture(signal)
-    return { ...image, mode: 'other', botActive: this.pendingBotActions > 0 }
+  observe(signal?: AbortSignal): Promise<ComputerFrame> {
+    return this.admit(async () => {
+      this.expireLease()
+      this.assertBotControl()
+      const image = await this.capture(signal)
+      return { ...image, mode: 'other', botActive: this.pendingBotActions > 0 }
+    }, signal)
   }
 
   /**
-   * Admit one viewer as controller after all previously admitted input settles.
+   * Admit one viewer as controller after all admitted input and model frames settle.
    * @param viewerId - UUID identifying the browser viewer.
    * @param signal - Optional request cancellation while waiting for admission.
    * @returns The controlling mode.
@@ -355,9 +501,8 @@ export class VpsComputer {
     const id = validateViewer(viewerId)
     return this.admit(() => {
       this.expireLease()
-      if (this.owner !== undefined && this.owner !== id) throw new ComputerLeaseError('computer is controlled by another viewer')
-      this.owner = id
-      this.leaseExpiry = this.now() + LEASE_DURATION_MS
+      if (this.signIn !== undefined) throw new ComputerLeaseError('use the Computer sign-in request to take control')
+      this.grantControl(id)
       return { mode: 'controlling' as const }
     }, signal)
   }
@@ -372,10 +517,7 @@ export class VpsComputer {
     const id = validateViewer(viewerId)
     return this.admit(() => {
       this.expireLease()
-      if (this.owner === id) {
-        this.owner = undefined
-        this.leaseExpiry = 0
-      }
+      if (this.owner === id) this.clearLease()
       return { mode: this.modeFor(id) }
     }, signal)
   }
@@ -385,16 +527,18 @@ export class VpsComputer {
    * @param viewerId - UUID identifying the browser viewer.
    * @param action - Untrusted action value to validate before admission.
    * @param signal - Optional request cancellation.
+   * @param browserOrigin - Expected origin from the viewer's last browser frame, when required by the provider.
    * @returns The continuing controlling mode.
    */
-  async input(viewerId: string, action: unknown, signal?: AbortSignal): Promise<ComputerControlResult> {
+  async input(viewerId: string, action: unknown, signal?: AbortSignal, browserOrigin?: string): Promise<ComputerControlResult> {
     const id = validateViewer(viewerId)
     const normalized = validateComputerAction(action)
     return this.admit(async () => {
       this.expireLease()
       if (this.owner !== id) throw new ComputerLeaseError('viewer does not hold computer control')
+      if (this.signIn !== undefined && !this.signIn.taken) throw new ComputerLeaseError('accept the Computer sign-in request first')
       this.leaseExpiry = this.now() + LEASE_DURATION_MS
-      await this.execute(normalized, signal)
+      await this.execute(normalized, signal, this.signIn !== undefined, browserOrigin)
       return { mode: 'controlling' as const }
     }, signal)
   }
@@ -407,11 +551,52 @@ export class VpsComputer {
    */
   async actAsBot(action: unknown, signal?: AbortSignal): Promise<void> {
     const normalized = validateComputerAction(action)
-    this.pendingBotActions += 1
-    const result = this.admit(async () => {
+    return this.runWhileBotControls(() => this.execute(normalized, signal), signal)
+  }
+
+  /**
+   * Admit a website navigation through the Bot's isolated browser provider.
+   * @param url - Website to validate and visit at the provider.
+   * @param signal - Cancellation before admission and during provider work.
+   * @param navigate - The already selected provider for this Bot's browser.
+   * @returns When the provider has accepted the navigation.
+   */
+  navigateAsBot(url: string, signal: AbortSignal, navigate: (url: string, signal: AbortSignal) => Promise<void>): Promise<void> {
+    return this.runWhileBotControls(() => navigate(url, signal), signal)
+  }
+
+  /**
+   * Navigate the isolated browser for the viewer holding control, including during a claimed sign-in handoff.
+   * @param viewerId - Current viewer lease identifier.
+   * @param url - Validated website URL.
+   * @param signal - Request cancellation.
+   * @param navigate - Provider for this Computer's browser.
+   * @returns The viewer mode after navigation.
+   */
+  navigateAsViewer(viewerId: string, url: string, signal: AbortSignal,
+    navigate: (url: string, signal: AbortSignal) => Promise<void>): Promise<ComputerControlResult> {
+    const id = validateViewer(viewerId)
+    return this.admit(async () => {
       this.expireLease()
-      if (this.owner !== undefined) throw new ComputerLeaseError('computer is controlled by a human')
-      await this.execute(normalized, signal)
+      if (this.owner !== id || this.signIn?.taken === false) throw new ComputerLeaseError('viewer does not hold browser control')
+      await navigate(url, signal)
+      this.leaseExpiry = this.now() + LEASE_DURATION_MS
+      return { mode: 'controlling' }
+    }, signal)
+  }
+
+  /**
+   * Admit a Bot operation while the owner has no active Computer lease.
+   * @param work - Provider operation that settles before the next input is admitted.
+   * @param signal - Cancellation while waiting for admission.
+   * @returns The operation's result.
+   */
+  runWhileBotControls<T>(work: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+    this.pendingBotActions += 1
+    const result = this.admit(() => {
+      this.expireLease()
+      this.assertBotControl()
+      return work()
     }, signal)
     return result.finally(() => { this.pendingBotActions -= 1 })
   }
@@ -433,8 +618,9 @@ export class VpsComputer {
   async dispose(): Promise<void> {
     if (this.disposePromise !== undefined) return this.disposePromise
     this.disposed = true
-    this.owner = undefined
-    this.leaseExpiry = 0
+    this.clearLease()
+    this.signIn?.settle('interrupted')
+    this.clearSignIn()
     this.disposePromise = (async () => {
       await this.queue
       await Promise.all([...this.captures])
@@ -447,13 +633,39 @@ export class VpsComputer {
   }
 
   private expireLease(): void {
-    if (this.owner !== undefined && this.now() >= this.leaseExpiry) {
-      this.owner = undefined
-      this.leaseExpiry = 0
+    if (this.owner !== undefined && this.now() >= this.leaseExpiry) this.clearLease()
+  }
+
+  private clearLease(): void {
+    this.owner = undefined
+    this.leaseExpiry = 0
+  }
+
+  private clearSignIn(): void {
+    this.signIn = undefined
+    this.signInRevision++
+  }
+
+  private grantControl(id: string): void {
+    if (this.owner !== undefined && this.owner !== id) throw new ComputerLeaseError('computer is controlled by another viewer')
+    this.owner = id
+    this.leaseExpiry = this.now() + LEASE_DURATION_MS
+  }
+
+  private assertBotControl(): void {
+    if (this.signIn !== undefined || this.owner !== undefined) throw new ComputerLeaseError('computer is controlled by a human')
+  }
+
+  private browserFrame(id: string, image?: ComputerImage): ComputerFrame {
+    return {
+      ...(image ?? { jpeg: '', width: COMPUTER_WIDTH, height: COMPUTER_HEIGHT }),
+      mode: this.signIn !== undefined && (this.owner !== id || !this.signIn.taken) ? 'other' : this.modeFor(id),
+      botActive: this.pendingBotActions > 0,
+      ...(this.signIn === undefined ? {} : { signIn: this.signIn.id }),
     }
   }
 
-  private modeFor(viewerId: string): 'watching' | 'controlling' | 'other' {
+  private modeFor(viewerId: string | undefined): ComputerMode {
     if (this.owner === undefined) return 'watching'
     return this.owner === viewerId ? 'controlling' : 'other'
   }
@@ -468,8 +680,12 @@ export class VpsComputer {
     return run
   }
 
-  private async execute(action: ComputerAction, signal?: AbortSignal): Promise<void> {
+  private async execute(action: ComputerAction, signal?: AbortSignal, signIn = false, browserOrigin?: string): Promise<void> {
     throwIfAborted(signal)
+    if (this.inputRunner !== undefined) {
+      await this.inputRunner(action, signal ?? new AbortController().signal, browserOrigin)
+      return
+    }
     const env = { ...scrubbedParentEnv(), DISPLAY: this.config.display, XAUTHORITY: this.config.authorityPath }
     const move = async (x: number, y: number): Promise<void> => {
       await this.run('xdotool', ['mousemove', '--sync', String(x), String(y)], env, signal ?? new AbortController().signal)
@@ -497,7 +713,7 @@ export class VpsComputer {
         } catch (error: unknown) {
           if (failure === undefined) failure = error
         }
-        if (failure !== undefined) throw failure
+        if (failure !== undefined) throw failure as Error
         return
       case 'scroll':
         await move(action.x, action.y)
@@ -507,11 +723,24 @@ export class VpsComputer {
         }
         return
       case 'key':
-        await this.run('xdotool', ['key', '--clearmodifiers', action.key], env, signal ?? new AbortController().signal)
+        if (signIn) {
+          // Xdotool's command reader expands `$` and treats quotes as delimiters.
+          const keys = action.key.split('+').map(key => SYMBOL_KEYSYMS[key] ?? key).join('+')
+          await this.run('xdotool', ['-'], env, signal ?? new AbortController().signal, `key --clearmodifiers ${keys}\n`)
+        } else {
+          await this.run('xdotool', ['key', '--clearmodifiers', action.key], env, signal ?? new AbortController().signal)
+        }
         return
-      case 'text':
-        await this.run('xdotool', ['type', '--clearmodifiers', '--delay', '0', '--', action.text], env, signal ?? new AbortController().signal)
+      case 'text': {
+        // Firefox needs paced key events. Reserve half the command deadline for X11 and process overhead.
+        const interval = Math.min(XDOTOOL_TEXT_INTERVAL_MS, Math.floor(COMMAND_TIMEOUT_MS / (2 * Math.max(1, action.text.length))))
+        const args = ['type', '--clearmodifiers', '--delay', String(interval)]
+        if (signIn) await this.run('xdotool', [...args, '--file', '-'], env, signal ?? new AbortController().signal, action.text)
+        else await this.run('xdotool', [...args, '--', action.text], env, signal ?? new AbortController().signal)
+        // X11 can finish queuing text before Firefox applies it to the address bar.
+        await delay(XDOTOOL_TEXT_SETTLE_MS, undefined, { signal })
         return
+      }
     }
   }
 
@@ -519,12 +748,29 @@ export class VpsComputer {
     const operation = this.captureNow(signal)
     const settled = operation.then(() => undefined, () => undefined)
     this.captures.add(settled)
-    void operation.finally(() => { this.captures.delete(settled) }).catch((error) => { void error })
+    void operation.finally(() => { this.captures.delete(settled) }).catch((error: unknown) => { void error })
     return operation
   }
 
   private async captureNow(signal?: AbortSignal): Promise<ComputerImage> {
     throwIfAborted(signal)
+    if (this.captureRunner !== undefined) {
+      try {
+        const capture = await this.captureRunner(signal ?? new AbortController().signal)
+        const bytes = Buffer.isBuffer(capture) ? capture : capture.bytes
+        if (bytes.length < 2 || bytes[0] !== 0xff || bytes[1] !== 0xd8) {
+          throw new ComputerError('computer frame capture failed', 'capture-failed')
+        }
+        return {
+          jpeg: bytes.toString('base64'), width: COMPUTER_WIDTH, height: COMPUTER_HEIGHT,
+          ...(Buffer.isBuffer(capture) ? {} : { browserOrigin: capture.browserOrigin }),
+        }
+      } catch (error) {
+        if (error instanceof ComputerError) throw error
+        if (signal?.aborted === true) throw abortError()
+        throw new ComputerError('computer frame capture failed', 'capture-failed')
+      }
+    }
     let directory: string | undefined
     try {
       directory = await mkdtemp(join(tmpdir(), 'dsh-computer-'))
@@ -544,6 +790,28 @@ export class VpsComputer {
       }
     }
   }
+}
+
+/**
+ * Create a Computer Host whose display commands execute inside a private
+ * container or remote execution environment.
+ *
+ * `run` receives argv without a shell. Input actions invoke `xdotool` through
+ * that callback, while screenshots invoke the image’s capture command so the JPEG stays
+ * inside the execution environment until the callback returns its bytes.
+ * @param run - Execute one argv vector with optional piped input and return stdout bytes.
+ * @returns A Computer Host using the supplied execution environment.
+ */
+export function containerComputer(
+  run: (argv: readonly string[], signal: AbortSignal, stdin?: string) => Promise<Buffer>,
+): VpsComputer {
+  const execute: ComputerCommandRunner = async (command, args, _env, signal, stdin) => {
+    await run([command, ...args], signal, stdin)
+  }
+  const capture: ComputerCaptureRunner = signal => run(
+    ['/usr/local/bin/yharness-vps-bot-capture'], signal,
+  )
+  return new VpsComputer({ display: ':container', authorityPath: '/dev/null' }, { run: execute, capture })
 }
 
 /** Compatibility name for Host-side callers that prefer the generic service term. */

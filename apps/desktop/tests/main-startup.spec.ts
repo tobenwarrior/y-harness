@@ -321,7 +321,7 @@ vi.mock('electron', () => ({
     },
     removeHandler: (channel: string) => { harness.handlers.delete(channel) },
   },
-  Menu: { setApplicationMenu: harness.menu.setApplicationMenu, buildFromTemplate: harness.menu },
+  Menu: { setApplicationMenu: harness.menu.setApplicationMenu, buildFromTemplate: harness.menu, getApplicationMenu: () => null },
   session: { defaultSession: {
     setPermissionCheckHandler: vi.fn(), setPermissionRequestHandler: vi.fn(), webRequest: { onBeforeSendHeaders: harness.socketHeaders },
   } },
@@ -919,8 +919,14 @@ describe('desktop main startup', () => {
     if (platform === 'darwin') {
       const workspace = template.find(item => item.label === en.cloudWorkspace)
       expect(workspace?.submenu).toEqual([
-        expect.objectContaining({ label: en.cloudOpenMac }),
-        expect.objectContaining({ label: en.cloudOpen }),
+        expect.objectContaining({ label: en.cloudOpenMac, type: 'radio', accelerator: 'Command+Alt+1' }),
+        expect.objectContaining({ label: en.cloudOpen, type: 'radio', accelerator: 'Command+Alt+2' }),
+        expect.objectContaining({ type: 'separator' }),
+        expect.objectContaining({ label: en.cloudVault }),
+        expect.objectContaining({ label: en.cloudChangeServer }),
+        expect.objectContaining({ type: 'separator' }),
+        expect.objectContaining({ label: en.cloudCopyCatalogs }),
+        expect.objectContaining({ label: en.cloudCopyProviderKeys }),
       ])
     }
     const application = template[0]!.submenu as MenuItemConstructorOptions[]
@@ -1143,6 +1149,93 @@ describe('desktop main startup', () => {
     await harness.navigated.promise
     return harness.hosts[0]!
   }
+
+  it('waits for a managed restart write after a repeated quit request', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'dsh-managed-race-'))
+    onTestFinished(() => { rmSync(directory, { recursive: true, force: true }) })
+    const status = join(directory, 'status.json')
+    const built = 'a'.repeat(40)
+    const candidate = 'b'.repeat(40)
+    writeFileSync(status, JSON.stringify({ phase: 'ready', commit: candidate }))
+    vi.stubEnv('DSH_DESKTOP_GITHUB_MANAGED', '1')
+    vi.stubEnv('DSH_DESKTOP_GITHUB_STATUS', status)
+    vi.stubEnv('DSH_DESKTOP_GITHUB_BUILD_COMMIT', built)
+    harness.updateSourceAvailable = false
+    const entered = Promise.withResolvers<undefined>()
+    const release = Promise.withResolvers<undefined>()
+    const update = await import('../src/update-checkout.ts')
+    const writeRestart = update.requestManagedGithubRestart
+    vi.spyOn(update, 'requestManagedGithubRestart').mockImplementation(async (...args) => {
+      entered.resolve(undefined)
+      await release.promise
+      return writeRestart(...args)
+    })
+    const host = await readyForUpdate()
+    harness.updateState = { phase: 'available', version: candidate.slice(0, 12) }
+    let completed = false
+    void harness.quitCompleted.promise.then(() => { completed = true })
+    try {
+      await invoke(DESKTOP_IPC.updatesOpen, 'app')
+      await entered.promise
+      const watcher = statusWatch.watch.mock.results.at(-1)
+      if (watcher?.type !== 'return') throw new Error('The managed status watcher did not start.')
+      expect(watcher.value.close).toHaveBeenCalledOnce()
+      harness.app.quit()
+      await Promise.resolve()
+      expect(completed).toBe(false)
+      expect(readdirSync(directory)).not.toContain('restart-request.json')
+    } finally {
+      release.resolve(undefined)
+      host.exited.resolve()
+      await vi.advanceTimersByTimeAsync(0)
+      await harness.quitCompleted.promise
+    }
+    expect(JSON.parse(readFileSync(join(directory, 'restart-request.json'), 'utf8'))).toEqual({
+      phase: 'requested', buildCommit: built, targetCommit: candidate,
+    })
+  })
+
+  it('handles Cloud cleanup failure while the managed restart write is pending', async () => {
+    vi.stubGlobal('process', { ...process, platform: 'darwin', arch: 'arm64', resourcesPath: 'desktop-test-resources' })
+    const directory = mkdtempSync(join(tmpdir(), 'dsh-managed-cloud-race-'))
+    onTestFinished(() => { rmSync(directory, { recursive: true, force: true }) })
+    const status = join(directory, 'status.json')
+    const built = 'a'.repeat(40)
+    const candidate = 'b'.repeat(40)
+    writeFileSync(status, JSON.stringify({ phase: 'ready', commit: candidate }))
+    vi.stubEnv('DSH_DESKTOP_GITHUB_MANAGED', '1')
+    vi.stubEnv('DSH_DESKTOP_GITHUB_STATUS', status)
+    vi.stubEnv('DSH_DESKTOP_GITHUB_BUILD_COMMIT', built)
+    harness.updateSourceAvailable = false
+    const failure = new Error('cloud cleanup failed')
+    const cloud = await import('../src/cloud-workspace.ts')
+    vi.spyOn(cloud.DesktopCloudWorkspace.prototype, 'dispose').mockRejectedValue(failure)
+    const entered = Promise.withResolvers<undefined>()
+    const release = Promise.withResolvers<undefined>()
+    const update = await import('../src/update-checkout.ts')
+    const writeRestart = update.requestManagedGithubRestart
+    vi.spyOn(update, 'requestManagedGithubRestart').mockImplementation(async (...args) => {
+      entered.resolve(undefined)
+      await release.promise
+      return writeRestart(...args)
+    })
+    const host = await readyForUpdate()
+    harness.updateState = { phase: 'available', version: candidate.slice(0, 12) }
+    let completed = false
+    void harness.quitCompleted.promise.then(() => { completed = true })
+    try {
+      await invoke(DESKTOP_IPC.updatesOpen, 'app')
+      await entered.promise
+      await vi.advanceTimersByTimeAsync(0)
+      expect(console.error).toHaveBeenCalledWith(failure)
+      expect(completed).toBe(false)
+    } finally {
+      release.resolve(undefined)
+      host.exited.resolve()
+      await vi.advanceTimersByTimeAsync(0)
+      await harness.quitCompleted.promise
+    }
+  })
 
   it('rechecks a managed update before allowing a stale indicator to quit the app', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'dsh-managed-update-'))
@@ -1485,6 +1578,42 @@ describe('desktop main startup', () => {
     window.emit('show')
     await opened
     expect(harness.updateInstall).toHaveBeenCalledWith('1.0.1')
+  })
+
+  it('disposes policy authentication when policy cleanup fails', async () => {
+    harness.embeddedPolicy = { origin: 'https://policy.example.com', authentication: 'feishu-test',
+      allowedAuthOrigins: ['https://login.example.com'], allowedPageOrigins: ['https://downloads.example.com'], intervalMs: 1000, jitter: 0 }
+    vi.stubGlobal('fetch', vi.fn<typeof fetch>().mockImplementation(async () =>
+      Response.json({ code: 0, data: { biz_code: 0, biz_data: null } })))
+    const failure = new Error('policy cleanup failed')
+    const policy = await import('../src/mandatory-update-policy.ts')
+    vi.spyOn(policy.DesktopMandatoryUpdatePolicy.prototype, 'dispose').mockRejectedValue(failure)
+    const host = await readyForUpdate()
+    harness.app.quit()
+    await host.stopping.promise
+    host.exited.resolve()
+    await harness.quitCompleted.promise
+    expect(console.error).toHaveBeenCalledWith(failure)
+    expect(testAuth.dispose).toHaveBeenCalledOnce()
+  })
+
+  it('waits for the remaining cleanup when Host shutdown fails', async () => {
+    const host = await readyForUpdate()
+    const disposal = harness.deferPlatformDispose()
+    const failure = new Error('host cleanup failed')
+    host.stop.mockImplementation(() => { host.stopping.resolve(); return Promise.reject(failure) })
+    let completed = false
+    void harness.quitCompleted.promise.then(() => { completed = true })
+    try {
+      harness.app.quit()
+      await host.stopping.promise
+      await vi.advanceTimersByTimeAsync(0)
+      expect(console.error).toHaveBeenCalledWith(failure)
+      expect(completed).toBe(false)
+    } finally {
+      disposal.resolve()
+      await harness.quitCompleted.promise
+    }
   })
 
   it('waits for Platform view storage cleanup before an ordinary quit completes', async () => {

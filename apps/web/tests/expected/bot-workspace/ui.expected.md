@@ -3,11 +3,8 @@
   - button "Bots" [pressed]
 - complementary "Bot workspace":
   - text: Bots
-  - button "Edit avatar"
-  - button "Bot templates"
   - button "New bot"
-  - button "Join a shared bot"
-  - button "Create a shared group"
+  - button "Bot workspace options"
   - textbox "Search bots"
   - region "General":
     - heading "General" [level=2]:
@@ -29,12 +26,7 @@
 - region "Scout":
   - img "Scout"
   - text: Scout Keeps the team informed
-  - button "Edit bot profile"
-  - button "Share bot"
-  - button "Manage memories"
-  - button "Manage skills"
-  - button "Manage routines"
-  - text: Idle
+  - button "Bot options"
   - textbox "Message or run a task, / commands, @ files or sessions"
   - button "Add files or run commands"
   - 'button "Access mode, current: Approve for me"': Approve for me
@@ -182,14 +174,24 @@
 - dialog "Imported Grok chat":
   - heading "Imported Grok chat" [level=2]
   - button "Close"
-  - paragraph: Recovered messages. Earlier messages were unavailable in the source cache.
+  - paragraph: Some records could not be recovered from this source.
+  - text: History source
+  - combobox "History source":
+    - option "Original recovery" [selected]
+    - option "Recovered supplement"
   - list:
     - listitem:
-      - strong: You
-      - time: Jan 1, 1970, 8:00 AM
+      - strong: Archive owner
+      - text: Unknown time
       - paragraph: Recovered question
     - listitem:
-      - strong: Orbit
+      - strong: Orbit historian
+      - text: Author Original author
       - time: Jan 1, 1970, 8:00 AM
       - paragraph: Recovered answer
+    - listitem:
+      - strong: Archive tool
+      - text: Unknown time
+      - paragraph: Recovered tool record
+      - text: Incomplete source record
   - button "Close"

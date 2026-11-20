@@ -168,6 +168,15 @@ abstract describe(ref: CredentialRef): Promise<CredentialInfo>
 abstract set(ref: CredentialRef, value: string): Promise<void>
 
 /**
+ * Store a nonempty value only while no source supplies the reference. A
+ * provider offering this operation checks and writes under the same lock.
+ * @param ref - the reference to populate.
+ * @param value - the nonempty secret value.
+ * @returns Whether the value was inserted.
+ */
+setIfAbsent?(ref: CredentialRef, value: string): Promise<boolean>
+
+/**
  * Remove one reference from the provider-managed writable source; removing
  * an absent reference is a no-op. Rejects while a read-only source shadows
  * the reference, like {@link set}.

@@ -30,6 +30,38 @@
   gap: 4px;
 }
 
+.agentsTrigger {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  gap: 6px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--yh-radius-md);
+  background: transparent;
+  color: var(--yh-alias-label-secondary);
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.agentsTrigger:hover,
+.agentsTrigger[aria-expanded='true'] {
+  background: var(--yh-alias-interactive-bg-hover);
+  color: var(--yh-alias-label-primary);
+}
+
+.agentsCount,
+.agentsRunning {
+  color: var(--yh-alias-label-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+@container bot-detail (max-width: 520px) {
+  .agentsLabel { display: none; }
+}
+
 .switcherTrigger {
   gap: 4px;
   min-width: 0;
@@ -126,6 +158,37 @@
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
+}
+
+.agentsHeading {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  color: var(--yh-alias-label-primary);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.previousAgents {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  margin-top: 4px;
+  padding: 4px 8px;
+  border: 0;
+  border-top: 0.5px solid var(--yh-alias-border-l2);
+  background: transparent;
+  color: var(--yh-alias-label-secondary);
+  font: inherit;
+  font-size: 12px;
+  text-align: start;
+  cursor: pointer;
+}
+
+.previousAgents:hover {
+  color: var(--yh-alias-label-primary);
 }
 
 .node {

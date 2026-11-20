@@ -12,7 +12,7 @@ import { makeTranslate } from '@yharness/client-test-runtime'
 import { SidebarRightTabRegistry } from '@yharness/client-ui-sidebar-right/src/client/tab-registry.ts'
 import { sessionFileAddress } from '@yharness/util-workspace-path'
 import {
-  FILES_ID, FILES_KIND, filesDefinition,
+  COMPUTER_FILES_KIND, COMPUTER_SHARED_FILES_KIND, FILES_ID, FILES_KIND, filesDefinition,
 } from '../src/client/definition.tsx'
 import { zh } from '../src/client/locales.ts'
 
@@ -47,5 +47,15 @@ describe('filesDefinition', () => {
     expect(definition.priority).toBe('builtin')
     expect(definition.patterns).toBeUndefined()
     expect(definition.title('')).toBe(zh['type.label'])
+  })
+
+  it('registers a separate shared Computer workspace tab without a guide entry', () => {
+    const registry = new SidebarRightTabRegistry(new Context())
+    const definition = filesDefinition(t, 'shared')
+    registry.register(definition)
+    expect(registry.get(COMPUTER_SHARED_FILES_KIND)?.id).toBe(`${FILES_ID}/${COMPUTER_SHARED_FILES_KIND}`)
+    expect(registry.get(COMPUTER_SHARED_FILES_KIND)?.guide).toEqual([])
+    expect(registry.get(COMPUTER_SHARED_FILES_KIND)?.title('')).toBe(zh['sharedType.label'])
+    expect(registry.get(COMPUTER_FILES_KIND)).toBeUndefined()
   })
 })

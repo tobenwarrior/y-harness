@@ -40,6 +40,9 @@ import { createCheckoutProbe, detectCheckoutUpdate, detectManagedGithubUpdate, f
   requestManagedGithubRestart, type CheckoutUpdateState } from './update-checkout.ts'
 import { DesktopCommandManager } from './command-management.ts'
 import { serveWebDocument, authenticateWebHost, forwardWebRequest } from './web-document.ts'
+import { prepareCloudProviderCatalogCopy } from './cloud-provider-catalog.ts'
+import { prepareCloudProviderKeyCopy } from './cloud-provider-keys.ts'
+import type { ProviderKeySourceRequest } from '@yharness/provider-config-sync'
 import { DesktopFatalRecovery } from './fatal-recovery.ts'
 import { pruneCrashReports, RendererConsoleTail, writeCrashReport, type CrashReportSource } from './crash-report.ts'
 import { connectDesktopWelcome, type DesktopWelcomeBackend } from './welcome-backend.ts'
@@ -369,6 +372,7 @@ async function main(): Promise<void> {
   let hostEnvironment: NodeJS.ProcessEnv = process.env
   const prepareHostEnvironment = async (): Promise<void> => { hostEnvironment = await loginShell }
   let quitting = false
+  let quitCleanupComplete = false
   let startup: Promise<void> | undefined
   let workspaceRecovery: Promise<void> | undefined
   let mainWindow: BrowserWindow | undefined
@@ -558,6 +562,7 @@ async function main(): Promise<void> {
       updateTasks: (action: 'inspect' | 'lock' | 'unlock') => host.updateTasks(action),
       inspectQuit: () => host.inspectQuit(),
       bootInjections: () => host.bootInjections(),
+      providerKeyRequest: (request: ProviderKeySourceRequest) => host.providerKeyRequest(request),
     }
   }, (state) => {
     if (state.phase === 'error') reportFatal(state.failure, 'host')
@@ -744,14 +749,15 @@ async function main(): Promise<void> {
         const operation = /^\/api\/computer\/mac\/([a-z-]+)$/u.exec(url.pathname)?.[1]
         if (operation !== undefined) {
           return (async () => {
+            const canUseMacPanel = (): boolean => cloudWorkspace?.isCloudSelected() !== true && mainWindow?.isVisible() === true
             const origin = request.headers.get('origin')
             if ((origin !== null && origin !== 'dsh-app://app') || request.headers.get('content-type') !== 'application/json'
-              || cloudWorkspace?.isCloudSelected() === true || mainWindow?.isVisible() !== true) {
+              || !canUseMacPanel()) {
               return Response.json({ error: 'mac-workspace-inactive' }, { status: 403 })
             }
             try {
               const body: unknown = await request.json()
-              if (cloudWorkspace?.isCloudSelected() === true || mainWindow?.isVisible() !== true) {
+              if (!canUseMacPanel()) {
                 return Response.json({ error: 'mac-workspace-inactive' }, { status: 403 })
               }
               return Response.json(await macComputer.panel(operation, body), { headers: { 'cache-control': 'no-store' } })
@@ -1057,13 +1063,122 @@ async function main(): Promise<void> {
     return policy
   }
 
+  const syncWorkspaceMenu = (): void => {
+    if (cloudWorkspace === undefined) return
+    const menu = Menu.getApplicationMenu()
+    if (menu === null) return
+    const local = menu.getMenuItemById('workspace-mac')
+    const cloud = menu.getMenuItemById('workspace-cloud')
+    const vault = menu.getMenuItemById('workspace-vault')
+    const cloudSelected = cloudWorkspace.isCloudSelected()
+    if (local !== null) local.checked = !cloudSelected
+    if (cloud !== null) cloud.checked = cloudSelected
+    if (vault !== null) vault.enabled = cloudWorkspace.ownerCloudWorkspace() !== undefined
+  }
   const cloudWorkspace = process.platform === 'darwin'
     ? new DesktopCloudWorkspace(join(app.getPath('userData'), 'cloud-workspace.json'),
       () => currentDesktopLocale().messages, () => {
         void dialog.showMessageBox({ type: 'warning', message: currentDesktopLocale().messages.cloudPreferenceError })
       }, new DesktopCloudVault(fileURLToPath(new URL('./preload-cloud-vault.cjs', import.meta.url)),
-        join(app.getAppPath(), 'renderer'), () => currentDesktopLocale().messages), () => { macComputer?.revoke() })
+        join(app.getAppPath(), 'renderer'), () => currentDesktopLocale().messages), () => { macComputer?.revoke() }, syncWorkspaceMenu)
     : undefined
+
+  let transferringProviders = false
+  const copyProviderCatalogs = async (): Promise<void> => {
+    if (transferringProviders || isQuitting()) return
+    transferringProviders = true
+    const messages = currentDesktopLocale().messages
+    const title = messages.cloudCopyCatalogsReview
+    const notice = async (message: string): Promise<void> => {
+      if (!isQuitting()) await ordinaryMessageBox({ type: 'info', title, message, buttons: [messages.updateAcknowledge] })
+    }
+    try {
+      const macHost = backend.host
+      const macUrl = hostUrl
+      const macCookie = hostCookie
+      const destination = cloudWorkspace?.ownerCloudWorkspace()
+      if (macHost === undefined || macUrl === undefined || macCookie === undefined || destination === undefined) {
+        await notice(messages.cloudCopyCatalogsReady)
+        return
+      }
+      const transfer = await prepareCloudProviderCatalogCopy({
+        origin: new URL(macUrl).origin,
+        fetch: (url, options) => {
+          if (hostUrl !== macUrl || hostCookie !== macCookie || backend.host !== macHost) {
+            throw new Error('Mac workspace disconnected')
+          }
+          const headers = new Headers(options.headers)
+          headers.set('cookie', macCookie)
+          return fetch(url, { ...options, headers })
+        },
+      }, destination)
+      const counts = messages.cloudCopyCatalogsCounts
+        .replace('{additions}', String(transfer.additions))
+        .replace('{retained}', String(transfer.retained))
+        .replace('{skipped}', String(transfer.skipped))
+      if (transfer.additions === 0) {
+        await notice(messages.cloudCopyCatalogsEmpty + ' ' + counts)
+        return
+      }
+      if (isQuitting()) return
+      const consent = await ordinaryMessageBox({
+        type: 'info', title, message: messages.cloudCopyCatalogsReview,
+        detail: counts + '\n' + messages.cloudCopyCatalogsKeyHint,
+        buttons: [messages.cloudCopyCatalogsConfirm, messages.cancel], cancelId: 1, defaultId: 1,
+      })
+      if (consent.response !== 0 || isQuitting()) return
+      if (hostUrl !== macUrl || hostCookie !== macCookie || backend.host !== macHost) {
+        throw new Error('Mac workspace disconnected')
+      }
+      await transfer.apply()
+      await notice(messages.cloudCopyCatalogsDone + ' ' + messages.cloudCopyCatalogsKeyHint)
+    } catch (_error) {
+      await notice(messages.cloudCopyCatalogsFailed)
+    } finally {
+      transferringProviders = false
+    }
+  }
+
+  const copyProviderKeys = async (): Promise<void> => {
+    if (transferringProviders || isQuitting()) return
+    transferringProviders = true
+    const messages = currentDesktopLocale().messages
+    const title = messages.cloudCopyProviderKeys
+    const notice = async (message: string): Promise<void> => {
+      if (!isQuitting()) await ordinaryMessageBox({ type: 'info', title, message, buttons: [messages.updateAcknowledge] })
+    }
+    try {
+      const host = backend.host
+      const destination = cloudWorkspace?.ownerCloudWorkspace()
+      if (host === undefined || destination === undefined) {
+        await notice(messages.cloudCopyCatalogsReady)
+        return
+      }
+      const preview = await prepareCloudProviderKeyCopy((command) => {
+        if (backend.host !== host || isQuitting()) throw new Error('Mac workspace disconnected')
+        return host.providerKeyRequest(command)
+      }, destination)
+      if (preview.providers.length === 0) {
+        await notice(messages.cloudCopyProviderKeysEmpty)
+        return
+      }
+      if (isQuitting()) return
+      const result = await ordinaryMessageBox({
+        type: 'info', title, message: messages.cloudCopyProviderKeysReview,
+        detail: messages.cloudCopyProviderKeysDetail.replace('{target}', destination.target)
+          .replace('{providers}', preview.providers.join(', ')),
+        buttons: [messages.cloudCopyProviderKeysConfirm, messages.cancel], cancelId: 1, defaultId: 1,
+      })
+      if (result.response !== 0 || isQuitting()) return
+      const copy = await preview.apply()
+      await notice(messages.cloudCopyProviderKeysDone
+        .replace('{copied}', String(copy.copied)).replace('{skipped}', String(copy.skipped)))
+    } catch (_error) {
+      await notice(messages.cloudCopyProviderKeysFailed)
+    } finally {
+      transferringProviders = false
+    }
+  }
 
   const automaticCheck = (): void => {
     if (!quitting) void mandatoryPolicy?.check('foreground-or-resume').catch((error: unknown) => { console.error(error) })
@@ -1096,8 +1211,18 @@ async function main(): Promise<void> {
     ? [shortcuts.fileMenu(currentDesktopLocale().messages), { role: 'editMenu' }, {
       label: currentDesktopLocale().messages.cloudWorkspace,
       submenu: [
-        { label: currentDesktopLocale().messages.cloudOpenMac, click: () => { cloudWorkspace?.showMac() } },
-        { label: currentDesktopLocale().messages.cloudOpen, click: () => { cloudWorkspace?.showCloud() } },
+        { id: 'workspace-mac', type: 'radio', label: currentDesktopLocale().messages.cloudOpenMac,
+          accelerator: 'Command+Alt+1', click: () => { cloudWorkspace?.showMac() } },
+        { id: 'workspace-cloud', type: 'radio', label: currentDesktopLocale().messages.cloudOpen,
+          accelerator: 'Command+Alt+2', click: () => { cloudWorkspace?.showCloud() } },
+        { type: 'separator' },
+        { id: 'workspace-vault', label: currentDesktopLocale().messages.cloudVault, click: () => { cloudWorkspace?.showVault() } },
+        { label: currentDesktopLocale().messages.cloudChangeServer, click: () => { cloudWorkspace?.showSetup() } },
+        { type: 'separator' },
+        { label: currentDesktopLocale().messages.cloudCopyCatalogs,
+          click: () => { void copyProviderCatalogs().catch((_error: unknown) => undefined) } },
+        { label: currentDesktopLocale().messages.cloudCopyProviderKeys,
+          click: () => { void copyProviderKeys().catch((_error: unknown) => undefined) } },
       ],
     }, { role: 'windowMenu' }]
     : [{ role: 'editMenu' }]
@@ -1140,6 +1265,7 @@ async function main(): Promise<void> {
       label: darwin ? process.env.DSH_CLIENT_DISPLAY_NAME ?? app.name : currentDesktopLocale().messages.application,
       submenu: [...applicationItems(), ...devToolsItems],
     }, ...platformMenus()]))
+    syncWorkspaceMenu()
     tray?.relabel()
   }
   refreshApplicationMenu()
@@ -1346,7 +1472,8 @@ async function main(): Promise<void> {
     managedStatusWatcher?.close()
     updateJournal?.action('quit-requested')
     quitConfirmation.dispose()
-    const closeCloud = cloudWorkspace?.dispose()
+    const closeCloud = Promise.resolve().then(() => cloudWorkspace?.dispose())
+      .catch((error: unknown) => { console.error(error) })
     backgroundNotice?.dispose()
     tray?.dispose()
     stopAccount?.()
@@ -1358,10 +1485,13 @@ async function main(): Promise<void> {
       ? Promise.resolve()
       : requestManagedGithubRestart(restartRequest).catch((error: unknown) => { console.error(error) })
     void writeRestartRequest.then(() => Promise.all([
-      closeCloud, Promise.resolve(mandatoryPolicy?.dispose()).then(() => policyAuth?.dispose()), backend.close(),
-      // A Platform cleanup failure is logged without cutting the remaining Host shutdown short.
-      platformView.dispose().catch((error: unknown) => { console.error(error) }),
-    ])).catch((error: unknown) => { console.error(error) }).finally(() => { app.quit() })
+      closeCloud,
+      Promise.resolve().then(() => mandatoryPolicy?.dispose()).catch((error: unknown) => { console.error(error) })
+        .then(() => policyAuth?.dispose())
+        .catch((error: unknown) => { console.error(error) }),
+      Promise.resolve().then(() => backend.close()).catch((error: unknown) => { console.error(error) }),
+      Promise.resolve().then(() => platformView.dispose()).catch((error: unknown) => { console.error(error) }),
+    ])).finally(() => { quitCleanupComplete = true; app.quit() })
   }
   app.on('before-quit', (event) => {
     if (shellInstallerOwnsQuit) {
@@ -1378,7 +1508,10 @@ async function main(): Promise<void> {
       void platformView.dispose().catch((error: unknown) => { console.error(error) })
       return
     }
-    if (quitting) return
+    if (quitting) {
+      if (!quitCleanupComplete) event.preventDefault()
+      return
+    }
     event.preventDefault()
     if (skipQuitConfirmation || sessionEnding) { finishQuit(); return }
     void quitConfirmation.confirm().then((approved) => {

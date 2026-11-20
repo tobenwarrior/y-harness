@@ -1,6 +1,6 @@
 import type { UserMessage } from '@yharness/llm'
 import type { MessageId } from '@yharness/llm/brand'
-import type { SessionEvent } from '@yharness/session'
+import type { SessionEvent } from '@yharness/session/types'
 
 /** Durable outcome of one Bot inbox message, including messages no longer pending. */
 export type BotInboxMessageDisposition = 'pending' | 'claimed' | 'canceled'

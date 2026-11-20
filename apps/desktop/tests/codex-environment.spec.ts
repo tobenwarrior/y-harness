@@ -18,10 +18,33 @@ interface FixtureNativeTarget {
   readonly executable: string
 }
 
-const ARM64_NATIVE_TARGET: FixtureNativeTarget = {
-  packageName: '@openai/codex-darwin-arm64', version: '0.166.0-darwin-arm64',
-  triple: 'aarch64-apple-darwin', executable: 'codex',
+const FIXTURE_PLATFORM: 'darwin' | 'win32' = process.platform === 'win32' ? 'win32' : 'darwin'
+const FIXTURE_ARCH: 'arm64' | 'x64' = process.arch === 'arm64' ? 'arm64' : 'x64'
+const NATIVE_TARGETS: Readonly<Record<'darwin' | 'win32', Readonly<Record<'arm64' | 'x64', FixtureNativeTarget>>>> = {
+  darwin: {
+    arm64: {
+      packageName: '@openai/codex-darwin-arm64', version: '0.166.0-darwin-arm64',
+      triple: 'aarch64-apple-darwin', executable: 'codex',
+    },
+    x64: {
+      packageName: '@openai/codex-darwin-x64', version: '0.166.0-darwin-x64',
+      triple: 'x86_64-apple-darwin', executable: 'codex',
+    },
+  },
+  win32: {
+    arm64: {
+      packageName: '@openai/codex-win32-arm64', version: '0.166.0-win32-arm64',
+      triple: 'aarch64-pc-windows-msvc', executable: 'codex.exe',
+    },
+    x64: {
+      packageName: '@openai/codex-win32-x64', version: '0.166.0-win32-x64',
+      triple: 'x86_64-pc-windows-msvc', executable: 'codex.exe',
+    },
+  },
 }
+const FIXTURE_NATIVE_TARGET = NATIVE_TARGETS[FIXTURE_PLATFORM][FIXTURE_ARCH]
+const X64_NATIVE_TARGET = NATIVE_TARGETS[FIXTURE_PLATFORM].x64
+const ALTERNATE_ARCH: 'arm64' | 'x64' = FIXTURE_ARCH === 'arm64' ? 'x64' : 'arm64'
 
 function temporaryRoot(): string {
   const root = mkdtempSync(join(tmpdir(), 'y-harness-codex-environment-'))
@@ -31,7 +54,7 @@ function temporaryRoot(): string {
 
 function runtimeWithCodex(root: string, manifest: Record<string, unknown> = {
   name: '@openai/codex', version: '0.166.0', bin: { codex: 'bin/codex.js' },
-}, nativeTarget: FixtureNativeTarget = ARM64_NATIVE_TARGET): string {
+}, nativeTarget: FixtureNativeTarget = FIXTURE_NATIVE_TARGET): string {
   const runtime = join(root, 'runtime')
   const packageRoot = join(runtime, 'node_modules', '@yharness', 'llm-pi-ai', 'node_modules', '@openai', 'codex')
   const nativeRoot = join(packageRoot, 'node_modules', '@openai', nativeTarget.packageName.slice('@openai/'.length))
@@ -42,7 +65,7 @@ function runtimeWithCodex(root: string, manifest: Record<string, unknown> = {
   writeFileSync(join(llmRoot, 'package.json'), JSON.stringify({ name: '@yharness/llm-pi-ai', version: '0.2.1-rc.2' }))
   writeFileSync(join(packageRoot, 'package.json'), JSON.stringify(manifest))
   writeFileSync(join(packageRoot, 'bin', 'codex.js'), '#!/usr/bin/env node\n')
-  writeFileSync(join(nativeRoot, 'package.json'), JSON.stringify({ name: '@openai/codex', version: nativeTarget.version, os: ['darwin'], cpu: [nativeTarget.packageName.endsWith('-x64') ? 'x64' : 'arm64'] }))
+  writeFileSync(join(nativeRoot, 'package.json'), JSON.stringify({ name: '@openai/codex', version: nativeTarget.version, os: [FIXTURE_PLATFORM], cpu: [nativeTarget.packageName.endsWith('-x64') ? 'x64' : 'arm64'] }))
   writeFileSync(join(nativeRoot, 'vendor', nativeTarget.triple, 'bin', nativeTarget.executable), '')
   chmodSync(join(packageRoot, 'bin', 'codex.js'), 0o755)
   chmodSync(join(nativeRoot, 'vendor', nativeTarget.triple, 'bin', nativeTarget.executable), 0o755)
@@ -94,7 +117,7 @@ describe('Desktop Codex environment', () => {
     chmodSync(nodePath, 0o755)
     const result = resolveDesktopCodexEnvironment({
       runtimeDir, dshHome: join(root, 'home'), cwd: join(root, 'profile'), nodePath,
-      targetPlatform: 'darwin', targetArch: 'arm64',
+      targetPlatform: FIXTURE_PLATFORM, targetArch: FIXTURE_ARCH,
     })
     expect(result.reason).toBeUndefined()
     expect(result.environment).toEqual({
@@ -189,7 +212,7 @@ describe('Desktop Codex environment', () => {
       runtimeDir: runtimeWithCodex(root, {
         name: '@openai/codex', version: '0.166.0', bin: { codex: '../../outside.js' },
       }), dshHome: join(root, 'home'), cwd: join(root, 'profile'), nodePath,
-      targetPlatform: 'darwin', targetArch: 'arm64',
+      targetPlatform: FIXTURE_PLATFORM, targetArch: FIXTURE_ARCH,
     })
     expect(result.environment).toEqual({})
     expect(result.reason).toContain('package-local')
@@ -201,7 +224,7 @@ describe('Desktop Codex environment', () => {
     const nodePath = join(root, 'node')
     writeFileSync(nodePath, '')
     chmodSync(nodePath, 0o755)
-    const request = { runtimeDir, dshHome: join(root, 'home'), cwd: join(root, 'profile'), nodePath, targetPlatform: 'darwin' as const, targetArch: 'arm64' as const }
+    const request = { runtimeDir, dshHome: join(root, 'home'), cwd: join(root, 'profile'), nodePath, targetPlatform: FIXTURE_PLATFORM, targetArch: FIXTURE_ARCH }
     const first = resolveDesktopCodexEnvironment(request)
     const second = resolveDesktopCodexEnvironment(request)
     expect(second).toEqual(first)
@@ -217,7 +240,7 @@ describe('Desktop Codex environment', () => {
     const result = resolveDesktopCodexEnvironment({
       runtimeDir: runtimeWithCodex(root, { name: '@openai/codex', version: '0.160.0', bin: { codex: 'bin/codex.js' } }),
       dshHome: join(root, 'home'), cwd: join(root, 'profile'), nodePath,
-      targetPlatform: 'darwin', targetArch: 'arm64',
+      targetPlatform: FIXTURE_PLATFORM, targetArch: FIXTURE_ARCH,
     })
     expect(result.environment).toEqual({})
     expect(result.reason).toContain('pinned @openai/codex@0.166.0')
@@ -230,10 +253,10 @@ describe('Desktop Codex environment', () => {
     chmodSync(nodePath, 0o755)
     const result = resolveDesktopCodexEnvironment({
       runtimeDir: runtimeWithCodex(root), dshHome: join(root, 'home'), cwd: join(root, 'profile'), nodePath,
-      targetPlatform: 'darwin', targetArch: 'x64',
+      targetPlatform: FIXTURE_PLATFORM, targetArch: ALTERNATE_ARCH,
     })
     expect(result.environment).toEqual({})
-    expect(result.reason).toContain('darwin-x64')
+    expect(result.reason).toContain(`${FIXTURE_PLATFORM}-${ALTERNATE_ARCH}`)
   })
 
   it('resolves the target x64 native package when it is installed', () => {
@@ -241,16 +264,16 @@ describe('Desktop Codex environment', () => {
     const nodePath = join(root, 'node')
     writeFileSync(nodePath, '')
     chmodSync(nodePath, 0o755)
+    const runtimeDir = runtimeWithCodex(root, undefined, X64_NATIVE_TARGET)
     const result = resolveDesktopCodexEnvironment({
-      runtimeDir: runtimeWithCodex(root, undefined, {
-        packageName: '@openai/codex-darwin-x64', version: '0.166.0-darwin-x64',
-        triple: 'x86_64-apple-darwin', executable: 'codex',
-      }),
+      runtimeDir,
       dshHome: join(root, 'home'), cwd: join(root, 'profile'), nodePath,
-      targetPlatform: 'darwin', targetArch: 'x64',
+      targetPlatform: FIXTURE_PLATFORM, targetArch: 'x64',
     })
     expect(result.reason).toBeUndefined()
-    expect(result.environment.DSH_CODEX_BINARY).toContain('codex/bin/codex.js')
+    expect(result.environment.DSH_CODEX_BINARY).toBe(
+      realpathSync(join(runtimeDir, 'node_modules', '@yharness', 'llm-pi-ai', 'node_modules', '@openai', 'codex', 'bin', 'codex.js')),
+    )
   })
 
   it('resolves the wrapper and native package from the physical runtime beside ASAR', () => {
@@ -263,7 +286,7 @@ describe('Desktop Codex environment', () => {
     const result = resolveDesktopCodexEnvironment({
       runtimeDir: archivedRuntime, unpackedRuntimeDir: unpackedRuntime,
       dshHome: join(root, 'home'), cwd: join(root, 'profile'), nodePath,
-      targetPlatform: 'darwin', targetArch: 'arm64',
+      targetPlatform: FIXTURE_PLATFORM, targetArch: FIXTURE_ARCH,
     })
     expect(result.reason).toBeUndefined()
     expect(result.environment.DSH_CODEX_BINARY).toBe(
@@ -283,7 +306,7 @@ describe('Desktop Codex environment', () => {
     mkdirSync(join(root, 'home', 'native-codex'), { recursive: true, mode: 0o755 })
     const result = resolveDesktopCodexEnvironment({
       runtimeDir, dshHome: join(root, 'home'), cwd: join(root, 'profile'), nodePath,
-      targetPlatform: 'darwin', targetArch: 'arm64',
+      targetPlatform: FIXTURE_PLATFORM, targetArch: FIXTURE_ARCH,
     })
     expect(result.reason).toBeUndefined()
     expect(result.environment.DSH_CODEX_HOME).toBe(join(root, 'home', 'native-codex'))
@@ -301,7 +324,7 @@ describe('Desktop Codex environment', () => {
     symlinkSync(join(root, 'outside'), join(root, 'home', 'native-codex'))
     const result = resolveDesktopCodexEnvironment({
       runtimeDir, dshHome: join(root, 'home'), cwd: join(root, 'profile'), nodePath,
-      targetPlatform: 'darwin', targetArch: 'arm64',
+      targetPlatform: FIXTURE_PLATFORM, targetArch: FIXTURE_ARCH,
     })
     expect(result.environment).toEqual({})
     expect(result.reason).toContain('symbolic link')

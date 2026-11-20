@@ -31,6 +31,8 @@
     "@yharness/cordis": "workspace:~"
   },
   "dependencies": {
+    "@yharness/lazy-require": "workspace:*",
+    "@yharness/win32-process": "workspace:*",
     "chokidar": "^4.0.3",
     "koffi": "3.1.1",
     "@yharness/schemastery": "workspace:~",

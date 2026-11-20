@@ -59,7 +59,49 @@ describe('Schedule model tools', () => {
     const resumed = await execute(test, 'schedule_resume', { id: record.id })
     expect(resumed.value).toMatchObject({ id: record.id, resumed: true, status: 'active' })
     const history = await execute(test, 'schedule_history', { id: record.id, limit: 10 })
-    expect(history.value).toMatchObject({ id: record.id, records: [], retention: expect.any(Object) })
+    expect(history.value).toMatchObject({ id: record.id, records: [] })
+    expect(history.value).toHaveProperty('retention', expect.any(Object))
+  })
+
+  it('pages the calling Session’s delivered occurrences using the returned message identity', async () => {
+    const test = await setup()
+    test.resolve.mockResolvedValue({ agent: test.agent })
+    const record = await test.service.create(test.agent.session.id, {
+      prompt: 'Check the report', every_seconds: 300, title: 'Check the report',
+    })
+    await vi.advanceTimersByTimeAsync(600_000)
+    expect(test.agent.followup).toHaveBeenCalledTimes(2)
+    const [firstMessage, secondMessage] = test.agent.followup.mock.calls.map(([message]) => message)
+
+    const latest = await execute(test, 'schedule_history', { id: record.id, limit: 1 })
+    expect(latest.value).toMatchObject({
+      id: record.id,
+      records: [{ messageId: secondMessage!.id }],
+      nextBefore: secondMessage!.id,
+    })
+    const earlier = await execute(test, 'schedule_history', { id: record.id, before: secondMessage!.id })
+    expect(earlier.value).toMatchObject({ id: record.id, records: [{ messageId: firstMessage!.id }] })
+    expect(earlier.value).not.toHaveProperty('nextBefore')
+  })
+
+  it.each([
+    ['schedule_pause', 'pause'],
+    ['schedule_resume', 'resume'],
+    ['schedule_history', 'history'],
+  ] as const)('validates and cancels %s before dispatch, and contains service errors', async (name, method) => {
+    const test = await setup()
+    const call = vi.spyOn(test.service, method)
+    const invalid = await execute(test, name, { id: ' task-id' })
+    expect(invalid.value).toMatchObject({ code: 'invalid_rule' })
+    const canceled = await executeBody(test, name, { id: 'task-id' }, AbortSignal.abort())
+    expect(canceled).toEqual({ code: 'internal_error', message: 'The schedule operation failed.' })
+    expect(call).not.toHaveBeenCalled()
+
+    call.mockRejectedValueOnce(new Error('Storage failure details'))
+    const failed = await execute(test, name, { id: 'task-id' })
+    expect(failed.value).toEqual({ code: 'internal_error', message: 'The schedule operation failed.' })
+    expect(call).toHaveBeenCalledTimes(1)
+    expect(call.mock.calls[0]?.[0]).toMatchObject({ id: 'task-id', sessionId: test.agent.session.id })
   })
 
   it('refuses a call dispatched without a caller Agent in every tool', async () => {
@@ -395,6 +437,12 @@ describe('Schedule model tools', () => {
         { card: 'generic', title: 'Delete reminder', kind: 'other', rawInput: 'missing' }],
       ['schedule_update', { id: 'missing', title: 'Check' },
         { card: 'generic', title: 'Update reminder', kind: 'other', rawInput: 'missing' }],
+      ['schedule_pause', { id: 'missing' },
+        { card: 'generic', title: 'Pause reminder', kind: 'other', rawInput: 'missing' }],
+      ['schedule_resume', { id: 'missing' },
+        { card: 'generic', title: 'Resume reminder', kind: 'other', rawInput: 'missing' }],
+      ['schedule_history', { id: 'missing' },
+        { card: 'generic', title: 'Read reminder history', kind: 'read', rawInput: 'missing' }],
     ] as const
     for (const [name, args, presentation] of cases) {
       const definition = test.ctx.tools.get(name, test.agent)

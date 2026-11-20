@@ -28,6 +28,6 @@
 
 - insert:
     - id: computer-use
-      name: '@deepseek-ai/dsh-computer-use'
+      name: '@yharness/computer-use'
     - id: native-computer-use-fixture
       name: './native-fixture.mjs'

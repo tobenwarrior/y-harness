@@ -14,6 +14,7 @@ import { unwatchFile, watchFile, type Stats } from 'node:fs'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { homedir } from 'node:os'
 import type { Context } from '@yharness/cordis'
+import { managedBotExecutionFor } from '@yharness/sandbox-policy'
 import chokidar from 'chokidar'
 import z from '@yharness/schemastery'
 import type Schema from '@yharness/schemastery'
@@ -131,6 +132,11 @@ interface ResolvedWatchConfig {
   followSymlinks: boolean
 }
 
+/** The registry carries the viewing scope to providers at runtime. */
+interface ScopedSkillLookupOptions extends SkillLookupOptions {
+  readonly scope?: { readonly ctx?: Context }
+}
+
 /** Register the local filesystem skill provider on `ctx.skills`. */
 export function apply(ctx: Context, config: Config = {}): void {
   let provider!: FileSystemSkillProvider
@@ -185,7 +191,9 @@ export class FileSystemSkillProvider implements SkillProvider {
    *   failure returns readable candidates as an incomplete observation.
    */
   async list(options: SkillLookupOptions): Promise<SkillCandidate[] | SkillProviderObservation> {
-    const roots = await this.roots(options.cwd)
+    const scope = (options as ScopedSkillLookupOptions).scope
+    const managed = scope === undefined ? undefined : managedBotExecutionFor({ agent: scope })
+    const roots = await this.roots(options.cwd, managed?.workspaceRoot)
     let complete = true
     try {
       await this.watchManager.observeRoots(roots)
@@ -243,8 +251,15 @@ export class FileSystemSkillProvider implements SkillProvider {
     return this.disposal
   }
 
-  private async roots(cwd: string | undefined): Promise<SkillRoot[]> {
+  private async roots(cwd: string | undefined, managedWorkspaceRoot?: string): Promise<SkillRoot[]> {
     const roots: SkillRoot[] = []
+    if (managedWorkspaceRoot !== undefined) {
+      return [{
+        path: join(managedWorkspaceRoot, '.agents/skills'),
+        source: 'project-agents',
+        rank: PROJECT_AGENTS_RANK,
+      }]
+    }
     if (this.includeDefaultRoots && cwd !== undefined) {
       const projectRoot = await findProjectRoot(resolve(cwd), optionalFileSystem(this.ctx))
       roots.push(

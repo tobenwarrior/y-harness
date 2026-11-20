@@ -2,15 +2,18 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AttachmentId } from '@yharness/attachment'
-import { BotId } from '@yharness/bots'
+import { BotId, type BotView } from '@yharness/bots'
 import { ScheduleId } from '@yharness/schedule'
 import { SessionId } from '@yharness/session'
 import { makeTranslate } from '@yharness/client-test-runtime'
 import type { ClientConnectionRpc } from '@yharness/client-connection/client'
-import type { ReactNode } from 'react'
+import type { ComponentProps, ReactNode } from 'react'
+import type { ISessions } from '@yharness/api-session-controller/client'
+import type { BotRoutineView } from '@yharness/bots/client'
 import { BotAvatar } from '../src/client/BotAvatar.tsx'
 import { BotSkillsManager } from '../src/client/BotSkillsManager.tsx'
 import { BotDetail, BotGroupDetail, BotRoster } from '../src/client/BotWorkspace.tsx'
+import { BotWorkspaceController, type BotWorkspaceRemote } from '../src/client/controller.ts'
 import { BotRoutineManager } from '../src/client/BotRoutineManager.tsx'
 import { BotTemplatesPanel } from '../src/client/BotTemplatesPanel.tsx'
 import { en } from '../src/client/locales.ts'
@@ -18,7 +21,7 @@ import { MessageId } from '@yharness/llm/brand'
 import { createSharedBotsClient, type SharedBotsClient } from '../src/client/shared-client.ts'
 import type {
   BotGroupDetailData, BotGroupSummary, BotMemoryManagerActions, BotMemorySummary, BotRoutineHistory, BotSummary,
-  BotSkillManagerActions, BotSkillPolicy, BotTemplateActions, BotTemplateState, BotWorkspaceProps,
+  BotSkillManagerActions, BotSkillPolicy, BotSkillSummary, BotTemplateActions, BotTemplateState, BotWorkspaceProps,
 } from '../src/client/types.ts'
 import { BotSkillPolicyConflictError } from '../src/client/types.ts'
 
@@ -28,6 +31,96 @@ afterEach(() => {
 })
 
 const t = makeTranslate(en)
+
+function chooseBotOption(name: string, menu: string = en.botMenu): void {
+  fireEvent.click(screen.getByRole('button', { name: menu }))
+  fireEvent.click(screen.getByRole('menuitem', { name }))
+}
+
+function memoryController(memories: readonly BotMemorySummary[]): BotWorkspaceController {
+  const remote: BotWorkspaceRemote = {
+    list: vi.fn<BotWorkspaceRemote['list']>(),
+    create: vi.fn<BotWorkspaceRemote['create']>(),
+    rename: vi.fn<BotWorkspaceRemote['rename']>(),
+    listMemory: vi.fn<NonNullable<BotWorkspaceRemote['listMemory']>>(async () => ({ ok: true, value: { memories } })),
+    updateMemory: vi.fn<NonNullable<BotWorkspaceRemote['updateMemory']>>(),
+    forgetMemory: vi.fn<NonNullable<BotWorkspaceRemote['forgetMemory']>>(),
+  }
+  const sessions = {
+    retain: vi.fn(),
+    refresh: vi.fn(async () => {}),
+  } as Pick<ISessions, 'retain' | 'refresh'> as ISessions
+  return new BotWorkspaceController(remote, sessions, () => 'unexpected response')
+}
+
+function skillController(skills: readonly BotSkillSummary[]): BotWorkspaceController {
+  const persisted: BotView = {
+    id: BotId('research'),
+    sessionId: SessionId('session-research'),
+    name: 'Research partner',
+    identity: 'browse',
+    accent: 'teal',
+    cwd: '/workspace',
+    state: 'active',
+    createdAt: 1,
+    updatedAt: 1,
+    availability: 'idle',
+    pinned: false,
+    hidden: false,
+  }
+  const policy: BotSkillPolicy = { mode: 'all', enabled: [], disabled: [] }
+  const remote: BotWorkspaceRemote = {
+    list: vi.fn<BotWorkspaceRemote['list']>(),
+    create: vi.fn<BotWorkspaceRemote['create']>(),
+    rename: vi.fn<BotWorkspaceRemote['rename']>(),
+    listSkills: vi.fn<NonNullable<BotWorkspaceRemote['listSkills']>>(async () => ({
+      ok: true,
+      value: { bot: persisted, policy, revision: 0, skills },
+    })),
+    updateSkills: vi.fn<NonNullable<BotWorkspaceRemote['updateSkills']>>(),
+  }
+  const sessions = {
+    retain: vi.fn(),
+    refresh: vi.fn(async () => {}),
+  } as Pick<ISessions, 'retain' | 'refresh'> as ISessions
+  return new BotWorkspaceController(remote, sessions, () => 'unexpected response')
+}
+
+function routineController(routines: readonly BotRoutineView[]) {
+  const persisted: BotView = {
+    id: BotId('research'),
+    sessionId: SessionId('session-research'),
+    name: 'Research partner',
+    identity: 'browse',
+    accent: 'teal',
+    cwd: '/workspace',
+    state: 'active',
+    createdAt: 1,
+    updatedAt: 1,
+    availability: 'idle',
+    pinned: false,
+    hidden: false,
+  }
+  const listRoutines = vi.fn<NonNullable<BotWorkspaceRemote['listRoutines']>>(async () => ({
+    ok: true,
+    value: { bot: persisted, routines },
+  }))
+  const remote: BotWorkspaceRemote = {
+    list: vi.fn<BotWorkspaceRemote['list']>(),
+    create: vi.fn<BotWorkspaceRemote['create']>(),
+    rename: vi.fn<BotWorkspaceRemote['rename']>(),
+    listRoutines,
+    pauseRoutine: vi.fn<NonNullable<BotWorkspaceRemote['pauseRoutine']>>(),
+    resumeRoutine: vi.fn<NonNullable<BotWorkspaceRemote['resumeRoutine']>>(),
+    deleteRoutine: vi.fn<NonNullable<BotWorkspaceRemote['deleteRoutine']>>(),
+    routineHistory: vi.fn<NonNullable<BotWorkspaceRemote['routineHistory']>>(),
+  }
+  const sessions = {
+    retain: vi.fn(),
+    refresh: vi.fn(async () => {}),
+  } as Pick<ISessions, 'retain' | 'refresh'> as ISessions
+  return { controller: new BotWorkspaceController(remote, sessions, () => 'unexpected response'), listRoutines }
+}
 
 const bots: readonly BotSummary[] = [
   {
@@ -188,7 +281,7 @@ describe('Bot roster and detail', () => {
       onUpdateProfile={updateProfile}
     ><span>Persistent session surface</span></BotDetail>)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Edit bot profile' }))
+    chooseBotOption('Edit bot profile')
     fireEvent.change(screen.getByRole('textbox', { name: 'What it does' }), { target: { value: 'Source scout updated' } })
     fireEvent.change(screen.getByRole('textbox', { name: 'Instructions' }), { target: { value: 'Lead with evidence.' } })
     fireEvent.change(screen.getByRole('textbox', { name: 'Specialties' }), { target: { value: 'chat, research, release-review' } })
@@ -214,7 +307,7 @@ describe('Bot roster and detail', () => {
       onUpdateProfile={updateProfile}
     ><span /></BotDetail>)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Edit bot profile' }))
+    chooseBotOption('Edit bot profile')
     fireEvent.change(screen.getByRole('textbox', { name: 'Instructions' }), { target: { value: 'Keep the draft.' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save profile' }))
 
@@ -236,7 +329,7 @@ describe('Bot roster and detail', () => {
       onUpdateProfile={updateProfile}
     ><span /></BotDetail>)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Edit bot profile' }))
+    chooseBotOption('Edit bot profile')
     fireEvent.change(screen.getByRole('textbox', { name: 'Instructions' }), { target: { value: 'Keep my newer draft.' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save profile' }))
 
@@ -256,7 +349,7 @@ describe('Bot roster and detail', () => {
       onUpdateProfile={updateProfile}
     ><span /></BotDetail>)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Edit bot profile' }))
+    chooseBotOption('Edit bot profile')
     fireEvent.click(screen.getByRole('button', { name: 'Save profile' }))
     await waitFor(() => { expect(updateProfile).toHaveBeenCalledOnce() })
 
@@ -268,7 +361,7 @@ describe('Bot roster and detail', () => {
       onUpdateProfile={updateProfile}
     ><span /></BotDetail>)
     await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Edit bot profile' })).toBeNull() })
-    fireEvent.click(screen.getByRole('button', { name: 'Edit bot profile' }))
+    chooseBotOption('Edit bot profile')
     expect(screen.getByRole('button', { name: /Save profile|Saving/ })).not.toHaveProperty('disabled', true)
 
     save.resolve(undefined)
@@ -287,7 +380,7 @@ describe('Bot roster and detail', () => {
       onUpdateProfile={updateProfile}
     ><span /></BotDetail>)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Edit bot profile' }))
+    chooseBotOption('Edit bot profile')
     fireEvent.click(screen.getByRole('button', { name: 'Save profile' }))
     await waitFor(() => { expect(updateProfile).toHaveBeenCalledOnce() })
 
@@ -299,7 +392,7 @@ describe('Bot roster and detail', () => {
       onUpdateProfile={updateProfile}
     ><span /></BotDetail>)
     await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Edit bot profile' })).toBeNull() })
-    fireEvent.click(screen.getByRole('button', { name: 'Edit bot profile' }))
+    chooseBotOption('Edit bot profile')
     save.reject(new Error('offline'))
 
     await waitFor(() => { expect(screen.getByRole('dialog', { name: 'Edit bot profile' })).toBeTruthy() })
@@ -357,6 +450,95 @@ describe('Bot roster and detail', () => {
     await waitFor(() => { expect(actions.remove).toHaveBeenCalledWith('research', 'schedule-release') })
   })
 
+  it('keeps routine focus and confirmation across equivalent Controller actions, then refreshes on revision', async () => {
+    const routine: BotRoutineView = {
+      kind: 'event',
+      id: 'event-controller-routine',
+      title: 'Controller routine',
+      prompt: 'Controller routine prompt',
+      trigger: { type: 'message', source: 'user' },
+      status: 'active',
+      createdAt: 1,
+      updatedAt: 1,
+      state: 'waiting',
+      deliveryMode: 'host',
+      botId: BotId('research'),
+      sessionId: SessionId('session-research'),
+    }
+    const { controller, listRoutines } = routineController([routine])
+    const actions = controller.face().routineManager
+    if (actions === undefined) throw new Error('routine manager was not mounted')
+    const view = render(<BotDetail
+      bot={bots[0]}
+      loading={false}
+      loadAvatar={undefined}
+      routineManager={actions}
+      routineRevision={controller.source.getSnapshot().routineRevision}
+      t={t}
+    >
+      <p>Persistent session surface</p>
+    </BotDetail>)
+
+    chooseBotOption('Manage routines')
+    const routineList = await screen.findByRole('list', { name: 'Bot routines' })
+    const row = within(routineList).getAllByRole('button')[0]!
+    row.focus()
+    expect(document.activeElement).toBe(row)
+    expect(listRoutines).toHaveBeenCalledTimes(1)
+
+    const refreshedActions = controller.face().routineManager
+    if (refreshedActions === undefined) throw new Error('routine manager was not mounted')
+    expect(refreshedActions).not.toBe(actions)
+    view.rerender(<BotDetail
+      bot={bots[0]}
+      loading={false}
+      loadAvatar={undefined}
+      routineManager={refreshedActions}
+      routineRevision={controller.source.getSnapshot().routineRevision}
+      t={t}
+    >
+      <p>Persistent session surface</p>
+    </BotDetail>)
+    expect(document.activeElement).toBe(row)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Controller routine' }))
+    expect(screen.getByRole('dialog', { name: 'Delete routine?' })).toBeTruthy()
+    const sameRevisionActions = controller.face().routineManager
+    if (sameRevisionActions === undefined) throw new Error('routine manager was not mounted')
+    view.rerender(<BotDetail
+      bot={bots[0]}
+      loading={false}
+      loadAvatar={undefined}
+      routineManager={sameRevisionActions}
+      routineRevision={controller.source.getSnapshot().routineRevision}
+      t={t}
+    >
+      <p>Persistent session surface</p>
+    </BotDetail>)
+    expect(screen.getByRole('dialog', { name: 'Delete routine?' })).toBeTruthy()
+    expect(listRoutines).toHaveBeenCalledTimes(1)
+    const deleteDialog = screen.getByRole('dialog', { name: 'Delete routine?' })
+    fireEvent.click(within(deleteDialog).getAllByRole('button', { name: 'Cancel' })[1]!)
+
+    controller.bumpRoutineRevision()
+    const revision = controller.source.getSnapshot().routineRevision
+    const revisionActions = controller.face().routineManager
+    if (revisionActions === undefined) throw new Error('routine manager was not mounted')
+    view.rerender(<BotDetail
+      bot={bots[0]}
+      loading={false}
+      loadAvatar={undefined}
+      routineManager={revisionActions}
+      routineRevision={revision}
+      t={t}
+    >
+      <p>Persistent session surface</p>
+    </BotDetail>)
+    await waitFor(() => { expect(listRoutines).toHaveBeenCalledTimes(2) })
+    expect(within(screen.getByRole('list', { name: 'Bot routines' })).getAllByRole('button')[0]).toBeTruthy()
+    controller.dispose()
+  })
+
   it('opens routine management from the selected Bot header', async () => {
     const actions = {
       list: vi.fn(async () => []),
@@ -366,7 +548,7 @@ describe('Bot roster and detail', () => {
       history: vi.fn(async () => ({ kind: 'event' as const, id: 'event-review', deliveries: [], results: [] })),
     }
     render(<BotDetail bot={bots[0]} loading={false} loadAvatar={undefined} t={t} routineManager={actions}><span /></BotDetail>)
-    fireEvent.click(screen.getByRole('button', { name: 'Manage routines' }))
+    chooseBotOption('Manage routines')
     expect(await screen.findByRole('dialog', { name: 'Bot routines' })).toBeTruthy()
   })
 
@@ -730,6 +912,385 @@ describe('Bot roster and detail', () => {
     expect(within(detail()).getByText('Runs once in 0.5 seconds')).toBeTruthy()
   })
 
+  it('renders optional schedule fields and every event result status', async () => {
+    const schedule = (scheduleKind: 'after' | 'every' | 'daily' | 'weekly' | 'cron', title: string, patch: {
+      readonly afterSeconds?: number
+      readonly everySeconds?: number
+      readonly time?: string
+      readonly timeZone?: string
+      readonly weekdays?: readonly number[]
+      readonly expression?: string
+    } = {}) => ({
+      kind: 'schedule' as const,
+      scheduleKind,
+      id: ScheduleId(`schedule-${title}`),
+      title,
+      prompt: `${title} prompt`,
+      ...patch,
+      scheduledAt: '2026-11-04T03:00:00.000Z',
+      state: 'scheduled' as const,
+      deliveryMode: 'host' as const,
+      status: 'active' as const,
+      botId: BotId('research'),
+      sessionId: SessionId('session-research'),
+    })
+    const event = {
+      kind: 'event' as const,
+      id: 'event-result-statuses',
+      title: 'Result statuses',
+      prompt: 'Inspect result statuses',
+      trigger: { type: 'message' as const, source: 'user' as const },
+      status: 'active' as const,
+      createdAt: 1,
+      updatedAt: 1,
+      state: 'waiting' as const,
+      deliveryMode: 'host' as const,
+      botId: BotId('research'),
+      sessionId: SessionId('session-research'),
+    }
+    const routines = [
+      schedule('after', 'Negative delay', { afterSeconds: -1 }),
+      schedule('after', 'Default delay'),
+      schedule('every', 'Default interval'),
+      schedule('every', 'Minute and second', { everySeconds: 61 }),
+      schedule('daily', 'Default daily'),
+      schedule('weekly', 'Default weekly'),
+      schedule('cron', 'Default cron'),
+      event,
+    ]
+    const actions = {
+      list: vi.fn(async () => routines),
+      pause: vi.fn(async () => routines[0]!),
+      resume: vi.fn(async () => routines[0]!),
+      remove: vi.fn(async () => {}),
+      history: vi.fn(async (_botId: string, routineId: string) => routineId === event.id ? {
+        kind: 'event' as const,
+        id: event.id,
+        deliveries: [],
+        results: [
+          { messageId: MessageId('result-aborted'), status: 'aborted' as const, completedAt: '2026-11-04T00:00:00.000Z', output: 'Stopped output' },
+          { messageId: MessageId('result-blocked'), status: 'blocked' as const, completedAt: '2026-11-04T00:01:00.000Z', error: 'Blocked output' },
+          { messageId: MessageId('result-max-tokens'), status: 'max-tokens' as const, completedAt: '2026-11-04T00:02:00.000Z', output: 'Limited output' },
+          { messageId: MessageId('result-interrupted'), status: 'interrupted' as const, completedAt: '2026-11-04T00:03:00.000Z', output: 'Interrupted output' },
+          { messageId: MessageId('result-forked'), status: 'forked' as const, completedAt: '2026-11-04T00:04:00.000Z', output: 'Forked output' },
+          { messageId: MessageId('result-other'), status: 'other' as const, completedAt: '2026-11-04T00:05:00.000Z' },
+        ],
+      } : { kind: 'event' as const, id: routineId, deliveries: [], results: [] }),
+    }
+    render(<BotRoutineManager bot={bots[0]!} actions={actions} open onClose={vi.fn()} t={t} />)
+    await screen.findByRole('button', { name: 'View results for Negative delay' })
+    const detail = () => screen.getByRole('region', { name: 'Routine details' })
+    const list = screen.getByRole('list', { name: 'Bot routines' })
+    const expectedRules = [
+      ['Negative delay', 'Runs once in -1 seconds'],
+      ['Default delay', 'Runs once in 0 seconds'],
+      ['Default interval', 'Repeats every 0 seconds'],
+      ['Minute and second', 'Repeats every 1 minute 1 second'],
+      ['Default daily', 'Runs daily at ()'],
+      ['Default weekly', 'Runs weekly on at ()'],
+      ['Default cron', 'Cron ()'],
+    ] as const
+    for (const [title, rule] of expectedRules) {
+      fireEvent.click(within(list).getByText(title).closest('button')!)
+      expect(within(detail()).getByText(rule)).toBeTruthy()
+    }
+    fireEvent.click(within(list).getByText(event.title).closest('button')!)
+    fireEvent.click(within(detail()).getByRole('tab', { name: 'Rule' }))
+    fireEvent.click(within(detail()).getByRole('tab', { name: 'Results' }))
+    for (const label of ['Stopped', 'Blocked', 'Output limit reached', 'Interrupted', 'Continued in another conversation', 'Did not complete']) {
+      expect(await screen.findByText(label)).toBeTruthy()
+    }
+  })
+
+  it('merges schedule history pages and replaces mismatched pages safely', async () => {
+    const routine = {
+      kind: 'schedule' as const,
+      scheduleKind: 'every' as const,
+      id: ScheduleId('schedule-pagination'),
+      title: 'Pagination routine',
+      prompt: 'Inspect pagination',
+      everySeconds: 60,
+      scheduledAt: '2026-11-04T03:00:00.000Z',
+      state: 'scheduled' as const,
+      deliveryMode: 'host' as const,
+      status: 'active' as const,
+      botId: BotId('research'),
+      sessionId: SessionId('session-research'),
+    }
+    const firstCursor = MessageId('history-cursor-first')
+    const secondCursor = MessageId('history-cursor-second')
+    const firstPage = {
+      kind: 'schedule' as const,
+      id: routine.id,
+      records: [{ messageId: MessageId('history-new'), scheduledAt: '2026-11-04T00:00:00.000Z', deliveredAt: '2026-11-04T00:01:00.000Z', prompt: 'Newest run' }],
+      earlierRecordsUnavailable: false,
+      earlierRecordsPruned: false,
+      retention: { days: 30, records: 200 },
+      nextBefore: firstCursor,
+    }
+    const secondPage = {
+      kind: 'schedule' as const,
+      id: routine.id,
+      records: [
+        { messageId: MessageId('history-new'), scheduledAt: '2026-11-04T00:00:00.000Z', deliveredAt: '2026-11-04T00:01:00.000Z', prompt: 'Newest run' },
+        { messageId: MessageId('history-old'), scheduledAt: '2026-11-03T00:00:00.000Z', deliveredAt: '2026-11-03T00:01:00.000Z', prompt: 'Older run' },
+      ],
+      earlierRecordsUnavailable: true,
+      earlierRecordsPruned: true,
+      retention: { days: 30, records: 200 },
+      nextBefore: secondCursor,
+    }
+    const replacementPage = {
+      kind: 'schedule' as const,
+      id: ScheduleId('schedule-replacement'),
+      records: [{ messageId: MessageId('history-replacement'), scheduledAt: '2026-11-02T00:00:00.000Z', deliveredAt: '2026-11-02T00:01:00.000Z', prompt: 'Replacement run' }],
+      earlierRecordsUnavailable: false,
+      earlierRecordsPruned: false,
+      retention: { days: 30, records: 200 },
+    }
+    const history = vi.fn(async (_botId: string, _routineId: string, before?: MessageId) => {
+      if (before === undefined) return firstPage
+      if (before === firstCursor) return secondPage
+      return replacementPage
+    })
+    const actions = {
+      list: vi.fn(async () => [routine]),
+      pause: vi.fn(async () => routine),
+      resume: vi.fn(async () => routine),
+      remove: vi.fn(async () => {}),
+      history,
+    }
+    render(<BotRoutineManager bot={bots[0]!} actions={actions} open onClose={vi.fn()} t={t} />)
+    await screen.findByRole('button', { name: 'View results for Pagination routine' })
+    fireEvent.click(screen.getByRole('button', { name: 'View results for Pagination routine' }))
+    expect(await screen.findByText('Newest run')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Load older runs' }))
+    expect(await screen.findByText('Older run')).toBeTruthy()
+    expect(screen.getByText('Some older runs are unavailable.')).toBeTruthy()
+    expect(screen.getByText('Older runs were pruned by retention.')).toBeTruthy()
+    expect(screen.getAllByText('Newest run')).toHaveLength(1)
+    fireEvent.click(screen.getByRole('button', { name: 'Load older runs' }))
+    expect(await screen.findByText('Replacement run')).toBeTruthy()
+    expect(screen.queryByText('Older run')).toBeNull()
+  })
+
+  it('ignores a stale history failure after selecting another routine', async () => {
+    const first = {
+      kind: 'event' as const,
+      id: 'event-stale-history-first',
+      title: 'First history routine',
+      prompt: 'First history prompt',
+      trigger: { type: 'message' as const, source: 'user' as const },
+      status: 'active' as const,
+      createdAt: 1,
+      updatedAt: 1,
+      state: 'waiting' as const,
+      deliveryMode: 'host' as const,
+      botId: BotId('research'),
+      sessionId: SessionId('session-research'),
+    }
+    const second = { ...first, id: 'event-stale-history-second', title: 'Second history routine' }
+    const stale = Promise.withResolvers<BotRoutineHistory>()
+    const staleSuccess = Promise.withResolvers<BotRoutineHistory>()
+    let firstHistoryCalls = 0
+    const actions = {
+      list: vi.fn(async () => [first, second]),
+      pause: vi.fn(async () => first),
+      resume: vi.fn(async () => first),
+      remove: vi.fn(async () => {}),
+      history: vi.fn(async (_botId: string, routineId: string) => routineId === first.id
+        ? (firstHistoryCalls++ === 0 ? stale.promise : staleSuccess.promise)
+        : { kind: 'event' as const, id: second.id, deliveries: [], results: [] }),
+    }
+    render(<BotRoutineManager bot={bots[0]!} actions={actions} open onClose={vi.fn()} t={t} />)
+    await screen.findByRole('button', { name: 'View results for First history routine' })
+    fireEvent.click(screen.getByRole('button', { name: 'View results for First history routine' }))
+    await waitFor(() => { expect(actions.history).toHaveBeenCalledWith('research', first.id) })
+    fireEvent.click(screen.getByRole('button', { name: 'View results for Second history routine' }))
+    expect(await screen.findByText('No deliveries recorded yet.')).toBeTruthy()
+    stale.reject(new Error('stale history failure'))
+    await stale.promise.catch(() => undefined)
+    expect(screen.queryByText('Routine history could not be loaded. Try again.')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'View results for First history routine' }))
+    await waitFor(() => { expect(actions.history).toHaveBeenCalledTimes(3) })
+    fireEvent.click(screen.getByRole('button', { name: 'View results for Second history routine' }))
+    expect(await screen.findByText('No deliveries recorded yet.')).toBeTruthy()
+    staleSuccess.resolve({ kind: 'event', id: first.id, deliveries: [], results: [] })
+    await staleSuccess.promise
+  })
+
+  it('ignores a rejected catalog after the manager unmounts', async () => {
+    const list = Promise.withResolvers<readonly []>()
+    const actions = {
+      list: vi.fn(() => list.promise),
+      pause: vi.fn(async () => { throw new Error('not used') }),
+      resume: vi.fn(async () => { throw new Error('not used') }),
+      remove: vi.fn(async () => {}),
+      history: vi.fn(async () => ({ kind: 'event' as const, id: 'event-rejected-list', deliveries: [], results: [] })),
+    }
+    const view = render(<BotRoutineManager bot={bots[0]!} actions={actions} open onClose={vi.fn()} t={t} />)
+    view.unmount()
+    list.reject(new Error('stale catalog failure'))
+    await list.promise.catch(() => undefined)
+  })
+
+  it('refreshes an active filter and reports an empty paused filter', async () => {
+    const routine = {
+      kind: 'event' as const,
+      id: 'event-filter-refresh',
+      title: 'Filter refresh routine',
+      prompt: 'Filter refresh prompt',
+      trigger: { type: 'message' as const, source: 'user' as const },
+      status: 'active' as const,
+      createdAt: 1,
+      updatedAt: 1,
+      state: 'waiting' as const,
+      deliveryMode: 'host' as const,
+      botId: BotId('research'),
+      sessionId: SessionId('session-research'),
+    }
+    const list = vi.fn(async () => [routine])
+    const actions = {
+      list,
+      pause: vi.fn(async () => routine),
+      resume: vi.fn(async () => routine),
+      remove: vi.fn(async () => {}),
+      history: vi.fn(async () => ({ kind: 'event' as const, id: routine.id, deliveries: [], results: [] })),
+    }
+    const view = render(<BotRoutineManager bot={bots[0]!} actions={actions} open onClose={vi.fn()} t={t} revision={0} />)
+    await screen.findByRole('button', { name: 'View results for Filter refresh routine' })
+    fireEvent.click(screen.getByRole('tab', { name: 'Enabled' }))
+    view.rerender(<BotRoutineManager bot={bots[0]!} actions={actions} open onClose={vi.fn()} t={t} revision={1} />)
+    await waitFor(() => { expect(list).toHaveBeenCalledTimes(2) })
+    fireEvent.click(screen.getByRole('tab', { name: 'Paused' }))
+    expect(await screen.findByText('No routines match this filter')).toBeTruthy()
+  })
+
+  it('ignores concurrent and stale routine status changes', async () => {
+    const first = {
+      kind: 'event' as const,
+      id: 'event-status-first',
+      title: 'First status routine',
+      prompt: 'First status prompt',
+      trigger: { type: 'message' as const, source: 'user' as const },
+      status: 'active' as const,
+      createdAt: 1,
+      updatedAt: 1,
+      state: 'waiting' as const,
+      deliveryMode: 'host' as const,
+      botId: BotId('research'),
+      sessionId: SessionId('session-research'),
+    }
+    const second = { ...first, id: 'event-status-second', title: 'Second status routine' }
+    const pending = Promise.withResolvers<typeof first>()
+    const pause = vi.fn((_botId: string, routineId: string) => routineId === first.id ? pending.promise : Promise.resolve(second))
+    const actions = {
+      list: vi.fn(async () => [first, second]),
+      pause,
+      resume: vi.fn(async () => first),
+      remove: vi.fn(async () => {}),
+      history: vi.fn(async () => ({ kind: 'event' as const, id: first.id, deliveries: [], results: [] })),
+    }
+    const view = render(<BotRoutineManager bot={bots[0]!} actions={actions} open onClose={vi.fn()} t={t} />)
+    await screen.findByRole('button', { name: 'View results for First status routine' })
+    fireEvent.click(screen.getByRole('button', { name: 'Pause First status routine' }))
+    await waitFor(() => { expect(pause).toHaveBeenCalledOnce() })
+    fireEvent.click(screen.getByRole('button', { name: 'Pause Second status routine' }))
+    expect(pause).toHaveBeenCalledOnce()
+    view.unmount()
+    pending.reject(new Error('stale status failure'))
+    await pending.promise.catch(() => undefined)
+  })
+
+  it('ignores a stale routine deletion failure after unmount', async () => {
+    const routine = {
+      kind: 'event' as const,
+      id: 'event-stale-delete',
+      title: 'Stale delete routine',
+      prompt: 'Stale delete prompt',
+      trigger: { type: 'message' as const, source: 'user' as const },
+      status: 'active' as const,
+      createdAt: 1,
+      updatedAt: 1,
+      state: 'waiting' as const,
+      deliveryMode: 'host' as const,
+      botId: BotId('research'),
+      sessionId: SessionId('session-research'),
+    }
+    const pending = Promise.withResolvers<undefined>()
+    const actions = {
+      list: vi.fn(async () => [routine]),
+      pause: vi.fn(async () => routine),
+      resume: vi.fn(async () => routine),
+      remove: vi.fn(() => pending.promise),
+      history: vi.fn(async () => ({ kind: 'event' as const, id: routine.id, deliveries: [], results: [] })),
+    }
+    const view = render(<BotRoutineManager bot={bots[0]!} actions={actions} open onClose={vi.fn()} t={t} />)
+    await screen.findByRole('button', { name: 'View results for Stale delete routine' })
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Stale delete routine' }))
+    const confirmation = screen.getByRole('dialog', { name: 'Delete routine?' })
+    fireEvent.click(within(confirmation).getByRole('button', { name: 'Delete routine' }))
+    await waitFor(() => { expect(actions.remove).toHaveBeenCalledWith('research', routine.id) })
+    view.unmount()
+    pending.reject(new Error('stale delete failure'))
+    await pending.promise.catch(() => undefined)
+  })
+
+  it('handles deletion dialog close and cancel actions around a pending delete', async () => {
+    const routine = {
+      kind: 'event' as const,
+      id: 'event-delete-dialog',
+      title: 'Delete dialog routine',
+      prompt: 'Delete dialog prompt',
+      trigger: { type: 'message' as const, source: 'user' as const },
+      status: 'active' as const,
+      createdAt: 1,
+      updatedAt: 1,
+      state: 'waiting' as const,
+      deliveryMode: 'host' as const,
+      botId: BotId('research'),
+      sessionId: SessionId('session-research'),
+    }
+    const other = { ...routine, id: 'event-delete-other', title: 'Other delete routine' }
+    const pending = Promise.withResolvers<undefined>()
+    const remove = vi.fn((_botId: string, routineId: string) => routineId === other.id ? Promise.resolve() : pending.promise)
+    const actions = {
+      list: vi.fn(async () => [routine, other]),
+      pause: vi.fn(async () => routine),
+      resume: vi.fn(async () => routine),
+      remove,
+      history: vi.fn(async () => ({ kind: 'event' as const, id: routine.id, deliveries: [], results: [] })),
+    }
+    render(<BotRoutineManager bot={bots[0]!} actions={actions} open onClose={vi.fn()} t={t} />)
+    await screen.findByRole('button', { name: 'View results for Delete dialog routine' })
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Other delete routine' }))
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Delete routine?' })).getByRole('button', { name: 'Delete routine' }))
+    await waitFor(() => { expect(remove).toHaveBeenCalledWith('research', other.id) })
+    expect(screen.queryByRole('button', { name: 'Delete Other delete routine' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Delete dialog routine' }))
+    let confirmation = screen.getByRole('dialog', { name: 'Delete routine?' })
+    const cancelButtons = within(confirmation).getAllByRole('button', { name: 'Cancel' })
+    fireEvent.click(cancelButtons.at(-1)!)
+    expect(screen.queryByRole('dialog', { name: 'Delete routine?' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Delete dialog routine' }))
+    confirmation = screen.getByRole('dialog', { name: 'Delete routine?' })
+    fireEvent.click(within(confirmation).getAllByRole('button', { name: 'Cancel' })[0]!)
+    expect(screen.queryByRole('dialog', { name: 'Delete routine?' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Delete dialog routine' }))
+    confirmation = screen.getByRole('dialog', { name: 'Delete routine?' })
+    fireEvent.click(within(confirmation).getByRole('button', { name: 'Delete routine' }))
+    await waitFor(() => { expect(remove).toHaveBeenCalledTimes(2) })
+    confirmation = screen.getByRole('dialog', { name: 'Delete routine?' })
+    fireEvent.click(within(confirmation).getByRole('button', { name: 'Deleting…' }))
+    expect(remove).toHaveBeenCalledTimes(2)
+    fireEvent.click(within(confirmation).getAllByRole('button', { name: 'Cancel' })[0]!)
+    expect(screen.getByRole('dialog', { name: 'Delete routine?' })).toBeTruthy()
+    pending.resolve(undefined)
+    await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Delete routine?' })).toBeNull() })
+  })
+
   it('renders event deliveries and controls older schedule history', async () => {
     const event = {
       kind: 'event' as const,
@@ -968,7 +1529,7 @@ describe('Bot roster and detail', () => {
   it('renames the selected bot from its conversation header', async () => {
     const rename = vi.fn(async () => {})
     render(<BotDetail bot={bots[0]} loading={false} loadAvatar={undefined} t={t} onRename={rename}><span /></BotDetail>)
-    fireEvent.click(screen.getByRole('button', { name: 'Rename bot' }))
+    chooseBotOption('Rename bot')
     fireEvent.change(screen.getByRole('textbox', { name: 'Bot name' }), { target: { value: 'Market scout' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save name' }))
     await waitFor(() => { expect(rename).toHaveBeenCalledWith('research', 'Market scout') })
@@ -977,7 +1538,7 @@ describe('Bot roster and detail', () => {
   it('keeps the rename dialog open when saving fails', async () => {
     const rename = vi.fn(async () => { throw new Error('offline') })
     render(<BotDetail bot={bots[0]} loading={false} loadAvatar={undefined} t={t} onRename={rename}><span /></BotDetail>)
-    fireEvent.click(screen.getByRole('button', { name: 'Rename bot' }))
+    chooseBotOption('Rename bot')
     fireEvent.change(screen.getByRole('textbox', { name: 'Bot name' }), { target: { value: 'Market scout' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save name' }))
     expect((await screen.findByRole('alert')).textContent).toContain('The name could not be saved')
@@ -1032,7 +1593,7 @@ describe('Bot roster and detail', () => {
       t={t}
     />)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Bot templates' }))
+    chooseBotOption('Bot templates', en.rosterMenu)
     expect(screen.getByRole('dialog', { name: 'Bot templates' })).toBeTruthy()
     expect(screen.getByText('Release partner')).toBeTruthy()
     fireEvent.click(screen.getAllByRole('button', { name: 'Share' })[0]!)
@@ -1064,7 +1625,7 @@ describe('Bot roster and detail', () => {
       t={t}
     />)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Bot templates' }))
+    chooseBotOption('Bot templates', en.rosterMenu)
     fireEvent.keyDown(screen.getByRole('textbox', { name: 'Template share code' }), { key: 'Enter' })
 
     expect(actions.previewTemplate).not.toHaveBeenCalled()
@@ -1098,7 +1659,7 @@ describe('Bot roster and detail', () => {
       t={t}
     />)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Bot templates' }))
+    chooseBotOption('Bot templates', en.rosterMenu)
     expect(screen.getByText('issuer-fingerprint-123')).toBeTruthy()
     expect(screen.getByText('artifact-fingerprint-456')).toBeTruthy()
     expect(screen.getByText('Summarize evidence before recommending action.')).toBeTruthy()
@@ -1133,7 +1694,7 @@ describe('Bot roster and detail', () => {
       t={t}
     />)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Bot templates' }))
+    chooseBotOption('Bot templates', en.rosterMenu)
     const importButton = screen.getByRole('button', { name: 'Approve and create Bot' })
     expect(importButton).toHaveProperty('disabled', true)
     expect(screen.getByText('Unavailable on this Host')).toBeTruthy()
@@ -1219,7 +1780,7 @@ describe('Bot roster and detail', () => {
       t={t}
     />)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Join a shared bot' }))
+    chooseBotOption('Join a shared bot', en.rosterMenu)
 
     expect(expandSidebar).toHaveBeenCalledOnce()
     expect(await screen.findByRole('dialog', { name: 'Shared with you' })).toBeTruthy()
@@ -1240,13 +1801,14 @@ describe('Bot roster and detail', () => {
     />)
 
     await waitFor(() => { expect(getOwnerCapability).toHaveBeenCalledOnce() })
-    const ownerButton = screen.getByRole('button', { name: 'Create a shared group' }) as HTMLButtonElement
+    fireEvent.click(screen.getByRole('button', { name: en.rosterMenu }))
+    const ownerButton = screen.getByRole('menuitem', { name: 'Create a shared group' }) as HTMLButtonElement
     expect(ownerButton.disabled).toBe(true)
-    expect(ownerButton.getAttribute('title')).toBe('Shared owner setup is unavailable in this connection.')
+    expect(screen.getByText(en.sharedOwnerSetupUnavailable)).toBeTruthy()
 
     window.dispatchEvent(new Event('focus'))
     await waitFor(() => { expect(getOwnerCapability).toHaveBeenCalledTimes(2) })
-    expect((screen.getByRole('button', { name: 'Create a shared group' }) as HTMLButtonElement).disabled).toBe(false)
+    expect(screen.getByRole('menuitem', { name: 'Create a shared group' })).toHaveProperty('disabled', false)
     window.dispatchEvent(new Event('focus'))
     expect(getOwnerCapability).toHaveBeenCalledTimes(2)
   })
@@ -1296,12 +1858,13 @@ describe('Bot roster and detail', () => {
     />)
 
     await waitFor(() => { expect(capabilityCalls).toBe(1) })
-    expect((screen.getByRole('button', { name: 'Create a shared group' }) as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: en.rosterMenu }))
+    expect(screen.getByRole('menuitem', { name: 'Create a shared group' })).toHaveProperty('disabled', true)
     if (onGeneration === undefined) throw new Error('Connection generation listener was not registered')
     await act(async () => { onGeneration?.() })
     await waitFor(() => {
       expect(capabilityCalls).toBe(2)
-      expect((screen.getByRole('button', { name: 'Create a shared group' }) as HTMLButtonElement).disabled).toBe(false)
+      expect(screen.getByRole('menuitem', { name: 'Create a shared group' })).toHaveProperty('disabled', false)
     })
     view.unmount()
     client.dispose?.()
@@ -1339,7 +1902,7 @@ describe('Bot roster and detail', () => {
       <p>Persistent session surface</p>
     </BotDetail>)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Manage memories' }))
+    chooseBotOption('Manage memories')
     expect(await screen.findByRole('dialog', { name: 'Bot memory' })).toBeTruthy()
     expect(actions.list).toHaveBeenCalledWith('research')
     expect(screen.queryByRole('complementary', { name: 'Bot workspace' })).toBeNull()
@@ -1361,11 +1924,128 @@ describe('Bot roster and detail', () => {
       <p>Persistent session surface</p>
     </BotDetail>)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Manage memories' }))
+    chooseBotOption('Manage memories')
     const dialog = await screen.findByRole('dialog', { name: 'Bot memory' })
     fireEvent.click(within(dialog).getAllByRole('button', { name: /^Close$/ }).at(-1)!)
 
     await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Bot memory' })).toBeNull() })
+  })
+
+  it('keeps the focused memory editor when the Controller re-renders equivalent actions', async () => {
+    const memory: BotMemorySummary = { id: 'memory-controller', text: 'Controller memory.', createdAt: 1 }
+    const controller = memoryController([memory])
+    const actions = controller.face().memoryManager
+    if (actions === undefined) throw new Error('memory manager was not mounted')
+    const view = render(<BotDetail
+      bot={bots[0]}
+      loading={false}
+      loadAvatar={undefined}
+      memoryManager={actions}
+      t={t}
+    >
+      <p>Persistent session surface</p>
+    </BotDetail>)
+
+    chooseBotOption('Manage memories')
+    const row = await screen.findByRole('listitem', { name: 'memory-controller' })
+    fireEvent.click(within(row).getByRole('button', { name: 'Edit memory memory-controller' }))
+    const editor = within(row).getByRole('textbox', { name: 'Memory text' })
+    fireEvent.change(editor, { target: { value: 'Keep this focused.' } })
+    editor.focus()
+    expect(document.activeElement).toBe(editor)
+
+    const refreshedActions = controller.face().memoryManager
+    if (refreshedActions === undefined) throw new Error('memory manager was not mounted')
+    expect(refreshedActions).toBe(actions)
+    view.rerender(<BotDetail
+      bot={bots[0]}
+      loading={false}
+      loadAvatar={undefined}
+      memoryManager={refreshedActions}
+      t={t}
+    >
+      <p>Persistent session surface</p>
+    </BotDetail>)
+    expect(document.activeElement).toBe(editor)
+    controller.dispose()
+  })
+
+  it('keeps memory removal confirmation when the Controller re-renders equivalent actions', async () => {
+    const memory: BotMemorySummary = { id: 'memory-controller', text: 'Controller memory.', createdAt: 1 }
+    const controller = memoryController([memory])
+    const actions = controller.face().memoryManager
+    if (actions === undefined) throw new Error('memory manager was not mounted')
+    const view = render(<BotDetail
+      bot={bots[0]}
+      loading={false}
+      loadAvatar={undefined}
+      memoryManager={actions}
+      t={t}
+    >
+      <p>Persistent session surface</p>
+    </BotDetail>)
+
+    chooseBotOption('Manage memories')
+    const row = await screen.findByRole('listitem', { name: 'memory-controller' })
+    fireEvent.click(within(row).getByRole('button', { name: 'Remove memory memory-controller' }))
+    expect(screen.getByRole('dialog', { name: 'Remove memory?' })).toBeTruthy()
+
+    const refreshedActions = controller.face().memoryManager
+    if (refreshedActions === undefined) throw new Error('memory manager was not mounted')
+    expect(refreshedActions).toBe(actions)
+    view.rerender(<BotDetail
+      bot={bots[0]}
+      loading={false}
+      loadAvatar={undefined}
+      memoryManager={refreshedActions}
+      t={t}
+    >
+      <p>Persistent session surface</p>
+    </BotDetail>)
+    expect(screen.getByRole('dialog', { name: 'Remove memory?' })).toBeTruthy()
+    controller.dispose()
+  })
+
+  it('preserves a new draft after closing and reopening during a pending save', async () => {
+    const first = { id: 'memory-first', text: 'First memory.', createdAt: 1 }
+    const second = { id: 'memory-second', text: 'Second memory.', createdAt: 2 }
+    const pendingUpdate = Promise.withResolvers<BotMemorySummary>()
+    const actions: BotMemoryManagerActions = {
+      list: vi.fn(async () => [first, second]),
+      update: vi.fn(async () => pendingUpdate.promise),
+      remove: vi.fn(async () => {}),
+    }
+    render(<BotDetail
+      bot={bots[0]}
+      loading={false}
+      loadAvatar={undefined}
+      memoryManager={actions}
+      t={t}
+    >
+      <p>Persistent session surface</p>
+    </BotDetail>)
+
+    chooseBotOption('Manage memories')
+    const firstRow = await screen.findByRole('listitem', { name: 'memory-first' })
+    fireEvent.click(within(firstRow).getByRole('button', { name: 'Edit memory memory-first' }))
+    fireEvent.change(within(firstRow).getByRole('textbox', { name: 'Memory text' }), { target: { value: 'Updated first memory.' } })
+    fireEvent.click(within(firstRow).getByRole('button', { name: 'Save memory' }))
+    await waitFor(() => { expect(actions.update).toHaveBeenCalledWith('research', 'memory-first', 'Updated first memory.') })
+
+    const dialog = screen.getByRole('dialog', { name: 'Bot memory' })
+    fireEvent.click(within(dialog).getAllByRole('button', { name: /^Close$/ }).at(-1)!)
+    await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Bot memory' })).toBeNull() })
+
+    chooseBotOption('Manage memories')
+    await screen.findByRole('dialog', { name: 'Bot memory' })
+    const secondRow = screen.getByRole('listitem', { name: 'memory-second' })
+    fireEvent.click(within(secondRow).getByRole('button', { name: 'Edit memory memory-second' }))
+    fireEvent.change(within(secondRow).getByRole('textbox', { name: 'Memory text' }), { target: { value: 'Updated second memory.' } })
+
+    pendingUpdate.resolve({ ...first, text: 'Updated first memory.', createdAt: 3 })
+    expect(await screen.findByText('Updated first memory.')).toBeTruthy()
+    const preservedSecondRow = screen.getByRole('listitem', { name: 'memory-second' })
+    expect(within(preservedSecondRow).getByRole('textbox', { name: 'Memory text' })).toHaveProperty('value', 'Updated second memory.')
   })
 
   it('does not apply a pending edit from the previous Bot after selection changes', async () => {
@@ -1388,7 +2068,7 @@ describe('Bot roster and detail', () => {
       <p>Persistent session surface</p>
     </BotDetail>)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Manage memories' }))
+    chooseBotOption('Manage memories')
     const researchRow = await screen.findByRole('listitem', { name: 'memory-shared' })
     fireEvent.click(within(researchRow).getByRole('button', { name: 'Edit memory memory-shared' }))
     fireEvent.change(within(researchRow).getByRole('textbox', { name: 'Memory text' }), { target: { value: 'Updated research note' } })
@@ -1409,6 +2089,92 @@ describe('Bot roster and detail', () => {
     resolveUpdate({ id: 'memory-shared', text: 'Updated research note', createdAt: 3 })
     await waitFor(() => { expect(screen.getByText('Release note')).toBeTruthy() })
     expect(screen.queryByText('Updated research note')).toBeNull()
+  })
+
+  it('does not show a pending save error from the previous Bot after selection changes', async () => {
+    const pendingUpdate = Promise.withResolvers<BotMemorySummary>()
+    const actions: BotMemoryManagerActions = {
+      list: vi.fn(async (botId: string) => botId === 'research'
+        ? [{ id: 'memory-shared', text: 'Research note', createdAt: 1 }]
+        : [{ id: 'memory-shared', text: 'Release note', createdAt: 2 }]),
+      update: vi.fn(async () => pendingUpdate.promise),
+      remove: vi.fn(async () => {}),
+    }
+    const view = render(<BotDetail
+      bot={bots[0]}
+      loading={false}
+      loadAvatar={undefined}
+      memoryManager={actions}
+      t={t}
+    >
+      <p>Persistent session surface</p>
+    </BotDetail>)
+
+    chooseBotOption('Manage memories')
+    const researchRow = await screen.findByRole('listitem', { name: 'memory-shared' })
+    fireEvent.click(within(researchRow).getByRole('button', { name: 'Edit memory memory-shared' }))
+    fireEvent.change(within(researchRow).getByRole('textbox', { name: 'Memory text' }), { target: { value: 'Updated research note' } })
+    fireEvent.click(within(researchRow).getByRole('button', { name: 'Save memory' }))
+    await waitFor(() => { expect(actions.update).toHaveBeenCalledWith('research', 'memory-shared', 'Updated research note') })
+
+    view.rerender(<BotDetail
+      bot={bots[1]}
+      loading={false}
+      loadAvatar={undefined}
+      memoryManager={actions}
+      t={t}
+    >
+      <p>Persistent session surface</p>
+    </BotDetail>)
+    expect(await screen.findByText('Release note')).toBeTruthy()
+
+    pendingUpdate.reject(new Error('stale update'))
+    await pendingUpdate.promise.catch(() => undefined)
+    await waitFor(() => { expect(screen.queryByRole('alert')).toBeNull() })
+    expect(screen.getByText('Release note')).toBeTruthy()
+  })
+
+  it('does not apply a pending removal from the previous Bot after selection changes', async () => {
+    const pendingRemove = Promise.withResolvers<undefined>()
+    const actions: BotMemoryManagerActions = {
+      list: vi.fn(async (botId: string) => botId === 'research'
+        ? [{ id: 'memory-shared', text: 'Research note', createdAt: 1 }]
+        : [{ id: 'memory-shared', text: 'Release note', createdAt: 2 }]),
+      update: vi.fn(),
+      remove: vi.fn(async () => pendingRemove.promise),
+    }
+    const view = render(<BotDetail
+      bot={bots[0]}
+      loading={false}
+      loadAvatar={undefined}
+      memoryManager={actions}
+      t={t}
+    >
+      <p>Persistent session surface</p>
+    </BotDetail>)
+
+    chooseBotOption('Manage memories')
+    const researchRow = await screen.findByRole('listitem', { name: 'memory-shared' })
+    fireEvent.click(within(researchRow).getByRole('button', { name: 'Remove memory memory-shared' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Remove memory' }))
+    await waitFor(() => { expect(actions.remove).toHaveBeenCalledWith('research', 'memory-shared') })
+
+    view.rerender(<BotDetail
+      bot={bots[1]}
+      loading={false}
+      loadAvatar={undefined}
+      memoryManager={actions}
+      t={t}
+    >
+      <p>Persistent session surface</p>
+    </BotDetail>)
+    expect(await screen.findByText('Release note')).toBeTruthy()
+
+    pendingRemove.resolve(undefined)
+    await pendingRemove.promise
+    await waitFor(() => { expect(screen.getByText('Release note')).toBeTruthy() })
+    expect(screen.queryByText('Research note')).toBeNull()
+    expect(screen.queryByRole('alert')).toBeNull()
   })
 
   it('edits the selected Bot skill policy from its detail header', async () => {
@@ -1440,7 +2206,7 @@ describe('Bot roster and detail', () => {
       <p>Persistent session surface</p>
     </BotDetail>)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Manage skills' }))
+    chooseBotOption('Manage skills')
     const dialog = await screen.findByRole('dialog', { name: 'Bot skills' })
     expect(actions.list).toHaveBeenCalledWith('research')
     fireEvent.click(within(dialog).getByRole('radio', { name: 'Only selected skills' }))
@@ -1450,6 +2216,47 @@ describe('Bot roster and detail', () => {
       expect(actions.update).toHaveBeenCalledWith('research', { mode: 'selected', enabled: ['code-review'], disabled: [] }, 0)
     })
     expect(screen.queryByRole('dialog', { name: 'Bot skills' })).toBeNull()
+  })
+
+  it('keeps focused skill selection when the Controller re-renders equivalent actions', async () => {
+    const controller = skillController([{
+      name: 'code-review', description: 'Review code', enabled: true, available: true,
+    }])
+    const actions = controller.face().skillManager
+    if (actions === undefined) throw new Error('skill manager was not mounted')
+    const view = render(<BotDetail
+      bot={bots[0]}
+      loading={false}
+      loadAvatar={undefined}
+      skillManager={actions}
+      t={t}
+    >
+      <p>Persistent session surface</p>
+    </BotDetail>)
+
+    chooseBotOption('Manage skills')
+    const dialog = await screen.findByRole('dialog', { name: 'Bot skills' })
+    fireEvent.click(within(dialog).getByRole('radio', { name: 'Only selected skills' }))
+    const checkbox = within(dialog).getByRole('checkbox', { name: 'Allow code-review' })
+    fireEvent.click(checkbox)
+    checkbox.focus()
+    expect(document.activeElement).toBe(checkbox)
+
+    const refreshedActions = controller.face().skillManager
+    if (refreshedActions === undefined) throw new Error('skill manager was not mounted')
+    expect(refreshedActions).toBe(actions)
+    view.rerender(<BotDetail
+      bot={bots[0]}
+      loading={false}
+      loadAvatar={undefined}
+      skillManager={refreshedActions}
+      t={t}
+    >
+      <p>Persistent session surface</p>
+    </BotDetail>)
+    expect(document.activeElement).toBe(checkbox)
+    expect(within(screen.getByRole('dialog', { name: 'Bot skills' })).getByRole('checkbox', { name: 'Do not allow code-review' })).toHaveProperty('checked', true)
+    controller.dispose()
   })
 
   it('shows selected-mode denied skills as disabled and clears the deny when granted', async () => {
@@ -1476,7 +2283,7 @@ describe('Bot roster and detail', () => {
       <p>Persistent session surface</p>
     </BotDetail>)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Manage skills' }))
+    chooseBotOption('Manage skills')
     const dialog = await screen.findByRole('dialog', { name: 'Bot skills' })
     const denied = within(dialog).getByRole('checkbox', { name: 'Allow code-review' }) as HTMLInputElement
     expect(denied.checked).toBe(false)
@@ -1516,7 +2323,7 @@ describe('Bot roster and detail', () => {
       <p>Persistent session surface</p>
     </BotDetail>)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Manage skills' }))
+    chooseBotOption('Manage skills')
     const dialog = await screen.findByRole('dialog', { name: 'Bot skills' })
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save skills' }))
     await waitFor(() => { expect(screen.getByRole('alert').textContent).toContain('changed elsewhere') })
@@ -1547,7 +2354,7 @@ describe('Bot roster and detail', () => {
       <p>Persistent session surface</p>
     </BotDetail>)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Manage skills' }))
+    chooseBotOption('Manage skills')
     expect(await screen.findByRole('dialog', { name: 'Bot skills' })).toBeTruthy()
     view.rerender(<BotDetail
       bot={bots[1]}
@@ -1972,7 +2779,7 @@ describe('Bot roster and detail', () => {
     fireEvent.change(screen.getByRole('textbox', { name: 'Message Release room' }), { target: { value: 'Retry this' } })
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
     await waitFor(() => { expect(failed).toHaveBeenCalledWith('Retry this') })
-    expect((screen.getByRole('textbox', { name: 'Message Release room' }) as HTMLTextAreaElement).value).toBe('Retry this')
+    expect(screen.getByRole('textbox', { name: 'Message Release room' })).toHaveProperty('value', 'Retry this')
     expect(screen.getByRole('alert').textContent).toContain('Some Bots could not receive')
   })
 
@@ -2043,7 +2850,7 @@ describe('Bot roster and detail', () => {
   })
 
   it('retries an attachment with the same message id and clears it only after success', async () => {
-    const sendWithAttachments = vi.fn()
+    const sendWithAttachments = vi.fn<NonNullable<ComponentProps<typeof BotGroupDetail>['onSendWithAttachments']>>()
       .mockRejectedValueOnce(new Error('attachment upload failed'))
       .mockResolvedValueOnce(undefined)
     render(<BotGroupDetail
@@ -2193,7 +3000,7 @@ describe('Bot roster and detail', () => {
     const onSetConnectedAppAccess = vi.fn().mockResolvedValue(undefined)
     renderSplitWorkspace({ onLoadConnectedApps, onSetConnectedAppAccess })
 
-    openConnectedAppsMenu(bots[1]!)
+    openConnectedAppsMenu(bots[1])
     const dialog = await screen.findByRole('dialog', { name: 'Connected apps' })
     await waitFor(() => { expect(onLoadConnectedApps).toHaveBeenCalledWith('release') })
     expect(dialog.querySelector('[data-app-id="github"]')).not.toBeNull()
@@ -2314,7 +3121,7 @@ describe('Bot roster and detail', () => {
     const update = vi.fn().mockResolvedValue(undefined)
     renderSplitWorkspace({ avatarEditor: { status, generate, commit, update } })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Edit avatar' }))
+    chooseBotOption('Edit avatar', en.rosterMenu)
     const dialog = screen.getByRole('dialog', { name: 'Customize avatar' })
     fireEvent.click(within(dialog).getByRole('tab', { name: 'Generate' }))
     await waitFor(() => { expect(status).toHaveBeenCalledOnce() })
@@ -2340,7 +3147,7 @@ describe('Bot roster and detail', () => {
     const update = vi.fn()
     renderSplitWorkspace({ avatarEditor: { status, generate, commit, update } })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Edit avatar' }))
+    chooseBotOption('Edit avatar', en.rosterMenu)
     const dialog = screen.getByRole('dialog', { name: 'Customize avatar' })
     fireEvent.click(within(dialog).getByRole('tab', { name: 'Generate' }))
     await waitFor(() => { expect(status).toHaveBeenCalledOnce() })
@@ -2363,7 +3170,7 @@ describe('Bot roster and detail', () => {
     const update = vi.fn()
     renderSplitWorkspace({ avatarEditor: { status, generate, commit, update } })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Edit avatar' }))
+    chooseBotOption('Edit avatar', en.rosterMenu)
     const dialog = screen.getByRole('dialog', { name: 'Customize avatar' })
     fireEvent.click(within(dialog).getByRole('tab', { name: 'Generate' }))
     await waitFor(() => { expect(status).toHaveBeenCalledOnce() })
@@ -2392,7 +3199,7 @@ describe('Bot roster and detail', () => {
     const update = vi.fn().mockRejectedValueOnce(new Error('temporary update failure')).mockResolvedValueOnce(undefined)
     renderSplitWorkspace({ avatarEditor: { status, generate, commit, update } })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Edit avatar' }))
+    chooseBotOption('Edit avatar', en.rosterMenu)
     const dialog = screen.getByRole('dialog', { name: 'Customize avatar' })
     fireEvent.click(within(dialog).getByRole('tab', { name: 'Generate' }))
     await waitFor(() => { expect(status).toHaveBeenCalledOnce() })
@@ -2422,7 +3229,7 @@ describe('Bot roster and detail', () => {
     const onOpenAvatarSettings = vi.fn()
     renderSplitWorkspace({ avatarEditor: { status, generate, commit: vi.fn(), update }, onOpenAvatarSettings })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Edit avatar' }))
+    chooseBotOption('Edit avatar', en.rosterMenu)
     const dialog = screen.getByRole('dialog', { name: 'Customize avatar' })
     fireEvent.click(within(dialog).getByRole('tab', { name: 'Generate' }))
     await waitFor(() => { expect(screen.getByRole('alert').textContent).toContain('OpenAI') })
@@ -2437,7 +3244,7 @@ describe('Bot roster and detail', () => {
     const generate = vi.fn().mockRejectedValue(new Error('provider unavailable'))
     renderSplitWorkspace({ avatarEditor: { status, generate, commit: vi.fn(), update: vi.fn() } })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Edit avatar' }))
+    chooseBotOption('Edit avatar', en.rosterMenu)
     const dialog = screen.getByRole('dialog', { name: 'Customize avatar' })
     fireEvent.click(within(dialog).getByRole('tab', { name: 'Generate' }))
     await waitFor(() => { expect(status).toHaveBeenCalledOnce() })

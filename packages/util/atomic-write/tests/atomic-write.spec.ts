@@ -190,7 +190,7 @@ describe('withFileLock', () => {
     expect(await readFile(`${target}.lock`, 'utf8')).toBe(LOCK_PROTOCOL_MARKER)
   })
 
-  it('fails closed when lock-marker writing is short', async () => {
+  it.skipIf(process.platform === 'win32')('fails closed when POSIX lock-marker writing is short', async () => {
     const dir = await scratch()
     const target = join(dir, 'document')
     const operation = vi.fn(async () => {})
@@ -299,7 +299,7 @@ describe('withFileLock', () => {
         if (error?.code !== 'ERR_ATOMIC_WRITE_LOCK_PROTOCOL') process.exitCode = 1
       }
     `
-    const child = spawn(process.execPath, ['--experimental-strip-types', '--input-type=module', '-e', childSource], {
+    const child = spawn(process.execPath, ['--import', 'tsx/esm', '--input-type=module', '-e', childSource], {
       cwd: process.cwd(),
       stdio: ['ignore', 'ignore', 'pipe'],
     })

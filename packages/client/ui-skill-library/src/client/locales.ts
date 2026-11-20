@@ -5,7 +5,7 @@ export type SkillLibraryKey = keyof typeof en
 
 /** English dictionary for this namespace. */
 export const en = {
-  decisionTitle: 'Decision advice', decisionHint: 'Choose a separate response-only API to rank scoped skill candidates. Starts disabled; chat model, permissions, verification and maintenance authority stay unchanged.',
+  decisionTitle: 'Decision advice', decisionAdvanced: 'Advanced', decisionHint: 'Choose a separate response-only API to rank scoped skill candidates. Starts disabled; chat model, permissions, verification and maintenance authority stay unchanged.',
   decisionNativeHint: 'Native Codex routes, including gpt-6-luna, expose native tools and are unavailable for Decision. No new account or credentials are configured.',
   decisionEnable: 'Enable skill candidate advice', decisionModel: 'Decision model', decisionChoose: 'Choose a value', decisionNative: 'Native tools unavailable', decisionUnavailable: 'Unavailable',
   decisionEffort: 'Reasoning effort', decisionTier: 'Processing tier', decisionLimits: 'At most 1 call · input budget {input} · output {output} tokens · {seconds}s deadline',

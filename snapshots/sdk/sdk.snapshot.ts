@@ -95,6 +95,7 @@ const dshSdkChildConfig = fileURLToPath(new URL(
   '../../packages/subagent/subagent-dsh-sdk/tests/fixtures/loader/child.patch.yml',
   import.meta.url,
 ))
+const recordedWorkspacePatch = fileURLToPath(new URL('./recorded-workspace.cordis.yml', import.meta.url))
 
 function dirOf(url: string): string {
   return fileURLToPath(new URL('.', url))
@@ -125,6 +126,10 @@ interface SdkAssertions {
 }
 
 const SDK_ASSERTIONS: Readonly<Record<string, SdkAssertions>> = {
+  'account-provider-signout': { patches: [recordedWorkspacePatch] },
+  'bash-tool': { patches: [recordedWorkspacePatch] },
+  'serial-created': { patches: [recordedWorkspacePatch] },
+  'subagent-spawn-in-process': { patches: [recordedWorkspacePatch] },
   'native-item-projection': {
     patches: [fileURLToPath(new URL('./native-item-projection/runtime.cordis.yml', import.meta.url))],
     expectedFinalResponse: 'NATIVE_ITEM_PROJECTION_OK',
@@ -133,7 +138,7 @@ const SDK_ASSERTIONS: Readonly<Record<string, SdkAssertions>> = {
     expectedFinalResponse: 'DONE',
   },
   'tool-scheduler-recovery': {
-    patches: [fileURLToPath(new URL('./tool-scheduler-recovery/runtime.cordis.yml', import.meta.url))],
+    patches: [recordedWorkspacePatch, fileURLToPath(new URL('./tool-scheduler-recovery/runtime.cordis.yml', import.meta.url))],
   },
   'tool-error-details': {
     patches: [fileURLToPath(new URL('./tool-error-details/runtime.cordis.yml', import.meta.url))],
@@ -148,6 +153,7 @@ const SDK_ASSERTIONS: Readonly<Record<string, SdkAssertions>> = {
     environment: { DSH_SNAPSHOT_HUMAN_STEER: '1' },
   },
   'subagent-dsh-sdk-diagnostic': {
+    patches: [recordedWorkspacePatch],
     environment: { DSH_TEST_CHILD_PATCH: dshSdkDiagnosticChildPatch },
   },
   'persistent-tools': {
@@ -161,6 +167,7 @@ const SDK_ASSERTIONS: Readonly<Record<string, SdkAssertions>> = {
     },
   },
   'subagent-dsh-sdk-dynamic-route': {
+    patches: [recordedWorkspacePatch],
     environment: { DSH_TEST_PARENT_PROVIDER: 'deepseek-official' },
     dshSdkChild: {
       config: dshSdkChildConfig,
@@ -569,11 +576,12 @@ async function runScenario(scenario: CorpusScenario): Promise<{
   let childEnvironment: Record<string, string> = {}
   if (assertions.dshSdkChild !== undefined) {
     const childHome = join(cwd, '.child-dsh')
-    const childPatch = materializeProfilePatch(assertions.dshSdkChild.config, cwd, 'sdk', patchRoot, patches.length)
+    const childPatches = [recordedWorkspacePatch, assertions.dshSdkChild.config]
+      .map((patch, index) => materializeProfilePatch(patch, cwd, 'sdk', patchRoot, patches.length + index))
     await mkdir(childHome, { recursive: true })
     childSessionsRoot = join(childHome, 'sessions')
     childEnvironment = {
-      DSH_TEST_CHILD_PATCHES: JSON.stringify([childPatch]),
+      DSH_TEST_CHILD_PATCHES: JSON.stringify(childPatches),
       DSH_TEST_CHILD_HOME: childHome,
     }
   }

@@ -47,7 +47,7 @@ const eyeLayouts: Record<BotIdentity, { x: number; y: number; spacing: number; s
  * @param props.avatar - optional persisted generated image reference.
  * @param props.botId - stable Bot id used by the avatar loader.
  * @param props.loadAvatar - Host-backed loader for the persisted image bytes.
- * @param props.size - roster or detail avatar size.
+ * @param props.size - completion, roster, or detail avatar size.
  * @param props.status - current bot activity.
  * @returns the character avatar.
  */
@@ -58,7 +58,7 @@ export function BotAvatar({ name, identity = 'agent', accent = 'violet', avatar,
   avatar?: SharedBotAvatar | undefined
   botId?: string | undefined
   loadAvatar?: ((botId: string, avatar: SharedBotAvatar) => Promise<string>) | undefined
-  size?: 'small' | 'large' | undefined
+  size?: 'tiny' | 'small' | 'large' | undefined
   status?: BotStatus | undefined
 }) {
   const initials = name.trim().split(/\s+/u).filter(Boolean).slice(0, 2).map(part => part[0]).join('').toUpperCase() || '?'
@@ -94,7 +94,7 @@ export function BotAvatar({ name, identity = 'agent', accent = 'violet', avatar,
   }, [avatar, botId, loadAvatar])
   return (
     <span
-      className={clsx(css.avatar, size === 'large' ? css.large : css.small)}
+      className={clsx(css.avatar, size === 'large' ? css.large : size === 'tiny' ? css.tiny : css.small)}
       data-accent={accent}
       data-identity={identity}
       data-status={status}

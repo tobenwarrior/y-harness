@@ -527,7 +527,7 @@ describe.skipIf(!isWin32 || !pwshAvailable())('windows-acl runner', () => {
     }
   }, 30_000)
 
-  it('a FullControl open inside a granted root still works for files (the deny inherits to containers only)', () => {
+  it('grants file writes and enforces directory deletion permissions for restricted children', () => {
     // The ambient-delete deny is 0x40, a member of FILE_ALL_ACCESS: inheriting
     // it onto files would deny every GENERIC_ALL/FullControl open by the user,
     // Administrators, SYSTEM, or the DSH host. Directories inside a granted
@@ -536,35 +536,47 @@ describe.skipIf(!isWin32 || !pwshAvailable())('windows-acl runner', () => {
     const granted = join(scratchRoot, 'fullcontrol-root')
     const child = join(granted, 'child')
     mkdirSync(granted)
-    mkdirSync(child)
-    writeFileSync(join(granted, 'file.txt'), 'x')
-    writeFileSync(join(child, 'deep.txt'), 'x')
-    const grant = AclWriteGrant.create(workspaceWriteSid(granted))
-    grant.add(granted, true)
     try {
       const probe = `
-$ErrorActionPreference='SilentlyContinue'
+$ErrorActionPreference='Stop'
 Add-Type -Namespace P -Name F -MemberDefinition @'
 [DllImport("kernel32.dll", SetLastError=true, CharSet=CharSet.Unicode, EntryPoint="CreateFileW")]
 public static extern IntPtr CreateFileW(string n, uint a, uint s, IntPtr sa, uint d, uint f, IntPtr t);
 [DllImport("kernel32.dll", SetLastError=true)]
 public static extern bool CloseHandle(IntPtr h);
 '@ | Out-Null
-function TryOpen([string]$label, [string]$path) {
-  $h = [P.F]::CreateFileW($path, 0x10000000, 7, [IntPtr]::Zero, 3, 0x02000000, [IntPtr]::Zero)
+function TryOpen([string]$label, [string]$path, [uint32]$access, [uint32]$flags) {
+  $h = [P.F]::CreateFileW($path, $access, 7, [IntPtr]::Zero, 3, $flags, [IntPtr]::Zero)
   if ($h -eq [IntPtr]::new(-1)) { "$($label): DENIED" } else { [void][P.F]::CloseHandle($h); "$($label): OK" }
 }
-TryOpen 'FILE' '${join(granted, 'file.txt')}'
-TryOpen 'NESTED-FILE' '${join(child, 'deep.txt')}'
-TryOpen 'DIRECTORY' '${child}'
 `
-      const result = spawnSync('pwsh', ['-NoLogo', '-NonInteractive', '-NoProfile', '-Command', probe], { encoding: 'utf8', timeout: 60_000 })
+      // Create descendants after the runner applies the root grant so the
+      // platform applies both inheritable ACEs to the same restricted-child
+      // fixture before probing their distinct rights.
+      const result = runRunner([
+        '--workspace', granted, '--temp', isolatedTemp, '--mode', 'workspace-write',
+        '--', 'pwsh', '-NoLogo', '-NonInteractive', '-NoProfile', '-Command', `${probe}
+New-Item -ItemType Directory -Path '${child}' -ErrorAction Stop | Out-Null
+Set-Content -LiteralPath '${join(granted, 'file.txt')}' -Value x -ErrorAction Stop
+Set-Content -LiteralPath '${join(child, 'deep.txt')}' -Value x -ErrorAction Stop
+TryOpen 'FILE-WRITE' '${join(granted, 'file.txt')}' 0x2 0
+TryOpen 'NESTED-FILE-WRITE' '${join(child, 'deep.txt')}' 0x2 0
+TryOpen 'DIRECTORY' '${child}' 0x40 0x02000000
+`,
+      ], 60_000)
       expect(result.status, `stderr: ${result.stderr}`).toBe(0)
-      expect(result.stdout).toContain('FILE: OK')
-      expect(result.stdout).toContain('NESTED-FILE: OK')
-      expect(result.stdout).toContain('DIRECTORY: DENIED')
+      expect(result.stdout.split(/\r?\n/u)).toEqual(expect.arrayContaining([
+        'FILE-WRITE: OK', 'NESTED-FILE-WRITE: OK', 'DIRECTORY: DENIED',
+      ]))
+
+      // The standing grant stays on disk. Check the host's full access to both files with ordinary file opens.
+      const host = spawnSync(resolvePwshPath(), ['-NoLogo', '-NonInteractive', '-NoProfile', '-Command', `${probe}
+TryOpen 'FILE' '${join(granted, 'file.txt')}' 0x10000000 0
+TryOpen 'NESTED-FILE' '${join(child, 'deep.txt')}' 0x10000000 0
+`], { timeout: 30_000, encoding: 'utf8' })
+      expect(host.status, `stderr: ${host.stderr}`).toBe(0)
+      expect(host.stdout.split(/\r?\n/u)).toEqual(expect.arrayContaining(['FILE: OK', 'NESTED-FILE: OK']))
     } finally {
-      grant.dispose()
       rmSync(granted, { recursive: true, force: true })
     }
   }, 60_000)

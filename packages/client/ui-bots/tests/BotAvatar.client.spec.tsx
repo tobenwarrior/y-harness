@@ -71,7 +71,67 @@ describe('BotAvatar', () => {
     render(<BotAvatar name="Generated" identity="goal" accent="amber" avatar={avatar} botId="generated" loadAvatar={loadAvatar} />)
 
     await waitFor(() => { expect(screen.getByRole('img', { name: 'Generated' }).querySelector('img')).not.toBeNull() })
-    expect(screen.getByRole('img', { name: 'Generated' }).querySelector('[data-character]')).toBeNull()
+    const generated = screen.getByRole('img', { name: 'Generated' })
+    expect(generated.querySelector('[data-character]')).toBeNull()
+    expect(generated.querySelector('img')?.getAttribute('alt')).toBe('')
+    expect(generated.querySelector('img')?.getAttribute('aria-hidden')).toBe('true')
+  })
+
+  it('falls back to the character when the uploaded avatar cannot be loaded', async () => {
+    const avatar = {
+      attachmentId: AttachmentId(`sha256:${'b'.repeat(64)}`),
+      mediaType: 'image/png' as const,
+      bytes: 3,
+      width: 1,
+      height: 1,
+    }
+    const loadAvatar = vi.fn().mockRejectedValue(new Error('synthetic avatar failure'))
+    render(<BotAvatar name="Fallback" avatar={avatar} botId="fallback" loadAvatar={loadAvatar} />)
+
+    const rendered = screen.getByRole('img', { name: 'Fallback' })
+    await waitFor(() => { expect(loadAvatar).toHaveBeenCalledWith('fallback', avatar) })
+    await waitFor(() => { expect(rendered.querySelector('[data-character]')).not.toBeNull() })
+    expect(rendered.getAttribute('data-avatar-loaded')).toBe('false')
+  })
+
+  it('ignores an uploaded avatar that resolves after unmount', async () => {
+    const avatar = {
+      attachmentId: AttachmentId(`sha256:${'c'.repeat(64)}`),
+      mediaType: 'image/png' as const,
+      bytes: 3,
+      width: 1,
+      height: 1,
+    }
+    let resolveAvatar!: (url: string) => void
+    const pending = new Promise<string>((resolve) => { resolveAvatar = resolve })
+    const loadAvatar = vi.fn().mockReturnValue(pending)
+    const view = render(<BotAvatar name="Unmounted" avatar={avatar} botId="unmounted" loadAvatar={loadAvatar} />)
+
+    await waitFor(() => { expect(loadAvatar).toHaveBeenCalledWith('unmounted', avatar) })
+    view.unmount()
+    resolveAvatar('data:image/png;base64,c3RhbGU=')
+    await pending
+    await Promise.resolve()
+  })
+
+  it('ignores an uploaded avatar failure that arrives after unmount', async () => {
+    const avatar = {
+      attachmentId: AttachmentId(`sha256:${'d'.repeat(64)}`),
+      mediaType: 'image/png' as const,
+      bytes: 3,
+      width: 1,
+      height: 1,
+    }
+    let rejectAvatar!: (reason: unknown) => void
+    const pending = new Promise<string>((_, reject) => { rejectAvatar = reject })
+    const loadAvatar = vi.fn().mockReturnValue(pending)
+    const view = render(<BotAvatar name="Rejected" avatar={avatar} botId="rejected" loadAvatar={loadAvatar} />)
+
+    await waitFor(() => { expect(loadAvatar).toHaveBeenCalledWith('rejected', avatar) })
+    view.unmount()
+    rejectAvatar(new Error('synthetic late failure'))
+    await pending.catch(() => undefined)
+    await Promise.resolve()
   })
 
   it('reflects bot activity on the character', () => {
@@ -87,6 +147,27 @@ describe('BotAvatar', () => {
     expect(character.style.getPropertyValue('--eye-x')).toBe('3px')
     fireEvent.mouseLeave(character)
     expect(character.style.getPropertyValue('--eye-x')).toBe('')
+  })
+
+  it('ignores pointer motion when the character has no rendered bounds', () => {
+    render(<BotAvatar name="Hidden bot" />)
+    const character = screen.getByRole('img', { name: 'Hidden bot' }).querySelector<HTMLElement>('[data-character]')!
+    vi.spyOn(character, 'getBoundingClientRect').mockReturnValue({ left: 0, top: 0, width: 0, height: 0, right: 0, bottom: 0, x: 0, y: 0, toJSON: () => ({}) })
+
+    fireEvent.mouseMove(character, { clientX: 100, clientY: 100 })
+
+    expect(character.style.getPropertyValue('--eye-x')).toBe('')
+    expect(character.style.getPropertyValue('--eye-y')).toBe('')
+  })
+
+  it('uses the requested size classes and keeps an empty name accessible', () => {
+    render(<div><BotAvatar name="" size="tiny" /><BotAvatar name="Large bot" size="large" /></div>)
+
+    const tiny = screen.getByRole('img', { name: '?' })
+    const large = screen.getByRole('img', { name: 'Large bot' })
+    expect(tiny.className).toContain('tiny')
+    expect(large.className).toContain('large')
+    expect(tiny.getAttribute('aria-label')).toBe('?')
   })
 
   it('positions the barbell eyes according to its definition', () => {

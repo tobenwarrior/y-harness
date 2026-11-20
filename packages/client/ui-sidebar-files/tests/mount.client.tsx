@@ -15,7 +15,7 @@ import { makeTranslate } from '@yharness/client-test-runtime'
 import type { SessionId } from '@yharness/session/types'
 import type { SidebarRightTabActions } from '@yharness/client-ui-sidebar-right/client'
 import { filesFace } from '../src/client/face.ts'
-import type { FilesInjected } from '../src/client/face.ts'
+import type { FilesInjected, WatchWorkspaceDirectory } from '../src/client/face.ts'
 import { FilesBody } from '../src/client/FilesBody.tsx'
 import type { FilesBodyProps } from '../src/client/FilesBody.tsx'
 import { zh } from '../src/client/locales.ts'
@@ -59,10 +59,18 @@ export interface Mounted {
 }
 
 /** One store instance, one face, one owner share. */
-function harness(cwd: string | null, refreshShortcut?: ReturnType<FilesBodyProps['useTabInfo']>['tab']['refreshShortcut']) {
+type FilesTabKind = ReturnType<FilesBodyProps['useTabInfo']>['tab']['kind']
+
+function harness(
+  cwd: string | null,
+  refreshShortcut?: ReturnType<FilesBodyProps['useTabInfo']>['tab']['refreshShortcut'],
+  kind: FilesTabKind = 'files',
+) {
   const instance = createFilesStore().create()
   const script = scriptedList()
-  const face = filesFace(script.list, script.watch)(SESSION, instance.actions)
+  const computer = kind !== 'files'
+  const watch: WatchWorkspaceDirectory = computer ? () => ['ready'] : script.watch
+  const face = filesFace(script.list, watch)(SESSION, instance.actions)
   const controller = new AbortController()
   onTestFinished(async () => {
     controller.abort()
@@ -81,7 +89,7 @@ function harness(cwd: string | null, refreshShortcut?: ReturnType<FilesBodyProps
       sidebar: { expanded: true, fullscreen: false },
       panel: { id: 'pane-1' },
       tab: {
-        id: TAB, kind: 'files', contentId: 'files', title: zh['type.label'], visible: true,
+        id: TAB, kind, contentId: 'files', title: zh['type.label'], visible: true,
         navigation: { address: 'files', params: undefined, revision: 1 },
         signal: controller.signal,
         actions: tabActions, refreshShortcut,
@@ -103,8 +111,12 @@ function harness(cwd: string | null, refreshShortcut?: ReturnType<FilesBodyProps
  * @param cwd - the session's working directory as `useSessions` reports it; `null` for a session without one.
  * @param refreshShortcut - effective binding advertised by the tab owner.
  */
-export function mountBody(cwd: string | null = ROOT, refreshShortcut?: ReturnType<FilesBodyProps['useTabInfo']>['tab']['refreshShortcut']): Mounted {
-  const { shared, ...hands } = harness(cwd, refreshShortcut)
+export function mountBody(
+  cwd: string | null = ROOT,
+  refreshShortcut?: ReturnType<FilesBodyProps['useTabInfo']>['tab']['refreshShortcut'],
+  kind: FilesTabKind = 'files',
+): Mounted {
+  const { shared, ...hands } = harness(cwd, refreshShortcut, kind)
   const view = render(<FilesBody {...shared as unknown as FilesBodyProps} />)
   return { ...hands, view, remount: () => render(<FilesBody {...shared as unknown as FilesBodyProps} />) }
 }

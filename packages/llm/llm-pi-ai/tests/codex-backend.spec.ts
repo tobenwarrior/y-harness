@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { AttachmentStore } from '@yharness/attachment'
+import { AttachmentId, type AttachmentStore } from '@yharness/attachment'
 import { parseCodexModels, declineCodexRequest, projectCodexHistory, projectCodexDynamicToolReplay, CodexBackendAdapter, CodexBackendRuntime } from '../src/codex-backend.ts'
 import type { CodexDynamicTool, CodexDynamicToolEvent, CodexDynamicToolResolver, CodexDynamicToolReplayer } from '../src/codex-backend.ts'
-import { ReasoningEffortId, ServiceTierId } from '@yharness/llm'
+import { createAssistantMessage, createSystemMessage, createUserMessage, ReasoningEffortId, ServiceTierId } from '@yharness/llm'
 import type { SkillLearningNativeItem } from '@yharness/skill-library/types'
 import { codexNativeItem } from '../src/codex-native-evidence.ts'
 
@@ -102,7 +102,7 @@ describe('Codex native backend', () => {
         for await (const _chunk of f.runtime.stream({ provider: 'codex-backend', model: 'gpt-6.1-sol', messages: [] })) { /* settle */ }
         expect(observed).toHaveLength(2)
         expect(observed.every(item => item.procedure !== undefined)).toBe(scope.expected)
-      } finally { f.runtime.close() }
+      } finally { await f.runtime.close() }
     }
   })
   it('invalidates bounded native observation without disrupting the native answer', async () => {
@@ -126,7 +126,7 @@ describe('Codex native backend', () => {
     for await (const chunk of f.runtime.stream({ provider: 'codex-backend', model: 'gpt-6.1-sol', messages: [] })) chunks.push(chunk)
     expect(observed.map(item => item.phase)).toEqual(['started', 'settled', 'invalidated'])
     expect(chunks.at(-1)).toMatchObject({ type: 'finish', reason: { kind: 'stop' } })
-    f.runtime.close()
+    await f.runtime.close()
   })
   it('invalidates changed start and settle metadata and ignores other native threads', async () => {
     const observed: SkillLearningNativeItem[] = []
@@ -147,7 +147,7 @@ describe('Codex native backend', () => {
     })
     for await (const _chunk of f.runtime.stream({ provider: 'codex-backend', model: 'gpt-6.1-sol', messages: [] })) { /* settle */ }
     expect(observed.map(item => item.phase)).toEqual(['started', 'invalidated'])
-    f.runtime.close()
+    await f.runtime.close()
   })
   it('publishes only matching live native tool metadata without commands or result bodies', async () => {
     const observed: SkillLearningNativeItem[] = []
@@ -175,7 +175,7 @@ describe('Codex native backend', () => {
     expect(observed[0]).toMatchObject({ provider: 'codex', connectionId: 'fixture-profile', sessionId: 'thread1', turnId: 'turn1', itemId: 'read', kind: 'read', phase: 'started' })
     expect(observed[1]).toMatchObject({ outcome: 'reported-success', skillReadPath: '/project/.dsh/skills/inspect/SKILL.md' })
     expect(JSON.stringify(observed)).not.toMatch(/api_key|stdout|private contents|old|orphan/)
-    f.runtime.close()
+    await f.runtime.close()
   })
   it('preserves real model IDs, Ultra and native Fast; filters hidden entries', () => {
     expect(parseCodexModels(catalog)).toEqual([{ id: 'gpt-6.1-sol', name: 'Sol', description: 'Native', efforts: [{ id: 'max', description: 'Max' }, { id: 'ultra', description: 'Delegation' }], defaultEffort: 'max', serviceTiers: [{ id: 'priority', name: 'Fast', description: 'More usage' }], inputModalities: ['text', 'image'] }])
@@ -268,7 +268,7 @@ describe('Codex native backend', () => {
       for await (const chunk of f.runtime.stream({ provider: 'codex-backend', model: 'gpt-6.1-sol', sessionId: 'bot-session-alpha' as never, messages: [{ role: 'user', content: [{ type: 'text', text: 'send it' }] }] })) chunks.push(chunk)
       return chunks
     })()
-    await vi.waitFor(() => expect(f.request.mock.calls.some(call => call[0] === 'turn/start')).toBe(true))
+    await vi.waitFor(() => { expect(f.request.mock.calls.some(call => call[0] === 'turn/start')).toBe(true) })
     const threadStart = f.request.mock.calls.find(call => call[0] === 'thread/start')?.[1]
     expect(threadStart).toMatchObject({ dynamicTools: [{ type: 'function', name: 'send_bot_message', description: tool.description, inputSchema: tool.inputSchema }] })
     await expect(f.invoke('item/tool/call', { threadId: 'thread1', turnId: 'turn1', callId: 'call-1', tool: 'send_bot_message', arguments: '{"target":"bot-beta"}' })).resolves.toEqual({
@@ -285,7 +285,37 @@ describe('Codex native backend', () => {
     f.emit('turn/completed', { threadId: 'thread1', turnId: 'turn1', turn: { id: 'turn1', status: 'completed' } })
     const chunks = await running
     expect(chunks.at(-1)).toMatchObject({ type: 'finish', reason: { kind: 'stop' } })
-    f.runtime.close()
+    await f.runtime.close()
+  })
+  it('delivers a native Computer frame from its durable attachment reference', async () => {
+    const attachment = { attachmentId: AttachmentId('computer-frame'), mediaType: 'image/jpeg' as const, bytes: 3, width: 1, height: 1 }
+    const readImage = vi.fn(async () => ({ ref: attachment, data: new Uint8Array([1, 2, 3]) }))
+    const result = { success: true, contentItems: [], image: attachment }
+    const tool: CodexDynamicTool = {
+      name: 'vps_computer', description: 'Observe the Computer.', inputSchema: { type: 'object' }, execute: async () => result,
+    }
+    const events: CodexDynamicToolEvent[] = []
+    const f = fixture(catalog, () => ({ readImage }) as never, undefined, undefined, {}, () => [tool], (event) => { events.push(event) })
+    await f.runtime.refresh()
+    await f.runtime.configure(true)
+    const original = f.request.getMockImplementation()!
+    f.request.mockImplementation(async (method, params) => method === 'turn/start' ? { turn: { id: 'turn1' } } : original(method, params))
+    const turn = (async () => {
+      for await (const _chunk of f.runtime.stream({ provider: 'codex-backend', model: 'gpt-6.1-sol', messages: [] })) { /* settle */ }
+    })()
+    try {
+      await vi.waitFor(() => { expect(f.request.mock.calls.some(call => call[0] === 'turn/start')).toBe(true) })
+      await expect(f.invoke('item/tool/call', { threadId: 'thread1', turnId: 'turn1', callId: 'frame-1', tool: 'vps_computer', arguments: '{}' })).resolves.toEqual({
+        success: true, contentItems: [{ type: 'inputImage', imageUrl: 'data:image/jpeg;base64,AQID' }],
+      })
+      expect(readImage).toHaveBeenCalledExactlyOnceWith(attachment, expect.any(AbortSignal))
+      expect(events.map(event => event.phase)).toEqual(['started', 'settled'])
+      expect(events[1]?.result).toEqual(result)
+    } finally {
+      f.emit('turn/completed', { threadId: 'thread1', turnId: 'turn1', turn: { id: 'turn1', status: 'completed' } })
+      await turn
+      await f.runtime.close()
+    }
   })
   it('replays persisted dynamic-tool records after cursor loss without duplicating valid continuation', async () => {
     const tool: CodexDynamicTool = {
@@ -325,6 +355,11 @@ describe('Codex native backend', () => {
       .map(call => ((call[1] as { input: { text: string }[] }).input[0]?.text ?? ''))
     expect(replay).toHaveBeenCalledTimes(2)
     expect(turnInputs()[1]).toContain(JSON.stringify(persisted))
+    const rebuiltTurn = f.request.mock.calls.filter(call => call[0] === 'turn/start')[1]?.[1] as {
+      input: { type: string; text?: string; text_elements: readonly unknown[] }[]
+    }
+    expect(rebuiltTurn.input.at(-1)).toEqual({ type: 'text', text: '## Current user request\n\nsecond', text_elements: [] })
+    expect(rebuiltTurn.input.slice(0, -1).map(input => input.text).join('\n')).toContain('"role":"assistant"')
     const secondFinish = second.at(-1) as { replayState: unknown }
     await collect([firstUser, {
       role: 'assistant', content: [{ type: 'text', text: 'hello' }],
@@ -335,6 +370,171 @@ describe('Codex native backend', () => {
     }, { role: 'user', content: [{ type: 'text', text: 'third' }] }])
     expect(replay).toHaveBeenCalledTimes(2)
     expect(turnInputs()[2]).toBe('third')
+    f.emit('__closed', {})
+    await collect([{ role: 'user', content: [{ type: 'text', text: 'current after history truncation' }] }])
+    const truncatedTurn = f.request.mock.calls.filter(call => call[0] === 'turn/start')[3]?.[1] as {
+      input: { type: string; text?: string; text_elements: readonly unknown[] }[]
+    }
+    expect(replay).toHaveBeenCalledTimes(3)
+    expect(truncatedTurn.input).toHaveLength(2)
+    expect(truncatedTurn.input[0]?.text).toContain(JSON.stringify(persisted))
+    expect(truncatedTurn.input[1]).toEqual({
+      type: 'text', text: '## Current user request\n\ncurrent after history truncation', text_elements: [],
+    })
+    await f.runtime.close()
+  })
+  it('keeps the scheduled request current when the step appends a time snapshot', async () => {
+    const f = fixture(catalog)
+    const routine = '[SCHEDULE REMINDER BATCH]\nThis is a scheduled message from the user\nreminders_json: [{"schedule_id":"fixture","occurrence_at":"2026-01-01T00:00:00.000Z","reminder_prompt":"Check the fixture report."}]'
+    const stepTime = 'Time sampled while preparing the current step.'
+    try {
+      await f.runtime.refresh()
+      await f.runtime.configure(true)
+      const messages = [
+        createSystemMessage('Fixture instructions.'),
+        createUserMessage({ content: [{ type: 'text', text: 'earlier request' }], source: { kind: 'user' } }),
+        createUserMessage({ content: [{ type: 'text', text: routine }], source: { kind: 'schedule' } }),
+        createUserMessage({
+          content: [{ type: 'text', text: stepTime }],
+          source: { kind: 'time-context', form: 'snapshot', sections: [{ name: 'time-context', text: stepTime }] },
+        }),
+      ]
+      for await (const _chunk of f.runtime.stream({ provider: 'codex-backend', model: 'gpt-6.1-sol', messages })) { /* drain */ }
+      expect(f.request.mock.calls.find(call => call[0] === 'turn/start')?.[1]).toHaveProperty('input', [
+        { type: 'text', text: 'Conversation context from Harness (quoted transcript; retain each role):\n[{"role":"user","text":"earlier request"}]', text_elements: [] },
+        { type: 'text', text: `## Current Harness context\n\n${stepTime}`, text_elements: [] },
+        { type: 'text', text: `## Current user request\n\n${routine}`, text_elements: [] },
+      ])
+    } finally {
+      await f.runtime.close()
+    }
+  })
+  it('keeps a completed scheduled request in history when only context follows the reply', async () => {
+    const f = fixture(catalog)
+    const routine = 'Check the fixture report.'
+    const reply = 'The report check is complete.'
+    const stepTime = 'Time sampled after the reply.'
+    try {
+      await f.runtime.refresh()
+      await f.runtime.configure(true)
+      const messages = [
+        createUserMessage({ content: [{ type: 'text', text: routine }], source: { kind: 'schedule' } }),
+        createAssistantMessage({ content: [{ type: 'text', text: reply }], source: { provider: 'codex-backend', model: 'gpt-6.1-sol' } }),
+        createUserMessage({
+          content: [{ type: 'text', text: stepTime }],
+          source: { kind: 'time-context', form: 'snapshot', sections: [{ name: 'time-context', text: stepTime }] },
+        }),
+      ]
+      for await (const _chunk of f.runtime.stream({ provider: 'codex-backend', model: 'gpt-6.1-sol', messages })) { /* drain */ }
+      const transcript = [{ role: 'user', text: routine }, { role: 'assistant', text: reply }, { role: 'user', text: stepTime }]
+      expect(f.request.mock.calls.find(call => call[0] === 'turn/start')?.[1]).toHaveProperty('input', [
+        { type: 'text', text: `Conversation context from Harness (quoted transcript; retain each role):\n${JSON.stringify(transcript)}`, text_elements: [] },
+      ])
+    } finally {
+      await f.runtime.close()
+    }
+  })
+  it('keeps a cleared runtime context behind the current request', async () => {
+    const f = fixture(catalog)
+    const request = 'Continue the fixture task.'
+    const cleared = 'Current runtime context: none. Earlier runtime-context snapshots no longer apply.'
+    try {
+      await f.runtime.refresh()
+      await f.runtime.configure(true)
+      const messages = [
+        createUserMessage({ content: [{ type: 'text', text: request }], source: { kind: 'user' } }),
+        createUserMessage({
+          content: [{ type: 'text', text: cleared }],
+          source: { kind: 'runtime-context' } as never,
+        }),
+      ]
+      for await (const _chunk of f.runtime.stream({ provider: 'codex-backend', model: 'gpt-6.1-sol', messages })) { /* drain */ }
+      expect(f.request.mock.calls.find(call => call[0] === 'turn/start')?.[1]).toHaveProperty('input', [
+        { type: 'text', text: `## Current Harness context\n\n${cleared}`, text_elements: [] },
+        { type: 'text', text: `## Current user request\n\n${request}`, text_elements: [] },
+      ])
+    } finally {
+      await f.runtime.close()
+    }
+  })
+  it('keeps trailing instructions, catalog, and recall as current context', async () => {
+    const f = fixture(catalog)
+    const request = 'Continue the fixture task.'
+    const contexts = [
+      { text: 'Follow the fixture instructions.', source: { kind: 'skill-invocation', name: 'fixture', form: 'instructions' } },
+      { text: 'The fixture catalog is current.', source: { kind: 'skill-catalog', form: 'catalog', entries: [] } },
+      { text: 'The fixture recall is relevant.', source: { kind: 'session-reference', form: 'recall', version: 1, references: [] } },
+    ] as const
+    try {
+      await f.runtime.refresh()
+      await f.runtime.configure(true)
+      const messages = [
+        createUserMessage({ content: [{ type: 'text', text: request }], source: { kind: 'user' } }),
+        ...contexts.map(({ text: contextText, source }) => createUserMessage({
+          content: [{ type: 'text', text: contextText }], source: source as never,
+        })),
+      ]
+      for await (const _chunk of f.runtime.stream({ provider: 'codex-backend', model: 'gpt-6.1-sol', messages })) { /* drain */ }
+      expect(f.request.mock.calls.find(call => call[0] === 'turn/start')?.[1]).toHaveProperty('input', [
+        { type: 'text', text: `## Current Harness context\n\n${contexts.map(context => context.text).join('\n\n')}`, text_elements: [] },
+        { type: 'text', text: `## Current user request\n\n${request}`, text_elements: [] },
+      ])
+    } finally {
+      await f.runtime.close()
+    }
+  })
+  it.each([
+    { form: 'notice', text: 'A fixture notice needs attention.', source: { kind: 'plan-mode', form: 'notice', summary: 'Fixture notice' } },
+    { form: 'relay', text: 'A fixture relay needs attention.', source: { kind: 'agent-message', form: 'relay', senderSessionId: 'fixture-sender' } },
+  ] as const)('keeps a trailing $form message actionable', async ({ text, source }) => {
+    const f = fixture(catalog)
+    const prior = 'Earlier fixture request.'
+    try {
+      await f.runtime.refresh()
+      await f.runtime.configure(true)
+      const messages = [
+        createUserMessage({ content: [{ type: 'text', text: prior }], source: { kind: 'user' } }),
+        createUserMessage({ content: [{ type: 'text', text }], source: source as never }),
+      ]
+      for await (const _chunk of f.runtime.stream({ provider: 'codex-backend', model: 'gpt-6.1-sol', messages })) { /* drain */ }
+      expect(f.request.mock.calls.find(call => call[0] === 'turn/start')?.[1]).toHaveProperty('input', [
+        { type: 'text', text: `Conversation context from Harness (quoted transcript; retain each role):\n${JSON.stringify([{ role: 'user', text: prior }])}`, text_elements: [] },
+        { type: 'text', text: `## Current user request\n\n${text}`, text_elements: [] },
+      ])
+    } finally {
+      await f.runtime.close()
+    }
+  })
+  it('keeps only the rebuilt current user image as a native input', async () => {
+    const historicalRef = { attachmentId: 'historical-image', mediaType: 'image/png', bytes: 3, width: 1, height: 1 }
+    const currentRef = { attachmentId: 'current-image', mediaType: 'image/png', bytes: 3, width: 1, height: 1 }
+    const readImage = vi.fn(async () => ({ ref: currentRef, data: new Uint8Array([1, 2, 3]) }))
+    const f = fixture(catalog, () => ({ readImage }) as never)
+    await f.runtime.refresh(); await f.runtime.configure(true)
+    const collect = async (messages: unknown[]) => {
+      const chunks = []
+      for await (const chunk of f.runtime.stream({ provider: 'codex-backend', model: 'gpt-6.1-sol', sessionId: 'bot-session-image-rebuild' as never, messages: messages as never })) chunks.push(chunk)
+      return chunks
+    }
+    const firstUser = { role: 'user', content: [{ type: 'text', text: 'first' }, { type: 'image', attachment: historicalRef }] } as never
+    const first = await collect([firstUser])
+    const firstFinish = first.at(-1) as { replayState: unknown }
+    f.emit('__closed', {})
+    const secondUser = { role: 'user', content: [{ type: 'text', text: 'second' }, { type: 'image', attachment: currentRef }] } as never
+    await collect([firstUser, {
+      role: 'assistant', content: [{ type: 'text', text: 'hello' }],
+      source: { kind: 'model', provider: 'codex-backend', model: 'gpt-6.1-sol', replayState: firstFinish.replayState },
+    }, secondUser])
+    const rebuiltTurn = f.request.mock.calls.filter(call => call[0] === 'turn/start')[1]?.[1] as {
+      input: { type: string; text?: string; url?: string; text_elements?: readonly unknown[] }[]
+    }
+    expect(rebuiltTurn.input).toHaveLength(3)
+    expect(rebuiltTurn.input[0]?.type).toBe('text')
+    expect(rebuiltTurn.input[0]?.text).toContain('first\\n[image attachment]')
+    expect(rebuiltTurn.input[0]?.text_elements).toEqual([])
+    expect(rebuiltTurn.input[1]).toEqual({ type: 'text', text: '## Current user request\n\nsecond\n[image attachment]', text_elements: [] })
+    expect(rebuiltTurn.input[2]).toEqual({ type: 'image', url: 'data:image/png;base64,AQID' })
+    expect(readImage).toHaveBeenCalledTimes(2)
     await f.runtime.close()
   })
   it('bounds dynamic-tool replay and discloses omitted records', () => {
@@ -372,7 +572,7 @@ describe('Codex native backend', () => {
     expect(starts()).toHaveLength(2)
     expect((starts()[1]?.[1] as { developerInstructions: string }).developerInstructions).toContain('Research Lead')
     expect((starts()[1]?.[1] as { developerInstructions: string }).developerInstructions).not.toContain('Chief of Staff')
-    runtime.close()
+    await runtime.close()
   })
   it('rejects missing or unadvertised efforts instead of converting Ultra to Max', async () => {
     const { runtime } = fixture(); await runtime.refresh(); await runtime.configure(true); const call = runtime.stream({ provider: 'codex-backend', model: 'gpt-6.1-sol', reasoningEffort: ReasoningEffortId('invented'), messages: [] }); await expect(call.next()).rejects.toThrow('effort')

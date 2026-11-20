@@ -136,7 +136,8 @@ export function reconcileProfilePlugins(options: ProfilePluginLocation & {
     ? options.before.dependencies.filter(dependency => dependency.bundle && !dependency.enabled).map(dependency => dependency.name)
     : [])
   const previous = after.manifest.dsh?.profile?.bundles ?? []
-  const bundles = previous.filter(name => (!hasPackageName(beforeNames, name) && !hasPackageName(afterNames, name)) || hasPackageName(bundleNames, name))
+  const bundles = previous.filter(name =>
+    (!hasPackageName(beforeNames, name) && !hasPackageName(afterNames, name)) || hasPackageName(bundleNames, name))
   for (const dependency of after.dependencies) {
     if (dependency.bundle && !hasPackageName(disabled, dependency.name) && !bundles.some(name => samePackageName(name, dependency.name))) {
       bundles.push(dependency.name)

@@ -35,6 +35,7 @@
     "client": {
       "platform": "web",
       "inject": [
+        "@yharness/client-connection",
         "@yharness/client-locale",
         "@yharness/client-ui-layout",
         "@yharness/client-ui-renderer",
@@ -47,6 +48,7 @@
   },
   "devDependencies": {
     "@yharness/cordis": "workspace:~",
+    "@yharness/client-connection": "workspace:*",
     "@yharness/client-locale": "workspace:*",
     "@yharness/client-store": "workspace:*",
     "@yharness/client-test-runtime": "workspace:*",

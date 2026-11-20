@@ -18,7 +18,7 @@ import {
 } from '@yharness/skill'
 import { parse as parseYaml } from 'yaml'
 import { MapServiceBridge, registerMapRoutes } from './map-service.ts'
-import { activeOverlay, overlayRoot as defaultOverlayRoot } from './overlay.ts'
+import { activeOverlay, resolveOverlayRoot } from './overlay.ts'
 import {
   compareReleases,
   recordedCommit,
@@ -48,6 +48,8 @@ export interface Config {
   mapStateDir?: string
   /** Absolute private directory where automatically downloaded revisions are published. */
   overlayRoot?: string
+  /** Check for and apply upstream revisions in the background. Defaults to true. */
+  autoUpdate?: boolean
 }
 
 /** Validated resource configuration. */
@@ -56,6 +58,7 @@ export const Config: z<Config> = z.object({
   python: z.string().min(1),
   mapStateDir: z.string().min(1),
   overlayRoot: z.string().min(1),
+  autoUpdate: z.boolean().default(true),
 })
 
 /** Cordis plugin identity. */
@@ -168,7 +171,7 @@ function harnessActivation(): string {
 export function apply(ctx: Context, config: Config = {}): void {
   const assetRoot = config.assetRoot ?? fileURLToPath(new URL('../assets/', import.meta.url))
   if (!isAbsolute(assetRoot)) throw new Error('skill-compound: assetRoot must be an absolute directory')
-  const updateRoot = config.overlayRoot ?? defaultOverlayRoot()
+  const updateRoot = config.overlayRoot ?? resolveOverlayRoot()
   if (!isAbsolute(updateRoot)) throw new Error('skill-compound: overlayRoot must be an absolute directory')
   const { python, supported } = resolvePython(config.python)
   const bundledCommit = recordedCommit(readFileSync(join(PACKAGE_ROOT, 'UPSTREAM.md'), 'utf8'))
@@ -295,8 +298,8 @@ export function apply(ctx: Context, config: Config = {}): void {
         pendingChecks.add(operation)
         void operation.then(() => { pendingChecks.delete(operation) }, () => { pendingChecks.delete(operation) })
       }
-      schedule()
-      const timer = setInterval(schedule, AUTO_UPDATE_INTERVAL_MS)
+      const timer = config.autoUpdate === false ? undefined : setInterval(schedule, AUTO_UPDATE_INTERVAL_MS)
+      if (timer !== undefined) schedule()
       return async () => {
         disposed = true
         lifetime.abort()

@@ -111,4 +111,19 @@ describe('update steps panel', () => {
     expect(screen.getByRole('dialog').textContent).toContain(en.updateFailed.replace('{reason}', 'tree is dirty'))
     expect(screen.getByRole('button', { name: en.update.replace('{upstream}', '0.12.0') }).hasAttribute('disabled')).toBe(false)
   })
+
+  it('keeps a completed update from being applied again', () => {
+    const { apply } = renderPanel({ phase: 'ready', open: true, status: RELEASED, apply: { phase: 'done', error: null } })
+    const updated = screen.getByRole('button', { name: en.updated })
+    expect(updated.hasAttribute('disabled')).toBe(true)
+    fireEvent.click(updated)
+    expect(apply).not.toHaveBeenCalled()
+  })
+
+  it('allows a retry after a failure without details', () => {
+    const { apply } = renderPanel({ phase: 'ready', open: true, status: RELEASED, apply: { phase: 'failed', error: null } })
+    expect(screen.getByRole('dialog').textContent).toContain(en.updateFailed.replace('{reason}', ''))
+    fireEvent.click(screen.getByRole('button', { name: en.update.replace('{upstream}', '0.12.0') }))
+    expect(apply).toHaveBeenCalledTimes(1)
+  })
 })

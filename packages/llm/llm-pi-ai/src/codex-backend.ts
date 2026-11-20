@@ -19,7 +19,7 @@ function text(value: unknown): string { return typeof value === 'string' ? value
 function parseDynamicToolArguments(value: unknown): Obj | undefined {
   if (typeof value === 'string') {
     try {
-      const parsed = JSON.parse(value)
+      const parsed: unknown = JSON.parse(value)
       return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Obj : undefined
     } catch { return undefined }
   }
@@ -99,6 +99,17 @@ export interface CodexHistoryEntry {
   text: string
   images: ImageAttachmentRef[]
 }
+
+function isCodexContext(message: RequestMessage): boolean {
+  if (message.role !== 'user' || message.source === undefined) return false
+  const source = message.source
+  const kind: string = source.kind
+  // A cleared runtime snapshot has no sections or form.
+  if (kind === 'runtime-context') return true
+  if (!('form' in source)) return false
+  return source.form === 'instructions' || source.form === 'catalog' || source.form === 'snapshot' || source.form === 'recall'
+}
+
 /**
  * Text-and-image history seed, visibly separated from the current user message.
  * Every image also leaves a placeholder in the text, so a quoted transcript
@@ -144,11 +155,21 @@ export interface CodexPreferences {
   auto?: boolean
 }
 
-/** Text result accepted by the Codex app-server dynamic-tool protocol. */
+/** Dynamic tool result before the backend resolves any attachment bytes. */
 export interface CodexDynamicToolResult {
-  /** Content sent back to the native model as the tool result. */
+  /** Text sent back to the native model as the tool result. */
   readonly contentItems: readonly { readonly type: 'inputText'; readonly text: string }[]
   /** Whether the model may treat the invocation as successful. */
+  readonly success: boolean
+  /** Durable image resolved to wire bytes after the tool returns. */
+  readonly image?: ImageAttachmentRef
+}
+
+interface CodexDynamicToolResponse {
+  readonly contentItems: readonly (
+    | CodexDynamicToolResult['contentItems'][number]
+    | { readonly type: 'inputImage'; readonly imageUrl: string }
+  )[]
   readonly success: boolean
 }
 
@@ -501,7 +522,7 @@ export class CodexBackendRuntime {
     signal: AbortSignal
     sessionId: GenerateOptions['sessionId']
     accepting: boolean
-  }, params: Obj): Promise<CodexDynamicToolResult> {
+  }, params: Obj): Promise<CodexDynamicToolResponse> {
     if (!active.accepting || active.signal.aborted || active.turnId === undefined || params.turnId !== active.turnId) return declineCodexRequest('item/tool/call', params) as Promise<never>
     const name = text(params.tool)
     const tool = active.dynamicTools.get(name)
@@ -518,14 +539,24 @@ export class CodexBackendRuntime {
     try { await this.options.observeDynamicTool?.({ phase: 'started', name, ...context, arguments: parsed }) }
     catch { return this.dynamicToolFailure('The requested Bot action could not be completed.') }
     let result: CodexDynamicToolResult
-    try { result = await tool.execute(parsed, context) }
-    catch { result = this.dynamicToolFailure('The requested Bot action could not be completed.') }
+    let response: CodexDynamicToolResponse
+    try {
+      result = await tool.execute(parsed, context)
+      const contentItems = result.image === undefined ? result.contentItems : [
+        ...result.contentItems,
+        { type: 'inputImage' as const, imageUrl: await this.imageUrl(result.image, context.signal) },
+      ]
+      response = { success: result.success, contentItems }
+    } catch (error) {
+      void error
+      result = response = this.dynamicToolFailure('The requested Bot action could not be completed.')
+    }
     try { await this.options.observeDynamicTool?.({ phase: 'settled', name, ...context, arguments: parsed, result }) }
     catch { return this.dynamicToolFailure('The requested Bot action could not be completed.') }
-    return result
+    return response
   }
-  private dynamicToolFailure(message: string): CodexDynamicToolResult {
-    return { success: false, contentItems: [{ type: 'inputText', text: message }] }
+  private dynamicToolFailure(message: string) {
+    return { success: false, contentItems: [{ type: 'inputText' as const, text: message }] }
   }
   private async readAccount(peer: CodexPeer): Promise<void> {
     const account = obj(obj(await peer.request('account/read', { refreshToken: false })).account)
@@ -589,7 +620,8 @@ export class CodexBackendRuntime {
     this.options.preferences.models = nextModels
     try {
       await this.options.persist(this.options.preferences)
-      if (this.disposed || peer !== this.peer) throw new Error('Codex backend is closed.')
+      this.assertOpen()
+      if (peer !== this.peer) throw new Error('Codex backend is closed.')
     } catch (error) {
       this.options.preferences.models = previousModels
       throw error
@@ -796,7 +828,8 @@ export class CodexBackendRuntime {
     const access = this.options.resolveAccess(options)
     const observationProjectRoot = this.options.resolveObservationProjectRoot?.(options)
     const accessKey = JSON.stringify([access.cwd, access.sandbox, access.approvalPolicy, access.sandboxPolicy])
-    const history = projectCodexHistory(options.messages)
+    const historyMessages = options.messages.filter(message => message.role !== 'system')
+    const history = projectCodexHistory(historyMessages)
     const instructions = [options.system, ...options.messages.filter(message => message.role === 'system').flatMap(message => message.content.flatMap(block => block.type === 'text' ? [block.text] : [])),
       'Use your native Codex tools. Harness tool descriptions in prior context do not grant access.'].filter(Boolean).join('\n\n')
     const dynamicTools = await this.options.resolveDynamicTools?.(options) ?? []
@@ -815,8 +848,8 @@ export class CodexBackendRuntime {
     if (!this.connected) throw new Error('Sign in to the separate Codex profile before sending a turn.')
     const key = options.purpose === undefined && options.sessionId !== undefined ? `${options.sessionId}/${options.model}` : randomUUID()
     let cursor = this.cursors.get(key)
-    const markerIndex = cursor === undefined ? -1 : options.messages.findLastIndex(message => message.role === 'assistant' && text(obj(obj(message.source.replayState).response).codexMarker) === cursor?.marker)
-    const prefix = markerIndex < 0 ? '' : JSON.stringify(projectCodexHistory(options.messages.slice(0, markerIndex)))
+    const markerIndex = cursor === undefined ? -1 : historyMessages.findLastIndex(message => message.role === 'assistant' && text(obj(obj(message.source.replayState).response).codexMarker) === cursor?.marker)
+    const prefix = markerIndex < 0 ? '' : JSON.stringify(history.slice(0, markerIndex))
     const continuing = cursor !== undefined && prefix === cursor.input
       && cursor.instructions === instructions && cursor.access === accessKey && cursor.dynamicTools === dynamicToolsKey
     const replayEvents = continuing || this.options.replayDynamicTools === undefined
@@ -839,18 +872,28 @@ export class CodexBackendRuntime {
       threadId: activeCursor.id, access, turnId: undefined as string | undefined, items: new Map<string, Obj>(),
       dynamicTools: dynamicToolMap, signal: options.signal ?? new AbortController().signal, sessionId: options.sessionId, accepting: true,
     }
-    const suffix = continuing ? projectCodexHistory(options.messages.slice(markerIndex + 1)) : history
-    const transcript = suffix.map(({ role, text: entryText }) => ({ role, text: entryText }))
-    const promptBase = suffix.length === 1 && suffix[0]?.role === 'user' ? suffix[0].text : `Conversation context from Harness (quoted transcript; retain each role):\n${JSON.stringify(transcript)}`
-    // Keep the current Harness request last so replayed audit data is context,
-    // not a competing instruction or a replacement for the user's turn.
-    const prompt = replay === '' ? promptBase : `${replay}\n\n${promptBase}`
-    // Only the turn's own user message carries native image inputs; images in a
-    // quoted transcript stay text placeholders, because the transcript is one text input.
-    const latest = suffix.at(-1)
-    const imageInputs = latest === undefined || latest.role !== 'user'
+    const start = continuing ? markerIndex + 1 : 0
+    const suffix = history.slice(start)
+    const requestIndex = historyMessages.slice(start).findLastIndex(message => !isCodexContext(message))
+    const latest = suffix[requestIndex]
+    const currentUser = latest?.role === 'user' ? latest : undefined
+    const prior = currentUser === undefined ? suffix : suffix.slice(0, requestIndex)
+    const texts = replay === '' ? [] : [replay]
+    if (prior.length > 0 || currentUser === undefined) {
+      const transcript = prior.map(({ role, text: entryText }) => ({ role, text: entryText }))
+      texts.push(`Conversation context from Harness (quoted transcript; retain each role):\n${JSON.stringify(transcript)}`)
+    }
+    if (currentUser !== undefined) {
+      const currentContext = suffix.slice(requestIndex + 1).map(entry => entry.text).filter(Boolean).join('\n\n')
+      if (currentContext !== '') texts.push(`## Current Harness context\n\n${currentContext}`)
+      texts.push(texts.length === 0 ? currentUser.text : `## Current user request\n\n${currentUser.text}`)
+    }
+    const promptInputs = texts.map(entryText => ({ type: 'text', text: entryText, text_elements: [] }))
+    // Only the current user message carries native image inputs; images in a
+    // quoted transcript stay text placeholders.
+    const imageInputs = currentUser === undefined
       ? []
-      : await Promise.all(latest.images.map(reference => this.imageInput(reference)))
+      : await Promise.all(currentUser.images.map(async reference => ({ type: 'image', url: await this.imageUrl(reference, options.signal) })))
     const queue: Array<{ method: string; params: Obj }> = []
     let wake: (() => void) | undefined
     const unsubscribe = peer.subscribe((method, params) => {
@@ -878,7 +921,7 @@ export class CodexBackendRuntime {
     try {
       this.activeRequest = activeRequest
       const result = obj(await peer.request('turn/start', { threadId: activeCursor.id, model: options.model, effort, serviceTier: tier === 'priority' ? 'fast' : tier,
-        cwd: access.cwd, input: [{ type: 'text', text: prompt, text_elements: [] }, ...imageInputs],
+        cwd: access.cwd, input: [...promptInputs, ...imageInputs],
         approvalPolicy: access.approvalPolicy, approvalsReviewer: 'user', sandboxPolicy: access.sandboxPolicy }))
       turnId = text(obj(result.turn).id)
       activeRequest.turnId = turnId
@@ -972,19 +1015,20 @@ export class CodexBackendRuntime {
     }
   }
   /**
-   * Encode one durable image as a native Codex image input. The inline data URL
+   * Encode one durable image for native Codex. The inline data URL
    * keeps the turn self-contained: the Codex process runs in a separate profile
    * whose sandbox may not reach the Harness attachment directory.
    * @param reference - durable image reference carried by the request message.
-   * @returns the app-server `image` user-input item.
+   * @param signal - Caller cancellation for the attachment read.
+   * @returns the inline URL used by the app-server image input.
    */
-  private async imageInput(reference: ImageAttachmentRef): Promise<Obj> {
+  private async imageUrl(reference: ImageAttachmentRef, signal?: AbortSignal): Promise<string> {
     const attachments = this.options.resolveAttachments?.()
     if (attachments === undefined) {
       throw new Error('Codex image input requires the durable attachment service; this deployment mounts none.')
     }
-    const stored = await attachments.readImage(reference)
-    return { type: 'image', url: `data:${reference.mediaType};base64,${Buffer.from(stored.data).toString('base64')}` }
+    const stored = await attachments.readImage(reference, signal)
+    return `data:${reference.mediaType};base64,${Buffer.from(stored.data).toString('base64')}`
   }
 }
 /** Native Codex model routing while Codex, rather than Harness, owns tools. */

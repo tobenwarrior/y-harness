@@ -5,7 +5,7 @@
     - id: acp-diagnostic-release-on-job-output
       name: './release-on-job-output.mjs'
     - id: subagent-acp-diagnostic
-      name: '@deepseek-ai/dsh-subagent-acp'
+      name: '@yharness/subagent-acp'
       config:
         providerName: acp-diagnostic
         command: !!js process.execPath

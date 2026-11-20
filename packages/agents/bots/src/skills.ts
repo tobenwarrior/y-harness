@@ -40,11 +40,7 @@ function sortedUniqueNames(value: unknown, label: string): string[] {
     }
     names.push(candidate)
   }
-  return [...new Set(names)].sort(compareNames)
-}
-
-function compareNames(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0
+  return [...new Set(names)].sort()
 }
 
 /**

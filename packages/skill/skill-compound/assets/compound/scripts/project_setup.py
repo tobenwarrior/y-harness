@@ -2,20 +2,22 @@
 """Enable or inspect bounded Compound Skills routing blocks.
 
 Project mode edits project-local instruction files.  Global mode edits only
-the selected user instruction files.  The helper never installs a skill,
-reads credentials, changes host settings, or edits an ancestor instruction
-file.
+the selected user instruction files. The optional Claude permissions check
+reads only its user settings file and reports the expected allow rules. The
+helper never changes host settings or edits an ancestor instruction file.
 """
 
 from __future__ import annotations
 
 import argparse
+import codecs
+import io
 import json
 import os
 import stat
 import sys
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Iterable, Sequence
 
@@ -44,14 +46,12 @@ CURSOR_DISABLE_NOTE = (
     "rule in Cursor Customize; this helper does not change app settings."
 )
 
+ROUTING_PATH = Path(__file__).resolve().parent.parent / "references" / "default-routing.md"
 BLOCK_LINES = (
     START_MARKER,
     "## Compound Skills default routing",
     "",
-    "For engineering work, including commit/PR drafts, load the installed Compound Skills "
-    "`compound` skill before starting; use the host's skill tool when available. "
-    "Read only relevant references. Respect project instructions and user scope. "
-    "If unavailable, report it and follow project conventions.",
+    ROUTING_PATH.read_text(encoding="utf-8").strip(),
     END_MARKER,
 )
 
@@ -97,6 +97,7 @@ class TargetState:
     path: Path
     text: str | None
     markers: MarkerRange | None
+    bom: bytes = b""
 
     @property
     def exists(self) -> bool:
@@ -128,14 +129,14 @@ class GlobalContext:
     notes: tuple[str, ...] = ()
 
 
-def _newline(text: str) -> str:
+def _newline(text: str, default: str = "\n") -> str:
     if "\r\n" in text:
         return "\r\n"
     if "\n" in text:
         return "\n"
     if "\r" in text:
         return "\r"
-    return "\n"
+    return default
 
 
 def _has_line_ending(text: str) -> bool:
@@ -145,15 +146,11 @@ def _has_line_ending(text: str) -> bool:
 def _marker_lines(text: str, marker: str) -> list[tuple[int, int, str]]:
     matches: list[tuple[int, int, str]] = []
     offset = 0
-    for line in text.splitlines(keepends=True):
-        content = line.rstrip("\r\n")
-        if content.strip() == marker:
+    # Split only at the endings _has_line_ending accepts; str.splitlines() also splits at U+2028 and others.
+    for line in io.StringIO(text, newline=""):
+        if line.rstrip("\r\n").strip() == marker:
             matches.append((offset, offset + len(line), line))
         offset += len(line)
-    if offset < len(text):  # splitlines() only omits this for an empty string
-        content = text[offset:].rstrip("\r\n")
-        if content.strip() == marker:
-            matches.append((offset, len(text), text[offset:]))
     return matches
 
 
@@ -209,8 +206,10 @@ def _read_target(
         raw = path.read_bytes()
     except OSError as exc:
         raise SetupError(f"could not inspect instruction target {path}: {exc}") from exc
+    # Some editors save a byte-order mark before the start marker; it is not content.
+    bom = codecs.BOM_UTF8 if raw.startswith(codecs.BOM_UTF8) else b""
     try:
-        text = raw.decode("utf-8")
+        text = raw[len(bom) :].decode("utf-8")
     except UnicodeDecodeError as exc:
         raise SetupError(f"instruction target is not UTF-8: {path}") from exc
     return TargetState(
@@ -223,32 +222,25 @@ def _read_target(
             end_marker=end_marker,
             marker_namespace=marker_namespace,
         ),
+        bom,
     )
 
 
-def _validate_no_symlink_chain(path: Path, label: str) -> None:
-    """Reject symlinks in the configured path and its existing local parents."""
+def _validate_not_symlink(path: Path, label: str) -> None:
+    """Reject a symlink at a directory the helper writes in, whether or not it exists yet.
 
-    candidate = path if path.is_absolute() else Path.cwd() / path
-    while not candidate.exists() and not candidate.is_symlink():
-        parent = candidate.parent
-        if parent == candidate:
-            break
-        candidate = parent
-    stop = candidate
+    Its ancestors may be links, such as a linked HOME or /home.
+    """
+
     try:
-        while True:
-            if candidate.is_symlink():
-                raise SetupError(f"refusing symlink {label}: {candidate}")
-            if candidate == stop:
-                break
-            candidate = candidate.parent
+        if path.is_symlink():
+            raise SetupError(f"refusing symlink {label}: {path}")
     except OSError as exc:
         raise SetupError(f"could not inspect {label} {path}: {exc}") from exc
 
 
 def _validate_global_base(path: Path, label: str) -> Path:
-    _validate_no_symlink_chain(path, label)
+    _validate_not_symlink(path, label)
     try:
         if path.exists() and not path.is_dir():
             raise SetupError(f"global {label} is not a directory: {path}")
@@ -271,7 +263,7 @@ def _configured_global_base(environment_name: str, default_directory: str, label
 
 
 def _global_file(name: str, path: Path) -> TargetState:
-    _validate_no_symlink_chain(path.parent, "global instruction parent")
+    _validate_not_symlink(path.parent, "global instruction parent")
     state = _read_target(
         name,
         path,
@@ -298,14 +290,16 @@ def _validate_fallback_ancestors(root: Path) -> None:
 def _legacy_shadow_files(root: Path) -> tuple[Path, ...]:
     found: list[Path] = []
     ancestor = root
-    user_claude_memory = Path.home() / ".claude" / "CLAUDE.md"
+    primary = root / "AGENTS.md"
+    user_claude_memory = Path.home().resolve() / ".claude" / "CLAUDE.md"
     while True:
         for relative in ("CLAUDE.md", ".claude/CLAUDE.md", "CLAUDE.local.md"):
             candidate = ancestor / relative
             if candidate == user_claude_memory:
                 continue
             try:
-                if candidate.is_file():
+                # A symlink to AGENTS.md still loads it after enable replaces the file; a hard link keeps the old text.
+                if candidate.is_file() and candidate.resolve() != primary:
                     found.append(candidate)
             except OSError as exc:
                 raise SetupError(f"could not inspect legacy instruction file {candidate}: {exc}") from exc
@@ -316,18 +310,31 @@ def _legacy_shadow_files(root: Path) -> tuple[Path, ...]:
     return tuple(found)
 
 
+def _outdated_warning(target: TargetState, block_lines: Sequence[str], command: str) -> str | None:
+    """A managed block whose text enable would rewrite was saved by an earlier version."""
+    if target.markers is None or target.text is None:
+        return None
+    if _replace_block(target.text, target.markers, block_lines) == target.text:
+        return None
+    return f"Compound rule is from an earlier version at {target.path}. Run {command} to update it."
+
+
 def _warning_list(
     override: TargetState,
     fallback: TargetState,
     shadows: Iterable[Path],
+    primary: TargetState | None = None,
 ) -> list[str]:
     warnings: list[str] = []
+    for state in (primary, override, fallback):
+        if state is not None and (warning := _outdated_warning(state, BLOCK_LINES, "compound refresh")) is not None:
+            warnings.append(warning)
     if override.exists and override.text and override.text.strip() and override.markers is None:
         warnings.append(f"AGENTS.override.md may shadow AGENTS.md without managed routing: {override.path}")
     if shadows and fallback.markers is None:
         for path in shadows:
             warnings.append(f"Claude instruction may shadow AGENTS.md without managed fallback: {path}")
-    if fallback.exists and fallback.markers is None:
+    if (fallback.text or "").strip() and fallback.markers is None:
         warnings.append(f"Claude fallback contains unmanaged content and was left unchanged: {fallback.path}")
     if fallback.exists and not shadows and fallback.markers is not None:
         warnings.append(f"Managed Claude fallback has no current legacy shadow: {fallback.path}")
@@ -346,17 +353,42 @@ def _load_context(root: Path) -> Context:
     fallback = _read_target(".claude/rules/compound.md", fallback_path)
     shadows = _legacy_shadow_files(root)
 
-    warnings = _warning_list(override, fallback, shadows)
+    warnings = _warning_list(override, fallback, shadows, primary)
     return Context(root, primary, override, fallback, shadows, tuple(warnings))
 
 
 GLOBAL_HOST_NAMES = ("codex", "cursor", "claude")
+HOST_LABELS = {"codex": "Codex", "cursor": "Cursor", "claude": "Claude Code"}
+
+
+def _host_home(name: str) -> Path:
+    if name == "codex":
+        return _configured_global_base("CODEX_HOME", ".codex", "Codex home")
+    if name == "claude":
+        return _configured_global_base("CLAUDE_CONFIG_DIR", ".claude", "Claude configuration directory")
+    return Path.home() / ".cursor"
+
+
+def _installed_hosts() -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """The apps whose configuration folder exists, and a note for each one skipped.
+
+    Default setup and status use these apps. --host names one app, and --host all selects every supported host.
+    """
+    selected: list[str] = []
+    notes: list[str] = []
+    for name in GLOBAL_HOST_NAMES:
+        home = _host_home(name)
+        if home.is_dir():
+            selected.append(name)
+        else:
+            notes.append(f"Skipped {HOST_LABELS[name]}: {home} does not exist. Use --host {name} to select it explicitly.")
+    return tuple(selected), tuple(notes)
 
 
 def _global_target_warning(target: TargetState, description: str) -> str | None:
     if target.exists and (target.text or "").strip() and target.markers is None:
         return f"{description} contains unmanaged content and was left unchanged: {target.path}"
-    return None
+    return _outdated_warning(target, GLOBAL_BLOCK_LINES, "compound refresh global")
 
 
 def _load_global_context(host_names: Sequence[str]) -> GlobalContext:
@@ -460,14 +492,11 @@ def _global_disable_plans(context: GlobalContext) -> list[tuple[TargetState, str
     for host in context.hosts:
         if host.name == "cursor":
             continue
-        for target in host.targets:
-            state = target
+        for state in host.targets:
             if not state.exists or state.markers is None:
                 continue
-            new_text = _remove_block(state.text or "", state.markers, GLOBAL_BLOCK_LINES)
-            remove_file = False
-            if host.name == "claude":
-                remove_file = not new_text.strip()
+            new_text = _remove_block(state.text or "", state.markers)
+            remove_file = not new_text.strip()
             if remove_file or new_text != (state.text or ""):
                 plans.append((state, new_text, remove_file))
     return plans
@@ -495,17 +524,102 @@ def _global_host_status(host: GlobalHost) -> str:
 
 def _global_status_name(context: GlobalContext) -> str:
     bases = {_global_host_status(host).removesuffix("-with-warnings") for host in context.hosts}
-    if not bases:
+    # Host-managed hosts set the aggregate only when no helper-managed host is selected.
+    helper_bases = bases - {"host-managed"}
+    if not helper_bases:
+        base = "host-managed" if bases else "disabled"
+    elif helper_bases == {"disabled"}:
         base = "disabled"
-    elif bases == {"disabled"}:
-        base = "disabled"
-    elif bases == {"host-managed"}:
-        base = "host-managed"
-    elif bases <= {"enabled", "host-managed"}:
+    elif helper_bases == {"enabled"}:
         base = "enabled"
     else:
         base = "partial"
     return base + "-with-warnings" if context.warnings else base
+
+
+CLAUDE_RULES_ELSEWHERE_NOTE = ("This copy of Compound belongs to {app}, so Claude Code allow rules would name a folder Claude Code "
+                               "does not run; run this from Claude Code to add or remove its allow rules.")
+
+
+def _other_app_holding_this_install() -> str | None:
+    """The other app whose folder holds this copy of the plugin; Claude Code's allow rules must name its own copy."""
+    here = Path(__file__).resolve()
+    for name in ("codex", "cursor"):
+        try:
+            home = _host_home(name).resolve()
+        except SetupError:
+            continue
+        if here.is_relative_to(home):
+            return HOST_LABELS[name]
+    return None
+
+
+def _claude_permission_rules() -> list[str]:
+    """Offer stable rules only from Claude's installed Compound copy."""
+    try:
+        try:
+            from .claude_map_launcher import CACHE, SCRIPT, config_home, permission_rules
+        except ImportError:
+            from claude_map_launcher import CACHE, SCRIPT, config_home, permission_rules
+        base = config_home()
+        path = Path(__file__).resolve().with_name(SCRIPT.name)
+        if os.name == "posix" and path.is_relative_to(base / CACHE):
+            relative = path.relative_to(base / CACHE)
+            if Path(*relative.parts[1:]) == SCRIPT:
+                return permission_rules(base)
+    except (ImportError, OSError, ValueError, RuntimeError):
+        pass
+    return []
+
+
+MAX_CLAUDE_SETTINGS_BYTES = 1024 * 1024
+
+
+def _claude_permission_check(rules: Sequence[str]) -> dict[str, object]:
+    """Check literal allow entries in Claude Code's user settings."""
+    try:
+        base = _host_home("claude")
+        # Allow a linked home ancestor while keeping the config directory and settings file no-follow.
+        canonical = base.parent.resolve() / base.name
+        if not rules or not Path(__file__).resolve().is_relative_to(canonical):
+            return {"status": "unavailable", "message": "Run the permission check from Claude Code's installed copy."}
+        try:
+            from .safe_open import open_regular_nofollow
+        except ImportError:  # direct script execution
+            from safe_open import open_regular_nofollow
+        with os.fdopen(open_regular_nofollow(canonical, "settings.json"), "rb") as settings:
+            data = settings.read(MAX_CLAUDE_SETTINGS_BYTES + 1)
+        if len(data) > MAX_CLAUDE_SETTINGS_BYTES:
+            raise ValueError("settings exceed the size limit")
+        document = json.loads(data)
+        permissions = document.get("permissions", {}) if isinstance(document, dict) else None
+        allowed = permissions.get("allow", []) if isinstance(permissions, dict) else None
+        if not isinstance(allowed, list) or not all(isinstance(rule, str) for rule in allowed):
+            raise ValueError("invalid allow list")
+    except FileNotFoundError:
+        allowed = []
+    except (OSError, ValueError, RuntimeError):
+        return {"status": "unavailable", "message": "Could not safely inspect Claude Code's user settings."}
+
+    missing = [rule for rule in rules if rule not in allowed]
+    if missing:
+        return {
+            "status": "missing",
+            "missing_rules": missing,
+            "message": "Run setup-global in Claude Code to add the missing rules for this installation.",
+        }
+    try:
+        try:
+            from .claude_map_launcher import LAUNCHER, _read_owned, current_install
+        except ImportError:
+            from claude_map_launcher import LAUNCHER, _read_owned, current_install
+        current_install(canonical)
+        if not _read_owned(canonical, LAUNCHER):
+            raise ValueError("launcher is empty")
+    except (OSError, ValueError, TypeError, AttributeError, RuntimeError):
+        return {"status": "missing", "missing_rules": [],
+                "message": "Run setup-global in Claude Code to prepare the stable map launcher."}
+    return {"status": "present", "missing_rules": []}
 
 
 def _global_payload(
@@ -516,6 +630,7 @@ def _global_payload(
     *,
     error: str | None = None,
     changed_paths: Sequence[str] = (),
+    check_claude_permissions: bool = False,
 ) -> dict[str, object]:
     hosts: dict[str, object] = {}
     notes: list[str] = [GLOBAL_PREREQUISITE]
@@ -544,6 +659,16 @@ def _global_payload(
             if host.name == "cursor":
                 hosts[host.name]["managed_by"] = "native Cursor user-scope plugin rule"
                 hosts[host.name]["runtime_verified"] = False
+            if host.name == "claude":
+                other = _other_app_holding_this_install()
+                rules = [] if other else _claude_permission_rules()
+                hosts[host.name]["permission_rules"] = rules
+                if check_claude_permissions:
+                    hosts[host.name]["permission_check"] = _claude_permission_check(rules)
+                if other:
+                    note = CLAUDE_RULES_ELSEWHERE_NOTE.format(app=other)
+                    hosts[host.name]["notes"].append(note)
+                    notes.append(note)
     value: dict[str, object] = {
         "action": action,
         "status": status,
@@ -574,9 +699,10 @@ def _canonical_block(
 
 def _append_block(
     text: str,
-    newline: str,
+    preferred_newline: str,
     block_lines: Sequence[str] = BLOCK_LINES,
 ) -> str:
+    newline = _newline(text, preferred_newline)
     if not text:
         return _canonical_block(newline, False, block_lines)
     if _has_line_ending(text):
@@ -597,22 +723,13 @@ def _replace_block(
     )
 
 
-def _remove_block(
-    text: str,
-    markers: MarkerRange,
-    block_lines: Sequence[str] = BLOCK_LINES,
-) -> str:
+def _remove_block(text: str, markers: MarkerRange) -> str:
     before = text[: markers.start]
-    after = text[markers.end :]
-    result = before + after
-    if not markers.has_trailing_newline and not after and before:
-        newline = _newline(before)
-        canonical = _canonical_block(newline, False, block_lines)
-        if before.endswith(newline) and text[markers.start : markers.end] == canonical:
-            # Enable inserts this separator when the original file had no
-            # final newline; remove that separator during the exact round trip.
-            result = before[: -len(newline)]
-    return result
+    if not markers.has_trailing_newline:
+        # Enable separates a block it appends to a file without a final
+        # newline by one line ending; remove that separator again.
+        before = before.removesuffix("\n").removesuffix("\r")
+    return before + text[markers.end :]
 
 
 def _preferred_newline(context: Context) -> str:
@@ -638,14 +755,31 @@ def _planned_enable(context: Context) -> list[tuple[TargetState, str, bool]]:
 
     if context.legacy_shadows:
         fallback = context.fallback
-        if fallback.exists:
-            if fallback.markers is None:
-                raise SetupError(f"refusing to overwrite unmanaged Claude fallback: {fallback.path}")
+        user_claude = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude").resolve()
+        if context.root / ".claude" == user_claude:
+            # Claude loads rules there for every project, so this would be a global default.
+            raise SetupError(f"refusing to write project Claude rule into user Claude configuration: {fallback.path}")
+        if fallback.markers is not None:
             new_text = _replace_block(fallback.text or "", fallback.markers)
+        elif (fallback.text or "").strip():
+            raise SetupError(f"refusing to overwrite unmanaged Claude fallback: {fallback.path}")
         else:
             new_text = _canonical_block(preferred, False)
         if new_text != (fallback.text or ""):
             plans.append((fallback, new_text, False))
+    return plans
+
+
+def _planned_refresh(
+    targets: Iterable[TargetState], block_lines: Sequence[str],
+) -> list[tuple[TargetState, str, bool]]:
+    plans = []
+    for state in targets:
+        if state.markers is None or state.text is None:
+            continue
+        new_text = _replace_block(state.text, state.markers, block_lines)
+        if new_text != state.text:
+            plans.append((state, new_text, False))
     return plans
 
 
@@ -655,7 +789,7 @@ def _planned_disable(context: Context) -> list[tuple[TargetState, str, bool]]:
         if not state.exists or state.markers is None:
             continue
         new_text = _remove_block(state.text or "", state.markers)
-        remove_file = state is context.fallback and new_text == ""
+        remove_file = not new_text.strip()
         if remove_file or new_text != (state.text or ""):
             plans.append((state, new_text, remove_file))
     return plans
@@ -683,7 +817,7 @@ def _stage(plans: Iterable[tuple[TargetState, str, bool]]) -> list[StagedPlan]:
                 item.temporary = Path(temporary)
                 staged.append(item)
                 with os.fdopen(descriptor, "wb") as handle:
-                    handle.write(text.encode("utf-8"))
+                    handle.write(state.bom + text.encode("utf-8"))
                     handle.flush()
                     os.fsync(handle.fileno())
                 if state.exists:
@@ -712,29 +846,46 @@ def _cleanup_staged(staged: Iterable[StagedPlan]) -> None:
         item.temporary = None
 
 
+def _require_unchanged_target(state: TargetState) -> None:
+    """Compare the live instruction file with the snapshot used to plan the write."""
+    try:
+        mode = state.path.lstat().st_mode
+        if not stat.S_ISREG(mode):
+            raise SetupError(f"instruction target is no longer a regular file: {state.path}")
+        current = state.path.read_bytes()
+    except FileNotFoundError:
+        current = None
+    except OSError as exc:
+        raise SetupError(f"could not recheck instruction target {state.path}: {exc}") from exc
+    expected = None if state.text is None else state.bom + state.text.encode("utf-8")
+    if current != expected:
+        raise SetupError(f"instructions changed during setup: {state.path}. Rerun to use the latest text.")
+
+
 def _apply(plans: Iterable[tuple[TargetState, str, bool]]) -> tuple[bool, tuple[str, ...]]:
     staged = _stage(plans)
     changed_paths: list[str] = []
     try:
-        # Replace all staged files before deleting a managed fallback file.
         for item in staged:
+            _require_unchanged_target(item.state)
+        # Replace all staged files before deleting any emptied file.
+        for item in sorted(staged, key=lambda item: item.remove_file):
+            _require_unchanged_target(item.state)
             if item.remove_file:
-                continue
-            assert item.temporary is not None
-            try:
-                os.replace(item.temporary, item.state.path)
-            except OSError as exc:
-                raise ApplyError(f"could not atomically update {item.state.path}: {exc}", changed_paths) from exc
-            item.temporary = None
+                try:
+                    item.state.path.unlink()
+                except OSError as exc:
+                    raise SetupError(f"could not remove {item.state.path}: {exc}") from exc
+            else:
+                assert item.temporary is not None
+                try:
+                    os.replace(item.temporary, item.state.path)
+                except OSError as exc:
+                    raise SetupError(f"could not atomically update {item.state.path}: {exc}") from exc
+                item.temporary = None
             changed_paths.append(str(item.state.path))
-        for item in staged:
-            if not item.remove_file:
-                continue
-            try:
-                item.state.path.unlink()
-            except OSError as exc:
-                raise ApplyError(f"could not remove {item.state.path}: {exc}", changed_paths) from exc
-            changed_paths.append(str(item.state.path))
+    except SetupError as exc:
+        raise ApplyError(str(exc), changed_paths) from exc
     finally:
         _cleanup_staged(staged)
     return bool(changed_paths), tuple(changed_paths)
@@ -786,7 +937,11 @@ def _payload(
 
 
 def _emit(value: dict[str, object]) -> int:
-    print(json.dumps(value, ensure_ascii=False))
+    try:
+        print(json.dumps(value, ensure_ascii=False))
+    except UnicodeEncodeError:
+        # A strict stdout, as under en_US.UTF-8, cannot encode undecodable path bytes; the files are already written.
+        print(json.dumps(value))
     return 0 if value["status"] != "error" else 2
 
 
@@ -809,13 +964,17 @@ def _resolve_root(raw: str) -> Path:
 
 def _parser() -> argparse.ArgumentParser:
     parser = JsonArgumentParser(
-        description="Enable, inspect, or disable bounded Compound Skills routing blocks."
+        description="Enable, refresh, inspect, or disable bounded Compound Skills routing blocks."
     )
-    parser.add_argument("action", nargs="?", help="enable, status, or disable")
+    parser.add_argument("action", nargs="?", help="enable, refresh, status, or disable")
     scope = parser.add_mutually_exclusive_group()
     scope.add_argument("--project-root", metavar="PATH", help="project root")
     scope.add_argument("--global", dest="global_scope", action="store_true", help="use global user instruction files")
     parser.add_argument("--host", choices=("all", "codex", "cursor", "claude"), help="global host selection")
+    parser.add_argument("--check-claude-permissions", action="store_true",
+                        help="check user allow entries with status --global --host claude")
+    parser.add_argument("--quiet", action="store_true",
+                        help="suppress success output from a single-host global refresh")
     return parser
 
 
@@ -838,15 +997,28 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _emit(_payload(_action_hint(argv_list), "error", False, None, [], error=str(exc)))
 
     action = args.action or ""
-    if action not in {"enable", "status", "disable"}:
-        return _emit(_payload(action, "error", False, None, [], error="action must be enable, status, or disable"))
+    if action not in {"enable", "refresh", "status", "disable"}:
+        return _emit(_payload(action, "error", False, None, [], error="action must be enable, refresh, status, or disable"))
     if args.host is not None and not args.global_scope:
         return _emit(_payload(action, "error", False, None, [], error="--host requires --global"))
+    if args.check_claude_permissions and (action != "status" or not args.global_scope or args.host != "claude"):
+        return _emit(_payload(action, "error", False, None, [],
+                              error="--check-claude-permissions requires status --global --host claude"))
+    if args.quiet and (action != "refresh" or not args.global_scope or args.host not in {"codex", "claude"}):
+        return _emit(_payload(action, "error", False, None, [],
+                              error="--quiet requires refresh --global --host codex or claude"))
     if args.global_scope:
-        host_names = GLOBAL_HOST_NAMES if args.host in (None, "all") else (args.host,)
         global_context: GlobalContext | None = None
         try:
+            skipped: tuple[str, ...] = ()
+            if args.host is None and action in {"enable", "refresh", "status"}:
+                host_names, skipped = _installed_hosts()
+                if action == "enable" and not host_names:
+                    raise SetupError("no Claude Code, Codex or Cursor configuration folder found; add --host to choose an app")
+            else:
+                host_names = GLOBAL_HOST_NAMES if args.host in (None, "all") else (args.host,)
             global_context = _load_global_context(host_names)
+            global_context = replace(global_context, notes=global_context.notes + skipped)
             if action == "status":
                 return _emit(
                     _global_payload(
@@ -854,15 +1026,21 @@ def main(argv: Sequence[str] | None = None) -> int:
                         _global_status_name(global_context),
                         False,
                         global_context,
+                        check_claude_permissions=args.check_claude_permissions,
                     )
                 )
-            plans = (
-                _global_enable_plans(global_context)
-                if action == "enable"
-                else _global_disable_plans(global_context)
-            )
+            if action == "refresh":
+                targets = (target for host in global_context.hosts for target in host.targets)
+                plans = _planned_refresh(targets, GLOBAL_BLOCK_LINES)
+            elif action == "enable":
+                plans = _global_enable_plans(global_context)
+            else:
+                plans = _global_disable_plans(global_context)
             changed, changed_paths = _apply(plans)
+            if args.quiet:
+                return 0
             after = _load_global_context(host_names)
+            after = replace(after, notes=after.notes + skipped)
             return _emit(
                 _global_payload(
                     action,
@@ -872,25 +1050,19 @@ def main(argv: Sequence[str] | None = None) -> int:
                     changed_paths=changed_paths,
                 )
             )
-        except ApplyError as exc:
-            return _emit(
-                _global_payload(
-                    action,
-                    "error",
-                    bool(exc.changed_paths),
-                    global_context,
-                    error=str(exc),
-                    changed_paths=exc.changed_paths,
-                )
-            )
         except SetupError as exc:
+            if args.quiet:
+                print(f"Compound Skills global refresh: {exc}", file=sys.stderr)
+                return 1
+            changed_paths = exc.changed_paths if isinstance(exc, ApplyError) else ()
             return _emit(
                 _global_payload(
                     action,
                     "error",
-                    False,
+                    bool(changed_paths),
                     global_context,
                     error=str(exc),
+                    changed_paths=changed_paths,
                 )
             )
     if not args.project_root:
@@ -902,7 +1074,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         path = context.primary.path
         if action == "status":
             return _emit(_payload(action, _status_name(context), False, path, context.warnings))
-        plans = _planned_enable(context) if action == "enable" else _planned_disable(context)
+        if action == "refresh":
+            plans = _planned_refresh((context.primary, context.override, context.fallback), BLOCK_LINES)
+        elif action == "enable":
+            plans = _planned_enable(context)
+        else:
+            plans = _planned_disable(context)
         changed, changed_paths = _apply(plans)
         after = _load_context(root)
         return _emit(

@@ -77,7 +77,7 @@ describe('ShellEnvRegistry', () => {
     expect(fromEnvironment.collect(execution()).DSH_HOME).toBe(resolve('./ambient-dsh-home'))
 
     const root = await mkdtemp(join(tmpdir(), 'yh-shell-env-home-'))
-    vi.stubEnv('HOME', root)
+    vi.stubEnv(process.platform === 'win32' ? 'USERPROFILE' : 'HOME', root)
     vi.stubEnv('DSH_HOME', undefined)
     try {
       const fromDefault = new ShellEnvRegistry(new Context())

@@ -1,0 +1,436 @@
+// @vitest-environment jsdom
+
+import type { SessionSnapshot } from '@yharness/api-session-controller/client'
+import type { ComponentProps } from 'react'
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { makeTranslate } from '@yharness/client-test-runtime'
+import { SessionId } from '@yharness/session/types'
+import { en } from '../src/client/locales.ts'
+import {
+  createBotVaultRequestPoller,
+  fetchBotVaultRequest,
+  isYHarnessCloudDesktop,
+  parseBotVaultRequestResponse,
+  type BotVaultRequest,
+  type BotVaultRequestFetcher,
+  type BotVaultRequestResult,
+} from '../src/client/bot-vault-request.ts'
+import { BotVaultRequestCard } from '../src/client/BotVaultRequestCard.tsx'
+import {
+  createBotWebsiteLoginRequestPoller,
+  fetchBotWebsiteLoginRequest,
+  isBotWebsiteLoginRequestEnabled,
+  parseBotWebsiteLoginResponse,
+  type BotWebsiteLoginRequest,
+  type BotWebsiteLoginRequestFetcher,
+} from '../src/client/bot-website-login-request.ts'
+import { BotWebsiteLoginRequestCard } from '../src/client/BotWebsiteLoginRequestCard.tsx'
+
+afterEach(() => {
+  cleanup()
+  vi.useRealTimers()
+  vi.restoreAllMocks()
+})
+
+const t = makeTranslate(en)
+const REQUEST_ID = '0123456789abcdef0123456789abcdef'
+
+function websiteResponse(overrides: Partial<BotWebsiteLoginRequest> = {}): { request: BotWebsiteLoginRequest } {
+  return {
+    request: {
+      id: REQUEST_ID as BotWebsiteLoginRequest['id'],
+      origin: 'https://example.com',
+      destination: 'https://example.com/sign-in',
+      ...overrides,
+    },
+  }
+}
+
+describe('Bot website login request response', () => {
+  it('accepts exact metadata and rejects secret-shaped or off-origin values', () => {
+    expect(parseBotWebsiteLoginResponse({ request: null })).toBeNull()
+    expect(parseBotWebsiteLoginResponse(websiteResponse())).toEqual(websiteResponse().request)
+    expect(parseBotWebsiteLoginResponse({ request: { ...websiteResponse().request, scope: 'shared' } })).toEqual({
+      ...websiteResponse().request, scope: 'shared',
+    })
+    expect(parseBotWebsiteLoginResponse({ request: { ...websiteResponse().request, scope: 'owner' } })).toBeNull()
+    expect(parseBotWebsiteLoginResponse({ request: [] })).toBeNull()
+    expect(parseBotWebsiteLoginResponse({ request: { ...websiteResponse().request, origin: null } })).toBeNull()
+    expect(parseBotWebsiteLoginResponse({ request: { ...websiteResponse().request, origin: 'https://[invalid' } })).toBeNull()
+    expect(parseBotWebsiteLoginResponse({ request: { ...websiteResponse().request, destination: 'https://example.com/sign-in?token=fixture-only' } })).toBeNull()
+    expect(parseBotWebsiteLoginResponse({ request: { ...websiteResponse().request, destination: 'http://example.com/sign-in' } })).toBeNull()
+    expect(parseBotWebsiteLoginResponse({ request: { ...websiteResponse().request, destination: 'https://other.example/sign-in' } })).toBeNull()
+    expect(parseBotWebsiteLoginResponse({ request: { ...websiteResponse().request, username: 'alice', password: 'secret' } })).toBeNull()
+  })
+
+  it('reads the Session’s website login request from the document route without caching', async () => {
+    const fetcher = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(websiteResponse()), { status: 200 }))
+    await expect(fetchBotWebsiteLoginRequest('owner session/one', new AbortController().signal)).resolves.toEqual(websiteResponse().request)
+    expect(fetcher).toHaveBeenCalledWith('api/bot-website-login?sessionId=owner%20session%2Fone', expect.objectContaining({
+      method: 'GET', credentials: 'same-origin', cache: 'no-store',
+    }))
+  })
+
+  it('returns null for revoked, failed, and malformed broker responses', async () => {
+    const fetcher = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ request: null }), { status: 200 }))
+      .mockResolvedValueOnce(new Response('unavailable', { status: 503 }))
+      .mockResolvedValueOnce(new Response('not-json', { status: 200 }))
+    const signal = new AbortController().signal
+
+    await expect(fetchBotWebsiteLoginRequest('website-session', signal, fetcher)).resolves.toBeNull()
+    await expect(fetchBotWebsiteLoginRequest('website-session', signal, fetcher)).resolves.toBeNull()
+    await expect(fetchBotWebsiteLoginRequest('website-session', signal, fetcher)).resolves.toBeNull()
+  })
+
+  it('cancels a stale selected-session read and ignores its completion', async () => {
+    let resolveFirst: ((value: BotWebsiteLoginRequest | null) => void) | undefined
+    const fetcher = vi.fn<BotWebsiteLoginRequestFetcher>(async (sessionId, signal) => {
+      if (sessionId === 'first-session') {
+        await new Promise<BotWebsiteLoginRequest | null>((resolve) => { resolveFirst = resolve })
+        if (signal.aborted) return null
+        return websiteResponse().request
+      }
+      return { ...websiteResponse().request, purpose: 'verification' }
+    })
+    const results: Array<{ sessionId: string; request: BotWebsiteLoginRequest | null }> = []
+    const poller = createBotWebsiteLoginRequestPoller({
+      fetcher,
+      intervalMs: 1_000,
+      onResult: (sessionId, request) => { results.push({ sessionId, request }) },
+    })
+
+    try {
+      poller.select('first-session', true)
+      poller.select('second-session', false)
+      resolveFirst?.(websiteResponse().request)
+      await vi.waitFor(() => { expect(results).toHaveLength(1) })
+
+      expect(fetcher).toHaveBeenCalledTimes(2)
+      expect(fetcher.mock.calls[0]?.[1].aborted).toBe(true)
+      expect(results[0]).toMatchObject({ sessionId: 'second-session', request: { purpose: 'verification' } })
+    } finally {
+      poller.dispose()
+    }
+  })
+
+  it('requires the explicit website-login feature flag', () => {
+    window.__YH_BOT_WEBSITE_LOGIN__ = true
+    expect(isBotWebsiteLoginRequestEnabled()).toBe(true)
+    delete window.__YH_BOT_WEBSITE_LOGIN__
+    expect(isBotWebsiteLoginRequestEnabled()).toBe(false)
+  })
+})
+
+describe('BotWebsiteLoginRequestCard', () => {
+  beforeEach(() => { window.__YH_BOT_WEBSITE_LOGIN__ = true })
+  afterEach(() => {
+    delete window.__YH_BOT_WEBSITE_LOGIN__
+    delete window.__YH_BOT_SHARED_BROWSER__
+  })
+
+  it('shows origin and exact destination without rendering a credential editor', async () => {
+    vi.spyOn(window.navigator, 'userAgent', 'get').mockReturnValue('YHarnessCloudDesktop/1')
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(websiteResponse()), { status: 200 }))
+    render(<BotWebsiteLoginRequestCard {...cardProps()} />)
+    expect(await screen.findByText('https://example.com')).toBeTruthy()
+    expect(screen.getByText('https://example.com/sign-in')).toBeTruthy()
+    expect(screen.getByRole('link').getAttribute('href')).toBe(`/__yharness/vault-login-use/${REQUEST_ID}`)
+    expect(screen.queryByRole('textbox')).toBeNull()
+  })
+
+  it.each([
+    ['signup', en.websiteSignupRequestTitle, en.websiteSignupOpenDesktop],
+    ['verification', en.websiteVerificationRequestTitle, en.websiteVerificationOpenDesktop],
+  ] as const)('labels a private %s and links to the secure Desktop review', async (purpose, title, action) => {
+    vi.spyOn(window.navigator, 'userAgent', 'get').mockReturnValue('YHarnessCloudDesktop/1')
+    const form = { ...websiteResponse().request, destination: `https://example.com/${purpose}`, purpose }
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(Response.json({ request: form }))
+    render(<BotWebsiteLoginRequestCard {...cardProps()} />)
+    const review = await screen.findByRole('link', { name: action })
+    expect(screen.getByText(title)).toBeTruthy()
+    expect(review.getAttribute('href')).toBe(`/__yharness/vault-login-use/${REQUEST_ID}`)
+    expect(screen.queryByRole('textbox')).toBeNull()
+    expect(parseBotWebsiteLoginResponse({ request: { ...form, scope: 'shared' } })).toBeNull()
+    expect(parseBotWebsiteLoginResponse({ request: { ...form, code: 'fixture-only' } })).toBeNull()
+  })
+
+  it('does not query ordinary conversations or Web handoff links', async () => {
+    const fetcher = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(websiteResponse()), { status: 200 }))
+    render(<BotWebsiteLoginRequestCard {...cardProps({ botChat: false })} />)
+    await Promise.resolve()
+    expect(fetcher).not.toHaveBeenCalled()
+    cleanup()
+    render(<BotWebsiteLoginRequestCard {...cardProps()} />)
+    expect(await screen.findByText(en.websiteLoginDesktopOnly)).toBeTruthy()
+    expect(screen.queryByRole('link')).toBeNull()
+  })
+
+  it('uses the Web handoff when the browser navigator is unavailable', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(websiteResponse()), { status: 200 }))
+    const props = cardProps()
+    const view = render(<BotWebsiteLoginRequestCard {...props} />)
+    expect(await screen.findByText(en.websiteLoginDesktopOnly)).toBeTruthy()
+
+    vi.stubGlobal('navigator', undefined)
+    try {
+      view.rerender(<BotWebsiteLoginRequestCard {...props} />)
+      expect(screen.getByText(en.websiteLoginDesktopOnly)).toBeTruthy()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('keeps polling an idle owner session for a shared approval', async () => {
+    vi.useFakeTimers()
+    window.__YH_BOT_SHARED_BROWSER__ = true
+    vi.spyOn(window.navigator, 'userAgent', 'get').mockReturnValue('YHarnessCloudDesktop/1')
+    const fetcher = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      request: { ...websiteResponse().request, scope: 'shared' },
+    }), { status: 200 }))
+    render(<BotWebsiteLoginRequestCard {...cardProps()} />)
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    expect(screen.getByText(en.websiteLoginSharedRequestTitle)).toBeTruthy()
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(2_000) })
+    expect(fetcher).toHaveBeenCalledTimes(2)
+  })
+})
+
+function response(overrides: Partial<BotVaultRequest> = {}): { request: BotVaultRequest } {
+  return {
+    request: {
+      id: REQUEST_ID as BotVaultRequest['id'],
+      unit: 'yharness-worker.service',
+      name: 'DEEPSEEK_API_KEY',
+      state: 'pending',
+      ...overrides,
+    },
+  }
+}
+
+describe('Bot Vault request response parser', () => {
+  it('accepts only the exact metadata response and rejects secret-shaped or malformed values', () => {
+    expect(parseBotVaultRequestResponse(undefined)).toBeNull()
+    expect(parseBotVaultRequestResponse({ request: null })).toBeNull()
+    expect(parseBotVaultRequestResponse(response())).toEqual(response().request)
+    expect(parseBotVaultRequestResponse({ request: { ...response().request, scope: 'shared' } })).toEqual({
+      ...response().request, scope: 'shared',
+    })
+    expect(parseBotVaultRequestResponse({ request: { ...response().request, scope: 'owner' } })).toBeNull()
+    expect(parseBotVaultRequestResponse({ request: { ...response().request, id: 'ABC' } })).toBeNull()
+    expect(parseBotVaultRequestResponse({ request: { ...response().request, unit: '../worker.service' } })).toBeNull()
+    expect(parseBotVaultRequestResponse({ request: { ...response().request, name: 'API-KEY' } })).toBeNull()
+    expect(parseBotVaultRequestResponse({ request: { ...response().request, value: 'secret' } })).toBeNull()
+    expect(parseBotVaultRequestResponse({ request: { ...response().request, state: 'unknown' } })).toBeNull()
+  })
+
+  it('recognizes only the exact native Cloud Desktop user-agent token', () => {
+    expect(isYHarnessCloudDesktop('Mozilla/5.0 YHarnessCloudDesktop/1')).toBe(true)
+    expect(isYHarnessCloudDesktop('YHarnessCloudDesktop/10')).toBe(false)
+    expect(isYHarnessCloudDesktop('NotYHarnessCloudDesktop/1')).toBe(false)
+  })
+
+  it('reads the Session’s Vault request from the document route without caching', async () => {
+    const fetcher = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(response()), { status: 200 }))
+    await expect(fetchBotVaultRequest('owner session/one', new AbortController().signal)).resolves.toEqual(response().request)
+    expect(fetcher).toHaveBeenCalledWith('api/bot-vault-request?sessionId=owner%20session%2Fone', expect.objectContaining({
+      method: 'GET', credentials: 'same-origin', cache: 'no-store',
+    }))
+  })
+
+  it('returns no metadata when the broker response is not valid JSON', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response('not-json', { status: 200 }))
+    await expect(fetchBotVaultRequest('owner session/one', new AbortController().signal, fetcher)).resolves.toBeNull()
+  })
+})
+
+describe('Bot Vault request polling', () => {
+  it('aborts and ignores a result from a previous Bot after selection changes', async () => {
+    let resolveFirst: ((value: BotVaultRequest | null) => void) | undefined
+    const fetcher = vi.fn(async (sessionId: string, signal: AbortSignal) => {
+      if (sessionId === 'first-session') {
+        await new Promise<BotVaultRequest | null>((resolve) => { resolveFirst = resolve })
+        if (signal.aborted) return null
+        return response().request
+      }
+      return { ...response().request, name: 'OTHER_API_KEY' }
+    })
+    const results: Array<{ sessionId: string; request: BotVaultRequest | null }> = []
+    const poller = createBotVaultRequestPoller({
+      fetcher,
+      intervalMs: 1_000,
+      onResult: (sessionId, request) => { results.push({ sessionId, request }) },
+    })
+
+    poller.select('first-session', true)
+    poller.select('second-session', false)
+    resolveFirst?.(response().request)
+    await vi.waitFor(() => { expect(results).toHaveLength(1) })
+
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(fetcher).toHaveBeenNthCalledWith(1, 'first-session', expect.any(AbortSignal))
+    expect(fetcher).toHaveBeenNthCalledWith(2, 'second-session', expect.any(AbortSignal))
+    expect(fetcher.mock.calls[0]?.[1].aborted).toBe(true)
+    expect(results[0]).toMatchObject({ sessionId: 'second-session', request: { name: 'OTHER_API_KEY' } })
+    poller.dispose()
+  })
+
+  it('retries a failed refresh without replacing the last metadata', async () => {
+    vi.useFakeTimers()
+    const fetcher = vi.fn<BotVaultRequestFetcher>()
+      .mockResolvedValueOnce(response().request)
+      .mockRejectedValueOnce(new Error('connection closed'))
+      .mockResolvedValueOnce(null)
+    const onResult = vi.fn<BotVaultRequestResult>()
+    const poller = createBotVaultRequestPoller({ fetcher, onResult, intervalMs: 100 })
+
+    poller.select('bot-session', true)
+    await vi.advanceTimersByTimeAsync(100)
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(onResult.mock.calls).toEqual([['bot-session', response().request]])
+
+    await vi.advanceTimersByTimeAsync(100)
+    expect(onResult).toHaveBeenLastCalledWith('bot-session', null)
+    poller.dispose()
+  })
+
+  it('stops future reads when selection clears or the poller is disposed', async () => {
+    vi.useFakeTimers()
+    const fetcher = vi.fn(async () => null)
+    const poller = createBotVaultRequestPoller({ fetcher, onResult: vi.fn(), intervalMs: 100 })
+
+    poller.select('bot-session', true)
+    await vi.advanceTimersByTimeAsync(0)
+    poller.select(undefined, false)
+    await vi.advanceTimersByTimeAsync(100)
+    expect(fetcher).toHaveBeenCalledTimes(1)
+
+    poller.dispose()
+    poller.dispose()
+    poller.select('bot-session', true)
+    await vi.advanceTimersByTimeAsync(100)
+    expect(fetcher).toHaveBeenCalledTimes(1)
+  })
+})
+
+type CardProps = ComponentProps<typeof BotVaultRequestCard>
+
+function cardProps(overrides: Partial<CardProps> = {}): CardProps {
+  const session = { running: false } as SessionSnapshot
+  return {
+    botChat: true,
+    sessionId: SessionId('bot-session'),
+    useSession: selector => selector(session),
+    t,
+    ...overrides,
+  } as CardProps
+}
+
+describe('BotVaultRequestCard', () => {
+  beforeEach(() => { window.__YH_BOT_VAULT_REQUESTS__ = true })
+  afterEach(() => {
+    delete window.__YH_BOT_VAULT_REQUESTS__
+    delete window.__YH_BOT_SHARED_VAULT_REQUESTS__
+  })
+
+  it('does not query ordinary conversations', async () => {
+    const fetcher = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(response()), { status: 200 }))
+    render(<BotVaultRequestCard {...cardProps({ botChat: false })} />)
+    await Promise.resolve()
+    expect(fetcher).not.toHaveBeenCalled()
+    expect(screen.queryByText(en.vaultRequestTitle)).toBeNull()
+  })
+
+  it('does not query a workspace without Vault requests enabled', () => {
+    delete window.__YH_BOT_VAULT_REQUESTS__
+    const fetcher = vi.spyOn(globalThis, 'fetch')
+    render(<BotVaultRequestCard {...cardProps()} />)
+    expect(fetcher).not.toHaveBeenCalled()
+  })
+
+  it('keeps broker errors out of the composer surface', async () => {
+    const fetcher = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('unavailable', { status: 503 }))
+    render(<BotVaultRequestCard {...cardProps()} />)
+
+    await waitFor(() => { expect(fetcher).toHaveBeenCalledTimes(1) })
+    expect(screen.queryByRole('region')).toBeNull()
+    expect(screen.queryByText(en.vaultRequestTitle)).toBeNull()
+  })
+
+  it('shows a pending request without a value editor and links only to the validated native path', async () => {
+    vi.spyOn(window.navigator, 'userAgent', 'get').mockReturnValue('YHarnessCloudDesktop/1')
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(response()), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }))
+    render(<BotVaultRequestCard {...cardProps()} />)
+
+    expect(await screen.findByText(en.vaultRequestTitle)).toBeTruthy()
+    expect(screen.getByText('yharness-worker.service')).toBeTruthy()
+    expect(screen.getByText('DEEPSEEK_API_KEY')).toBeTruthy()
+    expect(screen.getByRole('link', { name: en.vaultRequestOpenDesktop }).getAttribute('href'))
+      .toBe(`/__yharness/vault-request/${REQUEST_ID}`)
+    expect(screen.queryByRole('textbox')).toBeNull()
+  })
+
+  it('renders the browser handoff instead of a native request link in Web', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(response()), { status: 200 }))
+    render(<BotVaultRequestCard {...cardProps()} />)
+
+    expect(await screen.findByText(en.vaultRequestDesktopOnly)).toBeTruthy()
+    expect(screen.queryByRole('link')).toBeNull()
+  })
+
+  it('renders a cancelled request with an accessible status and tolerates a missing navigator', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify(response({ state: 'cancelled' })), { status: 200 }))
+    const props = cardProps()
+    const view = render(<BotVaultRequestCard {...props} />)
+
+    const region = await screen.findByRole('region', { name: en.vaultRequestTitle })
+    expect(region.getAttribute('data-bot-vault-request-state')).toBe('cancelled')
+    expect(screen.getByText(en.vaultRequestCancelled)).toBeTruthy()
+    expect(screen.getByText('yharness-worker.service')).toBeTruthy()
+    expect(screen.getByText('DEEPSEEK_API_KEY')).toBeTruthy()
+    expect(region.querySelector('[aria-hidden="true"]')).not.toBeNull()
+
+    vi.stubGlobal('navigator', undefined)
+    try {
+      view.rerender(<BotVaultRequestCard {...props} />)
+      expect(screen.getByRole('region', { name: en.vaultRequestTitle })).toBeTruthy()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('renders saved and cancelled statuses and clears the card when the broker returns no request', async () => {
+    const fetcher = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify(response({ state: 'saved' })), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ request: null }), { status: 200 }))
+    const props = cardProps()
+    const view = render(<BotVaultRequestCard {...props} />)
+
+    expect(await screen.findByText(en.vaultRequestSaved)).toBeTruthy()
+    view.rerender(<BotVaultRequestCard {...props} useSession={selector => selector({ running: true } as SessionSnapshot)} />)
+    await waitFor(() => { expect(fetcher).toHaveBeenCalledTimes(2) })
+    await waitFor(() => { expect(screen.queryByText(en.vaultRequestTitle)).toBeNull() })
+  })
+
+  it('keeps polling an idle owner session for a shared Vault request', async () => {
+    vi.useFakeTimers()
+    window.__YH_BOT_SHARED_VAULT_REQUESTS__ = true
+    const fetcher = vi.spyOn(globalThis, 'fetch').mockImplementation(() => Promise.resolve(new Response(JSON.stringify({
+      request: { ...response().request, scope: 'shared' },
+    }), { status: 200 })))
+    render(<BotVaultRequestCard {...cardProps()} />)
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    await act(async () => { await vi.advanceTimersByTimeAsync(2_000) })
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(screen.getByText(en.vaultRequestSharedTitle)).toBeTruthy()
+  })
+})

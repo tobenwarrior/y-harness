@@ -162,7 +162,7 @@ describe('OverlayDocking position memory', () => {
       8,
       (message, ...args) => { logged.push([message, ...args]) },
     )
-    expect(() => docking.persist()).not.toThrow()
+    expect(() => { docking.persist() }).not.toThrow()
     expect(logged.length).toBeGreaterThan(0)
   })
 

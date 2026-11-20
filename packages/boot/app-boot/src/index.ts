@@ -25,6 +25,7 @@ export {
   setProfileVersionExemption, type ProfileCompatibility,
 } from './profile-compatibility.ts'
 import { prepareProfilePatches } from './compatibility-preflight.ts'
+import { samePackageName } from './profile-resolution/package-aliases.ts'
 export { prepareProfileEntries, prepareProfilePatches } from './compatibility-preflight.ts'
 export { readPluginMeta } from './package-meta.ts'
 export { generateConfigSchema, type ConfigSchemaDump, type NativeConfigSchema } from './config-schema/index.ts'
@@ -468,7 +469,7 @@ export function renderConfigDump(
       // dump has no logger, so substitute inline for a plain line.
       let index = 0
       warnings.push(message.replace(/%C/g, () => JSON.stringify(args[index++])))
-    })
+    }, samePackageName)
   }
   let previous = base
   let previousWarnings: string[] = []

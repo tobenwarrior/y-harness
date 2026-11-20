@@ -10,7 +10,7 @@
   - button "Open configuration file"
   - button "Close"
   - heading "Models" [level=2]
-  - paragraph: Enter your API keys to use models from the following providers.
+  - paragraph: Connect a subscription or API provider to choose its models in Y Harness.
   - text: ChatGPT subscription
   - button "Edit ChatGPT subscription": Edit
   - text: Nous Portal
@@ -33,27 +33,6 @@
       - button "Delete acme-gateway": Delete
       - alert: "llm-pi-ai: provider \"acme-gateway\" model \"custom-model\" needs an api; the installed catalog does not describe it, so set the route's api to the wire protocol its endpoint speaks"
   - button "Add model provider"
-  - region "Decision advice":
+  - group "Decision advice":
     - heading "Decision advice" [level=3]
-    - paragraph: Choose a separate response-only API to rank scoped skill candidates. Starts disabled; chat model, permissions, verification and maintenance authority stay unchanged.
-    - paragraph: Native Codex routes, including gpt-6-luna, expose native tools and are unavailable for Decision. No new account or credentials are configured.
-    - switch "Enable skill candidate advice"
-    - text: Enable skill candidate advice Decision model
-    - combobox "Decision model":
-      - option "Choose a value" [selected]
-      - option "GLM-4.7 · zai"
-      - option "GLM-5-Turbo · zai"
-      - option "GLM-5.2 · zai"
-      - option "GLM-5.2 Highspeed · zai"
-      - option "GLM-5.3 · zai"
-      - option "GLM-5.3-Flash · zai"
-      - option "GLM-5.3 Highspeed · zai"
-      - option "DeepSeek · deepseek-official · Unavailable" [disabled]
-    - paragraph: At most 1 call · input budget 16000 · output 512 tokens · {{duration}} deadline
-    - button "Save Decision settings"
-    - text: Project
-    - combobox "Preview project":
-      - option "Choose a project" [selected]
-    - textbox "Enter a skill candidate query"
-    - button "Preview candidate order" [disabled]
-    - button "Refresh"
+    - text: Advanced ⌄

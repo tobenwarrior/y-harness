@@ -42,14 +42,13 @@ describe('web e2e: startup auto-selection', () => {
     onTestFailed(() => saveFailureShot(page, 'web-e2e-first-workspace-stable-tree'))
     await page.locator(`${ROOT_PHASE}[data-phase="hero"]`).waitFor({ timeout: 15_000 })
     const headline = page.getByText('Into the Unknown', { exact: true })
-    // The headline text sits in its own span inside the title group; the fish
-    // hitbox precedes the group, not the text span.
-    const fishHitbox = headline.locator('xpath=../preceding-sibling::span[1]')
-    const fish = fishHitbox.locator('svg')
-    expect(await fish.evaluate(node => getComputedStyle(node).color))
+    // The brand mark precedes the title group and shares its foreground color.
+    const brandContainer = headline.locator('xpath=../preceding-sibling::span[1]')
+    const brand = brandContainer.locator('svg')
+    expect(await brand.evaluate(node => getComputedStyle(node).color))
       .toBe(await headline.evaluate(node => getComputedStyle(node).color))
-    await fishHitbox.hover()
-    expect(await fish.evaluate(node => getComputedStyle(node).animationName)).not.toBe('none')
+    await brandContainer.hover()
+    expect(await brand.evaluate(node => getComputedStyle(node).animationName)).toBe('none')
     await page.evaluate(() => {
       const refs = {
         root: document.querySelector('div[data-phase="hero"]'),

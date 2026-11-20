@@ -1,0 +1,1065 @@
+/**
+ * Rootless Podman runtime for one private desktop per Web Bot session.
+ *
+ * A runtime owns only the workspaces below its configured private root. Each
+ * session receives a container with a named workspace volume, a private
+ * `/tmp`, and no host sockets. Firefox desktops use a separate profile volume.
+ * Selected desktops use rootless outbound networking with host loopback blocked.
+ * Commands are returned as argv so callers can route shell and Computer
+ * operations through the container without a shell interpolation step.
+ * @module @yharness/web-app/vps-runtime
+ */
+
+import { execFile, spawn } from 'node:child_process'
+import { createHash } from 'node:crypto'
+import { accessSync, constants, readFileSync } from 'node:fs'
+import { mkdir, lstat } from 'node:fs/promises'
+import { isAbsolute, parse, relative, resolve, sep } from 'node:path'
+import { promisify } from 'node:util'
+import type { VpsBotComputerSetting } from './vps-bot-computer-setting.ts'
+import { TERMINAL_SCOPE_COMMAND } from './vps-bot-terminal.ts'
+import { settleVpsCommand } from './vps-command.ts'
+
+const PODMAN = '/usr/bin/podman'
+const USER_COMPUTER_SCOPE = [
+  '/usr/bin/systemd-run', '--user', '--scope', '--quiet', '--collect', '--no-ask-password',
+  '--description=Y Harness Bot Computer', '--',
+] as const
+const SESSION_ID_PATTERN = /^bot-session-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u
+const IMAGE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/@:-]*$/u
+const PRIVATE_MODE_MASK = 0o077
+const PODMAN_TIMEOUT_MS = 120_000
+const PODMAN_KILL_GRACE_MS = 2_000
+const PODMAN_OUTPUT_LIMIT = 64 * 1024
+const DESKTOP_READY_TIMEOUT_MS = 30_000
+const DESKTOP_HEALTH_CACHE_MS = 500
+const RUNTIME_CLOSED = 'VPS Bot Computer scope is closed'
+const SHARED_PROJECT = '/workspace'
+const SHARED_PROJECT_PURPOSE = 'shared-project'
+const BROWSER_PROFILE = '/var/lib/yharness-browser-profile'
+const OUTBOUND_NETWORK = 'slirp4netns:allow_host_loopback=false'
+type VpsNetworkMode = 'none' | typeof OUTBOUND_NETWORK
+const BROWSER_READY = '/tmp/yharness-browser-ready'
+const exec = promisify(execFile)
+
+/** Exit facts returned by the Podman command seam. */
+export interface VpsCommandResult {
+  readonly code: number
+  readonly stdout: string
+  readonly stderr: string
+}
+
+/**
+ * Injectable Podman seam used by unit tests. Production uses argv-only
+ * `spawn`; no command is interpreted by a shell.
+ */
+export type VpsCommandRunner = (argv: readonly string[], signal: AbortSignal) => Promise<VpsCommandResult>
+
+/** Test-only hooks for the local Podman process and filesystem clock. */
+export interface VpsRuntimeInternals {
+  readonly run?: VpsCommandRunner
+  readonly uid?: () => number | undefined
+  /** Simulate a Web host launched as a systemd user service. */
+  readonly userService?: boolean
+  /** Probe the presence of the rootless outbound network helper. */
+  readonly networkHelperAvailable?: () => boolean
+}
+
+/** Locally provisioned browser desktop resources for an explicitly selected Bot. */
+export interface VpsBrowserOptions {
+  /** Local browser desktop image built from the standard desktop. */
+  readonly image: string
+  /** Absolute path to the private Firefox-compatible Podman policy. */
+  readonly seccompProfile: string
+}
+
+/** Provisioning options for a private Bot desktop. */
+export interface VpsRuntimeOptions {
+  /** Cancel requests when their Web configuration retires. */
+  readonly configurationSignal?: AbortSignal
+  /** Local Firefox image and its syscall policy. */
+  readonly browser?: VpsBrowserOptions
+  /** Default access to the installation's shared project volume. */
+  readonly sharedWorkspace?: boolean
+  /** Allow outbound traffic. By default only the provisioned Firefox desktop has internet access. */
+  readonly internet?: boolean
+  /** Host-owned network choices keyed by the exact private Computer Session. */
+  readonly networkPolicy?: Pick<VpsBotComputerSetting, 'get' | 'set'>
+  /** Host-owned choices for mounting the shared project in an exact Session. */
+  readonly sharedWorkspacePolicy?: Pick<VpsBotComputerSetting, 'get' | 'set'>
+}
+
+/**
+ * Identify the absolute project path namespace, including paths the filesystem must reject for traversal.
+ * @param path - requested Computer or process path.
+ * @param privateRoot - exact private workspace. Its absolute paths keep their private meaning.
+ * @returns Whether the path must be confined to the shared project instead of the private volume.
+ */
+export function isVpsSharedPath(path: string, privateRoot?: string): boolean {
+  return (path === SHARED_PROJECT || path.startsWith(SHARED_PROJECT + '/'))
+    && (privateRoot === undefined || (path !== privateRoot && !path.startsWith(privateRoot + '/')))
+}
+
+/** Runtime options for one `podman exec` operation. */
+export interface VpsExecOptions {
+  /** Absolute directory in the private workspace or an enabled shared project. */
+  readonly workdir?: string
+  /** Keep stdin open without allocating a pseudo-terminal. */
+  readonly stdin?: boolean
+  /** Allocate stdin and a pseudo-terminal for an interactive command. */
+  readonly interactive?: boolean
+}
+
+/** Safe failure raised before a Podman command can cross the runtime's scope. */
+export class VpsRuntimeError extends Error {
+  /**
+   * @param message - Safe diagnostic for the Web host; Podman output is not included.
+   */
+  constructor(message: string) {
+    super(message)
+    this.name = 'VpsRuntimeError'
+  }
+}
+
+/**
+ * One rootless Podman desktop and workspace per validated Bot session.
+ *
+ * The constructor is intentionally side-effect free. `ensure()` creates the
+ * private root and host placeholder workspace lazily, then creates and starts
+ * the session's named volume/container. Concurrent calls for one session share
+ * one promise; different sessions retain distinct container and volume names.
+ */
+export class VpsRuntime {
+  private readonly rootPath: string
+  private readonly imageName: string
+  private readonly workspaceImage: string
+  private readonly internals: VpsRuntimeInternals
+  private readonly browserPolicy?: string
+  private readonly projectVolume?: string
+  private readonly sharedWorkspace: boolean
+  private readonly sharedWorkspacePolicy: VpsRuntimeOptions['sharedWorkspacePolicy']
+  private readonly networkPolicy: VpsRuntimeOptions['networkPolicy']
+  private readonly scopedLaunch: boolean
+  /** Whether the Bot's private computer and terminal have outbound internet access. */
+  readonly internet: boolean
+  /** Project mount point for this runtime when a Session has access. */
+  readonly sharedRoot?: string
+  private readonly lifetime = new AbortController()
+  private readonly requests: AbortSignal
+  private readonly pending = new Map<string, Promise<void>>()
+  private readonly pendingSignals = new Map<string, AbortSignal>()
+  private readonly pendingCommands = new Set<Promise<VpsCommandResult>>()
+  private readonly healthyUntil = new Map<string, number>()
+  private readonly active = new Map<string, Set<Promise<void>>>()
+  private readonly replacing = new Map<string, Promise<void>>()
+  private readonly mountedProjects = new Set<string>()
+
+  /**
+   * @param root - Absolute owner-only directory containing all Bot workspaces.
+   * @param image - Standard desktop image and existing workspace label.
+   * @param internals - Optional command seam used by tests.
+   * @param options - Configuration lifetime, provisioned resources, and access settings.
+   */
+  constructor(
+    root: string, image: string, internals: VpsRuntimeInternals = {}, options: VpsRuntimeOptions = {},
+  ) {
+    const { browser, configurationSignal, sharedWorkspace } = options
+    this.requests = configurationSignal === undefined ? this.signal : AbortSignal.any([configurationSignal, this.signal])
+    this.rootPath = privatePath(root, 'VPS Bot root')
+    this.workspaceImage = imageReference(image)
+    this.imageName = browser === undefined ? this.workspaceImage : imageReference(browser.image)
+    if (browser !== undefined) this.browserPolicy = privatePath(browser.seccompProfile, 'VPS Bot browser policy')
+    this.internals = internals
+    this.scopedLaunch = internals.userService ?? inSystemdUserService()
+    this.internet = options.internet ?? (browser !== undefined)
+    this.networkPolicy = options.networkPolicy
+    this.sharedWorkspace = sharedWorkspace === true
+    this.sharedWorkspacePolicy = options.sharedWorkspacePolicy
+    const overlapping = isVpsSharedPath(this.rootPath)
+    if (this.sharedWorkspace && overlapping) throw new VpsRuntimeError('Private and shared Bot workspaces must be distinct')
+    if (!overlapping && (this.sharedWorkspace || this.sharedWorkspacePolicy !== undefined)) {
+      this.sharedRoot = SHARED_PROJECT
+      this.projectVolume = 'yharness-bot-project-' + rootDigest(this.rootPath)
+    }
+  }
+
+  /** Cancellation when the runtime is disposed. */
+  get signal(): AbortSignal {
+    return this.lifetime.signal
+  }
+
+  /**
+   * Combine a request with the lifetime of its VPS configuration.
+   * @param signal - Optional request cancellation.
+   * @returns Cancellation when either the request or the configuration ends.
+   */
+  operationSignal(signal?: AbortSignal): AbortSignal {
+    return signal === undefined ? this.requests : AbortSignal.any([signal, this.requests])
+  }
+
+  /** Cancel and drain Computer preparation, commands, uses, and setting changes. */
+  async dispose(): Promise<void> {
+    this.lifetime.abort(new VpsRuntimeError(RUNTIME_CLOSED))
+    this.healthyUntil.clear()
+    await Promise.allSettled([
+      ...this.pending.values(),
+      ...this.pendingCommands,
+      ...this.replacing.values(),
+      ...[...this.active.values()].flatMap(uses => [...uses]),
+    ])
+  }
+
+  /**
+   * Return the deterministic private workspace for a roster session.
+   * @param sessionId - Roster UUID for the Bot session.
+   * @returns The absolute workspace path, also used inside its container.
+   */
+  workspace(sessionId: string): string {
+    validateSessionId(sessionId)
+    return resolve(this.rootPath, sessionId)
+  }
+
+  /**
+   * Report the effective selection for an owner Computer without starting it.
+   * @param sessionId - Exact private Bot Session.
+   * @returns The saved choice or the deployment's network setting.
+   */
+  async internetFor(sessionId: string): Promise<boolean> {
+    validateSessionId(sessionId)
+    return await this.networkPolicy?.get(sessionId) ?? this.internet
+  }
+
+  /**
+   * Resolve current access without opening the private Computer.
+   * @param sessionId - Exact private Bot Session.
+   * @returns The shared project root when the Session has access.
+   */
+  async sharedWorkspaceFor(sessionId: string): Promise<string | undefined> {
+    validateSessionId(sessionId)
+    if (this.sharedRoot === undefined) return undefined
+    const enabled = await this.sharedWorkspacePolicy?.get(sessionId) ?? this.sharedWorkspace
+    return enabled ? this.sharedRoot : undefined
+  }
+
+  /**
+   * Report availability of the owner switch without opening the Computer.
+   * @returns Whether this runtime supports per-Session shared workspace changes.
+   */
+  supportsSharedWorkspaceControl(): boolean {
+    return this.sharedWorkspacePolicy !== undefined && this.sharedRoot !== undefined
+  }
+
+  /**
+   * Inspect whether the owner can configure the Computer's network on this Host.
+   * @param currentlyEnabled - A running or configured network can always be removed.
+   * @returns Whether an owner policy is installed and the operation can use local network resources.
+   */
+  supportsNetworkControl(currentlyEnabled: boolean): boolean {
+    return this.networkPolicy !== undefined && (currentlyEnabled || (this.internals.networkHelperAvailable ?? networkHelperAvailable)())
+  }
+
+  /**
+   * Hold the Computer while a command, transfer, or terminal uses it.
+   * @param sessionId - Exact private Bot Session.
+   * @returns An idempotent release after the operation and its process have settled.
+   */
+  beginUse(sessionId: string): () => void {
+    this.signal.throwIfAborted()
+    validateSessionId(sessionId)
+    this.requireStableComputer(sessionId)
+    const uses = this.active.get(sessionId) ?? new Set<Promise<void>>()
+    const held = Promise.withResolvers<void>()
+    uses.add(held.promise)
+    this.active.set(sessionId, uses)
+    return () => {
+      if (!uses.delete(held.promise)) return
+      held.resolve()
+      if (uses.size === 0) this.active.delete(sessionId)
+    }
+  }
+
+  /**
+   * Save an owner network selection for the next launch after the existing Computer is idle.
+   * An idle replacement reuses the private workspace, shared project, and browser profile volumes.
+   * @param sessionId - Validated private Bot Session.
+   * @param enabled - Owner-selected outbound access.
+   * @param signal - Cancellation permitted before changing the installed Computer.
+   * @returns Whether the choice took effect or the existing Computer is busy.
+   */
+  async setInternetAccess(sessionId: string, enabled: boolean, signal: AbortSignal): Promise<'applied' | 'busy'> {
+    const policy = this.networkPolicy
+    return this.changeWhileIdle<'applied'>(sessionId, signal, async () => {
+      if (policy === undefined || !this.supportsNetworkControl(!enabled)) {
+        throw new VpsRuntimeError('VPS Computer internet settings are unavailable.')
+      }
+      const current = await this.internetFor(sessionId)
+      if (current === enabled) return 'applied'
+      await ensurePrivateDirectory(this.rootPath, this.internals.uid)
+      if (!await this.removeIdleContainer(sessionId, current, signal)) return 'busy'
+      this.requests.throwIfAborted()
+      await policy.set(sessionId, enabled, this.requests)
+      return 'applied'
+    })
+  }
+
+  /**
+   * Change one idle Computer's project mount while preserving the named volumes.
+   * @param sessionId - Exact private Bot Session.
+   * @param enabled - Owner-selected project access.
+   * @param signal - Cancel before removing the existing container.
+   * @returns Whether the owner choice was saved or the Computer is busy.
+   */
+  async setSharedWorkspaceAccess(sessionId: string, enabled: boolean, signal: AbortSignal): Promise<'applied' | 'busy'> {
+    const policy = this.sharedWorkspacePolicy
+    const volume = this.projectVolume
+    return this.changeWhileIdle<'applied'>(sessionId, signal, async () => {
+      if (policy === undefined || volume === undefined) throw new VpsRuntimeError('Shared workspace settings are unavailable.')
+      const current = await this.sharedWorkspaceFor(sessionId)
+      if ((current !== undefined) === enabled) return 'applied'
+      await ensurePrivateDirectory(this.rootPath, this.internals.uid)
+      if (enabled) await this.ensureSharedVolume(volume)
+      if (!await this.removeIdleContainer(sessionId, await this.internetFor(sessionId), signal)) return 'busy'
+      this.requests.throwIfAborted()
+      await policy.set(sessionId, enabled, this.requests)
+      return 'applied'
+    })
+  }
+
+  /**
+   * Recreate an idle Computer with its saved workspace, browser profile and network choice.
+   * @param sessionId - Exact private Bot Session.
+   * @param signal - Cancel before stopping the existing Computer.
+   * @returns Whether the replacement is ready or the existing Computer is busy.
+   */
+  async restart(sessionId: string, signal: AbortSignal): Promise<'restarted' | 'busy'> {
+    return this.changeWhileIdle<'restarted'>(sessionId, signal, async () => {
+      if (!await this.removeIdleContainer(sessionId, await this.internetFor(sessionId), signal, true)) return 'busy'
+      await this.ensureOne(sessionId)
+      this.healthyUntil.set(sessionId, Date.now() + DESKTOP_HEALTH_CACHE_MS)
+      return 'restarted'
+    })
+  }
+
+  private async changeWhileIdle<T>(sessionId: string, signal: AbortSignal, change: () => Promise<T | 'busy'>): Promise<T | 'busy'> {
+    this.operationSignal(signal).throwIfAborted()
+    validateSessionId(sessionId)
+    if (this.replacing.has(sessionId) || this.pending.has(sessionId) || this.active.has(sessionId)) return 'busy'
+    const held = Promise.withResolvers<void>()
+    this.replacing.set(sessionId, held.promise)
+    try {
+      return await change()
+    } finally {
+      this.replacing.delete(sessionId)
+      held.resolve()
+    }
+  }
+
+  private async removeIdleContainer(sessionId: string, internet: boolean, signal: AbortSignal, recovering = false): Promise<boolean> {
+    const name = containerName(this.rootPath, sessionId)
+    const exists = await this.runPodman(['container', 'exists', name])
+    signal.throwIfAborted()
+    if (exists.code === 1) {
+      this.healthyUntil.delete(sessionId)
+      this.mountedProjects.delete(sessionId)
+      return true
+    }
+    if (exists.code !== 0) throw new VpsRuntimeError('VPS Bot container lookup failed')
+    const projectVolume = await this.sharedWorkspaceFor(sessionId) === undefined ? undefined : this.projectVolume
+    const metadata = await this.inspectCurrent(sessionId, internet, projectVolume)
+    if (metadata.running) {
+      const processes = await this.runPodman(['top', name, 'pid', 'ppid', 'comm', 'args'])
+      if (processes.code !== 0 || !idleDesktop(processes.stdout, recovering)) return false
+    }
+    const image = await this.runPodman(['image', 'exists', this.imageName])
+    if (image.code !== 0) throw new VpsRuntimeError('The private desktop image is unavailable.')
+    await this.checkBrowserPolicy()
+    signal.throwIfAborted()
+    this.healthyUntil.delete(sessionId)
+    this.mountedProjects.delete(sessionId)
+    if (metadata.running && (await this.runPodman(['stop', '--time', '10', name])).code !== 0) {
+      throw new VpsRuntimeError('The private Computer could not stop.')
+    }
+    if ((await this.runPodman(['rm', name])).code !== 0) throw new VpsRuntimeError('The private Computer could not be replaced.')
+    return true
+  }
+
+  private requireStableComputer(sessionId: string): void {
+    if (this.replacing.has(sessionId)) throw new VpsRuntimeError('The private Computer is being replaced.')
+  }
+
+  /**
+   * Create and start one session container if it is not already running.
+   * @param sessionId - Roster UUID for the Bot session.
+   * @param signal - Optional operation cancellation; healthy concurrent callers retry after caller-owned cancellation.
+   * @returns A promise settled after the container is running.
+   */
+  async ensure(sessionId: string, signal?: AbortSignal): Promise<void> {
+    const operationSignal = this.operationSignal(signal)
+    operationSignal.throwIfAborted()
+    validateSessionId(sessionId)
+    this.requireStableComputer(sessionId)
+    const existing = this.pending.get(sessionId)
+    if (existing !== undefined) {
+      const pendingSignal = this.pendingSignals.get(sessionId)
+      if (pendingSignal !== undefined && pendingSignal !== this.requests
+        && !this.requests.aborted && !(signal?.aborted ?? false)) {
+        return existing.catch((error: unknown) => {
+          if (!pendingSignal.aborted || this.requests.aborted) throw error
+          return this.ensure(sessionId, signal)
+        })
+      }
+      return existing
+    }
+    const now = Date.now()
+    if ((this.healthyUntil.get(sessionId) ?? 0) > now) return
+    const task = Promise.resolve().then(async () => {
+      operationSignal.throwIfAborted()
+      this.mountedProjects.delete(sessionId)
+      await this.ensureOne(sessionId, operationSignal)
+      operationSignal.throwIfAborted()
+      this.healthyUntil.set(sessionId, Date.now() + DESKTOP_HEALTH_CACHE_MS)
+    })
+    this.pending.set(sessionId, task)
+    this.pendingSignals.set(sessionId, operationSignal)
+    const clear = (): void => {
+      if (this.pending.get(sessionId) === task) {
+        this.pending.delete(sessionId)
+        this.pendingSignals.delete(sessionId)
+      }
+      if ((this.healthyUntil.get(sessionId) ?? 0) <= Date.now()) {
+        this.healthyUntil.delete(sessionId)
+      }
+    }
+    void task.then(clear, clear)
+    return task
+  }
+
+  /**
+   * Build an argv-only `podman exec` invocation for one session.
+   *
+   * The command is not run by this method. Callers must await `ensure()` and
+   * then pass this argv to their process provider. `workdir` may not escape
+   * its private or enabled shared workspace. A shell never parses the invocation arguments.
+   * @param sessionId - Roster UUID for the Bot session.
+   * @param argv - Non-empty executable and positional arguments.
+   * @param options - Optional scoped working directory and terminal mode.
+   * @returns A fresh immutable argv array suitable for an argv-only spawner.
+   */
+  execArgv(sessionId: string, argv: readonly string[], options: VpsExecOptions = {}): readonly [string, ...string[]] {
+    this.signal.throwIfAborted()
+    validateSessionId(sessionId)
+    if (!validCommandArguments(argv)) {
+      throw new VpsRuntimeError('VPS Bot command must contain a non-empty argv without NUL bytes')
+    }
+    const workspace = this.workspace(sessionId)
+    const directory = options.workdir
+    const shared = this.sharedWorkspacePolicy === undefined ? this.sharedWorkspace : this.mountedProjects.has(sessionId)
+    const root = directory !== undefined && shared && this.sharedRoot !== undefined && isVpsSharedPath(directory)
+      ? this.sharedRoot : workspace
+    const workdir = directory === undefined ? workspace : scopedWorkdir(root, directory)
+    if (options.stdin !== undefined && typeof options.stdin !== 'boolean') {
+      throw new VpsRuntimeError('VPS Bot stdin mode must be a boolean')
+    }
+    if (options.interactive !== undefined && typeof options.interactive !== 'boolean') {
+      throw new VpsRuntimeError('VPS Bot interactive mode must be a boolean')
+    }
+    const command: [string, ...string[]] = ['/usr/bin/env', '-i', ...podmanEnvironmentArgs(), PODMAN, 'exec']
+    if (options.stdin === true || options.interactive === true) command.push('--interactive')
+    if (options.interactive === true) command.push('--tty')
+    command.push('--workdir', workdir, containerName(this.rootPath, sessionId), ...argv)
+    return Object.freeze(command)
+  }
+
+  /**
+   * Run a Computer command in the selected Session's ready container.
+   * @param sessionId - Roster UUID for the Bot Session.
+   * @param argv - Fixed command and arguments from the Computer controller.
+   * @param signal - Request cancellation.
+   * @param stdin - Optional owner input carried by a pipe.
+   * @returns Command output bytes for the Computer controller.
+   */
+  async desktopCommand(sessionId: string, argv: readonly string[], signal: AbortSignal, stdin?: string): Promise<Buffer> {
+    return this.runContainerCommand(sessionId, argv, this.operationSignal(signal), stdin)
+  }
+
+  /**
+   * Stop an existing terminal group, including during Web shutdown before runtime disposal.
+   * @param sessionId - Owning Bot Session.
+   * @param scope - Identity assigned when the terminal group started.
+   * @param graceMs - Grace period before killing the remaining processes.
+   */
+  async stopTerminal(sessionId: string, scope: string, graceMs: number): Promise<void> {
+    await this.runContainerCommand(sessionId, [...TERMINAL_SCOPE_COMMAND, 'stop', scope, String(graceMs)], this.signal)
+  }
+
+  private async runContainerCommand(sessionId: string, argv: readonly string[], signal: AbortSignal, stdin?: string): Promise<Buffer> {
+    signal.throwIfAborted()
+    const [program, ...args] = this.execArgv(sessionId, argv, { stdin: stdin !== undefined })
+    const finished = this.beginUse(sessionId)
+    try {
+      const child = exec(program, args, { encoding: 'buffer', maxBuffer: 4 * 1024 * 1024, timeout: 12_000, signal })
+      const settled = settleVpsCommand(child)
+      if (stdin !== undefined) {
+        child.child.stdin?.on('error', (error) => { void error })
+        child.child.stdin?.end(stdin)
+      }
+      return (await settled).stdout
+    } catch (error) {
+      signal.throwIfAborted()
+      if (stdin === undefined) throw error
+      throw new VpsRuntimeError('The private Computer input could not be sent')
+    } finally {
+      finished()
+    }
+  }
+
+  private async ensureOne(sessionId: string, signal: AbortSignal = this.requests): Promise<void> {
+    signal.throwIfAborted()
+    await ensurePrivateDirectory(this.rootPath, this.internals.uid)
+    signal.throwIfAborted()
+    const workspace = this.workspace(sessionId)
+    await ensurePrivateDirectory(workspace, this.internals.uid)
+    signal.throwIfAborted()
+    const name = containerName(this.rootPath, sessionId)
+    const volume = volumeName(this.rootPath, sessionId)
+    const projectVolume = await this.sharedWorkspaceFor(sessionId) === undefined ? undefined : this.projectVolume
+    const browserPolicy = this.browserPolicy
+    const browserVolume = browserPolicy === undefined ? undefined : `${volume}-browser`
+    const internet = await this.internetFor(sessionId)
+    signal.throwIfAborted()
+    await this.checkBrowserPolicy(signal)
+    const exists = await this.runPodman(['container', 'exists', name], signal)
+    if (exists.code === 0) {
+      const metadata = await this.inspectCurrent(sessionId, internet, projectVolume, signal)
+      await this.ensureVolume(volume, sessionId, workspace, undefined, signal)
+      if (browserVolume !== undefined) await this.ensureVolume(browserVolume, sessionId, workspace, 'browser', signal)
+      if (projectVolume !== undefined) await this.ensureSharedVolume(projectVolume, signal)
+      if (!metadata.running) {
+        const started = await this.runPodman(['start', name], signal)
+        if (started.code !== 0) throw new VpsRuntimeError('VPS Bot container could not be restarted')
+      }
+      await this.waitForDesktop(name, workspace, signal)
+      if (projectVolume !== undefined) this.mountedProjects.add(sessionId)
+      return
+    }
+    if (exists.code !== 1) throw new VpsRuntimeError('VPS Bot container lookup failed')
+    await this.ensureVolume(volume, sessionId, workspace, undefined, signal)
+    if (browserVolume !== undefined) await this.ensureVolume(browserVolume, sessionId, workspace, 'browser', signal)
+    if (projectVolume !== undefined) await this.ensureSharedVolume(projectVolume, signal)
+    const launched = await this.runPodman([
+      'run',
+      '--detach',
+      '--name', name,
+      '--userns=keep-id',
+      '--pid=private',
+      '--ipc=private',
+      '--uts=private',
+      ...runtimeUserArgs(),
+      `--network=${modeFor(internet)}`,
+      '--no-hosts',
+      '--http-proxy=false',
+      '--image-volume=ignore',
+      '--security-opt=no-new-privileges',
+      ...(browserPolicy === undefined ? [] : [`--security-opt=seccomp=${browserPolicy}`]),
+      '--cap-drop=ALL',
+      '--volume', `${volume}:${workspace}:rw,nodev,nosuid`,
+      ...(browserVolume === undefined ? [] : ['--volume', `${browserVolume}:${BROWSER_PROFILE}:rw,nodev,nosuid,nocopy`]),
+      ...(projectVolume === undefined ? [] : ['--volume', projectVolume + ':' + SHARED_PROJECT + ':rw,nodev,nosuid,nocopy']),
+      '--tmpfs', '/tmp:rw,noexec,nosuid,nodev',
+      '--workdir', workspace,
+      '--label', `io.yharness.vps.root=${this.rootPath}`,
+      '--label', `io.yharness.vps.session=${sessionId}`,
+      '--label', `io.yharness.vps.workspace=${workspace}`,
+      '--label', `io.yharness.vps.volume=${volume}`,
+      '--label', `io.yharness.vps.image=${this.imageName}`,
+      '--pull=never',
+      this.imageName,
+    ], signal)
+    if (launched.code !== 0) throw new VpsRuntimeError('VPS Bot container could not be launched')
+    await this.waitForDesktop(name, workspace, signal)
+    if (projectVolume !== undefined) this.mountedProjects.add(sessionId)
+  }
+
+  private async inspectCurrent(
+    sessionId: string, internet: boolean, projectVolume: string | undefined, signal: AbortSignal = this.requests,
+  ): Promise<ContainerMetadata> {
+    const name = containerName(this.rootPath, sessionId)
+    const inspected = await this.runPodman(['inspect', '--format', '{{json .}}', name], signal)
+    if (inspected.code !== 0) throw new VpsRuntimeError('VPS Bot container inspection failed')
+    return inspectContainer(inspected.stdout, this.rootPath, this.imageName, sessionId,
+      this.workspace(sessionId), volumeName(this.rootPath, sessionId), {
+        browserPolicy: this.browserPolicy, projectVolume, networkMode: modeFor(internet),
+      })
+  }
+
+  private async checkBrowserPolicy(signal: AbortSignal = this.requests): Promise<void> {
+    signal.throwIfAborted()
+    if (this.browserPolicy === undefined) return
+    const policy = await lstat(this.browserPolicy).catch(() => undefined)
+    const uid = this.internals.uid?.() ?? process.getuid?.()
+    if (policy === undefined || !policy.isFile() || policy.nlink !== 1 || policy.uid !== uid
+      || (policy.mode & PRIVATE_MODE_MASK) !== 0) {
+      throw new VpsRuntimeError('VPS Bot browser policy must be an owner-only file')
+    }
+    signal.throwIfAborted()
+  }
+
+  private async ensureVolume(
+    volume: string, sessionId: string, workspace: string, purpose?: 'browser', signal: AbortSignal = this.requests,
+  ): Promise<void> {
+    const exists = await this.runPodman(['volume', 'exists', volume], signal)
+    if (exists.code === 1) {
+      const created = await this.runPodman([
+        'volume', 'create',
+        '--label', `io.yharness.vps.root=${this.rootPath}`,
+        '--label', `io.yharness.vps.session=${sessionId}`,
+        '--label', `io.yharness.vps.workspace=${workspace}`,
+        '--label', `io.yharness.vps.image=${this.workspaceImage}`,
+        ...(purpose === undefined ? [] : ['--label', `io.yharness.vps.purpose=${purpose}`]),
+        volume,
+      ], signal)
+      if (created.code !== 0) throw new VpsRuntimeError('VPS Bot workspace volume could not be created')
+    } else if (exists.code !== 0) {
+      throw new VpsRuntimeError('VPS Bot workspace volume lookup failed')
+    }
+    const inspected = await this.runPodman(['volume', 'inspect', '--format', '{{json .}}', volume], signal)
+    if (inspected.code !== 0
+      || !inspectVolume(inspected.stdout, this.rootPath, this.workspaceImage, sessionId, workspace, volume, purpose)) {
+      throw new VpsRuntimeError('VPS Bot workspace volume ownership does not match this runtime')
+    }
+  }
+
+  private async ensureSharedVolume(name: string, signal: AbortSignal = this.requests): Promise<void> {
+    const exists = await this.runPodman(['volume', 'exists', name], signal)
+    if (exists.code === 1) {
+      const created = await this.runPodman([
+        'volume', 'create', '--ignore', '--driver', 'local',
+        '--label', 'io.yharness.vps.root=' + this.rootPath,
+        '--label', 'io.yharness.vps.purpose=' + SHARED_PROJECT_PURPOSE,
+        name,
+      ], signal)
+      if (created.code !== 0) throw new VpsRuntimeError('Shared project volume could not be created')
+    } else if (exists.code !== 0) {
+      throw new VpsRuntimeError('Shared project volume lookup failed')
+    }
+    const inspection = await this.runPodman(['volume', 'inspect', '--format', '{{json .}}', name], signal)
+    if (inspection.code !== 0 || !inspectSharedVolume(inspection.stdout, this.rootPath, name)) {
+      throw new VpsRuntimeError('Shared project volume must be a local volume owned by this runtime')
+    }
+  }
+
+  private async waitForDesktop(name: string, workspace: string, signal: AbortSignal = this.requests): Promise<void> {
+    const deadline = Date.now() + DESKTOP_READY_TIMEOUT_MS
+    const probe = this.browserPolicy === undefined
+      ? ['xdotool', 'getdisplaygeometry']
+      : ['test', '-f', BROWSER_READY]
+    while (Date.now() < deadline) {
+      const ready = await this.runPodman(['exec', '--workdir', workspace, name, ...probe], signal)
+      if (ready.code === 0) return
+      await new Promise<void>((resolveReady) => { setTimeout(resolveReady, 50) })
+    }
+    throw new VpsRuntimeError('VPS Bot desktop did not become ready')
+  }
+
+  private async runPodman(args: readonly string[], signal: AbortSignal = this.requests): Promise<VpsCommandResult> {
+    signal.throwIfAborted()
+    const startsComputer = args[0] === 'run' || args[0] === 'start'
+    const argv: readonly [string, ...string[]] = this.scopedLaunch && startsComputer
+      ? [...USER_COMPUTER_SCOPE, PODMAN, ...args]
+      : [PODMAN, ...args]
+    const command = (this.internals.run ?? runPodmanProcess)(argv, signal)
+    this.pendingCommands.add(command)
+    try {
+      const result = await command
+      signal.throwIfAborted()
+      if (!Number.isInteger(result.code) || typeof result.stdout !== 'string' || typeof result.stderr !== 'string') {
+        throw new VpsRuntimeError('VPS Bot Podman returned invalid command facts')
+      }
+      return result
+    } finally {
+      this.pendingCommands.delete(command)
+    }
+  }
+}
+
+function modeFor(internet: boolean): VpsNetworkMode {
+  return internet ? OUTBOUND_NETWORK : 'none'
+}
+
+function networkHelperAvailable(): boolean {
+  if (process.platform !== 'linux') return false
+  try {
+    accessSync('/usr/bin/slirp4netns', constants.X_OK)
+    return true
+  } catch (error) {
+    void error
+    return false
+  }
+}
+
+function idleDesktop(output: string, recovering: boolean): boolean {
+  const [heading, ...entries] = output.trim().split('\n')
+  if (heading?.trim().replace(/\s+/gu, ' ') !== 'PID PPID COMMAND COMMAND') return false
+  const observed = new Set<string>()
+  for (const entry of entries) {
+    const match = /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(.+?)\s*$/u.exec(entry)
+    if (match === null) return false
+    const [, pid, parent, name, command] = match
+    if (name === undefined || command === undefined || observed.has(name)) return false
+    if (pid === '1') {
+      if (parent !== '0' || name !== 'bash' || !/^(?:\/usr\/bin\/|\/bin\/)?bash \/usr\/local\/bin\/yharness-vps-bot-start$/u.test(command)) return false
+    } else {
+      if (parent !== '1') return false
+      if (!(name === 'Xvfb' && command === 'Xvfb :99 -screen 0 1280x800x24 -nolisten tcp -auth /tmp/yharness-xauthority')
+        && !(name === 'openbox' && command === 'openbox')
+        && !(name === 'sleep' && command === 'sleep 1')) return false
+    }
+    observed.add(name)
+  }
+  return observed.has('bash') && (recovering || (observed.has('Xvfb') && observed.has('openbox')))
+}
+
+function inSystemdUserService(): boolean {
+  const uid = process.getuid?.()
+  if (process.platform !== 'linux' || uid === undefined || uid === 0) return false
+  let membership: string
+  try {
+    membership = readFileSync('/proc/self/cgroup', 'utf8')
+  } catch (error) {
+    // Web can run directly in an environment without readable Linux cgroup metadata.
+    void error
+    return false
+  }
+  const userManager = `user@${uid}.service`
+  return membership.split('\n').some((line) => {
+    const path = /^\d+:(?:|name=systemd):(\/.+)$/u.exec(line)?.[1]
+    if (path === undefined) return false
+    const parents = path.split('/')
+    const manager = parents.indexOf(userManager)
+    return manager >= 0 && parents.slice(manager + 1).some(unit => unit.endsWith('.service'))
+  })
+}
+
+function validateSessionId(sessionId: string): void {
+  if (typeof sessionId !== 'string' || !SESSION_ID_PATTERN.test(sessionId)) {
+    throw new VpsRuntimeError('VPS Bot session id must be a roster UUID')
+  }
+}
+
+function privatePath(value: string, label: string): string {
+  if (typeof value !== 'string' || !isAbsolute(value) || /[\u0000-\u001f\u007f]/u.test(value)) {
+    throw new VpsRuntimeError(`${label} must be an absolute path without control characters`)
+  }
+  const normalized = resolve(value)
+  if (normalized === parse(normalized).root || normalized === '/tmp') {
+    throw new VpsRuntimeError(`${label} must name a dedicated private directory`)
+  }
+  return normalized
+}
+
+function imageReference(value: string): string {
+  if (typeof value !== 'string' || value.length === 0 || value.length > 256 || value.startsWith('-') || !IMAGE_PATTERN.test(value)) {
+    throw new VpsRuntimeError('VPS Bot image must be a safe local image reference')
+  }
+  return value
+}
+
+function scopedWorkdir(workspace: string, requested: string): string {
+  if (typeof requested !== 'string' || !isAbsolute(requested) || /[\u0000-\u001f\u007f]/u.test(requested)) {
+    throw new VpsRuntimeError('VPS Bot workdir must be an absolute path in its workspace')
+  }
+  const normalized = resolve(requested)
+  const child = relative(workspace, normalized)
+  if (child !== '' && (child === '..' || child.startsWith(`..${sep}`) || isAbsolute(child))) {
+    throw new VpsRuntimeError('VPS Bot workdir must remain inside its workspace')
+  }
+  return normalized
+}
+
+function rootDigest(root: string): string {
+  return createHash('sha256').update(root).digest('hex').slice(0, 16)
+}
+
+function containerName(root: string, sessionId: string): string {
+  return `yharness-bot-${rootDigest(root)}-${sessionId.replaceAll('-', '')}`
+}
+
+function volumeName(root: string, sessionId: string): string {
+  return `yharness-bot-volume-${rootDigest(root)}-${sessionId.replaceAll('-', '')}`
+}
+
+interface ContainerMetadata {
+  readonly running: boolean
+}
+
+function inspectVolume(
+  serialized: string,
+  root: string,
+  image: string,
+  sessionId: string,
+  workspace: string,
+  volume: string,
+  purpose: 'browser' | undefined,
+): boolean {
+  let value: unknown
+  try {
+    value = JSON.parse(serialized)
+  } catch {
+    return false
+  }
+  if (!isRecord(value) || value.Name !== volume || !isRecord(value.Labels)
+    || value.Labels['io.yharness.vps.root'] !== root
+    || value.Labels['io.yharness.vps.image'] !== image
+    || value.Labels['io.yharness.vps.session'] !== sessionId
+    || value.Labels['io.yharness.vps.workspace'] !== workspace
+    || value.Labels['io.yharness.vps.purpose'] !== purpose) {
+    return false
+  }
+  return true
+}
+
+function inspectSharedVolume(serialized: string, root: string, name: string): boolean {
+  let value: unknown
+  try {
+    value = JSON.parse(serialized)
+  } catch {
+    return false
+  }
+  return isRecord(value) && value.Name === name && value.Driver === 'local'
+    && (value.Options === null || (isRecord(value.Options) && Object.keys(value.Options).length === 0))
+    && isRecord(value.Labels) && value.Labels['io.yharness.vps.root'] === root
+    && value.Labels['io.yharness.vps.purpose'] === SHARED_PROJECT_PURPOSE
+}
+
+function inspectContainer(
+  serialized: string,
+  root: string,
+  image: string,
+  sessionId: string,
+  workspace: string,
+  volume: string,
+  options: {
+    readonly browserPolicy: string | undefined
+    readonly projectVolume: string | undefined
+    readonly networkMode: VpsNetworkMode
+  },
+): ContainerMetadata {
+  const { browserPolicy, projectVolume, networkMode } = options
+  let value: unknown
+  try {
+    value = JSON.parse(serialized)
+  } catch {
+    throw new VpsRuntimeError('VPS Bot container metadata is not valid JSON')
+  }
+  if (!isRecord(value)) throw new VpsRuntimeError('VPS Bot container metadata is invalid')
+  const labels = value.Config
+  if (!isRecord(labels) || !isRecord(labels.Labels)
+    || labels.Labels['io.yharness.vps.root'] !== root
+    || labels.Labels['io.yharness.vps.image'] !== image
+    || labels.Labels['io.yharness.vps.session'] !== sessionId
+    || labels.Labels['io.yharness.vps.workspace'] !== workspace
+    || labels.Labels['io.yharness.vps.volume'] !== volume) {
+    throw new VpsRuntimeError('VPS Bot container ownership does not match this runtime')
+  }
+  if (!isRecord(value.State) || typeof value.State.Running !== 'boolean') {
+    throw new VpsRuntimeError('VPS Bot container state is invalid')
+  }
+  const imageNames = [
+    typeof value.ImageName === 'string' ? value.ImageName : undefined,
+    typeof labels.Image === 'string' ? labels.Image : undefined,
+  ].filter((name): name is string => name !== undefined)
+  if (imageNames.length === 0 || imageNames.some(name => name !== image)) {
+    throw new VpsRuntimeError('VPS Bot container image is invalid')
+  }
+  if (!recordArray(value.Mounts)) {
+    throw new VpsRuntimeError('VPS Bot container mounts are invalid')
+  }
+  const workspaceMounts = value.Mounts.filter(mount => mount.Type === 'volume' && mount.Destination === workspace)
+  const workspaceMount = workspaceMounts.length === 1 ? workspaceMounts[0] : undefined
+  if (workspaceMount === undefined || workspaceMount.Name !== volume || workspaceMount.RW !== true) {
+    throw new VpsRuntimeError('VPS Bot container workspace mount is invalid')
+  }
+  const profileMounts = value.Mounts.filter(mount => mount.Type === 'volume' && mount.Destination === BROWSER_PROFILE)
+  const profile = profileMounts[0]
+  if (browserPolicy !== undefined && (profileMounts.length !== 1 || profile?.Name !== `${volume}-browser`
+    || profile.RW !== true || !mountOptions(profile).includes('nodev') || !mountOptions(profile).includes('nosuid'))) {
+    throw new VpsRuntimeError('VPS Bot browser profile mount is invalid')
+  }
+  const projects = value.Mounts.filter(mount => mount.Destination === SHARED_PROJECT)
+  const project = projects[0]
+  if (projectVolume !== undefined && (projects.length !== 1 || project?.Type !== 'volume'
+    || project.Name !== projectVolume || project.RW !== true
+    || !mountOptions(project).includes('nodev') || !mountOptions(project).includes('nosuid'))) {
+    throw new VpsRuntimeError('The Bot container needs the shared project mount. Prepare its computer while idle before enabling it.')
+  }
+  if (value.Mounts.some(mount => mount.Type === 'bind' || (mount.Type === 'volume'
+    && mount.Destination !== workspace
+    && (browserPolicy === undefined || mount.Destination !== BROWSER_PROFILE)
+    && (projectVolume === undefined || mount.Destination !== SHARED_PROJECT)))) {
+    throw new VpsRuntimeError('VPS Bot container has an unexpected host mount')
+  }
+  const volumeMode = mountOptions(workspaceMount)
+  if (!volumeMode.includes('nodev') || !volumeMode.includes('nosuid')) {
+    throw new VpsRuntimeError('VPS Bot workspace volume options are invalid')
+  }
+  const hostConfig = value.HostConfig
+  const tmpfs = isRecord(hostConfig) && isRecord(hostConfig.Tmpfs) ? hostConfig.Tmpfs['/tmp'] : undefined
+  const tmpfsMount = value.Mounts.find(mount => mount.Type === 'tmpfs' && mount.Destination === '/tmp')
+  const tmpfsOptions = typeof tmpfs === 'string' ? tmpfs.split(',') : tmpfsMount === undefined ? [] : mountOptions(tmpfsMount)
+  if (!tmpfsOptions.includes('noexec') || !tmpfsOptions.includes('nosuid') || !tmpfsOptions.includes('nodev')) {
+    throw new VpsRuntimeError('VPS Bot container temporary storage is invalid')
+  }
+  if (!isRecord(hostConfig) || hostConfig.Privileged === true
+    || !stringArray(hostConfig.SecurityOpt, 'no-new-privileges')
+    || !capabilitiesDropped(value, hostConfig)
+    || ![hostConfig.PidMode, hostConfig.IpcMode, hostConfig.UTSMode].every(mode => mode === undefined || mode === '' || mode === 'private')
+    || (typeof hostConfig.UsernsMode !== 'string'
+      || (hostConfig.UsernsMode !== 'private' && !hostConfig.UsernsMode.startsWith('keep-id')))) {
+    throw new VpsRuntimeError('VPS Bot container privileges are invalid')
+  }
+  const matchingNetwork = networkMode === 'none' ? hostConfig.NetworkMode === 'none'
+    : (hostConfig.NetworkMode === 'slirp4netns' || hostConfig.NetworkMode === networkMode)
+      && stringArray(labels.CreateCommand, `--network=${networkMode}`)
+  if (!matchingNetwork || hostConfig.PublishAllPorts === true
+    || (isRecord(hostConfig.PortBindings) && Object.keys(hostConfig.PortBindings).length > 0)) {
+    throw new VpsRuntimeError('VPS Bot container network does not match its settings. Prepare the Computer while idle.')
+  }
+  if (browserPolicy !== undefined && !stringArray(hostConfig.SecurityOpt, `seccomp=${browserPolicy}`)) {
+    throw new VpsRuntimeError('VPS Bot browser container policy is invalid')
+  }
+  const containerConfig = value.Config
+  if (!isRecord(containerConfig) || typeof containerConfig.User !== 'string' || /^0(?::0)?$/u.test(containerConfig.User)) {
+    throw new VpsRuntimeError('VPS Bot container user is invalid')
+  }
+  return { running: value.State.Running }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function recordArray(value: unknown): value is Record<string, unknown>[] {
+  return Array.isArray(value) && value.every(isRecord)
+}
+
+function validCommandArguments(value: unknown): value is readonly [string, ...string[]] {
+  return Array.isArray(value) && value.length > 0
+    && !value.some((argument: unknown) => typeof argument !== 'string' || argument.includes('\u0000'))
+}
+
+function stringArray(value: unknown, expected: string): boolean {
+  return Array.isArray(value) && value.includes(expected)
+}
+
+function capabilitiesDropped(container: Record<string, unknown>, hostConfig: Record<string, unknown>): boolean {
+  const { EffectiveCaps: effective, BoundingCaps: bounding } = container
+  const empty = (value: unknown): boolean => value === null || (Array.isArray(value) && value.length === 0)
+  for (const caps of [hostConfig.CapAdd, effective, bounding]) {
+    if (caps !== undefined && !empty(caps)) return false
+  }
+  // Podman can report the expanded CapDrop list instead of the original flag.
+  return (effective !== undefined && bounding !== undefined) || stringArray(hostConfig.CapDrop, 'ALL')
+}
+
+function mountOptions(mount: Record<string, unknown>): string[] {
+  if (Array.isArray(mount.Options) && mount.Options.every((option): option is string => typeof option === 'string')) {
+    return mount.Options
+  }
+  if (typeof mount.Mode === 'string') return mount.Mode.split(',')
+  return []
+}
+
+async function ensurePrivateDirectory(path: string, uidHook?: () => number | undefined): Promise<void> {
+  await mkdir(path, { mode: 0o700, recursive: true })
+  const info = await lstat(path)
+  const uid = uidHook?.() ?? (typeof process.getuid === 'function' ? process.getuid() : undefined)
+  if (!info.isDirectory() || (uid !== undefined && info.uid !== uid) || (info.mode & PRIVATE_MODE_MASK) !== 0) {
+    throw new VpsRuntimeError('VPS Bot workspace must be an owner-only directory')
+  }
+}
+
+async function runPodmanProcess(argv: readonly [string, ...string[]], signal: AbortSignal): Promise<VpsCommandResult> {
+  const [command, ...args] = argv
+  signal.throwIfAborted()
+  return await new Promise<VpsCommandResult>((resolveResult, reject) => {
+    const child = spawn(command, args, {
+      env: podmanEnvironment(),
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    let stdout = ''
+    let stderr = ''
+    let settled = false
+    let failure: VpsRuntimeError | undefined
+    let forceKill: ReturnType<typeof setTimeout> | undefined
+    const terminate = (error: VpsRuntimeError): void => {
+      if (settled || failure !== undefined) return
+      failure = error
+      clearTimeout(deadline)
+      forceKill = setTimeout(() => { child.kill('SIGKILL') }, PODMAN_KILL_GRACE_MS)
+      child.kill('SIGTERM')
+    }
+    const stop = (): void => { terminate(new VpsRuntimeError(RUNTIME_CLOSED)) }
+    const deadline = setTimeout(() => {
+      terminate(new VpsRuntimeError('VPS Bot Podman command timed out'))
+    }, PODMAN_TIMEOUT_MS)
+    const clean = (): void => {
+      settled = true
+      clearTimeout(deadline)
+      clearTimeout(forceKill)
+      signal.removeEventListener('abort', stop)
+    }
+    const outputOverflow = (): void => { terminate(new VpsRuntimeError('VPS Bot Podman output exceeded its limit')) }
+    child.stdout.setEncoding('utf8')
+    child.stderr.setEncoding('utf8')
+    child.stdout.on('data', (chunk: string) => {
+      if (failure !== undefined) return
+      stdout += chunk
+      if (Buffer.byteLength(stdout, 'utf8') > PODMAN_OUTPUT_LIMIT) outputOverflow()
+    })
+    child.stderr.on('data', (chunk: string) => {
+      if (failure !== undefined) return
+      stderr += chunk
+      if (Buffer.byteLength(stderr, 'utf8') > PODMAN_OUTPUT_LIMIT) outputOverflow()
+    })
+    child.once('error', () => {
+      if (settled || failure !== undefined) return
+      clean()
+      reject(new VpsRuntimeError('VPS Bot Podman could not start'))
+    })
+    child.once('close', (code) => {
+      if (settled) return
+      clean()
+      if (failure !== undefined) reject(failure)
+      else if (code === null) reject(new VpsRuntimeError('VPS Bot Podman exited without a status'))
+      else resolveResult({ code, stdout, stderr })
+    })
+    signal.addEventListener('abort', stop, { once: true })
+    if (signal.aborted) stop()
+  })
+}
+
+function podmanEnvironment(): NodeJS.ProcessEnv {
+  const environment: NodeJS.ProcessEnv = {
+    PATH: '/usr/local/bin:/usr/bin:/bin',
+    LC_ALL: 'C',
+  }
+  const home = process.env.HOME
+  if (home !== undefined && isSafeEnvironmentValue(home)) environment.HOME = home
+  const runtime = process.env.XDG_RUNTIME_DIR
+  if (runtime !== undefined && isSafeEnvironmentValue(runtime)) environment.XDG_RUNTIME_DIR = runtime
+  return environment
+}
+
+function podmanEnvironmentArgs(): string[] {
+  const environment = podmanEnvironment()
+  return Object.entries(environment).map(([key, value]) => `${key}=${value}`)
+}
+
+function runtimeUserArgs(): string[] {
+  if (typeof process.getuid !== 'function' || typeof process.getgid !== 'function') return []
+  return ['--user', `${String(process.getuid())}:${String(process.getgid())}`]
+}
+
+function isSafeEnvironmentValue(value: string): boolean {
+  return !/[\u0000-\u001f\u007f]/u.test(value)
+}

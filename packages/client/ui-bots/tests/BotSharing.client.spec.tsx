@@ -740,7 +740,7 @@ describe('shared Bot collaboration surfaces', () => {
     await waitFor(() => { expect(recoverRosterFence).toHaveBeenCalledWith('old-fence-token') })
     await waitFor(() => { expect(screen.getByText('new-fence-token')).toBeTruthy() })
     expect(screen.getByRole('alert').textContent).toContain('still active or changed')
-    expect((within(screen.getByRole('dialog', { name: 'Recover shared roster?' })).getByRole('button', { name: 'Recover roster' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(within(screen.getByRole('dialog', { name: 'Recover shared roster?' })).getByRole('button', { name: 'Recover roster' })).toHaveProperty('disabled', true)
   })
 
   it('shows and recovers only an owner-visible recipient fence after explicit acknowledgement', async () => {
@@ -842,8 +842,8 @@ describe('shared Bot collaboration surfaces', () => {
     fireEvent.click(within(confirmation).getByRole('button', { name: 'Enable context' }))
 
     await waitFor(() => { expect(actions.setMemoryPolicy).toHaveBeenCalledWith(bot.id, true) })
-    expect((screen.getByRole('button', { name: 'Create invite' }) as HTMLButtonElement).disabled).toBe(true)
-    expect((screen.getByRole('button', { name: 'Revoke access: principal-member' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(screen.getByRole('button', { name: 'Create invite' })).toHaveProperty('disabled', true)
+    expect(screen.getByRole('button', { name: 'Revoke access: principal-member' })).toHaveProperty('disabled', true)
 
     await act(async () => {
       policyWrite.resolve({ botId: BotId(bot.id), enabled: true, updatedAt: 2 })
@@ -1433,7 +1433,7 @@ describe('shared Bot collaboration surfaces', () => {
       createdAt: 1,
       updatedAt: 1,
     } satisfies BotGroupView
-    const createGroup = vi.fn()
+    const createGroup = vi.fn<NonNullable<SharedBotsClient['createGroup']>>()
       .mockRejectedValueOnce(new Error('connection closed after commit'))
       .mockResolvedValueOnce({ ok: true, value: { group } })
     const client = sharedClient({
@@ -1454,14 +1454,14 @@ describe('shared Bot collaboration surfaces', () => {
 
     await waitFor(() => { expect(createGroup).toHaveBeenCalledTimes(1) })
     await waitFor(() => { expect(screen.getByRole('alert').textContent).toContain('connection closed after commit') })
-    const firstRequest = createGroup.mock.calls[0]?.[0] as { readonly id?: string }
-    expect(firstRequest.id).toMatch(/^bot-group-/)
+    const firstRequest = createGroup.mock.calls[0]?.[0]
+    expect(firstRequest?.id).toMatch(/^bot-group-/)
 
     await waitFor(() => { expect(within(dialog).getByRole('button', { name: 'Recover' })).toBeTruthy() })
     fireEvent.click(within(dialog).getByRole('button', { name: /Recover/ }))
     await waitFor(() => {
       expect(createGroup).toHaveBeenCalledTimes(2)
-      expect(createGroup.mock.calls[1]?.[0].id).toBe(firstRequest.id)
+      expect(createGroup.mock.calls[1]?.[0].id).toBe(firstRequest?.id)
     })
   })
 
@@ -1477,7 +1477,7 @@ describe('shared Bot collaboration surfaces', () => {
       createdAt: 1,
       updatedAt: 1,
     } satisfies BotGroupView
-    const sendGroupMessage = vi.fn()
+    const sendGroupMessage = vi.fn<NonNullable<SharedBotsClient['sendGroupMessage']>>()
       .mockRejectedValueOnce(new Error('connection closed after commit'))
       .mockResolvedValueOnce({ ok: true, value: { messageId: brandString<BotGroupMessageId>('bot-group-message-retry'), status: 'accepted', deliveries: [] } })
     const client = sharedClient({
@@ -1492,13 +1492,13 @@ describe('shared Bot collaboration surfaces', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Send to group' }))
     await waitFor(() => { expect(sendGroupMessage).toHaveBeenCalledTimes(1) })
     await waitFor(() => { expect(screen.getByRole('alert').textContent).toContain('connection closed after commit') })
-    const firstRequest = sendGroupMessage.mock.calls[0]?.[0] as { readonly messageId?: string }
-    expect(firstRequest.messageId).toMatch(/^bot-group-message-/)
+    const firstRequest = sendGroupMessage.mock.calls[0]?.[0]
+    expect(firstRequest?.messageId).toMatch(/^bot-group-message-/)
 
     fireEvent.click(screen.getByRole('button', { name: 'Recover' }))
     await waitFor(() => {
       expect(sendGroupMessage).toHaveBeenCalledTimes(2)
-      expect(sendGroupMessage.mock.calls[1]?.[0].messageId).toBe(firstRequest.messageId)
+      expect(sendGroupMessage.mock.calls[1]?.[0].messageId).toBe(firstRequest?.messageId)
     })
   })
 
@@ -1515,7 +1515,7 @@ describe('shared Bot collaboration surfaces', () => {
       updatedAt: 1,
     } satisfies BotGroupView
     const existingMessage: { current: BotGroupMessageView | undefined } = { current: undefined }
-    const sendGroupMessage = vi.fn()
+    const sendGroupMessage = vi.fn<NonNullable<SharedBotsClient['sendGroupMessage']>>()
       .mockImplementationOnce(async (request) => {
         existingMessage.current = {
           id: request.messageId!,
@@ -1564,7 +1564,7 @@ describe('shared Bot collaboration surfaces', () => {
     const text = 'Send this identical update'
     const queue = createSharedGroupPendingQueue('principal-member')
     const pending = await queue.reserveMessage('other-tab-action', String(group.id), text)
-    const sendGroupMessage = vi.fn().mockResolvedValue({
+    const sendGroupMessage = vi.fn<NonNullable<SharedBotsClient['sendGroupMessage']>>().mockResolvedValue({
       ok: true,
       value: { messageId: brandString<BotGroupMessageId>('bot-group-message-distinct-new'), status: 'accepted', deliveries: [] },
     })
@@ -1819,7 +1819,7 @@ describe('shared Bot collaboration surfaces', () => {
       const recover = within(dialog).getByRole('button', { name: /Recover/ })
       expect(recover).toBeTruthy()
       expect((recover as HTMLButtonElement).disabled).toBe(true)
-      expect((within(dialog).getByRole('button', { name: 'Create shared group' }) as HTMLButtonElement).disabled).toBe(true)
+      expect(within(dialog).getByRole('button', { name: 'Create shared group' })).toHaveProperty('disabled', true)
     })
     fireEvent.click(within(dialog).getByRole('button', { name: /Recover/ }))
     await new Promise<void>((resolve) => { setTimeout(resolve, 0) })
@@ -1828,7 +1828,7 @@ describe('shared Bot collaboration surfaces', () => {
     createGroup.resolve({ ok: false, error: { code: 'gateway/transport', message: 'settled', details: {} } })
     await act(async () => { await Promise.resolve(); await Promise.resolve() })
     await waitFor(() => {
-      expect((within(dialog).getByRole('button', { name: 'Recover' }) as HTMLButtonElement).disabled).toBe(false)
+      expect(within(dialog).getByRole('button', { name: 'Recover' })).toHaveProperty('disabled', false)
     })
   })
 
@@ -1846,7 +1846,7 @@ describe('shared Bot collaboration surfaces', () => {
       updatedAt: 1,
     } satisfies BotGroupView
     let groups: readonly BotGroupView[] = []
-    const createGroup = vi.fn().mockRejectedValueOnce(new Error('connection closed after commit'))
+    const createGroup = vi.fn<NonNullable<SharedBotsClient['createGroup']>>().mockRejectedValueOnce(new Error('connection closed after commit'))
     const listGroups = vi.fn().mockImplementation(async () => ({ ok: true as const, value: { groups } }))
     const client = sharedClient({
       list: vi.fn().mockResolvedValue({ ok: true, value: { bots: [{ ...bot, role: 'owner' }, { ...analystBot, role: 'owner' }] } }),
@@ -1898,7 +1898,7 @@ describe('shared Bot collaboration surfaces', () => {
       updatedAt: 1,
     } satisfies BotGroupView
     const existingMessage: { current: BotGroupMessageView | undefined } = { current: undefined }
-    const sendGroupMessage = vi.fn()
+    const sendGroupMessage = vi.fn<NonNullable<SharedBotsClient['sendGroupMessage']>>()
       .mockRejectedValueOnce(new Error('connection closed after commit'))
       .mockResolvedValue({ ok: true, value: { messageId: brandString<BotGroupMessageId>('bot-group-message-persisted-message'), status: 'accepted', deliveries: [] } })
     const inspectGroup = vi.fn().mockImplementation(async () => ({
@@ -1916,6 +1916,7 @@ describe('shared Bot collaboration surfaces', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Send to group' }))
     await waitFor(() => { expect(sendGroupMessage).toHaveBeenCalledOnce() })
     const firstId = sendGroupMessage.mock.calls[0]?.[0].messageId
+    if (firstId === undefined) throw new Error('expected a message id before recovery')
     expect(firstId).toMatch(/^bot-group-message-/)
     await waitFor(() => { expect(screen.getByRole('alert').textContent).toContain('connection closed after commit') })
     firstView.unmount()
@@ -2122,7 +2123,7 @@ describe('shared Bot collaboration surfaces', () => {
       createdAt: 1,
       updatedAt: 1,
     } satisfies BotGroupView
-    const sendGroupMessage = vi.fn()
+    const sendGroupMessage = vi.fn<NonNullable<SharedBotsClient['sendGroupMessage']>>()
       .mockResolvedValueOnce({ ok: true as const, value: { messageId: brandString<BotGroupMessageId>('bot-group-message-repeat-one'), status: 'accepted' as const, deliveries: [] } })
       .mockResolvedValueOnce({ ok: true as const, value: { messageId: brandString<BotGroupMessageId>('bot-group-message-repeat-two'), status: 'accepted' as const, deliveries: [] } })
     const client = sharedClient({
@@ -2222,7 +2223,7 @@ describe('shared Bot collaboration surfaces', () => {
       await waitFor(() => { expect(screen.getByPlaceholderText('Message Catalog gate room')).toBeTruthy() })
       const input = screen.getByPlaceholderText('Message Catalog gate room')
       fireEvent.change(input, { target: { value: 'Catalog loaded' } })
-      expect((screen.getByRole('button', { name: 'Send to group' }) as HTMLButtonElement).disabled).toBe(false)
+      expect(screen.getByRole('button', { name: 'Send to group' })).toHaveProperty('disabled', false)
     } finally {
       vi.restoreAllMocks()
     }
@@ -2407,7 +2408,7 @@ describe('shared Bot collaboration surfaces', () => {
       await Promise.resolve()
       await Promise.resolve()
     })
-    expect((screen.getByRole('button', { name: 'Sending…' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(screen.getByRole('button', { name: 'Sending…' })).toHaveProperty('disabled', true)
 
     await act(async () => {
       secondSend.resolve({ ok: true, value: { messageId: brandString<BotGroupMessageId>('bot-group-message-beta'), status: 'accepted', deliveries: [] } })

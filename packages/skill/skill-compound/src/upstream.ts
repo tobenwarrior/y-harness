@@ -18,7 +18,7 @@ import { requestUpstreamManifest, upstreamManifestVersion } from './upstream-man
 export { resolveUpstreamCommit } from './upstream-head.ts'
 
 /** Release of the vendored content; kept equal to the table in `UPSTREAM.md`. */
-export const VENDORED_VERSION = '0.11.1'
+export const VENDORED_VERSION = '0.17.2'
 
 /** Upstream repository the vendored content is copied from. */
 export const UPSTREAM_REPOSITORY = RESOLVER_REPOSITORY

@@ -1,9 +1,9 @@
 ---
 name: setup
-description: "Run Compound project setup and verified cleanup when requested."
+description: "Use when initializing Compound for the current project."
 license: MIT
 ---
 
 # Setup project
 
-Run [Compound](../compound/SKILL.md) as an explicit `compound setup` request for the current project, including activation and a fresh verified cleanup pass.
+Run [Compound](../compound/SKILL.md) as an explicit `compound setup` request for the current project, to prepare project guidance and the local map.

@@ -1,32 +1,48 @@
 import { createHash } from 'node:crypto'
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { describe, expect, it, vi } from 'vitest'
+
+const { homeOverride, spawnSyncMock } = vi.hoisted(() => ({
+  homeOverride: { value: undefined as string | undefined },
+  spawnSyncMock: vi.fn(),
+}))
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>()
+  spawnSyncMock.mockImplementation(actual.spawnSync)
+  return { ...actual, spawnSync: spawnSyncMock }
+})
+vi.mock('node:os', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:os')>()
+  return { ...actual, homedir: () => homeOverride.value ?? actual.homedir() }
+})
+
 import { Context } from '@yharness/cordis'
 import Include from '@yharness/cordis-plugin-include'
 import Loader from '@yharness/cordis-plugin-loader'
 import type { ConnectionFetchRoute } from '@yharness/client-connection'
 import SkillRegistry from '@yharness/skill'
+import { createOwnerPrivateDirectoryWin32 } from '@yharness/fs-local'
 import * as SkillCompound from '@yharness/skill-compound'
-import { activeOverlay } from '../src/overlay.ts'
+import { activeOverlay, legacyOverlayRoot, overlayRoot } from '../src/overlay.ts'
 import { AUTO_UPDATE_INTERVAL_MS } from '../src/index.ts'
 import { VENDORED_VERSION } from '../src/upstream.ts'
-import { describe, expect, it, vi } from 'vitest'
+import { privateOverlayRoot } from './private-overlay-root.ts'
 
 const assets = fileURLToPath(new URL('../assets/', import.meta.url))
 const names = ['compound', 'map', 'setup', 'setup-global', 'status-global']
 
 /**
- * Write an executable stand-in that reports one Python release.
+ * Write a path fixture whose typed process double reports one Python release.
  * @param root - directory that receives the script.
  * @param version - release string the script prints.
  * @returns the absolute script path.
  */
 async function fakePython(root: string, version: string): Promise<string> {
   const path = join(root, `python-${version}`)
-  await writeFile(path, `#!/bin/sh\necho "Python ${version}"\n`)
-  await chmod(path, 0o755)
+  await writeFile(path, `Python ${version}\n`)
   return path
 }
 
@@ -43,7 +59,7 @@ async function writeSkill(root: string, content: string): Promise<void> {
 
 describe('bundled Compound skills', () => {
   it('registers every vendored skill and serves its body with the runtime paths', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'dsh-compound-bundled-'))
+    const root = await privateOverlayRoot('dsh-compound-bundled-')
     const ctx = new Context()
     try {
       await ctx.plugin(SkillRegistry)
@@ -86,7 +102,7 @@ describe('bundled Compound skills', () => {
   })
 
   it('reads relocated assets through the assetRoot config', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'dsh-compound-skills-'))
+    const root = await privateOverlayRoot('dsh-compound-skills-')
     const ctx = new Context()
     try {
       const external = join(root, 'relocated assets')
@@ -109,7 +125,7 @@ describe('bundled Compound skills', () => {
   })
 
   it('loads a valid private overlay and keeps the bundled assets as fallback', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'dsh-compound-overlay-'))
+    const root = await privateOverlayRoot('dsh-compound-overlay-')
     const ctx = new Context()
     try {
       const commit = 'a'.repeat(40)
@@ -132,9 +148,73 @@ describe('bundled Compound skills', () => {
     }
   })
 
+  it('uses an active legacy overlay when the default root is omitted', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'dsh-compound-legacy-home-'))
+    const root = legacyOverlayRoot(home)
+    const commit = 'e'.repeat(40)
+    const nextCommit = 'f'.repeat(40)
+    const routes: ConnectionFetchRoute[] = []
+    const ctx = new Context()
+    const upstreamVersion = '2.1.0'
+    const files = new Map(names.map(name => [
+      `skills/${name}/SKILL.md`,
+      `---\nname: ${name}\ndescription: upstream ${name}\n---\n\nUpdated legacy body ${name}.\n`,
+    ]))
+    const tree = [...files].map(([path, text]) => ({
+      path, type: 'blob' as const, mode: '100644' as const, size: Buffer.byteLength(text),
+      sha: createHash('sha1').update(`blob ${Buffer.byteLength(text)}\0`).update(text).digest('hex'),
+    }))
+    const previousHome = homeOverride.value
+    homeOverride.value = home
+    try {
+      if (process.platform === 'win32') createOwnerPrivateDirectoryWin32(root)
+      const skills = join(root, 'revisions', commit, 'skills')
+      for (const name of names) {
+        const directory = join(skills, name)
+        await mkdir(directory, { recursive: true, mode: 0o700 })
+        await writeFile(join(directory, 'SKILL.md'), `---\nname: ${name}\ndescription: legacy ${name}\n---\n\nLegacy body ${name}.\n`, { mode: 0o600 })
+      }
+      await writeFile(join(root, 'current.json'), JSON.stringify({ commit, version: '2.0.0' }), { mode: 0o600 })
+      vi.stubGlobal('fetch', (url: string) => {
+        if (url.includes('/commits/')) return Promise.resolve(Response.json({ sha: nextCommit }))
+        if (url.endsWith('/.codex-plugin/plugin.json')) return Promise.resolve(Response.json({ version: upstreamVersion }))
+        if (url.endsWith('/plugin.json')) return Promise.resolve(new Response(null, { status: 404 }))
+        if (url.includes('/git/trees/')) return Promise.resolve(Response.json({ truncated: false, tree }))
+        const path = [...files.keys()].find(key => url.endsWith(key))
+        return Promise.resolve(new Response(path === undefined ? 'missing' : files.get(path)))
+      })
+      ctx.provide('connection', {
+        fetch: { register: (route: ConnectionFetchRoute) => { routes.push(route); return () => {} } },
+      } as never)
+      await ctx.plugin(SkillRegistry)
+      await ctx.plugin(SkillCompound, { autoUpdate: false })
+
+      const loaded = await ctx.skills.get('compound')
+      expect(loaded?.resourceBase).toEqual({ kind: 'directory', path: join(skills, 'compound') })
+      expect(loaded?.content).toContain('Legacy body compound.')
+
+      const applyRoute = routes.find(route => route.path === '/api/skill-compound.update.apply')
+      expect(applyRoute).toBeDefined()
+      const response = await applyRoute!.fetch(new Request('http://localhost/api/skill-compound.update.apply', { method: 'POST' }))
+      await expect(response.json()).resolves.toMatchObject({ status: 'updated', upstream: upstreamVersion, error: null })
+      expect(activeOverlay(root)?.version).toBe(upstreamVersion)
+      expect(activeOverlay(overlayRoot(home))).toBeUndefined()
+      const updated = await ctx.skills.get('compound')
+      expect(updated?.content).toContain('Updated legacy body compound.')
+    } finally {
+      try {
+        await ctx.fiber.dispose()
+      } finally {
+        homeOverride.value = previousHome
+        vi.unstubAllGlobals()
+        await rm(home, { recursive: true, force: true })
+      }
+    }
+  })
+
   it('automatically applies upstream revisions and stops after disposal', async () => {
     vi.useFakeTimers()
-    const root = await mkdtemp(join(tmpdir(), 'dsh-compound-auto-update-'))
+    const root = await privateOverlayRoot('dsh-compound-auto-update-')
     const routes: ConnectionFetchRoute[] = []
     const ctx = new Context()
     let upstreamVersion = '2.0.0'
@@ -197,7 +277,7 @@ describe('bundled Compound skills', () => {
 
   it('applies an update and reports its status through a real Loader composition', async () => {
     vi.useFakeTimers()
-    const root = await mkdtemp(join(tmpdir(), 'dsh-compound-loader-update-'))
+    const root = await privateOverlayRoot('dsh-compound-loader-update-')
     const configPath = join(root, 'cordis.yml')
     const routes: ConnectionFetchRoute[] = []
     const ctx = new Context()
@@ -267,23 +347,21 @@ describe('bundled Compound skills', () => {
     }
   })
 
-  it('keeps a manual update alive after the request aborts and waits on disposal', async () => {
+  it('updates on request with background updates disabled and waits for disposal', async () => {
     vi.useFakeTimers()
-    const root = await mkdtemp(join(tmpdir(), 'dsh-compound-manual-update-'))
+    const root = await privateOverlayRoot('dsh-compound-manual-update-')
     const routes: ConnectionFetchRoute[] = []
     const ctx = new Context()
     let upstreamVersion = VENDORED_VERSION
     let upstreamCommit = 'd36f372a60624b92e0e364871cae2c50cbf4ba01'
     let upstreamSignal: AbortSignal | null | undefined
-    const initialStatus = Promise.withResolvers<undefined>()
     const rawStarted = Promise.withResolvers<undefined>()
     const filesFor = () => new Map(names.map(name => [
       `skills/${name}/SKILL.md`,
       `---\nname: ${name}\ndescription: manual upstream ${upstreamVersion}\n---\n\nManual body ${upstreamVersion}.\n`,
     ]))
-    vi.stubGlobal('fetch', (url: string, init?: RequestInit) => {
+    const fetchUpstream = vi.fn((url: string, init?: RequestInit) => {
       if (url.includes('/commits/')) {
-        initialStatus.resolve(undefined)
         return Promise.resolve(Response.json({ sha: upstreamCommit }))
       }
       if (url.endsWith('/plugin.json')) return Promise.resolve(Response.json({ version: upstreamVersion }))
@@ -305,13 +383,16 @@ describe('bundled Compound skills', () => {
         }, { once: true })
       })
     })
+    vi.stubGlobal('fetch', fetchUpstream)
     ctx.provide('connection', {
       fetch: { register: (route: ConnectionFetchRoute) => { routes.push(route); return () => {} } },
     } as never)
     try {
       await ctx.plugin(SkillRegistry)
-      const fiber = await ctx.plugin(SkillCompound, { overlayRoot: root })
-      await initialStatus.promise
+      const config = { overlayRoot: root, autoUpdate: false }
+      const fiber = await ctx.plugin(SkillCompound, config)
+      await vi.advanceTimersByTimeAsync(AUTO_UPDATE_INTERVAL_MS)
+      expect(fetchUpstream).not.toHaveBeenCalled()
       upstreamVersion = '2.0.0'
       upstreamCommit = 'a'.repeat(40)
       const applyRoute = routes.find(route => route.path === '/api/skill-compound.update.apply')
@@ -337,8 +418,14 @@ describe('bundled Compound skills', () => {
     const ctx = new Context()
     try {
       const python = await fakePython(root, '4.0.1')
+      spawnSyncMock.mockImplementationOnce((command: string, args: readonly string[]) => {
+        expect(command).toBe(python)
+        expect(args).toEqual(['--version'])
+        return { error: undefined, status: 0, stdout: 'Python 4.0.1\n', stderr: '' }
+      })
       await ctx.plugin(SkillRegistry)
       await ctx.plugin(SkillCompound, { python })
+      expect(spawnSyncMock).toHaveBeenCalledWith(python, ['--version'], { encoding: 'utf8' })
       const loaded = await ctx.skills.get('compound')
       expect(loaded?.content).toContain(JSON.stringify(python))
       expect(loaded?.content).not.toContain('older than the required Python')
@@ -383,7 +470,7 @@ describe('bundled Compound skills', () => {
   })
 
   it('registers relocated resources through a real cordis.yml composition', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'dsh-compound-composition-'))
+    const root = await privateOverlayRoot('dsh-compound-composition-')
     const ctx = new Context()
     try {
       const external = join(root, 'relocated skills')

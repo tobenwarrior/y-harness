@@ -22,6 +22,7 @@ describe('group Bot mentions', () => {
 
   it('does not broadcast a partial Bot mention that matches a roster name', () => {
     expect(resolveMentionTargets('@Ana please check', bots, [])).toBeUndefined()
+    expect(resolveMentionTargets('@... please check', bots, [])).toEqual([])
     expect(resolveMentionTargets('@someone else can help', bots, [])).toEqual([])
     expect(resolveMentionTargets('@Chief of staff please check', bots, [])).toEqual(['bot-chief'])
   })

@@ -37,7 +37,7 @@ Document implementations register metadata with `ctx.documentPreviews.register({
 <a id="addresses"></a>
 ## Addresses
 
-A tab uses the Session address built by `fileAddressFor`, carrying a relative or absolute path. `hostFileOf(address)` takes the Session only from that address, with no external Session argument; neither current nor Tab Session is borrowed. The Host resolves file and related paths through the Session filesystem, whose backend controls read authority. Metadata for the same complete address is shared by every UI, including Global components. The [Workspace Files README](../../api/workspace-files/README.md) owns these rules; renderer selection does not change the navigation address.
+A tab uses a Session or Computer file address carrying the file path and its authorization Session. Metadata is shared by the complete address. Computer previews keep related-file reads in the same workspace. Owners can download Computer files. A private Computer file can also be copied at its selected version into another eligible Bot’s VPS workspace. See [Workspace Files](../../api/workspace-files/README.md).
 
 After all text pages load, Markdown images use the authenticated `/api/file` route for absolute file paths and paths relative to the source document's directory. Relative images wait for the Host's absolute document path. URL escapes are decoded once; query and fragment suffixes are excluded from the filename. HTTP(S) images retain their authored URLs, and failed image loads show alt text. Local images require an HTTP(S) application base URL; image files are not added to automatic-refresh dependencies.
 

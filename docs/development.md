@@ -75,7 +75,7 @@ Six packages split Host and Client tsconfigs: `api/remotes`, `api/gateway`, `api
 The root build follows the generated dependency order:
 
 ```sh
-tsc -b tsconfig.host.json
+node --max-old-space-size=5120 ./node_modules/typescript/bin/tsc -b tsconfig.host.json
 tsdown --env.DSH_BUILD_FACE host
 pnpm --filter @yharness/desktop run bundle
 tsc -b tsconfig.client.json
@@ -131,6 +131,8 @@ Contributors can opt into the comprehensive local gate set with `pnpm run check:
 ### CI gates
 
 The keyless [CI workflow](../.github/workflows/ci.yml) groups independent gates into broad lanes and runs a smaller compatibility signal across supported Node versions. Artifact consumers wait for one build within their lane. Required benchmarks run separately on standard GitHub-hosted Linux; the [benchmark runner reference](../benchmarks/AGENTS.md) owns routing and the job timeout. The separate real-API workflow runs `pnpm run test:e2e` with its configured worker bound. See [scripts/run-gates.ts](../scripts/run-gates.ts) and the workflow files for the current gate and job inventory.
+
+`pnpm run duplication` reports duplicate code in `packages/` and `scripts/` and fails when a match exceeds the recorded counts in [the baseline](../.jscpd-baseline.json) or the scan finds no source files.
 
 PRs default to standard GitHub-hosted Linux and Windows runners. Enable a configured private standby pool with `DSH_CI_STANDBY_LINUX_ENABLED=true` or `DSH_CI_STANDBY_WINDOWS_ENABLED=true`. Set `DSH_CI_RUNNER_BENCHMARKS_ENABLED=true` to enable the manual benchmark tiers. The `DSH_CI_FAILOVER_LINUX` and `DSH_CI_FAILOVER_WINDOWS` variables select configured alternate runner pools.
 

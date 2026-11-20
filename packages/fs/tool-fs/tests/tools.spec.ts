@@ -927,6 +927,16 @@ describe('sandbox escalation API (write/edit)', () => {
     }])
   })
 
+  it('treats blank justification without an escalation mode as omitted', async () => {
+    const { ctx, fs } = await setupConfining()
+    await call(ctx, 'write', { file_path: 'a.txt', content: 'x', justification: '   ' }, escalationAgent())
+    expect(fs.stamped).toEqual([{
+      mode: 'workspace-write',
+      workspaceRoot: '/session-project',
+      sessionId: SessionId('sess-fs-esc'),
+    }])
+  })
+
   it('a standing session override folds onto the stamp', async () => {
     const { ctx, fs } = await setupConfining()
     await call(ctx, 'write', { file_path: 'a.txt', content: 'x' }, escalationAgent([{ type: 'sandbox/mode', data: { mode: 'read-only' } }]))

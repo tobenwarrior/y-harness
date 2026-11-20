@@ -1,4 +1,5 @@
-import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
+import { execFileSync } from 'node:child_process'
+import { lstat, mkdir, mkdtemp, readFile, readlink, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -24,8 +25,40 @@ import {
   yhHomePath,
 } from '@yharness/home-paths'
 
+const osHome = vi.hoisted(() => ({ value: undefined as string | undefined }))
+const deniedPath = vi.hoisted(() => ({ path: '', error: Object.assign(new Error('Fixture stat denied'), { code: 'EACCES' }) }))
+
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>()
+  return {
+    ...actual,
+    statSync: (path: string) => {
+      if (path === deniedPath.path) throw deniedPath.error
+      return actual.statSync(path)
+    },
+  }
+})
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  return {
+    ...actual,
+    lstat: async (path: string) => {
+      if (path === deniedPath.path) throw deniedPath.error
+      return actual.lstat(path)
+    },
+  }
+})
+
+vi.mock('node:os', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:os')>()
+  return { ...actual, homedir: () => osHome.value ?? actual.homedir() }
+})
+
 afterEach(() => {
   vi.unstubAllEnvs()
+  osHome.value = undefined
+  deniedPath.path = ''
 })
 
 describe('dsh path helpers', () => {
@@ -53,12 +86,11 @@ describe('dsh path helpers', () => {
 
   it('treats an empty or whitespace-only DSH_HOME as unset', async () => {
     const root = await mkdtemp(join(tmpdir(), 'yh-empty-home-'))
-    vi.stubEnv('HOME', root)
+    osHome.value = root
     try {
       expect(resolveDshHome(undefined, { DSH_HOME: '' })).toBe(join(root, '.yharness'))
       expect(resolveDshHome(undefined, { DSH_HOME: '   ' })).toBe(join(root, '.yharness'))
     } finally {
-      vi.unstubAllEnvs()
       await rm(root, { recursive: true, force: true })
     }
   })
@@ -77,7 +109,7 @@ describe('dsh path helpers', () => {
   it.each([undefined, '', '   ', '~/env-dsh', './relative-dsh'] as const)(
     'resolves cache paths with DSH_HOME=%j', async (home) => {
       const root = await mkdtemp(join(tmpdir(), 'yh-cache-home-'))
-      vi.stubEnv('HOME', root)
+      osHome.value = root
       vi.stubEnv('DSH_HOME', home)
       try {
         const expectedHome = home === undefined || home.trim() === ''
@@ -88,7 +120,6 @@ describe('dsh path helpers', () => {
         expect(dshCachePath()).toBe(join(expectedHome, 'cache'))
         expect(dshCachePath('models', 'index.json')).toBe(join(expectedHome, 'cache', 'models', 'index.json'))
       } finally {
-        vi.unstubAllEnvs()
         await rm(root, { recursive: true, force: true })
       }
     })
@@ -140,7 +171,7 @@ describe('Y Harness home compatibility', () => {
   it('routes old path helpers to the canonical default when both roots are new', async () => {
     const root = await mkdtemp(join(tmpdir(), 'yh-home-legacy-helper-'))
     try {
-      vi.stubEnv('HOME', root)
+      osHome.value = root
       vi.stubEnv(YH_HOME_ENV, '')
       vi.stubEnv(DSH_HOME_ENV, '')
       expect(resolveDshHome(undefined, {})).toBe(join(root, '.yharness'))
@@ -164,10 +195,17 @@ describe('Y Harness home compatibility', () => {
     expect(yhHomeDisplay('/some/other/root')).toBe('$YH_HOME')
   })
 
+  it('resolves cache overrides with the canonical option first', () => {
+    vi.stubEnv(YH_HOME_ENV, '~/environment')
+    expect(yhCachePath()).toBe(join(homedir(), 'environment', 'cache'))
+    expect(yhCachePath({ dshHome: '~/legacy' }, 'provider.json')).toBe(join(homedir(), 'legacy', 'cache', 'provider.json'))
+    expect(yhCachePath({ yhHome: '~/current', dshHome: '~/legacy' })).toBe(join(homedir(), 'current', 'cache'))
+  })
+
   it('keeps a populated legacy default when the canonical default is empty or partial', async () => {
     const root = await mkdtemp(join(tmpdir(), 'yh-home-resolution-'))
     try {
-      vi.stubEnv('HOME', root)
+      osHome.value = root
       const legacy = join(root, '.dsh')
       const canonical = join(root, '.yharness')
       await mkdir(join(legacy, 'profiles'), { recursive: true })
@@ -187,11 +225,59 @@ describe('Y Harness home compatibility', () => {
   it('uses a populated canonical default when no legacy data exists', async () => {
     const root = await mkdtemp(join(tmpdir(), 'yh-home-resolution-canonical-'))
     try {
-      vi.stubEnv('HOME', root)
+      osHome.value = root
       const canonical = join(root, '.yharness')
       await mkdir(canonical)
       await writeFile(join(canonical, 'settings.json'), '{}\n')
       expect(resolveYhHome(undefined, {})).toBe(canonical)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('ignores a non-directory legacy placeholder and migrates an actual default home', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'yh-default-migration-'))
+    const source = join(root, '.dsh')
+    const target = join(root, '.yharness')
+    try {
+      osHome.value = root
+      await writeFile(source, 'unrelated file')
+      expect(resolveYhHome(undefined, {})).toBe(target)
+      await expect(migrateLegacyHome()).rejects.toThrow('source is not a directory')
+
+      await rm(source)
+      await mkdir(source)
+      await writeFile(join(source, 'providers.json'), '{"fixture":true}\n')
+      await expect(migrateLegacyHome()).resolves.toMatchObject({ source, target, status: 'migrated', copied: 1 })
+      expect(await readFile(join(target, 'providers.json'), 'utf8')).toBe('{"fixture":true}\n')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('surfaces an unreadable default home before attempting a fallback', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'yh-home-denied-'))
+    try {
+      osHome.value = root
+      deniedPath.path = join(root, '.yharness')
+      expect(() => resolveYhHome(undefined, {})).toThrow(deniedPath.error)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it.each(['source', 'target', 'target file'] as const)('propagates permission errors when inspecting the migration %s', async (location) => {
+    const root = await mkdtemp(join(tmpdir(), 'yh-denied-migration-'))
+    const source = join(root, 'legacy')
+    const target = join(root, 'current')
+    try {
+      await mkdir(source)
+      await mkdir(target)
+      await writeFile(join(source, 'providers.json'), '{"fixture":true}')
+      const targetFile = join(target, 'providers.json')
+      deniedPath.path = location === 'source' ? source : location === 'target' ? target : targetFile
+      await expect(migrateLegacyHome({ source, target })).rejects.toBe(deniedPath.error)
+      await expect(readFile(targetFile, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
     } finally {
       await rm(root, { recursive: true, force: true })
     }
@@ -298,6 +384,67 @@ describe('Y Harness home compatibility', () => {
     }
   })
 
+  it('preserves a file blocking a legacy subdirectory and equal-length file conflicts', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'yh-home-copy-conflict-'))
+    const source = join(root, 'legacy')
+    const target = join(root, 'current')
+    try {
+      await mkdir(join(source, 'settings'), { recursive: true })
+      await mkdir(target)
+      await writeFile(join(source, 'settings', 'account.json'), '{"fixture":true}')
+      await writeFile(join(target, 'settings'), 'preserve')
+      await writeFile(join(source, 'model.json'), '{"slot":1}')
+      await writeFile(join(target, 'model.json'), '{"slot":2}')
+
+      const result = await migrateLegacyHome({ source, target })
+      expect(result).toMatchObject({ status: 'conflicts', copied: 0, unchanged: 0 })
+      expect([...result.conflicts].sort()).toEqual([join(target, 'model.json'), join(target, 'settings')])
+      expect(await readFile(join(target, 'model.json'), 'utf8')).toBe('{"slot":2}')
+      expect(await readFile(join(target, 'settings'), 'utf8')).toBe('preserve')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  // Windows file symlinks can require a privilege these tests do not have.
+  it.skipIf(process.platform === 'win32')('retains relative symlink text across retries and preserves a conflicting link', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'yh-home-link-copy-'))
+    const source = join(root, 'legacy')
+    const target = join(root, 'current')
+    try {
+      await mkdir(source)
+      await symlink('shared-settings.json', join(source, 'settings.json'))
+      await expect(migrateLegacyHome({ source, target })).resolves.toMatchObject({ status: 'migrated', copied: 1 })
+      expect(await readlink(join(target, 'settings.json'))).toBe('shared-settings.json')
+      await expect(migrateLegacyHome({ source, target })).resolves.toMatchObject({ status: 'already-current', unchanged: 1 })
+
+      await rm(join(target, 'settings.json'))
+      await symlink('other-settings.json', join(target, 'settings.json'))
+      await expect(migrateLegacyHome({ source, target })).resolves.toMatchObject({
+        status: 'conflicts', conflicts: [join(target, 'settings.json')],
+      })
+      expect(await readlink(join(target, 'settings.json'))).toBe('other-settings.json')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  // A FIFO exercises the POSIX non-file migration error.
+  it.skipIf(process.platform === 'win32')('rejects a special source entry without creating a copy of it', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'yh-home-special-entry-'))
+    const source = join(root, 'legacy')
+    const target = join(root, 'current')
+    try {
+      await mkdir(source)
+      const pipe = join(source, 'fixture-pipe')
+      execFileSync('mkfifo', [pipe])
+      await expect(migrateLegacyHome({ source, target })).rejects.toThrow('legacy home migration cannot copy')
+      await expect(lstat(join(target, 'fixture-pipe'))).rejects.toMatchObject({ code: 'ENOENT' })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('refuses symlink roots instead of copying through them', async () => {
     const root = await mkdtemp(join(tmpdir(), 'yh-home-migration-symlink-'))
     const source = join(root, 'legacy')
@@ -320,6 +467,21 @@ describe('Y Harness home compatibility', () => {
     const root = await mkdtemp(join(tmpdir(), 'yh-home-migration-same-'))
     try {
       await expect(migrateLegacyHome({ source: root, target: root })).rejects.toThrow('source and target must differ')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects the same migration directory with different casing on Windows', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'yh-home-case-'))
+    try {
+      const platform = vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
+      try {
+        await expect(migrateLegacyHome({ source: join(root, 'Fixture'), target: join(root, 'fixture') }))
+          .rejects.toThrow('source and target must differ')
+      } finally {
+        platform.mockRestore()
+      }
     } finally {
       await rm(root, { recursive: true, force: true })
     }

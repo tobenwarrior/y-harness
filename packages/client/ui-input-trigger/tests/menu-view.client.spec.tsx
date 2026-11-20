@@ -134,6 +134,20 @@ describe('MenuView', () => {
     expect(screen.getAllByText('Add')).toHaveLength(1)
   })
 
+  it('renders the source name as an alias when the localized label changes its meaning', () => {
+    mount(openState({
+      groups: [{
+        source: 'command',
+        status: 'ready',
+        items: [{ name: 'plan', label: 'Planning mode' }],
+      }],
+      highlight: null,
+    }))
+    const option = screen.getByRole('option')
+    expect(option.textContent).toBe('Planning modeplan')
+    expect(screen.getByText('plan', { exact: true })).toBeTruthy()
+  })
+
   it('keeps an opted-out source title hidden while its candidates are pending', () => {
     mount(openState({
       groups: [{ source: 'reference', showGroupTitle: false, status: 'pending', items: [] }],

@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, it } from 'vitest'
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { mkdtemp, mkdir, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { Context } from '@yharness/cordis'
@@ -37,6 +37,48 @@ describe('file-backed skill library', () => {
     expect(inventory.items.find(item => item.scope === 'shared')).toMatchObject({ shadowed: true, automaticCleanup: false })
     expect(inventory.items.every(item => !('content' in item))).toBe(true)
   })
+
+  it('keeps a discovered source available while another inventory scan is still gathering candidates', async () => {
+    const f = await fixture()
+    await f.skill('project', 'deploy', 'Review the release.')
+    const source = (await f.library.list()).items[0]!
+    const nativeStarted = Promise.withResolvers<undefined>()
+    const resumeNative = Promise.withResolvers<undefined>()
+    const inventoryStarted = Promise.withResolvers<undefined>()
+    const resumeInventory = Promise.withResolvers<undefined>()
+    const removeNative = f.library.registerNativeProvider({
+      name: 'fixture-native',
+      list: async () => {
+        nativeStarted.resolve(undefined)
+        await resumeNative.promise
+        return { status: { provider: 'fixture-native', state: 'connected' }, entries: [] }
+      },
+    })
+    const learning = f.library.learningSource(source.id)
+    const list = f.options.provider.list.bind(f.options.provider)
+    const candidateScan = vi.spyOn(f.options.provider, 'list')
+    let inventory: ReturnType<SkillLibrary['list']> | undefined
+    try {
+      await nativeStarted.promise
+      candidateScan.mockImplementationOnce(async (request) => {
+        inventoryStarted.resolve(undefined)
+        await resumeInventory.promise
+        return list(request)
+      })
+      inventory = f.library.list()
+      await inventoryStarted.promise
+      resumeNative.resolve(undefined)
+
+      await expect(learning).resolves.toMatchObject({ item: { id: source.id }, content: '\nReview the release.\n' })
+    } finally {
+      resumeNative.resolve(undefined)
+      resumeInventory.resolve(undefined)
+      await Promise.allSettled([learning, inventory])
+      candidateScan.mockRestore()
+      removeNative()
+    }
+  })
+
   it('requires deliberate adoption and a current hash before compression, preserving code and repeated paragraphs', async () => {
     const f = await fixture(); const dir = await f.skill('project', 'deploy', 'Step one.  \n\n\n\nRepeated.\n\nRepeated.\n\n```\nkeep  \n\n\n```')
     const item = (await f.library.list({})).items[0]!
@@ -59,6 +101,32 @@ describe('file-backed skill library', () => {
     await f.library.restore({ id: item.id })
     expect(await readFile(join(dir, 'reference.txt'), 'utf8')).toBe('precious reference')
     expect((await f.library.list({})).items[0]!.id).toBe(item.id)
+  })
+  it('recovers newly written instructions when discovery was temporarily unavailable', async () => {
+    const f = await fixture()
+    const name = 'verify-release'
+    const content = 'Check the release results.\n'
+    const expectedPath = join(f.project, '.dsh', 'skills', name, 'SKILL.md')
+    const pending = join(f.options.historyDirectory, 'pending-creations')
+    const discovery = vi.spyOn(f.options.provider, 'list').mockResolvedValue([])
+    try {
+      await expect(f.library.createLearning({ projectId: 'p', name, content, expectedPath,
+        description: 'Release verification steps' }, async () => {})).rejects.toThrow('created instructions were not discoverable')
+      expect(await readFile(expectedPath, 'utf8')).toContain(content)
+      expect(await readdir(pending)).toHaveLength(1)
+      expect(f.rows.size).toBe(0)
+    } finally {
+      discovery.mockRestore()
+      await f.library.dispose()
+    }
+
+    const recovered = new SkillLibrary(f.options)
+    const inventory = await recovered.list()
+    expect(inventory.items).toHaveLength(1)
+    const item = inventory.items[0]!
+    expect(item).toMatchObject({ name, ownership: 'y-managed', automaticCleanup: false })
+    await expect(recovered.detail({ id: item.id })).resolves.toMatchObject({ content })
+    expect(await readdir(pending)).toEqual([])
   })
   it('keeps history and performs hash-checked rollback after managed cleanup', async () => {
     const f = await fixture(); const dir = await f.skill('project', 'deploy', 'Do work.  \n\n\n\nFinish.')

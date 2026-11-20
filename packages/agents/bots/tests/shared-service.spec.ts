@@ -53,6 +53,7 @@ import { sharedGroupSnapshotSchema, type SharedGroupSessionBinding } from '../sr
 import {
   sharedInviteSchema,
   sharedMemorySnapshotSchema,
+  SHARED_MEMORY_MAX_ENTRIES_PER_BOT,
   sharedMembershipSchema,
   sharedMembershipSnapshotSchema,
   sharedPrivateSessionSchema,
@@ -6059,7 +6060,10 @@ describe('shared Bot service', () => {
       const privateTranscript = await value.service.handle('bots/share/read-private-chat', {
         botId: 'bot-chief',
       }, new AbortController().signal, collaborator.peer)
-      expect(privateTranscript).toMatchObject({ ok: true, value: { recent: expect.any(Array) } })
+      expect(privateTranscript.ok).toBe(true)
+      if (!privateTranscript.ok) throw new Error('private transcript was not returned')
+      const privateTranscriptValue = z.object({ recent: z.array(z.unknown()) }).parse(privateTranscript.value)
+      expect(privateTranscriptValue.recent).toBeInstanceOf(Array)
       expect(JSON.stringify([...value.host.messages.values()])).toContain('private note')
       expect(JSON.stringify(privateTranscript)).not.toContain('Launch notes')
     } finally {
@@ -6661,6 +6665,24 @@ describe('shared Bot service', () => {
     } finally {
       await value.close()
     }
+  })
+
+  it('rejects duplicate policies and oversized per-Bot shared-context snapshots', () => {
+    const policy = { botId: BotId('bot-chief'), enabled: true, updatedAt: 1_000 }
+    expect(() => sharedMemorySnapshotSchema.parse({ policies: [policy, policy], entries: [] })).toThrow(
+      'Shared-context policies must be unique per Bot',
+    )
+
+    const entries = Array.from({ length: SHARED_MEMORY_MAX_ENTRIES_PER_BOT + 1 }, (_, index) => ({
+      id: `memory-limit-${String(index)}`,
+      botId: BotId('bot-chief'),
+      principalId: BotPrincipalId('principal-memory-limit'),
+      text: `Bounded note ${String(index)}`,
+      createdAt: 1_000,
+    }))
+    expect(() => sharedMemorySnapshotSchema.parse({ policies: [], entries })).toThrow(
+      'Shared-context entries exceeded the per-Bot limit',
+    )
   })
 
   it('rejects shared-context policy mutations beyond the policy limit', async () => {

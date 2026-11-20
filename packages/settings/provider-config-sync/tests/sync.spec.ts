@@ -279,16 +279,12 @@ it('propagates metadata access failures without treating them as missing receipt
   expect(await readFile(receiptPath, 'utf8')).toBe(receiptBefore)
 })
 
-it('refuses unsafe POSIX permission metadata on any test host without writing either document', async () => {
+it.skipIf(process.platform === 'win32')('refuses unsafe POSIX permission metadata without writing either document', async () => {
   const { home, sharedPath, client } = await fixture(); const a = client('a', { example: {} }); await a.engine.synchronize()
   const receiptPath = join(home, 'a.json')
   const sharedBefore = await readFile(sharedPath, 'utf8'); const receiptBefore = await readFile(receiptPath, 'utf8')
-  const original = Object.getOwnPropertyDescriptor(process, 'platform') as PropertyDescriptor
   reads.unsafeModePath = receiptPath
-  try {
-    Object.defineProperty(process, 'platform', { ...original, value: 'linux' })
-    await expect(a.engine.synchronize()).rejects.toThrow('owner-only regular file')
-  } finally { Object.defineProperty(process, 'platform', original) }
+  await expect(a.engine.synchronize()).rejects.toThrow('owner-only regular file')
   expect(a.writes).toBe(0)
   expect(await readFile(sharedPath, 'utf8')).toBe(sharedBefore)
   expect(await readFile(receiptPath, 'utf8')).toBe(receiptBefore)

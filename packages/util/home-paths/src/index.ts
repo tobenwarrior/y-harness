@@ -383,7 +383,9 @@ async function filesEqual(left: string, right: string): Promise<boolean> {
     while (true) {
       const [leftChunk, rightChunk] = await Promise.all([leftIterator.next(), rightIterator.next()])
       if (leftChunk.done || rightChunk.done) return leftChunk.done === rightChunk.done
-      if (!leftChunk.value.equals(rightChunk.value)) return false
+      const leftBytes = leftChunk.value as Buffer
+      const rightBytes = rightChunk.value as Buffer
+      if (!leftBytes.equals(rightBytes)) return false
     }
   } finally {
     leftStream.destroy()

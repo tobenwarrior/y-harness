@@ -171,6 +171,72 @@
   background: var(--yh-alias-interactive-bg-hover);
 }
 
+.folderRow {
+  display: flex;
+  align-items: center;
+}
+
+.folderUpload {
+  margin-right: 4px;
+  opacity: 0;
+}
+
+.folderRow:hover .folderUpload,
+.folderRow:focus-within .folderUpload {
+  opacity: 1;
+}
+
+.uploadButton {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+  min-height: 28px;
+  padding: 3px 7px;
+  color: var(--yh-alias-label-secondary);
+  font: inherit;
+  white-space: nowrap;
+  background: transparent;
+  border: none;
+  border-radius: var(--yh-radius-sm);
+  cursor: pointer;
+}
+
+.uploadButton:hover:not(:disabled) {
+  color: var(--yh-alias-label-primary);
+  background: var(--yh-alias-interactive-bg-hover);
+}
+
+.uploadButton:disabled,
+.folderUpload:disabled {
+  cursor: default;
+}
+
+.uploadButton:disabled {
+  opacity: 0.5;
+}
+
+.uploadProgress {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  padding: 2px 8px 2px 16px;
+  color: var(--yh-alias-label-secondary);
+}
+
+.uploadErrors {
+  max-height: 96px;
+  padding: 4px 16px;
+  overflow: auto;
+  color: var(--yh-alias-label-secondary);
+  overflow-wrap: anywhere;
+}
+
+.uploadErrors p {
+  margin: 0;
+}
+
 /* The folder sheet before the chip's text; the chip's title row centres it
    on the text's line and spaces it. */
 .titleIcon {

@@ -11,7 +11,7 @@ import type { ComponentType } from 'react'
 import type {
   PickOutcome, ReferenceInsert, TokenSpan,
 } from '@yharness/client-ui-conversation/client'
-import type { IconProps } from '@yharness/client-ui-primitives'
+import type { IconProps, InlineReferenceIconProps } from '@yharness/client-ui-primitives'
 import type { SessionId } from '@yharness/session/types'
 
 export type {
@@ -229,6 +229,8 @@ export interface InputTriggerSource {
    * @returns whether this source accepted the preview, possibly awaiting its catalog; false leaves the editor gesture unchanged.
    */
   openReference?(session: ClientSessionContext, reference: Pick<ReferenceInsert, 'ref' | 'appearance'>): boolean
+  /** Inline icon for references inserted by this source. */
+  readonly referenceIcon?: ComponentType<InlineReferenceIconProps>
   /** Reference codec; required for sources producing insert outcomes. */
   readonly codec?: ReferenceCodec
 }

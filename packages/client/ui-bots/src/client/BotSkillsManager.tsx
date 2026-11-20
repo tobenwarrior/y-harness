@@ -34,7 +34,7 @@ export interface BotSkillsManagerProps {
 }
 
 function sortedNames(names: readonly string[]): string[] {
-  return [...new Set(names)].sort((left, right) => left < right ? -1 : left > right ? 1 : 0)
+  return [...new Set(names)].sort()
 }
 
 function hasSkill(policy: BotSkillPolicy, name: string): boolean {
@@ -111,6 +111,7 @@ export function BotSkillsManager({ bot, actions, loadAvatar, open, onClose, t }:
   }, [actions, bot.id, loadAttempt, visible])
 
   const save = async (): Promise<void> => {
+    /* v8 ignore next -- the native save control is rendered only for a visible, loaded, idle manager. */
     if (!visible || working || loading) return
     const requestedBotId = bot.id
     const requestedGeneration = targetGenerationRef.current

@@ -138,17 +138,18 @@ export class CodexBackendConnection extends TypertRemoteService {
       observeDynamicTool: event => this.observeDynamicTool(event),
       replayDynamicTools: request => this.ctx.get('codexDynamicTools')?.replay?.(request) ?? [],
       persist: async (next) => {
-        if (this.disposed) throw new Error('Codex backend is closed.')
+        const isDisposed = () => this.disposed
+        if (isDisposed()) throw new Error('Codex backend is closed.')
         await mkdir(options.home, { recursive: true, mode: 0o700 })
         const temporary = `${file}.${randomUUID()}.tmp`
         try {
           await writeFile(temporary, JSON.stringify(next, null, 2), { mode: 0o600 })
-          if (this.disposed) throw new Error('Codex backend is closed.')
+          if (isDisposed()) throw new Error('Codex backend is closed.')
           await rename(temporary, file)
         } finally {
           await rm(temporary, { force: true })
         }
-        if (this.disposed) return
+        if (isDisposed()) return
         register()
         this.ctx.emit('llm/adapters-updated')
       } })

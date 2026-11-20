@@ -26,6 +26,10 @@
 .toggle svg { flex: none; width: 14px; height: 14px; }
 @container (max-width: 620px) { .presented { grid-template-columns: minmax(0, 1fr); } }
 .actions { display: inline-flex; flex: none; pointer-events: auto; }
+.download { display: grid; place-items: center; width: 28px; height: 28px; border-radius: var(--yh-radius-sm); color: var(--yh-alias-label-secondary); }
+.download:hover { background: var(--yh-alias-interactive-bg-hover); color: var(--yh-alias-label-primary); }
+.download:focus-visible { outline: 2px solid var(--yh-focus-ring-color, var(--yh-alias-state-business-primary)); outline-offset: -2px; }
+
 
 .secondaryText[data-success] { animation-name: success-fade; animation-timing-function: ease-out; animation-fill-mode: forwards; }
 @keyframes success-fade { to { opacity: 0; } }

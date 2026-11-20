@@ -47,7 +47,8 @@ async function fixture() {
   ctx.provide('sessionQuery', { readEvent } as never)
   const opener = vi.fn(async (_request: { path: string; action?: 'reveal' }, _signal: AbortSignal) => ({ opened: true as const }))
   const applications = vi.fn(async () => [{ id: 'player', name: 'Player', default: true, icon: null }])
-  ctx.provide('sessionController', { workspacePathApplications: applications, resolveAgent, openWorkspacePath: opener, workspaceDesktop: () => ({ name: 'desktop', available: true, fileManager: 'finder' }) } as never)
+  const desktop = { name: 'desktop', available: true, fileManager: 'finder' as const }
+  ctx.provide('sessionController', { workspacePathApplications: applications, resolveAgent, openWorkspacePath: opener, workspaceDesktop: () => desktop } as never)
   const connection = new HostConnectionService(ctx, [], {} as BrowserAuth)
   const fiber = ctx.plugin({ inject: ['connection', 'sessionQuery', 'sessionController', 'workspaceFiles', 'fs', 'sandboxPolicy'], apply: registerPresentOpen })
   await fiber
@@ -55,7 +56,10 @@ async function fixture() {
   const open = (query = '?sessionId=owner&seq=7&index=0', signal?: AbortSignal) => handler.fetch(new Request(
     `http://localhost${PRESENT_OPEN_PATH}${query}`, { method: 'POST', signal: signal ?? null },
   ))
-  return { applications, root, cwd, ctx, fiber, file, session, readEvent, open, opener, handler, resolveAgent }
+  const download = (query = '?sessionId=owner&seq=7&index=0', signal?: AbortSignal) => handler.fetch(new Request(
+    `http://localhost/api/present.download${query}`, { signal: signal ?? null },
+  ))
+  return { applications, root, cwd, ctx, fiber, file, session, readEvent, open, opener, handler, resolveAgent, desktop, download }
 }
 
 describe('Presented workspace file native open route', () => {
@@ -64,7 +68,6 @@ describe('Presented workspace file native open route', () => {
     const source = await realpath(join(cwd, file.path))
     expect(presentedFileUrl(SessionId('owner'), 7, 0)).toBe('api/present.open?sessionId=owner&seq=7&index=0')
     expect((await handler.fetch(new Request(`http://localhost${PRESENT_OPEN_PATH}`))).status).toBe(400)
-    expect((await handler.fetch(new Request('http://localhost/api/present.download?sessionId=owner&seq=7&index=0'))).status).toBe(404)
     for (const contents of ['current source', 'edited source']) {
       await writeFile(source, contents)
       const response = await open()
@@ -249,4 +252,59 @@ it('queries handlers only after file authorization and forwards explicit applica
   vi.spyOn(ctx.fs, 'processPathFromHostPath').mockReturnValue(undefined)
   expect((await handler.fetch(new Request(url))).status).toBe(422)
   expect(applications).toHaveBeenCalledOnce()
+})
+
+describe('Presented workspace file download', () => {
+  it('downloads current binary bytes without a desktop or waking the Session', async () => {
+    const { cwd, desktop, download, file, opener, resolveAgent, fiber } = await fixture()
+    desktop.available = false
+    const response = await download()
+    expect(response.status).toBe(200)
+    expect(response.headers.get('content-disposition')).toContain("filename*=UTF-8''%C3%85rsrapport-template.docx")
+    expect(response.headers.get('x-content-type-options')).toBe('nosniff')
+    expect(response.headers.get('cache-control')).toBe('no-store')
+    expect(new Uint8Array(await response.arrayBuffer())).toEqual(Uint8Array.of(80, 75, 0, 255))
+    await writeFile(join(cwd, file.path), 'new contents')
+    expect(await (await download()).text()).toBe('new contents')
+    expect(opener).not.toHaveBeenCalled()
+    expect(resolveAgent).not.toHaveBeenCalled()
+    await fiber.dispose()
+    expect((await download()).status).toBe(404)
+  })
+
+  it('uses the managed filesystem for a cold exact Session download', async () => {
+    const { ctx, cwd, root, file, download, open, opener, resolveAgent } = await fixture()
+    const managed = join(root, 'managed')
+    await mkdir(managed)
+    await writeFile(join(managed, file.path), 'inside managed workspace')
+    ctx.provide('workspaceFileAccess', {
+      forSession: async sessionId => sessionId === 'owner' ? { fs: ctx.fs, workspaceRoot: managed } : undefined,
+    })
+    expect(await (await download()).text()).toBe('inside managed workspace')
+    expect((await open()).status).toBe(422)
+    expect(opener).not.toHaveBeenCalled()
+    await unlink(join(managed, file.path))
+    expect((await download()).status).toBe(404)
+    expect(await readFile(join(cwd, file.path))).toEqual(Buffer.from([80, 75, 0, 255]))
+    expect(resolveAgent).not.toHaveBeenCalled()
+  })
+
+  it('serves only declared regular workspace files and enforces the byte cap', async () => {
+    const { cwd, root, file, download } = await fixture()
+    expect((await download('?sessionId=other&seq=7&index=0')).status).toBe(404)
+    expect((await download('?sessionId=owner&seq=7&index=9')).status).toBe(404)
+    expect((await download('?sessionId=owner&seq=7&index=-1')).status).toBe(400)
+    const source = join(cwd, file.path)
+    await writeFile(source, Buffer.alloc(1025))
+    expect((await download()).status).toBe(413)
+    await unlink(source)
+    const outside = join(root, 'outside')
+    await writeFile(outside, 'private bytes')
+    await symlink(outside, source)
+    expect((await download()).status).toBe(404)
+    file.path = outside
+    expect((await download()).status).toBe(404)
+    file.path = '.'
+    expect((await download()).status).toBe(404)
+  })
 })

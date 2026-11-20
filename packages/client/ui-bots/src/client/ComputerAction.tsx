@@ -3,10 +3,13 @@
 import type { ReactNode } from 'react'
 import { Button, Tooltip, type IconProps } from '@yharness/client-ui-primitives'
 import type { PropsLocale } from '@yharness/client-ui-slots'
+import type { ComputerIdentity } from './computer-client.ts'
+import css from './BotWorkspace.module.css'
 
 /** Bot header control for showing or hiding the private desktop. */
 interface ComputerActionProps extends PropsLocale<'bots'> {
   readonly expanded: boolean
+  readonly identity?: ComputerIdentity
   readonly toggle: () => void
 }
 
@@ -22,7 +25,8 @@ export function ComputerGlyph({ size = 16, className }: IconProps): ReactNode {
 }
 
 /** Render the opener only after the Host has advertised Computer availability. */
-export function ComputerAction({ expanded, toggle, t }: ComputerActionProps): ReactNode {
+export function ComputerAction({ expanded, identity, toggle, t }: ComputerActionProps): ReactNode {
+  const scope = identity?.permissionScope
   return (
     <Tooltip label={t(expanded ? 'computerClose' : 'computerOpen')} side="bottom" delayMs={500}>
       <Button
@@ -33,7 +37,9 @@ export function ComputerAction({ expanded, toggle, t }: ComputerActionProps): Re
         aria-pressed={expanded}
         onClick={toggle}
       >
-        {t('computerLabel')}
+        <span className={css.workspaceToolLabel}>{t('computerLabel')}</span>
+        {scope === 'bot' && <span className={css.computerScope}>{t('computerScopeBotChip')}</span>}
+        {scope === 'workspace' && <span className={css.computerScope}>{t('computerScopeWorkspaceChip')}</span>}
       </Button>
     </Tooltip>
   )

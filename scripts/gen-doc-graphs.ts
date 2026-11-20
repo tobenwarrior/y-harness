@@ -325,7 +325,16 @@ const SERVICE_ROLES: ServiceRole[] = [
     pkg: 'api-workspace-files',
     title: 'Host workspace file Remote service',
     mode: 'core',
-    note: 'Serves stat, paged text, byte windows, directory listings, and the change feed for files inside a Session\'s workspace root, confined by lstat, containment, and a stat re-check.',
+    note: 'Serves file metadata, previews, and workspace listings. Declared-file downloads read regular files inside the Session workspace.',
+  },
+  {
+    key: 'workspaceFileAccess',
+    pkg: 'api-workspace-files',
+    title: 'Managed Session filesystem',
+    mode: 'seam',
+    implementations: ['web-app'],
+    consumers: ['api-workspace-files'],
+    note: "Selects an owner Bot's filesystem and workspace root by exact Session identity.",
   },
   {
     key: 'workspaceChanges',

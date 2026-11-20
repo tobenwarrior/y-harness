@@ -23,6 +23,10 @@ const TIMEOUT_CODE = 'PERSISTENT_PWSH_TIMEOUT'
 // scrollback is assembled only when a command settles or needs partial output.
 const SCROLLBACK_PAGE_LINES = 1_000
 const POLL_INTERVAL_MS = 25
+// A POSIX pwsh can report its foreground stdin wait before the PTY delivers
+// the command's final marker or exit event. Two follow-up polls cover that
+// handoff while keeping an interactive Read-Host bounded to a partial result.
+const MARKER_GRACE_POLLS = 2
 
 const DEFAULT_DESCRIPTION = 'Run commands in a persistent PowerShell shell. State, including the current directory and exported environment variables, persists across calls for this agent.'
 
@@ -326,38 +330,11 @@ async function executeCommand(
   const marker = markers()
   const wrapped = wrapCommand(command, marker)
   let first = true
+  let observingStdin = false
   let fallback = ''
   let fallbackTruncated = false
 
-  while (true) {
-    // The shell may flip to exited between iterations (a fast `exit` can
-    // settle the previous send while its exit event is still in flight, and
-    // the echoed wrapper can then carry a marker end without status digits);
-    // re-observing status before the next send closes that gap.
-    const status = ctx.terminals.list(owner).find(session => session.sessionId === id)?.status
-    if (status?.kind === 'exited') {
-      return await respondToSessionExit(
-        ctx, shells, owner, id, status, marker, wrapped, fallback, fallbackTruncated, config,
-      )
-    }
-    let operation
-    let result
-    try {
-      operation = ctx.terminals.startSend(owner, id, {
-        text: first ? wrapped : '',
-        submit: first,
-        signal: commandDeadline.signal,
-      })
-      first = false
-      result = await operation.done
-    } catch (error: unknown) {
-      await shells.reset(owner, 'persistent pwsh send failed')
-      throw error
-    }
-    const incremental = operation.readOutput()
-    fallback = incremental.delta.length > 0 ? fallback + incremental.delta : result.viewport
-    fallbackTruncated ||= incremental.truncated || result.truncated
-    const latest = ctx.terminals.read(owner, id, { offset: 0, count: SCROLLBACK_PAGE_LINES })
+  const settleDeadline = async (latest?: TerminalReadResult): Promise<string | undefined> => {
     const timedOut = timeoutOf(commandDeadline.signal, TIMEOUT_CODE)
     if (timedOut !== undefined) {
       const snapshot = retainedScrollback(ctx, owner, id, latest)
@@ -378,10 +355,67 @@ async function executeCommand(
       // ToolRuntime publishes ABORTED after this cancelled invocation settles.
       return ''
     }
+    return undefined
+  }
+  const completeOutput = (
+    latest: TerminalReadResult,
+    viewport: string,
+    truncated: boolean,
+  ): CapturedOutput | undefined => {
+    let complete: CapturedOutput | undefined
     if (latest.text.includes(marker.end)) {
-      const complete = commandOutput(retainedScrollback(ctx, owner, id, latest), marker, wrapped)
-      if (complete !== undefined) return renderCaptured(complete, config.maxOutputChars)
+      complete = commandOutput(retainedScrollback(ctx, owner, id, latest), marker, wrapped)
     }
+    // The operation viewport can contain the completed marker before the
+    // scrollback read catches up. Prefer the full scrollback when it has one,
+    // then parse the operation-owned text as the same marker protocol.
+    if (complete === undefined && viewport.includes(marker.end)) {
+      complete = commandOutput({ text: viewport, truncated }, marker, wrapped)
+    }
+    return complete
+  }
+
+  while (true) {
+    // The shell may flip to exited between iterations (a fast `exit` can
+    // settle the previous send while its exit event is still in flight, and
+    // the echoed wrapper can then carry a marker end without status digits);
+    // re-observing status before the next send closes that gap.
+    const status = ctx.terminals.list(owner).find(session => session.sessionId === id)?.status
+    if (status?.kind === 'exited') {
+      return await respondToSessionExit(
+        ctx, shells, owner, id, status, marker, wrapped, fallback, fallbackTruncated, config,
+      )
+    }
+    let operation
+    let result
+    const submitted = first
+    try {
+      operation = ctx.terminals.startSend(owner, id, {
+        text: first ? wrapped : '',
+        submit: first,
+        signal: commandDeadline.signal,
+      })
+      first = false
+      result = await operation.done
+    } catch (error: unknown) {
+      const sendStatus = ctx.terminals.list(owner).find(session => session.sessionId === id)?.status
+      if (sendStatus?.kind === 'exited') {
+        return await respondToSessionExit(
+          ctx, shells, owner, id, sendStatus, marker, wrapped, fallback, fallbackTruncated, config,
+        )
+      }
+      await shells.reset(owner, 'persistent pwsh send failed')
+      throw error
+    }
+    const incremental = operation.readOutput()
+    if (incremental.delta.length > 0) fallback += incremental.delta
+    else if (result.viewport.length > 0) fallback = result.viewport
+    fallbackTruncated ||= incremental.truncated || result.truncated
+    const latest = ctx.terminals.read(owner, id, { offset: 0, count: SCROLLBACK_PAGE_LINES })
+    const deadlineResult = await settleDeadline(latest)
+    if (deadlineResult !== undefined) return deadlineResult
+    const complete = completeOutput(latest, result.viewport, result.truncated)
+    if (complete !== undefined) return renderCaptured(complete, config.maxOutputChars)
     if (result.sessionStatus.kind === 'exited') {
       return await respondToSessionExit(
         ctx, shells, owner, id, result.sessionStatus, marker, wrapped, fallback, fallbackTruncated, config,
@@ -389,10 +423,36 @@ async function executeCommand(
     }
     // The shell reads stdin again (its prompt, or a foreground child's own
     // read) without having printed the end marker — an interrupt, a replaced
-    // shell, or an interactive child. Return what was captured instead of
-    // spinning until the command deadline.
-    if (result.waitReason === 'stdin_read') {
-      const snapshot = retainedScrollback(ctx, owner, id, latest)
+    // shell, or an interactive child. A short marker grace handles the POSIX
+    // pwsh handoff where stdin readiness wins the race with the final marker
+    // or an exit event; Read-Host still returns its prompt after the bounded
+    // grace rather than waiting for the command deadline.
+    if (result.waitReason === 'stdin_read' && submitted) {
+      // A provider can settle the submitted send from stale foreground
+      // evidence just before a command that exits delivers its final PTY
+      // bytes. The next loop iteration is an observation-only send, so the
+      // terminal backend owns the handoff: an exiting session settles it as
+      // `session_exit`, while an interactive child still returns readiness.
+      observingStdin = true
+      continue
+    }
+    if (observingStdin || result.waitReason === 'stdin_read') {
+      let latestAfterGrace = latest
+      for (let poll = 0; poll < MARKER_GRACE_POLLS; poll += 1) {
+        await pause()
+        const graceDeadline = await settleDeadline()
+        if (graceDeadline !== undefined) return graceDeadline
+        const graceStatus = ctx.terminals.list(owner).find(session => session.sessionId === id)?.status
+        if (graceStatus?.kind === 'exited') {
+          return await respondToSessionExit(
+            ctx, shells, owner, id, graceStatus, marker, wrapped, fallback, fallbackTruncated, config,
+          )
+        }
+        latestAfterGrace = ctx.terminals.read(owner, id, { offset: 0, count: SCROLLBACK_PAGE_LINES })
+        const graceComplete = completeOutput(latestAfterGrace, '', false)
+        if (graceComplete !== undefined) return renderCaptured(graceComplete, config.maxOutputChars)
+      }
+      const snapshot = retainedScrollback(ctx, owner, id, latestAfterGrace)
       return renderCaptured(
         partialOutput(snapshot, marker, wrapped, fallback, fallbackTruncated),
         config.maxOutputChars,

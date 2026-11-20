@@ -53,7 +53,8 @@ async function selectBot(page: Page, web: WebScaffold, bot: BotView): Promise<Lo
 }
 
 async function openRoutines(page: Page) {
-  await page.getByRole('button', { name: 'Manage routines', exact: true }).click()
+  await page.getByRole('button', { name: 'Bot options', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Manage routines', exact: true }).click()
   const dialog = page.getByRole('dialog', { name: 'Bot routines', exact: true })
   await dialog.getByRole('list', { name: 'Bot routines', exact: true }).waitFor()
   return dialog

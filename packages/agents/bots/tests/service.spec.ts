@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { createHash, randomUUID } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
-import { join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { Context, Service } from '@yharness/cordis'
 import { SharedAccessAuthority, sharedPrincipalOf, type ConnectionFetchRoute } from '@yharness/client-connection'
@@ -69,6 +69,8 @@ import { BotGroupId, BotGroupMessageId, BotGroupService, botGroupDomain } from '
 import type { BotGroupDeliveryHost } from '../src/group-chat.ts'
 import type { SharedBotHost } from '../src/shared-service.ts'
 import { SharedBotService } from '../src/shared-service.ts'
+import { mountVpsBots } from '../../../bundle/web-app/src/vps-bots.ts'
+import { VpsRuntime } from '../../../bundle/web-app/src/vps-runtime.ts'
 import { generateSessionTitleWithLlm } from '../../../session/session-title-llm/src/index.ts'
 import { SessionTitleProviderId } from '../../../session/session-title/src/index.ts'
 import { sharedGroupSnapshotSchema, type SharedGroupSessionBinding } from '../src/shared-group.ts'
@@ -77,6 +79,18 @@ import { BotId } from '../src/types.ts'
 import type { BotEventRoutine, BotListRequest, BotListValue, BotRecord, BotView } from '../src/types.ts'
 import { sessionFormatCatalog } from '@yharness/session-format-catalog'
 import z from 'zod'
+
+const asymmetricMatchers: {
+  readonly any: (expected: unknown) => unknown
+  readonly anything: () => unknown
+  readonly arrayContaining: (expected: unknown[]) => unknown
+  readonly objectContaining: (expected: object) => unknown
+  readonly stringContaining: (expected: string) => unknown
+  readonly stringMatching: (expected: string | RegExp) => unknown
+} = expect
+const storedGroupMessages = z.array(z.looseObject({ status: z.string() }))
+const routineIdentifier = z.object({ id: z.string() })
+const fixtureCwd = resolve('/tmp')
 
 declare module '@yharness/llm' {
   interface MessageSourceMap {
@@ -193,7 +207,10 @@ function expectCurrentSessionReload(session: Session): void {
     isSeeded: session.header.isSeeded,
     delegationDepth: session.header.delegationDepth ?? 0,
   }, Number(session.inheritedEventCount))
-  const currentRows = session.snapshotEvents().map(event => sessionFormatCatalog.encodeCurrentEvent(JSON.parse(JSON.stringify(event))))
+  const currentRows = session.snapshotEvents().map((event) => {
+    const serialized = JSON.parse(JSON.stringify(event)) as Parameters<typeof sessionFormatCatalog.encodeCurrentEvent>[0]
+    return sessionFormatCatalog.encodeCurrentEvent(serialized)
+  })
   const reopened = sessionFormatCatalog.createRestore(currentHeader, { recovery: 'strict', validation: 'current' })
   for (const row of currentRows) reopened.decodeRow(row)
   expect(() => reopened.finish()).not.toThrow()
@@ -577,7 +594,7 @@ async function createHarness({
   if (options.connection !== undefined) ctx.provide('connection', options.connection as never)
   if (scheduleEnabled) await ctx.plugin(ScheduleService)
   if (scheduleEnabled) await Promise.all(agents.map(agent => agent.ctx.inject(
-    ['schedule', 'tools'], (scheduleScope: Context) => registerScheduleTools(scheduleScope),
+    ['schedule', 'tools'], (scheduleScope: Context) => { registerScheduleTools(scheduleScope) },
   )))
   const service = new BotService(ctx, config)
   try {
@@ -811,6 +828,122 @@ function provideResolvedTemplatePreset(ctx: Context): void {
 }
 
 describe('durable Bot roster', () => {
+  it('orders equal-age Bots by stable id for roster display', async () => {
+    const h = await harness()
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(1_234)
+    try {
+      await h.service.create({ id: BotId('bot-zeta'), name: 'Zeta', cwd: '/tmp' })
+      await h.service.create({ id: BotId('bot-alpha'), name: 'Alpha', cwd: '/tmp' })
+      await expect(h.service.list({})).resolves.toMatchObject({
+        bots: [{ id: BotId('bot-alpha') }, { id: BotId('bot-zeta') }],
+      })
+    } finally {
+      clock.mockRestore()
+      await close(h.ctx)
+    }
+  })
+
+  it('provisions one managed workspace per Bot and retains it across a failed setup retry', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'yh-managed-bot-'))
+    const workspace = (sessionId: SessionId) => join(root, sessionId)
+    const prepare = vi.fn(async (sessionId: SessionId, _botId: BotId) => { await mkdir(workspace(sessionId), { mode: 0o700 }) })
+    prepare.mockRejectedValueOnce(new Error('Computer unavailable'))
+    const h = await harness(undefined, undefined, undefined, [], new Map(), new Map(), true, 'native', false, {
+      beforeService: (ctx) => { ctx.provide('botWorkspaces', { workspace, prepare, installSkill: async () => true }) },
+    })
+    try {
+      const request = { id: BotId('bot-managed'), name: 'Managed Bot' }
+      await expect(h.service.create(request)).rejects.toThrow('Computer unavailable')
+      expect(h.create).not.toHaveBeenCalled()
+      const first = (await h.service.create(request)).bot
+      const second = (await h.service.create({ name: 'Second Bot' })).bot
+      expect(first.cwd).toBe(workspace(first.sessionId))
+      expect(second.cwd).not.toBe(first.cwd)
+      expect(prepare.mock.calls).toEqual([[first.sessionId, first.id], [first.sessionId, first.id], [second.sessionId, second.id]])
+      await expect(h.service.create(request)).resolves.toMatchObject({ bot: { sessionId: first.sessionId } })
+      expect(h.create).toHaveBeenCalledWith(expect.objectContaining({ sessionId: first.sessionId, cwd: first.cwd }), expect.anything())
+      await expect(h.service.ownerBotForSession(first.sessionId)).resolves.toMatchObject({ id: first.id, state: 'active' })
+      await expect(h.service.ownerBotForSession(SessionId('other-session'))).resolves.toBeUndefined()
+      await expect(h.service.create({ name: 'Host directory', cwd: root })).rejects.toThrow('assigned a private workspace')
+    } finally {
+      await close(h.ctx)
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('creates a managed child Bot from its scoped tool without inheriting a host cwd', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const parent = await first.service.create({ name: 'Managed parent', cwd: '/host/workspace' })
+    await close(first.ctx)
+    const root = await mkdtemp(join(tmpdir(), 'yh-scoped-managed-child-'))
+    const workspace = (sessionId: SessionId) => join(root, String(sessionId))
+    const prepare = vi.fn(async () => {})
+    const h = await harness(pool, undefined, undefined, [String(parent.bot.sessionId)], new Map(), new Map(), true, 'native', false, {
+      beforeService: (ctx) => {
+        ctx.provide('botWorkspaces', { workspace, prepare, installSkill: async () => true, managed: () => true })
+      },
+    })
+    try {
+      const agent = h.agents[0]
+      if (agent === undefined) throw new Error('managed parent Agent was not created')
+      const create = h.ctx.tools.get('create_bot', agent)
+      if (create === undefined) throw new Error('scoped Bot creation tool was not installed')
+      const callId = ToolCallId('managed-scoped-child-create')
+      const result = await create.execute({ name: 'Managed child' }, {
+        callId,
+        rootCallId: callId,
+        name: 'create_bot',
+        arguments: { name: 'Managed child' },
+        agent,
+        signal: new AbortController().signal,
+        token: Symbol('managed-scoped-child-create') as ToolExecutionToken,
+        deferContext: () => {},
+        concludeTurn: () => {},
+      })
+      expect(result).toMatchObject({ name: 'Managed child', state: 'active' })
+      const [request] = h.create.mock.calls.at(-1) ?? []
+      if (request === undefined || request.sessionId === undefined) throw new Error('managed child Session request was not recorded')
+      expect(request).toMatchObject({ cwd: workspace(SessionId(request.sessionId)) })
+      const child = (await h.service.list({})).bots.find(bot => bot.name === 'Managed child')
+      expect(child?.sessionId).toBe(request.sessionId)
+      expect(prepare).toHaveBeenCalledWith(request.sessionId, child?.id)
+      await expect(h.service.create({ name: 'Explicit managed cwd', cwd: '/host/escape' }))
+        .rejects.toThrow('assigned a private workspace')
+    } finally {
+      await close(h.ctx)
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps non-allowlisted Bot creation on the legacy cwd and skips VPS preparation', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'yh-allowlisted-bot-'))
+    const workspace = (sessionId: SessionId) => join(root, sessionId)
+    const prepare = vi.fn(async (sessionId: SessionId, _botId: BotId) => { await mkdir(workspace(sessionId), { mode: 0o700 }) })
+    const h = await harness(undefined, undefined, undefined, [], new Map(), new Map(), true, 'native', false, {
+      beforeService: (ctx) => {
+        ctx.provide('botWorkspaces', {
+          workspace,
+          prepare,
+          installSkill: async () => true,
+          managed: (botId: string) => botId === 'bot-research',
+        })
+      },
+    })
+    try {
+      const managed = (await h.service.create({ id: BotId('bot-research'), name: 'Research' })).bot
+      const legacy = (await h.service.create({ id: BotId('bot-legacy'), name: 'Legacy', cwd: root })).bot
+      expect(managed.cwd).toBe(workspace(managed.sessionId))
+      expect(legacy.cwd).toBe(resolve(root))
+      await expect(h.service.create({ id: BotId('bot-legacy'), name: 'Legacy', cwd: root }))
+        .resolves.toMatchObject({ bot: { cwd: resolve(root), sessionId: legacy.sessionId } })
+      expect(prepare).toHaveBeenCalledExactlyOnceWith(managed.sessionId, managed.id)
+    } finally {
+      await close(h.ctx)
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('waits for an in-flight local attachment upload before closing its attachment domain', async () => {
     let route: ConnectionFetchRoute | undefined
     let enteredResolve: (() => void) | undefined
@@ -1124,7 +1257,7 @@ describe('durable Bot roster', () => {
       if (fence === undefined) throw new Error('event routine roster fence capability was not mounted')
       await started.promise
 
-      const releaseTimer = setTimeout(() => release.resolve(true), 2_500)
+      const releaseTimer = setTimeout(() => { release.resolve(true) }, 2_500)
       const canceled = await harness(pool, undefined, undefined, [String(created.bot.sessionId)], new Map(), records)
       const canceledFollowup = canceled.followups[0]
       if (canceledFollowup === undefined) throw new Error('event routine canceled recovery follow-up was not created')
@@ -1200,7 +1333,7 @@ describe('durable Bot roster', () => {
       await trigger.triggerEventRoutines.call(h.service, owner.id, {
         message: event.data, eventSeq: Number(event.seq), eventTime: event.time, source: 'user',
       })
-      const releaseTimer = setTimeout(() => release.resolve(undefined), 2_000)
+      const releaseTimer = setTimeout(() => { release.resolve(undefined) }, 2_000)
       try {
         await vi.waitFor(() => { expect(followup).toHaveBeenCalledOnce() }, { timeout: 7_000 })
       } finally {
@@ -1280,7 +1413,7 @@ describe('durable Bot roster', () => {
       if (fence === undefined) throw new Error('mid-commit fence capability was not mounted')
       await started.promise
       releaseCommit.resolve(undefined)
-      const releaseTimer = setTimeout(() => release.resolve(undefined), 2_000)
+      const releaseTimer = setTimeout(() => { release.resolve(undefined) }, 2_000)
       try {
         await vi.waitFor(() => { expect(followup).toHaveBeenCalledOnce() }, { timeout: 7_000 })
       } finally {
@@ -1357,7 +1490,7 @@ describe('durable Bot roster', () => {
       try {
         await vi.waitFor(() => { expect(followup).toHaveBeenCalledOnce() }, { timeout: 13_000 })
         expect(h.records.get(credentialKey('agent-bots', 'profile-revisions-v4'))).not.toMatchObject({
-          payload: { pending: expect.anything() },
+          payload: { pending: asymmetricMatchers.anything() },
         })
       } finally {
         clearTimeout(releaseTimer)
@@ -1589,13 +1722,11 @@ describe('durable Bot roster', () => {
           reject(new Error(`roster-fence worker exited before readiness (${String(code)}, ${String(signal)}): ${stdout}\n${stderr}`))
         })
       })
-      child.kill('SIGKILL')
+      expect(child.kill('SIGKILL')).toBe(true)
       const [exitCode, signal] = await closePromise
-      // Windows terminates through taskkill and reports an exit code instead
-      // of the POSIX signal; both forms prove the child was stopped.
-      if (process.platform === 'win32') {
-        expect(exitCode).not.toBeNull()
-        expect(signal).toBeNull()
+      // Windows may omit the signal after terminating the process.
+      if (process.platform === 'win32' && signal === null) {
+        expect(exitCode).not.toBe(0)
       } else {
         expect(exitCode).toBeNull()
         expect(signal).toBe('SIGKILL')
@@ -1688,7 +1819,7 @@ describe('durable Bot roster', () => {
       if (storedFence?.kind !== 'grant') throw new Error('shared roster fence was not persisted')
       const fenceToken = z.object({
         sharedRosterFence: z.object({ token: z.string() }),
-      }).passthrough().parse(storedFence.payload).sharedRosterFence.token
+      }).loose().parse(storedFence.payload).sharedRosterFence.token
       type SharedRosterRecoveryService = {
         recoverSharedRosterFence: (request: {
           readonly token: string
@@ -1712,7 +1843,7 @@ describe('durable Bot roster', () => {
         .resolves.toEqual({ status: 'busy' })
       expect(z.object({
         sharedRosterFence: z.object({ token: z.string() }),
-      }).passthrough().parse(storedFence.payload).sharedRosterFence.token).toBe(fenceToken)
+      }).loose().parse(storedFence.payload).sharedRosterFence.token).toBe(fenceToken)
       await expect(recovery.recoverSharedRosterFence({ token: fenceToken, confirmQuiescent: true, acceptRaceRisk: true })).resolves.toEqual({ status: 'released' })
       await expect(host.withBotRoster(bots, undefined, async () => 'recovered')).resolves.toEqual({
         valid: true,
@@ -1753,7 +1884,7 @@ describe('durable Bot roster', () => {
       if (storedFence?.kind !== 'grant') throw new Error('shared roster fence was not persisted')
       const fenceToken = z.object({
         sharedRosterFence: z.object({ token: z.string() }),
-      }).passthrough().parse(storedFence.payload).sharedRosterFence.token
+      }).loose().parse(storedFence.payload).sharedRosterFence.token
       await expect(h.service.recoverSharedRosterFence({ token: fenceToken, confirmQuiescent: true, acceptRaceRisk: true }))
         .resolves.toEqual({ status: 'released' })
       await expect(host.withBotRoster([], undefined, async () => 'authority-reconciled')).resolves.toEqual({
@@ -1849,7 +1980,7 @@ describe('durable Bot roster', () => {
       expect(diagnostic.status).toBe('held')
       if (diagnostic.token === undefined) throw new Error('live shared roster fence token is missing')
       await expect(Reflect.apply(
-        second.service.recoverSharedRosterFence,
+        second.service.recoverSharedRosterFence.bind(second.service),
         second.service,
         [{ token: diagnostic.token, confirmQuiescent: true }],
       ))
@@ -2611,6 +2742,181 @@ describe('durable Bot roster', () => {
       expect(search).toHaveBeenCalledOnce()
     } finally {
       await close(h.ctx)
+    }
+  })
+
+  it('installs exact shared browser and Vault request tools only in the shared Agent and rechecks admission before their bodies', async () => {
+    const pool = new MemoryMediaPool()
+    const sharedSessionId = SessionId('shared-session-browser-admission')
+    const connection = {
+      sharedRpc: {
+        enroll: vi.fn(() => async () => {}),
+        handle: vi.fn(() => async () => {}),
+      },
+    }
+    const first = await harness(pool, undefined, undefined, [], new Map(), new Map(), true, 'native', false, { connection })
+    let firstClosed = false
+    let ownerPrincipalId = ''
+    try {
+      const created = await first.service.create({ name: 'Shared browser owner', cwd: '/tmp' })
+      const authority = await SharedAccessAuthority.create(first.ctx, first.credentials, {
+        sessionMaxAgeMs: 60_000,
+        inviteMaxAgeMs: 60_000,
+      })
+      try {
+        const owner = await authority.enrollOwner({ headers: { host: '127.0.0.1:3080' } })
+        ownerPrincipalId = String(owner.principalId)
+        await bindSharedSession(authority, created.bot.id, sharedSessionId, ownerPrincipalId)
+        await authority.mutateExtension('agent-bots/shared-memberships', (current) => {
+          const membership = sharedMembershipSnapshotSchema.parse(current)
+          return {
+            value: undefined,
+            next: {
+              ...membership,
+              memberships: [...membership.memberships, {
+                botId: created.bot.id,
+                principalId: BotPrincipalId(ownerPrincipalId),
+                role: 'owner' as const,
+                grantedBy: BotPrincipalId(ownerPrincipalId),
+                createdAt: 1,
+                updatedAt: 1,
+              }],
+            },
+          }
+        })
+      } finally {
+        await authority.dispose()
+      }
+      const records = first.records
+      await close(first.ctx)
+      firstClosed = true
+
+      const calls = vi.fn(async () => 'shared browser result')
+      let browserAllowed = true
+      const browserAvailable = vi.fn(async () => browserAllowed)
+      let authorized: ReturnType<typeof vi.fn<(signal: AbortSignal, start?: () => void) => Promise<boolean>>> | undefined
+      const vaultCalls = vi.fn(async () => 'shared vault result')
+      let vaultAuthorized: ReturnType<typeof vi.fn<(signal: AbortSignal, start?: () => void) => Promise<boolean>>> | undefined
+      let vaultOwnerSessionId: SessionId | undefined
+      const h = await harness(pool, undefined, undefined, [String(sharedSessionId)], new Map(), records, true, 'native', false, {
+        connection,
+        inspectSharedSessions: true,
+        beforeService: (ctx) => {
+          ctx.provide('botSharedBrowser', {
+            available: browserAvailable,
+            toolForSession: (
+              _scope: Context,
+              _agent: Agent,
+              _botId: BotId,
+              check: (signal: AbortSignal, start?: () => void) => Promise<boolean>,
+            ) => {
+              authorized = vi.fn((signal, start) => check(signal, start))
+              return plainFixtureTool('shared_browser', async () => {
+                if (authorized === undefined) throw new Error('shared browser unavailable')
+                let operation: Promise<string> | undefined
+                if (!await authorized(new AbortController().signal, () => {
+                  operation = calls()
+                }) || operation === undefined) throw new Error('shared browser unavailable')
+                return operation
+              })
+            },
+          } as never)
+          ctx.provide('botSharedVaultRequests', {
+            toolForSession: (
+              _scope: Context,
+              _agent: Agent,
+              _botId: BotId,
+              ownerSessionId: SessionId,
+              check: (signal: AbortSignal, start?: () => void) => Promise<boolean>,
+            ) => {
+              vaultOwnerSessionId = ownerSessionId
+              vaultAuthorized = vi.fn((signal, start) => check(signal, start))
+              return plainFixtureTool('request_vps_secret', async () => {
+                if (vaultAuthorized === undefined) throw new Error('shared vault request unavailable')
+                let operation: Promise<string> | undefined
+                if (!await vaultAuthorized(new AbortController().signal, () => {
+                  operation = vaultCalls()
+                }) || operation === undefined) throw new Error('shared vault request unavailable')
+                return operation
+              })
+            },
+          } as never)
+        },
+      })
+      try {
+        const agent = h.agents[0]
+        if (agent === undefined) throw new Error('shared browser Agent was not created')
+        Object.defineProperty(agent, 'status', { value: 'running', configurable: true })
+        expect(h.ctx.tools.schemas(agent).map(schema => schema.name)).toContain('shared_browser')
+        expect(h.ctx.tools.schemas(agent).map(schema => schema.name)).toContain('request_vps_secret')
+        expect(h.ctx.tools.schemas().map(schema => schema.name)).not.toContain('shared_browser')
+        expect(h.ctx.tools.schemas().map(schema => schema.name)).not.toContain('request_vps_secret')
+        expect(vaultOwnerSessionId).toBe(created.bot.sessionId)
+        const assemble = async () => (await h.ctx.systemPrompt.assemble({ scope: agent })).tools.map(tool => tool.name)
+        await expect(assemble()).resolves.toContain('shared_browser')
+        browserAllowed = false
+        await expect(assemble()).resolves.not.toContain('shared_browser')
+        await expect(h.ctx.tools.execute({
+          callId: ToolCallId('shared-browser-disabled'), name: 'shared_browser', arguments: {},
+          signal: new AbortController().signal, agent,
+        })).resolves.toMatchObject({ isError: true })
+        expect(calls).not.toHaveBeenCalled()
+        browserAllowed = true
+        await expect(assemble()).resolves.toContain('shared_browser')
+        await expect(h.ctx.tools.execute({
+          callId: ToolCallId('shared-browser-admitted'), name: 'shared_browser', arguments: {},
+          signal: new AbortController().signal, agent,
+        })).resolves.toMatchObject({ isError: false })
+        expect(calls).toHaveBeenCalledOnce()
+        await expect(h.ctx.tools.execute({
+          callId: ToolCallId('shared-vault-admitted'), name: 'request_vps_secret', arguments: {},
+          signal: new AbortController().signal, agent,
+        })).resolves.toMatchObject({ isError: false })
+        expect(vaultCalls).toHaveBeenCalledOnce()
+        if (authorized === undefined) throw new Error('shared browser authorization callback was not installed')
+        if (vaultAuthorized === undefined) throw new Error('shared vault authorization callback was not installed')
+        const admittedStart = vi.fn()
+        await expect(authorized(new AbortController().signal, admittedStart)).resolves.toBe(true)
+        expect(admittedStart).toHaveBeenCalledOnce()
+        const authority = await SharedAccessAuthority.create(h.ctx, h.credentials, {
+          sessionMaxAgeMs: 60_000,
+          inviteMaxAgeMs: 60_000,
+        })
+        try {
+          await authority.mutateExtension('agent-bots/shared-memberships', (current) => {
+            const membership = sharedMembershipSnapshotSchema.parse(current)
+            return {
+              value: undefined,
+              next: {
+                ...membership,
+                memberships: membership.memberships.filter(member => String(member.principalId) !== ownerPrincipalId),
+              },
+            }
+          })
+        } finally {
+          await authority.dispose()
+        }
+        const revokedStart = vi.fn()
+        await expect(authorized(new AbortController().signal, revokedStart)).resolves.toBe(false)
+        expect(revokedStart).not.toHaveBeenCalled()
+        const revokedVaultStart = vi.fn()
+        await expect(vaultAuthorized(new AbortController().signal, revokedVaultStart)).resolves.toBe(false)
+        expect(revokedVaultStart).not.toHaveBeenCalled()
+        await expect(h.ctx.tools.execute({
+          callId: ToolCallId('shared-browser-revoked'), name: 'shared_browser', arguments: {},
+          signal: new AbortController().signal, agent,
+        })).resolves.toMatchObject({ isError: true })
+        await expect(h.ctx.tools.execute({
+          callId: ToolCallId('shared-vault-revoked'), name: 'request_vps_secret', arguments: {},
+          signal: new AbortController().signal, agent,
+        })).resolves.toMatchObject({ isError: true })
+        expect(calls).toHaveBeenCalledOnce()
+        expect(vaultCalls).toHaveBeenCalledOnce()
+      } finally {
+        await close(h.ctx)
+      }
+    } finally {
+      if (!firstClosed) await close(first.ctx)
     }
   })
 
@@ -4842,7 +5148,7 @@ describe('durable Bot roster', () => {
   it('mounts native collaboration actions only for Bot-owned Sessions', async () => {
     const pool = new MemoryMediaPool()
     const first = await harness(pool)
-    const created = await first.service.create({ name: 'Native bridge owner', cwd: '/tmp' })
+    const created = await first.service.create({ name: 'Native bridge owner', cwd: fixtureCwd })
     await close(first.ctx)
 
     const h = await harness(pool, undefined, undefined, [String(created.bot.sessionId)])
@@ -4864,7 +5170,7 @@ describe('durable Bot roster', () => {
       expect((await create.execute({ name: 'Research', identity: 'heart', accent: 'rose' }, context)).success).toBe(true)
       const bots = (await h.service.list({})).bots
       const research = bots.find(bot => bot.name === 'Research')!
-      expect(research).toMatchObject({ identity: 'heart', accent: 'rose', cwd: '/tmp' })
+      expect(research).toMatchObject({ identity: 'heart', accent: 'rose', cwd: fixtureCwd })
       expect((await create.execute({ name: 'Research', identity: 'heart', accent: 'rose' }, context)).success).toBe(true)
       expect((await h.service.list({})).bots.filter(bot => bot.name === 'Research')).toHaveLength(1)
       const edit = tools.find(tool => tool.name === 'edit_bot_profile')!
@@ -5359,19 +5665,26 @@ describe('durable Bot roster', () => {
     expect(() => projectBotMemories(conflict, BotId('bot-alpha'))).toThrow(/conflicting text/)
   })
 
-  it('keeps identical text separate when callers choose distinct explicit ids', async () => {
+  it('orders equal-time memories by id and keeps identical text separate', async () => {
     const pool = new MemoryMediaPool()
     const first = await harness(pool)
     const created = await first.service.create({ name: 'Duplicate text owner', cwd: '/tmp' })
     await close(first.ctx)
     const h = await harness(pool, undefined, undefined, [String(created.bot.sessionId)])
+    const fixedTime = Date.now()
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(fixedTime)
     try {
-      const bot = await h.service.collaborationFor({ id: created.bot.sessionId })
-      const firstMemory = await bot.memory!.remember({ memoryId: BotMemoryId('memory-first'), text: 'Same reference.' })
+      const agent = h.agents[0]!
+      const bot = await h.service.collaborationFor(agent)
       const secondMemory = await bot.memory!.remember({ memoryId: BotMemoryId('memory-second'), text: 'Same reference.' })
+      const firstMemory = await bot.memory!.remember({ memoryId: BotMemoryId('memory-first'), text: 'Same reference.' })
+      expect([firstMemory.createdAt, secondMemory.createdAt]).toEqual([fixedTime, fixedTime])
       await expect(bot.memory!.list()).resolves.toEqual([firstMemory, secondMemory])
-      expect(h.agents[0]?.session.snapshotEvents().filter(event => event.type === 'bot/memory')).toHaveLength(2)
+      const prompt = renderPrompt(await h.ctx.systemPrompt.assemble({ scope: agent }))
+      expect(prompt).toContain('- "memory-first": "Same reference."\n- "memory-second": "Same reference."')
+      expect(agent.session.snapshotEvents().filter(event => event.type === 'bot/memory')).toHaveLength(2)
     } finally {
+      clock.mockRestore()
       await close(h.ctx)
     }
   })
@@ -6011,7 +6324,7 @@ describe('durable Bot roster', () => {
     h.ctx.emit('session/event', betaAgent.session, failure)
 
     await expect(h.service.inspectGroup({ groupId: group.group.id })).resolves.toMatchObject({
-      deliveries: expect.arrayContaining([
+      deliveries: asymmetricMatchers.arrayContaining([
         expect.objectContaining({
           messageId: 'bot-group-message-credential-failure', botId: beta.bot.id,
           status: 'failed', error: 'This Bot could not reply because its provider credentials are missing. Connect the provider, then retry.',
@@ -6023,10 +6336,10 @@ describe('durable Bot roster', () => {
     const reopened = await harness(pool, undefined, undefined, [String(alpha.bot.sessionId), String(beta.bot.sessionId)])
     try {
       await expect(reopened.service.inspectGroup({ groupId: group.group.id })).resolves.toMatchObject({
-        deliveries: expect.arrayContaining([
+        deliveries: asymmetricMatchers.arrayContaining([
           expect.objectContaining({
             messageId: 'bot-group-message-credential-failure', botId: beta.bot.id,
-            status: 'failed', error: expect.stringContaining('provider credentials are missing'),
+            status: 'failed', error: asymmetricMatchers.stringContaining('provider credentials are missing'),
           }),
         ]),
       })
@@ -6064,10 +6377,10 @@ describe('durable Bot roster', () => {
       await reopened.ctx.serial('agent/created', { agent: resumedBeta, source: 'resume' })
 
       await expect(reopened.service.inspectGroup({ groupId: group.group.id })).resolves.toMatchObject({
-        deliveries: expect.arrayContaining([
+        deliveries: asymmetricMatchers.arrayContaining([
           expect.objectContaining({
             messageId: 'bot-group-message-restart-failure', botId: beta.bot.id,
-            status: 'failed', error: expect.stringContaining('provider credentials are missing'),
+            status: 'failed', error: asymmetricMatchers.stringContaining('provider credentials are missing'),
           }),
         ]),
       })
@@ -6101,7 +6414,7 @@ describe('durable Bot roster', () => {
       await reopened.ctx.serial('agent/created', { agent: resumedBeta, source: 'resume' })
 
       await expect(reopened.service.inspectGroup({ groupId: group.group.id })).resolves.toMatchObject({
-        deliveries: expect.arrayContaining([
+        deliveries: asymmetricMatchers.arrayContaining([
           expect.objectContaining({
             messageId: 'bot-group-message-raw-blocked', botId: beta.bot.id,
             status: 'failed', error: 'This Bot could not reply because the request was blocked. Try again.',
@@ -6247,12 +6560,12 @@ describe('durable Bot roster', () => {
     )
     try {
       await expect(reopened.service.inspectGroup({ groupId: group.group.id })).resolves.toMatchObject({
-        deliveries: expect.arrayContaining([
+        deliveries: asymmetricMatchers.arrayContaining([
           expect.objectContaining({
             messageId: 'bot-group-message-persisted-time-context',
             botId: beta.bot.id,
             status: 'failed',
-            error: expect.stringContaining('provider credentials are missing'),
+            error: asymmetricMatchers.stringContaining('provider credentials are missing'),
           }),
         ]),
       })
@@ -6305,12 +6618,12 @@ describe('durable Bot roster', () => {
     try {
       expect(cold.agents).toHaveLength(0)
       await expect(cold.service.inspectGroup({ groupId: group.group.id })).resolves.toMatchObject({
-        deliveries: expect.arrayContaining([
+        deliveries: asymmetricMatchers.arrayContaining([
           expect.objectContaining({
             messageId: 'bot-group-message-cold-inspection',
             botId: beta.bot.id,
             status: 'failed',
-            error: expect.stringContaining('provider credentials are missing'),
+            error: asymmetricMatchers.stringContaining('provider credentials are missing'),
           }),
         ]),
       })
@@ -6363,7 +6676,7 @@ describe('durable Bot roster', () => {
     )
     try {
       await expect(reopened.service.inspectGroup({ groupId: group.group.id })).resolves.toMatchObject({
-        deliveries: expect.arrayContaining([
+        deliveries: asymmetricMatchers.arrayContaining([
           expect.objectContaining({
             messageId: 'bot-group-message-persisted-agent-relay',
             botId: beta.bot.id,
@@ -6606,8 +6919,8 @@ describe('durable Bot roster', () => {
       expect(transcript).toHaveLength(3)
       expect(transcript[0]).toMatchObject({ sender: { kind: 'user' }, text: 'Answer separately.' })
       expect(transcript.slice(1)).toEqual(expect.arrayContaining([
-        expect.objectContaining({ sender: expect.objectContaining({ kind: 'bot', botId: alpha.bot.id }) }),
-        expect.objectContaining({ sender: expect.objectContaining({ kind: 'bot', botId: beta.bot.id }) }),
+        asymmetricMatchers.objectContaining({ sender: asymmetricMatchers.objectContaining({ kind: 'bot', botId: alpha.bot.id }) }),
+        asymmetricMatchers.objectContaining({ sender: asymmetricMatchers.objectContaining({ kind: 'bot', botId: beta.bot.id }) }),
       ]))
     } finally {
       await close(h.ctx)
@@ -6931,7 +7244,7 @@ describe('durable Bot roster', () => {
                 kind: 'grant',
                 payload: {
                   version: 1,
-                  messages: stored.payload.messages.map(message => ({
+                  messages: storedGroupMessages.parse(stored.payload.messages).map(message => ({
                     ...(message.status === 'pending'
                       ? (() => {
                         const { admissionToken: _admissionToken, admissionStartedAt: _admissionStartedAt, ...withoutAdmission } = message
@@ -7057,7 +7370,7 @@ describe('durable Bot roster', () => {
       await rejected
       release.resolve(undefined)
       for (let index = 0; index < 6; index += 1) await Promise.resolve()
-      await vi.runAllTicks()
+      vi.runAllTicks()
       await vi.runOnlyPendingTimersAsync()
       await vi.advanceTimersByTimeAsync(1)
       expect(records.get(credentialKey('agent-bots', 'shared-group-message-deliveries'))).toMatchObject({
@@ -7136,7 +7449,7 @@ describe('durable Bot roster', () => {
         kind: 'grant',
         payload: {
           version: 1,
-          messages: current.payload.messages.map(message => ({
+          messages: storedGroupMessages.parse(current.payload.messages).map(message => ({
             ...message,
             ...(message.status === 'pending' ? { claimLeaseUntil: 0 } : {}),
           })),
@@ -7972,9 +8285,11 @@ describe('durable Bot roster', () => {
         source: { kind: 'bot-group-message', groupId, messageId },
       }), { surfaceOp: 'append' })
       await vi.advanceTimersByTimeAsync(1_000)
-      await vi.waitFor(() => expect(records.get(credentialKey('agent-bots', 'shared-group-message-deliveries'))).toMatchObject({
-        payload: { messages: [{ status: 'accepted' }] },
-      }), { timeout: 2_000, interval: 10 })
+      await vi.waitFor(() => {
+        expect(records.get(credentialKey('agent-bots', 'shared-group-message-deliveries'))).toMatchObject({
+          payload: { messages: [{ status: 'accepted' }] },
+        })
+      }, { timeout: 2_000, interval: 10 })
       expect(h.followups[0]).not.toHaveBeenCalled()
     } finally {
       processKill.mockRestore()
@@ -8258,7 +8573,7 @@ describe('durable Bot roster', () => {
         kind: 'grant',
         payload: {
           version: 1,
-          messages: current.payload.messages.map(message => ({
+          messages: storedGroupMessages.parse(current.payload.messages).map(message => ({
             ...message,
             ...(message.status === 'pending' ? { claimLeaseUntil: 0 } : {}),
           })),
@@ -9008,14 +9323,14 @@ describe('durable Bot roster', () => {
     const h = await harness()
     try {
       const created = await h.service.create({
-        name: 'Research partner', identity: 'sparkle', accent: 'blue', cwd: '/tmp',
+        name: 'Research partner', identity: 'sparkle', accent: 'blue', cwd: fixtureCwd,
       })
       expect(created.bot.state).toBe('active')
       expect(created.bot.identity).toBe('sparkle')
       expect(created.bot.accent).toBe('blue')
       expect(created.bot.sessionId).toMatch(/^bot-session-/)
       expect(h.create).toHaveBeenCalledWith(
-        { sessionId: created.bot.sessionId, cwd: '/tmp' },
+        { sessionId: created.bot.sessionId, cwd: fixtureCwd },
         expect.any(AbortSignal),
       )
 
@@ -10319,7 +10634,7 @@ describe('durable Bot roster', () => {
         kind: 'grant',
         payload: {
           version: 4,
-          revisions: { [id]: expect.any(Number) },
+          revisions: { [id]: asymmetricMatchers.any(Number) },
         },
       })
     } finally {
@@ -11222,7 +11537,7 @@ describe('durable Bot roster', () => {
         botId: created.bot.id,
         persona: 'New instruction.',
         capabilities: ['chat', 'research'],
-      })).resolves.toMatchObject({ bot: { updatedAt: expect.any(Number) } })
+      })).resolves.toMatchObject({ bot: { updatedAt: asymmetricMatchers.any(Number) } })
 
       await expect(h.service.updateProfile({
         botId: created.bot.id,
@@ -11878,7 +12193,7 @@ describe('durable Bot roster', () => {
       }
       const createdRoutine = await create.execute({ title: 'Status check', prompt: 'Check status', every_seconds: 300 }, context)
       expect(createdRoutine.success).toBe(true)
-      const routineId = JSON.parse(createdRoutine.contentItems[0]!.text).id as string
+      const { id: routineId } = routineIdentifier.parse(JSON.parse(createdRoutine.contentItems[0]!.text))
       const paused = await pause.execute({ id: routineId }, { ...context, callId: 'pause-routine' })
       expect(paused).toMatchObject({ success: true })
       expect(await h.ctx.schedule.catalog()).toEqual([expect.objectContaining({ id: routineId, status: 'paused' })])
@@ -12003,6 +12318,72 @@ describe('durable Bot roster', () => {
     }
   })
 
+  it('retains version-two roles, authors, partial records, and supplemental sources additively', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    let botId!: BotView['id']
+    try {
+      const { bot } = await first.service.create({ name: 'Extended History Bot', cwd: '/tmp' })
+      botId = bot.id
+      await expect(first.service.importGrokHistory({ botId, document: JSON.stringify({
+        source: 'grok-bot', version: 1, firstCachedSequence: 1, messages: [
+          { sourceSequence: 1, role: 'user', text: 'Earlier question', timestampMs: 1000 },
+          { sourceSequence: 2, role: 'assistant', text: 'Earlier answer', timestampMs: 2000 },
+        ],
+      }) })).resolves.toEqual({ messages: 2 })
+
+      const extended = {
+        source: 'grok-bot', version: 2, firstCachedSequence: 0, complete: false,
+        messages: [
+          { sourceSequence: 0, role: 'tool', text: '', timestampMs: null, incomplete: true as const },
+          { sourceSequence: 1, role: 'user', text: 'Earlier question', timestampMs: 1000 },
+          { sourceSequence: 2, role: 'assistant', text: 'Earlier answer', timestampMs: 2000 },
+          { sourceSequence: 3, role: 'agent', text: 'Later answer', timestampMs: null, author: 'Desk Bot' },
+        ],
+        sources: [{
+          id: 'builder', label: 'Bot builder', firstCachedSequence: 0, complete: false,
+          messages: [
+            { sourceSequence: 0, role: 'tool', text: 'Tool output', timestampMs: 3000 },
+            { sourceSequence: 1, role: 'assistant', text: 'Builder answer', timestampMs: null, incomplete: true as const },
+          ],
+        }],
+      }
+      await expect(first.service.importGrokHistory({ botId, document: JSON.stringify(extended) }))
+        .resolves.toEqual({ messages: 6 })
+      await expect(first.service.readGrokHistory({ botId })).resolves.toEqual(extended)
+
+      const enriched = {
+        ...structuredClone(extended),
+        messages: structuredClone(extended.messages).map(message => message.sourceSequence === 1 ? { ...message, author: 'owner' } : message),
+      }
+      await expect(first.service.importGrokHistory({ botId, document: JSON.stringify(enriched) }))
+        .resolves.toEqual({ messages: 6 })
+      const enrichedArchive = await first.service.readGrokHistory({ botId })
+      expect(enrichedArchive?.messages[0]).toMatchObject({ sourceSequence: 0 })
+      expect(enrichedArchive?.messages[1]).toMatchObject({ sourceSequence: 1, author: 'owner' })
+
+      const changedAuthor = {
+        ...structuredClone(enriched),
+        messages: structuredClone(enriched.messages).map(message => message.sourceSequence === 1 ? { ...message, author: 'another owner' } : message),
+      }
+      await expect(first.service.importGrokHistory({ botId, document: JSON.stringify(changedAuthor) }))
+        .rejects.toThrow('would remove or change')
+
+      const sourceRemoved = { ...structuredClone(enriched), sources: undefined }
+      await expect(first.service.importGrokHistory({ botId, document: JSON.stringify(sourceRemoved) }))
+        .rejects.toThrow('would remove or change')
+
+      await expect(first.service.importGrokHistory({ botId, document: JSON.stringify({
+        source: 'grok-bot', version: 1, firstCachedSequence: 1, messages: [
+          { sourceSequence: 1, role: 'user', text: 'Earlier question', timestampMs: 1000 },
+          { sourceSequence: 2, role: 'assistant', text: 'Earlier answer', timestampMs: 2000 },
+        ],
+      }) })).rejects.toThrow('would remove or change')
+    } finally {
+      await close(first.ctx)
+    }
+  })
+
   it('imports Grok memories and paused routines into the existing Bot Session', async () => {
     const pool = new MemoryMediaPool()
     const first = await harness(pool)
@@ -12050,6 +12431,166 @@ describe('durable Bot roster', () => {
       await expect(h.service.listMemory({ botId: bot.id })).resolves.toEqual({ memories: memories.slice(1) })
     } finally {
       await close(h.ctx)
+    }
+  })
+
+  it('imports managed Grok skills through the Computer workspace after a Host migration', async () => {
+    const pool = new MemoryMediaPool()
+    const hostRoot = await mkdtemp(join(tmpdir(), 'yh-grok-import-host-'))
+    const containerRoot = await mkdtemp(join(tmpdir(), 'yh-grok-import-computer-'))
+    await mkdir(join(hostRoot, '.agents', 'skills', 'legacy'), { recursive: true })
+    await writeFile(join(hostRoot, '.agents', 'skills', 'legacy', 'SKILL.md'), 'Retain the old Host file.')
+    const seed = await harness(pool)
+    const created = await seed.service.create({ name: 'Migrated Grok Bot', cwd: hostRoot })
+    const records = seed.records
+    await close(seed.ctx)
+    const prepare = vi.fn(async (sessionId: SessionId) => {
+      await mkdir(join(containerRoot, String(sessionId)), { recursive: true })
+    })
+    let failSecond = true
+    const installSkill = vi.fn(async (
+      sessionId: SessionId, _botId: BotId, name: string, content: string, preview: boolean,
+    ): Promise<boolean> => {
+      const path = join(containerRoot, String(sessionId), '.agents', 'skills', name, 'SKILL.md')
+      let existing: string | undefined
+      try {
+        existing = await readFile(path, 'utf8')
+      } catch (error: unknown) {
+        if (!(error instanceof Error) || !('code' in error) || error.code !== 'ENOENT') throw error
+      }
+      if (existing !== undefined) {
+        if (existing !== content) throw new Error('A Grok skill file already exists with different content.')
+        return false
+      }
+      if (preview) return true
+      if (name === 'second-skill' && failSecond) {
+        failSecond = false
+        throw new Error('The Computer transfer was interrupted.')
+      }
+      await mkdir(dirname(path), { recursive: true })
+      await writeFile(path, content, { flag: 'wx' })
+      expect(await readFile(path, 'utf8')).toBe(content)
+      return true
+    })
+    const h = await harness(pool, undefined, undefined, [String(created.bot.sessionId)], new Map(), records, true, 'native', false, {
+      beforeService: (ctx) => {
+        ctx.provide('botWorkspaces', {
+          workspace: (sessionId: SessionId) => join(containerRoot, String(sessionId)),
+          prepare,
+          installSkill,
+          managed: () => true,
+        })
+      },
+    })
+    try {
+      const document = JSON.stringify({
+        format: 'grok-bot-export', version: 1, bots: [{
+          name: 'Source Bot', skills: [
+            { name: 'First Skill', instructions: 'First.' },
+            { name: 'Second Skill', instructions: 'Second.' },
+          ],
+        }],
+      })
+      const request = { botId: created.bot.id, document }
+      await expect(h.service.importGrokBot({ ...request, preview: true })).resolves.toMatchObject({
+        skills: 2, skillNames: ['first-skill', 'second-skill'],
+      })
+      expect(prepare).not.toHaveBeenCalled()
+      await expect(readFile(join(containerRoot, String(created.bot.sessionId), '.agents/skills/first-skill/SKILL.md')))
+        .rejects.toMatchObject({ code: 'ENOENT' })
+
+      await expect(h.service.importGrokBot(request)).rejects.toThrow('Computer transfer was interrupted')
+      await expect(readFile(join(containerRoot, String(created.bot.sessionId), '.agents/skills/first-skill/SKILL.md'), 'utf8'))
+        .resolves.toContain('First.')
+      await expect(readFile(join(hostRoot, '.agents/skills/legacy/SKILL.md'), 'utf8'))
+        .resolves.toBe('Retain the old Host file.')
+
+      await expect(h.service.importGrokBot(request)).resolves.toMatchObject({
+        skills: 2, skillNames: ['first-skill', 'second-skill'],
+      })
+      expect(prepare).toHaveBeenCalledTimes(2)
+      await expect(readFile(join(containerRoot, String(created.bot.sessionId), '.agents/skills/second-skill/SKILL.md'), 'utf8'))
+        .resolves.toContain('Second.')
+      expect(installSkill.mock.calls.map(call => call[2])).toEqual([
+        'first-skill', 'second-skill', 'first-skill', 'second-skill', 'first-skill', 'second-skill',
+      ])
+    } finally {
+      await close(h.ctx)
+      await rm(hostRoot, { recursive: true, force: true })
+      await rm(containerRoot, { recursive: true, force: true })
+    }
+  })
+
+  it.skipIf(process.platform === 'win32')('imports managed Grok skills through the mounted Computer filesystem', async () => {
+    const pool = new MemoryMediaPool()
+    const hostRoot = await mkdtemp(join(tmpdir(), 'yh-grok-mounted-host-'))
+    const computerRoot = await mkdtemp(join(tmpdir(), 'yh-grok-mounted-computer-'))
+    const seed = await harness(pool)
+    const created = await seed.service.create({ name: 'Mounted Grok Bot', cwd: hostRoot })
+    const records = seed.records
+    await close(seed.ctx)
+    await mkdir(join(computerRoot, String(created.bot.sessionId)), { recursive: true })
+    const ensure = vi.spyOn(VpsRuntime.prototype, 'ensure').mockResolvedValue(undefined)
+    const execArgv = vi.spyOn(VpsRuntime.prototype, 'execArgv').mockImplementation((_sessionId, command) => {
+      const workspace = command[command.length - 1]
+      if (workspace === undefined) throw new Error('Missing fixture Computer workspace')
+      if (command[2] === '-c') {
+        const worker = command[3]
+        if (worker === undefined) throw new Error('Missing bundled filesystem worker')
+        return ['/usr/bin/env', 'TMPDIR=' + computerRoot, 'python3', '-I', '-c', worker, workspace]
+      }
+      return ['/usr/bin/env', 'TMPDIR=' + computerRoot, 'python3', 'scripts/vps-bot/files.py', workspace]
+    })
+    let h: Awaited<ReturnType<typeof harness>> | undefined
+    const parentFs = {}
+    try {
+      h = await harness(pool, undefined, undefined, [String(created.bot.sessionId)], new Map(), records, true, 'native', false, {
+        beforeService: (ctx) => {
+          ctx.provide('fs', parentFs as never)
+          mountVpsBots(ctx, { root: computerRoot, image: 'localhost/yharness-test', bots: [String(created.bot.id)] }, [])
+        },
+      })
+      const request = {
+        botId: created.bot.id,
+        document: JSON.stringify({
+          format: 'grok-bot-export', version: 1, bots: [{
+            name: 'Source Bot', skills: [
+              { name: 'First Skill', instructions: 'First.' },
+              { name: 'Second Skill', instructions: 'Second.' },
+            ],
+          }],
+        }),
+      }
+      await expect(h.service.importGrokBot(request)).resolves.toMatchObject({
+        skills: 2, skillNames: ['first-skill', 'second-skill'],
+      })
+      await expect(h.service.importGrokBot(request)).resolves.toMatchObject({
+        skills: 2, skillNames: ['first-skill', 'second-skill'],
+      })
+      await expect(readFile(join(computerRoot, String(created.bot.sessionId), '.agents/skills/first-skill/SKILL.md'), 'utf8'))
+        .resolves.toContain('First.')
+      await expect(readFile(join(computerRoot, String(created.bot.sessionId), '.agents/skills/second-skill/SKILL.md'), 'utf8'))
+        .resolves.toContain('Second.')
+      await expect(readFile(join(hostRoot, '.agents/skills/first-skill/SKILL.md'), 'utf8'))
+        .rejects.toMatchObject({ code: 'ENOENT' })
+      expect(h.ctx.get('fs')).toBe(parentFs)
+
+      const controller = new AbortController()
+      const preparationSignal = Promise.withResolvers<AbortSignal>()
+      ensure.mockImplementationOnce(async (_sessionId, signal) => {
+        if (signal === undefined) throw new Error('Missing import cancellation signal')
+        preparationSignal.resolve(signal)
+        controller.abort(new Error('synthetic cancellation during Computer preparation'))
+        signal.throwIfAborted()
+      })
+      await expect(h.service.importGrokBot(request, controller.signal)).rejects.toThrow('synthetic cancellation during Computer preparation')
+      await expect(preparationSignal.promise).resolves.toBe(controller.signal)
+    } finally {
+      if (h !== undefined) await close(h.ctx)
+      ensure.mockRestore()
+      execArgv.mockRestore()
+      await rm(hostRoot, { recursive: true, force: true })
+      await rm(computerRoot, { recursive: true, force: true })
     }
   })
 
@@ -12713,7 +13254,7 @@ describe('durable Bot roster', () => {
       if (followup === undefined) throw new Error('recovery candidate follow-up was not created')
       expect(followup).toHaveBeenCalledOnce()
       expect(followup.mock.calls[0]?.[0].content).toEqual([
-        { type: 'text', text: expect.stringContaining('[BOT EVENT ROUTINE]\nOlder routine prompt.') },
+        { type: 'text', text: asymmetricMatchers.stringContaining('[BOT EVENT ROUTINE]\nOlder routine prompt.') },
       ])
     } finally {
       if (reopened !== undefined) await close(reopened.ctx)
@@ -12903,7 +13444,8 @@ describe('durable Bot roster', () => {
       h.ctx.emit('session/event', owner.session, owner.session.snapshotEvents().at(-1)!)
       await vi.waitFor(() => { expect(followup).toHaveBeenCalledOnce() })
       await vi.waitFor(async () => {
-        const current = await history.execute({ id: JSON.parse(result.contentItems[0]!.text).id, limit: 1 }, {
+        const { id } = routineIdentifier.parse(JSON.parse(result.contentItems[0]!.text))
+        const current = await history.execute({ id, limit: 1 }, {
           ...context, callId: 'status-retry-history',
         })
         expect(JSON.parse(current.contentItems[0]!.text)).toMatchObject({ deliveries: [{ status: 'delivered' }] })
@@ -13940,7 +14482,7 @@ describe('durable Bot roster', () => {
       if (agent === undefined) throw new Error('boundary-id test Agent was not created')
 
       await expect(h.service.listConnectedApps({ botId: created.bot.id })).resolves.toMatchObject({
-        apps: expect.arrayContaining(ids.map(id => expect.objectContaining({ id, allowed: false }))),
+        apps: asymmetricMatchers.arrayContaining(ids.map(id => asymmetricMatchers.objectContaining({ id, allowed: false }))),
       })
       for (const [index, id] of ids.entries()) {
         await expect(h.service.setConnectedAppAccess({ botId: created.bot.id, appId: id, allowed: true })).resolves.toMatchObject({
@@ -13957,7 +14499,7 @@ describe('durable Bot roster', () => {
       const reopened = await harness(pool, undefined, undefined, [String(created.bot.sessionId)])
       try {
         await expect(reopened.service.listConnectedApps({ botId: created.bot.id })).resolves.toMatchObject({
-          apps: expect.arrayContaining(ids.map(id => expect.objectContaining({ id, allowed: true }))),
+          apps: asymmetricMatchers.arrayContaining(ids.map(id => asymmetricMatchers.objectContaining({ id, allowed: true }))),
         })
       } finally {
         await close(reopened.ctx)
@@ -14066,7 +14608,7 @@ describe('durable Bot roster', () => {
     const h = await harness(new MemoryMediaPool(), create)
     try {
       const id = BotId('bot-retry')
-      const failed = h.service.create({ id, name: 'Retry me', cwd: '/tmp' })
+      const failed = h.service.create({ id, name: 'Retry me', cwd: fixtureCwd })
       await expect(failed).rejects.toMatchObject({
         code: 'bot/provisioning-failed',
       })
@@ -14075,11 +14617,11 @@ describe('durable Bot roster', () => {
       await expect(h.service.list({})).resolves.toMatchObject({
         bots: [{ id, state: 'provisioning', sessionId: firstSessionId }],
       })
-      const retried = await h.service.create({ id, name: 'Retry me', cwd: '/tmp' })
+      const retried = await h.service.create({ id, name: 'Retry me', cwd: fixtureCwd })
       expect(retried.bot.state).toBe('active')
       expect(create).toHaveBeenNthCalledWith(
         2,
-        { sessionId: firstSessionId, cwd: '/tmp' },
+        { sessionId: firstSessionId, cwd: fixtureCwd },
         expect.any(AbortSignal),
       )
     } finally {
@@ -14999,7 +15541,7 @@ describe('durable Bot roster', () => {
       await reopened.ctx.serial('agent/created', { agent: resumedBeta, source: 'resume' })
 
       await expect(reopened.service.inspectGroup({ groupId: group.group.id })).resolves.toMatchObject({
-        deliveries: expect.arrayContaining([
+        deliveries: asymmetricMatchers.arrayContaining([
           expect.objectContaining({
             messageId: 'bot-group-message-pending-restart', botId: beta.bot.id,
             status: 'failed', error: 'This Bot could not reply because the request was blocked. Try again.',
@@ -15032,7 +15574,7 @@ describe('durable Bot roster', () => {
       h.ctx.emit('session/event', betaAgent.session, failure)
 
       await expect(h.service.inspectGroup({ groupId: group.group.id })).resolves.toMatchObject({
-        deliveries: expect.arrayContaining([
+        deliveries: asymmetricMatchers.arrayContaining([
           expect.objectContaining({ messageId: 'bot-group-message-blocked-pre-step', botId: beta.bot.id, status: 'failed' }),
         ]),
       })
@@ -15070,7 +15612,7 @@ describe('durable Bot roster', () => {
       h.ctx.emit('session/event', betaAgent.session, failure)
 
       await expect(h.service.inspectGroup({ groupId: group.group.id })).resolves.toMatchObject({
-        deliveries: expect.arrayContaining([
+        deliveries: asymmetricMatchers.arrayContaining([
           expect.objectContaining({ messageId: 'bot-group-message-rewritten-pre-step', botId: beta.bot.id, status: 'accepted' }),
         ]),
       })
@@ -15142,7 +15684,7 @@ describe('durable Bot roster', () => {
           { sender: { kind: 'user' }, text: 'Beta should finish this after removal.' },
           { sender: { kind: 'bot', botId: beta.bot.id }, text: 'Beta completed the queued work.' },
         ],
-        deliveries: expect.arrayContaining([
+        deliveries: asymmetricMatchers.arrayContaining([
           expect.objectContaining({ messageId: 'bot-group-message-removed-delivery', botId: beta.bot.id, status: 'responded' }),
         ]),
       })
@@ -15181,7 +15723,7 @@ describe('durable Bot roster', () => {
       h.ctx.emit('session/event', betaAgent.session, failure)
 
       await expect(h.service.inspectGroup({ groupId: group.group.id })).resolves.toMatchObject({
-        deliveries: expect.arrayContaining([
+        deliveries: asymmetricMatchers.arrayContaining([
           expect.objectContaining({
             messageId: 'bot-group-message-removed-failure', botId: beta.bot.id, status: 'failed',
             error: 'This Bot could not reply because its provider credentials are missing. Connect the provider, then retry.',
@@ -15252,14 +15794,14 @@ describe('durable Bot roster', () => {
       const created = await h.service.create({ name: 'Revocation source', cwd: '/private/revocation-source' })
       const published = await h.service.publishTemplate({ botId: created.bot.id, name: 'Revocable template' })
       await expect(h.service.revokeTemplate({ templateId: published.template.id })).resolves.toMatchObject({
-        template: { id: published.template.id, revokedAt: expect.any(Number) },
+        template: { id: published.template.id, revokedAt: asymmetricMatchers.any(Number) },
       })
       await expect(h.service.previewTemplate({ shareCode: published.template.shareCode })).rejects.toMatchObject({ code: 'bot-template/revoked' })
       await expect(h.service.importTemplate({ shareCode: published.template.shareCode })).rejects.toMatchObject({ code: 'bot-template/revoked' })
       await expect(h.service.previewTemplate({ shareCode: 'malformed-code' as never })).rejects.toMatchObject({ code: 'bot-template/invalid' })
       await expect(h.service.importTemplate({ shareCode: 'malformed-code' as never })).rejects.toMatchObject({ code: 'bot-template/invalid' })
       await expect(h.service.listTemplates({})).resolves.toMatchObject({
-        templates: [expect.objectContaining({ id: published.template.id, revokedAt: expect.any(Number) })],
+        templates: [asymmetricMatchers.objectContaining({ id: published.template.id, revokedAt: asymmetricMatchers.any(Number) })],
       })
     } finally {
       await close(h.ctx)
@@ -15325,16 +15867,16 @@ describe('durable Bot roster', () => {
         name: 'Portable partner', persona: 'Prefer concise evidence-backed answers.',
         capabilities: ['chat', 'collaboration'], agentPreset: 'portable-preset', avatar: { data: 'AQID' },
         fingerprint: published.template.fingerprint,
-        issuerFingerprint: expect.stringMatching(/^[0-9a-f]{64}$/u),
+        issuerFingerprint: asymmetricMatchers.stringMatching(/^[0-9a-f]{64}$/u),
       })
       await approveTemplate(target.service, published.template.shareCode)
-      const first = await target.service.importTemplate({ shareCode: published.template.shareCode, importId: 'retry-1' } as never)
-      const second = await target.service.importTemplate({ shareCode: published.template.shareCode, importId: 'retry-1' } as never)
+      const first = await target.service.importTemplate({ shareCode: published.template.shareCode, importId: 'retry-1' })
+      const second = await target.service.importTemplate({ shareCode: published.template.shareCode, importId: 'retry-1' })
       expect(second.bot.id).toBe(first.bot.id)
       expect(second.bot.sessionId).toBe(first.bot.sessionId)
       await expect(target.service.importTemplate({
         shareCode: published.template.shareCode, importId: 'retry-1', name: 'Different retry metadata',
-      } as never)).rejects.toMatchObject({ code: 'bot-template/import-conflict' })
+      })).rejects.toMatchObject({ code: 'bot-template/import-conflict' })
       expect(first.bot).toMatchObject({
         name: 'Portable partner', persona: 'Prefer concise evidence-backed answers.',
         capabilities: ['chat', 'collaboration'], avatar: { mediaType: 'image/png' },
@@ -15365,7 +15907,7 @@ describe('durable Bot roster', () => {
       await expect(importedAfterRevocation.service.importTemplate({
         shareCode: published.template.shareCode,
         importId: 'after-revocation',
-      } as never)).resolves.toMatchObject({ bot: { name: 'Portable partner' } })
+      })).resolves.toMatchObject({ bot: { name: 'Portable partner' } })
     } finally {
       await close(importedAfterRevocation.ctx)
     }
@@ -15386,7 +15928,7 @@ describe('durable Bot roster', () => {
       provideResolvedTemplatePreset(target.ctx)
       await approveTemplate(target.service, published.template.shareCode)
       target.readImage.mockRejectedValueOnce(new Error('avatar admission blocked'))
-      await expect(target.service.importTemplate({ shareCode: published.template.shareCode } as never))
+      await expect(target.service.importTemplate({ shareCode: published.template.shareCode }))
         .rejects.toMatchObject({ code: 'bot-template/avatar-invalid' })
       await expect(target.service.list({})).resolves.toMatchObject({ bots: [] })
       expect(target.create).not.toHaveBeenCalled()
@@ -15396,7 +15938,7 @@ describe('durable Bot roster', () => {
       }
       target.saveImage.mockResolvedValue(targetAvatar)
       target.readImage.mockResolvedValue({ ref: targetAvatar, data: Uint8Array.of(1, 2, 3) })
-      const imported = await target.service.importTemplate({ shareCode: published.template.shareCode } as never)
+      const imported = await target.service.importTemplate({ shareCode: published.template.shareCode })
       expect(target.saveImage).toHaveBeenCalledTimes(2)
       expect(target.readImage).toHaveBeenCalledTimes(2)
       expect(imported.bot).toMatchObject({ name: 'Avatar source', avatar: { mediaType: 'image/png' } })
@@ -15453,22 +15995,22 @@ describe('durable Bot roster', () => {
       currentSchemas = changedSchemas
       await expect(target.service.importTemplate({
         shareCode: published.template.shareCode, importId: 'permission-mutation-retry',
-      } as never)).rejects.toMatchObject({ code: 'bot-template/approval-mismatch' })
+      })).rejects.toMatchObject({ code: 'bot-template/approval-mismatch' })
       expect(target.create).not.toHaveBeenCalled()
 
       currentSchemas = initialSchemas
       const first = await target.service.importTemplate({
         shareCode: published.template.shareCode, importId: 'permission-mutation-retry',
-      } as never)
+      })
       currentSchemas = changedSchemas
       await expect(target.service.importTemplate({
         shareCode: published.template.shareCode, importId: 'permission-mutation-retry',
-      } as never)).rejects.toMatchObject({ code: 'bot-template/approval-mismatch' })
+      })).rejects.toMatchObject({ code: 'bot-template/approval-mismatch' })
 
       currentSchemas = initialSchemas
       await expect(target.service.importTemplate({
         shareCode: published.template.shareCode, importId: 'permission-mutation-retry',
-      } as never)).resolves.toMatchObject({ bot: { id: first.bot.id } })
+      })).resolves.toMatchObject({ bot: { id: first.bot.id } })
       expect(target.create).toHaveBeenCalledOnce()
       expect(schemas).toHaveBeenCalled()
     } finally {
@@ -15507,7 +16049,7 @@ describe('durable Bot roster', () => {
       currentSchemas = initialSchemas
       await expect(target.service.importTemplate({
         shareCode: published.template.shareCode, importId: 'preview-race-import',
-      } as never)).rejects.toMatchObject({ code: 'bot-template/untrusted' })
+      })).rejects.toMatchObject({ code: 'bot-template/untrusted' })
 
       await expect(approveTemplate(target.service, published.template.shareCode)).resolves.toMatchObject({
         template: { fingerprint: published.template.fingerprint, approved: true },
@@ -15553,7 +16095,7 @@ describe('durable Bot roster', () => {
 
       await expect(target.service.importTemplate({
         shareCode: published.template.shareCode, importId: 'permission-retry',
-      } as never)).rejects.toMatchObject({ code: 'bot-template/permissions-unavailable' })
+      })).rejects.toMatchObject({ code: 'bot-template/permissions-unavailable' })
       expect(target.create).not.toHaveBeenCalled()
       await expect(target.service.list({})).resolves.toMatchObject({ bots: [] })
     } finally {
@@ -15604,7 +16146,7 @@ describe('durable Bot roster', () => {
       await expect(target.service.importTemplate({
         shareCode: published.template.shareCode,
         importId: 'untrusted-import',
-      } as never)).rejects.toMatchObject({ code: 'bot-template/untrusted' })
+      })).rejects.toMatchObject({ code: 'bot-template/untrusted' })
 
       const preview = await target.service.previewTemplate({ shareCode: published.template.shareCode })
       expect(preview.approvalToken).toBeDefined()
@@ -15620,7 +16162,7 @@ describe('durable Bot roster', () => {
       await expect(target.service.importTemplate({
         shareCode: published.template.shareCode,
         importId: 'untrusted-import',
-      } as never)).resolves.toMatchObject({ bot: { agentPreset: 'dangerous-preset' } })
+      })).resolves.toMatchObject({ bot: { agentPreset: 'dangerous-preset' } })
     } finally {
       await close(target.ctx)
     }
@@ -15645,10 +16187,10 @@ describe('durable Bot roster', () => {
     try {
       const source = await h.service.create({ name: 'Retry source', cwd: '/tmp' })
       const published = await h.service.publishTemplate({ botId: source.bot.id })
-      const first = await h.service.importTemplate({ shareCode: published.template.shareCode, importId: 'edited-retry' } as never)
+      const first = await h.service.importTemplate({ shareCode: published.template.shareCode, importId: 'edited-retry' })
       await h.service.rename({ botId: first.bot.id, name: 'Edited imported Bot' })
 
-      await expect(h.service.importTemplate({ shareCode: published.template.shareCode, importId: 'edited-retry' } as never)).resolves.toMatchObject({
+      await expect(h.service.importTemplate({ shareCode: published.template.shareCode, importId: 'edited-retry' })).resolves.toMatchObject({
         bot: { id: first.bot.id, sessionId: first.bot.sessionId, name: 'Edited imported Bot' },
       })
     } finally {
@@ -15661,10 +16203,10 @@ describe('durable Bot roster', () => {
     try {
       const source = await h.service.create({ name: 'Revoked retry source', cwd: '/tmp' })
       const published = await h.service.publishTemplate({ botId: source.bot.id })
-      const first = await h.service.importTemplate({ shareCode: published.template.shareCode, importId: 'revoked-retry' } as never)
+      const first = await h.service.importTemplate({ shareCode: published.template.shareCode, importId: 'revoked-retry' })
       await h.service.revokeTemplate({ templateId: published.template.id })
 
-      await expect(h.service.importTemplate({ shareCode: published.template.shareCode, importId: 'revoked-retry' } as never)).resolves.toMatchObject({
+      await expect(h.service.importTemplate({ shareCode: published.template.shareCode, importId: 'revoked-retry' })).resolves.toMatchObject({
         bot: { id: first.bot.id, sessionId: first.bot.sessionId },
       })
     } finally {
@@ -15711,7 +16253,7 @@ describe('durable Bot roster', () => {
       await expect(reopened.service.listTemplates({})).resolves.toMatchObject({
         templates: [{ name: 'Signed name', agentPreset: 'signed-preset' }],
       })
-      await expect(reopened.service.importTemplate({ shareCode: published.template.shareCode } as never)).resolves.toMatchObject({
+      await expect(reopened.service.importTemplate({ shareCode: published.template.shareCode })).resolves.toMatchObject({
         bot: { name: 'Signed name', agentPreset: 'signed-preset' },
       })
     } finally {

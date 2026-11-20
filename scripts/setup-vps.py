@@ -18,6 +18,14 @@ from pathlib import Path
 REPOSITORY = 'https://github.com/tobenwarrior/y-harness.git'
 SERVICE = 'yharness-vps.service'
 CLI = Path('apps/cli/lib/bin.js')
+BOT_IMAGE = 'localhost/yharness-vps-bot:24.04'
+BOT_BASE_IMAGE = 'docker.io/library/ubuntu:24.04'
+BOT_CONTAINERFILE = Path('scripts/vps-bot/Containerfile')
+BOT_BROWSER_CONTAINERFILE = BOT_CONTAINERFILE.with_name('Browser.Containerfile')
+BOT_BROWSER_IMAGE = 'localhost/yharness-vps-bot-browser:24.04-v1'
+BOT_BROWSER_POLICY = 'browser-seccomp.json'
+PODMAN_POLICIES = (Path('/etc/containers/seccomp.json'), Path('/usr/share/containers/seccomp.json'))
+BOT_ROOT = Path('bots')
 NATIVE_PACKAGES = Path('native/system/packages')
 SANDBOX_SCRIPT = 'sandbox-setup.py'
 BUBBLEWRAP_BIN = Path('/usr/bin/bwrap')
@@ -96,6 +104,203 @@ def require_linux_user():
     for name in ('git', 'loginctl', 'systemctl'):
         if shutil.which(name) is None:
             raise SetupError(f'Setup needs {name}. Install it on the server and retry.')
+
+
+def podman_environment():
+    """Pass only non-sensitive owner paths to the local Podman client."""
+    environment = {
+        'PATH': '/usr/local/bin:/usr/bin:/bin',
+        'LC_ALL': 'C',
+    }
+    for name in ('HOME', 'XDG_RUNTIME_DIR'):
+        value = os.environ.get(name)
+        if value is not None and not re.search(r'[\x00-\x1f\x7f]', value):
+            environment[name] = value
+    return environment
+
+
+def podman_executable(root):
+    """Find Podman or install it through the owner's interactive sudo prompt."""
+    executable = shutil.which('podman')
+    if executable is not None:
+        path = Path(executable).resolve()
+        if path == Path('/usr/bin/podman'):
+            ensure_rootless_podman(path)
+            return path
+        raise SetupError('Podman must be installed at /usr/bin/podman for the rootless VPS Bot runtime.')
+    print('Podman is not installed. Setup may ask for your sudo password.', flush=True)
+    environment = build_environment()
+    environment.update(podman_environment())
+    with os.fdopen(private_file(root / 'podman.log', os.O_WRONLY | os.O_CREAT), 'w') as log:
+        log.truncate()
+        try:
+            # Keep sudo interactive: the owner sees and authorizes every package
+            # installation; setup never attempts a hidden or cached root shell.
+            apt = ['/usr/bin/sudo', '/usr/bin/apt-get', '-o', 'DPkg::Lock::Timeout=30', '-o', 'Acquire::Retries=1']
+            run([*apt, 'update'], env=environment, stdout=log, stderr=subprocess.STDOUT, timeout=180)
+            run(
+                [*apt, 'install', '--no-install-recommends', '--no-upgrade', '--no-remove', '--yes', 'podman', 'uidmap'],
+                env=environment, stdout=log, stderr=subprocess.STDOUT, timeout=180,
+            )
+        except (OSError, subprocess.SubprocessError) as error:
+            raise SetupError('Could not install Podman through interactive sudo. Check the private podman.log.') from error
+    executable = shutil.which('podman')
+    if executable is None or Path(executable).resolve() != Path('/usr/bin/podman'):
+        raise SetupError('Podman is still unavailable after installation. Check the private podman.log.')
+    path = Path('/usr/bin/podman')
+    ensure_rootless_podman(path)
+    return path
+
+
+def subid_mapping(path, account):
+    """Return whether an owner has a sufficiently large subordinate-id range."""
+    try:
+        lines = path.read_text().splitlines()
+    except (OSError, UnicodeError):
+        return False
+    for line in lines:
+        fields = line.split(':')
+        if len(fields) != 3 or fields[0] not in (account, str(os.getuid())):
+            continue
+        try:
+            int(fields[1])
+            if int(fields[2]) >= 65_536:
+                return True
+        except ValueError:
+            continue
+    return False
+
+
+def ensure_rootless_podman(podman):
+    """Require subordinate ids and prove Podman can enter an owner namespace."""
+    account = pwd.getpwuid(os.getuid()).pw_name
+    if not subid_mapping(Path('/etc/subuid'), account) or not subid_mapping(Path('/etc/subgid'), account):
+        raise SetupError('The VPS account needs 65,536-entry /etc/subuid and /etc/subgid mappings for rootless Podman.')
+    try:
+        run(
+            [str(podman), 'unshare', '/usr/bin/true'], env=podman_environment(),
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        raise SetupError('Rootless Podman is not functional for this VPS account. Check uidmap and subordinate ids.') from error
+
+
+def ensure_bot_image(root, source):
+    """Build the audited local Bot desktop image once, without restarting Web."""
+    podman = podman_executable(root)
+    containerfile = source / BOT_CONTAINERFILE
+    if containerfile.is_symlink() or not containerfile.is_file():
+        raise SetupError('The installed source is missing the audited VPS Bot Containerfile.')
+    environment = podman_environment()
+    ensure_bot_base(root, podman, environment)
+    try:
+        run([str(podman), 'image', 'exists', BOT_IMAGE], env=environment, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except subprocess.CalledProcessError:
+        descriptor = private_file(root / 'podman-build.log', os.O_WRONLY | os.O_CREAT)
+        with os.fdopen(descriptor, 'w') as log:
+            log.truncate()
+            try:
+                run(
+                    [str(podman), 'build', '--pull=never', '--network=host', '--tag', BOT_IMAGE,
+                     '--file', str(containerfile), str(containerfile.parent)],
+                    cwd=source, env=environment, stdout=log, stderr=subprocess.STDOUT, timeout=600,
+                )
+            except (OSError, subprocess.SubprocessError) as error:
+                raise SetupError('The audited VPS Bot image build failed. Check the private podman-build.log.') from error
+    return podman
+
+
+def ensure_bot_base(root, podman, environment):
+    """Pull the pinned Ubuntu base explicitly before the offline image build."""
+    try:
+        run([str(podman), 'image', 'exists', BOT_BASE_IMAGE], env=environment,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return
+    except subprocess.CalledProcessError:
+        descriptor = private_file(root / 'podman-base.log', os.O_WRONLY | os.O_CREAT)
+        with os.fdopen(descriptor, 'w') as log:
+            log.truncate()
+            try:
+                run(
+                    [str(podman), 'pull', '--quiet', BOT_BASE_IMAGE],
+                    env=environment, stdout=log, stderr=subprocess.STDOUT, timeout=300,
+                )
+            except (OSError, subprocess.SubprocessError) as error:
+                raise SetupError('The pinned Ubuntu Bot base could not be pulled. Check the private podman-base.log.') from error
+
+
+def firefox_seccomp_policy(source):
+    """Allow Firefox's nested chroot helper under the existing deny-by-default policy."""
+    policy = json.loads(source)
+    if not isinstance(policy, dict) or policy.get('defaultAction') != 'SCMP_ACT_ERRNO':
+        raise SetupError('The Podman policy must deny by default.')
+    rules = policy.get('syscalls')
+    if not isinstance(rules, list) or not rules:
+        raise SetupError('The Podman policy is missing its syscall rules.')
+    kept = []
+    for rule in rules:
+        names = rule.get('names') if isinstance(rule, dict) else None
+        if not isinstance(names, list) or not names or not all(isinstance(name, str) for name in names):
+            raise SetupError('The Podman policy contains an invalid syscall rule.')
+        names = [name for name in names if name != 'chroot']
+        if names:
+            kept.append({**rule, 'names': names})
+    kept.append({'names': ['chroot'], 'action': 'SCMP_ACT_ALLOW'})
+    return (json.dumps({**policy, 'syscalls': kept}, indent=2) + '\n').encode()
+
+
+def ensure_bot_network(root):
+    """Install the rootless Bot network helper on APT hosts when needed."""
+    helper = Path('/usr/bin/slirp4netns')
+    if helper.is_file():
+        return
+    if not Path('/usr/bin/apt-get').is_file():
+        raise SetupError('Install slirp4netns with your server’s package manager and run setup again.')
+    print('Installing the rootless networking package. Setup may ask for sudo.', flush=True)
+    with os.fdopen(private_file(root / 'bot-network.log', os.O_WRONLY | os.O_CREAT), 'w') as log:
+        log.truncate()
+        try:
+            environment = build_environment()
+            apt = [
+                '/usr/bin/sudo', '/usr/bin/env', 'DEBIAN_FRONTEND=noninteractive', 'NEEDRESTART_MODE=l',
+                '/usr/bin/apt-get', '-o', 'DPkg::Lock::Timeout=30', '-o', 'Acquire::Retries=1',
+            ]
+            run([*apt, 'update'], env=environment, stdout=log, stderr=subprocess.STDOUT, timeout=180)
+            run([
+                *apt, 'install',
+                '--no-install-recommends', '--no-upgrade', '--no-remove', '--yes', 'slirp4netns',
+            ], env=environment, stdout=log, stderr=subprocess.STDOUT, timeout=180)
+        except (OSError, subprocess.SubprocessError) as error:
+            raise SetupError('Could not install slirp4netns. See the private bot-network.log.') from error
+    if not helper.is_file():
+        raise SetupError('The slirp4netns package did not provide the networking helper.')
+
+
+def prepare_bot_browser(root, source):
+    """Build Firefox and prepare its private policy without changing the Web service."""
+    containerfile = source / BOT_BROWSER_CONTAINERFILE
+    if containerfile.is_symlink() or not containerfile.is_file():
+        raise SetupError('Run browser setup from a Y Harness checkout that includes the browser desktop.')
+    packaged = next((path for path in PODMAN_POLICIES if path.exists()), None)
+    if packaged is None:
+        raise SetupError('Install the system Podman syscall policy and retry browser setup.')
+    info = packaged.stat(follow_symlinks=False)
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
+        raise SetupError('The system Podman policy must be an administrator-owned file.')
+    policy = firefox_seccomp_policy(packaged.read_bytes())
+    ensure_bot_network(root)
+    podman = ensure_bot_image(root, source)
+    with os.fdopen(private_file(root / 'browser-build.log', os.O_WRONLY | os.O_CREAT), 'w') as log:
+        log.truncate()
+        try:
+            run(
+                [str(podman), 'build', '--pull=never', '--no-cache', '--network=host', '--tag', BOT_BROWSER_IMAGE,
+                 '--file', str(containerfile), str(containerfile.parent)],
+                cwd=source, env=podman_environment(), stdout=log, stderr=subprocess.STDOUT, timeout=600,
+            )
+        except (OSError, subprocess.SubprocessError) as error:
+            raise SetupError('Could not build the Firefox desktop. See the private browser-build.log.') from error
+    write_private_copy(root / BOT_BROWSER_POLICY, policy)
 
 
 def node_executable():
@@ -339,6 +544,35 @@ def install_sandbox_start_check(root, unit_dir):
     write_private_copy(dropin_dir / 'sandbox.conf', check.encode())
 
 
+def bot_resources(source):
+    """Report whether this checkout carries the complete Bot runtime payload."""
+    resources = (
+        source / BOT_CONTAINERFILE,
+        source / BOT_CONTAINERFILE.parent / 'start.sh',
+        source / BOT_CONTAINERFILE.parent / 'capture.sh',
+        source / BOT_CONTAINERFILE.parent / 'files.py',
+        source / 'packages/bundle/web-app/src/vps-runtime.ts',
+    )
+    present = [path for path in resources if path.exists() or path.is_symlink()]
+    if not present:
+        return False
+    if any(path.is_symlink() or not path.is_file() for path in resources):
+        raise SetupError('The installed source has an incomplete VPS Bot runtime payload.')
+    return True
+
+
+def install_bot_dropin(root, unit_dir):
+    """Install owner-only Web environment values without restarting the service."""
+    dropin_dir = unit_dir / (SERVICE + '.d')
+    private_directory(dropin_dir)
+    dropin = (
+        '[Service]\n'
+        'Environment="YH_VPS_BOT_ROOT=%h/.yharness-vps/bots"\n'
+        f'Environment="YH_VPS_BOT_IMAGE={BOT_IMAGE}"\n'
+    )
+    write_private_copy(dropin_dir / 'vps-bot.conf', dropin.encode())
+
+
 def build_source(root, node):
     """Build and check a staged public checkout before making it the installed source."""
     for name in ('npm', 'cc'):
@@ -388,6 +622,7 @@ def setup(root, unit_dir):
         fcntl.flock(lock, fcntl.LOCK_EX)
         private_directory(root / 'state')
         private_directory(root / 'workspace')
+        private_directory(root / BOT_ROOT)
         os.close(private_file(root / 'host.log', os.O_WRONLY | os.O_CREAT))
         source = root / 'source'
         if source.is_symlink() or (source.exists() and not (source / CLI).is_file()):
@@ -412,6 +647,9 @@ def setup(root, unit_dir):
                 output.flush()
                 os.link(output.name, unit_path)
         install_sandbox_start_check(root, unit_dir)
+        if bot_resources(source):
+            ensure_bot_image(root, source)
+            install_bot_dropin(root, unit_dir)
         try:
             for arguments in (['daemon-reload'], ['enable', '--now', SERVICE]):
                 run(['systemctl', '--user', *arguments], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -431,9 +669,9 @@ def launch_url(path):
 
 
 def main():
-    """Run the server-side setup, status or explicit private-link command."""
+    """Run setup, computer prerequisites, sandbox checks, status or private-link output."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', nargs='?', choices=('setup', 'status', 'url', 'sandbox'), default='setup')
+    parser.add_argument('action', nargs='?', choices=('setup', 'status', 'url', 'sandbox', 'browser', 'network'), default='setup')
     action = parser.parse_args().action
     os.umask(0o077)
     account_home = Path(pwd.getpwuid(os.getuid()).pw_dir)
@@ -444,6 +682,20 @@ def main():
             if not config_home.is_absolute():
                 raise SetupError('XDG_CONFIG_HOME must be an absolute path.')
             setup(root, config_home / 'systemd/user')
+        elif action in ('browser', 'network'):
+            require_linux_user()
+            require_outside_git(root)
+            private_directory(root)
+            with os.fdopen(private_file(root / 'setup.lock', os.O_RDWR | os.O_CREAT), 'r+') as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX)
+                if action == 'browser':
+                    prepare_bot_browser(root, Path(__file__).resolve().parent.parent)
+                else:
+                    ensure_bot_network(root)
+            if action == 'browser':
+                print('Firefox is ready. Select the Bots that can use it in the private Web profile.')
+            else:
+                print('Rootless networking is ready. Select the Bots that can use it in the private Web profile.')
         elif action == 'sandbox':
             require_linux_user()
             private_directory(root)

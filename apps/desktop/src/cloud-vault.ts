@@ -1,11 +1,8 @@
 /** Write-only VPS Vault management over the owner's existing SSH login. */
-import { execFile, type ChildProcess, type ExecFileOptions } from 'node:child_process'
+import { readBoundedJson } from './web-document.ts'
 import { randomUUID } from 'node:crypto'
 import { isIP } from 'node:net'
-import { isCloudTarget } from './cloud-connection.ts'
-
-const SSH = '/usr/bin/ssh'
-const COMMAND = '/usr/local/sbin/yharness-vault desktop-client'
+import type { CloudVaultTransport } from './cloud-connection.ts'
 const UNIT = /^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,220}\.service$/u
 const NAME = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/u
 const BOT = /^bot-[A-Za-z0-9][A-Za-z0-9-]{0,245}$/u
@@ -18,8 +15,8 @@ const VALUE_LIMIT = 8192
 const LOGIN_LABEL_LIMIT = 80
 const LOGIN_USERNAME_LIMIT = 512
 const LOGIN_PASSWORD_LIMIT = 8192
+const LOGIN_CODE_LIMIT = 64
 const MAX_LOGINS = 64
-const MAX_OUTPUT = 160 * 1024
 const MAX_ROSTER_BYTES = 4 * 1024 * 1024
 const MAX_ACCESS_MODE_BYTES = 128
 const MAX_BROWSER_ACCESS_BYTES = 64 * 1024
@@ -80,6 +77,13 @@ export type VaultRequest = { readonly action: 'list' | 'list-grants' } | ({
 } | {
   readonly action: 'list-logins' | 'list-bot-logins'
 } | {
+  readonly action: 'list-login-automation'
+} | {
+  readonly action: 'set-login-automatic'
+  readonly id: VaultLoginId
+  readonly bot: VaultBotId
+  readonly enabled: boolean
+} | {
   readonly action: 'add-login'
   readonly bot?: VaultBotId
   readonly origin: string
@@ -125,11 +129,36 @@ export type VaultRequest = { readonly action: 'list' | 'list-grants' } | ({
   readonly password: string
   readonly saveLabel?: string
 } | {
+  readonly action: 'create-login-use'
+  readonly id: VaultLoginUseRequestId
+  readonly origin: string
+  readonly destination: string
+  readonly username: string
+  readonly saveLabel: string
+} | {
+  readonly action: 'enter-verification-code'
+  readonly id: VaultLoginUseRequestId
+  readonly origin: string
+  readonly destination: string
+  readonly code: string
+} | {
   readonly action: 'decline-login-use'
   readonly id: VaultLoginUseRequestId
 }
 
-type VaultWireRequest = Exclude<VaultRequest, { readonly action: 'list-browser-access' | 'set-browser-access' }>
+/** Personal website login normalized for the existing Vault store. */
+export interface VaultWebsiteLoginInput {
+  readonly origin: string
+  readonly label: string
+  readonly username: string
+  readonly password: string
+}
+
+/** Import operations reserved for the native file picker flow. */
+export type VaultLoginImportRequest = { readonly action: 'inspect-login-import'; readonly salt: string }
+  | ({ readonly action: 'import-login' } & VaultWebsiteLoginInput)
+
+type VaultWireRequest = VaultLoginImportRequest | Exclude<VaultRequest, { readonly action: 'list-browser-access' | 'set-browser-access' }>
   | { readonly action: 'list-scoped-grants' } | {
     readonly action: 'set-browser-access'
     readonly bot: VaultBotId
@@ -201,6 +230,7 @@ export interface VaultLoginUseRequestMetadata {
   readonly destination: string
   readonly logins: readonly VaultLoginUseChoice[]
   readonly acceptsCredentials?: true
+  readonly purpose?: 'signup' | 'verification'
 }
 
 /** Non-secret saved-login choice bound to its current record revision. */
@@ -230,17 +260,27 @@ export type VaultReply = {
   readonly bots?: readonly VaultBotChoice[]
 } | {
   readonly ok: true
+  readonly loginAutomation: {
+    readonly available: boolean
+    readonly enabled: readonly VaultLoginId[]
+  }
+} | {
+  readonly ok: true
   readonly access: VaultBotAccess
   readonly bots?: readonly VaultBotChoice[]
 } | {
   readonly ok: true
   readonly browserAccess: VaultBrowserAccess
 } | {
+  readonly importIndex: { readonly fingerprints: readonly string[]; readonly remaining: number }
+} | {
+  readonly outcome: 'imported' | 'duplicate' | 'full'
+} | {
   readonly request: VaultRequestMetadata | VaultLoginUseRequestMetadata
 } | {
-  readonly state: 'saved' | 'cancelled' | 'needs-owner' | 'unavailable'
+  readonly state: 'saved' | 'cancelled' | 'unavailable'
 } | {
-  readonly state: 'submitted'
+  readonly state: 'submitted' | 'needs-owner'
   readonly saved?: boolean
 } | {
   readonly ok: false
@@ -253,11 +293,11 @@ export interface VaultCloudWorkspace {
   readonly fetch: (url: string, options: RequestInit) => Promise<Response>
 }
 
-/** SSH execution seam used by tests with a real local subprocess. */
-export type VaultExec = (
-  file: string, args: readonly string[], options: ExecFileOptions & { encoding: 'utf8' },
-  complete: (error: Error | null, stdout: string) => void,
-) => ChildProcess
+/** Owner-authenticated Cloud view and its connection-bound Vault commands. */
+export interface CloudVaultSession extends VaultCloudWorkspace {
+  /** Transport owned by the active native Cloud connection. */
+  readonly sendVaultRequest: CloudVaultTransport
+}
 
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -354,6 +394,29 @@ function loginOrigin(value: unknown, requireCanonical = false): string | undefin
   return requireCanonical && value !== origin ? undefined : origin
 }
 
+/**
+ * Normalize a CSV login to an exact Vault origin. Password and username text are preserved.
+ * @param site - HTTPS login URL from the export.
+ * @param title - Optional entry label from the export.
+ * @param user - Exact account name from the export.
+ * @param secret - Exact password from the export.
+ * @returns A valid website login or undefined when the row cannot be stored.
+ */
+export function normalizeVaultLoginImport(site: string, title: string, user: string, secret: string): VaultWebsiteLoginInput | undefined {
+  const candidate = site.trim()
+  if (!/^https:\/\//iu.test(candidate) || CONTROL.test(site) || candidate.includes('\\')) return undefined
+  let url: URL
+  try { url = new URL(candidate) }
+  catch { return undefined }
+  if (url.username !== '' || url.password !== '') return undefined
+  const origin = loginOrigin(url.origin, true)
+  const username = boundedLoginText(user, LOGIN_USERNAME_LIMIT, false)
+  const password = boundedLoginText(secret, LOGIN_PASSWORD_LIMIT, false)
+  if (origin === undefined || username === undefined || password === undefined) return undefined
+  const label = boundedLoginText(title, LOGIN_LABEL_LIMIT, true) ?? url.hostname.slice(0, LOGIN_LABEL_LIMIT)
+  return { origin, label, username, password }
+}
+
 function grantScope(value: unknown): value is VaultGrantScope {
   return value === 'owner' || value === 'shared'
 }
@@ -401,12 +464,32 @@ function requestBody(value: unknown): VaultRequest | undefined {
     const saveLabel = boundedLoginText(value.saveLabel, LOGIN_LABEL_LIMIT, true)
     return fields === 7 && saveLabel !== undefined ? { ...entry, saveLabel } : undefined
   }
+  if (action === 'create-login-use' && fields === 6 && isVaultLoginUseRequestId(value.id)) {
+    const origin = loginOrigin(value.origin, true)
+    const destination = origin === undefined ? undefined : loginDestination(value.destination, origin)
+    const username = boundedLoginText(value.username, LOGIN_USERNAME_LIMIT, true)
+    const saveLabel = boundedLoginText(value.saveLabel, LOGIN_LABEL_LIMIT, true)
+    if (origin === undefined || destination === undefined || username === undefined || saveLabel === undefined) return undefined
+    return { action, id: value.id, origin, destination, username, saveLabel }
+  }
+  if (action === 'enter-verification-code' && fields === 5 && isVaultLoginUseRequestId(value.id)) {
+    const origin = loginOrigin(value.origin, true)
+    const destination = origin === undefined ? undefined : loginDestination(value.destination, origin)
+    const code = boundedLoginText(value.code, LOGIN_CODE_LIMIT, false)
+    if (origin === undefined || destination === undefined || code === undefined) return undefined
+    return { action, id: value.id, origin, destination, code }
+  }
   if (action === 'save-request' && fields === 3 && isVaultRequestId(value.id)
     && typeof value.value === 'string' && value.value.length > 0 && !value.value.includes('\0')
     && value.value.isWellFormed() && Buffer.byteLength(value.value, 'utf8') <= VALUE_LIMIT) {
     return { action, id: value.id, value: value.value }
   }
   if ((action === 'list-logins' || action === 'list-bot-logins') && fields === 1) return { action }
+  if (action === 'list-login-automation' && fields === 1) return { action }
+  if (action === 'set-login-automatic' && fields === 4 && isVaultLoginId(value.id)
+    && botId(value.bot) && typeof value.enabled === 'boolean') {
+    return { action, id: value.id, bot: value.bot, enabled: value.enabled }
+  }
   if (action === 'add-login' || action === 'replace-login' || action === 'remove-login') {
     const assigned = Object.hasOwn(value, 'bot')
     if (assigned && !botId(value.bot)) return undefined
@@ -464,11 +547,15 @@ function loginUseMetadata(value: unknown, expectedId?: VaultLoginUseRequestId): 
   if (!record(value) || !isVaultLoginUseRequestId(value.id) || value.id !== expectedId) return undefined
   const fields = Object.keys(value).length
   const acceptsCredentials = value.acceptsCredentials === true
-  if (fields !== (acceptsCredentials ? 5 : 4)) return undefined
+  const { purpose } = value
+  const special = purpose !== undefined
+  if (fields !== (acceptsCredentials || special ? 5 : 4) || (acceptsCredentials && special)
+    || (special && purpose !== 'signup' && purpose !== 'verification')
+    || (value.acceptsCredentials !== undefined && !acceptsCredentials)) return undefined
   const origin = loginOrigin(value.origin, true)
   const destination = origin === undefined ? undefined : loginDestination(value.destination, origin)
   if (origin === undefined || destination === undefined || !Array.isArray(value.logins)
-    || value.logins.length > MAX_LOGINS) return undefined
+    || value.logins.length > MAX_LOGINS || (special && value.logins.length !== 0)) return undefined
   const ids = new Set<string>()
   const logins: VaultLoginUseChoice[] = []
   for (const login of value.logins) {
@@ -477,7 +564,11 @@ function loginUseMetadata(value: unknown, expectedId?: VaultLoginUseRequestId): 
     ids.add(metadata.id)
     logins.push(metadata)
   }
-  return { id: value.id, origin, destination, logins, ...(acceptsCredentials ? { acceptsCredentials: true } : {}) }
+  return {
+    id: value.id, origin, destination, logins,
+    ...(acceptsCredentials ? { acceptsCredentials: true } : {}),
+    ...(purpose === undefined ? {} : { purpose }),
+  }
 }
 
 function botAccess(value: unknown, sharedScopes: boolean): VaultBotAccess | undefined {
@@ -506,6 +597,36 @@ function replyBody(
   const value: unknown = JSON.parse(stdout)
   if (!record(value)) return undefined
   const fields = Object.keys(value).length
+  if (action === 'inspect-login-import') {
+    const index = value.importIndex
+    if (fields !== 1 || !record(index) || Object.keys(index).length !== 2
+      || !Array.isArray(index.fingerprints) || !index.fingerprints.every(isVaultLoginGeneration)
+      || new Set(index.fingerprints).size !== index.fingerprints.length
+      || typeof index.remaining !== 'number' || !Number.isInteger(index.remaining) || index.remaining < 0
+      || index.remaining + index.fingerprints.length > MAX_LOGINS) return undefined
+    return { importIndex: { fingerprints: index.fingerprints, remaining: index.remaining } }
+  }
+  if (action === 'import-login') {
+    const { outcome } = value
+    return fields === 1 && (outcome === 'imported' || outcome === 'duplicate' || outcome === 'full') ? { outcome } : undefined
+  }
+  if (action === 'list-login-automation') {
+    const automation = value.loginAutomation
+    if (fields !== 1 || !record(automation) || Object.keys(automation).length !== 2
+      || typeof automation.available !== 'boolean' || !Array.isArray(automation.enabled)
+      || automation.enabled.length > MAX_LOGINS) return undefined
+    const ids = new Set<VaultLoginId>()
+    for (const id of automation.enabled) {
+      if (!isVaultLoginId(id) || ids.has(id)) return undefined
+      ids.add(id)
+    }
+    return { ok: true, loginAutomation: { available: automation.available, enabled: automation.enabled } }
+  }
+  if (action === 'create-login-use') {
+    if (fields === 1 && value.state === 'unavailable') return { state: value.state }
+    return fields === 2 && value.saved === true && (value.state === 'submitted' || value.state === 'needs-owner')
+      ? { state: value.state, saved: true } : undefined
+  }
   if (action === 'enter-login-use' && fields === 2 && value.state === 'submitted' && typeof value.saved === 'boolean') {
     return { state: value.state, saved: value.saved }
   }
@@ -531,9 +652,9 @@ function replyBody(
     const request = loginUseMetadata(value.request, expectedId as VaultLoginUseRequestId | undefined)
     return request === undefined ? undefined : { request }
   }
-  if (action === 'approve-login-use' || action === 'enter-login-use') {
-    return value.state === 'submitted' || value.state === 'needs-owner' || value.state === 'unavailable'
-      ? { state: value.state } : undefined
+  if (action === 'approve-login-use' || action === 'enter-login-use' || action === 'enter-verification-code') {
+    const { state } = value
+    return state === 'submitted' || state === 'needs-owner' || state === 'unavailable' ? { state } : undefined
   }
   if (action === 'decline-login-use') {
     return value.state === 'unavailable' ? { state: value.state } : undefined
@@ -584,31 +705,11 @@ export function vaultRequestAllowed(value: unknown, scope: VaultRequestMode | Va
     return typeof scope === 'string' ? request.id === scope : scope?.kind === 'request' && request.id === scope.id
   }
   if (request.action === 'inspect-login-use' || request.action === 'approve-login-use'
-    || request.action === 'enter-login-use' || request.action === 'decline-login-use') {
+    || request.action === 'enter-login-use' || request.action === 'create-login-use'
+    || request.action === 'enter-verification-code' || request.action === 'decline-login-use') {
     return typeof scope !== 'string' && scope?.kind === 'login-use' && request.id === scope.id
   }
   return scope === undefined || (typeof scope !== 'string' && scope.kind === 'manage')
-}
-
-async function readCloudReply(response: Response, maxBytes: number): Promise<unknown> {
-  if (!response.ok || response.body === null) return undefined
-  const reader = response.body.getReader()
-  const chunks: Uint8Array[] = []
-  let remaining = maxBytes
-  try {
-    for (;;) {
-      const next = await reader.read()
-      if (next.done) return JSON.parse(Buffer.concat(chunks).toString('utf8'))
-      remaining -= next.value.byteLength
-      if (remaining < 0) {
-        await reader.cancel()
-        return undefined
-      }
-      chunks.push(next.value)
-    }
-  } finally {
-    reader.releaseLock()
-  }
 }
 
 interface VaultPolicy {
@@ -626,8 +727,9 @@ async function readCloudVaultPolicy(
       method: 'GET', redirect: 'error', credentials: 'include', cache: 'no-store',
       signal: AbortSignal.any([signal, AbortSignal.timeout(5_000)]),
     })
-    const reply = await readCloudReply(response, MAX_ACCESS_MODE_BYTES)
-    if (signal.aborted || !record(reply) || Object.keys(reply).length !== 1) return undefined
+    const reply = await readBoundedJson(response, MAX_ACCESS_MODE_BYTES)
+    signal.throwIfAborted()
+    if (!record(reply) || Object.keys(reply).length !== 1) return undefined
     const { mode } = reply
     if (mode !== 'managed' && mode !== 'external' && mode !== 'disabled') return undefined
     return { mode, sharedScopes: mode === 'managed' && response.headers.get('X-YH-Vault-Grant-Scopes') === '1' }
@@ -655,8 +757,9 @@ export async function readCloudVaultBots(
       body: JSON.stringify({ type: 'client-request', rpcId, method: 'bots/list', payload: { args: { request: { includeHidden: true } } } }),
       signal: AbortSignal.any([signal, AbortSignal.timeout(5_000)]),
     })
-    const reply = await readCloudReply(response, MAX_ROSTER_BYTES)
-    if (signal.aborted || !record(reply) || reply.type !== 'server-response' || reply.rpcId !== rpcId
+    const reply = await readBoundedJson(response, MAX_ROSTER_BYTES)
+    signal.throwIfAborted()
+    if (!record(reply) || reply.type !== 'server-response' || reply.rpcId !== rpcId
       || !record(reply.result) || reply.result.ok !== true || !record(reply.result.value)
       || !Array.isArray(reply.result.value.bots)) return undefined
     const bots: VaultBotChoice[] = []
@@ -715,8 +818,8 @@ async function readCloudBrowserAccess(
       method: 'GET', redirect: 'error', credentials: 'include', cache: 'no-store',
       signal: AbortSignal.any([signal, AbortSignal.timeout(5_000)]),
     })
-    const reply = await readCloudReply(response, MAX_BROWSER_ACCESS_BYTES)
-    if (signal.aborted) return undefined
+    const reply = await readBoundedJson(response, MAX_BROWSER_ACCESS_BYTES)
+    signal.throwIfAborted()
     return browserAccessBody(reply)
   } catch (_error) {
     return undefined
@@ -732,18 +835,17 @@ function browserAccessReply(value: CloudBrowserAccess): VaultReply {
 
 /**
  * Send one bounded request over SSH and return only validated metadata or a fixed failure.
- * @param target - Main-owned, previously connected Cloud SSH destination.
+ * @param send - Request transport owned by the current native Cloud connection.
  * @param value - Untrusted IPC input from the Vault window.
  * @param signal - Cancel the SSH child when its window closes.
- * @param execute - Subprocess injection for tests.
  * @param workspace - Authenticated Cloud connection required for Bot grant operations.
  * @returns A safe response for the Vault window.
  */
 export async function cloudVaultRequest(
-  target: string, value: unknown, signal: AbortSignal, execute: VaultExec = execFile, workspace?: VaultCloudWorkspace,
+  send: CloudVaultTransport, value: unknown, signal: AbortSignal, workspace?: VaultCloudWorkspace,
 ): Promise<VaultReply> {
   const request = requestBody(value)
-  if (!isCloudTarget(target) || request === undefined) return { ok: false, reason: 'invalid' }
+  if (request === undefined) return { ok: false, reason: 'invalid' }
   if (request.action === 'list-browser-access' || request.action === 'set-browser-access') {
     if (workspace === undefined) return unavailable
     const current = await readCloudBrowserAccess(workspace, signal)
@@ -752,10 +854,10 @@ export async function cloudVaultRequest(
     if (current.mode !== 'managed') return unavailable
     const selected = current.bots.find(bot => bot.id === request.bot)
     if (selected === undefined) return unavailable
-    const changed = await executeVaultRequest(target, {
+    const changed = await executeVaultRequest(send, {
       action: 'set-browser-access', bot: request.bot, session: selected.sessionId, enabled: request.enabled,
-    }, signal, execute)
-    if (!('ok' in changed) || changed.ok !== true) return changed
+    }, signal)
+    if (!('ok' in changed) || !changed.ok) return changed
     const verified = await readCloudBrowserAccess(workspace, signal)
     if (verified?.mode !== 'managed') return unavailable
     const confirmed = verified.bots.find(bot => bot.id === request.bot)
@@ -779,45 +881,51 @@ export async function cloudVaultRequest(
     if (workspace !== undefined) bots = await readCloudVaultBots(workspace.origin, workspace.fetch, signal)
     if (assignedLogin !== undefined && !bots?.some(bot => bot.id === assignedLogin)) return unavailable
   }
+  if (request.action === 'set-login-automatic' && request.enabled) {
+    // Enabling binds the grant to the current authenticated Cloud roster. Disabling
+    // stays available for an exact Vault account after its Bot leaves that roster.
+    if (workspace === undefined || (await readCloudVaultPolicy(workspace, signal))?.mode !== 'managed') return unavailable
+    bots = await readCloudVaultBots(workspace.origin, workspace.fetch, signal)
+    if (!bots?.some(bot => bot.id === request.bot)) return unavailable
+  }
   const scoped = request.action === 'list-grants' && sharedScopes
-    ? await executeVaultRequest(target, { action: 'list-scoped-grants' }, signal, execute)
+    ? await executeVaultRequest(send, { action: 'list-scoped-grants' }, signal)
     : undefined
   const reply = scoped !== undefined && 'access' in scoped
     ? scoped
-    : await executeVaultRequest(target, request, signal, execute)
+    : await executeVaultRequest(send, request, signal)
+  if ('loginAutomation' in reply && reply.loginAutomation.available) {
+    const policy = workspace === undefined ? undefined : await readCloudVaultPolicy(workspace, signal)
+    return { ...reply, loginAutomation: { ...reply.loginAutomation, available: policy?.mode === 'managed' } }
+  }
   return ('access' in reply || 'botLogins' in reply) && bots !== undefined ? { ...reply, bots } : reply
 }
 
+/**
+ * Send an import operation through the native workspace's authenticated Vault connection.
+ * @param send - The active connection's Vault transport.
+ * @param request - Native import operation, unavailable through renderer requests.
+ * @param signal - Cancellation for the current native import.
+ * @returns Validated import metadata, outcome, or an unavailable result.
+ */
+export function cloudVaultLoginImport(
+  send: CloudVaultTransport, request: VaultLoginImportRequest, signal: AbortSignal,
+): Promise<VaultReply> {
+  return executeVaultRequest(send, request, signal)
+}
+
 async function executeVaultRequest(
-  target: string, request: VaultWireRequest, signal: AbortSignal, execute: VaultExec,
+  send: CloudVaultTransport, request: VaultWireRequest, signal: AbortSignal,
 ): Promise<VaultReply> {
   if (signal.aborted) return unavailable
-  return new Promise((resolve) => {
-    try {
-      const child = execute(SSH, [
-        '-a', '-x', '-T',
-        '-o', 'BatchMode=yes', '-o', 'ClearAllForwardings=yes',
-        '-o', 'ControlMaster=no', '-o', 'ControlPath=none',
-        '-o', 'ForwardAgent=no', '-o', 'ForwardX11=no',
-        '-o', 'PermitLocalCommand=no', '-o', 'RequestTTY=no',
-        '-o', 'StrictHostKeyChecking=yes', '--', target, COMMAND,
-      ], {
-        signal, encoding: 'utf8', timeout: 25_000, maxBuffer: MAX_OUTPUT,
-        env: Object.fromEntries(Object.entries(process.env).filter(([key]) => !/(?:KEY|SECRET|TOKEN|PASSWORD)/iu.test(key))),
-      }, (error, stdout) => {
-        if (error !== null || signal.aborted) { resolve(unavailable); return }
-        try {
-          const expectedId = request.action === 'inspect-request' || request.action === 'inspect-login-use'
-            ? request.id : undefined
-          resolve(replyBody(request.action, stdout, expectedId) ?? unavailable)
-        }
-        catch { resolve(unavailable) }
-      })
-      // OpenSSH can exit before reading stdin, for example if the owner lost access.
-      child.stdin?.on('error', () => { resolve(unavailable) })
-      child.stdin?.end(JSON.stringify(request), 'utf8')
-    } catch {
-      resolve(unavailable)
-    }
-  })
+  try {
+    const stdout = await send(JSON.stringify(request), signal)
+    signal.throwIfAborted()
+    if (stdout === undefined) return unavailable
+    const expectedId = request.action === 'inspect-request' || request.action === 'inspect-login-use'
+      ? request.id : undefined
+    return replyBody(request.action, stdout, expectedId) ?? unavailable
+  } catch {
+    return unavailable
+  }
 }

@@ -452,6 +452,20 @@ describe('provider profile lifecycle', () => {
     ]) expect(LlmPiAi).not.toHaveProperty(helper)
   })
 
+  it('exposes resolved API-key route metadata without provider configuration', () => {
+    expect(LlmPiAi.resolveApiKeyRoute('example', {
+      api: 'openai-completions',
+      baseURL: 'https://models.example.test/v1',
+      models: [{ id: 'fixture-model' }],
+      apiKeyEnv: 'EXAMPLE_API_KEY',
+      headers: { 'X-Service-Header': 'fixture-value' },
+    })).toEqual({
+      ref: 'EXAMPLE_API_KEY',
+      endpoints: [{ api: 'openai-completions', baseUrl: 'https://models.example.test/v1' }],
+    })
+    expect(LlmPiAi.resolveApiKeyRoute('not-configured', {})).toBeUndefined()
+  })
+
   it('registers every profile atomically and unregisters on dispose', async () => {
     const ctx = new Context()
     await ctx.plugin(LlmRuntime)

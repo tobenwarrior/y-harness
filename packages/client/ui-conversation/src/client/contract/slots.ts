@@ -133,7 +133,7 @@ declare module '@yharness/client-ui-slots' {
     'conversation.session': {
       kind: 'single'
       scope: 'session'
-      owner: { view?: string }
+      owner: { view?: string; bot?: ConversationBot }
     }
     /** Resident navigation container, including when no Session is selected. */
     'conversation.header': { kind: 'single'; scope: 'session-maybe' }
@@ -151,6 +151,15 @@ declare module '@yharness/client-ui-slots' {
       kind: 'single'
       scope: 'session'
       owner: ConversationHeaderLineageOwnerProps
+    }
+    /** Agent activity control in an embedded Session header. */
+    'conversation.session.header.agents': {
+      kind: 'single'
+      scope: 'session'
+      owner: {
+        /** Clear a panel occupying the sidebar space before a child chat opens. */
+        beforeOpen?: () => void
+      }
     }
     /** Title-adjacent Session actions in ascending order. */
     'conversation.session.header.actions': {
@@ -183,6 +192,8 @@ declare module '@yharness/client-ui-slots' {
     }
     /** Registered Conversation target Views, rendered one at a time. */
     'conversation.view': { kind: 'list'; scope: 'session'; owner: ConvViewOwnerProps }
+    /** Speaker avatar for an assistant reply in the Bots workspace. */
+    'conversation.bot.reply.avatar': { kind: 'single'; scope: 'session' }
     /** Selector-routed replacements for the current Session's resident composer. */
     'conversation.composer': { kind: 'chain'; scope: 'session'; owner: ComposerChainProps }
     /** Workspace picker shown by the blank-session Hero. */
@@ -196,7 +207,7 @@ declare module '@yharness/client-ui-slots' {
     /** Floating entries rendered inside the resident composer card. */
     'conversation.input.overlay': { kind: 'list'; scope: 'session' }
     /** Ambient entries below the composer card. */
-    'conversation.composer.dock': { kind: 'list'; scope: 'session' }
+    'conversation.composer.dock': { kind: 'list'; scope: 'session'; owner: ComposerDockOwnerProps }
     /** Compact controls at the left of the composer tool row. */
     'conversation.input.left': { kind: 'list'; scope: 'session' }
     /** Compact controls before the composer submit action. */
@@ -248,7 +259,7 @@ declare module '@yharness/client-ui-slots' {
       inject: ConversationInjected
       locale: 'conversation'
       slots: {
-        views: { scope: 'session' }
+        views: { scope: 'session'; props: { bot?: ConversationBot } }
         widthControls: { scope: 'root'; props: ConversationWidthControlsInputProps }
       }
     }
@@ -320,6 +331,8 @@ export interface InputZone {
 
 /** Conversation View entries obtain their data from registered standard hooks. */
 export interface ConvViewOwnerProps {
+  /** Speaker for a Bot's embedded Conversation occurrence. */
+  bot?: ConversationBot
   /** Open a tool call's inspector when an inspection target is available. */
   inspectCall: ((callId: string) => void) | undefined
   /** Focus request addressed to the selected View. */
@@ -364,8 +377,16 @@ export interface ConversationSessionHeaderInjected {
   selectView: (view: string) => void
 }
 
+/** Owner share of the statistics and diagnostics dock below the composer. */
+export interface ComposerDockOwnerProps {
+  /** Use compact diagnostic controls in an embedded Bot conversation. */
+  botChat?: boolean
+}
+
 /** Owner share of the resident composer bar. */
 export interface ComposerBarOwnerProps {
+  /** Present composer diagnostics as compact Bot chat controls. */
+  botChat?: boolean
   /** Hero uses centered placement; composer uses the active bottom placement. */
   variant: 'hero' | 'composer'
   /** A feature-owned reason that makes message input inert while leaving model selection live. */
@@ -471,11 +492,18 @@ export interface ConversationPanelInputProps {
 /** Full props of the reusable Conversation frame Factory definition. */
 export type ConversationPanelProps = FactoryComponentPropsOf<'conversation.panel'>
 
+/** Display identity supplied by the Bots workspace for one conversation. */
+export interface ConversationBot {
+  readonly name: string
+}
+
 /** Inputs shared by main and embedded Conversation content occurrences. */
 export interface ConversationContentInputProps {
   variant: 'main' | 'embedded'
   phase: 'settling' | 'hero' | 'active'
   hero: boolean
+  /** Speaker for the embedded Bots transcript. */
+  bot?: ConversationBot
 }
 
 /** Values passed from shared content to its occurrence-selected width controls. */

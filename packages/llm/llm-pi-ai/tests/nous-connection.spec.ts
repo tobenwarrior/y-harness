@@ -43,7 +43,7 @@ it('stays dormant without a chosen public client and never starts network authen
   expect(protocol.start).not.toHaveBeenCalled()
 })
 it('requires local-storage consent and commits a completed grant without exposing credentials', async () => {
-  const { ctx, dir, connection } = await app(grant.clientId)
+  const { ctx, connection } = await app(grant.clientId)
   await expect(connection.start(false)).rejects.toThrow('local credential storage')
   startProtocol(); const completed = Promise.withResolvers<NousGrant>(); protocol.complete.mockReturnValue(completed.promise)
   expect(await connection.start(true)).toEqual(verification)
@@ -52,6 +52,13 @@ it('requires local-storage consent and commits a completed grant without exposin
   await expect.poll(async () => (await connection.getState()).connected).toBe(true)
   expect(await credentialStoreFrom(ctx).read('nous')).toEqual(grant)
   expect(JSON.stringify(await connection.getState())).not.toMatch(/mock-access|mock-refresh|private-device-code|user_code/)
+})
+it.skipIf(process.platform === 'win32')('writes the completed grant with owner-only POSIX file permissions', async () => {
+  const { dir, connection } = await app(grant.clientId)
+  startProtocol()
+  protocol.complete.mockResolvedValue(grant)
+  await connection.start(true)
+  await expect.poll(async () => (await connection.getState()).connected).toBe(true)
   expect((await stat(join(dir, '.credentials.yaml'))).mode & 0o777).toBe(0o600)
 })
 it('waits for cancellation cleanup and keeps the previous grant when polling returns late', async () => {

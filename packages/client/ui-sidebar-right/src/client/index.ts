@@ -109,13 +109,6 @@ export function apply(ctx: ClientContext): void {
   const t = ctx.locale.bind(NS)
   const tabs = new SidebarRightTabRegistry(ctx)
   const views = new SidebarSessionViews(ctx.sessions)
-  ctx.effect(() => {
-    const current = ctx.uiSession.adapter.current
-    const sync = (): void => { views.select(current.getSnapshot().key as SessionId | undefined) }
-    const unsubscribe = current.subscribe(sync)
-    sync()
-    return () => { unsubscribe(); views.dispose() }
-  }, 'ui-sidebar-right: retained Session views')
   const layout: ILayout = ctx.layout
   // The automatic fullscreen rule as the seats last rendered it: the frame
   // hands them its width as owner props, and every seat reports the same rule.
@@ -129,22 +122,25 @@ export function apply(ctx: ClientContext): void {
       closeWithFocus: (sessionId, paneId, close) => { closeWithPaneFocus(document, sessionId, paneId, close) },
     },
   )
-  // The Session on screen: the selected one while the Conversation fills the
-  // main column. Both sources notify before React renders their change, so the
-  // service names the arriving Session before any component of that commit
-  // reads it, and its seat mints the Session's store in the same render.
   ctx.effect(() => {
+    const current = ctx.uiSession.adapter.current
     const sync = (): void => {
-      const selected = views.source.getSnapshot().find(view => view.selected)
-      show(layout.panelInfo.getSnapshot().activePanelId === null ? selected?.sessionId : undefined)
+      const panel = layout.panelInfo.getSnapshot().activePanelId
+      const conversation = current.getSnapshot().key as SessionId | undefined
+      const selected = panel === null ? conversation : controller.panelSessions.getSnapshot().get(panel)
+      show(selected)
+      views.select(selected ?? conversation)
     }
-    const unsubscribeViews = views.source.subscribe(sync)
+    const unsubscribeCurrent = current.subscribe(sync)
     const unsubscribePanel = layout.panelInfo.subscribe(sync)
+    const unsubscribeSelection = controller.panelSessions.subscribe(sync)
     sync()
     return () => {
-      unsubscribeViews()
+      unsubscribeCurrent()
       unsubscribePanel()
+      unsubscribeSelection()
       show(undefined)
+      views.dispose()
     }
   }, 'ui-sidebar-right: on-screen Session')
   const disposeRegistry = ctx.reflect.provide('sidebarRightTabs', tabs)
@@ -206,7 +202,7 @@ export function apply(ctx: ClientContext): void {
         name: 'rightbar',
         children: { 'rightbar.session': { kind: 'single', scope: 'session' } },
         inject: (): RightbarRootInjected => ({
-          hooks: { views: views.source },
+          hooks: { views: views.source, activeSession: controller.mounted },
           mountView: reference => views.mount(reference),
         }),
       }, RightbarRoot)

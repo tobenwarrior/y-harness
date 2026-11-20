@@ -18,7 +18,7 @@ describe('Desktop release dotenv serialization', () => {
   })
 
   it('rejects values whose two quote delimiters cannot be represented losslessly', () => {
-    expect(() => serializeDesktopDotenvValue(`both'quotes"#`)).toThrow(/unsupported quote/u)
+    expect(() => serializeDesktopDotenvValue('both\'quotes"#')).toThrow(/unsupported quote/u)
   })
 
   it('writes selected settings without logging or changing their values', async () => {

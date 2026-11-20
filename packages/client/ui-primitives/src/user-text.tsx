@@ -2,7 +2,8 @@
  * Display projection of reference forms in sent user text (bubble and queue
  * rows). The logged model text remains the single truth; this is presentation
  * only. Inline references follow the consumer's wrapping policy and keep long
- * labels within its width. Four decoration sources, by precedence: the wire session form
+ * labels within its width. Canonical Bot references show the Bot's label and
+ * its available avatar. The wire session form
  * `@[label](dsh-session:...)` folds to its label; exact session labels
  * supplied by an adjacent recall decorate their bare `@label` mention; plain
  * `@name` word-boundary tokens decorate by shape alone; and a plain `/name`
@@ -14,9 +15,10 @@
  * text end, so slash paths (`/nfs-hg/xxx`, `/plan.md`) and punctuation-glued
  * tokens (`/plan。`) stay plain even for a loaded name.
  */
-import type { ReactNode } from 'react'
+import type { ComponentType, ReactNode } from 'react'
 import clsx from 'clsx'
-import { ReferenceIconRegular } from './ReferenceIcon.tsx'
+import { ReferenceIconRegular, type InlineReferenceIconProps } from './ReferenceIcon.tsx'
+import { botMentionsIn } from './bot-mention.ts'
 import css from './user-text.module.css'
 import markdownCss from './markdown/MarkdownText.module.css'
 
@@ -31,7 +33,7 @@ interface DecorationRange {
   readonly end: number
   /** Matched source text (hover title). */
   readonly label: string
-  readonly kind: 'session' | 'plain'
+  readonly kind: 'bot' | 'session' | 'plain'
   /** Pre-resolved display text (wire folds); derived from label when absent. */
   readonly display?: string
 }
@@ -39,9 +41,11 @@ interface DecorationRange {
 /** Optional navigation supplied by consumers that can preview references. */
 export interface UserTextReferences {
   /** Open a file path decoded from an `@` mention. */
-  openFile: (path: string) => void
+  openFile?: (path: string) => void
   /** Open the source of a skill loaded for this message. */
-  openSkill: (name: string) => void
+  openSkill?: (name: string) => void
+  /** Resolve the source-owned avatar for one canonical Bot reference. */
+  botIcon?: (() => ComponentType<InlineReferenceIconProps> | undefined) | undefined
 }
 
 /**
@@ -63,6 +67,15 @@ export function projectUserText(
   references?: UserTextReferences,
 ): ReactNode {
   const ranges: DecorationRange[] = []
+  for (const mention of botMentionsIn(text)) {
+    ranges.push({
+      start: mention.index,
+      end: mention.index + mention.text.length,
+      label: mention.text,
+      kind: 'bot',
+      display: mention.label,
+    })
+  }
   SESSION_WIRE_RE.lastIndex = 0
   let wire: RegExpExecArray | null
   while ((wire = SESSION_WIRE_RE.exec(text)) !== null) {
@@ -96,7 +109,7 @@ export function projectUserText(
     if (label.startsWith('/') && !slashNames.includes(label.slice(1))) continue
     ranges.push({ start: tokenStart, end: tokenStart + label.length, label, kind: 'plain' })
   }
-  const rankOf = (range: DecorationRange): number => range.kind === 'session' ? 0 : 1
+  const rankOf = (range: DecorationRange): number => range.kind === 'plain' ? 1 : 0
   ranges.sort((a, b) => a.start - b.start || rankOf(a) - rankOf(b) || b.end - a.end)
   const parts: ReactNode[] = []
   let cursor = 0
@@ -107,8 +120,8 @@ export function projectUserText(
     if (range.start < cursor) continue
     const { start: tokenStart, end, label, kind } = range
     if (tokenStart > cursor) pushPlain(cursor, tokenStart)
-    const referenceKind = kind === 'session'
-      ? 'session'
+    const referenceKind = kind !== 'plain'
+      ? kind
       : label.startsWith('@')
         ? label.replace(/^@"|"$/gu, '').endsWith('/') ? 'folder' : 'file'
         : undefined
@@ -118,21 +131,25 @@ export function projectUserText(
         : referenceKind === 'session'
           ? label.slice(1)
           : label.slice(1).replace(/^"|"$/gu, '').split(/[\\/]/u).filter(Boolean).at(-1) ?? label.slice(1))
+    const BotIcon = kind === 'bot' ? references?.botIcon?.() : undefined
     const contents = <>
-      {referenceKind !== undefined && (
-        <ReferenceIconRegular kind={referenceKind} size={16} className={css.refIcon} />
-      )}
+      {BotIcon !== undefined
+        ? <span className={clsx(css.refIcon, css.refAvatar)} aria-hidden><BotIcon reference={label} label={displayLabel} /></span>
+        : referenceKind !== undefined && (
+          <ReferenceIconRegular kind={referenceKind} size={16} className={css.refIcon} />
+        )}
       {displayLabel}
     </>
-    const open = references === undefined ? undefined
-      : referenceKind === 'file'
-        ? () => { references.openFile(label.slice(1).replace(/^"|"$/gu, '')) }
-        : referenceKind === undefined && slashKind === 'skill'
-          ? () => { references.openSkill(label.slice(1)) }
-          : undefined
+    const openFile = references?.openFile
+    const openSkill = references?.openSkill
+    const open = referenceKind === 'file' && openFile !== undefined
+      ? () => { openFile(label.slice(1).replace(/^"|"$/gu, '')) }
+      : referenceKind === undefined && slashKind === 'skill' && openSkill !== undefined
+        ? () => { openSkill(label.slice(1)) }
+        : undefined
     const className = clsx(css.refChip, referenceKind === undefined && css.slashChip)
     parts.push(open === undefined
-      ? <span key={tokenStart} className={className} data-ref-chip={referenceKind ?? slashKind} title={label}>
+      ? <span key={tokenStart} className={className} data-ref-chip={referenceKind ?? slashKind} title={kind === 'bot' ? displayLabel : label}>
         {contents}
       </span>
       : <button

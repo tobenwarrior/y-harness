@@ -88,9 +88,9 @@ describe('shared Schedule management', () => {
     const domain = test.ctx.storageDomain.get('schedule')
     if (domain === undefined) throw new Error('Schedule domain not initialized')
     const tasks = domain.table('tasks')
-    expect(tasks.get(first.id)).toMatchObject({
-      idempotencyKey: 'operation-one', requestFingerprint: expect.stringMatching(/^[0-9a-f]{64}$/),
-    })
+    const persisted = tasks.get(first.id)
+    expect(persisted).toHaveProperty('idempotencyKey', 'operation-one')
+    expect(persisted).toHaveProperty('requestFingerprint', expect.stringMatching(/^[0-9a-f]{64}$/))
     await tasks.put(first.id, { ...tasks.get(first.id)!, status: 'inactive' })
     const recreated = await test.service.create(sessionId, request, undefined, { idempotencyKey: 'operation-three' })
     expect(recreated.id).not.toBe(first.id)
@@ -162,6 +162,8 @@ describe('shared Schedule management', () => {
     const test = await setup()
     const sessionId = SessionId('approval-pending')
     const request = { prompt: 'Check the build', title: 'Build check', after_seconds: 60 }
+    await expect(test.service.releaseCreate(sessionId, request, 'approval-pending'))
+      .resolves.toEqual({ status: 'unknown' })
     await expect(test.service.reconcileCreate(sessionId, request, 'approval-pending'))
       .resolves.toEqual({ status: 'unknown' })
     expect([...test.ctx.storageDomain.get('schedule')!.table('create_operations').entries()]).toEqual([])
@@ -190,6 +192,52 @@ describe('shared Schedule management', () => {
     expect(await restarted.service.list({ sessionId })).toEqual([record])
   })
 
+  it.each(['create', 'reserveCreate', 'releaseCreate', 'reconcileCreate'] as const)(
+    'recovers a task whose receipt was interrupted via %s without creating a second task',
+    async (operation) => {
+      const pool = new MemoryMediaPool()
+      let operationWrites = 0
+      const test = await setup({ pool, backend: gatedScheduleBackend(pool, {
+        putRecord: async (table) => {
+          if (table === 'create_operations' && ++operationWrites === 2) throw new Error('Interrupted receipt write')
+        },
+      }) })
+      const owner = SessionId('routine-owner')
+      const request = { prompt: 'Check the report', title: 'Paper report', every_seconds: 300 }
+      const retry = { idempotencyKey: 'create-paper-report' }
+      await expect(test.service.create(owner, request, undefined, retry)).rejects.toThrow('Interrupted receipt write')
+
+      const tasks = await test.service.list({ sessionId: owner })
+      expect(tasks).toHaveLength(1)
+      await vi.advanceTimersByTimeAsync(60_000)
+      const recovered = operation === 'create'
+        ? { status: 'committed', record: await test.service.create(owner, request, undefined, retry) }
+        : await test.service[operation](owner, request, retry.idempotencyKey)
+      expect(recovered).toEqual({ status: 'committed', record: tasks[0] })
+      await expect(test.service.create(owner, request, undefined, retry)).resolves.toEqual(tasks[0])
+      expect(await test.service.list({ sessionId: owner })).toEqual(tasks)
+      await expect(test.service.reconcileCreate(owner, request, retry.idempotencyKey))
+        .resolves.toEqual({ status: 'committed', record: tasks[0] })
+    },
+  )
+
+  it('declines conflicting recovery of a reserved routine without changing its saved status', async () => {
+    const test = await setup()
+    const owner = SessionId('routine-owner')
+    const request = { prompt: 'Check the report', title: 'Paper report', every_seconds: 300 }
+    const key = 'create-paper-report'
+    await expect(test.service.reserveCreate(owner, request, key)).resolves.toEqual({ status: 'reserved' })
+    const conflict = { ...request, every_seconds: 600 }
+    await expect(test.service.releaseCreate(owner, conflict, key)).rejects.toMatchObject({ code: 'invalid_rule' })
+    await expect(test.service.reconcileCreate(owner, request, key)).resolves.toEqual({ status: 'unknown' })
+    expect(await test.service.list({ sessionId: owner })).toEqual([])
+
+    const committed = await test.service.create(owner, request, undefined, { idempotencyKey: key })
+    await expect(test.service.reserveCreate(owner, request, key))
+      .resolves.toEqual({ status: 'committed', record: committed })
+    expect(await test.service.list({ sessionId: owner })).toEqual([committed])
+  })
+
   it('matches equivalent structured local at inputs through the stored fingerprint', async () => {
     const test = await setup()
     const sessionId = SessionId('structured-at')
@@ -203,6 +251,35 @@ describe('shared Schedule management', () => {
     }, undefined, { idempotencyKey: 'structured-at-key' })
     expect(retry).toEqual(first)
     expect(await test.service.list({ sessionId })).toEqual([first])
+  })
+
+  it.each([
+    {
+      original: { daily: { time: '09:00:00', time_zone: 'US/Eastern' } },
+      equivalent: { daily: { time: '09:00:00.000', time_zone: 'America/New_York' } },
+    },
+    {
+      original: { weekly: { time: '09:00:00', time_zone: 'US/Eastern', weekdays: [3, 1] } },
+      equivalent: { weekly: { time: '09:00:00.000', time_zone: 'America/New_York', weekdays: [1, 3] } },
+    },
+  ])('reuses the receipt for the same normalized calendar rule %#', async ({ original, equivalent }) => {
+    const test = await setup()
+    const owner = SessionId('calendar-rule')
+    const request = { prompt: 'Check the simulated report', title: 'Calendar report' }
+    const options = { idempotencyKey: 'calendar-rule' }
+    const record = await test.service.create(owner, { ...request, ...original }, undefined, options)
+    await expect(test.service.create(owner, { ...request, ...equivalent }, undefined, options)).resolves.toEqual(record)
+    expect(await test.service.list({ sessionId: owner })).toEqual([record])
+  })
+
+  it('refuses a padded retry identity before changing any saved routines', async () => {
+    const test = await setup()
+    const owner = SessionId('routine-owner')
+    const request = { prompt: 'Check the report', title: 'Report', every_seconds: 300 }
+    await expect(test.service.reserveCreate(owner, request, ' padded-key')).rejects.toMatchObject({ code: 'invalid_rule' })
+    await expect(test.service.create(owner, request, undefined, { idempotencyKey: ' padded-key' }))
+      .rejects.toMatchObject({ code: 'invalid_rule' })
+    expect(await test.service.catalog()).toEqual([])
   })
 
   it('durably retires an absent operation so later identical requests can repeat', async () => {
@@ -750,6 +827,9 @@ describe('Schedule activation and shutdown', () => {
     await expect(test.service.resume({ sessionId, id: record.id })).resolves.toMatchObject({
       id: record.id, kind: 'every', resumed: true, status: 'active',
     })
+    await expect(test.service.resume({ sessionId, id: record.id })).resolves.toMatchObject({
+      id: record.id, kind: 'every', resumed: true, status: 'active',
+    })
     expect(await test.service.list({ sessionId })).toEqual([record])
     await test.ctx.fiber.dispose()
 
@@ -768,9 +848,27 @@ describe('Schedule activation and shutdown', () => {
     const domain = test.ctx.storageDomain.get('schedule')
     if (domain === undefined) throw new Error('Schedule domain not initialized')
     await domain.table('tasks').put(record.id, { ...domain.table('tasks').get(record.id)!, status: 'inactive' })
+    await expect(test.service.pause({ sessionId, id: record.id })).resolves.toEqual({
+      id: record.id, paused: false, code: 'schedule_ended',
+    })
     await expect(test.service.resume({ sessionId, id: record.id })).resolves.toEqual({
       id: record.id, resumed: false, code: 'schedule_ended',
     })
+    await expect(test.service.resume({ sessionId: SessionId('different-routine-owner'), id: record.id }))
+      .resolves.toEqual({ id: record.id, resumed: false, code: 'schedule_not_found' })
+  })
+
+  it('refuses native routine reservation and lifecycle changes for a delegated Session', async () => {
+    const test = await setup()
+    const child = agentFor(test.ctx, 'child-routine', { delegationDepth: 1 })
+    await test.ctx.agents.register(child)
+    const request = { prompt: 'Check the report', title: 'Report', every_seconds: 300 }
+    await expect(test.service.reserveCreate(child.session.id, request, 'child-routine'))
+      .rejects.toMatchObject({ code: 'subagent_session' })
+    const lifecycle = { sessionId: child.session.id, id: ScheduleId('original') }
+    await expect(test.service.pause(lifecycle)).resolves.toMatchObject({ code: 'subagent_session' })
+    await expect(test.service.resume(lifecycle)).resolves.toMatchObject({ code: 'subagent_session' })
+    expect(await test.service.catalog()).toEqual([])
   })
 
   it('warns for loaded active legacy reminders but not completed history', async () => {

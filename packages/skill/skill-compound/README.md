@@ -37,8 +37,13 @@ Mount this provider beside the skill registry and `dsh-tool-skill` to expose `co
 | `python` | Newest Python 3.11+ on `PATH` | Absolute interpreter the skill commands must call. The provider probes `python3.13`, `python3.12`, `python3.11`, then `python3`, and reports the resolved interpreter to the model. |
 | `mapStateDir` | `~/.cache/compound-skills`, or the system temporary directory when the home directory sits inside the mapped repository | Absolute cache directory for the code-map service. The service refuses a cache inside the repository it maps, so a deployment whose `HOME` is inside the checkout needs the fallback. |
 | `overlayRoot` | `~/.local/share/y-harness/compound-skills` | Private directory for verified upstream snapshots. The active revision is selected atomically through `current.json`; the managed Y Harness checkout is never rewritten. Existing installations under `~/.local/share/deepseek-harness/compound-skills` remain selected and receive updates there until a canonical revision exists; neither location is moved or overwritten. |
+| `autoUpdate` | `true` | Check for and apply upstream revisions in the background. Set to `false` for manual updates only. |
 
 Each loaded skill body ends with a `Compound runtime` section naming the absolute `skillDir` and `python` the vendored commands must use, because the upstream instructions address `<installed-skill-dir>` and a bare `python3`.
+
+On Windows, the configured `overlayRoot` is created with a protected DACL limited to the current user, SYSTEM, and local Administrators; an existing root is accepted only when its owner, ACL, and path components satisfy the same private policy. A missing root checks every existing ancestor for untrusted replacement rights, allowing inherited read/traverse/create-child access but failing closed on writable or untrusted ownership paths.
+
+Active revisions validate resource ownership and file types before exposing skill paths or starting the code-map service. Windows also validates every resource's private DACL. Owner-created Python caches keep their account's normal permissions within the private POSIX root. Symbolic links, reparse points, special files and POSIX hard links writable by other accounts are rejected.
 
 ### What the skills do
 

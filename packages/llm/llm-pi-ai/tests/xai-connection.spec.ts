@@ -72,7 +72,9 @@ it('serves grok-4.7 from the installed catalog once connected', async () => {
   await credentialStoreFrom(ctx).modify('xai', async () => grant())
   const models = await connection.models()
   expect(models.map(model => model.id)).toContain('grok-4.7')
-  expect(models.find(model => model.id === 'grok-4.7')).toMatchObject({ name: expect.any(String), reasoning: true })
+  const grok = models.find(model => model.id === 'grok-4.7')
+  expect(grok).toHaveProperty('name', expect.any(String))
+  expect(grok).toHaveProperty('reasoning', true)
 })
 
 it('waits for cancellation and keeps the previous grant when polling returns late', async () => {

@@ -6,6 +6,9 @@ import type { ToolCallId } from '@yharness/llm/brand'
 /** Authenticated POST route for opening a workspace file on the Host desktop. */
 export const PRESENT_OPEN_PATH = '/api/present.open'
 
+/** Authenticated GET route for downloading one file declared in a Session. */
+export const PRESENT_DOWNLOAD_PATH = '/api/present.download'
+
 /** Authenticated desktop availability and destination metadata. */
 export const PRESENT_HOST_PATH = '/api/present.host'
 
@@ -61,7 +64,22 @@ export function isPresentedFile(value: unknown): value is PresentedFile {
  * @returns document-relative file action route.
  */
 export function presentedFileUrl(sessionId: SessionId, seq: number, index: number): string {
-  return `${PRESENT_OPEN_ROUTE}?${new URLSearchParams({ sessionId, seq: String(seq), index: String(index) })}`
+  return fileActionUrl(PRESENT_OPEN_ROUTE, sessionId, seq, index)
+}
+
+/**
+ * Address a recorded file for download through the owner connection.
+ * @param sessionId - viewed Session.
+ * @param seq - delivery event sequence.
+ * @param index - file index in the recorded declaration.
+ * @returns document-relative download URL.
+ */
+export function presentedDownloadUrl(sessionId: SessionId, seq: number, index: number): string {
+  return fileActionUrl(PRESENT_DOWNLOAD_PATH.slice(1), sessionId, seq, index)
+}
+
+function fileActionUrl(route: string, sessionId: SessionId, seq: number, index: number): string {
+  return `${route}?${new URLSearchParams({ sessionId, seq: String(seq), index: String(index) })}`
 }
 
 /**

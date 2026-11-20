@@ -255,12 +255,12 @@ export function applyReadImageTool(ctx: Context): void {
       if (declared !== undefined) assertDeploymentAccepts(attachments, declared, args.file_path)
       await assertImageCapableRoute(ctx, exec, args.file_path)
 
-      const { target, info } = await resolveRegularReadTarget(ctx, exec, args.file_path)
+      const { target, info, fs } = await resolveRegularReadTarget(ctx, exec, args.file_path)
 
       // The tool result is one message carrying one image, so the per-message
       // aggregate bound applies beside the per-image bound.
       const byteCap = Math.min(attachments.imageLimits.maxImageBytes, attachments.imageLimits.maxMessageImageBytes)
-      const data = await ctx.fs.readBytes(target, exec.signal, byteCap)
+      const data = await fs.readBytes(target, exec.signal, byteCap)
       const mediaType = declared ?? sniffImageMediaType(data)
       if (mediaType === undefined) {
         throw new Error(`cannot read "${target.displayPath}": the file content is not a supported image format; read_image accepts PNG/JPEG/WebP/GIF`)

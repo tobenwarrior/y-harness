@@ -1,6 +1,7 @@
 /** Native desktop view of the private VPS workspace. */
 import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { writeFileAtomic } from '@yharness/atomic-write'
 import { WebContentsView, session, type BrowserWindow, type Session } from 'electron'
 import { isCloudTarget, openCloudConnection, openCloudForward, type CloudConnection, type CloudForward } from './cloud-connection.ts'
@@ -15,9 +16,11 @@ import {
   type CloudWorkspaceStatus,
 } from './cloud-workspace-document.ts'
 import type { DesktopCloudVault } from './cloud-vault-window.ts'
+import type { CloudVaultSession } from './cloud-vault.ts'
 import type { DesktopMessages } from './locale.ts'
+import { DESKTOP_IPC } from './ipc.ts'
 
-const BAR_HEIGHT = 50
+const chromePreload = fileURLToPath(new URL('./preload-cloud-chrome.cjs', import.meta.url))
 const RETRY_MS = 5_000
 const MAX_RETRY_MS = 30_000
 const LOAD_TIMEOUT_MS = 20_000
@@ -71,10 +74,11 @@ export class DesktopCloudWorkspace {
    * @param preferenceError - notification when the choice cannot be saved.
    * @param vault - application-owned VPS secret window.
    * @param onShowCloud - revokes access scoped to the Mac workspace.
+   * @param onStateChange - updates native Workspace menu availability.
    */
   constructor(private readonly file: string, private readonly messages: () => DesktopMessages,
     private readonly preferenceError: () => void, private readonly vault: Pick<DesktopCloudVault, 'open' | 'close'>,
-    private readonly onShowCloud?: () => void) {}
+    private readonly onShowCloud?: () => void, private readonly onStateChange?: () => void) {}
 
   private onClosed = (): void => { void this.dispose() }
 
@@ -85,6 +89,8 @@ export class DesktopCloudWorkspace {
     this.saved = readPreference(this.file)
     this.target = this.saved?.target
     owner.on('resize', this.layout)
+    owner.on('enter-full-screen', this.syncChrome)
+    owner.on('leave-full-screen', this.syncChrome)
     owner.once('closed', this.onClosed)
     if (this.saved?.selected === true) this.showCloud()
   }
@@ -105,6 +111,18 @@ export class DesktopCloudWorkspace {
     this.render()
   }
 
+  /** Open the setup view from the native workspace menu. */
+  showSetup(): void {
+    if (this.owner === undefined) return
+    this.selected = true
+    this.onShowCloud?.()
+    this.resetWorkspace()
+    this.target = undefined
+    this.invalidTarget = false
+    this.status = 'setup'
+    this.render()
+  }
+
   /** Return to the local workspace, preserving an open Cloud view for quick switching. */
   showMac(): void {
     this.vault.close()
@@ -121,17 +139,28 @@ export class DesktopCloudWorkspace {
 
   /** Open Vault for the active Cloud connection. */
   showVault(): void {
-    const { connection, owner, remote, target } = this
-    if (!this.selected || this.status !== 'online' || connection === undefined || owner === undefined
-      || remote === undefined || target === undefined) return
+    const { owner } = this
+    const workspace = this.ownerCloudWorkspace()
+    if (owner === undefined || workspace === undefined) return
+    this.vault.open(owner, workspace)
+  }
+
+  /** @returns The selected owner's current Cloud connection for native settings operations. */
+  ownerCloudWorkspace(): (CloudVaultSession & { readonly target: string }) | undefined {
+    const { connection, remote, target } = this
+    if (!this.selected || this.status !== 'online' || connection === undefined
+      || remote === undefined || target === undefined) return undefined
     const contents = remote.webContents
-    this.vault.open(owner, target, { kind: 'manage' }, {
+    const active = () => this.selected && this.status === 'online' && this.connection === connection && !contents.isDestroyed()
+    return {
       origin: connection.origin,
-      fetch: async (url, options) => {
-        if (this.connection !== connection || contents.isDestroyed()) throw new Error('Cloud workspace disconnected')
+      target,
+      fetch: (url, options) => {
+        if (!active()) throw new Error('Cloud workspace disconnected')
         return contents.session.fetch(url, options)
       },
-    })
+      sendVaultRequest: (payload, signal) => active() ? connection.sendVaultRequest(payload, signal) : Promise.resolve(undefined),
+    }
   }
 
   /**
@@ -142,6 +171,8 @@ export class DesktopCloudWorkspace {
     const owner = this.owner
     this.owner = undefined
     owner?.off('resize', this.layout)
+    owner?.off('enter-full-screen', this.syncChrome)
+    owner?.off('leave-full-screen', this.syncChrome)
     owner?.off('closed', this.onClosed)
     this.resetWorkspace(owner)
     this.release(this.controls, owner)
@@ -161,8 +192,16 @@ export class DesktopCloudWorkspace {
   private layout = (): void => {
     if (this.owner === undefined || this.owner.isDestroyed()) return
     const { width, height } = this.owner.getContentBounds()
-    this.controls?.setBounds({ x: 0, y: 0, width, height: this.remoteReady ? BAR_HEIGHT : height })
-    this.remote?.setBounds({ x: 0, y: BAR_HEIGHT, width, height: Math.max(0, height - BAR_HEIGHT) })
+    const bounds = { x: 0, y: 0, width, height }
+    this.controls?.setBounds(bounds)
+    this.remote?.setBounds(bounds)
+  }
+
+  private syncChrome = (): void => {
+    const { owner, remote } = this
+    if (owner !== undefined && !owner.isDestroyed() && remote !== undefined && !remote.webContents.isDestroyed()) {
+      remote.webContents.send(DESKTOP_IPC.windowFullscreen, owner.isFullScreen())
+    }
   }
 
   private release(view: WebContentsView | undefined, owner = this.owner): void {
@@ -174,9 +213,17 @@ export class DesktopCloudWorkspace {
   private render(): void {
     const owner = this.owner
     if (owner === undefined || owner.isDestroyed()) return
+    this.onStateChange?.()
     if (!this.selected) {
       this.controls?.setVisible(false)
       this.remote?.setVisible(false)
+      return
+    }
+    if (this.remoteReady && this.remote !== undefined) {
+      this.controls?.setVisible(false)
+      this.layout()
+      this.remote.setVisible(true)
+      if (this.status === 'online') this.remote.webContents.focus()
       return
     }
     if (this.controls === undefined) {
@@ -195,14 +242,7 @@ export class DesktopCloudWorkspace {
         if (action === undefined) return
         switch (action.type) {
           case 'mac': this.showMac(); break
-          case 'vault': this.showVault(); break
-          case 'configure':
-            this.resetWorkspace()
-            this.target = undefined
-            this.invalidTarget = false
-            this.status = 'setup'
-            this.render()
-            break
+          case 'configure': this.showSetup(); break
           case 'retry': if (this.target !== undefined) this.connect(this.target); break
           case 'connect':
             this.invalidTarget = !isCloudTarget(action.target)
@@ -213,7 +253,7 @@ export class DesktopCloudWorkspace {
       })
       owner.contentView.addChildView(controls)
     }
-    const document = cloudDocument(this.messages(), this.status, this.invalidTarget, this.remoteReady)
+    const document = cloudDocument(this.messages(), this.status, this.invalidTarget)
     if (this.controlsDocument !== document) {
       this.controlsDocument = document
       void this.controls.webContents.loadURL(document).catch(() => {
@@ -222,8 +262,6 @@ export class DesktopCloudWorkspace {
     }
     this.layout()
     this.controls.setVisible(true)
-    this.remote?.setVisible(this.remoteReady)
-    if (this.status === 'online') this.remote?.webContents.focus()
   }
 
   private track(task: Promise<void>): void {
@@ -339,7 +377,7 @@ export class DesktopCloudWorkspace {
       await isolated.cookies.set(cookie)
       if (!this.isPending(pending)) return
       this.authenticated = true
-      if (activeView === undefined) await this.loadWorkspace(owner, isolated, forward, target, pending)
+      if (activeView === undefined) await this.loadWorkspace(owner, isolated, forward, pending)
       if (!this.isPending(pending)) return
 
       this.status = 'online'
@@ -362,7 +400,7 @@ export class DesktopCloudWorkspace {
   }
 
   private async loadWorkspace(
-    owner: BrowserWindow, isolated: Session, forward: CloudForward, target: string, pending: AbortController,
+    owner: BrowserWindow, isolated: Session, forward: CloudForward, pending: AbortController,
   ): Promise<void> {
     const { origin } = forward
     isolated.setPermissionCheckHandler((_contents, permission) => permission === 'clipboard-sanitized-write')
@@ -375,10 +413,12 @@ export class DesktopCloudWorkspace {
 
     const remote = new WebContentsView({ webPreferences: {
       session: isolated, nodeIntegration: false, contextIsolation: true, sandbox: true, devTools: false,
+      preload: chromePreload,
     } })
     this.remote = remote
     remote.setVisible(false)
     const contents = remote.webContents
+    contents.on('did-finish-load', this.syncChrome)
     contents.setWindowOpenHandler(() => ({ action: 'deny' }))
     contents.on('will-frame-navigate', (event) => {
       if (!cloudRequestAllowed(origin, event.url)) event.preventDefault()
@@ -403,13 +443,15 @@ export class DesktopCloudWorkspace {
       const loginUseRequestId = cloudWebsiteLoginUseRequestId(origin, url)
       if (loginUseRequestId !== undefined) {
         event.preventDefault()
-        this.vault.open(owner, target, { kind: 'login-use', id: loginUseRequestId })
+        const workspace = this.ownerCloudWorkspace()
+        if (workspace !== undefined) this.vault.open(owner, workspace, { kind: 'login-use', id: loginUseRequestId })
         return
       }
       const requestId = cloudVaultRequestId(origin, url)
       if (requestId === undefined) return
       event.preventDefault()
-      this.vault.open(owner, target, { kind: 'request', id: requestId })
+      const workspace = this.ownerCloudWorkspace()
+      if (workspace !== undefined) this.vault.open(owner, workspace, { kind: 'request', id: requestId })
     })
     const responseStatus = new Promise<number>((resolve) => {
       contents.once('did-navigate', (_event, _url, status) => { resolve(status) })

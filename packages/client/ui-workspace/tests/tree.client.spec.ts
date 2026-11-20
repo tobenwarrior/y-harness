@@ -78,14 +78,26 @@ describe('withoutBotSessions', () => {
   it('removes Bot-owned Sessions from browser rows while preserving ordinary Sessions', () => {
     const ordinary = summary('ordinary', 2)
     const bot = summary('bot-session-1', 3)
-    const state = list(ordinary, bot)
+    const ordinaryProjection = catalog('ordinary-child')
+    const botProjection = catalog('bot-child')
+    const state: SessionListState = {
+      ...list(ordinary, bot),
+      projectionsBySession: {
+        [ordinary.id]: ordinaryProjection,
+        [bot.id]: botProjection,
+      },
+    }
 
     const filtered = withoutBotSessions(state, [bot.id])
 
     expect(filtered.ids).toEqual([ordinary.id])
     expect(filtered.byId).toEqual({ [ordinary.id]: ordinary })
-    expect(filtered.projectionsBySession).toEqual({})
+    expect(filtered.projectionsBySession).toEqual({ [ordinary.id]: ordinaryProjection })
     expect(state.ids).toEqual([ordinary.id, bot.id])
+    expect(state.projectionsBySession).toEqual({
+      [ordinary.id]: ordinaryProjection,
+      [bot.id]: botProjection,
+    })
   })
 })
 

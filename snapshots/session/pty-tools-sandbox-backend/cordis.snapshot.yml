@@ -9,7 +9,7 @@
     - id: pty-snapshot-backend
       name: './pty-snapshot-backend.mjs'
     - id: tool-terminal
-      name: '@deepseek-ai/dsh-tool-terminal'
+      name: '@yharness/tool-terminal'
       config:
         maxResultBytes: 64
     - id: llm-replay

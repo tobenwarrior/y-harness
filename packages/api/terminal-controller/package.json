@@ -63,6 +63,7 @@
     "zod": "^4.4.3"
   },
   "peerDependencies": {
+    "@yharness/sandbox-policy": "workspace:*",
     "@yharness/subprocess": "workspace:*",
     "@yharness/cordis": "workspace:~"
   },

@@ -84,12 +84,13 @@ describe.each(MODE === 'record' ? ['deepseek-official'] : ['deepseek-official', 
     expect(scaffold.ctx.agents.get(sessionId)).toBe(agent)
   }
 
-  async function selectModel(name: string): Promise<void> {
+  async function selectModel(providerName: string, modelName: string): Promise<void> {
     const trigger = page.getByRole('button', { name: /^Select model, current/ })
     await trigger.click()
-    await page.getByRole('menuitem', { name: /^Model\b/ }).click()
-    await page.getByRole('menuitemradio', { name, exact: true }).click()
-    await expect.poll(() => trigger.getAttribute('aria-label')).toContain(name)
+    await page.getByRole('menuitem', { name: 'Provider', exact: true }).click()
+    await page.getByRole('menuitemradio', { name: providerName, exact: true }).click()
+    await page.getByRole('menuitemradio', { name: modelName, exact: true }).click()
+    await expect.poll(() => trigger.getAttribute('aria-label')).toContain(modelName)
     // The durable projection can update the label before the selection reply closes the menu.
     await expect.poll(() => trigger.getAttribute('aria-expanded'), { timeout: 10_000 }).toBe('false')
   }
@@ -109,8 +110,7 @@ describe.each(MODE === 'record' ? ['deepseek-official'] : ['deepseek-official', 
     const address = collector.address()
     if (address === null || typeof address === 'string') throw new Error('collector has no port')
     scaffold = await launchWebScaffold({
-      telemetryUrl: `http://127.0.0.1:${address.port}/v1/logs`,
-      telemetryMode: 'FEEDBACK_ONLY',
+      feedbackCollectorPort: address.port,
       telemetryScheduledDelayMillis: 10,
       replayProviders: [
         { id: 'deepseek-official', name: 'DeepSeek', models: [
@@ -162,7 +162,7 @@ describe.each(MODE === 'record' ? ['deepseek-official'] : ['deepseek-official', 
     }
     const input = page.locator('[data-composer-input]').first()
     await input.waitFor({ timeout: 10_000 })
-    if (!official) await selectModel('Feedback mock')
+    if (!official) await selectModel('Feedback mock', 'Feedback mock')
     const settled = scaffold.whenTurnSettled()
     await input.fill(PROMPT)
     await input.press('Enter')
@@ -172,8 +172,8 @@ describe.each(MODE === 'record' ? ['deepseek-official'] : ['deepseek-official', 
     expect(uploads).toEqual([])
     // Both routes render the same composer without changing the actual request header.
     if (MODE !== 'record') {
-      await selectModel('Feedback mock')
-      await selectModel('DeepSeek-V4-Flash')
+      await selectModel('Feedback mock', 'Feedback mock')
+      await selectModel('DeepSeek', 'DeepSeek-V4-Flash')
     }
     expect(agent?.session.requestHeader()?.config.provider).toBe(provider)
     expect(uploads).toEqual([])
@@ -207,8 +207,8 @@ describe.each(MODE === 'record' ? ['deepseek-official'] : ['deepseek-official', 
     const events = await readPersistedEvents(scaffold, sessionId)
     expect(events.at(-1)?.type).toBe('command/done')
     expect(events.at(-1)!.seq).toBeGreaterThan(authorized.at(-1)!.seq)
-    await selectModel('Feedback mock')
-    await selectModel('DeepSeek-V4-Flash')
+    await selectModel('Feedback mock', 'Feedback mock')
+    await selectModel('DeepSeek', 'DeepSeek-V4-Flash')
     const warningStart = tripwire.warnings.length
     await page.reload({ waitUntil: 'load' })
     acknowledgeReloadConnectionLoss(tripwire, warningStart)
@@ -285,8 +285,8 @@ describe.each(MODE === 'record' ? ['deepseek-official'] : ['deepseek-official', 
   }, 60_000)
 
   it.skipIf(MODE === 'record')('releases headerless feedback without capturing another session’s provider-change tail', async () => {
-    await selectModel('Feedback mock')
-    await selectModel('DeepSeek-V4-Flash')
+    await selectModel('Feedback mock', 'Feedback mock')
+    await selectModel('DeepSeek', 'DeepSeek-V4-Flash')
     expect(captured()).toHaveLength(releasedCount)
     await page.getByRole('button', { name: 'New session', exact: true }).last().click()
     const input = page.locator('[data-composer-input][contenteditable="true"][data-placeholder="Describe what you want to build, / commands, @ files or sessions"]')

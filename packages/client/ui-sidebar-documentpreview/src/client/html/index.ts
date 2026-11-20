@@ -2,7 +2,7 @@
 import type { Context } from '@yharness/cordis'
 import type {} from '../index.ts'
 import type { DocumentPreviewDefinition } from '../document/registry.ts'
-import { hostFileOf } from '../rpc.ts'
+import { documentPath, hostFileOf } from '../rpc.ts'
 import { HtmlBody } from './HtmlBody.tsx'
 import type { HtmlBodyInjected } from './HtmlBody.tsx'
 import type {} from '@yharness/client-ui-settings/client'
@@ -35,7 +35,7 @@ export function apply(ctx: Context): void {
         hooks: { interactivePreview: ctx.configForms.developerTools.enabled },
         readRelated: (address, relativePath, signal) => {
           const file = hostFileOf(address)
-          return ctx.remote.workspaceFiles.readBytes(file.sessionId, relativePath, { baseFile: file.path }, signal)
+          return ctx.remote.workspaceFiles.readBytes(file.sessionId, documentPath(file, relativePath), { baseFile: file.path }, signal)
         },
       }),
     }, HtmlBody,

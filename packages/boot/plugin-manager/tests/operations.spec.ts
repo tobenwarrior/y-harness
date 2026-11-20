@@ -1,7 +1,7 @@
 /** The CLI and manager share package reconciliation, path anchoring and diagnostics. */
 import { EventEmitter } from 'node:events'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { basename, join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { PassThrough } from 'node:stream'
 import { expect, it, onTestFinished, vi } from 'vitest'
@@ -42,6 +42,20 @@ interface FakePnpm {
 }
 
 const command = vi.hoisted(() => ({ run: vi.fn<(...args: unknown[]) => Promise<FakeOutcome> & FakeChild>() }))
+const missingDuringRead = vi.hoisted(() => ({ path: undefined as string | undefined }))
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>()
+  return {
+    ...actual,
+    readFileSync: (...args: Parameters<typeof actual.readFileSync>) => {
+      if (typeof args[0] === 'string' && args[0] === missingDuringRead.path) {
+        missingDuringRead.path = undefined
+        actual.unlinkSync(args[0])
+      }
+      return actual.readFileSync(...args)
+    },
+  }
+})
 const logHandle = vi.hoisted(() => ({ close: vi.fn() }))
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>()
@@ -49,11 +63,12 @@ vi.mock('node:fs/promises', async (importOriginal) => {
     ...actual,
     open: async (...args: Parameters<typeof actual.open>) => {
       const handle = await actual.open(...args)
-      if (typeof args[0] !== 'string' || !args[0].endsWith('/pnpm.log')) return handle
+      if (typeof args[0] !== 'string' || basename(args[0]) !== 'pnpm.log') return handle
       return new Proxy(handle, {
         get(target, property, receiver) {
           if (property === 'close') return async () => { logHandle.close(); return target.close() }
-          return Reflect.get(target, property, receiver)
+          const value: unknown = Reflect.get(target, property, receiver)
+          return value
         },
       })
     },
@@ -464,6 +479,25 @@ it('does not fail an unrelated installation on an untouched incompatible depende
   })).toMatchObject({ exitCode: 0 })
   expect(readProfileManifest('test', dir).dsh?.profile?.bundles).toEqual(['unrelated'])
   expect(messages.join('')).toContain('startup denies it')
+})
+
+it('finishes a package-only operation when a manifest disappears after discovery', async () => {
+  const { context, dir, pnpm } = fixture()
+  const removed = join(dir, 'node_modules', 'disappearing', 'package.json')
+  onTestFinished(() => { missingDuringRead.path = undefined })
+  pnpm.mutate = (target) => {
+    installGuarded(target, 'disappearing')
+    install(target, 'kept')
+    missingDuringRead.path = removed
+  }
+
+  const result = await runProfilePnpm(context, ['add', 'kept'], {
+    execution: 'service', outputBytes: 8192, activateNewBundles: false,
+  })
+
+  expect(result).toMatchObject({ exitCode: 0 })
+  expect(existsSync(removed)).toBe(false)
+  expect(readProfileManifest('test', dir).dsh?.profile?.bundles).toEqual([])
 })
 
 it('installs a dependency whose installed manifest declares compatible peers', async () => {

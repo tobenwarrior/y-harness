@@ -312,16 +312,17 @@ collaborationFor(agent: Pick<Agent, 'id'>): Promise<BotCollaborationClient>
 @Remote('routineHistory') async routineHistory(request: BotRoutineHistoryRequest): Promise<BotRoutineHistoryValue>
 
 /**
- * Read a private recovered archive without activating the Bot Session.
+ * Read a private recovered archive and its verified attachment positions without activating the Bot Session.
  * @param request - Bot identity.
+ * @param signal - Cancellation for attachment verification.
  * @returns Recovered history or null if the Bot has no archive.
  */
-@Remote('readGrokHistory') async readGrokHistory(request: BotGrokHistoryRequest): Promise<BotGrokHistoryArchive | null>
+@Remote('readGrokHistory') async readGrokHistory(request: BotGrokHistoryRequest, signal?: AbortSignal): Promise<BotGrokHistoryView | null>
 
 /**
  * Store a reviewed transcript without delivering it to the Bot or changing its Session.
  * @param request - Existing Bot and versioned transcript JSON.
- * @returns The number of recovered messages.
+ * @returns The total number of stored records across the primary and supplemental sources.
  */
 @Remote('importGrokHistory') async importGrokHistory(request: BotGrokHistoryImportRequest): Promise<{ readonly messages: number }>
 
@@ -365,6 +366,29 @@ collaborationFor(agent: Pick<Agent, 'id'>): Promise<BotCollaborationClient>
  * @returns the active row or a retryable provisioning row.
  */
 @Remote('create') async create(request: BotCreateRequest): Promise<BotCreateValue>
+
+/**
+ * Resolve a server-owned Bot by its exact backing Session.
+ * @param sessionId - Session identity from the live Agent or authenticated UI.
+ * @returns The owner Bot, including provisioning state, or undefined for other Sessions.
+ */
+async ownerBotForSession(sessionId: string): Promise<{ readonly id: BotId readonly sessionId: SessionId readonly state: 'active' | 'provisioning' } | undefined>
+
+/**
+ * Check whether the live owner Bot is answering a direct human message.
+ * @param agent - Exact live Agent invoking the owner-only operation.
+ * @param signal - Cancellation while reading the current Session log.
+ * @returns Whether the current turn belongs exclusively to a direct owner conversation.
+ */
+async isDirectOwnerTurn(agent: Agent, signal?: AbortSignal): Promise<boolean>
+
+/**
+ * Identify a live private turn whose input belongs exclusively to the owner or its schedule.
+ * @param agent - Exact Agent invoking the operation.
+ * @param signal - Cancellation while reading the current Session log.
+ * @returns The trusted input source for the open owner turn, or undefined when none qualifies.
+ */
+async privateOwnerTurnSource(agent: Agent, signal?: AbortSignal): Promise<'user' | 'schedule' | undefined>
 
 /**
  * Rename one Bot while preserving its one Session mapping and visual identity.
@@ -418,7 +442,7 @@ collaborationFor(agent: Pick<Agent, 'id'>): Promise<BotCollaborationClient>
 @Remote('readAvatar') async readAvatar(request: BotAvatarReadRequest): Promise<BotAvatarReadValue>
 ```
 
-Types: [Agent](core.md)
+Types: [Agent](core.md) · [SessionId](core.md)
 
 Source: [`packages/agents/bots/src/index.ts`](../../packages/agents/bots/src/index.ts)
 

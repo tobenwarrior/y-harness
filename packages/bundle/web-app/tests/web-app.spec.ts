@@ -115,6 +115,37 @@ interface BashContribution {
 }
 
 describe('web-app runtime glue', () => {
+  const defaults = { openBrowser: false, printUrl: false, surfaceContext: true, trustedHosts: [] } satisfies Config
+
+  it('keeps existing Bot Computer configurations valid without a browser', () => {
+    const botComputers = { root: '/example/computers', image: 'localhost/example', bots: ['bot-existing'] }
+    const resolved = new Config({ ...defaults, botComputers }).botComputers
+    expect(resolved).toMatchObject(botComputers)
+    expect(resolved?.browser).toBeUndefined()
+  })
+
+  it('accepts a complete opt-in Bot browser configuration', () => {
+    const botComputers = {
+      root: '/example/computers', image: 'localhost/example',
+      browser: { bots: ['bot-browser'], image: 'localhost/example-browser', seccompProfile: '/example/browser.json' },
+    }
+    expect(new Config({ ...defaults, botComputers }).botComputers).toMatchObject(botComputers)
+  })
+
+  it('accepts an isolated browser broker for selected private Computers', () => {
+    const botComputers = {
+      root: '/example/computers', image: 'localhost/example',
+      isolatedBrowser: { socketPath: '/run/yharness-browser.sock', bots: ['bot-isolated'] },
+    }
+    expect(new Config({ ...defaults, botComputers }).botComputers).toMatchObject(botComputers)
+  })
+
+  it('preserves the difference between all Bots and an empty private Computer allowlist', () => {
+    const botComputers = { root: '/example/computers', image: 'localhost/example' }
+    expect(new Config({ ...defaults, botComputers }).botComputers?.bots).toBeUndefined()
+    expect(new Config({ ...defaults, botComputers: { ...botComputers, bots: [] } }).botComputers?.bots).toEqual([])
+  })
+
   it('mounts dist serving, prompt section, bash variables, and publishes the URL with the LAN snapshot', async () => {
     stageDist()
     const ctx = new Context()

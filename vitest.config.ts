@@ -144,6 +144,16 @@ if (coveragePartitionRaw !== undefined && coveragePartitionRaw !== '' && coverag
 }
 const coveragePartitionMode = coveragePartitionRaw === '1'
 
+const coverageBaselineRaw = process.env.DSH_COVERAGE_BASELINE
+if (coverageBaselineRaw !== undefined && coverageBaselineRaw !== '' && coverageBaselineRaw !== '1') {
+  throw new Error(`vitest config: DSH_COVERAGE_BASELINE must be '1' or unset, got ${JSON.stringify(coverageBaselineRaw)}.`)
+}
+const coverageBaseline = coverageBaselineRaw === '1'
+const baselineReporter = [
+  uncoveredLocationsReporter,
+  { baselineFile: fileURLToPath(new URL(`./scripts/coverage-baseline/${process.platform}.json`, import.meta.url)) },
+] satisfies [string, { baselineFile: string }]
+
 // Lanes on shared hosts raise the per-test, hook, and expect.poll defaults
 // together through DSH_COVERAGE_TEST_TIMEOUT_MS; it lands in each inline
 // project below because CLI flags do not reach them (coverageTestTimeoutOptions
@@ -372,11 +382,9 @@ export default defineConfig({
         ...windowsRunnerCoverageExclusions,
         ...pwshCoverageExclusions,
       ],
-      // 100% or it doesn't merge (docs/testing.md: excessive tests are welcome).
-      // Per-file so a well-covered big file can't subsidize a bare one.
-      // Every v8 ignore comment must carry a reason — see the testing policy
-      // (docs/testing.md).
-      thresholds: coveragePartitionMode
+      // The baseline reporter checks the complete merged coverage map in CI.
+      // A standalone coverage run uses Vitest's strict per-file thresholds.
+      thresholds: coveragePartitionMode || coverageBaseline
         ? undefined
         : {
             perFile: true,
@@ -387,9 +395,11 @@ export default defineConfig({
           },
       reporter: coveragePartitionMode
         ? []
-        : process.env.CI
-          ? ['text', uncoveredLocationsReporter]
-          : ['text', 'html', uncoveredLocationsReporter],
+        : [
+            'text',
+            ...(process.env.CI ? [] : ['html' as const]),
+            coverageBaseline ? baselineReporter : uncoveredLocationsReporter,
+          ],
     },
   },
 })

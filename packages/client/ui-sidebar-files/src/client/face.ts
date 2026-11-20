@@ -26,6 +26,7 @@ import type { DirLevel, createFilesStore } from './store.ts'
 import type { WorkspaceFileWatchFrame } from '@yharness/api-workspace-files/types'
 import { RemoteError } from '@yharness/typert-protocol'
 import { DirectoryNode } from './directory-node.ts'
+export { childPath } from './directory-node.ts'
 
 /**
  * Observe one directory without recursively watching its descendants.
@@ -34,14 +35,18 @@ import { DirectoryNode } from './directory-node.ts'
  * @param signal - node lifetime.
  * @returns readiness and invalidation notifications.
  */
-export type WatchWorkspaceDirectory = (sessionId: SessionId, path: string, signal: AbortSignal) => AsyncIterable<'ready' | 'change'>
+export type WatchWorkspaceDirectory = (
+  sessionId: SessionId, path: string, signal: AbortSignal,
+) => AsyncIterable<'ready' | 'change'> | Iterable<'ready' | 'change'>
 
 /**
  * Bind directory observation to the Remote stream supervisor.
  * @param remote - Client Remote with workspace file streams.
  * @returns a watcher that awaits stream disposal when its node ends.
  */
-export function createWatch(remote: ClientRemote): WatchWorkspaceDirectory {
+export function createWatch(remote: ClientRemote): (
+  sessionId: SessionId, path: string, signal: AbortSignal,
+) => AsyncIterable<'ready' | 'change'> {
   return async function* (sessionId, path, signal) {
     const aborted = (): boolean => signal.aborted
     if (aborted()) return
@@ -89,27 +94,15 @@ export type WorkspaceFilesListRemote = {
 /**
  * Bind the listing to one Remote face, keeping only what the tree stores.
  * @param remote - the Client Remote face carrying the `workspaceFiles` namespace.
+ * @param computer - list directories in a Computer workspace.
  * @returns the listing the tree's face performs.
  */
-export function createList(remote: WorkspaceFilesListRemote): ListWorkspaceDirectory {
+export function createList(remote: WorkspaceFilesListRemote, computer = false): ListWorkspaceDirectory {
   return async (sessionId, path, signal) => {
-    const result = await remote.workspaceFiles.list(sessionId, path, signal)
+    const result = await remote.workspaceFiles.list(sessionId, computer ? { computer: path } : path, signal)
     if (!result.ok) return result
     return { ok: true, value: { entries: result.value.entries, truncated: result.value.truncated } }
   }
-}
-
-/**
- * The absolute path of one child entry.
- *
- * Joined with `/` whatever the parent's separators: the Host resolves mixed
- * separators, and the tree only needs a stable key.
- * @param parent - absolute path of the listed directory.
- * @param name - the entry's basename.
- * @returns the child's absolute path.
- */
-export function childPath(parent: string, name: string): string {
-  return `${parent.replace(/[/\\]+$/, '')}/${name}`
 }
 
 /** The tree's injected business face, as the body receives it. */

@@ -20,7 +20,7 @@ File cards use the same split-control pattern as the Session header. The card an
 
 ## Alternatives considered
 
-**Immutable attachment snapshots and editable temporary copies** preserve delivered versions after source edits or deletion, but make desktop edits diverge from workspace files and introduce retention work without a current product requirement. This decision supersedes the [snapshot-delivery design](../../archived/feature/2026-09-08-web-explicit-file-delivery.md). Neither a download endpoint nor a fallback copy remains; both require an explicit future product decision.
+**Immutable attachment snapshots and editable temporary copies** preserve delivered versions after source edits or deletion, but make desktop edits diverge from workspace files and introduce retention work without a current product requirement. This decision supersedes the [snapshot-delivery design](../../archived/feature/2026-09-08-web-explicit-file-delivery.md). The Cloud card can download the current contents of a declared file inside the Session workspace. It reads the same source on each request and creates no retained delivery version.
 
 **Opening attachment-store files directly** lets editors mutate immutable objects. A future persistent delivery system needs an owned editing and retention policy, such as copy-on-write, before exposing saved versions to applications.
 
@@ -36,4 +36,4 @@ The Session log persists declarations but no attachment references or file conte
 
 The removed file-size cap has no role in a metadata-only declaration; the configurable file-count limit still bounds result size. Cards show file names and descriptions, falling back to file types, without stale byte-size metadata. No artifact service or speculative storage fallback is introduced.
 
-Focused tests cover content-free declarations, invalid inputs, blocked results, source-path identity, current bytes after edits, missing files, external paths and unavailable Host mappings, fork-relative paths, retry, cancellation, and disposal. The recorded Web scenario covers nested completion followed by enclosing failure, source edits, reload, deletion errors, card and prose opens without browser downloads, and content-free Session export.
+Focused tests cover content-free declarations, invalid inputs, blocked results, source-path identity, current bytes after edits, missing files, external paths and unavailable Host mappings, fork-relative paths, retry, cancellation, and disposal. The recorded Web scenario covers nested completion followed by enclosing failure, source edits, reload, deletion errors, native card and prose opens and explicit downloads of workspace files, and content-free Session export.

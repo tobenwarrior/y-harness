@@ -829,7 +829,7 @@ describe.skipIf(MODE === 'record')('web e2e: active Schedule catalog', () => {
     // unrestricted state; the repeating task is reached by name instead of a
     // retired type chip.
     const statuses = manager.getByRole('group', { name: 'Task status' })
-    expect(await statuses.getByRole('button').count()).toBe(3)
+    expect(await statuses.getByRole('button').allTextContents()).toEqual(['All', 'Enabled', 'Paused', 'Inactive'])
     await manager.getByRole('button', { name: 'All', exact: true }).click()
     await expect.poll(() => tasks.getByRole('listitem').count()).toBe(4)
     expect(await tasks.textContent()).toContain('Check exact cadence')

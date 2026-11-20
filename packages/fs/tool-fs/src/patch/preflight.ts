@@ -1,7 +1,7 @@
 /** Read-only simulation of patch effects; no internal read establishes model observation. */
 import type { Context } from '@yharness/cordis'
 import { FsError } from '@yharness/fs'
-import type { FsInfo, FsTarget, FsTargetKey } from '@yharness/fs'
+import type { FileSystem, FsInfo, FsTarget, FsTargetKey } from '@yharness/fs'
 import { applyHunks } from '@yharness/fs-patch'
 import type { SandboxExecutionPolicy } from '@yharness/sandbox'
 import type { ToolExecution } from '@yharness/tools'
@@ -26,10 +26,14 @@ class Preflight {
     private readonly policy: SandboxExecutionPolicy | undefined,
   ) {}
 
+  private get fs(): FileSystem {
+    return this.sandbox.filesystem(this.exec)
+  }
+
   private async state(target: FsTarget): Promise<SimulatedFile> {
     const known = this.states.get(target.targetKey)
     if (known) return known
-    const info = await this.ctx.fs.stat(target, this.exec.signal)
+    const info = await this.fs.stat(target, this.exec.signal)
     const state = { exists: info !== undefined, info, touched: false }
     this.states.set(target.targetKey, state)
     return state
@@ -63,7 +67,7 @@ class Preflight {
 
   private async content(state: SimulatedFile, target: FsTarget): Promise<string> {
     if (state.content === undefined) {
-      const text = await this.ctx.fs.readText(target, this.exec.signal)
+      const text = await this.fs.readText(target, this.exec.signal)
       // readText samples only a prefix for NUL bytes; the mutation path rejects any NUL.
       if (text.includes('\0')) throw new FsError(`cannot patch "${target.displayPath}": binary file`, 'FS_NOT_TEXT')
       state.content = text.replace(/\r\n/g, '\n')
@@ -91,7 +95,7 @@ class Preflight {
     }
     if (operation.kind === 'delete' || operation.kind === 'move') {
       const options = sessionResolveOptions(this.exec, this.policy?.workspaceRoot)
-      const info = await this.ctx.fs.lstat(operation.rawPath, options, options.signal)
+      const info = await this.fs.lstat(operation.rawPath, options, options.signal)
       if (info?.type === 'symlink') return { code: 'PATCH_SYMLINK_SOURCE',
         message: `cannot ${operation.kind} "${operation.target.displayPath}": path is a symbolic link — operate on its target path instead` }
     }

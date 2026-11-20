@@ -211,7 +211,10 @@ actualCodexSmoke('initializes the pinned package-local Codex CLI with an isolate
     expect(account).toMatchObject({ account: null })
   } finally {
     peer.close()
-    if (handle !== undefined) await expect(handle.waitForExit()).resolves.toBe(true)
+    if (handle !== undefined) {
+      await handle.done
+      await expect(handle.waitForExit()).resolves.toBe(true)
+    }
     await rm(root, { recursive: true, force: true })
   }
 })

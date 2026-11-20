@@ -2,8 +2,13 @@
 # with recorded JSONL, pin the recorded top-level model, and keep persistence
 # raw for fixture harvesting.
 
+- id: skill-compound
+  config:
+    assetRoot: !!js process.env.DSH_SNAPSHOT_SKILLS_ROOT
+    overlayRoot: !!js dshHomePath('snapshot-compound-overlay')
+    autoUpdate: false
+
 - id: llm-deepseek
-  name: '@deepseek-ai/dsh-llm-deepseek-api-key'
   disabled: true
 
 - id: acp

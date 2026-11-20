@@ -1,7 +1,7 @@
 /** File identity, Sidebar preview, and contributed native actions for one delivery. */
 import type { ReactNode } from 'react'
 import { resolveWorkspacePath } from '@yharness/util-workspace-path'
-import { FileTypeIcon, fileExtension } from '@yharness/client-ui-primitives'
+import { FileTypeIcon, IconDownloadOutlineRegular, Tooltip, fileExtension } from '@yharness/client-ui-primitives'
 import type { PropsLocale } from '@yharness/client-ui-slots'
 import type { PresentedHost } from '../presented.ts'
 import { PRESENTED_SUCCESS_HOLD_MS, PRESENTED_SUCCESS_FADE_MS, type PresentedOpenPhase } from './present-open.ts'
@@ -19,12 +19,13 @@ function cardDescription(description: string | undefined, fallback: string): str
  * @param props - durable file metadata, Sidebar preview, Host capabilities, gesture status, and localized copy.
  * @returns the file card and its anchored action menu.
  */
-export function PresentedFileCard({ file, cwd, phase, host, onPreview, actions, t }: {
+export function PresentedFileCard({ file, cwd, phase, host, onPreview, downloadUrl, actions, t }: {
   file: PresentedPath
   cwd: string | undefined
   phase: PresentedOpenPhase | undefined
   host: PresentedHost | null
   onPreview: () => void
+  downloadUrl?: string
   actions: ReactNode
 } & PropsLocale<typeof NS>) {
   const succeeded = phase === 'opened' || phase === 'revealed'
@@ -52,7 +53,14 @@ export function PresentedFileCard({ file, cwd, phase, host, onPreview, actions, 
           <span className={css.previewHint}>{t('presented.preview')}</span>
         </span>
       </div>
-      <div className={css.actions}>{actions}</div>
+      <div className={css.actions}>
+        {downloadUrl !== undefined && <Tooltip label={t('presented.download')} portal>
+          <a href={downloadUrl} download className={css.download} aria-label={t('presented.downloadFile', { name })}>
+            <IconDownloadOutlineRegular size={16} />
+          </a>
+        </Tooltip>}
+        {actions}
+      </div>
     </div>
   </div>
 }

@@ -6,7 +6,7 @@ import type {
   BotAppearanceUpdateValue,
   BotAttachmentGrantValue,
   BotGroupImageAdmissionRequest,
-  BotGrokHistoryArchive,
+  BotGrokHistoryView,
   BotGrokHistoryRequest,
   BotAvatar,
   BotAvatarUpdateValue,
@@ -99,7 +99,7 @@ import type { HostObservable } from '@yharness/client-ui-slots'
 import type { RemoteResult } from '@yharness/api-remotes/client'
 import { randomUUID } from '@yharness/util-crypto'
 import type { SharedBotsClient } from './shared-client.ts'
-import { admitBotGroupAttachments, isBotGroupImageType, type BotAttachmentFetch } from './attachment-client.ts'
+import { admitBotGroupAttachments, groupAttachmentsMatchDrafts, isBotGroupImageType, type BotAttachmentFetch } from './attachment-client.ts'
 import type { BotGroupAttachmentDraft } from './types.ts'
 import type {
   BotAccent, BotAvatarEditorActions, BotConnectedAppAccess, BotCreation, BotGroupCreation, BotGroupDetailData,
@@ -117,7 +117,7 @@ export interface BotWorkspaceRemote {
 
   rename(request: { readonly botId: BotIdType; readonly name: string }): Promise<RemoteResult<{ readonly bot: BotView }>>
   updateProfile?: (request: BotProfileUpdateRequest) => Promise<RemoteResult<BotProfileUpdateValue>>
-  readGrokHistory?: (request: BotGrokHistoryRequest) => Promise<RemoteResult<BotGrokHistoryArchive | null>>
+  readGrokHistory?: (request: BotGrokHistoryRequest) => Promise<RemoteResult<BotGrokHistoryView | null>>
   updateOrganization?: (request: BotOrganizationUpdateRequest) => Promise<RemoteResult<BotOrganizationUpdateValue>>
 
   listTemplates?: (request: BotTemplateListRequest) => Promise<RemoteResult<BotTemplateListValue>>
@@ -292,7 +292,7 @@ export interface BotWorkspaceFace {
   readonly retryGroup: () => void
   readonly loadConnectedApps?: (botId: string) => Promise<readonly BotConnectedAppAccess[]>
   readonly setConnectedAppAccess?: (botId: string, appId: string, allowed: boolean) => Promise<void>
-  readonly readGrokHistory?: (botId: string) => Promise<BotGrokHistoryArchive | null>
+  readonly readGrokHistory?: (botId: string) => Promise<BotGrokHistoryView | null>
   readonly loadAvatar: (botId: string, avatar: BotAvatar) => Promise<string>
   readonly avatarEditor?: BotAvatarEditorActions
   readonly memoryManager?: BotMemoryManagerActions
@@ -340,6 +340,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
+function isPendingTargetList(value: unknown): value is readonly string[] {
+  return Array.isArray(value) && value.length > 0
+    && value.every((id: unknown) => typeof id === 'string' && id.trim() !== '')
+}
+
 function restorePendingGroupState(value: unknown): BotGroupPendingState {
   const creations: Record<string, string> = {}
   const messages: Record<string, {
@@ -364,8 +369,7 @@ function restorePendingGroupState(value: unknown): BotGroupPendingState {
       throw new Error('invalid pending Bot group message')
     }
     const targetBotIds = pending.targetBotIds
-    if (targetBotIds !== undefined && (!Array.isArray(targetBotIds)
-      || targetBotIds.length === 0 || targetBotIds.some(id => typeof id !== 'string' || id.trim() === ''))) {
+    if (targetBotIds !== undefined && !isPendingTargetList(targetBotIds)) {
       throw new Error('invalid pending Bot group targets')
     }
     const replyToMessageId = pending.replyToMessageId
@@ -447,6 +451,8 @@ export class BotWorkspaceController {
   private pending: Promise<void> | undefined
   private pendingCreation: BotCreateRequest | undefined
   private creating: Promise<void> | undefined
+  private memoryManagerActions: BotMemoryManagerActions | undefined
+  private skillManagerActions: BotSkillManagerActions | undefined
   private readonly avatarLoads = new Map<string, Promise<string>>()
   private readonly templateImportIds = new Map<string, string>()
   private templatePreviewGeneration = 0
@@ -717,7 +723,7 @@ export class BotWorkspaceController {
 
       if (this.pending === pending) {
         this.pending = undefined
-        if (this.refreshAfterPending && !this.disposed) {
+        if (this.refreshAfterPending && this.canUpdate()) {
           this.refreshAfterPending = false
           void this.load().catch((error: unknown) => {
             this.fail(error instanceof Error ? error.message : String(error))
@@ -726,6 +732,10 @@ export class BotWorkspaceController {
 
       }
     }
+  }
+
+  private canUpdate(): boolean {
+    return !this.disposed
   }
 
   private async read(): Promise<void> {
@@ -744,7 +754,7 @@ export class BotWorkspaceController {
     }
     const groupsResult = await this.readGroups()
     const templateCatalog = await this.readTemplates()
-    if (this.disposed) return
+    if (!this.canUpdate()) return
     if (rosterRevision !== this.rosterRevision) {
       this.refreshAfterPending = true
       return
@@ -782,7 +792,7 @@ export class BotWorkspaceController {
       this.fail(error instanceof Error ? error.message : String(error))
       return
     }
-    if (this.disposed) return
+    if (!this.canUpdate()) return
     if (this.selectionGeneration !== refreshSelectionGeneration) {
       this.refreshAfterPending = true
       return
@@ -821,7 +831,7 @@ export class BotWorkspaceController {
         () => !this.disposed && this.selectionGeneration === selectionGeneration,
       )
     }
-    if (this.disposed || this.selectionGeneration !== selectionGeneration) return
+    if (!this.canUpdate() || this.selectionGeneration !== selectionGeneration) return
     if (rosterRevision !== this.rosterRevision) {
       this.refreshAfterPending = true
       return
@@ -947,12 +957,12 @@ export class BotWorkspaceController {
       await action(actionGeneration)
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error)
-      if (this.disposed || actionGeneration !== this.templateActionGeneration) return
+      if (!this.canUpdate() || actionGeneration !== this.templateActionGeneration) return
       const latest = this.source.getSnapshot()
       this.source.set({ ...latest, templates: { ...latest.templates, busy: false, error: message } })
       throw new Error(message)
     } finally {
-      if (!this.disposed && actionGeneration === this.templateActionGeneration) {
+      if (this.canUpdate() && actionGeneration === this.templateActionGeneration) {
         this.templateActionKind = undefined
         const latest = this.source.getSnapshot()
         if (latest.templates.busy) {
@@ -967,7 +977,7 @@ export class BotWorkspaceController {
     const current = this.source.getSnapshot()
     if (this.remote.listTemplates === undefined) return
     const templateCatalog = await this.readTemplates(current.templates)
-    if (this.disposed || templateCatalog === undefined
+    if (!this.canUpdate() || templateCatalog === undefined
       || (actionGeneration !== undefined && actionGeneration !== this.templateActionGeneration)) return
     const latest = this.source.getSnapshot()
     this.source.set({ ...latest, templates: this.mergeTemplateCatalog(templateCatalog, latest.templates) })
@@ -1130,7 +1140,7 @@ export class BotWorkspaceController {
         throw new Error(error instanceof Error ? error.message : String(error))
       }
       if (!result.ok) throw new Error(result.error.message)
-      if (this.disposed || actionGeneration !== this.templateActionGeneration || editGeneration !== this.templateStateGeneration) return
+      if (!this.canUpdate() || actionGeneration !== this.templateActionGeneration || editGeneration !== this.templateStateGeneration) return
       this.templateImportIds.delete(importKey)
       const latest = this.source.getSnapshot()
       this.source.set({ ...latest, templates: { ...latest.templates, code: '', preview: null, error: null } })
@@ -1301,7 +1311,7 @@ export class BotWorkspaceController {
         throw new Error(message)
       }
     }
-    if (this.disposed) return
+    if (!this.canUpdate()) return
     const created = groupSummary(result.value.group)
     const current = this.source.getSnapshot()
     const groups = current.groups.some(group => group.id === created.id)
@@ -1545,7 +1555,7 @@ export class BotWorkspaceController {
       explicitMessageId?.trim() || `bot-group-message-${randomUUID()}`,
     )
     const effectiveTargetIds = normalizedTargetIds
-      ?? current.selectedGroup?.bots.map(bot => String(bot.id))
+      ?? current.selectedGroup?.bots.map(bot => bot.id)
       ?? []
     let existing: BotGroupMessageView | undefined
     try {
@@ -1560,7 +1570,7 @@ export class BotWorkspaceController {
     let result: RemoteResult<BotGroupSendValue>
     try {
       if (existing !== undefined) {
-        if (!groupAttachmentMatchesDrafts(existing, attachments)) {
+        if (!groupAttachmentsMatchDrafts(existing.attachments, attachments)) {
           throw new Error(`Cannot safely retry Bot message ${String(messageId)} because its attachments differ.`)
         }
         const request: BotGroupSendRemoteRequest & { readonly replyToMessageId?: BotGroupMessageIdType } = {
@@ -1576,7 +1586,7 @@ export class BotWorkspaceController {
       } else {
         const grants = await admitBotGroupAttachments(
           {
-            groupId: String(current.selectedGroupId),
+            groupId: current.selectedGroupId,
             messageId: String(messageId),
             ...(normalizedTargetIds === undefined ? {} : { targetBotIds: normalizedTargetIds }),
           },
@@ -1648,7 +1658,7 @@ export class BotWorkspaceController {
     const current = this.source.getSnapshot()
     if (current.selectedBotId !== id) return
     const referenceError = this.retainSelected(id, current.bots)
-    if (this.disposed || this.selectionGeneration !== selectionGeneration) {
+    if (!this.canUpdate() || this.selectionGeneration !== selectionGeneration) {
       this.selectedReference?.release()
       this.selectedReference = undefined
       return
@@ -1963,13 +1973,14 @@ export class BotWorkspaceController {
   }
 
   private memoryManager(): BotMemoryManagerActions {
+    if (this.memoryManagerActions !== undefined) return this.memoryManagerActions
     const listMemory = this.remote.listMemory
     const updateMemory = this.remote.updateMemory
     const forgetMemory = this.remote.forgetMemory
     if (listMemory === undefined || updateMemory === undefined || forgetMemory === undefined) {
       throw new Error('Bot memory management is not mounted.')
     }
-    return {
+    const actions: BotMemoryManagerActions = {
       list: async (botId) => {
         const result = await listMemory({ botId: brandString<BotIdType>(botId) })
         if (!result.ok) throw new Error(result.error.message)
@@ -1993,9 +2004,12 @@ export class BotWorkspaceController {
         if (!result.ok) throw new Error(result.error.message)
       },
     }
+    this.memoryManagerActions = actions
+    return actions
   }
 
   private skillManager(): BotSkillManagerActions {
+    if (this.skillManagerActions !== undefined) return this.skillManagerActions
     const listSkills = this.remote.listSkills
     const updateSkills = this.remote.updateSkills
     if (listSkills === undefined || updateSkills === undefined) {
@@ -2009,7 +2023,7 @@ export class BotWorkspaceController {
       if (String(value.bot.id) !== id) throw new Error(this.unexpectedResponse())
       return { policy: value.policy, revision: value.revision, skills: value.skills }
     }
-    return {
+    const actions: BotSkillManagerActions = {
       list: async (botId) => {
         const result = await listSkills({ botId: brandString<BotIdType>(botId) })
         if (!result.ok) throw new Error(result.error.message)
@@ -2043,6 +2057,8 @@ export class BotWorkspaceController {
         return { policy: result.value.policy }
       },
     }
+    this.skillManagerActions = actions
+    return actions
   }
 
   private routineManager(): BotRoutineManagerActions {
@@ -2179,7 +2195,7 @@ export class BotWorkspaceController {
       bots,
       () => !this.disposed && this.selectionGeneration === selectionGeneration,
     )
-    if (this.disposed || this.selectionGeneration !== selectionGeneration) return
+    if (!this.canUpdate() || this.selectionGeneration !== selectionGeneration) return
     this.pendingCreation = result.value.bot.state === 'active' ? undefined : request
     this.source.set({
       phase: 'ready',
@@ -2310,23 +2326,6 @@ function sameStringIdSet(left: readonly string[], right: readonly string[]): boo
 
 function canonicalTargetIds(ids: readonly string[] | undefined): readonly string[] {
   return ids === undefined ? [] : [...new Set(ids)].sort()
-}
-
-function groupAttachmentMatchesDrafts(
-  message: BotGroupMessageView,
-  drafts: readonly BotGroupAttachmentDraft[],
-): boolean {
-  const admitted = message.attachments
-  if (admitted === undefined || admitted.length !== drafts.length || admitted.length === 0) return false
-  return drafts.every((draft, index) => {
-    const current = admitted[index]
-    if (current === undefined || current.bytes !== draft.file.size) return false
-    if (current.type === 'file') return current.name === (draft.file.name || current.name)
-    return current.type === 'image'
-      && isBotGroupImageType(draft.file.type)
-      && current.mediaType === draft.file.type
-      && (draft.file.name === '' || current.name === draft.file.name || current.name === undefined)
-  })
 }
 
 function groupDetail(value: BotGroupInspectValue): BotGroupDetailData {

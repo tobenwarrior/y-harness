@@ -1,5 +1,4 @@
-#!/usr/bin/env node
-/** Private Claude read worker; a bounded settings observation supports opted-in unmanaged handoff. */
+/** Request validation and the private Node worker for bounded Claude history and startup policy reads. */
 import { createHash } from 'node:crypto'
 import { open, realpath } from 'node:fs/promises'
 import { dirname, isAbsolute, resolve } from 'node:path'

@@ -37,10 +37,14 @@
 - paragraph: PRESENT_DONE
 - button "Preview report.txt in sidebar"
 - text: report.txt delivered report
+- link "Download report.txt":
+  - /url: api/present.download?sessionId=session-{{uuid}}&seq=22&index=0
 - button "Open in Test Editor"
 - button "More ways to open"
 - button "Preview 说明.txt in sidebar"
 - text: 说明.txt delivered note
+- link "Download 说明.txt":
+  - /url: api/present.download?sessionId=session-{{uuid}}&seq=22&index=1
 - button "Open in Test Editor"
 - button "More ways to open"
 - button "Copy"
@@ -51,7 +55,7 @@
 - text: {{clock}}
 - textbox "Message or run a task, / commands, @ files or sessions"
 - button "Add files or run commands"
-- 'button "Access mode, current: Workspace Write"': Workspace Write
+- 'button "Access mode, current: Approve for me"': Approve for me
 - button "Select model, current DeepSeek-V4-Flash": DeepSeek-V4-Flash
 - button "Send message" [disabled]
 - button "1 turns 2 steps · {{throughput}} tok/s": 1 turns 2 steps{{throughput}} tok/s

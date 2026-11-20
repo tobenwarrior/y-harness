@@ -5,9 +5,9 @@
 | Field | Value |
 |---|---|
 | Upstream repository | `https://github.com/tobenwarrior/compound-skills` |
-| Vendored version | `0.11.1` (upstream `plugin.json`) |
-| Vendored commit | `d36f372a60624b92e0e364871cae2c50cbf4ba01` (2026-10-27) |
-| Vendored on | 2026-10-27 |
+| Vendored version | `0.17.2` (upstream `.codex-plugin/plugin.json`) |
+| Vendored commit | `0edd268307ae40d62d76f8974ba33910ea46088d` (2026-11-18) |
+| Vendored on | 2026-11-18 |
 | Upstream license | MIT, `Copyright (c) 2026 tobenwarrior` |
 
 ## What is copied

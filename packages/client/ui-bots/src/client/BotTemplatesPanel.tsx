@@ -191,7 +191,7 @@ export function BotTemplatesPanel({ bots, state, actions, t, open, onClose }: {
               <Button
                 variant="primary"
                 icon={<IconDownloadOutlineRegular size={14} />}
-                disabled={state.busy || state.preview === null || state.preview.localPermissions?.status !== 'resolved'}
+                disabled={state.busy || state.preview.localPermissions?.status !== 'resolved'}
                 onClick={() => { void importBot() }}
               >
                 {state.busy ? t('templatesImporting') : t('templatesImport')}

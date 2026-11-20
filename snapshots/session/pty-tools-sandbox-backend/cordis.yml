@@ -13,4 +13,4 @@
         timeoutMs: 2000
         disposeGraceMs: 500
     - id: tool-terminal
-      name: '@deepseek-ai/dsh-tool-terminal'
+      name: '@yharness/tool-terminal'

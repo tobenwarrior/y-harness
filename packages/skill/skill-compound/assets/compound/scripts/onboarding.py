@@ -54,7 +54,11 @@ def _now() -> float:
 
 
 def _emit(value: dict[str, object]) -> int:
-    print(json.dumps(value, ensure_ascii=False))
+    try:
+        print(json.dumps(value, ensure_ascii=False))
+    except UnicodeEncodeError:
+        # A strict stdout, as under en_US.UTF-8, cannot encode undecodable path bytes; claim already stored the lease.
+        print(json.dumps(value))
     return 2 if value["status"] == "error" else 0
 
 
@@ -80,10 +84,10 @@ def _error(action: str, message: str, identity: Identity | None = None) -> dict[
 
 
 def _canonical_directory(raw: str) -> Path:
-    path = Path(raw).expanduser()
-    if not path.is_absolute():
-        path = Path.cwd() / path
     try:
+        path = Path(raw).expanduser()
+        if not path.is_absolute():
+            path = Path.cwd() / path
         if not path.exists():
             raise SetupError(f"repository path does not exist: {path}")
         if not path.is_dir():
@@ -91,8 +95,8 @@ def _canonical_directory(raw: str) -> Path:
         return path.resolve(strict=True)
     except SetupError:
         raise
-    except OSError as exc:
-        raise SetupError(f"could not resolve repository path {path}: {exc}") from exc
+    except (OSError, RuntimeError) as exc:
+        raise SetupError(f"could not resolve repository path {raw}: {exc}") from exc
 
 
 def _repository_identity(raw: str) -> Identity:
@@ -101,7 +105,6 @@ def _repository_identity(raw: str) -> Identity:
         result = subprocess.run(
             ["git", "-C", str(supplied), "rev-parse", "--show-toplevel", "--git-common-dir"],
             capture_output=True,
-            text=True,
             check=False,
             timeout=10,
         )
@@ -109,7 +112,8 @@ def _repository_identity(raw: str) -> Identity:
         raise SetupError(f"could not inspect repository with git: {exc}") from exc
 
     if result.returncode == 0:
-        lines = result.stdout.splitlines()
+        # Paths need not be UTF-8; decode them as the file system does.
+        lines = [os.fsdecode(line) for line in result.stdout.splitlines()]
         if len(lines) != 2 or not all(lines):
             raise SetupError("git returned an invalid repository identity")
         try:
@@ -129,40 +133,38 @@ def _repository_identity(raw: str) -> Identity:
             raise SetupError(f"could not inspect repository identity: {exc}") from exc
         root = supplied
         parts = ("nongit", str(root), str(stat_result.st_dev), str(stat_result.st_ino))
-    key = hashlib.sha256("\0".join(parts).encode("utf-8")).hexdigest()
+    key = hashlib.sha256("\0".join(parts).encode("utf-8", "surrogateescape")).hexdigest()
     return Identity(root, key)
 
 
 def _state_paths() -> tuple[Path, Path]:
     configured = os.environ.get("COMPOUND_SKILLS_STATE_DIR")
-    if configured is None:
-        directory = Path.home() / ".cache" / "compound-skills"
-    elif not configured:
-        raise SetupError("COMPOUND_SKILLS_STATE_DIR must not be empty")
-    else:
-        directory = Path(configured).expanduser()
-        if not directory.is_absolute():
-            raise SetupError("COMPOUND_SKILLS_STATE_DIR must be an absolute path")
+    try:
+        if configured is None:
+            directory = Path.home() / ".cache" / "compound-skills"
+        elif not configured:
+            raise SetupError("COMPOUND_SKILLS_STATE_DIR must not be empty")
+        else:
+            directory = Path(configured).expanduser()
+            if not directory.is_absolute():
+                raise SetupError("COMPOUND_SKILLS_STATE_DIR must be an absolute path")
+    except RuntimeError as exc:
+        raise SetupError(f"could not determine onboarding state directory: {exc}") from exc
     return directory, directory / DATABASE_NAME
 
 
-def _reject_symlink_chain(path: Path, label: str) -> None:
-    current = path if path.is_absolute() else Path.cwd() / path
+def _reject_symlink(path: Path, label: str) -> None:
+    """Refuse a symlink at the path itself; its ancestors may be links, such as /home on FreeBSD."""
     try:
-        while True:
-            if current.is_symlink():
-                raise SetupError(f"refusing symlink {label}: {current}")
-            parent = current.parent
-            if parent == current:
-                break
-            current = parent
+        if path.is_symlink():
+            raise SetupError(f"refusing symlink {label}: {path}")
     except OSError as exc:
         raise SetupError(f"could not inspect {label} {path}: {exc}") from exc
 
 
 def _prepare_state(write: bool) -> tuple[Path, Path, bool]:
     directory, database = _state_paths()
-    _reject_symlink_chain(directory, "state parent")
+    _reject_symlink(directory, "state directory")
     try:
         if directory.exists() and not directory.is_dir():
             raise SetupError(f"state path is not a directory: {directory}")
@@ -171,7 +173,7 @@ def _prepare_state(write: bool) -> tuple[Path, Path, bool]:
                 directory.mkdir(parents=True)
             except FileExistsError:
                 pass
-            _reject_symlink_chain(directory, "state parent")
+            _reject_symlink(directory, "state directory")
         if database.is_symlink():
             raise SetupError(f"refusing symlink state database: {database}")
         if database.exists() and not database.is_file():
@@ -288,7 +290,8 @@ def _claim(
             if lease_until is not None and lease_until > now:
                 connection.commit()
                 return _result("claim", identity, "busy", False)
-        token = supplied_token or secrets.token_urlsafe(32)
+        # Hex never starts with "-", which argparse would read as an option after --token.
+        token = supplied_token or secrets.token_hex(32)
         expires = now + LEASE_SECONDS
         connection.execute(
             "INSERT INTO onboarding(repo_key,state,token,lease_until,updated_at) VALUES(?,?,?,?,?) "
