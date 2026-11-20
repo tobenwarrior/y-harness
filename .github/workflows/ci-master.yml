@@ -176,6 +176,7 @@ jobs:
       - name: Run complete unsharded primary Node CI serially
         env:
           DSH_ARCHIVE_BASE_REF: ${{ github.event.before }}
+          DSH_COVERAGE_BASELINE: '1'
           DSH_COVERAGE_MAX_WORKERS: '1'
           DSH_E2E_MAX_WORKERS: '1'
           DSH_GATE_CONCURRENCY: '1'
@@ -274,6 +275,7 @@ jobs:
       - name: Run complete unsharded Windows gate inventory serially
         shell: pwsh
         env:
+          DSH_COVERAGE_BASELINE: '1'
           DSH_COVERAGE_MAX_WORKERS: '1'
           DSH_COVERAGE_TEST_TIMEOUT_MS: '90000'
           DSH_GATE_CONCURRENCY: '1'
@@ -516,6 +518,7 @@ jobs:
       - name: Run complete unsharded primary Node CI concurrently
         if: matrix.platform == 'linux'
         env:
+          DSH_COVERAGE_BASELINE: '1'
           DSH_COVERAGE_MAX_WORKERS: ${{ matrix.workers }}
           DSH_GATE_CONCURRENCY: ${{ matrix.workers }}
           DSH_OXLINT_THREADS: ${{ matrix.workers }}
