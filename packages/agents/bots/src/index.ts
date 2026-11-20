@@ -2075,9 +2075,10 @@ function eventRoutineId(
 
 /** Project one durable event routine into the common native routine view. */
 function eventRoutineView(routine: BotEventRoutine): BotEventRoutineView {
-  const { deliveries, results, admissionWatermark, admissionTombstones, ...view } = routine
+  const { deliveries, results, firstEligibleEventSeq, admissionWatermark, admissionTombstones, ...view } = routine
   void deliveries
   void results
+  void firstEligibleEventSeq
   void admissionWatermark
   void admissionTombstones
   return { ...view, kind: 'event', state: 'waiting', deliveryMode: 'host' }
@@ -2189,9 +2190,10 @@ function retainEventRoutineDeliveries(
 /** Return whether a routine may consume one event during live or restart recovery. */
 function canTriggerEventRoutine(
   routine: BotEventRoutine,
-  input: Pick<EventRoutineTriggerInput, 'eventTime' | 'source' | 'relayContext'>,
+  input: Pick<EventRoutineTriggerInput, 'eventSeq' | 'eventTime' | 'source' | 'relayContext'>,
 ): boolean {
-  if (routine.status !== 'active' || routine.trigger.source !== input.source || input.eventTime < routine.createdAt) return false
+  if (routine.status !== 'active' || routine.trigger.source !== input.source || input.eventTime < routine.createdAt
+    || input.eventSeq < (routine.firstEligibleEventSeq ?? 0)) return false
   return input.relayContext === undefined || input.relayContext.depth < MAX_EVENT_ROUTINE_HOPS
 }
 
@@ -4866,6 +4868,17 @@ export class BotService extends TypertRemoteService {
     return record?.sessionId === sessionId ? [...record.eventRoutines ?? []] : []
   }
 
+  /** Capture the first new sequence under the serialized routine mutation. */
+  private async nextRoutineEventSequence(
+    sessionId: SessionId,
+    routine: BotEventRoutine,
+    signal?: AbortSignal,
+  ): Promise<number> {
+    const { events } = await this.ctx.sessionController.inspect(sessionId, signal)
+    const last = events.at(-1)
+    return Math.max(routine.firstEligibleEventSeq ?? 0, last === undefined ? 0 : Number(last.seq) + 1)
+  }
+
   /** Update content or the message source of an event routine. */
   private async updateEventRoutine(
     sessionId: SessionId,
@@ -4886,9 +4899,13 @@ export class BotService extends TypertRemoteService {
       if (prompt.length === 0 || prompt.length > 16_000) {
         throw new BotCollaborationError('message-invalid', 'A routine prompt must be non-empty and at most 16000 characters.')
       }
+      const trigger = change.event ?? routine.trigger
+      const cutoff = routine.status === 'active' && trigger.source !== routine.trigger.source
+        ? { firstEligibleEventSeq: await this.nextRoutineEventSequence(sessionId, routine, signal) }
+        : {}
       signal?.throwIfAborted()
       const nextRoutine: BotEventRoutine = {
-        ...routine, title, prompt, ...(change.event === undefined ? {} : { trigger: change.event }),
+        ...routine, title, prompt, trigger, ...cutoff,
         updatedAt: Math.max(Date.now(), routine.updatedAt),
       }
       const eventRoutines = current.eventRoutines ?? []
@@ -4951,8 +4968,11 @@ export class BotService extends TypertRemoteService {
       if (current === undefined || routine === undefined || current.sessionId !== sessionId) {
         return { id, [status === 'active' ? 'resumed' : 'paused']: false, code: 'schedule_not_found' as const }
       }
+      const cutoff = status === 'active' && routine.status === 'paused'
+        ? { firstEligibleEventSeq: await this.nextRoutineEventSequence(sessionId, routine, signal) }
+        : {}
       signal?.throwIfAborted()
-      const nextRoutine = { ...routine, status, updatedAt: Math.max(Date.now(), routine.updatedAt) }
+      const nextRoutine = { ...routine, status, ...cutoff, updatedAt: Math.max(Date.now(), routine.updatedAt) }
       const next: BotRecord = {
         ...current,
         eventRoutines: (current.eventRoutines ?? []).map(candidate => candidate.id === id ? nextRoutine : candidate),

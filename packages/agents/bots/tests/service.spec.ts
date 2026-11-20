@@ -12557,6 +12557,81 @@ describe('durable Bot roster', () => {
     }
   })
 
+  it.each(['resume', 'source change'] as const)('matches only new messages after a routine %s and a Host restart', async (change) => {
+    const pool = new MemoryMediaPool()
+    const setup = await harness(pool)
+    const { bot } = await setup.service.create({ name: 'Routine recovery fixture', cwd: '/tmp' })
+    await close(setup.ctx)
+
+    const first = await routineHarness(pool, undefined, undefined, [String(bot.sessionId)], true)
+    let reopened: Awaited<ReturnType<typeof routineHarness>> | undefined
+    let firstClosed = false
+    try {
+      const provider = first.ctx.get('codexDynamicTools')
+      if (provider === undefined) throw new Error('native Bot provider was not mounted')
+      const tools = await provider.resolve({ sessionId: bot.sessionId, provider: 'test', model: 'test-model', messages: [] })
+      const create = tools.find(tool => tool.name === 'schedule_create')
+      const update = tools.find(tool => tool.name === 'schedule_update')
+      if (create === undefined || update === undefined) throw new Error('event routine tools missing')
+      const context = {
+        callId: 'new-events-create', threadId: 'new-events-thread', turnId: 'new-events-turn',
+        sessionId: bot.sessionId, signal: new AbortController().signal,
+        approvalPolicy: 'on-request' as const, requestApproval: async () => true,
+      }
+      const created = await create.execute({
+        title: 'New-message monitor', prompt: 'Review the new message.',
+        event: { type: 'message', source: change === 'resume' ? 'user' : 'bot' },
+      }, context)
+      expect(created.success).toBe(true)
+      const [routine] = (await first.service.listRoutines({ botId: bot.id })).routines
+      if (routine?.kind !== 'event') throw new Error('message routine was not created')
+      const request = { botId: bot.id, routineId: routine.id }
+      if (change === 'resume') await expect(first.service.pauseRoutine(request)).resolves.toMatchObject({ paused: true })
+
+      const agent = first.agents[0]
+      if (agent === undefined) throw new Error('routine fixture Bot was not created')
+      agent.session.append('user/message', createUserMessage({
+        content: [{ type: 'text', text: 'A message before the routine became eligible.' }],
+        source: { kind: 'user' },
+      }), { surfaceOp: 'append' })
+      const seed = (await first.ctx.sessionController.inspect(bot.sessionId)).events
+      first.ctx.emit('session/event', agent.session, seed.at(-1)!)
+      if (change === 'resume') await expect(first.service.resumeRoutine(request)).resolves.toMatchObject({ resumed: true })
+      else await expect(update.execute({
+        id: request.routineId, event: { type: 'message', source: 'user' },
+      }, { ...context, callId: 'new-events-update' })).resolves.toMatchObject({ success: true })
+      expect(first.followups[0]).not.toHaveBeenCalled()
+      await close(first.ctx)
+      firstClosed = true
+
+      reopened = await routineHarness(pool, undefined, undefined, [String(bot.sessionId)], true, [], new Map([
+        [String(bot.sessionId), seed],
+      ]))
+      const nextFollowup = reopened.followups[0]
+      const reopenedAgent = reopened.agents[0]
+      if (reopenedAgent === undefined || nextFollowup === undefined) throw new Error('routine fixture Bot did not reopen')
+      expect(nextFollowup).not.toHaveBeenCalled()
+
+      const newMessage = createUserMessage({
+        content: [{ type: 'text', text: 'The first eligible message.' }], source: { kind: 'user' },
+      })
+      reopenedAgent.session.append('user/message', newMessage, { surfaceOp: 'append' })
+      const recent = (await reopened.ctx.sessionController.inspect(bot.sessionId)).events
+      reopened.ctx.emit('session/event', reopenedAgent.session, recent.at(-1)!)
+      const restored = reopened
+      await vi.waitFor(async () => {
+        expect(await restored.service.routineHistory({ ...request, limit: 10 })).toMatchObject({
+          kind: 'event',
+          deliveries: [{ triggerMessageId: newMessage.id, status: 'delivered' }],
+        })
+      })
+      expect(nextFollowup).toHaveBeenCalledOnce()
+    } finally {
+      if (reopened !== undefined) await close(reopened.ctx)
+      if (!firstClosed) await close(first.ctx)
+    }
+  })
+
   it('retries event-routine admission after a transient reservation write failure', async () => {
     const pool = new MemoryMediaPool()
     const first = await harness(pool)

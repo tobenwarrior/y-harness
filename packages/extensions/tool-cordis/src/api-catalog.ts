@@ -5793,7 +5793,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'BotEventRoutine',
-    declaration: 'export interface BotEventRoutine {\n    readonly id: string;\n    readonly title: string;\n    readonly prompt: string;\n    readonly trigger: BotEventTrigger;\n    readonly status: \'active\' | \'paused\';\n    readonly createdAt: number;\n    readonly updatedAt: number;\n    readonly deliveries: readonly BotEventRoutineDelivery[];\n    readonly admissionWatermark?: number | undefined;\n    readonly admissionTombstones?: readonly BotEventRoutineAdmissionTombstone[] | undefined;\n    readonly results: readonly BotEventRoutineResult[];\n}',
+    declaration: 'export interface BotEventRoutine {\n    readonly id: string;\n    readonly title: string;\n    readonly prompt: string;\n    readonly trigger: BotEventTrigger;\n    readonly status: \'active\' | \'paused\';\n    readonly createdAt: number;\n    readonly updatedAt: number;\n    readonly deliveries: readonly BotEventRoutineDelivery[];\n    readonly firstEligibleEventSeq?: number | undefined;\n    readonly admissionWatermark?: number | undefined;\n    readonly admissionTombstones?: readonly BotEventRoutineAdmissionTombstone[] | undefined;\n    readonly results: readonly BotEventRoutineResult[];\n}',
   },
   {
     name: 'BotEventRoutineAdmissionTombstone',
@@ -5817,7 +5817,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'BotEventRoutineView',
-    declaration: 'export type BotEventRoutineView = Omit<BotEventRoutine, \'deliveries\' | \'results\'> & {\n    readonly kind: \'event\';\n    readonly state: \'waiting\';\n    readonly deliveryMode: \'host\';\n};',
+    declaration: 'export type BotEventRoutineView = Omit<BotEventRoutine, \'deliveries\' | \'results\' | \'firstEligibleEventSeq\'> & {\n    readonly kind: \'event\';\n    readonly state: \'waiting\';\n    readonly deliveryMode: \'host\';\n};',
   },
   {
     name: 'BotEventSource',

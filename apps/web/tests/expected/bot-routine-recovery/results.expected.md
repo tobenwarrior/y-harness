@@ -1,0 +1,3 @@
+- paragraph: No deliveries recorded yet.
+- text: Delivered
+- text: The routine handled the new message.
