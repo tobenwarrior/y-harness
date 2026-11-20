@@ -173,6 +173,11 @@ describe('Imported chat from Bot options', () => {
     expect(dialog.getByRole('status').textContent).toBe(en.grokHistoryNoMatches)
     expect(screen.queryByRole('listitem')).toBeNull()
 
+    fireEvent.change(search, { target: { value: 'gap source answer' } })
+    expect(dialog.getByRole('status').textContent).toBe(en.grokHistoryOneMatch)
+    expect(dialog.getAllByRole('listitem')).toHaveLength(1)
+    expect(screen.getByText('Gap source answer')).toBeTruthy()
+
     fireEvent.change(search, { target: { value: 'question' } })
     fireEvent.click(screen.getByRole('button', { name: 'Open message in Partial source' }))
     expect(search).toHaveProperty('value', '')
