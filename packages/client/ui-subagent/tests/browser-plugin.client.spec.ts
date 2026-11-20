@@ -9,6 +9,8 @@ import type {
 import type { SubagentAddress } from '@yharness/subagent/client'
 import { SlotRegistry } from '@yharness/client-ui-renderer/client'
 import type { SessionId } from '@yharness/session/types'
+import type { ResourceProvider } from '@yharness/client-resources/client'
+import type { SidebarRightTabDefinition } from '@yharness/client-ui-sidebar-right/client'
 import type { ComposerChainProps } from '@yharness/client-ui-conversation/client'
 import { apply as applyLocale, inject as localeInject } from '@yharness/client-locale/client'
 import {
@@ -67,6 +69,7 @@ async function provideSlotFaces(ctx: Context): Promise<void> {
       'conversation.session.header.agents': { kind: 'single', scope: 'session' },
       'conversation.session.header.actions': { kind: 'list', scope: 'session' },
       'conversation.composer': { kind: 'chain', scope: 'session' },
+      'sidebar.right.pane.tab': { kind: 'keyed', scope: 'session' },
     },
   } as never, () => null)
 }
@@ -107,6 +110,24 @@ const FAMILY: SessionSummary[] = [
 describe('apply', () => {
   it('declares the services it binds', () => {
     expect(inject).toEqual(['sessions', 'uiWorkspace', 'slots', 'locale', 'sidebarRight'])
+  })
+
+  it('registers chat resources and tabs when the sidebar services arrive', async () => {
+    const { ctx } = await fullBench(FAMILY)
+    const resources: ResourceProvider<'subagentchat'>[] = []
+    const tabs: SidebarRightTabDefinition[] = []
+    ctx.provide('resources', { register: (resource: ResourceProvider<'subagentchat'>) => {
+      resources.push(resource)
+      return () => {}
+    } } as never)
+    expect(resources).toEqual([])
+    ctx.provide('sidebarRightTabs', { register: (tab: SidebarRightTabDefinition) => {
+      tabs.push(tab)
+      return () => {}
+    } } as never)
+    await expect.poll(() => resources.map(resource => resource.protocol)).toEqual(['subagentchat'])
+    expect(tabs[0]?.canOpen?.('dsh-resource://subagentchat/session/c1?parent=parent&mode=continuable')).toBe(true)
+    expect(ctx.slots.entries('sidebar.chat.conversation')).toHaveLength(1)
   })
 
   it('registers catalog actions and selects read-only subagent composers from session facts', async () => {

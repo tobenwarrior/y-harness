@@ -21,7 +21,6 @@
     - listitem:
       - text: DeepSeek
       - img "API key configured"
-      - text: API key configured
       - button "Edit DeepSeek (deepseek-official)": Edit
       - text: DeepSeek deepseek-official API key
       - textbox "API key":

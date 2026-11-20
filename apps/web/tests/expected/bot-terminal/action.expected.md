@@ -1,3 +1,3 @@
-- button "Open VPS terminal":
+- menuitem "Terminal":
   - img
-  - text: Terminal
+  - text: Terminal VPS terminal · Internet disabled

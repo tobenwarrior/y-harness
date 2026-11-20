@@ -26,7 +26,14 @@ const CHILD = 'child' as SessionId
 const GRANDCHILD = 'grandchild' as SessionId
 const t: SubagentHeaderLineageProps['t'] = makeTranslate(en)
 
-type CatalogFixture = { entries: readonly (SubagentCatalogRow | { id: SessionId; mode: 'unknown'; label?: string; activity: 'inactive' })[]; parentAvailable: boolean; state: 'loading' | 'ready' | 'error'; error: SessionListState['projectionsBySession'][SessionId]['error'] }
+type CatalogEntryFixture = (SubagentCatalogRow | { id: SessionId; mode: 'unknown'; label?: string; activity: 'inactive' }) & { createdAt?: number }
+
+interface CatalogFixture {
+  entries: readonly CatalogEntryFixture[]
+  parentAvailable: boolean
+  state: 'loading' | 'ready' | 'error'
+  error: SessionListState['projectionsBySession'][SessionId]['error']
+}
 
 function catalog(over: Partial<CatalogFixture> = {}): CatalogFixture {
   return {
@@ -74,7 +81,7 @@ function props(
     phase: 'ready',
     projectionsBySession: Object.fromEntries(Object.entries(catalogs).map(([id, catalog]) => [id, {
       state: catalog.state, error: catalog.error,
-      values: { subagentCatalog: catalog.entries.map(({ activity: _activity, ...entry }) => ({ ...entry, createdAt: 1 })) },
+      values: { subagentCatalog: catalog.entries.map(({ activity: _activity, createdAt = 1, ...entry }) => ({ ...entry, createdAt })) },
     }])) ,
   } satisfies SessionListState
   function useSessions<T>(select: (snapshot: SessionListState) => T): T {
@@ -291,6 +298,62 @@ describe('SubagentHeaderLineage', () => {
     expect(input.openChildAside).toHaveBeenCalledWith({ parentSessionId: PARENT, childSessionId: CHILD, mode: 'continuable' })
     expect(input.openChild).not.toHaveBeenCalled()
     expect(trigger.getAttribute('aria-expanded')).toBe('false')
+  })
+
+  it('sorts running agents and previous agents by start time and routes descendants to the sidebar', () => {
+    const scout = 'scout' as SessionId
+    const reviewer = 'reviewer' as SessionId
+    const builder = 'builder' as SessionId
+    const input = props(catalog({ entries: [
+      { id: CHILD, mode: 'continuable', label: 'Worker', activity: 'running', createdAt: 2 },
+      { id: reviewer, mode: 'one-shot', label: 'Reviewer', activity: 'inactive', createdAt: 1 },
+      { id: scout, mode: 'continuable', label: 'Scout', activity: 'running', createdAt: 4 },
+      { id: builder, mode: 'one-shot', label: 'Builder', activity: 'inactive', createdAt: 3 },
+    ] }), {
+      [CHILD]: catalog({ entries: [{ id: GRANDCHILD, mode: 'one-shot', label: 'Verifier', activity: 'inactive' }] }),
+    })
+    render(<SubagentActivity {...input} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Agents, 2 running, 4 total' }))
+    expect(screen.getAllByRole('treeitem').map(row => row.getAttribute('aria-label'))).toEqual([
+      'Scout running', 'Worker running',
+    ])
+    fireEvent.click(screen.getByRole('button', { name: 'Previous agents (2)' }))
+    const archive = screen.getByRole('tree', { name: 'Previous agents (2)' })
+    expect(within(archive).getAllByRole('treeitem').map(row => row.getAttribute('aria-label'))).toEqual([
+      'Builder not running', 'Reviewer not running',
+    ])
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Worker descendants' }))
+    fireEvent.click(screen.getByRole('treeitem', { name: 'Verifier not running' }))
+    expect(input.openChildAside).toHaveBeenCalledWith({ parentSessionId: CHILD, childSessionId: GRANDCHILD, mode: 'one-shot' })
+    expect(input.openChild).not.toHaveBeenCalled()
+  })
+
+  it('moves keyboard focus to Previous agents when all agents have finished', async () => {
+    const input = props(catalog({ entries: [{ id: CHILD, mode: 'one-shot', label: 'Reviewer', activity: 'inactive' }] }), {}, {
+      [CHILD]: { ...summary(CHILD, 1), projectionValues: { subagentTiming: { settledMs: 0, lastTurnCompleted: true } } },
+    })
+    render(<SubagentActivity {...input} />)
+    const trigger = screen.getByRole('button', { name: 'Agents, 0 running, 1 total' })
+    expect(within(trigger).getByText('1')).toBeTruthy()
+    fireEvent.keyDown(trigger, { key: 'ArrowDown' })
+    await act(async () => { await Promise.resolve() })
+    const previous = screen.getByRole('button', { name: 'Previous agents (1)' })
+    expect(document.activeElement).toBe(previous)
+    fireEvent.click(previous)
+    const finished = screen.getByRole('treeitem', { name: 'Reviewer completed' })
+    expect(within(finished).queryByText('0s')).toBeNull()
+    fireEvent.click(trigger)
+    expect(trigger.getAttribute('aria-expanded')).toBe('false')
+    expect(screen.queryByRole('treeitem')).toBeNull()
+  })
+
+  it('lets a Bot retry a failed agent list before membership is known', () => {
+    const input = props(catalog({ entries: [], state: 'error' }))
+    render(<SubagentActivity {...input} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Agents, 0 running, 0 total' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(input.refreshProjection).toHaveBeenCalledWith(PARENT)
+    expect(screen.queryByRole('treeitem')).toBeNull()
   })
 
   it('selects singular count keys for one direct child', () => {
