@@ -1,15 +1,18 @@
 import { createHmac } from 'node:crypto'
 import { createServer, request as httpRequest, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import type { Context } from '@yharness/cordis'
+import { Context } from '@yharness/cordis'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { credentialRef } from '@yharness/credentials'
 import { createGitHubWebhookHandler } from '../src/handler.ts'
 
 const servers: Server[] = []
+const contexts: Context[] = []
 
 afterEach(async () => {
   await Promise.all(servers.splice(0).map(server => new Promise<void>(resolve => server.close(() => { resolve() }))))
+  await Promise.all(contexts.splice(0).map(ctx => ctx.fiber.dispose()))
+  vi.restoreAllMocks()
 })
 
 /** One mutable fake for credential rotation and dispatch observation. */
@@ -19,22 +22,18 @@ function fakeContext(secret = 'fixture-secret', admit?: (delivery: unknown) => P
   setSecret(value: string | undefined): void
   warnings: ReturnType<typeof vi.fn>
 } {
-  let current = secret as string | undefined
+  let current: string | undefined = secret
   const dispatch = vi.fn()
   const warnings = vi.fn()
-  return {
-    ctx: {
-      credentials: {
-        resolve: async () => current === undefined ? undefined : { value: current, source: 'environment' },
-      },
-      webhookRuntime: { dispatch },
-      get: (name: string) => name === 'bots' && admit !== undefined ? { admitGitHubRoutineDelivery: admit } : undefined,
-      logger: { warn: warnings },
-    } as unknown as Context,
-    dispatch,
-    setSecret(value) { current = value },
-    warnings,
-  }
+  const ctx = new Context()
+  contexts.push(ctx)
+  ctx.provide('credentials', {
+    resolve: async () => current === undefined ? undefined : { value: current, source: 'environment' },
+  } as never)
+  ctx.provide('webhookRuntime', { dispatch } as never)
+  if (admit !== undefined) ctx.provide('bots', { admitGitHubRoutineDelivery: admit } as never)
+  vi.spyOn(ctx.logger, 'warn').mockImplementation(warnings)
+  return { ctx, dispatch, setSecret(value) { current = value }, warnings }
 }
 
 /** Start a real Node server around the package-owned route handler. */
