@@ -5225,7 +5225,7 @@ export class BotService extends TypertRemoteService {
     return { firstEligibleEventSeq: Math.max(routine.firstEligibleEventSeq ?? 0, sessionEventSequence(events) + 1) }
   }
 
-  /** Update content or the message source of an event routine. */
+  /** Update an event routine in the latest durable Bot profile. */
   private async updateEventRoutine(
     sessionId: SessionId,
     id: string,
@@ -5235,9 +5235,9 @@ export class BotService extends TypertRemoteService {
     return this.serialize(async () => {
       const domain = await this.getDomain()
       const current = await this.refreshBotRecordFromProfile(domain, sessionId)
-        ?? this.currentBotRecord(domain, sessionId)
-      const routine = current?.eventRoutines?.find(candidate => candidate.id === id)
-      if (current === undefined || routine === undefined || current.sessionId !== sessionId) {
+      const eventRoutines = current?.eventRoutines
+      const routine = eventRoutines?.find(candidate => candidate.id === id)
+      if (current === undefined || eventRoutines === undefined || routine === undefined || current.sessionId !== sessionId) {
         throw new BotCollaborationError('target-not-found', `Event routine "${id}" was not found.`)
       }
       const title = change.title === undefined ? routine.title : scheduleTitle(change.title)
@@ -5256,7 +5256,6 @@ export class BotService extends TypertRemoteService {
         ...routine, title, prompt, trigger, ...cutoff,
         updatedAt: Math.max(Date.now(), routine.updatedAt),
       }
-      const eventRoutines = current.eventRoutines ?? []
       const next: BotRecord = {
         ...current, eventRoutines: eventRoutines.map(candidate => candidate.id === id ? nextRoutine : candidate),
         updatedAt: Math.max(Date.now(), current.updatedAt),
@@ -5302,6 +5301,7 @@ export class BotService extends TypertRemoteService {
     return latest === undefined ? resumed : { ...eventRoutineView(latest), resumed: true }
   }
 
+  /** Change activation in the latest durable Bot profile. */
   private async setEventRoutineStatus(
     sessionId: SessionId,
     id: string,
@@ -5311,9 +5311,9 @@ export class BotService extends TypertRemoteService {
     return this.serialize(async () => {
       const domain = await this.getDomain()
       const current = await this.refreshBotRecordFromProfile(domain, sessionId)
-        ?? this.currentBotRecord(domain, sessionId)
-      const routine = current?.eventRoutines?.find(candidate => candidate.id === id)
-      if (current === undefined || routine === undefined || current.sessionId !== sessionId) {
+      const eventRoutines = current?.eventRoutines
+      const routine = eventRoutines?.find(candidate => candidate.id === id)
+      if (current === undefined || eventRoutines === undefined || routine === undefined || current.sessionId !== sessionId) {
         return { id, [status === 'active' ? 'resumed' : 'paused']: false, code: 'schedule_not_found' as const }
       }
       const cutoff = status === 'active' && routine.status === 'paused'
@@ -5323,7 +5323,7 @@ export class BotService extends TypertRemoteService {
       const nextRoutine = { ...routine, status, ...cutoff, updatedAt: Math.max(Date.now(), routine.updatedAt) }
       const next: BotRecord = {
         ...current,
-        eventRoutines: (current.eventRoutines ?? []).map(candidate => candidate.id === id ? nextRoutine : candidate),
+        eventRoutines: eventRoutines.map(candidate => candidate.id === id ? nextRoutine : candidate),
         updatedAt: Math.max(Date.now(), current.updatedAt),
       }
       await this.commitEventRoutineRecord(current, next, signal)

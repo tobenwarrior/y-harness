@@ -12896,6 +12896,30 @@ describe('durable Bot roster', () => {
         event: { type: 'message', source: 'user' },
       }, scopedExecution)
       expect(scopedRoutine).toMatchObject({ kind: 'event', state: 'waiting' })
+      const changed = await update.execute({ id: routine.id, prompt: 'Summarize the latest peer message.' }, {
+        ...context, callId: 'event-update-prompt',
+      })
+      expect(changed.success).toBe(true)
+      await expect(update.execute({ id: routine.id, prompt: 'x'.repeat(16_001) }, {
+        ...context, callId: 'event-update-over-limit',
+      })).resolves.toMatchObject({
+        success: false,
+        contentItems: [{ text: expect.stringContaining('at most 16000 characters') }],
+      })
+      await expect(update.execute({ id: routine.id, event: { type: 'message', source: 'bot' }, every_seconds: 30 }, {
+        ...context, callId: 'event-update-conflicting-triggers',
+      })).resolves.toMatchObject({
+        success: false,
+        contentItems: [{ text: expect.stringContaining('cannot also supply a timing selector') }],
+      })
+      const request = { botId: created.bot.id, routineId: routine.id }
+      await expect(h.service.pauseRoutine(request)).resolves.toMatchObject({ paused: true })
+      await expect(h.service.resumeRoutine(request)).resolves.toMatchObject({ resumed: true })
+      const edited = (await h.service.listRoutines({ botId: created.bot.id })).routines
+      expect(edited).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: routine.id, prompt: 'Summarize the latest peer message.', status: 'active' }),
+        expect.objectContaining({ title: 'User-facing digest', prompt: 'Summarize direct user messages.', status: 'active' }),
+      ]))
       owner.session.append('turn/start', { turn: 1 })
       h.ctx.emit('session/event', owner.session, owner.session.snapshotEvents().at(-1)!)
       owner.session.append('user/message', createUserMessage({
@@ -13171,6 +13195,69 @@ describe('durable Bot roster', () => {
       await expect(live.service.admitGitHubRoutineDelivery(receipt)).rejects.toThrow('source is unavailable')
     } finally {
       await close(live.ctx)
+    }
+  })
+
+  it.each(['update', 'pause', 'resume'] as const)('reports a routine deleted before %s commits', async (action) => {
+    const pool = new MemoryMediaPool()
+    const setup = await harness(pool)
+    const { bot } = await setup.service.create({ name: 'Routine mutation fixture', cwd: '/tmp' })
+    await close(setup.ctx)
+
+    const h = await routineHarness(pool, undefined, undefined, [String(bot.sessionId)], true)
+    const entered = Promise.withResolvers<undefined>()
+    const release = Promise.withResolvers<undefined>()
+    const method = action === 'update' ? 'updateEventRoutine' : 'setEventRoutineStatus'
+    try {
+      const provider = h.ctx.get('codexDynamicTools')
+      if (provider === undefined) throw new Error('native Bot provider was not mounted')
+      const tools = await provider.resolve({ sessionId: bot.sessionId, provider: 'test', model: 'test-model', messages: [] })
+      const create = tools.find(tool => tool.name === 'schedule_create')
+      const operation = tools.find(tool => tool.name === `schedule_${action}`)
+      if (create === undefined || operation === undefined) throw new Error('event routine tools missing')
+      const context = {
+        callId: 'create-routine', threadId: 'routine-thread', turnId: 'routine-turn',
+        sessionId: bot.sessionId, signal: new AbortController().signal,
+        approvalPolicy: 'on-request' as const, requestApproval: async () => true,
+      }
+      const created = await create.execute({
+        title: 'Peer monitor', prompt: 'Review the new message.', event: { type: 'message', source: 'bot' },
+      }, context)
+      expect(created.success).toBe(true)
+      const [routine] = (await h.service.listRoutines({ botId: bot.id })).routines
+      if (routine?.kind !== 'event') throw new Error('message routine was not created')
+
+      const mutate: unknown = Reflect.get(h.service, method)
+      if (typeof mutate !== 'function') throw new Error('Bot routine mutation is unavailable')
+      Object.defineProperty(h.service, method, {
+        configurable: true,
+        value: async (...args: readonly unknown[]): Promise<unknown> => {
+          entered.resolve(undefined)
+          await release.promise
+          return Reflect.apply(mutate, h.service, args)
+        },
+      })
+      const args = action === 'update' ? { id: routine.id, title: 'New name' } : { id: routine.id }
+      const pending = operation.execute(args, { ...context, callId: 'change-routine' })
+      try {
+        await Promise.race([
+          entered.promise,
+          pending.then(() => { throw new Error('Routine mutation finished before its commit could be interleaved') }),
+        ])
+        await expect(h.service.deleteRoutine({ botId: bot.id, routineId: routine.id })).resolves.toMatchObject({ deleted: true })
+      } finally {
+        release.resolve(undefined)
+        await Promise.allSettled([pending])
+      }
+
+      const result = await pending
+      expect(result.success).toBe(action !== 'update')
+      expect(result.contentItems[0]?.text).toContain(action === 'update' ? 'target-not-found' : 'schedule_not_found')
+      expect((await h.service.listRoutines({ botId: bot.id })).routines).toEqual([])
+      expect(h.followups[0]).not.toHaveBeenCalled()
+    } finally {
+      Reflect.deleteProperty(h.service, method)
+      await close(h.ctx)
     }
   })
 
