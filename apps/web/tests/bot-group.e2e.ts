@@ -1101,12 +1101,7 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
     tripwire = watchConsole(page)
     await page.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
     await page.waitForSelector('[class*="frame"]', { timeout: 30_000 })
-    await page.getByRole('button', { name: 'Bots', exact: true }).click()
-    const reopenedOwnerDialog = page.getByRole('button', { name: 'Create a shared group', exact: true })
-    await expect.poll(() => reopenedOwnerDialog.isEnabled(), { timeout: 30_000 }).toBe(true)
-    await reopenedOwnerDialog.click()
-    const restartedDialog = page.getByRole('dialog', { name: 'Shared with you', exact: true })
-    await restartedDialog.waitFor({ state: 'visible', timeout: 15_000 })
+    const restartedDialog = await openOwnerDialog()
     await expect.poll(() => restartedDialog.getByRole('button', { name: new RegExp(`^${RENAMED_SHARED_GROUP_NAME}`) }).count(), {
       timeout: 30_000,
     }).toBe(1)
