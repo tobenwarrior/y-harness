@@ -1,10 +1,10 @@
 /** Browser-safe Bot requests, durable values, and Remote failure vocabulary. */
 
-import type { WebhookDeliveryId, WebhookSourceId } from '@yharness/webhook'
 import { brandString, type Branded } from '@yharness/brand'
 import type { ImageAttachmentRef } from '@yharness/attachment'
 import type { MessageId } from '@yharness/llm/brand'
 import type { SessionId } from '@yharness/session/types'
+import type { WebhookDeliveryId, WebhookSourceId } from '@yharness/webhook/brand'
 import type { BotPrincipalId, BotShareRole } from './sharing.ts'
 import type {
   ScheduleCatalogEntry,

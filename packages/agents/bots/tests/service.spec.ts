@@ -12900,18 +12900,16 @@ describe('durable Bot roster', () => {
         ...context, callId: 'event-update-prompt',
       })
       expect(changed.success).toBe(true)
-      await expect(update.execute({ id: routine.id, prompt: 'x'.repeat(16_001) }, {
+      const overLimit = await update.execute({ id: routine.id, prompt: 'x'.repeat(16_001) }, {
         ...context, callId: 'event-update-over-limit',
-      })).resolves.toMatchObject({
-        success: false,
-        contentItems: [{ text: expect.stringContaining('at most 16000 characters') }],
       })
-      await expect(update.execute({ id: routine.id, event: { type: 'message', source: 'bot' }, every_seconds: 30 }, {
+      expect(overLimit.success).toBe(false)
+      expect(overLimit.contentItems[0]?.text).toContain('at most 16000 characters')
+      const conflicting = await update.execute({ id: routine.id, event: { type: 'message', source: 'bot' }, every_seconds: 30 }, {
         ...context, callId: 'event-update-conflicting-triggers',
-      })).resolves.toMatchObject({
-        success: false,
-        contentItems: [{ text: expect.stringContaining('cannot also supply a timing selector') }],
       })
+      expect(conflicting.success).toBe(false)
+      expect(conflicting.contentItems[0]?.text).toContain('cannot also supply a timing selector')
       const request = { botId: created.bot.id, routineId: routine.id }
       await expect(h.service.pauseRoutine(request)).resolves.toMatchObject({ paused: true })
       await expect(h.service.resumeRoutine(request)).resolves.toMatchObject({ resumed: true })
@@ -13177,11 +13175,10 @@ describe('durable Bot roster', () => {
       })
       expect(followup).toHaveBeenCalledOnce()
       const message = followup.mock.calls[0]?.[0]
-      expect(message).toMatchObject({
-        source: { kind: 'webhook', ruleId: routine.id },
-        content: [{ text: expect.stringContaining('https://github.com/example/workbench/issues/11') }],
-      })
       if (message === undefined) throw new Error('GitHub follow-up missing')
+      expect(message.source).toMatchObject({ kind: 'webhook', ruleId: routine.id })
+      const body = message.content[0]
+      expect(body?.type === 'text' ? body.text : undefined).toContain('https://github.com/example/workbench/issues/11')
       agent.session.append('turn/start', { turn: 1 })
       live.ctx.emit('session/event', agent.session, agent.session.snapshotEvents().at(-1)!)
       agent.session.append('user/message', message, { surfaceOp: 'append' })

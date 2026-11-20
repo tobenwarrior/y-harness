@@ -292,7 +292,8 @@ it.skipIf(webSnapshotMode() === 'record')('runs a signed GitHub trigger once in 
     const { events } = await web.ctx.sessionController.inspect(bot.sessionId)
     const webhookMessages = events.flatMap(value => value.type === 'user/message' && value.data.source.kind === 'webhook' ? [value.data] : [])
     expect(webhookMessages).toHaveLength(1)
-    expect(webhookMessages[0]?.content).toMatchObject([{ text: expect.stringContaining('https://github.com/example/workbench/pull/17') }])
+    const webhookText = webhookMessages[0]?.content[0]
+    expect(webhookText?.type === 'text' ? webhookText.text : undefined).toContain('https://github.com/example/workbench/pull/17')
     expect(JSON.stringify(webhookMessages)).not.toContain('Untrusted fixture description')
 
     const page = await newEnglishPage(browser)
