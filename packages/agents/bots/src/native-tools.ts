@@ -978,37 +978,23 @@ function routineTool(
               if (resolution.status === 'committed') {
                 return await recover(resolution.record, candidate.call)
               }
-              if (resolution.status === 'unknown') {
+              if (resolution.status === 'unknown' && candidate.state === 'pending') {
                 const pendingKey = nativeCallKey(sessionId, { name, ...candidate.call })
-                // An in-flight approval is still authoritative in this Host.
-                // A replayed start with no live execution is an abandoned call;
-                // retire its audit record so a restart cannot block forever.
-                const liveApproval = candidate.state === 'pending'
-                  && (createFlights.has(pendingKey) || reserve === undefined || release === undefined)
-                if (liveApproval) {
+                if (createFlights.has(pendingKey) || reserve === undefined || release === undefined) {
                   return failure(
                     'uncertain-outcome',
                     'The earlier routine has not reached the Schedule service yet. Wait for its approval result before retrying.',
                   )
                 }
-                if (candidate.state === 'pending') {
-                  if (release !== undefined) {
-                    try {
-                      await release(candidate.call.arguments, {
-                        ...context,
-                        callId: candidate.call.callId,
-                        threadId: candidate.call.threadId,
-                        turnId: candidate.call.turnId,
-                      })
-                    } catch (error: unknown) {
-                      return signalIsAborted(context.signal) ? failure('cancelled', 'The Bot action was cancelled.') : collaborationFailure(error)
-                    }
-                  }
-                  await persistSettlement(candidate.call, candidate.call.arguments,
-                    failure('uncertain-outcome', 'The earlier routine creation was abandoned before approval completed.'))
-                }
-              }
-              else if (candidate.state === 'pending') {
+                await release(candidate.call.arguments, {
+                  ...context,
+                  callId: candidate.call.callId,
+                  threadId: candidate.call.threadId,
+                  turnId: candidate.call.turnId,
+                })
+                await persistSettlement(candidate.call, candidate.call.arguments,
+                  failure('uncertain-outcome', 'The earlier routine creation was abandoned before approval completed.'))
+              } else if (candidate.state === 'pending') {
                 // Schedule has durably proved that no task committed. Close the
                 // native lifecycle before permitting a new operation.
                 await persistSettlement(candidate.call, candidate.call.arguments,
@@ -1071,14 +1057,14 @@ function routineTool(
           ? inFlight.result
           : failure('uncertain-outcome', 'This native routine call identity is already running with different arguments.')
       }
-      const result = executeOnce()
+      const result = Promise.resolve().then(executeOnce)
       createFlights.set(key, { argumentsKey, result })
       try {
         const settled = await result
         if (settled.success) createReceipts.set(key, { argumentsKey, result: settled })
         return settled
       } finally {
-        if (createFlights.get(key)?.result === result) createFlights.delete(key)
+        createFlights.delete(key)
       }
     },
   }

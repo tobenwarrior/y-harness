@@ -772,8 +772,8 @@ describe('native Bot actions', () => {
 
   it('shares one in-flight schedule creation across parallel retries', async () => {
     const sessionId = SessionId('bot-session-alpha')
-    let release: ((value: unknown) => void) | undefined
-    const routine = vi.fn(() => new Promise<unknown>((resolve) => { release = resolve }))
+    const release = Promise.withResolvers<{ id: string }>()
+    const routine = vi.fn(() => release.promise)
     const provider = createBotNativeToolProvider({
       bind: async () => client(), persist: async () => {}, replay: async () => [], routine, routineAvailable: async () => true,
     })
@@ -781,14 +781,42 @@ describe('native Bot actions', () => {
     if (create === undefined) throw new Error('schedule_create missing')
     const first = create.execute({ title: 'Daily check' }, context({ sessionId }))
     const second = create.execute({ title: 'Daily check' }, context({ sessionId }))
-    await Promise.resolve()
-    await Promise.resolve()
-    expect(routine).toHaveBeenCalledOnce()
-    release?.({ id: 'schedule-1' })
+    try {
+      const conflicting = await create.execute({ title: 'Changed check' }, context({ sessionId }))
+      expect(conflicting.success).toBe(false)
+      expect(conflicting.contentItems[0]?.text).toContain('already running with different arguments')
+      await vi.waitFor(() => { expect(routine).toHaveBeenCalledOnce() })
+    } finally {
+      release.resolve({ id: 'schedule-1' })
+    }
     await expect(Promise.all([first, second])).resolves.toEqual([
       { success: true, contentItems: [{ type: 'inputText', text: '{"id":"schedule-1"}' }] },
       { success: true, contentItems: [{ type: 'inputText', text: '{"id":"schedule-1"}' }] },
     ])
+  })
+
+  it('shares one schedule creation when a retry arrives during the replay read', async () => {
+    const sessionId = SessionId('bot-session-alpha')
+    const call = context({ sessionId })
+    const args = { title: 'Daily check' }
+    const routine = vi.fn(async () => ({ id: 'schedule-one' }))
+    const replay = vi.fn<BotNativeToolHost['replay']>(async () => [])
+    const provider = createBotNativeToolProvider({
+      bind: async () => client(), persist: async () => {}, replay, routine, routineAvailable: async () => true,
+    })
+    const create = (await provider.resolve({ sessionId })).find(tool => tool.name === 'schedule_create')
+    if (create === undefined) throw new Error('schedule_create missing')
+    let retry: ReturnType<typeof create.execute> | undefined
+    replay.mockImplementationOnce(async () => {
+      retry = create.execute(args, call)
+      return []
+    })
+
+    const first = await create.execute(args, call)
+    expect(first.success).toBe(true)
+    expect(retry).toBeDefined()
+    await expect(retry).resolves.toEqual(first)
+    expect(routine).toHaveBeenCalledOnce()
   })
 
   it('does not advertise routines without the scoped capability', async () => {
@@ -818,6 +846,9 @@ describe('native Bot actions', () => {
     cancelled.abort()
     await expect(create.execute({}, context({ signal: cancelled.signal }))).resolves.toMatchObject({ success: false })
     await expect(create.execute({}, context({ approvalPolicy: 'never' }))).resolves.toMatchObject({ success: false })
+    const denied = await update.execute({ id: 'routine-1' }, context({ approvalPolicy: 'never' }))
+    expect(denied.contentItems[0]?.text).toContain('approval-required')
+    expect(routine).not.toHaveBeenCalled()
     await expect(create.execute({}, context({ requestApproval: async () => { throw new Error('approval unavailable') } })))
       .resolves.toMatchObject({ success: false })
     const approvalThrowCancelled = new AbortController()
@@ -925,11 +956,12 @@ describe('native Bot actions', () => {
     }]
     const release = vi.fn<NonNullable<BotNativeToolHost['routineRelease']>>(async () => {})
     const reconcile = vi.fn<NonNullable<BotNativeToolHost['routineReconcile']>>(async () => ({ status: 'unknown' as const }))
+    const reserve = vi.fn<NonNullable<BotNativeToolHost['routineReserve']>>(async () => ({ status: 'reserved' }))
     replay.mockResolvedValueOnce(pending)
     release.mockRejectedValueOnce(new Error('reservation release unavailable'))
     const recoveryProvider = createBotNativeToolProvider({
       bind: async () => client(), persist: async () => {}, replay, routine, routineAvailable: async () => true,
-      routineReconcile: reconcile, routineReserve: async () => ({ status: 'reserved' as const }), routineRelease: release,
+      routineReconcile: reconcile, routineReserve: reserve, routineRelease: release,
     })
     const recoveryCreate = (await recoveryProvider.resolve({ sessionId })).find(tool => tool.name === 'schedule_create')
     if (recoveryCreate === undefined) throw new Error('recovery schedule_create missing')
@@ -937,6 +969,62 @@ describe('native Bot actions', () => {
       .resolves.toMatchObject({ success: false })
     expect(reconcile).toHaveBeenCalledOnce()
     expect(release).toHaveBeenCalledOnce()
+    reserve.mockRejectedValueOnce(new Error('Routine reservation is unavailable'))
+    const rejected = await recoveryCreate.execute({ title: 'New title' }, context({ sessionId }))
+    expect(rejected.contentItems[0]?.text).toContain('"error":"unavailable"')
+    expect(routine).not.toHaveBeenCalled()
+  })
+
+  it.each(['replay', 'reconcile', 'reserve', 'release'] as const)(
+    'returns cancellation when routine creation is interrupted during %s',
+    async (stage) => {
+      const sessionId = SessionId('bot-session-alpha')
+      const args = { title: 'Daily check' }
+      const abort = new AbortController()
+      const interrupted = async () => {
+        abort.abort()
+        throw new Error('Routine admission was interrupted')
+      }
+      const pending: BotDynamicToolEvent = {
+        phase: 'started', name: 'schedule_create', callId: 'earlier-call',
+        threadId: 'earlier-thread', turnId: 'earlier-turn', sessionId, arguments: args,
+      }
+      const routine = vi.fn(async () => ({ id: 'not-created' }))
+      const provider = createBotNativeToolProvider({
+        bind: async () => client(), persist: async () => {}, routine, routineAvailable: async () => true,
+        replay: stage === 'replay' ? interrupted : async () => stage === 'reserve' ? [] : [pending],
+        routineReconcile: stage === 'reconcile' ? interrupted : async () => ({ status: 'unknown' }),
+        routineReserve: stage === 'reserve' ? interrupted : async () => ({ status: 'reserved' }),
+        routineRelease: interrupted,
+      })
+      const create = (await provider.resolve({ sessionId })).find(tool => tool.name === 'schedule_create')
+      if (create === undefined) throw new Error('schedule_create missing')
+      const result = await create.execute(args, context({ sessionId, signal: abort.signal }))
+      expect(result.success).toBe(false)
+      expect(result.contentItems[0]?.text).toContain('"error":"cancelled"')
+      expect(routine).not.toHaveBeenCalled()
+    },
+  )
+
+  it.each(['absent', 'unknown'] as const)('permits a new routine after a failed attempt reconciles as %s', async (status) => {
+    const sessionId = SessionId('bot-session-alpha')
+    const args = { title: 'Daily check' }
+    const pending: BotDynamicToolEvent = {
+      phase: 'started', name: 'schedule_create', callId: 'earlier-call',
+      threadId: 'earlier-thread', turnId: 'earlier-turn', sessionId, arguments: args,
+    }
+    const routine = vi.fn(async () => ({ id: 'schedule-retry' }))
+    const persist = vi.fn<BotNativeToolHost['persist']>(async () => {})
+    const provider = createBotNativeToolProvider({
+      bind: async () => client(), persist, routine, routineAvailable: async () => true,
+      replay: async () => [pending, { ...pending, phase: 'settled', result: { success: false, contentItems: [] } }],
+      routineReconcile: async () => ({ status }),
+    })
+    const create = (await provider.resolve({ sessionId })).find(tool => tool.name === 'schedule_create')
+    if (create === undefined) throw new Error('schedule_create missing')
+    await expect(create.execute(args, context({ sessionId }))).resolves.toMatchObject({ success: true })
+    expect(persist).not.toHaveBeenCalled()
+    expect(routine).toHaveBeenCalledOnce()
   })
 
   it('releases a reserved routine when approval is denied', async () => {
