@@ -141,8 +141,10 @@ function routineRule(routine: BotRoutineView, t: Translate): string {
   if (routine.kind === 'schedule') return scheduleRule(routine, t)
   const trigger = routine.trigger
   if (trigger.type === 'message') return t('routineEventRule', { source: sourceLabel(trigger.source, t) })
-  const label = trigger.event === 'pull_request.opened' ? 'routineGitHubPullRequest' : 'routineGitHubIssue'
-  return t(label, { repository: trigger.repository })
+  const values = { repository: trigger.repository }
+  return trigger.event === 'pull_request.opened'
+    ? t('routineGitHubPullRequest', values)
+    : t('routineGitHubIssue', values)
 }
 
 function formatDate(value: string | number): string {
