@@ -304,7 +304,7 @@ export function startConnection(ctx: Context, config: Config, policy: ResolvedRe
     }
     let instructions: string
     try {
-      transport = createTransport(config)
+      transport = createTransport(config, ctx.get('credentials'))
       await generation.connect(transport)
       if (hasClosed()) {
         attemptSettled = true
