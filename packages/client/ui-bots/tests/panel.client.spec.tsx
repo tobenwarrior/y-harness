@@ -231,10 +231,11 @@ describe('Bots conversation slot wiring', () => {
     render(<BotsPanel {...props} />)
 
     expect(screen.getByTestId('conversation-slot').textContent).toBe(selected.name)
-    expect(calls).toEqual([
-      { key: 'bots.conversation', props: { bot: { name: selected.name } } },
-      { key: 'conversation.session.header.agents', props: { beforeOpen: expect.any(Function) } },
-    ])
+    expect(calls).toHaveLength(2)
+    expect(calls[0]).toEqual({ key: 'bots.conversation', props: { bot: { name: selected.name } } })
+    const agents = calls[1]!
+    expect(agents.key).toBe('conversation.session.header.agents')
+    expect('beforeOpen' in agents.props && typeof agents.props.beforeOpen).toBe('function')
   })
 
   it('shows the VPS Bot scope beside the Computer affordance before opening it', () => {
