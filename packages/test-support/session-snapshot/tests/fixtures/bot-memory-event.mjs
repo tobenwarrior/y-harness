@@ -1,4 +1,4 @@
-/** Add one active Bot memory after the SDK's deterministic file read. */
+/** Add Bot metadata after the SDK's deterministic file read. */
 
 export const name = 'snapshot-bot-memory-event'
 export const inject = ['agents']
@@ -14,6 +14,9 @@ export function apply(ctx) {
           memoryId: 'memory-sdk-snapshot',
           operation: 'remember',
           text: 'The SDK projection keeps this active Bot memory.',
+        })
+        agent.session.append('bot/routine-test', {
+          routineId: 'routine-sdk-snapshot', messageId: 'bot-routine-test-sdk-snapshot',
         })
         appended = true
       }

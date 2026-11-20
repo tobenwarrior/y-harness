@@ -1,11 +1,5 @@
 /** Host timer over stored tasks; Session activation is a delivery operation. */
 import { createUserMessage } from '@yharness/llm'
-import type { ContextFormed } from '@yharness/llm'
-declare module '@yharness/llm' {
-  interface MessageSourceMap {
-    'schedule': { kind: 'schedule' } & ContextFormed
-  }
-}
 import type { Context } from '@yharness/cordis'
 import type {} from '@yharness/api-session-controller'
 import { isRecurringScheduleRecord, renderReminderFraming, renderRecurringReminderBatchFraming, resolveRecurringOccurrence } from './domain.ts'

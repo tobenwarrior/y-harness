@@ -298,6 +298,21 @@ async admitGitHubRoutineDelivery(delivery: VerifiedWebhookDelivery): Promise<voi
 @Remote('listRoutines') async listRoutines(request: BotRoutineListRequest): Promise<BotRoutineListValue>
 
 /**
+ * Run the saved instructions once in the owning Bot Session. The Schedule
+ * task and event subscriptions are independent of this reservation.
+ * @param request - Bot, routine, and stable request identity.
+ * @returns The existing or newly reserved test and its Session status.
+ */
+@Remote('testRoutine') async testRoutine(request: BotRoutineTestRequest): Promise<BotRoutineTestRun>
+
+/**
+ * Read the latest explicit test from the Bot Session without waking its Agent.
+ * @param request - The Bot and routine.
+ * @returns The latest test state, if one has been requested.
+ */
+@Remote('routineTestStatus') async routineTestStatus(request: BotRoutineLifecycleRequest): Promise<BotRoutineTestStatusValue>
+
+/**
  * Pause one routine owned by a Bot without waking its Session.
  * @param request - Bot and routine identity.
  * @returns The paused routine or a bounded lookup/ended result.

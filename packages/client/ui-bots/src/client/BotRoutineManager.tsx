@@ -7,6 +7,7 @@ import {
 } from '@yharness/client-ui-primitives'
 import type { PropsLocale } from '@yharness/client-ui-slots'
 import { BotAvatar } from './BotAvatar.tsx'
+import { BotRoutineTest } from './BotRoutineTest.tsx'
 import css from './BotWorkspace.module.css'
 import type { BotRoutineHistory, BotRoutineManagerActions, BotSummary, BotWorkspaceProps } from './types.ts'
 import type { BotEventRoutineResult, BotRoutineView } from '@yharness/bots/client'
@@ -587,7 +588,24 @@ export function BotRoutineManager({ bot, actions, open, onClose, t, revision = 0
                   <button type="button" role="tab" aria-selected={tab === 'rule'} className={tab === 'rule' ? css.routineTabSelected : css.routineTab} onClick={() => { setTab('rule') }}>{t('routineRuleTab')}</button>
                   <button type="button" role="tab" aria-selected={tab === 'results'} className={tab === 'results' ? css.routineTabSelected : css.routineTab} onClick={() => { void showHistory(selected) }}>{t('routineResultsTab')}</button>
                 </div>
-                {tab === 'rule' && <div className={css.routineRule}><strong>{selected.title}</strong><p>{selected.prompt}</p><span>{routineRule(selected, t)}</span></div>}
+                {tab === 'rule' && (
+                  <div className={css.routineRule}>
+                    <strong>{selected.title}</strong>
+                    <p>{selected.prompt}</p>
+                    <span>{routineRule(selected, t)}</span>
+                    {actions.test !== undefined && selected.status !== 'inactive'
+                      && (selected.kind === 'schedule' || selected.trigger.type === 'message') && (
+                      <BotRoutineTest
+                        key={bot.id + ':' + String(selected.id)}
+                        botId={bot.id}
+                        routineId={String(selected.id)}
+                        actions={actions.test}
+                        onViewChat={closeManager}
+                        t={t}
+                      />
+                    )}
+                  </div>
+                )}
                 {tab === 'results' && (
                   historyLoading
                     ? <div className={css.memoryLoading} role="status"><StateDot state="ongoing" size={13} />{t('routineHistoryLoading')}</div>

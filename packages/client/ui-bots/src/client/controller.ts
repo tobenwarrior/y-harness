@@ -70,6 +70,10 @@ import type {
   BotRoutineListValue,
   BotRoutinePauseValue,
   BotRoutineResumeValue,
+  BotRoutineTestId,
+  BotRoutineTestRequest,
+  BotRoutineTestRun,
+  BotRoutineTestStatusValue,
   BotRoutineDeleteValue,
   BotView,
   BotShareInviteRequest,
@@ -147,6 +151,8 @@ export interface BotWorkspaceRemote {
   resumeRoutine?: (request: BotRoutineLifecycleRequest) => Promise<RemoteResult<BotRoutineResumeValue>>
   deleteRoutine?: (request: BotRoutineLifecycleRequest) => Promise<RemoteResult<BotRoutineDeleteValue>>
   routineHistory?: (request: BotRoutineHistoryRequest) => Promise<RemoteResult<BotRoutineHistoryValue>>
+  testRoutine?: (request: BotRoutineTestRequest) => Promise<RemoteResult<BotRoutineTestRun>>
+  routineTestStatus?: (request: BotRoutineLifecycleRequest) => Promise<RemoteResult<BotRoutineTestStatusValue>>
   updateAvatar?: (request: { readonly botId: BotIdType; readonly avatar: BotAvatar | null }) => Promise<RemoteResult<BotAvatarUpdateValue>>
   uploadAvatar?: (request: { readonly botId: BotIdType; readonly data: string; readonly mediaType: 'image/png' }) => Promise<RemoteResult<BotAvatarUpdateValue>>
   updateAppearance?: (request: BotAppearanceUpdateRequest) => Promise<RemoteResult<BotAppearanceUpdateValue>>
@@ -583,6 +589,7 @@ export class BotWorkspaceController {
       && this.remote.updateGroup !== undefined
       && this.remote.inspectGroup !== undefined
       && this.remote.sendGroupMessage !== undefined
+    const routineManager = this.routineManager()
     return {
       hooks: { workspace: this.source },
       reference: () => this.selectedReference,
@@ -672,15 +679,7 @@ export class BotWorkspaceController {
           ? { skillManager: this.skillManager() }
           : {}
       ),
-      ...(
-        this.remote.listRoutines !== undefined
-        && this.remote.pauseRoutine !== undefined
-        && this.remote.resumeRoutine !== undefined
-        && this.remote.deleteRoutine !== undefined
-        && this.remote.routineHistory !== undefined
-          ? { routineManager: this.routineManager() }
-          : {}
-      ),
+      ...(routineManager === undefined ? {} : { routineManager }),
       retry: () => {
         void this.retry().catch((error: unknown) => {
           this.fail(error instanceof Error ? error.message : String(error))
@@ -2061,15 +2060,17 @@ export class BotWorkspaceController {
     return actions
   }
 
-  private routineManager(): BotRoutineManagerActions {
+  private routineManager(): BotRoutineManagerActions | undefined {
     const listRoutines = this.remote.listRoutines
     const pauseRoutine = this.remote.pauseRoutine
     const resumeRoutine = this.remote.resumeRoutine
     const deleteRoutine = this.remote.deleteRoutine
     const routineHistory = this.remote.routineHistory
+    const testRoutine = this.remote.testRoutine
+    const routineTestStatus = this.remote.routineTestStatus
     if (listRoutines === undefined || pauseRoutine === undefined || resumeRoutine === undefined
       || deleteRoutine === undefined || routineHistory === undefined) {
-      throw new Error('Bot routine management is not mounted.')
+      return undefined
     }
     return {
       list: async (botId) => {
@@ -2105,6 +2106,22 @@ export class BotWorkspaceController {
         if (!('kind' in result.value)) throw new Error(result.value.code)
         return result.value
       },
+      ...(testRoutine === undefined || routineTestStatus === undefined ? {} : {
+        test: {
+          start: async (botId, routineId, requestId) => {
+            const result = await testRoutine({
+              botId: brandString<BotIdType>(botId), routineId, requestId: brandString<BotRoutineTestId>(requestId),
+            })
+            if (!result.ok) throw new Error(result.error.message)
+            return result.value
+          },
+          status: async (botId, routineId) => {
+            const result = await routineTestStatus({ botId: brandString<BotIdType>(botId), routineId })
+            if (!result.ok) throw new Error(result.error.message)
+            return result.value.run
+          },
+        },
+      }),
     }
   }
 

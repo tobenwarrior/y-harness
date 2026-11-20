@@ -1,0 +1,5 @@
+- button "Run test"
+- button "Running…" [disabled]
+- text: Routine test
+- paragraph: The example report is ready.
+- status: Test completed

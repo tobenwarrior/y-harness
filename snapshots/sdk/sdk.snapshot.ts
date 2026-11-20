@@ -1123,6 +1123,12 @@ describe('TypeScript SDK snapshots over the jsonrpc runtime', () => {
           .map(memory => ({ type: memory.type, data: memory.data }))).toEqual(
           memories.map(memory => ({ type: memory.type, data: memory.data })),
         )
+        const reservations = records(parent.content).filter(record => record.type === 'bot/routine-test')
+        expect(reservations.map(record => record.data)).toEqual([{
+          routineId: 'routine-sdk-snapshot', messageId: 'bot-routine-test-sdk-snapshot',
+        }])
+        expect(records(expectedContents[0] ?? '').filter(record => record.type === 'bot/routine-test')
+          .map(record => record.data)).toEqual(reservations.map(record => record.data))
       }
       await verifyHeaders(scenario, ordered, actualContext, assertions.dshSdkChild?.agentConfig)
 

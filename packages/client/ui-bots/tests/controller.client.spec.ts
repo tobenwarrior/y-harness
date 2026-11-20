@@ -2189,6 +2189,11 @@ describe('BotWorkspaceController', () => {
     remote.resumeRoutine = resumeRoutine
     remote.deleteRoutine = deleteRoutine
     remote.routineHistory = routineHistory
+    const testRun = { messageId: MessageId('manual-run'), requestedAt: 1, status: 'completed' as const }
+    const testRoutine = vi.fn(async () => ({ ok: true as const, value: testRun }))
+    const routineTestStatus = vi.fn(async () => ({ ok: true as const, value: { run: testRun } }))
+    remote.testRoutine = testRoutine
+    remote.routineTestStatus = routineTestStatus
     const controller = new BotWorkspaceController(remote, sessionsFixture().sessions, () => 'unexpected response')
 
     const manager = controller.face().routineManager
@@ -2206,6 +2211,11 @@ describe('BotWorkspaceController', () => {
     expect(routineHistory).toHaveBeenCalledWith({ botId: persisted.id, routineId: 'routine-one', limit: 50 })
     expect(routineHistory).toHaveBeenCalledWith({ botId: persisted.id, routineId: 'routine-one', limit: 50, before: MessageId('older-routine-result') })
     expect(deleteRoutine).toHaveBeenCalledWith({ botId: persisted.id, routineId: 'routine-one' })
+    if (manager.test === undefined) throw new Error('routine tests were not mounted')
+    await expect(manager.test.start(String(persisted.id), 'routine-one', 'request-id')).resolves.toEqual(testRun)
+    await expect(manager.test.status(String(persisted.id), 'routine-one')).resolves.toEqual(testRun)
+    expect(testRoutine).toHaveBeenCalledWith({ botId: persisted.id, routineId: 'routine-one', requestId: 'request-id' })
+    expect(routineTestStatus).toHaveBeenCalledWith({ botId: persisted.id, routineId: 'routine-one' })
   })
 
   it('forwards optional Bot actions with their owner and lifecycle arguments', async () => {
@@ -3433,6 +3443,8 @@ describe('BotWorkspaceController', () => {
     remote.resumeRoutine = vi.fn(async () => ({ ok: false as const, error: new RemoteError('gateway/internal', 'routine resume failed', {}) }))
     remote.deleteRoutine = vi.fn(async () => ({ ok: false as const, error: new RemoteError('gateway/internal', 'routine delete failed', {}) }))
     remote.routineHistory = vi.fn(async () => ({ ok: false as const, error: new RemoteError('gateway/internal', 'routine history failed', {}) }))
+    remote.testRoutine = vi.fn(async () => ({ ok: false as const, error: new RemoteError('gateway/internal', 'routine test failed', {}) }))
+    remote.routineTestStatus = vi.fn(async () => ({ ok: false as const, error: new RemoteError('gateway/internal', 'routine status failed', {}) }))
     const controller = new BotWorkspaceController(remote, sessionsFixture().sessions, () => 'unexpected response')
     await controller.load()
     const face = controller.face()
@@ -3474,6 +3486,8 @@ describe('BotWorkspaceController', () => {
     await expect(routines.resume(original.id, routine.id)).rejects.toThrow('routine resume failed')
     await expect(routines.remove(original.id, routine.id)).rejects.toThrow('routine delete failed')
     await expect(routines.history(original.id, routine.id)).rejects.toThrow('routine history failed')
+    await expect(routines.test?.start(original.id, routine.id, 'start-failed')).rejects.toThrow('routine test failed')
+    await expect(routines.test?.status(original.id, routine.id)).rejects.toThrow('routine status failed')
     controller.dispose()
 
     const disposedSkillRemote = remoteFixture([original])
@@ -3526,6 +3540,25 @@ describe('BotWorkspaceController', () => {
     retryController.face().retry()
     expect(retryRemote.list).toHaveBeenCalledOnce()
     retryController.dispose()
+  })
+
+  it.each([
+    new Error('Workspace refresh failed'),
+    'Workspace refresh failed',
+  ])('reports failures from the panel-level retry controls', async (failure) => {
+    const controller = new BotWorkspaceController(remoteFixture([]), sessionsFixture().sessions, () => 'unexpected response')
+    const refresh = vi.spyOn(controller, 'load').mockRejectedValue(failure)
+    try {
+      const face = controller.face()
+      face.retryGroup()
+      await vi.waitFor(() => { expect(controller.source.getSnapshot().groupError).toBe('Workspace refresh failed') })
+      face.retry()
+      await vi.waitFor(() => { expect(controller.source.getSnapshot().error).toBe('Workspace refresh failed') })
+      expect(refresh).toHaveBeenCalledTimes(2)
+    } finally {
+      refresh.mockRestore()
+      controller.dispose()
+    }
   })
 
   it('surfaces non-Error failures from queued roster and retry callbacks', async () => {
