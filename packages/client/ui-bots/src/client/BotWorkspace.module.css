@@ -703,6 +703,29 @@
   overflow-y: auto;
 }
 
+.memoryBrowserContent,
+.memoryBrowserContent > :last-child {
+  min-height: 0;
+}
+
+.memorySearchRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.memorySearchInput {
+  min-width: 0;
+  flex: 1;
+}
+
+.memoryCount {
+  color: var(--yh-alias-label-secondary);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
 .memoryManagerHeading {
   display: flex;
   align-items: center;
@@ -922,17 +945,20 @@
 .memoryList {
   display: flex;
   min-width: 0;
+  min-height: 0;
   flex-direction: column;
   gap: 8px;
   margin: 0;
+  overflow: auto;
   padding: 0;
   list-style: none;
+  scrollbar-gutter: stable;
 }
 
 .memoryRow {
-  position: relative;
   display: flex;
   min-width: 0;
+  flex: none;
   flex-direction: column;
   gap: 7px;
   padding: 11px 12px;
@@ -956,13 +982,6 @@
   line-height: 16px;
 }
 
-.memoryId {
-  overflow: hidden;
-  font-family: var(--yh-font-family-mono, ui-monospace, monospace);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .memoryRowMeta time {
   flex: none;
 }
@@ -977,10 +996,8 @@
 }
 
 .memoryRowActions {
-  position: absolute;
-  top: 7px;
-  right: 7px;
   gap: 2px;
+  margin-left: auto;
 }
 
 .memoryEditor {

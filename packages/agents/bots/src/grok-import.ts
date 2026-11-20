@@ -1,9 +1,10 @@
-/** Validate a Grok Bot version-one export for owner-side import. */
+/** Validate a Grok Bot profile or supplemental memory export for owner-side import. */
 
 import { RemoteError } from '@yharness/typert-protocol'
 import { createCronScheduleRecord, ScheduleId, ScheduleInputError, type CronInput } from '@yharness/schedule'
 import { z } from 'zod'
-import { BOT_MEMORY_ENTRY_LIMIT, BOT_MEMORY_TEXT_LIMIT } from './memory.ts'
+import { BOT_MEMORY_ENTRY_LIMIT, BOT_MEMORY_TEXT_LIMIT, fitsBotMemoryCapacity } from './memory.ts'
+import type { BotGrokImportValue } from './types.ts'
 
 const MAX_DOCUMENT_BYTES = 512 * 1024
 const CREDENTIAL_KEY = /^(?:authorization|cookie|(?:.*[_-])?(?:password|secret|token|api[_-]?key|private[_-]?key))$/iu
@@ -28,7 +29,7 @@ const routine = z.object({
   timezone: text(128),
   skills: z.array(text(160)).max(24).default([]),
 })
-const documentSchema = z.object({
+const profileExportSchema = z.object({
   format: z.literal('grok-bot-export'),
   version: z.literal(1),
   bots: z.array(z.object({
@@ -39,11 +40,29 @@ const documentSchema = z.object({
     routines: z.array(routine).max(64).default([]),
   })).min(1).max(32),
 })
+const recoveredMemory = z.object({
+  text: memoryText,
+  source: z.enum(['own_profile', 'shared_profile', 'shared_journal']),
+  truncated: z.boolean(),
+})
+
+const memoryRecoverySchema = z.object({
+  format: z.literal('grok-bot-memory-completion'),
+  version: z.literal(1),
+  bot_name: text(160),
+  reported_total: z.number().int().nonnegative(),
+  retrieved_total: z.number().int().nonnegative(),
+  memories: z.array(recoveredMemory).max(BOT_MEMORY_ENTRY_LIMIT),
+  user_facts: z.array(recoveredMemory).max(BOT_MEMORY_ENTRY_LIMIT),
+})
+
+const documentSchema = z.discriminatedUnion('format', [profileExportSchema, memoryRecoverySchema])
 const timedTriggers = new Set(['schedule', 'scheduled', 'cron', 'time', 'interval'])
 
 interface GrokImportPlan {
   readonly name: string
   readonly memories: readonly string[]
+  readonly memoryGaps?: BotGrokImportValue['memoryGaps']
   readonly skills: readonly z.infer<typeof skill>[]
   readonly routines: readonly {
     readonly title: string
@@ -72,10 +91,16 @@ function checkCredentials(data: unknown): void {
   }
 }
 
-/** Parse one Bot and validate its cron definitions before any durable writes.
- * @param document - Grok Bot export JSON.
+function distinctMemories(texts: readonly string[]): readonly string[] {
+  const unique = [...new Set(texts)]
+  if (!fitsBotMemoryCapacity(unique)) return invalid('This export exceeds the Bot memory limit.')
+  return unique
+}
+
+/** Parse one Bot and validate its rules before any durable writes.
+ * @param document - Grok Bot profile or supplemental memory export JSON.
  * @param sourceName - Source Bot display name when the file contains multiple Bots.
- * @returns Memory text, skill definitions, and normalized timed routines for the selected Bot.
+ * @returns Complete memory text, supplemental memory gaps, skill definitions, and timed routines.
  */
 export function parseGrokImport(document: string, sourceName?: string): GrokImportPlan {
   if (typeof document !== 'string' || Buffer.byteLength(document) > MAX_DOCUMENT_BYTES) {
@@ -90,14 +115,31 @@ export function parseGrokImport(document: string, sourceName?: string): GrokImpo
   }
   checkCredentials(json)
   const parsed = documentSchema.safeParse(json)
-  if (!parsed.success) return invalid('Expected a version-one Grok Bot export with valid memories, skills, and timed routines.')
-  const candidates = sourceName === undefined
-    ? parsed.data.bots
-    : parsed.data.bots.filter(bot => bot.name.toLowerCase() === sourceName.trim().toLowerCase())
+  if (!parsed.success) return invalid('Expected a valid version-one Grok Bot profile or supplemental memory export.')
+  const exportData = parsed.data
+  const selectedName = sourceName?.trim().toLowerCase()
+  if (exportData.format === 'grok-bot-memory-completion') {
+    if (selectedName !== undefined && exportData.bot_name.toLowerCase() !== selectedName) {
+      return invalid('Select exactly one source Bot from the Grok Bot export.')
+    }
+    const recovered = [...exportData.memories, ...exportData.user_facts]
+    if (recovered.length !== exportData.retrieved_total || recovered.length > exportData.reported_total) {
+      return invalid('The supplemental memory counts do not match the export.')
+    }
+    const complete = recovered.filter(row => !row.truncated)
+    return {
+      name: exportData.bot_name,
+      memories: distinctMemories(complete.map(row => row.text)),
+      memoryGaps: { truncated: recovered.length - complete.length, unretrieved: exportData.reported_total - recovered.length },
+      skills: [], routines: [],
+    }
+  }
+  const candidates = selectedName === undefined
+    ? exportData.bots
+    : exportData.bots.filter(bot => bot.name.toLowerCase() === selectedName)
   const [bot] = candidates
   if (bot === undefined || candidates.length !== 1) return invalid('Select exactly one source Bot from the Grok Bot export.')
-  const uniqueMemories = [...new Set([...bot.memories, ...bot.user_facts])]
-  if (uniqueMemories.length > BOT_MEMORY_ENTRY_LIMIT) return invalid('This export exceeds the Bot memory limit.')
+  const uniqueMemories = distinctMemories([...bot.memories, ...bot.user_facts])
   const titles = new Set<string>()
   const now = Date.now()
   const routines = bot.routines.map((item) => {

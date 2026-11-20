@@ -328,9 +328,9 @@ collaborationFor(agent: Pick<Agent, 'id'>): Promise<BotCollaborationClient>
 
 /**
  * Import private memories, workspace skills, and paused cron routines into an existing Bot.
- * @param request - Destination Bot, version-one export, and optional preview.
+ * @param request - Destination Bot, version-one export or supplemental memories, and optional preview.
  * @param signal - Cancellation between durable entries. Retrying the same export preserves completed entries.
- * @returns Counts for the selected source Bot and names of missing routine skill definitions.
+ * @returns Selected counts, supplemental memory gaps, and names of missing routine skill definitions.
  */
 @Remote('importGrokBot') async importGrokBot(request: BotGrokImportRequest, signal?: AbortSignal): Promise<BotGrokImportValue>
 

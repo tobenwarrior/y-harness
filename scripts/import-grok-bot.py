@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Preview or import one Grok Bot export into an existing VPS Bot."""
+"""Preview or import a Grok Bot profile or supplemental memory export into an existing VPS Bot."""
 
 import argparse
 import http.client

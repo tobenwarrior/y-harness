@@ -854,6 +854,9 @@ describe('durable Bot roster', () => {
     try {
       const request = { id: BotId('bot-managed'), name: 'Managed Bot' }
       await expect(h.service.create(request)).rejects.toThrow('Computer unavailable')
+      await expect(h.service.importGrokBot({ botId: request.id, document: JSON.stringify({
+        format: 'grok-bot-export', version: 1, bots: [{ name: request.name, memories: ['Review the notes.'] }],
+      }) })).rejects.toThrow('finish setup')
       expect(h.create).not.toHaveBeenCalled()
       const first = (await h.service.create(request)).bot
       const second = (await h.service.create({ name: 'Second Bot' })).bot
@@ -5491,7 +5494,7 @@ describe('durable Bot roster', () => {
     }
   })
 
-  it('retries a failed edit from its durable intent without losing the replacement', async () => {
+  it.each(['retry the edit', 'save another note'] as const)('recovers a failed edit before attempting to %s', async (operation) => {
     const pool = new MemoryMediaPool()
     const first = await harness(pool)
     const owner = await first.service.create({ name: 'Retry edit owner', cwd: '/tmp' })
@@ -5509,12 +5512,18 @@ describe('durable Bot roster', () => {
 
       const request = { botId: owner.bot.id, memoryId, text: 'The corrected schedule.' }
       await expect(h.service.updateMemory(request)).rejects.toMatchObject({ code: 'durability-failed' })
-      await expect(h.service.updateMemory(request)).resolves.toMatchObject({
-        memory: { id: String(memoryId), text: 'The corrected schedule.' },
-      })
-      expect(agent.session.snapshotEvents().filter(event => event.type === 'bot/memory').map(event => event.data.operation)).toEqual([
-        'remember', 'forget', 'remember',
-      ])
+      const expectedOperations = ['remember', 'forget', 'remember']
+      if (operation === 'retry the edit') {
+        await expect(h.service.updateMemory(request)).resolves.toMatchObject({
+          memory: { id: String(memoryId), text: 'The corrected schedule.' },
+        })
+      } else {
+        await expect(memory.remember({ text: 'A new reference note.' })).resolves.toMatchObject({ text: 'A new reference note.' })
+        expect((await memory.list()).map(entry => entry.text).sort()).toEqual(['A new reference note.', 'The corrected schedule.'])
+        expectedOperations.push('remember')
+      }
+      expect(agent.session.snapshotEvents().filter(event => event.type === 'bot/memory').map(event => event.data.operation))
+        .toEqual(expectedOperations)
     } finally {
       await close(h.ctx)
     }
@@ -12384,10 +12393,11 @@ describe('durable Bot roster', () => {
     }
   })
 
-  it('imports Grok memories and paused routines into the existing Bot Session', async () => {
+  it('imports Grok memories, workspace skills, and paused routines into the existing Bot Session', async () => {
     const pool = new MemoryMediaPool()
+    const cwd = await mkdtemp(join(tmpdir(), 'yh-grok-profile-import-'))
     const first = await harness(pool)
-    const { bot } = await first.service.create({ name: 'Imported Bot', cwd: '/tmp' })
+    const { bot } = await first.service.create({ name: 'Imported Bot', cwd })
     await first.service.updateOrganization({ botId: bot.id, group: 'Research' })
     await close(first.ctx)
     const h = await routineHarness(pool, undefined, undefined, [String(bot.sessionId)], true)
@@ -12395,23 +12405,29 @@ describe('durable Bot roster', () => {
       const document = JSON.stringify({
         format: 'grok-bot-export', version: 1, bots: [{
           name: 'Source Bot', memories: ['Use the public feed.'], user_facts: ['Use the local time zone.'],
+          skills: [{ name: 'Draft summary', instructions: 'Write a concise summary.' }],
           routines: [{
             name: 'Morning check', instruction: 'Read the feed.', trigger: 'schedule',
             schedule_cron: '0 9 * * *', timezone: 'Asia/Singapore', paused: false,
+            skills: ['Draft Summary', 'Check feed'],
           }],
         }],
       })
       const request = { botId: bot.id, document }
+      const skillPath = join(cwd, '.agents', 'skills', 'draft-summary', 'SKILL.md')
       await expect(h.service.importGrokBot({ ...request, preview: true })).resolves.toMatchObject({
-        memories: 2, skills: 0, routines: 1,
+        memories: 2, skills: 1, skillNames: ['draft-summary'], routines: 1, missingRoutineSkills: ['Check feed'],
       })
+      await expect(readFile(skillPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
       await expect(h.service.listMemory({ botId: bot.id })).resolves.toEqual({ memories: [] })
       await expect(h.service.listRoutines({ botId: bot.id })).resolves.toEqual({ routines: [] })
       await expect(h.service.importGrokBot(request)).resolves.toMatchObject({ memories: 2, routines: 1 })
+      await expect(readFile(skillPath, 'utf8')).resolves.toContain('Write a concise summary.')
       const { routines } = await h.service.listRoutines({ botId: bot.id })
       expect(routines).toEqual([expect.objectContaining({
         kind: 'schedule', title: 'Morning check', status: 'paused', sessionId: bot.sessionId,
       })])
+      expect(routines[0]?.prompt).toContain('"draft-summary", "Check feed"')
       await expect(h.service.importGrokBot(request)).resolves.toMatchObject({ memories: 2, routines: 1 })
       await expect(h.service.listRoutines({ botId: bot.id })).resolves.toEqual({ routines })
       const { memories } = await h.service.listMemory({ botId: bot.id })
@@ -12429,6 +12445,176 @@ describe('durable Bot roster', () => {
       await h.service.forgetMemory({ botId: bot.id, memoryId: firstMemory.id })
       await h.service.importGrokBot(request)
       await expect(h.service.listMemory({ botId: bot.id })).resolves.toEqual({ memories: memories.slice(1) })
+    } finally {
+      try {
+        await close(h.ctx)
+      } finally {
+        await rm(cwd, { recursive: true, force: true })
+      }
+    }
+  })
+
+  it('rejects a missing destination or a timed import without the Schedule service', async () => {
+    const h = await harness()
+    try {
+      const { bot } = await h.service.create({ name: 'Imported Bot', cwd: '/tmp' })
+      const document = JSON.stringify({
+        format: 'grok-bot-export', version: 1, bots: [{
+          name: bot.name, memories: ['Existing reference.'], routines: [{
+            name: 'Morning check', instruction: 'Check the notes.', trigger: 'schedule',
+            schedule_cron: '0 1 * * *', timezone: 'UTC',
+          }],
+        }],
+      })
+      await expect(h.service.importGrokBot({ botId: undefined as never, document })).rejects.toThrow('Bot id is required')
+      await expect(h.service.importGrokBot({ botId: bot.id, document })).rejects.toThrow('Enable the Host Schedule service')
+      expect((await h.service.listMemory({ botId: bot.id })).memories).toHaveLength(0)
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('clears a cancelled cold projection and reuses the next inspection for concurrent clients', async () => {
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const { bot } = await seed.service.create({ name: 'Research Bot', cwd: '/tmp' })
+    await close(seed.ctx)
+    const h = await harness(pool)
+    try {
+      const controller = new AbortController()
+      h.inspect.mockImplementationOnce(async () => {
+        controller.abort()
+        return { events: [] }
+      })
+      const request = {
+        botId: bot.id,
+        document: JSON.stringify({
+          format: 'grok-bot-export', version: 1, bots: [{ name: bot.name, memories: ['Research reference'] }],
+        }),
+      }
+      await expect(h.service.importGrokBot(request, controller.signal)).rejects.toMatchObject({ code: 'cancelled' })
+      expect(h.inspect).toHaveBeenCalledWith(bot.sessionId, controller.signal)
+      h.inspect.mockClear()
+      const inspection = h.inspect.getMockImplementation()!
+      h.inspect.mockImplementationOnce(async (sessionId) => {
+        await new Promise<void>(resolve => setImmediate(resolve))
+        return inspection(sessionId)
+      })
+      const clients = await Promise.all([
+        h.service.collaborationFor({ id: bot.sessionId }),
+        h.service.collaborationFor({ id: bot.sessionId }),
+      ])
+      for (const client of clients) {
+        expect(client.memory).toBeDefined()
+        await expect(client.memory!.list()).resolves.toEqual([])
+      }
+      expect(h.inspect).toHaveBeenCalledExactlyOnceWith(bot.sessionId)
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('restores supplemental memories beside edited entries without changing an active routine', async () => {
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const { bot } = await seed.service.create({ name: 'Research Bot', cwd: '/tmp' })
+    await close(seed.ctx)
+    const h = await routineHarness(pool, undefined, undefined, [String(bot.sessionId)], true)
+    try {
+      const initialMemories = Array.from({ length: 81 }, (_, index) => `Original reference ${String(index + 1)}`)
+      const original = {
+        botId: bot.id,
+        document: JSON.stringify({
+          format: 'grok-bot-export', version: 1, bots: [{
+            name: bot.name, memories: initialMemories,
+            routines: [{
+              name: 'Morning check', instruction: 'Check the notes.', trigger: 'schedule',
+              schedule_cron: '0 1 * * *', timezone: 'UTC',
+            }],
+          }],
+        }),
+      }
+      await h.service.importGrokBot(original)
+      const first = (await h.service.listMemory({ botId: bot.id })).memories[0]
+      const routine = (await h.service.listRoutines({ botId: bot.id })).routines[0]
+      if (first === undefined || routine === undefined) throw new Error('Original import was not retained')
+      await h.service.updateMemory({ botId: bot.id, memoryId: first.id, text: 'Edited reference' })
+      await h.service.resumeRoutine({ botId: bot.id, routineId: routine.id })
+      const schedules = await h.service.listRoutines({ botId: bot.id })
+      expect(schedules.routines[0]?.status).toBe('active')
+
+      const recovered = Array.from({ length: 98 }, (_, index) => ({
+        text: `Recovered reference ${String(index + 1)}`, source: 'own_profile', truncated: false,
+      }))
+      const request = {
+        botId: bot.id,
+        document: JSON.stringify({
+          format: 'grok-bot-memory-completion', version: 1, bot_name: bot.name,
+          reported_total: 105, retrieved_total: 103,
+          memories: recovered,
+          user_facts: [
+            { text: first.text, source: 'own_profile', truncated: false },
+            ...Array.from({ length: 4 }, (_, index) => ({
+              text: `Unfinished reference ${String(index + 1)}`, source: 'shared_profile', truncated: true,
+            })),
+          ],
+        }),
+      }
+      await expect(h.service.importGrokBot({ ...request, preview: true })).resolves.toMatchObject({
+        memories: 99, skills: 0, routines: 0, memoryGaps: { truncated: 4, unretrieved: 2 },
+      })
+      expect((await h.service.listMemory({ botId: bot.id })).memories).toHaveLength(81)
+      await h.service.importGrokBot(request)
+      const result = await h.service.listMemory({ botId: bot.id })
+      expect(result.memories).toHaveLength(179)
+      expect(result.memories.find(memory => memory.id === first.id)?.text).toBe('Edited reference')
+      expect(result.memories.some(memory => memory.text === first.text || memory.text.startsWith('Unfinished reference'))).toBe(false)
+      expect(result.memories.some(memory => memory.text === 'Recovered reference 98')).toBe(true)
+      const [agent] = h.agents
+      if (agent === undefined) throw new Error('Research Bot Agent was not mounted')
+      expect(projectBotMemories(agent.session.snapshotEvents(), bot.id).size).toBe(179)
+      const prompt = renderPrompt(await h.ctx.systemPrompt.assemble({ scope: agent }))
+      expect(prompt).toContain('Edited reference')
+      expect(prompt).toContain('Recovered reference 98')
+      await h.service.importGrokBot(request)
+      await expect(h.service.listMemory({ botId: bot.id })).resolves.toEqual(result)
+      await expect(h.service.listRoutines({ botId: bot.id })).resolves.toEqual(schedules)
+      expect((await h.service.list({})).bots[0]?.sessionId).toBe(bot.sessionId)
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('enforces the combined memory text budget before writes from imports, edits, and the model', async () => {
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const { bot } = await seed.service.create({ name: 'Reference Bot', cwd: '/tmp' })
+    await close(seed.ctx)
+    const h = await routineHarness(pool, undefined, undefined, [String(bot.sessionId)], true)
+    try {
+      const notes = Array.from({ length: 99 }, (_, i) => String(i).padStart(2, '0') + 'x'.repeat(1998))
+      notes[0] = '00' + '📝'.repeat(1998)
+      notes.push('Edit me', 'x'.repeat(1991))
+      const exportText = (memories: readonly string[]): string => JSON.stringify({
+        format: 'grok-bot-export', version: 1, bots: [{ name: bot.name, memories }],
+      })
+      await h.service.importGrokBot({ botId: bot.id, document: exportText(notes) })
+      const initial = await h.service.listMemory({ botId: bot.id })
+      expect(initial.memories).toHaveLength(101)
+      const edited = initial.memories.find(memory => memory.text === 'Edit me')
+      if (edited === undefined) throw new Error('Memory to edit is unavailable')
+      const [agent] = h.agents
+      if (agent === undefined) throw new Error('Reference Bot Agent was not mounted')
+      const memory = (await h.service.collaborationFor(agent)).memory
+      if (memory === undefined) throw new Error('Reference Bot memory tools were not mounted')
+
+      await expect(h.service.importGrokBot({ botId: bot.id, document: exportText(['Too many characters']) }))
+        .rejects.toThrow('insufficient memory capacity')
+      await expect(h.service.updateMemory({ botId: bot.id, memoryId: edited.id, text: 'Too many characters' }))
+        .rejects.toMatchObject({ code: 'memory-limit' })
+      await expect(memory.remember({ text: 'Too many characters' })).rejects.toMatchObject({ code: 'memory-limit' })
+      await expect(h.service.listMemory({ botId: bot.id })).resolves.toEqual(initial)
+      await expect(memory.remember({ text: 'OK' })).resolves.toMatchObject({ text: 'OK' })
     } finally {
       await close(h.ctx)
     }
