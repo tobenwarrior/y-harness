@@ -197,6 +197,7 @@ export async function invokeRoutineTrigger(
   service: BotService,
   sessionId: SessionId,
   message: UserMessage,
+  eventSeq = 1,
 ): Promise<boolean> {
   const descriptor = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(service), 'triggerEventRoutines')
   if (descriptor === undefined || typeof descriptor.value !== 'function') throw new Error('Bot routine trigger is unavailable')
@@ -213,7 +214,7 @@ export async function invokeRoutineTrigger(
   const triggerRoutine = descriptor.value as TriggerRoutine
   return triggerRoutine.call(service, sessionId, {
     message,
-    eventSeq: 1,
+    eventSeq,
     eventTime: Date.now(),
     source: 'user',
   })

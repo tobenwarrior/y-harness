@@ -5133,7 +5133,8 @@ export class BotService extends TypertRemoteService {
         bots.entries(), ([id, stored]) => applyProfileSnapshot(stored, state.profiles[String(id)]),
       ).filter(record => record.state === 'active' && record.ownerId === this.ownerId))
       for (let record of roster) {
-        const routines = (record.eventRoutines ?? []).filter(routine => matchesGitHubRoutine(routine, activity))
+        let eventRoutines = record.eventRoutines ?? []
+        const routines = eventRoutines.filter(routine => matchesGitHubRoutine(routine, activity))
         if (routines.length === 0) continue
         const { events } = await this.ctx.sessionController.inspect(record.sessionId)
         for (const routine of routines) {
@@ -5151,10 +5152,9 @@ export class BotService extends TypertRemoteService {
             ...routine, ...retainEventRoutineDeliveries(routine, [...routine.deliveries, reservation]),
             updatedAt: Math.max(Date.now(), routine.updatedAt),
           }
+          eventRoutines = eventRoutines.map(item => item.id === routine.id ? nextRoutine : item)
           record = await this.commitEventRoutineRecord(record, {
-            ...record,
-            eventRoutines: (record.eventRoutines ?? []).map(item => item.id === routine.id ? nextRoutine : item),
-            updatedAt: Math.max(Date.now(), record.updatedAt + 1),
+            ...record, eventRoutines, updatedAt: Math.max(Date.now(), record.updatedAt + 1),
           })
           this.emitChanged()
           this.scheduleCanceledEventRoutineRetry(record.sessionId, routine.id, messageId)
@@ -5699,30 +5699,33 @@ export class BotService extends TypertRemoteService {
     }
     const resolved = await this.ctx.sessionController.resolveAgent(record.sessionId)
     if (!('agent' in resolved)) throw resolved.error
+    const eventRoutines = record.eventRoutines
     let currentRecord = record
     let currentRoutine = routine
     let currentDelivery = attempt
+    const commitDelivery = async (nextDelivery: BotEventRoutineDelivery): Promise<void> => {
+      const now = Date.now()
+      const nextRoutine: BotEventRoutine = {
+        ...currentRoutine,
+        deliveries: currentRoutine.deliveries.map(candidate => candidate.messageId === nextDelivery.messageId ? nextDelivery : candidate),
+        updatedAt: Math.max(now, currentRoutine.updatedAt),
+      }
+      currentRecord = await this.commitEventRoutineRecord(currentRecord, {
+        ...currentRecord,
+        eventRoutines: eventRoutines?.map(candidate => candidate.id === nextRoutine.id ? nextRoutine : candidate),
+        updatedAt: Math.max(now, currentRecord.updatedAt),
+      })
+      currentRoutine = nextRoutine
+      currentDelivery = nextDelivery
+    }
     if (!alreadyQueued) {
-      currentDelivery = { ...attempt, dispatchStartedAt: new Date(Date.now()).toISOString() }
-      currentRoutine = {
-        ...routine,
-        deliveries: routine.deliveries.map(candidate => candidate.messageId === attempt.messageId ? currentDelivery : candidate),
-        updatedAt: Math.max(Date.now(), routine.updatedAt),
-      }
-      currentRecord = {
-        ...record,
-        eventRoutines: (record.eventRoutines ?? []).map(candidate => candidate.id === routine.id ? currentRoutine : candidate),
-        updatedAt: Math.max(Date.now(), record.updatedAt),
-      }
-      currentRecord = await this.commitEventRoutineRecord(record, currentRecord)
-      currentRoutine = currentRecord.eventRoutines?.find(candidate => candidate.id === routine.id) ?? currentRoutine
-      currentDelivery = currentRoutine.deliveries.find(candidate => candidate.messageId === attempt.messageId) ?? currentDelivery
+      await commitDelivery({ ...attempt, dispatchStartedAt: new Date(Date.now()).toISOString() })
       const input: Pick<UserMessage, 'content' | 'source'> = currentDelivery.github === undefined ? {
         content: [{ type: 'text', text: `[BOT EVENT ROUTINE]\n${currentRoutine.prompt}` }],
         source: {
           kind: 'bot-event-routine', form: 'notice', summary: `Routine "${currentRoutine.title}" triggered`,
           routineId: currentRoutine.id, triggerEventSeq: currentDelivery.triggerEventSeq,
-          ...(relayContextOf({ chainId: currentDelivery.chainId, depth: currentDelivery.depth }, `${String(currentRecord.sessionId)}:${String(currentDelivery.messageId)}`) ?? {}),
+          ...relayContextOf({ chainId: currentDelivery.chainId, depth: currentDelivery.depth }, `${String(currentRecord.sessionId)}:${String(currentDelivery.messageId)}`),
         },
       } : githubRoutineFollowup(currentRoutine, currentDelivery.github)
       resolved.agent.followup(freezeMessage({ id: currentDelivery.messageId, role: 'user', ...input }))
@@ -5745,46 +5748,19 @@ export class BotService extends TypertRemoteService {
     }
     if (!afterSurface && afterInbox?.disposition === 'canceled') {
       const resetDelivery = resetCanceledDelivery(currentDelivery)
-      const resetRoutine: BotEventRoutine = {
-        ...currentRoutine,
-        deliveries: currentRoutine.deliveries.map(candidate => candidate.messageId === resetDelivery.messageId
-          ? resetDelivery
-          : candidate),
-        updatedAt: Math.max(Date.now(), currentRoutine.updatedAt),
-      }
-      const resetRecord: BotRecord = {
-        ...currentRecord,
-        eventRoutines: (currentRecord.eventRoutines ?? []).map(candidate => candidate.id === resetRoutine.id
-          ? resetRoutine
-          : candidate),
-        updatedAt: Math.max(Date.now(), currentRecord.updatedAt),
-      }
-      const committedReset = await this.commitEventRoutineRecord(currentRecord, resetRecord)
+      await commitDelivery(resetDelivery)
       this.emitChanged()
-      this.scheduleCanceledEventRoutineRetry(committedReset.sessionId, resetRoutine.id, resetDelivery.messageId)
-      return committedReset
+      this.scheduleCanceledEventRoutineRetry(currentRecord.sessionId, routine.id, resetDelivery.messageId)
+      return currentRecord
     }
     if (!afterSurface && afterInbox?.disposition !== 'pending' && afterInbox?.disposition !== 'claimed') {
       // A successful flush without a durable receipt is still uncertain. Keep
       // the dispatch marker so recovery does not invoke the routine twice.
       return currentRecord
     }
-    const deliveredAt = new Date(Date.now()).toISOString()
-    const updatedRoutine: BotEventRoutine = {
-      ...currentRoutine,
-      deliveries: currentRoutine.deliveries.map(candidate => candidate.messageId === currentDelivery.messageId
-        ? { ...candidate, status: 'delivered' as const, deliveredAt }
-        : candidate),
-      updatedAt: Math.max(Date.now(), currentRoutine.updatedAt),
-    }
-    const next: BotRecord = {
-      ...currentRecord,
-      eventRoutines: (currentRecord.eventRoutines ?? []).map(candidate => candidate.id === currentRoutine.id ? updatedRoutine : candidate),
-      updatedAt: Math.max(Date.now(), currentRecord.updatedAt),
-    }
-    const committed = await this.commitEventRoutineRecord(currentRecord, next)
+    await commitDelivery({ ...currentDelivery, status: 'delivered', deliveredAt: new Date(Date.now()).toISOString() })
     this.emitChanged()
-    return committed
+    return currentRecord
   }
 
   /** Repair a delivery that was acknowledged before its inbox cancellation became visible. */

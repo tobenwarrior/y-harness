@@ -956,8 +956,22 @@ describe('native Bot actions', () => {
     expect(routine).not.toHaveBeenCalled()
 
     release.mockRejectedValueOnce(new Error('reservation release failed'))
-    await expect(create.execute({ title: 'Release failure' }, context({ requestApproval: async () => false })))
-      .resolves.toMatchObject({ success: false })
+    const failed = await create.execute({ title: 'Release failure' }, context({ requestApproval: async () => false }))
+    expect(failed.success).toBe(false)
+    expect(failed.contentItems[0]?.text).toContain('"error":"unavailable"')
+
+    const controller = new AbortController()
+    release.mockImplementationOnce(async () => {
+      controller.abort()
+      throw new Error('reservation release interrupted')
+    })
+    const cancelled = await create.execute({ title: 'Interrupted release' }, context({
+      signal: controller.signal, requestApproval: async () => false,
+    }))
+    expect(cancelled.success).toBe(false)
+    expect(cancelled.contentItems[0]?.text).toContain('"error":"cancelled"')
+    expect(release).toHaveBeenCalledTimes(3)
+    expect(routine).not.toHaveBeenCalled()
   })
 
   it('offers bot creation and profile editing actions to a bot', async () => {

@@ -131,7 +131,7 @@ export function matchesGitHubRoutine(
  * @returns Model input and user-visible notice metadata.
  */
 export function githubRoutineFollowup(
-  routine: BotEventRoutine,
+  routine: Pick<BotEventRoutine, 'id' | 'prompt'>,
   receipt: BotGitHubRoutineReceipt,
 ): Pick<UserMessage, 'content' | 'source'> {
   const pull = receipt.event === 'pull_request.opened'

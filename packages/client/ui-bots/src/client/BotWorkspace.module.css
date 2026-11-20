@@ -1016,6 +1016,22 @@
   opacity: 0.7;
 }
 
+.routineOwner {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 14px;
+  color: var(--yh-alias-label-secondary);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.routineOwner > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .routineFilters,
 .routineDetailTabs {
   display: flex;

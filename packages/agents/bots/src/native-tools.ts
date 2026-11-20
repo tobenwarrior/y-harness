@@ -932,10 +932,9 @@ function routineTool(
           callArguments: Readonly<Record<string, unknown>>,
           result: BotNativeToolResult,
         ): Promise<void> => {
-          const settled = safeResult(result)
           await persist({
             phase: 'settled', name, callId: call.callId, threadId: call.threadId, turnId: call.turnId,
-            sessionId, arguments: safeArguments(callArguments), ...(settled === undefined ? {} : { result: settled }),
+            sessionId, arguments: safeArguments(callArguments), result: boundedResult(result),
           })
         }
         const recover = async (

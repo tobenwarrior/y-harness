@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { WebhookDeliveryId, WebhookSourceId, type VerifiedWebhookDelivery } from '@yharness/webhook'
-import { invokeRoutine } from './routine-test-harness.ts'
+import { invokeRoutine, invokeRoutineTrigger, rawBotRow } from './routine-test-harness.ts'
 import { createHash, randomUUID } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
@@ -54,6 +54,7 @@ import BotService from '../src/index.ts'
 import type { BotDynamicToolEvent } from '../src/collaboration.ts'
 import type { BotNativeToolEvent, BotNativeToolProvider } from '../src/native-tools.ts'
 import { BotMemoryId, projectBotMemories } from '../src/memory.ts'
+import { githubRoutineFollowup, githubRoutineMessageId, projectGitHubRoutineActivity } from '../src/github-routines.ts'
 import {
   botDomain,
   SHARED_BOT_ENDPOINTS,
@@ -13157,6 +13158,7 @@ describe('durable Bot roster', () => {
     const pool = new MemoryMediaPool()
     const initial = await harness(pool)
     const { bot } = await initial.service.create({ name: 'Release watch', cwd: '/tmp' })
+    await initial.service.create({ name: 'No routines configured', cwd: '/tmp' })
     await close(initial.ctx)
     const live = await routineHarness(pool, undefined, undefined, [String(bot.sessionId)], true)
     try {
@@ -13175,8 +13177,13 @@ describe('durable Bot roster', () => {
       await expect(invokeRoutine(live.service, 'create', {
         ...args, prompt: 'x'.repeat(16_001),
       }, bot.sessionId, 'long-github-prompt')).rejects.toThrow('at most 16000 characters')
-      const [routine] = (await live.service.listRoutines({ botId: bot.id })).routines
-      if (routine?.kind !== 'event') throw new Error('GitHub routine was not created')
+      await invokeRoutine(live.service, 'create', {
+        ...args, title: 'Watch pull requests', event: { ...selector, event: 'pull_request.opened' },
+      }, bot.sessionId, 'github-pull-requests')
+      const { routines } = await live.service.listRoutines({ botId: bot.id })
+      const routine = routines.find(candidate => candidate.title === args.title)
+      const pullRoutine = routines.find(candidate => candidate.title === 'Watch pull requests')
+      if (routine?.kind !== 'event' || pullRoutine?.kind !== 'event') throw new Error('GitHub routines were not created')
       const request = { botId: bot.id, routineId: routine.id, limit: 10 }
       const followup = live.followups[0]
       const agent = live.agents[0]
@@ -13204,6 +13211,29 @@ describe('durable Bot roster', () => {
       expect(await live.service.routineHistory(request)).toMatchObject({ deliveries: [], results: [] })
 
       const fresh = new Date().toISOString()
+      const inChat = issue('already-in-chat', 12, fresh)
+      const inInbox = issue('already-in-inbox', 13, fresh)
+      const existingMessage = (delivery: VerifiedWebhookDelivery) => {
+        const activity = projectGitHubRoutineActivity(delivery)
+        if (activity === undefined) throw new Error('Fixture GitHub delivery did not resolve to an issue')
+        return freezeMessage({
+          id: githubRoutineMessageId(bot.sessionId, routine.id, activity.receipt),
+          role: 'user',
+          ...githubRoutineFollowup({ id: routine.id, prompt: args.prompt }, activity.receipt),
+        })
+      }
+      agent.session.append('turn/start', { turn: 1 })
+      agent.session.append('user/message', existingMessage(inChat), { surfaceOp: 'append' })
+      agent.session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+      const replayedInput = agent.session.snapshotEvents().find(event => event.type === 'user/message')
+      if (replayedInput === undefined) throw new Error('Previously delivered input was not recorded')
+      live.ctx.emit('session/event', agent.session, replayedInput)
+      agent.session.append('agent/inbox/spliced', { target: 'next-turn', start: 0, inserted: [existingMessage(inInbox)] })
+      await live.service.admitGitHubRoutineDelivery(inChat)
+      await live.service.admitGitHubRoutineDelivery(inInbox)
+      expect(await live.service.routineHistory(request)).toMatchObject({ deliveries: [], results: [] })
+      expect(followup).not.toHaveBeenCalled()
+
       const receipt = issue('first', 11, fresh)
       await Promise.all([
         live.service.admitGitHubRoutineDelivery(receipt),
@@ -13220,19 +13250,86 @@ describe('durable Bot roster', () => {
       expect(message.source).toMatchObject({ kind: 'webhook', ruleId: routine.id })
       const body = message.content[0]
       expect(body?.type === 'text' ? body.text : undefined).toContain('https://github.com/example/workbench/issues/11')
-      agent.session.append('turn/start', { turn: 1 })
+      agent.session.append('turn/start', { turn: 2 })
       live.ctx.emit('session/event', agent.session, agent.session.snapshotEvents().at(-1)!)
       agent.session.append('user/message', message, { surfaceOp: 'append' })
       live.ctx.emit('session/event', agent.session, agent.session.snapshotEvents().at(-1)!)
-      agent.session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+      agent.session.append('turn/end', { turn: 2, reason: { kind: 'completed' } })
       live.ctx.emit('session/event', agent.session, agent.session.snapshotEvents().at(-1)!)
       await vi.waitFor(async () => {
         expect(await live.service.routineHistory(request)).toMatchObject({ results: [{ messageId: message.id, status: 'completed' }] })
       })
+      expect(await live.service.routineHistory({ ...request, routineId: pullRoutine.id })).toMatchObject({ deliveries: [], results: [] })
       remove()
       await expect(live.service.admitGitHubRoutineDelivery(receipt)).rejects.toThrow('source is unavailable')
     } finally {
       await close(live.ctx)
+    }
+  })
+
+  it('keeps pending GitHub admissions durable when the routine reaches its limit', async () => {
+    const pool = new MemoryMediaPool()
+    const initial = await harness(pool)
+    const { bot } = await initial.service.create({ name: 'GitHub delivery backlog', cwd: '/tmp' })
+    await close(initial.ctx)
+    const host = await routineHarness(pool, undefined, undefined, [String(bot.sessionId)], true)
+    try {
+      const source = WebhookSourceId('backlog-source')
+      host.service.registerGitHubRoutineSource(source)
+      await invokeRoutine(host.service, 'create', {
+        title: 'Watch issues', prompt: 'Summarize the issue.',
+        event: { type: 'github', source, repository: 'example/workbench', event: 'issues.opened' },
+      }, bot.sessionId, 'git-backlog')
+      const createdAt = new Date().toISOString()
+      const { routines } = await host.service.listRoutines({ botId: bot.id })
+      const routine = routines[0]
+      if (routine?.kind !== 'event') throw new Error('GitHub routine was not created')
+      const issue = (number: number, deliveryId = String(number)): VerifiedWebhookDelivery => ({
+        kind: 'github', source, deliveryId: WebhookDeliveryId(deliveryId), receivedAt: Date.now(),
+        event: {
+          name: 'issues',
+          payload: {
+            action: 'opened', repository: { full_name: 'example/workbench' },
+            issue: { number, created_at: createdAt },
+          },
+        },
+      })
+      vi.useFakeTimers({ toFake: ['queueMicrotask'] })
+      for (let number = 1; number <= 200; number += 1) {
+        await host.service.admitGitHubRoutineDelivery(issue(number))
+      }
+      await expect(host.service.admitGitHubRoutineDelivery(issue(201))).rejects.toThrow('too many pending deliveries')
+      await expect(host.service.admitGitHubRoutineDelivery(issue(1, 'redelivery'))).resolves.toBeUndefined()
+      const history = await host.service.routineHistory({ botId: bot.id, routineId: routine.id, limit: 100 })
+      if (!('kind' in history) || history.kind !== 'event') throw new Error('GitHub routine history was not returned')
+      expect(history.deliveries).toHaveLength(100)
+      expect(history.deliveries[0]).toMatchObject({ status: 'pending', github: { subject: 200 } })
+      expect(host.followups[0]).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+      await close(host.ctx)
+    }
+  }, 15_000)
+
+  it('rejects GitHub routine creation when the live Bot binding has lost its durable row', async () => {
+    const pool = new MemoryMediaPool()
+    const initial = await harness(pool)
+    const { bot } = await initial.service.create({ name: 'Stale routine owner', cwd: '/tmp' })
+    await close(initial.ctx)
+    const host = await routineHarness(pool, undefined, undefined, [String(bot.sessionId)], true)
+    try {
+      host.service.registerGitHubRoutineSource('stale-source')
+      const domain = host.ctx.storageDomain.get(botDomain.name) as Domain<typeof botDomain> | undefined
+      if (domain === undefined) throw new Error('Bot domain was not mounted')
+      await domain.table('bots').delete(bot.id)
+      await expect(invokeRoutine(host.service, 'create', {
+        title: 'Watch issues', prompt: 'Summarize the issue.',
+        event: { type: 'github', source: 'stale-source', repository: 'example/workbench', event: 'issues.opened' },
+      }, bot.sessionId, 'stale-github-routine')).rejects.toMatchObject({ code: 'sender-not-bot' })
+      expect(rawBotRow(pool, bot.id)).toBeUndefined()
+      expect(host.followups[0]).not.toHaveBeenCalled()
+    } finally {
+      await close(host.ctx)
     }
   })
 
@@ -13463,6 +13560,63 @@ describe('durable Bot roster', () => {
     }
   })
 
+  it('retains replay protection for older message receipts when a routine has also handled GitHub activity', async () => {
+    const pool = new MemoryMediaPool()
+    const seed = await harness(pool)
+    const { bot } = await seed.service.create({ name: 'Legacy routine owner', cwd: '/tmp' })
+    const domain = seed.ctx.storageDomain.get(botDomain.name) as Domain<typeof botDomain> | undefined
+    const bots = domain?.table('bots')
+    const stored = bots?.get(bot.id)
+    if (bots === undefined || stored === undefined) throw new Error('Legacy Bot row was not created')
+    const id = 'bot-event-routine-mixed-history'
+    const openedAt = new Date(1).toISOString()
+    const receipt = {
+      source: WebhookSourceId('legacy-github'), deliveryId: WebhookDeliveryId('legacy-receipt'),
+      repository: 'example/workbench', event: 'issues.opened' as const, subject: 2,
+    }
+    const routine: BotEventRoutine = {
+      id, title: 'Review messages', prompt: 'Review the message.', trigger: { type: 'message', source: 'user' },
+      status: 'active', createdAt: 1, updatedAt: 1, results: [],
+      deliveries: [{
+        github: receipt, messageId: githubRoutineMessageId(bot.sessionId, id, receipt),
+        status: 'delivered', createdAt: openedAt, deliveredAt: openedAt,
+      }, ...Array.from({ length: 199 }, (_, index) => ({
+        triggerEventSeq: index + 2, messageId: MessageId(`legacy-receipt-${String(index + 2)}`),
+        ...(index === 0 ? {} : { triggerMessageId: MessageId(`legacy-message-${String(index + 2)}`) }),
+        status: 'delivered' as const, createdAt: openedAt, deliveredAt: openedAt,
+      }))],
+    }
+    await bots.put(bot.id, { ...stored, eventRoutines: [routine] })
+    await close(seed.ctx)
+
+    const host = await routineHarness(pool, undefined, undefined, [String(bot.sessionId)], true)
+    try {
+      const followup = host.followups[0]
+      if (followup === undefined) throw new Error('Legacy Bot Session was not loaded')
+      const dispatch = (id: string, eventSeq: number) => invokeRoutineTrigger(host.service, bot.sessionId, freezeMessage({
+        id: MessageId(id), role: 'user', content: [{ type: 'text', text: 'Review this.' }], source: { kind: 'user' },
+      }), eventSeq)
+
+      await expect(dispatch('unretained-historical-message', 1)).resolves.toBe(true)
+      await expect(dispatch('legacy-message-2', 2)).resolves.toBe(true)
+      expect(followup).not.toHaveBeenCalled()
+
+      for (const eventSeq of [201, 202, 203, 204]) {
+        await expect(dispatch(`new-message-${String(eventSeq)}`, eventSeq)).resolves.toBe(true)
+      }
+      expect(followup).toHaveBeenCalledTimes(4)
+      expect(rawBotRow(pool, bot.id)?.eventRoutines?.[0]?.admissionTombstones).toEqual([
+        { triggerEventSeq: 2 },
+        { triggerEventSeq: 3, triggerMessageId: MessageId('legacy-message-3') },
+        { triggerEventSeq: 4, triggerMessageId: MessageId('legacy-message-4') },
+      ])
+      await expect(dispatch('legacy-message-4', 205)).resolves.toBe(true)
+      expect(followup).toHaveBeenCalledTimes(4)
+    } finally {
+      await close(host.ctx)
+    }
+  })
+
   it('does not replay event routines after their delivery history is pruned', async () => {
     const pool = new MemoryMediaPool()
     const first = await harness(pool)
@@ -13512,7 +13666,7 @@ describe('durable Bot roster', () => {
     }
   })
 
-  it('does not recover relay events at the maximum hop depth', async () => {
+  it('skips capped relay events while live and after a Host restart', async () => {
     const pool = new MemoryMediaPool()
     const first = await harness(pool)
     const sender = await first.service.create({ name: 'Recovery relay sender', cwd: '/tmp' })
@@ -13548,6 +13702,15 @@ describe('durable Bot roster', () => {
         },
       }), { surfaceOp: 'append' })
       const seed = targetAgent.session.snapshotEvents()
+      const cappedMessage = seed.at(-1)
+      if (cappedMessage?.type !== 'user/message') throw new Error('Capped relay was not stored')
+      h.ctx.emit('session/event', targetAgent.session, cappedMessage)
+      const { routines } = await h.service.listRoutines({ botId: target.bot.id })
+      const routine = routines[0]
+      if (routine?.kind !== 'event') throw new Error('Relay routine was not created')
+      expect(await h.service.routineHistory({ botId: target.bot.id, routineId: routine.id, limit: 10 }))
+        .toMatchObject({ deliveries: [] })
+      expect(h.followups[1]).not.toHaveBeenCalled()
       await close(h.ctx)
 
       reopened = await routineHarness(pool, undefined, undefined, [
@@ -13761,7 +13924,7 @@ describe('durable Bot roster', () => {
     }
   })
 
-  it('does not redispatch after an uncertain follow-up without a Session receipt', async () => {
+  it.each([false, true])('does not redispatch a follow-up without a receipt when the flush returns %s', async (acknowledged) => {
     const pool = new MemoryMediaPool()
     const first = await harness(pool)
     const created = await first.service.create({ name: 'Uncertain delivery owner', cwd: '/tmp' })
@@ -13791,7 +13954,7 @@ describe('durable Bot roster', () => {
       const owner = h.agents[0]
       const followup = h.followups[0]
       if (owner === undefined || followup === undefined) throw new Error('event routine owner was not created')
-      h.flush.mockResolvedValueOnce(false)
+      h.flush.mockResolvedValueOnce(acknowledged)
       owner.session.append('user/message', createUserMessage({
         content: [{ type: 'text', text: 'Trigger before the Host loses its receipt.' }], source: { kind: 'user' },
       }), { surfaceOp: 'append' })
@@ -13909,7 +14072,7 @@ describe('durable Bot roster', () => {
     }
   })
 
-  it('retries an event routine after its inbox message was canceled', async () => {
+  it.each(['before', 'during'] as const)('retries an inbox message canceled %s the first receipt check', async (timing) => {
     const pool = new MemoryMediaPool()
     const first = await harness(pool)
     const created = await first.service.create({ name: 'Canceled delivery owner', cwd: '/tmp' })
@@ -13939,33 +14102,34 @@ describe('durable Bot roster', () => {
       const owner = h.agents[0]
       const followup = h.followups[0]
       if (owner === undefined || followup === undefined) throw new Error('event routine owner was not created')
-      let ownerInspections = 0
-      h.inspect.mockImplementation(async (sessionId) => {
-        const events = h.agents.find(agent => agent.id === sessionId)?.session.snapshotEvents() ?? []
-        ownerInspections += 1
-        if (String(sessionId) === String(owner.id) && ownerInspections === 3) {
-          queueMicrotask(() => {
-            owner.session.append('agent/inbox/spliced', {
-              target: 'next-turn', start: 0, removedCount: 1, inserted: [], outcome: 'canceled',
-            })
-            h.ctx.emit('session/event', owner.session, owner.session.snapshotEvents().at(-1)!)
-          })
-        }
-        return { events: [...events] }
-      })
-      h.flush.mockImplementationOnce(async () => {
-        const pendingMessage = followup.mock.calls[0]?.[0]
-        if (pendingMessage === undefined) throw new Error('canceled event follow-up was not captured before flush')
+      const inspect = h.inspect.getMockImplementation()!
+      const flush = h.flush.getMockImplementation()!
+      let cancelOnCheck = false
+      const cancelFirstDelivery = (): void => {
         owner.session.append('agent/inbox/spliced', {
-          target: 'next-turn', start: 0, inserted: [pendingMessage],
+          target: 'next-turn', start: 0, removedCount: 1, inserted: [], outcome: 'canceled',
         })
-        return true
+      }
+      h.inspect.mockImplementation(async (sessionId) => {
+        const snapshot = await inspect(sessionId)
+        if (sessionId === owner.id && cancelOnCheck) {
+          cancelOnCheck = false
+          queueMicrotask(cancelFirstDelivery)
+        }
+        return snapshot
+      })
+      h.flush.mockImplementationOnce(async (session) => {
+        const flushed = await flush(session)
+        if (timing === 'before') cancelFirstDelivery()
+        else cancelOnCheck = true
+        return flushed
       })
       owner.session.append('user/message', createUserMessage({
         content: [{ type: 'text', text: 'Trigger the canceled delivery.' }], source: { kind: 'user' },
       }), { surfaceOp: 'append' })
       h.ctx.emit('session/event', owner.session, owner.session.snapshotEvents().at(-1)!)
       await vi.waitFor(() => { expect(followup).toHaveBeenCalledTimes(2) })
+      expect(followup.mock.calls[1]?.[0]?.id).toBe(followup.mock.calls[0]?.[0]?.id)
       await vi.waitFor(async () => {
         const recovered = await history.execute({ id: routine.id, limit: 1 }, { ...context, callId: 'canceled-before-restart' })
         expect(JSON.parse(recovered.contentItems[0]!.text)).toMatchObject({ deliveries: [{ status: 'delivered' }] })
@@ -14067,6 +14231,7 @@ describe('durable Bot roster', () => {
       const routine = JSON.parse(result.contentItems[0]!.text) as { id: string }
       const owner = h.agents[0]
       if (owner === undefined) throw new Error('event routine owner was not created')
+      owner.session.append('turn/end', { turn: 6, reason: { kind: 'interrupted' } })
       owner.session.append('turn/start', { turn: 7 })
       const routineMessage = createUserMessage({
         content: [{ type: 'text', text: '[BOT EVENT ROUTINE]\nPersist this.' }],

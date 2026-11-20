@@ -153,7 +153,7 @@ it.skipIf(webSnapshotMode() === 'record')('keeps a paused message out of Results
     dialog = await openRoutines(page)
     await dialog.getByRole('tab', { name: 'Results', exact: true }).click()
     const deliveries = dialog.getByRole('list', { name: 'Deliveries', exact: true })
-    const results = dialog.getByRole('list', { name: 'Results', exact: true })
+    const results = dialog.getByRole('list', { name: 'Runs', exact: true })
     await results.getByText(RESULT, { exact: true }).waitFor()
     expect(await deliveries.getByRole('listitem').count()).toBe(1)
     expect(await results.getByRole('listitem').count()).toBe(1)

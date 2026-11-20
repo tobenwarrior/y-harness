@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
-  Button, IconClockOutlineRegular, IconPauseOutlineRegular, IconPlayOutlineRegular, IconTrashOutlineRegular,
+  Button, IconBranchOutlineRegular, IconClockOutlineRegular, IconPauseOutlineRegular,
+  IconPlayOutlineRegular, IconQueueOutlineRegular, IconTrashOutlineRegular,
   Modal, StateDot, Tag,
 } from '@yharness/client-ui-primitives'
 import type { PropsLocale } from '@yharness/client-ui-slots'
@@ -524,15 +525,13 @@ export function BotRoutineManager({ bot, actions, open, onClose, t, revision = 0
         open={open}
         onClose={closeManager}
         title={t('routineManagerTitle')}
-        description={t('routineManagerDescription')}
         closeLabel={t('close')}
         className={css.memoryModal as string}
         contentClassName={css.memoryModalContent as string}
-        footer={<Button variant="ghost" onClick={closeManager}>{t('close')}</Button>}
       >
-        <div className={css.memoryManagerHeading}>
+        <div className={css.routineOwner}>
           <BotAvatar name={bot.name} identity={bot.identity} accent={bot.accent} avatar={bot.avatar} botId={bot.id} loadAvatar={loadAvatar} size="small" />
-          <span><strong>{bot.name}</strong><span>{t('routinePrivateHint')}</span></span>
+          <span>{bot.name}</span>
         </div>
         <div className={css.routineFilters} role="tablist" aria-label={t('routineFiltersLabel')}>
           {(['all', 'active', 'paused'] as const).map(value => (
@@ -562,12 +561,15 @@ export function BotRoutineManager({ bot, actions, open, onClose, t, revision = 0
                 const id = String(routine.id)
                 const status = routineStatus(routine)
                 const busy = working === id
+                const timed = routine.kind === 'schedule'
+                const github = !timed && routine.trigger.type === 'github'
+                const Icon = timed ? IconClockOutlineRegular : github ? IconBranchOutlineRegular : IconQueueOutlineRegular
+                const typeLabel = t(timed ? 'routineTimed' : github ? 'routineGitHub' : 'routineEvent')
                 return (
                   <li key={id} className={id === selectedId ? css.routineRowSelected : css.routineRow}>
                     <button type="button" className={css.routineRowSelect} aria-pressed={id === selectedId} onClick={() => { selectRoutine(id) }}>
-                      <span className={css.routineRowIcon} aria-hidden="true"><IconClockOutlineRegular size={14} /></span>
-                      <span className={css.routineRowCopy}><strong>{routine.title}</strong><span>{routine.kind === 'schedule' ? t('routineTimed')
-                        : t(routine.trigger.type === 'github' ? 'routineGitHub' : 'routineEvent')}</span></span>
+                      <span className={css.routineRowIcon} aria-hidden="true"><Icon size={14} /></span>
+                      <span className={css.routineRowCopy}><strong>{routine.title}</strong><span>{typeLabel}</span></span>
                       <Tag tone={statusTone(status)}>{statusLabel(status, t)}</Tag>
                     </button>
                     <div className={css.routineRowActions}>
