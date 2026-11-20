@@ -1063,12 +1063,21 @@ async function main(): Promise<void> {
     return policy
   }
 
+  const syncWorkspaceMenu = (): void => {
+    const menu = Menu.getApplicationMenu()
+    const local = menu?.getMenuItemById('workspace-mac')
+    const cloud = menu?.getMenuItemById('workspace-cloud')
+    const vault = menu?.getMenuItemById('workspace-vault')
+    if (local !== null && local !== undefined) local.checked = cloudWorkspace?.isCloudSelected() !== true
+    if (cloud !== null && cloud !== undefined) cloud.checked = cloudWorkspace?.isCloudSelected() === true
+    if (vault !== null && vault !== undefined) vault.enabled = cloudWorkspace?.ownerCloudWorkspace() !== undefined
+  }
   const cloudWorkspace = process.platform === 'darwin'
     ? new DesktopCloudWorkspace(join(app.getPath('userData'), 'cloud-workspace.json'),
       () => currentDesktopLocale().messages, () => {
         void dialog.showMessageBox({ type: 'warning', message: currentDesktopLocale().messages.cloudPreferenceError })
       }, new DesktopCloudVault(fileURLToPath(new URL('./preload-cloud-vault.cjs', import.meta.url)),
-        join(app.getAppPath(), 'renderer'), () => currentDesktopLocale().messages), () => { macComputer?.revoke() })
+        join(app.getAppPath(), 'renderer'), () => currentDesktopLocale().messages), () => { macComputer?.revoke() }, syncWorkspaceMenu)
     : undefined
 
   let transferringProviders = false
@@ -1199,8 +1208,13 @@ async function main(): Promise<void> {
     ? [shortcuts.fileMenu(currentDesktopLocale().messages), { role: 'editMenu' }, {
       label: currentDesktopLocale().messages.cloudWorkspace,
       submenu: [
-        { label: currentDesktopLocale().messages.cloudOpenMac, click: () => { cloudWorkspace?.showMac() } },
-        { label: currentDesktopLocale().messages.cloudOpen, click: () => { cloudWorkspace?.showCloud() } },
+        { id: 'workspace-mac', type: 'radio', label: currentDesktopLocale().messages.cloudOpenMac,
+          accelerator: 'Command+Alt+1', click: () => { cloudWorkspace?.showMac() } },
+        { id: 'workspace-cloud', type: 'radio', label: currentDesktopLocale().messages.cloudOpen,
+          accelerator: 'Command+Alt+2', click: () => { cloudWorkspace?.showCloud() } },
+        { type: 'separator' },
+        { id: 'workspace-vault', label: currentDesktopLocale().messages.cloudVault, click: () => { cloudWorkspace?.showVault() } },
+        { label: currentDesktopLocale().messages.cloudChangeServer, click: () => { cloudWorkspace?.showSetup() } },
         { type: 'separator' },
         { label: currentDesktopLocale().messages.cloudCopyCatalogs,
           click: () => { void copyProviderCatalogs().catch((_error: unknown) => undefined) } },
@@ -1248,6 +1262,7 @@ async function main(): Promise<void> {
       label: darwin ? process.env.DSH_CLIENT_DISPLAY_NAME ?? app.name : currentDesktopLocale().messages.application,
       submenu: [...applicationItems(), ...devToolsItems],
     }, ...platformMenus()]))
+    syncWorkspaceMenu()
     tray?.relabel()
   }
   refreshApplicationMenu()
