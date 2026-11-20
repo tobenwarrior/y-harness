@@ -14261,12 +14261,18 @@ describe('durable Bot roster', () => {
       if (reopenedProvider === undefined) throw new Error('reopened native Bot provider was not mounted')
       const reopenedHistory = (await reopenedProvider.resolve({ sessionId: created.bot.sessionId })).find(tool => tool.name === 'schedule_history')
       if (reopenedHistory === undefined) throw new Error('reopened schedule_history missing')
+      reopened.inspect.mockRejectedValueOnce(new Error('Routine history temporarily unavailable'))
+      await reopened.service['recoverEventRoutineResults'](created.bot.sessionId)
+      const retries = internalSet<string>(reopened.service, 'eventRoutineResultRecoveryRetryKeys')
+      expect(retries.has(String(created.bot.sessionId))).toBe(true)
+      await vi.waitFor(() => { expect(retries.has(String(created.bot.sessionId))).toBe(false) })
       await vi.waitFor(async () => {
         const recovered = await reopenedHistory.execute({ id: routine.id, limit: 1 }, { ...context, callId: 'result-recovery-history' })
         expect(JSON.parse(recovered.contentItems[0]!.text)).toMatchObject({
           results: [{ status: 'other', output: 'Recovered result.' }],
         })
       })
+      expect(reopened.followups[0]).not.toHaveBeenCalled()
     } finally {
       if (reopened !== undefined) await close(reopened.ctx)
       else if (!initialClosed) await close(h.ctx)
