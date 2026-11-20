@@ -64,7 +64,7 @@ import { scopeOf, scopeParentOf } from '@yharness/scope'
 import z from '@yharness/schemastery'
 import { Remote, RemoteError, TypertRemoteService, remoteErrorOf } from '@yharness/typert-protocol'
 import { z as zod } from 'zod'
-import { BOT_ACCENTS, BOT_EVENT_SOURCES, BOT_IDENTITIES, BotId } from './types.ts'
+import { BOT_ACCENTS, BOT_IDENTITIES, BotId } from './types.ts'
 import { botMessageWasDelivered, BotCollaborationError, BotCollaborationService, BotMessageId } from './collaboration.ts'
 import type { BotCollaborationClient, BotCollaborationDeliveryEvent, BotCollaborationHost, BotEventRelayContext } from './collaboration.ts'
 import {
@@ -295,6 +295,12 @@ import type {
   BotTemplateApprovalPermissions,
   BotTemplateStoredRecord,
 } from './template-storage.ts'
+
+import type { VerifiedWebhookDelivery, WebhookSourceId } from '@yharness/webhook'
+import {
+  botEventTriggerSchema, githubRoutineFollowup, githubRoutineMessageId, githubRoutineSourceSchema,
+  matchesGitHubRoutine, projectGitHubRoutineActivity, routineFollowupId, sameRoutineTrigger,
+} from './github-routines.ts'
 
 type RoutineArguments = Record<string, unknown>
 
@@ -2090,15 +2096,12 @@ function routineCron(value: unknown): CronInput {
 }
 
 function routineEvent(value: unknown): BotEventTrigger {
-  const record = routineRecord(value)
-  if (record === undefined || record.type !== 'message' || typeof record.source !== 'string'
-    || !BOT_EVENT_SOURCES.includes(record.source as BotEventSource)) {
-    throw new BotCollaborationError(
-      'message-invalid',
-      'A routine event must be { type: "message", source: "bot" | "user" }.',
-    )
-  }
-  return { type: 'message', source: record.source as BotEventSource }
+  const parsed = botEventTriggerSchema.safeParse(value)
+  if (parsed.success) return parsed.data
+  throw new BotCollaborationError(
+    'message-invalid',
+    'Choose a message from the user or another Bot, or a GitHub event with its source and repository.',
+  )
 }
 
 function routineCreateRequest(args: RoutineArguments): BotRoutineCreateRequest {
@@ -2135,7 +2138,7 @@ function rejectUnsupportedRoutineTrigger(args: RoutineArguments): void {
   if (Object.hasOwn(args, 'trigger') || Object.hasOwn(args, 'on_event')) {
     throw new BotCollaborationError(
       'message-invalid',
-      'Use event: { type: "message", source: "bot" | "user" } for event-triggered routines.',
+      'Use the event field for message or GitHub-triggered routines.',
     )
   }
 }
@@ -2200,10 +2203,11 @@ function eventRoutineId(
 
 /** Project one durable event routine into the common native routine view. */
 function eventRoutineView(routine: BotEventRoutine): BotEventRoutineView {
-  const { deliveries, results, firstEligibleEventSeq, admissionWatermark, admissionTombstones, ...view } = routine
+  const { deliveries, results, firstEligibleEventSeq, firstEligibleGitHubAt, admissionWatermark, admissionTombstones, ...view } = routine
   void deliveries
   void results
   void firstEligibleEventSeq
+  void firstEligibleGitHubAt
   void admissionWatermark
   void admissionTombstones
   return { ...view, kind: 'event', state: 'waiting', deliveryMode: 'host' }
@@ -2280,7 +2284,7 @@ function hasEventRoutineAdmission(
   if (routine.deliveries.some(delivery => delivery.triggerMessageId === input.message.id
     || (delivery.triggerMessageId === undefined && delivery.triggerEventSeq === input.eventSeq))) return true
   const legacyWatermark = routine.deliveries.length >= MAX_ROUTINE_DELIVERIES
-    ? Math.max(...routine.deliveries.map(delivery => delivery.triggerEventSeq))
+    ? Math.max(...routine.deliveries.map(delivery => delivery.triggerEventSeq ?? -1))
     : undefined
   const watermark = routine.admissionWatermark ?? legacyWatermark
   if (watermark !== undefined && input.eventSeq <= watermark) return true
@@ -2297,16 +2301,16 @@ function retainEventRoutineDeliveries(
   const pruned = deliveries.slice(0, Math.max(0, deliveries.length - MAX_ROUTINE_DELIVERIES))
   const tombstones: BotEventRoutineAdmissionTombstone[] = [
     ...(routine.admissionTombstones ?? []),
-    ...pruned.map(delivery => ({
+    ...pruned.flatMap(delivery => delivery.triggerEventSeq === undefined ? [] : [{
       triggerEventSeq: delivery.triggerEventSeq,
       ...(delivery.triggerMessageId === undefined ? {} : { triggerMessageId: delivery.triggerMessageId }),
-    })),
+    }]),
   ]
   return {
     deliveries: retained,
     admissionWatermark: Math.max(
       routine.admissionWatermark ?? 0,
-      ...deliveries.map(delivery => delivery.triggerEventSeq),
+      ...deliveries.map(delivery => delivery.triggerEventSeq ?? 0),
     ),
     ...(tombstones.length === 0 ? {} : { admissionTombstones: tombstones.slice(-MAX_ROUTINE_ADMISSION_TOMBSTONES) }),
   }
@@ -2317,7 +2321,7 @@ function canTriggerEventRoutine(
   routine: BotEventRoutine,
   input: Pick<EventRoutineTriggerInput, 'eventSeq' | 'eventTime' | 'source' | 'relayContext'>,
 ): boolean {
-  if (routine.status !== 'active' || routine.trigger.source !== input.source || input.eventTime < routine.createdAt
+  if (routine.status !== 'active' || routine.trigger.type !== 'message' || routine.trigger.source !== input.source || input.eventTime < routine.createdAt
     || input.eventSeq < (routine.firstEligibleEventSeq ?? 0)) return false
   return input.relayContext === undefined || input.relayContext.depth < MAX_EVENT_ROUTINE_HOPS
 }
@@ -2404,8 +2408,9 @@ function routineTurnsFromEvents(events: readonly SessionEvent[]): Map<number, Ev
     }
     if (openTurn === undefined) continue
     if (event.type === 'user/message') {
+      const routineId = routineFollowupId(event.data)
+      if (routineId !== undefined) openTurn.runs.set(String(event.data.id), routineId)
       if (event.data.source.kind === 'bot-event-routine') {
-        openTurn.runs.set(String(event.data.id), event.data.source.routineId)
         openTurn.relayContext = maxRelayContext(
           openTurn.relayContext,
           relayContextOf(event.data.source, `${String(event.data.id)}:${String(openTurn.turn)}`),
@@ -2799,6 +2804,7 @@ export class BotService extends TypertRemoteService {
     readonly purpose: AuxiliarySessionPurpose
   }>()
   private readonly recordsBySession = new Map<string, BotStoredRecord>()
+  private readonly githubRoutineSources = new Set<WebhookSourceId>()
   private readonly memoriesBySession = new Map<string, Map<string, BotMemoryRecord>>()
   private readonly forgottenMemoryIdsBySession = new Map<string, Set<string>>()
   private readonly memoryLoads = new Map<string, Promise<void>>()
@@ -5091,6 +5097,73 @@ export class BotService extends TypertRemoteService {
     return mapped
   }
 
+  /**
+   * Register the identifier of one Host-owned, signature-verifying GitHub route.
+   * @param source - configured ingress identifier.
+   * @returns Route disposer which stops new admissions from that source.
+   */
+  registerGitHubRoutineSource(source: string): () => void {
+    const id = githubRoutineSourceSchema.parse(source)
+    if (this.githubRoutineSources.has(id)) throw new Error('GitHub routine source is already registered')
+    this.githubRoutineSources.add(id)
+    return () => { this.githubRoutineSources.delete(id) }
+  }
+
+  /** Fail routine creation or selection changes when the signed ingress is absent. */
+  private requireRoutineSource(trigger: BotEventTrigger): void {
+    if (trigger.type === 'github' && !this.githubRoutineSources.has(trigger.source)) {
+      throw new BotCollaborationError('message-invalid', 'That GitHub routine source is unavailable on this Host.')
+    }
+  }
+
+  /**
+   * Reserve matching Bot runs before acknowledging a verified GitHub delivery.
+   * @param delivery - Delivery authenticated by the registered GitHub ingress.
+   * @returns Settles after matching runs are durable, without waiting for a model response.
+   */
+  async admitGitHubRoutineDelivery(delivery: VerifiedWebhookDelivery): Promise<void> {
+    const activity = projectGitHubRoutineActivity(delivery)
+    if (activity === undefined) return
+    await this.serialize(async () => {
+      if (this.stopping || !this.githubRoutineSources.has(activity.receipt.source)) {
+        throw new Error('GitHub routine source is unavailable')
+      }
+      const domain = await this.getDomain()
+      for (const projected of this.recordsBySession.values()) {
+        if (projected.state !== 'active' || !projected.eventRoutines?.some(routine => matchesGitHubRoutine(routine, activity))) continue
+        let record = await this.refreshBotRecordFromProfile(domain, projected.sessionId)
+          ?? this.currentBotRecord(domain, projected.sessionId)
+        if (record?.state !== 'active' || record.ownerId !== this.ownerId) continue
+        const routines = (record.eventRoutines ?? []).filter(routine => matchesGitHubRoutine(routine, activity))
+        if (routines.length === 0) continue
+        const { events } = await this.ctx.sessionController.inspect(record.sessionId)
+        for (const routine of routines) {
+          const messageId = githubRoutineMessageId(record.sessionId, routine.id, activity.receipt)
+          if (routine.deliveries.some(item => item.messageId === messageId)
+            || events.some(event => event.type === 'user/message' && event.data.id === messageId)
+            || botInboxMessageState(events, messageId) !== undefined) continue
+          if (routine.deliveries.length >= MAX_ROUTINE_DELIVERIES && routine.deliveries[0]?.status === 'pending') {
+            throw new Error('The Bot routine has too many pending deliveries')
+          }
+          const reservation: BotEventRoutineDelivery = {
+            github: activity.receipt, messageId, status: 'pending', createdAt: new Date(activity.receivedAt).toISOString(),
+          }
+          const nextRoutine = {
+            ...routine, ...retainEventRoutineDeliveries(routine, [...routine.deliveries, reservation]),
+            updatedAt: Math.max(Date.now(), routine.updatedAt),
+          }
+          record = await this.commitEventRoutineRecord(record, {
+            ...record,
+            eventRoutines: (record.eventRoutines ?? []).map(item => item.id === routine.id ? nextRoutine : item),
+            updatedAt: Math.max(Date.now(), record.updatedAt + 1),
+          })
+          this.emitChanged()
+          this.scheduleCanceledEventRoutineRetry(record.sessionId, routine.id, messageId)
+        }
+      }
+    })
+  }
+
   /** Create or replay one Bot event routine under the calling Bot Session. */
   private async createEventRoutine(
     sessionId: SessionId,
@@ -5107,11 +5180,13 @@ export class BotService extends TypertRemoteService {
       }
       const existing = current.eventRoutines?.find(routine => routine.id === id)
       if (existing !== undefined) {
-        if (existing.title !== request.title || existing.prompt !== request.prompt || existing.trigger.source !== request.event.source) {
+        if (existing.title !== request.title || existing.prompt !== request.prompt
+          || !sameRoutineTrigger(existing.trigger, request.event)) {
           throw new BotCollaborationError('message-invalid', 'This event routine operation identity was already used with different arguments.')
         }
         return existing
       }
+      this.requireRoutineSource(request.event)
       const title = scheduleTitle(request.title)
       const prompt = request.prompt.trim()
       if (prompt.length === 0 || prompt.length > 16_000) {
@@ -5138,14 +5213,16 @@ export class BotService extends TypertRemoteService {
     return record?.sessionId === sessionId ? [...record.eventRoutines ?? []] : []
   }
 
-  /** Capture the first new sequence under the serialized routine mutation. */
-  private async nextRoutineEventSequence(
+  /** Capture which incoming activity is new when a routine becomes eligible. */
+  private async routineActivationCutoff(
     sessionId: SessionId,
     routine: BotEventRoutine,
+    trigger: BotEventTrigger,
     signal?: AbortSignal,
-  ): Promise<number> {
+  ): Promise<Pick<BotEventRoutine, 'firstEligibleEventSeq' | 'firstEligibleGitHubAt'>> {
+    if (trigger.type === 'github') return { firstEligibleGitHubAt: Math.max(routine.firstEligibleGitHubAt ?? 0, Date.now()) }
     const { events } = await this.ctx.sessionController.inspect(sessionId, signal)
-    return Math.max(routine.firstEligibleEventSeq ?? 0, sessionEventSequence(events) + 1)
+    return { firstEligibleEventSeq: Math.max(routine.firstEligibleEventSeq ?? 0, sessionEventSequence(events) + 1) }
   }
 
   /** Update content or the message source of an event routine. */
@@ -5169,8 +5246,10 @@ export class BotService extends TypertRemoteService {
         throw new BotCollaborationError('message-invalid', 'A routine prompt must be non-empty and at most 16000 characters.')
       }
       const trigger = change.event ?? routine.trigger
-      const cutoff = routine.status === 'active' && trigger.source !== routine.trigger.source
-        ? { firstEligibleEventSeq: await this.nextRoutineEventSequence(sessionId, routine, signal) }
+      const changed = !sameRoutineTrigger(trigger, routine.trigger)
+      if (changed) this.requireRoutineSource(trigger)
+      const cutoff = routine.status === 'active' && changed
+        ? await this.routineActivationCutoff(sessionId, routine, trigger, signal)
         : {}
       signal?.throwIfAborted()
       const nextRoutine: BotEventRoutine = {
@@ -5238,7 +5317,7 @@ export class BotService extends TypertRemoteService {
         return { id, [status === 'active' ? 'resumed' : 'paused']: false, code: 'schedule_not_found' as const }
       }
       const cutoff = status === 'active' && routine.status === 'paused'
-        ? { firstEligibleEventSeq: await this.nextRoutineEventSequence(sessionId, routine, signal) }
+        ? await this.routineActivationCutoff(sessionId, routine, routine.trigger, signal)
         : {}
       signal?.throwIfAborted()
       const nextRoutine = { ...routine, status, ...cutoff, updatedAt: Math.max(Date.now(), routine.updatedAt) }
@@ -5425,15 +5504,16 @@ export class BotService extends TypertRemoteService {
     eventTime: number,
   ): void {
     const source = message.source
-    if (source.kind === 'bot-event-routine') {
+    const routineId = routineFollowupId(message)
+    if (routineId !== undefined) {
       const turn = this.eventRoutineTurns.get(`${String(sessionId)}:${this.openTurnNumber(sessionId)}`)
       if (turn !== undefined) {
-        turn.runs.set(String(message.id), source.routineId)
-        const relayContext = relayContextOf(source, `${String(sessionId)}:${String(message.id)}`)
+        turn.runs.set(String(message.id), routineId)
+        const relayContext = relayContextOf(source.kind === 'bot-event-routine' ? source : undefined, `${String(sessionId)}:${String(message.id)}`)
         if (relayContext !== undefined) turn.relayContext = maxRelayContext(turn.relayContext, relayContext)
       }
       queueMicrotask(() => {
-        void this.markEventRoutineDeliveryClaimed(sessionId, source.routineId, MessageId(message.id), eventTime)
+        void this.markEventRoutineDeliveryClaimed(sessionId, routineId, MessageId(message.id), eventTime)
       })
       return
     }
@@ -5637,16 +5717,15 @@ export class BotService extends TypertRemoteService {
       currentRecord = await this.commitEventRoutineRecord(record, currentRecord)
       currentRoutine = currentRecord.eventRoutines?.find(candidate => candidate.id === routine.id) ?? currentRoutine
       currentDelivery = currentRoutine.deliveries.find(candidate => candidate.messageId === attempt.messageId) ?? currentDelivery
-      resolved.agent.followup(freezeMessage({
-        id: currentDelivery.messageId,
-        role: 'user',
+      const input: Pick<UserMessage, 'content' | 'source'> = currentDelivery.github === undefined ? {
         content: [{ type: 'text', text: `[BOT EVENT ROUTINE]\n${currentRoutine.prompt}` }],
         source: {
           kind: 'bot-event-routine', form: 'notice', summary: `Routine "${currentRoutine.title}" triggered`,
           routineId: currentRoutine.id, triggerEventSeq: currentDelivery.triggerEventSeq,
           ...(relayContextOf({ chainId: currentDelivery.chainId, depth: currentDelivery.depth }, `${String(currentRecord.sessionId)}:${String(currentDelivery.messageId)}`) ?? {}),
         },
-      }))
+      } : githubRoutineFollowup(currentRoutine, currentDelivery.github)
+      resolved.agent.followup(freezeMessage({ id: currentDelivery.messageId, role: 'user', ...input }))
     }
     // Even an already-admitted inbox message needs a fresh durability barrier:
     // the previous attempt may have observed the splice but lost its reply.

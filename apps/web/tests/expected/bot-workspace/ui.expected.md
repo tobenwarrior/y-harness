@@ -147,7 +147,7 @@
 - dialog "Bot routines":
   - heading "Bot routines" [level=2]
   - button "Close"
-  - paragraph: Review this bot’s timed and message-triggered routines.
+  - paragraph: Review this bot’s schedules and triggers.
   - img "Scout"
   - strong: Scout
   - text: Only routines owned by this bot are shown here.

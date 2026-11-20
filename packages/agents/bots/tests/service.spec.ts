@@ -1,4 +1,6 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { WebhookDeliveryId, WebhookSourceId, type VerifiedWebhookDelivery } from '@yharness/webhook'
+import { invokeRoutine } from './routine-test-harness.ts'
 import { createHash, randomUUID } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
@@ -12215,12 +12217,12 @@ describe('durable Bot roster', () => {
         title: 'Event check', prompt: 'Watch an event', event: { source: 'webhook' },
       }, { ...context, callId: 'unsupported-event' })
       expect(unsupported).toMatchObject({ success: false })
-      expect(unsupported.contentItems[0]?.text).toContain('A routine event must be')
+      expect(JSON.parse(unsupported.contentItems[0]!.text)).toMatchObject({ error: 'message-invalid' })
       const unsupportedUpdate = await update.execute({
         id: routineId, event: { source: 'webhook' },
       }, { ...context, callId: 'unsupported-event-update' })
       expect(unsupportedUpdate).toMatchObject({ success: false })
-      expect(unsupportedUpdate.contentItems[0]?.text).toContain('A routine event must be')
+      expect(JSON.parse(unsupportedUpdate.contentItems[0]!.text)).toMatchObject({ error: 'message-invalid' })
     } finally {
       await close(h.ctx)
     }
@@ -13095,6 +13097,80 @@ describe('durable Bot roster', () => {
     } finally {
       if (reopened !== undefined) await close(reopened.ctx)
       else if (!initialClosed) await close(h.ctx)
+    }
+  })
+
+  it('reserves and delivers signed GitHub activity only to a matching active routine', async () => {
+    const pool = new MemoryMediaPool()
+    const initial = await harness(pool)
+    const { bot } = await initial.service.create({ name: 'Release watch', cwd: '/tmp' })
+    await close(initial.ctx)
+    const live = await routineHarness(pool, undefined, undefined, [String(bot.sessionId)], true)
+    try {
+      const source = 'tool-test-github'
+      const selector = { type: 'github', source, repository: 'Example/Workbench', event: 'issues.opened' }
+      const args = { title: 'Watch issues', prompt: 'Summarize the issue.', event: selector }
+      await expect(invokeRoutine(live.service, 'create', args, bot.sessionId, 'missing-source')).rejects.toThrow('source is unavailable')
+      const remove = live.service.registerGitHubRoutineSource(source)
+      expect(() => live.service.registerGitHubRoutineSource(source)).toThrow('already registered')
+      const create = () => invokeRoutine(live.service, 'create', args, bot.sessionId, 'github-issues')
+      const created = await create()
+      expect(await create()).toEqual(created)
+      const [routine] = (await live.service.listRoutines({ botId: bot.id })).routines
+      if (routine?.kind !== 'event') throw new Error('GitHub routine was not created')
+      const request = { botId: bot.id, routineId: routine.id, limit: 10 }
+      const followup = live.followups[0]
+      const agent = live.agents[0]
+      if (followup === undefined || agent === undefined) throw new Error('Bot agent was not created')
+      const openedAt = new Date(Date.now() - 100_000).toISOString()
+      function issue(id: string, subject: number, createdAt: string): VerifiedWebhookDelivery {
+        return {
+          kind: 'github', source: WebhookSourceId(source), deliveryId: WebhookDeliveryId(id), receivedAt: Date.now(),
+          event: {
+            name: 'issues',
+            payload: { action: 'opened', repository: { full_name: 'example/workbench' }, issue: { number: subject, created_at: createdAt } },
+          },
+        }
+      }
+      await live.service.admitGitHubRoutineDelivery(issue('older', 9, openedAt))
+      await live.service.pauseRoutine(request)
+      const duringPause = issue('paused', 10, new Date(Date.now() - 1).toISOString())
+      await live.service.admitGitHubRoutineDelivery(duringPause)
+      await live.service.resumeRoutine(request)
+      await live.service.admitGitHubRoutineDelivery(duringPause)
+      expect(await live.service.routineHistory(request)).toMatchObject({ deliveries: [], results: [] })
+
+      const fresh = new Date().toISOString()
+      const receipt = issue('first', 11, fresh)
+      await Promise.all([
+        live.service.admitGitHubRoutineDelivery(receipt),
+        live.service.admitGitHubRoutineDelivery(issue('redelivered', 11, fresh)),
+      ])
+      await vi.waitFor(async () => {
+        expect(await live.service.routineHistory(request)).toMatchObject({
+          deliveries: [{ status: 'delivered', github: { repository: 'example/workbench', subject: 11 } }],
+        })
+      })
+      expect(followup).toHaveBeenCalledOnce()
+      const message = followup.mock.calls[0]?.[0]
+      expect(message).toMatchObject({
+        source: { kind: 'webhook', ruleId: routine.id },
+        content: [{ text: expect.stringContaining('https://github.com/example/workbench/issues/11') }],
+      })
+      if (message === undefined) throw new Error('GitHub follow-up missing')
+      agent.session.append('turn/start', { turn: 1 })
+      live.ctx.emit('session/event', agent.session, agent.session.snapshotEvents().at(-1)!)
+      agent.session.append('user/message', message, { surfaceOp: 'append' })
+      live.ctx.emit('session/event', agent.session, agent.session.snapshotEvents().at(-1)!)
+      agent.session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+      live.ctx.emit('session/event', agent.session, agent.session.snapshotEvents().at(-1)!)
+      await vi.waitFor(async () => {
+        expect(await live.service.routineHistory(request)).toMatchObject({ results: [{ messageId: message.id, status: 'completed' }] })
+      })
+      remove()
+      await expect(live.service.admitGitHubRoutineDelivery(receipt)).rejects.toThrow('source is unavailable')
+    } finally {
+      await close(live.ctx)
     }
   })
 

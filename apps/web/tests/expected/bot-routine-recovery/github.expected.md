@@ -1,0 +1,3 @@
+- text: GitHub trigger
+- text: "example/workbench #17"
+- text: The routine handled the new message.

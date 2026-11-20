@@ -138,9 +138,11 @@ function scheduleRule(routine: Extract<BotRoutineView, { kind: 'schedule' }>, t:
 }
 
 function routineRule(routine: BotRoutineView, t: Translate): string {
-  return routine.kind === 'schedule'
-    ? scheduleRule(routine, t)
-    : t('routineEventRule', { source: sourceLabel(routine.trigger.source, t) })
+  if (routine.kind === 'schedule') return scheduleRule(routine, t)
+  const trigger = routine.trigger
+  if (trigger.type === 'message') return t('routineEventRule', { source: sourceLabel(trigger.source, t) })
+  const label = trigger.event === 'pull_request.opened' ? 'routineGitHubPullRequest' : 'routineGitHubIssue'
+  return t(label, { repository: trigger.repository })
 }
 
 function formatDate(value: string | number): string {
@@ -210,6 +212,9 @@ function historyRows(history: BotRoutineHistory, t: Translate, options: HistoryR
                 <li key={`delivery:${String(delivery.messageId)}`} className={css.routineHistoryRow}>
                   <strong>{historyDate(delivery.deliveredAt ?? delivery.createdAt)}</strong>
                   <span>{delivery.status === 'delivered' ? t('routineDeliveryDelivered') : t('routineDeliveryPending')}</span>
+                  {delivery.github !== undefined && <span>{t('routineGitHubReceipt', {
+                    repository: delivery.github.repository, number: String(delivery.github.subject),
+                  })}</span>}
                 </li>
               ))}
             </ul>
@@ -557,7 +562,8 @@ export function BotRoutineManager({ bot, actions, open, onClose, t, revision = 0
                   <li key={id} className={id === selectedId ? css.routineRowSelected : css.routineRow}>
                     <button type="button" className={css.routineRowSelect} aria-pressed={id === selectedId} onClick={() => { selectRoutine(id) }}>
                       <span className={css.routineRowIcon} aria-hidden="true"><IconClockOutlineRegular size={14} /></span>
-                      <span className={css.routineRowCopy}><strong>{routine.title}</strong><span>{routine.kind === 'schedule' ? t('routineTimed') : t('routineEvent')}</span></span>
+                      <span className={css.routineRowCopy}><strong>{routine.title}</strong><span>{routine.kind === 'schedule' ? t('routineTimed')
+                        : t(routine.trigger.type === 'github' ? 'routineGitHub' : 'routineEvent')}</span></span>
                       <Tag tone={statusTone(status)}>{statusLabel(status, t)}</Tag>
                     </button>
                     <div className={css.routineRowActions}>

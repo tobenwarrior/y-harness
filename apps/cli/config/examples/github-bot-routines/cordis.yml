@@ -1,0 +1,25 @@
+# Isolate the signed GitHub route from the web application.
+- insert:
+    - id: webhook-runtime
+      name: '@yharness/webhook'
+
+    - id: github-bot-ingress
+      name: cordis:group
+      group: true
+      isolate:
+        webServer: true
+      config:
+        - id: github-bot-webhook-server
+          name: '@yharness/host-webserver'
+          config:
+            host: '127.0.0.1'
+            port: !!js Number(process.env.DSH_GITHUB_BOT_WEBHOOK_PORT ?? 3082)
+
+        - id: github-bot-webhook-adapter
+          name: '@yharness/webhook-github'
+          config:
+            source: bot-github
+            path: /github
+            secretEnv: DSH_GITHUB_BOT_WEBHOOK_SECRET
+            maxBodyBytes: 1048576
+            botRoutines: true

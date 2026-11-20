@@ -28231,7 +28231,7 @@
         "packages/agents/bots/src/collaboration.ts#BotCollaborationDeliveryEvent"
       ],
       "sources": [
-        "packages/agents/bots/src/collaboration.ts:34"
+        "packages/agents/bots/src/collaboration.ts:35"
       ]
     },
     {
@@ -28425,7 +28425,7 @@
       "digest": "11c7e946f76f16eda6dd66de89593719d5916b92305b33a18ffc444bd96394cd",
       "names": [],
       "sources": [
-        "packages/agents/bots/src/collaboration.ts:127"
+        "packages/agents/bots/src/collaboration.ts:128"
       ]
     },
     {
@@ -29287,7 +29287,7 @@
         "packages/agents/bots/src/collaboration.ts#BotDynamicToolEventResult"
       ],
       "sources": [
-        "packages/agents/bots/src/collaboration.ts:125"
+        "packages/agents/bots/src/collaboration.ts:126"
       ]
     },
     {
@@ -29462,11 +29462,11 @@
         "packages/workflow/workflow/src/types.ts#WorkflowRunId"
       ],
       "sources": [
-        "packages/agents/bots/src/collaboration.ts:19",
+        "packages/agents/bots/src/collaboration.ts:20",
         "packages/agents/bots/src/group-chat.ts:28",
         "packages/agents/bots/src/group-chat.ts:39",
         "packages/agents/bots/src/memory.ts:8",
-        "packages/agents/bots/src/types.ts:21",
+        "packages/agents/bots/src/types.ts:22",
         "packages/api/session-controller/src/types.ts:413",
         "packages/attachment/attachment/src/brand.ts:6",
         "packages/compaction/compaction/src/brand.ts:4",
@@ -30442,7 +30442,7 @@
       "digest": "838ee520d8e15fed42575c847fdb6ad38defd9b2b149135a9a62a1e2a60c0cbb",
       "names": [],
       "sources": [
-        "packages/agents/bots/src/collaboration.ts:65"
+        "packages/agents/bots/src/collaboration.ts:66"
       ]
     },
     {
@@ -30513,7 +30513,7 @@
         "packages/agents/bots/src/collaboration.ts#BotEventRelayContext"
       ],
       "sources": [
-        "packages/agents/bots/src/collaboration.ts:44"
+        "packages/agents/bots/src/collaboration.ts:45"
       ]
     },
     {
@@ -30541,7 +30541,7 @@
         "packages/subagent/subagent/src/continuation-messages.ts#AgentMessageSource"
       ],
       "sources": [
-        "packages/agents/bots/src/collaboration.ts:52",
+        "packages/agents/bots/src/collaboration.ts:53",
         "packages/subagent/subagent/src/continuation-messages.ts:15"
       ]
     },
@@ -31009,7 +31009,7 @@
         "packages/agents/bots/src/collaboration.ts#BotDynamicToolEvent"
       ],
       "sources": [
-        "packages/agents/bots/src/collaboration.ts:137"
+        "packages/agents/bots/src/collaboration.ts:138"
       ]
     },
     {
@@ -32155,7 +32155,7 @@
         "packages/agents/bots/src/collaboration.ts#BotGroupMessageSource"
       ],
       "sources": [
-        "packages/agents/bots/src/collaboration.ts:79"
+        "packages/agents/bots/src/collaboration.ts:80"
       ]
     },
     {

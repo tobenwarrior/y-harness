@@ -1,5 +1,6 @@
 /** Browser-safe Bot requests, durable values, and Remote failure vocabulary. */
 
+import type { WebhookDeliveryId, WebhookSourceId } from '@yharness/webhook'
 import { brandString, type Branded } from '@yharness/brand'
 import type { ImageAttachmentRef } from '@yharness/attachment'
 import type { MessageId } from '@yharness/llm/brand'
@@ -273,19 +274,49 @@ export const BOT_EVENT_SOURCES = ['bot', 'user'] as const
 export type BotEventSource = typeof BOT_EVENT_SOURCES[number]
 
 /** Message event selector for one Bot-owned routine. */
-export interface BotEventTrigger {
-  /** Trigger family; message is the only supported event family. */
+export interface BotMessageEventTrigger {
+  /** Message trigger family. */
   readonly type: 'message'
   /** Whether a peer Bot or the human user must author the message. */
   readonly source: BotEventSource
 }
 
-/** One durably admitted event-trigger delivery. */
-export interface BotEventRoutineDelivery {
-  /** Session event sequence that caused this delivery. */
-  readonly triggerEventSeq: number
-  /** Stable source message identity used to deduplicate inbox and surface events. */
-  readonly triggerMessageId?: MessageId | undefined
+/** Signed GitHub events available as routine triggers. */
+export const BOT_GITHUB_ROUTINE_EVENTS = ['pull_request.opened', 'issues.opened'] as const
+
+/** GitHub event selected for a Bot routine. */
+export type BotGitHubRoutineEvent = typeof BOT_GITHUB_ROUTINE_EVENTS[number]
+
+/** Repository and verified ingress selected for an app-triggered routine. */
+export interface BotGitHubEventTrigger {
+  /** GitHub trigger family. */
+  readonly type: 'github'
+  /** Configured ingress that verifies this repository's deliveries. */
+  readonly source: WebhookSourceId
+  /** Case-normalized GitHub owner and repository. */
+  readonly repository: string
+  /** Event that runs the routine. */
+  readonly event: BotGitHubRoutineEvent
+}
+
+/** A message or signed app event that can run a Bot routine. */
+export type BotEventTrigger = BotMessageEventTrigger | BotGitHubEventTrigger
+
+/** Fields retained from one verified GitHub event. */
+export interface BotGitHubRoutineReceipt {
+  /** Configured GitHub ingress. */
+  readonly source: WebhookSourceId
+  /** Delivery id received from GitHub. */
+  readonly deliveryId: WebhookDeliveryId
+  /** Case-normalized GitHub owner and repository. */
+  readonly repository: string
+  /** Verified event family and action. */
+  readonly event: BotGitHubRoutineEvent
+  /** Issue or pull request number in the repository. */
+  readonly subject: number
+}
+
+interface BotEventRoutineDeliveryFields {
   /** Stable message id used for retrying delivery after a restart. */
   readonly messageId: MessageId
   /** Cross-Bot routine chain identity, when this delivery came from a peer Bot. */
@@ -301,6 +332,23 @@ export interface BotEventRoutineDelivery {
   /** Time Session persistence acknowledged the follow-up. */
   readonly deliveredAt?: string | undefined
 }
+
+/** One durably admitted event-trigger delivery. */
+export type BotEventRoutineDelivery = BotEventRoutineDeliveryFields & (
+  | {
+    /** Session event sequence that caused this delivery. */
+    readonly triggerEventSeq: number
+    /** Stable source identity used to deduplicate inbox and surface events. */
+    readonly triggerMessageId?: MessageId | undefined
+    readonly github?: undefined
+  }
+  | {
+    /** Verified routing fields kept for later delivery and history. */
+    readonly github: BotGitHubRoutineReceipt
+    readonly triggerEventSeq?: undefined
+    readonly triggerMessageId?: undefined
+  }
+)
 
 /** Durable identity retained after an old routine delivery is pruned. */
 export interface BotEventRoutineAdmissionTombstone {
@@ -324,7 +372,7 @@ export interface BotEventRoutineResult {
   readonly error?: string | undefined
 }
 
-/** Durable Bot routine that runs when its selected message event arrives. */
+/** Durable Bot routine that runs when its selected event arrives. */
 export interface BotEventRoutine {
   /** Stable routine identity. */
   readonly id: string
@@ -344,6 +392,8 @@ export interface BotEventRoutine {
   readonly deliveries: readonly BotEventRoutineDelivery[]
   /** First Session event sequence eligible after the routine is resumed or its active trigger changes. */
   readonly firstEligibleEventSeq?: number | undefined
+  /** Earliest GitHub event time eligible after activation or a selector change. */
+  readonly firstEligibleGitHubAt?: number | undefined
   /** Highest source event sequence durably considered for this routine. */
   readonly admissionWatermark?: number | undefined
   /** Source identities retained when delivery records are pruned. */
@@ -353,10 +403,10 @@ export interface BotEventRoutine {
 }
 
 /** Browser/native view of one Bot event routine. */
-export type BotEventRoutineView = Omit<BotEventRoutine, 'deliveries' | 'results' | 'firstEligibleEventSeq'> & {
+export type BotEventRoutineView = Omit<BotEventRoutine, 'deliveries' | 'results' | 'firstEligibleEventSeq' | 'firstEligibleGitHubAt'> & {
   /** Common routine discriminator used alongside timed Schedule records. */
   readonly kind: 'event'
-  /** Event routines wait for a matching message instead of a wall-clock target. */
+  /** Event routines wait for a matching activity. */
   readonly state: 'waiting'
   /** Delivery remains in the Bot's original Session. */
   readonly deliveryMode: 'host'
@@ -506,7 +556,7 @@ export interface BotRecord {
   readonly accent: BotAccent
   /** Optional generated avatar selected by the user. */
   readonly avatar?: BotAvatar | undefined
-  /** Bot-scoped message routines; absent on rows written before event routines existed. */
+  /** Bot-scoped event routines. */
   readonly eventRoutines?: readonly BotEventRoutine[] | undefined
   /** Optional model-facing persona text. */
   readonly persona?: string | undefined

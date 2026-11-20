@@ -36,6 +36,17 @@ describe('GitHub webhook plugin config', () => {
     expect(test.remove).toHaveBeenCalledOnce()
   })
 
+  it('registers the Bot source with the plugin and removes it on unload', async () => {
+    const test = harness()
+    const takeDown = vi.fn()
+    const registerSource = vi.fn(() => takeDown)
+    test.ctx.provide('bots', { registerGitHubRoutineSource: registerSource } as never)
+    apply(test.ctx, { ...valid, botRoutines: true })
+    await vi.waitFor(() => { expect(registerSource).toHaveBeenCalledWith('primary') })
+    await test.ctx.fiber.dispose()
+    expect(takeDown).toHaveBeenCalledOnce()
+  })
+
   it.each([
     [{ ...valid, source: '' }, /source/],
     [{ ...valid, source: ' primary' }, /source/],

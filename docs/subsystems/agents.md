@@ -127,6 +127,20 @@ collaborationFor(agent: Pick<Agent, 'id'>): Promise<BotCollaborationClient>
 @Remote('setConnectedAppAccess') async setConnectedAppAccess(request: BotConnectedAppAccessRequest): Promise<BotConnectedAppAccessValue>
 
 /**
+ * Register the identifier of one Host-owned, signature-verifying GitHub route.
+ * @param source - configured ingress identifier.
+ * @returns Route disposer which stops new admissions from that source.
+ */
+registerGitHubRoutineSource(source: string): () => void
+
+/**
+ * Reserve matching Bot runs before acknowledging a verified GitHub delivery.
+ * @param delivery - Delivery authenticated by the registered GitHub ingress.
+ * @returns Settles after matching runs are durable, without waiting for a model response.
+ */
+async admitGitHubRoutineDelivery(delivery: VerifiedWebhookDelivery): Promise<void>
+
+/**
  * Read host-local skill metadata and one Bot's current discovery policy.
  * Bodies, paths, provider handles, and credentials never cross this Remote.
  * @param request - Bot id whose skill view should be projected.
@@ -442,7 +456,7 @@ async privateOwnerTurnSource(agent: Agent, signal?: AbortSignal): Promise<'user'
 @Remote('readAvatar') async readAvatar(request: BotAvatarReadRequest): Promise<BotAvatarReadValue>
 ```
 
-Types: [Agent](core.md) · [SessionId](core.md)
+Types: [Agent](core.md) · [SessionId](core.md) · [VerifiedWebhookDelivery](webhook.md)
 
 Source: [`packages/agents/bots/src/index.ts`](../../packages/agents/bots/src/index.ts)
 

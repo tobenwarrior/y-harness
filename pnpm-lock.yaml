@@ -1190,6 +1190,9 @@ importers:
       '@yharness/schemastery':
         specifier: link:../../../vendor/schemastery
         version: link:../../../vendor/schemastery
+      '@yharness/webhook':
+        specifier: workspace:*
+        version: link:../../webhook/webhook
       zod:
         specifier: ^4.4.3
         version: 4.4.3
@@ -15104,6 +15107,9 @@ importers:
         specifier: workspace:*
         version: link:../../util/values
     devDependencies:
+      '@yharness/bots':
+        specifier: workspace:*
+        version: link:../../agents/bots
       '@yharness/cordis':
         specifier: workspace:~
         version: link:../../../vendor/cordis

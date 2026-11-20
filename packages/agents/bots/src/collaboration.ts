@@ -1,5 +1,6 @@
 /** Provider-independent Bot roster inspection and durable peer delivery. */
 
+import { routineFollowupId } from './github-routines.ts'
 import { randomUUID } from 'node:crypto'
 import type { Agent } from '@yharness/agent'
 import type { ImageAttachmentRef } from '@yharness/attachment'
@@ -405,7 +406,7 @@ function transcript(events: readonly SessionEvent[]): BotCollaborationTranscript
         taintTurn(currentTurn)
       }
     }
-    const citesRoutine = event.data.source.kind === 'bot-event-routine'
+    const citesRoutine = routineFollowupId(event.data) !== undefined
       || event.sourceEventSeqs?.some(seq => routineSourceSeqs.has(String(seq))) === true
     if (citesRoutine) {
       routineSourceSeqs.add(seq)

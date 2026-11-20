@@ -32,6 +32,7 @@
   ],
   "license": "MIT",
   "peerDependencies": {
+    "@yharness/bots": "workspace:*",
     "@yharness/cordis": "workspace:~",
     "@yharness/credentials": "workspace:*",
     "@yharness/host-webserver": "workspace:*",
@@ -44,6 +45,7 @@
     "@octokit/webhooks": "^14.2.0"
   },
   "devDependencies": {
+    "@yharness/bots": "workspace:*",
     "@yharness/cordis": "workspace:~",
     "@yharness/cordis-plugin-include": "workspace:~",
     "@yharness/cordis-plugin-loader": "workspace:~",
@@ -51,5 +53,10 @@
     "@yharness/host-webserver": "workspace:*",
     "@yharness/session": "workspace:*",
     "@yharness/webhook": "workspace:*"
+  },
+  "peerDependenciesMeta": {
+    "@yharness/bots": {
+      "optional": true
+    }
   }
 }

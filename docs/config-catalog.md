@@ -467,7 +467,7 @@ export type Config = LocalConfig
 ## `@yharness/bots`
 
 - `inject`: `agents` · `storageDomain` · `sessionController` · `sessions` · `attachments` · `systemPrompt` · `tools`
-- `source`: [`packages/agents/bots/src/index.ts:659`](../packages/agents/bots/src/index.ts)
+- `source`: [`packages/agents/bots/src/index.ts:665`](../packages/agents/bots/src/index.ts)
 
 ```ts config-catalog
 /** Bot service configuration. */
@@ -4698,7 +4698,7 @@ export interface Config {
 ## `@yharness/webhook-github`
 
 - `inject`: `webServer` · `webhookRuntime` · `credentials`
-- `source`: [`packages/webhook/webhook-github/src/index.ts:17`](../packages/webhook/webhook-github/src/index.ts)
+- `source`: [`packages/webhook/webhook-github/src/index.ts:18`](../packages/webhook/webhook-github/src/index.ts)
 
 ```ts config-catalog
 /** Required GitHub ingress configuration. */
@@ -4711,6 +4711,8 @@ export interface Config {
   readonly secretEnv: string
   /** Positive raw body ceiling in bytes. */
   readonly maxBodyBytes: number
+  /** Route verified deliveries to Bot routines bound to this source. */
+  readonly botRoutines?: boolean
 }
 ```
 <!-- END GENERATED config-catalog:@yharness/webhook-github -->

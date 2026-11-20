@@ -1,5 +1,6 @@
 /** Native Codex actions for live Bot Sessions. */
 
+import { BOT_GITHUB_ROUTINE_EVENTS } from './types.ts'
 import { createHash } from 'node:crypto'
 import type { GenerateOptions } from '@yharness/llm'
 import { canonicalizeCronExpression, parseAtInput } from '@yharness/schedule'
@@ -836,6 +837,19 @@ interface RoutineCreateReceipt {
   readonly result: BotNativeToolResult
 }
 
+const nativeEventSelector = {
+  type: 'object',
+  description: 'Select type message with source bot or user, or type github with the configured source, repository, and event name.',
+  properties: {
+    type: { type: 'string', enum: ['message', 'github'] },
+    source: { type: 'string' },
+    repository: { type: 'string', description: 'GitHub repository in owner/repo form.' },
+    event: { type: 'string', enum: [...BOT_GITHUB_ROUTINE_EVENTS] },
+  },
+  required: ['type', 'source'],
+  additionalProperties: false,
+}
+
 /** Build one native routine action over the Host Schedule adapter. */
 function routineTool(
   action: 'create' | 'list' | 'update' | 'delete' | 'pause' | 'resume' | 'history',
@@ -856,7 +870,7 @@ function routineTool(
     description: action === 'list'
       ? 'List the durable routines owned by this Bot Session.'
       : action === 'create'
-        ? 'Create a durable routine owned by this Bot Session. Supply one timing selector or event { type: "message", source: "bot" | "user" }. This action requires approval.'
+        ? 'Create a durable routine owned by this Bot Session. Supply one timing selector or a message or GitHub event. This action requires approval.'
         : action === 'update'
           ? 'Change a durable routine owned by this Bot Session. This action requires approval.'
           : action === 'pause'
@@ -872,22 +886,14 @@ function routineTool(
         ...(action === 'create' ? {
           prompt: { type: 'string', description: 'Instruction delivered when the routine runs.' },
           title: { type: 'string', description: 'Short name for the routine.' },
-          event: {
-            type: 'object', description: 'Message event trigger. Use { type: "message", source: "bot" | "user" }.',
-            properties: { type: { type: 'string', enum: ['message'] }, source: { type: 'string', enum: ['bot', 'user'] } },
-            required: ['type', 'source'], additionalProperties: false,
-          },
+          event: nativeEventSelector,
           after_seconds: { type: 'number' }, at: { oneOf: [{ type: 'string' }, { type: 'object' }] }, every_seconds: { type: 'number' },
           daily: { type: 'object' }, weekly: { type: 'object' }, cron: { type: 'object' },
         } : {}),
         ...(action === 'update' ? {
           id: { type: 'string', description: 'Routine id returned by schedule_list.' },
           prompt: { type: 'string' }, title: { type: 'string' },
-          event: {
-            type: 'object', description: 'Message event trigger. Use { type: "message", source: "bot" | "user" }.',
-            properties: { type: { type: 'string', enum: ['message'] }, source: { type: 'string', enum: ['bot', 'user'] } },
-            required: ['type', 'source'], additionalProperties: false,
-          },
+          event: nativeEventSelector,
           at: { oneOf: [{ type: 'string' }, { type: 'object' }] }, every_seconds: { type: 'number' },
           daily: { type: 'object' }, weekly: { type: 'object' }, cron: { type: 'object' },
         } : {}),

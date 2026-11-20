@@ -7,7 +7,7 @@ kind: "package-reference"
 
 ## Summary
 
-`dsh-webhook-github` registers one exact HTTP route on the injected `ctx.webServer`. It bounds and verifies GitHub's raw JSON body, projects a provider-neutral delivery, calls `ctx.webhookRuntime.dispatch()`, and returns `202` without waiting for rules or Sessions. Use it when a deployment needs authenticated GitHub ingress for the generic webhook runtime.
+`dsh-webhook-github` registers one exact HTTP route on the injected `ctx.webServer`. It bounds and verifies GitHub's raw JSON body, and projects a provider-neutral delivery. The default route dispatches to the Webhook runtime. A route with `botRoutines: true` acknowledges after the Bot service reserves matching runs.
 
 ## Table of Contents
 
@@ -29,8 +29,9 @@ kind: "package-reference"
 | `path` | Exact non-root pathname without trailing slash, query, or fragment. |
 | `secretEnv` | Credential reference containing the GitHub webhook secret. |
 | `maxBodyBytes` | Positive safe-integer ceiling for the untouched request body. |
+| `botRoutines` | Route matching events to registered Bot routines. Defaults to `false`. |
 
-All fields are required. The secret reference is resolved for every request, so rotation affects the next delivery without reloading the plugin.
+The source, path, secret reference, and body limit are required. The secret reference is resolved for every request, so rotation affects the next delivery without reloading the plugin.
 
 <a id="http-contract"></a>
 ## HTTP contract
@@ -39,15 +40,15 @@ Only `POST application/json` is accepted. The adapter reads a bounded UTF-8 body
 
 | Status | Meaning |
 |---|---|
-| `202` | Verified JSON was dispatched in memory. |
+| `202` | Verified JSON was dispatched, or matching Bot runs were durably reserved. |
 | `400` | Required header, UTF-8, JSON, or top-level object was invalid. |
 | `401` | Signature was invalid. |
 | `405` | Method was not `POST`. |
 | `413` | Declared or streamed body exceeded `maxBodyBytes`. |
 | `415` | Media type was not `application/json`. |
-| `503` | Credential or webhook runtime was unavailable. |
+| `503` | Credential, dispatcher, or Bot admission was unavailable. |
 
-`202` does not state that any rule matched or that a Session was created. GitHub event-specific field validation belongs to each rule; the adapter guarantees only authenticated generic JSON.
+Unmatched signed deliveries also return `202`. The rule or Bot service validates the GitHub event fields it consumes.
 
 <a id="dedicated-listener-composition"></a>
 ## Dedicated listener composition
@@ -57,7 +58,7 @@ The normal Web profile already owns `ctx.webServer`. Mount another `dsh-host-web
 <a id="model-experience"></a>
 ## Model Experience
 
-Indirectly, through `dsh-webhook`: this adapter contributes no prompt or tool schema; a matching rule owns the Session request and model-visible text.
+Indirectly, through the prompt supplied by the webhook rule or Bot routine.
 
 #### KV Cache effect
 
@@ -69,7 +70,7 @@ Independent. Authentication and HTTP dispatch do not touch a model request; any 
 
 - **No TLS** — the injected development WebServer is normally loopback-only behind a TLS reverse proxy or tunnel.
 - **Generic payload validation only** — rules own validation of the GitHub event fields they consume.
-- **No provider acknowledgement of downstream work** — `202` precedes arbitrary rule calls and Session creation.
+- **Acknowledgement before completion** — a reserved Bot run can still be pending when the adapter answers.
 - **No form encoding** — GitHub must send `application/json`; `application/x-www-form-urlencoded` is rejected.
 
 <a id="dev-note"></a>
