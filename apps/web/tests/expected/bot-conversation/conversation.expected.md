@@ -1,7 +1,7 @@
 - text: Summarize the release checklist. {{clock}}
 - button "Copy"
 - status: Waiting for reply
-- textbox "Message or run a task, / commands, @ files or sessions"
+- textbox "Message Scout"
 - button "Add files or run commands"
 - 'button "Access mode, current: Approve for me"'
 - button "Select model, current bot-conversation-browser-test/reply": bot-conversation-browser-test/reply
@@ -18,7 +18,7 @@
 - button "Branch into a new conversation"
 - button "Token usage"
 - text: {{clock}}
-- textbox "Message or run a task, / commands, @ files or sessions"
+- textbox "Message Scout"
 - button "Add files or run commands"
 - 'button "Access mode, current: Approve for me"'
 - button "Select model, current bot-conversation-browser-test/reply": bot-conversation-browser-test/reply
@@ -80,7 +80,7 @@
 - button "Branch into a new conversation"
 - button "Token usage"
 - text: {{clock}}
-- textbox "Message or run a task, / commands, @ files or sessions"
+- textbox "Message Scout"
 - button "Add files or run commands"
 - 'button "Access mode, current: Approve for me"'
 - button "Select model, current bot-conversation-browser-test/reply": bot-conversation-browser-test/reply
