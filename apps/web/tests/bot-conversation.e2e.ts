@@ -15,7 +15,7 @@ import {
   captureStableAria, compareOrRefreshGolden, launchWebScaffold,
   watchConsole, webSnapshotMode, type WebScaffold,
 } from './scaffold.ts'
-import { newEnglishPage, saveFailureShot } from './support.ts'
+import { newEnglishPage, saveFailureShot, writeComposerDraft } from './support.ts'
 
 const SNAPSHOT_DIR = fileURLToPath(new URL('../../../snapshots/web/bot-workspace', import.meta.url))
 const FIXTURE = join(SNAPSHOT_DIR, 'session.v3.jsonl')
@@ -240,7 +240,7 @@ describe.skipIf(MODE === 'record')('web e2e: Bot conversation presentation', () 
 
     const options = page.getByRole('button', { name: 'Bot options', exact: true })
     const draft = 'Keep this draft while I check statistics.'
-    await composer.fill(draft)
+    await writeComposerDraft(page, composer, draft)
     await options.click()
     const statisticsOption = page.getByRole('menuitem', { name: 'Show chat statistics', exact: true })
     await statisticsOption.waitFor()
@@ -282,7 +282,8 @@ describe.skipIf(MODE === 'record')('web e2e: Bot conversation presentation', () 
     await page.getByRole('menuitem', { name: 'Hide chat statistics', exact: true }).click()
     await expect.poll(() => surface.locator('[data-composer-stat]').count()).toBe(0)
     expect(await composer.textContent()).toContain(draft)
-    await composer.clear()
+    await writeComposerDraft(page, composer, '')
+    await expect.poll(() => composer.textContent()).toBe('')
 
     // A due reminder enters the same Bot Session and remains attributable to its origin.
     await scaffold.ctx.schedule.create(bot.sessionId, {
