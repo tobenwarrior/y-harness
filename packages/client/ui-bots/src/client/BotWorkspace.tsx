@@ -709,7 +709,7 @@ export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate,
         { id: option.bot.id, name: option.bot.name },
       ]
     setDraft(next)
-    setEveryoneMentionSelected(option.kind === 'everyone' || hasCompleteMention(next, EVERYONE_MENTION))
+    setEveryoneMentionSelected(option.kind === 'everyone' || everyoneMentionSelected)
     setMentionQuery(null)
     setMentionIndex(0)
     requestAnimationFrame(() => {

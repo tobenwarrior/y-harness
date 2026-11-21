@@ -2936,7 +2936,7 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
         { id: String(option.bot.id), name: option.bot.name },
       ]
     setGroupDraft(next)
-    setGroupEveryoneMentionSelected(option.kind === 'everyone' || hasCompleteMention(next, EVERYONE_MENTION))
+    setGroupEveryoneMentionSelected(option.kind === 'everyone' || groupEveryoneMentionSelected)
     setGroupMentionQuery(null)
     setGroupMentionIndex(0)
     requestAnimationFrame(() => {
