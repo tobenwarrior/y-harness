@@ -61,8 +61,8 @@
   max-block-size: 34dvh;
   resize: vertical;
   padding: 8px 10px;
-  border: 1px solid var(--yh-alias-border-l2);
-  border-radius: 8px;
+  border: 0.5px solid var(--yh-alias-border-l2);
+  border-radius: var(--yh-radius-md);
   background: var(--yh-alias-bg-layer-1);
   color: var(--yh-alias-label-primary);
   font: inherit;
