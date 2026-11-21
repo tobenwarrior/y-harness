@@ -7,12 +7,14 @@ import {
 import type { SubagentAddress } from '@yharness/subagent/client'
 import type { SessionId } from '@yharness/session/types'
 import {
-  IconBranchOutlineRegular, IconChevronDownOutlineRegular, IconChevronRightOutlineRegular, IconRefreshOutlineRegular, StateDot, Tooltip,
+  IconBranchOutlineRegular, IconChevronDownOutlineRegular, IconChevronRightOutlineRegular, IconFlatListOutlineRegular,
+  IconRefreshOutlineRegular, StateDot, Tooltip,
 } from '@yharness/client-ui-primitives'
 import type { PropsLocale, PropsRuntime, TranslateNS } from '@yharness/client-ui-slots'
 import { NS } from './locales.ts'
 import type {} from '@yharness/client-ui-conversation/client'
 import type {} from '@yharness/token-meter/client'
+import type { SubagentActivityItem } from './activity.ts'
 import css from './SubagentHeaderLineage.module.css'
 
 type SubagentCatalogSnapshot = Omit<SessionProjectionSnapshot, 'values' | 'state'> & {
@@ -26,6 +28,8 @@ export interface SubagentCatalogInjected {
   openChild: (address: SubagentAddress) => void
   openChildAside: (address: SubagentAddress) => void
   refreshProjection: (parentSessionId: SessionId) => void
+  /** Read a bounded child tail without activating or resuming its Agent. */
+  readChildActivity: (address: SubagentAddress) => Promise<readonly SubagentActivityItem[]>
 }
 
 /** Full props for the session-header lineage renderer. */
@@ -43,9 +47,17 @@ interface CatalogRowsProps {
   openChild: (address: SubagentAddress) => void
   openChildAside: (address: SubagentAddress) => void
   refreshProjection: (parentSessionId: SessionId) => void
+  activityBySession: Readonly<Record<SessionId, ActivityState>>
+  expandedActivity: ReadonlySet<SessionId>
+  toggleActivity: (address: SubagentAddress) => void
   toggleBranch: (childSessionId: SessionId) => void
   closeCatalog: () => void
   agents?: boolean
+}
+
+interface ActivityState {
+  readonly state: 'loading' | 'ready' | 'error'
+  readonly items: readonly SubagentActivityItem[]
 }
 
 function treeItems(root: HTMLDivElement | null): HTMLElement[] {
@@ -201,7 +213,8 @@ function isKnownLeaf(catalog: SubagentCatalogSnapshot | undefined): boolean {
 /** Render one catalog level and recurse only through explicitly expanded rows. */
 function CatalogRows({
   parentSessionId, currentSessionId, catalog, catalogs, summaries, expanded, level,
-  openChild, openChildAside, refreshProjection, toggleBranch, closeCatalog, agents, t,
+  openChild, openChildAside, refreshProjection, activityBySession, expandedActivity,
+  toggleActivity, toggleBranch, closeCatalog, agents, t,
 }: CatalogRowsProps & { t: TranslateNS<typeof NS> }) {
   const [now, setNow] = useState(() => Date.now())
   const running = catalog.entries.some(entry => entry.activity === 'running')
@@ -239,6 +252,8 @@ function CatalogRows({
           || (childCatalog.state === 'loading' && childCatalog.entries.length === 0)
         const summary = summaries[entry.id]
         const label = entry.label ?? entry.id
+        const activityState = activityBySession[entry.id]
+        const activityOpen = expandedActivity.has(entry.id)
         const mode = entry.mode === 'unknown' ? t('mode.unknown')
           : entry.mode === 'one-shot' ? t('mode.oneShot') : t('mode.continuable')
         const completed = entry.activity === 'inactive'
@@ -287,6 +302,16 @@ function CatalogRows({
           event.stopPropagation()
           openChildAside({ parentSessionId, childSessionId: entry.id, mode: entry.mode })
           closeCatalog()
+        }
+        const activityAddress: SubagentAddress = {
+          parentSessionId,
+          childSessionId: entry.id,
+          mode: entry.mode,
+        }
+        const toggleActivityPreview = (event: MouseEvent<HTMLButtonElement>): void => {
+          event.preventDefault()
+          event.stopPropagation()
+          toggleActivity(activityAddress)
         }
         const handleKey = (event: KeyboardEvent<HTMLDivElement>): void => {
           if (event.key === 'Enter' || event.key === ' ') {
@@ -355,6 +380,22 @@ function CatalogRows({
                     )}
                   </span>
                 )}
+                <Tooltip
+                  label={t(activityOpen ? 'activity.hide' : 'activity.show')}
+                  side="bottom"
+                  align="end"
+                >
+                  <button
+                    type="button"
+                    className={`${css.activityButton} ${activityOpen ? css.activityButtonOpen : ''}`}
+                    aria-label={t('activity.aria', { label })}
+                    aria-expanded={activityOpen}
+                    onClick={toggleActivityPreview}
+                    onKeyDown={(event) => { event.stopPropagation() }}
+                  >
+                    <IconFlatListOutlineRegular size={14} />
+                  </button>
+                </Tooltip>
                 {!isCurrent && agents !== true && (
                   <Tooltip label={t('open.sidebar')} side="bottom" align="end">
                     <button
@@ -370,6 +411,38 @@ function CatalogRows({
                 )}
               </div>
             </div>
+            {activityOpen && (
+              <div
+                className={css.activityPreview}
+                role="region"
+                aria-label={t('activity.aria', { label })}
+              >
+                <div className={css.activityHeading}>{t('activity.heading')}</div>
+                {activityState?.state === 'loading' && (
+                  <div className={css.activityNotice}>{t('activity.loading')}</div>
+                )}
+                {activityState?.state === 'error' && (
+                  <div className={css.activityNotice}>{t('activity.error')}</div>
+                )}
+                {activityState?.state === 'ready' && activityState.items.length === 0 && (
+                  <div className={css.activityNotice}>{t('activity.empty')}</div>
+                )}
+                {activityState?.state === 'ready' && activityState.items.length > 0 && (
+                  <ul className={css.activityList}>
+                    {activityState.items.map((item, index) => (
+                      <li key={`${item.kind}-${item.name}-${index}`} className={css.activityItem}>
+                        <span className={`${css.activityStatus} ${item.status === 'failed' ? css.activityStatusFailed : ''}`} />
+                        <span className={css.activityItemText}>
+                          {t(item.status === 'failed'
+                            ? 'activity.failed'
+                            : item.kind === 'action' ? 'activity.action' : 'activity.result', { name: item.name })}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
             {isExpanded && !knownLeaf && (
               <div
                 role="group"
@@ -390,6 +463,9 @@ function CatalogRows({
                       openChild={openChild}
                       openChildAside={openChildAside}
                       refreshProjection={refreshProjection}
+                      activityBySession={activityBySession}
+                      expandedActivity={expandedActivity}
+                      toggleActivity={toggleActivity}
                       toggleBranch={toggleBranch}
                       closeCatalog={closeCatalog}
                       {...(agents === true ? { agents } : {})}
@@ -451,7 +527,7 @@ function catalogMenuPosition(trigger: HTMLButtonElement): CSSProperties {
 /** One trigger-plus-tree dropdown over the catalog rooted at `rootSessionId`. */
 function CatalogDropdown({
   rootSessionId, currentSessionId, displayTitle, openTitle, variant,
-  useSessions, useSessionStatus, openChild, openChildAside, refreshProjection, t,
+  useSessions, useSessionStatus, openChild, openChildAside, refreshProjection, readChildActivity, t,
 }: CatalogDropdownProps) {
   const ancestorSwitcher = variant === 'switcher' && openTitle !== undefined
   const projections = useSessions(state => state.projectionsBySession)
@@ -470,6 +546,8 @@ function CatalogDropdown({
   const [open, setOpen] = useState(false)
   const [menuPosition, setMenuPosition] = useState<CSSProperties>()
   const [expanded, setExpanded] = useState<ReadonlySet<SessionId>>(() => new Set())
+  const [expandedActivity, setExpandedActivity] = useState<ReadonlySet<SessionId>>(() => new Set())
+  const [activityBySession, setActivityBySession] = useState<Readonly<Record<SessionId, ActivityState>>>({})
   const [showPrevious, setShowPrevious] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
@@ -520,6 +598,8 @@ function CatalogDropdown({
       setOpen(false)
       setMenuPosition(undefined)
       setExpanded(new Set())
+      setExpandedActivity(new Set())
+      setActivityBySession({})
       setShowPrevious(false)
     }
     if (restoreFocus) queueMicrotask(() => { triggerRef.current?.focus() })
@@ -566,6 +646,34 @@ function CatalogDropdown({
     }
     setExpanded(current => new Set(current).add(childSessionId))
     refreshProjection(childSessionId)
+  }
+
+  const toggleActivity = (address: SubagentAddress): void => {
+    if (expandedActivity.has(address.childSessionId)) {
+      setExpandedActivity(current => new Set([...current].filter(id => id !== address.childSessionId)))
+      return
+    }
+    setExpandedActivity(current => new Set(current).add(address.childSessionId))
+    const cachedActivity = activityBySession[address.childSessionId]
+    if (cachedActivity?.state === 'ready' || cachedActivity?.state === 'loading') return
+    setActivityBySession(current => ({
+      ...current,
+      [address.childSessionId]: { state: 'loading', items: [] },
+    }))
+    void readChildActivity(address).then(
+      (items) => {
+        setActivityBySession(current => ({
+          ...current,
+          [address.childSessionId]: { state: 'ready', items },
+        }))
+      },
+      () => {
+        setActivityBySession(current => ({
+          ...current,
+          [address.childSessionId]: { state: 'error', items: [] },
+        }))
+      },
+    )
   }
 
   useEffect(() => {
@@ -618,6 +726,8 @@ function CatalogDropdown({
     pinnedRef.current = false
     setOpen(false)
     setExpanded(new Set())
+    setExpandedActivity(new Set())
+    setActivityBySession({})
     setShowPrevious(false)
   }, [visible, open])
 
@@ -633,7 +743,8 @@ function CatalogDropdown({
   const currentCatalog = { ...presentedCatalog, entries: activeEntries }
   const rows = {
     parentSessionId: rootSessionId, currentSessionId, catalogs, summaries, expanded, level: 1,
-    openChild, openChildAside, refreshProjection, toggleBranch, closeCatalog: () => { changeOpen(false) }, agents, t,
+    openChild, openChildAside, refreshProjection, activityBySession, expandedActivity,
+    toggleActivity, toggleBranch, closeCatalog: () => { changeOpen(false) }, agents, t,
   }
 
   const focusAt = (index: number): void => {
@@ -783,7 +894,8 @@ export type SubagentCatalogActionProps =
  * @returns The count dropdown, or null on a child session.
  */
 export function SubagentCatalogAction({
-  sessionId, useSessions, useSessionStatus, openChild, openChildAside, refreshProjection, t,
+  sessionId, useSessions, useSessionStatus, openChild, openChildAside, refreshProjection,
+  readChildActivity, t,
 }: SubagentCatalogActionProps) {
   const isChild = useSessions(state => state.byId[sessionId]?.origin === 'subagent')
   if (isChild) return null
@@ -797,6 +909,7 @@ export function SubagentCatalogAction({
       openChild={openChild}
       openChildAside={openChildAside}
       refreshProjection={refreshProjection}
+      readChildActivity={readChildActivity}
       t={t}
     />
   )
@@ -809,7 +922,8 @@ export function SubagentCatalogAction({
  */
 export function SubagentHeaderLineage({
   lineageSessionId, displayTitle, openTitle,
-  useSessions, useSession, useSessionStatus, openChild, openChildAside, refreshProjection, t,
+  useSessions, useSession, useSessionStatus, openChild, openChildAside, refreshProjection,
+  readChildActivity, t,
 }: SubagentHeaderLineageProps) {
   const address = useSession(session => session.subagent?.address)
   const parentId = useSessions((state) => {
@@ -819,7 +933,9 @@ export function SubagentHeaderLineage({
     }
     return undefined
   })
-  const shared = { useSessions, useSessionStatus, openChild, openChildAside, refreshProjection, t }
+  const shared = {
+    useSessions, useSessionStatus, openChild, openChildAside, refreshProjection, readChildActivity, t,
+  }
   // Root sessions carry no breadcrumb; their descendant count lives in the
   // header actions band (SubagentCatalogAction).
   if (parentId === undefined) return null
@@ -855,7 +971,8 @@ export type SubagentActivityProps =
  * @returns An Agents control when the Session has children or a catalog read needs retrying.
  */
 export function SubagentActivity({
-  sessionId, useSessions, useSessionStatus, openChild, openChildAside, refreshProjection, beforeOpen, t,
+  sessionId, useSessions, useSessionStatus, openChild, openChildAside, refreshProjection,
+  readChildActivity, beforeOpen, t,
 }: SubagentActivityProps) {
   return (
     <CatalogDropdown
@@ -867,6 +984,7 @@ export function SubagentActivity({
       openChild={openChild}
       openChildAside={(address) => { beforeOpen?.(); openChildAside(address) }}
       refreshProjection={refreshProjection}
+      readChildActivity={readChildActivity}
       t={t}
     />
   )

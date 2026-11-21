@@ -4,8 +4,10 @@ import { Context } from '@yharness/cordis'
 import { stubConfigForm } from '@yharness/client-test-runtime'
 import { describe, expect, it } from 'vitest'
 import type {
-  SessionListState, SessionSnapshot, SessionSummary,
+  SessionBinding, SessionListState, SessionReference, SessionRetainOptions, SessionSnapshot, SessionSummary,
+  SessionTarget,
 } from '@yharness/api-session-controller/client'
+import { MutableSessionEventSource } from '@yharness/api-session-controller/client'
 import type { SubagentAddress } from '@yharness/subagent/client'
 import { SlotRegistry } from '@yharness/client-ui-renderer/client'
 import type { SessionId } from '@yharness/session/types'
@@ -44,6 +46,20 @@ function sessionsWith(sessions: SessionSummary[]) {
     childSessionId: sid('c1'),
     mode: 'continuable',
   }
+  const eventSource = new MutableSessionEventSource()
+  const binding = {
+    sessionId: address.childSessionId,
+    session: {} as SessionBinding['session'],
+    eventSource,
+    ctx: {} as SessionBinding['ctx'],
+  } satisfies SessionBinding
+  const reference = {
+    sessionId: address.childSessionId,
+    binding,
+    ready: Promise.resolve(binding),
+    release: () => {},
+    [Symbol.dispose]: () => {},
+  } satisfies SessionReference
   return {
     list: {
       getSnapshot: () => snapshot,
@@ -57,6 +73,11 @@ function sessionsWith(sessions: SessionSummary[]) {
       actionCalls.push({ method: 'refreshProjections', args: [parentSessionId] })
       return Promise.resolve()
     },
+    using: <T>(
+      _target: SessionTarget,
+      _options: SessionRetainOptions,
+      operation: (reference: SessionReference) => T | Promise<T>,
+    ): Promise<T> => Promise.resolve(operation(reference)),
   }
 }
 
@@ -143,6 +164,7 @@ describe('apply', () => {
     actions.openChild(address)
     actions.openChildAside(address)
     actions.refreshProjection(sid('parent'))
+    await expect(actions.readChildActivity(address)).resolves.toEqual([])
     expect(face.actionCalls).toEqual([
       { method: 'openSession', args: [address] },
       {

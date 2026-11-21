@@ -5,7 +5,7 @@ import type { Browser, Page } from 'playwright'
 import { chromium } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it, onTestFailed } from 'vitest'
 import type { AgentHandle } from '@yharness/agent'
-import { createUserMessage, LlmAdapter } from '@yharness/llm'
+import { createToolResultMessage, createUserMessage, LlmAdapter, ToolCallId } from '@yharness/llm'
 import type { GenerateOptions, StreamChunk } from '@yharness/llm'
 import { SessionId, type SessionId as SessionIdValue } from '@yharness/session'
 import type {} from '@yharness/subagent'
@@ -26,6 +26,7 @@ const RUNNING_OWNER_EXPECTED = join(SNAPSHOT_DIR, 'owner-running.expected.md')
 const MODE = webSnapshotMode()
 const HOLD_PROVIDER = 'web-test-hold'
 const HOLD_MODEL = 'hold'
+const SCREENSHOTS = process.env.YH_CODE_ACTIVITY_SCREENSHOTS
 
 /** Model stub that completes the owner turn, then holds its delegated child open. */
 class StagedAdapter extends LlmAdapter {
@@ -68,6 +69,29 @@ async function waitForRunningChild(
   }
 }
 
+/** Capture optional visual evidence without writing artifacts in default CI. */
+async function captureActivityScreenshot(page: Page, name: string): Promise<void> {
+  if (SCREENSHOTS === undefined || SCREENSHOTS.length === 0) return
+  await mkdir(SCREENSHOTS, { recursive: true })
+  await page.screenshot({ path: join(SCREENSHOTS, name), fullPage: true, animations: 'disabled' })
+}
+
+/** Wait for the responsive left sidebar to stop changing width before a shot. */
+async function waitForSidebarWidth(page: Page): Promise<void> {
+  const sidebar = page.locator('[data-yh-part="sidebar-column"]')
+  await sidebar.waitFor({ state: 'attached' })
+  let last = Number.NaN
+  let steady = 0
+  for (let attempt = 0; attempt < 80; attempt += 1) {
+    const current = Math.round(await sidebar.evaluate(node => node.getBoundingClientRect().width))
+    steady = current === last ? steady + 1 : 0
+    if (steady === 2) return
+    last = current
+    await page.waitForTimeout(50)
+  }
+  throw new Error(`sidebar width never settled (last ${last}px)`)
+}
+
 describe('web e2e: sidebar subagent activity', () => {
   let scaffold: WebScaffold
   let browser: Browser
@@ -107,6 +131,25 @@ describe('web e2e: sidebar subagent activity', () => {
     })
     childId = started.childId
     await waitForRunningChild(scaffold, adapter, childId)
+    const child = scaffold.ctx.agents.get(childId)
+    if (child === undefined) throw new Error('held child was not retained by the scaffold')
+    const callId = ToolCallId('sidebar-activity-read')
+    child.session.append('tool/call', {
+      turn: 1,
+      step: 1,
+      callId,
+      name: 'read',
+      arguments: JSON.stringify({ file_path: 'README.md' }),
+    })
+    child.session.append('tool/result', {
+      turn: 1,
+      step: 1,
+      message: createToolResultMessage({
+        callId,
+        content: [{ type: 'text', text: 'private fixture result' }],
+        isError: false,
+      }),
+    }, { surfaceOp: 'append' })
 
     browser = await chromium.launch()
     page = await newEnglishPage(browser)
@@ -149,6 +192,28 @@ describe('web e2e: sidebar subagent activity', () => {
     const runningTrigger = page.getByRole('button', { name: '1 subagent running' })
     await runningTrigger.waitFor({ timeout: 10_000 })
     expect(await runningTrigger.locator('[data-state="ongoing"]').count()).toBe(1)
+    await runningTrigger.click()
+    const childRow = page.getByRole('treeitem', { name: /sidebar activity child/ })
+    await childRow.waitFor({ timeout: 10_000 })
+    expect(await page.getByRole('region', { name: /Recent activity for sidebar activity child/ }).count()).toBe(0)
+    await childRow.getByRole('button', { name: 'Recent activity for sidebar activity child' }).click()
+    const activityRegion = page.getByRole('region', { name: 'Recent activity for sidebar activity child' })
+    await activityRegion.waitFor({ state: 'visible' })
+    await expect.poll(() => activityRegion.innerText(), { timeout: 10_000 }).toContain('Action')
+    await expect.poll(() => activityRegion.innerText(), { timeout: 10_000 }).toContain('Result')
+    await waitForSidebarWidth(page)
+    await captureActivityScreenshot(page, 'activity-desktop.png')
+    await page.setViewportSize({ width: 480, height: 900 })
+    await waitForSidebarWidth(page)
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+    await captureActivityScreenshot(page, 'activity-narrow-480.png')
+    await page.setViewportSize({ width: 1680, height: 1000 })
+    await waitForSidebarWidth(page)
+    await childRow.getByRole('button', { name: 'Open sidebar activity child in sidebar' }).click()
+    const sidebarChat = page.locator('[data-sidebar-chat]')
+    await sidebarChat.waitFor({ state: 'visible', timeout: 10_000 })
+    await waitForSidebarWidth(page)
+    await captureActivityScreenshot(page, 'activity-sidebar-parent.png')
     await assertFixtureInventory(SNAPSHOT_DIR, ['owner-running.expected.md'])
     expect(tripwire.pageErrors).toEqual([])
     expect(tripwire.warnings).toEqual([])
