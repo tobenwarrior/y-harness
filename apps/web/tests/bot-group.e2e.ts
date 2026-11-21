@@ -302,7 +302,8 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
 
     const openSharedDialog = async (target: Page): Promise<import('playwright').Locator> => {
       await target.getByRole('button', { name: 'Bots', exact: true }).click()
-      const join = target.getByRole('button', { name: 'Join a shared bot', exact: true })
+      await target.getByRole('button', { name: 'Bot workspace options', exact: true }).click()
+      const join = target.getByRole('menuitem', { name: 'Join a shared bot', exact: true })
       await join.click()
       const dialog = target.getByRole('dialog', { name: 'Shared with you', exact: true })
       await dialog.waitFor({ state: 'visible', timeout: 15_000 })
@@ -320,7 +321,8 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
 
     const openOwnerDialog = async (): Promise<import('playwright').Locator> => {
       await page.getByRole('button', { name: 'Bots', exact: true }).click()
-      await page.getByRole('button', { name: 'Create a shared group', exact: true }).click()
+      await page.getByRole('button', { name: 'Bot workspace options', exact: true }).click()
+      await page.getByRole('menuitem', { name: 'Create a shared group', exact: true }).click()
       const dialog = page.getByRole('dialog', { name: 'Shared with you', exact: true })
       await dialog.waitFor({ state: 'visible', timeout: 15_000 })
       // The owner bootstrap status is transient. The Bot buttons are the
@@ -381,6 +383,9 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
     let secondCollaboratorDialog = await openSharedDialog(secondCollaboratorPage)
     await redeemInvite(collaboratorDialog, collaboratorChiefInvite.code)
     await collaboratorDialog.getByRole('button', { name: new RegExp(`^${firstBot.name}\\b`) }).waitFor({ state: 'visible', timeout: 30_000 })
+    const firstEnrollment = await scaffold.ctx.bots.listShareMembers({ botId: firstBot.id })
+    const collaboratorPrincipalBeforeSettings = firstEnrollment.members.find(member => member.role === 'collaborator')?.principalId
+    if (collaboratorPrincipalBeforeSettings === undefined) throw new Error('the first collaborator did not enroll')
     await redeemInvite(collaboratorDialog, collaboratorOrbitInvite.code)
     await collaboratorDialog.getByRole('button', { name: new RegExp(`^${secondBot.name}\\b`) }).waitFor({ state: 'visible', timeout: 30_000 })
     await redeemInvite(collaboratorDialog, groupInvite)
@@ -932,8 +937,7 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
 
     const ownerMembersBeforeSettings = await scaffold.ctx.bots.listShareMembers({ botId: firstBot.id })
     const ownerPrincipalBeforeSettings = ownerMembersBeforeSettings.members.find(member => member.role === 'owner')?.principalId
-    const collaboratorPrincipalBeforeSettings = ownerMembersBeforeSettings.members.find(member => member.role === 'collaborator')?.principalId
-    if (ownerPrincipalBeforeSettings === undefined || collaboratorPrincipalBeforeSettings === undefined) {
+    if (ownerPrincipalBeforeSettings === undefined) {
       throw new Error('shared group participants were not durable before settings opened')
     }
 
@@ -1050,7 +1054,8 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
     await collaboratorPage.reload({ waitUntil: 'load' })
     await collaboratorPage.waitForSelector('[class*="frame"]', { timeout: 30_000 })
     await collaboratorPage.getByRole('button', { name: 'Bots', exact: true }).click()
-    await collaboratorPage.getByRole('button', { name: 'Join a shared bot', exact: true }).click()
+    await collaboratorPage.getByRole('button', { name: 'Bot workspace options', exact: true }).click()
+    await collaboratorPage.getByRole('menuitem', { name: 'Join a shared bot', exact: true }).click()
     const revokedDialog = collaboratorPage.getByRole('dialog', { name: 'Shared with you', exact: true })
     await revokedDialog.waitFor({ state: 'visible', timeout: 15_000 })
     await expect.poll(() => revokedDialog.getByRole('button', { name: new RegExp(`^${RENAMED_SHARED_GROUP_NAME}`) }).count(), { timeout: 30_000 }).toBe(0)
@@ -1096,12 +1101,7 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
     tripwire = watchConsole(page)
     await page.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
     await page.waitForSelector('[class*="frame"]', { timeout: 30_000 })
-    await page.getByRole('button', { name: 'Bots', exact: true }).click()
-    const reopenedOwnerDialog = page.getByRole('button', { name: 'Create a shared group', exact: true })
-    await expect.poll(() => reopenedOwnerDialog.isEnabled(), { timeout: 30_000 }).toBe(true)
-    await reopenedOwnerDialog.click()
-    const restartedDialog = page.getByRole('dialog', { name: 'Shared with you', exact: true })
-    await restartedDialog.waitFor({ state: 'visible', timeout: 15_000 })
+    const restartedDialog = await openOwnerDialog()
     await expect.poll(() => restartedDialog.getByRole('button', { name: new RegExp(`^${RENAMED_SHARED_GROUP_NAME}`) }).count(), {
       timeout: 30_000,
     }).toBe(1)

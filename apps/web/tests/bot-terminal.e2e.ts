@@ -139,14 +139,19 @@ it.skipIf(process.platform === 'win32')('switches between a Bot’s Computer and
       throw new Error(JSON.stringify(messages), { cause })
     })
     const select = (id: string) => sidebar.locator('[data-bot-id="' + id + '"]').click()
-    const action = page.getByRole('button', { name: 'Open VPS terminal', exact: true })
-    const filesAction = page.getByRole('button', { name: 'Open VPS files', exact: true })
+    const options = page.getByRole('button', { name: 'Bot options', exact: true })
+    const menu = page.getByRole('menu')
+    const action = menu.getByRole('menuitem', { name: 'Terminal', exact: true })
+    const filesAction = menu.getByRole('menuitem', { name: 'Private workspace', exact: true })
     const fileTree = page.locator('[data-files-state="tree"]:visible')
     const preview = page.locator('[data-textpreview-body]:visible')
-    const fileMenu = page.getByRole('menu').filter({ has: page.getByRole('menuitem', { name: 'Shared workspace', exact: true }) })
+    const openTerminal = async (): Promise<void> => {
+      await options.click()
+      await action.click()
+    }
     const openFiles = async (kind: 'Private workspace' | 'Shared workspace'): Promise<void> => {
-      await filesAction.click()
-      await fileMenu.getByRole('menuitem', { name: kind, exact: true }).click()
+      await options.click()
+      await menu.getByRole('menuitem', { name: kind, exact: true }).click()
     }
     const openBrief = async (): Promise<void> => {
       await openFiles('Private workspace')
@@ -174,14 +179,17 @@ it.skipIf(process.platform === 'win32')('switches between a Bot’s Computer and
       return processId(sessionId, file)
     }
     await select(FIRST)
+    await options.click()
     await action.waitFor()
     await compareOrRefreshGolden(GOLDEN, (await action.ariaSnapshot()).trimEnd(), webSnapshotMode())
     await action.click()
     await terminal.waitFor()
     await send('printf "%s" "$$" > first.pid')
     const firstPid = await readPid(first.sessionId, 'first.pid')
+    await options.click()
     await filesAction.waitFor()
     await compareOrRefreshGolden(FILES_GOLDEN, (await filesAction.ariaSnapshot()).trimEnd(), webSnapshotMode())
+    await page.keyboard.press('Escape')
     await openBrief()
     await preview.getByText('Scout workspace', { exact: true }).waitFor()
     const downloadLink = page.getByRole('link', { name: 'Download file', exact: true })
@@ -222,7 +230,7 @@ it.skipIf(process.platform === 'win32')('switches between a Bot’s Computer and
     await page.getByRole('button', { name: 'Open computer panel', exact: true }).click()
     await computer.waitFor()
     await terminal.waitFor({ state: 'hidden' })
-    await action.click()
+    await openTerminal()
     await computer.waitFor({ state: 'hidden' })
     await terminal.waitFor()
     await send('printf "%s" "$$" > reopened.pid')
@@ -230,7 +238,7 @@ it.skipIf(process.platform === 'win32')('switches between a Bot’s Computer and
 
     await select(SECOND)
     await terminal.waitFor({ state: 'hidden' })
-    await action.click()
+    await openTerminal()
     await terminal.waitFor()
     await send('printf "%s" "$$" > second.pid')
     expect(await readPid(second.sessionId, 'second.pid')).not.toBe(firstPid)
@@ -290,9 +298,11 @@ it.skipIf(process.platform === 'win32')('switches between a Bot’s Computer and
       approval.mockRestore()
     }
 
-    await filesAction.click()
-    await compareOrRefreshGolden(SHARED_GOLDEN, (await fileMenu.ariaSnapshot()).trimEnd(), webSnapshotMode())
-    await fileMenu.getByRole('menuitem', { name: 'Shared workspace', exact: true }).click()
+    await options.click()
+    const sharedFiles = menu.getByRole('menuitem', { name: 'Shared workspace', exact: true })
+    await sharedFiles.waitFor()
+    await compareOrRefreshGolden(SHARED_GOLDEN, (await menu.ariaSnapshot()).trimEnd(), webSnapshotMode())
+    await sharedFiles.click()
     const projectTree = page.locator('[data-files-root="/workspace"]:visible')
     const [projectPicker] = await Promise.all([
       page.waitForEvent('filechooser'), projectTree.getByRole('button', { name: 'Upload files', exact: true }).click(),
@@ -313,16 +323,19 @@ it.skipIf(process.platform === 'win32')('switches between a Bot’s Computer and
 
     await select(LEGACY)
     await sidebar.locator('[data-bot-id="' + LEGACY + '"][aria-current="page"]').waitFor()
+    await options.click()
+    await menu.waitFor()
     await expect.poll(() => action.count()).toBe(0)
-    await expect.poll(() => filesAction.count()).toBe(0)
+    await expect.poll(() => menu.getByRole('menuitem', { name: /^(?:Files|Private workspace|Shared workspace)$/u }).count()).toBe(0)
+    await page.keyboard.press('Escape')
     await terminal.waitFor({ state: 'hidden' })
     await select(FIRST)
-    await action.waitFor()
-    if (!await terminal.isVisible()) await action.click()
+    if (!await terminal.isVisible()) await openTerminal()
     await terminal.waitFor()
     await send('printf "%s" "$$" > reselected.pid')
     expect(await readPid(first.sessionId, 'reselected.pid')).toBe(firstPid)
     await page.setViewportSize({ width: 1024, height: 760 })
+    await options.click()
     await expect.poll(() => filesAction.evaluate((button) => {
       const bounds = button.getBoundingClientRect()
       return bounds.width > 0 && bounds.left >= 0 && bounds.right <= window.innerWidth

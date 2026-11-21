@@ -69,6 +69,22 @@
   gap: 10px;
 }
 
+.rosterToolbar,
+.detailMeta,
+.detailStatus {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.toolbarMore {
+  display: inline-flex;
+  min-width: 32px;
+  min-height: 32px;
+  padding: 0;
+  justify-content: center;
+}
+
 .emptyMark,
 .emptyMarkSmall {
   display: inline-flex;
@@ -600,6 +616,10 @@
   border-bottom: 0.5px solid var(--yh-alias-border-l2);
 }
 
+:global([data-platform='darwin']) .detailHeader {
+  padding-inline-start: max(16px, var(--dsh-frame-leading-clearance, 20px));
+}
+
 .detailIdentity {
   min-width: 0;
   gap: 12px;
@@ -626,6 +646,21 @@
   white-space: nowrap;
 }
 
+.detailMeta {
+  min-width: 0;
+  color: var(--yh-alias-label-secondary);
+}
+
+.detailMeta:empty {
+  display: none;
+}
+
+.detailStatus {
+  flex: none;
+  gap: 4px;
+  font-size: 12px;
+}
+
 .detailActions {
   flex: none;
   gap: 6px;
@@ -647,10 +682,10 @@
   white-space: nowrap;
 }
 
-.detailActions [data-tone] {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
+.grokHistoryLoading {
+  display: grid;
+  min-height: 6rem;
+  place-items: center;
 }
 
 .memoryModal {
@@ -3001,14 +3036,8 @@
 
 @container bot-detail (max-width: 500px) {
   .detailHeader {
-    flex-wrap: wrap;
     gap: 8px 12px;
     padding: 10px 16px;
-  }
-
-  .detailActions {
-    flex: 0 1 auto;
-    flex-wrap: wrap;
   }
 }
 

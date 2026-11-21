@@ -3,11 +3,8 @@
   - button "Bots" [pressed]
 - complementary "Bot workspace":
   - text: Bots
-  - button "Edit avatar"
-  - button "Bot templates"
   - button "New bot"
-  - button "Join a shared bot"
-  - button "Create a shared group"
+  - button "Bot workspace options"
   - textbox "Search bots"
   - region "General":
     - heading "General" [level=2]:
@@ -29,12 +26,7 @@
 - region "Scout":
   - img "Scout"
   - text: Scout Keeps the team informed
-  - button "Edit bot profile"
-  - button "Share bot"
-  - button "Manage memories"
-  - button "Manage skills"
-  - button "Manage routines"
-  - text: Idle
+  - button "Bot options"
   - textbox "Message or run a task, / commands, @ files or sessions"
   - button "Add files or run commands"
   - 'button "Access mode, current: Approve for me"': Approve for me
