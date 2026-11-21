@@ -147,10 +147,8 @@
 - dialog "Bot routines":
   - heading "Bot routines" [level=2]
   - button "Close"
-  - paragraph: Review this bot’s schedules and triggers.
   - img "Scout"
-  - strong: Scout
-  - text: Only routines owned by this bot are shown here.
+  - text: Scout
   - tablist "Routine filters":
     - tab "All" [selected]
     - tab "Enabled"
@@ -170,7 +168,6 @@
     - strong: Morning check-in
     - paragraph: Review the project.
     - text: Repeats every day
-  - button "Close"
 - dialog "Imported Grok chat":
   - heading "Imported Grok chat" [level=2]
   - button "Close"
