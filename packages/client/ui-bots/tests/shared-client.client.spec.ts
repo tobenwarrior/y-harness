@@ -73,19 +73,25 @@ describe('shared Bot client capabilities', () => {
     const botId = BotId('bot-launch')
     const suggestionId = BotShareLearningId('learning-one')
     const call = vi.fn<ClientConnectionRpc['call']>()
+      .mockResolvedValueOnce({ ok: true, value: { botId, pending: [] } })
       .mockResolvedValueOnce({ ok: true, value: { botId, pending: [], recentlyLearned: [{}] } })
       .mockResolvedValueOnce({ ok: true, value: { botId, pending: [{ id: 'wrong-id' }], recentlyLearned: [] } })
       .mockResolvedValueOnce({ ok: true, value: { published: false } })
       .mockResolvedValueOnce({ ok: true, value: { published: 'true' } })
+      .mockResolvedValueOnce({ ok: true, value: { published: true, entry: {} } })
       .mockResolvedValueOnce({ ok: true, value: { botId, suggestionId, decision: 'rejected', resolved: true, entry: {} } })
+      .mockResolvedValueOnce({ ok: true, value: { botId, suggestionId, decision: 'rejected' } })
       .mockResolvedValueOnce({ ok: true, value: { botId, suggestionId, decision: 'rejected', resolved: false } })
     const client = createSharedBotsClient({ call })
     const invalid = { ok: false, error: { code: 'gateway/invalid-response' } }
     const request = { botId, suggestionId, decision: 'reject' } as const
     await expect(client.listLearning?.({ botId })).resolves.toMatchObject(invalid)
     await expect(client.listLearning?.({ botId })).resolves.toMatchObject(invalid)
+    await expect(client.listLearning?.({ botId })).resolves.toMatchObject(invalid)
     await expect(client.writeMemory(botId, 'A note')).resolves.toMatchObject(invalid)
     await expect(client.writeMemory(botId, 'A note')).resolves.toMatchObject(invalid)
+    await expect(client.writeMemory(botId, 'A note')).resolves.toMatchObject(invalid)
+    await expect(client.decideLearning?.(request)).resolves.toMatchObject(invalid)
     await expect(client.decideLearning?.(request)).resolves.toMatchObject(invalid)
     await expect(client.decideLearning?.(request)).resolves.toEqual({
       ok: true, value: { botId, suggestionId, decision: 'rejected', resolved: false },

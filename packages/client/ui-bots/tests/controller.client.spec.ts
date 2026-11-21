@@ -7,6 +7,7 @@ import { RemoteError } from '@yharness/typert-protocol'
 import {
   BotId,
   BotPrincipalId,
+  BotShareLearningId,
   type BotAttachmentGrantId,
   type BotGroupId,
   type BotGroupInspectValue,
@@ -2270,6 +2271,12 @@ describe('BotWorkspaceController', () => {
     remote.setShareMemoryPolicy = vi.fn<NonNullable<BotWorkspaceRemote['setShareMemoryPolicy']>>(async ({ botId, enabled }) => ({
       ok: true, value: { botId, enabled, updatedAt: 2 },
     }))
+    remote.listShareLearning = vi.fn<NonNullable<BotWorkspaceRemote['listShareLearning']>>(async ({ botId }) => ({
+      ok: true, value: { botId, pending: [], recentlyLearned: [] },
+    }))
+    remote.decideShareLearning = vi.fn<NonNullable<BotWorkspaceRemote['decideShareLearning']>>(async ({ botId, suggestionId }) => ({
+      ok: true, value: { botId, suggestionId, decision: 'rejected', resolved: true },
+    }))
     remote.inspectSharedRosterFence = vi.fn<NonNullable<BotWorkspaceRemote['inspectSharedRosterFence']>>(async () => ({
       ok: true, value: { status: 'held', token: 'roster-fence-token' },
     }))
@@ -2358,6 +2365,13 @@ describe('BotWorkspaceController', () => {
     })
     await expect(share.getMemoryPolicy(original.id)).resolves.toMatchObject({ botId: original.id, enabled: false })
     await expect(share.setMemoryPolicy(original.id, true)).resolves.toMatchObject({ botId: original.id, enabled: true })
+    await expect(share.listLearning?.({ botId: original.id })).resolves.toMatchObject({ ok: true, value: { botId: original.id } })
+    const suggestionId = BotShareLearningId('learning-provider')
+    await expect(share.decideLearning?.({ botId: original.id, suggestionId, decision: 'reject' })).resolves.toMatchObject({
+      ok: true, value: { botId: original.id, suggestionId, decision: 'rejected' },
+    })
+    Reflect.deleteProperty(remote, 'decideShareLearning')
+    expect(controller.face().share?.listLearning).toBeUndefined()
     await expect(share.inspectRosterFence()).resolves.toEqual({ status: 'held', token: 'roster-fence-token' })
     await expect(share.recoverRosterFence('roster-fence-token')).resolves.toEqual({ status: 'released' })
     await expect(share.inspectDeliveryFences(original.id)).resolves.toEqual({ fences: [fence] })

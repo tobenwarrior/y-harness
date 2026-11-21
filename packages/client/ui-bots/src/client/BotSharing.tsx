@@ -2412,11 +2412,11 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
       } else if (currentSelection && result.error.code === 'gateway/forbidden') {
         requestRevalidation(true, result.error.message)
       } else if (currentSelection) {
-        setError(result.error.message || t(suggestMemory ? 'sharedSuggestionFailed' : 'sharedMemoryWriteFailed'))
+        setError(result.error.message || t('sharedMemoryWriteFailed'))
       }
     } catch (cause: unknown) {
       if (isCurrentAuth(auth) && isCurrentSelection(botId, selectionEpoch)) {
-        setError(cause instanceof Error ? cause.message : t(suggestMemory ? 'sharedSuggestionFailed' : 'sharedMemoryWriteFailed'))
+        setError(cause instanceof Error ? cause.message : t('sharedMemoryWriteFailed'))
       }
     } finally {
       if (hasCurrentAuth(auth) && memoryOperationTokensRef.current[botId] === memoryOperationToken) {
@@ -3003,11 +3003,11 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
                 <form className={css.sharedComposer} onSubmit={(event) => { event.preventDefault(); void send() }}>
                   <div className={css.sharedComposerTextRow}>
                     <Input value={message} placeholder={t('sharedChatPlaceholder')} aria-label={t('sharedChatPlaceholder')} onChange={(event) => {
-                      if (selectedBotId === null) return
-                      const revision = (messageDraftRevisionsRef.current[selectedBotId] ?? 0) + 1
-                      messageDraftRevisionsRef.current[selectedBotId] = revision
+                      const botId = String(selected.id)
+                      const revision = (messageDraftRevisionsRef.current[botId] ?? 0) + 1
+                      messageDraftRevisionsRef.current[botId] = revision
                       const value = event.currentTarget.value
-                      setMessageDrafts(current => ({ ...current, [selectedBotId]: value }))
+                      setMessageDrafts(current => ({ ...current, [botId]: value }))
                     }} />
                     <Button variant="primary" type="submit" aria-label={t('sendMessage')} disabled={working !== null || currentChatWorking || currentMemoryWorking || message.trim() === ''} icon={<IconShareOutlineRegular size={14} />} />
                   </div>
