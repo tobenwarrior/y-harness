@@ -149,6 +149,19 @@ collaborationFor(agent: Pick<Agent, 'id'>): Promise<BotCollaborationClient>
 @Remote('list') async list(request: BotListRequest): Promise<BotListValue>
 
 /**
+ * Search visible messages across the owner's direct Bot Sessions.
+ *
+ * The Bot roster is the authorization source: the Session query provider
+ * never receives an unrestricted corpus request. The returned sequence is
+ * the provider's exact matching event sequence so the Client can open the
+ * matching Bot transcript without guessing from snippets.
+ *
+ * @param request - Literal message query.
+ * @returns A bounded owner-scoped page of visible Bot message matches.
+ */
+@Remote('searchMessages') async searchMessages(request: BotMessageSearchRequest): Promise<BotMessageSearchValue>
+
+/**
  * List published Bot configuration snapshots, including revoked rows.
  * @param _request - Empty list request reserved for future cursor paging.
  * @returns Published template rows in stable creation order.

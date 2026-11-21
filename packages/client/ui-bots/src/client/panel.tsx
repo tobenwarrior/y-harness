@@ -10,6 +10,7 @@ import { BotDetail, BotGroupDetail, BotRoster } from './BotWorkspace.tsx'
 import type { BotStatus, BotSummary } from './types.ts'
 import { ComputerAction } from './ComputerAction.tsx'
 import { BotAvatar } from './BotAvatar.tsx'
+import { BotMessageSearchDialog, type BotMessageSearchActions } from './BotMessageSearchDialog.tsx'
 import { ComputerPanel } from './ComputerPanel.tsx'
 import { MacComputerPanel } from './MacComputerPanel.tsx'
 import type { AvailabilityState } from './computer-availability.ts'
@@ -68,7 +69,10 @@ export type BotsConversationProps = PropsRuntime<'bots.conversation'> & PropsRen
 export type BotsRosterProps =
   PropsRuntime<'sidebar.bots'>
   & PropsLocale<'bots'>
-  & InjectFace<BotWorkspaceFace>
+  & InjectFace<BotWorkspaceFace & {
+    readonly messageSearch?: BotMessageSearchActions
+    readonly hooks: { readonly messageSearchOpen: HostObservable<boolean> }
+  }>
 
 function statusOf(bot: BotView, statuses: SessionStatusSnapshot): BotStatus | undefined {
   if (bot.state === 'provisioning') return 'preparing'
@@ -121,38 +125,46 @@ export function BotsRoster({
   create, createGroup, groupsAvailable, organize, templateActions, retry, loadAvatar, avatarEditor, share, sharedClient, t,
   loadConnectedApps,
   setConnectedAppAccess,
+  messageSearch, useMessageSearchOpen,
 }: BotsRosterProps): ReactNode {
   const state: BotWorkspaceState = useWorkspace(value => value)
   const statuses = useSessionStatus(value => value)
+  const searchOpen = useMessageSearchOpen(value => value)
   const bots = state.bots.map(bot => summaryOf(bot, statuses))
   return (
-    <BotRoster
-      bots={bots}
-      groups={state.groups}
-      selectedBotId={state.selectedBotId}
-      selectedGroupId={state.selectedGroupId}
-      onSelectBot={select}
-      onSelectGroup={groupsAvailable ? selectGroup : undefined}
-      onCreateBot={create}
+    <>
+      <BotRoster
+        bots={bots}
+        groups={state.groups}
+        selectedBotId={state.selectedBotId}
+        selectedGroupId={state.selectedGroupId}
+        onSelectBot={select}
+        onSelectGroup={groupsAvailable ? selectGroup : undefined}
+        onCreateBot={create}
 
-      onOrganizeBot={organize}
-      onCreateGroup={groupsAvailable ? createGroup : undefined}
-      templates={state.templates}
-      templateActions={templateActions}
-      groupError={state.groupError}
-      onLoadConnectedApps={loadConnectedApps}
-      onSetConnectedAppAccess={setConnectedAppAccess}
-      onRetry={retry}
-      loadAvatar={loadAvatar}
-      avatarEditor={avatarEditor}
-      {...(share === undefined ? {} : { share })}
-      {...(sharedClient === undefined ? {} : { sharedClient })}
-      error={state.error}
-      loading={state.phase === 'loading' && bots.length === 0}
-      wide={wide}
-      expandSidebar={expandSidebar}
-      t={t}
-    />
+        onOrganizeBot={organize}
+        onCreateGroup={groupsAvailable ? createGroup : undefined}
+        templates={state.templates}
+        templateActions={templateActions}
+        groupError={state.groupError}
+        onLoadConnectedApps={loadConnectedApps}
+        onSetConnectedAppAccess={setConnectedAppAccess}
+        onRetry={retry}
+        loadAvatar={loadAvatar}
+        avatarEditor={avatarEditor}
+        {...(share === undefined ? {} : { share })}
+        {...(sharedClient === undefined ? {} : { sharedClient })}
+        error={state.error}
+        loading={state.phase === 'loading' && bots.length === 0}
+        wide={wide}
+        expandSidebar={expandSidebar}
+        {...(messageSearch === undefined ? {} : { openMessageSearch: () => { messageSearch.setOpen(true) } })}
+        t={t}
+      />
+      {messageSearch !== undefined && searchOpen && (
+        <BotMessageSearchDialog bots={state.bots} actions={messageSearch} loadAvatar={loadAvatar} t={t} />
+      )}
+    </>
   )
 }
 

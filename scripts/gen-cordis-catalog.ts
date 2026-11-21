@@ -278,6 +278,7 @@ export const EVENT_SCOPE_PAGE: Record<string, string> = {
 export const EVENT_WALK_EXEMPTIONS: Record<string, string> = {
   'command/executed': 'client-face local command acknowledgment — packages/client/ui-commands/README.md owns the API',
   'connection/reset': 'client-face transport signal — packages/api/session-controller/README.md owns the API',
+  'layout/search-active-panel': 'client layout search routing is owned by packages/client/ui-layout/README.md',
   'locale/change': 'client-face locale switch signal — packages/client/locale/README.md owns the API',
   'slash/input-begin-command': 'client-face slash-input protocol — packages/client/ui-input-trigger/README.md owns the API',
   'slash/input-consume-token': 'client-face slash-input protocol — packages/client/ui-input-trigger/README.md owns the API',
@@ -963,6 +964,8 @@ export const TYPE_LINK_EXEMPTIONS: Readonly<Record<string, string>> = {
   BotSharedGroupDeliveryFenceDiagnosticValue: 'Shared-group delivery diagnostics are owned by packages/agents/bots/README.md and src/group-chat.ts',
   BotListRequest: 'Bot roster list input is owned by packages/agents/bots/README.md and src/types.ts',
   BotListValue: 'Bot roster list result is owned by packages/agents/bots/README.md and src/types.ts',
+  BotMessageSearchRequest: 'Bot message search input is owned by packages/agents/bots/README.md and src/types.ts',
+  BotMessageSearchValue: 'Bot message search result is owned by packages/agents/bots/README.md and src/types.ts',
   BotGroupListRequest: 'Bot group list input is owned by packages/agents/bots/README.md and src/group-chat.ts',
   BotGroupListValue: 'Bot group list result is owned by packages/agents/bots/README.md and src/group-chat.ts',
   BotGroupCreateRequest: 'Bot group creation input is owned by packages/agents/bots/README.md and src/group-chat.ts',

@@ -450,4 +450,19 @@ describe('Chat inject API', () => {
     expect(injected.loadImage.peek?.(ATTACHMENT)).toBe(loaded)
     await b.runtime.dispose()
   })
+
+  it('binds exact Chat navigation to the injected Session and releases it', async () => {
+    const b = await bench()
+    const { injected } = b.chatViewApi(b.rootReference)
+    const navigate = vi.fn()
+    const dispose = injected.registerChatNavigation(navigate)
+
+    b.runtime.ctx.get('chatNavigation').request({ sessionId: ROOT, seq: SessionSeq(42) })
+    expect(navigate).toHaveBeenCalledWith(SessionSeq(42))
+
+    dispose()
+    b.runtime.ctx.get('chatNavigation').request({ sessionId: ROOT, seq: SessionSeq(43) })
+    expect(navigate).toHaveBeenCalledTimes(1)
+    await b.runtime.dispose()
+  })
 })

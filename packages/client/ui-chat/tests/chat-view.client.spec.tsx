@@ -23,6 +23,7 @@ import type {
 import type { WorkspaceSnapshot } from '@yharness/api-workspace-controller/client'
 import { SessionSeq, type SessionId } from '@yharness/session/types'
 import type { SessionStatusSnapshot } from '@yharness/client-ui-session/client'
+import { ChatNavigationService } from '../src/client/chat/chat-navigation-service.ts'
 import type { KeyedSnapshotSelectorHook, SnapshotSelectorHook } from '@yharness/client-ui-slots'
 import { bindSnapshotSelector, makeTranslate } from '@yharness/client-test-runtime'
 import { createSnapshotStore, type ObservableSnapshot } from '@yharness/client-store'
@@ -296,6 +297,10 @@ function makeHarness(
   const openSkill = vi.fn<(name: string) => void>()
   const loadOlder = vi.fn()
   const loadThrough = vi.fn<(seq: number) => Promise<void>>().mockResolvedValue(undefined)
+  const chatNavigation = new ChatNavigationService()
+  const registerChatNavigation = vi.fn((listener: (seq: SessionSeq) => void) => {
+    return chatNavigation.register(SID, listener)
+  })
   // Mutable outline holder: tests swap the value and drive a re-render via set().
   let outlineValue: unknown
   const openView = vi.fn<(view: string, focus: string) => void>()
@@ -453,6 +458,7 @@ function makeHarness(
     openExternalLink: vi.fn(),
     loadOlder,
     loadThrough,
+    registerChatNavigation,
     loadImage: vi.fn(() => Promise.reject(new Error('not used'))),
     chatScroll,
     forkAt,
@@ -480,7 +486,8 @@ function makeHarness(
   }
   return {
     set, setSession: session.set, setChat: chatSource.set, ChatView, props,
-    openFile, openSkill, loadOlder, loadThrough, openView,
+    openFile, openSkill, loadOlder, loadThrough, openView, registerChatNavigation,
+    requestChatNavigation: (seq: SessionSeq) => { chatNavigation.request({ sessionId: SID, seq }) },
     setOutline: (value: unknown) => { outlineValue = value },
     chatScroll, forkAt, toolOwners,
     setPerformanceUsage: (mode: 'compact' | 'detailed') => { performanceUsage.set(mode) },
@@ -1103,6 +1110,39 @@ describe('ChatView', () => {
     expect(within(view.getByRole('navigation')).getAllByRole('button').map(mark => mark.getAttribute('aria-label'))).toEqual([
       'Jump to turn 1', 'Jump to turn 2', 'Jump to turn 3',
     ])
+  })
+
+  it('reveals an exact Session sequence through the mounted Chat navigation seam', async () => {
+    const h = makeHarness({
+      nodes: [userInTurn(1, 'first prompt', 1), assistant(2, 'first response', 1)],
+      turnEnds: new Map([[1, 3]]),
+    })
+    const view = render(<h.ChatView {...h.props} />)
+    const prompt = await view.findByText('first prompt')
+    const row = prompt.closest<HTMLElement>('[data-chat-anchor-seq]')
+    expect(row?.dataset.chatAnchorSeq).toBe('1')
+
+    h.requestChatNavigation(SessionSeq(1))
+
+    expect(h.loadThrough).not.toHaveBeenCalled()
+    expect(h.registerChatNavigation).toHaveBeenCalled()
+  })
+
+  it('defers a pending exact sequence until the opening Chat has settled', async () => {
+    const h = makeHarness({
+      nodes: [userInTurn(1, 'opening prompt', 1), assistant(2, 'opening response', 1)],
+      turnEnds: new Map([[1, 3]]),
+    }, { openState: 'loading' })
+    const view = render(<h.ChatView {...h.props} />)
+    await view.findByText('opening prompt')
+    expect(h.registerChatNavigation).not.toHaveBeenCalled()
+
+    h.requestChatNavigation(SessionSeq(1))
+    expect(h.registerChatNavigation).not.toHaveBeenCalled()
+
+    h.setSession({ openState: 'open' })
+    await waitFor(() => expect(h.registerChatNavigation).toHaveBeenCalledOnce())
+    expect(h.loadThrough).not.toHaveBeenCalled()
   })
 
   it('extends the rail with unloaded outline turns, pages on click, and falls back when nothing lands', async () => {
