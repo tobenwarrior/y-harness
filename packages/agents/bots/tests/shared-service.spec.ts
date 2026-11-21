@@ -6049,7 +6049,37 @@ describe('shared Bot service', () => {
       await expect(value.service.handle('bots/share/write-memory', {
         botId: 'bot-chief', text: 'Launch notes', consent: true,
       }, new AbortController().signal, collaborator.peer)).resolves.toMatchObject({
-        ok: true, value: { entry: { text: 'Launch notes', principalId: collaborator.principalId } },
+        ok: true,
+        value: {
+          published: false,
+          suggestion: { text: 'Launch notes', principalId: collaborator.principalId },
+        },
+      })
+      await expect(value.service.handle('bots/share/read-memory', {
+        botId: 'bot-chief',
+      }, new AbortController().signal, owner.peer)).resolves.toMatchObject({
+        ok: true, value: { enabled: true, entries: [] },
+      })
+      const pending = await value.service.handle('bots/share/list-learning', {
+        botId: 'bot-chief',
+      }, new AbortController().signal, owner.peer)
+      expect(pending).toMatchObject({
+        ok: true,
+        value: { pending: [{ text: 'Launch notes', principalId: collaborator.principalId }] },
+      })
+      if (!pending.ok) throw new Error('learning queue was not returned')
+      const pendingValue = z.object({ pending: z.array(z.object({ id: z.string() })) }).parse(pending.value)
+      const suggestionId = pendingValue.pending[0]?.id
+      if (suggestionId === undefined) throw new Error('learning suggestion id was not returned')
+      await expect(value.service.handle('bots/share/decide-learning', {
+        botId: 'bot-chief', suggestionId, decision: 'approve',
+      }, new AbortController().signal, owner.peer)).resolves.toMatchObject({
+        ok: true, value: { decision: 'approved', resolved: true, entry: { text: 'Launch notes' } },
+      })
+      await expect(value.service.handle('bots/share/decide-learning', {
+        botId: 'bot-chief', suggestionId, decision: 'reject',
+      }, new AbortController().signal, owner.peer)).resolves.toMatchObject({
+        ok: true, value: { decision: 'approved', resolved: false },
       })
       await expect(value.service.handle('bots/share/read-memory', {
         botId: 'bot-chief',
@@ -6066,6 +6096,39 @@ describe('shared Bot service', () => {
       expect(privateTranscriptValue.recent).toBeInstanceOf(Array)
       expect(JSON.stringify([...value.host.messages.values()])).toContain('private note')
       expect(JSON.stringify(privateTranscript)).not.toContain('Launch notes')
+    } finally {
+      await value.close()
+    }
+  })
+
+  it('keeps collaborator learning pending, private, and cleared on disable', async () => {
+    const value = await fixture()
+    try {
+      const ownerEnrollment = await value.service.enroll((await value.service.createInvite(BotId('bot-chief'), 'owner')).code, enrollmentRequest())
+      const collaboratorEnrollment = await value.service.enroll((await value.service.createInvite(BotId('bot-chief'), 'collaborator')).code, enrollmentRequest())
+      const owner = await principal(value, ownerEnrollment)
+      const collaborator = await principal(value, collaboratorEnrollment)
+      await value.service.setMemoryPolicy(BotId('bot-chief'), true)
+      await expect(value.service.handle('bots/share/write-memory', {
+        botId: 'bot-chief', text: 'pending only', consent: true,
+      }, new AbortController().signal, collaborator.peer)).resolves.toMatchObject({
+        ok: true, value: { published: false },
+      })
+      await expect(value.service.handle('bots/share/list-learning', {
+        botId: 'bot-chief',
+      }, new AbortController().signal, collaborator.peer)).resolves.toMatchObject({
+        ok: false, error: { code: 'gateway/forbidden' },
+      })
+      await value.service.setMemoryPolicy(BotId('bot-chief'), false)
+      await value.service.setMemoryPolicy(BotId('bot-chief'), true)
+      await expect(value.service.listLearning(BotId('bot-chief'))).resolves.toMatchObject({
+        botId: BotId('bot-chief'), pending: [], recentlyLearned: [],
+      })
+      await expect(value.service.handle('bots/share/read-memory', {
+        botId: 'bot-chief',
+      }, new AbortController().signal, owner.peer)).resolves.toMatchObject({
+        ok: true, value: { entries: [], learningReview: true },
+      })
     } finally {
       await value.close()
     }
@@ -6732,7 +6795,9 @@ describe('shared Bot service', () => {
       })
       await expect(value.service.handle('bots/share/write-memory', {
         botId: 'bot-chief', text: 'manager context', consent: true,
-      }, new AbortController().signal, manager.peer)).resolves.toMatchObject({ ok: true })
+      }, new AbortController().signal, manager.peer)).resolves.toMatchObject({
+        ok: true, value: { published: true, entry: { text: 'manager context' } },
+      })
       await expect(value.service.handle('bots/share/manage-memory', {
         botId: 'bot-chief', enabled: false,
       }, new AbortController().signal, collaborator.peer)).resolves.toMatchObject({

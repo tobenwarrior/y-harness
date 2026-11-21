@@ -48,10 +48,15 @@ import {
 } from './attachment-grants.ts'
 import {
   BotId,
+  BotShareLearningId,
+  type BotShareLearningDecisionValue,
+  type BotShareLearningSuggestion,
+  type BotShareLearningValue,
   BotShareMemoryId,
   type BotShareMemoryEntry,
   type BotShareMemoryPolicyValue,
   type BotShareMemoryValue,
+  type BotShareMemoryWriteValue,
   type BotAccent,
   type BotIdentity,
   type BotView,
@@ -106,6 +111,8 @@ export const SHARED_BOT_ENDPOINTS = [
   'bots/share/manage-members',
   'bots/share/read-memory',
   'bots/share/write-memory',
+  'bots/share/list-learning',
+  'bots/share/decide-learning',
   'bots/share/manage-memory',
   'bots/share/list-groups',
   'bots/share/create-group',
@@ -466,6 +473,14 @@ const writeMemoryPayload = botIdPayload.extend({
 const manageMemoryPayload = botIdPayload.extend({
   enabled: z.boolean(),
 }).strict()
+const learningSuggestionIdSchema = z.string()
+  .regex(/^learning-[A-Za-z0-9][A-Za-z0-9-]*$/)
+  .transform(BotShareLearningId)
+const listLearningPayload = botIdPayload
+const decideLearningPayload = botIdPayload.extend({
+  suggestionId: learningSuggestionIdSchema,
+  decision: z.enum(['approve', 'reject']),
+}).strict()
 const groupIdPayload = z.object({
   groupId: z.string().regex(/^bot-group-[A-Za-z0-9][A-Za-z0-9-]*$/).transform(BotGroupId),
 }).strict()
@@ -546,6 +561,7 @@ type ChatPayload = z.infer<typeof chatPayload>
 type ManageMembersPayload = z.infer<typeof manageMembersPayload>
 type WriteMemoryPayload = z.infer<typeof writeMemoryPayload>
 type ManageMemoryPayload = z.infer<typeof manageMemoryPayload>
+type DecideLearningPayload = z.infer<typeof decideLearningPayload>
 type GroupIdPayload = z.infer<typeof groupIdPayload>
 type GroupCreatePayload = z.infer<typeof groupCreatePayload>
 type GroupUpdatePayload = z.infer<typeof groupUpdatePayload>
@@ -572,12 +588,15 @@ interface PrivateAttachmentLeaseGuard {
 
 const SHARED_MEMBERSHIP_RECORD_KEY = credentialKey('agent-bots', 'shared-memberships')
 const SHARED_MEMBERSHIP_EXTENSION_KEY = 'agent-bots/shared-memberships'
+/** Independent authority extension for pending shared-Bot learning. */
+const SHARED_LEARNING_EXTENSION_KEY = 'agent-bots/shared-learning'
 const SHARED_PRIVATE_SESSIONS_EXTENSION_KEY = 'agent-bots/shared-private-sessions'
 const SHARED_CONNECTED_APP_ACCESS_EXTENSION_KEY = 'agent-bots/shared-connected-app-access'
 const SHARED_APP_APPROVALS_EXTENSION_KEY = 'agent-bots/shared-app-approvals'
 const SHARED_APP_APPROVAL_GRANTS_EXTENSION_KEY = 'agent-bots/shared-app-approval-grants'
 const SHARED_PAIR_KEY_MIGRATION_EXTENSION_KEY = 'agent-bots/shared-pair-key-migration'
 const SHARED_MEMBERSHIP_RECORD_VERSION = 1 as const
+const SHARED_LEARNING_RECORD_VERSION = 1 as const
 const SHARED_PRIVATE_SESSIONS_RECORD_VERSION = 1 as const
 const SHARED_CONNECTED_APP_ACCESS_VERSION = 1 as const
 const SHARED_APP_APPROVALS_VERSION = 1 as const
@@ -603,6 +622,8 @@ const SHARED_APP_APPROVAL_MAX_LIVE_KEYS = 512
 const DEFAULT_SHARED_APP_APPROVAL_POLL_INTERVAL_MS = 1_000
 const MIN_SHARED_APP_APPROVAL_POLL_INTERVAL_MS = 50
 const MAX_SHARED_APP_APPROVAL_POLL_INTERVAL_MS = 30_000
+const SHARED_LEARNING_MAX_PENDING = SHARED_MEMORY_MAX_ENTRIES
+const SHARED_LEARNING_MAX_DECISIONS = SHARED_MEMORY_MAX_ENTRIES
 
 const sharedPrivateSessionSnapshotSchema = z.object({
   version: z.literal(SHARED_PRIVATE_SESSIONS_RECORD_VERSION),
@@ -710,6 +731,58 @@ const sharedConnectedAppAccessSnapshotSchema = z.object({
 })
 
 type SharedConnectedAppAccessSnapshot = z.infer<typeof sharedConnectedAppAccessSnapshotSchema>
+
+const sharedLearningSuggestionSchema = z.object({
+  id: z.string().regex(/^learning-[A-Za-z0-9][A-Za-z0-9-]*$/).transform(BotShareLearningId),
+  botId: z.string().regex(/^bot-[A-Za-z0-9][A-Za-z0-9-]*$/).transform(BotId),
+  principalId: z.string().regex(/^principal-[A-Za-z0-9-]+$/).transform(BotPrincipalId),
+  text: z.string().min(1).max(2_000).refine(value => value.trim() === value),
+  createdAt: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+}).strict()
+
+const sharedLearningDecisionSchema = z.object({
+  suggestionId: z.string().regex(/^learning-[A-Za-z0-9][A-Za-z0-9-]*$/).transform(BotShareLearningId),
+  botId: z.string().regex(/^bot-[A-Za-z0-9][A-Za-z0-9-]*$/).transform(BotId),
+  decision: z.enum(['approved', 'rejected']),
+  decidedBy: z.string().regex(/^principal-[A-Za-z0-9-]+$/).transform(BotPrincipalId),
+  decidedAt: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+}).strict()
+
+const sharedLearningSnapshotSchema = z.object({
+  version: z.literal(SHARED_LEARNING_RECORD_VERSION),
+  pending: z.array(sharedLearningSuggestionSchema).max(SHARED_LEARNING_MAX_PENDING),
+  decisions: z.array(sharedLearningDecisionSchema).max(SHARED_LEARNING_MAX_DECISIONS),
+}).strict().superRefine((snapshot, context) => {
+  const suggestionIds = new Set<string>()
+  for (const [index, suggestion] of snapshot.pending.entries()) {
+    const id = String(suggestion.id)
+    if (suggestionIds.has(id)) {
+      context.addIssue({ code: 'custom', message: 'shared learning suggestions must be unique', path: ['pending', index, 'id'] })
+    }
+    suggestionIds.add(id)
+  }
+  const decisionIds = new Set<string>()
+  for (const [index, decision] of snapshot.decisions.entries()) {
+    const id = String(decision.suggestionId)
+    if (decisionIds.has(id)) {
+      context.addIssue({ code: 'custom', message: 'shared learning decisions must be unique', path: ['decisions', index, 'suggestionId'] })
+    }
+    decisionIds.add(id)
+  }
+  const pendingByBot = new Map<string, number>()
+  for (const suggestion of snapshot.pending) {
+    const botId = String(suggestion.botId)
+    const count = (pendingByBot.get(botId) ?? 0) + 1
+    pendingByBot.set(botId, count)
+    if (count > SHARED_MEMORY_MAX_ENTRIES_PER_BOT) {
+      context.addIssue({ code: 'custom', message: 'shared learning suggestions exceeded the per-Bot limit', path: ['pending'] })
+    }
+  }
+})
+
+type SharedLearningSuggestion = z.infer<typeof sharedLearningSuggestionSchema>
+type SharedLearningDecision = z.infer<typeof sharedLearningDecisionSchema>
+type SharedLearningSnapshot = z.infer<typeof sharedLearningSnapshotSchema>
 
 /** Await one storage read unless the caller or service stops waiting. */
 async function raceSharedAbort<T>(operation: Promise<T>, signal?: AbortSignal): Promise<T> {
@@ -873,6 +946,7 @@ export class SharedBotService {
       await reconcilePrivateSessionMirror(authority, domain.table('private_sessions'))
       await initializeSharedAppApprovalSnapshot(authority)
       await initializeSharedAppApprovalGrantSnapshot(authority)
+      await initializeSharedLearningSnapshot(authority)
       return new SharedBotService(
         owner, domain, authority, host, membershipSnapshot, privateSessionSnapshot, options, options.attachmentStore,
       )
@@ -998,7 +1072,7 @@ export class SharedBotService {
    */
   async setMemoryPolicy(botId: BotId, enabled: boolean): Promise<BotShareMemoryPolicyValue> {
     return this.serialize(async () => {
-      return this.mutateSharedMemory(botId, undefined, undefined, undefined, (memory) => {
+      return this.mutateSharedMemory(botId, undefined, undefined, undefined, (memory, learning) => {
         const updatedAt = this.now()
         const currentPolicy = memory.policies.find(candidate => candidate.botId === botId)
         if (currentPolicy === undefined && memory.policies.length >= SHARED_MEMORY_MAX_POLICIES) {
@@ -1014,9 +1088,179 @@ export class SharedBotService {
             policies,
             entries: enabled ? memory.entries : memory.entries.filter(entry => entry.botId !== botId),
           },
+          learning: {
+            ...learning,
+            pending: enabled
+              ? learning.pending
+              : learning.pending.filter(suggestion => suggestion.botId !== botId),
+          },
           value: policy,
         }
       })
+    })
+  }
+
+  /**
+   * List owner-reviewed learning state for one Bot.
+   * @param botId - Bot whose pending suggestions and published notes are read.
+   * @param signal - Optional cancellation signal for the Bot lookup.
+   * @param actor - Optional shared principal; only owners and managers may review.
+   * @returns pending suggestions and the currently published notes.
+   */
+  async listLearning(
+    botId: BotId,
+    signal?: AbortSignal,
+    actor?: ReturnType<typeof BotPrincipalId>,
+  ): Promise<BotShareLearningValue> {
+    return this.serialize(async () => {
+      signal?.throwIfAborted()
+      const operation = await this.host.withBot(botId, signal, async () => {
+        const value = await this.authority.readLockedExtensions(
+          [SHARED_MEMBERSHIP_EXTENSION_KEY, SHARED_LEARNING_EXTENSION_KEY],
+          (extensions, authorityState) => {
+            const membershipSnapshot = parseMembershipSnapshot(extensions[SHARED_MEMBERSHIP_EXTENSION_KEY])
+            if (actor !== undefined) {
+              const authorityPrincipal = authorityState.principals.find(principal => String(principal.id) === String(actor))
+              if (authorityPrincipal === undefined || authorityPrincipal.revokedAt !== undefined) {
+                throw new SharedServiceFault('gateway/forbidden', 'shared Bot authority is no longer active')
+              }
+              this.requireAuthorizationForMemberships(membershipSnapshot.memberships, botId, actor, 'manage-memory')
+            }
+            const learning = parseSharedLearningSnapshot(extensions[SHARED_LEARNING_EXTENSION_KEY])
+            const memory = membershipSnapshot.sharedMemory ?? emptySharedMemorySnapshot()
+            this.membershipSnapshot = membershipSnapshot.memberships
+            return learningValueFor(memory, learning, botId)
+          },
+        )
+        return value
+      })
+      if (!operation.found) throw new SharedServiceFault('bot/not-found', 'shared Bot was not found')
+      return operation.value
+    })
+  }
+
+  /**
+   * Approve or reject one pending learning suggestion.
+   * @param botId - Bot whose suggestion is resolved.
+   * @param suggestionId - Pending suggestion identity.
+   * @param decision - Whether to publish or discard the suggestion.
+   * @param actor - Optional shared principal; only owners and managers may decide.
+   * @param signal - Optional cancellation signal for the Bot lookup.
+   * @returns the durable decision and any newly published note.
+   */
+  async decideLearning(
+    botId: BotId,
+    suggestionId: BotShareLearningId,
+    decision: 'approve' | 'reject',
+    actor?: ReturnType<typeof BotPrincipalId>,
+    signal?: AbortSignal,
+  ): Promise<BotShareLearningDecisionValue> {
+    return this.serialize(async () => {
+      signal?.throwIfAborted()
+      const operation = await this.host.withBot(botId, signal, async () => {
+        let latestMemberships: readonly SharedMembershipRecord[] | undefined
+        const result = await this.authority.mutateExtensions<BotShareLearningDecisionValue>(
+          [SHARED_MEMBERSHIP_EXTENSION_KEY, SHARED_LEARNING_EXTENSION_KEY],
+          (extensions, authorityState) => {
+            const membershipSnapshot = parseMembershipSnapshot(extensions[SHARED_MEMBERSHIP_EXTENSION_KEY])
+            latestMemberships = membershipSnapshot.memberships
+            if (actor !== undefined) {
+              const authorityPrincipal = authorityState.principals.find(principal => String(principal.id) === String(actor))
+              if (authorityPrincipal === undefined || authorityPrincipal.revokedAt !== undefined) {
+                throw new SharedServiceFault('gateway/forbidden', 'shared Bot authority is no longer active')
+              }
+              this.requireAuthorizationForMemberships(membershipSnapshot.memberships, botId, actor, 'manage-memory')
+            }
+            const learning = parseSharedLearningSnapshot(extensions[SHARED_LEARNING_EXTENSION_KEY])
+            const existingDecision = learning.decisions.find(candidate =>
+              candidate.botId === botId && candidate.suggestionId === suggestionId)
+            const currentLearning = extensions[SHARED_LEARNING_EXTENSION_KEY] ?? {
+              version: SHARED_LEARNING_RECORD_VERSION,
+              pending: [],
+              decisions: [],
+            }
+            const currentMembership = extensions[SHARED_MEMBERSHIP_EXTENSION_KEY]
+            if (existingDecision !== undefined) {
+              return {
+                value: {
+                  botId,
+                  suggestionId,
+                  decision: existingDecision.decision,
+                  resolved: false,
+                },
+                next: {
+                  [SHARED_MEMBERSHIP_EXTENSION_KEY]: currentMembership,
+                  [SHARED_LEARNING_EXTENSION_KEY]: currentLearning,
+                },
+              }
+            }
+            const pending = learning.pending.find(candidate =>
+              candidate.botId === botId && candidate.id === suggestionId)
+            if (pending === undefined) {
+              throw new SharedServiceFault('gateway/not-found', 'shared Bot learning suggestion was not found')
+            }
+            const memory = membershipSnapshot.sharedMemory ?? emptySharedMemorySnapshot()
+            let entry: BotShareMemoryEntry | undefined
+            let nextMemory = memory
+            if (decision === 'approve') {
+              const policy = memoryPolicyFor(memory, botId)
+              if (!policy.enabled) throw new SharedServiceFault('gateway/forbidden', 'shared Bot context is disabled')
+              if (memory.entries.length >= SHARED_MEMORY_MAX_ENTRIES) {
+                throw new SharedServiceFault('gateway/unavailable', 'shared Bot context is full')
+              }
+              const botEntryCount = memory.entries.filter(candidate => candidate.botId === botId).length
+              if (botEntryCount >= SHARED_MEMORY_MAX_ENTRIES_PER_BOT) {
+                throw new SharedServiceFault('gateway/unavailable', 'shared Bot context reached its per-Bot limit')
+              }
+              const published: SharedMemoryEntry = {
+                id: BotShareMemoryId(`memory-${randomUUID()}`),
+                botId,
+                principalId: pending.principalId,
+                text: pending.text,
+                createdAt: this.now(),
+              }
+              entry = memoryEntryValue(published)
+              nextMemory = { ...memory, entries: [...memory.entries, published] }
+            }
+            if (learning.decisions.length >= SHARED_LEARNING_MAX_DECISIONS) {
+              throw new SharedServiceFault('gateway/unavailable', 'shared Bot learning history is full')
+            }
+            const decidedBy = actor
+              ?? membershipSnapshot.memberships.find(member => member.botId === botId && member.role === 'owner')?.principalId
+              ?? BotPrincipalId('principal-local-owner')
+            const storedDecision: SharedLearningDecision = {
+              suggestionId,
+              botId,
+              decision: decision === 'approve' ? 'approved' : 'rejected',
+              decidedBy,
+              decidedAt: this.now(),
+            }
+            const nextLearning: SharedLearningSnapshot = {
+              version: SHARED_LEARNING_RECORD_VERSION,
+              pending: learning.pending.filter(candidate => candidate.id !== suggestionId),
+              decisions: [...learning.decisions, storedDecision],
+            }
+            const parsedMemory = sharedMemorySnapshotSchema.safeParse(nextMemory)
+            if (!parsedMemory.success) throw new SharedServiceFault('gateway/unavailable', 'shared Bot context limits were exceeded')
+            const parsedLearning = sharedLearningSnapshotSchema.safeParse(nextLearning)
+            if (!parsedLearning.success) throw new SharedServiceFault('gateway/unavailable', 'shared Bot learning limits were exceeded')
+            return {
+              value: { botId, suggestionId, decision: storedDecision.decision, resolved: true, ...(entry === undefined ? {} : { entry }) },
+              next: {
+                [SHARED_MEMBERSHIP_EXTENSION_KEY]: {
+                  ...membershipSnapshot,
+                  sharedMemory: parsedMemory.data,
+                },
+                [SHARED_LEARNING_EXTENSION_KEY]: parsedLearning.data,
+              },
+            }
+          },
+        )
+        if (latestMemberships !== undefined) this.membershipSnapshot = latestMemberships
+        return result
+      })
+      if (!operation.found) throw new SharedServiceFault('bot/not-found', 'shared Bot was not found')
+      return operation.value
     })
   }
 
@@ -2527,6 +2771,7 @@ export class SharedBotService {
       // a collaborator answer and therefore never join the local service chain.
       return await (endpoint === 'bots/share/list-approvals' || endpoint === 'bots/share/decide-approval'
         || endpoint === 'bots/share/list-approval-grants' || endpoint === 'bots/share/revoke-approval-grant'
+        || endpoint === 'bots/share/list-learning' || endpoint === 'bots/share/decide-learning'
         ? dispatchRequest()
         : this.serialize(dispatchRequest, requestController.signal))
     } catch (error) {
@@ -2598,6 +2843,10 @@ export class SharedBotService {
         return this.readMemory(parsePayload(botIdPayload, payload), signal, principalId)
       case 'bots/share/write-memory':
         return this.writeMemory(parsePayload(writeMemoryPayload, payload), signal, principalId)
+      case 'bots/share/list-learning':
+        return this.listLearningRoute(parsePayload(listLearningPayload, payload), signal, principalId)
+      case 'bots/share/decide-learning':
+        return this.decideLearningRoute(parsePayload(decideLearningPayload, payload), signal, principalId)
       case 'bots/share/manage-memory':
         return this.manageMemory(parsePayload(manageMemoryPayload, payload), signal, principalId)
       case 'bots/share/list-groups':
@@ -2754,15 +3003,42 @@ export class SharedBotService {
   ): Promise<ConnectionRpcHandlerResult> {
     signal.throwIfAborted()
     this.requireAuthorization(payload.botId, principalId, 'write-memory')
-    const value = await this.mutateSharedMemory(
+    const value = await this.mutateSharedMemory<BotShareMemoryWriteValue>(
       payload.botId,
       signal,
       principalId,
       'write-memory',
-      (memory) => {
+      (memory, learning, actorMembership) => {
         const policy = memoryPolicyFor(memory, payload.botId)
         if (!policy.enabled) {
           throw new SharedServiceFault('gateway/forbidden', 'shared Bot context is disabled')
+        }
+        if (actorMembership?.role === 'collaborator') {
+          const pendingBotCount = learning.pending.filter(candidate => candidate.botId === payload.botId).length
+          if (pendingBotCount >= SHARED_MEMORY_MAX_ENTRIES_PER_BOT) {
+            throw new SharedServiceFault('gateway/unavailable', 'shared Bot learning queue reached its per-Bot limit')
+          }
+          if (learning.pending.length >= SHARED_LEARNING_MAX_PENDING) {
+            throw new SharedServiceFault('gateway/unavailable', 'shared Bot learning queue is full')
+          }
+          const suggestion: SharedLearningSuggestion = {
+            id: BotShareLearningId(`learning-${randomUUID()}`),
+            botId: payload.botId,
+            principalId,
+            text: payload.text,
+            createdAt: this.now(),
+          }
+          return {
+            memory,
+            learning: {
+              ...learning,
+              pending: [...learning.pending, suggestion],
+            },
+            value: {
+              suggestion: learningSuggestionValue(suggestion),
+              published: false,
+            } satisfies BotShareMemoryWriteValue,
+          }
         }
         const botEntryCount = memory.entries.filter(entry => entry.botId === payload.botId).length
         if (botEntryCount >= SHARED_MEMORY_MAX_ENTRIES_PER_BOT) {
@@ -2780,12 +3056,33 @@ export class SharedBotService {
         }
         return {
           memory: { ...memory, entries: [...memory.entries, entry] },
-          value: { entry: memoryEntryValue(entry) },
+          value: { entry: memoryEntryValue(entry), published: true } satisfies BotShareMemoryWriteValue,
         }
       },
     )
     await this.requireBot(payload.botId, signal)
     return { ok: true, value }
+  }
+
+  private async listLearningRoute(
+    payload: BotIdPayload,
+    signal: AbortSignal,
+    principalId: ReturnType<typeof BotPrincipalId>,
+  ): Promise<ConnectionRpcHandlerResult> {
+    this.requireAuthorization(payload.botId, principalId, 'manage-memory')
+    return { ok: true, value: await this.listLearning(payload.botId, signal, principalId) }
+  }
+
+  private async decideLearningRoute(
+    payload: DecideLearningPayload,
+    signal: AbortSignal,
+    principalId: ReturnType<typeof BotPrincipalId>,
+  ): Promise<ConnectionRpcHandlerResult> {
+    this.requireAuthorization(payload.botId, principalId, 'manage-memory')
+    return {
+      ok: true,
+      value: await this.decideLearning(payload.botId, payload.suggestionId, payload.decision, principalId, signal),
+    }
   }
 
   private async manageMemory(
@@ -2800,7 +3097,7 @@ export class SharedBotService {
       signal,
       principalId,
       'manage-memory',
-      (memory) => {
+      (memory, learning) => {
         const currentPolicy = memory.policies.find(candidate => candidate.botId === payload.botId)
         if (currentPolicy === undefined && memory.policies.length >= SHARED_MEMORY_MAX_POLICIES) {
           throw new SharedServiceFault('gateway/unavailable', 'shared Bot context policy limit reached')
@@ -2815,6 +3112,12 @@ export class SharedBotService {
             entries: payload.enabled
               ? memory.entries
               : memory.entries.filter(entry => entry.botId !== payload.botId),
+          },
+          learning: {
+            ...learning,
+            pending: payload.enabled
+              ? learning.pending
+              : learning.pending.filter(suggestion => suggestion.botId !== payload.botId),
           },
           value: policy,
         }
@@ -4148,34 +4451,48 @@ export class SharedBotService {
     signal: AbortSignal | undefined,
     actor: ReturnType<typeof BotPrincipalId> | undefined,
     operation: BotShareOperation | undefined,
-    mutation: (memory: SharedMemorySnapshot) => {
+    mutation: (
+      memory: SharedMemorySnapshot,
+      learning: SharedLearningSnapshot,
+      actorMembership: SharedMembershipRecord | undefined,
+    ) => {
       readonly memory: SharedMemorySnapshot
+      readonly learning?: SharedLearningSnapshot
       readonly value: T
     },
   ): Promise<T> {
     signal?.throwIfAborted()
     const operationResult = await this.host.withBot(botId, signal, async () => {
-      const result = await this.authority.mutateExtension(
-        SHARED_MEMBERSHIP_EXTENSION_KEY,
+      const result = await this.authority.mutateExtensions(
+        [SHARED_MEMBERSHIP_EXTENSION_KEY, SHARED_LEARNING_EXTENSION_KEY],
         (current, authorityState) => {
-          const snapshot = parseMembershipSnapshot(current)
+          const snapshot = parseMembershipSnapshot(current[SHARED_MEMBERSHIP_EXTENSION_KEY])
+          const learning = parseSharedLearningSnapshot(current[SHARED_LEARNING_EXTENSION_KEY])
+          let actorMembership: SharedMembershipRecord | undefined
           if (actor !== undefined && operation !== undefined) {
             const authorityPrincipal = authorityState.principals.find(principal => String(principal.id) === String(actor))
             if (authorityPrincipal === undefined || authorityPrincipal.revokedAt !== undefined) {
               throw new SharedServiceFault('gateway/forbidden', 'shared Bot authority is no longer active')
             }
-            this.requireAuthorizationForMemberships(snapshot.memberships, botId, actor, operation)
+            actorMembership = this.requireAuthorizationForMemberships(snapshot.memberships, botId, actor, operation).actor
           }
           signal?.throwIfAborted()
-          const next = mutation(snapshot.sharedMemory ?? emptySharedMemorySnapshot())
+          const next = mutation(snapshot.sharedMemory ?? emptySharedMemorySnapshot(), learning, actorMembership)
           signal?.throwIfAborted()
           const parsedMemory = sharedMemorySnapshotSchema.safeParse(next.memory)
           if (!parsedMemory.success) {
             throw new SharedServiceFault('gateway/unavailable', 'shared Bot context limits were exceeded')
           }
+          const parsedLearning = sharedLearningSnapshotSchema.safeParse(next.learning ?? learning)
+          if (!parsedLearning.success) {
+            throw new SharedServiceFault('gateway/unavailable', 'shared Bot learning limits were exceeded')
+          }
           return {
             value: { memberships: snapshot.memberships, value: next.value },
-            next: { ...snapshot, sharedMemory: parsedMemory.data },
+            next: {
+              [SHARED_MEMBERSHIP_EXTENSION_KEY]: { ...snapshot, sharedMemory: parsedMemory.data },
+              [SHARED_LEARNING_EXTENSION_KEY]: parsedLearning.data,
+            },
           }
         },
       )
@@ -4261,6 +4578,20 @@ async function initializeSharedAppApprovalGrantSnapshot(authority: SharedAccessA
     return {
       value: undefined,
       next: { version: SHARED_APP_APPROVAL_GRANTS_VERSION, grants: [], pending: [], terminal: [] },
+    }
+  })
+}
+
+/** Initialize and validate the independent shared-learning authority extension. */
+async function initializeSharedLearningSnapshot(authority: SharedAccessAuthority): Promise<void> {
+  await authority.mutateExtension(SHARED_LEARNING_EXTENSION_KEY, (current) => {
+    if (current !== undefined) {
+      parseSharedLearningSnapshot(current)
+      return { value: undefined, next: current }
+    }
+    return {
+      value: undefined,
+      next: { version: SHARED_LEARNING_RECORD_VERSION, pending: [], decisions: [] },
     }
   })
 }
@@ -4359,6 +4690,15 @@ function pendingBotInvite(
 function parseMembershipSnapshot(value: unknown): SharedMembershipSnapshot {
   const parsed = sharedMembershipSnapshotSchema.safeParse(value)
   if (!parsed.success) throw new Error('shared Bot service membership snapshot is invalid')
+  return parsed.data
+}
+
+function parseSharedLearningSnapshot(value: unknown): SharedLearningSnapshot {
+  if (value === undefined) {
+    return { version: SHARED_LEARNING_RECORD_VERSION, pending: [], decisions: [] }
+  }
+  const parsed = sharedLearningSnapshotSchema.safeParse(value)
+  if (!parsed.success) throw new Error('shared Bot learning snapshot is invalid')
   return parsed.data
 }
 
@@ -4902,9 +5242,35 @@ function memoryValueFor(
 ): BotShareMemoryValue {
   return {
     ...policy,
+    learningReview: true,
     entries: policy.enabled
       ? memory.entries.filter(entry => entry.botId === botId).map(memoryEntryValue)
       : [],
+  }
+}
+
+function learningSuggestionValue(suggestion: SharedLearningSuggestion): BotShareLearningSuggestion {
+  return {
+    id: suggestion.id,
+    principalId: suggestion.principalId,
+    text: suggestion.text,
+    createdAt: suggestion.createdAt,
+  }
+}
+
+function learningValueFor(
+  memory: SharedMemorySnapshot,
+  learning: SharedLearningSnapshot,
+  botId: BotId,
+): BotShareLearningValue {
+  return {
+    botId,
+    pending: learning.pending
+      .filter(suggestion => suggestion.botId === botId)
+      .map(learningSuggestionValue),
+    recentlyLearned: memory.entries
+      .filter(entry => entry.botId === botId)
+      .map(memoryEntryValue),
   }
 }
 

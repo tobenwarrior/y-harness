@@ -64,7 +64,7 @@ import { scopeOf, scopeParentOf } from '@yharness/scope'
 import z from '@yharness/schemastery'
 import { Remote, RemoteError, TypertRemoteService, remoteErrorOf } from '@yharness/typert-protocol'
 import { z as zod } from 'zod'
-import { BOT_ACCENTS, BOT_EVENT_SOURCES, BOT_IDENTITIES, BotId } from './types.ts'
+import { BOT_ACCENTS, BOT_EVENT_SOURCES, BOT_IDENTITIES, BotId, BotShareLearningId } from './types.ts'
 import { botMessageWasDelivered, BotCollaborationError, BotCollaborationService, BotMessageId } from './collaboration.ts'
 import type { BotCollaborationClient, BotCollaborationDeliveryEvent, BotCollaborationHost, BotEventRelayContext } from './collaboration.ts'
 import {
@@ -219,6 +219,9 @@ import type {
   BotShareInviteValue,
   BotShareMemoryPolicyRequest,
   BotShareMemoryPolicyValue,
+  BotShareLearningDecisionRequest,
+  BotShareLearningDecisionValue,
+  BotShareLearningValue,
   BotSharedRosterFenceDiagnosticValue,
   BotSharedRosterFenceRecoveryRequest,
   BotSharedRosterFenceRecoveryValue,
@@ -324,7 +327,14 @@ interface EventRoutineTriggerInput {
 }
 
 export type * from './types.ts'
-export { BOT_ACCENTS, BOT_EVENT_SOURCES, BOT_IDENTITIES, BotId, BotShareMemoryId } from './types.ts'
+export {
+  BOT_ACCENTS,
+  BOT_EVENT_SOURCES,
+  BOT_IDENTITIES,
+  BotId,
+  BotShareLearningId,
+  BotShareMemoryId,
+} from './types.ts'
 export {
   BOT_MEMORY_ENTRY_LIMIT,
   BOT_MEMORY_TEXT_LIMIT,
@@ -694,6 +704,11 @@ const sharedInviteRequestSchema = zod.object({
 }).strict()
 const sharedMembersRequestSchema = zod.object({
   botId: zod.string().regex(/^bot-[A-Za-z0-9][A-Za-z0-9-]*$/).transform(BotId),
+}).strict()
+const sharedLearningDecisionRequestSchema = zod.object({
+  botId: zod.string().regex(/^bot-[A-Za-z0-9][A-Za-z0-9-]*$/).transform(BotId),
+  suggestionId: zod.string().regex(/^learning-[A-Za-z0-9][A-Za-z0-9-]*$/),
+  decision: zod.enum(['approve', 'reject']),
 }).strict()
 const sharedAppAccessRequestSchema = sharedMembersRequestSchema
 const sharedAppAccessUpdateRequestSchema = zod.object({
@@ -3689,6 +3704,40 @@ export class BotService extends TypertRemoteService {
       throw new RemoteError('gateway/internal', 'Shared Bot access is not enabled', {})
     }
     return this.sharedService.setMemoryPolicy(parsed.data.botId, parsed.data.enabled)
+  }
+
+  /**
+   * List pending collaborator learning suggestions for one Bot.
+   * @param request - Bot id to inspect.
+   * @returns pending suggestions and the Bot's published shared notes.
+   */
+  @Remote('listShareLearning')
+  async listShareLearning(request: BotShareMembersRequest): Promise<BotShareLearningValue> {
+    const parsed = sharedMembersRequestSchema.safeParse(request)
+    if (!parsed.success) throw new RemoteError('gateway/bad-request', 'Invalid shared Bot learning request', {})
+    if (this.sharedService === undefined) {
+      throw new RemoteError('gateway/internal', 'Shared Bot access is not enabled', {})
+    }
+    return this.sharedService.listLearning(parsed.data.botId)
+  }
+
+  /**
+   * Approve or reject one pending collaborator learning suggestion.
+   * @param request - Bot, suggestion, and review decision.
+   * @returns the committed decision and any newly published note.
+   */
+  @Remote('decideShareLearning')
+  async decideShareLearning(request: BotShareLearningDecisionRequest): Promise<BotShareLearningDecisionValue> {
+    const parsed = sharedLearningDecisionRequestSchema.safeParse(request)
+    if (!parsed.success) throw new RemoteError('gateway/bad-request', 'Invalid shared Bot learning decision', {})
+    if (this.sharedService === undefined) {
+      throw new RemoteError('gateway/internal', 'Shared Bot access is not enabled', {})
+    }
+    return this.sharedService.decideLearning(
+      parsed.data.botId,
+      BotShareLearningId(parsed.data.suggestionId),
+      parsed.data.decision,
+    )
   }
 
   /**
