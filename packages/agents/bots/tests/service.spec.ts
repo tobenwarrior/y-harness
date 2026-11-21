@@ -1,5 +1,6 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { WebhookDeliveryId, WebhookSourceId, type VerifiedWebhookDelivery } from '@yharness/webhook'
+import { brandString } from '@yharness/brand'
 import { invokeRoutine, invokeRoutineTrigger, rawBotRow } from './routine-test-harness.ts'
 import { createHash, randomUUID } from 'node:crypto'
 import { spawn } from 'node:child_process'
@@ -79,7 +80,7 @@ import { SessionTitleProviderId } from '../../../session/session-title/src/index
 import { sharedGroupSnapshotSchema, type SharedGroupSessionBinding } from '../src/shared-group.ts'
 import { sharedMembershipSnapshotSchema } from '../src/storage.ts'
 import { BotId } from '../src/types.ts'
-import type { BotEventRoutine, BotListRequest, BotListValue, BotRecord, BotView } from '../src/types.ts'
+import type { BotEventRoutine, BotListRequest, BotListValue, BotRecord, BotRoutineTestId, BotView } from '../src/types.ts'
 import { sessionFormatCatalog } from '@yharness/session-format-catalog'
 import z from 'zod'
 
@@ -12675,12 +12676,161 @@ describe('durable Bot roster', () => {
       expect(history).toMatchObject({ kind: 'schedule', id: task.id, records: [] })
 
       await expect(other.service.listRoutines({ botId: created.bot.id })).rejects.toMatchObject({ code: 'bot/not-found' })
+      const query = { botId: created.bot.id, routineId: String(task.id) }
+      await expect(other.service.routineTestStatus(query)).rejects.toMatchObject({ code: 'bot/not-found' })
+      await expect(other.service.testRoutine({ ...query, requestId: brandString<BotRoutineTestId>(randomUUID()) }))
+        .rejects.toMatchObject({ code: 'bot/not-found' })
       const removed = await h.service.deleteRoutine({ botId: created.bot.id, routineId: String(task.id) })
       expect(removed).toEqual({ id: task.id, deleted: true })
       await expect(h.service.listRoutines({ botId: created.bot.id })).resolves.toEqual({ routines: [] })
     } finally {
       await close(other.ctx)
       await close(h.ctx)
+    }
+  })
+
+  it('runs a paused timed routine once and follows its exact Bot turn across Hosts', async () => {
+    const pool = new MemoryMediaPool()
+    const setup = await harness(pool)
+    const { bot } = await setup.service.create({ name: 'Routine test owner', cwd: '/tmp' })
+    await close(setup.ctx)
+
+    const host = await routineHarness(pool, undefined, undefined, [String(bot.sessionId)], true)
+    let reopened: Awaited<ReturnType<typeof routineHarness>> | undefined
+    let closed = false
+    try {
+      const schedule = host.ctx.get('schedule')
+      if (schedule === undefined) throw new Error('Schedule service was not mounted')
+      const task = await schedule.create(bot.sessionId, {
+        title: 'Weekly review', prompt: 'Summarize the example report.', every_seconds: 3_600,
+      })
+      const query = { botId: bot.id, routineId: String(task.id) }
+      await host.service.pauseRoutine(query)
+      const before = await schedule.catalog()
+      await expect(host.service.routineTestStatus(query)).resolves.toEqual({})
+      const request = { ...query, requestId: brandString<BotRoutineTestId>(randomUUID()) }
+      const duplicate = async () => host.service.testRoutine(request)
+      const [run, retry] = await Promise.all([duplicate(), duplicate()])
+      expect(run.status).toBe('queued')
+      expect(retry).toEqual(run)
+      host.inspect.mockResolvedValueOnce({ events: [] })
+      await expect(duplicate()).resolves.toEqual(run)
+      await expect(host.service.testRoutine({
+        ...request, requestId: brandString<BotRoutineTestId>(randomUUID()),
+      })).rejects.toMatchObject({ code: 'bot/routine-test-busy' })
+      const agent = host.agents[0]
+      const followup = host.followups[0]
+      const message = followup?.mock.calls[0]?.[0]
+      if (agent === undefined || message === undefined) throw new Error('The test did not target its owning Session')
+      host.inspect.mockResolvedValueOnce({ events: agent.session.snapshotEvents() }).mockResolvedValueOnce({ events: [] })
+      await expect(duplicate()).rejects.toMatchObject({ code: 'gateway/internal', message: 'The test reservation is missing.' })
+      expect(followup).toHaveBeenCalledOnce()
+      expect(message).toMatchObject({
+        id: run.messageId,
+        source: { kind: 'schedule', invocation: 'test', form: 'notice', summary: 'Weekly review' },
+        content: [{ type: 'text', text: '[BOT ROUTINE TEST]\nSummarize the example report.' }],
+      })
+      expect(agent.session.snapshotEvents().filter(event => event.type === 'bot/routine-test')).toHaveLength(1)
+      expect(await schedule.catalog()).toEqual(before)
+      expect(await host.service.routineHistory({ ...query, limit: 10 })).toMatchObject({ records: [] })
+
+      agent.session.append('turn/start', { turn: 1 })
+      agent.session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+      await expect(host.service.routineTestStatus(query)).resolves.toMatchObject({ run: { status: 'queued' } })
+      agent.session.append('turn/start', { turn: 2 })
+      agent.session.append('agent/inbox/spliced', { target: 'next-turn', start: 0, removedCount: 1, inserted: [] })
+      agent.session.append('user/message', message, { surfaceOp: 'append' })
+      await expect(host.service.routineTestStatus(query)).resolves.toMatchObject({ run: { status: 'running' } })
+      agent.session.append('turn/end', { turn: 2, reason: { kind: 'completed' } })
+      const seed = agent.session.snapshotEvents()
+      await close(host.ctx)
+      closed = true
+
+      reopened = await routineHarness(pool, undefined, undefined, [], true, [], new Map([
+        [String(bot.sessionId), seed],
+      ]), new Map([
+        [String(bot.sessionId), seed],
+      ]))
+      await expect(reopened.service.routineTestStatus(query)).resolves.toEqual({ run: { ...run, status: 'completed' } })
+      await expect(reopened.service.testRoutine(request)).resolves.toEqual({ ...run, status: 'completed' })
+      expect(reopened.resolveAgent).not.toHaveBeenCalled()
+    } finally {
+      if (reopened !== undefined) await close(reopened.ctx)
+      if (!closed) await close(host.ctx)
+    }
+  })
+
+  it('keeps an uncertain test reservation from invoking the Bot twice', async () => {
+    const pool = new MemoryMediaPool()
+    const setup = await harness(pool)
+    const { bot } = await setup.service.create({ name: 'Routine checkpoint owner', cwd: '/tmp' })
+    await close(setup.ctx)
+    const h = await routineHarness(pool, undefined, undefined, [String(bot.sessionId)], true)
+    try {
+      const { id } = routineIdentifier.parse(await invokeRoutine(h.service, 'create', {
+        title: 'Review new notes', prompt: 'Summarize the example notes.', event: { type: 'message', source: 'user' },
+      }, bot.sessionId, 'routine-test-message'))
+      const query = { botId: bot.id, routineId: id }
+      await h.service.pauseRoutine(query)
+      const request = { ...query, requestId: brandString<BotRoutineTestId>(randomUUID()) }
+      h.flush.mockResolvedValueOnce(false)
+      await expect(h.service.testRoutine(request)).rejects.toMatchObject({ code: 'bot/routine-test-unconfirmed' })
+      expect(h.followups[0]).not.toHaveBeenCalled()
+      const result = await h.service.testRoutine(request)
+      expect(result.status).toBe('interrupted')
+      expect(h.followups[0]).not.toHaveBeenCalled()
+      await expect(h.service.testRoutine({ ...request, routineId: 'missing' }))
+        .rejects.toMatchObject({ code: 'bot/routine-not-found' })
+      await expect(h.service.testRoutine({ ...request, requestId: brandString<BotRoutineTestId>('invalid') }))
+        .rejects.toMatchObject({ code: 'gateway/bad-request' })
+
+      const omittedBot = { ...request }
+      Reflect.deleteProperty(omittedBot, 'botId')
+      await expect(h.service.routineTestStatus(omittedBot))
+        .rejects.toMatchObject({ code: 'gateway/bad-request', message: 'Bot id is required' })
+      await expect(h.service.testRoutine(omittedBot))
+        .rejects.toMatchObject({ code: 'gateway/bad-request', message: 'Bot id is required' })
+      const notResolved = new Error('Bot Session could not be reopened')
+      h.resolveAgent.mockResolvedValueOnce({ error: notResolved })
+      const freshRequest = { ...request, requestId: brandString<BotRoutineTestId>(randomUUID()) }
+      await expect(h.service.testRoutine(freshRequest)).rejects.toThrow(notResolved.message)
+      h.flush.mockResolvedValueOnce(true).mockResolvedValueOnce(false)
+      await expect(h.service.testRoutine(freshRequest)).rejects.toMatchObject({ code: 'bot/routine-test-unconfirmed' })
+      const fresh = await h.service.testRoutine(freshRequest)
+      expect(fresh.status).toBe('queued')
+      expect(fresh.messageId).not.toBe(result.messageId)
+      expect(h.followups[0]).toHaveBeenCalledOnce()
+      expect((await h.service.listRoutines({ botId: bot.id })).routines).toMatchObject([{ status: 'paused' }])
+      expect(await h.service.routineHistory({ ...query, limit: 10 })).toMatchObject({ deliveries: [] })
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('keeps a delivered one-shot routine from being started as a test', async () => {
+    const pool = new MemoryMediaPool()
+    const setup = await harness(pool)
+    const { bot } = await setup.service.create({ name: 'One-shot routine owner', cwd: '/tmp' })
+    await close(setup.ctx)
+    const host = await routineHarness(pool, undefined, undefined, [String(bot.sessionId)], true)
+    vi.useFakeTimers()
+    try {
+      const schedule = host.ctx.get('schedule')
+      if (schedule === undefined) throw new Error('Schedule service was not mounted')
+      const task = await schedule.create(bot.sessionId, {
+        title: 'One-time review', prompt: 'Review the example.', after_seconds: 60,
+      })
+      await vi.advanceTimersByTimeAsync(60_000)
+      await expect(host.service.listRoutines({ botId: bot.id })).resolves.toMatchObject({
+        routines: [{ id: task.id, status: 'inactive' }],
+      })
+      await expect(host.service.testRoutine({
+        botId: bot.id, routineId: String(task.id), requestId: brandString<BotRoutineTestId>(randomUUID()),
+      })).rejects.toMatchObject({ code: 'bot/routine-test-unavailable' })
+      expect(host.followups[0]).toHaveBeenCalledOnce()
+    } finally {
+      vi.useRealTimers()
+      await close(host.ctx)
     }
   })
 
@@ -13200,6 +13350,9 @@ describe('durable Bot roster', () => {
       const routine = routines.find(candidate => candidate.title === args.title)
       const pullRoutine = routines.find(candidate => candidate.title === 'Watch pull requests')
       if (routine?.kind !== 'event' || pullRoutine?.kind !== 'event') throw new Error('GitHub routines were not created')
+      await expect(live.service.testRoutine({
+        botId: bot.id, routineId: routine.id, requestId: brandString<BotRoutineTestId>(randomUUID()),
+      })).rejects.toMatchObject({ code: 'bot/routine-test-unavailable' })
       const request = { botId: bot.id, routineId: routine.id, limit: 10 }
       const followup = live.followups[0]
       const agent = live.agents[0]

@@ -21,6 +21,10 @@ export type { BotAttachmentGrantId, BotAttachmentGrantValue } from './attachment
 /** Stable user-owned identity for one roster entry. */
 export type BotId = Branded<'BotId'>
 
+// A client keeps the request id across retries of a single explicit test.
+/** Opaque identity for one owner-started routine test request. */
+export type BotRoutineTestId = Branded<'BotRoutineTestId'>
+
 /** Opaque identity for one explicitly published shared-context note. */
 export type BotShareMemoryId = Branded<'BotShareMemoryId'>
 
@@ -483,6 +487,31 @@ export type BotRoutineResumeValue =
 export type BotRoutineDeleteValue =
   | { readonly id: string; readonly deleted: true }
   | { readonly id: string; readonly deleted: false; readonly code: 'routine_not_found' }
+
+/** Start one test using the currently saved routine instructions. */
+export interface BotRoutineTestRequest extends BotRoutineLifecycleRequest {
+  /** Stable across retries of this explicit request. */
+  readonly requestId: BotRoutineTestId
+}
+
+/** Lifecycle of an explicit test in the Bot's ordinary Session. */
+export type BotRoutineTestStatus = 'queued' | 'running' | 'completed' | 'failed' | 'canceled' | 'interrupted'
+
+/** Status of one owner-started routine test. */
+export interface BotRoutineTestRun {
+  /** Stable user-message identity reserved before dispatch. */
+  readonly messageId: MessageId
+  /** Unix time in milliseconds of the durable reservation. */
+  readonly requestedAt: number
+  /** Status of the reserved input or the exact turn that claimed it. */
+  readonly status: BotRoutineTestStatus
+}
+
+/** Latest owner-started test for the selected routine. */
+export interface BotRoutineTestStatusValue {
+  /** Absent until the owner requests a test. */
+  readonly run?: BotRoutineTestRun
+}
 
 /** Request one bounded routine-history page. */
 export interface BotRoutineHistoryRequest {
@@ -1032,6 +1061,14 @@ declare module '@yharness/typert-protocol' {
     'gateway/conflict': { readonly botId: BotId }
     /** The requested Bot id is absent from the durable roster. */
     'bot/not-found': { readonly botId: BotId }
+    /** The requested routine is absent from the selected Bot. */
+    'bot/routine-not-found': { readonly botId: BotId }
+    /** A routine requires live event input or has ended. */
+    'bot/routine-test-unavailable': { readonly botId: BotId }
+    /** An earlier test is still queued or running. */
+    'bot/routine-test-busy': { readonly botId: BotId }
+    /** Session persistence did not acknowledge a test reservation or receipt. */
+    'bot/routine-test-unconfirmed': { readonly phase: 'reservation' | 'receipt' }
     /** The requested Bot id already names another roster row. */
     'bot/id-conflict': { readonly botId: BotId }
     /** The requested Bot metadata conflicts with an existing provisioning row. */

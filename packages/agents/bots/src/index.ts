@@ -125,6 +125,7 @@ import { createBotNativeToolProvider, VPS_COMPUTER_TOOL, VPS_VAULT_REQUEST_TOOL 
 import type { BotNativeTool, BotNativeToolHost, BotRoutineCreateResolution, BotRoutineCreateReservation, BotVpsJournalReader } from './native-tools.ts'
 import { installBotCollaborationTools } from './scoped-tools.ts'
 import { installBotRoutineTools } from './routine-tools.ts'
+import { routineTestMessageId, routineTestRunFromEvents } from './routine-test.ts'
 import type { BotEventRoutineToolHost } from './routine-tools.ts'
 import { botInboxMessageState } from './inbox.ts'
 import { parseGrokImport } from './grok-import.ts'
@@ -202,6 +203,9 @@ import type {
   BotRoutineListValue,
   BotRoutinePauseValue,
   BotRoutineResumeValue,
+  BotRoutineTestRequest,
+  BotRoutineTestRun,
+  BotRoutineTestStatusValue,
   BotRoutineView,
   BotScheduleRoutineView,
   BotRecord,
@@ -7175,6 +7179,90 @@ export class BotService extends TypertRemoteService {
     }
     for (const routine of bot.eventRoutines ?? []) routines.push(botEventRoutineView(routine, bot))
     return { routines }
+  }
+
+  /**
+   * Run the saved instructions once in the owning Bot Session. The Schedule
+   * task and event subscriptions are independent of this reservation.
+   * @param request - Bot, routine, and stable request identity.
+   * @returns The existing or newly reserved test and its Session status.
+   */
+  @Remote('testRoutine')
+  async testRoutine(request: BotRoutineTestRequest): Promise<BotRoutineTestRun> {
+    const botId = normalizeBotId(request.botId)
+    if (botId === undefined) return badRequest('Bot id is required')
+    const routineId = normalizeRoutineId(request.routineId)
+    if (typeof request.requestId !== 'string' || !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/iu.test(request.requestId)) {
+      return badRequest('Routine test request id must be a UUID')
+    }
+    return this.serialize(async () => {
+      const bot = await this.readOwnedBot(botId)
+      const messageId = routineTestMessageId(bot.sessionId, routineId, request.requestId)
+      const inspection = await this.ctx.sessionController.inspect(bot.sessionId)
+      const prior = routineTestRunFromEvents(inspection.events, routineId, messageId)
+      if (prior !== undefined) {
+        const agent = this.ctx.agents.get(bot.sessionId)
+        return agent === undefined ? prior : await this.confirmRoutineTest(agent, routineId, prior.messageId)
+      }
+      const eventRoutine = bot.eventRoutines?.find(routine => routine.id === routineId)
+      const schedule = this.ctx.get('schedule')
+      const routine = eventRoutine ?? (await schedule?.catalog())?.find(candidate =>
+        String(candidate.id) === routineId && candidate.sessionId === bot.sessionId)
+      if (routine === undefined) throw new RemoteError('bot/routine-not-found', 'Routine was not found.', { botId })
+      if (routine.status === 'inactive' || eventRoutine?.trigger.type === 'github') {
+        throw new RemoteError('bot/routine-test-unavailable', 'This routine cannot be tested directly.', { botId })
+      }
+      const resolved = await this.ctx.sessionController.resolveAgent(bot.sessionId)
+      if (!('agent' in resolved)) throw resolved.error
+      const { agent } = resolved
+      const { events } = await this.ctx.sessionController.inspect(bot.sessionId)
+      const duplicate = routineTestRunFromEvents(events, routineId, messageId)
+      if (duplicate !== undefined) return this.confirmRoutineTest(agent, routineId, duplicate.messageId)
+      const latest = routineTestRunFromEvents(events, routineId)
+      if (latest?.status === 'running' || latest?.status === 'queued') {
+        throw new RemoteError('bot/routine-test-busy', 'This routine already has a test in progress.', { botId })
+      }
+      agent.session.append('bot/routine-test', { routineId, messageId })
+      if (!await this.ctx.sessions.flush(agent.session)) {
+        throw new RemoteError('bot/routine-test-unconfirmed', 'Could not save the test request.', { phase: 'reservation' })
+      }
+      agent.followup(freezeMessage({
+        id: messageId,
+        role: 'user',
+        source: { kind: 'schedule', invocation: 'test', form: 'notice', summary: routine.title },
+        content: [{ type: 'text', text: '[BOT ROUTINE TEST]\n' + routine.prompt }],
+      }))
+      return this.confirmRoutineTest(agent, routineId, messageId)
+    })
+  }
+
+  /** Acknowledge a live attempt only after its Session journal flush. */
+  private async confirmRoutineTest(agent: Agent, routineId: string, messageId: MessageId): Promise<BotRoutineTestRun> {
+    if (!await this.ctx.sessions.flush(agent.session)) {
+      throw new RemoteError('bot/routine-test-unconfirmed', 'Could not confirm the test request. Check the bot chat.', { phase: 'receipt' })
+    }
+    const { events } = await this.ctx.sessionController.inspect(agent.id)
+    const run = routineTestRunFromEvents(events, routineId, messageId)
+    if (run === undefined) throw new RemoteError('gateway/internal', 'The test reservation is missing.', {})
+    return run
+  }
+
+  /**
+   * Read the latest explicit test from the Bot Session without waking its Agent.
+   * @param request - The Bot and routine.
+   * @returns The latest test state, if one has been requested.
+   */
+  @Remote('routineTestStatus')
+  async routineTestStatus(request: BotRoutineLifecycleRequest): Promise<BotRoutineTestStatusValue> {
+    const botId = normalizeBotId(request.botId)
+    if (botId === undefined) return badRequest('Bot id is required')
+    const routineId = normalizeRoutineId(request.routineId)
+    return this.serialize(async () => {
+      const bot = await this.readOwnedBot(botId)
+      const { events } = await this.ctx.sessionController.inspect(bot.sessionId)
+      const run = routineTestRunFromEvents(events, routineId)
+      return run === undefined ? {} : { run }
+    })
   }
 
   /**

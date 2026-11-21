@@ -46,6 +46,13 @@ describe('Turn trigger notices', () => {
     expect(view.container.querySelector('time')?.dateTime).toBe('2023-11-14T22:13:20.000Z')
   })
 
+  it('identifies an explicit routine test in the chat', () => {
+    const node = trigger({ kind: 'schedule', invocation: 'test' })
+    expect(turnTriggerDetails(node.data)).toEqual({ title: 'message.trigger.routineTest', icon: 'schedule' })
+    const view = render(<TurnTriggerNodeView node={node} t={makeTranslate(en)} />)
+    expect(view.getByRole('button').textContent).toContain('Routine test')
+  })
+
   it.each([
     { locale: en, title: 'Automation task' },
     { locale: zh, title: 'Automation task' },

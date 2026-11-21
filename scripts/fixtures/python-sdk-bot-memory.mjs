@@ -1,4 +1,4 @@
-/** Append one active Bot memory while the Python SDK run is subscribed. */
+/** Append Bot metadata while the Python SDK run is subscribed. */
 
 export const name = 'python-sdk-bot-memory'
 export const inject = ['agents', 'tools']
@@ -16,6 +16,9 @@ export function apply(ctx) {
       memoryId: 'memory-python-snapshot',
       operation: 'remember',
       text: 'The Python SDK projection keeps this active Bot memory.',
+    })
+    agent.session.append('bot/routine-test', {
+      routineId: 'routine-python-snapshot', messageId: 'bot-routine-test-python-snapshot',
     })
     return downstream
   })

@@ -804,6 +804,18 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'The Bot\'s active, paused, and ended routine rows.',
       },
       {
+        signature: '@Remote(\'testRoutine\') async testRoutine(request: BotRoutineTestRequest): Promise<BotRoutineTestRun>',
+        description: 'Run the saved instructions once in the owning Bot Session. The Schedule task and event subscriptions are independent of this reservation.',
+        parameters: [{ name: 'request', description: 'Bot, routine, and stable request identity.' }],
+        returns: 'The existing or newly reserved test and its Session status.',
+      },
+      {
+        signature: '@Remote(\'routineTestStatus\') async routineTestStatus(request: BotRoutineLifecycleRequest): Promise<BotRoutineTestStatusValue>',
+        description: 'Read the latest explicit test from the Bot Session without waking its Agent.',
+        parameters: [{ name: 'request', description: 'The Bot and routine.' }],
+        returns: 'The latest test state, if one has been requested.',
+      },
+      {
         signature: '@Remote(\'pauseRoutine\') async pauseRoutine(request: BotRoutineLifecycleRequest): Promise<BotRoutinePauseValue>',
         description: 'Pause one routine owned by a Bot without waking its Session.',
         parameters: [{ name: 'request', description: 'Bot and routine identity.' }],
@@ -6223,6 +6235,26 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'BotRoutineResumeValue',
     declaration: 'export type BotRoutineResumeValue = {\n    readonly routine: BotRoutineView;\n    readonly resumed: true;\n} | {\n    readonly id: string;\n    readonly resumed: false;\n    readonly code: \'routine_not_found\' | \'routine_ended\';\n};',
+  },
+  {
+    name: 'BotRoutineTestId',
+    declaration: 'export type BotRoutineTestId = Branded<\'BotRoutineTestId\'>;',
+  },
+  {
+    name: 'BotRoutineTestRequest',
+    declaration: 'export interface BotRoutineTestRequest extends BotRoutineLifecycleRequest {\n    readonly requestId: BotRoutineTestId;\n}',
+  },
+  {
+    name: 'BotRoutineTestRun',
+    declaration: 'export interface BotRoutineTestRun {\n    readonly messageId: MessageId;\n    readonly requestedAt: number;\n    readonly status: BotRoutineTestStatus;\n}',
+  },
+  {
+    name: 'BotRoutineTestStatus',
+    declaration: 'export type BotRoutineTestStatus = \'queued\' | \'running\' | \'completed\' | \'failed\' | \'canceled\' | \'interrupted\';',
+  },
+  {
+    name: 'BotRoutineTestStatusValue',
+    declaration: 'export interface BotRoutineTestStatusValue {\n    readonly run?: BotRoutineTestRun;\n}',
   },
   {
     name: 'BotRoutineView',

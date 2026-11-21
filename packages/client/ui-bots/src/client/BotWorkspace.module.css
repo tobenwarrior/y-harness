@@ -1179,6 +1179,22 @@
   line-height: 18px;
 }
 
+.routineTest {
+  display: grid;
+  gap: 6px;
+  margin-top: 2px;
+  padding-top: 10px;
+  border-top: 0.5px solid var(--yh-alias-border-l2);
+  color: var(--yh-alias-label-secondary);
+}
+
+.routineTestActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
 .routineRule strong {
   font-size: 14px;
   font-weight: 500;
@@ -1191,7 +1207,7 @@
   overflow-wrap: anywhere;
 }
 
-.routineRule span {
+.routineRule > span {
   color: var(--yh-alias-label-tertiary);
 }
 

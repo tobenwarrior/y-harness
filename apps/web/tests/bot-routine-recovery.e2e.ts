@@ -19,9 +19,12 @@ const PROVIDER = 'bot-routine-recovery-test'
 const MODEL = 'reply'
 const TITLE = 'Review new messages'
 const RESULT = 'The routine handled the new message.'
+const MANUAL_RESULT = 'The example report is ready.'
 
 class RoutineReplyAdapter extends LlmAdapter {
   readonly inputs: string[] = []
+
+  constructor(private readonly releaseTest?: Promise<void>) { super() }
 
   override async listModels(provider: string) {
     return [{ provider, id: MODEL, name: 'Routine test model' }]
@@ -32,7 +35,9 @@ class RoutineReplyAdapter extends LlmAdapter {
       message.role === 'user' ? message.content.flatMap(block => block.type === 'text' ? [block.text] : []) : [],
     ).join('\n')
     this.inputs.push(input)
-    const text = input.includes('[BOT EVENT ROUTINE]') ? RESULT : 'Message received.'
+    const manual = input.includes('[BOT ROUTINE TEST]')
+    if (manual) await this.releaseTest
+    const text = manual ? MANUAL_RESULT : input.includes('[BOT EVENT ROUTINE]') ? RESULT : 'Message received.'
     yield { type: 'block-start', index: 0, blockType: 'text' }
     yield { type: 'text-delta', index: 0, text }
     yield { type: 'block-end', index: 0, block: { type: 'text', text } }
@@ -41,8 +46,8 @@ class RoutineReplyAdapter extends LlmAdapter {
   }
 }
 
-async function configureModel(web: WebScaffold): Promise<RoutineReplyAdapter> {
-  const adapter = new RoutineReplyAdapter()
+async function configureModel(web: WebScaffold, releaseTest?: Promise<void>): Promise<RoutineReplyAdapter> {
+  const adapter = new RoutineReplyAdapter(releaseTest)
   web.ctx.effect(() => web.ctx.llm.registerAdapter([PROVIDER], adapter), 'routine recovery fixture')
   await web.ctx.agentDefaultModel.saveSelection({ provider: PROVIDER, model: MODEL })
   return adapter
@@ -323,6 +328,118 @@ it.skipIf(webSnapshotMode() === 'record')('runs a signed GitHub trigger once in 
     }
     expect(tripwire.pageErrors).toEqual([])
   } finally {
+    try {
+      await browser?.close()
+    } finally {
+      try {
+        await web?.close()
+      } finally {
+        await rm(workspaceCwd, { recursive: true, force: true })
+      }
+    }
+  }
+}, 120_000)
+
+const MANUAL_EXPECTED = fileURLToPath(new URL('./expected/bot-routine-recovery/test-run.expected.md', import.meta.url))
+
+async function captureRoutineTest(page: Page, name: string, dialog?: Locator): Promise<void> {
+  const screenshots = process.env.DSH_BOT_ROUTINE_TEST_SCREENSHOTS
+  if (screenshots === undefined) return
+  await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' })
+  for (const width of [1440, 480]) {
+    await page.setViewportSize({ width, height: 900 })
+    if (dialog !== undefined) {
+      const bounds = await dialog.boundingBox()
+      expect(bounds).not.toBeNull()
+      if (bounds !== null) {
+        expect(bounds.x).toBeGreaterThanOrEqual(0)
+        expect(bounds.x + bounds.width).toBeLessThanOrEqual(width)
+        expect(bounds.y + bounds.height).toBeLessThanOrEqual(900)
+      }
+    }
+    await page.screenshot({ path: join(screenshots, name + '-' + String(width) + '.png'), animations: 'disabled' })
+  }
+}
+
+it.skipIf(webSnapshotMode() === 'record')('tests a paused routine in the same chat while its browser is closed', async () => {
+  const workspaceCwd = await mkdtemp(join(tmpdir(), 'yh-manual-bot-routine-'))
+  const persistenceRoot = join(workspaceCwd, 'sessions')
+  const options = { workspaceCwd, persistenceRoot, replayFixture: FIXTURE, replayProvidersOnly: true }
+  const release = Promise.withResolvers<undefined>()
+  const title = 'Review the daily report'
+  let web: WebScaffold | undefined
+  let browser: Browser | undefined
+  try {
+    await mkdir(persistenceRoot)
+    web = await launchWebScaffold(options)
+    const firstHost = web
+    const adapter = await configureModel(firstHost, release.promise)
+    const { bot } = await firstHost.ctx.bots.create({ name: 'Scout', cwd: workspaceCwd, identity: 'browse', accent: 'teal' })
+    const schedule = firstHost.ctx.get('schedule')
+    if (schedule === undefined) throw new Error('Schedule service is unavailable')
+    const task = await schedule.create(bot.sessionId, {
+      title, prompt: 'Read the example report and summarize the highlights.', every_seconds: 86_400,
+    })
+    const query = { botId: bot.id, routineId: String(task.id) }
+    await firstHost.ctx.bots.pauseRoutine(query)
+    const scheduleBefore = await schedule.catalog()
+    browser = await chromium.launch()
+    const page = await newEnglishPage(browser)
+    await selectBot(page, firstHost, bot)
+    let dialog = await openRoutines(page)
+    const start = dialog.getByRole('button', { name: 'Run test', exact: true })
+    await start.waitFor()
+    await expect.poll(async () => start.isEnabled()).toBe(true)
+    const buttonSnapshot = await start.ariaSnapshot()
+    await captureRoutineTest(page, 'test-action', dialog)
+    await start.click()
+    const running = dialog.getByRole('button', { name: 'Running…', exact: true })
+    await running.waitFor()
+    expect(await running.isDisabled()).toBe(true)
+    const runningSnapshot = await running.ariaSnapshot()
+    await captureRoutineTest(page, 'test-running', dialog)
+    await page.close()
+    release.resolve(undefined)
+    await expect.poll(async () => (await firstHost.ctx.bots.routineTestStatus(query)).run?.status).toBe('completed')
+    expect(adapter.inputs.filter(input => input.includes('[BOT ROUTINE TEST]'))).toHaveLength(1)
+    expect(await schedule.catalog()).toEqual(scheduleBefore)
+    expect(await firstHost.ctx.bots.routineHistory({ ...query, limit: 10 })).toMatchObject({ records: [] })
+    web = undefined
+    await firstHost.close()
+
+    web = await launchWebScaffold(options)
+    await configureModel(web)
+    const reopened = await newEnglishPage(browser)
+    const conversation = await selectBot(reopened, web, bot)
+    const trigger = conversation.getByText('Routine test', { exact: true })
+    const result = conversation.getByText(MANUAL_RESULT, { exact: true })
+    await result.waitFor()
+    await trigger.waitFor()
+    expect(await result.count()).toBe(1)
+    await captureRoutineTest(reopened, 'test-chat-result')
+    dialog = await openRoutines(reopened)
+    const completed = dialog.getByText('Test completed', { exact: true })
+    await completed.waitFor()
+    const completionColors = await completed.evaluate((element) => {
+      const controls = element.parentElement
+      if (controls === null) throw new Error('The routine test controls are missing')
+      return { rendered: getComputedStyle(element).color, label: getComputedStyle(controls).color }
+    })
+    expect(completionColors.rendered).toBe(completionColors.label)
+    await dialog.getByRole('button', { name: 'Resume ' + title, exact: true }).waitFor()
+    await captureRoutineTest(reopened, 'test-completed', dialog)
+    await compareOrRefreshGolden(MANUAL_EXPECTED, [
+      buttonSnapshot,
+      runningSnapshot,
+      await trigger.ariaSnapshot(),
+      await result.ariaSnapshot(),
+      await completed.ariaSnapshot(),
+    ].join('\n'), webSnapshotMode())
+    await dialog.getByRole('button', { name: 'Back to chat', exact: true }).click()
+    await dialog.waitFor({ state: 'hidden' })
+    expect(await result.isVisible()).toBe(true)
+  } finally {
+    release.resolve(undefined)
     try {
       await browser?.close()
     } finally {

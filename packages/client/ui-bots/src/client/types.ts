@@ -13,6 +13,7 @@ import type {
   BotInputAttachmentView as SharedBotInputAttachmentView,
   BotRoutineHistoryRequest,
   BotRoutineHistoryValue,
+  BotRoutineTestRun,
   BotRoutineView,
 } from '@yharness/bots/client'
 import type { BotGroupDeliveryStatusView as SharedBotGroupDeliveryStatusView } from '@yharness/bots/client'
@@ -351,6 +352,14 @@ export interface BotSkillManagerActions {
 /** Successful history response shown by the selected Bot's routine manager. */
 export type BotRoutineHistory = Exclude<BotRoutineHistoryValue, { readonly code: string }>
 
+/** Test actions mounted for the owner of a Bot. */
+export interface BotRoutineTestActions {
+  /** Start one test, using the same request identity when retrying it. */
+  readonly start: (botId: string, routineId: string, requestId: string) => Promise<BotRoutineTestRun>
+  /** Read the latest test and the status of its original Bot turn. */
+  readonly status: (botId: string, routineId: string) => Promise<BotRoutineTestRun | undefined>
+}
+
 /** Bot-scoped routine management actions mounted by the Host. */
 export interface BotRoutineManagerActions {
   /** Read timed and event routines owned by one Bot. */
@@ -363,6 +372,8 @@ export interface BotRoutineManagerActions {
   readonly remove: (botId: string, routineId: string) => Promise<void>
   /** Read one bounded routine history page, optionally continuing an older timed page. */
   readonly history: (botId: string, routineId: string, before?: BotRoutineHistoryRequest['before']) => Promise<BotRoutineHistory>
+  /** Owner-only routine tests when the Host supports their durable lifecycle. */
+  readonly test?: BotRoutineTestActions
 }
 
 /** Async avatar capabilities owned by the Client composition. */

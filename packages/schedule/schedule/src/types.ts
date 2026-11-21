@@ -5,10 +5,21 @@
 
 import type { SessionId } from '@yharness/session/types'
 import type { MessageId } from '@yharness/llm/brand'
+import type { ContextFormed } from '@yharness/llm'
 import type { Branded } from '@yharness/brand'
 import type {} from '@yharness/session/types'
 // Type-only: the Workspace registry's archive-admission family map this plugin merges `schedule` into.
 import type {} from '@yharness/workspace/types'
+
+declare module '@yharness/llm' {
+  interface MessageSourceMap {
+    'schedule': {
+      readonly kind: 'schedule'
+      /** An explicit owner-started routine test. Absent for timer delivery. */
+      readonly invocation?: 'test'
+    } & ContextFormed
+  }
+}
 
 /** Stable globally unique reminder identity. */
 export type ScheduleId = Branded<'ScheduleId'>

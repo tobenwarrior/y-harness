@@ -168,6 +168,8 @@
     - strong: Morning check-in
     - paragraph: Review the project.
     - text: Repeats every day
+    - button "Run test"
+    - text: Runs once with this bot’s current permissions.
 - dialog "Imported Grok chat":
   - heading "Imported Grok chat" [level=2]
   - button "Close"

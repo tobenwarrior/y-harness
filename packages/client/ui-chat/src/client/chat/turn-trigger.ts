@@ -52,7 +52,7 @@ export function turnTriggerDetails(node: ContextMessageNode): {
       break
     }
     case 'schedule':
-      title = 'message.trigger.schedule'
+      title = field(source, 'invocation') === 'test' ? 'message.trigger.routineTest' : 'message.trigger.schedule'
       icon = 'schedule'
       break
     case 'tool-jobs':

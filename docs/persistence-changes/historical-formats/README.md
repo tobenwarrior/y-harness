@@ -32,7 +32,7 @@ The index is generated from validated snapshots and the current writer constant.
 | 3 | PR #4320 | [V3](v3.md) | [JSON](v3.schema.json) | 60 / 467 |
 | 4 | PR #4320 | [V4](v4.md) | [JSON](v4.schema.json) | 73 / 693 |
 | 5 | `dsh-v0.2.1-rc.2` | [V5](v5.md) | [JSON](v5.schema.json) | 73 / 695 |
-| 6 | Current checkout | [Current catalog](../../persistence-catalog.md) | [JSON](../../persistence-schema.json) | 74 / 704 |
+| 6 | Current checkout | [Current catalog](../../persistence-catalog.md) | [JSON](../../persistence-schema.json) | 75 / 708 |
 
 <!-- persistence-format-index:end -->
 

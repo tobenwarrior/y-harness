@@ -88,7 +88,7 @@
     },
     {
       "type": "request/header",
-      "seq": 21,
+      "seq": 22,
       "time": 0,
       "data": {
         "header": {
@@ -137,7 +137,7 @@
     },
     {
       "type": "developer/message",
-      "seq": 22,
+      "seq": 23,
       "time": 0,
       "data": {
         "turn": 1,
@@ -155,13 +155,13 @@
           "role": "developer",
           "id": "{{messageId}}"
         },
-        "headerSeq": 21
+        "headerSeq": 22
       },
       "surfaceOp": "append"
     },
     {
       "type": "request/header",
-      "seq": 29,
+      "seq": 30,
       "time": 0,
       "data": {
         "header": {
@@ -209,7 +209,7 @@
     },
     {
       "type": "developer/message",
-      "seq": 30,
+      "seq": 31,
       "time": 0,
       "data": {
         "turn": 1,
@@ -242,6 +242,12 @@
         "operation": "remember",
         "text": "The Python SDK projection keeps this active Bot memory."
       }
+    }
+  ],
+  "routineTestReservations": [
+    {
+      "routineId": "routine-python-snapshot",
+      "messageId": "bot-routine-test-python-snapshot"
     }
   ],
   "toolCalls": [

@@ -2568,7 +2568,10 @@ def build_dynamic_tools_snapshot_files(
     cwd: Path,
 ) -> dict[str, str]:
     """Pin tool declarations, historical schema references, and Python SDK event delivery."""
-    selected_types = {"bot/memory", "request/header", "request/context", "developer/message", "tool/call", "tool/result"}
+    selected_types = {
+        "bot/memory", "bot/routine-test", "request/header", "request/context",
+        "developer/message", "tool/call", "tool/result",
+    }
     events = [event for event in result.events if event.get("type") in selected_types]
     subscribed = [notification.payload["event"] for notification in result.notifications
                   if notification.method == "session.event"
@@ -2583,6 +2586,11 @@ def build_dynamic_tools_snapshot_files(
         "operation": "remember",
         "text": "The Python SDK projection keeps this active Bot memory.",
     }, memories
+    reservations = [event["data"] for event in events if event["type"] == "bot/routine-test"]
+    assert reservations == [{
+        "routineId": "routine-python-snapshot",
+        "messageId": "bot-routine-test-python-snapshot",
+    }], reservations
     headers = [event for event in events if event["type"] == "request/header"]
     assert len(headers) == 3, headers
     names = [[tool["name"] for tool in event["data"]["header"]["tools"]] for event in headers]
@@ -2621,6 +2629,7 @@ def build_dynamic_tools_snapshot_files(
         "requestToolChanges": changes,
         "events": [event for event in events if event["type"] in {"request/header", "request/context", "developer/message"}],
         "memoryEvents": memories,
+        "routineTestReservations": reservations,
         "toolCalls": calls,
         "pingResult": ping,
     }
