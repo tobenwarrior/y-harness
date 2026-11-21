@@ -2200,9 +2200,10 @@ function eventRoutineId(
 
 /** Project one durable event routine into the common native routine view. */
 function eventRoutineView(routine: BotEventRoutine): BotEventRoutineView {
-  const { deliveries, results, admissionWatermark, admissionTombstones, ...view } = routine
+  const { deliveries, results, firstEligibleEventSeq, admissionWatermark, admissionTombstones, ...view } = routine
   void deliveries
   void results
+  void firstEligibleEventSeq
   void admissionWatermark
   void admissionTombstones
   return { ...view, kind: 'event', state: 'waiting', deliveryMode: 'host' }
@@ -2314,9 +2315,10 @@ function retainEventRoutineDeliveries(
 /** Return whether a routine may consume one event during live or restart recovery. */
 function canTriggerEventRoutine(
   routine: BotEventRoutine,
-  input: Pick<EventRoutineTriggerInput, 'eventTime' | 'source' | 'relayContext'>,
+  input: Pick<EventRoutineTriggerInput, 'eventSeq' | 'eventTime' | 'source' | 'relayContext'>,
 ): boolean {
-  if (routine.status !== 'active' || routine.trigger.source !== input.source || input.eventTime < routine.createdAt) return false
+  if (routine.status !== 'active' || routine.trigger.source !== input.source || input.eventTime < routine.createdAt
+    || input.eventSeq < (routine.firstEligibleEventSeq ?? 0)) return false
   return input.relayContext === undefined || input.relayContext.depth < MAX_EVENT_ROUTINE_HOPS
 }
 
@@ -5136,32 +5138,33 @@ export class BotService extends TypertRemoteService {
     return record?.sessionId === sessionId ? [...record.eventRoutines ?? []] : []
   }
 
-  /** Update content or the message source of an event routine. */
-  private async updateEventRoutine(
+  /** Capture the first new sequence under the serialized routine mutation. */
+  private async nextRoutineEventSequence(
+    sessionId: SessionId,
+    routine: BotEventRoutine,
+    signal?: AbortSignal,
+  ): Promise<number> {
+    const { events } = await this.ctx.sessionController.inspect(sessionId, signal)
+    return Math.max(routine.firstEligibleEventSeq ?? 0, sessionEventSequence(events) + 1)
+  }
+
+  /** Resolve and change one routine inside the serialized profile write. */
+  private async mutateEventRoutine(
     sessionId: SessionId,
     id: string,
-    change: { readonly title?: string; readonly prompt?: string; readonly event?: BotEventTrigger },
-    signal?: AbortSignal,
-  ): Promise<BotEventRoutine> {
+    signal: AbortSignal | undefined,
+    change: (routine: BotEventRoutine) => Promise<BotEventRoutine>,
+  ): Promise<BotEventRoutine | undefined> {
     return this.serialize(async () => {
       const domain = await this.getDomain()
       const current = await this.refreshBotRecordFromProfile(domain, sessionId)
-        ?? this.currentBotRecord(domain, sessionId)
-      const routine = current?.eventRoutines?.find(candidate => candidate.id === id)
-      if (current === undefined || routine === undefined || current.sessionId !== sessionId) {
-        throw new BotCollaborationError('target-not-found', `Event routine "${id}" was not found.`)
+      const eventRoutines = current?.eventRoutines
+      const routine = eventRoutines?.find(candidate => candidate.id === id)
+      if (current === undefined || eventRoutines === undefined || routine === undefined || current.sessionId !== sessionId) {
+        return undefined
       }
-      const title = change.title === undefined ? routine.title : scheduleTitle(change.title)
-      const prompt = change.prompt === undefined ? routine.prompt : change.prompt.trim()
-      if (prompt.length === 0 || prompt.length > 16_000) {
-        throw new BotCollaborationError('message-invalid', 'A routine prompt must be non-empty and at most 16000 characters.')
-      }
+      const nextRoutine = await change(routine)
       signal?.throwIfAborted()
-      const nextRoutine: BotEventRoutine = {
-        ...routine, title, prompt, ...(change.event === undefined ? {} : { trigger: change.event }),
-        updatedAt: Math.max(Date.now(), routine.updatedAt),
-      }
-      const eventRoutines = current.eventRoutines ?? []
       const next: BotRecord = {
         ...current, eventRoutines: eventRoutines.map(candidate => candidate.id === id ? nextRoutine : candidate),
         updatedAt: Math.max(Date.now(), current.updatedAt),
@@ -5170,6 +5173,32 @@ export class BotService extends TypertRemoteService {
       this.emitChanged()
       return nextRoutine
     })
+  }
+
+  /** Update an event routine in the latest durable Bot profile. */
+  private async updateEventRoutine(
+    sessionId: SessionId,
+    id: string,
+    change: { readonly title?: string; readonly prompt?: string; readonly event?: BotEventTrigger },
+    signal?: AbortSignal,
+  ): Promise<BotEventRoutine> {
+    const updated = await this.mutateEventRoutine(sessionId, id, signal, async (routine) => {
+      const title = change.title === undefined ? routine.title : scheduleTitle(change.title)
+      const prompt = change.prompt === undefined ? routine.prompt : change.prompt.trim()
+      if (prompt.length === 0 || prompt.length > 16_000) {
+        throw new BotCollaborationError('message-invalid', 'A routine prompt must be non-empty and at most 16000 characters.')
+      }
+      const trigger = change.event ?? routine.trigger
+      const cutoff = routine.status === 'active' && trigger.source !== routine.trigger.source
+        ? { firstEligibleEventSeq: await this.nextRoutineEventSequence(sessionId, routine, signal) }
+        : {}
+      return {
+        ...routine, title, prompt, trigger, ...cutoff,
+        updatedAt: Math.max(Date.now(), routine.updatedAt),
+      }
+    })
+    if (updated === undefined) throw new BotCollaborationError('target-not-found', `Event routine "${id}" was not found.`)
+    return updated
   }
 
   /** Delete one event routine and its bounded run history. */
@@ -5207,31 +5236,22 @@ export class BotService extends TypertRemoteService {
     return latest === undefined ? resumed : { ...eventRoutineView(latest), resumed: true }
   }
 
+  /** Change activation in the latest durable Bot profile. */
   private async setEventRoutineStatus(
     sessionId: SessionId,
     id: string,
     status: 'active' | 'paused',
     signal?: AbortSignal,
   ): Promise<unknown> {
-    return this.serialize(async () => {
-      const domain = await this.getDomain()
-      const current = await this.refreshBotRecordFromProfile(domain, sessionId)
-        ?? this.currentBotRecord(domain, sessionId)
-      const routine = current?.eventRoutines?.find(candidate => candidate.id === id)
-      if (current === undefined || routine === undefined || current.sessionId !== sessionId) {
-        return { id, [status === 'active' ? 'resumed' : 'paused']: false, code: 'schedule_not_found' as const }
-      }
-      signal?.throwIfAborted()
-      const nextRoutine = { ...routine, status, updatedAt: Math.max(Date.now(), routine.updatedAt) }
-      const next: BotRecord = {
-        ...current,
-        eventRoutines: (current.eventRoutines ?? []).map(candidate => candidate.id === id ? nextRoutine : candidate),
-        updatedAt: Math.max(Date.now(), current.updatedAt),
-      }
-      await this.commitEventRoutineRecord(current, next, signal)
-      this.emitChanged()
-      return { ...eventRoutineView(nextRoutine), [status === 'active' ? 'resumed' : 'paused']: true }
+    const next = await this.mutateEventRoutine(sessionId, id, signal, async (routine) => {
+      const cutoff = status === 'active' && routine.status === 'paused'
+        ? { firstEligibleEventSeq: await this.nextRoutineEventSequence(sessionId, routine, signal) }
+        : {}
+      return { ...routine, status, ...cutoff, updatedAt: Math.max(Date.now(), routine.updatedAt) }
     })
+    const key = status === 'active' ? 'resumed' : 'paused'
+    if (next === undefined) return { id, [key]: false, code: 'schedule_not_found' as const }
+    return { ...eventRoutineView(next), [key]: true }
   }
 
   /** Read bounded event deliveries and completed model results newest first. */
