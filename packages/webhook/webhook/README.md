@@ -45,6 +45,8 @@ Successful `Agent.followup()` is the webhook operation's commit point. The messa
 
 Load the runtime on the Web Host plane after Agents, model defaults, agent presets, permission presets, titles, and the Workspace registry. User-authored rule plugins inject `webhookRuntime` and yield the disposer returned by `register()` through their own effect.
 
+HTTP adapters can use `readBoundedUtf8Body` to read exact UTF-8 request text within a byte limit. The reader rejects invalid lengths, incomplete requests, and invalid encodings before the adapter parses JSON or verifies a signature.
+
 The [GitHub review guide](../../../docs/user/guide/github-review.md) shows a rule module, dedicated ingress port, secret setup, and Workspace routing.
 
 <a id="model-experience"></a>

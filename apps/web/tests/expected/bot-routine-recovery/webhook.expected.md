@@ -1,0 +1,12 @@
+- group "Webhook connection":
+  - text: Endpoint
+  - code: hooks.example.invalid
+  - button "Copy URL"
+  - text: Webhook key
+  - button "Copy key"
+  - button "Copy authorization header"
+  - button "Rotate key"
+- button "Replace key"
+- text: External event received
+- paragraph: The routine handled the new message.
+- text: Delivered

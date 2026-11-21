@@ -1047,6 +1047,8 @@ export const TYPE_LINK_EXEMPTIONS: Readonly<Record<string, string>> = {
   BotRoutineTestRequest: 'Bot routine test input is owned by packages/agents/bots/README.md and src/types.ts',
   BotRoutineTestRun: 'Bot routine test state is owned by packages/agents/bots/README.md and src/types.ts',
   BotRoutineTestStatusValue: 'Bot routine test status is owned by packages/agents/bots/README.md and src/types.ts',
+  BotRoutineWebhookReceiver: 'Bot webhook route registration is owned by packages/agents/bots/README.md and src/webhook-routines.ts',
+  BotRoutineWebhookSetup: 'Bot webhook connection details are owned by packages/agents/bots/README.md and src/types.ts',
   BotRoutinePauseValue: 'Bot routine pause result is owned by packages/agents/bots/README.md and src/types.ts',
   BotRoutineResumeValue: 'Bot routine resume result is owned by packages/agents/bots/README.md and src/types.ts',
   BotRoutineDeleteValue: 'Bot routine deletion result is owned by packages/agents/bots/README.md and src/types.ts',

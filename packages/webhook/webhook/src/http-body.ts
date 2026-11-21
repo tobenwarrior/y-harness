@@ -1,4 +1,4 @@
-/** Bounded raw HTTP body intake for GitHub signature verification. */
+/** Bounded raw HTTP body intake for webhook adapters. */
 
 import type { IncomingMessage } from 'node:http'
 
@@ -46,7 +46,7 @@ export async function readBoundedUtf8Body(
   const chunks: Buffer[] = []
   let size = 0
   try {
-    for await (const raw of request) {
+    for await (const raw of request.iterator({ destroyOnReturn: false })) {
       const chunk = Buffer.isBuffer(raw) ? raw : Buffer.from(raw as string)
       size += chunk.byteLength
       if (size > maxBodyBytes) {
@@ -63,7 +63,7 @@ export async function readBoundedUtf8Body(
   try {
     return new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks, size))
   } catch {
-    // TextDecoder is the only statement in the try; GitHub JSON must be valid UTF-8.
+    // Reject invalid UTF-8 without putting request data into the response.
     throw new WebhookHttpError(400, 'request body is not valid UTF-8')
   }
 }

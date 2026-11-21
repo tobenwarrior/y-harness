@@ -206,6 +206,7 @@ import type {
   BotRoutineTestRequest,
   BotRoutineTestRun,
   BotRoutineTestStatusValue,
+  BotRoutineWebhookSetup,
   BotRoutineView,
   BotScheduleRoutineView,
   BotRecord,
@@ -305,6 +306,11 @@ import {
   botEventTriggerSchema, githubRoutineFollowup, githubRoutineMessageId, githubRoutineSourceSchema,
   matchesGitHubRoutine, projectGitHubRoutineActivity, routineFollowupId, sameRoutineTrigger,
 } from './github-routines.ts'
+import {
+  BOT_ROUTINE_WEBHOOK_PATH, createRoutineWebhookHandler, matchesRoutineWebhookKey, newRoutineWebhookVersion,
+  routineWebhookFollowup, routineWebhookKey, routineWebhookMessageId, routineWebhookSetup,
+  type BotRoutineWebhookReceiver, type BotRoutineWebhookRequest, type BotRoutineWebhookStatus,
+} from './webhook-routines.ts'
 
 type RoutineArguments = Record<string, unknown>
 
@@ -2207,14 +2213,24 @@ function eventRoutineId(
 
 /** Project one durable event routine into the common native routine view. */
 function eventRoutineView(routine: BotEventRoutine): BotEventRoutineView {
-  const { deliveries, results, firstEligibleEventSeq, firstEligibleGitHubAt, admissionWatermark, admissionTombstones, ...view } = routine
+  const {
+    deliveries, results, firstEligibleEventSeq, firstEligibleGitHubAt, firstEligibleWebhookAt, webhookKeyVersion,
+    admissionWatermark, admissionTombstones, ...view
+  } = routine
   void deliveries
   void results
   void firstEligibleEventSeq
   void firstEligibleGitHubAt
+  void firstEligibleWebhookAt
+  void webhookKeyVersion
   void admissionWatermark
   void admissionTombstones
   return { ...view, kind: 'event', state: 'waiting', deliveryMode: 'host' }
+}
+
+/** Preserve receipt metadata while limiting payload access to the owning Bot chat. */
+function publicEventRoutineDelivery(delivery: BotEventRoutineDelivery): BotEventRoutineDelivery {
+  return delivery.webhook === undefined ? delivery : { ...delivery, webhook: {} }
 }
 
 /** Project one retained timed routine into the Bot-scoped catalog view. */
@@ -2809,6 +2825,7 @@ export class BotService extends TypertRemoteService {
   }>()
   private readonly recordsBySession = new Map<string, BotStoredRecord>()
   private readonly githubRoutineSources = new Set<WebhookSourceId>()
+  private routineWebhookPublicRoot: string | undefined
   private readonly memoriesBySession = new Map<string, Map<string, BotMemoryRecord>>()
   private readonly forgottenMemoryIdsBySession = new Map<string, Set<string>>()
   private readonly memoryLoads = new Map<string, Promise<void>>()
@@ -5113,11 +5130,74 @@ export class BotService extends TypertRemoteService {
     return () => { this.githubRoutineSources.delete(id) }
   }
 
+  /**
+   * Mount the routine receiver for one Web instance with a durable credential store.
+   * @param publicRoot - Advertised HTTPS application URL, including any proxy prefix.
+   * @param maxBodyBytes - Maximum raw request body size.
+   * @returns The prefix route and its admission disposer.
+   */
+  registerRoutineWebhookReceiver(publicRoot: string, maxBodyBytes: number): BotRoutineWebhookReceiver {
+    if (this.credentials === undefined) throw new Error('Webhook routines require durable credentials')
+    if (this.routineWebhookPublicRoot !== undefined) throw new Error('The Bot routine webhook receiver is already registered')
+    this.routineWebhookPublicRoot = publicRoot
+    const receiver = createRoutineWebhookHandler(maxBodyBytes, request => this.admitRoutineWebhook(request))
+    return {
+      route: { kind: 'prefix', path: BOT_ROUTINE_WEBHOOK_PATH, handler: receiver },
+      dispose: () => { this.routineWebhookPublicRoot = undefined },
+    }
+  }
+
   /** Fail routine creation or selection changes when the signed ingress is absent. */
   private requireRoutineSource(trigger: BotEventTrigger): void {
     if (trigger.type === 'github' && !this.githubRoutineSources.has(trigger.source)) {
       throw new BotCollaborationError('message-invalid', 'That GitHub routine source is unavailable on this Host.')
     }
+    if (trigger.type === 'webhook' && this.routineWebhookPublicRoot === undefined) {
+      throw new BotCollaborationError('message-invalid', 'Webhook routines are unavailable on this Host.')
+    }
+  }
+
+  /** Reserve one authenticated request before replying to the caller. */
+  private async admitRoutineWebhook(request: BotRoutineWebhookRequest): Promise<BotRoutineWebhookStatus> {
+    return this.serialize(async () => {
+      const credentials = this.credentials
+      if (this.stopping || credentials === undefined || this.routineWebhookPublicRoot === undefined) return 404
+      let bot: BotStoredRecord
+      try {
+        bot = await this.readOwnedBot(request.botId)
+      } catch (error: unknown) {
+        if (error instanceof RemoteError && error.code === 'bot/not-found') return 404
+        throw error
+      }
+      const routines = bot.eventRoutines ?? []
+      const routine = routines.find(item => item.id === request.routineId)
+      if (bot.state !== 'active' || routine?.trigger.type !== 'webhook' || routine.webhookKeyVersion === undefined) return 404
+      const key = await routineWebhookKey(credentials, bot.id, routine.id, routine.webhookKeyVersion)
+      if (!matchesRoutineWebhookKey(request.key, key)) return 404
+      const messageId = routineWebhookMessageId(bot.sessionId, routine.id, request.deliveryId)
+      if (routine.deliveries.some(item => item.messageId === messageId)) return 200
+      if (routine.status !== 'active' || request.receivedAt < routine.createdAt
+        || request.receivedAt <= (routine.firstEligibleWebhookAt ?? 0)) return 409
+      const { events } = await this.ctx.sessionController.inspect(bot.sessionId)
+      if (events.some(event => event.type === 'user/message' && event.data.id === messageId)
+        || botInboxMessageState(events, messageId) !== undefined) return 200
+      if (routine.deliveries.length >= MAX_ROUTINE_DELIVERIES && routine.deliveries[0]?.status === 'pending') return 429
+      const reservation: BotEventRoutineDelivery = {
+        webhook: request.payload === undefined ? {} : { payload: request.payload },
+        messageId, status: 'pending', createdAt: new Date(request.receivedAt).toISOString(),
+      }
+      const nextRoutine = {
+        ...routine, ...retainEventRoutineDeliveries(routine, [...routine.deliveries, reservation]),
+        updatedAt: Math.max(Date.now(), routine.updatedAt),
+      }
+      await this.commitEventRoutineRecord(bot, {
+        ...bot, eventRoutines: routines.map(item => item.id === routine.id ? nextRoutine : item),
+        updatedAt: Math.max(Date.now(), bot.updatedAt + 1),
+      })
+      this.emitChanged()
+      this.scheduleCanceledEventRoutineRetry(bot.sessionId, routine.id, messageId)
+      return 200
+    })
   }
 
   /**
@@ -5200,6 +5280,7 @@ export class BotService extends TypertRemoteService {
       const routine: BotEventRoutine = {
         id, title, prompt, trigger: request.event, status: 'active', createdAt: now, updatedAt: now,
         deliveries: [], results: [],
+        ...(request.event.type === 'webhook' ? { webhookKeyVersion: newRoutineWebhookVersion() } : {}),
       }
       const next: BotRecord = { ...current, eventRoutines: [...current.eventRoutines ?? [], routine], updatedAt: now }
       await this.commitEventRoutineRecord(current, next, signal)
@@ -5222,8 +5303,9 @@ export class BotService extends TypertRemoteService {
     routine: BotEventRoutine,
     trigger: BotEventTrigger,
     signal?: AbortSignal,
-  ): Promise<Pick<BotEventRoutine, 'firstEligibleEventSeq' | 'firstEligibleGitHubAt'>> {
+  ): Promise<Pick<BotEventRoutine, 'firstEligibleEventSeq' | 'firstEligibleGitHubAt' | 'firstEligibleWebhookAt'>> {
     if (trigger.type === 'github') return { firstEligibleGitHubAt: Math.max(routine.firstEligibleGitHubAt ?? 0, Date.now()) }
+    if (trigger.type === 'webhook') return { firstEligibleWebhookAt: Math.max(routine.firstEligibleWebhookAt ?? 0, Date.now()) }
     const { events } = await this.ctx.sessionController.inspect(sessionId, signal)
     return { firstEligibleEventSeq: Math.max(routine.firstEligibleEventSeq ?? 0, sessionEventSequence(events) + 1) }
   }
@@ -5276,6 +5358,7 @@ export class BotService extends TypertRemoteService {
         : {}
       return {
         ...routine, title, prompt, trigger, ...cutoff,
+        ...(changed && trigger.type === 'webhook' ? { webhookKeyVersion: newRoutineWebhookVersion() } : {}),
         updatedAt: Math.max(Date.now(), routine.updatedAt),
       }
     })
@@ -5343,7 +5426,7 @@ export class BotService extends TypertRemoteService {
     if (routine === undefined) return { id, code: 'schedule_not_found' as const }
     return {
       id,
-      deliveries: routine.deliveries.slice(-limit).reverse(),
+      deliveries: routine.deliveries.slice(-limit).reverse().map(publicEventRoutineDelivery),
       results: routine.results.slice(-limit).reverse(),
     }
   }
@@ -5724,14 +5807,21 @@ export class BotService extends TypertRemoteService {
     }
     if (!alreadyQueued) {
       await commitDelivery({ ...attempt, dispatchStartedAt: new Date(Date.now()).toISOString() })
-      const input: Pick<UserMessage, 'content' | 'source'> = currentDelivery.github === undefined ? {
-        content: [{ type: 'text', text: `[BOT EVENT ROUTINE]\n${currentRoutine.prompt}` }],
-        source: {
-          kind: 'bot-event-routine', form: 'notice', summary: `Routine "${currentRoutine.title}" triggered`,
-          routineId: currentRoutine.id, triggerEventSeq: currentDelivery.triggerEventSeq,
-          ...relayContextOf({ chainId: currentDelivery.chainId, depth: currentDelivery.depth }, `${String(currentRecord.sessionId)}:${String(currentDelivery.messageId)}`),
-        },
-      } : githubRoutineFollowup(currentRoutine, currentDelivery.github)
+      let input: Pick<UserMessage, 'content' | 'source'>
+      if (currentDelivery.webhook !== undefined) {
+        input = routineWebhookFollowup(currentRoutine, currentDelivery.messageId, currentDelivery.webhook.payload)
+      } else if (currentDelivery.github !== undefined) {
+        input = githubRoutineFollowup(currentRoutine, currentDelivery.github)
+      } else {
+        input = {
+          content: [{ type: 'text', text: `[BOT EVENT ROUTINE]\n${currentRoutine.prompt}` }],
+          source: {
+            kind: 'bot-event-routine', form: 'notice', summary: `Routine "${currentRoutine.title}" triggered`,
+            routineId: currentRoutine.id, triggerEventSeq: currentDelivery.triggerEventSeq,
+            ...relayContextOf({ chainId: currentDelivery.chainId, depth: currentDelivery.depth }, `${String(currentRecord.sessionId)}:${String(currentDelivery.messageId)}`),
+          },
+        }
+      }
       resolved.agent.followup(freezeMessage({ id: currentDelivery.messageId, role: 'user', ...input }))
     }
     // Even an already-admitted inbox message needs a fresh durability barrier:
@@ -7156,7 +7246,7 @@ export class BotService extends TypertRemoteService {
   }
 
   /**
-   * List timed and message-triggered routines owned by one Bot.
+   * List timed and event-triggered routines owned by one Bot.
    *
    * This lookup never activates the Bot Session. Timed rows are read from the
    * Host Schedule catalog and event rows from the Bot record, after checking
@@ -7179,6 +7269,57 @@ export class BotService extends TypertRemoteService {
     }
     for (const routine of bot.eventRoutines ?? []) routines.push(botEventRoutineView(routine, bot))
     return { routines }
+  }
+
+  /**
+   * Read the current webhook connection details after checking the Bot owner.
+   * @param request - The owning Bot and routine.
+   * @returns Current HTTPS URL and Bearer value.
+   */
+  @Remote('routineWebhookSetup')
+  async routineWebhookSetup(request: BotRoutineLifecycleRequest): Promise<BotRoutineWebhookSetup> {
+    return this.resolveRoutineWebhookSetup(request, false)
+  }
+
+  /**
+   * Replace the credential for a saved webhook routine and revoke its previous value.
+   * @param request - The owning Bot and routine.
+   * @returns The unchanged POST URL and replacement Bearer value.
+   */
+  @Remote('rotateRoutineWebhookKey')
+  async rotateRoutineWebhookKey(request: BotRoutineLifecycleRequest): Promise<BotRoutineWebhookSetup> {
+    return this.resolveRoutineWebhookSetup(request, true)
+  }
+
+  /** Resolve the current key under the same writer used for rotation and intake. */
+  private async resolveRoutineWebhookSetup(request: BotRoutineLifecycleRequest, rotate: boolean): Promise<BotRoutineWebhookSetup> {
+    if (!isRequestObject(request)) return badRequest('Bot id is required')
+    const botId = normalizeBotId(request.botId)
+    if (botId === undefined) return badRequest('Bot id is required')
+    const routineId = normalizeRoutineId(request.routineId)
+    return this.serialize(async () => {
+      const bot = await this.readOwnedBot(botId)
+      const routines = bot.eventRoutines ?? []
+      const routine = routines.find(item => item.id === routineId)
+      if (routine === undefined) throw new RemoteError('bot/routine-not-found', 'Routine was not found.', { botId })
+      const credentials = this.credentials
+      const publicRoot = this.routineWebhookPublicRoot
+      if (bot.state !== 'active' || routine.trigger.type !== 'webhook' || routine.webhookKeyVersion === undefined
+        || credentials === undefined || publicRoot === undefined) {
+        throw new RemoteError('bot/routine-webhook-unavailable', 'Webhook setup is unavailable for this routine.', { botId })
+      }
+      const version = rotate ? newRoutineWebhookVersion() : routine.webhookKeyVersion
+      const key = await routineWebhookKey(credentials, bot.id, routine.id, version)
+      if (rotate) {
+        const now = Date.now()
+        const nextRoutine = { ...routine, webhookKeyVersion: version, updatedAt: Math.max(now, routine.updatedAt) }
+        await this.commitEventRoutineRecord(bot, {
+          ...bot, eventRoutines: routines.map(item => item.id === routineId ? nextRoutine : item),
+          updatedAt: Math.max(now, bot.updatedAt + 1),
+        })
+      }
+      return routineWebhookSetup(publicRoot, bot.id, routine.id, key)
+    })
   }
 
   /**
@@ -7209,7 +7350,7 @@ export class BotService extends TypertRemoteService {
       const routine = eventRoutine ?? (await schedule?.catalog())?.find(candidate =>
         String(candidate.id) === routineId && candidate.sessionId === bot.sessionId)
       if (routine === undefined) throw new RemoteError('bot/routine-not-found', 'Routine was not found.', { botId })
-      if (routine.status === 'inactive' || eventRoutine?.trigger.type === 'github') {
+      if (routine.status === 'inactive' || (eventRoutine !== undefined && eventRoutine.trigger.type !== 'message')) {
         throw new RemoteError('bot/routine-test-unavailable', 'This routine cannot be tested directly.', { botId })
       }
       const resolved = await this.ctx.sessionController.resolveAgent(bot.sessionId)
@@ -7370,7 +7511,7 @@ export class BotService extends TypertRemoteService {
       return {
         kind: 'event',
         id: routineId,
-        deliveries: eventRoutine.deliveries.slice(-request.limit).reverse(),
+        deliveries: eventRoutine.deliveries.slice(-request.limit).reverse().map(publicEventRoutineDelivery),
         results: eventRoutine.results.slice(-request.limit).reverse(),
       }
     }

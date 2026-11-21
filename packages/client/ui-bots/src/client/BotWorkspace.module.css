@@ -1016,6 +1016,12 @@
   opacity: 0.7;
 }
 
+.routineModal {
+  width: min(724px, 100%);
+  max-height: 100%;
+  min-height: 0;
+}
+
 .routineOwner {
   display: flex;
   align-items: center;
@@ -1193,6 +1199,56 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 4px;
+}
+
+.routineWebhook {
+  display: grid;
+  gap: 10px;
+  margin-top: 4px;
+  padding-top: 12px;
+  border-top: 0.5px solid var(--yh-alias-border-l2);
+}
+
+.routineWebhookFields {
+  display: grid;
+  min-width: 0;
+  gap: 0;
+  padding: 0 8px;
+  border: 0.5px solid var(--yh-alias-border-l2);
+  border-radius: var(--yh-radius-md);
+  background: var(--yh-alias-bg-layer-1);
+}
+
+.routineWebhookRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 7px 0;
+}
+
+.routineWebhookRow + .routineWebhookRow {
+  border-top: 0.5px solid var(--yh-alias-border-l2);
+}
+
+.routineWebhookValue {
+  display: grid;
+  flex: 1 1 130px;
+  min-width: 0;
+  color: var(--yh-alias-label-secondary);
+  overflow-wrap: anywhere;
+}
+
+.routineWebhookValue code {
+  color: var(--yh-alias-label-primary);
+}
+
+.routineWebhookActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
 }
 
 .routineRule strong {

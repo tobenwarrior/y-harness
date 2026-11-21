@@ -8,6 +8,7 @@ import { createWebhookSession } from './session.ts'
 import type { VerifiedWebhookDelivery, WebhookRule, WebhookSessionRequest } from './types.ts'
 
 export * from './brand.ts'
+export { readBoundedUtf8Body, WebhookHttpError } from './http-body.ts'
 export type * from './types.ts'
 
 declare module '@yharness/cordis' {

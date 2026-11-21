@@ -134,6 +134,14 @@ collaborationFor(agent: Pick<Agent, 'id'>): Promise<BotCollaborationClient>
 registerGitHubRoutineSource(source: string): () => void
 
 /**
+ * Mount the routine receiver for one Web instance with a durable credential store.
+ * @param publicRoot - Advertised HTTPS application URL, including any proxy prefix.
+ * @param maxBodyBytes - Maximum raw request body size.
+ * @returns The prefix route and its admission disposer.
+ */
+registerRoutineWebhookReceiver(publicRoot: string, maxBodyBytes: number): BotRoutineWebhookReceiver
+
+/**
  * Reserve matching Bot runs before acknowledging a verified GitHub delivery.
  * @param delivery - Delivery authenticated by the registered GitHub ingress.
  * @returns Settles after matching runs are durable, without waiting for a model response.
@@ -287,7 +295,7 @@ async admitGitHubRoutineDelivery(delivery: VerifiedWebhookDelivery): Promise<voi
 @Remote('inspectSharedRosterFence') async inspectSharedRosterFence(): Promise<BotSharedRosterFenceDiagnosticValue>
 
 /**
- * List timed and message-triggered routines owned by one Bot.
+ * List timed and event-triggered routines owned by one Bot.
  *
  * This lookup never activates the Bot Session. Timed rows are read from the
  * Host Schedule catalog and event rows from the Bot record, after checking
@@ -296,6 +304,20 @@ async admitGitHubRoutineDelivery(delivery: VerifiedWebhookDelivery): Promise<voi
  * @returns The Bot's active, paused, and ended routine rows.
  */
 @Remote('listRoutines') async listRoutines(request: BotRoutineListRequest): Promise<BotRoutineListValue>
+
+/**
+ * Read the current webhook connection details after checking the Bot owner.
+ * @param request - The owning Bot and routine.
+ * @returns Current HTTPS URL and Bearer value.
+ */
+@Remote('routineWebhookSetup') async routineWebhookSetup(request: BotRoutineLifecycleRequest): Promise<BotRoutineWebhookSetup>
+
+/**
+ * Replace the credential for a saved webhook routine and revoke its previous value.
+ * @param request - The owning Bot and routine.
+ * @returns The unchanged POST URL and replacement Bearer value.
+ */
+@Remote('rotateRoutineWebhookKey') async rotateRoutineWebhookKey(request: BotRoutineLifecycleRequest): Promise<BotRoutineWebhookSetup>
 
 /**
  * Run the saved instructions once in the owning Bot Session. The Schedule

@@ -451,3 +451,173 @@ it.skipIf(webSnapshotMode() === 'record')('tests a paused routine in the same ch
     }
   }
 }, 120_000)
+
+const WEBHOOK_OVERLAY = fileURLToPath(new URL(
+  '../../../apps/cli/config/examples/bot-routine-webhooks/cordis.yml', import.meta.url,
+))
+const WEBHOOK_EXPECTED = fileURLToPath(new URL('./expected/bot-routine-recovery/webhook.expected.md', import.meta.url))
+const WEBHOOK_TITLE = 'Review incoming reports'
+const WEBHOOK_HOST = 'hooks.example.invalid'
+
+async function captureRoutineWebhook(page: Page, name: string, dialog?: Locator): Promise<void> {
+  const screenshots = process.env.DSH_BOT_ROUTINE_WEBHOOK_SCREENSHOTS
+  if (screenshots === undefined) return
+  for (const colorScheme of ['dark', 'light'] as const) {
+    await page.emulateMedia({ colorScheme, reducedMotion: 'reduce' })
+    for (const width of [1440, 480]) {
+      await page.setViewportSize({ width, height: 900 })
+      if (dialog !== undefined) {
+        const bounds = await dialog.boundingBox()
+        if (bounds === null) throw new Error('Routines dialog is unavailable')
+        expect(bounds.x).toBeGreaterThanOrEqual(0)
+        expect(bounds.x + bounds.width).toBeLessThanOrEqual(width)
+        expect(bounds.y + bounds.height).toBeLessThanOrEqual(900)
+      }
+      await page.screenshot({ path: join(screenshots, name + '-' + colorScheme + '-' + String(width) + '.png'), animations: 'disabled' })
+    }
+  }
+}
+
+it.skipIf(webSnapshotMode() === 'record')('accepts a private keyed routine webhook once and keeps the reply in the same Bot chat', async () => {
+  const workspaceCwd = await mkdtemp(join(tmpdir(), 'yh-webhook-routine-'))
+  const persistenceRoot = join(workspaceCwd, 'sessions')
+  const overlay = join(workspaceCwd, 'webhook-routines.yml')
+  const options = { workspaceCwd, persistenceRoot, extraOverlayPath: overlay, replayFixture: FIXTURE, replayProvidersOnly: true }
+  let web: WebScaffold | undefined
+  let browser: Browser | undefined
+  try {
+    await mkdir(persistenceRoot)
+    const example = await readFile(WEBHOOK_OVERLAY, 'utf8')
+    await writeFile(overlay, example.replace('https://hooks.example/', 'https://' + WEBHOOK_HOST + '/workbench/'))
+    web = await launchWebScaffold(options)
+    const firstHost = web
+    const adapter = await configureModel(firstHost)
+    const { bot } = await firstHost.ctx.bots.create({ name: 'Report Scout', cwd: workspaceCwd, identity: 'browse', accent: 'teal' })
+    await createRoutine(firstHost, bot, WEBHOOK_TITLE, { type: 'webhook' }, false)
+    expect(await firstHost.ctx.bots.listRoutines({ botId: bot.id })).toEqual({ routines: [] })
+    const entry = await createRoutine(firstHost, bot, WEBHOOK_TITLE, { type: 'webhook' })
+    if (entry === undefined) throw new Error('The webhook routine was not created')
+    const query = { botId: entry.botId, routineId: entry.routineId }
+    const setup = await firstHost.ctx.bots.routineWebhookSetup(query)
+    const route = '/bot-hooks/' + String(bot.id) + '/' + query.routineId
+    expect(setup.postUrl).toBe('https://' + WEBHOOK_HOST + '/workbench' + route)
+    const caller = (host: WebScaffold) => 'http://127.0.0.1:' + String(host.ctx.webServer.port) + route
+    const send = async (host: WebScaffold, key: string, id: string, body?: string): Promise<number> => {
+      const response = await fetch(caller(host), {
+        method: 'POST',
+        headers: { authorization: 'Bearer ' + key, 'idempotency-key': id, 'content-type': 'application/json' },
+        ...(body === undefined ? {} : { body }),
+      })
+      await response.body?.cancel()
+      return response.status
+    }
+    expect((await fetch(caller(firstHost) + '?key=ignored', { method: 'POST' })).status).toBe(404)
+    expect((await fetch(caller(firstHost), { method: 'POST' })).status).toBe(404)
+    expect((await fetch(caller(firstHost))).status).toBe(405)
+    expect(await send(firstHost, 'A'.repeat(43), 'wrong-key')).toBe(404)
+    expect(await send(firstHost, setup.key, 'bad/json', '{}')).toBe(400)
+    expect(await send(firstHost, setup.key, 'invalid-json', '{')).toBe(400)
+    expect(await send(firstHost, setup.key, 'oversize', JSON.stringify('x'.repeat(16_384)))).toBe(413)
+
+    browser = await chromium.launch()
+    const page = await newEnglishPage(browser)
+    await page.addInitScript(() => {
+      let clipboardText = ''
+      Object.defineProperty(navigator, 'clipboard', { value: {
+        writeText: async (text: string) => { clipboardText = text },
+        readText: async () => clipboardText,
+      } })
+    })
+    const tripwire = watchConsole(page)
+    await selectBot(page, firstHost, bot)
+    const dialog = await openRoutines(page)
+    const connection = dialog.getByRole('group', { name: 'Webhook connection', exact: true })
+    const copyURL = connection.getByRole('button', { name: 'Copy URL', exact: true })
+    const copyKey = connection.getByRole('button', { name: 'Copy key', exact: true })
+    const copyHeader = connection.getByRole('button', { name: 'Copy authorization header', exact: true })
+    await copyURL.waitFor()
+    const setupSnapshot = await connection.ariaSnapshot()
+    expect((await connection.innerText()).includes(setup.key)).toBe(false)
+    await captureRoutineWebhook(page, 'webhook-setup', dialog)
+    await copyURL.click()
+    await expect.poll(() => page.evaluate(async () => await navigator.clipboard.readText())).toBe(setup.postUrl)
+    await copyKey.click()
+    await expect.poll(async () => (await page.evaluate(async () => await navigator.clipboard.readText())) === setup.key).toBe(true)
+    await copyHeader.click()
+    await expect.poll(async () => (await page.evaluate(async () => await navigator.clipboard.readText())) === 'Authorization: Bearer ' + setup.key).toBe(true)
+    await dialog.getByRole('button', { name: 'Pause ' + WEBHOOK_TITLE, exact: true }).click()
+    const resume = dialog.getByRole('button', { name: 'Resume ' + WEBHOOK_TITLE, exact: true })
+    await resume.waitFor()
+    expect(await send(firstHost, setup.key, 'while-paused', '{"title":"Paused"}')).toBe(409)
+    expect(await firstHost.ctx.bots.routineHistory(entry)).toMatchObject({ deliveries: [], results: [] })
+    await resume.click()
+    await dialog.getByRole('button', { name: 'Pause ' + WEBHOOK_TITLE, exact: true }).waitFor()
+
+    await connection.getByRole('button', { name: 'Rotate key', exact: true }).click()
+    const replace = connection.getByRole('button', { name: 'Replace key', exact: true })
+    await replace.waitFor()
+    const rotationSnapshot = await replace.ariaSnapshot()
+    await captureRoutineWebhook(page, 'webhook-rotate', dialog)
+    await replace.click()
+    await connection.getByText('Key replaced. Copy the new key or authorization header.', { exact: true }).waitFor()
+    const rotated = await firstHost.ctx.bots.routineWebhookSetup(query)
+    expect(rotated.key !== setup.key).toBe(true)
+    expect(rotated.postUrl).toBe(setup.postUrl)
+    expect(await send(firstHost, setup.key, 'revoked-key')).toBe(404)
+    await page.evaluate(async () => { await navigator.clipboard.writeText('') })
+    expect(tripwire.pageErrors).toEqual([])
+    await page.context().close()
+
+    const body = '{"title":"Sample report","status":"ready"}'
+    expect(await Promise.all([
+      send(firstHost, rotated.key, 'fresh-report', body),
+      send(firstHost, rotated.key, 'fresh-report', body),
+    ])).toEqual([200, 200])
+    await expect.poll(async () => await firstHost.ctx.bots.routineHistory(entry), { timeout: 20_000 }).toMatchObject({
+      deliveries: [{ status: 'delivered', webhook: {} }],
+      results: [{ status: 'completed', output: RESULT }],
+    })
+    expect(adapter.inputs.filter(input => input.includes('Webhook payload from an external sender.'))).toHaveLength(1)
+    expect(adapter.inputs.some(input => input.includes(JSON.stringify(body)))).toBe(true)
+    expect(JSON.stringify(await firstHost.ctx.bots.routineHistory(entry))).not.toContain(body)
+
+    web = undefined
+    await firstHost.close()
+    web = await launchWebScaffold(options)
+    const reopened = web
+    await configureModel(reopened)
+    const reopenedSetup = await reopened.ctx.bots.routineWebhookSetup(query)
+    expect(reopenedSetup.key === rotated.key).toBe(true)
+    expect(await send(reopened, reopenedSetup.key, 'fresh-report', body)).toBe(200)
+    const reopenedPage = await newEnglishPage(browser)
+    const conversation = await selectBot(reopenedPage, reopened, bot)
+    const notice = conversation.getByText('External event received', { exact: true })
+    const output = conversation.getByText(RESULT, { exact: true })
+    await output.waitFor()
+    expect(await output.count()).toBe(1)
+    await notice.waitFor()
+    await captureRoutineWebhook(reopenedPage, 'webhook-chat')
+    const resultsDialog = await openRoutines(reopenedPage)
+    await resultsDialog.getByRole('tab', { name: 'Results', exact: true }).click()
+    const deliveries = resultsDialog.getByRole('list', { name: 'Deliveries', exact: true })
+    const results = resultsDialog.getByRole('list', { name: 'Runs', exact: true })
+    await results.getByText(RESULT, { exact: true }).waitFor()
+    expect(await deliveries.getByRole('listitem').count()).toBe(1)
+    expect(await results.getByRole('listitem').count()).toBe(1)
+    await captureRoutineWebhook(reopenedPage, 'webhook-result', resultsDialog)
+    await compareOrRefreshGolden(WEBHOOK_EXPECTED, [
+      setupSnapshot, rotationSnapshot, await notice.ariaSnapshot(), await output.ariaSnapshot(),
+      await deliveries.getByText('Delivered', { exact: true }).ariaSnapshot(),
+    ].join('\n'), webSnapshotMode())
+  } finally {
+    try {
+      await browser?.close()
+    } finally {
+      try {
+        await web?.close()
+      } finally {
+        await rm(workspaceCwd, { recursive: true, force: true })
+      }
+    }
+  }
+}, 120_000)

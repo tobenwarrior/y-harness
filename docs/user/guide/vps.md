@@ -416,6 +416,23 @@ For a file with several bots, add `--source-name` to choose one. Repeat the comm
 
 If a routine references Grok's `box-desktop` skill, copy the [VPS Computer compatibility skill](../../../apps/cli/config/examples/skills/box-desktop/SKILL.md) into `.agents/skills/box-desktop/SKILL.md` in the Bot's execution workspace. For a managed VPS Bot, use its Computer workspace or `podman cp` after identifying the container; for a desktop-only or ordinary Bot, use the Host directory at `~/.yharness-vps/bots/<bot-session-id>`. Select an image-capable model in that Bot’s chat. Test a desktop observation and review any routine that needs network access before resuming it.
 
+## Trigger a Bot routine from another service
+
+Enable `bot-routine-webhooks` in the Web profile after giving callers an HTTPS endpoint. For a VPS that uses a private tunnel, expose only the webhook path through your HTTPS proxy. [Example overlay](../../../apps/cli/config/examples/bot-routine-webhooks/cordis.yml)
+
+```yaml
+- id: bot-routine-webhooks
+  disabled: false
+  config:
+    publicUrl: https://hooks.example/
+```
+
+Forward `/bot-hooks/` to the private Web listener. If the URL includes a base path, strip that path at the proxy. Preserve the caller's `Authorization` header and keep it out of logs. See the [Web bundle configuration](../../../packages/bundle/web-app/README.md#routine-webhooks).
+
+Ask the Bot to create a webhook routine with the instructions it should follow. Approve the creation, then open **Bot options → Manage routines** and select it. Copy the URL and authorization header into the sending service. Send a POST request with an optional JSON body. Use the same `Idempotency-Key` value when retrying one event. The response confirms acceptance, and the Bot posts its reply in the same chat. Open **Results** to see deliveries and replies.
+
+Pause the routine to refuse new requests. Rotate its key from the routine details when changing who can send requests, and copy the replacement into each sending service.
+
 ## Check the service
 
 On the VPS, run `python3 ~/.local/bin/yharness-vps status`. Setup keeps the source checkout, the working directory, and Y Harness state in separate locations under `~/.yharness-vps`. Provider settings and logs stay in that private directory. Keep the host log private because it contains the sign-in link.

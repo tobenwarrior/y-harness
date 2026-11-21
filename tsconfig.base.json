@@ -195,6 +195,7 @@
       "@yharness/agent/brand": ["./packages/core/agent/src/brand.ts"],
       "@yharness/headless/startup": ["./packages/bundle/headless/src/startup.ts"],
       "@yharness/web-app/startup": ["./packages/bundle/web-app/src/startup.ts"],
+      "@yharness/web-app/routine-webhooks": ["./packages/bundle/web-app/src/routine-webhooks.ts"],
       "@yharness/client-*/client": ["./packages/client/*/src/client"],
       // One wildcard maps every @yharness/<name> to its source. Package
       // dir names are unique across groups, so first-on-disk-wins resolution is

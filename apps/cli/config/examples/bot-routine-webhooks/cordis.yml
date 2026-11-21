@@ -1,0 +1,5 @@
+# Forward the HTTPS webhook path to the private Web listener before enabling this row.
+- id: bot-routine-webhooks
+  disabled: false
+  config:
+    publicUrl: https://hooks.example/

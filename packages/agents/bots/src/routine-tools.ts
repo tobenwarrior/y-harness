@@ -30,10 +30,10 @@ const EVENT_OUTPUT = {
 const eventSelector = {
   type: 'object',
   additionalProperties: false,
-  description: 'Choose message with source bot or user, or github with the configured source, repository, and event name.',
+  description: 'Choose message with source bot or user, github with the configured source, repository, and event name, or webhook with only type. The owner can copy webhook credentials in Manage routines.',
   properties: {
-    type: { type: 'string', required: true, enum: ['message', 'github'] },
-    source: { type: 'string', required: true },
+    type: { type: 'string', required: true, enum: ['message', 'github', 'webhook'] },
+    source: { type: 'string', description: 'Required for message and GitHub triggers.' },
     repository: { type: 'string', description: 'GitHub repository in owner/repo form.' },
     event: { type: 'string', enum: BOT_GITHUB_ROUTINE_EVENTS },
   },
@@ -54,7 +54,7 @@ function eventParameters(action: 'create' | 'list' | 'update' | 'delete' | 'paus
 }
 
 function eventDescription(action: 'create' | 'list' | 'update' | 'delete' | 'pause' | 'resume' | 'history'): string {
-  if (action === 'create') return 'Create a Bot routine triggered by a message or verified GitHub event. This action requires approval.'
+  if (action === 'create') return 'Create a Bot routine triggered by a message, verified GitHub event, or authenticated webhook. This action requires approval.'
   if (action === 'list') return 'List event-triggered routines owned by this Bot.'
   if (action === 'update') return 'Edit an event-triggered routine owned by this Bot. This action requires approval.'
   if (action === 'delete') return 'Delete an event-triggered routine owned by this Bot. This action requires approval.'

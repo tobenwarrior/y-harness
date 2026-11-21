@@ -183,6 +183,10 @@
     - id: web-startup
       name: '@yharness/web-app/startup'
 
+    - id: bot-routine-webhooks
+      name: '@yharness/web-app/routine-webhooks'
+      disabled: true
+
     # ── layer 2: transport/service ──────────────────────────────────────────────
 
     # Plain route-registration carrier; host and port come from the app's

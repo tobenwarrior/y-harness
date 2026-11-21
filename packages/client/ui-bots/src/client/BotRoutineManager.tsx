@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
-  Button, IconBranchOutlineRegular, IconClockOutlineRegular, IconPauseOutlineRegular,
+  Button, IconBranchOutlineRegular, IconClockOutlineRegular, IconLinkOutlineRegular, IconPauseOutlineRegular,
   IconPlayOutlineRegular, IconQueueOutlineRegular, IconTrashOutlineRegular,
   Modal, StateDot, Tag,
 } from '@yharness/client-ui-primitives'
 import type { PropsLocale } from '@yharness/client-ui-slots'
 import { BotAvatar } from './BotAvatar.tsx'
 import { BotRoutineTest } from './BotRoutineTest.tsx'
+import { BotRoutineWebhook } from './BotRoutineWebhook.tsx'
 import css from './BotWorkspace.module.css'
 import type { BotRoutineHistory, BotRoutineManagerActions, BotSummary, BotWorkspaceProps } from './types.ts'
 import type { BotEventRoutineResult, BotRoutineView } from '@yharness/bots/client'
@@ -143,6 +144,7 @@ function routineRule(routine: BotRoutineView, t: Translate): string {
   if (routine.kind === 'schedule') return scheduleRule(routine, t)
   const trigger = routine.trigger
   if (trigger.type === 'message') return t('routineEventRule', { source: sourceLabel(trigger.source, t) })
+  if (trigger.type === 'webhook') return t('routineWebhookRule')
   const values = { repository: trigger.repository }
   return trigger.event === 'pull_request.opened'
     ? t('routineGitHubPullRequest', values)
@@ -527,7 +529,7 @@ export function BotRoutineManager({ bot, actions, open, onClose, t, revision = 0
         onClose={closeManager}
         title={t('routineManagerTitle')}
         closeLabel={t('close')}
-        className={css.memoryModal as string}
+        className={css.routineModal as string}
         contentClassName={css.memoryModalContent as string}
       >
         <div className={css.routineOwner}>
@@ -564,8 +566,10 @@ export function BotRoutineManager({ bot, actions, open, onClose, t, revision = 0
                 const busy = working === id
                 const timed = routine.kind === 'schedule'
                 const github = !timed && routine.trigger.type === 'github'
-                const Icon = timed ? IconClockOutlineRegular : github ? IconBranchOutlineRegular : IconQueueOutlineRegular
-                const typeLabel = t(timed ? 'routineTimed' : github ? 'routineGitHub' : 'routineEvent')
+                const webhook = !timed && routine.trigger.type === 'webhook'
+                const Icon = timed ? IconClockOutlineRegular : github ? IconBranchOutlineRegular
+                  : webhook ? IconLinkOutlineRegular : IconQueueOutlineRegular
+                const typeLabel = t(timed ? 'routineTimed' : github ? 'routineGitHub' : webhook ? 'routineWebhook' : 'routineEvent')
                 return (
                   <li key={id} className={id === selectedId ? css.routineRowSelected : css.routineRow}>
                     <button type="button" className={css.routineRowSelect} aria-pressed={id === selectedId} onClick={() => { selectRoutine(id) }}>
@@ -593,6 +597,15 @@ export function BotRoutineManager({ bot, actions, open, onClose, t, revision = 0
                     <strong>{selected.title}</strong>
                     <p>{selected.prompt}</p>
                     <span>{routineRule(selected, t)}</span>
+                    {actions.webhook !== undefined && selected.kind === 'event' && selected.trigger.type === 'webhook' && (
+                      <BotRoutineWebhook
+                        key={bot.id + ':' + selected.id}
+                        botId={bot.id}
+                        routineId={selected.id}
+                        actions={actions.webhook}
+                        t={t}
+                      />
+                    )}
                     {actions.test !== undefined && selected.status !== 'inactive'
                       && (selected.kind === 'schedule' || selected.trigger.type === 'message') && (
                       <BotRoutineTest

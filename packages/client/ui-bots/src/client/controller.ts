@@ -74,6 +74,7 @@ import type {
   BotRoutineTestRequest,
   BotRoutineTestRun,
   BotRoutineTestStatusValue,
+  BotRoutineWebhookSetup,
   BotRoutineDeleteValue,
   BotView,
   BotShareInviteRequest,
@@ -153,6 +154,8 @@ export interface BotWorkspaceRemote {
   routineHistory?: (request: BotRoutineHistoryRequest) => Promise<RemoteResult<BotRoutineHistoryValue>>
   testRoutine?: (request: BotRoutineTestRequest) => Promise<RemoteResult<BotRoutineTestRun>>
   routineTestStatus?: (request: BotRoutineLifecycleRequest) => Promise<RemoteResult<BotRoutineTestStatusValue>>
+  routineWebhookSetup?: (request: BotRoutineLifecycleRequest) => Promise<RemoteResult<BotRoutineWebhookSetup>>
+  rotateRoutineWebhookKey?: (request: BotRoutineLifecycleRequest) => Promise<RemoteResult<BotRoutineWebhookSetup>>
   updateAvatar?: (request: { readonly botId: BotIdType; readonly avatar: BotAvatar | null }) => Promise<RemoteResult<BotAvatarUpdateValue>>
   uploadAvatar?: (request: { readonly botId: BotIdType; readonly data: string; readonly mediaType: 'image/png' }) => Promise<RemoteResult<BotAvatarUpdateValue>>
   updateAppearance?: (request: BotAppearanceUpdateRequest) => Promise<RemoteResult<BotAppearanceUpdateValue>>
@@ -2068,6 +2071,8 @@ export class BotWorkspaceController {
     const routineHistory = this.remote.routineHistory
     const testRoutine = this.remote.testRoutine
     const routineTestStatus = this.remote.routineTestStatus
+    const routineWebhookSetup = this.remote.routineWebhookSetup
+    const rotateRoutineWebhookKey = this.remote.rotateRoutineWebhookKey
     if (listRoutines === undefined || pauseRoutine === undefined || resumeRoutine === undefined
       || deleteRoutine === undefined || routineHistory === undefined) {
       return undefined
@@ -2106,6 +2111,20 @@ export class BotWorkspaceController {
         if (!('kind' in result.value)) throw new Error(result.value.code)
         return result.value
       },
+      ...(routineWebhookSetup === undefined || rotateRoutineWebhookKey === undefined ? {} : {
+        webhook: {
+          setup: async (botId, routineId) => {
+            const result = await routineWebhookSetup({ botId: brandString<BotIdType>(botId), routineId })
+            if (!result.ok) throw new Error(result.error.message)
+            return result.value
+          },
+          rotate: async (botId, routineId) => {
+            const result = await rotateRoutineWebhookKey({ botId: brandString<BotIdType>(botId), routineId })
+            if (!result.ok) throw new Error(result.error.message)
+            return result.value
+          },
+        },
+      }),
       ...(testRoutine === undefined || routineTestStatus === undefined ? {} : {
         test: {
           start: async (botId, routineId, requestId) => {
