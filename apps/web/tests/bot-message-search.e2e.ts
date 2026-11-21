@@ -134,6 +134,7 @@ describe.skipIf(MODE === 'record')('web e2e: owner-scoped Bot message search', (
 
     browser = await chromium.launch()
     page = await newEnglishPage(browser)
+    await page.addInitScript(() => { Object.defineProperty(navigator, 'platform', { value: 'MacIntel' }) })
     tripwire = watchConsole(page)
     await page.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
     await page.waitForSelector('[class*="frame"]', { timeout: 30_000 })
@@ -212,7 +213,7 @@ describe.skipIf(MODE === 'record')('web e2e: owner-scoped Bot message search', (
     expect(revealedBox.y + revealedBox.height).toBeLessThanOrEqual(viewport.height)
     expect(await orbitDetail.locator('[data-conversation-session]').getAttribute('data-conversation-session'))
       .toBe(orbit.sessionId)
-    await page.keyboard.press('ControlOrMeta+k')
+    await page.keyboard.press('Meta+Alt+k')
     await dialog.waitFor({ state: 'visible' })
     await page.keyboard.press('Escape')
     await dialog.waitFor({ state: 'hidden' })
