@@ -1,15 +1,18 @@
 // @vitest-environment jsdom
 
 import type { ComponentProps } from 'react'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { SessionBinding, SessionListState, SessionReference } from '@yharness/api-session-controller/client'
+import type { SessionRequestId } from '@yharness/api-session-controller/types'
+import { brandString } from '@yharness/brand'
 import { BotId, BotPrincipalId, type BotView } from '@yharness/bots/client'
 import { AttachmentId } from '@yharness/attachment'
 import type { GlobalStandardProps } from '@yharness/client-ui-slots'
 import { PendingApproval } from '@yharness/client-ui-approval/src/client/contract/slots.ts'
 import type { WorkspaceSnapshot } from '@yharness/api-workspace-controller/client'
-import { makeTranslate } from '@yharness/client-test-runtime'
+import { FixtureSession, makeTranslate, RemoteError, sessionSnapshot } from '@yharness/client-test-runtime'
+import { createSnapshotStore } from '@yharness/client-store'
 import { SessionId } from '@yharness/session/types'
 import { en } from '../src/client/locales.ts'
 import { BotsPanelIcon } from '../src/client/BotsPanelIcon.tsx'
@@ -19,7 +22,7 @@ import {
 } from '../src/client/panel.tsx'
 import { createSharedBotsClient } from '../src/client/shared-client.ts'
 import type { BotWorkspaceState } from '../src/client/controller.ts'
-import type { ComputerClient, ComputerIdentity } from '../src/client/computer-client.ts'
+import type { ComputerClient, ComputerIdentity, ComputerTeachingId } from '../src/client/computer-client.ts'
 import type { SessionStatusSnapshot } from '@yharness/client-ui-session/client'
 
 afterEach(cleanup)
@@ -337,6 +340,52 @@ describe('Bots conversation slot wiring', () => {
     fireEvent.click(closeButtons.at(-1)!)
     expect(setComputerTarget).toHaveBeenLastCalledWith(null)
     expect(setComputerTarget.mock.calls.filter(([target]) => target === null)).toHaveLength(2)
+  })
+
+  it('queues a reviewed Browser demonstration in the selected Bot Session and retains a rejected draft for retry', async () => {
+    const selected = bot()
+    const state = workspaceState([selected], selected.id)
+    const requestId = brandString<SessionRequestId>('fixture-id')
+    const prompt = vi.fn<SessionBinding['session']['prompt']>()
+      .mockResolvedValueOnce({ ok: false, error: new RemoteError('gateway/internal', 'synthetic send failure', {}) })
+      .mockResolvedValueOnce({ ok: true, value: { accepted: true } })
+    const session = new FixtureSession(selected.sessionId, createSnapshotStore(sessionSnapshot(selected.sessionId)), { prompt })
+    const originalReference = sessionReference(selected.sessionId)
+    const reference: SessionReference = {
+      ...originalReference, binding: { ...originalReference.binding, session, eventSource: session.eventSource },
+    }
+    const computer: ComputerClient = {
+      ...computerClient(),
+      status: async () => ({ available: true, computer: { id: selected.id, location: 'vps', permissionScope: 'bot', browser: true, teaching: true } }),
+      frame: async () => ({ jpeg: '', width: 1, height: 1, mode: 'controlling', botActive: false }),
+      teaching: {
+        start: async () => brandString<ComputerTeachingId>('fixture-id'),
+        stop: async () => ({ id: brandString<ComputerTeachingId>('fixture-id'), reviewable: true, truncated: false, actions: [
+          { kind: 'navigate', origin: 'https://example.test' },
+        ] }),
+      },
+    }
+    render(<BotsPanel {...panelProps(state, reference, () => null, {
+      availability: 'available', target: selected.sessionId,
+    })} computer={computer} />)
+    fireEvent.click(await screen.findByRole('button', { name: en.computerTeachTitle }))
+    fireEvent.change(screen.getByRole('textbox', { name: en.computerTeachGoal }), { target: { value: 'Review a sample.' } })
+    fireEvent.click(screen.getByRole('button', { name: en.computerTeachStart }))
+    fireEvent.click(await screen.findByRole('button', { name: en.computerTeachStop }))
+    const send = await screen.findByRole('button', { name: en.computerTeachDraftSkill })
+    expect(prompt).not.toHaveBeenCalled()
+    fireEvent.click(send)
+    await screen.findByText(en.computerTeachSendFailed)
+    const call = prompt.mock.calls[0]
+    const content = call?.[0][0]
+    if (content?.type !== 'text') throw new Error('The fixture did not queue a text prompt.')
+    expect(content.text).toContain('Review a sample.')
+    expect(content.text).toContain('Opened https://example.test')
+    expect(call?.slice(1)).toEqual(['queue', undefined, requestId])
+    fireEvent.click(send)
+    await waitFor(() => { expect(screen.queryByRole('dialog')).toBeNull() })
+    expect(prompt).toHaveBeenCalledTimes(2)
+    expect(prompt.mock.calls[1]).toEqual(prompt.mock.calls[0])
   })
 
   it('renders the selected group through the group detail entrypoint', () => {

@@ -45,6 +45,49 @@
   gap: 6px;
 }
 
+.teachingContent,
+.teachingGoal {
+  display: grid;
+  gap: 8px;
+}
+
+.teachingContent p {
+  margin: 0;
+}
+
+.teachingGoal textarea {
+  box-sizing: border-box;
+  inline-size: 100%;
+  max-block-size: 34dvh;
+  resize: vertical;
+  padding: 8px 10px;
+  border: 0.5px solid var(--yh-alias-border-l2);
+  border-radius: var(--yh-radius-md);
+  background: var(--yh-alias-bg-layer-1);
+  color: var(--yh-alias-label-primary);
+  font: inherit;
+  line-height: 1.45;
+}
+
+.teachingGoal textarea:disabled {
+  color: var(--yh-alias-label-secondary);
+}
+
+.teachingSteps {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding-inline-start: 28px;
+  max-block-size: 36dvh;
+  overflow: auto;
+  overflow-wrap: anywhere;
+}
+
+.teachingAlert {
+  max-inline-size: 15em;
+  color: var(--yh-alias-label-primary);
+}
+
 .viewSwitch {
   display: flex;
   flex: none;

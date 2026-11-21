@@ -1,5 +1,8 @@
 /** Browser client for the authenticated Computer side-panel routes. */
 
+import { brandString, type Branded } from '@yharness/brand'
+
+/** Lease state of the current viewer. */
 export type ComputerMode = 'watching' | 'controlling' | 'other'
 
 /** Execution location reported for a Computer provider. */
@@ -14,6 +17,8 @@ export interface ComputerIdentity {
   readonly location: ComputerLocation
   readonly permissionScope: ComputerPermissionScope
   readonly browser?: true
+  /** This Bot's isolated browser can record a reviewed demonstration. */
+  readonly teaching?: true
   /** This Bot has both an isolated browser and a Linux desktop. */
   readonly desktop?: true
   readonly terminal?: true
@@ -89,6 +94,42 @@ export interface ComputerControlResult {
   readonly mode: ComputerMode
 }
 
+/* jscpd:ignore-start -- Intentional Host/client mirror of Browser-teaching wire vocabulary. */
+/** Opaque identity of one browser demonstration. */
+export type ComputerTeachingId = Branded<'ComputerTeachingId'>
+
+/** Pointer actions and canonical website origins available for owner review. */
+export type ComputerTeachingAction =
+  | { readonly kind: 'click'; readonly x: number; readonly y: number; readonly button: 1 | 2 | 3 }
+  | { readonly kind: 'drag'; readonly x: number; readonly y: number; readonly toX: number; readonly toY: number }
+  | { readonly kind: 'scroll'; readonly x: number; readonly y: number; readonly delta: number }
+  | { readonly kind: 'navigate'; readonly origin: string }
+/* jscpd:ignore-end */
+
+/** Result of stopping the same demonstration, available only to its owner. */
+export interface ComputerTeachingTrace {
+  readonly id: ComputerTeachingId
+  readonly reviewable: boolean
+  readonly truncated: boolean
+  readonly actions: readonly ComputerTeachingAction[]
+}
+
+/** Record a demonstration within the selected Browser Computer lease. */
+export interface ComputerTeachingClient {
+  /** @param viewerId - Current Browser lease holder.
+   * @param sessionId - Exact Bot Session owning the Browser.
+   * @param signal - Cancellation for the start round-trip.
+   * @returns Identity of the new or recoverable recording.
+   */
+  start(viewerId: string, sessionId: string, signal: AbortSignal): Promise<ComputerTeachingId>
+  /** @param viewerId - Current Browser lease holder.
+   * @param sessionId - Exact Bot Session owning the Browser.
+   * @param signal - Cancellation for the stop round-trip.
+   * @returns Recorded evidence for owner review.
+   */
+  stop(viewerId: string, sessionId: string, signal: AbortSignal): Promise<ComputerTeachingTrace>
+}
+
 /** HTTP failure returned by a Computer endpoint. */
 export class ComputerApiError extends Error {
   /** HTTP status returned by the failed Computer route. */
@@ -146,6 +187,8 @@ export interface ComputerClient {
   readonly sharedWorkspace?: (sessionId: string, enabled: boolean, signal?: AbortSignal) => Promise<ComputerSharedWorkspaceResult>
   /** Open a URL while the viewer controls the selected isolated browser. */
   readonly navigate?: (viewerId: string, url: string, sessionId: string, signal?: AbortSignal) => Promise<ComputerControlResult>
+  /** Teach a task on an isolated Browser that advertises the capability. */
+  readonly teaching?: ComputerTeachingClient
   /** Read or respond to sign-in requests on a VPS Bot's Computer. */
   readonly signIn?: {
     status(sessionId: string, signal: AbortSignal): Promise<{ readonly request: ComputerSignInRequest | null }>
@@ -162,6 +205,8 @@ const RELEASE_CONTROL_PATH = 'api/computer/release-control'
 const INPUT_PATH = 'api/computer/input'
 const NAVIGATE_PATH = 'api/computer/navigate'
 const SIGN_IN_PATH = 'api/computer/sign-in'
+const TEACH_PATH = 'api/computer/teach'
+const MAX_TEACHING_ACTIONS = 128
 const NETWORK_PATH = 'api/computer/network'
 const RESTART_PATH = 'api/computer/restart'
 const SHARED_WORKSPACE_PATH = 'api/computer/shared-workspace'
@@ -187,6 +232,7 @@ function identityOf(value: unknown): ComputerIdentity | undefined {
   const dedicated = location === 'vps' && permissionScope === 'bot'
   return { ...(id === undefined ? {} : { id }), location, permissionScope,
     ...(dedicated && value.browser === true ? { browser: true } : {}),
+    ...(dedicated && value.browser === true && value.teaching === true ? { teaching: true } : {}),
     ...(dedicated && value.desktop === true ? { desktop: true } : {}),
     ...(dedicated && value.terminal === true ? {
       terminal: true,
@@ -203,6 +249,53 @@ function identityOf(value: unknown): ComputerIdentity | undefined {
 
 function modeOf(value: unknown): ComputerMode | undefined {
   return value === 'watching' || value === 'controlling' || value === 'other' ? value : undefined
+}
+
+function teachingStartedOf(value: unknown): ComputerTeachingId | undefined {
+  if (!isRecord(value) || typeof value.active !== 'boolean' || typeof value.traceId !== 'string' || !UUID.test(value.traceId)) return undefined
+  return brandString<ComputerTeachingId>(value.traceId)
+}
+
+function canonicalTeachingOrigin(value: unknown): string | undefined {
+  if (typeof value !== 'string' || value.length > 2048) return undefined
+  try {
+    const url = new URL(value)
+    return (url.protocol === 'http:' || url.protocol === 'https:') && url.origin === value ? value : undefined
+  } catch (error) {
+    void error
+    return undefined
+  }
+}
+
+function finiteCoordinate(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value)
+}
+
+function teachingActionOf(value: unknown): ComputerTeachingAction | undefined {
+  if (!isRecord(value)) return undefined
+  if (value.kind === 'navigate') {
+    const origin = canonicalTeachingOrigin(value.origin)
+    return origin === undefined ? undefined : { kind: 'navigate', origin }
+  }
+  const { kind, x, y, button, toX, toY, delta } = value
+  if (!finiteCoordinate(x) || !finiteCoordinate(y)) return undefined
+  if (kind === 'click' && (button === 1 || button === 2 || button === 3)) return { kind, x, y, button }
+  if (kind === 'drag' && finiteCoordinate(toX) && finiteCoordinate(toY)) return { kind, x, y, toX, toY }
+  if (kind === 'scroll' && finiteCoordinate(delta)) return { kind, x, y, delta }
+  return undefined
+}
+
+function teachingTraceOf(value: unknown): ComputerTeachingTrace | undefined {
+  if (!isRecord(value) || typeof value.id !== 'string' || !UUID.test(value.id)
+    || typeof value.reviewable !== 'boolean' || typeof value.truncated !== 'boolean'
+    || !Array.isArray(value.actions) || value.actions.length > MAX_TEACHING_ACTIONS) return undefined
+  const actions: ComputerTeachingAction[] = []
+  for (const entry of value.actions) {
+    const action = teachingActionOf(entry)
+    if (action === undefined) return undefined
+    actions.push(action)
+  }
+  return { id: brandString<ComputerTeachingId>(value.id), reviewable: value.reviewable, truncated: value.truncated, actions }
 }
 
 function canonicalHttpsOrigin(value: unknown): string | undefined {
@@ -364,6 +457,10 @@ function computerClientFor(post: ReturnType<typeof computerPost>, surface?: 'des
     navigate: (viewerId, url, sessionId, signal) => post(
       NAVIGATE_PATH, { viewerId, url, sessionId }, controlOf, requestOptions(signal),
     ),
+    teaching: {
+      start: (viewerId, sessionId, signal) => post(`${TEACH_PATH}/start`, { viewerId, sessionId }, teachingStartedOf, { signal }),
+      stop: (viewerId, sessionId, signal) => post(`${TEACH_PATH}/stop`, { viewerId, sessionId }, teachingTraceOf, { signal }),
+    },
     signIn: {
       status: (sessionId, signal) => post(SIGN_IN_PATH, { action: 'status', sessionId }, signInStatusOf, { signal }),
       take: (sessionId, requestId, viewerId) => post(SIGN_IN_PATH, { action: 'take', sessionId, requestId, viewerId }, controlOf),

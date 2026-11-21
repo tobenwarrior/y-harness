@@ -8,8 +8,10 @@ import {
 import type { PropsLocale } from '@yharness/client-ui-slots'
 import { randomUUID } from '@yharness/util-crypto'
 import {
-  ComputerApiError, type ComputerClient, type ComputerFrame, type ComputerInputAction, type ComputerMode, type ComputerStatus,
+  ComputerApiError, type ComputerClient, type ComputerFrame, type ComputerInputAction,
+  type ComputerMode, type ComputerStatus, type ComputerTeachingId,
 } from './computer-client.ts'
+import { ComputerTeaching } from './ComputerTeaching.tsx'
 import css from './ComputerPanel.module.css'
 
 /** Private desktop client and panel dismissal. */
@@ -20,6 +22,8 @@ interface ComputerPanelProps extends PropsLocale<'bots'> {
   readonly botId?: string
   readonly close: () => void
   readonly refreshAvailability?: (sessionId?: string) => void
+  /** Submit a reviewed demonstration into the same selected private chat. */
+  readonly sendTeachingDraft?: (text: string, id: ComputerTeachingId) => Promise<void>
   readonly local?: { readonly checkSharing: () => void }
   readonly signIn?: {
     readonly requestId: string
@@ -159,7 +163,7 @@ interface ComputerViewerProps extends ComputerPanelProps {
 }
 
 function ComputerViewer({
-  computer, sessionId, botId, close, refreshAvailability, local, signIn, view, restoreFocus, select, t,
+  computer, sessionId, botId, close, refreshAvailability, sendTeachingDraft, local, signIn, view, restoreFocus, select, t,
 }: ComputerViewerProps): ReactNode {
   const viewerIdRef = useRef<string>()
   if (viewerIdRef.current === undefined) viewerIdRef.current = randomUUID()
@@ -693,6 +697,9 @@ function ComputerViewer({
     && computerStatus.computer.permissionScope === 'bot' && privateSignIn === undefined
   const viewLocked = busy !== undefined || mode === 'controlling' || networkActionDisabled || restartConfirmOpen
   const restartingBrowser = computerStatus?.computer?.desktop === true && computerStatus.computer.browser === true
+  const teaching = view === 'browser' && signIn === undefined && privateSignIn === undefined
+    && computerStatus?.computer?.id === botId && computerStatus?.computer?.teaching === true
+    ? computer.teaching : undefined
 
   return (
     <section className={css.root} aria-label={t('computerTitle')} data-computer-panel>
@@ -809,6 +816,10 @@ function ComputerViewer({
           ? t(mode === 'controlling' ? 'macComputerPaused' : 'macComputerShared')
           : t(mode === 'controlling' ? 'computerInputHint' : 'computerWatchHint')}</span>
         <div className={css.footerActions}>
+          {teaching !== undefined && sessionId !== undefined && sendTeachingDraft !== undefined && (
+            <ComputerTeaching teaching={teaching} viewerId={viewerId} sessionId={sessionId}
+              hasControl={inputReady && phase === 'ready'} sendForDraft={sendTeachingDraft} t={t} />
+          )}
           {restartActionAvailable && !restartConfirmOpen && (
             <Button data-computer-restart variant="ghost" size="sm" icon={<IconRefreshOutlineRegular size={14} />}
               disabled={restartActionDisabled} onClick={() => { setRestartConfirmOpen(true) }}>

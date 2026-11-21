@@ -3,7 +3,9 @@
 import type { Branded } from '@yharness/brand'
 import type { ConnectionFetchRoute } from '@yharness/client-connection'
 import { assertNever } from '@yharness/util-values'
-import type { ComputerSignInAction, ComputerSignInRequest, VpsComputer } from './computer.ts'
+import type {
+  ComputerSignInAction, ComputerSignInRequest, ComputerTeachingStatus, ComputerTeachingTrace, VpsComputer,
+} from './computer.ts'
 import { validateIsolatedBrowserUrl } from './vps-isolated-browser.ts'
 
 type ViewerId = Branded<'computer-viewer-id'>
@@ -22,6 +24,10 @@ interface ResolvedComputer {
   readonly available: boolean
   readonly metadata?: ComputerStatusMetadata
   readonly navigate?: (viewer: string, url: string, signal: AbortSignal) => Promise<unknown>
+}
+
+interface ResolvedBotComputer extends ResolvedComputer {
+  readonly open: (signal: AbortSignal) => VpsComputer | Promise<VpsComputer>
 }
 
 /** Exact owner view the sign-in route can inspect or change. */
@@ -57,6 +63,8 @@ export interface ComputerStatusMetadata {
   readonly permissionScope: ComputerPermissionScope
   /** Whether the Computer exposes browser address navigation. */
   readonly browser?: true
+  /** Whether the owner can teach a task in this isolated Browser. */
+  readonly teaching?: true
   /** Whether this Bot also offers the Linux desktop alongside its isolated browser. */
   readonly desktop?: true
   /** Whether the owner's terminal uses this Bot's private computer. */
@@ -339,6 +347,39 @@ async function readComputerRequest(request: Request): Promise<Record<string, unk
   }
 }
 
+type ComputerPostRouteHandler = (
+  request: Request,
+  payload: Record<string, unknown>,
+  viewer: ViewerId,
+  target: SessionTarget,
+) => Promise<Response>
+
+function computerPostRoute(
+  path: string,
+  targetFor: (payload: Record<string, unknown>) => SessionTarget | undefined,
+  handle: ComputerPostRouteHandler,
+): ConnectionFetchRoute {
+  return {
+    path,
+    methods: ['POST'],
+    requestBody: 'streaming',
+    fetch: async (request) => {
+      const payload = await readComputerRequest(request)
+      if (payload === undefined) return json({ error: 'invalid-request' }, 400)
+      const viewer = viewerId(payload.viewerId)
+      const target = targetFor(payload)
+      if (viewer === undefined || target === undefined) return json({ error: 'invalid-request' }, 400)
+      try {
+        return await handle(request, payload, viewer, target)
+      } catch (error) {
+        // Process diagnostics can contain host paths or desktop details.
+        void error
+        return json({ error: 'computer-unavailable' }, 409)
+      }
+    },
+  }
+}
+
 interface RouteOptions {
   readonly managed: boolean
   /** Permit the old shared route's omitted session id during an allowlisted rollout. */
@@ -382,30 +423,37 @@ function routesFor(
         }
       },
     },
-    ...(['frame', 'take-control', 'release-control', 'input'] as const).map((endpoint): ConnectionFetchRoute => ({
-      path: `/api/computer/${endpoint}`,
-      methods: ['POST'],
-      requestBody: 'streaming',
-      fetch: async (request) => {
-        const payload = await readComputerRequest(request)
-        if (payload === undefined) return json({ error: 'invalid-request' }, 400)
-        const id = viewerId(payload.viewerId)
-        const target = sessionTarget(payload, options.managed && options.allowMissingSession !== true, options.allowDesktop)
-        if (id === undefined || target === undefined) return json({ error: 'invalid-request' }, 400)
-        try {
-          const resolved = await resolveComputer(target)
-          request.signal.throwIfAborted()
-          const handle = resolved === undefined ? undefined : action(await resolved.open(request.signal), endpoint)
-          if (handle === undefined) return json({ error: 'computer-unavailable' }, 409)
-          return json(await handle(id, payload, request.signal))
-        } catch (error) {
-          // Process diagnostics can contain host paths or desktop details.
-          void error
-          return json({ error: 'computer-unavailable' }, 409)
-        }
+    ...(['frame', 'take-control', 'release-control', 'input'] as const).map(endpoint => computerPostRoute(
+      `/api/computer/${endpoint}`,
+      payload => sessionTarget(payload, options.managed && options.allowMissingSession !== true, options.allowDesktop),
+      async (request, payload, id, target) => {
+        const resolved = await resolveComputer(target)
+        request.signal.throwIfAborted()
+        const handle = resolved === undefined ? undefined : action(await resolved.open(request.signal), endpoint)
+        if (handle === undefined) return json({ error: 'computer-unavailable' }, 409)
+        return json(await handle(id, payload, request.signal))
       },
-    })),
+    )),
   ]
+}
+
+function teachingRoutes(resolve: (target: SessionTarget) => Promise<ResolvedBotComputer | undefined>): readonly ConnectionFetchRoute[] {
+  const actions: Readonly<Record<string, (computer: VpsComputer, viewer: ViewerId, signal: AbortSignal) =>
+    ComputerTeachingStatus | Promise<ComputerTeachingStatus | ComputerTeachingTrace>>> = {
+    status: (computer, viewer) => computer.teachingStatus(viewer),
+    start: (computer, viewer, signal) => computer.startTeaching(viewer, signal),
+    stop: (computer, viewer, signal) => computer.stopTeaching(viewer, signal),
+  }
+  return Object.entries(actions).map(([endpoint, runAction]) => computerPostRoute(
+    `/api/computer/teach/${endpoint}`,
+    payload => Object.keys(payload).length === 2 ? sessionTarget(payload, true, false) : undefined,
+    async (request, _payload, id, target) => {
+      const resolved = await resolve(target)
+      request.signal.throwIfAborted()
+      if (resolved?.metadata?.teaching !== true) return json({ error: 'computer-unavailable' }, 409)
+      return json(await runAction(await resolved.open(request.signal), id, request.signal))
+    },
+  ))
 }
 
 function browserNavigationRoute(resolveComputer: (sessionId: string) => Promise<ResolvedComputer | undefined>): ConnectionFetchRoute {
@@ -446,7 +494,7 @@ function browserNavigationRoute(resolveComputer: (sessionId: string) => Promise<
  * session id. Cloud Bot routes should use {@link botComputerRoutes} so the
  * active Session selects its own controller.
  * @param computer - Desktop controller shared with the model tool.
- * @returns The five private POST routes.
+ * @returns The private legacy Computer POST routes.
  */
 export function computerRoutes(computer: ComputerRouteController): readonly ConnectionFetchRoute[] {
   return routesFor(() => Promise.resolve({ open: () => computer, available: computer.status?.().available !== false }), {
@@ -472,7 +520,7 @@ export function computerRoutes(computer: ComputerRouteController): readonly Conn
  * Resolver failures and missing Computers produce a safe unavailable status or
  * a 409 action response without exposing provider diagnostics.
  * @param resolveComputer - Lazily resolve the Computer owned by a Bot Session.
- * @returns The same five private POST routes as the legacy Computer API.
+ * @returns The private Computer POST routes for each managed Bot.
  */
 export function botComputerRoutes(
   resolveComputer: (sessionId: string) => Promise<VpsComputer | undefined>,
@@ -503,13 +551,13 @@ export function botComputerRoutes(
  * fallback; the Host decides whether a known Bot is selected for isolation.
  * @param resolveTarget - Describe the selected Computer without opening its desktop.
  * @param options - Permit omitted session ids only for an explicit legacy rollout.
- * @returns Private Computer routes and the optional browser navigation route.
+ * @returns Private Computer routes with browser navigation and teaching for isolated Browsers.
  */
 export function botComputerRoutesWithLegacy(
   resolveTarget: (sessionId: string) => Promise<BotComputerRouteTarget | undefined>,
   options: { readonly allowMissingSession?: boolean } = {},
 ): readonly ConnectionFetchRoute[] {
-  const resolveComputer = async (selection: SessionTarget, statusSignal?: AbortSignal): Promise<ResolvedComputer | undefined> => {
+  const resolveComputer = async (selection: SessionTarget, statusSignal?: AbortSignal): Promise<ResolvedBotComputer | undefined> => {
     const target = await resolveTarget(selection.id)
     if (target === undefined) return undefined
     const desktop = target.permissionScope === 'bot' ? target.desktop : undefined
@@ -520,6 +568,7 @@ export function botComputerRoutesWithLegacy(
     const open = typeof computer === 'function' ? computer : () => computer
     const restart = target.permissionScope === 'bot' && (selectedDesktop || target.restart === true
       || (statusSignal !== undefined && target.restart !== undefined && await target.restart(statusSignal)))
+    const teaching = navigate !== undefined && target.permissionScope === 'bot' && !selection.id.startsWith('handoff-')
     return {
       open,
       available: typeof computer === 'function' || computer.status().available,
@@ -528,6 +577,7 @@ export function botComputerRoutesWithLegacy(
         location: 'vps',
         permissionScope: target.permissionScope,
         ...(navigate === undefined ? {} : { browser: true }),
+        ...(teaching ? { teaching: true } : {}),
         ...(desktop === undefined ? {} : { desktop: true }),
         ...(target.terminal === true ? { terminal: true } : {}),
         ...(target.permissionScope === 'bot' && target.terminal === true && target.terminalInternet !== undefined
@@ -560,7 +610,7 @@ export function botComputerRoutesWithLegacy(
         computer: metadata satisfies ComputerStatusMetadata,
       })
     },
-  }), browserNavigationRoute(id => resolveComputer({ id, managed: true, surface: 'primary' }))]
+  }), ...teachingRoutes(resolveComputer), browserNavigationRoute(id => resolveComputer({ id, managed: true, surface: 'primary' }))]
 }
 
 /**

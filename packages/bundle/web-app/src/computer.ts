@@ -16,6 +16,7 @@ import { isAbsolute, join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { scrubbedParentEnv } from '@yharness/subprocess'
 import { brandString, type Branded } from '@yharness/brand'
+import { assertNever } from '@yharness/util-values'
 
 /** Fixed width exposed by the first private Computer panel. */
 export const COMPUTER_WIDTH = 1280
@@ -29,6 +30,8 @@ const MAX_TEXT_BYTES = 8_192
 const XDOTOOL_TEXT_INTERVAL_MS = 12
 const XDOTOOL_TEXT_SETTLE_MS = 350
 const MAX_KEY_LENGTH = 64
+const MAX_TEACHING_ACTIONS = 128
+const MAX_TEACHING_DURATION_MS = 10 * 60_000
 const VIEWER_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu
 
 /** Mode reported to browser viewers and control operations. */
@@ -72,6 +75,40 @@ export interface ComputerSignInRequest {
   readonly canCancel: boolean
 }
 
+/* jscpd:ignore-start -- Intentional Host/client mirror of Browser-teaching wire vocabulary. */
+/** Opaque identifier for one owner-started Computer demonstration. */
+export type ComputerTeachingId = Branded<'ComputerTeachingId'>
+
+/** Safe action metadata retained for a reviewed Computer demonstration. */
+export type ComputerTeachingAction =
+  | { readonly kind: 'click'; readonly x: number; readonly y: number; readonly button: 1 | 2 | 3 }
+  | { readonly kind: 'drag'; readonly x: number; readonly y: number; readonly toX: number; readonly toY: number }
+  | { readonly kind: 'scroll'; readonly x: number; readonly y: number; readonly delta: number }
+  | { readonly kind: 'navigate'; readonly origin: string }
+/* jscpd:ignore-end */
+
+/** The state of an owner Computer demonstration. */
+export type ComputerTeachingTraceStatus = 'review' | 'interrupted' | 'limit'
+
+/** Bounded trace returned after an explicit owner stop. */
+export interface ComputerTeachingTrace {
+  readonly id: ComputerTeachingId
+  readonly status: ComputerTeachingTraceStatus
+  readonly reviewable: boolean
+  readonly truncated: boolean
+  readonly startedAt: number
+  readonly endedAt: number
+  readonly actions: readonly ComputerTeachingAction[]
+}
+
+/** Owner-visible demonstration state; completed traces are returned only by explicit stop. */
+export interface ComputerTeachingStatus {
+  readonly active: boolean
+  readonly actionCount: number
+  readonly maxActions: number
+  readonly traceId?: ComputerTeachingId
+}
+
 /** Owner actions on an exact sign-in request. */
 export type ComputerSignInAction = 'take' | 'complete' | 'cancel'
 
@@ -82,6 +119,19 @@ interface SignIn {
   readonly id: ComputerSignInId
   taken: boolean
   settle(result: ComputerSignInResult): void
+}
+
+interface Teaching {
+  readonly id: ComputerTeachingId
+  readonly viewerId: string
+  readonly startedAt: number
+  readonly actions: ComputerTeachingAction[]
+  readonly timer: ReturnType<typeof setTimeout>
+}
+
+interface PendingTeachingReview {
+  readonly viewerId: string
+  readonly trace: ComputerTeachingTrace
 }
 
 /** Private opt-in X11 settings supplied by the composition owner. */
@@ -198,6 +248,29 @@ function invalidViewer(): never {
 function validateViewer(value: string): string {
   if (!VIEWER_ID_PATTERN.test(value)) invalidViewer()
   return value
+}
+
+/**
+ * Remove path, query, and fragment data before a browser navigation enters a trace.
+ * @param url - A URL already admitted by the isolated browser route.
+ * @returns Safe origin metadata, or undefined for a URL that cannot be retained.
+ */
+function teachingNavigation(url: string): ComputerTeachingAction | undefined {
+  try {
+    const parsed = new URL(url)
+    if ((parsed.protocol !== 'http:' && parsed.protocol !== 'https:') || parsed.username !== '' || parsed.password !== '') {
+      return undefined
+    }
+    return { kind: 'navigate', origin: parsed.origin }
+  } catch (error) {
+    // Rejected navigation URLs contribute no evidence.
+    void error
+    return undefined
+  }
+}
+
+function teachingStatusFor(id: ComputerTeachingId, actionCount: number, active: boolean): ComputerTeachingStatus {
+  return { active, actionCount, maxActions: MAX_TEACHING_ACTIONS, traceId: id }
 }
 
 function boundedInteger(value: unknown, minimum: number, maximum: number): number {
@@ -361,6 +434,8 @@ export class VpsComputer {
   private signIn: SignIn | undefined
   private signInRevision = 0
   private pendingBotActions = 0
+  private teaching: Teaching | undefined
+  private pendingTeaching: PendingTeachingReview | undefined
   private disposed = false
   private disposePromise: Promise<void> | undefined
 
@@ -402,6 +477,8 @@ export class VpsComputer {
     const answer = Promise.withResolvers<ComputerSignInResult>()
     await this.admit(() => {
       if (this.signIn !== undefined) throw new ComputerLeaseError('a Computer sign-in is already open')
+      this.finishTeaching('interrupted')
+      this.pendingTeaching = undefined
       const interrupt = (): void => {
         void this.admit(() => {
           if (this.signIn !== request) return
@@ -523,6 +600,89 @@ export class VpsComputer {
   }
 
   /**
+   * Start recording a bounded, owner-controlled Computer demonstration.
+   *
+   * Only an active viewer lease can start a demonstration. The returned state
+   * is scoped to that viewer and the exact Computer instance selected for its
+   * Bot Session.
+   * @param viewerId - UUID holding the current Computer lease.
+   * @param signal - Optional request cancellation while waiting for admission.
+   * @returns The current recording state or the identity of a recording that reached its limit.
+   */
+  async startTeaching(viewerId: string, signal?: AbortSignal): Promise<ComputerTeachingStatus> {
+    const id = validateViewer(viewerId)
+    return this.admit(() => {
+      this.expireLease()
+      this.expireTeaching()
+      if (this.owner !== id) throw new ComputerLeaseError('viewer does not hold computer control')
+      if (this.signIn !== undefined) throw new ComputerLeaseError('Computer teaching is unavailable during sign-in')
+      const active = this.teaching
+      if (active !== undefined) return teachingStatusFor(active.id, active.actions.length, true)
+      const pending = this.pendingTeaching?.trace
+      if (pending?.status === 'limit') return teachingStatusFor(pending.id, pending.actions.length, false)
+      this.pendingTeaching = undefined
+      const timer = setTimeout(() => {
+        void this.admit(() => {
+          if (this.teaching !== teaching) return
+          this.expireLease()
+          this.finishTeaching('limit')
+        }).catch((error: unknown) => {
+          // Disposal clears the recording before rejecting queued work.
+          void error
+        })
+      }, MAX_TEACHING_DURATION_MS)
+      timer.unref()
+      const teaching: Teaching = {
+        id: brandString<ComputerTeachingId>(randomUUID()), viewerId: id, startedAt: this.now(), actions: [], timer,
+      }
+      this.teaching = teaching
+      return teachingStatusFor(teaching.id, 0, true)
+    }, signal)
+  }
+
+  /**
+   * Stop the current demonstration and return a review-only trace. A trace
+   * that reached the action or duration bound remains retrievable by the same
+   * controlling viewer until that viewer releases the Computer.
+   * @param viewerId - UUID holding the demonstration's Computer lease.
+   * @param signal - Optional request cancellation while waiting for admission.
+   * @returns A bounded trace containing only safe action metadata.
+   */
+  async stopTeaching(viewerId: string, signal?: AbortSignal): Promise<ComputerTeachingTrace> {
+    const id = validateViewer(viewerId)
+    return this.admit(() => {
+      this.expireLease()
+      this.expireTeaching()
+      if (this.owner !== id) {
+        throw new ComputerLeaseError('viewer does not hold a Computer demonstration')
+      }
+      const trace = this.finishTeaching('review') ?? this.pendingTeaching?.trace
+      if (trace === undefined) throw new ComputerLeaseError('Computer demonstration has ended')
+      this.pendingTeaching = { viewerId: id, trace }
+      this.leaseExpiry = this.now() + LEASE_DURATION_MS
+      return trace
+    }, signal)
+  }
+
+  /**
+   * Read demonstration state for one authenticated viewer without exposing
+   * another viewer's trace.
+   * @param viewerId - UUID identifying the owner viewer.
+   * @returns The active state or an inactive state for that viewer.
+   */
+  teachingStatus(viewerId: string): ComputerTeachingStatus {
+    const id = validateViewer(viewerId)
+    this.assertOpen()
+    this.expireLease()
+    this.expireTeaching()
+    const active = this.teaching
+    if (active?.viewerId === id) return teachingStatusFor(active.id, active.actions.length, true)
+    const pending = this.pendingTeaching
+    if (pending?.viewerId === id) return teachingStatusFor(pending.trace.id, pending.trace.actions.length, false)
+    return { active: false, actionCount: 0, maxActions: MAX_TEACHING_ACTIONS }
+  }
+
+  /**
    * Admit one human action, requiring and renewing that viewer's lease.
    * @param viewerId - UUID identifying the browser viewer.
    * @param action - Untrusted action value to validate before admission.
@@ -539,6 +699,7 @@ export class VpsComputer {
       if (this.signIn !== undefined && !this.signIn.taken) throw new ComputerLeaseError('accept the Computer sign-in request first')
       this.leaseExpiry = this.now() + LEASE_DURATION_MS
       await this.execute(normalized, signal, this.signIn !== undefined, browserOrigin)
+      if (this.signIn === undefined) this.recordTeachingAction(id, normalized)
       return { mode: 'controlling' as const }
     }, signal)
   }
@@ -580,6 +741,10 @@ export class VpsComputer {
       this.expireLease()
       if (this.owner !== id || this.signIn?.taken === false) throw new ComputerLeaseError('viewer does not hold browser control')
       await navigate(url, signal)
+      if (this.signIn === undefined) {
+        const action = teachingNavigation(url)
+        if (action !== undefined) this.appendTeachingAction(id, action)
+      }
       this.leaseExpiry = this.now() + LEASE_DURATION_MS
       return { mode: 'controlling' }
     }, signal)
@@ -637,6 +802,8 @@ export class VpsComputer {
   }
 
   private clearLease(): void {
+    this.finishTeaching('interrupted')
+    this.pendingTeaching = undefined
     this.owner = undefined
     this.leaseExpiry = 0
   }
@@ -650,6 +817,60 @@ export class VpsComputer {
     if (this.owner !== undefined && this.owner !== id) throw new ComputerLeaseError('computer is controlled by another viewer')
     this.owner = id
     this.leaseExpiry = this.now() + LEASE_DURATION_MS
+  }
+
+  private expireTeaching(): void {
+    const teaching = this.teaching
+    if (teaching !== undefined && this.now() - teaching.startedAt >= MAX_TEACHING_DURATION_MS) {
+      this.finishTeaching('limit')
+    }
+  }
+
+  private finishTeaching(status: ComputerTeachingTraceStatus): ComputerTeachingTrace | undefined {
+    const teaching = this.teaching
+    if (teaching === undefined) return undefined
+    this.teaching = undefined
+    clearTimeout(teaching.timer)
+    const trace: ComputerTeachingTrace = {
+      id: teaching.id,
+      status,
+      reviewable: status !== 'interrupted',
+      truncated: status !== 'review',
+      startedAt: teaching.startedAt,
+      endedAt: Math.max(teaching.startedAt, this.now()),
+      actions: teaching.actions.slice(),
+    }
+    if (status === 'limit') this.pendingTeaching = { viewerId: teaching.viewerId, trace }
+    return trace
+  }
+
+  private recordTeachingAction(viewerId: string, action: ComputerAction): void {
+    switch (action.kind) {
+      case 'click':
+        this.appendTeachingAction(viewerId, { kind: 'click', x: action.x, y: action.y, button: action.button })
+        return
+      case 'drag':
+        this.appendTeachingAction(viewerId, { kind: 'drag', x: action.x, y: action.y, toX: action.toX, toY: action.toY })
+        return
+      case 'scroll':
+        this.appendTeachingAction(viewerId, { kind: 'scroll', x: action.x, y: action.y, delta: action.delta })
+        return
+      case 'key':
+      case 'move':
+      case 'text':
+        return
+      /* v8 ignore next -- ComputerAction is a closed union. */
+      default:
+        return assertNever(action, 'computer action')
+    }
+  }
+
+  private appendTeachingAction(viewerId: string, action: ComputerTeachingAction): void {
+    this.expireTeaching()
+    const teaching = this.teaching
+    if (teaching?.viewerId !== viewerId) return
+    teaching.actions.push(action)
+    if (teaching.actions.length === MAX_TEACHING_ACTIONS) this.finishTeaching('limit')
   }
 
   private assertBotControl(): void {

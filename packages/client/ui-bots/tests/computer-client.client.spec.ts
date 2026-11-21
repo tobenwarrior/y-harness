@@ -17,6 +17,68 @@ function parsedBody(value: unknown): unknown {
 }
 
 describe('Computer HTTP client', () => {
+  const teachingId = 'b023da7a-7004-4d17-b7a4-6f691d1d3fe0'
+  const recordingTrace = { id: teachingId, reviewable: true, truncated: false, actions: [] }
+
+  it('uses the exact Bot and lease for private Browser teaching', async () => {
+    const fetchHost = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(response({ available: true, computer: { location: 'vps', permissionScope: 'bot', browser: true, teaching: true } }))
+      .mockResolvedValueOnce(response({ active: true, traceId: teachingId }))
+      .mockResolvedValueOnce(response({ ...recordingTrace, actions: [
+        { kind: 'navigate', origin: 'https://example.test', path: '/discarded' },
+        { kind: 'click', x: 28, y: 42, button: 1 },
+        { kind: 'drag', x: 7, y: 18, toX: 50, toY: 80 },
+        { kind: 'scroll', x: 7, y: 18, delta: -3 },
+      ] }))
+    const client = createComputerClient(fetchHost)
+    const signal = new AbortController().signal
+    const teaching = client.teaching!
+    expect((await client.status(signal, 'bot-session')).computer?.teaching).toBe(true)
+    expect(client.desktop?.teaching).toBeUndefined()
+    await expect(teaching.start('owner-viewer', 'bot-session', signal)).resolves.toBe(teachingId)
+    await expect(teaching.stop('owner-viewer', 'bot-session', signal)).resolves.toEqual({ ...recordingTrace, actions: [
+      { kind: 'navigate', origin: 'https://example.test' },
+      { kind: 'click', x: 28, y: 42, button: 1 },
+      { kind: 'drag', x: 7, y: 18, toX: 50, toY: 80 },
+      { kind: 'scroll', x: 7, y: 18, delta: -3 },
+    ] })
+    expect(fetchHost.mock.calls.slice(1).map(([path, init]) => [path, parsedBody(init), init?.signal])).toEqual([
+      ['api/computer/teach/start', { viewerId: 'owner-viewer', sessionId: 'bot-session' }, signal],
+      ['api/computer/teach/stop', { viewerId: 'owner-viewer', sessionId: 'bot-session' }, signal],
+    ])
+  })
+
+  it('recognizes a recoverable recording that reached its limit', async () => {
+    const teaching = createComputerClient(() => Promise.resolve(response({ active: false, traceId: teachingId }))).teaching!
+    await expect(teaching.start('viewer', 'bot-session', new AbortController().signal)).resolves.toBe(teachingId)
+  })
+
+  it.each([null, { active: 'false', traceId: teachingId }, { active: true, traceId: 1 }, { active: true, traceId: 'invalid' }])(
+    'rejects a malformed Browser recording start', async (value) => {
+      const teaching = createComputerClient(() => Promise.resolve(response(value))).teaching!
+      await expect(teaching.start('viewer', 'bot-session', new AbortController().signal)).rejects.toThrow('invalid response')
+    },
+  )
+
+  it.each([
+    null, { ...recordingTrace, id: 5 }, { ...recordingTrace, id: 'invalid' },
+    { ...recordingTrace, reviewable: undefined }, { ...recordingTrace, truncated: undefined },
+    { ...recordingTrace, actions: false }, { ...recordingTrace, actions: Array.from({ length: 129 }, () => ({})) },
+    { ...recordingTrace, actions: [null] },
+    ...[
+      { kind: 'navigate' }, { kind: 'navigate', origin: 'https://user:sample@example.test/secret' },
+      { kind: 'navigate', origin: 'file:///sample' }, { kind: 'navigate', origin: 'malformed' },
+      { kind: 'navigate', origin: `https://${'a'.repeat(2049)}.test` },
+      { kind: 'click', x: false, y: 9, button: 1 }, { kind: 'click', x: 1, y: 1.5, button: 1 },
+      { kind: 'click', x: 1, y: 2, button: 0 },
+      { kind: 'drag', x: 1, y: 2 }, { kind: 'drag', x: 1, y: 2, toX: 4 },
+      { kind: 'text', x: 1, y: 2, text: 'discarded' }, { kind: 'scroll', x: 1, y: 2, delta: '3' },
+    ].map(action => ({ ...recordingTrace, actions: [action] })),
+  ])('rejects invalid or private Browser evidence', async (value) => {
+    const teaching = createComputerClient(() => Promise.resolve(response(value))).teaching!
+    await expect(teaching.stop('viewer', 'bot-session', new AbortController().signal)).rejects.toThrow('invalid response')
+  })
+
   it('starts checking, maps Mac/VPS/unavailable results, and keeps identity metadata', async () => {
     const status = vi.fn<ComputerClient['status']>()
       .mockResolvedValueOnce({ available: true, kind: 'mac', computer: { location: 'mac', permissionScope: 'workspace' } })

@@ -180,7 +180,7 @@ describe('Computer owner route lifecycle', () => {
     expect((await route(routes, '/api/computer/status').fetch(new Request('http://127.0.0.1/api/computer/status', { method: 'POST', body: '{' }))).status).toBe(400)
     await expect((await send('status', { sessionId: SESSION })).json()).resolves.toEqual({
       available: true, kind: 'vps', computer: {
-        id: 'bot-owner', location: 'vps', permissionScope: 'bot', browser: true, desktop: true, terminal: true,
+        id: 'bot-owner', location: 'vps', permissionScope: 'bot', browser: true, desktop: true, terminal: true, teaching: true,
         terminalInternet: true, networkControl: true, restart: true, files: true, sharedFiles: true, sharedWorkspaceControl: true,
       },
     })

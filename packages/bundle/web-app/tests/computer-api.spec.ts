@@ -105,6 +105,48 @@ describe('Computer HTTP routes', () => {
     expect(computer.input).not.toHaveBeenCalled()
   })
 
+  it('exposes owner-scoped teaching lifecycle routes without accepting extra fields', async () => {
+    const computer = new ComputerHost({ display: ':teach', authorityPath: '/dev/null' }, { run: async () => {} })
+    const send = sender(botComputerRoutesWithLegacy(async sessionId => sessionId === 'bot-session' ? {
+      computer, id: 'bot', permissionScope: 'bot' as const, navigate: async () => {},
+    } : undefined))
+    try {
+      await expect((await send('teach/status', { viewerId, sessionId: 'bot-session' })).json()).resolves.toEqual({ active: false, actionCount: 0, maxActions: 128 })
+      expect((await send('teach/start', null)).status).toBe(400)
+      expect((await send('teach/start', { sessionId: 'bot-session' })).status).toBe(400)
+      expect((await send('teach/start', { viewerId, sessionId: 'bot-session', extra: true })).status).toBe(400)
+      expect((await send('teach/start', { viewerId, sessionId: 'other-session' })).status).toBe(409)
+      expect((await send('teach/start', { viewerId, sessionId: 'bot-session' })).status).toBe(409)
+      expect((await send('teach/start', { viewerId, sessionId: 'bot-session', surface: 'desktop' })).status).toBe(400)
+      expect(await (await send('status', { sessionId: 'bot-session' })).json()).toMatchObject({ computer: { teaching: true } })
+      await expect((await send('take-control', { viewerId, sessionId: 'bot-session' })).json()).resolves.toEqual({ mode: 'controlling' })
+      await expect((await send('teach/start', { viewerId, sessionId: 'bot-session' })).json()).resolves.toMatchObject({ active: true, maxActions: 128 })
+      await expect((await send('teach/status', { viewerId, sessionId: 'bot-session' })).json()).resolves.toMatchObject({ active: true })
+      await expect((await send('teach/stop', { viewerId, sessionId: 'bot-session' })).json()).resolves.toMatchObject({ status: 'review', reviewable: true, actions: [] })
+      expect((await send('teach/status', { viewerId, sessionId: 'other-session' })).status).toBe(409)
+    } finally {
+      await computer.dispose()
+    }
+  })
+
+  it('rejects teaching for legacy, desktop, shared-handoff, and non-browser targets', async () => {
+    const computer = new ComputerHost({ display: ':teach-gate', authorityPath: '/dev/null' }, { run: async () => {} })
+    const send = sender(botComputerRoutesWithLegacy(async (sessionId) => {
+      if (sessionId === 'legacy') return { computer, id: 'shared-vps', permissionScope: 'workspace' as const, navigate: async () => {} }
+      if (sessionId === 'desktop') return { computer, id: 'bot', permissionScope: 'bot' as const }
+      if (sessionId === 'handoff-test') return { computer, id: 'bot', permissionScope: 'bot' as const, navigate: async () => {} }
+      return undefined
+    }))
+    try {
+      for (const sessionId of ['legacy', 'desktop', 'handoff-test']) {
+        expect(await (await send('status', { sessionId })).json()).not.toMatchObject({ computer: { teaching: true } })
+        expect((await send('teach/status', { viewerId, sessionId })).status).toBe(409)
+      }
+    } finally {
+      await computer.dispose()
+    }
+  })
+
   it('advertises and admits browser navigation only for a controlling viewer of the selected Bot', async () => {
     const computer = new ComputerHost({ display: ':browser', authorityPath: '/dev/null' })
     const navigate = vi.fn(async (_url: string, _signal: AbortSignal) => {})

@@ -1,6 +1,8 @@
 /** Global Bot panel and its explicitly Session-bound Conversation child. */
 
 import type { ReactNode } from 'react'
+import { brandString } from '@yharness/brand'
+import type { SessionRequestId } from '@yharness/api-session-controller/types'
 import type { BotView } from '@yharness/bots/client'
 import type { HostObservable, PropsLocale, PropsRenderFactories, PropsRenderSlots, PropsRuntime, InjectFace } from '@yharness/client-ui-slots'
 import type { ConversationBot } from '@yharness/client-ui-conversation/client'
@@ -268,6 +270,11 @@ export function BotsPanel({
             : <ComputerPanel key={selectedReference.sessionId} computer={computer} sessionId={selectedReference.sessionId}
               {...(selectedBot === undefined ? {} : { botId: selectedBot.id })}
               signIn={signIn?.sessionId === selectedReference.sessionId ? signIn : undefined}
+              sendTeachingDraft={async (text, id) => {
+                const session = selectedReference.binding.session
+                const result = await session.prompt([{ type: 'text', text }], 'queue', undefined, brandString<SessionRequestId>(id))
+                if (!result.ok) throw new Error(result.error.code)
+              }}
               close={closeComputer}
               {...(refreshComputerAvailability === undefined ? {} : { refreshAvailability: refreshComputerAvailability })}
               t={t} />}
