@@ -534,7 +534,7 @@ function Loaded({ injected, renderSlot }: { injected: ModelsSectionFace; renderS
   const detailRow = detailTarget === undefined
     ? undefined
     : state.rows.find(row => row.entry.provider === detailTarget.provider)
-  const detailVisible = detailTarget !== undefined && detailNamespace !== undefined
+  const detailVisible = detailTarget !== undefined && detailNamespace !== undefined && detailRow !== undefined
 
   return (
     <div className={styles['section']}>
@@ -571,20 +571,18 @@ function Loaded({ injected, renderSlot }: { injected: ModelsSectionFace; renderS
               t={t}
               onBack={() => { closeDetail(false, detailTarget) }}
             />
-            {detailRow?.entry.error === undefined
+            {detailRow.entry.error === undefined
               ? null
               : <p role="alert" className={styles['error']}>{detailRow.entry.error}</p>}
-            {detailRow === undefined
-              ? null
-              : renderSlot(
-                'settings.models.provider-card',
-                {
-                  provider: detailRow.entry,
-                  configured: detailRow.configured,
-                  keyConfigured: keyConfiguredOf(detailRow),
-                },
-                { entryKey: detailRow.entry.settingsNs },
-              )}
+            {renderSlot(
+              'settings.models.provider-card',
+              {
+                provider: detailRow.entry,
+                configured: detailRow.configured,
+                keyConfigured: keyConfiguredOf(detailRow),
+              },
+              { entryKey: detailRow.entry.settingsNs },
+            )}
             <div key={detailTarget.provider}>
               {renderProviderEditor({
                 target: detailTarget,
@@ -632,7 +630,6 @@ function Loaded({ injected, renderSlot }: { injected: ModelsSectionFace; renderS
                   </li>
                 )
               }
-              const open = !addOpen && editing?.provider === row.entry.provider
               const credentialConfigured = row.credential?.configured === true
               const credentialMissing = !credentialConfigured
             && row.apiKeyEnv !== undefined
@@ -722,17 +719,6 @@ function Loaded({ injected, renderSlot }: { injected: ModelsSectionFace; renderS
                     { provider: row.entry, configured: row.configured, keyConfigured: keyConfiguredOf(row) },
                     { entryKey: row.entry.settingsNs },
                   )}
-                  {open
-                    ? renderProviderEditor({
-                      target,
-                      namespace,
-                      schema,
-                      operations,
-                      t,
-                      readOnly: !state.writable,
-                      onClose: (changed) => { closeEditor(changed, target) },
-                    })
-                    : null}
                 </li>
               )
             })}
