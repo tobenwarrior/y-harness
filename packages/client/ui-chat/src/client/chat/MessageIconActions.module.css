@@ -9,6 +9,25 @@
   height: calc(28px + var(--dsh-content-font-delta, 0px));
 }
 
+.actions[data-reply-disclosure] {
+  flex-wrap: wrap;
+  height: auto;
+  min-height: calc(28px + var(--dsh-content-font-delta, 0px));
+}
+
+.replyTools:not([hidden]) {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: inherit;
+  min-width: 0;
+}
+
+.action[aria-expanded='true'] {
+  background: var(--yh-alias-interactive-bg-hover);
+  color: var(--yh-alias-label-secondary);
+}
+
 /* The user clock keeps the secondary tier. */
 .timeStart {
   padding-right: 12px;

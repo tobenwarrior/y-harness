@@ -1,6 +1,6 @@
 /** Global Bot panel and its explicitly Session-bound Conversation child. */
 
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import type { BotView } from '@yharness/bots/client'
 import type { HostObservable, PropsLocale, PropsRenderFactories, PropsRenderSlots, PropsRuntime, InjectFace } from '@yharness/client-ui-slots'
 import type { ConversationBot } from '@yharness/client-ui-conversation/client'
@@ -14,7 +14,7 @@ import { ComputerPanel } from './ComputerPanel.tsx'
 import { MacComputerPanel } from './MacComputerPanel.tsx'
 import type { AvailabilityState } from './computer-availability.ts'
 import type { ComputerClient, ComputerIdentity } from './computer-client.ts'
-import { IconFolderOpenOutlineRegular, PluginArtworkTerminal } from '@yharness/client-ui-primitives'
+import { IconFolderOpenOutlineRegular, IconGaugeOutlineRegular, PluginArtworkTerminal } from '@yharness/client-ui-primitives'
 import css from './BotWorkspace.module.css'
 
 /** Selected sign-in request and its Computer panel. */
@@ -178,6 +178,8 @@ export function BotsPanel({
   const showSharedFilesAction = useSharedFilesAvailable(value => value)
   const selectedBot = bots.find(bot => bot.id === state.selectedBotId)
   const selectedReference = reference()
+  const [statisticsTarget, setStatisticsTarget] = useState<string | null>(null)
+  const showStatistics = selectedReference !== undefined && statisticsTarget === selectedReference.sessionId
   const canShowComputer = (availability === 'available' || availability === 'mac') && selectedReference !== undefined
   const showComputer = canShowComputer && computerTarget === selectedReference.sessionId
   const closeComputer = (): void => { setComputerTarget(null) }
@@ -185,7 +187,7 @@ export function BotsPanel({
     ? undefined
     : (
       <SessionProvider session={selectedReference}>
-        {renderSlot('bots.conversation', { bot: { name: selectedBot.name } })}
+        {renderSlot('bots.conversation', { bot: { name: selectedBot.name, ...(showStatistics ? { showStatistics } : {}) } })}
       </SessionProvider>
     )
   if (groupsAvailable && state.selectedGroupId !== null) {
@@ -233,6 +235,12 @@ export function BotsPanel({
             icon: <IconFolderOpenOutlineRegular size={16} />,
             run: () => { openWorkspaceTab('computer-shared-files') },
           }] : []),
+          ...(selectedReference === undefined ? [] : [{
+            id: 'chat-statistics',
+            label: t(showStatistics ? 'hideChatStatistics' : 'showChatStatistics'),
+            icon: <IconGaugeOutlineRegular size={16} />,
+            run: () => { setStatisticsTarget(showStatistics ? null : selectedReference.sessionId) },
+          }]),
         ]}
         headerActions={<>
           {canShowComputer && (

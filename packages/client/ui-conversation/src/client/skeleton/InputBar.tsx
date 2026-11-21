@@ -49,7 +49,7 @@ export const InputBar = memo(function InputBar({
   renderSlot, useBusyEnter, useFileUploads, useNotices, useLexicon, useMenuLauncher, useStopShortcut,
   useProjection, sessionId, variant, disabled: inert = false, blocked,
   workspacePickerOpen = false, onRequestWorkspace,
-  placeholder, defaultPlaceholder, accessory, botChat,
+  placeholder, defaultPlaceholder, accessory, botChat, showStatistics,
 }: InputBarProps) {
   const input = useInput(s => s)
   const notice = useNotices(s => s)
@@ -503,9 +503,12 @@ export const InputBar = memo(function InputBar({
       </div>
       <div className={css.dock} data-composer-dock>
         {variant === 'composer' && input !== undefined && sessionId !== undefined
-          ? renderSlot('conversation.composer.dock', botChat === undefined ? {} : { botChat })
+          ? renderSlot('conversation.composer.dock', {
+            ...(botChat === undefined ? {} : { botChat }),
+            ...(showStatistics === undefined ? {} : { showStatistics }),
+          })
           : null}
-        {activity ? null : <ContextMeter useProjection={useProjection} t={t} />}
+        {!activity && (botChat !== true || showStatistics === true) && <ContextMeter useProjection={useProjection} t={t} />}
       </div>
     </div>
   )

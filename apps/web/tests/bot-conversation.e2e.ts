@@ -118,7 +118,7 @@ describe.skipIf(MODE === 'record')('web e2e: Bot conversation presentation', () 
       workspaceCwd: workspaceRoot,
     })
     await scaffold.ctx.settings.update('ui-chat', { performanceUsage: 'compact' })
-    await scaffold.ctx.settings.update('ui-theme', { preference: 'dark' })
+    await scaffold.ctx.settings.update('ui-theme', { preference: 'system' })
     scaffold.ctx.effect(
       () => scaffold.ctx.llm.registerAdapter([PROVIDER], adapter),
       'Bot conversation browser fixture adapter',
@@ -129,6 +129,7 @@ describe.skipIf(MODE === 'record')('web e2e: Bot conversation presentation', () 
     })).bot
     browser = await chromium.launch()
     page = await newEnglishPage(browser)
+    await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' })
     await page.route('**/api/computer/status', route => route.fulfill({
       status: 200, contentType: 'application/json', body: JSON.stringify({ available: true }),
     }))
@@ -208,23 +209,48 @@ describe.skipIf(MODE === 'record')('web e2e: Bot conversation presentation', () 
     expect(received).not.toBeNull()
     if (sent !== null && received !== null) expect(sent.x).toBeGreaterThan(received.x)
 
-    const activity = surface.locator('[data-composer-stat="activity"] button').first()
-    const usage = surface.locator('[data-composer-stat="usage"] button').first()
-    await expect.poll(() => surface.locator('[data-composer-stat="activity"]').count()).toBe(1)
-    await expect.poll(() => surface.locator('[data-composer-stat="usage"]').count()).toBe(1)
-    await expect.poll(() => activity.count()).toBe(1)
-    await expect.poll(() => usage.count()).toBe(1)
-    await expect.poll(() => activity.getAttribute('aria-label')).toBe('Activity')
-    await expect.poll(() => usage.getAttribute('aria-label')).toBe('Token usage')
-
     const settledSnapshot = await captureStableAria(page, '[data-conversation-surface="bots"]', scaffold.workspaceCwd)
     await captureMedia(page, mediaRoot, 'settled')
     if (mediaRoot !== undefined) {
+      const sidebar = page.locator('[data-yh-part="sidebar"]')
       await page.setViewportSize({ width: 1440, height: 1000 })
+      await expect.poll(() => sidebar.evaluate(element => element.getBoundingClientRect().width > 100)).toBe(true)
       await captureMedia(page, mediaRoot, 'settled-wide')
+      await page.emulateMedia({ colorScheme: 'light' })
+      await page.locator('body[data-ds-dark-theme]').waitFor({ state: 'detached' })
+      await captureMedia(page, mediaRoot, 'settled-light-wide')
       await page.setViewportSize({ width: 480, height: 1000 })
+      await expect.poll(() => sidebar.evaluate(element => element.getBoundingClientRect().width < 100)).toBe(true)
+      await captureMedia(page, mediaRoot, 'settled-light')
+      await page.emulateMedia({ colorScheme: 'dark' })
+      await page.locator('body[data-ds-dark-theme]').waitFor({ state: 'visible' })
     }
     await expect.poll(() => composer.getAttribute('aria-label')).toBe('Message ' + bot.name)
+    expect(await surface.locator('[data-composer-stat]').count()).toBe(0)
+    expect(await surface.getByRole('button', { name: 'Good response', exact: true }).count()).toBe(0)
+    const replyActions = surface.getByRole('button', { name: 'Reply actions', exact: true })
+    await expect.poll(() => replyActions.getAttribute('aria-expanded')).toBe('false')
+    await replyActions.press('Enter')
+    await expect.poll(() => replyActions.getAttribute('aria-expanded')).toBe('true')
+    await surface.getByRole('button', { name: 'Good response', exact: true }).waitFor()
+    await surface.getByRole('button', { name: 'Branch into a new conversation', exact: true }).waitFor()
+    await composer.focus()
+    await captureMedia(page, mediaRoot, 'reply-actions')
+    const replyActionsSnapshot = await captureStableAria(page, '[data-conversation-surface="bots"]', scaffold.workspaceCwd)
+
+    const options = page.getByRole('button', { name: 'Bot options', exact: true })
+    const draft = 'Keep this draft while I check statistics.'
+    await composer.fill(draft)
+    await options.click()
+    const statisticsOption = page.getByRole('menuitem', { name: 'Show chat statistics', exact: true })
+    await statisticsOption.waitFor()
+    await captureMedia(page, mediaRoot, 'bot-options')
+    await statisticsOption.click()
+    expect(await composer.textContent()).toContain(draft)
+    const activity = surface.locator('[data-composer-stat="activity"] button')
+    const usage = surface.locator('[data-composer-stat="usage"] button')
+    await expect.poll(() => activity.getAttribute('aria-label')).toBe('Activity')
+    await expect.poll(() => usage.getAttribute('aria-label')).toBe('Token usage')
 
     await activity.click()
     const activityDialog = page.getByRole('dialog', { name: 'Session statistics', exact: true })
@@ -249,6 +275,14 @@ describe.skipIf(MODE === 'record')('web e2e: Bot conversation presentation', () 
     const turnUsageSnapshot = await captureStableAria(page, '[role="dialog"][aria-label="Turn usage"]', scaffold.workspaceCwd)
     await page.keyboard.press('Escape')
     await expect.poll(() => turnUsageDialog.count()).toBe(0)
+    await replyActions.click()
+    await expect.poll(() => replyActions.getAttribute('aria-expanded')).toBe('false')
+    expect(await surface.getByRole('button', { name: 'Good response', exact: true }).count()).toBe(0)
+    await options.click()
+    await page.getByRole('menuitem', { name: 'Hide chat statistics', exact: true }).click()
+    await expect.poll(() => surface.locator('[data-composer-stat]').count()).toBe(0)
+    expect(await composer.textContent()).toContain(draft)
+    await composer.clear()
 
     // A due reminder enters the same Bot Session and remains attributable to its origin.
     await scaffold.ctx.schedule.create(bot.sessionId, {
@@ -276,7 +310,10 @@ describe.skipIf(MODE === 'record')('web e2e: Bot conversation presentation', () 
 
     await compareOrRefreshGolden(
       UI_EXPECTED,
-      [waitingSnapshot, settledSnapshot, activitySnapshot, usageSnapshot, turnUsageSnapshot, scheduledSnapshot].join('\n'),
+      [
+        waitingSnapshot, settledSnapshot, replyActionsSnapshot, activitySnapshot, usageSnapshot,
+        turnUsageSnapshot, scheduledSnapshot,
+      ].join('\n'),
       MODE,
     )
 
