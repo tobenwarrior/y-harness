@@ -3,7 +3,7 @@ import type { ReactNode } from 'react'
 import clsx from 'clsx'
 import {
   Button, IconArchiveOffOutlineRegular, IconCheckOutlineRegular,
-  IconEditOutlineRegular, IconEllipsisOutlineRegular,
+  IconCloseOutlineRegular, IconEditOutlineRegular, IconEllipsisOutlineRegular,
   IconFolderOpenOutlineRegular, IconLinkOutlineRegular, IconPaperPlaneOutlineRegular, IconPlusOutlineRegular,
   IconPinFillRegular, IconPinOutlineRegular, IconShareOutlineRegular, IconContextInjectionOutlineRegular, IconClockOutlineRegular,
   IconSidebarBotAddOutlineRegular, IconSidebarBotsOutlineRegular, IconSidebarSearchOutlineRegular,
@@ -27,7 +27,10 @@ import {
   createBotGroupAttachmentDraft,
   releaseBotGroupAttachment,
 } from './BotGroupAttachments.tsx'
-import { mentionQueryAt, mentionTargets } from './bot-mentions.ts'
+import {
+  EVERYONE_MENTION, hasCompleteMention, mentionQueryAt, removeCompleteMention, resolveMentionTargets,
+  type BotMentionSelection,
+} from './bot-mentions.ts'
 import { compactGroupQuote, GROUP_REACTION_OPTIONS } from './group-interactions.ts'
 import { BotMemoryManager } from './BotMemoryManager.tsx'
 import { BotSkillsManager } from './BotSkillsManager.tsx'
@@ -73,6 +76,10 @@ export interface BotRosterLayoutProps {
   readonly expandSidebar?: () => void
 }
 type BotDisplayStatus = Exclude<BotStatus, 'idle'> | 'needs-you'
+
+type GroupMentionOption =
+  | { readonly kind: 'everyone' }
+  | { readonly kind: 'bot'; readonly bot: BotSummary }
 
 function visibleBotStatus(bot: BotSummary): BotDisplayStatus | undefined {
   if (bot.needsAttention === true) return 'needs-you'
@@ -604,6 +611,7 @@ export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate,
   const [sending, setSending] = useState(false)
   const [mentionQuery, setMentionQuery] = useState<string | null>(null)
   const [mentionIndex, setMentionIndex] = useState(0)
+  const [everyoneMentionSelected, setEveryoneMentionSelected] = useState(false)
   const [editOpen, setEditOpen] = useState(false)
   const [retryingMessageId, setRetryingMessageId] = useState<string | null>(null)
   const [replyingTo, setReplyingTo] = useState<BotGroupMessageSummary | null>(null)
@@ -624,11 +632,17 @@ export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate,
   const attachmentsRef = useRef<readonly BotGroupAttachmentDraft[]>([])
   const attachmentMessageIdRef = useRef<string | null>(null)
   const attachmentDraftTextRef = useRef<string | null>(null)
+  const mentionSelectionsRef = useRef<readonly BotMentionSelection[]>([])
   attachmentsRef.current = attachments
   const mentionOptions = useMemo(() => {
     if (group === undefined || mentionQuery === null) return []
     const query = mentionQuery.toLocaleLowerCase()
-    return group.bots.filter(bot => bot.name.toLocaleLowerCase().includes(query))
+    const options: GroupMentionOption[] = []
+    if (EVERYONE_MENTION.startsWith(query)) options.push({ kind: 'everyone' })
+    options.push(...group.bots
+      .filter(bot => bot.name.toLocaleLowerCase().includes(query))
+      .map(bot => ({ kind: 'bot' as const, bot })))
+    return options
   }, [group, mentionQuery])
   useEffect(() => {
     const node = transcriptRef.current
@@ -644,6 +658,8 @@ export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate,
     setDraft('')
     setMentionQuery(null)
     setMentionIndex(0)
+    setEveryoneMentionSelected(false)
+    mentionSelectionsRef.current = []
     setReplyingTo(null)
     setReactionMenuMessageId(null)
     setReactionWorkingMessageId(null)
@@ -673,7 +689,7 @@ export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate,
     attachmentDraftTextRef.current = null
     setAttachments(current => current.filter(attachment => attachment.id !== id))
   }
-  const selectMention = (bot: BotSummary): void => {
+  const selectMention = (option: GroupMentionOption): void => {
     const input = composerInputRef.current
     /* v8 ignore next -- a visible mention option is rendered with its composer textarea mounted. */
     const cursor = input?.selectionStart ?? draft.length
@@ -681,9 +697,19 @@ export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate,
     const match = /(?:^|\s)@([^\s@]*)$/.exec(before)
     /* v8 ignore next -- mention options exist only while mentionQueryAt has matched this draft. */
     const start = match === null ? cursor : cursor - (match[1]?.length ?? 0) - 1
-    const next = `${draft.slice(0, start)}@${bot.name} ${draft.slice(cursor)}`
-    const nextCursor = start + bot.name.length + 2
+    const name = option.kind === 'everyone' ? EVERYONE_MENTION : option.bot.name
+    const next = `${draft.slice(0, start)}@${name} ${draft.slice(cursor)}`
+    const nextCursor = start + name.length + 2
+    mentionSelectionsRef.current = option.kind === 'everyone'
+      ? [...mentionSelectionsRef.current.filter(selection => !('kind' in selection)), { kind: 'everyone' }]
+      : [
+        ...mentionSelectionsRef.current.filter(selection => (
+          'kind' in selection || selection.name.toLocaleLowerCase() !== option.bot.name.toLocaleLowerCase()
+        )),
+        { id: option.bot.id, name: option.bot.name },
+      ]
     setDraft(next)
+    setEveryoneMentionSelected(option.kind === 'everyone' || hasCompleteMention(next, EVERYONE_MENTION))
     setMentionQuery(null)
     setMentionIndex(0)
     requestAnimationFrame(() => {
@@ -701,7 +727,11 @@ export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate,
       return
     }
     /* v8 ignore next -- the undefined-group render returns before the composer exists. */
-    const targets = group === undefined ? [] : mentionTargets(text, group.bots)
+    const targets = group === undefined ? [] : resolveMentionTargets(text, group.bots, mentionSelectionsRef.current)
+    if (targets === undefined) {
+      setAttachmentError(t('groupMentionAmbiguous'))
+      return
+    }
     setSending(true)
     setAttachmentError(null)
     try {
@@ -724,6 +754,8 @@ export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate,
       else await onSend(text, undefined, targets, replyingTo.id)
       setDraft('')
       setMentionQuery(null)
+      setEveryoneMentionSelected(false)
+      mentionSelectionsRef.current = []
       setReplyingTo(null)
     } catch (cause: unknown) {
       if (attachments.length > 0) setAttachmentError(cause instanceof Error ? cause.message : t('groupDeliveryFailure'))
@@ -731,6 +763,13 @@ export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate,
     } finally {
       setSending(false)
     }
+  }
+  const removeEveryoneMention = (): void => {
+    setDraft(current => removeCompleteMention(current, EVERYONE_MENTION))
+    mentionSelectionsRef.current = mentionSelectionsRef.current.filter(selection => !('kind' in selection))
+    setEveryoneMentionSelected(false)
+    setMentionQuery(null)
+    requestAnimationFrame(() => { composerInputRef.current?.focus() })
   }
   const chooseReaction = async (message: BotGroupMessageSummary, reaction: BotGroupReactionSummary): Promise<void> => {
     if (onReact === undefined || reactionWorkingMessageId !== null) return
@@ -934,6 +973,22 @@ export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate,
             </Button>
           </div>
         )}
+        {everyoneMentionSelected && (
+          <div className={css.groupMentionSelection} aria-label={t('groupMentionSelection')}>
+            <span className={css.groupMentionChip}>
+              <span className={css.groupMentionChipIcon} aria-hidden="true"><IconUsersOutlineRegular size={14} /></span>
+              <span>{t('mentionEveryone')}</span>
+              <button
+                type="button"
+                className={css.groupMentionChipRemove}
+                aria-label={t('removeGroupMention', { name: t('mentionEveryone') })}
+                onClick={removeEveryoneMention}
+              >
+                <IconCloseOutlineRegular size={12} />
+              </button>
+            </span>
+          </div>
+        )}
         <BotGroupAttachments
           attachments={attachments}
           disabled={sending}
@@ -951,20 +1006,22 @@ export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate,
         )}
         {mentionQuery !== null && mentionOptions.length > 0 && (
           <MenuSurface className={css.mentionMenu} role="listbox" aria-label={t('mentionBots')}>
-            {mentionOptions.map((bot, index) => (
+            {mentionOptions.map((option, index) => (
               <button
                 type="button"
                 role="option"
                 aria-selected={index === mentionIndex}
                 className={clsx(css.mentionOption, index === mentionIndex && css.mentionOptionSelected)}
-                key={bot.id}
+                key={option.kind === 'everyone' ? EVERYONE_MENTION : option.bot.id}
                 onMouseDown={(event) => { event.preventDefault() }}
-                onClick={() => { selectMention(bot) }}
+                onClick={() => { selectMention(option) }}
               >
-                <BotAvatar name={bot.name} identity={bot.identity} accent={bot.accent} avatar={bot.avatar} botId={bot.id} loadAvatar={loadAvatar} size="small" />
+                {option.kind === 'everyone' ? <IconUsersOutlineRegular size={16} /> : (
+                  <BotAvatar name={option.bot.name} identity={option.bot.identity} accent={option.bot.accent} avatar={option.bot.avatar} botId={option.bot.id} loadAvatar={loadAvatar} size="small" />
+                )}
                 <span className={css.mentionOptionCopy}>
-                  <span className={css.mentionOptionName}>{bot.name}</span>
-                  <span className={css.mentionOptionHint}>{t('mentionBotHint')}</span>
+                  <span className={css.mentionOptionName}>{option.kind === 'everyone' ? t('mentionEveryone') : option.bot.name}</span>
+                  <span className={css.mentionOptionHint}>{option.kind === 'everyone' ? t('mentionEveryoneHint') : t('mentionBotHint')}</span>
                 </span>
               </button>
             ))}
@@ -985,6 +1042,10 @@ export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate,
               attachmentDraftTextRef.current = null
             }
             setDraft(value)
+            if (everyoneMentionSelected && !hasCompleteMention(value, EVERYONE_MENTION)) {
+              setEveryoneMentionSelected(false)
+              mentionSelectionsRef.current = mentionSelectionsRef.current.filter(selection => !('kind' in selection))
+            }
             setMentionQuery(mentionQueryAt(value, event.currentTarget.selectionStart))
             setMentionIndex(0)
           }}
