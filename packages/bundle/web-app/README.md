@@ -67,6 +67,10 @@ By default the GUI listens on loopback and accepts connections from this machine
 
 The printed URL contains a process credential; share it only with intended users, and `printUrl: false` suppresses the line with or without `--public-url`.
 
+### Routine webhooks
+
+Enable `bot-routine-webhooks` and set its `publicUrl` to the HTTPS root available to callers. The proxy forwards the exact `/bot-hooks/` prefix to the Web listener, strips the advertised base path, and preserves the `Authorization` header. Keep the private GUI and its API behind their existing access controls. Set `maxBodyBytes` to override the default 16 KiB JSON limit. The Web bundle includes this plugin disabled by default. See [Trigger a Bot routine from another service](../../../docs/user/guide/vps.md#trigger-a-bot-routine-from-another-service).
+
 ### Running over SSH
 
 When you launch `yharness --profile web` over SSH, the URL line still prints but the browser is not opened for you: the SSH client or editor owns the local forwarding address. Without an advertised root the printed URL names the remote host's loopback endpoint, which you reach through your forwarding address. With `--public-url` the printed URL is the authenticated advertised root; the browser handoff stays suppressed, because opening a browser on the remote host cannot reach your screen.

@@ -65,6 +65,9 @@ const routineDeliverySchema = z.union([
     triggerMessageId: z.string().min(1).transform(MessageId).optional(),
   }).strict(),
   routineDeliveryFields.extend({ github: githubRoutineReceiptSchema }).strict(),
+  routineDeliveryFields.extend({
+    webhook: z.object({ payload: z.string().max(65_536).optional() }).strict(),
+  }).strict(),
 ])
 
 /** Durable event-trigger routine value validated inside each Bot row. */
@@ -79,6 +82,8 @@ export const botEventRoutineSchema = z.object({
   deliveries: z.array(routineDeliverySchema).max(200),
   firstEligibleEventSeq: z.number().int().nonnegative().optional(),
   firstEligibleGitHubAt: z.number().int().nonnegative().optional(),
+  firstEligibleWebhookAt: z.number().int().nonnegative().optional(),
+  webhookKeyVersion: z.string().regex(/^[a-f0-9]{24}$/u).optional(),
   admissionWatermark: z.number().int().nonnegative().optional(),
   admissionTombstones: z.array(z.object({
     triggerEventSeq: z.number().int().nonnegative(),

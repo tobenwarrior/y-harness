@@ -19,6 +19,7 @@ import type {
   ResolvedCredential,
 } from '@yharness/credentials'
 import type { BotNativeToolHost } from '../src/native-tools.ts'
+import type { BotRoutineWebhookRequest, BotRoutineWebhookStatus } from '../src/webhook-routines.ts'
 import BotService from '../src/index.ts'
 import type { BotId, BotRecord } from '../src/types.ts'
 import { botRecordSchema } from '../src/storage.ts'
@@ -89,6 +90,7 @@ export interface RoutineHarness {
 export async function routineHarness(
   pool = new MemoryMediaPool(),
   records = new Map<CredentialKey, CredentialRecord>(),
+  options: { readonly ownerId?: string; readonly useCredentials?: boolean; readonly sessionId?: SessionId } = {},
 ): Promise<RoutineHarness> {
   const ctx = new Context()
   await ctx.plugin(Storage)
@@ -106,7 +108,7 @@ export async function routineHarness(
     }
   })
 
-  const session = Session.create(SessionId('routine-test-session'))
+  const session = Session.create(options.sessionId ?? SessionId('routine-test-session'))
   const agent: Agent = {
     id: session.id,
     options: {},
@@ -153,8 +155,8 @@ export async function routineHarness(
     saveImage: async () => { throw new Error('image fixture unavailable') },
     validateImage: async () => undefined,
   } as never)
-  new SharedCredentials(ctx, records)
-  const service = new BotService(ctx, { ownerId: 'routine-test-owner' })
+  if (options.useCredentials ?? true) new SharedCredentials(ctx, records)
+  const service = new BotService(ctx, { ownerId: options.ownerId ?? 'routine-test-owner' })
   await service[Service.init]()
   return { ctx, service, pool, records, agent: { agent, session } }
 }
@@ -218,6 +220,14 @@ export async function invokeRoutineTrigger(
     eventTime: Date.now(),
     source: 'user',
   })
+}
+
+/** Call the admission adapter with metadata parsed by the HTTP receiver. */
+export function invokeRoutineWebhook(service: BotService, request: BotRoutineWebhookRequest): Promise<BotRoutineWebhookStatus> {
+  const descriptor = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(service), 'admitRoutineWebhook')
+  if (descriptor === undefined || typeof descriptor.value !== 'function') throw new Error('Webhook routine admission is unavailable')
+  const admit = descriptor.value as (this: BotService, request: BotRoutineWebhookRequest) => Promise<BotRoutineWebhookStatus>
+  return admit.call(service, request)
 }
 
 /** Read one raw Bot row from the shared medium, bypassing each process's stale domain cache. */

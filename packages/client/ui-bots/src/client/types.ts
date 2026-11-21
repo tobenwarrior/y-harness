@@ -14,6 +14,7 @@ import type {
   BotRoutineHistoryRequest,
   BotRoutineHistoryValue,
   BotRoutineTestRun,
+  BotRoutineWebhookSetup,
   BotRoutineView,
 } from '@yharness/bots/client'
 import type { BotGroupDeliveryStatusView as SharedBotGroupDeliveryStatusView } from '@yharness/bots/client'
@@ -360,6 +361,14 @@ export interface BotRoutineTestActions {
   readonly status: (botId: string, routineId: string) => Promise<BotRoutineTestRun | undefined>
 }
 
+/** Owner's controls for one authenticated routine webhook. */
+export interface BotRoutineWebhookActions {
+  /** Read the current POST URL and Bearer value. */
+  readonly setup: (botId: string, routineId: string) => Promise<BotRoutineWebhookSetup>
+  /** Replace the current Bearer value without changing the URL. */
+  readonly rotate: (botId: string, routineId: string) => Promise<BotRoutineWebhookSetup>
+}
+
 /** Bot-scoped routine management actions mounted by the Host. */
 export interface BotRoutineManagerActions {
   /** Read timed and event routines owned by one Bot. */
@@ -374,6 +383,8 @@ export interface BotRoutineManagerActions {
   readonly history: (botId: string, routineId: string, before?: BotRoutineHistoryRequest['before']) => Promise<BotRoutineHistory>
   /** Owner-only routine tests when the Host supports their durable lifecycle. */
   readonly test?: BotRoutineTestActions
+  /** Owner-only webhook connection details, when mounted by the Host. */
+  readonly webhook?: BotRoutineWebhookActions
 }
 
 /** Async avatar capabilities owned by the Client composition. */

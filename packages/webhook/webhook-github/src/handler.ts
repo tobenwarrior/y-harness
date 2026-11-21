@@ -7,12 +7,13 @@ import { Webhooks } from '@octokit/webhooks'
 import type { CredentialRef } from '@yharness/credentials'
 import { snapshotJsonValue } from '@yharness/util-values'
 import {
+  readBoundedUtf8Body,
   WebhookDeliveryId,
+  WebhookHttpError,
   WebhookSourceId,
   type VerifiedWebhookDelivery,
 } from '@yharness/webhook'
 import type { WebRoute } from '@yharness/host-webserver'
-import { readBoundedUtf8Body, WebhookHttpError } from './body.ts'
 import type { GitHubJsonObject } from './types.ts'
 
 /** Handler values validated once at plugin load. */

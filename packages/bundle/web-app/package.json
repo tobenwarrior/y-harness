@@ -22,6 +22,10 @@
       "types": "./lib/types/startup.d.ts",
       "default": "./lib/startup.js"
     },
+    "./routine-webhooks": {
+      "types": "./lib/types/routine-webhooks.d.ts",
+      "default": "./lib/routine-webhooks.js"
+    },
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./presets/*.patch.yml": "./presets/*.patch.yml",
     "./src/*": "./src/*",
@@ -36,6 +40,7 @@
     "presets/minimal.patch.yml",
     "presets/cordis.patch.yml",
     "presets/shared-bot.patch.yml",
+    "lib/routine-webhooks.js",
     "lib/public-url-*.js",
     "lib/types/**/*.d.ts"
   ],

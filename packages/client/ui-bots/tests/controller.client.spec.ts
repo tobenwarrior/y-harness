@@ -2194,6 +2194,12 @@ describe('BotWorkspaceController', () => {
     const routineTestStatus = vi.fn(async () => ({ ok: true as const, value: { run: testRun } }))
     remote.testRoutine = testRoutine
     remote.routineTestStatus = routineTestStatus
+    const webhook = { postUrl: 'https://hooks.example/', key: 'example-key' }
+    const replacement = { ...webhook, key: 'replacement-example-key' }
+    const routineWebhookSetup = vi.fn(async () => ({ ok: true as const, value: webhook }))
+    const rotateRoutineWebhookKey = vi.fn(async () => ({ ok: true as const, value: replacement }))
+    remote.routineWebhookSetup = routineWebhookSetup
+    remote.rotateRoutineWebhookKey = rotateRoutineWebhookKey
     const controller = new BotWorkspaceController(remote, sessionsFixture().sessions, () => 'unexpected response')
 
     const manager = controller.face().routineManager
@@ -2216,6 +2222,13 @@ describe('BotWorkspaceController', () => {
     await expect(manager.test.status(String(persisted.id), 'routine-one')).resolves.toEqual(testRun)
     expect(testRoutine).toHaveBeenCalledWith({ botId: persisted.id, routineId: 'routine-one', requestId: 'request-id' })
     expect(routineTestStatus).toHaveBeenCalledWith({ botId: persisted.id, routineId: 'routine-one' })
+    if (manager.webhook === undefined) throw new Error('webhook controls are not mounted')
+    await expect(manager.webhook.setup(String(persisted.id), 'routine-one')).resolves.toEqual(webhook)
+    await expect(manager.webhook.rotate(String(persisted.id), 'routine-one')).resolves.toEqual(replacement)
+    expect(routineWebhookSetup).toHaveBeenCalledWith({ botId: persisted.id, routineId: 'routine-one' })
+    expect(rotateRoutineWebhookKey).toHaveBeenCalledWith({ botId: persisted.id, routineId: 'routine-one' })
+    delete remote.rotateRoutineWebhookKey
+    expect(controller.face().routineManager?.webhook).toBeUndefined()
   })
 
   it('forwards optional Bot actions with their owner and lifecycle arguments', async () => {
@@ -3445,6 +3458,8 @@ describe('BotWorkspaceController', () => {
     remote.routineHistory = vi.fn(async () => ({ ok: false as const, error: new RemoteError('gateway/internal', 'routine history failed', {}) }))
     remote.testRoutine = vi.fn(async () => ({ ok: false as const, error: new RemoteError('gateway/internal', 'routine test failed', {}) }))
     remote.routineTestStatus = vi.fn(async () => ({ ok: false as const, error: new RemoteError('gateway/internal', 'routine status failed', {}) }))
+    remote.routineWebhookSetup = vi.fn(async () => ({ ok: false as const, error: new RemoteError('gateway/internal', 'webhook setup failed', {}) }))
+    remote.rotateRoutineWebhookKey = vi.fn(async () => ({ ok: false as const, error: new RemoteError('gateway/internal', 'webhook rotation failed', {}) }))
     const controller = new BotWorkspaceController(remote, sessionsFixture().sessions, () => 'unexpected response')
     await controller.load()
     const face = controller.face()
@@ -3488,6 +3503,8 @@ describe('BotWorkspaceController', () => {
     await expect(routines.history(original.id, routine.id)).rejects.toThrow('routine history failed')
     await expect(routines.test?.start(original.id, routine.id, 'start-failed')).rejects.toThrow('routine test failed')
     await expect(routines.test?.status(original.id, routine.id)).rejects.toThrow('routine status failed')
+    await expect(routines.webhook?.setup(original.id, routine.id)).rejects.toThrow('webhook setup failed')
+    await expect(routines.webhook?.rotate(original.id, routine.id)).rejects.toThrow('webhook rotation failed')
     controller.dispose()
 
     const disposedSkillRemote = remoteFixture([original])

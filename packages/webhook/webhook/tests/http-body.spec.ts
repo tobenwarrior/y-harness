@@ -1,6 +1,7 @@
-import type { IncomingMessage } from 'node:http'
+import { IncomingMessage } from 'node:http'
+import { Socket } from 'node:net'
 import { describe, expect, it, vi } from 'vitest'
-import { readBoundedUtf8Body } from '../src/body.ts'
+import { readBoundedUtf8Body } from '../src/http-body.ts'
 
 /** Minimal async-iterable request for byte-level branches Node fetch cannot construct. */
 function request(options: {
@@ -10,17 +11,17 @@ function request(options: {
   error?: unknown
 } = {}): IncomingMessage & { resume: ReturnType<typeof vi.fn> } {
   const resume = vi.fn()
-  return {
+  return Object.assign(new IncomingMessage(new Socket()), {
     headers: {
       ...(options.contentLength === undefined ? {} : { 'content-length': options.contentLength }),
     },
     complete: options.complete ?? true,
     resume,
-    async * [Symbol.asyncIterator]() {
+    async * iterator() {
       for (const chunk of options.chunks ?? []) yield chunk
       if (options.error !== undefined) throw options.error
     },
-  } as unknown as IncomingMessage & { resume: ReturnType<typeof vi.fn> }
+  })
 }
 
 describe('bounded webhook body intake', () => {

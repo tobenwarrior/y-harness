@@ -10,6 +10,7 @@ import { SessionId } from '@yharness/session'
 import { WebhookDeliveryId, WebhookSourceId } from '@yharness/webhook/brand'
 import { BotRoutineManager } from '../src/client/BotRoutineManager.tsx'
 import { BotRoutineTest } from '../src/client/BotRoutineTest.tsx'
+import { BotRoutineWebhook } from '../src/client/BotRoutineWebhook.tsx'
 import { en } from '../src/client/locales.ts'
 import type { BotRoutineManagerActions, BotRoutineTestActions, BotSummary } from '../src/client/types.ts'
 
@@ -53,6 +54,24 @@ function actionsFor(routines: readonly BotRoutineView[], overrides: Partial<BotR
 }
 
 describe('BotRoutineManager', () => {
+  it('shows webhook connection controls only for the selected webhook rule', async () => {
+    const routine: Extract<BotRoutineView, { kind: 'event' }> = {
+      kind: 'event', id: 'routine-webhook', title: 'Desk updates', prompt: 'Review the report',
+      trigger: { type: 'webhook' }, status: 'active', state: 'waiting', deliveryMode: 'host',
+      createdAt: 0, updatedAt: 0, botId: BotId(bot.id), sessionId: SessionId('session-routines'),
+    }
+    const setup = vi.fn(async () => ({ postUrl: 'https://hooks.example/bot-hooks/report', key: 'example-key' }))
+    const actions = actionsFor([routine, schedule()], {
+      webhook: { setup, rotate: vi.fn() },
+    })
+    render(<BotRoutineManager bot={bot} actions={actions} open onClose={vi.fn()} t={t} />)
+    await screen.findByRole('button', { name: 'Copy URL' })
+    expect(screen.getByText('Runs on an authenticated POST request')).toBeTruthy()
+    expect(setup).toHaveBeenCalledWith(bot.id, routine.id)
+    fireEvent.click(screen.getByText('Routine cadence'))
+    expect(screen.queryByRole('group', { name: 'Webhook connection' })).toBeNull()
+  })
+
   it.each([
     ['pull_request.opened', 'Runs when a pull request opens in example/desk'],
     ['issues.opened', 'Runs when an issue opens in example/desk'],
@@ -241,5 +260,108 @@ describe('BotRoutineManager', () => {
     expect(remove).toHaveBeenCalledOnce()
     pending.resolve(undefined)
     await waitFor(() => { expect(screen.queryByRole('button', { name: 'Delete Routine cadence' })).toBeNull() })
+  })
+})
+
+describe('BotRoutineWebhook', () => {
+  const initial = { postUrl: 'https://hooks.example/bot-hooks/initial', key: 'sample-initial-key' }
+  const next = { postUrl: initial.postUrl, key: 'sample-replacement-key' }
+  const props = { botId: bot.id, routineId: 'routine-webhook', t }
+
+  it('keeps the key off screen and confirms rotation before changing it', async () => {
+    const previous = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
+    const writeText = vi.fn<(text: string) => Promise<void>>().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+    const actions = { setup: vi.fn(async () => initial), rotate: vi.fn(async () => next) }
+    try {
+      const { container } = render(<BotRoutineWebhook {...props} actions={actions} />)
+      const copyURL = await screen.findByRole('button', { name: 'Copy URL' })
+      fireEvent.click(copyURL)
+      expect(writeText).toHaveBeenLastCalledWith(initial.postUrl)
+      fireEvent.click(screen.getByRole('button', { name: 'Copy key' }))
+      expect(writeText).toHaveBeenLastCalledWith(initial.key)
+      await screen.findByText('Copied to clipboard.')
+      expect(container.textContent).not.toContain(initial.key)
+      const copyHeader = screen.getByRole('button', { name: 'Copy authorization header' })
+      writeText.mockRejectedValueOnce(new Error('clipboard denied'))
+      fireEvent.click(copyHeader)
+      await screen.findByText('Couldn’t copy to the clipboard.')
+      fireEvent.click(screen.getByRole('button', { name: 'Rotate key' }))
+      expect(actions.rotate).not.toHaveBeenCalled()
+      fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+      expect(actions.rotate).not.toHaveBeenCalled()
+      fireEvent.click(screen.getByRole('button', { name: 'Rotate key' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Replace key' }))
+      await screen.findByText('Key replaced. Copy the new key or authorization header.')
+      expect(actions.rotate).toHaveBeenCalledWith(props.botId, props.routineId)
+      fireEvent.click(screen.getByRole('button', { name: 'Copy authorization header' }))
+      expect(writeText).toHaveBeenLastCalledWith('Authorization: Bearer ' + next.key)
+      await screen.findByText('Copied to clipboard.')
+      expect(container.textContent).not.toContain(next.key)
+    } finally {
+      if (previous === undefined) Reflect.deleteProperty(navigator, 'clipboard')
+      else Object.defineProperty(navigator, 'clipboard', previous)
+    }
+  })
+
+  it('reloads owner details after a failed setup or uncertain key replacement', async () => {
+    const actions = {
+      setup: vi.fn(async () => initial).mockRejectedValueOnce(new Error('unavailable')),
+      rotate: vi.fn(async () => next).mockRejectedValueOnce(new Error('connection interrupted')),
+    }
+    render(<BotRoutineWebhook {...props} actions={actions} />)
+    await screen.findByText('Couldn’t load webhook details.')
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Rotate key' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Replace key' }))
+    await screen.findByText('Couldn’t confirm the change. Reload before copying the key.')
+    expect(screen.queryByRole('button', { name: 'Copy key' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
+    await screen.findByRole('button', { name: 'Copy key' })
+    expect(actions.setup).toHaveBeenCalledTimes(3)
+  })
+
+  it('ignores a clipboard acknowledgement from a previous routine', async () => {
+    const previous = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
+    const finished = Promise.withResolvers<undefined>()
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true, value: { writeText: vi.fn(() => finished.promise) },
+    })
+    const actions = { setup: vi.fn(async () => initial), rotate: vi.fn(async () => next) }
+    try {
+      const { rerender } = render(<BotRoutineWebhook {...props} actions={actions} />)
+      fireEvent.click(await screen.findByRole('button', { name: 'Copy URL' }))
+      rerender(<BotRoutineWebhook {...props} routineId="next-routine" actions={actions} />)
+      await act(async () => { finished.resolve(undefined) })
+      expect(screen.queryByText('Copied to clipboard.')).toBeNull()
+    } finally {
+      if (previous === undefined) Reflect.deleteProperty(navigator, 'clipboard')
+      else Object.defineProperty(navigator, 'clipboard', previous)
+    }
+  })
+
+  it.each(['accepted', 'failed'] as const)('discards stale setup and %s rotation replies', async (result) => {
+    const deferredSetup = Promise.withResolvers<typeof initial>()
+    const deferredFailure = Promise.withResolvers<typeof initial>()
+    const deferredRotation = Promise.withResolvers<typeof initial>()
+    const actions = {
+      setup: vi.fn(async () => next).mockReturnValueOnce(deferredSetup.promise).mockReturnValueOnce(deferredFailure.promise),
+      rotate: vi.fn(() => deferredRotation.promise),
+    }
+    const { rerender, unmount } = render(<BotRoutineWebhook {...props} actions={actions} />)
+    rerender(<BotRoutineWebhook {...props} routineId="second" actions={actions} />)
+    await act(async () => { deferredSetup.resolve(initial) })
+    expect(screen.queryByRole('button', { name: 'Copy key' })).toBeNull()
+    rerender(<BotRoutineWebhook {...props} routineId="third" actions={actions} />)
+    await act(async () => { deferredFailure.reject(new Error('stale failure')) })
+    fireEvent.click(await screen.findByRole('button', { name: 'Rotate key' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Replace key' }))
+    await screen.findByText('Replacing key…')
+    unmount()
+    await act(async () => {
+      if (result === 'accepted') deferredRotation.resolve(initial)
+      else deferredRotation.reject(new Error('stale rotation failure'))
+    })
+    expect(screen.queryByText('Key replaced. Copy the new key or authorization header.')).toBeNull()
   })
 })

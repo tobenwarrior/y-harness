@@ -672,6 +672,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'Route disposer which stops new admissions from that source.',
       },
       {
+        signature: 'registerRoutineWebhookReceiver(publicRoot: string, maxBodyBytes: number): BotRoutineWebhookReceiver',
+        description: 'Mount the routine receiver for one Web instance with a durable credential store.',
+        parameters: [{ name: 'publicRoot', description: 'Advertised HTTPS application URL, including any proxy prefix.' }, { name: 'maxBodyBytes', description: 'Maximum raw request body size.' }],
+        returns: 'The prefix route and its admission disposer.',
+      },
+      {
         signature: 'async admitGitHubRoutineDelivery(delivery: VerifiedWebhookDelivery): Promise<void>',
         description: 'Reserve matching Bot runs before acknowledging a verified GitHub delivery.',
         parameters: [{ name: 'delivery', description: 'Delivery authenticated by the registered GitHub ingress.' }],
@@ -799,9 +805,21 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       },
       {
         signature: '@Remote(\'listRoutines\') async listRoutines(request: BotRoutineListRequest): Promise<BotRoutineListValue>',
-        description: 'List timed and message-triggered routines owned by one Bot.\n\nThis lookup never activates the Bot Session. Timed rows are read from the Host Schedule catalog and event rows from the Bot record, after checking the configured owner scope.',
+        description: 'List timed and event-triggered routines owned by one Bot.\n\nThis lookup never activates the Bot Session. Timed rows are read from the Host Schedule catalog and event rows from the Bot record, after checking the configured owner scope.',
         parameters: [{ name: 'request', description: 'Bot identity whose routine catalog should be returned.' }],
         returns: 'The Bot\'s active, paused, and ended routine rows.',
+      },
+      {
+        signature: '@Remote(\'routineWebhookSetup\') async routineWebhookSetup(request: BotRoutineLifecycleRequest): Promise<BotRoutineWebhookSetup>',
+        description: 'Read the current webhook connection details after checking the Bot owner.',
+        parameters: [{ name: 'request', description: 'The owning Bot and routine.' }],
+        returns: 'Current HTTPS URL and Bearer value.',
+      },
+      {
+        signature: '@Remote(\'rotateRoutineWebhookKey\') async rotateRoutineWebhookKey(request: BotRoutineLifecycleRequest): Promise<BotRoutineWebhookSetup>',
+        description: 'Replace the credential for a saved webhook routine and revoke its previous value.',
+        parameters: [{ name: 'request', description: 'The owning Bot and routine.' }],
+        returns: 'The unchanged POST URL and replacement Bearer value.',
       },
       {
         signature: '@Remote(\'testRoutine\') async testRoutine(request: BotRoutineTestRequest): Promise<BotRoutineTestRun>',
@@ -5902,7 +5920,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'BotEventRoutine',
-    declaration: 'export interface BotEventRoutine {\n    readonly id: string;\n    readonly title: string;\n    readonly prompt: string;\n    readonly trigger: BotEventTrigger;\n    readonly status: \'active\' | \'paused\';\n    readonly createdAt: number;\n    readonly updatedAt: number;\n    readonly deliveries: readonly BotEventRoutineDelivery[];\n    readonly firstEligibleEventSeq?: number | undefined;\n    readonly firstEligibleGitHubAt?: number | undefined;\n    readonly admissionWatermark?: number | undefined;\n    readonly admissionTombstones?: readonly BotEventRoutineAdmissionTombstone[] | undefined;\n    readonly results: readonly BotEventRoutineResult[];\n}',
+    declaration: 'export interface BotEventRoutine {\n    readonly id: string;\n    readonly title: string;\n    readonly prompt: string;\n    readonly trigger: BotEventTrigger;\n    readonly status: \'active\' | \'paused\';\n    readonly createdAt: number;\n    readonly updatedAt: number;\n    readonly deliveries: readonly BotEventRoutineDelivery[];\n    readonly firstEligibleEventSeq?: number | undefined;\n    readonly firstEligibleGitHubAt?: number | undefined;\n    readonly firstEligibleWebhookAt?: number | undefined;\n    readonly webhookKeyVersion?: string | undefined;\n    readonly admissionWatermark?: number | undefined;\n    readonly admissionTombstones?: readonly BotEventRoutineAdmissionTombstone[] | undefined;\n    readonly results: readonly BotEventRoutineResult[];\n}',
   },
   {
     name: 'BotEventRoutineAdmissionTombstone',
@@ -5914,7 +5932,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'BotEventRoutineDelivery',
-    declaration: 'export type BotEventRoutineDelivery = BotEventRoutineDeliveryFields & ({\n    readonly triggerEventSeq: number;\n    readonly triggerMessageId?: MessageId | undefined;\n    readonly github?: undefined;\n} | {\n    readonly github: BotGitHubRoutineReceipt;\n    readonly triggerEventSeq?: undefined;\n    readonly triggerMessageId?: undefined;\n});',
+    declaration: 'export type BotEventRoutineDelivery = BotEventRoutineDeliveryFields & ({\n    readonly triggerEventSeq: number;\n    readonly triggerMessageId?: MessageId | undefined;\n    readonly github?: undefined;\n    readonly webhook?: undefined;\n} | {\n    readonly github: BotGitHubRoutineReceipt;\n    readonly webhook?: undefined;\n    readonly triggerEventSeq?: undefined;\n    readonly triggerMessageId?: undefined;\n} | {\n    readonly webhook: {\n        readonly payload?: string | undefined;\n    };\n    readonly github?: undefined;\n    readonly triggerEventSeq?: undefined;\n    readonly triggerMessageId?: undefined;\n});',
   },
   {
     name: 'BotEventRoutineHistory',
@@ -5926,7 +5944,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'BotEventRoutineView',
-    declaration: 'export type BotEventRoutineView = Omit<BotEventRoutine, \'deliveries\' | \'results\' | \'firstEligibleEventSeq\' | \'firstEligibleGitHubAt\'> & {\n    readonly kind: \'event\';\n    readonly state: \'waiting\';\n    readonly deliveryMode: \'host\';\n};',
+    declaration: 'export type BotEventRoutineView = Omit<BotEventRoutine, \'deliveries\' | \'results\' | \'firstEligibleEventSeq\' | \'firstEligibleGitHubAt\' | \'firstEligibleWebhookAt\' | \'webhookKeyVersion\' | \'admissionWatermark\' | \'admissionTombstones\'> & {\n    readonly kind: \'event\';\n    readonly state: \'waiting\';\n    readonly deliveryMode: \'host\';\n};',
   },
   {
     name: 'BotEventSource',
@@ -5934,7 +5952,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'BotEventTrigger',
-    declaration: 'export type BotEventTrigger = BotMessageEventTrigger | BotGitHubEventTrigger;',
+    declaration: 'export type BotEventTrigger = BotMessageEventTrigger | BotGitHubEventTrigger | BotWebhookEventTrigger;',
   },
   {
     name: 'BotGitHubEventTrigger',
@@ -6261,6 +6279,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type BotRoutineView = BotScheduleRoutineView | BotEventRoutineCatalogView;',
   },
   {
+    name: 'BotRoutineWebhookReceiver',
+    declaration: 'export interface BotRoutineWebhookReceiver {\n    readonly route: {\n        readonly kind: \'prefix\';\n        readonly path: typeof BOT_ROUTINE_WEBHOOK_PATH;\n        readonly handler: (request: IncomingMessage, response: ServerResponse) => Promise<void>;\n    };\n    readonly dispose: () => void;\n}',
+  },
+  {
+    name: 'BotRoutineWebhookSetup',
+    declaration: 'export interface BotRoutineWebhookSetup {\n    readonly postUrl: string;\n    readonly key: string;\n}',
+  },
+  {
     name: 'BotScheduleRoutineHistory',
     declaration: 'export interface BotScheduleRoutineHistory {\n    readonly kind: \'schedule\';\n    readonly id: ScheduleId;\n    readonly records: readonly ScheduleDeliveryRecord[];\n    readonly earlierRecordsUnavailable: boolean;\n    readonly earlierRecordsPruned: boolean;\n    readonly retention: {\n        readonly days: number;\n        readonly records: number;\n    };\n    readonly nextBefore?: MessageId;\n}',
   },
@@ -6443,6 +6469,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'BotView',
     declaration: 'export type BotView = Omit<BotRecord, \'ownerId\' | \'eventRoutines\' | \'skillPolicyRevision\'> & {\n    readonly availability: BotAvailability;\n    readonly pinned: boolean;\n    readonly hidden: boolean;\n};',
+  },
+  {
+    name: 'BotWebhookEventTrigger',
+    declaration: 'export interface BotWebhookEventTrigger {\n    readonly type: \'webhook\';\n}',
   },
   {
     name: 'BoxProps',

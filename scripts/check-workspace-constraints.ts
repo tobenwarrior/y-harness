@@ -279,8 +279,8 @@ const packageFileExtras: Readonly<Record<string, readonly string[]>> = {
   // through a hashed chunk. The committed bin.js is the link target pnpm can
   // resolve at install time, before the build produces lib/bin.js.
   '@yharness/experimental-webworker-packer': ['bin.js', 'lib/repository-*.js'],
-  // Startup and runtime share the advertised URL parser.
-  '@yharness/web-app': ['lib/public-url-*.js'],
+  // The optional routine entry ships beside the advertised URL parser shared by startup and runtime.
+  '@yharness/web-app': ['lib/routine-webhooks.js', 'lib/public-url-*.js'],
   // The headless entry and its startup row share the JSON projection code
   // through a hashed tsdown chunk; both import it by relative path.
   '@yharness/headless': ['lib/json-stream-*.js'],

@@ -303,8 +303,13 @@ export interface BotGitHubEventTrigger {
   readonly event: BotGitHubRoutineEvent
 }
 
-/** A message or signed app event that can run a Bot routine. */
-export type BotEventTrigger = BotMessageEventTrigger | BotGitHubEventTrigger
+/** HTTPS request addressed to this routine and authenticated with its own key. */
+export interface BotWebhookEventTrigger {
+  readonly type: 'webhook'
+}
+
+/** An incoming message or authenticated external event that can run a Bot routine. */
+export type BotEventTrigger = BotMessageEventTrigger | BotGitHubEventTrigger | BotWebhookEventTrigger
 
 /** Fields retained from one verified GitHub event. */
 export interface BotGitHubRoutineReceipt {
@@ -345,10 +350,19 @@ export type BotEventRoutineDelivery = BotEventRoutineDeliveryFields & (
     /** Stable source identity used to deduplicate inbox and surface events. */
     readonly triggerMessageId?: MessageId | undefined
     readonly github?: undefined
+    readonly webhook?: undefined
   }
   | {
     /** Verified routing fields kept for later delivery and history. */
     readonly github: BotGitHubRoutineReceipt
+    readonly webhook?: undefined
+    readonly triggerEventSeq?: undefined
+    readonly triggerMessageId?: undefined
+  }
+  | {
+    /** Validated JSON received from the caller, kept through delivery recovery. */
+    readonly webhook: { readonly payload?: string | undefined }
+    readonly github?: undefined
     readonly triggerEventSeq?: undefined
     readonly triggerMessageId?: undefined
   }
@@ -398,6 +412,10 @@ export interface BotEventRoutine {
   readonly firstEligibleEventSeq?: number | undefined
   /** Earliest GitHub event time eligible after activation or a selector change. */
   readonly firstEligibleGitHubAt?: number | undefined
+  /** Earliest request receipt time eligible after this webhook was activated. */
+  readonly firstEligibleWebhookAt?: number | undefined
+  /** Private key-derivation nonce replaced whenever the owner rotates this webhook's key. */
+  readonly webhookKeyVersion?: string | undefined
   /** Highest source event sequence durably considered for this routine. */
   readonly admissionWatermark?: number | undefined
   /** Source identities retained when delivery records are pruned. */
@@ -407,7 +425,11 @@ export interface BotEventRoutine {
 }
 
 /** Browser/native view of one Bot event routine. */
-export type BotEventRoutineView = Omit<BotEventRoutine, 'deliveries' | 'results' | 'firstEligibleEventSeq' | 'firstEligibleGitHubAt'> & {
+export type BotEventRoutineView = Omit<
+  BotEventRoutine,
+  | 'deliveries' | 'results' | 'firstEligibleEventSeq' | 'firstEligibleGitHubAt' | 'firstEligibleWebhookAt'
+  | 'webhookKeyVersion' | 'admissionWatermark' | 'admissionTombstones'
+> & {
   /** Common routine discriminator used alongside timed Schedule records. */
   readonly kind: 'event'
   /** Event routines wait for a matching activity. */
@@ -511,6 +533,14 @@ export interface BotRoutineTestRun {
 export interface BotRoutineTestStatusValue {
   /** Absent until the owner requests a test. */
   readonly run?: BotRoutineTestRun
+}
+
+/** Owner-only connection details for one authenticated webhook routine. */
+export interface BotRoutineWebhookSetup {
+  /** HTTPS URL that accepts POST requests to this routine. */
+  readonly postUrl: string
+  /** Current Bearer credential for this one routine. */
+  readonly key: string
 }
 
 /** Request one bounded routine-history page. */
@@ -1063,6 +1093,8 @@ declare module '@yharness/typert-protocol' {
     'bot/not-found': { readonly botId: BotId }
     /** The requested routine is absent from the selected Bot. */
     'bot/routine-not-found': { readonly botId: BotId }
+    /** The routine or advertised HTTPS receiver does not support webhook connection details. */
+    'bot/routine-webhook-unavailable': { readonly botId: BotId }
     /** A routine requires live event input or has ended. */
     'bot/routine-test-unavailable': { readonly botId: BotId }
     /** An earlier test is still queued or running. */

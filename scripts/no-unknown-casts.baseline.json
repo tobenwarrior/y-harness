@@ -2137,9 +2137,6 @@
     "598014dcfe77101781e3c6a02709097e3b0151a335e909c44719fac08fdea433": 2,
     "ed2fec09418bc1a78fde5097fd01d5aabf903166ed1bf480a5e38bccdd3948a6": 1
   },
-  "packages/webhook/webhook-github/tests/body.spec.ts": {
-    "130dbbbe723b0d72d5a736596b3513f42b65a6e3909164b05bce810393f36b96": 1
-  },
   "packages/webhook/webhook-github/tests/handler.spec.ts": {
     "171a57417a610abfca8b6ef7c8a8bfe71a2c5cc27f6a52158bb9de709d51c234": 1,
     "981ca4f4ab5668c2c8d0d0bddf9bff66535bbdd27c8bb47816a83e610b60432f": 1,
