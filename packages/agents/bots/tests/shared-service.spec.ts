@@ -30,7 +30,7 @@ import { RemoteError } from '@yharness/typert-protocol'
 import { describe, expect, it, vi } from 'vitest'
 import z from 'zod'
 import { MemoryMediaPool, MemoryStorageBackend } from '../../../storage/storage-domain/tests/helpers/memory-backend.ts'
-import { BotId, type BotView } from '../src/types.ts'
+import { BotId, BotShareLearningId, type BotView } from '../src/types.ts'
 import {
   BotAttachmentGrantId,
   BotAttachmentGrantStore,
@@ -6128,6 +6128,180 @@ describe('shared Bot service', () => {
         botId: 'bot-chief',
       }, new AbortController().signal, owner.peer)).resolves.toMatchObject({
         ok: true, value: { entries: [], learningReview: true },
+      })
+    } finally {
+      await value.close()
+    }
+  })
+
+  it('rejects learning review from collaborators and revoked principals', async () => {
+    const value = await fixture()
+    try {
+      const ownerEnrollment = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      const collaboratorEnrollment = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'collaborator')).code,
+        enrollmentRequest(),
+      )
+      const owner = await principal(value, ownerEnrollment)
+      const collaborator = await principal(value, collaboratorEnrollment)
+      await value.service.setMemoryPolicy(BotId('bot-chief'), true)
+      const pending = await value.service.handle('bots/share/write-memory', {
+        botId: 'bot-chief', text: 'review authorization note', consent: true,
+      }, new AbortController().signal, collaborator.peer)
+      if (!pending.ok || pending.value === null || typeof pending.value !== 'object'
+        || !('suggestion' in pending.value) || pending.value.suggestion === undefined
+        || typeof pending.value.suggestion !== 'object' || pending.value.suggestion === null
+        || !('id' in pending.value.suggestion) || typeof pending.value.suggestion.id !== 'string') {
+        throw new Error('learning suggestion was not returned')
+      }
+      const suggestionId = BotShareLearningId(pending.value.suggestion.id)
+
+      await expect(value.service.listLearning(
+        BotId('bot-chief'), undefined, collaborator.botPrincipalId,
+      )).rejects.toMatchObject({ code: 'gateway/forbidden' })
+      await expect(value.service.decideLearning(
+        BotId('bot-chief'), suggestionId, 'approve', collaborator.botPrincipalId,
+      )).rejects.toMatchObject({ code: 'gateway/forbidden' })
+
+      await value.authority.revokePrincipal(owner.principalId)
+      await expect(value.service.listLearning(
+        BotId('bot-chief'), undefined, owner.botPrincipalId,
+      )).rejects.toMatchObject({ code: 'gateway/forbidden' })
+      await expect(value.service.decideLearning(
+        BotId('bot-chief'), suggestionId, 'reject', owner.botPrincipalId,
+      )).rejects.toMatchObject({ code: 'gateway/forbidden' })
+    } finally {
+      await value.close()
+    }
+  })
+
+  it('rejects duplicate and over-limit learning snapshots before they become visible', async () => {
+    const value = await fixture()
+    try {
+      const suggestion = {
+        id: 'learning-duplicate',
+        botId: 'bot-chief',
+        principalId: 'principal-duplicate',
+        text: 'duplicate suggestion',
+        createdAt: 1_000,
+      }
+      await value.authority.mutateExtension('agent-bots/shared-learning', () => ({
+        value: undefined,
+        next: { version: 1, pending: [suggestion, suggestion], decisions: [] },
+      }))
+      await expect(value.service.listLearning(BotId('bot-chief'))).rejects.toThrow('shared Bot learning snapshot is invalid')
+
+      const decision = {
+        suggestionId: 'learning-decision-duplicate',
+        botId: 'bot-chief',
+        decision: 'rejected' as const,
+        decidedBy: 'principal-duplicate',
+        decidedAt: 1_000,
+      }
+      await value.authority.mutateExtension('agent-bots/shared-learning', () => ({
+        value: undefined,
+        next: { version: 1, pending: [], decisions: [decision, decision] },
+      }))
+      await expect(value.service.listLearning(BotId('bot-chief'))).rejects.toThrow('shared Bot learning snapshot is invalid')
+
+      const overLimit = Array.from({ length: 513 }, (_, index) => ({
+        ...suggestion,
+        id: `learning-over-limit-${index}`,
+      }))
+      await value.authority.mutateExtension('agent-bots/shared-learning', () => ({
+        value: undefined,
+        next: { version: 1, pending: overLimit, decisions: [] },
+      }))
+      await expect(value.service.listLearning(BotId('bot-chief'))).rejects.toThrow('shared Bot learning snapshot is invalid')
+
+      const fullDecisionHistory = Array.from({ length: 4_096 }, (_, index) => ({
+        suggestionId: `learning-history-${index}`,
+        botId: 'bot-chief',
+        decision: 'rejected' as const,
+        decidedBy: 'principal-duplicate',
+        decidedAt: 1_000,
+      }))
+      await value.authority.mutateExtension('agent-bots/shared-learning', () => ({
+        value: undefined,
+        next: {
+          version: 1,
+          pending: [{ ...suggestion, id: 'learning-history-pending' }],
+          decisions: fullDecisionHistory,
+        },
+      }))
+      await expect(value.service.decideLearning(
+        BotId('bot-chief'), BotShareLearningId('learning-history-pending'), 'reject',
+      )).rejects.toMatchObject({ code: 'gateway/unavailable' })
+    } finally {
+      await value.close()
+    }
+  })
+
+  it('rejects collaborator writes when the durable learning queues are full', async () => {
+    const value = await fixture()
+    try {
+      await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      const collaboratorEnrollment = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'collaborator')).code,
+        enrollmentRequest(),
+      )
+      const collaborator = await principal(value, collaboratorEnrollment)
+      await value.service.setMemoryPolicy(BotId('bot-chief'), true)
+      const forBot = Array.from({ length: 512 }, (_, index) => ({
+        id: `learning-for-bot-${index}`,
+        botId: 'bot-chief',
+        principalId: String(collaborator.botPrincipalId),
+        text: `pending-${index}`,
+        createdAt: 1_000,
+      }))
+      await value.authority.mutateExtension('agent-bots/shared-learning', () => ({
+        value: undefined,
+        next: { version: 1, pending: forBot, decisions: [] },
+      }))
+      await expect(value.service.handle('bots/share/write-memory', {
+        botId: 'bot-chief', text: 'per-Bot queue is full', consent: true,
+      }, new AbortController().signal, collaborator.peer)).resolves.toMatchObject({
+        ok: false, error: { code: 'gateway/unavailable' },
+      })
+
+      const globallyFull = [
+        {
+          id: 'learning-global-target',
+          botId: 'bot-chief',
+          principalId: String(collaborator.botPrincipalId),
+          text: 'one target suggestion',
+          createdAt: 1_000,
+        },
+        ...Array.from({ length: 7 }, (_, group) => Array.from({ length: 512 }, (_, index) => ({
+          id: `learning-global-${group}-${index}`,
+          botId: `bot-queue-${group}`,
+          principalId: String(collaborator.botPrincipalId),
+          text: `global-${group}-${index}`,
+          createdAt: 1_000,
+        }))).flat(),
+        ...Array.from({ length: 511 }, (_, index) => ({
+          id: `learning-global-final-${index}`,
+          botId: 'bot-queue-final',
+          principalId: String(collaborator.botPrincipalId),
+          text: `global-final-${index}`,
+          createdAt: 1_000,
+        })),
+      ]
+      expect(globallyFull).toHaveLength(4_096)
+      await value.authority.mutateExtension('agent-bots/shared-learning', () => ({
+        value: undefined,
+        next: { version: 1, pending: globallyFull, decisions: [] },
+      }))
+      await expect(value.service.handle('bots/share/write-memory', {
+        botId: 'bot-chief', text: 'global queue is full', consent: true,
+      }, new AbortController().signal, collaborator.peer)).resolves.toMatchObject({
+        ok: false, error: { code: 'gateway/unavailable' },
       })
     } finally {
       await value.close()

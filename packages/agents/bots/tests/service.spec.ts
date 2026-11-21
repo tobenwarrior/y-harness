@@ -1047,6 +1047,45 @@ describe('durable Bot roster', () => {
     }
   })
 
+  it('validates shared-learning remotes and delegates them when shared access is mounted', async () => {
+    const withoutSharedAccess = await harness()
+    try {
+      await expect(withoutSharedAccess.service.listShareLearning({ botId: 'invalid' as never }))
+        .rejects.toMatchObject({ code: 'gateway/bad-request' })
+      await expect(withoutSharedAccess.service.listShareLearning({ botId: BotId('bot-chief') }))
+        .rejects.toMatchObject({ code: 'gateway/internal' })
+      await expect(withoutSharedAccess.service.decideShareLearning({
+        botId: 'invalid', suggestionId: 'invalid', decision: 'approve',
+      } as never)).rejects.toMatchObject({ code: 'gateway/bad-request' })
+      await expect(withoutSharedAccess.service.decideShareLearning({
+        botId: BotId('bot-chief'), suggestionId: 'learning-missing' as never, decision: 'reject',
+      })).rejects.toMatchObject({ code: 'gateway/internal' })
+    } finally {
+      await close(withoutSharedAccess.ctx)
+    }
+
+    const connection = {
+      sharedRpc: {
+        enroll: vi.fn(() => async () => {}),
+        handle: vi.fn(() => async () => {}),
+      },
+    }
+    const h = await harness(undefined, undefined, undefined, [], new Map(), new Map(), true, 'native', false, { connection })
+    try {
+      const created = await h.service.create({ name: 'Remote learning', cwd: '/tmp' })
+      await expect(h.service.listShareLearning({ botId: created.bot.id })).resolves.toEqual({
+        botId: created.bot.id, pending: [], recentlyLearned: [],
+      })
+      await expect(h.service.decideShareLearning({
+        botId: created.bot.id, suggestionId: 'learning-missing' as never, decision: 'reject',
+      })).rejects.toMatchObject({ code: 'gateway/not-found' })
+      expect(connection.sharedRpc.enroll).toHaveBeenCalled()
+      expect(connection.sharedRpc.handle).toHaveBeenCalled()
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
   it('does not hold the profile credential queue while shared authority commits', async () => {
     const root = await mkdtemp(join(tmpdir(), 'yh-bot-roster-fence-'))
     const h = await harness(
