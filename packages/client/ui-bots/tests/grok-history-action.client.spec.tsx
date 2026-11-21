@@ -173,6 +173,35 @@ describe('Imported chat from Bot options', () => {
     expect(screen.queryByRole('link', { name: 'Download report.txt' })).toBeNull()
   })
 
+  it('filters recovered messages by text and author within the selected source', async () => {
+    const read = vi.fn<(id: string) => Promise<BotGrokHistoryArchive>>().mockResolvedValue(versionTwoArchive)
+    renderHistory('bot-two', read)
+    openHistory()
+
+    const search = await screen.findByRole('searchbox', { name: 'Search imported messages' })
+    fireEvent.change(search, { target: { value: '  OPERATOR  ' } })
+    expect(await screen.findByText('2 of 6 messages')).toBeTruthy()
+    expect(screen.getByText('Author-labelled answer')).toBeTruthy()
+    expect(screen.getByText('Bot-attributed answer')).toBeTruthy()
+    expect(screen.queryByText('Primary question')).toBeNull()
+
+    fireEvent.change(search, { target: { value: 'QUESTION' } })
+    expect(await screen.findByText('Primary question')).toBeTruthy()
+    fireEvent.change(screen.getByRole('combobox', { name: en.grokHistorySource }), { target: { value: 'gap' } })
+    expect(await screen.findByText('No matches in this source.')).toBeTruthy()
+    expect(screen.queryByText('Gap source answer')).toBeNull()
+    expect(screen.queryByText('Primary question')).toBeNull()
+
+    fireEvent.change(search, { target: { value: '' } })
+    expect(await screen.findByText('Gap source answer')).toBeTruthy()
+    fireEvent.change(search, { target: { value: 'unmatched' } })
+    await screen.findByText('No matches in this source.')
+    fireEvent.click(screen.getAllByRole('button', { name: en.close })[0]!)
+    openHistory()
+    expect(await screen.findByRole('searchbox', { name: 'Search imported messages' })).toHaveProperty('value', '')
+    expect(screen.getByText('Primary question')).toBeTruthy()
+  })
+
   it('explains when the archive is absent or the reader fails', async () => {
     const unavailable = vi.fn<(id: string) => Promise<BotGrokHistoryArchive | null>>().mockResolvedValue(null)
     const unavailableView = renderHistory('missing', unavailable)

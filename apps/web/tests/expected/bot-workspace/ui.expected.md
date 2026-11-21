@@ -179,6 +179,7 @@
   - combobox "History source":
     - option "Original recovery" [selected]
     - option "Recovered supplement"
+  - searchbox "Search imported messages"
   - list:
     - listitem:
       - strong: Archive owner
@@ -194,4 +195,3 @@
       - text: Unknown time
       - paragraph: Recovered tool record
       - text: Incomplete source record
-  - button "Close"

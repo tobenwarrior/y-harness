@@ -1,6 +1,8 @@
 // Keyless assembled-browser coverage for the Bot roster and its one-to-one
 // embedded Conversation Sessions.
 import { fileURLToPath } from 'node:url'
+import { mkdtemp } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Browser, Page } from 'playwright'
 import { chromium } from 'playwright'
@@ -22,6 +24,7 @@ const SNAPSHOT_DIR = fileURLToPath(new URL('../../../snapshots/web/bot-workspace
 const FIXTURE = join(SNAPSHOT_DIR, 'session.v3.jsonl')
 const UI_EXPECTED = fileURLToPath(new URL('./expected/bot-workspace/ui.expected.md', import.meta.url))
 const MODE = webSnapshotMode()
+const CAPTURE_HISTORY = process.env.DSH_GROK_HISTORY_MEDIA === '1'
 
 describe('web e2e: Bot workspace retains one Conversation Session per Bot', () => {
   let scaffold: WebScaffold
@@ -35,6 +38,7 @@ describe('web e2e: Bot workspace retains one Conversation Session per Bot', () =
     // The scenario exercises the real Bot and Session services but never sends
     // a model request, so a header-only providers-only fixture is sufficient.
     scaffold = await launchWebScaffold({ replayFixture: FIXTURE, replayProvidersOnly: true })
+    if (CAPTURE_HISTORY) await scaffold.ctx.settings.update('ui-theme', { preference: 'system' })
     firstBot = (await scaffold.ctx.bots.create({
       name: 'Scout', identity: 'browse', accent: 'teal', cwd: scaffold.workspaceCwd,
     })).bot
@@ -241,6 +245,29 @@ describe('web e2e: Bot workspace retains one Conversation Session per Bot', () =
     await historyDialog.getByText('Recovered collaborator', { exact: true }).waitFor()
     await historyDialog.getByText('Unknown time', { exact: true }).waitFor()
     await expect.poll(() => historyDialog.getByText('Recovered question', { exact: true }).count()).toBe(0)
+    await sourceSelect.selectOption('primary')
+    const archiveSearch = historyDialog.getByRole('searchbox', { name: 'Search imported messages', exact: true })
+    await archiveSearch.fill('archive')
+    await historyDialog.getByRole('status').getByText('2 of 3 messages').waitFor()
+    await expect.poll(() => historyDialog.getByText('Recovered answer', { exact: true }).count()).toBe(0)
+    if (CAPTURE_HISTORY) {
+      const media = await mkdtemp(join(tmpdir(), 'dsh-bot-history-media-'))
+      const viewport = page.viewportSize()
+      for (const theme of ['dark', 'light'] as const) {
+        await page.emulateMedia({ colorScheme: theme, reducedMotion: 'reduce' })
+        await page.locator('body[data-ds-dark-theme]').waitFor({ state: theme === 'dark' ? 'visible' : 'detached' })
+        for (const width of [1440, 480]) {
+          await page.setViewportSize({ width, height: 900 })
+          await page.screenshot({ path: join(media, `imported-chat-${width}-${theme}.png`), animations: 'disabled' })
+        }
+      }
+      if (viewport !== null) await page.setViewportSize(viewport)
+      console.log(`Imported Bot chat media: ${media}`)
+    }
+    await sourceSelect.selectOption('supplement')
+    await historyDialog.getByRole('status').getByText('No matches in this source.').waitFor()
+    await archiveSearch.clear()
+    await historyDialog.getByText('Supplemental record', { exact: true }).waitFor()
     await sourceSelect.selectOption('primary')
     const historyDialogSnapshot = await captureStableAria(
       page, '[role="dialog"][aria-label="Imported Grok chat"]', scaffold.workspaceCwd,
