@@ -3,6 +3,7 @@
 // event in the selected Bot conversation.
 import { mkdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import { PAGE_MESSAGES } from '../../../packages/api/session-controller/src/client/sessions/session.ts'
 import { createAssistantMessage, createUserMessage } from '@yharness/llm'
 import { SessionId } from '@yharness/session'
 import type { Session } from '@yharness/session'
@@ -16,6 +17,7 @@ const MODE = webSnapshotMode()
 const SEARCH_TERM = 'search-amber-quasar'
 const SCOUT_REPLY = `Search Scout found the ${SEARCH_TERM} message.`
 const ORBIT_REPLY = `Search Orbit found the ${SEARCH_TERM} message.`
+const ORBIT_RECENT_REPLY = 'Search Orbit recent message stays visible while the target is unloaded.'
 const PRIVATE_REPLY = `Private session contains ${SEARCH_TERM} but must not appear.`
 const TAKE_SCREENSHOTS = process.env.YH_BOT_SEARCH_SCREENSHOTS === '1'
 const SHOT_DIR = fileURLToPath(new URL('../../../.artifacts/screenshots/bot-message-search', import.meta.url))
@@ -27,22 +29,22 @@ interface BotFixture {
 }
 
 /** Append one visible user/assistant turn and return the exact assistant seq. */
-async function seedVisibleTurn(session: Session, reply: string, label: string): Promise<string> {
-  session.append('turn/start', { turn: 1 })
+async function seedVisibleTurn(session: Session, reply: string, label: string, turn = 1): Promise<string> {
+  session.append('turn/start', { turn })
   session.append('user/message', createUserMessage({
     content: [{ type: 'text', text: `${label} context.` }], source: { kind: 'user' },
   }), { surfaceOp: 'append' })
-  session.append('step/start', { turn: 1, step: 1 })
+  session.append('step/start', { turn, step: 1 })
   session.append('assistant/message', {
-    stream: [], turn: 1, step: 1,
+    stream: [], turn, step: 1,
     message: createAssistantMessage({
       content: [{ type: 'text', text: reply }],
       source: { provider: 'fixture', model: 'fixture' },
     }),
   }, { surfaceOp: 'append' })
-  session.append('step/end', { turn: 1, step: 1 })
-  session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
-  const assistant = session.snapshotEvents().find(event => event.type === 'assistant/message')
+  session.append('step/end', { turn, step: 1 })
+  session.append('turn/end', { turn, reason: { kind: 'completed' } })
+  const assistant = [...session.snapshotEvents()].reverse().find(event => event.type === 'assistant/message')
   if (assistant === undefined) throw new Error(`Missing seeded assistant event for ${label}`)
   return String(assistant.seq)
 }
@@ -71,6 +73,17 @@ describe.skipIf(MODE === 'record')('web e2e: owner-scoped Bot message search', (
     const scoutSeq = await seedVisibleTurn(scoutSession, SCOUT_REPLY, 'Search Scout')
     await scaffold.ctx.sessions.flush(scoutSession)
     const orbitSeq = await seedVisibleTurn(orbitSession, ORBIT_REPLY, 'Search Orbit')
+    // PAGE_MESSAGES is the Client Session's minimum ordinary history window.
+    // Keep the target before a full page of later turns so the opening window
+    // contains a recent unrelated message but not the search target.
+    for (let turn = 2; turn <= PAGE_MESSAGES + 1; turn++) {
+      await seedVisibleTurn(
+        orbitSession,
+        turn === PAGE_MESSAGES + 1 ? ORBIT_RECENT_REPLY : `Search Orbit recent turn ${turn}.`,
+        `Search Orbit recent ${turn}`,
+        turn,
+      )
+    }
     await scaffold.ctx.sessions.flush(orbitSession)
     scout = { botId: String(scoutBot.id), sessionId: String(scoutBot.sessionId), assistantSeq: scoutSeq }
     orbit = { botId: String(orbitBot.id), sessionId: String(orbitBot.sessionId), assistantSeq: orbitSeq }
@@ -125,6 +138,16 @@ describe.skipIf(MODE === 'record')('web e2e: owner-scoped Bot message search', (
     await sidebar.getByRole('button', { name: 'Bots', exact: true }).click()
     const roster = sidebar.locator('aside[aria-label="Bot workspace"]')
     await roster.waitFor({ state: 'visible', timeout: 15_000 })
+
+    // Prove the target is genuinely outside the opening history page before
+    // the search flow asks the Client to jump back to it.
+    await roster.locator(`[data-bot-id="${orbit.botId}"]`).click()
+    const orbitInitialDetail = page.locator('section[aria-label="Search Orbit"]')
+    await orbitInitialDetail.waitFor({ state: 'visible', timeout: 15_000 })
+    await orbitInitialDetail.getByText(ORBIT_RECENT_REPLY, { exact: true }).waitFor({ state: 'visible' })
+    await expect.poll(() => orbitInitialDetail.locator(`[data-chat-anchor-seq="${orbit.assistantSeq}"]`).count())
+      .toBe(0)
+
     await roster.locator(`[data-bot-id="${scout.botId}"]`).click()
     const scoutDetail = page.locator('section[aria-label="Search Scout"]')
     await scoutDetail.waitFor({ state: 'visible', timeout: 15_000 })
