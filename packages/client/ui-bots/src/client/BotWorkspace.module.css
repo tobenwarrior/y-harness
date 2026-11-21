@@ -3073,22 +3073,45 @@
   list-style: none;
 }
 
+.grokHistoryControls {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  align-items: end;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
 .grokHistorySource {
   display: grid;
   gap: 4px;
-  margin-bottom: 12px;
+  min-width: 0;
   color: var(--yh-alias-label-secondary);
   font-size: 12px;
 }
 
 .grokHistorySource select {
   min-width: 0;
+  min-height: 32px;
   padding: 6px 8px;
   color: var(--yh-alias-label-primary);
   border: 0.5px solid var(--yh-alias-border-l2);
   border-radius: var(--yh-radius-md);
   background: var(--yh-alias-bg-layer-1);
   font: inherit;
+}
+
+.grokHistorySearch {
+  min-width: 0;
+}
+
+.grokHistorySearch input::placeholder {
+  color: var(--yh-alias-label-secondary);
+}
+
+.grokHistorySearchStatus {
+  margin: 0 0 8px;
+  color: var(--yh-alias-label-secondary);
+  font-size: 12px;
 }
 
 .grokHistoryMessage {
