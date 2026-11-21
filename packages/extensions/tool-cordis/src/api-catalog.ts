@@ -630,6 +630,18 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'the committed policy.',
       },
       {
+        signature: '@Remote(\'listShareLearning\') async listShareLearning(request: BotShareMembersRequest): Promise<BotShareLearningValue>',
+        description: 'List pending collaborator learning suggestions for one Bot.',
+        parameters: [{ name: 'request', description: 'Bot id to inspect.' }],
+        returns: 'pending suggestions and the Bot\'s published shared notes.',
+      },
+      {
+        signature: '@Remote(\'decideShareLearning\') async decideShareLearning(request: BotShareLearningDecisionRequest): Promise<BotShareLearningDecisionValue>',
+        description: 'Approve or reject one pending collaborator learning suggestion.',
+        parameters: [{ name: 'request', description: 'Bot, suggestion, and review decision.' }],
+        returns: 'the committed decision and any newly published note.',
+      },
+      {
         signature: '@Remote(\'revokeShareMember\') async revokeShareMember(request: BotShareMemberRevokeRequest): Promise<BotShareMemberRevokeValue>',
         description: 'Revoke one non-owner member from one operator-owned Bot.',
         parameters: [{ name: 'request', description: 'Bot id and the principal to remove.' }],
@@ -6249,6 +6261,26 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface BotShareInviteValue {\n    readonly code: string;\n    readonly expiresAt: number;\n}',
   },
   {
+    name: 'BotShareLearningDecisionRequest',
+    declaration: 'export interface BotShareLearningDecisionRequest {\n    readonly botId: BotId;\n    readonly suggestionId: BotShareLearningId;\n    readonly decision: \'approve\' | \'reject\';\n}',
+  },
+  {
+    name: 'BotShareLearningDecisionValue',
+    declaration: 'export interface BotShareLearningDecisionValue {\n    readonly botId: BotId;\n    readonly suggestionId: BotShareLearningId;\n    readonly decision: \'approved\' | \'rejected\';\n    readonly resolved: boolean;\n    readonly entry?: BotShareMemoryEntry;\n}',
+  },
+  {
+    name: 'BotShareLearningId',
+    declaration: 'export type BotShareLearningId = Branded<\'BotShareLearningId\'>;',
+  },
+  {
+    name: 'BotShareLearningSuggestion',
+    declaration: 'export interface BotShareLearningSuggestion {\n    readonly id: BotShareLearningId;\n    readonly principalId: BotPrincipalId;\n    readonly text: string;\n    readonly createdAt: number;\n}',
+  },
+  {
+    name: 'BotShareLearningValue',
+    declaration: 'export interface BotShareLearningValue {\n    readonly botId: BotId;\n    readonly pending: readonly BotShareLearningSuggestion[];\n    readonly recentlyLearned: readonly BotShareMemoryEntry[];\n}',
+  },
+  {
     name: 'BotShareMember',
     declaration: 'export interface BotShareMember {\n    readonly botId: BotId;\n    readonly principalId: BotPrincipalId;\n    readonly role: BotShareRole;\n    readonly grantedBy: BotPrincipalId;\n    readonly createdAt: number;\n    readonly updatedAt: number;\n}',
   },
@@ -6267,6 +6299,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'BotShareMembersValue',
     declaration: 'export interface BotShareMembersValue {\n    readonly botId: BotId;\n    readonly members: readonly BotShareMember[];\n}',
+  },
+  {
+    name: 'BotShareMemoryEntry',
+    declaration: 'export interface BotShareMemoryEntry {\n    readonly id: BotShareMemoryId;\n    readonly principalId: BotPrincipalId;\n    readonly text: string;\n    readonly createdAt: number;\n}',
+  },
+  {
+    name: 'BotShareMemoryId',
+    declaration: 'export type BotShareMemoryId = Branded<\'BotShareMemoryId\'>;',
   },
   {
     name: 'BotShareMemoryPolicyRequest',
