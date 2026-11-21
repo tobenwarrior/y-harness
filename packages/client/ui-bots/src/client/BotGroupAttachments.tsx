@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ChangeEvent, DragEvent, ReactNode } from 'react'
+import clsx from 'clsx'
 import {
   Button,
   fileSizeText,
@@ -8,6 +9,7 @@ import {
   IconPaperclipOutlineRegular,
   IconRefreshOutlineRegular,
   ImageLightbox,
+  Tooltip,
 } from '@yharness/client-ui-primitives'
 import type { PropsLocale } from '@yharness/client-ui-slots'
 import { randomUUID } from '@yharness/util-crypto'
@@ -110,6 +112,7 @@ export function releaseBotGroupAttachment(draft: BotGroupAttachmentDraft): void 
  *
  * @param props.attachments - ordered browser drafts retained by the composer.
  * @param props.disabled - whether picking and removal are temporarily blocked.
+ * @param props.compact - whether to show the picker as an icon-only composer control.
  * @param props.labels - locale-owned control and status copy.
  * @param props.onAddFiles - receives browser files in picker or drop order.
  * @param props.onRemove - removes one draft from the owner.
@@ -117,9 +120,10 @@ export function releaseBotGroupAttachment(draft: BotGroupAttachmentDraft): void 
  * @returns the picker and, when non-empty, its attachment rail.
  */
 export function BotGroupAttachments({
-  attachments, disabled, labels, onAddFiles, onRemove, onRetry,
+  attachments, compact = false, disabled, labels, onAddFiles, onRemove, onRetry,
 }: {
   readonly attachments: readonly BotGroupAttachmentDraft[]
+  readonly compact?: boolean
   readonly disabled: boolean
   readonly labels: BotGroupAttachmentLabels
   readonly onAddFiles: (files: readonly File[]) => void
@@ -142,12 +146,17 @@ export function BotGroupAttachments({
   }
   const onDrop = (event: DragEvent<HTMLDivElement>): void => {
     event.preventDefault()
+    event.stopPropagation()
     addFiles(Array.from(event.dataTransfer.files))
   }
   const displayName = (attachment: BotGroupAttachmentDraft): string => attachment.file.name || labels.file
 
   return (
-    <div className={css.groupAttachments} onDragOver={(event) => { event.preventDefault() }} onDrop={onDrop}>
+    <div className={clsx(
+      css.groupAttachments,
+      compact && css.groupAttachmentsCompact,
+      attachments.length > 0 && css.groupAttachmentsWithFiles,
+    )} onDragOver={(event) => { event.preventDefault() }} onDrop={onDrop}>
       <input
         ref={inputRef}
         className={css.groupAttachmentInput}
@@ -157,16 +166,29 @@ export function BotGroupAttachments({
         disabled={disabled}
         onChange={onInputChange}
       />
-      <Button
-        variant="ghost"
-        size="sm"
-        icon={<IconPaperclipOutlineRegular size={15} />}
-        aria-label={labels.picker}
-        disabled={disabled}
-        onClick={() => { inputRef.current?.click() }}
-      >
-        {labels.picker}
-      </Button>
+      {compact ? (
+        <Tooltip label={labels.picker} side="top" portal>
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={<IconPaperclipOutlineRegular size={15} />}
+            aria-label={labels.picker}
+            disabled={disabled}
+            onClick={() => { inputRef.current?.click() }}
+          />
+        </Tooltip>
+      ) : (
+        <Button
+          variant="ghost"
+          size="sm"
+          icon={<IconPaperclipOutlineRegular size={15} />}
+          aria-label={labels.picker}
+          disabled={disabled}
+          onClick={() => { inputRef.current?.click() }}
+        >
+          {labels.picker}
+        </Button>
+      )}
       {attachments.length > 0 && (
         <div className={css.groupAttachmentRail} role="group" aria-label={labels.attachments}>
           {attachments.map((attachment) => {

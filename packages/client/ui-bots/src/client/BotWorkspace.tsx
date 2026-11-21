@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { ReactNode } from 'react'
+import type { DragEvent, ReactNode } from 'react'
 import clsx from 'clsx'
 import {
   Button, IconArchiveOffOutlineRegular, IconCheckOutlineRegular,
@@ -958,6 +958,11 @@ export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate,
       <div
         className={css.groupComposerWrap}
         ref={composerRef}
+        onDragOver={(event) => { event.preventDefault() }}
+        onDrop={(event: DragEvent<HTMLDivElement>) => {
+          event.preventDefault()
+          addAttachments(Array.from(event.dataTransfer.files))
+        }}
         onBlur={(event) => {
           if (!composerRef.current?.contains(event.relatedTarget)) setMentionQuery(null)
         }}
@@ -991,6 +996,7 @@ export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate,
         )}
         <BotGroupAttachments
           attachments={attachments}
+          compact
           disabled={sending}
           labels={botGroupAttachmentLabels(t)}
           onAddFiles={addAttachments}
@@ -1030,6 +1036,7 @@ export function BotGroupDetail({ group, bots, loading, error, onRetry, onUpdate,
         <textarea
           className={css.groupComposer}
           ref={composerInputRef}
+          rows={1}
           aria-label={t('groupMessagePlaceholder', { name: group.name })}
           placeholder={t('groupMessagePlaceholder', { name: group.name })}
           value={draft}
