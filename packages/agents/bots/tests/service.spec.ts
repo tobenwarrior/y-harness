@@ -1074,15 +1074,31 @@ describe('durable Bot roster', () => {
       })
       const host = productionSharedHost(h.service)
       const bots = (await h.service.list({ includeHidden: true })).bots
-      const operation = host.withBotRoster(
-        bots,
-        undefined,
-        () => authority!.mutateExtension('test/shared-roster-fence', current => ({ value: undefined, next: current ?? null })),
-      )
-      const timeout = new Promise<'timed-out'>((resolve) => {
-        setTimeout(() => { resolve('timed-out') }, 250).unref()
+      const modify = h.credentials.modifyRecord.bind(h.credentials)
+      let writing = false
+      const guard = vi.spyOn(h.credentials, 'modifyRecord').mockImplementation((key, mutation) => {
+        // A nested write would wait for its own callback to finish on the serialized provider.
+        if (writing) throw new Error('Nested write to the profile credential queue')
+        return modify(key, async (current) => {
+          writing = true
+          try {
+            return await mutation(current)
+          } finally {
+            writing = false
+          }
+        })
       })
-      await expect(Promise.race([operation.then(() => 'completed' as const), timeout])).resolves.toBe('completed')
+      const key = 'test/shared-roster-fence'
+      try {
+        await expect(host.withBotRoster(
+          bots,
+          undefined,
+          () => authority!.mutateExtension(key, () => ({ value: 'committed', next: 'written' })),
+        )).resolves.toEqual({ valid: true, value: 'committed' })
+        await expect(authority.readExtension(key)).resolves.toMatchObject({ value: 'written' })
+      } finally {
+        guard.mockRestore()
+      }
     } finally {
       await authority?.dispose()
       await close(h.ctx)
