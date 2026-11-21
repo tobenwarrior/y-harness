@@ -6144,6 +6144,17 @@ describe('shared Bot service', () => {
     }
   })
 
+  it('projects empty learning when the initial membership has no shared memory', async () => {
+    const value = await fixture()
+    try {
+      await expect(value.service.listLearning(BotId('bot-chief'))).resolves.toMatchObject({
+        botId: BotId('bot-chief'), pending: [], recentlyLearned: [],
+      })
+    } finally {
+      await value.close()
+    }
+  })
+
   it('returns not-found for missing learning Bots and records rejected suggestions', async () => {
     const value = await fixture()
     try {
@@ -6466,6 +6477,44 @@ describe('shared Bot service', () => {
       await expect(value.service.listLearning(BotId('bot-chief'))).resolves.toMatchObject({
         pending: [],
         recentlyLearned: [{ text: 'approved projection', principalId: collaborator.botPrincipalId }],
+      })
+    } finally {
+      await value.close()
+    }
+  })
+
+  it('attributes a local learning decision to the durable owner', async () => {
+    const value = await fixture()
+    try {
+      const ownerEnrollment = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      const collaboratorEnrollment = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'collaborator')).code,
+        enrollmentRequest(),
+      )
+      const owner = await principal(value, ownerEnrollment)
+      const collaborator = await principal(value, collaboratorEnrollment)
+      await value.service.setMemoryPolicy(BotId('bot-chief'), true)
+      const pending = await value.service.handle('bots/share/write-memory', {
+        botId: 'bot-chief', text: 'local review', consent: true,
+      }, new AbortController().signal, collaborator.peer)
+      if (!pending.ok || pending.value === null || typeof pending.value !== 'object'
+        || !('suggestion' in pending.value) || pending.value.suggestion === undefined
+        || typeof pending.value.suggestion !== 'object' || pending.value.suggestion === null
+        || !('id' in pending.value.suggestion) || typeof pending.value.suggestion.id !== 'string') {
+        throw new Error('learning suggestion was not returned')
+      }
+      const suggestionId = BotShareLearningId(pending.value.suggestion.id)
+      await expect(value.service.decideLearning(
+        BotId('bot-chief'), suggestionId, 'reject',
+      )).resolves.toMatchObject({ decision: 'rejected', resolved: true })
+      expect((await value.authority.readExtension('agent-bots/shared-learning')).value).toMatchObject({
+        decisions: [{
+          botId: BotId('bot-chief'), suggestionId,
+          decision: 'rejected', decidedBy: owner.botPrincipalId,
+        }],
       })
     } finally {
       await value.close()
