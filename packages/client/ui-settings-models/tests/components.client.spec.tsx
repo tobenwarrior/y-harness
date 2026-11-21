@@ -1523,14 +1523,16 @@ describe('ModelsSection', () => {
     expect(screen.getByText<HTMLButtonElement>(en.add).disabled).toBe(true)
   })
 
-  it('toggles the row editor closed on a second edit click and on cancel', async () => {
+  it('opens a focused provider detail view and returns without saving', async () => {
     const { mutate } = await mountSection()
     const edit = screen.getByRole('button', { name: openaiCopy(en.editProvider) })
     fireEvent.click(edit)
     await waitFor(() => { expect(screen.queryAllByLabelText(en.keyInput).length).toBe(1) })
-    fireEvent.click(edit)
+    expect(screen.getByRole('button', { name: en.backToProviders })).toBeTruthy()
+    expect(document.querySelector('[data-yh-part="provider-detail"]')).not.toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: en.backToProviders }))
     expect(screen.queryAllByLabelText(en.keyInput)).toHaveLength(0)
-    fireEvent.click(edit)
+    fireEvent.click(screen.getByRole('button', { name: openaiCopy(en.editProvider) }))
     await waitFor(() => { expect(screen.queryAllByLabelText(en.keyInput).length).toBe(1) })
     fireEvent.click(screen.getByText(en.cancel))
     expect(screen.queryAllByLabelText(en.keyInput)).toHaveLength(0)

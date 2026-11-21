@@ -86,6 +86,7 @@ export const en = {
   deepSeekAccount: 'DeepSeek Account',
   title: 'Models',
   intro: 'Connect a subscription or API provider to choose its models in Y Harness.',
+  backToProviders: 'Back to providers',
   edit: 'Edit',
   editProvider: 'Edit {provider}',
   remove: 'Delete',

@@ -71,6 +71,60 @@
   gap: 8px;
 }
 
+.detailView {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.detailHeader {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 12px;
+}
+
+.detailBack {
+  flex: none;
+}
+
+.detailIdentity {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 9px;
+}
+
+.detailHeading {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.detailTitle {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--yh-alias-label-primary);
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detailRoute {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--yh-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Provider cards share the settings material; editors use the inset module fill. */
 .rowCard {
   border: 0.5px solid var(--yh-alias-settings-card-stroke);
@@ -756,6 +810,18 @@ select.input {
 @media (max-width: 760px) {
   .sectionHeader {
     align-items: flex-start;
+  }
+}
+
+@media (max-width: 480px) {
+  .detailHeader {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .detailIdentity {
+    flex-basis: 100%;
   }
 }
 
