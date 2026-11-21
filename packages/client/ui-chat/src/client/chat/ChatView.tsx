@@ -227,7 +227,10 @@ export function ChatView({
     submissionId: visibleSubmissions.at(-1)?.requestId ?? null,
     loadedTurns: turnNavigationItems,
   })
-  useLayoutEffect(() => registerChatNavigation(scroll.navigateToSeq), [registerChatNavigation, scroll.navigateToSeq])
+  useLayoutEffect(() => {
+    if (openState !== 'open') return
+    return registerChatNavigation(scroll.navigateToSeq)
+  }, [openState, registerChatNavigation, scroll.navigateToSeq])
   const contentRevision = bot === undefined ? '' : [
     hasMore ? 'more' : 'complete',
     ...turnNavigationItems.map(item => `${item.turn}:${item.anchorKey}:${item.prompt}:${item.response}`),
