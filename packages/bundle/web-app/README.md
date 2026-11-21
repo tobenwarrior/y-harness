@@ -42,6 +42,8 @@ After startup you see a `yharness web:` line whose root URL carries a fresh proc
 
 Saved model selections override the composition default. The settings card accepts a Messages-compatible API address and a credential reference.
 
+The macOS Desktop Host reads saved provider credentials over its private process channel. Cloud accepts copies through an authenticated route on its loopback Web listener.
+
 ### Configuration
 
 `--host` and `--port` configure the listener; `--public-url` names the advertised public HTTP(S) root the GUI is reached at behind a prefix-stripping proxy, and `--trusted-host` adds further accepted authorities. All are described under [Listening, trust, and public deployments](#public-deployments):
