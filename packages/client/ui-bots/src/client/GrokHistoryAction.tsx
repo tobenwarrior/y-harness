@@ -108,7 +108,7 @@ export function GrokHistoryDialog({
             </label>
           )}
           <Input
-            className={css.grokHistorySearch ?? ''}
+            className={css.grokHistorySearch as string}
             type="search"
             autoComplete="off"
             spellCheck={false}
