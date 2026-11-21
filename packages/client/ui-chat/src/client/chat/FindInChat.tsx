@@ -59,15 +59,27 @@ export function FindInChat({
   const [matches, setMatches] = useState<readonly HTMLElement[]>([])
   const [activeIndex, setActiveIndex] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
+  const restoreFocusRef = useRef<HTMLElement | null>(null)
+  const activeRowRef = useRef<HTMLElement | undefined>(undefined)
+  const queryRef = useRef('')
 
   const close = useCallback(() => {
+    const restoreFocus = restoreFocusRef.current
+    restoreFocusRef.current = null
     setOpen(false)
     setQuery('')
     setMatches([])
     setActiveIndex(0)
+    requestAnimationFrame(() => {
+      if (restoreFocus?.isConnected) restoreFocus.focus()
+    })
   }, [])
 
   const openSearch = useCallback(() => {
+    if (restoreFocusRef.current === null) {
+      const active = globalThis.document.activeElement
+      restoreFocusRef.current = active instanceof HTMLElement ? active : null
+    }
     setOpen(true)
     requestAnimationFrame(() => { inputRef.current?.focus() })
   }, [])
@@ -99,16 +111,27 @@ export function FindInChat({
   }, [close, open, openSearch, sessionId])
 
   useLayoutEffect(() => {
+    activeRowRef.current = matches[activeIndex]
+  }, [activeIndex, matches])
+
+  useLayoutEffect(() => {
     const scope = scopeRef.current
     const term = normalized(query)
+    const queryChanged = queryRef.current !== term
+    queryRef.current = term
     if (scope === null || term === '') {
+      activeRowRef.current = undefined
       setMatches(current => current.length === 0 ? current : [])
       setActiveIndex(current => current === 0 ? current : 0)
       return
     }
     const found = transcriptRows(scope).filter(row => normalized(row.textContent).includes(term))
+    const activeRow = activeRowRef.current
+    const nextActiveIndex = queryChanged || activeRow === undefined
+      ? 0
+      : Math.max(0, found.indexOf(activeRow))
     setMatches(current => sameRows(current, found) ? current : found)
-    setActiveIndex(current => current === 0 ? current : 0)
+    setActiveIndex(() => found.length === 0 ? 0 : nextActiveIndex)
   }, [contentRevision, query, scopeRef])
 
   useLayoutEffect(() => {

@@ -227,7 +227,7 @@ export function ChatView({
     submissionId: visibleSubmissions.at(-1)?.requestId ?? null,
     loadedTurns: turnNavigationItems,
   })
-  const contentRevision = [
+  const contentRevision = bot === undefined ? '' : [
     hasMore ? 'more' : 'complete',
     ...turnNavigationItems.map(item => `${item.turn}:${item.anchorKey}:${item.prompt}:${item.response}`),
   ].join('\u0001')

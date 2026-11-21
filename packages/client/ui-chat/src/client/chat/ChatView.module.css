@@ -8,18 +8,17 @@
   container-type: inline-size;
 }
 
-/* Direct Bot search is transient: it floats over the transcript instead of
-   adding another permanent toolbar control to the conversation header. */
+/* Direct Bot search is transient: it reserves one compact row above the
+   transcript instead of adding another permanent toolbar control. */
 .findBar {
-  position: absolute;
-  z-index: 4;
-  top: 10px;
-  left: 50%;
+  box-sizing: border-box;
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: 4px;
   width: min(560px, calc(100% - 32px));
-  transform: translateX(-50%);
+  align-self: center;
+  margin: 8px auto 0;
   padding: 5px;
   border: 0.5px solid var(--yh-alias-border-l2);
   border-radius: var(--yh-radius-lg);
@@ -50,14 +49,13 @@
 }
 
 :global([data-chat-find-match]) {
-  outline: 1px solid color-mix(in srgb, var(--yh-alias-state-business-primary) 44%, transparent);
-  outline-offset: 3px;
+  background: color-mix(in srgb, var(--yh-alias-state-business-primary) 5%, transparent);
   border-radius: var(--yh-radius-md);
 }
 
 :global([data-chat-find-active]) {
-  outline: 2px solid var(--yh-alias-state-business-primary);
-  outline-offset: 3px;
+  background: color-mix(in srgb, var(--yh-alias-state-business-primary) 9%, transparent);
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--yh-alias-state-business-primary) 52%, transparent);
 }
 
 .root {
