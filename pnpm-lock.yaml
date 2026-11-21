@@ -3079,6 +3079,9 @@ importers:
       open:
         specifier: ^11.0.0
         version: 11.0.4
+      ws:
+        specifier: 8.21.0
+        version: 8.21.0
       zod:
         specifier: ^4.4.3
         version: 4.4.3
@@ -3086,6 +3089,9 @@ importers:
       '@deepseek-ai/libreoffice-kit':
         specifier: ^0.1.5
         version: 0.1.5
+      '@types/ws':
+        specifier: 8.18.1
+        version: 8.18.1
       '@yharness/agent':
         specifier: workspace:*
         version: link:../../core/agent

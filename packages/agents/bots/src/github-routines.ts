@@ -6,8 +6,8 @@ import { MessageId } from '@yharness/llm/brand'
 import type { SessionId } from '@yharness/session'
 import { WebhookDeliveryId, WebhookRuleId, WebhookSourceId, type VerifiedWebhookDelivery } from '@yharness/webhook'
 import { z } from 'zod'
-import { BOT_EVENT_SOURCES, BOT_GITHUB_ROUTINE_EVENTS } from './types.ts'
-import type { BotEventRoutine, BotEventTrigger, BotGitHubRoutineReceipt } from './types.ts'
+import { BOT_GITHUB_ROUTINE_EVENTS } from './types.ts'
+import type { BotEventRoutine, BotGitHubRoutineReceipt } from './types.ts'
 
 /** Ingress identifier accepted by GitHub routine rules. */
 export const githubRoutineSourceSchema = z.string().regex(/^[a-z0-9][a-z0-9._-]{0,95}$/i).transform(WebhookSourceId)
@@ -19,14 +19,10 @@ const deliveryId = z.string().min(1).max(128).transform(WebhookDeliveryId)
 const subjectNumber = z.number().int().positive()
 const eventKind = z.enum(BOT_GITHUB_ROUTINE_EVENTS)
 
-const messageTrigger = z.object({ type: z.literal('message'), source: z.enum(BOT_EVENT_SOURCES) }).strict()
-const gitHubTrigger = z.object({
+/** Validate the selected GitHub source, repository, and event. */
+export const githubRoutineTriggerSchema = z.object({
   type: z.literal('github'), source: githubRoutineSourceSchema, repository, event: eventKind,
 }).strict()
-const webhookTrigger = z.object({ type: z.literal('webhook') }).strict()
-
-/** Shared validation for routine commands and durable Bot records. */
-export const botEventTriggerSchema = z.discriminatedUnion('type', [messageTrigger, gitHubTrigger, webhookTrigger])
 
 /** Fields persisted with a verified GitHub delivery. */
 export const githubRoutineReceiptSchema = z.object({
@@ -79,19 +75,6 @@ export function projectGitHubRoutineActivity(delivery: VerifiedWebhookDelivery):
     openedAt: Date.parse(subject.created_at),
     receivedAt,
   }
-}
-
-/**
- * Compare canonical selectors for creation retries and activation changes.
- * @param left - first selector.
- * @param right - second selector.
- * @returns Whether both admit the same activity.
- */
-export function sameRoutineTrigger(left: BotEventTrigger, right: BotEventTrigger): boolean {
-  if (left.type === 'webhook') return right.type === 'webhook'
-  if (left.type === 'message') return right.type === 'message' && left.source === right.source
-  return right.type === 'github' && left.source === right.source
-    && left.repository === right.repository && left.event === right.event
 }
 
 /**
@@ -152,21 +135,4 @@ export function githubRoutineFollowup(
       ruleId: WebhookRuleId(routine.id), form: 'notice', summary: 'GitHub · ' + label + ' #' + String(receipt.subject),
     },
   }
-}
-
-/**
- * Read the owner routine id carried by an admitted Session message.
- * @param message - persisted user-role Session message.
- * @returns Routine id for a recognized message or external trigger.
- */
-export function routineFollowupId(message: UserMessage): string | undefined {
-  const source = message.source
-  if (source.kind === 'bot-event-routine') return source.routineId
-  if (source.kind === 'webhook' && source.provider === 'github' && message.id.startsWith('bot-github-routine-')) {
-    return String(source.ruleId)
-  }
-  if (source.kind === 'webhook' && source.provider === 'bot-webhook' && message.id.startsWith('bot-http-routine-')) {
-    return String(source.ruleId)
-  }
-  return undefined
 }

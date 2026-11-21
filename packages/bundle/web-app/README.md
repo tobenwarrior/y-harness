@@ -67,6 +67,10 @@ By default the GUI listens on loopback and accepts connections from this machine
 
 The printed URL contains a process credential; share it only with intended users, and `printUrl: false` suppresses the line with or without `--public-url`.
 
+### Slack routines
+
+Enable one `bot-routine-slack` source with a label, Slack workspace and app identifiers, and an app token credential reference. The source opens an outbound Slack Socket Mode connection and acknowledges applicable messages after the Bot service reserves their runs. The Web bundle includes the plugin disabled by default. See [Trigger a Bot routine from Slack](../../../docs/user/guide/vps.md#trigger-a-bot-routine-from-slack).
+
 ### Routine webhooks
 
 Enable `bot-routine-webhooks` and set its `publicUrl` to the HTTPS root available to callers. The proxy forwards the exact `/bot-hooks/` prefix to the Web listener, strips the advertised base path, and preserves the `Authorization` header. Keep the private GUI and its API behind their existing access controls. Set `maxBodyBytes` to override the default 16 KiB JSON limit. The Web bundle includes this plugin disabled by default. See [Trigger a Bot routine from another service](../../../docs/user/guide/vps.md#trigger-a-bot-routine-from-another-service).

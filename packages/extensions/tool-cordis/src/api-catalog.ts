@@ -672,6 +672,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'Route disposer which stops new admissions from that source.',
       },
       {
+        signature: 'registerSlackRoutineSource(config: { source: string; workspaceId: string; appId: string }): { accept(payload: unknown, receivedAt: number): Promise<void> dispose(): void }',
+        description: 'Register a Host-owned authenticated Slack Socket Mode source.',
+        parameters: [{ name: 'config', description: 'Local source label and exact Slack installation ids.' }],
+        returns: 'An accept callback for socket payloads and a disposer that retires the source.',
+      },
+      {
         signature: 'registerRoutineWebhookReceiver(publicRoot: string, maxBodyBytes: number): BotRoutineWebhookReceiver',
         description: 'Mount the routine receiver for one Web instance with a durable credential store.',
         parameters: [{ name: 'publicRoot', description: 'Advertised HTTPS application URL, including any proxy prefix.' }, { name: 'maxBodyBytes', description: 'Maximum raw request body size.' }],
@@ -5920,7 +5926,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'BotEventRoutine',
-    declaration: 'export interface BotEventRoutine {\n    readonly id: string;\n    readonly title: string;\n    readonly prompt: string;\n    readonly trigger: BotEventTrigger;\n    readonly status: \'active\' | \'paused\';\n    readonly createdAt: number;\n    readonly updatedAt: number;\n    readonly deliveries: readonly BotEventRoutineDelivery[];\n    readonly firstEligibleEventSeq?: number | undefined;\n    readonly firstEligibleGitHubAt?: number | undefined;\n    readonly firstEligibleWebhookAt?: number | undefined;\n    readonly webhookKeyVersion?: string | undefined;\n    readonly admissionWatermark?: number | undefined;\n    readonly admissionTombstones?: readonly BotEventRoutineAdmissionTombstone[] | undefined;\n    readonly results: readonly BotEventRoutineResult[];\n}',
+    declaration: 'export interface BotEventRoutine {\n    readonly id: string;\n    readonly title: string;\n    readonly prompt: string;\n    readonly trigger: BotEventTrigger;\n    readonly status: \'active\' | \'paused\';\n    readonly createdAt: number;\n    readonly updatedAt: number;\n    readonly deliveries: readonly BotEventRoutineDelivery[];\n    readonly firstEligibleEventSeq?: number | undefined;\n    readonly firstEligibleGitHubAt?: number | undefined;\n    readonly firstEligibleSlackAt?: number | undefined;\n    readonly firstEligibleWebhookAt?: number | undefined;\n    readonly webhookKeyVersion?: string | undefined;\n    readonly admissionWatermark?: number | undefined;\n    readonly admissionTombstones?: readonly BotEventRoutineAdmissionTombstone[] | undefined;\n    readonly results: readonly BotEventRoutineResult[];\n}',
   },
   {
     name: 'BotEventRoutineAdmissionTombstone',
@@ -5932,7 +5938,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'BotEventRoutineDelivery',
-    declaration: 'export type BotEventRoutineDelivery = BotEventRoutineDeliveryFields & ({\n    readonly triggerEventSeq: number;\n    readonly triggerMessageId?: MessageId | undefined;\n    readonly github?: undefined;\n    readonly webhook?: undefined;\n} | {\n    readonly github: BotGitHubRoutineReceipt;\n    readonly webhook?: undefined;\n    readonly triggerEventSeq?: undefined;\n    readonly triggerMessageId?: undefined;\n} | {\n    readonly webhook: {\n        readonly payload?: string | undefined;\n    };\n    readonly github?: undefined;\n    readonly triggerEventSeq?: undefined;\n    readonly triggerMessageId?: undefined;\n});',
+    declaration: 'export type BotEventRoutineDelivery = BotEventRoutineDeliveryFields & ({\n    readonly triggerEventSeq: number;\n    readonly triggerMessageId?: MessageId | undefined;\n    readonly github?: undefined;\n    readonly slack?: undefined;\n    readonly webhook?: undefined;\n} | {\n    readonly github: BotGitHubRoutineReceipt;\n    readonly slack?: undefined;\n    readonly webhook?: undefined;\n    readonly triggerEventSeq?: undefined;\n    readonly triggerMessageId?: undefined;\n} | {\n    readonly webhook: {\n        readonly payload?: string | undefined;\n    };\n    readonly slack?: undefined;\n    readonly github?: undefined;\n    readonly triggerEventSeq?: undefined;\n    readonly triggerMessageId?: undefined;\n} | {\n    readonly slack: BotSlackRoutineReceipt;\n    readonly github?: undefined;\n    readonly webhook?: undefined;\n    readonly triggerEventSeq?: undefined;\n    readonly triggerMessageId?: undefined;\n});',
   },
   {
     name: 'BotEventRoutineHistory',
@@ -5944,7 +5950,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'BotEventRoutineView',
-    declaration: 'export type BotEventRoutineView = Omit<BotEventRoutine, \'deliveries\' | \'results\' | \'firstEligibleEventSeq\' | \'firstEligibleGitHubAt\' | \'firstEligibleWebhookAt\' | \'webhookKeyVersion\' | \'admissionWatermark\' | \'admissionTombstones\'> & {\n    readonly kind: \'event\';\n    readonly state: \'waiting\';\n    readonly deliveryMode: \'host\';\n};',
+    declaration: 'export type BotEventRoutineView = Omit<BotEventRoutine, \'deliveries\' | \'results\' | \'firstEligibleEventSeq\' | \'firstEligibleGitHubAt\' | \'firstEligibleSlackAt\' | \'firstEligibleWebhookAt\' | \'webhookKeyVersion\' | \'admissionWatermark\' | \'admissionTombstones\'> & {\n    readonly kind: \'event\';\n    readonly state: \'waiting\';\n    readonly deliveryMode: \'host\';\n};',
   },
   {
     name: 'BotEventSource',
@@ -5952,7 +5958,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'BotEventTrigger',
-    declaration: 'export type BotEventTrigger = BotMessageEventTrigger | BotGitHubEventTrigger | BotWebhookEventTrigger;',
+    declaration: 'export type BotEventTrigger = BotMessageEventTrigger | BotGitHubEventTrigger | BotWebhookEventTrigger | BotSlackEventTrigger;',
   },
   {
     name: 'BotGitHubEventTrigger',
@@ -6385,6 +6391,34 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'BotSkillUpdateValue',
     declaration: 'export interface BotSkillUpdateValue {\n    readonly bot: BotView;\n    readonly policy: BotSkillPolicy;\n    readonly revision: number;\n}',
+  },
+  {
+    name: 'BotSlackChannelId',
+    declaration: 'export type BotSlackChannelId = Branded<\'BotSlackChannelId\'>;',
+  },
+  {
+    name: 'BotSlackEventTrigger',
+    declaration: 'export interface BotSlackEventTrigger {\n    readonly type: \'slack\';\n    readonly source: WebhookSourceId;\n    readonly workspaceId: BotSlackWorkspaceId;\n    readonly event: BotSlackRoutineEvent;\n    readonly channelId?: BotSlackChannelId | undefined;\n    readonly userId?: BotSlackUserId | undefined;\n    readonly textIncludes?: string | undefined;\n    readonly reaction?: string | undefined;\n}',
+  },
+  {
+    name: 'BotSlackMessageTimestamp',
+    declaration: 'export type BotSlackMessageTimestamp = Branded<\'BotSlackMessageTimestamp\'>;',
+  },
+  {
+    name: 'BotSlackRoutineEvent',
+    declaration: 'export type BotSlackRoutineEvent = typeof BOT_SLACK_ROUTINE_EVENTS[number];',
+  },
+  {
+    name: 'BotSlackRoutineReceipt',
+    declaration: 'export interface BotSlackRoutineReceipt {\n    readonly source: WebhookSourceId;\n    readonly deliveryId: WebhookDeliveryId;\n    readonly workspaceId: BotSlackWorkspaceId;\n    readonly event: BotSlackRoutineEvent;\n    readonly channelId: BotSlackChannelId;\n    readonly userId: BotSlackUserId;\n    readonly messageTimestamp: BotSlackMessageTimestamp;\n    readonly text?: string | undefined;\n    readonly textTruncated?: true | undefined;\n    readonly reaction?: string | undefined;\n}',
+  },
+  {
+    name: 'BotSlackUserId',
+    declaration: 'export type BotSlackUserId = Branded<\'BotSlackUserId\'>;',
+  },
+  {
+    name: 'BotSlackWorkspaceId',
+    declaration: 'export type BotSlackWorkspaceId = Branded<\'BotSlackWorkspaceId\'>;',
   },
   {
     name: 'BotTemplateApproveRequest',

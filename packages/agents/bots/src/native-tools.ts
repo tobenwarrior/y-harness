@@ -1,6 +1,6 @@
 /** Native Codex actions for live Bot Sessions. */
 
-import { BOT_GITHUB_ROUTINE_EVENTS } from './types.ts'
+import { botRoutineEventToolDescription, botRoutineEventToolProperties } from './event-routines.ts'
 import { createHash } from 'node:crypto'
 import type { GenerateOptions } from '@yharness/llm'
 import { canonicalizeCronExpression, parseAtInput } from '@yharness/schedule'
@@ -839,13 +839,8 @@ interface RoutineCreateReceipt {
 
 const nativeEventSelector = {
   type: 'object',
-  description: 'Select message with source bot or user, github with the configured source, repository, and event name, or webhook with only type. The owner can copy webhook credentials in Manage routines.',
-  properties: {
-    type: { type: 'string', enum: ['message', 'github', 'webhook'] },
-    source: { type: 'string' },
-    repository: { type: 'string', description: 'GitHub repository in owner/repo form.' },
-    event: { type: 'string', enum: [...BOT_GITHUB_ROUTINE_EVENTS] },
-  },
+  description: botRoutineEventToolDescription,
+  properties: botRoutineEventToolProperties,
   required: ['type'],
   additionalProperties: false,
 }
@@ -870,7 +865,7 @@ function routineTool(
     description: action === 'list'
       ? 'List the durable routines owned by this Bot Session.'
       : action === 'create'
-        ? 'Create a durable routine owned by this Bot Session. Supply one timing selector or a message, GitHub, or webhook event. This action requires approval.'
+        ? 'Create a durable routine owned by this Bot Session. Supply one timing selector or a message, GitHub, Slack, or webhook event. This action requires approval.'
         : action === 'update'
           ? 'Change a durable routine owned by this Bot Session. This action requires approval.'
           : action === 'pause'

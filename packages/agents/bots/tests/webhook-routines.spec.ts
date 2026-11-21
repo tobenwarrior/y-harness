@@ -14,7 +14,7 @@ import {
   createRoutineWebhookHandler, matchesRoutineWebhookKey, newRoutineWebhookVersion, routineWebhookFollowup,
   routineWebhookKey, routineWebhookMessageId, routineWebhookSetup, type BotRoutineWebhookStatus,
 } from '../src/webhook-routines.ts'
-import { routineFollowupId } from '../src/github-routines.ts'
+import { routineFollowupId } from '../src/event-routines.ts'
 import { BotId } from '../src/types.ts'
 
 const botId = BotId('bot-scout')

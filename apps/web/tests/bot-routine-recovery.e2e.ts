@@ -1,12 +1,14 @@
-/** The assembled Bots workspace admits new message and signed GitHub routine events. */
+/** The assembled Bots workspace delivers routine events in the original Bot chat. */
 
 import { createHmac } from 'node:crypto'
+import { once } from 'node:events'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { chromium, type Browser, type Locator, type Page } from 'playwright'
 import { expect, it } from 'vitest'
+import WebSocket, { WebSocketServer } from 'ws'
 import type { BotView } from '@yharness/bots'
 import { credentialRef } from '@yharness/credentials'
 import { LlmAdapter, type GenerateOptions, type StreamChunk } from '@yharness/llm'
@@ -459,13 +461,17 @@ const WEBHOOK_EXPECTED = fileURLToPath(new URL('./expected/bot-routine-recovery/
 const WEBHOOK_TITLE = 'Review incoming reports'
 const WEBHOOK_HOST = 'hooks.example.invalid'
 
-async function captureRoutineWebhook(page: Page, name: string, dialog?: Locator): Promise<void> {
-  const screenshots = process.env.DSH_BOT_ROUTINE_WEBHOOK_SCREENSHOTS
+async function captureExternalRoutine(
+  page: Page, screenshots: string | undefined, name: string, dialog?: Locator,
+): Promise<void> {
   if (screenshots === undefined) return
   for (const colorScheme of ['dark', 'light'] as const) {
     await page.emulateMedia({ colorScheme, reducedMotion: 'reduce' })
     for (const width of [1440, 480]) {
       await page.setViewportSize({ width, height: 900 })
+      const sidebar = page.locator('[data-yh-part="sidebar"]')
+      await expect.poll(() => sidebar.evaluate(element => element.getBoundingClientRect().width < 100))
+        .toBe(width === 480)
       if (dialog !== undefined) {
         const bounds = await dialog.boundingBox()
         if (bounds === null) throw new Error('Routines dialog is unavailable')
@@ -538,7 +544,7 @@ it.skipIf(webSnapshotMode() === 'record')('accepts a private keyed routine webho
     await copyURL.waitFor()
     const setupSnapshot = await connection.ariaSnapshot()
     expect((await connection.innerText()).includes(setup.key)).toBe(false)
-    await captureRoutineWebhook(page, 'webhook-setup', dialog)
+    await captureExternalRoutine(page, process.env.DSH_BOT_ROUTINE_WEBHOOK_SCREENSHOTS, 'webhook-setup', dialog)
     await copyURL.click()
     await expect.poll(() => page.evaluate(async () => await navigator.clipboard.readText())).toBe(setup.postUrl)
     await copyKey.click()
@@ -557,7 +563,7 @@ it.skipIf(webSnapshotMode() === 'record')('accepts a private keyed routine webho
     const replace = connection.getByRole('button', { name: 'Replace key', exact: true })
     await replace.waitFor()
     const rotationSnapshot = await replace.ariaSnapshot()
-    await captureRoutineWebhook(page, 'webhook-rotate', dialog)
+    await captureExternalRoutine(page, process.env.DSH_BOT_ROUTINE_WEBHOOK_SCREENSHOTS, 'webhook-rotate', dialog)
     await replace.click()
     await connection.getByText('Key replaced. Copy the new key or authorization header.', { exact: true }).waitFor()
     const rotated = await firstHost.ctx.bots.routineWebhookSetup(query)
@@ -596,7 +602,7 @@ it.skipIf(webSnapshotMode() === 'record')('accepts a private keyed routine webho
     await output.waitFor()
     expect(await output.count()).toBe(1)
     await notice.waitFor()
-    await captureRoutineWebhook(reopenedPage, 'webhook-chat')
+    await captureExternalRoutine(reopenedPage, process.env.DSH_BOT_ROUTINE_WEBHOOK_SCREENSHOTS, 'webhook-chat')
     const resultsDialog = await openRoutines(reopenedPage)
     await resultsDialog.getByRole('tab', { name: 'Results', exact: true }).click()
     const deliveries = resultsDialog.getByRole('list', { name: 'Deliveries', exact: true })
@@ -604,7 +610,7 @@ it.skipIf(webSnapshotMode() === 'record')('accepts a private keyed routine webho
     await results.getByText(RESULT, { exact: true }).waitFor()
     expect(await deliveries.getByRole('listitem').count()).toBe(1)
     expect(await results.getByRole('listitem').count()).toBe(1)
-    await captureRoutineWebhook(reopenedPage, 'webhook-result', resultsDialog)
+    await captureExternalRoutine(reopenedPage, process.env.DSH_BOT_ROUTINE_WEBHOOK_SCREENSHOTS, 'webhook-result', resultsDialog)
     await compareOrRefreshGolden(WEBHOOK_EXPECTED, [
       setupSnapshot, rotationSnapshot, await notice.ariaSnapshot(), await output.ariaSnapshot(),
       await deliveries.getByText('Delivered', { exact: true }).ariaSnapshot(),
@@ -616,6 +622,181 @@ it.skipIf(webSnapshotMode() === 'record')('accepts a private keyed routine webho
       try {
         await web?.close()
       } finally {
+        await rm(workspaceCwd, { recursive: true, force: true })
+      }
+    }
+  }
+}, 120_000)
+
+const SLACK_EXPECTED = fileURLToPath(new URL('./expected/bot-routine-recovery/slack.expected.md', import.meta.url))
+const SLACK_TITLE = 'Review release updates'
+const SLACK_SOURCE = 'example-slack'
+const SLACK_WORKSPACE = 'TWORKBENCH'
+const SLACK_APP = 'AEXAMPLEAPP'
+const SLACK_CHANNEL = 'CRELEASES'
+const SLACK_TOKEN_REF = credentialRef('DSH_TEST_SLACK_APP_TOKEN')
+const SLACK_TOKEN = 'xapp-fixture-for-local-test'
+const SLACK_MESSAGE = 'The release ready checklist is attached.'
+
+function newSlackMessage(eventId: string, time: number, text = SLACK_MESSAGE) {
+  const timestamp = (time / 1000).toFixed(6)
+  return {
+    type: 'event_callback', team_id: SLACK_WORKSPACE, api_app_id: SLACK_APP, event_id: eventId,
+    event: { type: 'message', channel: SLACK_CHANNEL, user: 'UEXAMPLE', ts: timestamp, event_ts: timestamp, text },
+  }
+}
+
+async function sendSlackEnvelope(peer: WebSocket, envelopeId: string, payload: object): Promise<void> {
+  const acknowledgement = once(peer, 'message', { signal: AbortSignal.timeout(10_000) })
+  peer.send(JSON.stringify({ type: 'events_api', envelope_id: envelopeId, accepts_response_payload: false, payload }))
+  const frames: unknown[] = await acknowledgement
+  const result = frames[0]
+  if (!Buffer.isBuffer(result)) throw new Error('The Socket Mode acknowledgement was not a text frame')
+  expect(JSON.parse(result.toString())).toEqual({ envelope_id: envelopeId })
+}
+
+async function mountSlackFixture(web: WebScaffold, server: WebSocketServer): Promise<WebSocket> {
+  const entry = new URL('../../../packages/bundle/web-app/lib/routine-slack.js', import.meta.url).href
+  const plugin = await import(entry) as typeof import('../../../packages/bundle/web-app/src/routine-slack.ts')
+  const address = server.address()
+  if (address === null || typeof address === 'string') throw new Error('The local Slack fixture did not bind')
+  const config = plugin.Config({
+    source: SLACK_SOURCE, workspaceId: SLACK_WORKSPACE, appId: SLACK_APP, appTokenEnv: SLACK_TOKEN_REF,
+  })
+  await web.ctx.credentials.set(SLACK_TOKEN_REF, SLACK_TOKEN)
+  const connected = once(server, 'connection', { signal: AbortSignal.timeout(10_000) })
+  web.ctx.effect(() => plugin.mountSlackRoutineSource(web.ctx, config, options =>
+    plugin.createSlackSocketTransport({
+      ...options,
+      fetch: async (url, init) => {
+        expect(url).toBe('https://slack.com/api/apps.connections.open')
+        expect(new Headers(init?.headers).get('authorization')).toBe('Bearer ' + SLACK_TOKEN)
+        return Response.json({ ok: true, url: 'wss://wss.slack.com/link/?ticket=demo' })
+      },
+      openSocket: () => {
+        const socket = new WebSocket('ws://127.0.0.1:' + String(address.port))
+        return {
+          onOpen: (listener) => { socket.on('open', listener) },
+          onMessage: (listener) => { socket.on('message', (data) => { if (Buffer.isBuffer(data)) listener(data.toString()) }) },
+          onClose: (listener) => { socket.on('close', listener) },
+          onError: (listener) => { socket.on('error', listener) },
+          send: (data) => { socket.send(data) },
+          close: (code, reason) => { socket.close(code, reason) },
+        }
+      },
+    })), 'local Slack Socket Mode fixture')
+  const peers: unknown[] = await connected
+  const peer = peers[0]
+  if (!(peer instanceof WebSocket)) throw new Error('Expected a local Slack fixture connection')
+  return peer
+}
+
+it.skipIf(webSnapshotMode() === 'record')('acknowledges Slack activity once and keeps its reply in the same Bot chat after restart', async () => {
+  const workspaceCwd = await mkdtemp(join(tmpdir(), 'yh-slack-routine-'))
+  const persistenceRoot = join(workspaceCwd, 'sessions')
+  const options = { workspaceCwd, persistenceRoot, replayFixture: FIXTURE, replayProvidersOnly: true }
+  const socketServer = new WebSocketServer({ host: '127.0.0.1', port: 0 })
+  let web: WebScaffold | undefined
+  let browser: Browser | undefined
+  try {
+    await once(socketServer, 'listening')
+    await mkdir(persistenceRoot)
+    web = await launchWebScaffold(options)
+    const firstHost = web
+    const adapter = await configureModel(firstHost)
+    const firstPeer = await mountSlackFixture(firstHost, socketServer)
+    const { bot } = await firstHost.ctx.bots.create({
+      name: 'Release Scout', cwd: workspaceCwd, identity: 'sparkle', accent: 'violet',
+    })
+    const filter = {
+      type: 'slack', source: SLACK_SOURCE, workspaceId: SLACK_WORKSPACE, event: 'message',
+      channelId: SLACK_CHANNEL, textIncludes: 'release ready',
+    }
+    await createRoutine(firstHost, bot, SLACK_TITLE, filter, false)
+    expect(await firstHost.ctx.bots.listRoutines({ botId: bot.id })).toEqual({ routines: [] })
+    const request = await createRoutine(firstHost, bot, SLACK_TITLE, filter)
+    if (request === undefined) throw new Error('Slack routine was not created')
+
+    browser = await chromium.launch()
+    const page = await newEnglishPage(browser)
+    await selectBot(page, firstHost, bot)
+    let dialog = await openRoutines(page)
+    const scope = dialog.locator('dl[aria-label="Slack filters"]')
+    await scope.getByText('release ready', { exact: true }).waitFor()
+    const ruleSnapshot = [
+      await dialog.getByText('Slack trigger', { exact: true }).ariaSnapshot(),
+      await dialog.getByText('Runs when someone posts a message in Slack', { exact: true }).ariaSnapshot(),
+      await scope.ariaSnapshot(),
+    ].join('\n')
+    await captureExternalRoutine(page, process.env.DSH_BOT_ROUTINE_SLACK_SCREENSHOTS, 'slack-rule', dialog)
+
+    const pause = dialog.getByRole('button', { name: 'Pause ' + SLACK_TITLE, exact: true })
+    const resume = dialog.getByRole('button', { name: 'Resume ' + SLACK_TITLE, exact: true })
+    await pause.click()
+    await resume.waitFor()
+    const pausedEvent = newSlackMessage('EvPAUSEDFIXTURE', Date.now())
+    await sendSlackEnvelope(firstPeer, 'paused-event', pausedEvent)
+    await resume.click()
+    await pause.waitFor()
+    await sendSlackEnvelope(firstPeer, 'paused-event-retry', pausedEvent)
+    await sendSlackEnvelope(firstPeer, 'irrelevant-event', newSlackMessage('EvOTHER', Date.now(), 'Weekly office hours'))
+    expect(await firstHost.ctx.bots.routineHistory(request)).toMatchObject({ deliveries: [], results: [] })
+
+    const afterResume = Date.now()
+    await expect.poll(() => Date.now()).toBeGreaterThan(afterResume)
+    const freshEvent = newSlackMessage('EvNEWRELEASE', Date.now())
+    await sendSlackEnvelope(firstPeer, 'fresh-event', freshEvent)
+    const expected = {
+      deliveries: [{ slack: { deliveryId: 'EvNEWRELEASE', channelId: SLACK_CHANNEL }, status: 'delivered' }],
+      results: [{ status: 'completed', output: RESULT }],
+    }
+    await expect.poll(() => firstHost.ctx.bots.routineHistory(request), { timeout: 20_000 }).toMatchObject(expected)
+    expect(adapter.inputs).toHaveLength(1)
+    expect(adapter.inputs[0]).toContain('Summarize the new event.')
+    expect(adapter.inputs[0]).toContain('untrusted data')
+    expect(adapter.inputs[0]).toContain(SLACK_MESSAGE)
+    expect(JSON.stringify(await firstHost.ctx.bots.routineHistory(request))).not.toContain(SLACK_MESSAGE)
+    await page.close()
+    web = undefined
+    await firstHost.close()
+
+    web = await launchWebScaffold(options)
+    const nextModel = await configureModel(web)
+    const secondPeer = await mountSlackFixture(web, socketServer)
+    await sendSlackEnvelope(secondPeer, 'fresh-event-retry', freshEvent)
+    expect(await web.ctx.bots.routineHistory(request)).toMatchObject(expected)
+    expect(nextModel.inputs).toEqual([])
+    const { events } = await web.ctx.sessionController.inspect(bot.sessionId)
+    expect(events.filter(item => item.type === 'user/message' && item.data.source.kind === 'webhook'
+      && item.data.source.provider === 'slack')).toHaveLength(1)
+
+    const restored = await newEnglishPage(browser)
+    const tripwire = watchConsole(restored)
+    const conversation = await selectBot(restored, web, bot)
+    await conversation.getByText(RESULT, { exact: true }).waitFor()
+    await conversation.getByText('Slack event received', { exact: true }).waitFor()
+    await captureExternalRoutine(restored, process.env.DSH_BOT_ROUTINE_SLACK_SCREENSHOTS, 'slack-chat')
+    dialog = await openRoutines(restored)
+    await dialog.getByRole('tab', { name: 'Results', exact: true }).click()
+    const receipt = dialog.getByText('Slack · ' + SLACK_CHANNEL, { exact: true })
+    const outcome = dialog.getByText(RESULT, { exact: true })
+    await outcome.waitFor()
+    await compareOrRefreshGolden(SLACK_EXPECTED, [
+      ruleSnapshot, await receipt.ariaSnapshot(), await outcome.ariaSnapshot(),
+    ].join('\n'), webSnapshotMode())
+    await captureExternalRoutine(restored, process.env.DSH_BOT_ROUTINE_SLACK_SCREENSHOTS, 'slack-result', dialog)
+    expect(tripwire.pageErrors).toEqual([])
+  } finally {
+    try {
+      await browser?.close()
+    } finally {
+      try {
+        await web?.close()
+      } finally {
+        for (const socket of socketServer.clients) socket.terminate()
+        await new Promise<void>((resolve, reject) => {
+          socketServer.close((error) => { if (error === undefined) resolve(); else reject(error) })
+        })
         await rm(workspaceCwd, { recursive: true, force: true })
       }
     }

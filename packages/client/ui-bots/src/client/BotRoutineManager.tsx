@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
-  Button, IconBranchOutlineRegular, IconClockOutlineRegular, IconLinkOutlineRegular, IconPauseOutlineRegular,
+  Button, IconBranchOutlineRegular, IconClockOutlineRegular, IconGlobeOutlineRegular, IconLinkOutlineRegular, IconPauseOutlineRegular,
   IconPlayOutlineRegular, IconQueueOutlineRegular, IconTrashOutlineRegular,
   Modal, StateDot, Tag,
 } from '@yharness/client-ui-primitives'
@@ -11,12 +11,21 @@ import { BotRoutineTest } from './BotRoutineTest.tsx'
 import { BotRoutineWebhook } from './BotRoutineWebhook.tsx'
 import css from './BotWorkspace.module.css'
 import type { BotRoutineHistory, BotRoutineManagerActions, BotSummary, BotWorkspaceProps } from './types.ts'
-import type { BotEventRoutineResult, BotRoutineView } from '@yharness/bots/client'
+import type { BotEventRoutineResult, BotRoutineView, BotSlackEventTrigger } from '@yharness/bots/client'
 
 type Translate = PropsLocale<'bots'>['t']
 type RoutineFilter = 'all' | 'active' | 'paused'
 type RoutineTab = 'rule' | 'results'
 type HistoryCursor = Extract<BotRoutineHistory, { readonly kind: 'schedule' }>['nextBefore']
+
+const routineType = {
+  schedule: { Icon: IconClockOutlineRegular, labelKey: 'routineTimed' },
+  message: { Icon: IconQueueOutlineRegular, labelKey: 'routineEvent' },
+  github: { Icon: IconBranchOutlineRegular, labelKey: 'routineGitHub' },
+  webhook: { Icon: IconLinkOutlineRegular, labelKey: 'routineWebhook' },
+  slack: { Icon: IconGlobeOutlineRegular, labelKey: 'routineSlack' },
+} as const
+
 
 /** Props for the selected Bot's routine manager. */
 export interface BotRoutineManagerProps {
@@ -144,11 +153,30 @@ function routineRule(routine: BotRoutineView, t: Translate): string {
   if (routine.kind === 'schedule') return scheduleRule(routine, t)
   const trigger = routine.trigger
   if (trigger.type === 'message') return t('routineEventRule', { source: sourceLabel(trigger.source, t) })
+  if (trigger.type === 'slack') {
+    if (trigger.event === 'app_mention') return t('routineSlackMentionRule')
+    if (trigger.event === 'reaction_added') return t('routineSlackReactionRule')
+    return t('routineSlackMessageRule')
+  }
   if (trigger.type === 'webhook') return t('routineWebhookRule')
   const values = { repository: trigger.repository }
   return trigger.event === 'pull_request.opened'
     ? t('routineGitHubPullRequest', values)
     : t('routineGitHubIssue', values)
+}
+
+function SlackRuleScope({ trigger, t }: { readonly trigger: BotSlackEventTrigger; readonly t: Translate }) {
+  return (
+    <dl className={css.routineSlackScope} aria-label={t('routineSlackScope')}>
+      <dt>{t('routineSlackWorkspace')}</dt>
+      <dd>{trigger.workspaceId}</dd>
+      <dt>{t('routineSlackChannel')}</dt>
+      <dd>{trigger.channelId ?? t('routineSlackAnyChannel')}</dd>
+      {trigger.userId !== undefined && <><dt>{t('routineSlackMember')}</dt><dd>{trigger.userId}</dd></>}
+      {trigger.textIncludes !== undefined && <><dt>{t('routineSlackPhrase')}</dt><dd>{trigger.textIncludes}</dd></>}
+      {trigger.reaction !== undefined && <><dt>{t('routineSlackEmoji')}</dt><dd>{':' + trigger.reaction + ':'}</dd></>}
+    </dl>
+  )
 }
 
 function formatDate(value: string | number): string {
@@ -221,6 +249,7 @@ function historyRows(history: BotRoutineHistory, t: Translate, options: HistoryR
                   {delivery.github !== undefined && <span>{t('routineGitHubReceipt', {
                     repository: delivery.github.repository, number: String(delivery.github.subject),
                   })}</span>}
+                  {delivery.slack !== undefined && <span>{t('routineSlackReceipt', { channel: delivery.slack.channelId })}</span>}
                 </li>
               ))}
             </ul>
@@ -564,17 +593,12 @@ export function BotRoutineManager({ bot, actions, open, onClose, t, revision = 0
                 const id = String(routine.id)
                 const status = routineStatus(routine)
                 const busy = working === id
-                const timed = routine.kind === 'schedule'
-                const github = !timed && routine.trigger.type === 'github'
-                const webhook = !timed && routine.trigger.type === 'webhook'
-                const Icon = timed ? IconClockOutlineRegular : github ? IconBranchOutlineRegular
-                  : webhook ? IconLinkOutlineRegular : IconQueueOutlineRegular
-                const typeLabel = t(timed ? 'routineTimed' : github ? 'routineGitHub' : webhook ? 'routineWebhook' : 'routineEvent')
+                const { Icon, labelKey } = routineType[routine.kind === 'schedule' ? 'schedule' : routine.trigger.type]
                 return (
                   <li key={id} className={id === selectedId ? css.routineRowSelected : css.routineRow}>
                     <button type="button" className={css.routineRowSelect} aria-pressed={id === selectedId} onClick={() => { selectRoutine(id) }}>
                       <span className={css.routineRowIcon} aria-hidden="true"><Icon size={14} /></span>
-                      <span className={css.routineRowCopy}><strong>{routine.title}</strong><span>{typeLabel}</span></span>
+                      <span className={css.routineRowCopy}><strong>{routine.title}</strong><span>{t(labelKey)}</span></span>
                       <Tag tone={statusTone(status)}>{statusLabel(status, t)}</Tag>
                     </button>
                     <div className={css.routineRowActions}>
@@ -597,6 +621,7 @@ export function BotRoutineManager({ bot, actions, open, onClose, t, revision = 0
                     <strong>{selected.title}</strong>
                     <p>{selected.prompt}</p>
                     <span>{routineRule(selected, t)}</span>
+                    {selected.kind === 'event' && selected.trigger.type === 'slack' && <SlackRuleScope trigger={selected.trigger} t={t} />}
                     {actions.webhook !== undefined && selected.kind === 'event' && selected.trigger.type === 'webhook' && (
                       <BotRoutineWebhook
                         key={bot.id + ':' + selected.id}

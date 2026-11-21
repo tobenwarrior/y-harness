@@ -134,6 +134,13 @@ collaborationFor(agent: Pick<Agent, 'id'>): Promise<BotCollaborationClient>
 registerGitHubRoutineSource(source: string): () => void
 
 /**
+ * Register a Host-owned authenticated Slack Socket Mode source.
+ * @param config - Local source label and exact Slack installation ids.
+ * @returns An accept callback for socket payloads and a disposer that retires the source.
+ */
+registerSlackRoutineSource(config: { source: string; workspaceId: string; appId: string }): { accept(payload: unknown, receivedAt: number): Promise<void> dispose(): void }
+
+/**
  * Mount the routine receiver for one Web instance with a durable credential store.
  * @param publicRoot - Advertised HTTPS application URL, including any proxy prefix.
  * @param maxBodyBytes - Maximum raw request body size.

@@ -308,8 +308,43 @@ export interface BotWebhookEventTrigger {
   readonly type: 'webhook'
 }
 
+/** Installed Slack workspace identity. */
+export type BotSlackWorkspaceId = Branded<'BotSlackWorkspaceId'>
+
+/** Slack app identity assigned to a Socket Mode installation. */
+export type BotSlackAppId = Branded<'BotSlackAppId'>
+
+/** Slack conversation identity across public channels, private channels, and DMs. */
+export type BotSlackChannelId = Branded<'BotSlackChannelId'>
+
+/** Slack member identity. */
+export type BotSlackUserId = Branded<'BotSlackUserId'>
+
+/** Slack timestamp identifying a message within a conversation. */
+export type BotSlackMessageTimestamp = Branded<'BotSlackMessageTimestamp'>
+
+/** Slack events available as Bot routine triggers. */
+export const BOT_SLACK_ROUTINE_EVENTS = ['message', 'app_mention', 'reaction_added'] as const
+
+/** Slack event selected for a Bot routine. */
+export type BotSlackRoutineEvent = typeof BOT_SLACK_ROUTINE_EVENTS[number]
+
+/** Match human Slack activity from one configured app installation. */
+export interface BotSlackEventTrigger {
+  readonly type: 'slack'
+  readonly source: WebhookSourceId
+  readonly workspaceId: BotSlackWorkspaceId
+  readonly event: BotSlackRoutineEvent
+  readonly channelId?: BotSlackChannelId | undefined
+  readonly userId?: BotSlackUserId | undefined
+  /** Case-insensitive text required in a message or app mention. */
+  readonly textIncludes?: string | undefined
+  /** Emoji name for reaction triggers. */
+  readonly reaction?: string | undefined
+}
+
 /** An incoming message or authenticated external event that can run a Bot routine. */
-export type BotEventTrigger = BotMessageEventTrigger | BotGitHubEventTrigger | BotWebhookEventTrigger
+export type BotEventTrigger = BotMessageEventTrigger | BotGitHubEventTrigger | BotWebhookEventTrigger | BotSlackEventTrigger
 
 /** Fields retained from one verified GitHub event. */
 export interface BotGitHubRoutineReceipt {
@@ -323,6 +358,20 @@ export interface BotGitHubRoutineReceipt {
   readonly event: BotGitHubRoutineEvent
   /** Issue or pull request number in the repository. */
   readonly subject: number
+}
+
+/** Routing information and bounded message text from one authenticated Slack event. */
+export interface BotSlackRoutineReceipt {
+  readonly source: WebhookSourceId
+  readonly deliveryId: WebhookDeliveryId
+  readonly workspaceId: BotSlackWorkspaceId
+  readonly event: BotSlackRoutineEvent
+  readonly channelId: BotSlackChannelId
+  readonly userId: BotSlackUserId
+  readonly messageTimestamp: BotSlackMessageTimestamp
+  readonly text?: string | undefined
+  readonly textTruncated?: true | undefined
+  readonly reaction?: string | undefined
 }
 
 interface BotEventRoutineDeliveryFields {
@@ -350,11 +399,13 @@ export type BotEventRoutineDelivery = BotEventRoutineDeliveryFields & (
     /** Stable source identity used to deduplicate inbox and surface events. */
     readonly triggerMessageId?: MessageId | undefined
     readonly github?: undefined
+    readonly slack?: undefined
     readonly webhook?: undefined
   }
   | {
     /** Verified routing fields kept for later delivery and history. */
     readonly github: BotGitHubRoutineReceipt
+    readonly slack?: undefined
     readonly webhook?: undefined
     readonly triggerEventSeq?: undefined
     readonly triggerMessageId?: undefined
@@ -362,7 +413,16 @@ export type BotEventRoutineDelivery = BotEventRoutineDeliveryFields & (
   | {
     /** Validated JSON received from the caller, kept through delivery recovery. */
     readonly webhook: { readonly payload?: string | undefined }
+    readonly slack?: undefined
     readonly github?: undefined
+    readonly triggerEventSeq?: undefined
+    readonly triggerMessageId?: undefined
+  }
+  | {
+    /** Projected Slack event kept through durable delivery recovery. */
+    readonly slack: BotSlackRoutineReceipt
+    readonly github?: undefined
+    readonly webhook?: undefined
     readonly triggerEventSeq?: undefined
     readonly triggerMessageId?: undefined
   }
@@ -412,6 +472,8 @@ export interface BotEventRoutine {
   readonly firstEligibleEventSeq?: number | undefined
   /** Earliest GitHub event time eligible after activation or a selector change. */
   readonly firstEligibleGitHubAt?: number | undefined
+  /** Earliest Slack activity eligible after activation or a selector change. */
+  readonly firstEligibleSlackAt?: number | undefined
   /** Earliest request receipt time eligible after this webhook was activated. */
   readonly firstEligibleWebhookAt?: number | undefined
   /** Private key-derivation nonce replaced whenever the owner rotates this webhook's key. */
@@ -427,7 +489,7 @@ export interface BotEventRoutine {
 /** Browser/native view of one Bot event routine. */
 export type BotEventRoutineView = Omit<
   BotEventRoutine,
-  | 'deliveries' | 'results' | 'firstEligibleEventSeq' | 'firstEligibleGitHubAt' | 'firstEligibleWebhookAt'
+  | 'deliveries' | 'results' | 'firstEligibleEventSeq' | 'firstEligibleGitHubAt' | 'firstEligibleSlackAt' | 'firstEligibleWebhookAt'
   | 'webhookKeyVersion' | 'admissionWatermark' | 'admissionTombstones'
 > & {
   /** Common routine discriminator used alongside timed Schedule records. */
