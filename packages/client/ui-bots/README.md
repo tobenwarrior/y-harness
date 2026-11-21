@@ -62,6 +62,8 @@ The composition must provide the injected Bot Remote, Session store, locale, lay
 
 When the Host reports `available: true` from the authenticated `api/computer/status` route, the Bot header exposes a Computer action that opens the desktop beside the selected Bot conversation. The panel polls `api/computer/frame` only while visible, displays the current lease mode, and sends click, drag, scroll, keyboard, and pasted-text input only while the browser owns the control lease. Closing the panel requests lease release; server-side disconnect expiry remains the fallback.
 
+An isolated Browser Computer that advertises teaching shows **Teach a task** while the owner controls it. Enter a goal, record a demonstration, then stop to review the pointer actions and website origins. **Draft skill in chat** sends exactly those reviewed steps and the goal to the selected Bot for a proposed skill. Saving the skill is a separate action.
+
 Switching Computers or Bot Sessions clears the previous screen, discards unsent input, and ignores late input and clipboard replies. A control grant that arrives after a Session switch is returned to the original Computer.
 
 The private VPS capabilities for **Terminal** and **Files** open the selected Bot's workspace in the existing right sidebar. Files uses a Computer-specific address, so links in the Bot's conversation can still address the Session workspace. When the Host also reports shared files, **Bot options** lists **Private workspace** and **Shared workspace**, each with its own retained tree.

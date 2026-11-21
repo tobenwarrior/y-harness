@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   COMPUTER_HEIGHT,
   COMPUTER_WIDTH,
@@ -276,6 +276,142 @@ describe('private computer Host', () => {
     await expect(f.host.frame(viewers.bob)).resolves.toMatchObject({ mode: 'controlling' })
     await expect(f.host.releaseControl(viewers.bob)).resolves.toEqual({ mode: 'watching' })
     await f.dispose()
+  })
+
+  it('records only safe owner actions after explicit teaching starts', async () => {
+    const f = fixture()
+    const navigate = async (): Promise<void> => {}
+    const signal = new AbortController().signal
+    try {
+      await expect(f.host.startTeaching(viewers.alice)).rejects.toBeInstanceOf(ComputerLeaseError)
+      await f.host.takeControl(viewers.alice)
+      await expect(f.host.stopTeaching(viewers.alice)).rejects.toBeInstanceOf(ComputerLeaseError)
+      await f.host.input(viewers.alice, { kind: 'click', x: 1, y: 2, button: 1 })
+      expect(f.host.teachingStatus(viewers.alice)).toMatchObject({ active: false, actionCount: 0, maxActions: 128 })
+
+      const started = await f.host.startTeaching(viewers.alice)
+      await expect(f.host.startTeaching(viewers.alice)).resolves.toEqual(started)
+      expect(f.host.teachingStatus(viewers.bob)).toMatchObject({ active: false, actionCount: 0 })
+      await expect(f.host.stopTeaching(viewers.bob)).rejects.toBeInstanceOf(ComputerLeaseError)
+      await f.host.input(viewers.alice, { kind: 'click', x: 3, y: 4, button: 2 })
+      await f.host.input(viewers.alice, { kind: 'key', key: 'ctrl+L' })
+      await f.host.input(viewers.alice, { kind: 'text', text: 'secret text that must not enter the trace' })
+      await f.host.navigateAsViewer(viewers.alice, 'https://example.test/private?token=secret#fragment', signal, navigate)
+      await f.host.navigateAsViewer(viewers.alice, 'https://example.test:secret@example.test/path', signal, navigate)
+      await f.host.navigateAsViewer(viewers.alice, 'https://:secret@example.test/path', signal, navigate)
+      await f.host.navigateAsViewer(viewers.alice, 'file:///example', signal, navigate)
+      await f.host.navigateAsViewer(viewers.alice, 'invalid', signal, navigate)
+      await f.host.input(viewers.alice, { kind: 'drag', x: 5, y: 6, toX: 7, toY: 8 })
+      await f.host.input(viewers.alice, { kind: 'scroll', x: 5, y: 6, delta: 2 })
+      expect(f.host.teachingStatus(viewers.alice)).toMatchObject({ active: true, actionCount: 4, maxActions: 128 })
+
+      const trace = await f.host.stopTeaching(viewers.alice)
+      expect(trace).toMatchObject({ status: 'review', reviewable: true, truncated: false, actions: [
+        { kind: 'click', x: 3, y: 4, button: 2 },
+        { kind: 'navigate', origin: 'https://example.test' },
+        { kind: 'drag', x: 5, y: 6, toX: 7, toY: 8 },
+        { kind: 'scroll', x: 5, y: 6, delta: 2 },
+      ] })
+      expect(JSON.stringify(trace)).not.toContain('secret')
+      await f.host.input(viewers.alice, { kind: 'click', x: 9, y: 10, button: 1 })
+      expect(f.host.teachingStatus(viewers.alice)).toMatchObject({ active: false, actionCount: 4, traceId: trace.id })
+      await expect(f.host.stopTeaching(viewers.alice)).resolves.toEqual(trace)
+    } finally {
+      await f.dispose()
+    }
+  })
+
+  it('interrupts teaching when the owner lease ends and never records afterward', async () => {
+    const f = fixture()
+    try {
+      await f.host.takeControl(viewers.alice)
+      await f.host.startTeaching(viewers.alice)
+      await f.host.input(viewers.alice, { kind: 'click', x: 1, y: 2, button: 1 })
+      await f.host.releaseControl(viewers.alice)
+      const interrupted = f.host.teachingStatus(viewers.alice)
+      expect(interrupted).toMatchObject({ active: false, actionCount: 0 })
+      await f.host.takeControl(viewers.alice)
+      await f.host.input(viewers.alice, { kind: 'click', x: 3, y: 4, button: 1 })
+      expect(f.host.teachingStatus(viewers.alice)).toMatchObject({ active: false, actionCount: 0 })
+
+      await f.host.startTeaching(viewers.alice)
+      await f.host.input(viewers.alice, { kind: 'click', x: 5, y: 6, button: 1 })
+      f.setNow(9_001)
+      await expect(f.host.input(viewers.alice, { kind: 'click', x: 7, y: 8, button: 1 })).rejects.toBeInstanceOf(ComputerLeaseError)
+      expect(f.host.teachingStatus(viewers.alice)).toMatchObject({ active: false, actionCount: 0 })
+    } finally {
+      await f.dispose()
+    }
+  })
+
+  it('discards any saved demonstration when private sign-in begins', async () => {
+    const f = fixture()
+    const controller = new AbortController()
+    try {
+      await f.host.takeControl(viewers.alice)
+      await f.host.startTeaching(viewers.alice)
+      await f.host.stopTeaching(viewers.alice)
+      const signIn = f.host.requestSignIn(controller.signal)
+      await expect.poll(() => f.host.signInRequest()).toBeDefined()
+      await expect(f.host.startTeaching(viewers.alice)).rejects.toThrow('unavailable during sign-in')
+      expect(f.host.teachingStatus(viewers.alice)).toMatchObject({ active: false, actionCount: 0 })
+      await expect(f.host.stopTeaching(viewers.alice)).rejects.toBeInstanceOf(ComputerLeaseError)
+      controller.abort()
+      await expect(signIn).resolves.toBe('interrupted')
+    } finally {
+      controller.abort()
+      await f.dispose()
+    }
+  })
+
+  it('caps demonstrations by action count and duration', async () => {
+    const f = fixture()
+    try {
+      await f.host.takeControl(viewers.alice)
+      const started = await f.host.startTeaching(viewers.alice)
+      const maximum = f.host.teachingStatus(viewers.alice).maxActions
+      for (let index = 0; index < maximum; index++) {
+        await f.host.input(viewers.alice, { kind: 'click', x: index % 10, y: index % 10, button: 1 })
+      }
+      expect(f.host.teachingStatus(viewers.alice)).toMatchObject({ active: false, actionCount: maximum })
+      await expect(f.host.startTeaching(viewers.alice)).resolves.toMatchObject({ active: false, traceId: started.traceId })
+      await f.host.input(viewers.alice, { kind: 'click', x: 1, y: 1, button: 1 })
+      expect(f.host.teachingStatus(viewers.alice)).toMatchObject({ active: false, actionCount: maximum })
+      await expect(f.host.stopTeaching(viewers.alice)).resolves.toMatchObject({
+        status: 'limit', reviewable: true, truncated: true, actions: { length: maximum },
+      })
+
+      await f.host.releaseControl(viewers.alice)
+      await f.host.takeControl(viewers.alice)
+      await f.host.startTeaching(viewers.alice)
+      for (let elapsed = 5_000; elapsed < 600_000; elapsed += 5_000) {
+        f.setNow(elapsed)
+        await f.host.takeControl(viewers.alice)
+      }
+      f.setNow(601_001)
+      await expect(f.host.stopTeaching(viewers.alice)).resolves.toMatchObject({
+        status: 'limit', reviewable: true, truncated: true, actions: [],
+      })
+    } finally {
+      await f.dispose()
+    }
+  })
+
+  it('stops an idle demonstration at its duration bound', async () => {
+    vi.useFakeTimers()
+    const f = fixture()
+    try {
+      await f.host.takeControl(viewers.alice)
+      await f.host.startTeaching(viewers.alice)
+      await vi.advanceTimersByTimeAsync(10 * 60_000)
+      expect(f.host.teachingStatus(viewers.alice)).toMatchObject({ active: false, actionCount: 0 })
+      await expect(f.host.stopTeaching(viewers.alice)).resolves.toMatchObject({
+        status: 'limit', reviewable: true, truncated: true, actions: [],
+      })
+    } finally {
+      await f.dispose()
+      vi.useRealTimers()
+    }
   })
 
   it('expires an idle lease and lets a bot act after expiry', async () => {

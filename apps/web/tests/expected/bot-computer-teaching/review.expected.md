@@ -1,0 +1,11 @@
+- dialog "Review your demonstration":
+  - heading "Review your demonstration" [level=2]
+  - button "Close"
+  - paragraph: Review the recorded steps before sending them to this Bot to draft a skill.
+  - text: What should the Bot learn?
+  - textbox "What should the Bot learn?": Open the synthetic catalog and review the featured item.
+  - list:
+    - listitem: Opened https://example.test
+    - listitem: Clicked at (x, y) with button 1
+  - button "Cancel"
+  - button "Draft skill in chat"

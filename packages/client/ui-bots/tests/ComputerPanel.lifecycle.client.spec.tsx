@@ -50,6 +50,18 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
+it.each(['session', 'chat'] as const)('withholds teaching when the selected %s is unavailable', async (missing) => {
+  const botId = 'teaching-bot'
+  const status = vi.fn<ComputerClient['status']>().mockResolvedValue({
+    available: true, computer: { id: botId, location: 'vps', permissionScope: 'bot', browser: true, teaching: true },
+  })
+  const computer = makeComputer({ status, teaching: { start: vi.fn(), stop: vi.fn() } })
+  render(<ComputerPanel computer={computer} botId={botId} close={vi.fn()} t={t}
+    {...(missing === 'session' ? { sendTeachingDraft: vi.fn() } : { sessionId: 'teaching-session' })} />)
+  await takeComputerControl()
+  expect(screen.queryByRole('button', { name: en.computerTeachTitle })).toBeNull()
+})
+
 it('shows which VPS desktop the Computer button will open', () => {
   const toggle = vi.fn()
   const view = render(<ComputerAction
