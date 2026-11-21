@@ -39,7 +39,7 @@ export type BotSkillSummary = SharedBotSkillAccess
 export type BotSkillPolicy = SharedBotSkillPolicy
 
 /** Live availability mapped from the Bot's retained Session. */
-export type BotStatus = 'idle' | 'working' | 'preparing' | 'offline'
+export type BotStatus = 'idle' | 'working' | 'preparing' | 'offline' | 'needs-you'
 
 /** One bot identity and its presentation summary. One bot maps to one Session. */
 export interface BotSummary {

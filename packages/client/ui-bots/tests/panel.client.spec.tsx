@@ -404,10 +404,12 @@ describe('Bots conversation slot wiring', () => {
 
     expect(screen.getByRole('button', { name: 'Working bot, Working' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Preparing bot, Preparing' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'Idle bot, Idle' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Idle bot' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Idle bot, Idle' })).toBeNull()
     expect(screen.getByRole('button', { name: 'Unknown bot' })).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: 'Idle bot, Idle' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Idle bot' }))
     expect(select).toHaveBeenCalledWith(idle.id)
+
   })
 
   it('keeps a populated roster out of its loading skeleton and projects an avatar', () => {

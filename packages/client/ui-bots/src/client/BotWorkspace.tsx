@@ -72,20 +72,22 @@ export interface BotRosterLayoutProps {
   /** Expand the shared sidebar when a rail-only action needs the full roster. */
   readonly expandSidebar?: () => void
 }
-function statusState(status: BotStatus): 'ongoing' | 'idle' {
+function statusState(status: BotStatus): 'ongoing' | 'idle' | 'warning' {
   switch (status) {
     case 'working': return 'ongoing'
     case 'preparing': return 'ongoing'
+    case 'needs-you': return 'warning'
     case 'idle':
     case 'offline':
       return 'idle'
   }
 }
 
-function statusKey(status: BotStatus): 'status.idle' | 'status.working' | 'status.preparing' | 'status.offline' {
+function statusKey(status: BotStatus): 'status.idle' | 'status.working' | 'status.preparing' | 'status.offline' | 'status.needsYou' {
   switch (status) {
     case 'working': return 'status.working'
     case 'preparing': return 'status.preparing'
+    case 'needs-you': return 'status.needsYou'
     case 'offline': return 'status.offline'
     case 'idle': return 'status.idle'
   }
@@ -284,6 +286,7 @@ function BotRow({ bot, selected, onSelect, t, loadAvatar, groups, onOrganize, on
   const unreadCount = bot.unread ?? 0
   const summary = bot.preview ?? bot.description
   const status = bot.status
+  const visibleStatus = status === 'idle' ? undefined : status
   return (
     <div className={clsx(css.botRow, selected && css.botRowSelected)}>
       <button
@@ -292,7 +295,7 @@ function BotRow({ bot, selected, onSelect, t, loadAvatar, groups, onOrganize, on
         data-bot-id={bot.id}
         data-accent={bot.accent ?? 'violet'}
         aria-current={selected ? 'page' : undefined}
-        aria-label={status === undefined ? bot.name : `${bot.name}, ${statusLabel(status, t)}`}
+        aria-label={visibleStatus === undefined ? bot.name : `${bot.name}, ${statusLabel(visibleStatus, t)}`}
         onClick={onSelect}
       >
         <BotAvatar name={bot.name} identity={bot.identity} accent={bot.accent} avatar={bot.avatar}
@@ -304,9 +307,12 @@ function BotRow({ bot, selected, onSelect, t, loadAvatar, groups, onOrganize, on
             {unread && <span className={css.unreadDot} aria-label={t('unread', { count: unreadCount })}>{unreadCount}</span>}
           </span>
           {summary !== undefined && summary !== '' && <span className={css.botPreview}>{summary}</span>}
-          {(status !== undefined || bot.activity !== undefined) && <span className={css.botMeta}>
-            {status !== undefined && <><StateDot state={statusState(status)} size={8} /><span>{statusLabel(status, t)}</span></>}
-            {status !== undefined && bot.activity !== undefined && <span className={css.metaDivider}>·</span>}
+          {(visibleStatus !== undefined || bot.activity !== undefined) && <span className={css.botMeta}>
+            {visibleStatus !== undefined && <>
+              <StateDot state={statusState(visibleStatus)} size={8} />
+              <span>{statusLabel(visibleStatus, t)}</span>
+            </>}
+            {visibleStatus !== undefined && bot.activity !== undefined && <span className={css.metaDivider}>·</span>}
             {bot.activity !== undefined && <span>{bot.activity}</span>}
           </span>}
         </span>
@@ -1872,6 +1878,7 @@ export function BotRoster({
                 const rowsId = `${headingId}-rows`
                 const searching = normalizedQuery !== ''
                 const expanded = searching || !collapsedFolders.has(key)
+                const needsYouCount = rows.filter(bot => bot.status === 'needs-you').length
                 return (
                   <section className={css.group} key={key} aria-labelledby={headingId}>
                     <h2 id={headingId} className={clsx(css.groupLabel, css.folderHeading)}>
@@ -1884,7 +1891,12 @@ export function BotRoster({
                         onClick={() => { toggleFolder(key) }}
                       >
                         <span>{label}</span>
-                        {!expanded && <span className={css.folderCount} aria-hidden="true">{rows.length}</span>}
+                        {!expanded && <span className={css.folderSummary}>
+                          <span className={css.folderCount} aria-hidden="true">{rows.length}</span>
+                          {needsYouCount > 0 && <span className={css.folderAttention} role="img" aria-label={t('folderNeedsYou', { count: needsYouCount })}>
+                            <StateDot state="warning" size={8} />
+                          </span>}
+                        </span>}
                       </button>
                     </h2>
                     <div id={rowsId} className={css.groupRows} hidden={!expanded}>
@@ -1956,7 +1968,8 @@ export function BotRoster({
             <BotToolbarMenu items={rosterActions} label={t('rosterMenu')} compact />
             {visibleBots.map((bot) => {
               const status = bot.status
-              const label = status === undefined ? bot.name : `${bot.name}, ${statusLabel(status, t)}`
+              const visibleStatus = status === 'idle' ? undefined : status
+              const label = visibleStatus === undefined ? bot.name : `${bot.name}, ${statusLabel(visibleStatus, t)}`
               return (
                 <Tooltip key={bot.id} label={label} side="right" delayMs={500}>
                   <button
@@ -1967,10 +1980,15 @@ export function BotRoster({
                     aria-label={label}
                     onClick={() => { onSelectBot(bot.id) }}
                   >
-                    <BotAvatar
-                      name={bot.name} identity={bot.identity} accent={bot.accent} avatar={bot.avatar}
-                      botId={bot.id} loadAvatar={loadAvatar}
-                    />
+                    <span className={css.botRailAvatar}>
+                      <BotAvatar
+                        name={bot.name} identity={bot.identity} accent={bot.accent} avatar={bot.avatar}
+                        botId={bot.id} loadAvatar={loadAvatar} status={bot.status}
+                      />
+                      {bot.status === 'needs-you' && (
+                        <span className={css.botRailAttention} aria-hidden="true"><StateDot state="warning" size={8} /></span>
+                      )}
+                    </span>
                   </button>
                 </Tooltip>
               )

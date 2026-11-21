@@ -48,6 +48,21 @@
   box-shadow: inset 2px 0 var(--yh-alias-state-business-primary);
 }
 
+.botRailAvatar {
+  display: inline-flex;
+  position: relative;
+}
+
+.botRailAttention {
+  position: absolute;
+  right: -2px;
+  bottom: -1px;
+  display: inline-flex;
+  padding: 1px;
+  border-radius: 50%;
+  background: var(--yh-specific-sidebar-fill);
+}
+
 .botRailRow:focus-visible,
 .botRailAction:focus-visible {
   outline: 1px solid var(--yh-focus-ring-color, var(--yh-alias-state-business-primary));
@@ -208,6 +223,18 @@
   font-weight: 400;
   letter-spacing: normal;
   line-height: inherit;
+}
+
+.folderSummary {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex: none;
+}
+
+.folderAttention {
+  display: inline-flex;
+  align-items: center;
 }
 
 .groupHeadingRow {

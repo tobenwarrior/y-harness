@@ -72,7 +72,9 @@ export type BotsRosterProps =
 
 function statusOf(bot: BotView, statuses: SessionStatusSnapshot): BotStatus | undefined {
   if (bot.state === 'provisioning') return 'preparing'
-  const running = statuses.get(bot.sessionId)?.running
+  const sessionStatus = statuses.get(bot.sessionId)
+  if (sessionStatus?.pendingInteraction !== undefined) return 'needs-you'
+  const running = sessionStatus?.running
   if (running === true) return 'working'
   if (running === false) return 'idle'
   return undefined
