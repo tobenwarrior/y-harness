@@ -232,6 +232,60 @@
   overflow-y: auto;
 }
 
+@media (max-width: 640px) {
+  .panel {
+    flex-direction: column;
+    max-width: calc(100vw - 24px);
+  }
+
+  .nav {
+    width: 100%;
+    gap: 10px;
+    padding: 14px 16px 10px;
+    border-bottom: 1px solid var(--yh-alias-border-l2);
+  }
+
+  .navTitle {
+    display: flex;
+    align-items: center;
+    min-height: 28px;
+    max-width: calc(100% - 188px);
+    padding: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .navList {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(140px, 100%), 1fr));
+    align-content: start;
+    max-height: min(124px, 25vh);
+  }
+
+  .navCell {
+    min-width: 0;
+    height: 36px;
+    gap: 6px;
+    padding: 0 10px;
+  }
+
+  .header {
+    position: absolute;
+    top: 14px;
+    right: 16px;
+    align-items: center;
+    height: auto;
+    padding: 0;
+  }
+
+  .content {
+    min-height: 0;
+  }
+
+  .options {
+    padding: 14px 16px 20px;
+  }
+}
+
 /* Visually-hidden text seat (close button accessible name from slot content). */
 .hiddenLabel {
   position: absolute;
