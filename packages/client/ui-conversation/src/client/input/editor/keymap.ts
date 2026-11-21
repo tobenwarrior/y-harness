@@ -91,34 +91,26 @@ export function registerComposerKeymap(editor: LexicalEditor, handlers: Composer
   }
 
   /**
-   * Chromium treats Home/End as a document boundary when the editor is split
-   * into paragraph elements. The composer restores textarea navigation:
-   * Ctrl/Cmd moves across the whole draft, while an unmodified chord stays in
-   * the current paragraph. Shift keeps the original anchor while moving the
-   * active end of the selection.
+   * Chromium treats Ctrl/Cmd+Home/End as a line boundary when the editor is
+   * split into paragraph elements. The composer treats those chords as
+   * document navigation, matching the textarea contract and keeping edits at
+   * the actual draft boundary. Unmodified Home/End remains browser-owned so
+   * soft-wrapped visual-line navigation stays platform-native. Shift keeps the
+   * original anchor while moving the active end of the selection.
    */
   const documentBoundary = editor.registerCommand(KEY_DOWN_COMMAND, (event) => {
     if (isComposingEvent(event, recentlyComposing) || event.altKey) return false
     const atStart = event.key === 'Home' && (event.ctrlKey || event.metaKey)
     const atEnd = event.key === 'End' && (event.ctrlKey || event.metaKey)
-    const lineStart = event.key === 'Home' && !event.ctrlKey && !event.metaKey
-    const lineEnd = event.key === 'End' && !event.ctrlKey && !event.metaKey
-    if (!atStart && !atEnd && !lineStart && !lineEnd) return false
+    if (!atStart && !atEnd) return false
     const selection = $getSelection()
     if (!$isRangeSelection(selection)) return false
     const anchor = event.shiftKey
       ? { key: selection.anchor.key, offset: selection.anchor.offset, type: selection.anchor.type }
       : null
-    const line = (lineStart || lineEnd) ? selection.focus.getNode().getTopLevelElement() : null
-    if ((lineStart || lineEnd) && line === null) return false
     const edge = atStart
       ? $getRoot().selectStart()
-      : atEnd
-        ? $getRoot().selectEnd()
-        : lineStart
-          ? line?.selectStart()
-          : line?.selectEnd()
-    if (edge === undefined) return false
+      : $getRoot().selectEnd()
     if (anchor !== null && $isRangeSelection(edge)) {
       edge.anchor.set(anchor.key, anchor.offset, anchor.type)
     }

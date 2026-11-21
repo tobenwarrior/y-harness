@@ -102,17 +102,6 @@ describe('keymap keydown routing', () => {
       expect(selection && $isRangeSelection(selection) ? selection.anchor.offset : null).toBe(0)
     })
 
-    editor.dispatchCommand(KEY_DOWN_COMMAND, new KeyboardEvent('keydown', { key: 'End', shiftKey: true, bubbles: true, cancelable: true }))
-    await Promise.resolve()
-    editor.getEditorState().read(() => {
-      const selection = $getSelection()
-      if (!selection || !$isRangeSelection(selection)) throw new Error('Expected a range selection')
-      expect(selection.anchor.getNode().getTextContent()).toBe('first line')
-      expect(selection.anchor.offset).toBe(0)
-      expect(selection.focus.getNode().getTextContent()).toBe('first line')
-      expect(selection.focus.offset).toBe('first line'.length)
-    })
-
     editor.dispatchCommand(KEY_DOWN_COMMAND, new KeyboardEvent('keydown', { key: 'End', ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true }))
     await Promise.resolve()
     editor.getEditorState().read(() => {

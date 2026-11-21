@@ -507,7 +507,10 @@ it('rematches the current draft after a delayed real skills catalog without repl
   if (chip === null) throw new Error('The initialized file capsule is missing')
   await composer(page).click()
   await page.keyboard.press('ControlOrMeta+Home')
-  await page.keyboard.press('Shift+End')
+  await page.keyboard.down('Shift')
+  for (let i = 0; i < originalPrefix.trimEnd().length; i += 1) await page.keyboard.press('ArrowRight')
+  await page.keyboard.up('Shift')
+  expect((await editorSelection(page)).text).toBe(originalPrefix.trimEnd())
   await page.keyboard.insertText(currentPrefix.trimEnd())
   const edited: DraftSnapshot = {
     text: `${currentPrefix}${file} abcdef`,
