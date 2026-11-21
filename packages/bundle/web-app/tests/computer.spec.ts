@@ -414,6 +414,65 @@ describe('private computer Host', () => {
     }
   })
 
+  it('retains the reviewed steps when an admitted navigation crosses the teaching deadline', async () => {
+    vi.useFakeTimers({ now: 0 })
+    const host = new ComputerHost({ display: ':teach-deadline', authorityPath: '/dev/null' }, { run: async () => {} })
+    const navigating = Promise.withResolvers<undefined>()
+    const navigationAccepted = Promise.withResolvers<undefined>()
+    const click = { kind: 'click', x: 1, y: 2, button: 1 } as const
+    try {
+      await host.takeControl(viewers.alice)
+      await host.startTeaching(viewers.alice)
+      await host.input(viewers.alice, click)
+      for (let elapsed = 0; elapsed < 590_000; elapsed += 5_000) {
+        await vi.advanceTimersByTimeAsync(5_000)
+        await host.takeControl(viewers.alice)
+      }
+      await vi.advanceTimersByTimeAsync(6_000)
+      const navigation = host.navigateAsViewer(viewers.alice, 'https://example.test', new AbortController().signal, () => {
+        navigationAccepted.resolve(undefined)
+        return navigating.promise
+      })
+      await navigationAccepted.promise
+      await vi.advanceTimersByTimeAsync(5_000)
+      navigating.resolve(undefined)
+      await expect(navigation).resolves.toEqual({ mode: 'controlling' })
+      await expect(host.stopTeaching(viewers.alice)).resolves.toMatchObject({
+        status: 'limit', truncated: true, actions: [click],
+      })
+    } finally {
+      navigating.resolve(undefined)
+      await host.dispose()
+      vi.useRealTimers()
+    }
+  })
+
+  it('drains a queued teaching deadline when the Browser is disposed during navigation', async () => {
+    vi.useFakeTimers({ now: 0 })
+    const host = new ComputerHost({ display: ':teach-disposal', authorityPath: '/dev/null' }, { run: async () => {} })
+    const navigating = Promise.withResolvers<undefined>()
+    const navigationAccepted = Promise.withResolvers<undefined>()
+    try {
+      await host.takeControl(viewers.alice)
+      await host.startTeaching(viewers.alice)
+      const navigation = host.navigateAsViewer(viewers.alice, 'https://example.test', new AbortController().signal, () => {
+        navigationAccepted.resolve(undefined)
+        return navigating.promise
+      })
+      await navigationAccepted.promise
+      await vi.advanceTimersByTimeAsync(600_000)
+      const disposal = host.dispose()
+      navigating.resolve(undefined)
+      await navigation
+      await expect(disposal).resolves.toBeUndefined()
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      navigating.resolve(undefined)
+      await host.dispose()
+      vi.useRealTimers()
+    }
+  })
+
   it('expires an idle lease and lets a bot act after expiry', async () => {
     const f = fixture()
     await f.host.takeControl(viewers.alice)

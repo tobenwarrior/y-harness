@@ -620,8 +620,14 @@ export class VpsComputer {
       if (pending?.status === 'limit') return teachingStatusFor(pending.id, pending.actions.length, false)
       this.pendingTeaching = undefined
       const timer = setTimeout(() => {
-        this.expireLease()
-        this.finishTeaching('limit')
+        void this.admit(() => {
+          if (this.teaching !== teaching) return
+          this.expireLease()
+          this.finishTeaching('limit')
+        }).catch((error: unknown) => {
+          // Disposal clears the recording before rejecting queued work.
+          void error
+        })
       }, MAX_TEACHING_DURATION_MS)
       timer.unref()
       const teaching: Teaching = {
