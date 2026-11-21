@@ -1,0 +1,19 @@
+- dialog "Imported Grok chat":
+  - heading "Imported Grok chat" [level=2]
+  - button "Close"
+  - paragraph: Some messages could not be recovered.
+  - searchbox "Find in imported chat": research
+  - status: 2 matches
+  - list:
+    - listitem:
+      - strong: attachment
+      - time: Jan 1, 1970, 8:00 AM
+      - link "Download research-notes.txt":
+        - /url: /api/bots/grokHistory/downloadAttachment?botId=bot-grok-downloads&sourceId=primary&sourceSequence=2
+      - paragraph: research-notes.txt
+      - button "Open message in Original recovery": Open in Original recovery
+    - listitem:
+      - strong: Grok
+      - text: Unknown time
+      - paragraph: The research handoff is ready for review.
+      - button "Open message in Earlier export": Open in Earlier export

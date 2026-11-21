@@ -174,7 +174,8 @@
 - dialog "Imported Grok chat":
   - heading "Imported Grok chat" [level=2]
   - button "Close"
-  - paragraph: Some records could not be recovered from this source.
+  - paragraph: Some messages could not be recovered.
+  - searchbox "Find in imported chat"
   - text: History source
   - combobox "History source":
     - option "Original recovery" [selected]
@@ -194,4 +195,3 @@
       - text: Unknown time
       - paragraph: Recovered tool record
       - text: Incomplete source record
-  - button "Close"

@@ -3073,10 +3073,20 @@
   list-style: none;
 }
 
+.grokHistoryControls {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.grokHistoryMatchStatus {
+  color: var(--yh-alias-label-secondary);
+  font-size: 12px;
+}
+
 .grokHistorySource {
   display: grid;
   gap: 4px;
-  margin-bottom: 12px;
   color: var(--yh-alias-label-secondary);
   font-size: 12px;
 }
@@ -3095,6 +3105,19 @@
   padding: 10px 12px;
   border-radius: var(--yh-radius-lg);
   background: var(--yh-alias-interactive-bg-hover);
+  overflow-wrap: anywhere;
+}
+
+.grokHistoryMessage:focus {
+  outline: 2px solid var(--yh-focus-ring-color, var(--yh-alias-state-business-primary));
+  outline-offset: -2px;
+}
+
+.grokHistoryContext {
+  max-width: 100%;
+  margin-top: 6px;
+  text-align: start;
+  white-space: normal;
   overflow-wrap: anywhere;
 }
 

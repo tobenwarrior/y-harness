@@ -559,10 +559,16 @@ describe('Bots conversation slot wiring', () => {
       signIn,
       refreshComputerAvailability,
     })
-    render(<BotsPanel {...props}
-      readGrokHistory={vi.fn(async () => null)}
-      share={share} />)
-    expect(screen.getByRole('region', { name: selected.name })).toBeTruthy()
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    try {
+      render(<BotsPanel {...props}
+        readGrokHistory={vi.fn(async () => null)}
+        share={share} />)
+      expect(screen.getByRole('region', { name: selected.name })).toBeTruthy()
+      expect(errors.mock.calls.some(([message]) => String(message).includes('Encountered two children with the same key'))).toBe(false)
+    } finally {
+      errors.mockRestore()
+    }
     expect(refreshComputerAvailability).not.toHaveBeenCalled()
 
     cleanup()

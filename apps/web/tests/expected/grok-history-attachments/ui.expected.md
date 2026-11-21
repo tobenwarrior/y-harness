@@ -2,6 +2,11 @@
   - heading "Imported Grok chat" [level=2]
   - button "Close"
   - paragraph: Read-only messages recovered from Grok Bot.
+  - searchbox "Find in imported chat"
+  - text: History source
+  - combobox "History source":
+    - option "Original recovery" [selected]
+    - option "Earlier export"
   - list:
     - listitem:
       - strong: You
@@ -21,4 +26,3 @@
       - strong: attachment
       - time: Jan 1, 1970, 8:00 AM
       - paragraph: oversized-synthetic.bin
-  - button "Close"
