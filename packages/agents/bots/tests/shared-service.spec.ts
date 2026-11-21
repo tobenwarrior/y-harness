@@ -52,6 +52,7 @@ import {
 import { sharedGroupSnapshotSchema, type SharedGroupSessionBinding } from '../src/shared-group.ts'
 import {
   sharedInviteSchema,
+  SHARED_MEMORY_MAX_ENTRIES,
   sharedMemorySnapshotSchema,
   SHARED_MEMORY_MAX_ENTRIES_PER_BOT,
   sharedMembershipSchema,
@@ -6302,6 +6303,159 @@ describe('shared Bot service', () => {
         botId: 'bot-chief', text: 'global queue is full', consent: true,
       }, new AbortController().signal, collaborator.peer)).resolves.toMatchObject({
         ok: false, error: { code: 'gateway/unavailable' },
+      })
+    } finally {
+      await value.close()
+    }
+  })
+
+  it('projects approved learning and initializes a missing learning extension', async () => {
+    const value = await fixture()
+    try {
+      const ownerEnrollment = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      const collaboratorEnrollment = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'collaborator')).code,
+        enrollmentRequest(),
+      )
+      const owner = await principal(value, ownerEnrollment)
+      const collaborator = await principal(value, collaboratorEnrollment)
+      await value.service.setMemoryPolicy(BotId('bot-chief'), true)
+      const pending = await value.service.handle('bots/share/write-memory', {
+        botId: 'bot-chief', text: 'approved projection', consent: true,
+      }, new AbortController().signal, collaborator.peer)
+      if (!pending.ok || pending.value === null || typeof pending.value !== 'object'
+        || !('suggestion' in pending.value) || pending.value.suggestion === undefined
+        || typeof pending.value.suggestion !== 'object' || pending.value.suggestion === null
+        || !('id' in pending.value.suggestion) || typeof pending.value.suggestion.id !== 'string') {
+        throw new Error('learning suggestion was not returned')
+      }
+      const suggestionId = BotShareLearningId(pending.value.suggestion.id)
+      await expect(value.service.decideLearning(
+        BotId('bot-chief'), suggestionId, 'approve', owner.botPrincipalId,
+      )).resolves.toMatchObject({ decision: 'approved', resolved: true })
+      await expect(value.service.listLearning(BotId('bot-chief'))).resolves.toMatchObject({
+        pending: [],
+        recentlyLearned: [{ text: 'approved projection', principalId: collaborator.botPrincipalId }],
+      })
+
+      await value.authority.mutateExtensions(['agent-bots/shared-learning'], () => ({
+        value: undefined,
+        next: {},
+      }))
+      await expect(value.service.listLearning(BotId('bot-chief'))).resolves.toMatchObject({
+        pending: [],
+        recentlyLearned: [{ text: 'approved projection', principalId: collaborator.botPrincipalId }],
+      })
+    } finally {
+      await value.close()
+    }
+  })
+
+  it('rejects learning approval when shared memory reaches either capacity limit', async () => {
+    const value = await fixture()
+    try {
+      const ownerEnrollment = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      const collaboratorEnrollment = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'collaborator')).code,
+        enrollmentRequest(),
+      )
+      const owner = await principal(value, ownerEnrollment)
+      const collaborator = await principal(value, collaboratorEnrollment)
+      await value.service.setMemoryPolicy(BotId('bot-chief'), true)
+      const pending = await value.service.handle('bots/share/write-memory', {
+        botId: 'bot-chief', text: 'capacity check', consent: true,
+      }, new AbortController().signal, collaborator.peer)
+      if (!pending.ok || pending.value === null || typeof pending.value !== 'object'
+        || !('suggestion' in pending.value) || pending.value.suggestion === undefined
+        || typeof pending.value.suggestion !== 'object' || pending.value.suggestion === null
+        || !('id' in pending.value.suggestion) || typeof pending.value.suggestion.id !== 'string') {
+        throw new Error('learning suggestion was not returned')
+      }
+      const suggestionId = BotShareLearningId(pending.value.suggestion.id)
+      const globalEntries = Array.from({ length: SHARED_MEMORY_MAX_ENTRIES }, (_, index) => ({
+        id: `memory-learning-global-${index}`,
+        botId: `bot-learning-archive-${Math.floor(index / SHARED_MEMORY_MAX_ENTRIES_PER_BOT)}`,
+        principalId: String(collaborator.botPrincipalId),
+        text: `archive-${index}`,
+        createdAt: 1_000,
+      }))
+      await value.authority.mutateExtension('agent-bots/shared-memberships', (current) => {
+        const membership = sharedMembershipSnapshotSchema.parse(current)
+        return {
+          value: undefined,
+          next: {
+            ...membership,
+            sharedMemory: {
+              policies: [{ botId: 'bot-chief', enabled: true, updatedAt: 1_000 }],
+              entries: globalEntries,
+            },
+          },
+        }
+      })
+      await expect(value.service.decideLearning(
+        BotId('bot-chief'), suggestionId, 'approve', owner.botPrincipalId,
+      )).rejects.toMatchObject({ code: 'gateway/unavailable' })
+
+      const perBotEntries = Array.from({ length: SHARED_MEMORY_MAX_ENTRIES_PER_BOT }, (_, index) => ({
+        id: `memory-learning-per-bot-${index}`,
+        botId: 'bot-chief',
+        principalId: String(collaborator.botPrincipalId),
+        text: `per-bot-${index}`,
+        createdAt: 1_000,
+      }))
+      await value.authority.mutateExtension('agent-bots/shared-memberships', (current) => {
+        const membership = sharedMembershipSnapshotSchema.parse(current)
+        return {
+          value: undefined,
+          next: {
+            ...membership,
+            sharedMemory: {
+              policies: [{ botId: 'bot-chief', enabled: true, updatedAt: 1_000 }],
+              entries: perBotEntries,
+            },
+          },
+        }
+      })
+      await expect(value.service.decideLearning(
+        BotId('bot-chief'), suggestionId, 'approve', owner.botPrincipalId,
+      )).rejects.toMatchObject({ code: 'gateway/unavailable' })
+    } finally {
+      await value.close()
+    }
+  })
+
+  it('clears pending learning through the shared manage-memory route', async () => {
+    const value = await fixture()
+    try {
+      const ownerEnrollment = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      const collaboratorEnrollment = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'collaborator')).code,
+        enrollmentRequest(),
+      )
+      const owner = await principal(value, ownerEnrollment)
+      const collaborator = await principal(value, collaboratorEnrollment)
+      await value.service.setMemoryPolicy(BotId('bot-chief'), true)
+      await expect(value.service.handle('bots/share/write-memory', {
+        botId: 'bot-chief', text: 'route cleanup', consent: true,
+      }, new AbortController().signal, collaborator.peer)).resolves.toMatchObject({
+        ok: true, value: { published: false },
+      })
+      await expect(value.service.handle('bots/share/manage-memory', {
+        botId: 'bot-chief', enabled: false,
+      }, new AbortController().signal, owner.peer)).resolves.toMatchObject({
+        ok: true, value: { enabled: false },
+      })
+      await expect(value.service.listLearning(BotId('bot-chief'))).resolves.toMatchObject({
+        pending: [], recentlyLearned: [],
       })
     } finally {
       await value.close()
