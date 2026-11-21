@@ -49,7 +49,7 @@ export const InputBar = memo(function InputBar({
   renderSlot, useBusyEnter, useFileUploads, useNotices, useLexicon, useMenuLauncher, useStopShortcut,
   useProjection, sessionId, variant, disabled: inert = false, blocked,
   workspacePickerOpen = false, onRequestWorkspace,
-  placeholder, accessory, botChat,
+  placeholder, defaultPlaceholder, accessory, botChat,
 }: InputBarProps) {
   const input = useInput(s => s)
   const notice = useNotices(s => s)
@@ -351,7 +351,7 @@ export const InputBar = memo(function InputBar({
       // (the gate never consults plan mode), so the actionable hint wins.
       : canSteerQueue
         ? t('placeholder.steerQueue')
-        : planActive ? t('placeholder.plan') : t('placeholder.default'))
+        : planActive ? t('placeholder.plan') : defaultPlaceholder ?? t('placeholder.default'))
 
   return (
     <div className={clsx(css.root, variant === 'hero' && css.hero)}>

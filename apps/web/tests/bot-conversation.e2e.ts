@@ -219,6 +219,12 @@ describe.skipIf(MODE === 'record')('web e2e: Bot conversation presentation', () 
 
     const settledSnapshot = await captureStableAria(page, '[data-conversation-surface="bots"]', scaffold.workspaceCwd)
     await captureMedia(page, mediaRoot, 'settled')
+    if (mediaRoot !== undefined) {
+      await page.setViewportSize({ width: 1440, height: 1000 })
+      await captureMedia(page, mediaRoot, 'settled-wide')
+      await page.setViewportSize({ width: 480, height: 1000 })
+    }
+    await expect.poll(() => composer.getAttribute('aria-label')).toBe('Message ' + bot.name)
 
     await activity.click()
     const activityDialog = page.getByRole('dialog', { name: 'Session statistics', exact: true })

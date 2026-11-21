@@ -219,6 +219,7 @@ describe('web e2e: Bot workspace retains one Conversation Session per Bot', () =
     await expect.poll(() => secondDetail.locator('[data-conversation-session]').getAttribute('data-conversation-session'))
       .toBe(secondBot.sessionId)
     await expect.poll(() => secondDetail.locator('[data-composer-placement="bottom"]').count()).toBe(1)
+    await secondDetail.getByRole('textbox', { name: 'Message ' + secondBot.name, exact: true }).waitFor()
     await secondDetail.getByRole('button', { name: 'Bot options', exact: true }).click()
     await page.getByRole('menuitem', { name: 'Imported Grok chat', exact: true }).click()
     const historyDialog = page.getByRole('dialog', { name: 'Imported Grok chat' })
