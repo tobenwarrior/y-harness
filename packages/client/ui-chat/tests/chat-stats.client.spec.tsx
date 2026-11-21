@@ -192,9 +192,11 @@ describe('composer stats pills', () => {
     expect(view.container.textContent).toBe('')
   })
 
-  it('Bots compact stats keep Activity and token numbers in their dialogs', () => {
+  it('keeps Bot statistics collapsed and opens both figures on request', () => {
     const { source } = makeSource({ nodes: [timedStep()] })
     const view = render(<StatsPills {...props(source)} botChat />)
+    expect(view.queryByRole('button')).toBeNull()
+    view.rerender(<StatsPills {...props(source)} botChat showStatistics />)
     const activity = view.getByRole('button', { name: 'Activity' })
     const usage = view.getByRole('button', { name: 'Token usage' })
     expect(activity.textContent).toBe('Activity')
@@ -205,6 +207,9 @@ describe('composer stats pills', () => {
     fireEvent.keyDown(document, { key: 'Escape' })
     fireEvent.click(usage)
     expect(view.getByRole('dialog').textContent).toContain('105 tok')
+    view.rerender(<StatsPills {...props(source)} botChat showStatistics={false} />)
+    expect(view.queryByRole('button')).toBeNull()
+    expect(view.queryByRole('dialog')).toBeNull()
   })
 
   it('renders the counts reading and usage pill and hides a brand-new empty session', () => {

@@ -87,7 +87,7 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
     doc: 'Embedded Conversation for the selected Bot.',
     registerOptions: [],
     ownerProps: [
-      '/** Display identity supplied by the Bots workspace for one conversation. */\nexport interface ConversationBot {\n  readonly name: string\n}',
+      '/** Display identity supplied by the Bots workspace for one conversation. */\nexport interface ConversationBot {\n  readonly name: string\n  /** Whether to display the selected Bot\'s session statistics below the composer. */\n  readonly showStatistics?: boolean\n}',
     ],
     ownerPropsReferences: [],
     standardProps: [
@@ -495,9 +495,10 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
     doc: 'Resident composer body, including the no-Session inert state.',
     registerOptions: [],
     ownerProps: [
-      '/** Owner share of the resident composer bar. */\nexport interface ComposerBarOwnerProps {\n  /** Present composer diagnostics as compact Bot chat controls. */\n  botChat?: boolean\n  /** Hero uses centered placement; composer uses the active bottom placement. */\n  variant: \'hero\' | \'composer\'\n  /** A feature-owned reason that makes message input inert while leaving model selection live. */\n  blocked?: { readonly reason: string }\n  /** Lock all message actions while preserving the resident composer surface. */\n  disabled?: boolean\n  /** Whether the shared Workspace picker is expanded. */\n  workspacePickerOpen?: boolean\n  /** Open the Workspace picker from the inert composer surface. */\n  onRequestWorkspace?: () => void\n  placeholder?: string\n  /** Idle input copy when no workspace, plan, or queue hint takes precedence. */\n  defaultPlaceholder?: string\n  /** Optional content rendered above the composer surface. */\n  accessory?: ReactNode\n}',
+      '/** Owner share of the resident composer bar. */\nexport interface ComposerBarOwnerProps extends ComposerDockOwnerProps {\n  /** Hero uses centered placement; composer uses the active bottom placement. */\n  variant: \'hero\' | \'composer\'\n  /** A feature-owned reason that makes message input inert while leaving model selection live. */\n  blocked?: { readonly reason: string }\n  /** Lock all message actions while preserving the resident composer surface. */\n  disabled?: boolean\n  /** Whether the shared Workspace picker is expanded. */\n  workspacePickerOpen?: boolean\n  /** Open the Workspace picker from the inert composer surface. */\n  onRequestWorkspace?: () => void\n  placeholder?: string\n  /** Idle input copy when no workspace, plan, or queue hint takes precedence. */\n  defaultPlaceholder?: string\n  /** Optional content rendered above the composer surface. */\n  accessory?: ReactNode\n}',
     ],
     ownerPropsReferences: [
+      'ComposerDockOwnerProps',
       'Workspace',
     ],
     standardProps: [
@@ -553,7 +554,7 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
       },
     ],
     ownerProps: [
-      '/** Owner share of the statistics and diagnostics dock below the composer. */\nexport interface ComposerDockOwnerProps {\n  /** Use compact diagnostic controls in an embedded Bot conversation. */\n  botChat?: boolean\n}',
+      '/** Owner share of the statistics and diagnostics dock below the composer. */\nexport interface ComposerDockOwnerProps {\n  /** Whether this composer belongs to a Bot conversation. */\n  botChat?: boolean\n  /** Whether the Bot owner has opened session statistics. */\n  showStatistics?: boolean\n}',
     ],
     ownerPropsReferences: [],
     standardProps: [
@@ -1363,7 +1364,7 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
     doc: 'Strict per-Session Conversation body.',
     registerOptions: [],
     ownerProps: [
-      '/** Display identity supplied by the Bots workspace for one conversation. */\nexport interface ConversationBot {\n  readonly name: string\n}',
+      '/** Display identity supplied by the Bots workspace for one conversation. */\nexport interface ConversationBot {\n  readonly name: string\n  /** Whether to display the selected Bot\'s session statistics below the composer. */\n  readonly showStatistics?: boolean\n}',
     ],
     ownerPropsReferences: [],
     standardProps: [

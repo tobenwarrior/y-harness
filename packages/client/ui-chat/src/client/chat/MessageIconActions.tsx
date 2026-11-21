@@ -3,7 +3,7 @@
 
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import {
-  IconBranchOutlineRegular, IconCheckOutlineRegular, IconCopyOutlineRegular, Tooltip, writeClipboard,
+  IconBranchOutlineRegular, IconCheckOutlineRegular, IconCopyOutlineRegular, IconEllipsisOutlineRegular, Tooltip, writeClipboard,
 } from '@yharness/client-ui-primitives'
 import type { ChatViewSlotProps } from '../contract/slots.ts'
 import { formatMessageClock } from './message-chrome.ts'
@@ -28,6 +28,8 @@ export interface MessageIconActionsProps {
    * built-in copy and branch controls.
    */
   extraActions?: ReactNode
+  /** Keep feedback, branching, and usage behind an inline disclosure in Bot replies. */
+  collapseReplyActions?: boolean
   /**
    * Icon-row Turn-usage trigger (the TurnUsagePanel pill), seated after the
    * branch control at the end of the icon cluster.
@@ -44,10 +46,12 @@ export interface MessageIconActionsProps {
  */
 export function MessageIconActions({
   text, time, clock, onBranch, branchUnavailable = false, className,
-  extraActions, usageAction, t,
+  extraActions, collapseReplyActions = false, usageAction, t,
 }: MessageIconActionsProps) {
   const day = useCalendarDay()
   const reasonId = useId()
+  const replyActionsId = useId()
+  const [replyActionsOpen, setReplyActionsOpen] = useState(false)
   // Same success chrome as CodeBlock: a short check swap after the write,
   // gated so re-clicks during the window neither re-copy nor stack timers.
   const [copied, setCopied] = useState(false)
@@ -79,14 +83,8 @@ export function MessageIconActions({
       {formatMessageClock(time, t, day)}
     </span>
   )
-  return (
-    <div className={className === undefined ? css.actions : `${css.actions} ${className}`} data-clock={clock}>
-      {clock === 'start' ? clockEl : null}
-      <Tooltip label={copied ? t('copied') : t('copy')} side="bottom">
-        <button type="button" className={css.action} aria-label={copied ? t('copied') : t('copy')} onClick={onCopy}>
-          {copied ? <IconCheckOutlineRegular /> : <IconCopyOutlineRegular />}
-        </button>
-      </Tooltip>
+  const secondaryActions = (
+    <>
       {extraActions}
       {onBranch !== undefined && (
         <Tooltip label={branchUnavailable ? t('message.branchUnavailable') : t('message.branch')} side="bottom">
@@ -107,9 +105,42 @@ export function MessageIconActions({
       {onBranch !== undefined && branchUnavailable && (
         <span id={reasonId} className={css.visuallyHidden}>{t('message.branchUnavailable')}</span>
       )}
+    </>
+  )
+  return (
+    <div
+      className={className === undefined ? css.actions : `${css.actions} ${className}`}
+      data-clock={clock}
+      data-reply-disclosure={collapseReplyActions || undefined}
+    >
+      {clock === 'start' ? clockEl : null}
+      <Tooltip label={copied ? t('copied') : t('copy')} side="bottom">
+        <button type="button" className={css.action} aria-label={copied ? t('copied') : t('copy')} onClick={onCopy}>
+          {copied ? <IconCheckOutlineRegular /> : <IconCopyOutlineRegular />}
+        </button>
+      </Tooltip>
+      {collapseReplyActions ? (
+        <>
+          <Tooltip label={t('message.replyActions')} side="bottom">
+            <button
+              type="button"
+              className={css.action}
+              aria-label={t('message.replyActions')}
+              aria-controls={replyActionsId}
+              aria-expanded={replyActionsOpen}
+              onClick={() => { setReplyActionsOpen(open => !open) }}
+            >
+              <IconEllipsisOutlineRegular />
+            </button>
+          </Tooltip>
+          <span id={replyActionsId} className={css.replyTools} hidden={!replyActionsOpen}>
+            {replyActionsOpen && <>{secondaryActions}{usageAction}</>}
+          </span>
+        </>
+      ) : secondaryActions}
       {clock === 'end'
-        ? <span className={css.endInfo}>{usageAction}{clockEl}</span>
-        : usageAction}
+        ? <span className={css.endInfo}>{!collapseReplyActions && usageAction}{clockEl}</span>
+        : !collapseReplyActions && usageAction}
     </div>
   )
 }

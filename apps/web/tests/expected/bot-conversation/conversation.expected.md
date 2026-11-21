@@ -6,13 +6,24 @@
 - 'button "Access mode, current: Approve for me"'
 - button "Select model, current bot-conversation-browser-test/reply": bot-conversation-browser-test/reply
 - button "Stop generating"
-- button "Activity"
-- button "Token usage"
 - text: Summarize the release checklist. {{clock}}
 - button "Copy"
 - text: Scout
 - paragraph: The release checklist is ready for review.
 - button "Copy"
+- button "Reply actions"
+- text: {{clock}}
+- textbox "Message Scout"
+- button "Add files or run commands"
+- 'button "Access mode, current: Approve for me"'
+- button "Select model, current bot-conversation-browser-test/reply": bot-conversation-browser-test/reply
+- button "Send message" [disabled]
+- text: Summarize the release checklist. {{clock}}
+- button "Copy"
+- text: Scout
+- paragraph: The release checklist is ready for review.
+- button "Copy"
+- button "Reply actions" [expanded]
 - button "Good response"
 - button "Bad response"
 - button "Branch into a new conversation"
@@ -23,8 +34,6 @@
 - 'button "Access mode, current: Approve for me"'
 - button "Select model, current bot-conversation-browser-test/reply": bot-conversation-browser-test/reply
 - button "Send message" [disabled]
-- button "Activity"
-- button "Token usage"
 - dialog "Session statistics":
   - text: Session statistics 1 turns 2 steps
   - term: LLM time
@@ -64,10 +73,7 @@
 - text: Scout
 - paragraph: The release checklist is ready for review.
 - button "Copy"
-- button "Good response"
-- button "Bad response"
-- button "Branch into a new conversation"
-- button "Token usage"
+- button "Reply actions"
 - text: {{clock}}
 - button "Automation task {{clock}}":
   - text: Automation task
@@ -75,15 +81,11 @@
 - text: Scout
 - paragraph: "Scheduled check: the release checklist is still ready."
 - button "Copy"
-- button "Good response"
-- button "Bad response"
-- button "Branch into a new conversation"
-- button "Token usage"
+- button "Reply actions"
 - text: {{clock}}
-- textbox "Message Scout"
+- textbox "Message Scout":
+  - paragraph
 - button "Add files or run commands"
 - 'button "Access mode, current: Approve for me"'
 - button "Select model, current bot-conversation-browser-test/reply": bot-conversation-browser-test/reply
 - button "Send message" [disabled]
-- button "Activity"
-- button "Token usage"

@@ -379,14 +379,14 @@ export interface ConversationSessionHeaderInjected {
 
 /** Owner share of the statistics and diagnostics dock below the composer. */
 export interface ComposerDockOwnerProps {
-  /** Use compact diagnostic controls in an embedded Bot conversation. */
+  /** Whether this composer belongs to a Bot conversation. */
   botChat?: boolean
+  /** Whether the Bot owner has opened session statistics. */
+  showStatistics?: boolean
 }
 
 /** Owner share of the resident composer bar. */
-export interface ComposerBarOwnerProps {
-  /** Present composer diagnostics as compact Bot chat controls. */
-  botChat?: boolean
+export interface ComposerBarOwnerProps extends ComposerDockOwnerProps {
   /** Hero uses centered placement; composer uses the active bottom placement. */
   variant: 'hero' | 'composer'
   /** A feature-owned reason that makes message input inert while leaving model selection live. */
@@ -497,6 +497,8 @@ export type ConversationPanelProps = FactoryComponentPropsOf<'conversation.panel
 /** Display identity supplied by the Bots workspace for one conversation. */
 export interface ConversationBot {
   readonly name: string
+  /** Whether to display the selected Bot's session statistics below the composer. */
+  readonly showStatistics?: boolean
 }
 
 /** Inputs shared by main and embedded Conversation content occurrences. */

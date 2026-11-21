@@ -72,6 +72,7 @@ export const TurnTailNodeView = memo(function TurnTailNodeView({
         branchUnavailable={data.branchUnavailable || hasLaterChatNode}
         className={css.actions}
         extraActions={assistantActions}
+        collapseReplyActions={bot !== undefined}
         usageAction={detailed && data.tokenUsage !== undefined
           ? <TurnUsagePanel usage={data.tokenUsage} compact={bot !== undefined} t={t} />
           : null}

@@ -47,6 +47,8 @@ export const en = {
   creating: 'Creating…',
   editAvatar: 'Edit avatar',
   botMenu: 'Bot options',
+  showChatStatistics: 'Show chat statistics',
+  hideChatStatistics: 'Hide chat statistics',
   rosterMenu: 'Bot workspace options',
   manageMemories: 'Manage memories',
   grokHistory: 'Imported Grok chat',

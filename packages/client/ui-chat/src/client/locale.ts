@@ -158,6 +158,7 @@ export const en = {
   'message.turnProcess.thoughtForAWhile': 'Thought for a while',
   'message.turnProcess.separator': ' · ',
   'message.stopped': 'Stopped',
+  'message.replyActions': 'Reply actions',
   'message.branch': 'Branch into a new conversation',
   'message.branchUnavailable': 'Available only on the last message of a completed turn',
   'message.retry.active': 'Retrying model request',

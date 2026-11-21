@@ -145,7 +145,11 @@ export function ConversationContent(props: ConversationContentProps) {
   const blocked = !inert && composerBlock !== undefined
   const inputBar = renderSlot('conversation.composer.bar', {
     variant: hero ? 'hero' : 'composer',
-    ...bot === undefined ? {} : { botChat: true, defaultPlaceholder: t('placeholder.bot', { name: bot.name }) },
+    ...bot === undefined ? {} : {
+      botChat: true,
+      defaultPlaceholder: t('placeholder.bot', { name: bot.name }),
+      ...(bot.showStatistics === true ? { showStatistics: true } : {}),
+    },
     ...(inert
       ? {
         disabled: true,

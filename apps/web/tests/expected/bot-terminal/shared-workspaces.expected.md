@@ -10,3 +10,4 @@
     - text: Terminal VPS terminal · Internet disabled
   - menuitem "Private workspace"
   - menuitem "Shared workspace"
+  - menuitem "Show chat statistics"

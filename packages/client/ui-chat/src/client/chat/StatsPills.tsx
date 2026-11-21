@@ -125,8 +125,10 @@ type Translate = ChatViewSlotProps['t']
 export interface StatPillProps extends InjectFace<PerformanceUsageInjected> {
   useChat: SnapshotSelectorHook<ChatSnapshot>
   useProjection: UseProjection
-  /** Whether the owning composer is the compact Bots conversation surface. */
+  /** Whether the owning composer belongs to a Bot conversation. */
   botChat?: boolean
+  /** Whether the Bot owner has opened session statistics. */
+  showStatistics?: boolean
   /** The owning dock's locale seat. */
   t: Translate
 }
@@ -240,9 +242,12 @@ function DialogPill({ stat, icon, label, ariaLabel, title, titleValue, tooltip, 
  * Turn and step counts with whole-session speed, opening the time and speed
  * dialog; Compact keeps only the speed reading.
  */
-export const ActivityPill = memo(function ActivityPill({ useChat, useProjection, usePerformanceUsage, botChat, t }: StatPillProps) {
+export const ActivityPill = memo(function ActivityPill({
+  useChat, useProjection, usePerformanceUsage, botChat, showStatistics, t,
+}: StatPillProps) {
   const mode = usePerformanceUsage(value => value)
   const stats = useSessionStats(useChat, useProjection)
+  if (botChat === true && showStatistics !== true) return null
   const speed = stats.decodeMs > 0 ? decodeSpeed(stats, t) : null
   const icon = <IconGaugeOutlineRegular />
   if (mode === 'compact' && botChat !== true) return speed === null ? null : <PlainPill stat="activity" icon={icon} label={speed} />
@@ -292,9 +297,12 @@ export const ActivityPill = memo(function ActivityPill({ useChat, useProjection,
 })
 
 /** Whole-log token total and cache hit; Compact keeps only the cache hit. */
-export const UsagePill = memo(function UsagePill({ useProjection, usePerformanceUsage, botChat, t }: StatPillProps) {
+export const UsagePill = memo(function UsagePill({
+  useProjection, usePerformanceUsage, botChat, showStatistics, t,
+}: StatPillProps) {
   const mode = usePerformanceUsage(value => value)
   const usage = useProjection('tokenUsage')
+  if (botChat === true && showStatistics !== true) return null
   // Gated on actual token activity: a session whose steps all settled without
   // billing (e.g. every request failed) shows no usage pill.
   if (usage === undefined || (billedInputTokens(usage) === 0 && usage.outputTokens === 0)) return null
