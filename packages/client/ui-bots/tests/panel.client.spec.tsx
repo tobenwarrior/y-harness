@@ -19,7 +19,7 @@ import {
 import { createSharedBotsClient } from '../src/client/shared-client.ts'
 import type { BotWorkspaceState } from '../src/client/controller.ts'
 import type { ComputerClient, ComputerIdentity } from '../src/client/computer-client.ts'
-import type { SessionStatusSnapshot } from '@yharness/client-ui-session/client'
+import type { SessionPendingInteractionBase, SessionStatusSnapshot } from '@yharness/client-ui-session/client'
 
 afterEach(cleanup)
 
@@ -366,10 +366,15 @@ describe('Bots conversation slot wiring', () => {
     const preparing = { ...bot('roster-preparing', 'Preparing bot'), state: 'provisioning' as const }
     const idle = bot('roster-idle', 'Idle bot')
     const unknown = bot('roster-unknown', 'Unknown bot')
-    const state = workspaceState([working, preparing, idle, unknown], working.id)
+    const needs = bot('roster-needs', 'Needs bot')
+    const approval: SessionPendingInteractionBase = {
+      key: 'roster-approval', kind: 'approval', sessionId: needs.sessionId,
+    }
+    const state = workspaceState([working, preparing, idle, unknown, needs], working.id)
     const statuses: SessionStatusSnapshot = new Map([
       [working.sessionId, { running: true, pendingInteraction: undefined, completionUnread: false }],
       [idle.sessionId, { running: false, pendingInteraction: undefined, completionUnread: false }],
+      [needs.sessionId, { running: false, pendingInteraction: approval, completionUnread: false }],
     ])
     const select = vi.fn()
     const selectGroup = vi.fn()
@@ -406,6 +411,7 @@ describe('Bots conversation slot wiring', () => {
     expect(screen.getByRole('button', { name: 'Preparing bot, Preparing' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Idle bot' })).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Idle bot, Idle' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Needs bot, Needs you' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Unknown bot' })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Idle bot' }))
     expect(select).toHaveBeenCalledWith(idle.id)

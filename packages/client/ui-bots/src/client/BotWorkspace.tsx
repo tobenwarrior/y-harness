@@ -72,7 +72,7 @@ export interface BotRosterLayoutProps {
   /** Expand the shared sidebar when a rail-only action needs the full roster. */
   readonly expandSidebar?: () => void
 }
-type BotDisplayStatus = BotStatus | 'needs-you'
+type BotDisplayStatus = Exclude<BotStatus, 'idle'> | 'needs-you'
 
 function visibleBotStatus(bot: BotSummary): BotDisplayStatus | undefined {
   if (bot.needsAttention === true) return 'needs-you'
@@ -84,21 +84,18 @@ function statusState(status: BotDisplayStatus): 'ongoing' | 'idle' | 'warning' {
     case 'working': return 'ongoing'
     case 'preparing': return 'ongoing'
     case 'needs-you': return 'warning'
-    case 'idle':
-    case 'offline':
-      return 'idle'
+    case 'offline': return 'idle'
   }
 }
 
 function statusKey(
   status: BotDisplayStatus,
-): 'status.idle' | 'status.working' | 'status.preparing' | 'status.offline' | 'status.needsYou' {
+): 'status.working' | 'status.preparing' | 'status.offline' | 'status.needsYou' {
   switch (status) {
     case 'working': return 'status.working'
     case 'preparing': return 'status.preparing'
     case 'needs-you': return 'status.needsYou'
     case 'offline': return 'status.offline'
-    case 'idle': return 'status.idle'
   }
 }
 

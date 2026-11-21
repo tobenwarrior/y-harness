@@ -22,7 +22,7 @@ import type {
 } from '@yharness/client-ui-conversation/client'
 import type { WorkspaceSnapshot } from '@yharness/api-workspace-controller/client'
 import { SessionSeq, type SessionId } from '@yharness/session/types'
-import type { SessionStatusSnapshot } from '@yharness/client-ui-session/client'
+import type { SessionPendingInteractionBase, SessionStatusSnapshot } from '@yharness/client-ui-session/client'
 import type { KeyedSnapshotSelectorHook, SnapshotSelectorHook } from '@yharness/client-ui-slots'
 import { bindSnapshotSelector, makeTranslate } from '@yharness/client-test-runtime'
 import { createSnapshotStore, type ObservableSnapshot } from '@yharness/client-store'
@@ -310,6 +310,7 @@ function makeHarness(
   const chat = createChatStore().create()
   const transcriptView = createSnapshotStore<TranscriptViewMode>('compact')
   const performanceUsage = createSnapshotStore<'compact' | 'detailed'>('detailed')
+  const sessionStatus = createSnapshotStore<SessionStatusSnapshot>(new Map())
   const t = makeTranslate(zh, commonZh)
   const toolOwners: Array<{
     callId: string
@@ -420,9 +421,7 @@ function makeHarness(
     useSessions: emptySessions(),
     useSessionRetainInfo: () => undefined,
     useResource,
-    useSessionStatus: bindSnapshotSelector(
-      createSnapshotStore<SessionStatusSnapshot>(new Map()),
-    ),
+    useSessionStatus: bindSnapshotSelector(sessionStatus),
     useWorkspaces: emptyWorkspaces(),
     useProjection: (key: string) => {
       const inbox = useTestSession(snapshot => snapshot.testInbox)
@@ -481,6 +480,7 @@ function makeHarness(
   return {
     set, setSession: session.set, setChat: chatSource.set, ChatView, props,
     openFile, openSkill, loadOlder, loadThrough, openView,
+    setSessionStatus: (status: SessionStatusSnapshot) => { sessionStatus.set(status) },
     setOutline: (value: unknown) => { outlineValue = value },
     chatScroll, forkAt, toolOwners,
     setPerformanceUsage: (mode: 'compact' | 'detailed') => { performanceUsage.set(mode) },
@@ -4180,5 +4180,30 @@ describe('ChatView', () => {
     expect(view.getByText('answer')).toBeTruthy()
     expect(turnProcessControl(view.container)).toBeNull()
     expect(view.queryByText(/Completed in/)).toBeNull()
+  })
+
+  it('hides the Bot waiting bubble while a user interaction is pending', () => {
+    const h = makeHarness({
+      nodes: [user(1, 'question'), assistant(2, 'answer', 1, 1)],
+    }, { running: true })
+    const view = render(<h.ChatView {...h.props} bot={{ name: 'Build Bot' }} />)
+    expect(view.getByRole('status').textContent).toBe('Waiting for reply')
+
+    const approval: SessionPendingInteractionBase = {
+      key: 'chat-approval', kind: 'approval', sessionId: SID,
+    }
+    act(() => {
+      h.setSessionStatus(new Map([[SID, {
+        running: true, pendingInteraction: approval, completionUnread: false,
+      }]]))
+    })
+    expect(view.queryByRole('status')).toBeNull()
+
+    act(() => {
+      h.setSessionStatus(new Map([[SID, {
+        running: true, pendingInteraction: undefined, completionUnread: false,
+      }]]))
+    })
+    expect(view.getByRole('status').textContent).toBe('Waiting for reply')
   })
 })
