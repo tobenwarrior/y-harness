@@ -347,6 +347,39 @@ async function readComputerRequest(request: Request): Promise<Record<string, unk
   }
 }
 
+type ComputerPostRouteHandler = (
+  request: Request,
+  payload: Record<string, unknown>,
+  viewer: ViewerId,
+  target: SessionTarget,
+) => Promise<Response>
+
+function computerPostRoute(
+  path: string,
+  targetFor: (payload: Record<string, unknown>) => SessionTarget | undefined,
+  handle: ComputerPostRouteHandler,
+): ConnectionFetchRoute {
+  return {
+    path,
+    methods: ['POST'],
+    requestBody: 'streaming',
+    fetch: async (request) => {
+      const payload = await readComputerRequest(request)
+      if (payload === undefined) return json({ error: 'invalid-request' }, 400)
+      const viewer = viewerId(payload.viewerId)
+      const target = targetFor(payload)
+      if (viewer === undefined || target === undefined) return json({ error: 'invalid-request' }, 400)
+      try {
+        return await handle(request, payload, viewer, target)
+      } catch (error) {
+        // Process diagnostics can contain host paths or desktop details.
+        void error
+        return json({ error: 'computer-unavailable' }, 409)
+      }
+    },
+  }
+}
+
 interface RouteOptions {
   readonly managed: boolean
   /** Permit the old shared route's omitted session id during an allowlisted rollout. */
@@ -390,29 +423,17 @@ function routesFor(
         }
       },
     },
-    ...(['frame', 'take-control', 'release-control', 'input'] as const).map((endpoint): ConnectionFetchRoute => ({
-      path: `/api/computer/${endpoint}`,
-      methods: ['POST'],
-      requestBody: 'streaming',
-      fetch: async (request) => {
-        const payload = await readComputerRequest(request)
-        if (payload === undefined) return json({ error: 'invalid-request' }, 400)
-        const id = viewerId(payload.viewerId)
-        const target = sessionTarget(payload, options.managed && options.allowMissingSession !== true, options.allowDesktop)
-        if (id === undefined || target === undefined) return json({ error: 'invalid-request' }, 400)
-        try {
-          const resolved = await resolveComputer(target)
-          request.signal.throwIfAborted()
-          const handle = resolved === undefined ? undefined : action(await resolved.open(request.signal), endpoint)
-          if (handle === undefined) return json({ error: 'computer-unavailable' }, 409)
-          return json(await handle(id, payload, request.signal))
-        } catch (error) {
-          // Process diagnostics can contain host paths or desktop details.
-          void error
-          return json({ error: 'computer-unavailable' }, 409)
-        }
+    ...(['frame', 'take-control', 'release-control', 'input'] as const).map(endpoint => computerPostRoute(
+      `/api/computer/${endpoint}`,
+      payload => sessionTarget(payload, options.managed && options.allowMissingSession !== true, options.allowDesktop),
+      async (request, payload, id, target) => {
+        const resolved = await resolveComputer(target)
+        request.signal.throwIfAborted()
+        const handle = resolved === undefined ? undefined : action(await resolved.open(request.signal), endpoint)
+        if (handle === undefined) return json({ error: 'computer-unavailable' }, 409)
+        return json(await handle(id, payload, request.signal))
       },
-    })),
+    )),
   ]
 }
 
@@ -423,29 +444,16 @@ function teachingRoutes(resolve: (target: SessionTarget) => Promise<ResolvedBotC
     start: (computer, viewer, signal) => computer.startTeaching(viewer, signal),
     stop: (computer, viewer, signal) => computer.stopTeaching(viewer, signal),
   }
-  return Object.entries(actions).map(([endpoint, action]) => ({
-    path: `/api/computer/teach/${endpoint}`,
-    methods: ['POST'],
-    requestBody: 'streaming',
-    fetch: async (request) => {
-      const payload = await readComputerRequest(request)
-      if (payload === undefined) return json({ error: 'invalid-request' }, 400)
-      const id = viewerId(payload.viewerId)
-      const target = sessionTarget(payload, true, false)
-      if (id === undefined || target === undefined || Object.keys(payload).length !== 2) {
-        return json({ error: 'invalid-request' }, 400)
-      }
-      try {
-        const resolved = await resolve(target)
-        request.signal.throwIfAborted()
-        if (resolved?.metadata?.teaching !== true) return json({ error: 'computer-unavailable' }, 409)
-        return json(await action(await resolved.open(request.signal), id, request.signal))
-      } catch (error) {
-        void error
-        return json({ error: 'computer-unavailable' }, 409)
-      }
+  return Object.entries(actions).map(([endpoint, runAction]) => computerPostRoute(
+    `/api/computer/teach/${endpoint}`,
+    payload => Object.keys(payload).length === 2 ? sessionTarget(payload, true, false) : undefined,
+    async (request, _payload, id, target) => {
+      const resolved = await resolve(target)
+      request.signal.throwIfAborted()
+      if (resolved?.metadata?.teaching !== true) return json({ error: 'computer-unavailable' }, 409)
+      return json(await runAction(await resolved.open(request.signal), id, request.signal))
     },
-  }))
+  ))
 }
 
 function browserNavigationRoute(resolveComputer: (sessionId: string) => Promise<ResolvedComputer | undefined>): ConnectionFetchRoute {

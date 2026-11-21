@@ -94,6 +94,7 @@ export interface ComputerControlResult {
   readonly mode: ComputerMode
 }
 
+/* jscpd:ignore-start -- Intentional Host/client mirror of Browser-teaching wire vocabulary. */
 /** Opaque identity of one browser demonstration. */
 export type ComputerTeachingId = Branded<'ComputerTeachingId'>
 
@@ -103,6 +104,7 @@ export type ComputerTeachingAction =
   | { readonly kind: 'drag'; readonly x: number; readonly y: number; readonly toX: number; readonly toY: number }
   | { readonly kind: 'scroll'; readonly x: number; readonly y: number; readonly delta: number }
   | { readonly kind: 'navigate'; readonly origin: string }
+/* jscpd:ignore-end */
 
 /** Result of stopping the same demonstration, available only to its owner. */
 export interface ComputerTeachingTrace {

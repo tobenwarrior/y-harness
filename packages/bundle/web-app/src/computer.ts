@@ -75,6 +75,7 @@ export interface ComputerSignInRequest {
   readonly canCancel: boolean
 }
 
+/* jscpd:ignore-start -- Intentional Host/client mirror of Browser-teaching wire vocabulary. */
 /** Opaque identifier for one owner-started Computer demonstration. */
 export type ComputerTeachingId = Branded<'ComputerTeachingId'>
 
@@ -84,6 +85,7 @@ export type ComputerTeachingAction =
   | { readonly kind: 'drag'; readonly x: number; readonly y: number; readonly toX: number; readonly toY: number }
   | { readonly kind: 'scroll'; readonly x: number; readonly y: number; readonly delta: number }
   | { readonly kind: 'navigate'; readonly origin: string }
+/* jscpd:ignore-end */
 
 /** The state of an owner Computer demonstration. */
 export type ComputerTeachingTraceStatus = 'review' | 'interrupted' | 'limit'

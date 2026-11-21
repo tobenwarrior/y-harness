@@ -91,4 +91,61 @@ describe('event routine result recovery', () => {
       await closeRoutineHarness(harness)
     }
   })
+
+  it('clears recovery retry bookkeeping after a successful retry', async () => {
+    vi.useFakeTimers()
+    const harness = await routineHarness()
+    try {
+      const created = await harness.service.create({
+        id: BotId('bot-routine-recovery-cleanup'),
+        name: 'Recovery cleanup bot',
+        cwd: '/tmp',
+      })
+      const sessionId = SessionId(String(created.bot.sessionId))
+      await invokeRoutine(harness.service, 'create', {
+        title: 'On message', prompt: 'Recover this', event: { type: 'message', source: 'user' },
+      }, sessionId, 'create-recovery-cleanup-routine')
+
+      const recoverDescriptor = Object.getOwnPropertyDescriptor(
+        Object.getPrototypeOf(harness.service),
+        'recoverEventRoutineResults',
+      )
+      const scheduleDescriptor = Object.getOwnPropertyDescriptor(
+        Object.getPrototypeOf(harness.service),
+        'scheduleEventRoutineResultRecoveryRetry',
+      )
+      if (recoverDescriptor === undefined || typeof recoverDescriptor.value !== 'function'
+        || scheduleDescriptor === undefined || typeof scheduleDescriptor.value !== 'function') {
+        throw new Error('result recovery adapters are unavailable')
+      }
+      type RecoverResults = (retrySessionId?: SessionId, retryAttempt?: number) => Promise<void>
+      type ScheduleRecovery = (retrySessionId: SessionId, retryAttempt: number, fenceRetry?: boolean) => void
+      const recoverResults = recoverDescriptor.value as (
+        this: typeof harness.service,
+        ...args: Parameters<RecoverResults>
+      ) => ReturnType<RecoverResults>
+      const recover = vi.fn<RecoverResults>((retrySessionId, retryAttempt) =>
+        recoverResults.call(harness.service, retrySessionId, retryAttempt))
+      Object.defineProperty(harness.service, 'recoverEventRoutineResults', {
+        configurable: true,
+        value: recover,
+      })
+      const scheduleRecovery = scheduleDescriptor.value as (
+        this: typeof harness.service,
+        ...args: Parameters<ScheduleRecovery>
+      ) => ReturnType<ScheduleRecovery>
+
+      scheduleRecovery.call(harness.service, sessionId, 1, false)
+      await vi.runAllTimersAsync()
+      scheduleRecovery.call(harness.service, sessionId, 1, false)
+      await vi.runAllTimersAsync()
+
+      expect(recover).toHaveBeenCalledTimes(2)
+      expect(recover).toHaveBeenNthCalledWith(1, sessionId, 1)
+      expect(recover).toHaveBeenNthCalledWith(2, sessionId, 1)
+    } finally {
+      vi.useRealTimers()
+      await closeRoutineHarness(harness)
+    }
+  })
 })
