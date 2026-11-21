@@ -72,7 +72,14 @@ export interface BotRosterLayoutProps {
   /** Expand the shared sidebar when a rail-only action needs the full roster. */
   readonly expandSidebar?: () => void
 }
-function statusState(status: BotStatus): 'ongoing' | 'idle' | 'warning' {
+type BotDisplayStatus = BotStatus | 'needs-you'
+
+function visibleBotStatus(bot: BotSummary): BotDisplayStatus | undefined {
+  if (bot.needsAttention === true) return 'needs-you'
+  return bot.status === 'idle' ? undefined : bot.status
+}
+
+function statusState(status: BotDisplayStatus): 'ongoing' | 'idle' | 'warning' {
   switch (status) {
     case 'working': return 'ongoing'
     case 'preparing': return 'ongoing'
@@ -83,7 +90,9 @@ function statusState(status: BotStatus): 'ongoing' | 'idle' | 'warning' {
   }
 }
 
-function statusKey(status: BotStatus): 'status.idle' | 'status.working' | 'status.preparing' | 'status.offline' | 'status.needsYou' {
+function statusKey(
+  status: BotDisplayStatus,
+): 'status.idle' | 'status.working' | 'status.preparing' | 'status.offline' | 'status.needsYou' {
   switch (status) {
     case 'working': return 'status.working'
     case 'preparing': return 'status.preparing'
@@ -142,7 +151,7 @@ function sectionItemId(index: number): string {
   return `section:existing:${String(index)}`
 }
 
-function statusLabel(status: BotStatus, t: BotWorkspaceViewProps['t']): string {
+function statusLabel(status: BotDisplayStatus, t: BotWorkspaceViewProps['t']): string {
   return t(statusKey(status))
 }
 
@@ -285,8 +294,7 @@ function BotRow({ bot, selected, onSelect, t, loadAvatar, groups, onOrganize, on
   const unread = bot.unread !== undefined && bot.unread > 0
   const unreadCount = bot.unread ?? 0
   const summary = bot.preview ?? bot.description
-  const status = bot.status
-  const visibleStatus = status === 'idle' ? undefined : status
+  const visibleStatus = visibleBotStatus(bot)
   return (
     <div className={clsx(css.botRow, selected && css.botRowSelected)}>
       <button
@@ -299,7 +307,7 @@ function BotRow({ bot, selected, onSelect, t, loadAvatar, groups, onOrganize, on
         onClick={onSelect}
       >
         <BotAvatar name={bot.name} identity={bot.identity} accent={bot.accent} avatar={bot.avatar}
-          botId={bot.id} loadAvatar={loadAvatar} status={bot.status} />
+          botId={bot.id} loadAvatar={loadAvatar} status={bot.needsAttention === true ? undefined : bot.status} />
         <span className={css.botRowCopy}>
           <span className={css.botRowHeading}>
             <span className={css.botName}>{bot.name}</span>
@@ -1255,6 +1263,7 @@ export function BotDetail({
       </section>
     )
   }
+  const detailStatus = visibleBotStatus(bot)
   const items: BotToolbarItem[] = [
     ...(onUpdateProfile === undefined ? [] : [{
       id: 'edit-profile',
@@ -1299,14 +1308,15 @@ export function BotDetail({
     <section className={css.detail} aria-label={bot.name}>
       <header className={css.detailHeader}>
         <span className={css.detailIdentity}>
-          <BotAvatar name={bot.name} identity={bot.identity} accent={bot.accent} avatar={bot.avatar} botId={bot.id} loadAvatar={loadAvatar} status={bot.status} size="large" />
+          <BotAvatar name={bot.name} identity={bot.identity} accent={bot.accent} avatar={bot.avatar}
+            botId={bot.id} loadAvatar={loadAvatar} status={bot.needsAttention === true ? undefined : bot.status} size="large" />
           <span className={css.detailIdentityCopy}>
             <span className={css.detailName}>{bot.name}</span>
             <span className={css.detailMeta}>
-              {bot.status !== undefined && bot.status !== 'idle' && (
+              {detailStatus !== undefined && (
                 <span className={css.detailStatus}>
-                  <StateDot state={statusState(bot.status)} size={8} />
-                  {statusLabel(bot.status, t)}
+                  <StateDot state={statusState(detailStatus)} size={8} />
+                  {statusLabel(detailStatus, t)}
                 </span>
               )}
               {bot.description !== undefined && bot.description !== '' && <span className={css.detailRole}>{bot.description}</span>}
@@ -1326,7 +1336,7 @@ export function BotDetail({
         <GrokHistoryDialog key={bot.id} botId={bot.id} botName={bot.name} read={readGrokHistory}
           open={historyTarget === bot.id} onClose={() => { setHistoryTarget(null) }} t={t} />
       )}
-      {bot.status === 'working' && (bot.preview !== undefined || bot.activity !== undefined) && (
+      {detailStatus === 'working' && (bot.preview !== undefined || bot.activity !== undefined) && (
         <div className={css.activityBanner} role="status">
           <StateDot state="ongoing" size={14} />
           <span>{bot.preview ?? bot.activity}</span>
@@ -1878,7 +1888,7 @@ export function BotRoster({
                 const rowsId = `${headingId}-rows`
                 const searching = normalizedQuery !== ''
                 const expanded = searching || !collapsedFolders.has(key)
-                const needsYouCount = rows.filter(bot => bot.status === 'needs-you').length
+                const needsYouCount = rows.filter(bot => bot.needsAttention === true).length
                 return (
                   <section className={css.group} key={key} aria-labelledby={headingId}>
                     <h2 id={headingId} className={clsx(css.groupLabel, css.folderHeading)}>
@@ -1967,8 +1977,7 @@ export function BotRoster({
             </Tooltip>
             <BotToolbarMenu items={rosterActions} label={t('rosterMenu')} compact />
             {visibleBots.map((bot) => {
-              const status = bot.status
-              const visibleStatus = status === 'idle' ? undefined : status
+              const visibleStatus = visibleBotStatus(bot)
               const label = visibleStatus === undefined ? bot.name : `${bot.name}, ${statusLabel(visibleStatus, t)}`
               return (
                 <Tooltip key={bot.id} label={label} side="right" delayMs={500}>
@@ -1983,9 +1992,9 @@ export function BotRoster({
                     <span className={css.botRailAvatar}>
                       <BotAvatar
                         name={bot.name} identity={bot.identity} accent={bot.accent} avatar={bot.avatar}
-                        botId={bot.id} loadAvatar={loadAvatar} status={bot.status}
+                        botId={bot.id} loadAvatar={loadAvatar}
                       />
-                      {bot.status === 'needs-you' && (
+                      {visibleStatus === 'needs-you' && (
                         <span className={css.botRailAttention} aria-hidden="true"><StateDot state="warning" size={8} /></span>
                       )}
                     </span>

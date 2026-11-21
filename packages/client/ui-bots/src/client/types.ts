@@ -39,7 +39,7 @@ export type BotSkillSummary = SharedBotSkillAccess
 export type BotSkillPolicy = SharedBotSkillPolicy
 
 /** Live availability mapped from the Bot's retained Session. */
-export type BotStatus = 'idle' | 'working' | 'preparing' | 'offline' | 'needs-you'
+export type BotStatus = 'idle' | 'working' | 'preparing' | 'offline'
 
 /** One bot identity and its presentation summary. One bot maps to one Session. */
 export interface BotSummary {
@@ -67,6 +67,8 @@ export interface BotSummary {
   readonly activity?: string
   /** Optional live Session state. Omit it when the owner has no live signal. */
   readonly status?: BotStatus
+  /** Whether the Session is waiting for approval or an answer. */
+  readonly needsAttention?: boolean
   /** Optional unread count for work completed since the user last opened the bot. */
   readonly unread?: number
   /** Stable visual family; avoids arbitrary colors in feature CSS. */
