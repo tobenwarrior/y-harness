@@ -1119,13 +1119,7 @@ export class SharedBotService {
           [SHARED_MEMBERSHIP_EXTENSION_KEY, SHARED_LEARNING_EXTENSION_KEY],
           (extensions, authorityState) => {
             const membershipSnapshot = parseMembershipSnapshot(extensions[SHARED_MEMBERSHIP_EXTENSION_KEY])
-            if (actor !== undefined) {
-              const authorityPrincipal = authorityState.principals.find(principal => String(principal.id) === String(actor))
-              if (authorityPrincipal === undefined || authorityPrincipal.revokedAt !== undefined) {
-                throw new SharedServiceFault('gateway/forbidden', 'shared Bot authority is no longer active')
-              }
-              this.requireAuthorizationForMemberships(membershipSnapshot.memberships, botId, actor, 'manage-memory')
-            }
+            this.requireLearningReviewer(membershipSnapshot.memberships, authorityState, botId, actor)
             const learning = parseSharedLearningSnapshot(extensions[SHARED_LEARNING_EXTENSION_KEY])
             const memory = membershipSnapshot.sharedMemory ?? emptySharedMemorySnapshot()
             this.membershipSnapshot = membershipSnapshot.memberships
@@ -1164,22 +1158,10 @@ export class SharedBotService {
           (extensions, authorityState) => {
             const membershipSnapshot = parseMembershipSnapshot(extensions[SHARED_MEMBERSHIP_EXTENSION_KEY])
             latestMemberships = membershipSnapshot.memberships
-            if (actor !== undefined) {
-              const authorityPrincipal = authorityState.principals.find(principal => String(principal.id) === String(actor))
-              if (authorityPrincipal === undefined || authorityPrincipal.revokedAt !== undefined) {
-                throw new SharedServiceFault('gateway/forbidden', 'shared Bot authority is no longer active')
-              }
-              this.requireAuthorizationForMemberships(membershipSnapshot.memberships, botId, actor, 'manage-memory')
-            }
+            this.requireLearningReviewer(membershipSnapshot.memberships, authorityState, botId, actor)
             const learning = parseSharedLearningSnapshot(extensions[SHARED_LEARNING_EXTENSION_KEY])
             const existingDecision = learning.decisions.find(candidate =>
               candidate.botId === botId && candidate.suggestionId === suggestionId)
-            const currentLearning = extensions[SHARED_LEARNING_EXTENSION_KEY] ?? {
-              version: SHARED_LEARNING_RECORD_VERSION,
-              pending: [],
-              decisions: [],
-            }
-            const currentMembership = extensions[SHARED_MEMBERSHIP_EXTENSION_KEY]
             if (existingDecision !== undefined) {
               return {
                 value: {
@@ -1189,8 +1171,8 @@ export class SharedBotService {
                   resolved: false,
                 },
                 next: {
-                  [SHARED_MEMBERSHIP_EXTENSION_KEY]: currentMembership,
-                  [SHARED_LEARNING_EXTENSION_KEY]: currentLearning,
+                  [SHARED_MEMBERSHIP_EXTENSION_KEY]: extensions[SHARED_MEMBERSHIP_EXTENSION_KEY],
+                  [SHARED_LEARNING_EXTENSION_KEY]: extensions[SHARED_LEARNING_EXTENSION_KEY],
                 },
               }
             }
@@ -4276,6 +4258,20 @@ export class SharedBotService {
     subject?: ReturnType<typeof BotPrincipalId>,
   ): SharedMembershipState {
     return this.requireAuthorizationForMemberships(this.membershipSnapshot, botId, actor, operation, subject)
+  }
+
+  private requireLearningReviewer(
+    memberships: readonly SharedMembershipRecord[],
+    authorityState: SharedAccessStateSnapshot,
+    botId: BotId,
+    actor: ReturnType<typeof BotPrincipalId> | undefined,
+  ): void {
+    if (actor === undefined) return
+    const principal = authorityState.principals.find(candidate => String(candidate.id) === String(actor))
+    if (principal === undefined || principal.revokedAt !== undefined) {
+      throw new SharedServiceFault('gateway/forbidden', 'shared Bot authority is no longer active')
+    }
+    this.requireAuthorizationForMemberships(memberships, botId, actor, 'manage-memory')
   }
 
   private requireAuthorizationForMemberships(
