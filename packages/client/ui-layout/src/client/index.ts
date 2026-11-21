@@ -37,6 +37,14 @@ declare module '@yharness/cordis' {
     /** The outward face only; the concrete service stays inside this plugin. */
     layout: import('./service.ts').ILayout
   }
+  interface Events {
+    /**
+     * Open search owned by the active global panel.
+     * @param panelId - Selected main panel.
+     * @mode bail
+     */
+    'layout/search-active-panel'(panelId: import('./service.ts').MainPanelId): true | undefined
+  }
 }
 
 declare module '@yharness/client-ui-slots' {

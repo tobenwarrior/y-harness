@@ -3,11 +3,10 @@
 // event in the selected Bot conversation.
 import { mkdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { PAGE_MESSAGES } from '../../../packages/api/session-controller/src/client/sessions/session.ts'
 import { createAssistantMessage, createUserMessage } from '@yharness/llm'
 import { SessionId } from '@yharness/session'
 import type { Session } from '@yharness/session'
-import type { Browser, Page } from 'playwright'
+import type { Browser, Locator, Page } from 'playwright'
 import { chromium } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it, onTestFailed } from 'vitest'
 import { launchWebScaffold, watchConsole, webSnapshotMode, type WebScaffold } from './scaffold.ts'
@@ -18,9 +17,22 @@ const SEARCH_TERM = 'search-amber-quasar'
 const SCOUT_REPLY = `Search Scout found the ${SEARCH_TERM} message.`
 const ORBIT_REPLY = `Search Orbit found the ${SEARCH_TERM} message.`
 const ORBIT_RECENT_REPLY = 'Search Orbit recent message stays visible while the target is unloaded.'
+const ORBIT_RECENT_TURNS = 64
 const PRIVATE_REPLY = `Private session contains ${SEARCH_TERM} but must not appear.`
 const TAKE_SCREENSHOTS = process.env.YH_BOT_SEARCH_SCREENSHOTS === '1'
 const SHOT_DIR = fileURLToPath(new URL('../../../.artifacts/screenshots/bot-message-search', import.meta.url))
+
+async function expectEvenSearchInsets(dialog: Locator): Promise<void> {
+  const [modal, field] = await Promise.all([
+    dialog.boundingBox(),
+    dialog.locator('[data-yh-part="field-wrap"]').boundingBox(),
+  ])
+  if (modal === null || field === null) throw new Error('Search dialog or field has no layout box')
+  const left = field.x - modal.x
+  const right = modal.x + modal.width - field.x - field.width
+  expect(left).toBeGreaterThan(12)
+  expect(Math.abs(left - right)).toBeLessThan(2)
+}
 
 interface BotFixture {
   readonly botId: string
@@ -73,13 +85,13 @@ describe.skipIf(MODE === 'record')('web e2e: owner-scoped Bot message search', (
     const scoutSeq = await seedVisibleTurn(scoutSession, SCOUT_REPLY, 'Search Scout')
     await scaffold.ctx.sessions.flush(scoutSession)
     const orbitSeq = await seedVisibleTurn(orbitSession, ORBIT_REPLY, 'Search Orbit')
-    // PAGE_MESSAGES is the Client Session's minimum ordinary history window.
+    // Use more turns than the Client's ordinary history window.
     // Keep the target before a full page of later turns so the opening window
     // contains a recent unrelated message but not the search target.
-    for (let turn = 2; turn <= PAGE_MESSAGES + 1; turn++) {
+    for (let turn = 2; turn <= ORBIT_RECENT_TURNS + 1; turn++) {
       await seedVisibleTurn(
         orbitSession,
-        turn === PAGE_MESSAGES + 1 ? ORBIT_RECENT_REPLY : `Search Orbit recent turn ${turn}.`,
+        turn === ORBIT_RECENT_TURNS + 1 ? ORBIT_RECENT_REPLY : `Search Orbit recent turn ${turn}.`,
         `Search Orbit recent ${turn}`,
         turn,
       )
@@ -163,6 +175,10 @@ describe.skipIf(MODE === 'record')('web e2e: owner-scoped Bot message search', (
     await results.getByText('Search Scout', { exact: true }).waitFor({ state: 'visible' })
     await results.getByText('Search Orbit', { exact: true }).waitFor({ state: 'visible' })
     await expect.poll(() => dialog.getByText(PRIVATE_REPLY, { exact: true }).count()).toBe(0)
+    await expectEvenSearchInsets(dialog)
+    await page.setViewportSize({ width: 480, height: 900 })
+    await expectEvenSearchInsets(dialog)
+    await page.setViewportSize({ width: 1440, height: 1000 })
 
     if (TAKE_SCREENSHOTS) {
       mkdirSync(SHOT_DIR, { recursive: true })
@@ -196,6 +212,10 @@ describe.skipIf(MODE === 'record')('web e2e: owner-scoped Bot message search', (
     expect(revealedBox.y + revealedBox.height).toBeLessThanOrEqual(viewport.height)
     expect(await orbitDetail.locator('[data-conversation-session]').getAttribute('data-conversation-session'))
       .toBe(orbit.sessionId)
+    await page.keyboard.press('ControlOrMeta+k')
+    await dialog.waitFor({ state: 'visible' })
+    await page.keyboard.press('Escape')
+    await dialog.waitFor({ state: 'hidden' })
     expect(tripwire.pageErrors).toEqual([])
     expect(tripwire.warnings).toEqual([])
   }, 120_000)

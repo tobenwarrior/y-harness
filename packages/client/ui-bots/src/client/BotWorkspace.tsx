@@ -46,6 +46,7 @@ type BotWorkspaceViewProps = BotWorkspaceProps & PropsLocale<'bots'> & {
   children?: ReactNode
   share?: BotShareActions
   sharedClient?: SharedBotsClient
+  openMessageSearch?: () => void
 }
 
 const MAX_SHARED_OWNER_CAPABILITY_FOCUS_RETRIES = 3
@@ -1681,7 +1682,7 @@ export function BotRoster({
   groups: localGroups = [], selectedGroupId = null, onSelectGroup, onCreateGroup, groupError = null,
   onLoadConnectedApps, onSetConnectedAppAccess,
   onOrganizeBot, templates, templateActions, onRetry, loadAvatar, avatarEditor, sharedClient,
-  error = null, loading = false, wide = true, expandSidebar, t,
+  error = null, loading = false, wide = true, expandSidebar, openMessageSearch, t,
 }: BotWorkspaceViewProps & BotRosterLayoutProps): ReactNode {
   const [query, setQuery] = useState('')
   const [collapsedFolders, setCollapsedFolders] = useState<ReadonlySet<string>>(readCollapsedFolders)
@@ -1827,6 +1828,9 @@ export function BotRoster({
     ? openConnectedApps
     : undefined
   const rosterActions: BotToolbarItem[] = [
+    ...(openMessageSearch === undefined ? [] : [{
+      id: 'search-chats', label: t('searchChats'), icon: <IconSidebarSearchOutlineRegular size={16} />, run: openMessageSearch,
+    }]),
     ...(selectedBot === undefined || avatarEditor === undefined ? [] : [{
       id: 'avatar', label: t('editAvatar'), icon: <IconEditOutlineRegular size={16} />, run: openAvatarEditor,
     }]),

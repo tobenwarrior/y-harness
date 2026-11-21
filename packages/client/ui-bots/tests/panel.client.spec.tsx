@@ -373,9 +373,16 @@ describe('Bots conversation slot wiring', () => {
     ])
     const select = vi.fn()
     const selectGroup = vi.fn()
+    const messageSearch = {
+      setOpen: vi.fn(),
+      search: async () => ({ items: [], hasMore: false }),
+      openResult: vi.fn(),
+    }
     const useWorkspace: BotsRosterProps['useWorkspace'] = selector => selector(state)
     const useSessionStatus: BotsRosterProps['useSessionStatus'] = selector => selector(statuses)
     const props: BotsRosterProps = {
+      useMessageSearchOpen: selector => selector(false),
+      messageSearch,
       wide: true,
       expandSidebar: () => {},
       usePanelInfo,
@@ -400,7 +407,7 @@ describe('Bots conversation slot wiring', () => {
       retry: () => {},
       t,
     }
-    render(<BotsRoster {...props} />)
+    const view = render(<BotsRoster {...props} />)
 
     expect(screen.getByRole('button', { name: 'Working bot, Working' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Preparing bot, Preparing' })).toBeTruthy()
@@ -408,6 +415,11 @@ describe('Bots conversation slot wiring', () => {
     expect(screen.getByRole('button', { name: 'Unknown bot' })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Idle bot, Idle' }))
     expect(select).toHaveBeenCalledWith(idle.id)
+    fireEvent.click(screen.getByRole('button', { name: en.rosterMenu }))
+    fireEvent.click(screen.getByRole('menuitem', { name: en.searchChats }))
+    expect(messageSearch.setOpen).toHaveBeenCalledWith(true)
+    view.rerender(<BotsRoster {...props} useMessageSearchOpen={selector => selector(true)} />)
+    expect(screen.getByRole('dialog', { name: en.searchChats })).toBeTruthy()
   })
 
   it('keeps a populated roster out of its loading skeleton and projects an avatar', () => {
@@ -416,6 +428,7 @@ describe('Bots conversation slot wiring', () => {
     })
     const state = { ...workspaceState([avatarBot], avatarBot.id), phase: 'loading' as const }
     const props: BotsRosterProps = {
+      useMessageSearchOpen: selector => selector(false),
       wide: true,
       expandSidebar: () => {},
       usePanelInfo,
@@ -499,6 +512,7 @@ describe('Bots conversation slot wiring', () => {
       revokeMember: async () => ({ botId: selected.id, principalId: BotPrincipalId('principal'), revoked: true }),
     }
     const props: BotsRosterProps = {
+      useMessageSearchOpen: selector => selector(false),
       wide: false,
       expandSidebar: () => {},
       usePanelInfo,

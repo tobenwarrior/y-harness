@@ -27,6 +27,8 @@ Mount the Client export alongside the Bot Remote, Session UI, conversation UI, l
 
 Open **Bot options** in the chat header for profile, sharing, memories, skills, routines, and available workspace tools. The **Terminal** item shows whether the private VPS terminal has internet access configured. Use **Bot workspace options** beside **New bot** to edit the selected avatar, browse templates, and manage shared access.
 
+**Search Bot chats** in the workspace options searches visible messages across your direct Bot conversations. Select a result to open its Bot and reveal the message. The workspace search shortcut opens the same dialog while Bots is selected.
+
 One-to-one conversations place the user's messages on the right, show a small waiting bubble while the Bot works, and identify the final reply by name and avatar. Scheduled replies carry an expandable origin label. Composer approvals and questions stay visible while they await a response. Open the usage icon for token details.
 
 The memory and skill editors preserve unsaved values and focus during workspace refreshes. Memory confirmation dialogs stay open across those refreshes. Saving or deleting a memory preserves a draft for another entry. Selecting another Bot loads its data. Skill policy conflicts provide an explicit reload. Routine selections and delete confirmations persist across callback updates. The `routineRevision` prop triggers a fresh routine catalog.
