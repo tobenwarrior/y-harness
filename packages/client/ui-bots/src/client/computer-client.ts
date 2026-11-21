@@ -2,6 +2,7 @@
 
 import { brandString, type Branded } from '@yharness/brand'
 
+/** Lease state of the current viewer. */
 export type ComputerMode = 'watching' | 'controlling' | 'other'
 
 /** Execution location reported for a Computer provider. */
