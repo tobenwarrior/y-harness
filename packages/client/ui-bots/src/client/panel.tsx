@@ -4,7 +4,7 @@ import type { ReactNode } from 'react'
 import type { BotView } from '@yharness/bots/client'
 import type { HostObservable, PropsLocale, PropsRenderFactories, PropsRenderSlots, PropsRuntime, InjectFace } from '@yharness/client-ui-slots'
 import type { ConversationBot } from '@yharness/client-ui-conversation/client'
-import type { SessionStatusSnapshot } from '@yharness/client-ui-session/client'
+import type { SessionStatus, SessionStatusSnapshot } from '@yharness/client-ui-session/client'
 import type { BotWorkspaceFace, BotWorkspaceState } from './controller.ts'
 import { BotDetail, BotGroupDetail, BotRoster } from './BotWorkspace.tsx'
 import type { BotStatus, BotSummary } from './types.ts'
@@ -70,16 +70,18 @@ export type BotsRosterProps =
   & PropsLocale<'bots'>
   & InjectFace<BotWorkspaceFace>
 
-function statusOf(bot: BotView, statuses: SessionStatusSnapshot): BotStatus | undefined {
+function statusOf(bot: BotView, sessionStatus: SessionStatus | undefined): BotStatus | undefined {
   if (bot.state === 'provisioning') return 'preparing'
-  const running = statuses.get(bot.sessionId)?.running
+  const running = sessionStatus?.running
   if (running === true) return 'working'
   if (running === false) return 'idle'
   return undefined
 }
 
 function summaryOf(bot: BotView, statuses: SessionStatusSnapshot): BotSummary {
-  const status = statusOf(bot, statuses)
+  const sessionStatus = statuses.get(bot.sessionId)
+  const status = statusOf(bot, sessionStatus)
+  const needsAttention = status !== 'preparing' && sessionStatus?.pendingInteraction !== undefined
   return {
     id: bot.id,
     updatedAt: bot.updatedAt,
@@ -91,6 +93,7 @@ function summaryOf(bot: BotView, statuses: SessionStatusSnapshot): BotSummary {
     pinned: bot.pinned,
     hidden: bot.hidden,
     ...(status === undefined ? {} : { status }),
+    ...(needsAttention ? { needsAttention } : {}),
     accent: bot.accent,
     identity: bot.identity,
     ...(bot.avatar === undefined ? {} : { avatar: bot.avatar }),

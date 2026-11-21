@@ -7,6 +7,7 @@ import type { SessionBinding, SessionListState, SessionReference } from '@yharne
 import { BotId, BotPrincipalId, type BotView } from '@yharness/bots/client'
 import { AttachmentId } from '@yharness/attachment'
 import type { GlobalStandardProps } from '@yharness/client-ui-slots'
+import { PendingApproval } from '@yharness/client-ui-approval/src/client/contract/slots.ts'
 import type { WorkspaceSnapshot } from '@yharness/api-workspace-controller/client'
 import { makeTranslate } from '@yharness/client-test-runtime'
 import { SessionId } from '@yharness/session/types'
@@ -366,10 +367,13 @@ describe('Bots conversation slot wiring', () => {
     const preparing = { ...bot('roster-preparing', 'Preparing bot'), state: 'provisioning' as const }
     const idle = bot('roster-idle', 'Idle bot')
     const unknown = bot('roster-unknown', 'Unknown bot')
-    const state = workspaceState([working, preparing, idle, unknown], working.id)
+    const needs = bot('roster-needs', 'Needs bot')
+    const approval = new PendingApproval(needs.sessionId, { toolName: 'lookup' })
+    const state = workspaceState([working, preparing, idle, unknown, needs], working.id)
     const statuses: SessionStatusSnapshot = new Map([
       [working.sessionId, { running: true, pendingInteraction: undefined, completionUnread: false }],
       [idle.sessionId, { running: false, pendingInteraction: undefined, completionUnread: false }],
+      [needs.sessionId, { running: false, pendingInteraction: approval, completionUnread: false }],
     ])
     const select = vi.fn()
     const selectGroup = vi.fn()
@@ -404,10 +408,13 @@ describe('Bots conversation slot wiring', () => {
 
     expect(screen.getByRole('button', { name: 'Working bot, Working' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Preparing bot, Preparing' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'Idle bot, Idle' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Idle bot' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Idle bot, Idle' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Needs bot, Needs you' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Unknown bot' })).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: 'Idle bot, Idle' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Idle bot' }))
     expect(select).toHaveBeenCalledWith(idle.id)
+
   })
 
   it('keeps a populated roster out of its loading skeleton and projects an avatar', () => {

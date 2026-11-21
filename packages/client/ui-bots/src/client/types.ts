@@ -67,6 +67,8 @@ export interface BotSummary {
   readonly activity?: string
   /** Optional live Session state. Omit it when the owner has no live signal. */
   readonly status?: BotStatus
+  /** Whether the Session is waiting for approval or an answer. */
+  readonly needsAttention?: boolean
   /** Optional unread count for work completed since the user last opened the bot. */
   readonly unread?: number
   /** Stable visual family; avoids arbitrary colors in feature CSS. */

@@ -9,13 +9,13 @@
   - region "General":
     - heading "General" [level=2]:
       - button "General" [expanded]
-    - button "Scout, Idle":
+    - button "Scout":
       - img "Scout"
-      - text: Scout Keeps the team informed Idle
+      - text: Scout Keeps the team informed
     - button "Bot actions for Scout"
-    - button "Orbit, Idle":
+    - button "Orbit":
       - img "Orbit"
-      - text: Orbit Idle
+      - text: Orbit
     - button "Bot actions for Orbit"
   - region "Bot groups":
     - heading "Bot groups" [level=2]

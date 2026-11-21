@@ -611,6 +611,8 @@ export const en = {
   'status.working': 'Working',
   'status.preparing': 'Preparing',
   'status.offline': 'Offline',
+  'status.needsYou': 'Needs you',
+  folderNeedsYou: 'Needs you ({count})',
   unread: '{count} new',
   computerLabel: 'Computer',
   computerView: 'Computer view',

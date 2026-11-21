@@ -147,6 +147,11 @@ const bots: readonly BotSummary[] = [
   },
 ]
 
+const attentionBots: readonly BotSummary[] = [
+  { ...bots[0]!, group: 'Research', needsAttention: true },
+  { ...bots[1]!, group: 'Research' },
+]
+
 const sharedGroup: BotGroupSummary = {
   id: 'group-release',
   name: 'Release room',
@@ -1747,7 +1752,7 @@ describe('Bot roster and detail', () => {
     />)
 
     expect(screen.queryByRole('textbox', { name: 'Search bots' })).toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: /Release captain, Idle/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Release captain' }))
     expect(onSelectBot).toHaveBeenCalledWith('release')
     fireEvent.click(screen.getByRole('button', { name: 'New bot' }))
     expect(expandSidebar).toHaveBeenCalledOnce()
@@ -2477,7 +2482,7 @@ describe('Bot roster and detail', () => {
     expect(within(folder).getByText('1')).toBeTruthy()
     expect(folder.querySelector('svg')).toBeNull()
     expect(screen.queryByRole('button', { name: /Research partner, Working/ })).toBeNull()
-    expect(screen.getByRole('button', { name: /Release captain, Idle/ })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Release captain' })).toBeTruthy()
     expect(screen.getByText('Persistent session surface')).toBeTruthy()
 
     fireEvent.change(search, { target: { value: 'Research partner' } })
@@ -2603,7 +2608,7 @@ describe('Bot roster and detail', () => {
 
     fireEvent.change(screen.getByRole('textbox', { name: 'Search bots' }), { target: { value: 'shipping' } })
 
-    expect(screen.getByRole('button', { name: /Release captain, Idle/ })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Release captain' })).toBeTruthy()
     expect(screen.queryByRole('button', { name: /Research partner, Working/ })).toBeNull()
     expect(screen.getByText('Persistent session surface')).toBeTruthy()
 
@@ -2615,7 +2620,7 @@ describe('Bot roster and detail', () => {
     const onSelectBot = vi.fn()
     renderSplitWorkspace({ onSelectBot })
 
-    fireEvent.click(screen.getByRole('button', { name: /Release captain, Idle/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Release captain' }))
 
     expect(onSelectBot).toHaveBeenCalledWith('release')
   })
@@ -2683,6 +2688,35 @@ describe('Bot roster and detail', () => {
     expect(screen.queryByText('This bot is ready for its first message.')).toBeNull()
   })
 
+  it('surfaces pending attention in expanded, collapsed, and compact roster layouts', () => {
+    const wide = renderSplitWorkspace({ bots: attentionBots, selectedBotId: 'research' })
+    const pendingRow = screen.getByRole('button', { name: 'Research partner, Needs you' })
+    expect(pendingRow.textContent).toContain('Needs you')
+    expect(pendingRow.querySelector('[data-state="warning"]')).not.toBeNull()
+
+    const detail = screen.getByRole('region', { name: 'Research partner' })
+    expect(detail.textContent).toContain('Needs you')
+    expect(detail.querySelector('[data-state="warning"]')).not.toBeNull()
+
+    const folder = screen.getByRole('button', { name: 'Research' })
+    fireEvent.click(folder)
+    expect(folder.getAttribute('aria-expanded')).toBe('false')
+    expect(screen.getByRole('img', { name: 'Needs you (1)' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Research partner, Needs you' })).toBeNull()
+
+    wide.unmount()
+    render(<BotRoster
+      bots={attentionBots}
+      selectedBotId="research"
+      onSelectBot={vi.fn()}
+      onCreateBot={vi.fn()}
+      wide={false}
+      t={t}
+    />)
+    const compactRow = screen.getByRole('button', { name: 'Research partner, Needs you' })
+    expect(compactRow.querySelector('[data-state="warning"]')).not.toBeNull()
+  })
+
   it.each([
     ['idle', 'Idle'],
     ['working', 'Working'],
@@ -2694,8 +2728,9 @@ describe('Bot roster and detail', () => {
       selectedBotId: 'state',
     })
 
-    expect(screen.getByRole('button', { name: `State bot, ${label}` })).toBeTruthy()
-    expect(screen.getByRole('button', { name: `State bot, ${label}` }).textContent).toContain(label)
+    const row = screen.getByRole('button', { name: status === 'idle' ? 'State bot' : `State bot, ${label}` })
+    expect(row).toBeTruthy()
+    if (status !== 'idle') expect(row.textContent).toContain(label)
   })
 
   it('keeps shared groups in the existing Bots sidebar and selects one without a second rail', () => {
