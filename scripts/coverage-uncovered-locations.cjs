@@ -3,9 +3,9 @@
 /**
  * Istanbul coverage reporter printing one clickable `path:line:col` record per
  * uncovered statement, branch path, and function. Vitest's per-file threshold
- * failures name only the file; this reporter supplies the exact locations,
- * printed just above those ERROR lines (reports run before threshold checks).
- * Files at 100% print nothing, so a green run stays silent.
+ * failures name only the file; this reporter supplies the exact locations.
+ * In GitHub's baseline mode it rejects each unrecorded location and requires
+ * the original source for every file that still uses an allowance.
  *
  * CommonJS by requirement: istanbul-reports loads custom reporters with a bare
  * require() outside the tsx/ESM pipeline (istanbul-reports index.js create()),
@@ -15,6 +15,8 @@
  */
 
 const path = require('node:path');
+const { createHash } = require('node:crypto');
+const { readFileSync, statSync } = require('node:fs');
 const { ReportBase } = require('istanbul-lib-report');
 
 /**
@@ -49,8 +51,8 @@ function atLineEnd(column) {
  * degrade to a line-only suffix, or to nothing on a single line.
  */
 function endSuffix(loc) {
-  const end = loc.end;
-  if (!end || !Number.isFinite(end.line) || end.line < 1) return '';
+  const end = loc?.end;
+  if (!loc?.start || !end || !Number.isFinite(end.line) || end.line < 1) return '';
   if (atLineEnd(end.column)) {
     return end.line === loc.start.line ? '' : ` (to ${end.line})`;
   }
@@ -58,38 +60,75 @@ function endSuffix(loc) {
   return ` (to ${end.line}:${end.column + 1})`;
 }
 
+function isObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function readBaseline(file) {
+  const baseline = JSON.parse(readFileSync(file, 'utf8'));
+  if (!isObject(baseline) || baseline.version !== 1 || baseline.platform !== process.platform
+    || !Number.isSafeInteger(baseline.job) || baseline.job <= 0 || !isObject(baseline.files)) {
+    throw new Error('Invalid coverage baseline for this platform.');
+  }
+  for (const [name, entry] of Object.entries(baseline.files)) {
+    if (!/^packages\/[a-z0-9_.-]+\/[a-z0-9_.-]+\/src\/[a-z0-9_./-]+\.tsx?$/i.test(name)
+      || name.split('/').some(segment => segment === '.' || segment === '..' || segment === '')
+      || !isObject(entry) || typeof entry.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(entry.sha256)
+      || !Array.isArray(entry.uncovered) || entry.uncovered.length === 0
+      || !entry.uncovered.every(item => typeof item === 'string' && /^\d+:\d+ uncovered (statement|branch|function)(?: |$)/.test(item))) {
+      throw new Error(`Invalid coverage baseline entry: ${name}`);
+    }
+  }
+  return baseline;
+}
+
+function sourceDigest(file) {
+  // Coverage coordinates are independent of the checkout's line endings.
+  return createHash('sha256').update(readFileSync(file, 'utf8').replace(/\r\n/g, '\n')).digest('hex');
+}
+
 class UncoveredLocationsReport extends ReportBase {
   constructor(opts = {}) {
     super(opts);
     // Vitest passes the resolved config root alongside reporter options.
     this.projectRoot = opts.projectRoot || process.cwd();
-    this.records = [];
+    this.baselineFile = opts.baselineFile;
   }
 
   onStart() {
     this.records = [];
+    if (this.baselineFile === undefined) return;
+    this.baseline = readBaseline(this.baselineFile);
+    this.measured = new Set();
+    this.failures = [];
+    this.allowedCount = 0;
   }
 
   onDetail(node) {
     const fc = node.getFileCoverage();
     const rel = path.relative(this.projectRoot, fc.path).split(path.sep).join('/');
     const items = [];
-    const add = (loc, text) => items.push({ line: loc.start.line, column: loc.start.column, text });
+    let unmapped = 0;
+    const add = (loc, detail) => {
+      if (!usable(loc)) {
+        unmapped += 1;
+        return;
+      }
+      items.push({ line: loc.start.line, column: loc.start.column, text: `${pos(loc)} uncovered ${detail}` });
+    };
 
     for (const id of Object.keys(fc.statementMap)) {
       if (fc.s[id] !== 0) continue;
       const loc = fc.statementMap[id];
-      if (!usable(loc)) continue;
-      add(loc, `${rel}:${pos(loc)} uncovered statement${endSuffix(loc)}`);
+      add(loc, `statement${endSuffix(loc)}`);
     }
 
     for (const id of Object.keys(fc.fnMap)) {
       if (fc.f[id] !== 0) continue;
       const fn = fc.fnMap[id];
       const loc = usable(fn.decl) ? fn.decl : fn.loc;
-      if (!usable(loc)) continue;
       const name = fn.name ? ` ${fn.name}` : '';
-      add(loc, `${rel}:${pos(loc)} uncovered function${name}`);
+      add(loc, `function${name}`);
     }
 
     for (const id of Object.keys(fc.branchMap)) {
@@ -100,17 +139,60 @@ class UncoveredLocationsReport extends ReportBase {
         // Implicit arms (e.g. a missing else) may carry an empty location;
         // fall back to the branch's own span so the record stays clickable.
         const loc = usable(branch.locations && branch.locations[i]) ? branch.locations[i] : branch.loc;
-        if (!usable(loc)) continue;
-        add(loc, `${rel}:${pos(loc)} uncovered branch (${branch.type}, path ${i + 1}/${counts.length})`);
+        add(loc, `branch (${branch.type}, path ${i + 1}/${counts.length})`);
       }
     }
 
-    if (items.length === 0) return;
     items.sort((a, b) => a.line - b.line || a.column - b.column);
-    for (const item of items) this.records.push(item.text);
+    if (this.baseline !== undefined) {
+      this.checkFile(rel, fc.path, items, unmapped);
+      return;
+    }
+    for (const item of items) this.records.push(`${rel}:${item.text}`);
+  }
+
+  checkFile(rel, file, items, unmapped) {
+    this.measured.add(rel);
+    if (unmapped > 0) this.failures.push(`${rel}: ${unmapped} uncovered locations could not be identified`);
+    if (items.length === 0) return;
+
+    const entry = this.baseline.files[rel];
+    if (entry !== undefined && sourceDigest(file) !== entry.sha256) {
+      this.failures.push(`${rel}: changed source still has ${items.length} uncovered locations`);
+      return;
+    }
+    const remaining = new Map();
+    for (const location of entry?.uncovered ?? []) {
+      remaining.set(location, (remaining.get(location) ?? 0) + 1);
+    }
+    for (const { text } of items) {
+      const count = remaining.get(text) ?? 0;
+      if (count === 0) this.failures.push(`${rel}:${text}`);
+      else {
+        remaining.set(text, count - 1);
+        this.allowedCount += 1;
+      }
+    }
+  }
+
+  verifyBaseline() {
+    if (this.measured.size === 0) this.failures.push('No source files were measured.');
+    for (const name of Object.keys(this.baseline.files)) {
+      if (!this.measured.has(name) && statSync(path.resolve(this.projectRoot, name), { throwIfNoEntry: false }) !== undefined) {
+        this.failures.push(`${name}: expected coverage measurement is missing`);
+      }
+    }
+    if (this.failures.length > 0) {
+      throw new Error(`Coverage baseline rejected ${this.failures.length} results:\n${this.failures.slice(0, 50).join('\n')}`);
+    }
+    console.log(`Coverage baseline accepted ${this.allowedCount} existing gaps across ${this.measured.size} measured files.`);
   }
 
   onEnd() {
+    if (this.baseline !== undefined) {
+      this.verifyBaseline();
+      return;
+    }
     if (this.records.length === 0) return;
     console.log(`\nUncovered locations (per-file 100% gate): ${this.records.length}`);
     for (const record of this.records) console.log(record);

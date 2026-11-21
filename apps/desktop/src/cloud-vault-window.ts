@@ -1,8 +1,9 @@
 /** Shell-owned, isolated Vault window for one connected Cloud workspace. */
 import { randomUUID } from 'node:crypto'
-import { BrowserWindow, type IpcMainInvokeEvent } from 'electron'
+import { BrowserWindow, dialog, type IpcMainInvokeEvent } from 'electron'
 import { cloudVaultRequest, isVaultLoginUseRequestId, isVaultRequestId, vaultRequestAllowed } from './cloud-vault.ts'
-import type { VaultCloudWorkspace } from './cloud-vault.ts'
+import type { CloudVaultSession, VaultReply } from './cloud-vault.ts'
+import { CloudVaultLoginImport, readVaultLoginCsv, type VaultLoginImportReply } from './cloud-vault-import.ts'
 import { VAULT_IPC, VAULT_PAGE, type CloudVaultMode } from './cloud-vault-ipc.ts'
 import type { DesktopMessages } from './locale.ts'
 import { serveWebDocument } from './web-document.ts'
@@ -23,12 +24,10 @@ export class DesktopCloudVault {
 
   /**
    * @param parent - Window holding the connected Cloud workspace.
-   * @param target - Verified SSH destination of the current connection.
+   * @param workspace - Owner-authenticated Cloud view and its open Vault connection.
    * @param mode - Owner-selected presentation; management is the default.
-   * @param workspace - Owner-authenticated Cloud view for Bot policy and roster checks.
    */
-  open(parent: BrowserWindow, target: string, mode: CloudVaultMode = { kind: 'manage' },
-    workspace?: VaultCloudWorkspace): void {
+  open(parent: BrowserWindow, workspace: CloudVaultSession, mode: CloudVaultMode = { kind: 'manage' }): void {
     if (parent.isDestroyed() || !parent.isVisible()) return
     if (mode.kind === 'request' && !isVaultRequestId(mode.id)) return
     if (mode.kind === 'login-use' && !isVaultLoginUseRequestId(mode.id)) return
@@ -56,6 +55,7 @@ export class DesktopCloudVault {
       },
     })
     this.window = window
+    const importer = new CloudVaultLoginImport(workspace.sendVaultRequest)
     const contents = window.webContents
     const vaultSession = contents.session
     const assets = [VAULT_PAGE, 'dsh-app://shell/cloud-vault.js', 'dsh-app://shell/cloud-vault.css']
@@ -81,18 +81,40 @@ export class DesktopCloudVault {
     contents.ipc.handle(VAULT_IPC.request, async (event, request: unknown) => {
       owned(event)
       if (!vaultRequestAllowed(request, mode)) return { ok: false, reason: 'invalid' }
-      if (this.pending !== undefined) return { ok: false, reason: 'unavailable' }
-      const pending = new AbortController()
-      this.pending = pending
-      try {
-        return await cloudVaultRequest(target, request, pending.signal, undefined, workspace)
+      return this.run<VaultReply>(signal => cloudVaultRequest(workspace.sendVaultRequest, request, signal, workspace),
+        { ok: false, reason: 'unavailable' })
+    })
+    contents.ipc.handle(VAULT_IPC.importLogins, async (event, action: unknown, id?: unknown): Promise<VaultLoginImportReply> => {
+      owned(event)
+      if (mode.kind !== 'manage') return { state: 'unavailable' }
+      if (action === 'confirm' && typeof id === 'string') {
+        return this.run(signal => importer.confirm(id, signal), { state: 'unavailable' })
       }
-      finally { if (this.pending === pending) this.pending = undefined }
+      if (id !== undefined || (action !== 'choose' && action !== 'cancel')) return { state: 'unavailable' }
+      return this.run(async (signal) => {
+        importer.clear()
+        if (action === 'cancel') return { state: 'cancelled' }
+        try {
+          const result = await dialog.showOpenDialog(window, {
+            title: messages.cloudVaultLoginImportChoose,
+            properties: ['openFile'],
+            filters: [{ name: 'CSV', extensions: ['csv'] }],
+          })
+          if (result.canceled || signal.aborted) return { state: 'cancelled' }
+          const [source] = result.filePaths
+          const bytes = source === undefined ? undefined : await readVaultLoginCsv(source)
+          if (bytes === undefined) return { state: 'invalid-file' }
+          return await importer.prepare(bytes, signal)
+        } catch {
+          return { state: 'unavailable' }
+        }
+      }, { state: 'unavailable' })
     })
     contents.ipc.handle(VAULT_IPC.close, (event) => { owned(event); window.close() })
     const parentHidden = (): void => { this.close() }
     parent.on('hide', parentHidden)
     window.once('closed', () => {
+      importer.clear()
       parent.off('hide', parentHidden)
       vaultSession.protocol.unhandle('dsh-app')
       if (this.window !== window) return
@@ -105,7 +127,15 @@ export class DesktopCloudVault {
     void window.loadURL(VAULT_PAGE).catch(() => { if (this.window === window) this.close() })
   }
 
-  /** Dismiss the Vault and cancel an in-flight connection. */
+  private async run<T>(request: (signal: AbortSignal) => Promise<T>, unavailable: T): Promise<T> {
+    if (this.pending !== undefined) return unavailable
+    const pending = new AbortController()
+    this.pending = pending
+    try { return await request(pending.signal) }
+    finally { if (this.pending === pending) this.pending = undefined }
+  }
+
+  /** Dismiss the Vault and cancel its outstanding request. */
   close(): void {
     const window = this.window
     this.window = undefined

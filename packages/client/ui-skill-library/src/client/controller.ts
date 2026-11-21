@@ -362,7 +362,7 @@ export class SkillLibraryController {
    * Restore a historical instruction version under the current source hash.
    * @param item - observed source and concurrency hash.
    * @param revisionId - selected retained revision.
-   * @returns completion of the restore and refreshed detail.
+   * @returns completion of the restore, detail refresh, and learning metadata refresh.
    */
   async rollback(item: SkillLibraryItem, revisionId: SkillRevisionId): Promise<void> {
     await this.operation(() => valueOf(this.api.rollback({ id: item.id, expectedHash: item.contentHash, revisionId })), 'restored')
@@ -393,10 +393,10 @@ export class SkillLibraryController {
       await run()
       if (this.pending !== undefined) await this.pending
       await this.refresh()
-      if (this.learningPending !== undefined) await this.learningPending
-      await this.refreshLearning()
       const id = this.source.getSnapshot().detailId
       if (id !== null) await this.loadDetail(id)
+      if (this.learningPending !== undefined) await this.learningPending
+      await this.refreshLearning()
       this.notice(kind)
     } catch (_operationFailure) {
       this.notice('actionError')

@@ -15,12 +15,12 @@
               - id: deepseek-v4-flash
               - id: deepseek-v4-pro
     - id: subagent-codex-primary
-      name: '@deepseek-ai/dsh-subagent-codex'
+      name: '@yharness/subagent-codex'
       config:
         providerName: codex-primary
         model: codex-primary-model
     - id: subagent-codex-secondary
-      name: '@deepseek-ai/dsh-subagent-codex'
+      name: '@yharness/subagent-codex'
       config:
         providerName: codex-secondary
         model: codex-secondary-model

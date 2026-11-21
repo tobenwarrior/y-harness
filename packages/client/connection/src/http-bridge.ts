@@ -4,7 +4,7 @@
  */
 
 import type { IncomingMessage } from 'node:http'
-import { Readable } from 'node:stream'
+import { PassThrough, Readable } from 'node:stream'
 import type { ConnectionFetchHandler } from './rpc.ts'
 
 /** Default carrier cap for all HTTP RPC bodies: sized for the default
@@ -57,6 +57,7 @@ export async function bridge(
   )
   const bodyMode = apiHandler.requestBodyMode({ method, url })
   let request: Request
+  let releaseBody: (() => void) | undefined
   if (bodyMode === 'buffered') {
     const declaredLength = req.headers['content-length']
     if (declaredLength !== undefined && Number(declaredLength) > maxRequestBodyBytes) {
@@ -105,27 +106,57 @@ export async function bridge(
       signal: abort.signal,
     })
   } else {
+    // A handler may stop reading before returning a rejection. Closing its
+    // body pipe must leave the socket open long enough to send that response.
+    const pipe = new PassThrough()
+    const fail = (error: Error): void => { pipe.destroy(error) }
+    req.on('error', fail)
+    req.once('close', () => { req.off('error', fail) })
+    const body = Readable.toWeb(pipe, { strategy: {
+      highWaterMark: pipe.readableHighWaterMark,
+      size: (chunk: Uint8Array) => chunk.byteLength,
+    } }) as ReadableStream<Uint8Array>
+    req.pipe(pipe)
+    releaseBody = () => {
+      req.unpipe(pipe)
+      pipe.destroy()
+    }
     request = new Request(url, {
       method,
       headers,
-      body: Readable.toWeb(req) as ReadableStream<Uint8Array>,
+      body,
       signal: abort.signal,
       duplex: 'half',
     } as RequestInit & { duplex: 'half' })
   }
-  const response = await apiHandler.fetch(request)
-  const requestUnread = bodyMode === 'streaming' && !req.readableEnded
-  const responseHeaders = Object.fromEntries(response.headers.entries())
-  res.writeHead(response.status, requestUnread ? { ...responseHeaders, connection: 'close' } : responseHeaders)
-  if (response.body === null) {
+  try {
+    const response = await apiHandler.fetch(request)
+    const requestUnread = bodyMode === 'streaming' && !req.readableEnded
+    const responseHeaders = Object.fromEntries(response.headers.entries())
+    res.writeHead(response.status, requestUnread ? { ...responseHeaders, connection: 'close' } : responseHeaders)
+    if (response.body !== null) await writeFetchResponseBody(response.body, res, abort.signal)
     res.end()
-    if (requestUnread) req.destroy()
-    return
+  } finally {
+    releaseBody?.()
   }
-  for await (const chunk of response.body) {
+}
+
+/**
+ * Copy a Fetch body to an HTTP response while honoring socket backpressure.
+ * @param body - Body of an admitted Fetch response.
+ * @param res - Destination with headers already written.
+ * @param signal - Downstream disconnect. The body drains without further writes after abort.
+ * @returns When the body has ended. The caller owns response termination.
+ */
+export async function writeFetchResponseBody(
+  body: ReadableStream<Uint8Array>,
+  res: Pick<BridgeServerResponse, 'destroyed' | 'off' | 'once' | 'write'>,
+  signal: AbortSignal,
+): Promise<void> {
+  for await (const chunk of body) {
     // Drain without writing after disconnect: cancelling Node multipart bodies
     // can race their producer and reject with ERR_INVALID_STATE.
-    if (abort.signal.aborted) continue
+    if (signal.aborted) continue
     // Backpressure: a false return means the socket buffer is full — wait for drain
     // instead of buffering unboundedly (slow or suspended consumers). 'close' also
     // resolves so a mid-wait disconnect cannot park this loop forever.
@@ -141,6 +172,4 @@ export async function bridge(
       })
     }
   }
-  res.end()
-  if (requestUnread) req.destroy()
 }

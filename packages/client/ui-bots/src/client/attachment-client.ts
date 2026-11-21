@@ -8,6 +8,7 @@ import type {
   BotId as BotIdType,
   BotGroupId as BotGroupIdType,
   BotGroupMessageId as BotGroupMessageIdType,
+  BotGroupMessageView,
 } from '@yharness/bots/client'
 import { bytesToBase64 } from '@yharness/util-crypto'
 import type { BotGroupAttachmentDraft } from './types.ts'
@@ -57,6 +58,27 @@ export function isBotGroupImageType(value: string): value is BotGroupImageAdmiss
 }
 
 /**
+ * Match an uploaded group message's attachment metadata against the browser drafts on retry.
+ * @param admitted - Metadata saved on the existing group message.
+ * @param drafts - Files selected by the sender in display order.
+ * @returns Whether the existing attachments can be reused for this send.
+ */
+export function groupAttachmentsMatchDrafts(
+  admitted: BotGroupMessageView['attachments'],
+  drafts: readonly BotGroupAttachmentDraft[],
+): boolean {
+  if (admitted === undefined || admitted.length !== drafts.length || admitted.length === 0) return false
+  return drafts.every((draft, index) => {
+    const current = admitted[index]
+    if (current === undefined || current.bytes !== draft.file.size) return false
+    if (current.type === 'file') return current.name === (draft.file.name || current.name)
+    return isBotGroupImageType(draft.file.type)
+      && current.mediaType === draft.file.type
+      && (draft.file.name === '' || current.name === draft.file.name || current.name === undefined)
+  })
+}
+
+/**
  * Admit each browser draft and return only opaque grant ids for the message send.
  * Images use the caller's bounded JSON admission RPC; other files use the exact
  * streaming route. The function does not persist drafts or retry side effects.
@@ -101,7 +123,7 @@ export async function admitBotGroupAttachments(
 /** Validate an image media type without treating arbitrary image MIME values as raster input. */
 function imageMediaType(value: string): BotGroupImageAdmissionRequest['image']['mediaType'] | undefined {
   return isBotGroupImageType(value)
-    ? value as BotGroupImageAdmissionRequest['image']['mediaType']
+    ? value
     : undefined
 }
 
@@ -189,7 +211,7 @@ function parseMetadata(value: unknown): BotAttachmentGrantValue['attachments'][n
     || typeof value.height !== 'number' || !Number.isSafeInteger(value.height) || value.height < 1
     || (value.name !== undefined && (typeof value.name !== 'string' || value.name.length < 1 || value.name.length > 255))) return undefined
   return {
-    type: 'image', mediaType: value.mediaType as BotGroupImageAdmissionRequest['image']['mediaType'], bytes: value.bytes,
+    type: 'image', mediaType: value.mediaType, bytes: value.bytes,
     width: value.width, height: value.height, ...(value.name === undefined ? {} : { name: value.name }),
   }
 }
@@ -204,6 +226,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function browserOrigin(): string {
-  const locationValue = globalThis.location
-  return typeof locationValue?.origin === 'string' && locationValue.origin !== '' ? locationValue.origin : 'http://dsh.internal'
+  const locationValue: unknown = Reflect.get(globalThis, 'location')
+  const origin = isRecord(locationValue) ? locationValue.origin : undefined
+  return typeof origin === 'string' && origin !== '' ? origin : 'http://dsh.internal'
 }

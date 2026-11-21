@@ -77,6 +77,14 @@ export class InputTriggerService extends Service implements InputTriggerServiceC
   }
 
   /**
+   * @param source - owning trigger source.
+   * @returns its inline icon when registered.
+   */
+  referenceIcon(source: string): InputTriggerSource['referenceIcon'] {
+    return this.live.sources.find(owner => owner.name === source)?.referenceIcon
+  }
+
+  /**
    * Resolve the per-session controller for one session scope (lazy; the
    * scope disposer removes and disposes it). Construction warms the source
    * roster once — sessions are always agent-backed, so scope birth is the

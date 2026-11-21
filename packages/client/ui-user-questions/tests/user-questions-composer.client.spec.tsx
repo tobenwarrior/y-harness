@@ -309,7 +309,7 @@ describe('QuestionComposer', () => {
     render(<QuestionComposer matched={carrier} {...kit} />)
 
     expect(screen.getByRole('radio', { name: /Engineering delivery/ }).getAttribute('aria-checked')).toBe('true')
-    expect((screen.getByLabelText(en['nav.next']) as HTMLButtonElement).disabled).toBe(false)
+    expect(screen.getByLabelText(en['nav.next'])).toHaveProperty('disabled', false)
     fireEvent.click(screen.getByRole('radio', { name: 'Research potential' }))
     expect(screen.getByText('2 / 3')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Skip' }))

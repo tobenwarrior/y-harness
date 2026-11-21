@@ -16,7 +16,7 @@
 # nested filesystem overlay supplies private spill storage and its byte limit.
 - insert:
     - id: tool-session-query
-      name: '@deepseek-ai/dsh-tool-session-query'
+      name: '@yharness/tool-session-query'
 
 - id: timeout-policy
   name: '@deepseek-ai/dsh-tool-call-timeout-policy'

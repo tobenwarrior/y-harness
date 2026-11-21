@@ -3,6 +3,7 @@
 import { Context } from '@yharness/cordis'
 import { brandString } from '@yharness/brand'
 import type { CredentialRef } from '@yharness/credentials/types'
+import type {} from '@yharness/credentials'
 import type {} from '@yharness/settings'
 import z from '@yharness/schemastery'
 import { Remote, RemoteError, TypertRemoteService } from '@yharness/typert-protocol'
@@ -78,7 +79,7 @@ function stringMember(value: Record<string, unknown>, key: string): string | und
 }
 
 function textLength(value: string): number {
-  return [...value].length
+  return Array.from(value).length
 }
 
 const CREDENTIAL_REF_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/
@@ -142,27 +143,28 @@ function readChunk(
   return new Promise((resolve, reject) => {
     const onAbort = () => {
       cleanup()
-      void reader.cancel(signal.reason).catch((error: unknown) => {
+      const reason: unknown = signal.reason
+      void reader.cancel(reason).catch((error: unknown) => {
         // The request is already aborting; the stream's cleanup result is not actionable.
         void error
       })
-      reject(signal.reason)
+      reject(reason instanceof Error ? reason : new Error('Avatar request aborted.', { cause: reason }))
     }
     const cleanup = () => { signal.removeEventListener('abort', onAbort) }
     signal.addEventListener('abort', onAbort, { once: true })
     void reader.read().then(
       (value) => { cleanup(); resolve(value) },
-      (error) => { cleanup(); reject(error) },
+      (error: unknown) => {
+        cleanup()
+        reject(error instanceof Error ? error : new Error('Avatar response stream failed.', { cause: error }))
+      },
     )
   })
 }
 
 /** Decode a bounded JSON response without buffering an untrusted provider body. */
 async function readResponsePayload(response: Response, signal: AbortSignal, maxBytes: number): Promise<unknown> {
-  // Test doubles and a body-less 204 response do not expose a reader. Real
-  // successful Images API responses have a body, so the bounded path covers
-  // all provider data that can contain an image payload.
-  if (response.body === null || response.body === undefined) return response.json()
+  if (response.body === null) return response.json()
   const reader = response.body.getReader()
   const chunks: Uint8Array[] = []
   let bytes = 0
@@ -333,7 +335,7 @@ export default class AvatarGenerationService extends TypertRemoteService {
         throw new RemoteError('avatar-generation/response-invalid', 'OpenAI returned an unreadable avatar response.', {}, { cause: error })
       }
       const entries = isRecord(payload) ? member(payload, 'data') : undefined
-      const first = Array.isArray(entries) ? entries[0] : undefined
+      const first: unknown = Array.isArray(entries) ? entries[0] : undefined
       const encoded = isRecord(first) ? stringMember(first, 'b64_json') : undefined
       if (encoded === undefined) {
         throw new RemoteError('avatar-generation/response-invalid', 'OpenAI returned no avatar image.', {})
@@ -381,11 +383,11 @@ export default class AvatarGenerationService extends TypertRemoteService {
     }
   }
 
-  private descriptionOf(request: AvatarGenerationRequest): string {
-    if (request === null || typeof request !== 'object' || typeof request.description !== 'string') {
-      throw new RemoteError('avatar-generation/invalid-request', 'Avatar description is required.', { reason: 'empty-description' })
-    }
-    const description = request.description.trim()
+  private descriptionOf(request: unknown): string {
+    const rawDescription = typeof request === 'object' && request !== null && 'description' in request
+      ? request.description
+      : undefined
+    const description = typeof rawDescription === 'string' ? rawDescription.trim() : ''
     if (description.length === 0) {
       throw new RemoteError('avatar-generation/invalid-request', 'Avatar description is required.', { reason: 'empty-description' })
     }

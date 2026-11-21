@@ -15,6 +15,7 @@ import {
   type CloudWorkspaceStatus,
 } from './cloud-workspace-document.ts'
 import type { DesktopCloudVault } from './cloud-vault-window.ts'
+import type { CloudVaultSession } from './cloud-vault.ts'
 import type { DesktopMessages } from './locale.ts'
 
 const BAR_HEIGHT = 50
@@ -121,17 +122,28 @@ export class DesktopCloudWorkspace {
 
   /** Open Vault for the active Cloud connection. */
   showVault(): void {
-    const { connection, owner, remote, target } = this
-    if (!this.selected || this.status !== 'online' || connection === undefined || owner === undefined
-      || remote === undefined || target === undefined) return
+    const { owner } = this
+    const workspace = this.ownerCloudWorkspace()
+    if (owner === undefined || workspace === undefined) return
+    this.vault.open(owner, workspace)
+  }
+
+  /** @returns The selected owner's current Cloud connection for native settings operations. */
+  ownerCloudWorkspace(): (CloudVaultSession & { readonly target: string }) | undefined {
+    const { connection, remote, target } = this
+    if (!this.selected || this.status !== 'online' || connection === undefined
+      || remote === undefined || target === undefined) return undefined
     const contents = remote.webContents
-    this.vault.open(owner, target, { kind: 'manage' }, {
+    const active = () => this.selected && this.status === 'online' && this.connection === connection && !contents.isDestroyed()
+    return {
       origin: connection.origin,
-      fetch: async (url, options) => {
-        if (this.connection !== connection || contents.isDestroyed()) throw new Error('Cloud workspace disconnected')
+      target,
+      fetch: (url, options) => {
+        if (!active()) throw new Error('Cloud workspace disconnected')
         return contents.session.fetch(url, options)
       },
-    })
+      sendVaultRequest: (payload, signal) => active() ? connection.sendVaultRequest(payload, signal) : Promise.resolve(undefined),
+    }
   }
 
   /**
@@ -339,7 +351,7 @@ export class DesktopCloudWorkspace {
       await isolated.cookies.set(cookie)
       if (!this.isPending(pending)) return
       this.authenticated = true
-      if (activeView === undefined) await this.loadWorkspace(owner, isolated, forward, target, pending)
+      if (activeView === undefined) await this.loadWorkspace(owner, isolated, forward, pending)
       if (!this.isPending(pending)) return
 
       this.status = 'online'
@@ -362,7 +374,7 @@ export class DesktopCloudWorkspace {
   }
 
   private async loadWorkspace(
-    owner: BrowserWindow, isolated: Session, forward: CloudForward, target: string, pending: AbortController,
+    owner: BrowserWindow, isolated: Session, forward: CloudForward, pending: AbortController,
   ): Promise<void> {
     const { origin } = forward
     isolated.setPermissionCheckHandler((_contents, permission) => permission === 'clipboard-sanitized-write')
@@ -403,13 +415,15 @@ export class DesktopCloudWorkspace {
       const loginUseRequestId = cloudWebsiteLoginUseRequestId(origin, url)
       if (loginUseRequestId !== undefined) {
         event.preventDefault()
-        this.vault.open(owner, target, { kind: 'login-use', id: loginUseRequestId })
+        const workspace = this.ownerCloudWorkspace()
+        if (workspace !== undefined) this.vault.open(owner, workspace, { kind: 'login-use', id: loginUseRequestId })
         return
       }
       const requestId = cloudVaultRequestId(origin, url)
       if (requestId === undefined) return
       event.preventDefault()
-      this.vault.open(owner, target, { kind: 'request', id: requestId })
+      const workspace = this.ownerCloudWorkspace()
+      if (workspace !== undefined) this.vault.open(owner, workspace, { kind: 'request', id: requestId })
     })
     const responseStatus = new Promise<number>((resolve) => {
       contents.once('did-navigate', (_event, _url, status) => { resolve(status) })

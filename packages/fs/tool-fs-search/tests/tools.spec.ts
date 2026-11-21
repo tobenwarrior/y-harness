@@ -24,6 +24,8 @@ import { MAX_TIMER_DELAY_MS } from '@yharness/timeout'
 import { rgPath } from '@vscode/ripgrep'
 import { SpillLocator, SpillStore } from '@yharness/spill'
 import type { SaveTextSpill, SpillRef } from '@yharness/spill'
+import { bindManagedBotExecution, createManagedBotExecution } from '@yharness/sandbox-policy'
+import type { ManagedBotExecution } from '@yharness/sandbox-policy'
 import * as ToolFsSearch from '@yharness/tool-fs-search'
 import {
   buildGlobCommand,
@@ -398,6 +400,59 @@ describe('workdir derivation and signal forwarding', () => {
     // A non-agent caller takes the same default.
     await call(ctx, 'grep', { pattern: 'x' })
     expect(subprocess.spawns[1]?.cwd).toBe(process.cwd())
+  })
+
+  it('routes managed searches through the managed subprocess and workspace', async () => {
+    const { ctx, subprocess } = await setup()
+    subprocess.handler = () => subprocess.spawns.length === 0
+      ? runResult('nested/a.ts\n')
+      : runResult('', { exitCode: 1 })
+    const managedContext = new Context()
+    const managed = createManagedBotExecution({
+      context: managedContext,
+      shell: {} as ManagedBotExecution['shell'],
+      fs: {} as ManagedBotExecution['fs'],
+      subprocess,
+      sandboxPolicy: {
+        defaultMode: 'workspace-write',
+        resolve: () => ({ mode: 'workspace-write', workspaceRoot: '/managed/workspace' }),
+      },
+      workspaceRoot: '/managed/workspace',
+    })
+    const stop = bindManagedBotExecution(managedContext, managed)
+    const managedAgent = {
+      ctx: managedContext,
+      session: { header: { id: 'managed-session', cwd: '/host/workspace' } },
+    }
+    try {
+      const result = await call(ctx, 'glob', { pattern: '*.ts', path: 'nested' }, { agent: managedAgent })
+      expect(result.isError).toBe(false)
+      expect(subprocess.spawns[0]?.cwd).toBe('/managed/workspace')
+      expect(subprocess.spawns[0]?.argv[0]).toBe('rg')
+      expect(subprocess.spawns[0]?.argv.at(-1)).toBe('/managed/workspace/nested')
+
+      // A managed grep without a target keeps its fixed argv unchanged; the
+      // managed executable and cwd still come from the isolated provider.
+      const grep = await call(ctx, 'grep', { pattern: 'needle' }, { agent: managedAgent })
+      expect(grep.isError).toBe(false)
+      expect(subprocess.spawns[1]?.argv).toEqual(['rg', '--no-config', '--json', '--regexp=needle'])
+      expect(subprocess.spawns[1]?.cwd).toBe('/managed/workspace')
+
+      // A direct owner call with a trailing separator covers the optional
+      // target omission used by the argv router without bypassing the spawn seam.
+      const direct = {
+        signal: testToolSignal,
+        callId: ToolCallId('managed-trailing-separator'),
+        name: 'glob',
+        arguments: {},
+        agent: managedAgent,
+      } as never
+      await runRipgrep(ctx, direct, 'glob', ['--'], 1_000_000, 3_000, 64 * 1024)
+      expect(subprocess.spawns[2]?.argv).toEqual(['rg', '--no-config', '--'])
+      expect(subprocess.spawns[2]?.cwd).toBe('/managed/workspace')
+    } finally {
+      stop()
+    }
   })
 
   it('spawns the packaged ripgrep binary with --no-config, the fixed argv, and budgeted collect streams', async () => {

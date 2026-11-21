@@ -324,7 +324,7 @@ export interface Config {
 ## `@yharness/api-workspace-files`
 
 - `inject`: `fs` · `sandboxPolicy` · `sessions` · `typert`
-- `source`: [`packages/api/workspace-files/src/index.ts:70`](../packages/api/workspace-files/src/index.ts)
+- `source`: [`packages/api/workspace-files/src/index.ts:111`](../packages/api/workspace-files/src/index.ts)
 
 ```ts config-catalog
 /** Deployment caps on one page or one listing. */
@@ -389,7 +389,7 @@ export interface Config {
 
 ## `@yharness/avatar-generation`
 
-- `source`: [`packages/agents/avatar-generation/src/index.ts:28`](../packages/agents/avatar-generation/src/index.ts)
+- `source`: [`packages/agents/avatar-generation/src/index.ts:29`](../packages/agents/avatar-generation/src/index.ts)
 
 ```ts config-catalog
 /** Deployment configuration for the OpenAI Images API adapter. */
@@ -467,13 +467,15 @@ export type Config = LocalConfig
 ## `@yharness/bots`
 
 - `inject`: `agents` · `storageDomain` · `sessionController` · `sessions` · `attachments` · `systemPrompt` · `tools`
-- `source`: [`packages/agents/bots/src/index.ts:536`](../packages/agents/bots/src/index.ts)
+- `source`: [`packages/agents/bots/src/index.ts:659`](../packages/agents/bots/src/index.ts)
 
 ```ts config-catalog
 /** Bot service configuration. */
 export interface BotServiceConfig {
   /** Stable owner key selected by the Host composition. */
   readonly ownerId?: string
+  /** Absolute path to an operator-controlled, read-only Grok attachment vault. */
+  readonly grokHistoryAttachmentVault?: string
   /** Separate self-hosted collaborator access policy. */
   readonly shared?: BotSharedConfig
 }
@@ -508,7 +510,7 @@ export interface BotSharedConfig {
 ## `@yharness/client-connection`
 
 - `inject`: `credentials`
-- `source`: [`packages/client/connection/src/index.ts:121`](../packages/client/connection/src/index.ts)
+- `source`: [`packages/client/connection/src/index.ts:122`](../packages/client/connection/src/index.ts)
 
 ```ts config-catalog
 /** Browser authentication, request limits, and connection recovery configuration. */
@@ -1360,7 +1362,7 @@ export interface Config {
 
 ## `@yharness/fs-local`
 
-- `source`: [`packages/fs/fs-local/src/index.ts:51`](../packages/fs/fs-local/src/index.ts)
+- `source`: [`packages/fs/fs-local/src/index.ts:54`](../packages/fs/fs-local/src/index.ts)
 
 ```ts config-catalog
 /** Configuration for the local filesystem backend. */
@@ -2242,7 +2244,7 @@ export interface Config {
 
 ## `@yharness/office-to-pdf`
 
-- `source`: [`packages/document/office-to-pdf/src/index.ts:31`](../packages/document/office-to-pdf/src/index.ts)
+- `source`: [`packages/document/office-to-pdf/src/index.ts:30`](../packages/document/office-to-pdf/src/index.ts)
 
 ```ts config-catalog
 /** Provider concurrency and kit rendering/font configuration. */
@@ -2434,7 +2436,7 @@ export interface Config {
 ## `@yharness/provider-config-sync`
 
 - `inject`: `settings` · `profileContext`
-- `source`: [`packages/settings/provider-config-sync/src/index.ts:21`](../packages/settings/provider-config-sync/src/index.ts)
+- `source`: [`packages/settings/provider-config-sync/src/index.ts:28`](../packages/settings/provider-config-sync/src/index.ts)
 
 ```ts config-catalog
 /** Pairing is explicit; no shared location is selected by default. */
@@ -2616,7 +2618,7 @@ export interface Config {
 
 - `inject`: `sessionProjections`
 - `refs`: [`SandboxMode`](subsystems/sandbox.md)
-- `source`: [`packages/sandbox/sandbox-policy/src/index.ts:71`](../packages/sandbox/sandbox-policy/src/index.ts)
+- `source`: [`packages/sandbox/sandbox-policy/src/index.ts:78`](../packages/sandbox/sandbox-policy/src/index.ts)
 
 ```ts config-catalog
 /**
@@ -3018,6 +3020,8 @@ export interface Config {
   mapStateDir?: string
   /** Absolute private directory where automatically downloaded revisions are published. */
   overlayRoot?: string
+  /** Check for and apply upstream revisions in the background. Defaults to true. */
+  autoUpdate?: boolean
 }
 ```
 <!-- END GENERATED config-catalog:@yharness/skill-compound -->
@@ -3028,7 +3032,7 @@ export interface Config {
 ## `@yharness/skill-filesystem`
 
 - `inject`: `skills`
-- `source`: [`packages/skill/skill-filesystem/src/index.ts:49`](../packages/skill/skill-filesystem/src/index.ts)
+- `source`: [`packages/skill/skill-filesystem/src/index.ts:50`](../packages/skill/skill-filesystem/src/index.ts)
 
 ```ts config-catalog
 /** Local filesystem skill provider configuration. */
@@ -3757,7 +3761,7 @@ export interface Config {
 ## `@yharness/tool-bash`
 
 - `inject`: `tools` · `shell` · `systemPrompt` · `shellEnv`
-- `source`: [`packages/shell/tool-bash/src/index.ts:37`](../packages/shell/tool-bash/src/index.ts)
+- `source`: [`packages/shell/tool-bash/src/index.ts:38`](../packages/shell/tool-bash/src/index.ts)
 
 ```ts config-catalog
 /** Configuration for the bash tool. */
@@ -3946,7 +3950,7 @@ export interface Config {
 ## `@yharness/tool-present`
 
 - `inject`: `tools` · `fs` · `sessionProjections`
-- `source`: [`packages/deliverables/tool-present/src/index.ts:15`](../packages/deliverables/tool-present/src/index.ts)
+- `source`: [`packages/deliverables/tool-present/src/index.ts:16`](../packages/deliverables/tool-present/src/index.ts)
 
 ```ts config-catalog
 /** Per-call delivery limit. */
@@ -3993,7 +3997,7 @@ export interface Config {
 ## `@yharness/tool-pwsh-persistent`
 
 - `inject`: `tools` · `terminals`
-- `source`: [`packages/shell/tool-pwsh-persistent/src/index.ts:457`](../packages/shell/tool-pwsh-persistent/src/index.ts)
+- `source`: [`packages/shell/tool-pwsh-persistent/src/index.ts:517`](../packages/shell/tool-pwsh-persistent/src/index.ts)
 
 ```ts config-catalog
 /** Configuration for the persistent pwsh tool. */
@@ -4407,7 +4411,7 @@ export interface WebRuntimeConfig {
 ## `@yharness/web-app`
 
 - `inject`: `webServer`
-- `source`: [`packages/bundle/web-app/src/index.ts:52`](../packages/bundle/web-app/src/index.ts)
+- `source`: [`packages/bundle/web-app/src/index.ts:60`](../packages/bundle/web-app/src/index.ts)
 
 ```ts config-catalog
 /** Plugin config: composed deployment settings plus per-invocation command-line values. */
@@ -4433,6 +4437,55 @@ export interface Config {
   publicUrl?: string
   /** Explicit `--trusted-host` authorities from this invocation. */
   trustedHosts: string[]
+  /** Rootless computers assigned to Bots by the private VPS installation. */
+  botComputers?: {
+    /** Owner-only runtime root for the installation. */
+    root: string
+    /** Locally built desktop image. */
+    image: string
+    /** Exact Bot ids assigned isolated VPS Computers. Omit or use null to assign every Bot. */
+    bots?: string[] | null
+    /** Exact selected Bot ids that receive only a private Computer, not a VPS workspace. */
+    desktopOnlyBots?: string[]
+    /** Give Bots outside an explicit allowlist a private desktop, terminal, and file panel while preserving their Session workspace. */
+    desktopForUnlistedBots?: boolean
+    /** Default shared workspace access. Omit to default off, or set null to disable sharing and owner changes. */
+    sharedWorkspace?: {
+      /** Exact default participants. Omit or use null for the Bots selected by botComputers.bots. */
+      bots?: string[] | null
+    } | null
+    /** Direct file transfer limits for Bot workspaces. */
+    uploads?: {
+      /** Largest allowed file in bytes. */
+      maxBytes?: number
+      /** Free destination space to retain in bytes. */
+      reserveBytes?: number
+      /** Maximum transfer lifetime in milliseconds. */
+      timeoutMs?: number
+    }
+    /** Exact private Computer Bots with outbound network access. Omit or use null to keep the Firefox defaults. */
+    network?: {
+      /** Private Computer Bot ids. An empty list keeps all private desktops and terminals offline. */
+      bots: string[]
+    } | null
+    /** Firefox for selected private Computer Bots. */
+    browser?: {
+      /** Exact Bot ids allowed to run the browser desktop. */
+      bots: string[]
+      /** Locally built browser desktop image. */
+      image: string
+      /** Absolute path to the prepared owner-only browser policy. */
+      seccompProfile: string
+    } | null
+    /** Cloud-managed browser broker for selected private Computer Bots. */
+    isolatedBrowser?: VpsIsolatedBrowserConfig | null
+  } | null
+  /** Exact Linux service grants, selected by the VPS owner. */
+  vpsServices?: VpsServiceAccess[]
+  /** Private read-only journal socket and its owner Bot allowlist. */
+  vpsJournal?: VpsJournalConfig | null
+  /** Vault request broker configuration. Linux with managed Bot computers uses the local Vault unless explicitly disabled. */
+  vpsVaultRequests?: VpsVaultRequestsConfig | null
   /** Opt in to the private Linux desktop using its X display and owner-only authority file. */
   computer?: {
     /** Local X11 display identifier for the private desktop. */
@@ -4440,6 +4493,70 @@ export interface Config {
     /** Absolute path to the file that authenticates the private display. */
     authorityPath: string
   } | null
+}
+
+/** Trusted Web Host configuration for one isolated browser broker socket. */
+export interface VpsIsolatedBrowserConfig {
+  /** Absolute Unix-domain socket path owned by the Cloud browser service. */
+  readonly socketPath: string
+  /** Exact Bot roster ids allowed to use the browser service. */
+  readonly bots: string[]
+  /** Installer-prepared roster file to enable private browsing for each eligible owner Bot. */
+  readonly ownerRosterPath?: string
+  /** Bot roster ids also allowed to use separate browsers in their shared chats. */
+  readonly sharedBots?: string[]
+  /** Whether the owner-approved saved-login flow is available to these Bots. */
+  readonly savedLogins?: boolean
+}
+
+/** One exact Linux service and the Bots allowed to inspect it. */
+export interface VpsServiceAccess {
+  /** Exact systemd service name. */
+  readonly unit: string
+  /** System manager or the Web service account's user manager. */
+  readonly scope: 'system' | 'user'
+  /** Bot roster IDs with this grant. */
+  readonly bots: string[]
+  /** Allow a single restart after the owner accepts the request. */
+  readonly restart?: boolean
+}
+
+/** Trusted owner configuration for one read-only VPS journal socket. */
+export interface VpsJournalConfig {
+  /** Absolute Unix-domain socket path owned by the VPS journal service. */
+  readonly socketPath: string
+  /** Bot roster ids allowed to read this journal. */
+  readonly bots: string[]
+  /** Maximum wall-clock time for one socket read. Defaults to five seconds. */
+  readonly timeoutMs?: number
+  /** Maximum response frame size in bytes. Defaults to 256 KiB. */
+  readonly maxBytes?: number
+  /** Maximum entries retained in each response array. Defaults to 256. */
+  readonly maxEntries?: number
+}
+
+/** Trusted Web Host configuration for the VPS Vault request listener. */
+export interface VpsVaultRequestsConfig {
+  /** Absolute path to the local, Cloud-account-only broker socket. */
+  readonly socketPath: string
+  /** Explicit Web profile grants. Omit or set to null to use the Vault's current Bot-specific grants. */
+  readonly grants?: VpsVaultGrant[] | null
+  /** Allow explicitly granted shared requests. The standard Vault-managed broker enables this by default. */
+  readonly sharedRequests?: boolean
+}
+
+/** A credential request grant for a single owner Bot. */
+export interface VpsVaultGrant extends VpsVaultCredential {
+  /** Exact Bot roster ID. */
+  readonly bot: string
+}
+
+/** One exact service and key a Bot can ask its owner to enter. */
+export interface VpsVaultCredential {
+  /** Administrator-enabled system service receiving the key. */
+  readonly unit: string
+  /** Exact key name within the service's private credential directory. */
+  readonly name: string
 }
 ```
 <!-- END GENERATED config-catalog:@yharness/web-app -->

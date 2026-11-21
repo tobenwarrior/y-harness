@@ -418,13 +418,8 @@ export interface LaunchOptions {
     default: string
     definitions?: import('@yharness/agent-preset-registry').PresetDefinition[]
   }
-  /**
-   * Patch the telemetry exporter URL while preserving the shipped enabled
-   * setting. A scenario-owned loopback collector contains all fixture uploads.
-   */
-  telemetryUrl?: string
-  /** Mode when telemetryUrl is supplied; defaults to FEEDBACK_ONLY without enabling a disabled row. */
-  telemetryMode?: 'FEEDBACK_ONLY'
+  /** Enable feedback exports to a scenario-owned collector bound to 127.0.0.1. */
+  feedbackCollectorPort?: number
   /** SDK batch cadence for a scenario-owned collector; omitted to retain the SDK default. */
   telemetryScheduledDelayMillis?: number
   /**
@@ -591,10 +586,7 @@ export async function launchWebScaffold(options: LaunchOptions = {}): Promise<We
     : (typeof options.extraOverlayPath === 'string' ? [options.extraOverlayPath] : options.extraOverlayPath)
       .flatMap(path => loadOverlayPatches('web e2e scaffold', path))
   const composedRows = composeEntries([basePatches, surfacePatches, extraOverlayPatches])
-  const webRuntimeConfig = composedRows.find(row => row.id === 'web-runtime')?.config as {
-    surfaceContext?: boolean
-  } | undefined
-  const surfaceContext = webRuntimeConfig?.surfaceContext !== false
+  const webRuntimeConfig = composedRows.find(row => row.id === 'web-runtime')?.config as Record<string, unknown> | undefined
   // The scaffold's own overrides, above every bundle layer like `--patch` overlays.
   const overlayPatches: PatchOptions[] = [
     // Without HMR the profile applies configuration changes at its next start.
@@ -631,22 +623,50 @@ export async function launchWebScaffold(options: LaunchOptions = {}): Promise<We
         watch: false,
       },
     },
+    // These recorded owners pin the catalog used to produce their current-writer output.
+    {
+      id: 'skill-compound',
+      config: {
+        overlayRoot: join(workspaceCwd, '.compound-overlay'),
+        autoUpdate: false,
+        ...mode !== 'record' && replayFixture !== undefined
+          && [
+            'permission-policy-context',
+            'ptc-escalation-approved',
+            'question-composer',
+            'feedback-command',
+            'web-search-round',
+            'turn-tail-actions',
+            'file-upload-round',
+            'ptc-round',
+            'changed-files-turn',
+            'code-language',
+            'approval-composer',
+            'plan-review',
+            'present',
+            'lifecycle-chrome',
+            'steering',
+            'live-interactions',
+            'goal-multi-turn-actions',
+          ].includes(basename(dirname(replayFixture)))
+          ? { assetRoot: join(REPO_ROOT, 'apps/web/tests/fixtures/replay-compound-skills') }
+          : {},
+      },
+    },
     // fs/bash cwd default to process.cwd(); the gateway injects the same
     // value into session.cwd — chdir below anchors all three to the temp
     // workspace, keeping the composition untouched.
     { id: 'agent-instructions', disabled: true },
     { id: 'session-title-llm', disabled: true },
-    // Fixture sessions must never leave the process: the shipped row defaults
-    // to the production OTLP endpoint (or whatever DSH_TELEMETRY_OTLP_URL
-    // names in the ambient environment). A scenario with a local collector
-    // preserves the shipped disabled setting instead of overriding it.
-    options.telemetryUrl === undefined
+    // Only feedback scenarios can export Session data, to their own loopback collector.
+    options.feedbackCollectorPort === undefined
       ? { id: 'session-telemetry-otel', disabled: true }
       : {
         id: 'session-telemetry-otel',
+        disabled: false,
         config: {
-          mode: options.telemetryMode ?? 'FEEDBACK_ONLY',
-          exporter: { url: options.telemetryUrl },
+          mode: 'FEEDBACK_ONLY',
+          exporter: { url: `http://127.0.0.1:${String(options.feedbackCollectorPort)}/v1/logs` },
           ...(options.telemetryScheduledDelayMillis === undefined ? {} : {
             processor: { scheduledDelayMillis: options.telemetryScheduledDelayMillis },
           }),
@@ -665,9 +685,7 @@ export async function launchWebScaffold(options: LaunchOptions = {}): Promise<We
     // The bundle's web-runtime row resolves the same built dist under test
     // (apps/web IS @yharness/web-frontend); native browser opening and the
     // URL line are disabled because this scaffold owns its Playwright browser.
-    // Preserve the composed surface-context choice because a patch replaces
-    // the row's complete config.
-    { id: 'web-runtime', config: { openBrowser: false, printUrl: false, surfaceContext } },
+    { id: 'web-runtime', config: { ...webRuntimeConfig, openBrowser: false, printUrl: false } },
     ...publicHost === undefined && options.remoteAuthority === undefined
       ? []
       : [{

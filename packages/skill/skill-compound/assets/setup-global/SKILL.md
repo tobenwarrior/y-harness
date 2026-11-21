@@ -6,4 +6,4 @@ license: MIT
 
 # Setup globally
 
-Run [Compound](../compound/SKILL.md) as an explicit `compound setup global` request. Follow global activation only; this shortcut does not assess or clean projects.
+Follow [saved defaults](../compound/references/activation.md#saved-defaults) for global activation. Resolve `<installed-skill-dir>` to the sibling `compound` directory. Report saved guidance and optional map access separately.

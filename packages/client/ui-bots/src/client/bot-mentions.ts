@@ -8,7 +8,7 @@
  */
 export function mentionQueryAt(text: string, cursor: number): string | null {
   const match = /(?:^|\s)@([^\s@]*)$/.exec(text.slice(0, cursor))
-  return match === null ? null : match[1] ?? ''
+  return match === null ? null : match[1] as string
 }
 
 function escapeName(name: string): string {
@@ -43,7 +43,7 @@ export function resolveMentionTargets(
 ): readonly string[] | undefined {
   const known = [...bots, ...selections]
   for (const match of text.matchAll(/(?:^|\s)@([^\s@]+)/gu)) {
-    const query = (match[1] ?? '').replace(/[.,!?;:]+$/u, '').toLocaleLowerCase()
+    const query = (match[1] as string).replace(/[.,!?;:]+$/u, '').toLocaleLowerCase()
     if (query === '') continue
     const tail = text.slice(match.index + match[0].indexOf('@'))
     const possible = known.some(bot => bot.name.toLocaleLowerCase().startsWith(query))

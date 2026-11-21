@@ -2,3 +2,6 @@ interface:
   display_name: "Compound: Global status"
   short_description: "Check global guidance without changing settings"
   default_prompt: "Use $status-global to check my Compound global defaults."
+
+policy:
+  allow_implicit_invocation: false

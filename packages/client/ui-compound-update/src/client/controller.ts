@@ -110,6 +110,11 @@ export class CompoundUpdateController {
   private request: AbortController | undefined
   private applyRequest: AbortController | undefined
 
+  /** @param fetchHost - host HTTP carrier, defaulting to browser HTTP. */
+  constructor(
+    private readonly fetchHost: (input: string, init: RequestInit) => Promise<Response> = (input, init) => globalThis.fetch(input, init),
+  ) {}
+
   /** Read the Host route, retaining the previous reading until it answers. */
   async refresh(): Promise<void> {
     this.request?.abort()
@@ -117,7 +122,7 @@ export class CompoundUpdateController {
     this.request = request
     this.patch({ phase: 'loading' })
     try {
-      const response = await fetch(UPDATE_ROUTE, { signal: request.signal })
+      const response = await this.fetchHost(UPDATE_ROUTE, { signal: request.signal })
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
       const value: unknown = await response.json()
       if (!isUpdateStatus(value)) throw new Error('the Host answered with an unrecognized status')
@@ -157,7 +162,7 @@ export class CompoundUpdateController {
     this.applyRequest = request
     this.patch({ apply: { phase: 'running', error: null } })
     try {
-      const response = await fetch(APPLY_ROUTE, { method: 'POST', signal: request.signal })
+      const response = await this.fetchHost(APPLY_ROUTE, { method: 'POST', signal: request.signal })
       if (isAborted(request)) return
       const value: unknown = await response.json()
       if (isAborted(request)) return

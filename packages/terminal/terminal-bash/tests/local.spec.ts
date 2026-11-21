@@ -377,6 +377,7 @@ describe.skipIf(!hasPwsh)('terminal-bash pwsh real shell', () => {
       timeoutMs: 8_000,
     }, 'pwsh')
     const created = await ctx.terminals.spawn(agent, { type: 'shell', name: 'main', cwd: root })
+    const read = () => ctx.terminals.read(agent, created.sessionId, { offset: 0, count: 100 }).text
     // The bootstrap itself must have pinned both encodings: the session byte
     // decode is UTF-8, so an un-pinned console writing its host code page
     // garbles every non-ASCII byte that follows.
@@ -384,16 +385,17 @@ describe.skipIf(!hasPwsh)('terminal-bash pwsh real shell', () => {
       text: '"console=" + [Console]::OutputEncoding.WebName + " out=" + $OutputEncoding.WebName',
       submit: true,
     })
-    const pinnedResult = await pinned.done
-    expect(pinnedResult.viewport).toContain('console=utf-8 out=utf-8')
+    await pinned.done
+    await expect.poll(read, { timeout: 8_000 }).toContain('console=utf-8 out=utf-8')
     // Char codes keep the submitted line ASCII-only, so the assertion is a
     // pure output-decode check.
     const sent = ctx.terminals.startSend(agent, created.sessionId, {
       text: "[Console]::Write([char]0x4E2D + [char]0x6587 + ' encoding-ok')",
       submit: true,
     })
-    const result = await sent.done
-    expect(result.viewport).toContain('\u{4E2D}\u{6587} encoding-ok')
+    await sent.done
+    // Readiness can settle before the PTY delivers the last bytes to scrollback.
+    await expect.poll(read, { timeout: 8_000 }).toContain('\u{4E2D}\u{6587} encoding-ok')
     await ctx.terminals.kill(agent, created.sessionId)
   }, 30_000)
 })

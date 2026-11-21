@@ -16,7 +16,7 @@ import { z } from 'zod'
 import AgentRegistry from '@yharness/agent'
 import { AttachmentStore } from '@yharness/attachment'
 import { agentPresetProjectionDefinition } from '@yharness/agent-preset-registry'
-import { createUserMessage } from '@yharness/llm'
+import { createUserMessage, ReasoningEffortId, ServiceTierId } from '@yharness/llm'
 import SessionStore, { SESSION_FORMAT_VERSION, SessionId, SessionLogOffset, SessionSeq } from '@yharness/session'
 import type { Session, SessionEvent, SessionHeader, UserMessage } from '@yharness/session'
 import SessionProjectionRegistry from '@yharness/session-projection'
@@ -220,6 +220,37 @@ describe('session.history projections block', () => {
     expect(ctx.sessionProjections.snapshot(session).values.modelSelection).toEqual({
       lastUsed: selected,
       next: selected,
+    })
+  })
+
+  it('projects explicit reasoning and service tiers from a request header', async () => {
+    const { ctx, session } = await harness(true)
+    remote(ctx)
+    session.append('request/header', {
+      header: {
+        config: {
+          provider: 'p',
+          model: 'used',
+          reasoningEffort: ReasoningEffortId('high'),
+          serviceTier: ServiceTierId('priority'),
+        },
+      },
+      reason: 'initial',
+    })
+
+    expect(ctx.sessionProjections.snapshot(session).values.modelSelection).toEqual({
+      lastUsed: {
+        provider: 'p',
+        model: 'used',
+        reasoningEffort: 'high',
+        serviceTier: 'priority',
+      },
+      next: {
+        provider: 'p',
+        model: 'used',
+        reasoningEffort: 'high',
+        serviceTier: 'priority',
+      },
     })
   })
 

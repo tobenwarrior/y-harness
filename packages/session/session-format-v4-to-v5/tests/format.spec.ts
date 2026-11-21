@@ -62,7 +62,7 @@ describe('released V5 Session format', () => {
     const physicalHeader = releasedV5SessionFormatCodec.encodeHeader(v5Header, 0)
     const decoder = releasedV5SessionFormatCodec.createDecoder(physicalHeader, 'recoverable')
     const output = new SessionFormatEventCollector()
-    expect(() => decoder.decodeRow(malformedGroupMessage, output)).toThrow(
+    expect(() => { decoder.decodeRow(malformedGroupMessage, output) }).toThrow(
       'format v5 bot-group-message source requires string groupId and messageId',
     )
     expect(() => restoreReleasedV5Artifact({
@@ -103,31 +103,31 @@ describe('released V5 Session format', () => {
       event('user/message', null),
       event('system/message', {}),
     ]) {
-      expect(() => assertV5MessageSources(candidate)).not.toThrow()
+      expect(() => { assertV5MessageSources(candidate) }).not.toThrow()
     }
     for (const candidate of [undefined, null, {}, { kind: 'user' }]) {
-      expect(() => assertV5MessageSources(event('user/message', { ...message, source: candidate }))).not.toThrow()
+      expect(() => { assertV5MessageSources(event('user/message', { ...message, source: candidate })) }).not.toThrow()
     }
     for (const candidate of [
       { kind: 'bot-group-message' },
       { kind: 'bot-group-message', groupId: 1, messageId: 'message-1' },
       { kind: 'bot-group-message', groupId: 'group-1', messageId: 1 },
     ]) {
-      expect(() => assertV5MessageSources(event('user/message', { ...message, source: candidate }))).toThrow(
+      expect(() => { assertV5MessageSources(event('user/message', { ...message, source: candidate })) }).toThrow(
         'format v5 bot-group-message source requires string groupId and messageId',
       )
     }
-    expect(() => assertV5SourceRowAdmission(null)).not.toThrow()
-    expect(() => assertV5SourceRowAdmission({ type: 'user/message', data: null })).not.toThrow()
-    expect(() => assertV5SourceRowAdmission({ type: 'system/message', data: {} })).not.toThrow()
-    expect(() => assertV5SourceRowAdmission({ type: 'agent/inbox/spliced', data: { inserted: false } })).not.toThrow()
-    expect(() => assertV5SourceRowAdmission({ type: 'agent/inbox/spliced', data: { inserted: [null, message] } })).not.toThrow()
-    expect(() => assertV5SourceRowAdmission({ type: 'session/title-llm-request', data: { messages: [message] } })).not.toThrow()
-    expect(() => assertV5SourceRowAdmission({ type: 'future/event', data: { source } })).not.toThrow()
+    expect(() => { assertV5SourceRowAdmission(null) }).not.toThrow()
+    expect(() => { assertV5SourceRowAdmission({ type: 'user/message', data: null }) }).not.toThrow()
+    expect(() => { assertV5SourceRowAdmission({ type: 'system/message', data: {} }) }).not.toThrow()
+    expect(() => { assertV5SourceRowAdmission({ type: 'agent/inbox/spliced', data: { inserted: false } }) }).not.toThrow()
+    expect(() => { assertV5SourceRowAdmission({ type: 'agent/inbox/spliced', data: { inserted: [null, message] } }) }).not.toThrow()
+    expect(() => { assertV5SourceRowAdmission({ type: 'session/title-llm-request', data: { messages: [message] } }) }).not.toThrow()
+    expect(() => { assertV5SourceRowAdmission({ type: 'future/event', data: { source } }) }).not.toThrow()
 
     const opaqueDeveloper = { type: 'developer/message', ignorable: true, data: null }
-    expect(() => assertV5RowAdmission(opaqueDeveloper)).not.toThrow()
-    expect(() => assertV5RowAdmission(opaqueDeveloper, new Set(['developer/message']))).toThrow()
+    expect(() => { assertV5RowAdmission(opaqueDeveloper) }).not.toThrow()
+    expect(() => { assertV5RowAdmission(opaqueDeveloper, new Set(['developer/message'])) }).toThrow()
   })
 
   it('migrates V4 headers and events without rewriting group-source metadata', () => {
@@ -164,7 +164,7 @@ describe('released V5 Session format', () => {
   })
 
   it('rejects headers from another generation', () => {
-    expect(() => assertReleasedV5Header(v4Header)).toThrow('expected format v5 header')
+    expect(() => { assertReleasedV5Header(v4Header) }).toThrow('expected format v5 header')
     expect(() => releasedV5SessionFormatCodec.decodeHeader({ type: 'session', ...v4Header })).toThrow('v5 physical')
   })
 })

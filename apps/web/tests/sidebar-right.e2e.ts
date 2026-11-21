@@ -13,10 +13,7 @@
 // empty right edge is asserted first and the session-bound cases follow in a
 // nested block that seeds one turn.
 //
-// Copy is asserted in English because this page advertises English, which is
-// itself the point: every string in this column now comes from the dictionary,
-// so an English page renders English. The Chinese draft the product ships is
-// asserted, and captured for review, on its own page at the end.
+// Copy is asserted in English for both English and Chinese browser locales.
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -1135,12 +1132,8 @@ describe('web e2e: shipped right Sidebar', () => {
       expect(tripwire.warnings).toEqual([])
     })
 
-    // The product ships Chinese; the cases above advertise English so their role
-    // locators stay stable. This is the other half of the same seam, and the
-    // screenshot it takes is what the copy draft gets reviewed from. It lives in
-    // this block because a settled session is its precondition too — a case that
-    // depends on a sibling block's setup passes only in the right order.
-    it('renders the shipped Chinese copy on a Chinese page', async () => {
+    // A Chinese browser locale falls back to the shipped English copy.
+    it('renders English copy for a Chinese browser locale', async () => {
       const zhPage = await browser.newPage({ viewport: { width: 1680, height: 1000 }, locale: ZH_BROWSER_LOCALE })
       await zhPage.addInitScript(() => { Object.defineProperty(navigator, 'platform', { configurable: true, value: 'MacIntel' }) })
       const zhTripwire = watchConsole(zhPage)
@@ -1155,9 +1148,9 @@ describe('web e2e: shipped right Sidebar', () => {
         const column = zhPage.locator('[data-rightbar-col]')
         await expandOf(zhPage).waitFor({ timeout: 20_000 })
         await expandOf(zhPage).click()
-        await expect.poll(async () => await tabTitles(column)).toEqual(['\u{5F00}\u{59CB}'])
+        await expect.poll(async () => await tabTitles(column)).toEqual(['Start'])
         await column.locator('[data-sidebar-right-guide-entry="files"]').click()
-        await expect.poll(async () => await tabTitles(column)).toEqual(['\u{6587}\u{4EF6}'])
+        await expect.poll(async () => await tabTitles(column)).toEqual(['Files'])
         await column.locator('[data-dockkit-add-tab]').click()
 
         const guide = column.locator('[data-sidebar-right-guide]')
@@ -1166,9 +1159,9 @@ describe('web e2e: shipped right Sidebar', () => {
         // the column has the width, and a screenshot taken mid-transition reads
         // as a layout defect that is not there.
         expect(await width(column)).toBeGreaterThan(300)
-        await expect.poll(async () => await tabTitles(column)).toEqual(['\u{6587}\u{4EF6}', '\u{5F00}\u{59CB}'])
+        await expect.poll(async () => await tabTitles(column)).toEqual(['Files', 'Start'])
         await expect.poll(async () => await guide.locator('[data-sidebar-right-guide-entry="files"]').innerText())
-          .toBe('\u{5DE5}\u{4F5C}\u{533A}\u{6587}\u{4EF6}\n\u{6D4F}\u{89C8}\u{4F1A}\u{8BDD}\u{5DE5}\u{4F5C}\u{533A}\u{7684}\u{6587}\u{4EF6}\n⌥\n⌘\nP')
+          .toBe('Workspace files\nBrowse files in this session\'s workspace\n⌥\n⌘\nP')
         const fileEntry = guide.locator('[data-sidebar-right-guide-entry="files"]')
         const terminalEntry = guide.locator('[data-sidebar-right-guide-entry="terminal"]')
         for (const entry of [fileEntry, terminalEntry]) {
@@ -1183,7 +1176,7 @@ describe('web e2e: shipped right Sidebar', () => {
           expect(await action.evaluate(node => getComputedStyle(node).backgroundColor)).not.toBe('rgba(0, 0, 0, 0)')
         }
         await terminalActions.first().hover()
-        await shot(zhPage, '05-guide-copy-zh')
+        await shot(zhPage, '05-guide-copy-en-fallback')
 
         expect(zhTripwire.pageErrors).toEqual([])
         expect(zhTripwire.warnings).toEqual([])

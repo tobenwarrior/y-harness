@@ -109,6 +109,47 @@ describe('shared-group browser retry queue', () => {
     expect(localStorage.getItem(key)).toBe(raw)
   })
 
+  it('rejects invalid scopes, recipients, and reply targets before persistence', async () => {
+    expect(() => createSharedGroupPendingQueue('not-a-principal')).toThrow('scope is invalid')
+    const queue = createSharedGroupPendingQueue('principal-validation')
+
+    await expect(queue.reserveMessage('duplicate-targets', 'bot-group-room', 'draft', ['bot-scout', 'bot-scout']))
+      .rejects.toThrow('recipients are invalid')
+    await expect(queue.reserveMessage('too-many-targets', 'bot-group-room', 'draft', [
+      'bot-a', 'bot-b', 'bot-c', 'bot-d', 'bot-e', 'bot-f', 'bot-g',
+    ])).rejects.toThrow('recipients are invalid')
+    await expect(queue.reserveMessage('unsafe-target', 'bot-group-room', 'draft', ['bot/scout']))
+      .rejects.toThrow('recipients are invalid')
+    await expect(queue.reserveMessage('bad-reply', 'bot-group-room', 'draft', ['bot-scout'], 'parent-message'))
+      .rejects.toThrow('reply target is invalid')
+    await expect(queue.listMessages()).resolves.toEqual([])
+  })
+
+  it('reports a non-durable queue when Web Locks are unavailable', async () => {
+    const descriptor = Object.getOwnPropertyDescriptor(navigator, 'locks')
+    Reflect.deleteProperty(navigator, 'locks')
+    try {
+      const queue = createSharedGroupPendingQueue('principal-no-locks')
+      expect(queue.durable).toBe(false)
+      await expect(queue.listMessages()).rejects.toThrow('storage is unavailable')
+    } finally {
+      if (descriptor === undefined) Reflect.deleteProperty(navigator, 'locks')
+      else Object.defineProperty(navigator, 'locks', descriptor)
+    }
+  })
+
+  it('removes malformed legacy records while retaining valid scoped persistence', async () => {
+    const key = 'yharness.client-ui-bots.shared-group-pending.v2.principal-malformed.message.deadbeef'
+    localStorage.setItem(key, '{malformed')
+    const queue = createSharedGroupPendingQueue('principal-malformed')
+
+    await expect(queue.listMessages()).resolves.toEqual([])
+    expect(localStorage.getItem(key)).toBeNull()
+    const saved = await queue.reserveMessage('valid-after-malformed', 'bot-group-room', 'draft')
+    const reloaded = createSharedGroupPendingQueue('principal-malformed')
+    await expect(reloaded.listMessages()).resolves.toMatchObject([{ id: saved.id, text: 'draft' }])
+  })
+
   it('keeps existing broadcast retries visible alongside targeted retries', async () => {
     const queue = createSharedGroupPendingQueue('principal-target-compatibility')
     const broadcast = await queue.reserveMessage('broadcast', 'bot-group-room', 'Hello everyone')
@@ -258,11 +299,10 @@ describe('shared-group browser retry queue', () => {
 
     vi.useFakeTimers({ now: Date.now() + 24 * 60 * 60 * 1_000 + 1 })
     try {
-      await firstTab.listMessages()
-      const originalGetItem = Storage.prototype.getItem
+      const originalGetItem = Storage.prototype.getItem.bind(localStorage)
       let recreated = false
       vi.spyOn(Storage.prototype, 'getItem').mockImplementation(function (this: Storage, key: string) {
-        const raw = originalGetItem.call(this, key)
+        const raw = originalGetItem(key)
         if (!recreated && key === targetKey && raw !== null) {
           recreated = true
           const oldRecord = JSON.parse(raw) as Record<string, unknown>
@@ -289,6 +329,266 @@ describe('shared-group browser retry queue', () => {
     } finally {
       vi.restoreAllMocks()
       vi.useRealTimers()
+    }
+  })
+
+  it('loads valid version-one records while retaining the authenticated owner scope', async () => {
+    const prefix = 'yharness.client-ui-bots.shared-group-pending.v2'
+    const scope = 'principal-legacy-records'
+    const creationKey = `${prefix}.${scope}.creation.11111111`
+    const messageKey = `${prefix}.${scope}.message.22222222`
+    const foreignKey = `${prefix}.principal-other.message.33333333`
+    const now = Date.now()
+    localStorage.setItem(creationKey, JSON.stringify({
+      version: 1, kind: 'creation', id: 'bot-group-legacy-room', operationHash: '11111111',
+      name: 'Legacy room', botIds: ['bot-chief', 'bot-analyst'], createdAt: now, expiresAt: now + 1_000,
+    }))
+    localStorage.setItem(messageKey, JSON.stringify({
+      version: 1, kind: 'message', id: 'bot-group-message-legacy', operationHash: '22222222',
+      groupId: 'bot-group-legacy-room', text: 'Legacy draft', createdAt: now, expiresAt: now + 1_000,
+    }))
+    localStorage.setItem(foreignKey, JSON.stringify({
+      version: 1, kind: 'message', id: 'bot-group-message-foreign', operationHash: '33333333',
+      groupId: 'bot-group-foreign', text: 'Other owner', createdAt: now, expiresAt: now + 1_000,
+    }))
+
+    const queue = createSharedGroupPendingQueue(scope)
+    await expect(queue.listCreations()).resolves.toEqual([{
+      operationHash: '11111111', id: 'bot-group-legacy-room', name: 'Legacy room',
+      botIds: ['bot-chief', 'bot-analyst'], createdAt: now, expiresAt: now + 1_000, expired: false,
+    }])
+    await expect(queue.listMessages()).resolves.toEqual([{
+      operationHash: '22222222', id: 'bot-group-message-legacy', groupId: 'bot-group-legacy-room',
+      text: 'Legacy draft', createdAt: now, expiresAt: now + 1_000, expired: false,
+    }])
+    expect(localStorage.getItem(foreignKey)).not.toBeNull()
+  })
+
+  it('removes malformed legacy records while rejecting malformed versioned records', async () => {
+    const prefix = 'yharness.client-ui-bots.shared-group-pending.v2'
+    const scope = 'principal-record-validation'
+    const messageKey = (hash: string) => `${prefix}.${scope}.message.${hash}`
+    const baseMessage = (hash: string): Record<string, unknown> => ({
+      version: 1, kind: 'message', id: `bot-group-message-${hash}`, operationHash: hash,
+      groupId: 'bot-group-room', text: 'draft', createdAt: 1, expiresAt: 2,
+    })
+    const invalidRecords: readonly [string, unknown][] = [
+      ['aaaaaaaa', null],
+      ['aaaaaaab', { ...baseMessage('aaaaaaab'), version: 4 }],
+      ['aaaaaaac', { ...baseMessage('aaaaaaac'), id: 'not/safe' }],
+      ['aaaaaaad', { ...baseMessage('aaaaaaad'), operationHash: 7 }],
+      ['aaaaaaae', { ...baseMessage('AAAAAAAE'), operationHash: 'AAAAAAAE' }],
+      ['aaaaaaaf', { ...baseMessage('aaaaaaaf'), createdAt: -1 }],
+      ['aaaaaaba', { ...baseMessage('aaaaaaba'), expiresAt: 0 }],
+      ['aaaaaabb', { ...baseMessage('aaaaaabb'), status: 'complete' }],
+      ['aaaaaabc', { ...baseMessage('aaaaaabc'), completedAt: 3 }],
+      ['aaaaaabd', { ...baseMessage('aaaaaabd'), kind: 'creation', version: 2 }],
+      ['aaaaaabe', { ...baseMessage('aaaaaabe'), kind: 'creation', name: '', botIds: ['bot-chief', 'bot-analyst'] }],
+      ['aaaaaabf', { ...baseMessage('aaaaaabf'), kind: 'creation', name: 'Room', botIds: ['bot-chief'] }],
+      ['aaaaaaca', { ...baseMessage('aaaaaaca'), kind: 'creation', name: 'Room', botIds: ['bot/chief', 'bot-analyst'] }],
+      ['aaaaaacb', { ...baseMessage('aaaaaacb'), groupId: '' }],
+      ['aaaaaacc', { ...baseMessage('aaaaaacc'), version: 2, targetBotIds: [] }],
+      ['aaaaaacd', { ...baseMessage('aaaaaacd'), version: 2, targetBotIds: ['bot-chief', 'bot-chief'] }],
+      ['aaaaaace', { ...baseMessage('aaaaaace'), version: 3, replyToMessageId: 'not-a-message' }],
+      ['aaaaaacf', { ...baseMessage('aaaaaacf'), text: '' }],
+      ['aaaaaad0', { ...baseMessage('aaaaaad0'), text: undefined }],
+      ['aaaaaad1', { ...baseMessage('aaaaaad1'), status: 'expired', text: 'should be omitted' }],
+    ]
+    for (const [hash, value] of invalidRecords) localStorage.setItem(messageKey(hash), JSON.stringify(value))
+
+    const queue = createSharedGroupPendingQueue(scope)
+    await expect(queue.listMessages()).resolves.toEqual([])
+    expect(localStorage.length).toBe(0)
+
+    const targetedKey = 'yharness.client-ui-bots.shared-group-pending.v3.principal-record-validation.message.bbbbbbbb'
+    localStorage.setItem(targetedKey, JSON.stringify({
+      version: 2, kind: 'message', id: 'bot-group-message-targeted-invalid', operationHash: 'bbbbbbbb',
+      groupId: 'bot-group-room', text: 'draft', targetBotIds: [], createdAt: 1, expiresAt: 2,
+    }))
+    await expect(createSharedGroupPendingQueue(scope).listMessages()).rejects.toThrow('targeted retry record is invalid')
+    localStorage.removeItem(targetedKey)
+
+    const replyKey = 'yharness.client-ui-bots.shared-group-pending.v4.principal-record-validation.message.cccccccc'
+    localStorage.setItem(replyKey, JSON.stringify({
+      version: 3, kind: 'message', id: 'bot-group-message-reply-invalid', operationHash: 'cccccccc',
+      groupId: 'bot-group-room', text: 'draft', targetBotIds: ['bot-chief'], createdAt: 1, expiresAt: 2,
+    }))
+    await expect(createSharedGroupPendingQueue(scope).listMessages()).rejects.toThrow('reply retry record is invalid')
+  })
+
+  it('expires creation records without dropping their stable id', async () => {
+    const queue = createSharedGroupPendingQueue('principal-creation-expiry')
+    const first = await queue.reserveCreation('creation-key', 'Expiring room', ['bot-chief', 'bot-analyst'])
+    vi.useFakeTimers({ now: Date.now() + 24 * 60 * 60 * 1_000 + 1 })
+    try {
+      await expect(queue.listCreations()).resolves.toMatchObject([{ id: first.id, expired: true }])
+      await expect(queue.reserveCreation('creation-key', 'Expiring room', ['bot-analyst', 'bot-chief']))
+        .resolves.toMatchObject({ id: first.id, recovered: true, expired: true })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps queue operations unavailable when storage or locks cannot be acquired', async () => {
+    vi.stubGlobal('localStorage', undefined)
+    try {
+      const queue = createSharedGroupPendingQueue('principal-no-storage')
+      expect(queue.durable).toBe(false)
+      await expect(queue.listMessages()).rejects.toThrow('storage is unavailable')
+    } finally {
+      vi.unstubAllGlobals()
+    }
+
+    const blockedStorage = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('storage blocked') })
+    try {
+      const queue = createSharedGroupPendingQueue('principal-blocked-storage')
+      expect(queue.durable).toBe(false)
+      await expect(queue.listMessages()).rejects.toThrow('storage is unavailable')
+    } finally {
+      blockedStorage.mockRestore()
+    }
+
+    vi.stubGlobal('navigator', undefined)
+    try {
+      const queue = createSharedGroupPendingQueue('principal-no-navigator')
+      expect(queue.durable).toBe(false)
+      await expect(queue.listMessages()).rejects.toThrow('storage is unavailable')
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('marks ordinary lock failures unhealthy but retains recoverable queue errors', async () => {
+    const failed = createSharedGroupPendingQueue('principal-lock-failure')
+    const ordinaryFailure = vi.spyOn(navigator.locks, 'request').mockRejectedValueOnce(new Error('lock failed'))
+    try {
+      await expect(failed.listMessages()).rejects.toThrow('lock failed')
+      expect(failed.durable).toBe(false)
+      await expect(failed.listMessages()).rejects.toThrow('storage is unavailable')
+    } finally {
+      ordinaryFailure.mockRestore()
+    }
+
+    const quotaFailure = createSharedGroupPendingQueue('principal-lock-quota')
+    const recoverableFailure = vi.spyOn(navigator.locks, 'request').mockRejectedValueOnce(new SharedGroupPendingQueueFullError())
+    try {
+      await expect(quotaFailure.listMessages()).rejects.toBeInstanceOf(SharedGroupPendingQueueFullError)
+      expect(quotaFailure.durable).toBe(true)
+      await expect(quotaFailure.listMessages()).resolves.toEqual([])
+    } finally {
+      recoverableFailure.mockRestore()
+    }
+  })
+
+  it('ignores completion and removal requests that do not match the stored owner record', async () => {
+    const queue = createSharedGroupPendingQueue('principal-no-match')
+    const creation = await queue.reserveCreation('creation', 'No-match room', ['bot-chief', 'bot-analyst'])
+    await queue.removeCreation(creation.operationHash, 'bot-group-other')
+    await queue.completeCreation(creation.operationHash, 'bot-group-other')
+    await queue.completeCreation('deadbeef', creation.id)
+    await expect(queue.listCreations()).resolves.toHaveLength(1)
+
+    const message = await queue.reserveMessage('message', 'bot-group-room', 'No-match draft')
+    await queue.removeMessage(message.operationHash, 'bot-group-message-other')
+    await queue.completeMessage(message.operationHash, 'bot-group-message-other')
+    await queue.completeMessage('deadbeef', message.id)
+    await expect(queue.listMessages()).resolves.toMatchObject([{ id: message.id }])
+
+    await queue.completeCreation(creation.operationHash, creation.id)
+    await queue.removeCreation(creation.operationHash, creation.id)
+    await queue.removeMessage(message.operationHash, message.id)
+    await queue.completeMessage(message.operationHash, message.id)
+    await expect(queue.listCreations()).resolves.toEqual([])
+    await expect(queue.listMessages()).resolves.toEqual([])
+  })
+
+  it('uses the deterministic operation hash fallback without Web Crypto', async () => {
+    const originalCrypto = globalThis.crypto
+    vi.stubGlobal('crypto', { getRandomValues: originalCrypto.getRandomValues.bind(originalCrypto) })
+    try {
+      const queue = createSharedGroupPendingQueue('principal-hash-fallback')
+      const reservation = await queue.reserveMessage('fallback-operation', 'bot-group-room', 'fallback draft')
+      expect(reservation.operationHash).toMatch(/^[0-9a-f]{8}$/)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('retains a malformed legacy key when a concurrent writer repairs it during pruning', async () => {
+    const scope = 'principal-prune-invalid-race'
+    const key = `yharness.client-ui-bots.shared-group-pending.v2.${scope}.message.dddddddd`
+    const now = Date.now()
+    localStorage.setItem(key, '{malformed')
+    const originalGetItem = Storage.prototype.getItem.bind(localStorage)
+    let repaired = false
+    const getItem = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(function (this: Storage, candidate: string) {
+      const raw = originalGetItem(candidate)
+      if (!repaired && candidate === key && raw !== null) {
+        repaired = true
+        localStorage.setItem(key, JSON.stringify({
+          version: 1, kind: 'message', id: 'bot-group-message-repaired', operationHash: 'dddddddd',
+          groupId: 'bot-group-room', text: 'repaired draft', createdAt: now, expiresAt: now + 1_000,
+        }))
+        return raw
+      }
+      return raw
+    })
+    try {
+      const queue = createSharedGroupPendingQueue(scope)
+      await expect(queue.listMessages()).resolves.toMatchObject([{ id: 'bot-group-message-repaired', text: 'repaired draft' }])
+      expect(repaired).toBe(true)
+      expect(localStorage.getItem(key)).not.toBeNull()
+    } finally {
+      getItem.mockRestore()
+    }
+  })
+
+  it('ignores a record-kind swap between pruning and catalog listing', async () => {
+    const originalGetItem = Storage.prototype.getItem.bind(localStorage)
+    const reads = new Map<string, number>()
+    const getItem = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(function (this: Storage, key: string) {
+      const raw = originalGetItem(key)
+      const readCount = (reads.get(key) ?? 0) + 1
+      reads.set(key, readCount)
+      if (key === 'yharness.client-ui-bots.shared-group-pending.v2.principal-kind-swap-creation.creation.eeeeeeee') {
+        if (readCount === 2) return JSON.stringify({
+          version: 1, kind: 'creation', id: 'bot-group-swap-room', operationHash: 'eeeeeeee',
+          name: 'Swap room', botIds: ['bot-chief', 'bot-analyst'], createdAt: 1, expiresAt: 2,
+        })
+        return JSON.stringify({
+          version: 1, kind: 'message', id: 'bot-group-message-swap', operationHash: 'eeeeeeee',
+          groupId: 'bot-group-room', text: 'draft', createdAt: 1, expiresAt: 2,
+        })
+      }
+      if (key === 'yharness.client-ui-bots.shared-group-pending.v2.principal-kind-swap-message.message.ffffffff') {
+        if (readCount === 2) return JSON.stringify({
+          version: 1, kind: 'message', id: 'bot-group-message-swap', operationHash: 'ffffffff',
+          groupId: 'bot-group-room', text: 'draft', createdAt: 1, expiresAt: 2,
+        })
+        return JSON.stringify({
+          version: 1, kind: 'creation', id: 'bot-group-swap-room', operationHash: 'ffffffff',
+          name: 'Swap room', botIds: ['bot-chief', 'bot-analyst'], createdAt: 1, expiresAt: 2,
+        })
+      }
+      return raw
+    })
+    try {
+      const creationKey = 'yharness.client-ui-bots.shared-group-pending.v2.principal-kind-swap-creation.creation.eeeeeeee'
+      localStorage.setItem(creationKey, JSON.stringify({
+        version: 1, kind: 'message', id: 'bot-group-message-swap', operationHash: 'eeeeeeee',
+        groupId: 'bot-group-room', text: 'draft', createdAt: 1, expiresAt: 2,
+      }))
+      await expect(createSharedGroupPendingQueue('principal-kind-swap-creation').listCreations()).resolves.toEqual([])
+
+      localStorage.clear()
+      const messageKey = 'yharness.client-ui-bots.shared-group-pending.v2.principal-kind-swap-message.message.ffffffff'
+      localStorage.setItem(messageKey, JSON.stringify({
+        version: 1, kind: 'creation', id: 'bot-group-swap-room', operationHash: 'ffffffff',
+        name: 'Swap room', botIds: ['bot-chief', 'bot-analyst'], createdAt: 1, expiresAt: 2,
+      }))
+      await expect(createSharedGroupPendingQueue('principal-kind-swap-message').listMessages()).resolves.toEqual([])
+    } finally {
+      getItem.mockRestore()
     }
   })
 })

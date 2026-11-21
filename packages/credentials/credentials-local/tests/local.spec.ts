@@ -58,6 +58,33 @@ describe('resolveSpec', () => {
   })
 })
 
+describe('create-only credential storage', () => {
+  it('rejects an empty credential before creating a file', async () => {
+    const filename = join(await tempDir(), 'credentials.yaml')
+    const ctx = await boot({ path: filename, watch: false })
+
+    await expect(ctx.credentials.setIfAbsent?.(KEY, '')).rejects.toThrow('cannot store an empty value')
+    await expect(stat(filename)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('preserves a key added by another host after this store opened', async () => {
+    const filename = join(await tempDir(), 'credentials.yaml')
+    const first = await boot({ path: filename, watch: false })
+    const second = await boot({ path: filename, watch: false })
+    expect(await first.credentials.setIfAbsent?.(KEY, 'first-fixture')).toBe(true)
+    expect(await second.credentials.setIfAbsent?.(KEY, 'different-fixture')).toBe(false)
+    expect(await second.credentials.resolve(KEY)).toMatchObject({ value: 'first-fixture' })
+  })
+
+  it('keeps an effective key supplied by the launch environment', async () => {
+    const filename = join(await tempDir(), 'credentials.yaml')
+    const ctx = await boot({ path: filename, watch: false })
+    vi.stubEnv('DSH_CRED_TEST', 'owner-fixture')
+    expect(await ctx.credentials.setIfAbsent?.(KEY, 'different-fixture')).toBe(false)
+    expect(await ctx.credentials.resolve(KEY)).toMatchObject({ value: 'owner-fixture' })
+  })
+})
+
 describe('layering and reads', () => {
   it('treats an absent file as an empty writable store', async () => {
     const dir = await tempDir()

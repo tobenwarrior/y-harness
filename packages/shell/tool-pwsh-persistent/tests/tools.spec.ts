@@ -103,6 +103,12 @@ type StubMode =
   | 'paged-scrollback'
   | 'with-echo'
   | 'exit-after-send'
+  | 'exit-after-stdin-read'
+  | 'exit-on-observation-send'
+  | 'late-completion'
+  | 'late-exit'
+  | 'exit-with-end'
+  | 'read-host'
   | 'prompt-collision'
 
 const START_PATTERN = /__DSH_PERSISTENT_PWSH_START_[^_]+(?:-[^_]+)*__/
@@ -121,6 +127,13 @@ class StubTerminalSession implements TerminalBackendSession {
   throwOnSend = false
   largeOutput = 'x'.repeat(100)
   statusChunks: string[] = []
+  lateCompletion: { start: string; end: string } | undefined
+  lateCompletionReads = 0
+  lateExitPolls = 0
+  exitObservation = false
+  observationStarted = false
+  readCount = 0
+  abortOnRead: { controller: AbortController; read: number } | undefined
 
   constructor(mode: StubMode) {
     this.mode = mode
@@ -170,6 +183,29 @@ class StubTerminalSession implements TerminalBackendSession {
     this.pendingText = ''
     const start = START_PATTERN.exec(sent)?.[0]
     const end = END_PATTERN.exec(sent)?.[0]
+    if (this.mode === 'late-completion') {
+      if (this.lateCompletion === undefined) {
+        this.lateCompletion = { start: start ?? '', end: end ?? '' }
+        this.lateCompletionReads = 0
+        return this.operation(Promise.resolve(this.result(this.motd, 'stdin_read')))
+      }
+      return this.operation(Promise.resolve(this.result('', 'stdin_read')))
+    }
+    if (this.mode === 'late-exit') {
+      this.lateExitPolls = 0
+      return this.operation(Promise.resolve(this.result(this.motd, 'stdin_read')))
+    }
+    if (this.mode === 'exit-with-end') {
+      const output = `${end ?? ''}\n${this.motd}`
+      this.scrollback += output
+      this.statusValue = { kind: 'exited', exitCode: 9, signal: null }
+      return this.operation(Promise.resolve(this.result(output, 'session_exit')))
+    }
+    if (this.mode === 'read-host') {
+      const output = `${sent}\n${start ?? ''}\nName: `
+      this.scrollback += output
+      return this.operation(Promise.resolve(this.result(output, 'stdin_read')))
+    }
     if (this.mode === 'with-echo') {
       // The PSReadLine echo renders the submitted wrapper before the real
       // markers; the tool must strip it from the captured result.
@@ -188,6 +224,24 @@ class StubTerminalSession implements TerminalBackendSession {
       this.statusValue = { kind: 'exited', exitCode: 9, signal: null }
       this.throwOnSend = true
       return this.operation(Promise.resolve(settled))
+    }
+    if (this.mode === 'exit-after-stdin-read') {
+      if (!this.exitObservation) {
+        this.exitObservation = true
+        this.scrollback += `${start ?? ''}\n`
+        return this.operation(Promise.resolve(this.result(`${start ?? ''}\n`, 'stdin_read')))
+      }
+      this.observationStarted = true
+      return this.operation(Promise.resolve(this.result('', 'inferred_idle')))
+    }
+    if (this.mode === 'exit-on-observation-send') {
+      if (!this.exitObservation) {
+        this.exitObservation = true
+        this.scrollback += `${start ?? ''}\n`
+        return this.operation(Promise.resolve(this.result(`${start ?? ''}\n`, 'stdin_read')))
+      }
+      this.statusValue = { kind: 'exited', exitCode: 9, signal: null }
+      throw new Error('PTY session has exited')
     }
     if (this.mode === 'incremental-fallback') {
       const incremental = `${start ?? ''}\nincrement\n${this.motd}`
@@ -240,6 +294,12 @@ class StubTerminalSession implements TerminalBackendSession {
   }
 
   read(request: TerminalReadRequest) {
+    this.readCount += 1
+    const abortOnRead = this.abortOnRead
+    if (abortOnRead?.read === this.readCount) {
+      this.abortOnRead = undefined
+      abortOnRead.controller.abort({ kind: 'user' })
+    }
     if (this.mode === 'empty-read') {
       return { text: '', totalLines: 0, lineBegin: 0, lineEnd: 0, truncated: false }
     }
@@ -248,6 +308,14 @@ class StubTerminalSession implements TerminalBackendSession {
     }
     if (this.mode === 'empty-page-after-latest' && (request.offset ?? 0) > 0) {
       return { text: '', totalLines: 2, lineBegin: 1, lineEnd: 1, truncated: false }
+    }
+    if (this.mode === 'late-completion' && this.lateCompletion !== undefined) {
+      this.lateCompletionReads += 1
+      if (this.lateCompletionReads >= 3) {
+        const output = `${this.lateCompletion.start}\nlate completion\n${this.lateCompletion.end}0\n${this.motd}`
+        this.scrollback += output
+        this.lateCompletion = undefined
+      }
     }
     const lines = this.scrollback.split('\n')
     if (this.mode === 'paged-scrollback') {
@@ -277,6 +345,13 @@ class StubTerminalSession implements TerminalBackendSession {
   }
 
   status() {
+    if (this.mode === 'exit-after-stdin-read' && this.observationStarted && this.statusValue.kind === 'running') {
+      this.statusValue = { kind: 'exited', exitCode: 9, signal: null }
+    }
+    if (this.mode === 'late-exit' && this.statusValue.kind === 'running') {
+      this.lateExitPolls += 1
+      if (this.lateExitPolls >= 2) this.statusValue = { kind: 'exited', exitCode: 9, signal: null }
+    }
     return this.statusValue
   }
 
@@ -438,6 +513,112 @@ describe('tool-pwsh-persistent', () => {
 
     expect(text(await call(ctx, owner, 'Write-Output "$PWD"'))).toBe('hello from stub')
     expect(stub.sessions).toHaveLength(2)
+  })
+
+  it('waits for a completion marker that arrives after stdin readiness, then reuses the shell', async () => {
+    const { ctx, owner, stub } = await setup({ backendType: 'stub' })
+    await call(ctx, owner, 'warm up')
+    const session = stub.sessions[0]!
+    session.mode = 'late-completion'
+
+    expect(text(await call(ctx, owner, 'late output'))).toBe('late completion')
+    expect(session.sends).toBe(3)
+
+    session.mode = 'normal'
+    expect(text(await call(ctx, owner, 'next command'))).toBe('hello from stub')
+    expect(stub.sessions).toHaveLength(1)
+  })
+
+  it('reports a shell exit observed during marker grace', async () => {
+    const { ctx, owner, stub } = await setup({ backendType: 'stub' })
+    await call(ctx, owner, 'warm up')
+    const session = stub.sessions[0]!
+    session.mode = 'late-exit'
+
+    const result = text(await call(ctx, owner, 'exit'))
+    expect(result).toContain('[shell exited: code 9]')
+    expect(result).toContain('next pwsh call starts from the workspace')
+    expect(session.closed).toContain('persistent pwsh shell exited')
+  })
+
+  it('observes a shell exit after an early stdin readiness result', async () => {
+    const { ctx, owner, stub } = await setup({ backendType: 'stub' })
+    await call(ctx, owner, 'warm up')
+    const session = stub.sessions[0]!
+    session.mode = 'exit-after-stdin-read'
+
+    const result = text(await call(ctx, owner, 'exit'))
+    expect(result).toContain('[shell exited: code 9]')
+    expect(result).toContain('next pwsh call starts from the workspace')
+    expect(session.closed).toContain('persistent pwsh shell exited')
+  })
+
+  it('reports an exit when observation starts as the backend closes', async () => {
+    const { ctx, owner, stub } = await setup({ backendType: 'stub' })
+    await call(ctx, owner, 'warm up')
+    const session = stub.sessions[0]!
+    session.mode = 'exit-on-observation-send'
+
+    const result = text(await call(ctx, owner, 'exit'))
+    expect(result).toContain('[shell exited: code 9]')
+    expect(result).toContain('next pwsh call starts from the workspace')
+    expect(session.closed).toContain('persistent pwsh shell exited')
+  })
+
+  it('keeps an exit status when the retained start marker is missing', async () => {
+    const { ctx, owner, stub } = await setup({ backendType: 'stub' })
+    await call(ctx, owner, 'warm up')
+    const session = stub.sessions[0]!
+    session.mode = 'exit-with-end'
+    session.scrollback = ''
+
+    const result = text(await call(ctx, owner, 'exit'))
+    expect(result).toContain('[shell exited: code 9]')
+    expect(result).toContain('next pwsh call starts from the workspace')
+  })
+
+  it('returns a Read-Host prompt after bounded marker polling', async () => {
+    const { ctx, owner, stub } = await setup({ backendType: 'stub' })
+    await call(ctx, owner, 'warm up')
+    const session = stub.sessions[0]!
+    session.mode = 'read-host'
+    session.scrollback = ''
+
+    const result = text(await call(ctx, owner, 'Read-Host "Name"'))
+    expect(result).toContain('Name:')
+    expect(result).not.toContain('DSH_PERSISTENT_PWSH_START')
+    expect(result).not.toContain('DSH_PERSISTENT_PWSH_END')
+    expect(session.closed).toEqual([])
+  })
+
+  it('honors a command timeout during marker grace', async () => {
+    const { ctx, owner, stub } = await setup({ backendType: 'stub', timeoutMs: 10 })
+    await call(ctx, owner, 'warm up')
+    const session = stub.sessions[0]!
+    session.mode = 'read-host'
+    session.scrollback = ''
+
+    const result = text(await call(ctx, owner, 'Read-Host "Name"'))
+    expect(result).toContain('timed out after 0 seconds')
+    expect(result).toContain('next pwsh call starts from the workspace')
+    expect(session.closed).toContain('persistent pwsh command timed out')
+  })
+
+  it('honors cancellation during marker grace', async () => {
+    const { ctx, owner, stub } = await setup({ backendType: 'stub' })
+    await call(ctx, owner, 'warm up')
+    const session = stub.sessions[0]!
+    session.mode = 'read-host'
+    session.scrollback = ''
+    const controller = new AbortController()
+    const pending = call(ctx, owner, 'Read-Host "Name"', controller.signal)
+    session.readCount = 0
+    session.abortOnRead = { controller, read: 2 }
+
+    const result = await pending
+    expect(text(result)).toBe('Error: tool call aborted')
+    expect(result.error?.info).toEqual({ name: 'AbortError', code: 'ABORTED' })
+    expect(session.closed).toContain('persistent pwsh command aborted')
   })
 
   it('handles inferred idle, stdin_read fallback, shell exit, clipping, and cleanup', async () => {

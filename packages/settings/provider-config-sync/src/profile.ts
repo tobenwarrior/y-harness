@@ -1,6 +1,10 @@
 /** Ordinary provider catalog data; authentication stays owned by each profile. */
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
+import type { SettingsPathOpView } from '@yharness/settings/types'
 import { z } from 'zod'
+
+/** Route names portable between provider configuration profiles. */
+export const providerCatalogRoute = z.string().regex(/^[a-z][a-z0-9-]{0,127}$/u)
 
 const effort = z.enum(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
 const modelFields = {
@@ -39,6 +43,20 @@ const localProvider = z.object({
 export const providerFields = ['displayName', 'api', 'baseURL', 'models', 'modelOverrides'] as const
 /** Safe ordinary provider projection; excluded fields are never included. */
 export type ProviderProfile = z.infer<typeof sharedProvider>
+
+/**
+ * Set up a new route with its own missing credential reference.
+ * @param id - Exact provider route.
+ * @param value - Validated ordinary provider profile.
+ * @returns Keyless settings, or undefined if the provider needs account setup.
+ */
+export function unconfiguredProviderSettings(
+  id: string, value: ProviderProfile,
+): Extract<SettingsPathOpView, { op: 'set' }>['value'] | undefined {
+  if (id === 'nous' || id === 'chatgpt') return undefined
+  const apiKeyEnv = `YH_SYNC_UNCONFIGURED_${randomUUID().replaceAll('-', '').toUpperCase()}`
+  return { ...value, apiKeyEnv } as Extract<SettingsPathOpView, { op: 'set' }>['value']
+}
 
 /** Project an explicit local provider profile without access or unknown fields.
  * @param value Explicit local profile whose excluded fields stay local.

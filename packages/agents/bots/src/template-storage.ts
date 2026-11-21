@@ -7,7 +7,6 @@ import { BOT_ACCENTS, BOT_IDENTITIES } from './types.ts'
 import { BotTemplateId, BotTemplateShareCode } from './template-types.ts'
 import type {
   BotTemplateAvatar,
-  BotTemplateCapability,
   BotTemplateProfile,
   BotTemplateView,
 } from './template-types.ts'
@@ -55,9 +54,9 @@ const approvalPermissionsSchema = z.object({
     .transform(values => [...values].sort()),
 }).strict()
 const approvalSchema = z.union([
-  z.number().safe().int().nonnegative().transform((approvedAt): BotTemplateApproval => ({ approvedAt })),
+  z.number().int().nonnegative().transform((approvedAt): BotTemplateApproval => ({ approvedAt })),
   z.object({
-    approvedAt: z.number().safe().int().nonnegative(),
+    approvedAt: z.number().int().nonnegative(),
     permissions: approvalPermissionsSchema.optional(),
   }).strict(),
 ])
@@ -77,6 +76,8 @@ export interface BotTemplateGlobalState {
   /** Exact signed-artifact fingerprints explicitly approved by the Host owner. */
   readonly approvals?: Readonly<Record<string, BotTemplateApproval>>
 }
+
+const emptyBotTemplateGlobalState: BotTemplateGlobalState = {}
 
 /** Effective target-Host preset and tools bound to one approval. */
 export interface BotTemplateApprovalPermissions {
@@ -111,9 +112,9 @@ export const botTemplateRecordSchema = z.object({
   avatar: botTemplateAvatarSchema.optional(),
   agentPreset: boundedText(160).optional(),
   fingerprint: fingerprintSchema.optional(),
-  portableVersion: z.number().safe().int().positive().optional(),
-  createdAt: z.number().safe().int().nonnegative(),
-  revokedAt: z.number().safe().int().nonnegative().optional(),
+  portableVersion: z.number().int().positive().optional(),
+  createdAt: z.number().int().nonnegative(),
+  revokedAt: z.number().int().nonnegative().optional(),
 }).strict().refine(record => record.revokedAt === undefined || record.revokedAt >= record.createdAt, {
   message: 'Template revocation must not predate publication',
 }).transform((value): BotTemplateStoredRecord => ({
@@ -125,7 +126,7 @@ export const botTemplateRecordSchema = z.object({
   identity: value.identity,
   accent: value.accent,
   ...(value.persona === undefined ? {} : { persona: value.persona }),
-  ...(value.capabilities === undefined ? {} : { capabilities: value.capabilities as readonly BotTemplateCapability[] }),
+  ...(value.capabilities === undefined ? {} : { capabilities: value.capabilities }),
   ...(value.profile === undefined ? {} : { profile: value.profile as BotTemplateProfile }),
   ...(value.avatar === undefined ? {} : { avatar: value.avatar as BotTemplateAvatar }),
   ...(value.agentPreset === undefined ? {} : { agentPreset: value.agentPreset }),
@@ -157,7 +158,7 @@ export const botTemplateDomain = defineDomain({
         },
       ).optional(),
     }).strict(),
-    initial: {} as BotTemplateGlobalState,
+    initial: emptyBotTemplateGlobalState,
   },
   tables: {
     templates: domainTable<BotTemplateId, BotTemplateStoredRecord>(botTemplateRecordSchema),

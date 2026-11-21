@@ -27,6 +27,7 @@ afterEach(async () => {
 
 describe('skill library real Loader composition', () => {
   it('publishes adoption and a reviewed semantic proposal durably through Loader services', async () => {
+    const maintenanceIntervalMs = 10
     root = await mkdtemp(join(tmpdir(), 'dsh-library-loader-'))
     const project = join(root, 'project'); const home = join(root, 'home')
     const bundle = join(project, '.dsh', 'skills', 'deploy')
@@ -43,7 +44,7 @@ describe('skill library real Loader composition', () => {
       { name: '@yharness/workspace' },
       { name: '@yharness/typert-registry' },
       { name: '@yharness/skill-library', config: { dshHome: home, agentsHome: join(root,
-        'agents'), automaticMaintenanceIntervalMs: 10 } },
+        'agents'), automaticMaintenanceIntervalMs: maintenanceIntervalMs } },
     ]))
     context = new Context(); context.baseUrl = pathToFileURL(root).href + '/'
     await context.plugin(Loader); context.loader.builtins.include = Include
@@ -65,7 +66,25 @@ describe('skill library real Loader composition', () => {
         return value
       },
     })
-    await context.loader.create({ name: 'cordis:include', config: { path: pathToFileURL(configPath).href } }); await context.loader.await()
+    const maintenanceTicks: Array<() => void> = []
+    const schedule: typeof import('node:timers').setInterval = globalThis.setInterval
+    // The Windows bundle rename requires maintenance to close its skill files first.
+    const interval = vi.spyOn(globalThis, 'setInterval').mockImplementation((callback, delay) => {
+      const timer = schedule(callback, delay)
+      if (delay === maintenanceIntervalMs) {
+        clearInterval(timer)
+        maintenanceTicks.push(() => { callback() })
+      }
+      return timer
+    })
+    try {
+      await context.loader.create({ name: 'cordis:include', config: { path: pathToFileURL(configPath).href } })
+      await context.loader.await()
+    } finally {
+      interval.mockRestore()
+    }
+    expect(maintenanceTicks).toHaveLength(1)
+    const tickMaintenance = maintenanceTicks[0]!
     await context.workspaceRegistry.create(project)
     const item = (await context.skillLibrary.list({})).items.find(item => item.name === 'deploy')!
     expect(item).toMatchObject({ ownership: 'protected', automaticCleanup: false, usage: { coverage: 'unknown', loadCount: 0 } })
@@ -103,12 +122,19 @@ describe('skill library real Loader composition', () => {
     await context.skillLibrary.setAutomaticLearning({ id: changed.id,
       expectedHash: changed.contentHash, policyId: policy.id, enabled: true })
     const live = context
-    await vi.waitFor(async () => {
-      expect((await live.skillLibrary.detail({ id: changed.id })).content).toBe(
-        '\n- Request approval before deployment.\n\n# References\n- [Guide](reference.txt)\n')
-      expect(live.skillLibrary.listProposals({}).some(
-        row => row.generator === 'instruction-redundancy' && row.state === 'applied')).toBe(true)
-    }, { timeout: 3000, interval: 20 })
+    const cleanupPass = vi.spyOn(SkillLibrary.prototype, 'cleanupOptedIn')
+    try {
+      tickMaintenance()
+      await vi.waitFor(async () => {
+        expect(cleanupPass.mock.settledResults.map(result => result.type)).toEqual(['fulfilled'])
+        expect((await live.skillLibrary.detail({ id: changed.id })).content).toBe(
+          '\n- Request approval before deployment.\n\n# References\n- [Guide](reference.txt)\n')
+        expect(live.skillLibrary.listProposals({}).some(
+          row => row.generator === 'instruction-redundancy' && row.state === 'applied')).toBe(true)
+      }, { timeout: 3000, interval: 20 })
+    } finally {
+      cleanupPass.mockRestore()
+    }
     const settled = (await context.skillLibrary.detail({ id: changed.id })).item
     // oxlint-disable-next-line typescript/unbound-method -- The spy calls the captured original with its explicit receiver.
     const archive = SkillLibrary.prototype.archive
@@ -125,9 +151,13 @@ describe('skill library real Loader composition', () => {
     const warnings = vi.spyOn(entry.fiber!.ctx.logger, 'warn').mockImplementation(() => undefined)
     const failingConsumer = vi.spyOn(SkillLibrary.prototype,
       'cleanupOptedIn').mockRejectedValueOnce(new Error('fixture whitespace consumer failure'))
-    await vi.waitFor(() => { expect(warnings).toHaveBeenCalledWith(expect.stringContaining(
-      'fixture whitespace consumer failure')) }, { timeout: 3000 })
-    failingConsumer.mockRestore(); warnings.mockRestore()
+    try {
+      tickMaintenance()
+      await vi.waitFor(() => { expect(warnings).toHaveBeenCalledWith(expect.stringContaining(
+        'fixture whitespace consumer failure')) }, { timeout: 3000 })
+    } finally {
+      failingConsumer.mockRestore(); warnings.mockRestore()
+    }
     await entry.fiber!.dispose()
     expect(context.get('skillLibrary')).toBeUndefined()
   })

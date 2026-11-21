@@ -13,6 +13,22 @@ interface RunningStatusProps {
 }
 
 /**
+ * Render the Bot transcript's waiting bubble until the turn settles.
+ * @param props - Localized status label.
+ * @returns a single polite status with a decorative three-dot indicator.
+ */
+export function BotReplyPending({ t }: Pick<RunningStatusProps, 't'>) {
+  return (
+    <div className={css.botReplyPending} role="status" data-bot-reply-pending="">
+      <span className={a11yCss.visuallyHidden}>{t('chat.botReplyPending')}</span>
+      <span aria-hidden="true" />
+      <span aria-hidden="true" />
+      <span aria-hidden="true" />
+    </div>
+  )
+}
+
+/**
  * Show live elapsed time after the current Turn's content without announcing ticks.
  * @param props - Current Turn start time and localized copy.
  * @returns the blue running indicator; mount only while the Session is running.

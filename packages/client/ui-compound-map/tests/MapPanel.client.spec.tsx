@@ -57,11 +57,13 @@ describe('viewer appearance', () => {
     const frame = screen.getByTitle(en.frameTitle) as HTMLIFrameElement
     const viewer = document.implementation.createHTMLDocument('viewer')
     Object.defineProperty(frame, 'contentDocument', { configurable: true, value: viewer })
+    viewer.documentElement.style.setProperty('color', 'red')
     fireEvent.load(frame)
     const root = viewer.documentElement
     expect(root?.hasAttribute('data-ds-dark-theme')).toBe(true)
     expect(root?.getAttribute('data-yh-style')).toBe('terminal')
     expect(root?.style.getPropertyValue('--yh-alias-label-primary')).toBe('rgb(1, 2, 3)')
+    expect(root?.style.getPropertyValue('color')).toBe('red')
     document.body.removeAttribute('data-ds-dark-theme')
     document.body.setAttribute('data-yh-style', 'default')
     document.body.style.setProperty('--yh-alias-label-primary', 'rgb(4, 5, 6)')

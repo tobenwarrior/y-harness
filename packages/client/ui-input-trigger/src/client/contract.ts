@@ -17,6 +17,12 @@ export interface InputTriggerServiceContract {
    */
   registerSource(src: InputTriggerSource): () => void
   /**
+   * Look up the inline icon for a reference trigger.
+   * @param source - The owning trigger source.
+   * @returns The source icon, when one is registered.
+   */
+  referenceIcon(source: string): InputTriggerSource['referenceIcon']
+  /**
    * Resolve the lazy controller owned by one session scope.
    * @param actx - session-scoped Client context.
    * @returns controller that dies with that scope.

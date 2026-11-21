@@ -59,8 +59,12 @@ class FingerprintTests(unittest.TestCase):
     def test_worker_skips_unchanged_and_retries_pending_and_errors(self):
         service = map_server.MapService('token', 0, {})
         project = map_server.Project('id', 'name', self.root, '', 100)
-        model = {'files': [], 'coverage': {'pending': 0}}
-        with mock.patch.object(service, '_remember'), mock.patch.object(map_server.engine, 'build_map', return_value=(model, None)) as build:
+        model = {
+            'branch': 'main',
+            'files': [],
+            'coverage': {'inventory_available': True, 'notes': [], 'pending': 0},
+        }
+        with mock.patch.object(service, '_remember'), mock.patch.object(map_server.engine, '_build_model', return_value=model) as build:
             service._refresh_worker(project)
             service._refresh_worker(project)
             self.assertEqual(build.call_count, 1)

@@ -20,6 +20,9 @@ describe('isMobileDevice', () => {
     try {
       const { isMobileDevice } = await import('../src/focus.ts')
       expect(isMobileDevice()).toBe(mobile)
+      Object.defineProperty(navigator, 'userAgent', { configurable: true, value: mobile ? 'Desktop' : 'iPhone' })
+      Object.defineProperty(navigator, 'maxTouchPoints', { configurable: true, value: 0 })
+      expect(isMobileDevice()).toBe(mobile)
     } finally {
       for (const [name, descriptor] of descriptors) {
         if (descriptor === undefined) Reflect.deleteProperty(navigator, name)
@@ -267,6 +270,8 @@ describe('Menu', () => {
     // autoFocus parks the keyboard on the first row; Tab settles it like Enter.
     const alpha = screen.getByRole('menuitem', { name: 'Alpha' })
     expect(document.activeElement).toBe(alpha)
+    expect(alpha.getAttribute('data-dsh-automatic-focus')).toBe('')
+    fireEvent.keyDown(alpha, { key: 'Shift', shiftKey: true })
     expect(alpha.getAttribute('data-dsh-automatic-focus')).toBe('')
     expect(fireEvent.keyDown(alpha, { key: 'Tab' })).toBe(false)
     expect(alpha.getAttribute('data-dsh-automatic-focus')).toBeNull()

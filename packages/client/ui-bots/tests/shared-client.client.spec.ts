@@ -41,9 +41,9 @@ afterEach(() => {
 
 describe('shared Bot client capabilities', () => {
   it('advertises isolated shared-group operations when the server route is available', () => {
-    const rpc: ClientConnectionRpc = {
-      call: vi.fn(async () => ({ ok: true as const, value: {} })),
-    }
+    const rpc = {
+      call: vi.fn<ClientConnectionRpc['call']>(async () => ({ ok: true as const, value: {} })),
+    } satisfies ClientConnectionRpc
     const client = createSharedBotsClient(rpc)
 
     expect(client.listGroups).toEqual(expect.any(Function))
@@ -240,8 +240,8 @@ describe('shared Bot client capabilities', () => {
   })
 
   it('admits shared image attachments before sending their opaque grants', async () => {
-    const rpc: ClientConnectionRpc = {
-      call: vi.fn(async (_channel, endpoint) => {
+    const rpc = {
+      call: vi.fn<ClientConnectionRpc['call']>(async (_channel, endpoint) => {
         if (endpoint === 'bots/share/inspect-group') return {
           ok: true as const,
           value: {
@@ -262,7 +262,7 @@ describe('shared Bot client capabilities', () => {
           value: { messageId: 'bot-group-message-one', status: 'accepted', deliveries: [] },
         }
       }),
-    }
+    } satisfies ClientConnectionRpc
     const fetcher = vi.fn<typeof fetch>()
     const client = createSharedBotsClient(rpc, { attachmentFetcher: fetcher })
     if (client.sendGroupMessageWithAttachments === undefined) throw new Error('attachment transport unavailable')
@@ -282,8 +282,8 @@ describe('shared Bot client capabilities', () => {
 
   it('retries an already persisted shared attachment message without re-uploading', async () => {
     const send = vi.fn(async () => ({ ok: true as const, value: { messageId: 'bot-group-message-one', status: 'duplicate', deliveries: [] } }))
-    const rpc: ClientConnectionRpc = {
-      call: vi.fn(async (_channel, endpoint) => {
+    const rpc = {
+      call: vi.fn<ClientConnectionRpc['call']>(async (_channel, endpoint) => {
         if (endpoint === 'bots/share/inspect-group') return {
           ok: true as const,
           value: {
@@ -301,7 +301,7 @@ describe('shared Bot client capabilities', () => {
         if (endpoint === 'bots/share/send-group-message') return send()
         return { ok: true as const, value: {} }
       }),
-    }
+    } satisfies ClientConnectionRpc
     const client = createSharedBotsClient(rpc)
     if (client.sendGroupMessageWithAttachments === undefined) throw new Error('attachment transport unavailable')
     await expect(client.sendGroupMessageWithAttachments({
@@ -310,7 +310,9 @@ describe('shared Bot client capabilities', () => {
       text: 'Look at this',
       attachments: [{ id: 'draft-image', file: new File([new Uint8Array([1, 2, 3])], 'image.png', { type: 'image/png' }), state: 'ready' }],
     })).resolves.toMatchObject({ ok: true, value: { status: 'duplicate' } })
-    expect(rpc.call).toHaveBeenCalledWith('/shared-bots', 'bots/share/send-group-message', expect.not.objectContaining({ attachmentGrants: expect.anything() }))
+    const sent = rpc.call.mock.calls.find(([, endpoint]) => endpoint === 'bots/share/send-group-message')
+    expect(sent?.[0]).toBe('/shared-bots')
+    expect(sent?.[2]).not.toHaveProperty('attachmentGrants')
   })
 
   it('fails closed on malformed shared-group catalog data', async () => {
@@ -385,14 +387,14 @@ describe('shared Bot client capabilities', () => {
 
   it('uses the server-advertised owner capability instead of assuming enrollment is mounted', async () => {
     let capabilityCalls = 0
-    const rpc: ClientConnectionRpc = {
-      call: vi.fn(async (_channel, endpoint, payload) => {
+    const rpc = {
+      call: vi.fn<ClientConnectionRpc['call']>(async (_channel, endpoint, payload) => {
         expect(endpoint).toBe('bots/share/enroll')
         expect(payload).toEqual({ capability: true })
         capabilityCalls += 1
         return { ok: true as const, value: { ownerBootstrap: capabilityCalls === 1 } }
       }),
-    }
+    } satisfies ClientConnectionRpc
     const client = createSharedBotsClient(rpc)
     const capability = client.getOwnerCapability
     if (capability === undefined) throw new Error('owner capability is unavailable')

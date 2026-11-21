@@ -13,7 +13,7 @@ const CREDENTIAL_TEXT = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----/iu,
 ]
 const text = (maximum: number) => z.string().trim().min(1).max(maximum)
-const memoryText = z.string().trim().min(1).refine(value => [...value].length <= BOT_MEMORY_TEXT_LIMIT)
+const memoryText = z.string().trim().min(1).refine(value => Array.from(value).length <= BOT_MEMORY_TEXT_LIMIT)
 const memories = z.array(memoryText).max(BOT_MEMORY_ENTRY_LIMIT).default([])
 const skill = z.object({
   name: text(160),

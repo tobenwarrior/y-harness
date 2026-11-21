@@ -2,6 +2,7 @@
 
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { Readable } from 'node:stream'
+import { writeFetchResponseBody } from '@yharness/client-connection'
 import { BotGroupError, BotGroupId, BotGroupMessageId } from './group-chat.ts'
 import { BotAttachmentGrantError, BotPrivateMessageId } from './attachment-grants.ts'
 import type { BotAttachmentGrantValue } from './attachment-grants.ts'
@@ -42,20 +43,21 @@ export async function* boundedBotAttachmentStream(
       const result = signal === undefined
         ? await iterator.next()
         : await nextAttachmentChunk(iterator, signal)
-      if (result.done) {
+      if (result.done === true) {
         completed = true
         return
+      } else {
+        const chunk = result.value
+        signal?.throwIfAborted()
+        if (!(chunk instanceof Uint8Array)) {
+          throw new BotAttachmentGrantError('invalid', 'attachment upload data is invalid')
+        }
+        bytes += chunk.byteLength
+        if (bytes > maxBytes) {
+          throw new BotAttachmentGrantError('invalid', 'attachment upload exceeds the byte limit')
+        }
+        yield chunk
       }
-      const chunk = result.value
-      signal?.throwIfAborted()
-      if (!(chunk instanceof Uint8Array)) {
-        throw new BotAttachmentGrantError('invalid', 'attachment upload data is invalid')
-      }
-      bytes += chunk.byteLength
-      if (bytes > maxBytes) {
-        throw new BotAttachmentGrantError('invalid', 'attachment upload exceeds the byte limit')
-      }
-      yield chunk
     }
   } finally {
     if (!completed && iterator.return !== undefined) {
@@ -194,20 +196,7 @@ export async function bridgeBotAttachmentRequest(
     return
   }
   try {
-    for await (const chunk of response.body) {
-      if (abort.signal.aborted) continue
-      if (!res.write(chunk) && !res.destroyed) {
-        await new Promise<void>((resolve) => {
-          const done = (): void => {
-            res.off('drain', done)
-            res.off('close', done)
-            resolve()
-          }
-          res.once('drain', done)
-          res.once('close', done)
-        })
-      }
-    }
+    await writeFetchResponseBody(response.body, res, abort.signal)
     res.end()
   } catch (error: unknown) {
     res.destroy(error instanceof Error ? error : new Error('Attachment stream failed'))
@@ -273,12 +262,16 @@ function nextAttachmentChunk(
     const cleanup = (): void => { signal.removeEventListener('abort', onAbort) }
     const onAbort = (): void => {
       cleanup()
-      reject(signal.reason)
+      const reason: unknown = signal.reason
+      reject(reason instanceof Error ? reason : new Error('Bot attachment upload was aborted', { cause: reason }))
     }
     signal.addEventListener('abort', onAbort, { once: true })
     void iterator.next().then(
       (result) => { cleanup(); resolve(result) },
-      (error) => { cleanup(); reject(error) },
+      (error: unknown) => {
+        cleanup()
+        reject(error instanceof Error ? error : new Error('Bot attachment stream read failed', { cause: error }))
+      },
     )
   })
 }

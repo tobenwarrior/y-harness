@@ -10,6 +10,11 @@ import type { BotMemoryManagerActions, BotMemorySummary, BotSummary, BotWorkspac
 
 type Translate = PropsLocale<'bots'>['t']
 
+interface MemoryEditor {
+  readonly id: string
+  readonly draft: string
+}
+
 /** Props for the selected Bot's private memory manager. */
 export interface BotMemoryManagerProps {
   /** Selected Bot whose private memory projection is shown. */
@@ -36,8 +41,7 @@ export function BotMemoryManager({ bot, actions, loadAvatar, open, onClose, t }:
   const [memories, setMemories] = useState<readonly BotMemorySummary[]>([])
   const [loading, setLoading] = useState(false)
   const [loadAttempt, setLoadAttempt] = useState(0)
-  const [editingId, setEditingId] = useState<string | null>(null)
-  const [draft, setDraft] = useState('')
+  const [editor, setEditor] = useState<MemoryEditor | null>(null)
   const [confirmingId, setConfirmingId] = useState<string | null>(null)
   const [working, setWorking] = useState<string | null>(null)
   const [error, setError] = useState<'load' | 'update' | null>(null)
@@ -48,7 +52,6 @@ export function BotMemoryManager({ bot, actions, loadAvatar, open, onClose, t }:
     let live = true
     setLoading(true)
     setError(null)
-    setEditingId(null)
     setConfirmingId(null)
     setRemoveError(false)
     void actions.list(bot.id).then((next) => {
@@ -62,17 +65,23 @@ export function BotMemoryManager({ bot, actions, loadAvatar, open, onClose, t }:
     return () => { live = false }
   }, [actions, bot.id, loadAttempt, open])
 
+  useEffect(() => {
+    if (!open) return
+    setEditor(null)
+  }, [bot.id, loadAttempt, open])
+
+  const editingId = editor?.id ?? null
+  const draft = editor?.draft ?? ''
+
   const beginEdit = (id: string, text: string): void => {
-    setEditingId(id)
-    setDraft(text)
+    setEditor({ id, draft: text })
     setError(null)
     setConfirmingId(null)
     setRemoveError(false)
   }
 
   const cancelEdit = (): void => {
-    setEditingId(null)
-    setDraft('')
+    setEditor(null)
   }
 
   const save = async (id: string): Promise<void> => {
@@ -83,15 +92,16 @@ export function BotMemoryManager({ bot, actions, loadAvatar, open, onClose, t }:
     try {
       const updated = await actions.update(bot.id, id, text)
       setMemories(current => current.map(memory => memory.id === id ? updated : memory))
-      cancelEdit()
+      setEditor(current => current?.id === id ? null : current)
     } catch {
       setError('update')
     } finally {
-      setWorking(current => current === id ? null : current)
+      setWorking(null)
     }
   }
 
   const remove = async (id: string): Promise<void> => {
+    /* v8 ignore next -- the native confirmation control is disabled by the shared working lock. */
     if (working !== null) return
     setWorking(id)
     setError(null)
@@ -101,11 +111,12 @@ export function BotMemoryManager({ bot, actions, loadAvatar, open, onClose, t }:
       setMemories(current => current.filter(memory => memory.id !== id))
       setConfirmingId(null)
       setRemoveError(false)
-      if (editingId === id) cancelEdit()
+      /* v8 ignore next -- native row actions hide removal while that row is being edited. */
+      setEditor(current => current?.id === id ? null : current)
     } catch {
       setRemoveError(true)
     } finally {
-      setWorking(current => current === id ? null : current)
+      setWorking(null)
     }
   }
 
@@ -168,7 +179,13 @@ export function BotMemoryManager({ bot, actions, loadAvatar, open, onClose, t }:
                           className={css.memoryTextarea}
                           value={draft}
                           maxLength={2000}
-                          onChange={(event) => { setDraft(event.currentTarget.value) }}
+                          onChange={(event) => {
+                            const value = event.currentTarget.value
+                            /* v8 ignore next -- native rendering dispatches this textarea only for the matching editor id. */
+                            setEditor(current => current?.id === memory.id
+                              ? { ...current, draft: value }
+                              : current)
+                          }}
                           disabled={busy}
                         />
                         <div className={css.memoryEditorActions}>
@@ -205,7 +222,10 @@ export function BotMemoryManager({ bot, actions, loadAvatar, open, onClose, t }:
         footer={(
           <>
             <Button variant="ghost" onClick={() => { setConfirmingId(null) }} disabled={working !== null}>{t('cancel')}</Button>
-            <Button variant="primary" className={css.memoryDanger} onClick={() => { if (confirmingId !== null) void remove(confirmingId) }} disabled={working !== null}>
+            <Button variant="primary" className={css.memoryDanger} onClick={() => {
+              /* v8 ignore next -- the native confirmation modal renders only with a confirming id. */
+              if (confirmingId !== null) void remove(confirmingId)
+            }} disabled={working !== null}>
               {working !== null ? t('memoryRemoving') : t('memoryRemoveConfirm')}
             </Button>
           </>

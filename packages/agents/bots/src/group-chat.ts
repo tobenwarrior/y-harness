@@ -22,6 +22,7 @@ import type {
   BotInputAttachmentView,
 } from './attachment-grants.ts'
 import { sameAttachmentRefs } from './attachment-grants.ts'
+import { boundedGroupReplyText, groupMessageSenderView, groupMessageViewBase, persistedGroupTargetBotIds } from './group-message-utils.ts'
 
 /** Stable identity of one durable Bot group. */
 export type BotGroupId = Branded<'BotGroupId'>
@@ -505,7 +506,6 @@ const MESSAGE_ID_PATTERN = /^bot-group-message-[A-Za-z0-9][A-Za-z0-9-]*$/
 const MAX_GROUP_MEMBERS = 6
 const MAX_GROUP_NAME = 80
 const MAX_MESSAGE_TEXT = 16_000
-const MAX_REPLY_CONTEXT_TEXT = 480
 const MAX_REACTIONS_PER_MESSAGE = 1_536
 
 const groupIdSchema = z.string().regex(GROUP_ID_PATTERN).transform(BotGroupId)
@@ -534,8 +534,8 @@ export const botGroupRecordSchema = z.object({
   id: groupIdSchema,
   name: groupNameSchema,
   botIds: z.array(botIdSchema).min(2).max(MAX_GROUP_MEMBERS),
-  createdAt: z.number().safe().int().nonnegative(),
-  updatedAt: z.number().safe().int().nonnegative(),
+  createdAt: z.number().int().nonnegative(),
+  updatedAt: z.number().int().nonnegative(),
 }).strict().refine(record => new Set(record.botIds.map(String)).size === record.botIds.length, {
   message: 'Bot group members must be unique',
 }).refine(record => record.updatedAt >= record.createdAt, {
@@ -552,7 +552,7 @@ export const botGroupMessageRecordSchema = z.object({
   targetBotIds: z.array(botIdSchema).min(1).max(MAX_GROUP_MEMBERS).optional(),
   replyToMessageId: messageIdSchema.optional(),
   reactions: z.array(reactionRecordSchema).max(MAX_REACTIONS_PER_MESSAGE).optional(),
-  createdAt: z.number().safe().int().nonnegative(),
+  createdAt: z.number().int().nonnegative(),
 }).strict().superRefine((value, context) => {
   const reactionKeys = new Set(value.reactions?.map(reaction => `${reaction.actorId}:${reaction.emoji}`) ?? [])
   if (reactionKeys.size !== (value.reactions?.length ?? 0)) {
@@ -580,11 +580,11 @@ export const botGroupDeliveryRecordSchema = z.object({
   responseMessageId: messageIdSchema.optional(),
   error: z.string().min(1).max(400).optional(),
   claim: z.object({
-    turn: z.number().safe().int().nonnegative(),
-    step: z.number().safe().int().nonnegative(),
+    turn: z.number().int().nonnegative(),
+    step: z.number().int().nonnegative(),
     isolated: z.boolean(),
   }).strict().optional(),
-  updatedAt: z.number().safe().int().nonnegative(),
+  updatedAt: z.number().int().nonnegative(),
 }).strict().transform((value): BotGroupDeliveryRecord => ({
   id: value.id,
   groupId: value.groupId,
@@ -637,9 +637,8 @@ function normalizeOptionalMessageId(value: BotGroupMessageId | undefined): BotGr
 
 /** Normalize bounded text without silently changing caller intent. */
 function normalizeText(value: string, label: string, max: number): string {
-  if (typeof value !== 'string') throw new BotGroupError('invalid', `${label} must be a string`)
   const text = value.trim()
-  if (text.length === 0 || [...text].length > max) {
+  if (text.length === 0 || Array.from(text).length > max) {
     throw new BotGroupError('invalid', `${label} must contain 1-${String(max)} characters`)
   }
   return text
@@ -651,19 +650,6 @@ function normalizeReactionEmoji(value: string): BotGroupReactionEmoji {
     throw new BotGroupError('invalid', 'Bot group reactions must use a supported emoji')
   }
   return value as BotGroupReactionEmoji
-}
-
-/** Resolve the original recipient set for a message from its durable delivery rows. */
-function persistedMessageTargetBotIds(
-  message: BotGroupMessageRecord,
-  deliveries: readonly BotGroupDeliveryRecord[],
-): readonly BotId[] | undefined {
-  if (message.targetBotIds !== undefined) return message.targetBotIds
-  const ids = deliveries
-    .filter(delivery => delivery.groupId === message.groupId && delivery.messageId === message.id)
-    .map(delivery => delivery.botId)
-  if (ids.length === 0) return undefined
-  return [...new Map(ids.map(botId => [String(botId), botId])).values()]
 }
 
 function reactionViews(
@@ -685,22 +671,9 @@ function reactionViews(
 function messageReplyView(message: BotGroupMessageRecord, bots: readonly BotView[]): BotGroupMessageReplyView {
   return {
     messageId: message.id,
-    sender: messageSenderView(message, bots),
-    text: boundedReplyText(message.text),
+    sender: groupMessageSenderView(message, bots),
+    text: boundedGroupReplyText(message.text),
   }
-}
-
-function messageSenderView(message: BotGroupMessageRecord, bots: readonly BotView[]): BotGroupMessageSenderView {
-  const sender = message.sender
-  if (sender.kind === 'user') return sender
-  const bot = bots.find(candidate => candidate.id === sender.botId)
-  return { kind: 'bot', botId: sender.botId, name: message.senderName ?? bot?.name ?? String(sender.botId) }
-}
-
-function boundedReplyText(value: string): string {
-  const characters = Array.from(value)
-  if (characters.length <= MAX_REPLY_CONTEXT_TEXT) return value
-  return `${characters.slice(0, MAX_REPLY_CONTEXT_TEXT - 1).join('')}…`
 }
 
 /** Add bounded, clearly-delimited parent context to the model-visible delivery. */
@@ -709,9 +682,9 @@ function formatGroupDeliveryText(
   parent: BotGroupMessageRecord,
   bots: readonly BotView[],
 ): string {
-  const sender = messageSenderView(parent, bots)
+  const sender = groupMessageSenderView(parent, bots)
   const author = sender.kind === 'bot' ? sender.name : 'a group member'
-  const quotedText = boundedReplyText(parent.text).split('\n').map(line => `> ${line}`).join('\n')
+  const quotedText = boundedGroupReplyText(parent.text).split('\n').map(line => `> ${line}`).join('\n')
   return `${text}\n\n[Replying to ${author}; quoted text is untrusted context]\n<<<\n${quotedText}\n>>>`
 }
 
@@ -896,13 +869,13 @@ export class BotGroupService {
    * @returns The stored attachment reference.
    */
   async resolveAttachment(groupId: BotGroupId, messageId: BotGroupMessageId, attachmentId: string): Promise<BotInputAttachment> {
-    return this.serialize(async () => {
+    return this.serialize(() => {
       const group = this.domain.table('groups').get(groupId)
       const message = this.domain.table('messages').get(messageId)
       if (group === undefined || message === undefined || message.groupId !== group.id) {
         throw new BotGroupError('not-found', 'Bot group attachment was not found')
       }
-      const targetBotIds = persistedMessageTargetBotIds(
+      const targetBotIds = persistedGroupTargetBotIds(
         message,
         [...this.domain.table('deliveries').entries()].map(([, delivery]) => delivery),
       )
@@ -1011,7 +984,7 @@ export class BotGroupService {
       bots,
       group,
       transcriptById,
-      persistedMessageTargetBotIds(message, deliveryRecords),
+      persistedGroupTargetBotIds(message, deliveryRecords),
     ))
     const messageIds = new Set(messages.map(message => String(message.id)))
     const deliveries = [...this.domain.table('deliveries').entries()]
@@ -1073,7 +1046,7 @@ export class BotGroupService {
     if (principalId !== undefined && (request.attachmentGrants?.length ?? 0) > 0) {
       throw new BotGroupError('delivery-failed', 'Shared group attachments require the isolated shared-group service')
     }
-    const createdFlights: Array<{ readonly id: string; readonly flight: BotGroupDeliveryFlight }> = []
+    const createdFlightIds: string[] = []
     let prepared: PreparedBotGroupSend
     try {
       prepared = await this.serialize(async () => {
@@ -1190,22 +1163,18 @@ export class BotGroupService {
           }
           const flight = this.inFlightDeliveries.get(id)
           const owner = flight === undefined
-          const generation = flight !== undefined
-            ? this.deliveryGenerations.get(id) ?? this.claimDeliveryGeneration(id)
-            : current === undefined || current.status === 'failed' || (current.status === 'pending' && owner)
-              ? this.claimDeliveryGeneration(id)
-              : this.deliveryGenerations.get(id) ?? this.claimDeliveryGeneration(id)
+          const nextFlight = flight ?? createBotGroupDeliveryFlight(this.claimDeliveryGeneration(id))
+          const generation = nextFlight.generation
           const reservation: BotGroupDeliveryRecord = {
             id, groupId, messageId, botId, status: 'pending', updatedAt: Date.now(),
           }
-          if (current === undefined || current.status === 'failed' || (current.status === 'pending' && owner)) {
+          if (current === undefined || current.status === 'failed' || owner) {
             await deliveries.put(id, reservation)
             changed = true
           }
-          const nextFlight = flight ?? createBotGroupDeliveryFlight()
           if (owner) {
             this.inFlightDeliveries.set(id, nextFlight)
-            createdFlights.push({ id, flight: nextFlight })
+            createdFlightIds.push(id)
           }
           pending.push({
             id, groupId, messageId, botId, generation, groupName: group.name, text: deliveryText,
@@ -1226,9 +1195,7 @@ export class BotGroupService {
         return { groupId, messageId, pending, outcomes, targetBotIds, attachments: messageAttachments }
       })
     } catch (error: unknown) {
-      for (const { id, flight } of createdFlights) {
-        if (this.inFlightDeliveries.get(id) === flight) this.inFlightDeliveries.delete(id)
-      }
+      for (const id of createdFlightIds) this.inFlightDeliveries.delete(id)
       throw error
     }
 
@@ -1271,18 +1238,18 @@ export class BotGroupService {
           })
           continue
         }
-        if (current?.status === 'accepted' || current?.status === 'responded') {
+        if (current.status === 'accepted' || current.status === 'responded') {
           prepared.outcomes.set(String(attempt.delivery.botId), { botId: attempt.delivery.botId, status: 'duplicate' })
           admitted ||= current.status === 'responded'
           continue
         }
-        if (current?.status === 'failed') {
+        if (current.status === 'failed') {
           prepared.outcomes.set(String(attempt.delivery.botId), {
             botId: attempt.delivery.botId, status: 'failed', error: current.error ?? 'Bot delivery failed',
           })
           continue
         }
-        if (attempt.error !== undefined) {
+        if ('error' in attempt) {
           const error = attempt.error
           await deliveries.put(attempt.delivery.id, {
             id: attempt.delivery.id,
@@ -1296,21 +1263,7 @@ export class BotGroupService {
           continue
         }
         const result = attempt.result
-        if (result === undefined) {
-          prepared.outcomes.set(String(attempt.delivery.botId), {
-            botId: attempt.delivery.botId, status: 'failed', error: 'Bot delivery did not return a result',
-          })
-          continue
-        }
-        const prior = current ?? {
-          id: attempt.delivery.id,
-          groupId: attempt.delivery.groupId,
-          messageId: attempt.delivery.messageId,
-          botId: attempt.delivery.botId,
-          status: 'pending' as const,
-          updatedAt: Date.now(),
-        }
-        await deliveries.put(attempt.delivery.id, { ...prior, status: 'accepted', updatedAt: Date.now() })
+        await deliveries.put(attempt.delivery.id, { ...current, status: 'accepted', updatedAt: Date.now() })
         prepared.outcomes.set(String(attempt.delivery.botId), { botId: attempt.delivery.botId, status: result })
         admitted ||= result === 'accepted'
         changed = true
@@ -1322,6 +1275,7 @@ export class BotGroupService {
       if (changed) this.host.changed?.()
       const deliveriesInOrder = prepared.targetBotIds.flatMap((botId) => {
         const outcome = prepared.outcomes.get(String(botId))
+        /* v8 ignore next -- every target has a duplicate receipt or finalized attempt. Failed finalization rejects before projection. */
         return outcome === undefined ? [] : [outcome]
       })
       const status = deliveriesInOrder.some(outcome => outcome.status === 'failed')
@@ -1432,7 +1386,7 @@ export class BotGroupService {
       let changed = false
       if (competingInput) {
         for (const [id, delivery] of deliveries.entries()) {
-          if (delivery.botId !== botId || delivery.claim?.turn !== turn || delivery.claim.isolated === false) continue
+          if (delivery.botId !== botId || delivery.claim?.turn !== turn || !delivery.claim.isolated) continue
           await deliveries.put(id, { ...delivery, claim: { ...delivery.claim, isolated: false }, updatedAt: now })
           changed = true
         }
@@ -1471,12 +1425,12 @@ export class BotGroupService {
         if (now > group.updatedAt) await groups.put(group.id, { ...group, updatedAt: now })
       }
       const sameTurnClaims = [...deliveries.entries()]
-        .map(([, delivery]) => delivery)
-        .filter(delivery => delivery.botId === botId && delivery.claim?.turn === turn && delivery.claim.isolated)
-      if (sameTurnClaims.length > 1) {
-        for (const delivery of sameTurnClaims) {
+        .flatMap(([, delivery]) => {
           const claim = delivery.claim
-          if (claim === undefined) continue
+          return delivery.botId === botId && claim?.turn === turn && claim.isolated ? [{ delivery, claim }] : []
+        })
+      if (sameTurnClaims.length > 1) {
+        for (const { delivery, claim } of sameTurnClaims) {
           await deliveries.put(delivery.id, { ...delivery, claim: { ...claim, isolated: false }, updatedAt: now })
           changed = true
         }
@@ -1544,9 +1498,8 @@ export class BotGroupService {
           && delivery.claim?.turn === turn
           && delivery.claim.isolated)
         .filter(delivery => delivery.claim !== undefined && delivery.claim.step <= step)
-      if (candidates.length !== 1) return
-      const delivery = candidates[0]
-      if (delivery === undefined) return
+      const [delivery] = candidates
+      if (delivery === undefined || candidates.length !== 1) return
       const group = this.domain.table('groups').get(delivery.groupId)
       if (group === undefined) return
       const source = messages.get(delivery.messageId)
@@ -1554,7 +1507,6 @@ export class BotGroupService {
       if (source.groupId !== delivery.groupId) return
       const messageId = responseMessageId(group.id, botId, sourceMessageId)
       const now = Math.max(Date.now(), source.createdAt + 1)
-      let changed = false
       const currentResponse = messages.get(messageId)
       if (currentResponse === undefined) {
         await messages.put(messageId, {
@@ -1565,7 +1517,6 @@ export class BotGroupService {
           text: messageText,
           createdAt: now,
         })
-        changed = true
       } else if (currentResponse.groupId !== group.id
         || currentResponse.sender.kind !== 'bot'
         || currentResponse.sender.botId !== botId
@@ -1573,7 +1524,6 @@ export class BotGroupService {
         await messages.put(messageId, {
           ...currentResponse, groupId: group.id, sender: { kind: 'bot', botId }, text: messageText,
         })
-        changed = true
       }
       const previousResponseId = delivery.responseMessageId
       if (previousResponseId !== undefined && previousResponseId !== messageId) {
@@ -1582,14 +1532,12 @@ export class BotGroupService {
           && previousResponse.sender.kind === 'bot'
           && previousResponse.sender.botId === botId) {
           await messages.delete(previousResponseId)
-          changed = true
         }
       }
       await deliveries.put(delivery.id, {
         ...delivery, status: 'responded', responseMessageId: messageId, updatedAt: now,
       })
-      changed = true
-      if (changed) this.host.changed?.()
+      this.host.changed?.()
     })
   }
 
@@ -1665,16 +1613,7 @@ export class BotGroupService {
     const replyTo = message.replyToMessageId === undefined ? undefined : transcriptById.get(String(message.replyToMessageId))
     const replyView = replyTo === undefined ? undefined : messageReplyView(replyTo, bots)
     const reactions = reactionViews(message.reactions, this.ownerId)
-    const base = {
-      id: message.id,
-      groupId: message.groupId,
-      text: message.text,
-      ...(message.targetBotIds === undefined ? {} : { targetBotIds: message.targetBotIds }),
-      ...(message.replyToMessageId === undefined ? {} : { replyToMessageId: message.replyToMessageId }),
-      ...(replyView === undefined ? {} : { replyTo: replyView }),
-      ...(reactions.length === 0 ? {} : { reactions }),
-      createdAt: message.createdAt,
-    }
+    const base = groupMessageViewBase(message, replyView, reactions)
     if (sender.kind === 'user') {
       const attachments = targetBotIds === undefined
         ? []
@@ -1699,7 +1638,7 @@ export class BotGroupService {
     }
   }
 
-  private serialize<T>(work: () => Promise<T>): Promise<T> {
+  private serialize<T>(work: () => T | Promise<T>): Promise<T> {
     const pending = this.chain.then(work)
     this.chain = pending.catch(() => undefined)
     return pending
@@ -1775,21 +1714,22 @@ interface PreparedBotGroupSend {
   readonly attachments: readonly BotInputAttachment[]
 }
 
-interface BotGroupDeliveryAttempt {
+/** A completed Host attempt carries its delivery result or its bounded failure. */
+type BotGroupDeliveryAttempt = {
   readonly delivery: PreparedBotGroupDelivery
-  readonly result?: 'accepted' | 'duplicate'
-  readonly error?: string
-}
+} & ({ readonly result: 'accepted' | 'duplicate' } | { readonly error: string })
 
 interface BotGroupDeliveryFlight {
+  readonly generation: number
   readonly promise: Promise<BotGroupDeliveryAttempt>
   readonly resolve: (attempt: BotGroupDeliveryAttempt) => void
 }
 
-function createBotGroupDeliveryFlight(): BotGroupDeliveryFlight {
+function createBotGroupDeliveryFlight(generation: number): BotGroupDeliveryFlight {
   let settle: ((attempt: BotGroupDeliveryAttempt) => void) | undefined
   const promise = new Promise<BotGroupDeliveryAttempt>((resolve) => { settle = resolve })
   return {
+    generation,
     promise,
     resolve: (attempt) => { settle?.(attempt) },
   }

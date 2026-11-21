@@ -64,14 +64,14 @@ A provider lifetime owns all converters, queued calls, and temporary files.
 convert(request: OfficeToPdfRequest, signal?: AbortSignal): Promise<OfficeToPdfResult>
 
 /**
- * Read and convert one Office file using the Session's ordinary filesystem authorization.
+ * Read and convert one Office file using the selected workspace's filesystem authorization.
  * @param workspaceFileScope - Session header lookup shared with workspaceFiles.
- * @param path - absolute or workspace-relative Office path.
+ * @param path - Office file in the Session or its private Computer workspace.
  * @param priority - foreground preview or speculative background work.
  * @param signal - Remote cancellation; disposal also cancels outstanding reads and conversions.
  * @returns complete PDF bytes with original source identity and missing font families.
  */
-@Remote async render( workspaceFileScope: WorkspaceFileScope, path: string, priority: OfficeToPdfPriority, signal: AbortSignal, ): Promise<RenderedDocumentBytes>
+@Remote async render( workspaceFileScope: WorkspaceFileScope, path: WorkspaceFilePath, priority: OfficeToPdfPriority, signal: AbortSignal, ): Promise<RenderedDocumentBytes>
 
 /**
  * Read the current rendering generation before reusing a Client PDF.

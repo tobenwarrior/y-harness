@@ -4,7 +4,7 @@ import { chmod, copyFile, mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/pr
 import { realpathSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, relative, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
 import { runtimeArchivePath } from '../../desktop-host/src/office-engine.ts'
@@ -49,6 +49,14 @@ const asarUnpackPatterns = [
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/** Compare paths after resolving Windows short-name and case differences. */
+function samePath(actual: string, expected: string): boolean {
+  const norm = (value: string) => (
+    process.platform === 'win32' ? realpathSync.native(value).toLowerCase() : realpathSync.native(value)
+  )
+  return norm(actual) === norm(expected)
 }
 
 function asarTools(): AsarTools {
@@ -101,7 +109,7 @@ async function readRpcResponse(iterator: AsyncIterator<string>, id: number): Pro
       const result = await Promise.race([
         next,
         new Promise<never>((_, reject) => {
-          timer = setTimeout(() => reject(new Error(`Timed out waiting for Codex JSON-RPC response ${id}.`)), remaining)
+          timer = setTimeout(() => { reject(new Error(`Timed out waiting for Codex JSON-RPC response ${id}.`)) }, remaining)
         }),
       ])
       if (result.done) throw new Error('Codex app-server closed its protocol stream before replying.')
@@ -119,19 +127,24 @@ function sendRpcRequest(child: ChildProcess, id: number, method: string, params:
   child.stdin?.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`)
 }
 
-async function stopChild(child: ChildProcess): Promise<void> {
-  if (child.exitCode !== null || child.signalCode !== null) return
-  const closed = new Promise<void>(resolve => child.once('close', () => resolve()))
-  child.kill('SIGTERM')
-  const timeout = setTimeout(() => {
-    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
+async function stopChild(child: ChildProcess, closed: Promise<void>): Promise<void> {
+  // The Windows wrapper waits for its separate native child after stdin EOF.
+  if (child.stdin?.writable === true) child.stdin.end()
+  const gracefulTimeout = setTimeout(() => {
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM')
   }, 2_000)
+  const forceTimeout = setTimeout(() => {
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
+  }, 4_000)
   try { await closed }
-  finally { clearTimeout(timeout) }
+  finally {
+    clearTimeout(gracefulTimeout)
+    clearTimeout(forceTimeout)
+  }
 }
 
 afterEach(async () => {
-  for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true })
+  for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
 })
 
 describe('packaged Codex runtime', () => {
@@ -156,10 +169,12 @@ describe('packaged Codex runtime', () => {
     const unpackedRuntime = join(`${archive}.unpacked`, 'dsh')
     const unpackedWrapper = join(unpackedRuntime, 'node_modules', '@yharness', 'llm-pi-ai', 'node_modules', '@openai', 'codex', 'bin', 'codex.js')
     const unpackedNative = join(unpackedRuntime, 'node_modules', '@yharness', 'llm-pi-ai', 'node_modules', '@openai', target!.packageName.slice('@openai/'.length), 'vendor', target!.triple, 'bin', target!.executable)
+    const wrapperEntry = relative(archiveInput, prepared.wrapper)
+    const nativeEntry = relative(archiveInput, prepared.nativeExecutable)
     const archiveEntries = asarTools().listPackage(archive)
-    expect(archiveEntries).toContain('/dsh/node_modules/@yharness/llm-pi-ai/node_modules/@openai/codex/bin/codex.js')
-    expect(asarTools().statFile(archive, 'dsh/node_modules/@yharness/llm-pi-ai/node_modules/@openai/codex/bin/codex.js').unpacked).toBe(true)
-    expect(asarTools().statFile(archive, `dsh/node_modules/@yharness/llm-pi-ai/node_modules/@openai/${target!.packageName.slice('@openai/'.length)}/vendor/${target!.triple}/bin/${target!.executable}`).unpacked).toBe(true)
+    expect(archiveEntries).toContain(sep + wrapperEntry)
+    expect(asarTools().statFile(archive, wrapperEntry).unpacked).toBe(true)
+    expect(asarTools().statFile(archive, nativeEntry).unpacked).toBe(true)
     await expect(stat(unpackedWrapper)).resolves.toBeDefined()
     await expect(stat(unpackedNative)).resolves.toBeDefined()
     expect(prepared.wrapper).not.toBe(unpackedWrapper)
@@ -208,10 +223,11 @@ describe('packaged Codex runtime', () => {
       },
       stdio: ['pipe', 'pipe', 'pipe'],
     })
+    const closed = new Promise<void>(resolve => child.once('close', () => { resolve() }))
     child.on('error', () => undefined)
     child.stderr?.resume()
     if (child.stdout === null || child.stdin === null) {
-      await stopChild(child)
+      await stopChild(child, closed)
       throw new Error('The standalone Codex process did not expose protocol streams.')
     }
     const lines = createInterface({ input: child.stdout })
@@ -222,7 +238,10 @@ describe('packaged Codex runtime', () => {
       })
       const initialized = await readRpcResponse(lines[Symbol.asyncIterator](), 1)
       expect(initialized.error).toBeUndefined()
-      expect(initialized.result).toMatchObject({ codexHome: realpathSync(codexHome) })
+      if (!isRecord(initialized.result) || typeof initialized.result.codexHome !== 'string') {
+        throw new Error('Codex initialize response omitted its home path.')
+      }
+      expect(samePath(initialized.result.codexHome, codexHome)).toBe(true)
       child.stdin.write('{"jsonrpc":"2.0","method":"initialized","params":{}}\n')
       sendRpcRequest(child, 2, 'account/read', { refreshToken: false })
       const account = await readRpcResponse(lines[Symbol.asyncIterator](), 2)
@@ -230,7 +249,7 @@ describe('packaged Codex runtime', () => {
       expect(account.result).toMatchObject({ account: null })
     } finally {
       lines.close()
-      await stopChild(child)
+      await stopChild(child, closed)
     }
   })
 })

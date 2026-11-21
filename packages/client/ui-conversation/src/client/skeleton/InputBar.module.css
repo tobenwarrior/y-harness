@@ -58,7 +58,7 @@
      soft elevation tier. Fill: the input surface token (elevated in dark). */
   border: 0;
   --yh-elevation-stroke-color: var(--yh-alias-border-l2);
-  border-radius: var(--yh-radius-panel);
+  border-radius: var(--yh-radius-lg);
   background: var(--yh-specific-input-major);
   box-shadow: var(--yh-elevation-soft);
   /* The draft text follows the Settings font-size preference (the textarea,
@@ -90,7 +90,7 @@
   inset: 0;
   box-sizing: border-box;
   border: 1px dashed currentColor;
-  border-radius: var(--yh-radius-panel);
+  border-radius: var(--yh-radius-lg);
   color: var(--yh-alias-border-l4);
   transition: color 100ms ease;
   pointer-events: none;

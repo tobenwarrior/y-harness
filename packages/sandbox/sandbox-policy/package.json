@@ -28,8 +28,11 @@
   "license": "MIT",
   "peerDependencies": {
     "@yharness/agent": "workspace:*",
+    "@yharness/fs": "workspace:*",
     "@yharness/sandbox": "workspace:*",
+    "@yharness/shell": "workspace:*",
     "@yharness/session": "workspace:*",
+    "@yharness/subprocess": "workspace:*",
     "@yharness/system-prompt": "workspace:*",
     "@yharness/cordis": "workspace:~",
     "@yharness/session-projection": "workspace:*"
@@ -40,8 +43,11 @@
   },
   "devDependencies": {
     "@yharness/agent": "workspace:*",
+    "@yharness/fs": "workspace:*",
     "@yharness/sandbox": "workspace:*",
+    "@yharness/shell": "workspace:*",
     "@yharness/session": "workspace:*",
+    "@yharness/subprocess": "workspace:*",
     "@yharness/system-prompt": "workspace:*",
     "@yharness/cordis": "workspace:~",
     "@yharness/session-projection": "workspace:*"

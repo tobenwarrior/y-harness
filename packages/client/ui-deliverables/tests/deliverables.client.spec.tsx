@@ -943,7 +943,8 @@ describe('presented files', () => {
     fireEvent.click(expand)
     expect(view.container.querySelectorAll('[data-presented-file]')).toHaveLength(8)
     expect(view.getByRole('button', { name: 'Collapse delivered files' }).getAttribute('aria-expanded')).toBe('true')
-    expect(view.queryByRole('link')).toBeNull()
+    expect(view.getByRole('link', { name: 'Download report-7.docx' }).getAttribute('href'))
+      .toBe('api/present.download?sessionId=child-session&seq=2&index=7')
     fireEvent.click(view.getByRole('button', { name: 'Preview report-0.docx in sidebar' }))
     expect(preview).toHaveBeenCalledTimes(1)
     expect(preview).toHaveBeenLastCalledWith('report-0.docx')
@@ -1026,7 +1027,7 @@ it.each(['opening', 'opened', 'error'] as const)('shows the %s state and permits
 })
 
 
-it('explains a missing desktop and retries failed Host metadata', () => {
+it('offers a download on a headless Host and retries failed desktop metadata', () => {
   const controller = new PresentedOpenController()
   const props = openProps(controller)
   const matched = { changes: null, presented: [{ path: 'file.txt', seq: 2, index: 0 }] }
@@ -1037,7 +1038,10 @@ it('explains a missing desktop and retries failed Host metadata', () => {
   expect(props.reloadPresentedHost).toHaveBeenCalledOnce()
   controller.host.set({ name: 'server', available: false, fileManager: null })
   view.rerender(<Deliverables {...props} matched={matched} openFile={() => {}} sessionId={SessionId('session')} t={makeTranslate(en)} />)
-  expect(view.getByText(en['presented.unavailable'])).toBeTruthy()
+  const download = view.getByRole('link', { name: 'Download file.txt' })
+  expect(download.getAttribute('href')).toBe('api/present.download?sessionId=session&seq=2&index=0')
+  expect(download.hasAttribute('download')).toBe(true)
+  expect(view.queryByRole('button', { name: 'Native file action' })).toBeNull()
 })
 
 

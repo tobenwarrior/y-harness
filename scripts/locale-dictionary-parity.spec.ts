@@ -239,7 +239,7 @@ describe('shipped locale dictionaries', () => {
     const empty = english.filter(dictionary => dictionary.keys.length === 0)
     expect(empty).toEqual([])
 
-    const dictionaryFiles = files.filter(file => {
+    const dictionaryFiles = files.filter((file) => {
       const rel = relative(file)
       return rel.startsWith('/packages/client/')
         && !rel.endsWith('/packages/client/web/src/boot-locales.ts')

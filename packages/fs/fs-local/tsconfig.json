@@ -19,10 +19,16 @@
       "path": "../../llm/llm"
     },
     {
+      "path": "../../util/lazy-require"
+    },
+    {
       "path": "../fs"
     },
     {
       "path": "../fs-patch"
+    },
+    {
+      "path": "../../subprocess/win32-process"
     }
   ]
 }

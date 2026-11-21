@@ -108,7 +108,10 @@ export function apply(ctx: ClientContext): void {
   // footer track is hidden; retain a dedicated action beside the opener.
   ctx.slots.inject('sidebar.toggle.badge', () => ctx.slots.register({
     name: 'sidebar.toggle.badge', locale: NS,
-    inject: () => ({ hooks: { desktopUpdate: desktopUpdate.store, connectionState: connection.state }, openDesktopUpdate: () => { desktopUpdate.open() } }),
+    inject: () => ({
+      hooks: { desktopUpdate: desktopUpdate.store, connectionState: connection.state },
+      openDesktopUpdate: () => { desktopUpdate.open() },
+    }),
   }, DesktopUpdateBadge))
 
   // Copy freshness is framework-owned: components read the standard `t`

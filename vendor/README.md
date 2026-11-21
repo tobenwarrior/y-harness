@@ -58,6 +58,8 @@ Keep this log exhaustive — every divergence from upstream must be listed.
 
 23. **`loader/src/config/entry.ts` module identity**: retains each entry's raw import result as `moduleNamespace`, before plugin export normalization. HMR matches that object to Node's cached module namespace and updates it after a successful reload. `EntryTree.import()` keeps its existing arguments and return value; `loader/README.md` documents the additive field.
 
+24. **Profile patch name comparison in `include/src/index.ts`.** `applyEntryPatches` accepts a caller-provided comparison for patch `name` guards and defaults to exact equality. Y Harness profile composition uses it for the legacy and current package namespaces. The profile admission test covers mounting, inspection, and rejection of an unrelated package name.
+
 ## Sync procedure
 
 To update a vendored package from upstream:

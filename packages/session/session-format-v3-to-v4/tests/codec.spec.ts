@@ -93,7 +93,7 @@ describe('V4 framing and restoration', () => {
     expect(() => restore([fact, { ...marker, data: null }])).toThrow('data must be an object')
     const reader = sessionFormatCatalog.createRestore({ type: 'session', ...header }, { recovery: 'strict', validation: 'current' })
     reader.decodeRow(fact)
-    expect(() => reader.decodeRow({ ...marker, data: { ...data, throughSeq: 1 } })).toThrow('throughSeq')
+    expect(() => { reader.decodeRow({ ...marker, data: { ...data, throughSeq: 1 } }) }).toThrow('throughSeq')
   })
 
   it('preserves inherited and local events and admits foreign active deliveries inside the seed only', () => {

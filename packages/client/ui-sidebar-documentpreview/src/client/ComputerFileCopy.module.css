@@ -1,0 +1,49 @@
+.file {
+  margin: 0 0 14px;
+  color: var(--yh-alias-label-secondary);
+  overflow-wrap: anywhere;
+}
+
+.search {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 34px;
+  padding: 6px 10px;
+  color: var(--yh-alias-label-primary);
+  font: inherit;
+  background: var(--yh-alias-interactive-bg-hover);
+  border: 0.5px solid var(--yh-alias-border-l3);
+  border-radius: var(--yh-radius-md);
+}
+
+.recipients {
+  display: grid;
+  max-height: 225px;
+  margin-top: 8px;
+  overflow: auto;
+}
+
+.recipient {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 36px;
+  padding: 2px 8px;
+  border-radius: var(--yh-radius-md);
+  cursor: pointer;
+}
+
+.recipient:hover,
+.recipient:focus-within,
+.recipient:has(input:checked) {
+  background: var(--yh-alias-interactive-bg-hover);
+}
+
+.recipient span {
+  overflow-wrap: anywhere;
+}
+
+.notice {
+  color: var(--yh-alias-label-secondary);
+  overflow-wrap: anywhere;
+}

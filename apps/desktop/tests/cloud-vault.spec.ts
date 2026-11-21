@@ -1,6 +1,10 @@
 import { execFile } from 'node:child_process'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cloudVaultRequest, isVaultLoginUseRequestId, isVaultRequestId, readCloudVaultBots, vaultRequestAllowed, type VaultExec } from '../src/cloud-vault.ts'
+import { runCloudVaultCommand, type VaultExec } from '../src/cloud-connection.ts'
+import {
+  cloudVaultRequest as requestVaultOnConnection, isVaultLoginUseRequestId, isVaultRequestId,
+  readCloudVaultBots, vaultRequestAllowed, type VaultCloudWorkspace,
+} from '../src/cloud-vault.ts'
 
 const unit = 'fixture-worker.service'
 const value = 'a synthetic value with spaces, quotes and \n a second line'
@@ -8,6 +12,14 @@ const signal = new AbortController().signal
 const origin = 'http://127.0.0.1:28634'
 const browserSession = 'bot-session-0e9beecd-b6f5-40b1-8d52-f97259bdcf76'
 const children = new Set<ReturnType<typeof execFile>>()
+
+function rosterRequest(init: RequestInit) {
+  if (typeof init.body !== 'string') throw new Error('Expected a JSON request body')
+  const request: unknown = JSON.parse(init.body)
+  if (request === null || typeof request !== 'object' || !('rpcId' in request)
+    || typeof request.rpcId !== 'string') throw new Error('Expected a roster request')
+  return { body: request, rpcId: request.rpcId }
+}
 
 function managedWorkspace(sharedScopes = false) {
   return {
@@ -23,12 +35,20 @@ function managedWorkspace(sharedScopes = false) {
         })
       }
       expect(url).toBe(`${origin}/api/bots/list`)
-      const call = JSON.parse(String(options.body))
-      return Response.json({ type: 'server-response', rpcId: call.rpcId, result: { ok: true, value: {
+      const { rpcId } = rosterRequest(options)
+      return Response.json({ type: 'server-response', rpcId, result: { ok: true, value: {
         bots: [{ id: 'bot-scout', state: 'active', name: 'Scout' }],
       } } })
     },
   }
+}
+
+function cloudVaultRequest(target: string, request: unknown, requestSignal: AbortSignal,
+  execute: VaultExec, workspace?: VaultCloudWorkspace) {
+  return requestVaultOnConnection(
+    (payload, signal) => runCloudVaultCommand(target, '/fixture/control.sock', payload, signal, execute),
+    request, requestSignal, workspace,
+  )
 }
 
 function fixture(script: string): VaultExec {
@@ -259,9 +279,9 @@ describe('Desktop Vault SSH transport', () => {
       expect(url).toBe(`${origin}/api/bots/list`)
       expect(init.credentials).toBe('include')
       expect(init.redirect).toBe('error')
-      const body = JSON.parse(String(init.body))
+      const { body, rpcId } = rosterRequest(init)
       expect(body).toMatchObject({ type: 'client-request', method: 'bots/list', payload: { args: { request: { includeHidden: true } } } })
-      return Response.json({ type: 'server-response', rpcId: body.rpcId, result: { ok: true, value: { bots: [
+      return Response.json({ type: 'server-response', rpcId, result: { ok: true, value: { bots: [
         { id: 'bot-scout', state: 'active', name: 'Scout', fixtureOtherField: value },
         { id: 'bot-preparing', state: 'provisioning', name: 'Preparing' },
       ] } } })
@@ -300,6 +320,73 @@ describe('Desktop Vault SSH transport', () => {
     await expect(cloudVaultRequest('fixture-vps', action, signal,
       fixture('process.stdout.write(' + JSON.stringify(JSON.stringify(hasPassword)) + ')'), workspace))
       .resolves.toEqual({ ok: false, reason: 'unavailable' })
+  })
+
+  it('manages automatic sign-in metadata and revalidates the Bot only when enabling', async () => {
+    const loginId = 'c'.repeat(32)
+    const list = { loginAutomation: { available: false, enabled: [loginId] } }
+    await expect(cloudVaultRequest('fixture-vps', { action: 'list-login-automation' }, signal,
+      fixture(`process.stdout.write(${JSON.stringify(JSON.stringify(list))});`)))
+      .resolves.toEqual({ ok: true, ...list })
+    const external = { origin, fetch: async () => Response.json({ mode: 'external' }) }
+    const brokerReady = { loginAutomation: { ...list.loginAutomation, available: true } }
+    await expect(cloudVaultRequest('fixture-vps', { action: 'list-login-automation' }, signal,
+      fixture(`process.stdout.write(${JSON.stringify(JSON.stringify(brokerReady))});`), external))
+      .resolves.toEqual({ ok: true, ...list })
+
+    const enable = { action: 'set-login-automatic', id: loginId, bot: 'bot-scout', enabled: true } as const
+    const disable = { ...enable, enabled: false } as const
+    const execute = vi.fn(fixture(
+      'let body=""; process.stdin.on("data", chunk => body+=chunk); process.stdin.on("end", () => { '
+      + `if (![${JSON.stringify(JSON.stringify(enable))},${JSON.stringify(JSON.stringify(disable))}].includes(body)) process.exit(2); `
+      + 'process.stdout.write("{\\"ok\\":true}"); });',
+    ))
+    await expect(cloudVaultRequest('fixture-vps', { ...enable, bot: 'bot-other' }, signal, execute, managedWorkspace()))
+      .resolves.toEqual({ ok: false, reason: 'unavailable' })
+    await expect(cloudVaultRequest('fixture-vps', enable, signal, execute, external))
+      .resolves.toEqual({ ok: false, reason: 'unavailable' })
+    expect(execute).not.toHaveBeenCalled()
+    await expect(cloudVaultRequest('fixture-vps', enable, signal, execute, managedWorkspace()))
+      .resolves.toEqual({ ok: true })
+    expect(execute).toHaveBeenCalledOnce()
+
+    const noRoster = { origin, fetch: async () => { throw new Error('Disabling must not require the current roster') } }
+    await expect(cloudVaultRequest('fixture-vps', disable, signal, execute, noRoster))
+      .resolves.toEqual({ ok: true })
+    expect(execute).toHaveBeenCalledTimes(2)
+  })
+
+  it('strictly validates automatic sign-in requests and wire replies', async () => {
+    const id = 'd'.repeat(32)
+    const requestModeId = 'e'.repeat(32)
+    const loginUseModeId = 'f'.repeat(32)
+    if (!isVaultRequestId(requestModeId) || !isVaultLoginUseRequestId(loginUseModeId)) throw new Error('Fixture id is invalid')
+    const listRequest = { action: 'list-login-automation' } as const
+    const setRequest = { action: 'set-login-automatic', id, bot: 'bot-scout', enabled: true } as const
+    expect(vaultRequestAllowed(listRequest, { kind: 'manage' })).toBe(true)
+    expect(vaultRequestAllowed(listRequest, { kind: 'request', id: requestModeId })).toBe(false)
+    expect(vaultRequestAllowed(setRequest, { kind: 'manage' })).toBe(true)
+    expect(vaultRequestAllowed(setRequest, { kind: 'login-use', id: loginUseModeId })).toBe(false)
+    const mustNotOpen: VaultExec = () => { throw new Error('SSH was started') }
+    for (const request of [
+      { action: 'list-login-automation', extra: true },
+      { action: 'set-login-automatic', id, bot: 'bot-scout' },
+      { action: 'set-login-automatic', id: id.toUpperCase(), bot: 'bot-scout', enabled: true },
+      { action: 'set-login-automatic', id, bot: 'bot-scout', enabled: 'true' },
+    ]) {
+      await expect(cloudVaultRequest('fixture-vps', request, signal, mustNotOpen))
+        .resolves.toEqual({ ok: false, reason: 'invalid' })
+    }
+    for (const reply of [
+      { loginAutomation: { available: true, enabled: [id, id] } },
+      { loginAutomation: { available: true, enabled: [id.toUpperCase()] } },
+      { loginAutomation: { available: true, enabled: [], extra: true } },
+      { ok: true, loginAutomation: { available: true, enabled: [] } },
+    ]) {
+      await expect(cloudVaultRequest('fixture-vps', { action: 'list-login-automation' }, signal,
+        fixture(`process.stdout.write(${JSON.stringify(JSON.stringify(reply))});`)))
+        .resolves.toEqual({ ok: false, reason: 'unavailable' })
+    }
   })
 
   it('inspects a request and returns only its validated metadata', async () => {
@@ -382,6 +469,67 @@ describe('Desktop Vault SSH transport', () => {
       .resolves.toEqual({ ok: false, reason: 'unavailable' })
   })
 
+  it('limits generated signup to the reviewed native window and returns only saved status', async () => {
+    const id = 'f'.repeat(32)
+    const otherId = 'd'.repeat(32)
+    if (!isVaultLoginUseRequestId(id) || !isVaultLoginUseRequestId(otherId)) throw new Error('Fixture id is invalid.')
+    const request = {
+      action: 'create-login-use', id, origin: 'https://example.com', destination: 'https://example.com/signup',
+      username: 'fixture-user', saveLabel: 'Fixture account',
+    }
+    expect(vaultRequestAllowed(request, { kind: 'login-use', id })).toBe(true)
+    expect(vaultRequestAllowed(request, { kind: 'login-use', id: otherId })).toBe(false)
+    expect(vaultRequestAllowed(request, { kind: 'manage' })).toBe(false)
+    expect(vaultRequestAllowed({ ...request, password: 'fixture-value' }, { kind: 'login-use', id })).toBe(false)
+    expect(vaultRequestAllowed({ ...request, destination: 'https://elsewhere.example/signup' }, { kind: 'login-use', id })).toBe(false)
+    const payload = JSON.stringify(request)
+    const execute = fixture(`
+      let body = '';
+      process.stdin.setEncoding('utf8');
+      process.stdin.on('data', chunk => { body += chunk; });
+      process.stdin.on('end', () => {
+        if (body !== ${JSON.stringify(payload)}) process.exit(2);
+        process.stdout.write(JSON.stringify({ state: 'needs-owner', saved: true }));
+      });
+    `)
+    await expect(cloudVaultRequest('fixture-vps', request, signal, execute)).resolves.toEqual({ state: 'needs-owner', saved: true })
+    await expect(cloudVaultRequest('fixture-vps', request, signal,
+      fixture('process.stdout.write(JSON.stringify({ state: "submitted", saved: true, password: "fixture-value" }));')))
+      .resolves.toEqual({ ok: false, reason: 'unavailable' })
+  })
+
+  it('sends a verification code through the exact native approval and only accepts a fixed result', async () => {
+    const id = 'c'.repeat(32)
+    const other = 'd'.repeat(32)
+    if (!isVaultLoginUseRequestId(id) || !isVaultLoginUseRequestId(other)) throw new Error('Fixture id is invalid.')
+    const origin = 'https://example.test'
+    const request = { action: 'enter-verification-code', id, origin, destination: origin + '/verify', code: '041235' }
+    expect(vaultRequestAllowed(request, { kind: 'login-use', id })).toBe(true)
+    expect(vaultRequestAllowed(request, { kind: 'login-use', id: other })).toBe(false)
+    expect(vaultRequestAllowed(request, { kind: 'manage' })).toBe(false)
+    expect(vaultRequestAllowed({ ...request, destination: 'https://elsewhere.test/verify' }, { kind: 'login-use', id })).toBe(false)
+    expect(vaultRequestAllowed({ ...request, code: '' }, { kind: 'login-use', id })).toBe(false)
+    expect(vaultRequestAllowed({ ...request, saveLabel: 'Fixture' }, { kind: 'login-use', id })).toBe(false)
+
+    const expected = JSON.stringify(request)
+    const execute: VaultExec = (file, args, options, callback) => {
+      expect(args).not.toContain(request.code)
+      return fixture(`
+        let body = '';
+        process.stdin.setEncoding('utf8');
+        process.stdin.on('data', chunk => { body += chunk; });
+        process.stdin.on('end', () => {
+          if (body !== ${JSON.stringify(expected)}) process.exit(2);
+          process.stdout.write(JSON.stringify({ state: 'submitted' }));
+        });
+      `)(file, args, options, callback)
+    }
+    await expect(cloudVaultRequest('fixture-vps', request, signal, execute)).resolves.toEqual({ state: 'submitted' })
+    await expect(cloudVaultRequest('fixture-vps', request, signal,
+      fixture('process.stdout.write(JSON.stringify({ state: "submitted", code: "fixture" }));')))
+      .resolves.toEqual({ ok: false, reason: 'unavailable' })
+  })
+
   it('sends an exact website login decline and returns the fixed unavailable state', async () => {
     const id = 'f'.repeat(32)
     await expect(cloudVaultRequest('fixture-vps', { action: 'decline-login-use', id }, signal,
@@ -454,6 +602,8 @@ describe('Desktop Vault SSH transport', () => {
     const execute: VaultExec = (file, args, options, callback) => {
       expect(file).toBe('/usr/bin/ssh')
       expect(args.slice(-3)).toEqual(['--', 'fixture-vps', '/usr/local/sbin/yharness-vault desktop-client'])
+      expect(args[args.indexOf('-S') + 1]).toBe('/fixture/control.sock')
+      expect(args).toContain('ProxyCommand=/usr/bin/false')
       expect(args).toContain('StrictHostKeyChecking=yes')
       expect(args).toContain('ClearAllForwardings=yes')
       expect(args).toContain('ForwardAgent=no')
@@ -573,7 +723,6 @@ describe('Desktop Vault SSH transport', () => {
     ]) {
       await expect(cloudVaultRequest('fixture-vps', request, signal, mustNotOpen)).resolves.toEqual({ ok: false, reason: 'invalid' })
     }
-    await expect(cloudVaultRequest('-oUntrusted', { action: 'list' }, signal, mustNotOpen)).resolves.toEqual({ ok: false, reason: 'invalid' })
     await expect(cloudVaultRequest('fixture-vps', { action: 'list' }, AbortSignal.abort(), mustNotOpen))
       .resolves.toEqual({ ok: false, reason: 'unavailable' })
   })

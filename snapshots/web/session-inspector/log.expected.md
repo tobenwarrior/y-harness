@@ -43,8 +43,16 @@
       - cell "{{time}}"
       - 'cell "data: content: [1] · source: {…} · role: user · id: {{uuid}} · surfaceOp: append"':
         - 'button "data: content: [1] · source: {…} · role: user · id: {{uuid}} · surfaceOp: append"'
-    - 'row "10 user/message {{time}} data: content: [1] · source: {…} · role: user · id: {{uuid}} · surfaceOp: append"':
+    - 'row "10 user/message {{time}} data: source: {…} · content: [1] · role: user · id: {{uuid}} · surfaceOp: append"':
       - cell "10"
+      - cell "user/message":
+        - button "user/message"
+      - cell
+      - cell "{{time}}"
+      - 'cell "data: source: {…} · content: [1] · role: user · id: {{uuid}} · surfaceOp: append"':
+        - 'button "data: source: {…} · content: [1] · role: user · id: {{uuid}} · surfaceOp: append"'
+    - 'row "11 user/message {{time}} data: content: [1] · source: {…} · role: user · id: {{uuid}} · surfaceOp: append"':
+      - cell "11"
       - cell "user/message":
         - button "user/message"
       - cell

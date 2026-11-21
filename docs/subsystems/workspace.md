@@ -230,6 +230,14 @@ Typed Remote control of transient Session-owned terminal processes.
 
 ```ts cordis-catalog
 /**
+ * Bind one Agent's owner terminals to a workspace.
+ * @param agent - Agent whose terminal uses the supplied workspace.
+ * @param workspace - Shell provider and initial directory for owner terminals.
+ * @returns A disposer that closes the terminals for this binding and disables new shells until the workspace is rebound.
+ */
+bindWorkspace(agent: Agent, workspace: TerminalWorkspace): () => Promise<void>
+
+/**
  * Read the Session working directory and terminal limits without resolving a shell.
  * @param agent - Session owner supplied by the Gateway.
  * @param signal - request cancellation.
@@ -412,6 +420,35 @@ Host service backing the generated `ctx.remote.workspace` namespace.
 
 Source: [`packages/api/workspace-controller/src/index.ts`](../../packages/api/workspace-controller/src/index.ts)
 
+<a id="ctxworkspacefileaccess--workspacefileaccessprovider"></a>
+
+### `ctx.workspaceFileAccess` — `WorkspaceFileAccessProvider`
+
+Resolve a managed Session without opening its Agent or consulting the Host filesystem.
+
+```ts cordis-catalog
+/**
+ * Select the filesystem for the given managed Session.
+ * @param sessionId - exact Session identity.
+ * @param signal - caller cancellation.
+ * @returns the managed workspace, or undefined for Sessions using the Host filesystem.
+ */
+forSession(sessionId: SessionId, signal: AbortSignal): Promise<WorkspaceFileAccess | undefined>
+
+/**
+ * Resolve the authorized Computer filesystem for the requested path.
+ * @param sessionId - exact Session identity.
+ * @param signal - caller cancellation.
+ * @param path - requested Computer path or the base file for a relative read.
+ * @returns the selected workspace, or undefined when it is unavailable for this Session.
+ */
+forComputer?(sessionId: SessionId, signal: AbortSignal, path?: string): Promise<WorkspaceFileAccess | undefined>
+```
+
+Types: [SessionId](core.md)
+
+Source: [`packages/api/workspace-files/src/index.ts`](../../packages/api/workspace-files/src/index.ts)
+
 <a id="ctxworkspacefiles--workspacefiles"></a>
 
 ### `ctx.workspaceFiles` — `WorkspaceFiles`
@@ -422,40 +459,98 @@ Host Remote file reads and workspace directory observations over the composed fi
 /**
  * Read one page of lines from a UTF-8 file readable by the filesystem backend.
  * @param workspaceFileScope - header-derived workspace root for the Session identity on the wire.
- * @param path - absolute path or path relative to the workspace root; files outside it are allowed.
+ * @param path - Session path or a path confined to its private Computer workspace.
  * @param range - the line window; omitted fields take the page defaults.
  * @param signal - caller cancellation.
  * @returns the page, the file's version at the stat before it, and whether it reaches the last line.
  */
-@Remote async read( workspaceFileScope: WorkspaceFileScope, path: string, range: WorkspaceFileRange, signal: AbortSignal, ): Promise<WorkspaceFileText>
+@Remote async read( workspaceFileScope: WorkspaceFileScope, path: WorkspaceFilePath, range: WorkspaceFileRange, signal: AbortSignal, ): Promise<WorkspaceFileText>
 
 /**
  * Read a complete regular file or one byte range without text decoding.
  * @param workspaceFileScope - header-derived workspace root for the Session identity on the wire.
- * @param path - target path, absolute or workspace-relative; relative to the base file's directory when provided.
+ * @param path - Session or private Computer path, relative to the base file's directory when provided.
  * @param options - optional base file and range; without a range the complete-file cap applies.
  * @param signal - caller cancellation.
  * @returns native bytes with the file's version and size at the preceding stat, byte offset, and EOF marker.
  */
-@Remote async readBytes( workspaceFileScope: WorkspaceFileScope, path: string, options: WorkspaceByteReadOptions, signal: AbortSignal, ): Promise<WorkspaceFileBytes>
+@Remote async readBytes( workspaceFileScope: WorkspaceFileScope, path: WorkspaceFilePath, options: WorkspaceByteReadOptions, signal: AbortSignal, ): Promise<WorkspaceFileBytes>
+
+/**
+ * Read a complete regular file that resolves inside its Session workspace.
+ * @param scope - Session and the workspace root from its header.
+ * @param path - declared path inside the workspace.
+ * @param signal - caller cancellation.
+ * @returns the current bytes, subject to the configured complete-file cap.
+ */
+async readWorkspaceBytes(scope: WorkspaceFileScope, path: string, signal: AbortSignal): Promise<Uint8Array>
+
+/**
+ * Download a regular file confined to its authorized Session workspace.
+ * @param scope - Session and the workspace root from its header.
+ * @param path - declared path inside the workspace.
+ * @param filename - suggested attachment name.
+ * @param signal - download request lifetime.
+ * @returns an uncacheable attachment response subject to the complete-file cap.
+ */
+async downloadWorkspaceFile(scope: WorkspaceFileScope, path: string, filename: string, signal: AbortSignal): Promise<Response>
+
+/**
+ * Read an authorized file after checking the reserved source identity.
+ * @param scope - authorization Session and its working directory.
+ * @param path - Session path or a path confined to its private Computer workspace.
+ * @param expected - source identity observed before the reservation.
+ * @param maxBytes - the consumer's reserved byte capacity.
+ * @param signal - caller cancellation.
+ * @returns native bytes within the reservation.
+ */
+async readVerifiedBytes( scope: WorkspaceFileScope, path: WorkspaceFilePath, expected: WorkspaceFileStat, maxBytes: number, signal: AbortSignal, ): Promise<Uint8Array>
+
+/**
+ * Stream one private Computer file using bounded byte windows from one version.
+ * @param sessionId - the Session that owns the Computer.
+ * @param path - file inside that Computer's workspace.
+ * @param signal - download request lifetime.
+ * @returns an attachment response with a backpressured body.
+ */
+async downloadComputer(sessionId: SessionId, path: string, signal: AbortSignal): Promise<Response>
+
+/**
+ * Open a private Computer file for a byte-preserving transfer.
+ * @param sessionId - exact owner Bot Session.
+ * @param path - workspace-relative or absolute private Computer path.
+ * @param signal - transfer lifetime.
+ * @param expectedVersion - file version shown to the owner, when available.
+ * @returns the file name, size, and a version-checked byte stream.
+ */
+async openComputerFile( sessionId: SessionId, path: string, signal: AbortSignal, expectedVersion?: string, ): Promise<ComputerFileTransfer>
 
 /**
  * Report one regular file's identity, version, and size without its content.
  * @param workspaceFileScope - header-derived workspace root for the Session identity on the wire.
- * @param path - absolute path or path relative to the workspace root; files outside it are allowed.
+ * @param path - Session path or a path confined to its private Computer workspace.
  * @param signal - caller cancellation.
  * @returns the file's absolute path, current version, and byte size.
  */
-@Remote async stat(workspaceFileScope: WorkspaceFileScope, path: string, signal: AbortSignal): Promise<WorkspaceFileStat>
+@Remote async stat(workspaceFileScope: WorkspaceFileScope, path: WorkspaceFilePath, signal: AbortSignal): Promise<WorkspaceFileStat>
+
+/**
+ * Resolve one file for an action that runs on the Host desktop.
+ * @param scope - viewed Session and its header-derived root.
+ * @param path - declared file path.
+ * @param signal - caller cancellation.
+ * @returns the verified regular file's Host path, or undefined for a managed workspace.
+ */
+async hostFilePath(scope: WorkspaceFileScope, path: string, signal: AbortSignal): Promise<string | undefined>
 
 /**
  * List the direct children of one directory inside the Session's workspace.
  * @param workspaceFileScope - header-derived workspace root for the Session identity on the wire.
- * @param path - workspace path, absolute or relative to the workspace root.
+ * @param path - directory inside the Session or private Computer workspace.
  * @param signal - caller cancellation.
  * @returns the directory's children in the backend's stable name order, bounded by the entry cap.
  */
-@Remote async list(workspaceFileScope: WorkspaceFileScope, path: string, signal: AbortSignal): Promise<WorkspaceDirectoryListing>
+@Remote async list(workspaceFileScope: WorkspaceFileScope, path: WorkspaceFilePath, signal: AbortSignal): Promise<WorkspaceDirectoryListing>
 
 /**
  * Watch one file or a directory's direct entries in the Session's filesystem.
@@ -466,8 +561,10 @@ Host Remote file reads and workspace directory observations over the composed fi
  * @returns `ready` once the target watch is active, then current metadata for queued and live invalidations.
  * @throws RemoteError when watching is unavailable or a directory is outside the workspace.
  */
-@Remote({ mode: 'stream' }) changes(workspaceFileScope: WorkspaceFileScope, path: string, signal: AbortSignal): AsyncIterable<WorkspaceFileWatchFrame>
+@Remote({ mode: 'stream' }) async *changes(workspaceFileScope: WorkspaceFileScope, path: string, signal: AbortSignal): AsyncIterable<WorkspaceFileWatchFrame>
 ```
+
+Types: [SessionId](core.md)
 
 Source: [`packages/api/workspace-files/src/index.ts`](../../packages/api/workspace-files/src/index.ts)
 

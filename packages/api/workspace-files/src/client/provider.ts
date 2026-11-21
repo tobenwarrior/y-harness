@@ -26,7 +26,7 @@ import type { SessionId } from '@yharness/session/types'
 import { RemoteError } from '@yharness/typert-protocol'
 import type { RemoteResult } from '@yharness/typert-protocol'
 import { parseFileAddress } from '@yharness/util-workspace-path'
-import type { WorkspaceFileStat } from '../types.ts'
+import type { WorkspaceFilePath, WorkspaceFileStat } from '../types.ts'
 import type { ChangeFeed } from './change-feed.ts'
 import type { WorkspaceFilesRemote } from './remote.ts'
 
@@ -35,6 +35,7 @@ interface HostFile {
   readonly sessionId: SessionId
   /** The path the Host receives: absolute or workspace-relative. */
   readonly path: string
+  readonly computer?: true
 }
 
 /**
@@ -55,10 +56,16 @@ export function createFileResourceProvider(
         yield resolved
         return
       }
-      const { sessionId, path } = resolved.value
+      const { sessionId, path, computer } = resolved.value
+      const target: WorkspaceFilePath = computer === true ? { computer: path } : path
+      const stat = (): Promise<RemoteResult<WorkspaceFileStat>> => remote.workspaceFiles.stat(sessionId, target, signal)
+      if (computer === true) {
+        const result = await stat()
+        if (!signal.aborted) yield result
+        return
+      }
       // Queue changes delivered to this Client while stat is pending.
       const notices = changes.follow(sessionId, path, signal)
-      const stat = (): Promise<RemoteResult<WorkspaceFileStat>> => remote.workspaceFiles.stat(sessionId, path, signal)
       // Read through a call: a plain `signal.aborted` is narrowed to `false` by
       // the first check and would read as always-false after the later awaits.
       const aborted = (): boolean => signal.aborted
@@ -119,10 +126,10 @@ export function createFileResourceProvider(
 function resolve(address: string): RemoteResult<HostFile> {
   const parsed = parseFileAddress(address)
   if (parsed === undefined) return { ok: false, error: unsupportedAddress(address) }
-  if (parsed.scope === 'session') {
+  if (parsed.scope !== 'absolute') {
     // The address is a string boundary: its id segment is the Session id it names.
     const sessionId = parsed.sessionId as SessionId
-    return { ok: true, value: { sessionId, path: parsed.path } }
+    return { ok: true, value: { sessionId, path: parsed.path, ...(parsed.scope === 'computer' ? { computer: true } : {}) } }
   }
   return { ok: false, error: unknownWorkspace(address) }
 }

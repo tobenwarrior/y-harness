@@ -1,7 +1,7 @@
 /** macOS development bundle that loads the current workspace through Electron. */
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { readAppDisplayName } from '../../../scripts/app-branding.mjs'
 import { DEVELOPMENT_ICON_SOURCE, ICNS_BITMAPS, writeDevelopmentIcon } from './development-icon.ts'
@@ -24,6 +24,8 @@ export interface DevelopmentAppOptions {
   readonly openDevtools: string
   readonly disableInspectors?: boolean
   readonly managed?: boolean
+  /** Managed installation identity retained when preparing a new carrier. */
+  readonly bundleIdentifier?: string
   /** Test seam for the managed launch handoff command. */
   readonly managedOpenCommand?: string
   /** Test seam for the managed app path used by the launch handoff. */
@@ -31,6 +33,18 @@ export interface DevelopmentAppOptions {
 }
 
 function quote(value: string): string { return `'${value.replaceAll("'", "'\\''")}'` }
+
+function reusableBundle(bundle: string, stamp: string, identity: string): boolean {
+  if (!existsSync(stamp) || readFileSync(stamp, 'utf8') !== identity) return false
+  try {
+    execFileSync('/usr/bin/codesign', ['--verify', '--strict', '--deep', bundle], { stdio: 'pipe' })
+    return true
+  } catch (error) {
+    // A previously interrupted signing attempt can leave a matching stamp.
+    void error
+    return false
+  }
+}
 
 /**
  * Prepare and register a disposable .app without changing the installed Electron package.
@@ -49,28 +63,69 @@ export async function prepareDevelopmentApp(options: DevelopmentAppOptions): Pro
   const identity = JSON.stringify({ ...options, displayName, launcher,
     plist: readFileSync(join(source, 'Contents', 'Info.plist'), 'utf8'),
     icon: { artwork: createHash('sha256').update(readFileSync(DEVELOPMENT_ICON_SOURCE)).digest('hex'), bitmaps: ICNS_BITMAPS } })
-  if (!existsSync(stamp) || readFileSync(stamp, 'utf8') !== identity) {
-    rmSync(bundle, { recursive: true, force: true })
-    execFileSync('/usr/bin/ditto', [source, bundle])
-    const plist = join(bundle, 'Contents', 'Info.plist')
-    const values = {
-      CFBundleIdentifier: `com.yharness.desktop.dev.${createHash('sha256').update(options.appRoot).digest('hex').slice(0, 12)}`,
-      CFBundleName: 'Y harness',
-      CFBundleDisplayName: displayName ?? 'Y Harness',
-      CFBundleExecutable: 'YHarness',
-      CFBundleIconFile: ICON_FILE,
-      CFBundleURLTypes: options.managed === true ? [] : [{ CFBundleURLName: 'Y harness', CFBundleURLSchemes: ['dsh'], CFBundleTypeRole: 'Viewer' }],
+  if (!reusableBundle(bundle, stamp, identity)) {
+    mkdirSync(options.directory, { recursive: true })
+    const work = mkdtempSync(join(options.directory, '.development-app-'))
+    const prepared = join(work, 'Y harness.app')
+    let backup: string | undefined
+    try {
+      execFileSync('/usr/bin/ditto', [source, prepared])
+      const plist = join(prepared, 'Contents', 'Info.plist')
+      const values = {
+        CFBundleIdentifier: options.bundleIdentifier ?? `com.yharness.desktop.dev.${createHash('sha256').update(options.appRoot).digest('hex').slice(0, 12)}`,
+        CFBundleName: 'Y harness',
+        CFBundleDisplayName: displayName ?? 'Y Harness',
+        CFBundleExecutable: 'YHarness',
+        CFBundleIconFile: ICON_FILE,
+        CFBundleURLTypes: options.managed === true ? [] : [{ CFBundleURLName: 'Y harness', CFBundleURLSchemes: ['dsh'], CFBundleTypeRole: 'Viewer' }],
+      }
+      for (const [key, value] of Object.entries(values)) {
+        execFileSync('/usr/bin/plutil', ['-replace', key, '-json', JSON.stringify(value), plist])
+      }
+      await writeDevelopmentIcon(DEVELOPMENT_ICON_SOURCE, join(prepared, 'Contents', 'Resources', ICON_FILE))
+      writeFileSync(join(prepared, 'Contents', 'MacOS', 'YHarness'), launcher, { mode: 0o755 })
+      writeFileSync(join(prepared, 'Contents', 'Resources', 'yharness-development.json'), identity, { mode: 0o600 })
+      execFileSync('/usr/bin/codesign', ['--force', '--deep', '--sign', '-', prepared], { stdio: 'pipe' })
+      execFileSync('/usr/bin/codesign', ['--verify', '--strict', '--deep', prepared], { stdio: 'pipe' })
+      if (existsSync(bundle)) {
+        const previous = join(work, 'previous.app')
+        renameSync(bundle, previous)
+        backup = previous
+      }
+      try {
+        renameSync(prepared, bundle)
+      } catch (error) {
+        if (backup !== undefined) renameSync(backup, bundle)
+        backup = undefined
+        throw error
+      }
+      backup = undefined
+    } finally {
+      if (backup === undefined) rmSync(work, { recursive: true, force: true })
     }
-    for (const [key, value] of Object.entries(values)) {
-      execFileSync('/usr/bin/plutil', ['-replace', key, '-json', JSON.stringify(value), plist])
-    }
-    await writeDevelopmentIcon(DEVELOPMENT_ICON_SOURCE, join(bundle, 'Contents', 'Resources', ICON_FILE))
-    writeFileSync(executable, launcher, { mode: 0o755 })
-    writeFileSync(stamp, identity, { mode: 0o600 })
-    execFileSync('/usr/bin/codesign', ['--force', '--deep', '--sign', '-', bundle], { stdio: 'pipe' })
   }
   execFileSync('/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister', ['-f', bundle])
   return executable
+}
+
+function managedLaunchHandoff(options: Pick<DevelopmentAppOptions, 'managedOpenCommand' | 'managedAppPath'>): string[] {
+  return [
+    'if [ "${DSH_DESKTOP_GITHUB_MANAGED-}" != "1" ]; then',
+    `  ${quote(options.managedOpenCommand ?? '/usr/bin/open')} ${options.managedAppPath === undefined
+      ? '"$HOME/Applications/Y Harness GitHub.app"'
+      : quote(options.managedAppPath)}`,
+    '  exit $?',
+    'fi',
+  ]
+}
+
+/**
+ * Check whether Finder and Dock launches return to the installed supervisor.
+ * @param launcher - Contents of the signed bundle's launcher.
+ * @returns Whether it starts with the production handoff.
+ */
+export function hasManagedLaunchHandoff(launcher: string): boolean {
+  return launcher.startsWith(['#!/bin/sh', ...managedLaunchHandoff({}), ''].join('\n'))
 }
 
 /**
@@ -90,14 +145,7 @@ export function developmentLauncher(options: DevelopmentAppOptions, bundle: stri
     `--user-data-dir=${options.userData}`,
     options.appRoot,
   ]
-  const managedHandoff = options.managed === true ? [
-    'if [ "${DSH_DESKTOP_GITHUB_MANAGED-}" != "1" ]; then',
-    `  ${quote(options.managedOpenCommand ?? '/usr/bin/open')} ${options.managedAppPath === undefined
-      ? '"$HOME/Applications/Y Harness GitHub.app"'
-      : quote(options.managedAppPath)}`,
-    '  exit $?',
-    'fi',
-  ] : []
+  const managedHandoff = options.managed === true ? managedLaunchHandoff(options) : []
   if (options.disableInspectors === true) {
     return [
       '#!/bin/sh',

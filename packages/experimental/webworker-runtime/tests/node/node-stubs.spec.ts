@@ -21,6 +21,7 @@ import * as stream from '../../src/node/builtin_modules/implemented/stream.ts'
 import * as vm from '../../src/node/builtin_modules/mock/vm.ts'
 import * as workerThreads from '../../src/node/builtin_modules/mock/worker_threads.ts'
 import * as nodePty from '../../src/node/external_packages/node-pty.ts'
+import * as claudeAgentSdk from '../../src/node/external_packages/claude-agent-sdk.ts'
 import * as libreofficeKit from '../../src/node/external_packages/libreoffice-kit.ts'
 import * as execa from '../../src/node/external_packages/execa.ts'
 import * as got from '../../src/node/external_packages/got.ts'
@@ -48,6 +49,7 @@ const CALLED: [string, Record<string, unknown>, readonly string[]][] = [
   ['node-pty', nodePty, ['spawn', 'open']],
   ['execa', execa, ['execa']],
   ['got', got.default, ['post']],
+  ['@anthropic-ai/claude-agent-sdk', claudeAgentSdk, ['query', 'listSessions', 'getSessionInfo', 'getSessionMessages']],
   ['@deepseek-ai/pi-ai', piAi, [
     'createProvider', 'createModels', 'openAICompletionsApi', 'openAIResponsesApi', 'anthropicMessagesApi',
     'isContextOverflow', 'getSupportedThinkingLevels',
@@ -97,7 +99,9 @@ describe('not-implemented stubs', () => {
   }
 
   it('keeps the CommonJS interop marker and a default export on every replaced module', () => {
-    for (const namespace of [dnsPromises, net, sqlite, vm, workerThreads, childProcess, stream, ws, nodePty, piAi, os, perfHooks, got]) {
+    for (const namespace of [
+      dnsPromises, net, sqlite, vm, workerThreads, childProcess, stream, ws, nodePty, piAi, os, perfHooks, got, claudeAgentSdk,
+    ]) {
       const holder = namespace as { __esModule?: unknown; default?: unknown }
       expect(holder.__esModule).toBe(true)
       expect(holder.default).toBeDefined()
@@ -130,6 +134,7 @@ describe('replaced external packages', () => {
   })
 
   it('lists the packages the loader serves from the bundle', () => {
+    expect(REPLACED_EXTERNAL_PACKAGES).toContain('@anthropic-ai/claude-agent-sdk')
     expect(REPLACED_EXTERNAL_PACKAGES).not.toContain('chokidar')
     expect(REPLACED_EXTERNAL_PACKAGES).not.toContain('@yharness/node-addon-system')
     expect(REPLACED_EXTERNAL_PACKAGES).not.toContain('@yharness/node-addon-system/landlock-run')

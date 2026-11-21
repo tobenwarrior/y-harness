@@ -51,7 +51,7 @@ function isCleanAcceptGesture(event: KeyboardEvent | null): boolean {
     && !event.ctrlKey
     && !event.metaKey
     && !event.isComposing
-    && event.keyCode !== 229
+    && Reflect.get(event, 'keyCode') !== 229
 }
 
 /**
@@ -124,16 +124,16 @@ export function registerGhostPrediction(
     if (!controller.mayShow(false)) return false
     // Re-check inside the update: the decorator sync guarantees emptiness,
     // but a race with typing must not eat a keystroke.
-    let accepted: string | null = null
+    const accepted: { value: string | null } = { value: null }
     editor.update(() => {
       const root = $getRoot()
       const ghost = findGhostNode(root.getChildren())
       if (ghost === null) return
       const children = root.getChildren()
       if (children.length !== 2) return
-      accepted = controller.accept()
-      if (accepted !== null) {
-        const lines = accepted.split('\n')
+      accepted.value = controller.accept()
+      if (accepted.value !== null) {
+        const lines = accepted.value.split('\n')
         root.clear()
         for (const line of lines) {
           const paragraph = $createParagraphNode()
@@ -143,7 +143,7 @@ export function registerGhostPrediction(
         root.selectEnd()
       }
     }, { discrete: true })
-    if (accepted !== null) {
+    if (accepted.value !== null) {
       event?.preventDefault()
       event?.stopPropagation()
       return true

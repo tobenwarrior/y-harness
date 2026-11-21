@@ -47,9 +47,9 @@
 
 - insert:
     - id: computer-use
-      name: '@deepseek-ai/dsh-computer-use'
+      name: '@yharness/computer-use'
     - id: computer-use-cua-driver-mcp
-      name: '@deepseek-ai/dsh-experimental-computer-use-cua-driver-mcp'
+      name: '@yharness/experimental-computer-use-cua-driver-mcp'
       config:
         command: !!js process.execPath
         args: [driver.mjs, .dsh/computer-use-fixture]

@@ -69,6 +69,7 @@ export {
   serverResponseSchema,
 } from './rpc-schema.ts'
 export { HostConnectionService } from './rpc-host.ts'
+export { writeFetchResponseBody } from './http-bridge.ts'
 
 export { API_PATH } from './api-path.ts'
 export {

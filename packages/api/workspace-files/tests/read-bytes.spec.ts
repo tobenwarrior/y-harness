@@ -1,6 +1,6 @@
 /** The `readBytes` endpoint: the byte window it cuts, its defaults and cap, and the gates it shares with `read`. */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, realpath, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { FsVersion } from '@yharness/fs'
 import { failureOf, openWorkspace, signal, type Harness } from './harness.ts'
@@ -19,10 +19,212 @@ afterEach(async () => {
 
 const endpoint = (caps?: { maxBytes?: number; maxFileBytes?: number }): ReturnType<Harness['endpoint']> => harness.endpoint(caps)
 
+function exposeComputer(fs = harness.ctx.fs): void {
+  harness.ctx.provide('workspaceFileAccess', {
+    forSession: () => Promise.resolve(undefined),
+    forComputer: sessionId => Promise.resolve(sessionId === harness.scope.sessionId
+      ? { fs, workspaceRoot: harness.outside }
+      : undefined),
+  })
+}
+
 /** 256 bytes, each equal to its offset: the window's content names its position. */
 const RAMP = Buffer.from(Array.from({ length: 256 }, (_, i) => i))
 
 describe('workspaceFiles.readBytes — the window', () => {
+  it('downloads a Computer file in bounded windows above the preview size cap', async () => {
+    await writeFile(join(harness.outside, 'stock list.bin'), RAMP)
+    await writeFile(join(workspace, 'stock list.bin'), Buffer.alloc(RAMP.length, 42))
+    exposeComputer()
+    const download = await endpoint({ maxBytes: 64, maxFileBytes: 4 }).downloadComputer(
+      harness.scope.sessionId, 'stock list.bin', signal(),
+    )
+    expect(download.headers.get('content-disposition')).toContain("filename*=UTF-8''stock%20list.bin")
+    expect(download.headers.get('content-length')).toBe('256')
+    expect(Buffer.from(await download.arrayBuffer())).toEqual(RAMP)
+  })
+
+  it('keeps the private Computer and existing Session files separately addressable', async () => {
+    await writeFile(join(workspace, 'notes.txt'), 'Session notes')
+    await writeFile(join(harness.outside, 'notes.txt'), 'Computer notes')
+    await mkdir(join(harness.outside, 'reports'))
+    exposeComputer()
+    const files = endpoint()
+    const report = { computer: 'notes.txt' }
+    await expect(files.read(harness.scope, 'notes.txt', {}, signal())).resolves.toMatchObject({ text: 'Session notes' })
+    await expect(files.read(harness.scope, report, {}, signal())).resolves.toMatchObject({ text: 'Computer notes' })
+    expect(Buffer.from((await files.readBytes(harness.scope, report, {}, signal())).data).toString()).toBe('Computer notes')
+    const version = await files.stat(harness.scope, report, signal())
+    expect(version.bytes).toBe(14)
+    expect(Buffer.from(await files.readVerifiedBytes(harness.scope, report, version, 64, signal())).toString()).toBe('Computer notes')
+    await expect(files.list(harness.scope, { computer: '.' }, signal())).resolves.toMatchObject({
+      entries: [expect.objectContaining({ name: 'notes.txt' }), expect.objectContaining({ name: 'reports' })],
+    })
+    const outside = await failureOf(files.read(harness.scope, { computer: join(workspace, 'notes.txt') }, {}, signal()))
+    expect(outside.code).toBe('workspace-file/outside-workspace')
+    await expect(files.readVerifiedBytes(harness.scope, { computer: join(workspace, 'notes.txt') }, version, 64, signal()))
+      .rejects.toMatchObject({ code: 'workspace-file/outside-workspace' })
+  })
+
+  it('refuses a stale Computer copy before reading any file bytes', async () => {
+    await writeFile(join(harness.outside, 'notes.txt'), 'current')
+    exposeComputer()
+    const read = vi.spyOn(harness.ctx.fs, 'readByteRange')
+    await expect(endpoint().openComputerFile(harness.scope.sessionId, 'notes.txt', signal(), 'old-preview'))
+      .rejects.toMatchObject({ code: 'workspace-file/changed' })
+    expect(read).not.toHaveBeenCalled()
+  })
+
+  it('ends an empty Computer download without reading a byte window', async () => {
+    await writeFile(join(harness.outside, 'empty.txt'), '')
+    exposeComputer()
+    const read = vi.spyOn(harness.ctx.fs, 'readByteRange')
+
+    const response = await endpoint().downloadComputer(harness.scope.sessionId, 'empty.txt', signal())
+
+    expect(response.headers.get('content-length')).toBe('0')
+    expect(await response.text()).toBe('')
+    expect(read).not.toHaveBeenCalled()
+  })
+
+  it('streams Computer files when the backend leaves their size unknown', async () => {
+    await writeFile(join(harness.outside, 'notes.txt'), '12345678')
+    exposeComputer()
+    vi.spyOn(harness.ctx.fs, 'stat').mockResolvedValue({ type: 'file', version: FsVersion('fixture-version') })
+    const read = vi.spyOn(harness.ctx.fs, 'readByteRange')
+
+    const response = await endpoint({ maxBytes: 4 }).downloadComputer(harness.scope.sessionId, 'notes.txt', signal())
+
+    expect(response.headers.has('content-length')).toBe(false)
+    expect(await response.text()).toBe('12345678')
+    expect(read.mock.calls.map(([, range]) => range)).toEqual([
+      { offset: 0, length: 4 }, { offset: 4, length: 4 }, { offset: 8, length: 4 },
+    ])
+  })
+
+  it('refuses a short read when the Computer reported a complete byte window', async () => {
+    await writeFile(join(harness.outside, 'notes.txt'), '1234')
+    exposeComputer()
+    vi.spyOn(harness.ctx.fs, 'readByteRange').mockResolvedValue(new Uint8Array([49, 50]))
+    const response = await endpoint({ maxBytes: 4 }).downloadComputer(harness.scope.sessionId, 'notes.txt', signal())
+
+    await expect(response.arrayBuffer()).rejects.toThrow('The file changed during download.')
+  })
+
+  it('awaits an in-flight Computer read when the download is cancelled', async () => {
+    await writeFile(join(harness.outside, 'notes.txt'), 'pending')
+    exposeComputer()
+    const started = Promise.withResolvers<AbortSignal>()
+    const finish = Promise.withResolvers<undefined>()
+    vi.spyOn(harness.ctx.fs, 'readByteRange').mockImplementation(async (_target, _range, cancellation) => {
+      if (cancellation === undefined) throw new Error('Computer download omitted its cancellation signal')
+      started.resolve(cancellation)
+      await finish.promise
+      cancellation.throwIfAborted()
+      return new Uint8Array()
+    })
+    const transfer = await endpoint().openComputerFile(harness.scope.sessionId, 'notes.txt', signal())
+    const reader = transfer.body.getReader()
+    const read = reader.read()
+    try {
+      const cancellation = await started.promise
+      const cancelled = reader.cancel()
+      let settled = false
+      void cancelled.then(() => { settled = true })
+      await expect(read).resolves.toMatchObject({ done: true })
+      expect(cancellation.aborted).toBe(true)
+      expect(settled).toBe(false)
+      finish.resolve(undefined)
+      await cancelled
+    } finally {
+      finish.resolve(undefined)
+      await reader.cancel()
+      reader.releaseLock()
+    }
+  })
+
+  it.each(['C:\\computer\\notes.txt', '/computer/notes.txt'])('uses the Computer filename from %s', async (absolutePath) => {
+    await writeFile(join(harness.outside, 'notes.txt'), 'fixture')
+    exposeComputer(new Proxy(harness.ctx.fs, {
+      get(target, key) {
+        if (key === 'processPath') return () => absolutePath
+        const member: unknown = Reflect.get(target, key)
+        if (typeof member !== 'function') return member
+        const bound: unknown = member.bind(target)
+        return bound
+      },
+    }))
+    const response = await endpoint().downloadComputer(harness.scope.sessionId, 'notes.txt', signal())
+
+    expect(response.headers.get('content-disposition')).toContain("filename*=UTF-8''notes.txt")
+    expect(await response.text()).toBe('fixture')
+  })
+
+  it('rejects a Computer text page when a writer changes the file during the read', async () => {
+    const path = join(harness.outside, 'notes.txt')
+    await writeFile(path, 'Original')
+    harness.ctx.provide('workspaceFileAccess', {
+      forSession: () => Promise.resolve(undefined),
+      forComputer: () => Promise.resolve({ fs: harness.ctx.fs, workspaceRoot: harness.outside }),
+    })
+    vi.spyOn(harness.ctx.fs, 'streamText').mockImplementation(async () => (async function* () {
+      await writeFile(path, 'Different content and length')
+      yield 'Original'
+    })())
+    await expect(endpoint().read(harness.scope, { computer: 'notes.txt' }, {}, signal()))
+      .rejects.toMatchObject({ code: 'workspace-file/changed' })
+  })
+
+  it('never reads a regular Session file when its Computer is unavailable', async () => {
+    await writeFile(join(workspace, 'notes.txt'), 'Session notes')
+    const failure = await failureOf(endpoint().readBytes(harness.scope, { computer: 'notes.txt' }, {}, signal()))
+    expect(failure.code).toBe('workspace-file/computer-unavailable')
+  })
+
+  it.each(['changed-version', 'missing', 'directory'])('checks for a %s source before reading reserved bytes', async (change) => {
+    await writeFile(join(workspace, 'original.txt'), 'Workspace note')
+    const files = endpoint()
+    const current = await files.stat(harness.scope, 'original.txt', signal())
+    const path = change === 'missing' ? 'missing.txt' : change === 'directory' ? '.' : 'original.txt'
+    const expected = change === 'changed-version' ? { ...current, version: 'old-version' } : current
+    const read = vi.spyOn(harness.ctx.fs, 'readBytes')
+    await expect(files.readVerifiedBytes(harness.scope, path, expected, 64, signal()))
+      .rejects.toMatchObject({ code: 'workspace-file/changed' })
+    expect(read).not.toHaveBeenCalled()
+  })
+
+  it('opens previews in the exact Session execution workspace', async () => {
+    await writeFile(join(workspace, 'report.txt'), 'host copy')
+    await writeFile(join(harness.outside, 'report.txt'), 'managed copy')
+    harness.ctx.provide('workspaceFileAccess', {
+      forSession: async sessionId => sessionId === harness.scope.sessionId
+        ? { fs: harness.ctx.fs, workspaceRoot: harness.outside }
+        : undefined,
+    })
+    const files = endpoint()
+    expect((await files.read(harness.scope, 'report.txt', {}, signal())).text).toBe('managed copy')
+    expect(Buffer.from((await files.readBytes(harness.scope, 'report.txt', {}, signal())).data).toString()).toBe('managed copy')
+    await expect(files.stat(harness.scope, 'report.txt', signal())).resolves.toMatchObject({ bytes: 12 })
+    await expect(files.list(harness.scope, '.', signal())).resolves.toMatchObject({ entries: [expect.objectContaining({ name: 'report.txt' })] })
+    await expect(files.hostFilePath(harness.scope, 'report.txt', signal())).resolves.toBeUndefined()
+    const updates = files.changes(harness.scope, 'report.txt', signal())[Symbol.asyncIterator]()
+    await expect(updates.next()).rejects.toMatchObject({ code: 'workspace-file/watch-unsupported' })
+  })
+
+  it('downloads a named Session file and resolves its Host path', async () => {
+    const path = join(workspace, 'report.txt')
+    await writeFile(path, 'fixture report')
+    const files = endpoint()
+
+    const response = await files.downloadWorkspaceFile(harness.scope, 'report.txt', 'renamed.txt', signal())
+
+    expect(response.headers.get('content-disposition')).toContain("filename*=UTF-8''renamed.txt")
+    expect(await response.text()).toBe('fixture report')
+    await expect(files.hostFilePath(harness.scope, 'report.txt', signal())).resolves.toBe(await realpath(path))
+    const selected = await files.stat(harness.scope, 'report.txt', signal())
+    expect(Buffer.from(await files.readVerifiedBytes(harness.scope, 'report.txt', selected, 64, signal())).toString()).toBe('fixture report')
+  })
+
   it('returns the whole file as one window by default, with its absolute path, version, and size', async () => {
     await writeFile(join(workspace, 'ramp.bin'), RAMP)
     const result = await endpoint().readBytes(harness.scope, 'ramp.bin', { range: {} }, signal())

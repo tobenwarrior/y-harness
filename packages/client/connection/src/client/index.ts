@@ -91,7 +91,7 @@ export interface ClientTransportHooks {
    * Host such as a test mock plugs in here).
    */
   rpc?: ClientConnectionRpc
-  /** Transport for generic unary RPC channels (the Typert gateway); unused when `rpc` is present. */
+  /** Transport for Host HTTP routes and the encoded unary RPC carrier. */
   fetch?: RpcFetch
   /** Worker-local Gateway stream carrier; absent when the page uses the Gateway WebSocket or `rpc` is present. */
   openStream?: RpcStreamOpen
@@ -152,6 +152,8 @@ export interface ConnectionHandle {
   readonly state: ConnectionStateSource
   /** Generic logical RPC channels over the same Connection transport. */
   readonly rpc: ClientConnectionRpc
+  /** Fetch a Host HTTP route. Custom RPC-only handles may leave this unset. */
+  readonly fetch?: RpcFetch
   /** Reset retry progression and replace the current attempt immediately. */
   reconnect(): void
   /**
@@ -214,7 +216,8 @@ export function installConnection(ctx: Context, options: ConnectionInstallOption
   const pageLocation = options.location
   const transport = options.transport
   const recovery = options.recovery ?? {}
-  const rpc = transport?.rpc ?? createWebConnectionRpc(transport?.fetch, transport?.openStream)
+  const fetchHost: RpcFetch = transport?.fetch ?? ((input, init) => globalThis.fetch(input, init))
+  const rpc = transport?.rpc ?? createWebConnectionRpc(fetchHost, transport?.openStream)
   let generationSource: ConnectionGenerationSource | undefined
   let owner: ConnectionOwner | undefined
   let generationId = 0
@@ -269,6 +272,7 @@ export function installConnection(ctx: Context, options: ConnectionInstallOption
       },
     },
     rpc,
+    fetch: fetchHost,
     reconnect() {
       owner?.controller.reconnect()
     },

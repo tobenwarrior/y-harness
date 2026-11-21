@@ -31,7 +31,7 @@ function providerFor(
       calls += 1
       if (opts.hangFirst === true && calls === 1) {
         await new Promise<never>((_resolve, reject) => {
-          signal.addEventListener('abort', () => reject(new Error('aborted')))
+          signal.addEventListener('abort', () => { reject(new Error('aborted')) })
         })
       }
       if (signal.aborted) return null

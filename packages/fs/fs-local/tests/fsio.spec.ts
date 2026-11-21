@@ -905,7 +905,7 @@ describe('writeFileAtomic — temp-file safety', () => {
     await writeFile(join(dir, tempDirName, 'PRECIOUS'), 'keep')
     await expect(
       writeFileAtomic(file, 'hello', undefined, undefined, { tempDirName: () => tempDirName }),
-    ).rejects.toMatchObject({ code: 'FS_IO_ERROR', cause: expect.objectContaining({ code: 'EEXIST' }) })
+    ).rejects.toMatchObject({ code: 'FS_IO_ERROR', cause: { code: 'EEXIST' } })
     expect(await readFile(join(dir, tempDirName, 'PRECIOUS'), 'utf8')).toBe('keep')
     await expect(stat(file)).rejects.toMatchObject({ code: 'ENOENT' })
   })
@@ -914,6 +914,18 @@ describe('writeFileAtomic — temp-file safety', () => {
     const file = join(dir, 'nested', 'deep', 'a.txt')
     await writeFileAtomic(file, 'hi', undefined, undefined)
     expect(await readFile(file, 'utf8')).toBe('hi')
+  })
+
+  it('reports a file blocking parent creation and preserves that file', async () => {
+    const parent = join(dir, 'existing')
+    await writeFile(parent, 'keep')
+    const pending = writeFileAtomic(join(parent, 'output.txt'), 'new', undefined, undefined, {}, {
+      displayPath: 'existing/output.txt',
+    })
+    await expect(pending).rejects.toMatchObject({ code: 'FS_IO_ERROR' })
+    await expect(pending).rejects.toThrow('existing/output.txt')
+    expect(await readFile(parent, 'utf8')).toBe('keep')
+    expect(await readdir(dir)).toEqual(['existing'])
   })
 
   it('passes a live (non-aborted) signal through the write', async () => {

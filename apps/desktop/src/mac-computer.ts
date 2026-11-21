@@ -211,7 +211,7 @@ export class MacComputer {
     if (action.kind === 'observe') {
       const frame = await this.capture()
       this.expire()
-      if (this.owner !== owner || this.paused) throw new Error('Mac sharing has ended or paused.')
+      if (this.owner !== owner || this.isPaused()) throw new Error('Mac sharing has ended or paused.')
       this.observed = { width: frame.width, height: frame.height, at: this.now() }
       return frame
     }
@@ -220,5 +220,9 @@ export class MacComputer {
     this.desktop.input(inputOf(action, observed), { width: observed.width, height: observed.height })
     this.botActivityUntil = this.now() + 1000
     return undefined
+  }
+
+  private isPaused(): boolean {
+    return this.paused
   }
 }

@@ -408,10 +408,10 @@ export class LocaleRuntime {
    */
   register(ns: string, locale: string, dict: LocaleDict): () => void
   register(ns: string, localeOrDicts: string | Record<string, LocaleDict>, dict?: LocaleDict): () => void {
-    const pairs = (typeof localeOrDicts === 'string'
+    const pairs: [string, LocaleDict][] = typeof localeOrDicts === 'string'
       // Overload guarantees dict on the single-locale arm.
       ? [[localeOrDicts, dict as LocaleDict]]
-      : Object.entries(localeOrDicts)) as [string, LocaleDict][]
+      : Object.entries(localeOrDicts)
     for (const [locale] of pairs) {
       if (!LOCALE_ID_PATTERN.test(locale)) {
         throw new Error(`locale id "${locale}" is not a BCP 47-style tag`)

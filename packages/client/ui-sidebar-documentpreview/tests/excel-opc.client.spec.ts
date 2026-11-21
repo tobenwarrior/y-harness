@@ -46,8 +46,9 @@ describe.each([['Node', ExcelJS], ['browser bundle', browserExcel]] as const)('%
     files[relsPath] = strToU8(xml.replace(relations.join(''), [...relations].reverse().join('')))
     const workbook = new parser.Workbook()
     await workbook.xlsx.load(new Uint8Array(zipSync(Object.fromEntries(Object.entries(files).reverse()))).buffer, { ignoreNodes: ['drawing'] })
-    expect(workbook.worksheets[0]!.getCell('B2').note).toMatchObject({
-      texts: [{ text: expect.any(String), font: { bold: true } }], margins: { insetmode: 'custom' },
+    const note = workbook.worksheets[0]!.getCell('B2').note
+    expect(note).toMatchObject({
+      texts: [{ text: expect.any(String) as string, font: { bold: true } }], margins: { insetmode: 'custom' },
     })
   })
 })

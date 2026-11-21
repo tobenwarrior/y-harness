@@ -534,3 +534,29 @@ export function resolveProfiles(
   }
   return resolved
 }
+
+/** Effective provider endpoints and the optional credential reference for API-key provisioning. */
+export interface PiAiApiKeyRoute {
+  /** Credential reference configured on the route. */
+  readonly ref?: CredentialRef
+  /** Protocol and base URL of every serviceable model. */
+  readonly endpoints: readonly { readonly api: string; readonly baseUrl: string }[]
+}
+
+/**
+ * Resolve the route metadata a host needs to provision an API key.
+ * @param provider - Configured provider route id.
+ * @param source - The current provider profile.
+ * @returns Metadata for a serviceable API-key route, or undefined for an unsupported route.
+ * @throws When the profile fails configuration validation.
+ */
+export function resolveApiKeyRoute(provider: string, source: PiAiProviderProfile): PiAiApiKeyRoute | undefined {
+  const profile = resolveProfiles({ [provider]: source }, 'deferred').get(provider)
+  if (profile?.piProvider?.auth.apiKey === undefined) return undefined
+  const models = profile.piProvider.getModels()
+  if (models.length === 0) return undefined
+  return {
+    endpoints: models.map(({ api, baseUrl }) => ({ api, baseUrl })),
+    ...profile.apiKeyEnv === undefined ? {} : { ref: profile.apiKeyEnv },
+  }
+}

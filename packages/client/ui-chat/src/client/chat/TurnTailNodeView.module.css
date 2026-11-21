@@ -10,3 +10,11 @@
   margin-top: 4px;
   margin-left: -6px;
 }
+
+:global([data-conversation-surface='bots']) .root[data-turn-tail] {
+  padding-inline-start: var(--dsh-bot-reply-inset);
+}
+
+:global([data-conversation-surface='bots']) .root[data-turn-tail] .actions {
+  margin-inline-start: -6px;
+}

@@ -4,7 +4,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it, onTestFinished, vi } from 'vitest'
 
-const { displayName } = vi.hoisted(() => ({ displayName: vi.fn<() => string | undefined>(() => undefined) }))
+const { displayName, sign, verify } = vi.hoisted(() => ({
+  displayName: vi.fn<() => string | undefined>(() => undefined),
+  sign: vi.fn<() => void>(),
+  verify: vi.fn<() => void>(),
+}))
 vi.mock('../../../scripts/app-branding.mjs', () => ({ readAppDisplayName: displayName }))
 vi.mock('node:child_process', async (importOriginal) => {
   const original = await importOriginal<typeof import('node:child_process')>()
@@ -15,8 +19,10 @@ vi.mock('node:child_process', async (importOriginal) => {
       const plist = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>
       plist[args[1]!] = JSON.parse(args[3]!)
       writeFileSync(path, JSON.stringify(plist))
-    } else if (command !== '/usr/bin/codesign'
-      && !command.endsWith('/LaunchServices.framework/Support/lsregister')) {
+    } else if (command === '/usr/bin/codesign') {
+      if (args.includes('--sign')) sign()
+      else verify()
+    } else if (!command.endsWith('/LaunchServices.framework/Support/lsregister')) {
       throw new Error(`Unexpected native command: ${command}`)
     }
     return Buffer.alloc(0)
@@ -26,7 +32,11 @@ vi.mock('node:child_process', async (importOriginal) => {
 import { prepareDevelopmentApp } from '../scripts/development-app.ts'
 import { createElectronBuilderConfig } from '../scripts/electron-builder-config.mjs'
 
-afterEach(() => { displayName.mockReturnValue(undefined) })
+afterEach(() => {
+  displayName.mockReturnValue(undefined)
+  sign.mockReset()
+  verify.mockReset()
+})
 
 it('refreshes only the development bundle display label when the configuration changes', async () => {
   const root = mkdtempSync(join(tmpdir(), 'dsh-display-name-'))
@@ -69,6 +79,39 @@ it('refreshes only the development bundle display label when the configuration c
   const managed = JSON.parse(readFileSync(join(bundle, 'Info.plist'), 'utf8')) as Record<string, unknown>
   expect(managed.CFBundleURLTypes).toEqual([])
   expect(readFileSync(executable, 'utf8')).toContain("export DSH_DESKTOP_DEV_APP='0'")
+})
+
+it('preserves the working bundle when signing fails and signs again on retry', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'yh-development-retry-'))
+  onTestFinished(() => { rmSync(root, { recursive: true, force: true }) })
+  const source = join(root, 'Electron.app', 'Contents')
+  mkdirSync(join(source, 'MacOS'), { recursive: true })
+  mkdirSync(join(source, 'Resources'), { recursive: true })
+  writeFileSync(join(source, 'Info.plist'), '{}')
+  const electron = join(source, 'MacOS', 'Electron')
+  writeFileSync(electron, '')
+  const options = {
+    electron, appRoot: '/workspace/y-harness', directory: join(root, 'development'),
+    home: join(root, 'home'), userData: join(root, 'browser-data'), primaryRuntime: '/state/runtime',
+    mainPort: 9229, rendererPort: 9222, hostPort: 9230, openDevtools: '0',
+  }
+  mkdirSync(options.userData)
+  const sentinel = join(options.userData, 'keep.txt')
+  writeFileSync(sentinel, 'existing browser data')
+  const executable = await prepareDevelopmentApp(options)
+  const plist = join(options.directory, 'Y harness.app', 'Contents', 'Info.plist')
+  const original = readFileSync(plist, 'utf8')
+  displayName.mockReturnValue('New name')
+  sign.mockImplementationOnce(() => { throw new Error('signing interrupted') })
+  await expect(prepareDevelopmentApp(options)).rejects.toThrow('signing interrupted')
+  expect(readFileSync(plist, 'utf8')).toBe(original)
+  await expect(prepareDevelopmentApp(options)).resolves.toBe(executable)
+  expect(sign).toHaveBeenCalledTimes(3)
+  expect(JSON.parse(readFileSync(plist, 'utf8'))).toMatchObject({ CFBundleDisplayName: 'New name' })
+  verify.mockImplementationOnce(() => { throw new Error('matching cache stamp with invalid signature') })
+  await expect(prepareDevelopmentApp(options)).resolves.toBe(executable)
+  expect(sign).toHaveBeenCalledTimes(4)
+  expect(readFileSync(sentinel, 'utf8')).toBe('existing browser data')
 })
 
 it('adds a release display label without changing product filenames or identity metadata', () => {

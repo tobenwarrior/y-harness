@@ -58,17 +58,18 @@ describe('dsh-base bundle', () => {
       { schema: entryListSchema },
     )
     if (!Array.isArray(parsed)) throw new TypeError('base patch must parse to a patch list')
-    const row = parsed.flatMap(patch => patch.insert ?? []).find(candidate => candidate.id === 'session-telemetry-otel')
+    const patches = parsed as { insert?: { id: string; disabled?: unknown; config?: Record<string, unknown> }[] }[]
+    const row = patches.flatMap(patch => patch.insert ?? []).find(candidate => candidate.id === 'session-telemetry-otel')
     if (row === undefined) throw new Error('base patch must mount session telemetry')
-    const disabled = row.disabled as { __jsExpr?: string } | undefined
-    const exporter = row.config?.['exporter'] as { url?: { __jsExpr?: string } } | undefined
-    if (disabled?.__jsExpr === undefined || exporter?.url?.__jsExpr === undefined) {
+    const disabled = (row.disabled as { __jsExpr?: string } | undefined)?.__jsExpr
+    const exporter = (row.config?.['exporter'] as { url?: { __jsExpr?: string } } | undefined)?.url?.__jsExpr
+    if (disabled === undefined || exporter === undefined) {
       throw new Error('base telemetry row must expose endpoint and disabled expressions')
     }
-    const evaluateTelemetry = (env: Record<string, string | undefined>) => ({
-      disabled: Boolean(evaluate({ process: { env } }, disabled.__jsExpr!)),
-      endpoint: evaluate({ process: { env } }, exporter.url!.__jsExpr!),
-    })
+    const evaluateTelemetry = (env: Record<string, string | undefined>) => {
+      const endpoint: unknown = evaluate({ process: { env } }, exporter)
+      return { disabled: Boolean(evaluate({ process: { env } }, disabled)), endpoint }
+    }
     expect(evaluateTelemetry({})).toEqual({ disabled: true, endpoint: undefined })
     expect(evaluateTelemetry({ YH_TELEMETRY_OTLP_URL: '   ' })).toEqual({ disabled: true, endpoint: undefined })
     expect(evaluateTelemetry({ DSH_TELEMETRY_OTLP_URL: '  https://legacy.example/v1/logs  ' })).toEqual({

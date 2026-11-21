@@ -28,6 +28,7 @@ describe('Codex stable-profile sequential guards', () => {
     expect(() => { verifyRestrictedConfig(expected, { ...expected, features: { ...config.features, hooks: true } }) }).toThrow(/changed/)
   })
   it('rejects malformed, too many and control-character server names', () => {
+    expect(disabledServerMap({}, 10)).toEqual({})
     expect(() => disabledServerMap({ mcp_servers: [] }, 10)).toThrow()
     expect(() => disabledServerMap(config, 1)).toThrow()
     expect(() => disabledServerMap({ mcp_servers: { 'bad\nname': {} } }, 10)).toThrow()

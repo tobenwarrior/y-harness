@@ -47,6 +47,9 @@ import {
 } from './fsio.ts'
 import type { FsIoInternals, PathInfo } from './fsio.ts'
 
+export { assertOwnerPrivateWin32, createOwnerPrivateDirectoryWin32 } from './windows-private.ts'
+export type { OwnerPrivatePathKind } from './windows-private.ts'
+
 /** Configuration for the local filesystem backend. */
 export interface Config {
   /** Base directory for relative paths. Defaults to `process.cwd()`. */

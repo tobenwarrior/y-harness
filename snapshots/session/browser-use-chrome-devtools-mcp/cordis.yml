@@ -28,6 +28,6 @@
 
 - insert:
     - id: browser-use
-      name: '@deepseek-ai/dsh-browser-use'
+      name: '@yharness/browser-use'
     - id: browser-provider-fixture
       name: './provider-fixture.mjs'

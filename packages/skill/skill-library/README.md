@@ -83,7 +83,7 @@ Human-labelled fixtures in `tests/fixtures/decision-labels.json` identify releva
 <details>
 <summary>Implementation internals — click to expand</summary>
 
-Skill files and bundle resources remain authoritative. The `skillLibrary` Remote namespace supplies scoped inventory, lazy instructions, load observations, explicit relationships, source history and learning proposals. The `skill_library` domain contains management flags and history references; `skill_learning` retains evidence, full proposals and approved and revoked semantic policy records.
+Skill files and bundle resources remain authoritative. The `skillLibrary` Remote namespace supplies scoped inventory, lazy instructions, load observations, explicit relationships, source history and learning proposals. Each discovery request retains the source details it read while other requests run. The `skill_library` domain contains management flags and history references; `skill_learning` retains evidence, full proposals and approved and revoked semantic policy records.
 
 </details>
 

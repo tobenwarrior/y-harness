@@ -6,6 +6,7 @@ const api: CloudVaultApi = {
   messages: () => ipcRenderer.invoke(VAULT_IPC.messages) as ReturnType<CloudVaultApi['messages']>,
   mode: () => ipcRenderer.invoke(VAULT_IPC.mode) as ReturnType<CloudVaultApi['mode']>,
   request: request => ipcRenderer.invoke(VAULT_IPC.request, request) as ReturnType<CloudVaultApi['request']>,
+  importLogins: (action, id) => ipcRenderer.invoke(VAULT_IPC.importLogins, action, id) as ReturnType<CloudVaultApi['importLogins']>,
   close: () => ipcRenderer.invoke(VAULT_IPC.close) as Promise<void>,
 }
 if (location.href === VAULT_PAGE) contextBridge.exposeInMainWorld('yhCloudVault', api)

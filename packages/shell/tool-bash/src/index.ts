@@ -25,6 +25,7 @@ import type {} from '@yharness/shell-env'
 import type { SandboxExecutionPolicy, SandboxMode } from '@yharness/sandbox'
 import { ESCALATION_TARGETS, approveEscalation, sandboxPermissionsDescription, validateEscalationArgs } from '@yharness/sandbox'
 import type { SandboxPolicyService } from '@yharness/sandbox-policy'
+import { managedBotExecutionFor, resolveManagedWorkdir } from '@yharness/sandbox-policy'
 import { DSH_ENV_PREFIX } from '@yharness/shell'
 import type { ShellExecRequest, ShellExecSpec, ShellExecution, ShellRunResult } from '@yharness/shell'
 import { processJob, processOutcome, processSources, ringDelta } from './background.ts'
@@ -162,6 +163,17 @@ function resolveWorkdir(
   return modelWorkdir
 }
 
+/** Select the shell and policy provider for one call without host fallback. */
+function managedShellFor(ctx: Context, exec: ToolExecution): {
+  shell: typeof ctx.shell
+  policy: SandboxPolicyService | Pick<SandboxPolicyService, 'defaultMode' | 'resolve'> | undefined
+  managed: ReturnType<typeof managedBotExecutionFor>
+} {
+  const managed = managedBotExecutionFor(exec)
+  if (managed !== undefined) return { shell: managed.shell, policy: managed.sandboxPolicy, managed }
+  return { shell: ctx.shell, policy: ctx.get('sandboxPolicy'), managed: undefined }
+}
+
 /** Detach the executor DTO from readonly Service Definition types into plain JSON data. */
 function canonicalBashResult(result: ShellRunResult) {
   const output = (stream: ShellRunResult['stdout']) => ({
@@ -219,10 +231,6 @@ export function apply(ctx: Context, config: Config = {}): void {
   if (defaultMode !== undefined && sandboxPolicy === undefined) {
     throw new Error('tool-bash: the mounted bash executor confines but ctx.sandboxPolicy is missing')
   }
-  /** Resolve the complete standing policy for this call when a confining executor is mounted. */
-  const resolveSandboxPolicy = (exec: ToolExecution): SandboxExecutionPolicy | undefined =>
-    sandboxPolicy?.resolve(exec.agent === undefined ? {} : { session: exec.agent.session })
-
   /**
    * Resolve a sandbox-escalation request through `ctx.approval` BEFORE
    * anything executes, delegating the shared fail-closed sequence (strict
@@ -272,7 +280,9 @@ export function apply(ctx: Context, config: Config = {}): void {
     const background = jobs !== undefined
     const promote = background && promoteOnTimeout
     /** Register the command as a job; the process spawns inside the starter, after admission. */
-    const startJob = (registry: JobRegistry, args: BashToolArgs, exec: ToolExecution, spec: ShellExecSpec): StartedJob => {
+    const startJob = (
+      registry: JobRegistry, args: BashToolArgs, exec: ToolExecution, spec: ShellExecSpec, shell: typeof ctx.shell,
+    ): StartedJob => {
       let proc: ShellExecution | undefined
       let stopped: string | undefined
       const id = registry.start({
@@ -283,7 +293,7 @@ export function apply(ctx: Context, config: Config = {}): void {
         run: () => {
           const hooks = processJob(
             async (signal) => {
-              proc = await ctx.shell.execute({ ...spec, signal })
+              proc = await shell.execute({ ...spec, signal })
               return proc
             },
             started => processOutcome(started, escalationModes),
@@ -480,7 +490,8 @@ export function apply(ctx: Context, config: Config = {}): void {
       },
       async execute(args: BashToolArgs, exec) {
         // Description is display metadata; workdir defaults to the caller's session.
-        const standingPolicy = resolveSandboxPolicy(exec)
+        const { shell, policy: callPolicy, managed } = managedShellFor(ctx, exec)
+        const standingPolicy = callPolicy?.resolve(exec.agent === undefined ? {} : { session: exec.agent.session })
         validateBashArgs(args, standingPolicy?.mode)
         const approvedMode = args.sandbox_permissions !== undefined && args.justification !== undefined
           ? await approveBashEscalation(args.sandbox_permissions, args.justification, exec, standingPolicy)
@@ -488,8 +499,10 @@ export function apply(ctx: Context, config: Config = {}): void {
         const policy = approvedMode === undefined
           ? standingPolicy
           : { ...(standingPolicy as SandboxExecutionPolicy), mode: approvedMode }
-        const workdir = resolveWorkdir(args.workdir, exec, standingPolicy?.workspaceRoot)
-        const dshEnv = ctx.shellEnv.collect(exec)
+        const workdir = managed === undefined
+          ? resolveWorkdir(args.workdir, exec, standingPolicy?.workspaceRoot)
+          : resolveManagedWorkdir(managed, args.workdir)
+        const dshEnv = managed === undefined ? ctx.shellEnv.collect(exec) : managed.shellEnv
         const request: ShellExecRequest = {
           command: args.command,
           ...workdir !== undefined ? { workdir } : {},
@@ -507,7 +520,7 @@ export function apply(ctx: Context, config: Config = {}): void {
           }
           // The caller owns cancellation until ctx.jobs commits detached ownership.
           if (exec.signal.aborted) throw toolAborted()
-          return { kind: 'background' as const, jobId: startJob(jobs, args, exec, ctx.shell.resolve({ ...request, onExpiry: 'none' })).id }
+          return { kind: 'background' as const, jobId: startJob(jobs, args, exec, shell.resolve({ ...request, onExpiry: 'none' }), shell).id }
         }
         // A foreground call is a job the tool waits on, so the command is
         // visible and killable from the moment it starts and outlives the wait
@@ -515,16 +528,16 @@ export function apply(ctx: Context, config: Config = {}): void {
         // job limit, no controller) runs the command under the deadline kill
         // instead, exactly as a composition without a registry does.
         if (jobs !== undefined && promote) {
-          const spec = ctx.shell.resolve({ ...request, onExpiry: 'none' })
+          const spec = shell.resolve({ ...request, onExpiry: 'none' })
           let attached: StartedJob | undefined
           try {
-            attached = startJob(jobs, args, exec, spec)
+            attached = startJob(jobs, args, exec, spec, shell)
           } catch (error) {
             ctx.logger.warn(`bash: job registration refused, running in the foreground with the timeout kill instead: ${String(error)}`)
           }
           if (attached !== undefined) return waitOnJob(jobs, attached, exec, spec)
         }
-        const foreground = await ctx.shell.execute(ctx.shell.resolve({ ...request, signal: exec.signal }))
+        const foreground = await shell.execute(shell.resolve({ ...request, signal: exec.signal }))
         const result = await foreground.result()
         if (result.aborted) throw toolAborted()
         return { kind: 'foreground' as const, ...canonicalBashResult(result) }

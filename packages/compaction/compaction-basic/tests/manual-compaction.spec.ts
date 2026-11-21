@@ -877,20 +877,27 @@ describe('compactNow transaction and failure classification', () => {
   })
 
   it('makes duration derivable from the opening and closing marker times', async () => {
-    const { compact } = detachedService()
-    const session = closedConversation(2)
-    const agent = fakeAgent(session, () => () => undefined)
-    compact.gate = new Promise<undefined>((resolve) => {
-      setTimeout(() => { resolve(undefined) }, 5)
-    })
+    vi.useFakeTimers()
+    try {
+      const { compact } = detachedService()
+      const session = closedConversation(2)
+      const agent = fakeAgent(session, () => () => undefined)
+      compact.gate = new Promise<undefined>((resolve) => {
+        setTimeout(() => { resolve(undefined) }, 5)
+      })
 
-    await compact.compactNow(agent, SIGNAL)
+      const running = compact.compactNow(agent, SIGNAL)
+      await vi.advanceTimersByTimeAsync(5)
+      await running
 
-    const start = session.snapshotEvents().findLast(event => event.type === 'compaction/start')
-    const end = session.snapshotEvents().findLast(event => event.type === 'compaction/end')
-    expect(start).toBeDefined()
-    expect(end).toBeDefined()
-    expect(end!.time - start!.time).toBeGreaterThan(0)
+      const start = session.snapshotEvents().findLast(event => event.type === 'compaction/start')
+      const end = session.snapshotEvents().findLast(event => event.type === 'compaction/end')
+      expect(start).toBeDefined()
+      expect(end).toBeDefined()
+      expect(end!.time - start!.time).toBeGreaterThan(0)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('excludes concurrent automatic and manual compaction of one session', async () => {

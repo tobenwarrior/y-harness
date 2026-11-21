@@ -1,11 +1,10 @@
 /** Registration of the badge, the steps panel, and the dictionary. */
 import { Context } from '@yharness/cordis'
+import { installConnection } from '@yharness/client-connection/client'
 import { LocaleRuntime } from '@yharness/client-locale/client'
 import { SlotRegistry } from '@yharness/client-ui-renderer/client'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { apply, inject } from '../src/client/index.ts'
-
-afterEach(() => { vi.unstubAllGlobals() })
 
 const PLUGIN = { name: 'ui-compound-update', inject, apply }
 
@@ -32,7 +31,10 @@ async function mount(): Promise<{ ctx: Context; slots: SlotRegistry; requested: 
   } as never, () => null)
   ctx.provide('locale', new LocaleRuntime(ctx))
   const requested: string[] = []
-  vi.stubGlobal('fetch', (url: string) => { requested.push(url); return Promise.resolve(Response.json(RELEASED)) })
+  installConnection(ctx, { transport: { fetch: async (url) => {
+    requested.push(String(url))
+    return Response.json(RELEASED)
+  } } })
   return { ctx, slots, requested }
 }
 

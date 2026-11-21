@@ -91,15 +91,28 @@ describe('Desktop collapsed update action', () => {
   it('keeps the Windows caption update action separate and actionable in every status', () => {
     document.documentElement.setAttribute('data-windows-titlebar', '')
     let state: DesktopUpdateView = { failed: false, opening: false, presentation: { phase: 'available' } }
+    let connection: 'connected' | 'disconnected' | 'connecting' = 'connected'
     const openDesktopUpdate = vi.fn()
     const props = {
       ...kit,
       t,
       useDesktopUpdate: (select => select(state)) as Parameters<typeof DesktopUpdateBadge>[0]['useDesktopUpdate'],
-      useConnectionState: (select => select('connected')) as Parameters<typeof DesktopUpdateBadge>[0]['useConnectionState'],
+      useConnectionState: (select => select(connection)) as Parameters<typeof DesktopUpdateBadge>[0]['useConnectionState'],
       openDesktopUpdate,
     }
     const view = render(<DesktopUpdateBadge {...props} />)
+    connection = 'disconnected'
+    view.rerender(<DesktopUpdateBadge {...props} />)
+    expect(screen.queryByRole('button')).toBeNull()
+    connection = 'connecting'
+    view.rerender(<DesktopUpdateBadge {...props} />)
+    expect(screen.queryByRole('button')).toBeNull()
+    state = { failed: false, opening: false, presentation: { phase: 'installing', version: '1.0.1' } }
+    view.rerender(<DesktopUpdateBadge {...props} />)
+    expect(screen.getByRole('button', { name: 'Preparing to restart…' })).toBeTruthy()
+    connection = 'connected'
+    state = { failed: false, opening: false, presentation: { phase: 'available' } }
+    view.rerender(<DesktopUpdateBadge {...props} />)
     const available = screen.getByRole('button', { name: 'Update' })
     fireEvent.click(available)
     expect(openDesktopUpdate).toHaveBeenCalledOnce()
@@ -116,6 +129,9 @@ describe('Desktop collapsed update action', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Retry update' }))
     expect(openDesktopUpdate).toHaveBeenCalledTimes(2)
 
+    state = { failed: false, opening: false }
+    view.rerender(<DesktopUpdateBadge {...props} />)
+    expect(screen.queryByRole('button')).toBeNull()
     document.documentElement.removeAttribute('data-windows-titlebar')
     view.rerender(<DesktopUpdateBadge {...props} />)
     expect(screen.queryByRole('button')).toBeNull()

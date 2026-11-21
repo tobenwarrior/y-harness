@@ -1,15 +1,55 @@
-import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { delimiter, join } from 'node:path'
+import { writeFileSync } from 'node:fs'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { EventEmitter } from 'node:events'
+import { PassThrough } from 'node:stream'
 import { Context } from '@yharness/cordis'
 import type { ConnectionFetchRoute } from '@yharness/client-connection'
-import {
-  APPLY_ROUTE, compareReleases, registerUpdateRoute, UPDATE_ROUTE, UPSTREAM_REPOSITORY, UpstreamReleaseTracker,
-  VENDORED_VERSION,
-} from '../src/upstream.ts'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals() })
+const { spawnMock } = vi.hoisted(() => ({ spawnMock: vi.fn() }))
+vi.mock('node:child_process', async importOriginal => ({
+  ...await importOriginal<typeof import('node:child_process')>(),
+  spawn: spawnMock,
+}))
+
+import {
+  APPLY_ROUTE, compareReleases, recordedCommit, registerUpdateRoute, UPDATE_ROUTE, UPSTREAM_REPOSITORY, UpstreamReleaseTracker,
+  VENDORED_VERSION,
+} from '../src/upstream.ts'
+
+const NEWER_VERSION = `${Number(VENDORED_VERSION.split('.')[0]) + 1}.0.0`
+
+type FakeChild = EventEmitter & {
+  stdout: PassThrough
+  stderr: PassThrough
+  killed: boolean
+  kill: () => boolean
+}
+
+function fakeChild(stdout: string | Buffer = '', stderr: string | Buffer = '', code = 0): FakeChild {
+  const child = new EventEmitter() as EventEmitter & Partial<FakeChild>
+  child.stdout = new PassThrough()
+  child.stderr = new PassThrough()
+  child.killed = false
+  child.kill = () => {
+    child.killed = true
+    return true
+  }
+  setImmediate(() => {
+    if (stdout !== '') child.stdout?.emit('data', Buffer.from(stdout))
+    if (stderr !== '') child.stderr?.emit('data', Buffer.from(stderr))
+    child.emit('close', code)
+  })
+  return child as FakeChild
+}
+
+afterEach(() => {
+  vi.useRealTimers()
+  vi.unstubAllGlobals()
+  spawnMock.mockReset()
+})
 
 describe('release comparison', () => {
   it('orders plain releases by each component', () => {
@@ -29,10 +69,10 @@ describe('release comparison', () => {
 
 describe('upstream release tracker', () => {
   it('reports an available update when upstream publishes a later release', async () => {
-    const tracker = new UpstreamReleaseTracker(() => Promise.resolve('0.12.0'))
+    const tracker = new UpstreamReleaseTracker(() => Promise.resolve(NEWER_VERSION))
     const status = await tracker.status()
     expect(status).toMatchObject({
-      vendored: VENDORED_VERSION, upstream: '0.12.0', updateAvailable: true, repository: UPSTREAM_REPOSITORY, error: null,
+      vendored: VENDORED_VERSION, upstream: NEWER_VERSION, updateAvailable: true, repository: UPSTREAM_REPOSITORY, error: null,
     })
     expect(status.checkedAt).toBeTypeOf('number')
   })
@@ -108,12 +148,14 @@ describe('upstream release tracker', () => {
   })
 
   it('detects a changed commit at the same version and ignores an older version', async () => {
+    const bundledCommit = recordedCommit(await readFile(new URL('../UPSTREAM.md', import.meta.url), 'utf8'))
     const changed = { version: VENDORED_VERSION, commit: 'a'.repeat(40) }
     await expect(new UpstreamReleaseTracker(() => Promise.resolve(changed)).status()).resolves.toMatchObject({
       updateAvailable: true, error: null,
     })
     await expect(new UpstreamReleaseTracker(() => Promise.resolve({ ...changed, version: '0.10.0' })).status()).resolves.toMatchObject({ updateAvailable: false, error: null })
-    await expect(new UpstreamReleaseTracker(() => Promise.resolve({ ...changed, commit: 'd36f372a60624b92e0e364871cae2c50cbf4ba01' })).status()).resolves.toMatchObject({ updateAvailable: false, error: null })
+    await expect(new UpstreamReleaseTracker(() => Promise.resolve({ ...changed, commit: bundledCommit })).status())
+      .resolves.toMatchObject({ updateAvailable: false, error: null })
   })
 
   it('reads a release published only in the Codex plugin manifest', async () => {
@@ -157,26 +199,30 @@ describe('upstream release tracker', () => {
 
   it.each([403, 429])('uses noninteractive git head fallback for GitHub HTTP %s rate limits', async (statusCode) => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-compound-git-head-'))
-    const git = join(root, 'git')
     const marker = join(root, 'environment')
     const commit = 'b'.repeat(40)
-    const previousPath = process.env.PATH
-    await writeFile(git, `#!/bin/sh\nprintf '%s\\n' "$GIT_TERMINAL_PROMPT|$GIT_ASKPASS|$SSH_ASKPASS|$SSH_ASKPASS_REQUIRE" > ${JSON.stringify(marker)}\nprintf '%s\\n' '${commit} refs/heads/main'\n`)
-    await chmod(git, 0o755)
-    process.env.PATH = `${root}${delimiter}${previousPath ?? ''}`
+    spawnMock.mockImplementation((command: string, args: readonly string[], options: { env?: NodeJS.ProcessEnv }) => {
+      expect(command).toBe('git')
+      expect(args).toEqual([
+        '-c', 'credential.helper=', '-c', 'core.askPass=', 'ls-remote', '--refs', '--heads', '--',
+        'https://github.com/tobenwarrior/compound-skills.git', 'refs/heads/main',
+      ])
+      const environment = options.env ?? {}
+      writeFileSync(marker, `${environment.GIT_TERMINAL_PROMPT ?? ''}|${environment.GIT_ASKPASS ?? ''}|${environment.SSH_ASKPASS ?? ''}|${environment.SSH_ASKPASS_REQUIRE ?? ''}\n`)
+      return fakeChild(`${commit} refs/heads/main\n`)
+    })
     const requested: string[] = []
     vi.stubGlobal('fetch', (url: string) => {
       requested.push(url)
       if (url.includes('/commits/')) return Promise.resolve(new Response('rate limited', { status: statusCode, headers: { 'x-ratelimit-remaining': '0' } }))
-      return Promise.resolve(Response.json({ name: 'compound-skills', version: '0.13.0' }))
+      return Promise.resolve(Response.json({ name: 'compound-skills', version: NEWER_VERSION }))
     })
     try {
       const result = await new UpstreamReleaseTracker().status()
-      expect(result).toMatchObject({ upstream: '0.13.0', updateAvailable: true, error: null })
+      expect(result).toMatchObject({ upstream: NEWER_VERSION, updateAvailable: true, error: null })
       expect(requested).toEqual([`https://api.github.com/repos/${UPSTREAM_REPOSITORY}/commits/main`, `https://raw.githubusercontent.com/${UPSTREAM_REPOSITORY}/${commit}/.codex-plugin/plugin.json`])
       expect(await readFile(marker, 'utf8')).toBe('0|||' + 'never\n')
     } finally {
-      process.env.PATH = previousPath
       await rm(root, { recursive: true, force: true })
     }
   })
@@ -219,12 +265,12 @@ describe('upstream release tracker', () => {
     ctx.provide('connection', {
       fetch: { register: (route: ConnectionFetchRoute) => { routes.push(route); return () => {} } },
     } as never)
-    registerUpdateRoute(ctx, new UpstreamReleaseTracker(() => Promise.resolve('0.12.0')))
+    registerUpdateRoute(ctx, new UpstreamReleaseTracker(() => Promise.resolve(NEWER_VERSION)))
     expect(routes.map(route => route.path)).toEqual([UPDATE_ROUTE, APPLY_ROUTE])
     expect(routes[0]?.methods).toEqual(['GET'])
     const response = await routes[0]?.fetch(new Request(`http://127.0.0.1${UPDATE_ROUTE}`))
     expect(response?.headers.get('cache-control')).toBe('no-store')
-    await expect(response?.json()).resolves.toMatchObject({ vendored: VENDORED_VERSION, upstream: '0.12.0', updateAvailable: true })
+    await expect(response?.json()).resolves.toMatchObject({ vendored: VENDORED_VERSION, upstream: NEWER_VERSION, updateAvailable: true })
     await ctx.fiber.dispose()
   })
 

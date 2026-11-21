@@ -249,6 +249,29 @@ export interface SharedPrivateSessionInitiatorRequest {
   readonly sessionId: SessionId
 }
 
+/** Exact shared Session coordinate used at a shared-tool body-start boundary. */
+export type SharedToolAuthorizationRequest =
+  | {
+    readonly kind: 'private'
+    /** Shared Bot backing the private Session. */
+    readonly botId: BotId
+    /** Exact durable private Session binding. */
+    readonly sessionId: SessionId
+  }
+  | {
+    readonly kind: 'group'
+    /** Shared group containing the isolated delivery. */
+    readonly groupId: BotGroupId
+    /** Shared Bot backing the isolated Session. */
+    readonly botId: BotId
+    /** Exact isolated shared-group Session binding. */
+    readonly sessionId: SessionId
+    /** Model turn containing the claimed input. */
+    readonly turn: number
+    /** Current model step, at or after the isolated claim step. */
+    readonly step: number
+  }
+
 /** Exact shared Session and connected-app source used at a tool boundary. */
 export type SharedConnectedAppAuthorizationRequest =
   | {
@@ -1302,9 +1325,10 @@ export class SharedBotService {
         try {
           started = start()
         } catch (error: unknown) {
-          // Preserve the original failure, including non-Error rejections from external tools.
-          // oxlint-disable-next-line typescript/prefer-promise-reject-errors
-          started = Promise.reject(error)
+          // Preserve the original synchronous failure while tracking an Error-shaped body rejection.
+          started = Promise.reject(error instanceof Error
+            ? error
+            : new Error('Shared connected-app body failed', { cause: error }))
           void started.catch(() => undefined)
           throw error
         }
@@ -2021,65 +2045,37 @@ export class SharedBotService {
     })
   }
 
-  private async authorizeSharedConnectedAppWithHook(
-    request: SharedConnectedAppAuthorizationRequest,
+  private async authorizeSharedUse(
+    botId: BotId,
     signal: AbortSignal | undefined,
-    onAuthorized?: () => void,
-    rememberedApproval?: SharedAppApprovalExecutionReference,
+    onAuthorized: (() => void) | undefined,
+    keys: readonly string[],
+    assess: (
+      extensions: Readonly<Record<string, unknown>>,
+      authorityState: SharedAccessStateSnapshot,
+      membershipSnapshot: SharedMembershipSnapshot,
+      operationSignal: AbortSignal,
+    ) => boolean,
   ): Promise<boolean> {
     const operationSignal = signal === undefined
       ? this.stoppingController.signal
       : AbortSignal.any([signal, this.stoppingController.signal])
-    const operation = await this.host.withBot(request.botId, operationSignal, async (bot) => {
-      void bot
-      const keys = request.kind === 'private'
-        ? [
-          SHARED_CONNECTED_APP_ACCESS_EXTENSION_KEY,
-          SHARED_MEMBERSHIP_EXTENSION_KEY,
-          SHARED_PRIVATE_SESSIONS_EXTENSION_KEY,
-          ...(rememberedApproval === undefined ? [] : [SHARED_APP_APPROVAL_GRANTS_EXTENSION_KEY]),
-        ]
-        : [
-          SHARED_CONNECTED_APP_ACCESS_EXTENSION_KEY,
-          SHARED_MEMBERSHIP_EXTENSION_KEY,
-          ...(rememberedApproval === undefined ? [] : [SHARED_APP_APPROVAL_GRANTS_EXTENSION_KEY]),
-        ]
+    const operation = await this.host.withBot(botId, operationSignal, async () => {
       const readLockedExtensions = onAuthorized === undefined
         ? this.authority.readLockedExtensions.bind(this.authority)
         : this.authority.readLockedExtensionsForActionStart.bind(this.authority)
-      const result = await readLockedExtensions<{
-        readonly memberships: readonly SharedMembershipRecord[]
-        readonly value: boolean
-      }>(keys, (extensions, authorityState) => {
+      const result = await readLockedExtensions(keys, (extensions, authorityState) => {
         const membershipSnapshot = parseMembershipSnapshot(extensions[SHARED_MEMBERSHIP_EXTENSION_KEY])
-        const context = sharedAppAuthorizationContext(request, extensions, authorityState, operationSignal)
-        const rememberedGrantId = context !== undefined && rememberedApproval !== undefined
-          ? sharedAppApprovalGrantMatches(
-            parseSharedAppApprovalAuthority(extensions[SHARED_APP_APPROVAL_GRANTS_EXTENSION_KEY]),
-            request,
-            rememberedApproval,
-            context,
-          )
-          : undefined
-        const remembered = rememberedGrantId !== undefined
-        const allowed = context !== undefined && (rememberedApproval === undefined || remembered)
+        let allowed = assess(extensions, authorityState, membershipSnapshot, operationSignal)
         if (allowed && onAuthorized !== undefined) {
           operationSignal.throwIfAborted()
-          if (this.stopping || this.stoppingController.signal.aborted) {
-            return {
-              memberships: membershipSnapshot.memberships,
-              value: false,
-            }
-          }
-          onAuthorized()
+          if (this.stopping || this.stoppingController.signal.aborted) allowed = false
+          else onAuthorized()
         }
-        return {
-          memberships: membershipSnapshot.memberships,
-          value: allowed,
-        }
+        return { memberships: membershipSnapshot.memberships, allowed }
       })
       this.membershipSnapshot = result.memberships
-      return result.value
+      return result.allowed
     })
     if (!operation.found) {
       operationSignal.throwIfAborted()
@@ -2087,6 +2083,55 @@ export class SharedBotService {
     }
     if (onAuthorized === undefined) operationSignal.throwIfAborted()
     return operation.value
+  }
+
+  private authorizeSharedToolWithHook(
+    request: SharedToolAuthorizationRequest,
+    signal: AbortSignal | undefined,
+    onAuthorized?: () => void,
+  ): Promise<boolean> {
+    const keys = request.kind === 'private'
+      ? [SHARED_MEMBERSHIP_EXTENSION_KEY, SHARED_PRIVATE_SESSIONS_EXTENSION_KEY]
+      : [SHARED_MEMBERSHIP_EXTENSION_KEY]
+    return this.authorizeSharedUse(request.botId, signal, onAuthorized, keys, (extensions, authorityState, membershipSnapshot) => {
+      const principalId = request.kind === 'private'
+        ? resolvePrivateSessionInitiatorFromSnapshot(
+          membershipSnapshot,
+          extensions[SHARED_PRIVATE_SESSIONS_EXTENSION_KEY],
+          authorityState,
+          { botId: request.botId, sessionId: request.sessionId },
+        )
+        : resolveSharedGroupInitiatorFromSnapshot(extensions[SHARED_MEMBERSHIP_EXTENSION_KEY], authorityState, request)
+      return principalId !== undefined
+    })
+  }
+
+  private authorizeSharedConnectedAppWithHook(
+    request: SharedConnectedAppAuthorizationRequest,
+    signal: AbortSignal | undefined,
+    onAuthorized?: () => void,
+    rememberedApproval?: SharedAppApprovalExecutionReference,
+  ): Promise<boolean> {
+    const keys = [
+      SHARED_CONNECTED_APP_ACCESS_EXTENSION_KEY,
+      SHARED_MEMBERSHIP_EXTENSION_KEY,
+      ...(request.kind === 'private' ? [SHARED_PRIVATE_SESSIONS_EXTENSION_KEY] : []),
+      ...(rememberedApproval === undefined ? [] : [SHARED_APP_APPROVAL_GRANTS_EXTENSION_KEY]),
+    ]
+    return this.authorizeSharedUse(
+      request.botId, signal, onAuthorized, keys,
+      (extensions, authorityState, _memberships, operationSignal) => {
+        const context = sharedAppAuthorizationContext(request, extensions, authorityState, operationSignal)
+        if (context === undefined) return false
+        if (rememberedApproval === undefined) return true
+        return sharedAppApprovalGrantMatches(
+          parseSharedAppApprovalAuthority(extensions[SHARED_APP_APPROVAL_GRANTS_EXTENSION_KEY]),
+          request,
+          rememberedApproval,
+          context,
+        ) !== undefined
+      },
+    )
   }
 
   /** Read one app authorization context and an optional remembered grant under one authority lock. */
@@ -2276,6 +2321,24 @@ export class SharedBotService {
     request: SharedGroupInitiatorRequest,
   ): Promise<ReturnType<typeof BotPrincipalId> | undefined> {
     return this.groups.resolveSharedGroupInitiator(request)
+  }
+
+  /**
+   * Authorize one shared tool operation and optionally start its body under
+   * the authority record lock. The starter is synchronous: it may launch a
+   * provider promise, but this method never awaits that promise while the lock
+   * is held.
+   * @param request - Exact private or isolated group Session coordinate.
+   * @param signal - Cancellation for the authorization operation.
+   * @param onAuthorized - Optional synchronous body starter used at final admission.
+   * @returns Whether the current principal and delivery are authorized.
+   */
+  async authorizeSharedTool(
+    request: SharedToolAuthorizationRequest,
+    signal?: AbortSignal,
+    onAuthorized?: () => void,
+  ): Promise<boolean> {
+    return this.authorizeSharedToolWithHook(request, signal, onAuthorized)
   }
 
   /**
@@ -3805,7 +3868,7 @@ export class SharedBotService {
   private quarantineSession(key: string, quiescence: Promise<void>): void {
     if (this.quarantinedSessions.has(key)) return
     const released = new Promise<void>((resolve) => {
-      void quiescence.then(async () => {
+      void quiescence.then(() => {
         try {
           if (this.deferredRemoteCleanup.has(key)) {
             const binding = this.revokedBindings.get(key)
@@ -4094,7 +4157,7 @@ export class SharedBotService {
     const operationResult = await this.host.withBot(botId, signal, async () => {
       const result = await this.authority.mutateExtension(
         SHARED_MEMBERSHIP_EXTENSION_KEY,
-        async (current, authorityState) => {
+        (current, authorityState) => {
           const snapshot = parseMembershipSnapshot(current)
           if (actor !== undefined && operation !== undefined) {
             const authorityPrincipal = authorityState.principals.find(principal => String(principal.id) === String(actor))

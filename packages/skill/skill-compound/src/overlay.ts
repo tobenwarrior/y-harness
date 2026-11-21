@@ -1,9 +1,10 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
-import { lstatSync, readFileSync } from 'node:fs'
+import { lstatSync, readFileSync, readdirSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
+import { assertOwnerPrivateWin32, createOwnerPrivateDirectoryWin32 } from '@yharness/fs-local'
 import { parse as parseYaml } from 'yaml'
 import { resolveUpstreamCommit, UPSTREAM_REPOSITORY } from './upstream-head.ts'
 import { requestUpstreamManifest, upstreamManifestVersion } from './upstream-manifest.ts'
@@ -91,7 +92,7 @@ export function activeOverlay(root = resolveOverlayRoot()): ActiveOverlay | unde
 
 function activeOverlayAt(root: string): ActiveOverlay | undefined {
   try {
-    checkPrivateDirectory(root)
+    checkPrivateDirectory(root, true)
     checkPrivateDirectory(join(root, 'revisions'))
     const currentPath = join(root, 'current.json')
     checkPrivateFile(currentPath)
@@ -106,6 +107,7 @@ function activeOverlayAt(root: string): ActiveOverlay | undefined {
       checkPrivateFile(path)
       validateSkill(readFileSync(path, 'utf8'), name)
     }
+    assertPrivateOverlayResources(assetRoot)
     return { commit, version, assetRoot }
   } catch { return undefined }
 }
@@ -121,14 +123,39 @@ function overlayRootExists(root: string): boolean {
   }
 }
 
-function checkPrivateDirectory(path: string): void {
+function checkPrivateDirectory(path: string, protectedRoot = false): void {
   const stat = lstatSync(path)
-  if (!stat.isDirectory() || (typeof process.getuid === 'function' && stat.uid !== process.getuid()) || (stat.mode & 0o077) !== 0) throw new Error(`unsafe overlay directory: ${path}`)
+  if (!stat.isDirectory() || (typeof process.getuid === 'function' && stat.uid !== process.getuid()) || (process.platform !== 'win32' && (stat.mode & 0o077) !== 0)) throw new Error(`unsafe overlay directory: ${path}`)
+  if (process.platform === 'win32') assertOwnerPrivateWin32(path, 'directory', protectedRoot)
 }
 
 function checkPrivateFile(path: string): void {
   const stat = lstatSync(path)
-  if (!stat.isFile() || (typeof process.getuid === 'function' && stat.uid !== process.getuid()) || (stat.mode & 0o077) !== 0) throw new Error(`unsafe overlay file: ${path}`)
+  if (!stat.isFile() || (typeof process.getuid === 'function' && stat.uid !== process.getuid()) || (process.platform !== 'win32' && (stat.mode & 0o077) !== 0)) throw new Error(`unsafe overlay file: ${path}`)
+  if (process.platform === 'win32') assertOwnerPrivateWin32(path, 'file')
+}
+
+/**
+ * Check overlay resource ownership before exposing executable or viewer paths.
+ * The enclosing overlay root must already satisfy the owner-private policy.
+ * POSIX traversal remains confined by that root. Windows checks every resource's
+ * private DACL. Owner-created Python caches retain their account's normal umask.
+ * Symbolic links, special files, untrusted owners and writable POSIX hard links are rejected.
+ * @param path - resource file or directory, recursively inspected when a directory.
+ * @throws when an entry fails ownership, permission or file-type checks.
+ */
+export function assertPrivateOverlayResources(path: string): void {
+  const stat = lstatSync(path)
+  if (!stat.isDirectory() && !stat.isFile()) throw new Error(`unsafe overlay resource: ${path}`)
+  if (process.platform === 'win32') {
+    assertOwnerPrivateWin32(path, stat.isDirectory() ? 'directory' : 'file')
+  } else if ((typeof process.getuid === 'function' && stat.uid !== process.getuid())
+    || (stat.isFile() && stat.nlink > 1 && (stat.mode & 0o022) !== 0)) {
+    throw new Error(`unsafe overlay resource: ${path}`)
+  }
+  if (stat.isDirectory()) {
+    for (const name of readdirSync(path)) assertPrivateOverlayResources(join(path, name))
+  }
 }
 
 function olderVersion(left: string, right: string): boolean {
@@ -321,7 +348,8 @@ function shouldUseGitFallback(error: unknown): boolean {
 }
 
 /**
- * Download and publish a commit-pinned overlay. This does not restart any process.
+ * Download and publish a commit-pinned overlay after validating staged paths.
+ * A rejected revision or pointer leaves the active pointer in place.
  * @param root - overlay root to update.
  * @param minimumVersion - bundled release that the update must not precede.
  * @param signal - optional cancellation signal.
@@ -351,6 +379,14 @@ export function updateOverlay(root = resolveOverlayRoot(), minimumVersion?: stri
   return task
 }
 
+function checkPrivateEntry(root: string, path: string): string {
+  const parts = path.split('/')
+  for (let i = 1; i < parts.length; i++) checkPrivateDirectory(join(root, ...parts.slice(0, i)))
+  const file = join(root, ...parts)
+  checkPrivateFile(file)
+  return file
+}
+
 async function updateOverlayOnce(root: string, minimumVersion?: string, signal?: AbortSignal): Promise<OverlayRevision> {
   throwIfAborted(signal)
   let commit: string
@@ -374,8 +410,9 @@ async function updateOverlayOnce(root: string, minimumVersion?: string, signal?:
   if (minimumVersion !== undefined && olderVersion(version, minimumVersion)) throw new Error('upstream version would downgrade bundled skills')
   const current = activeOverlay(root)
   if (current && olderVersion(version, current.version)) throw new Error('upstream version would downgrade active overlay')
-  await mkdir(root, { recursive: true, mode: 0o700 })
-  checkPrivateDirectory(root)
+  if (process.platform === 'win32') createOwnerPrivateDirectoryWin32(root)
+  else await mkdir(root, { recursive: true, mode: 0o700 })
+  checkPrivateDirectory(root, true)
   await mkdir(join(root, 'revisions'), { mode: 0o700 }).catch((error: unknown) => {
     if (typeof error !== 'object' || error === null || !('code' in error) || error.code !== 'EEXIST') throw error
   })
@@ -394,25 +431,28 @@ async function updateOverlayOnce(root: string, minimumVersion?: string, signal?:
       await writeFile(target, bytes, { mode: 0o600, flag: 'wx' })
     }
     throwIfAborted(signal)
-    for (const name of names) validateSkill(await readFile(join(stage, 'skills', name, 'SKILL.md'), 'utf8'), name)
+    checkPrivateDirectory(stage)
+    for (const entry of entries) checkPrivateEntry(stage, entry.path)
+    const stagedAssets = join(stage, 'skills')
+    assertPrivateOverlayResources(stagedAssets)
+    for (const name of names) validateSkill(await readFile(join(stagedAssets, name, 'SKILL.md'), 'utf8'), name)
     const destination = join(root, 'revisions', commit)
     try { await rename(stage, destination) } catch {
       // Reuse only an existing revision whose downloaded files match exactly.
       try {
         checkPrivateDirectory(destination)
         for (const entry of entries) {
-          const parts = entry.path.split('/')
-          for (let i = 1; i < parts.length; i++) checkPrivateDirectory(join(destination, ...parts.slice(0, i)))
-          const target = join(destination, ...parts)
-          checkPrivateFile(target)
-          if (!(await readFile(target)).equals(await readFile(join(stage, ...parts)))) throw new Error('revision differs')
+          const target = checkPrivateEntry(destination, entry.path)
+          if (!(await readFile(target)).equals(await readFile(join(stage, entry.path)))) throw new Error('revision differs')
         }
+        assertPrivateOverlayResources(join(destination, 'skills'))
       } catch (reuseError) { throw new Error(`cannot publish revision: ${String(reuseError)}`) }
     }
     const temporary = join(root, `.current-${randomUUID()}.json`)
     try {
       throwIfAborted(signal)
       await writeFile(temporary, JSON.stringify({ commit, version }), { mode: 0o600, flag: 'wx' })
+      checkPrivateFile(temporary)
       const latest = activeOverlay(root)
       if (latest && olderVersion(version, latest.version)) throw new Error('upstream version would downgrade active overlay')
       throwIfAborted(signal)

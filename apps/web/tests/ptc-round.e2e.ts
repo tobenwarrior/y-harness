@@ -204,7 +204,7 @@ describe('web e2e: PTC mode round renders nested sub-calls', () => {
     )))
     await compareOrRefreshGolden(TRAJECTORY_EXPECTED, overview.join('\n'), MODE)
 
-    await page.getByRole('button', { name: 'Code', exact: true }).click()
+    await page.getByRole('tabpanel').getByRole('button', { name: 'Code', exact: true }).click()
     const source = page.locator('[data-line-numbers] pre')
     await source.waitFor()
     expect(await source.textContent()).toBe(args.code.endsWith('\n') ? args.code.slice(0, -1) : args.code)

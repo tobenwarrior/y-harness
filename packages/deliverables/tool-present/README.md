@@ -7,7 +7,7 @@ kind: "package-reference"
 
 ## Summary
 
-Use `present` to declare final files accessible through the Session filesystem, including files created through shell commands. Users open the current source files in their default application. The tool records paths and optional descriptions without copying file contents.
+Use `present` to declare final files accessible through the Session filesystem, including files created through shell commands. Users can preview the result, download it from the workspace, or open the source on a Host desktop. The tool records paths and optional descriptions without copying file contents.
 
 ## Table of Contents
 
@@ -23,7 +23,7 @@ Use `present` to declare final files accessible through the Session filesystem, 
 <a id="use-this-package"></a>
 ## Use this package
 
-The `standard`, `ptc`, and `cordis` agent presets mount this plugin. Call `present` with `files: [{ path, description? }]` after creating the files. Files must be regular files accessible through the Session filesystem. Relative paths resolve against the Session working directory; absolute paths may name files outside it, including `/tmp` or Downloads. Missing files, directories, final symbolic links, and provider-denied paths fail the call. Files in a shell sandbox’s private `/tmp` must first be written somewhere the Session filesystem can access.
+The `standard`, `ptc`, and `cordis` agent presets mount this plugin. Call `present` with `files: [{ path, description? }]` after creating the files. Files must be regular files accessible through the Session filesystem. Relative paths resolve against the Session working directory; absolute paths may name files outside it, including `/tmp` or Downloads. Missing files, directories, final symbolic links, and provider-denied paths fail the call. Managed VPS Bots resolve paths inside their own execution workspace, including when the Session header still carries an older Host path. Files in a shell sandbox’s private `/tmp` must first be written somewhere the Session filesystem can access.
 
 Mount it in an agent's Cordis composition with `tools`, `fs`, and the `turnBoundary` Session projection available:
 

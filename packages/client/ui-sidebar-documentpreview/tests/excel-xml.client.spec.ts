@@ -23,7 +23,7 @@ describe.each([['Node', ExcelJS], ['browser bundle', browserExcel]] as const)('%
     const sheet = workbook.worksheets[0]!
     expect(sheet.getCell('A5').value).toMatch(/^ <chart\/> & .+😀\n tail $/u)
     expect(sheet.getCell('A6').value).toEqual({ formula: 'SUM(B2:B3)', result: 57 })
-    expect(sheet.getCell('B2').note).toMatchObject({ texts: [{ text: expect.any(String) }] })
+    expect(sheet.getCell('B2').note).toMatchObject({ texts: [{ text: expect.any(String) as string }] })
     expect(sheet.getTable('Table1')).toMatchObject({ table: { name: 'Table1', tableRef: 'A1:B3' } })
     expect(sheet.getCell('B2').font).toMatchObject({ bold: true, color: { argb: 'FF112233' } })
     expect(workbook.worksheets[1]!.state).toBe('hidden')

@@ -1,0 +1,3 @@
+# Keep the chrome snapshots independent of the current upstream release.
+- id: ui-compound-update
+  disabled: true

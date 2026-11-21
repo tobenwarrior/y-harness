@@ -47,6 +47,7 @@ import { compactGroupQuote, GROUP_REACTION_OPTIONS, readGroupReplyToMessageId } 
 import {
   BotGroupAttachments,
   BotGroupSentAttachments,
+  botGroupAttachmentLabels,
   createBotGroupAttachmentDraft,
   releaseBotGroupAttachment,
 } from './BotGroupAttachments.tsx'
@@ -1509,7 +1510,6 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
     const auth = requireCurrentAuth(expectedAuth)
     const scope = auth.scope
     resetPendingScopeIfChanged(scope)
-    if (scope === undefined) throw new Error(t('sharedGroupRetryIdentityUnavailable'))
     if (pendingGroupQueueRef.current?.scope === scope) {
       if (!pendingGroupQueueRef.current.queue.durable) throw new Error(t('sharedGroupRetryUnavailable'))
       return pendingGroupQueueRef.current.queue
@@ -2194,7 +2194,7 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
     const existing = result.value.messages.find(messageRow => String(messageRow.id) === String(messageId))
     if (existing === undefined) return
     const principalId = auth.scope
-    if (principalId === undefined || String(existing.groupId) !== groupId || existing.text !== text
+    if (String(existing.groupId) !== groupId || existing.text !== text
       || existing.sender.kind !== 'user' || existing.sender.principalId === undefined
       || String(existing.sender.principalId) !== principalId
       || (targetBotIds !== undefined && JSON.stringify([...(existing.targetBotIds ?? [])].map(String).sort())
@@ -2292,7 +2292,7 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
       }
     } finally {
       if (enrollmentOperationTokenRef.current === enrollmentToken) {
-        const preserveCodeRevision = enrollmentSubmittedCodeRevisionRef.current ?? undefined
+        const preserveCodeRevision = enrollmentSubmittedCodeRevisionRef.current
         enrollmentInFlightRef.current = false
         enrollmentSubmittedCodeRevisionRef.current = null
         enrollmentClientRef.current = null
@@ -2822,7 +2822,7 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
         if (queue !== undefined && reservation !== undefined) {
           await queue.completeMessage(reservation.operationHash, reservation.id)
           if (!isCurrentAuth(auth) || !isCurrentGroupOperation()) return
-          setPendingMessages(current => current.filter(candidate => candidate.id !== reservation?.id))
+          setPendingMessages(current => current.filter(candidate => candidate.id !== reservation.id))
         } else {
           clearGroupAttachments()
         }
@@ -3279,18 +3279,7 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
                   <BotGroupAttachments
                     attachments={groupAttachments}
                     disabled={groupWorking === 'send'}
-                    labels={{
-                      picker: t('groupAttachFiles'),
-                      input: t('groupChooseFiles'),
-                      attachments: t('groupAttachments'),
-                      file: t('groupAttachmentFile'),
-                      preview: name => t('groupPreviewAttachment', { name }),
-                      remove: name => t('groupRemoveAttachment', { name }),
-                      retry: name => t('groupRetryAttachment', { name }),
-                      failed: t('groupAttachmentFailed'),
-                      uploading: t('groupAttachmentPreparing'),
-                      lightbox: { dialog: t('groupAttachmentPreview'), close: t('groupAttachmentClosePreview') },
-                    }}
+                    labels={botGroupAttachmentLabels(t)}
                     onAddFiles={addGroupAttachments}
                     onRemove={removeGroupAttachment}
                   />
@@ -3333,7 +3322,12 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
                       value={groupDraft}
                       placeholder={t('sharedGroupMessagePlaceholder', { name: selectedGroup.name })}
                       aria-label={t('sharedGroupMessagePlaceholder', { name: selectedGroup.name })}
-                      onFocus={(event) => { event.currentTarget.scrollIntoView?.({ block: 'nearest' }) }}
+                      onFocus={(event) => {
+                        const scrollTarget: {
+                          readonly scrollIntoView?: (options?: boolean | ScrollIntoViewOptions) => void
+                        } = event.currentTarget
+                        scrollTarget.scrollIntoView?.({ block: 'nearest' })
+                      }}
                       onChange={(event) => {
                         groupDraftRevisionRef.current += 1
                         if (groupAttachmentMessageIdRef.current !== null && groupAttachmentDraftTextRef.current !== null

@@ -8,9 +8,16 @@ import { describe, expect, it } from 'vitest'
 import { MemoryMediaPool, MemoryStorageBackend } from '../../../storage/storage-domain/tests/helpers/memory-backend.ts'
 import {
   BotAttachmentGrantId,
+  BotAttachmentGrantError,
   BotAttachmentGrantStore,
   BotPrivateMessageId,
+  attachmentContentBlocks,
+  attachmentMetadata,
+  attachmentView,
+  botAttachmentGrantSchema,
   botAttachmentDomain,
+  normalizeScope,
+  sameAttachmentRefs,
   type BotAttachmentScope,
 } from '../src/attachment-grants.ts'
 import { BotGroupId, BotGroupMessageId } from '../src/group-chat.ts'
@@ -55,6 +62,12 @@ const file: FileAttachmentRef = {
   bytes: 5,
 }
 
+const namedImage: ImageAttachmentRef = {
+  ...image,
+  name: 'fixture.png',
+  originalDimensions: { width: 2, height: 3 },
+}
+
 function localScope(targetBotIds: readonly BotId[] = [BotId('bot-beta')]): Extract<BotAttachmentScope, { kind: 'local-group' }> {
   return {
     kind: 'local-group',
@@ -67,6 +80,127 @@ function localScope(targetBotIds: readonly BotId[] = [BotId('bot-beta')]): Extra
 }
 
 describe('BotAttachmentGrantStore', () => {
+  it('projects validated attachment metadata and model content without provider ids', () => {
+    expect(botAttachmentGrantSchema.safeParse({
+      id: BotAttachmentGrantId('bot-attachment-grant-schema'),
+      scope: localScope(),
+      attachments: [{ type: 'image', attachment: namedImage }],
+      state: 'consumed',
+      createdAt: 1,
+      consumedAt: 2,
+    }).success).toBe(true)
+    expect(botAttachmentGrantSchema.safeParse({
+      id: BotAttachmentGrantId('bot-attachment-grant-missing-consumed-at'),
+      scope: localScope(),
+      attachments: [{ type: 'file', attachment: file }],
+      state: 'consumed',
+      createdAt: 1,
+    }).success).toBe(false)
+    expect(botAttachmentGrantSchema.safeParse({
+      id: BotAttachmentGrantId('bot-attachment-grant-extra-consumed-at'),
+      scope: localScope(),
+      attachments: [{ type: 'file', attachment: file }],
+      state: 'reserved',
+      createdAt: 1,
+      consumedAt: 2,
+    }).success).toBe(false)
+
+    expect(attachmentMetadata({ type: 'image', attachment: namedImage })).toEqual({
+      type: 'image', mediaType: 'image/png', bytes: 4, width: 1, height: 1, name: 'fixture.png',
+    })
+    expect(attachmentMetadata({ type: 'file', attachment: file })).toEqual({ type: 'file', name: 'notes.txt', bytes: 5 })
+    expect(attachmentView({ type: 'image', attachment: namedImage })).toMatchObject({
+      type: 'image', name: 'fixture.png', attachmentId: String(namedImage.attachmentId),
+    })
+    expect(sameAttachmentRefs([{ type: 'file', attachment: file }], [{ type: 'file', attachment: file }])).toBe(true)
+    expect(sameAttachmentRefs([{ type: 'file', attachment: file }], [{ type: 'image', attachment: image }])).toBe(false)
+    expect(attachmentContentBlocks([
+      { type: 'image', attachment: image },
+      { type: 'file', attachment: file },
+    ])).toEqual([
+      { type: 'image', attachment: image },
+      { type: 'file', attachment: file },
+    ])
+
+    const normalized = normalizeScope({ ...localScope([BotId('bot-zeta'), BotId('bot-alpha')]) })
+    expect(normalized.kind).toBe('local-group')
+    if (normalized.kind === 'local-group') {
+      expect(normalized.targetBotIds).toEqual([BotId('bot-alpha'), BotId('bot-zeta')])
+    }
+    expect(() => normalizeScope({ ...localScope(), targetBotIds: [] })).toThrow(BotAttachmentGrantError)
+  })
+
+  it('handles empty projections, ordered message reads, and shared recipient fencing', async () => {
+    const opened = await fixture()
+    try {
+      const store = new BotAttachmentGrantStore(opened.domain)
+      expect(await store.consume(localScope(), [], 1)).toEqual({ status: 'none', attachments: [] })
+      store.validate(localScope(), [])
+      expect(store.preview(localScope(), [])).toEqual([])
+      expect(store.attachmentsForMessage(localScope())).toEqual([])
+
+      const first = await store.admit(localScope(), [{ type: 'image', attachment: image }], 10)
+      const second = await store.admit(localScope(), [{ type: 'file', attachment: file }], 10)
+      await expect(store.consume(localScope(), [first.grantId, second.grantId], 11)).resolves.toMatchObject({ status: 'accepted' })
+      expect(store.attachmentsForMessage(localScope())).toHaveLength(2)
+      expect(store.attachmentsForMessage({ ...localScope(), ownerId: 'another-owner' })).toEqual([])
+
+      const privateScope: Extract<BotAttachmentScope, { kind: 'shared-private' }> = {
+        kind: 'shared-private',
+        botId: BotId('bot-private'),
+        principalId: BotPrincipalId('principal-private'),
+        messageId: BotPrivateMessageId('bot-private-message-projection'),
+        authorizationRevision: 1,
+      }
+      const privateGrant = await store.admit(privateScope, [{ type: 'file', attachment: file }], 12)
+      await store.consume(privateScope, [privateGrant.grantId], 13)
+      expect(store.attachmentsForMessage(privateScope)).toHaveLength(1)
+      expect(store.attachmentsForMessage({ ...privateScope, principalId: BotPrincipalId('principal-other') })).toEqual([])
+      expect(store.attachmentsForMessage({ ...privateScope, botId: BotId('bot-other') })).toEqual([])
+      expect(store.attachmentsForMessage({ ...privateScope, messageId: BotPrivateMessageId('bot-private-message-other') })).toEqual([])
+
+      const sharedScope: Extract<BotAttachmentScope, { kind: 'shared-group' }> = {
+        kind: 'shared-group',
+        principalId: BotPrincipalId('principal-projection'),
+        groupId: BotGroupId('bot-group-projection'),
+        messageId: BotGroupMessageId('bot-group-message-projection'),
+        targetBotIds: [BotId('bot-zeta'), BotId('bot-alpha')],
+        authorizationRevision: 1,
+      }
+      const sharedGrant = await store.admit(sharedScope, [{ type: 'file', attachment: file }], 14)
+      const sharedImageGrant = await store.admit(sharedScope, [{ type: 'image', attachment: image }], 14)
+      await store.consume(sharedScope, [sharedGrant.grantId, sharedImageGrant.grantId], 15)
+      expect(store.attachmentsForMessage(sharedScope)).toHaveLength(2)
+      expect(store.attachmentsForMessage({ ...sharedScope, principalId: BotPrincipalId('principal-other') })).toEqual([])
+      expect(store.attachmentsForMessage({ ...sharedScope, groupId: BotGroupId('bot-group-other') })).toEqual([])
+      expect(store.attachmentsForMessage({ ...sharedScope, messageId: BotGroupMessageId('bot-group-message-other') })).toEqual([])
+      expect(store.attachmentsForMessage({ ...sharedScope, targetBotIds: [BotId('bot-other')] })).toEqual([])
+      expect(store.attachmentsForSharedGroupMessage({
+        principalId: sharedScope.principalId,
+        groupId: sharedScope.groupId,
+        messageId: sharedScope.messageId,
+        targetBotIds: [BotId('bot-alpha'), BotId('bot-zeta')],
+        authorizationRevision: 99,
+      })).toHaveLength(2)
+      expect(store.attachmentsForSharedGroupMessage({
+        principalId: BotPrincipalId('principal-other'),
+        groupId: sharedScope.groupId,
+        messageId: sharedScope.messageId,
+        targetBotIds: [BotId('bot-alpha'), BotId('bot-zeta')],
+        authorizationRevision: 99,
+      })).toEqual([])
+      expect(() => store.attachmentsForSharedGroupMessage({
+        principalId: sharedScope.principalId,
+        groupId: sharedScope.groupId,
+        messageId: sharedScope.messageId,
+        targetBotIds: [],
+        authorizationRevision: 1,
+      })).toThrow(BotAttachmentGrantError)
+    } finally {
+      await opened.ctx.fiber.dispose()
+    }
+  })
+
   it('admits only opaque, bounded grants and consumes an exact scope once', async () => {
     const opened = await fixture()
     try {
@@ -141,6 +275,35 @@ describe('BotAttachmentGrantStore', () => {
     }
   })
 
+  it('rejects invalid attachment input, grant ids, timestamps, and revoked records', async () => {
+    const opened = await fixture()
+    try {
+      const store = new BotAttachmentGrantStore(opened.domain)
+      await expect(store.admit(localScope(), [], 1)).rejects.toMatchObject({ code: 'invalid' })
+      await expect(store.admit(localScope(), new Array(9).fill({ type: 'file', attachment: file }), 1))
+        .rejects.toMatchObject({ code: 'invalid' })
+      await expect(store.admit(localScope(), [{ type: 'file', attachment: { ...file, attachmentId: AttachmentId('') } }], 1))
+        .rejects.toMatchObject({ code: 'invalid' })
+      await expect(store.admit({ ...localScope(), targetBotIds: [BotId('bot-beta'), BotId('bot-beta')] }, [{ type: 'file', attachment: file }], 1))
+        .rejects.toMatchObject({ code: 'invalid' })
+      await expect(store.admit(localScope(), [{ type: 'file', attachment: file }], -1)).rejects.toMatchObject({ code: 'invalid' })
+
+      const grant = await store.admit(localScope(), [{ type: 'file', attachment: file }], 1)
+      store.validate(localScope(), [grant.grantId])
+      expect(() => { store.validate(localScope(), [grant.grantId, grant.grantId]) }).toThrow(/unique/)
+      const manyIds = Array.from({ length: 9 }, (_, index) => BotAttachmentGrantId(`bot-attachment-grant-missing-${index}`))
+      expect(() => { store.validate(localScope(), manyIds) }).toThrow(/unique and contain at most eight/)
+      expect(() => { store.validate(localScope(), [BotAttachmentGrantId('bot-attachment-grant-missing')]) }).toThrow(/not found/)
+
+      const stored = opened.domain.table('grants').get(grant.grantId)
+      if (stored === undefined) throw new Error('grant fixture disappeared')
+      await opened.domain.table('grants').put(grant.grantId, { ...stored, state: 'revoked' })
+      expect(() => { store.validate(localScope(), [grant.grantId]) }).toThrow(/revoked/)
+    } finally {
+      await opened.ctx.fiber.dispose()
+    }
+  })
+
   it('keeps shared-private delivery exclusive until a lease expires or settles', async () => {
     const opened = await fixture()
     try {
@@ -158,6 +321,49 @@ describe('BotAttachmentGrantStore', () => {
       await expect(store.settlePrivateDelivery(scope, 'lease-two', 'accepted', 122)).resolves.toBe(true)
       await expect(store.reservePrivateDelivery(scope, 'lease-three', 123, 20)).resolves.toBe('duplicate')
       await expect(store.reservePrivateDelivery({ ...scope, authorizationRevision: 4 }, 'lease-four', 124, 20)).resolves.toBe('duplicate')
+    } finally {
+      await opened.ctx.fiber.dispose()
+    }
+  })
+
+  it('validates private lease inputs and releases only the current pending token', async () => {
+    const opened = await fixture()
+    try {
+      const store = new BotAttachmentGrantStore(opened.domain)
+      const scope: Extract<BotAttachmentScope, { kind: 'shared-private' }> = {
+        kind: 'shared-private',
+        botId: BotId('bot-lease-validation'),
+        principalId: BotPrincipalId('principal-lease-validation'),
+        messageId: BotPrivateMessageId('bot-private-message-lease-validation'),
+        authorizationRevision: 1,
+      }
+      await expect(Reflect.apply(store.reservePrivateDelivery.bind(store), store, [localScope(), 'invalid-scope', 1, 10]))
+        .rejects.toMatchObject({ code: 'invalid' })
+      await expect(store.reservePrivateDelivery(scope, '', 1, 10)).rejects.toMatchObject({ code: 'invalid' })
+      await expect(store.reservePrivateDelivery(scope, 'x'.repeat(257), 1, 10)).rejects.toMatchObject({ code: 'invalid' })
+      await expect(store.reservePrivateDelivery(scope, 'valid', 1, 0)).rejects.toMatchObject({ code: 'invalid' })
+      await expect(store.reservePrivateDelivery(scope, 'valid', 1, 300_001)).rejects.toMatchObject({ code: 'invalid' })
+      await expect(store.reservePrivateDelivery(scope, 'valid', 1, 1.5)).rejects.toMatchObject({ code: 'invalid' })
+      await expect(store.reservePrivateDelivery(scope, 'valid', -1, 10)).rejects.toMatchObject({ code: 'invalid' })
+      await expect(store.renewPrivateDelivery(scope, '', 2, 10)).rejects.toMatchObject({ code: 'invalid' })
+      await expect(store.renewPrivateDelivery(scope, 'valid', 2, 0)).rejects.toMatchObject({ code: 'invalid' })
+      await expect(store.reservePrivateDelivery(scope, 'valid', 1, 10)).resolves.toBe('reserved')
+      await expect(store.renewPrivateDelivery(scope, 'valid', -1, 10)).rejects.toMatchObject({ code: 'invalid' })
+      await expect(store.renewPrivateDelivery(scope, 'valid', 2, 10)).resolves.toBe(true)
+      await expect(store.releasePrivateDelivery(scope, 'valid')).resolves.toBeUndefined()
+      await expect(store.renewPrivateDelivery(scope, 'valid', 2, 10)).resolves.toBe(false)
+      await expect(store.reservePrivateDelivery(scope, 'settle-owner', 10, 20)).resolves.toBe('reserved')
+      await expect(store.settlePrivateDelivery(scope, 'settle-owner', 'accepted', -1)).rejects.toMatchObject({ code: 'invalid' })
+      await expect(store.releasePrivateDelivery(scope, 'settle-owner')).resolves.toBeUndefined()
+      await expect(store.settlePrivateDelivery(scope, 'valid', 'accepted', 2)).resolves.toBe(false)
+      await expect(store.releasePrivateDelivery(scope, 'missing')).resolves.toBeUndefined()
+
+      await expect(store.reservePrivateDelivery(scope, 'owner', 10, 20)).resolves.toBe('reserved')
+      await expect(store.releasePrivateDelivery(scope, 'wrong')).resolves.toBeUndefined()
+      expect(store.readPrivateDelivery(scope)).toMatchObject({ token: 'owner', state: 'pending' })
+      await expect(store.releasePrivateDelivery(scope, 'owner')).resolves.toBeUndefined()
+      expect(store.readPrivateDelivery(scope)).toBeUndefined()
+      await expect(store.settlePrivateDelivery(scope, 'owner', 'accepted', 22)).resolves.toBe(false)
     } finally {
       await opened.ctx.fiber.dispose()
     }

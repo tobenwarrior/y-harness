@@ -8,7 +8,7 @@
 
 import type { Branded } from '@yharness/brand'
 import type { ToolCallId } from '@yharness/llm'
-import type { SessionId } from '@yharness/session'
+import type { SessionId } from '@yharness/session/types'
 
 /**
  * Opaque model-facing handle for one spilled artifact. A local backend may use a

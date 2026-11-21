@@ -32,7 +32,7 @@ function failure(code: 'schedule_not_found' | 'delivery_cursor_not_found'): Resu
   return { ok: true, value: { id, code } }
 }
 const transportFailure: Result = { ok: false, error: new RemoteError('gateway/internal', 'Private transport detail', {}) }
-function mount(dictionary: typeof en | typeof zh = en) {
+function mount(dictionary: typeof en = en) {
   const loadHistory = vi.fn<DeliveryHistoryInjected['loadHistory']>().mockResolvedValue(result())
   const props = { id, sessionId, latestMessageId: records[0]!.messageId, loadHistory, t: makeTranslate(dictionary) }
   const view = render(<DeliveryHistory {...props} />)
@@ -44,7 +44,7 @@ async function resolve(pending: ReturnType<typeof Promise.withResolvers<Result>>
 async function reject(pending: ReturnType<typeof Promise.withResolvers<Result>>): Promise<void> {
   await act(async () => { pending.reject(new Error('Private rejected detail')); await pending.promise.catch(() => {}) })
 }
-function occurrences(dictionary: typeof en | typeof zh = en): string[] {
+function occurrences(dictionary: typeof en = en): string[] {
   return screen.queryAllByRole('region', { name: dictionary['delivery.label'] })
     .map(region => region.querySelector('time')?.dateTime ?? '')
 }

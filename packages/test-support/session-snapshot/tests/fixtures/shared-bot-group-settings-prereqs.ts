@@ -6,11 +6,15 @@ import { ApiSessionNotFound, type SessionCreateRequest } from '@yharness/api-ses
 import { SharedAccessAuthority } from '@yharness/client-connection'
 import type { PeerScope } from '@yharness/typert-protocol'
 import { SessionId } from '@yharness/session'
-import { BotGroupId, BotGroupMessageId } from '@yharness/bots/src/group-chat.ts'
-import { BotId } from '@yharness/bots/types'
-import { BotService, SHARED_BOT_AGENT_PRESET, SharedBotService } from '@yharness/bots'
-import type { SharedBotService as SharedBotServiceType } from '@yharness/bots'
-import { botDomain } from '@yharness/bots/src/storage.ts'
+import {
+  BotGroupId,
+  BotGroupMessageId,
+  BotId,
+  BotService,
+  SHARED_BOT_AGENT_PRESET,
+  SharedBotService,
+  botDomain,
+} from '@yharness/bots'
 
 export const name = 'snapshot-shared-bot-group-settings-prereqs'
 export const inject = ['agentDefaultModel', 'agents', 'credentials', 'sessions', 'storageDomain']
@@ -23,7 +27,7 @@ const RENAMED_GROUP = 'Renamed planning room'
 
 interface SharedGroupDriver {
   readonly peer: PeerScope
-  readonly service: SharedBotServiceType
+  readonly service: SharedBotService
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -31,15 +35,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /** Read the private shared service mounted by the production Bot service. */
-function productionSharedService(service: BotService): SharedBotServiceType {
+function productionSharedService(service: BotService): SharedBotService {
   const descriptor = Object.getOwnPropertyDescriptor(service, 'sharedService')
-  const value = descriptor?.value as SharedBotServiceType | undefined
+  const value = descriptor?.value as SharedBotService | undefined
   if (!(value instanceof SharedBotService)) throw new Error('snapshot shared Bot service is unavailable')
   return value
 }
 
 /** Read the authority used by the production shared service. */
-function productionSharedAuthority(service: SharedBotServiceType): SharedAccessAuthority {
+function productionSharedAuthority(service: SharedBotService): SharedAccessAuthority {
   const descriptor = Object.getOwnPropertyDescriptor(service, 'authority')
   const value = descriptor?.value as SharedAccessAuthority | undefined
   if (!(value instanceof SharedAccessAuthority)) throw new Error('snapshot shared Bot authority is unavailable')

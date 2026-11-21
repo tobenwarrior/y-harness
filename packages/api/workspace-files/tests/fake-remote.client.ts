@@ -7,7 +7,7 @@ import type { RemoteResult, RemoteStreamHandle } from '@yharness/typert-protocol
 import { RemoteError } from '@yharness/typert-protocol'
 import { streamHandle } from '@yharness/remote-mock'
 import type { SessionId } from '@yharness/session/types'
-import type { WorkspaceFileWatchFrame, WorkspaceFileStat } from '../src/types.ts'
+import type { WorkspaceFilePath, WorkspaceFileWatchFrame, WorkspaceFileStat } from '../src/types.ts'
 import type { SupervisedStream, SupervisedStreamOptions, WorkspaceFilesRemote } from '../src/client/remote.ts'
 
 /** One scripted Host `changes` generation: frames pushed by the spec, ended by abort. */
@@ -79,7 +79,7 @@ export class Source<T> implements AsyncIterable<T> {
 /** One `stat` call awaiting the spec's answer. */
 export interface PendingStat {
   readonly sessionId: SessionId
-  readonly path: string
+  readonly path: WorkspaceFilePath
   readonly signal: AbortSignal | undefined
   resolve(result: RemoteResult<WorkspaceFileStat>): void
 }
@@ -216,7 +216,7 @@ export class FakeRemote implements WorkspaceFilesRemote {
   }
 
   readonly workspaceFiles = {
-    stat: (sessionId: SessionId, path: string, signal?: AbortSignal): Promise<RemoteResult<WorkspaceFileStat>> =>
+    stat: (sessionId: SessionId, path: WorkspaceFilePath, signal?: AbortSignal): Promise<RemoteResult<WorkspaceFileStat>> =>
       new Promise((resolve) => {
         this.calls.push('stat')
         const index = this.stats.length

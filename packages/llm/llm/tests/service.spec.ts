@@ -939,12 +939,12 @@ describe('LlmRuntime', () => {
       override resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
         return Promise.resolve({ provider, id: model, name: model,
           reasoning: { efforts: [{ id: ReasoningEffortId('high'), name: 'High' }] },
-          serviceTiers: { tiers: [{ id: ServiceTierId('priority'), name: 'Fast' }] } })
+          serviceTiers: { tiers: [{ id: ServiceTierId('priority'), name: 'Fast', description: 'Lower latency' }] } })
       }
     }(SCRIPT))
     expect(await ctx4.llm.resolveModelInfo('route', 'model')).toMatchObject({
       reasoning: { efforts: [{ id: 'high' }] },
-      serviceTiers: { tiers: [{ id: 'priority' }] },
+      serviceTiers: { tiers: [{ id: 'priority', description: 'Lower latency' }] },
     })
 
     // A model advertising no tiers refuses a tier outright.

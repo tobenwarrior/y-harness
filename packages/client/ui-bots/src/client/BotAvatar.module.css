@@ -5,6 +5,7 @@
 }
 
 .small { width: 34px; height: 34px; }
+.tiny { width: 18px; height: 18px; }
 .large { width: 48px; height: 48px; }
 
 .avatar[data-accent='blue'] { --avatar-accent: var(--yh-alias-state-business-primary); }
@@ -67,6 +68,11 @@
   23%, 31% { transform: translateX(4px) scaleY(1); }
   35%, 40% { transform: translateX(-4px) scaleY(1); }
   46.5% { transform: translateX(0) scaleY(.12); }
+}
+
+:global([data-bot-reply-speaker]) .volume,
+:global([data-bot-reply-speaker]) .eyes {
+  animation: none;
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -106,7 +106,8 @@ function inferenceModel<T extends Model<string>>(model: T): T {
  * @returns an OAuth-only provider whose account models are owned by Models settings.
  */
 export function nousProvider(profiles: readonly NousModelView[] = [], expectedClientId?: string): Provider {
-  const api = openAICompletionsApi()
+  let inferenceApi: ReturnType<typeof openAICompletionsApi> | undefined
+  const getInferenceApi = () => inferenceApi ??= openAICompletionsApi()
   const registeredGrant = (credential: OAuthCredential) => {
     const grant = validateNousGrant(credential)
     if (expectedClientId === undefined || expectedClientId.length === 0
@@ -128,9 +129,9 @@ export function nousProvider(profiles: readonly NousModelView[] = [], expectedCl
         })
       },
     } },
-    stream: (model, context, options) => api.stream(inferenceModel(model), context,
+    stream: (model, context, options) => getInferenceApi().stream(inferenceModel(model), context,
       inferenceOptions(options, profiles.find(profile => profile.id === model.id))),
-    streamSimple: (model, context, options) => api.streamSimple(inferenceModel(model), context,
+    streamSimple: (model, context, options) => getInferenceApi().streamSimple(inferenceModel(model), context,
       inferenceOptions(options, profiles.find(profile => profile.id === model.id))),
   }
 }

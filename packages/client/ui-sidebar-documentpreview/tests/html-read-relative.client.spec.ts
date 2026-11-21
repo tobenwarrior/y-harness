@@ -1,11 +1,15 @@
 /** HTML URL decoding stays local; workspace reads leave path resolution and authorization to the Host. */
 import { describe, expect, it, vi } from 'vitest'
 import { RemoteError } from '@yharness/client-test-runtime'
-import { sessionFileAddress } from '@yharness/util-workspace-path'
+import { computerFileAddress, sessionFileAddress } from '@yharness/util-workspace-path'
 import { createReadHtmlRelative } from '../src/client/html/read-relative.ts'
 import type { ReadHtmlRelated } from '../src/client/html/read-relative.ts'
 
 const ADDRESS = 'dsh-resource://file/session/html/sub/index.html'
+const SCOPES = [
+  { address: ADDRESS, dependency: sessionFileAddress },
+  { address: computerFileAddress('html', './sub/index.html'), dependency: computerFileAddress },
+] as const
 
 describe('HTML relative file reader', () => {
   it('decodes a relative URL once and preserves the returned bytes', async () => {
@@ -24,25 +28,26 @@ describe('HTML relative file reader', () => {
     expect(signal?.aborted).toBe(true)
   })
 
-  it('observes the Host-resolved dependency instead of a symlink and parent-segment spelling', async () => {
+  it.each(SCOPES)('observes the resolved dependency in $address', async ({ address, dependency }) => {
     const value = { absolutePath: '/workspace/style.css', data: new TextEncoder().encode('x'), version: 'v1', offset: 0, bytes: 1, eof: true }
     const readRelated = vi.fn<ReadHtmlRelated>().mockResolvedValue({ ok: true, value })
     const addResource = vi.fn()
     const signal = new AbortController().signal
-    await createReadHtmlRelative(readRelated, ADDRESS, signal, addResource)('linked/../style.css', signal)
-    expect(addResource).toHaveBeenCalledExactlyOnceWith(sessionFileAddress('html', value.absolutePath))
+    await createReadHtmlRelative(readRelated, address, signal, addResource)('linked/../style.css', signal)
+    expect(readRelated).toHaveBeenCalledExactlyOnceWith(address, 'linked/../style.css', expect.any(AbortSignal))
+    expect(addResource).toHaveBeenCalledExactlyOnceWith(dependency('html', value.absolutePath))
   })
 
-  it('observes the Host-reported missing path so creation can invalidate the preview', async () => {
+  it.each(SCOPES)('observes a missing dependency in $address so creation can invalidate the preview', async ({ address, dependency }) => {
     const path = '/workspace/missing.css'
     const readRelated = vi.fn<ReadHtmlRelated>().mockResolvedValue({
       ok: false, error: new RemoteError('workspace-file/not-found', 'Missing dependency', { path }),
     })
     const addResource = vi.fn()
     const signal = new AbortController().signal
-    await expect(createReadHtmlRelative(readRelated, ADDRESS, signal, addResource)('linked/../missing.css', signal))
+    await expect(createReadHtmlRelative(readRelated, address, signal, addResource)('linked/../missing.css', signal))
       .rejects.toThrow('Missing dependency')
-    expect(addResource).toHaveBeenCalledExactlyOnceWith(sessionFileAddress('html', path))
+    expect(addResource).toHaveBeenCalledExactlyOnceWith(dependency('html', path))
   })
 
   it('does not guess a dependency path when the Host failure contains none', async () => {

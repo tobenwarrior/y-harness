@@ -11,6 +11,7 @@ import { z } from 'zod'
 import { BotGroupId, BotGroupMessageId } from './group-chat.ts'
 import { BotPrincipalId } from './sharing.ts'
 import { BotId } from './types.ts'
+import { imageAttachmentRefWithId } from './image-attachment-ref.ts'
 
 /** Stable opaque identity for one admitted Bot-message attachment grant. */
 export type BotAttachmentGrantId = Branded<'BotAttachmentGrantId'>
@@ -143,32 +144,13 @@ const attachmentIdSchema = z.string().min(1).max(512).refine(
 const fileAttachmentSchema = z.object({
   attachmentId: attachmentIdSchema,
   name: z.string().min(1).max(255),
-  bytes: z.number().safe().int().nonnegative(),
+  bytes: z.number().int().nonnegative(),
 }).strict().transform((value): FileAttachmentRef => ({
   attachmentId: value.attachmentId,
   name: value.name,
   bytes: value.bytes,
 }))
-const imageAttachmentSchema = z.object({
-  attachmentId: attachmentIdSchema,
-  mediaType: z.enum(['image/png', 'image/jpeg', 'image/webp', 'image/gif']),
-  bytes: z.number().safe().int().nonnegative(),
-  width: z.number().safe().int().positive(),
-  height: z.number().safe().int().positive(),
-  name: z.string().min(1).max(255).optional(),
-  originalDimensions: z.object({
-    width: z.number().safe().int().positive(),
-    height: z.number().safe().int().positive(),
-  }).strict().optional(),
-}).strict().transform((value): ImageAttachmentRef => ({
-  attachmentId: value.attachmentId,
-  mediaType: value.mediaType,
-  bytes: value.bytes,
-  width: value.width,
-  height: value.height,
-  ...(value.name === undefined ? {} : { name: value.name }),
-  ...(value.originalDimensions === undefined ? {} : { originalDimensions: value.originalDimensions }),
-}))
+const imageAttachmentSchema = imageAttachmentRefWithId(attachmentIdSchema)
 const inputAttachmentSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('image'), attachment: imageAttachmentSchema }).strict(),
   z.object({ type: z.literal('file'), attachment: fileAttachmentSchema }).strict(),
@@ -177,7 +159,7 @@ const targetBotIdsSchema = z.array(botIdSchema).min(1).max(6).refine(
   values => new Set(values.map(String)).size === values.length,
   'Bot attachment targets must be unique',
 )
-const revisionSchema = z.number().safe().int().nonnegative()
+const revisionSchema = z.number().int().nonnegative()
 const localScopeSchema = z.object({
   kind: z.literal('local-group'),
   ownerId: z.string().min(1).max(MAX_OWNER_ID).refine(value => value.trim() === value),
@@ -210,8 +192,8 @@ export const botAttachmentGrantSchema = z.object({
   scope: scopeSchema,
   attachments: z.array(inputAttachmentSchema).min(1).max(MAX_GRANT_ATTACHMENTS),
   state: z.enum(['reserved', 'consumed', 'revoked']),
-  createdAt: z.number().safe().int().nonnegative(),
-  consumedAt: z.number().safe().int().nonnegative().optional(),
+  createdAt: z.number().int().nonnegative(),
+  consumedAt: z.number().int().nonnegative().optional(),
 }).strict().superRefine((record, context) => {
   if (record.state === 'consumed' && record.consumedAt === undefined) {
     context.addIssue({ code: 'custom', message: 'consumed grants require consumedAt', path: ['consumedAt'] })
@@ -233,8 +215,8 @@ const privateDeliverySchema = z.object({
   scope: sharedPrivateScopeSchema,
   token: z.string().min(1).max(MAX_LEASE_TOKEN),
   state: z.enum(['pending', 'accepted']),
-  leaseUntil: z.number().safe().int().nonnegative(),
-  updatedAt: z.number().safe().int().nonnegative(),
+  leaseUntil: z.number().int().nonnegative(),
+  updatedAt: z.number().int().nonnegative(),
 }).strict().transform((value): BotPrivateDeliveryRecord => ({
   id: value.id,
   scope: value.scope,
@@ -637,22 +619,24 @@ function normalizePrivateScope(
 
 function sameMessageScope(left: BotAttachmentScope, right: BotAttachmentScope): boolean {
   if (left.kind !== right.kind) return false
-  if (left.kind === 'local-group' && right.kind === 'local-group') {
-    return String(left.ownerId) === String(right.ownerId)
-      && left.groupId === right.groupId
-      && left.messageId === right.messageId
-      && isDeepStrictEqual(left.targetBotIds, right.targetBotIds)
+  if (left.kind === 'local-group') {
+    const rightLocal = right as Extract<BotAttachmentScope, { readonly kind: 'local-group' }>
+    return left.ownerId === rightLocal.ownerId
+      && left.groupId === rightLocal.groupId
+      && left.messageId === rightLocal.messageId
+      && isDeepStrictEqual(left.targetBotIds, rightLocal.targetBotIds)
   }
-  if (left.kind === 'shared-group' && right.kind === 'shared-group') {
-    return left.principalId === right.principalId
-      && left.groupId === right.groupId
-      && left.messageId === right.messageId
-      && isDeepStrictEqual(left.targetBotIds, right.targetBotIds)
+  if (left.kind === 'shared-group') {
+    const rightSharedGroup = right as Extract<BotAttachmentScope, { readonly kind: 'shared-group' }>
+    return left.principalId === rightSharedGroup.principalId
+      && left.groupId === rightSharedGroup.groupId
+      && left.messageId === rightSharedGroup.messageId
+      && isDeepStrictEqual(left.targetBotIds, rightSharedGroup.targetBotIds)
   }
-  if (left.kind !== 'shared-private' || right.kind !== 'shared-private') return false
-  return left.principalId === right.principalId
-    && left.botId === right.botId
-    && left.messageId === right.messageId
+  const rightPrivate = right as Extract<BotAttachmentScope, { readonly kind: 'shared-private' }>
+  return left.principalId === rightPrivate.principalId
+    && left.botId === rightPrivate.botId
+    && left.messageId === rightPrivate.messageId
 }
 
 /** Open-domain type exported for consumers that retain the provider. */

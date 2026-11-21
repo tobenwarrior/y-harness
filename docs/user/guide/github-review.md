@@ -65,7 +65,7 @@ Active:       yes
 
 The rule accepts only source `primary-github`, repository `tobenwarrior/y-harness`, event `pull_request`, and action `ready_for_review`. It passes the exact head SHA plus selected PR fields to the review prompt, labeling the JSON as untrusted metadata and forbidding file, branch, PR, or GitHub mutation.
 
-The Session request selects the `standard` agent preset and `read-only` permission preset. `workspacePath` is canonicalized through `WorkspaceRegistry.create()`, so the first matching delivery creates the Web Workspace when absent and later deliveries reuse it.
+The Session request selects the `standard` agent preset and uses the `read-only` permission preset supplied by the overlay. The preset confines the review to read-only access and asks for approval before any operation outside that policy. `workspacePath` is canonicalized through `WorkspaceRegistry.create()`, so the first matching delivery creates the Web Workspace when absent and later deliveries reuse it.
 
 The HTTP response is intentionally weaker than the Agent outcome: `202` means the signature and JSON were accepted and rule calls were scheduled in memory. It does not mean this rule matched or that a Session was created.
 

@@ -15,6 +15,7 @@ import { OfficeBody, type OfficeBodyInjected } from './OfficeBody.tsx'
 import { OfficeFontAction } from './OfficeFontAction.tsx'
 import { officeFace } from './face.ts'
 import { createOfficeStore } from './store.ts'
+import { documentPath } from '../rpc.ts'
 import type { Config } from '../../config.ts'
 
 declare module '@yharness/client-ui-slots' {
@@ -70,7 +71,7 @@ export function apply(ctx: Context, config: Config['office']): void {
   ctx.inject(['remote', 'remote.officeToPdf', 'remote.workspaceFiles'], (scope) => {
     const convert: ReadOfficeBytes = async (file, signal, priority) => {
       signal.throwIfAborted()
-      const result = await scope.remote.officeToPdf.render(file.sessionId, file.path, priority, signal)
+      const result = await scope.remote.officeToPdf.render(file.sessionId, documentPath(file), priority, signal)
       signal.throwIfAborted()
       if (!result.ok && result.error.code === 'document-render/failed') {
         throw new Error(t(conversionErrorKey(result.error.details.reason)), { cause: result.error })
@@ -80,11 +81,11 @@ export function apply(ctx: Context, config: Config['office']): void {
     const createCache = () => new OfficePreviewCache(
       async (file, signal) => {
         const authorized = await scope.remote.workspaceFiles.readBytes(
-          file.sessionId, file.path, { range: { offset: 0, length: 1 } }, signal,
+          file.sessionId, documentPath(file), { range: { offset: 0, length: 1 } }, signal,
         )
         signal.throwIfAborted()
         if (!authorized.ok) return authorized
-        const metadata = await scope.remote.workspaceFiles.stat(file.sessionId, file.path, signal)
+        const metadata = await scope.remote.workspaceFiles.stat(file.sessionId, documentPath(file), signal)
         if (metadata.ok && (authorized.value.absolutePath !== metadata.value.absolutePath
           || authorized.value.version !== metadata.value.version)) {
           throw new Error(t('changed'))

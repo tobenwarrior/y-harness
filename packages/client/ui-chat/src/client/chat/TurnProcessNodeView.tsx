@@ -8,20 +8,21 @@ import css from './TurnProcessNodeView.module.css'
 
 /** Settled Turn duration and process disclosure above its content. */
 export const TurnProcessNodeView = memo(function TurnProcessNodeView({
-  node, turnProcess, t,
+  node, turnProcess, bot, t,
 }: ChatNodeViewProps<'turn-process'>) {
-  if (turnProcess === undefined) throw new Error('turn-process node requires Turn process owner state')
-  const open = !turnProcess.foldable || turnProcess.open
   const turn = node.location.kind === 'turn' || node.location.kind === 'step'
     ? node.location.turn
     : undefined
   if (turn?.status !== 'closed') return null
-  const canCollapse = turnProcess.foldable && turnProcess.hasContent && !turnProcessAlwaysOpen(node)
   const reason = turn.end?.data.reason.kind
+  if (bot !== undefined) return reason === 'aborted' ? <span className={css.stopped} role="status">{t('message.stopped')}</span> : null
+  if (turnProcess === undefined) throw new Error('turn-process node requires Turn process owner state')
+  const open = !turnProcess.foldable || turnProcess.open
   const elapsedMs = turn.start === undefined || turn.end === undefined ? undefined
     : Math.max(1000, turn.end.time - turn.start.time)
   const duration = elapsedMs === undefined || reason === 'aborted' || reason === 'error' ? undefined
     : formatRunDuration(elapsedMs, t)
+  const canReveal = turnProcess.foldable && turnProcess.hasContent && !turnProcessAlwaysOpen(node)
   // Other end reasons retain elapsed time; only cancellation and failure replace it.
   const label = reason === 'aborted' ? t('message.stopped')
     : reason === 'error' ? t('message.turnProcess.failed')
@@ -41,7 +42,7 @@ export const TurnProcessNodeView = memo(function TurnProcessNodeView({
         data-turn-process-messages={node.data.messageCount}
         data-turn-process-tool-calls={node.data.toolCallCount}
         data-turn-process-subagents={node.data.subagentCount}
-        disabled={!canCollapse}
+        disabled={!canReveal}
         aria-expanded={turnProcess.hasContent ? open : undefined}
         onClick={(event) => {
           event.currentTarget.focus()
@@ -54,7 +55,7 @@ export const TurnProcessNodeView = memo(function TurnProcessNodeView({
             <span key={index} className={part.numeric ? css.durationNumber : undefined}>{part.text}</span>
           ))}
         </span>
-        {canCollapse && <IconChevronDownOutlineRegular className={css.chevron} />}
+        {canReveal && <IconChevronDownOutlineRegular className={css.chevron} />}
       </button>
     </>
   )

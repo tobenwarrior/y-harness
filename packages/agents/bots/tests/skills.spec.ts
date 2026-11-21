@@ -1,11 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { SkillCandidate, SkillDefinition, SkillViewOptions } from '@yharness/skill'
+import type { SkillCandidate, SkillDefinition, SkillSummary, SkillViewOptions } from '@yharness/skill'
 import type { ScopeKey } from '@yharness/scope'
 import type { BotSkillPolicy } from '../src/types.ts'
 import {
+  BOT_SKILL_NAME_LIMIT,
   botSkillPolicyAllows,
   createBotSkillPolicyProvider,
   normalizeBotSkillPolicy,
+  projectBotSkillSummary,
 } from '../src/skills.ts'
 
 describe('Bot skill policy', () => {
@@ -16,6 +18,8 @@ describe('Bot skill policy', () => {
     })).toEqual({
       mode: 'selected', enabled: ['code-review', 'release-notes'], disabled: ['code-review'],
     })
+    expect(normalizeBotSkillPolicy({ mode: 'selected', enabled: ['zeta', 'alpha', 'middle'], disabled: [] }).enabled)
+      .toEqual(['alpha', 'middle', 'zeta'])
   })
 
   it('uses selected mode as an allow list while disabled always wins', () => {
@@ -27,8 +31,14 @@ describe('Bot skill policy', () => {
   })
 
   it('rejects malformed policy names and modes', () => {
+    expect(() => normalizeBotSkillPolicy(null)).toThrow('Bot skill policy mode')
     expect(() => normalizeBotSkillPolicy({ mode: 'unknown' as 'all', enabled: [], disabled: [] }))
       .toThrow('Bot skill policy mode')
+    expect(() => normalizeBotSkillPolicy({ mode: 'all', enabled: undefined, disabled: [] }))
+      .toThrow('enabled must be an array')
+    expect(() => normalizeBotSkillPolicy({
+      mode: 'all', enabled: Array.from({ length: BOT_SKILL_NAME_LIMIT + 1 }, () => 'release-notes'), disabled: [],
+    })).toThrow('at most')
     expect(() => normalizeBotSkillPolicy({ mode: 'all', enabled: ['not valid'], disabled: [] }))
       .toThrow('Bot skill name')
     expect(() => normalizeBotSkillPolicy({ mode: 'all', enabled: [], disabled: [''] }))
@@ -44,7 +54,8 @@ describe('Bot skill policy', () => {
         provider: 'bundled', source: 'bundled', rank: 600, locator: 'code-review',
       },
       {
-        name: 'release-notes', description: 'Write release notes', invocation: { modelInvocable: true, userInvocable: true },
+        name: 'release-notes', description: 'Write release notes', whenToUse: 'When a release is near.',
+        invocation: { modelInvocable: true, userInvocable: true },
         provider: 'bundled', source: 'bundled', rank: 600, locator: 'release-notes',
       },
     ]
@@ -105,6 +116,70 @@ describe('Bot skill policy', () => {
       name: 'release-notes',
       invocation: { modelInvocable: false, userInvocable: false },
       content: '',
+    })
+  })
+
+  it('fails closed when a durable policy read is unavailable', async () => {
+    const candidate: SkillCandidate = {
+      name: 'release-notes', description: 'Write release notes',
+      invocation: { modelInvocable: true, userInvocable: true },
+      source: 'bundled', provider: 'bundled', rank: 10, locator: 'release-notes',
+    }
+    const list = vi.fn(async () => [candidate])
+    const get = vi.fn(async () => ({ ...candidate, content: 'must not load' }))
+    const provider = createBotSkillPolicyProvider({ list, get }, undefined, () => {
+      throw new Error('policy storage unavailable')
+    })
+
+    await expect(provider.list({})).resolves.toMatchObject({
+      candidates: [{ invocation: { modelInvocable: false, userInvocable: false } }],
+    })
+    await expect(provider.get(candidate, {})).resolves.toMatchObject({
+      name: 'release-notes', invocation: { modelInvocable: false, userInvocable: false }, content: '',
+    })
+    expect(get).not.toHaveBeenCalled()
+  })
+
+  it('maps rankless host summaries into scoped candidates', async () => {
+    const summary: SkillSummary = {
+      name: 'release-notes', description: 'Write release notes', whenToUse: 'When a release is near.',
+      invocation: { modelInvocable: true, userInvocable: true }, source: 'bundled', provider: 'bundled',
+    }
+    const provider = createBotSkillPolicyProvider({
+      list: async () => [summary],
+      get: async () => ({ ...summary, content: 'Release body.' }),
+    }, undefined, () => ({ mode: 'all', enabled: [], disabled: [] }))
+
+    const observation = await provider.list({})
+    if (Array.isArray(observation)) throw new Error('expected an incomplete discovery observation')
+    expect(observation).toEqual({
+      candidates: [{
+        name: 'release-notes', description: 'Write release notes', whenToUse: 'When a release is near.',
+        invocation: { modelInvocable: true, userInvocable: true }, source: 'runtime', provider: 'bot-skill-policy',
+        rank: 1_000_000,
+        locator: {
+          name: 'release-notes', description: 'Write release notes', whenToUse: 'When a release is near.',
+          invocation: { modelInvocable: true, userInvocable: true }, source: 'bundled', provider: 'bundled',
+          rank: 1_000_000, locator: 'release-notes',
+        },
+      }],
+      complete: false,
+    })
+  })
+
+  it('projects optional routing guidance with the current Bot grant', () => {
+    const skill: SkillSummary = {
+      name: 'release-notes', description: 'Write release notes',
+      invocation: { modelInvocable: true, userInvocable: true }, source: 'bundled', provider: 'bundled',
+    }
+    expect(projectBotSkillSummary({ ...skill, whenToUse: 'When a release is near.' }, { mode: 'all', enabled: [], disabled: [] })).toEqual({
+      name: 'release-notes', description: 'Write release notes', whenToUse: 'When a release is near.',
+      enabled: true, available: true,
+    })
+    expect(projectBotSkillSummary(skill, {
+      mode: 'selected', enabled: [], disabled: ['release-notes'],
+    })).toEqual({
+      name: 'release-notes', description: 'Write release notes', enabled: false, available: true,
     })
   })
 })

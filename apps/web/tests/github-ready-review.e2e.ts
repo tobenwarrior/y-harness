@@ -30,7 +30,8 @@ const EXPANDED_EXPECTED = fileURLToPath(
 const PROVIDER = 'github-webhook-review-test'
 const MODEL = 'reply'
 const SECRET = 'github-webhook-review-secret'
-const TITLE = 'Review deepseek-ai/deepseek-harness#314'
+const REPOSITORY = 'tobenwarrior/y-harness'
+const TITLE = `Review ${REPOSITORY}#314`
 const REPLY = 'Review complete: no actionable findings.'
 
 /** Deterministic model response for the webhook-created Session. */
@@ -118,6 +119,8 @@ describe.skipIf(MODE === 'record')('web e2e: GitHub ready-for-review', () => {
 
   it('isolates ingress and creates a browsable Workspace Session', async () => {
     onTestFailed(async () => { await saveFailureShot(page, 'github-ready-review') })
+    expect(scaffold.ctx.permissionPresets.resolve('read-only'))
+      .toMatchObject({ sandbox: 'read-only', approval: 'ask' })
     const before = scaffold.ctx.agents.list().length
 
     expect((await fetch(`${webhookOrigin}/api`)).status).toBe(404)
@@ -130,10 +133,10 @@ describe.skipIf(MODE === 'record')('web e2e: GitHub ready-for-review', () => {
     const payload = {
       action: 'ready_for_review',
       number: 314,
-      repository: { full_name: 'deepseek-ai/deepseek-harness' },
+      repository: { full_name: REPOSITORY },
       pull_request: {
         title: 'Fix session replay',
-        html_url: 'https://github.com/deepseek-ai/deepseek-harness/pull/314',
+        html_url: `https://github.com/${REPOSITORY}/pull/314`,
         draft: false,
         user: { login: 'octocat' },
         base: { ref: 'master', sha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' },
@@ -178,6 +181,9 @@ describe.skipIf(MODE === 'record')('web e2e: GitHub ready-for-review', () => {
 
     const agent = scaffold.ctx.agents.list().find(candidate => candidate.session.header.cwd === scaffold.workspaceCwd)
     expect(agent).toBeDefined()
+    expect(agent?.session.snapshotEvents()).toContainEqual(expect.objectContaining({
+      type: 'permission/preset', data: { preset: 'read-only' },
+    }))
     const workspace = await scaffold.ctx.workspaceRegistry.resolveByPath(scaffold.workspaceCwd)
     expect(workspace?.sessionIds).toContain(agent?.id)
     const webhookMessage = adapter.requests[0]?.messages.find(message => message.role === 'user' && message.source?.kind === 'webhook')

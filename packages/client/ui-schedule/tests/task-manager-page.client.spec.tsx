@@ -158,7 +158,7 @@ const taskZone = (instant: string): string => zoneDifferingFrom(instant)
 
 function mount(
   initial: Partial<CatalogSnapshot<ScheduleCatalogEntry>> = {},
-  dictionary: typeof en | typeof zh = en,
+  dictionary: typeof en = en,
   overrides: Partial<TaskManagerPageProps> = {},
 ) {
   let snapshot: CatalogSnapshot<ScheduleCatalogEntry> = {
@@ -207,18 +207,18 @@ function taskNames(): string[] {
 }
 
 /** The empty state's mock action, which starts a new Session like the heading's. */
-function emptyNewTaskButton(dictionary: typeof en | typeof zh = en): HTMLElement {
+function emptyNewTaskButton(dictionary: typeof en = en): HTMLElement {
   return within(screen.getByRole('status')).getByRole('button', { name: dictionary['empty.action'] })
 }
 
-function detailViewLabels(_dictionary: typeof en | typeof zh) {
+function detailViewLabels(_dictionary: typeof en) {
   return {
     tablist: 'Task detail views', rules: 'Rules', records: 'Records',
     empty: 'No delivery record available',
   }
 }
 
-function expectDetailView(dictionary: typeof en | typeof zh, active: 'rules' | 'records'): HTMLElement {
+function expectDetailView(dictionary: typeof en, active: 'rules' | 'records'): HTMLElement {
   const labels = detailViewLabels(dictionary)
   const detail = screen.getByRole('complementary', { name: dictionary['detail.label'] })
   const tabs = within(detail).getByRole('tablist', { name: labels.tablist })
@@ -257,12 +257,12 @@ function nextRunTime(root: HTMLElement): HTMLTimeElement | null {
  * The absolute next-run text the row and detail state for one instant, in the
  * device zone the cases pin.
  */
-function absoluteNextRun(scheduledAt: string, dictionary: typeof en | typeof zh): string {
+function absoluteNextRun(scheduledAt: string, dictionary: typeof en): string {
   return formatScheduleAbsolute(scheduledAt, dictionary['time.locale'])
 }
 
 /** The parenthesized distance the row and detail keep beside that absolute time. */
-function relativeNextRun(scheduledAt: string, dictionary: typeof en | typeof zh): string {
+function relativeNextRun(scheduledAt: string, dictionary: typeof en): string {
   return `(${remainingUntil(scheduledAt, dictionary)})`
 }
 
@@ -281,7 +281,7 @@ function relativeText(root: HTMLElement): string | null {
  * @param dictionary - active locale dictionary.
  * @returns the localized time remaining, or overdue text.
  */
-function remainingUntil(scheduledAt: string, dictionary: typeof en | typeof zh): string {
+function remainingUntil(scheduledAt: string, dictionary: typeof en): string {
   return formatScheduleRelative(scheduledAt, Date.now(), makeTranslate(dictionary))
 }
 
@@ -291,12 +291,12 @@ function follows(earlier: Element, later: Element): boolean {
 }
 
 /** The detail's editable task name control. */
-function nameField(dictionary: typeof en | typeof zh = en): HTMLInputElement {
+function nameField(dictionary: typeof en = en): HTMLInputElement {
   return screen.getByRole<HTMLInputElement>('textbox', { name: dictionary['detail.name'] })
 }
 
 /** The detail's editable instruction control. */
-function instructionField(dictionary: typeof en | typeof zh = en): HTMLTextAreaElement {
+function instructionField(dictionary: typeof en = en): HTMLTextAreaElement {
   return screen.getByRole<HTMLTextAreaElement>('textbox', { name: dictionary['detail.instruction'] })
 }
 
@@ -309,7 +309,7 @@ function instructionField(dictionary: typeof en | typeof zh = en): HTMLTextAreaE
  * @param dictionary - locale whose accessible names the region carries.
  * @param name - the task name the name control must show.
  */
-function expectDetailOrder(detail: HTMLElement, dictionary: typeof en | typeof zh, name: string): void {
+function expectDetailOrder(detail: HTMLElement, dictionary: typeof en, name: string): void {
   const tabs = within(detail).getByRole('tablist', { name: detailViewLabels(dictionary).tablist })
   const nameControl = within(detail).getByRole<HTMLInputElement>('textbox', { name: dictionary['detail.name'] })
   const body = detail.querySelector<HTMLElement>(`.${css.detailScroll}`)!
@@ -328,49 +328,49 @@ function expectDetailOrder(detail: HTMLElement, dictionary: typeof en | typeof z
 }
 
 /** Open the detail's overflow menu and return it. */
-function openMore(dictionary: typeof en | typeof zh = en): HTMLElement {
+function openMore(dictionary: typeof en = en): HTMLElement {
   fireEvent.click(screen.getByRole('button', { name: dictionary['detail.more'] }))
   return screen.getByRole('menu')
 }
 
 /** Open the shown rule's Repeat menu and choose one recurrence option. */
-function chooseRepeat(label: string, dictionary: typeof en | typeof zh = en): void {
+function chooseRepeat(label: string, dictionary: typeof en = en): void {
   fireEvent.click(within(screen.getByRole('region', { name: dictionary['rule.title'] }))
     .getByRole('button', { name: new RegExp(`^${dictionary['rule.repeat']}`) }))
   fireEvent.click(screen.getByRole('menuitem', { name: label }))
 }
 
 /** The Frequency selector of the cron builder's rows. */
-function cronFrequencyButton(dictionary: typeof en | typeof zh = en): HTMLElement {
+function cronFrequencyButton(dictionary: typeof en = en): HTMLElement {
   return within(screen.getByRole('region', { name: dictionary['rule.title'] }))
     .getByRole('button', { name: new RegExp(`^${dictionary['cronForm.frequency']}`) })
 }
 
 /** Open the cron builder's Frequency menu and choose one shape. */
-function chooseCronShape(label: string, dictionary: typeof en | typeof zh = en): void {
+function chooseCronShape(label: string, dictionary: typeof en = en): void {
   fireEvent.click(cronFrequencyButton(dictionary))
   fireEvent.click(screen.getByRole('menuitem', { name: label }))
 }
 
 /** The Repeat selector of the shown rule's Run time card. */
-function repeatButton(dictionary: typeof en | typeof zh = en): HTMLElement {
+function repeatButton(dictionary: typeof en = en): HTMLElement {
   return within(screen.getByRole('region', { name: dictionary['rule.title'] }))
     .getByRole('button', { name: new RegExp(`^${dictionary['rule.repeat']}`) })
 }
 
 /** The Time zone selector of the shown rule's Run time card. */
-function zoneButton(dictionary: typeof en | typeof zh = en): HTMLElement {
+function zoneButton(dictionary: typeof en = en): HTMLElement {
   return within(screen.getByRole('region', { name: dictionary['rule.title'] }))
     .getByRole('button', { name: new RegExp(`^${dictionary['timing.zone']}`) })
 }
 
 /** Localized offset/name pair produced by the same ICU-backed formatter as the UI. */
-function displayedZone(zone: string, dictionary: typeof en | typeof zh = en): string {
+function displayedZone(zone: string, dictionary: typeof en = en): string {
   return zoneLabel(zone, makeTranslate(dictionary))
 }
 
 /** Open the Time zone menu, filter by canonical IANA id, and choose the result. */
-function chooseZone(zone: string, dictionary: typeof en | typeof zh = en): void {
+function chooseZone(zone: string, dictionary: typeof en = en): void {
   fireEvent.click(zoneButton(dictionary))
   fireEvent.change(screen.getByRole('searchbox', { name: dictionary['timing.zoneSearch'] }), {
     target: { value: zone },
@@ -379,7 +379,7 @@ function chooseZone(zone: string, dictionary: typeof en | typeof zh = en): void 
 }
 
 /** The Weekday toggle group of the shown rule's Run time card. */
-function weekdayGroup(dictionary: typeof en | typeof zh = en): HTMLElement {
+function weekdayGroup(dictionary: typeof en = en): HTMLElement {
   return within(screen.getByRole('region', { name: dictionary['rule.title'] }))
     .getByRole('group', { name: dictionary['rule.weekday'] })
 }
@@ -390,20 +390,20 @@ function weekdayGroup(dictionary: typeof en | typeof zh = en): HTMLElement {
  * Scoped to the card: the open panel carries the row's own label and is portaled
  * outside it, so an unscoped lookup would match both while the panel shows.
  */
-function dateButton(dictionary: typeof en | typeof zh = en): HTMLButtonElement {
+function dateButton(dictionary: typeof en = en): HTMLButtonElement {
   return within(screen.getByRole('region', { name: dictionary['rule.title'] }))
     .getByLabelText<HTMLButtonElement>(dictionary['timing.date'])
 }
 
 /** The Time row's picker trigger of the shown rule's Run time card, scoped like `dateButton`. */
-function timeButton(dictionary: typeof en | typeof zh = en): HTMLButtonElement {
+function timeButton(dictionary: typeof en = en): HTMLButtonElement {
   return within(screen.getByRole('region', { name: dictionary['rule.title'] }))
     .getByLabelText<HTMLButtonElement>(dictionary['timing.time'])
 }
 
 /** One column of the open clock panel, by the row copy that names it. */
 function clockColumn(
-  key: 'timing.hour' | 'timing.minute' | 'timing.second', dictionary: typeof en | typeof zh = en,
+  key: 'timing.hour' | 'timing.minute' | 'timing.second', dictionary: typeof en = en,
 ): HTMLElement {
   return screen.getByRole('listbox', { name: dictionary[key] })
 }
@@ -417,7 +417,7 @@ function clockColumn(
  * @returns the trigger's text once the picks are staged.
  */
 function chooseClock(
-  hour: string, minute: string, second: string | undefined, dictionary: typeof en | typeof zh = en,
+  hour: string, minute: string, second: string | undefined, dictionary: typeof en = en,
 ): string {
   const picks: readonly (readonly ['timing.hour' | 'timing.minute' | 'timing.second', string])[] = [
     ['timing.hour', hour], ['timing.minute', minute],
@@ -438,7 +438,7 @@ function chooseClock(
  * @returns the trigger's text once the picks are staged.
  */
 function chooseTime(
-  hour: string, minute: string, second: string | undefined, dictionary: typeof en | typeof zh = en,
+  hour: string, minute: string, second: string | undefined, dictionary: typeof en = en,
 ): string {
   if (screen.queryByRole('listbox', { name: dictionary['timing.hour'] }) === null) fireEvent.click(timeButton(dictionary))
   return chooseClock(hour, minute, second, dictionary)
@@ -452,7 +452,7 @@ function chooseTime(
  * @param dictionary - active locale.
  * @returns the trigger's text once the day is staged.
  */
-function chooseDay(day: number, monthsAhead = 0, dictionary: typeof en | typeof zh = en): string {
+function chooseDay(day: number, monthsAhead = 0, dictionary: typeof en = en): string {
   if (screen.queryByRole('grid', { name: /.+/ }) === null) fireEvent.click(dateButton(dictionary))
   for (let step = 0; step < monthsAhead; step += 1) {
     fireEvent.click(screen.getByRole('button', { name: dictionary['timing.nextMonth'] }))
@@ -467,13 +467,13 @@ function dayCell(day: number): HTMLElement {
 }
 
 /** The monthly date toggle group of the shown rule's Run time card. */
-function dateGroup(dictionary: typeof en | typeof zh = en): HTMLElement {
+function dateGroup(dictionary: typeof en = en): HTMLElement {
   return within(screen.getByRole('region', { name: dictionary['rule.title'] }))
     .getByRole('group', { name: dictionary['cronForm.dates'] })
 }
 
 /** Accessible name of one date toggle. */
-function dateName(day: number, dictionary: typeof en | typeof zh = en): string {
+function dateName(day: number, dictionary: typeof en = en): string {
   return dictionary['cronForm.dateOption'].replace('{day}', String(day))
 }
 
@@ -505,22 +505,22 @@ function saveNotice(): HTMLElement | null {
 }
 
 /** Click the staged-edit bar's Save changes action. */
-function clickSave(dictionary: typeof en | typeof zh = en): void {
+function clickSave(dictionary: typeof en = en): void {
   fireEvent.click(within(saveFooter()!).getByRole('button', { name: dictionary['rule.save'] }))
 }
 
 /** Click the staged-edit bar's Cancel action. */
-function clickCancel(dictionary: typeof en | typeof zh = en): void {
+function clickCancel(dictionary: typeof en = en): void {
   fireEvent.click(within(saveFooter()!).getByRole('button', { name: dictionary['rule.cancel'] }))
 }
 
 /** Choose the overflow menu's delete row, opening the menu first. */
-function chooseDelete(dictionary: typeof en | typeof zh = en): void {
+function chooseDelete(dictionary: typeof en = en): void {
   fireEvent.click(screen.getByRole('button', { name: dictionary['detail.more'] }))
   fireEvent.click(screen.getByRole('menuitem', { name: dictionary['delete.action'] }))
 }
 
-function openDelete(dictionary: typeof en | typeof zh = en): HTMLElement {
+function openDelete(dictionary: typeof en = en): HTMLElement {
   fireEvent.click(screen.getByRole('button', { name: 'Review release' }))
   chooseDelete(dictionary)
   return screen.getByRole('dialog', { name: dictionary['delete.title'] })
@@ -3445,8 +3445,9 @@ describe('Task detail rule header and run-time card', () => {
     // The tab list needs 120px; the expanded entry takes 120px and the icon 28px,
     // and the tabs get the rest of the strip.
     let strip = 220
+    let expandedWidth = 120
     const compact = (): boolean => document.querySelector(`.${css.detailContext} .${css.detailIconButton}`) !== null
-    const entryWidth = (): number => (compact() ? 28 : 120)
+    const entryWidth = (): number => (compact() ? 28 : expandedWidth)
     // The tab list itself grows into the strip, so only its tabs report the 120px.
     vi.spyOn(Element.prototype, 'clientWidth', 'get').mockImplementation(() => strip - entryWidth())
     vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
@@ -3503,13 +3504,20 @@ describe('Task detail rule header and run-time card', () => {
       expect(compact()).toBe(false)
       expect(within(link()).getByText(en['detail.session'])).toBeDefined()
 
-      // A label changed while compact is measured expanded before shrinking again.
-      strip = 200
+      // A narrow strip collapses the old label. The replacement label is wider,
+      // so the compact reset must measure it before deciding the final layout.
+      strip = 230
       act(() => { stripObserver().fire() })
       expect(compact()).toBe(true)
-      h.view.rerender(<TaskManagerPage {...h.props} t={makeTranslate(zh)} />)
+      expandedWidth = 160
+      strip = 250
+      const relabeled = makeTranslate({ ...en, 'detail.session': 'Linked conversation' })
+      h.view.rerender(<TaskManagerPage {...h.props} t={relabeled} />)
       expect(compact()).toBe(true)
-      expect(within(detail).getByRole('button', { name: zh['detail.openSession'] })).toBeDefined()
+      expect(within(detail).getByRole('button', { name: en['detail.openSession'] })).toBeDefined()
+      fireEvent.mouseEnter(detailContext(detail)!)
+      expect(tooltip()).toBe('Linked conversation')
+      fireEvent.mouseLeave(detailContext(detail)!)
 
       const observer = stripObserver()
       fireEvent.click(within(detail).getByRole('tab', { name: detailViewLabels(zh).records }))

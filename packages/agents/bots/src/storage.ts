@@ -2,7 +2,7 @@
 
 import { SessionId } from '@yharness/session'
 import { brandString } from '@yharness/brand'
-import type { AttachmentId, ImageAttachmentRef } from '@yharness/attachment'
+import type { AttachmentId } from '@yharness/attachment'
 import { MessageId } from '@yharness/llm/brand'
 import { defineDomain, domainTable } from '@yharness/storage-domain'
 import { z } from 'zod'
@@ -11,6 +11,7 @@ import type { BotRecord } from './types.ts'
 import { BOT_MEMORY_TEXT_LIMIT } from './memory.ts'
 import { BOT_SHARE_ROLES, BotPrincipalId } from './sharing.ts'
 import { BOT_SKILL_NAME_LIMIT, BOT_SKILL_NAME_MAX_LENGTH } from './skills.ts'
+import { imageAttachmentRefWithId } from './image-attachment-ref.ts'
 
 /** Durable marker for a memory edit that was interrupted before its log write completed. */
 export type BotStoredRecord = BotRecord & {
@@ -21,27 +22,10 @@ export type BotStoredRecord = BotRecord & {
   } | undefined
 }
 
-/** Durable image reference admitted by the attachment store. */
-export const imageAttachmentRefSchema = z.object({
-  attachmentId: z.string().regex(/^sha256:[0-9a-f]{64}$/).transform(value => brandString<AttachmentId>(value)),
-  mediaType: z.enum(['image/png', 'image/jpeg', 'image/webp', 'image/gif']),
-  bytes: z.number().safe().int().nonnegative(),
-  width: z.number().safe().int().positive(),
-  height: z.number().safe().int().positive(),
-  name: z.string().min(1).max(255).optional(),
-  originalDimensions: z.object({
-    width: z.number().safe().int().positive(),
-    height: z.number().safe().int().positive(),
-  }).strict().optional(),
-}).strict().transform((value): ImageAttachmentRef => ({
-  attachmentId: value.attachmentId,
-  mediaType: value.mediaType,
-  bytes: value.bytes,
-  width: value.width,
-  height: value.height,
-  ...(value.name === undefined ? {} : { name: value.name }),
-  ...(value.originalDimensions === undefined ? {} : { originalDimensions: value.originalDimensions }),
-}))
+/** Durable roster avatar identified by the canonical image digest. */
+export const imageAttachmentRefSchema = imageAttachmentRefWithId(
+  z.string().regex(/^sha256:[0-9a-f]{64}$/).transform(value => brandString<AttachmentId>(value)),
+)
 
 const botIdSchema = z.string()
   .regex(/^bot-[A-Za-z0-9][A-Za-z0-9-]*$/, 'Bot ids must begin with bot- and contain simple URL-safe segments')
@@ -159,8 +143,8 @@ export const botRecordSchema = z.object({
   skillPolicy: botSkillPolicySchema.optional(),
   skillPolicyRevision: z.number().int().nonnegative().optional(),
   state: z.enum(['provisioning', 'active']),
-  createdAt: z.number().safe().int().nonnegative(),
-  updatedAt: z.number().safe().int().nonnegative(),
+  createdAt: z.number().int().nonnegative(),
+  updatedAt: z.number().int().nonnegative(),
   pendingMemoryUpdate: botPendingMemoryUpdateSchema.optional(),
 }).strict().refine(record => record.updatedAt >= record.createdAt, {
   message: 'updatedAt must not be earlier than createdAt',
@@ -179,6 +163,8 @@ export const botAppearanceMigrationSchema = z.object({
 /** Current one-time appearance migration applied to existing Bot rows. */
 export const BOT_APPEARANCE_MIGRATION_VERSION = 1
 
+const initialAppearanceMigration: z.infer<typeof botAppearanceMigrationSchema> = {}
+
 /** Authoritative Bot domain; earlier records remain readable as organization fields are optional. */
 export const botDomain = defineDomain({
   name: 'agent_bots',
@@ -187,7 +173,7 @@ export const botDomain = defineDomain({
   layout: 'per-record',
   global: {
     schema: botAppearanceMigrationSchema,
-    initial: {} as z.infer<typeof botAppearanceMigrationSchema>,
+    initial: initialAppearanceMigration,
   },
   tables: {
     bots: domainTable<BotRecord['id'], BotStoredRecord>(botRecordSchema),

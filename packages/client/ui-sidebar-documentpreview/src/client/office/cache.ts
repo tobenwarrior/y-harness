@@ -107,7 +107,9 @@ export class OfficePreviewCache {
     signal.throwIfAborted()
     if (!metadata.ok) return metadata
     if (generation.value !== this.generation) throw this.superseded
-    const key = JSON.stringify([generation.value, file.sessionId, metadata.value.absolutePath, metadata.value.version])
+    const key = JSON.stringify([
+      generation.value, file.sessionId, file.computer === true, metadata.value.absolutePath, metadata.value.version,
+    ])
     const cached = this.ready.get(key)
     if (cached !== undefined) {
       this.ready.delete(key)

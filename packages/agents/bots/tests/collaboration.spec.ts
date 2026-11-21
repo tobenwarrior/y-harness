@@ -1,10 +1,11 @@
 import { createUserMessage, freezeMessage, MessageId, type UserMessage } from '@yharness/llm'
-import { AttachmentId } from '@yharness/attachment'
+import { AttachmentId, type FileAttachmentRef } from '@yharness/attachment'
 import { SessionId, SessionSeq, type SessionEvent } from '@yharness/session'
 import { describe, expect, it, vi } from 'vitest'
 import {
   BotCollaborationService,
   BotMessageId,
+  botMessageWasDelivered,
   projectBotTranscript,
   type BotCollaborationHost,
 } from '../src/collaboration.ts'
@@ -742,6 +743,210 @@ describe('Bot collaboration seam', () => {
     ], source: { kind: 'user' } })
     const event = userEvent(message, 1)
     expect(projectBotTranscript([event])).toEqual([{ role: 'user', text: 'visible' }])
+  })
+
+  it('projects optional roster metadata and non-text transcript attachments', async () => {
+    const entries = [
+      bot('bot-alpha', 'bot-session-alpha', 'Alpha'),
+      { ...bot('bot-beta', 'bot-session-beta', 'Beta'), description: 'A bounded fixture Bot.' },
+    ]
+    const h = harness(entries)
+    const targetEvents = h.events.get('bot-session-beta')
+    if (targetEvents === undefined) throw new Error('target events were not created')
+    targetEvents.push({ type: 'turn/start', seq: SessionSeq(0), time: 0, data: { turn: 1 } })
+    targetEvents.push({ type: 'step/start', seq: SessionSeq(1), time: 1, data: { turn: 1, step: 1 } })
+    targetEvents.push(userEvent(createUserMessage({
+      content: [{ type: 'reasoning', text: 'private user reasoning' }], source: { kind: 'user' },
+    }), 2))
+    targetEvents.push(assistantEvent('', 3))
+    targetEvents.push({ type: 'turn/end', seq: SessionSeq(4), time: 4, data: { turn: 1, reason: { kind: 'completed' } } })
+    targetEvents.push({ type: 'turn/start', seq: SessionSeq(5), time: 5, data: { turn: 2 } })
+    targetEvents.push({ type: 'turn/end', seq: SessionSeq(6), time: 6, data: { turn: 3, reason: { kind: 'completed' } } })
+    targetEvents.push({ type: 'turn/end', seq: SessionSeq(7), time: 7, data: { turn: 2, reason: { kind: 'completed' } } })
+    targetEvents.push({ type: 'turn/end', seq: SessionSeq(8), time: 8, data: { turn: 3, reason: { kind: 'completed' } } })
+    const file: FileAttachmentRef = { attachmentId: AttachmentId('provider:collaboration-file'), name: 'notes.txt', bytes: 5 }
+    targetEvents.push(userEvent(createUserMessage({
+      content: [{ type: 'file', attachment: file }], source: { kind: 'user' },
+    }), 9))
+    targetEvents.push({
+      type: 'assistant/message', seq: SessionSeq(10), time: 10,
+      data: {
+        turn: 2, step: 1,
+        message: freezeMessage({
+          id: MessageId('assistant-file'), role: 'assistant',
+          content: [{ type: 'file', attachment: file }],
+          source: { kind: 'model', provider: 'test', model: 'test' },
+        }), stream: [],
+      }, surfaceOp: 'append',
+    })
+
+    const inspected = await (await h.client).inspect(BotId('bot-beta'))
+    expect(inspected.bot.description).toBe('A bounded fixture Bot.')
+    expect(inspected.recent.map(entry => entry.role)).toEqual(['user', 'assistant'])
+    for (const entry of inspected.recent) {
+      expect(entry.text).toContain('[Untrusted Bot transcript')
+      expect(entry.attachments).toEqual([
+        { type: 'file', attachmentId: 'provider:collaboration-file', name: 'notes.txt', bytes: 5 },
+      ])
+    }
+  })
+
+  it('recognizes a pending group inbox receipt without a surface event', () => {
+    const message = createUserMessage({
+      content: [{ type: 'text', text: 'queued group message' }],
+      source: {
+        kind: 'bot-group-message', groupId: BotGroupId('bot-group-pending'),
+        messageId: BotGroupMessageId('bot-group-message-pending'),
+      },
+    })
+    const laterNonGroupMessage = freezeMessage({ ...message, source: { kind: 'user' } })
+    const events: SessionEvent[] = [
+      { type: 'turn/start', seq: SessionSeq(0), time: 0, data: { turn: 1 } },
+      {
+        type: 'agent/inbox/spliced', seq: SessionSeq(1), time: 1,
+        data: { target: 'next-turn', start: 0, inserted: [message, laterNonGroupMessage] },
+      },
+    ]
+    expect(botMessageWasDelivered(events, BotMessageId(String(message.id)))).toBe(true)
+    expect(botMessageWasDelivered([], BotMessageId('missing-message'))).toBe(false)
+  })
+
+  it('validates external delivery, preserves attachments, and handles host failures', async () => {
+    const h = harness()
+    const service = h.service
+    const base = {
+      targetBotId: BotId('bot-beta'), groupId: BotGroupId('bot-group-external'), groupName: 'External room',
+      messageId: BotMessageId('bot-group-message-external'),
+    }
+    await expect(service.sendExternal({ ...base, text: '   ' })).rejects.toMatchObject({ code: 'message-invalid' })
+    await expect(service.sendExternal({ ...base, text: 'valid', messageId: BotMessageId('') })).rejects.toMatchObject({ code: 'message-invalid' })
+    await expect(service.sendExternal({ ...base, targetBotId: BotId('bot-missing'), text: 'valid' })).rejects.toMatchObject({ code: 'target-not-found' })
+
+    const image = {
+      attachmentId: AttachmentId(`sha256:${'a'.repeat(64)}`), mediaType: 'image/png' as const,
+      bytes: 4, width: 1, height: 1,
+    }
+    const file: FileAttachmentRef = { attachmentId: AttachmentId('provider:external-file'), name: 'brief.txt', bytes: 5 }
+    await expect(service.sendExternal({
+      ...base, senderName: 'Alpha', text: 'Read these files.',
+      attachments: [{ type: 'image', attachment: image }, { type: 'file', attachment: file }],
+    })).resolves.toBe('accepted')
+    const delivered = h.followups.get('bot-session-beta')?.mock.calls[0]?.[0]
+    expect(delivered?.content).toEqual([
+      { type: 'text', text: 'Message from Alpha in group "External room":\nRead these files.' },
+      { type: 'image', attachment: image }, { type: 'file', attachment: file },
+    ])
+    await expect(service.sendExternal({
+      ...base, senderName: 'Alpha', text: 'Read these files.',
+      attachments: [{ type: 'image', attachment: image }, { type: 'file', attachment: file }],
+    })).resolves.toBe('duplicate')
+
+    const concurrent = harness()
+    let releaseExternalInspection: (() => void) | undefined
+    const externalInspectionGate = new Promise<void>((resolve) => { releaseExternalInspection = resolve })
+    let externalInspectionStarted: () => void = () => undefined
+    const externalStarted = new Promise<void>((resolve) => { externalInspectionStarted = resolve })
+    let firstExternalInspection = true
+    const concurrentHost = concurrent.host as BotCollaborationHost & { inspectSession: BotCollaborationHost['inspectSession'] }
+    concurrentHost.inspectSession = async (sessionId) => {
+      if (String(sessionId) === 'bot-session-beta' && firstExternalInspection) {
+        firstExternalInspection = false
+        externalInspectionStarted()
+        await externalInspectionGate
+      }
+      return { events: concurrent.events.get(String(sessionId)) ?? [] }
+    }
+    const externalFirst = concurrent.service.sendExternal({
+      ...base, messageId: BotMessageId('bot-group-message-concurrent-first'), text: 'first external',
+    })
+    await externalStarted
+    const externalSecond = concurrent.service.sendExternal({
+      ...base, messageId: BotMessageId('bot-group-message-concurrent-second'), text: 'second external',
+    })
+    releaseExternalInspection?.()
+    await expect(Promise.all([externalFirst, externalSecond])).resolves.toEqual(['accepted', 'accepted'])
+
+    const externalUnavailable = harness()
+    const externalUnavailableHost = externalUnavailable.host as BotCollaborationHost & { resolveAgent: BotCollaborationHost['resolveAgent'] }
+    externalUnavailableHost.resolveAgent = async () => ({ error: new Error('offline') })
+    await expect(externalUnavailable.service.sendExternal({ ...base, text: 'external resume failure' }))
+      .rejects.toMatchObject({ code: 'target-unavailable' })
+
+    const flushFailure = harness()
+    const failingFlushHost = flushFailure.host as BotCollaborationHost & { flushSession: BotCollaborationHost['flushSession'] }
+    failingFlushHost.flushSession = vi.fn(async () => { throw new Error('storage unavailable') })
+    const failingClient = await flushFailure.service.bind({ id: SessionId('bot-session-alpha') })
+    await expect(failingClient.send({ targetBotId: BotId('bot-beta'), text: 'durability failure' }))
+      .rejects.toMatchObject({ code: 'durability-failed' })
+
+    const unavailable = harness()
+    const unavailableHost = unavailable.host as BotCollaborationHost & { resolveAgent: BotCollaborationHost['resolveAgent'] }
+    unavailableHost.resolveAgent = async () => ({ error: new Error('offline') })
+    const unavailableClient = await unavailable.service.bind({ id: SessionId('bot-session-alpha') })
+    await expect(unavailableClient.send({ targetBotId: BotId('bot-beta'), text: 'resume me' }))
+      .rejects.toMatchObject({ code: 'target-unavailable' })
+
+    const ordinaryError = harness()
+    const ordinaryErrorHost = ordinaryError.host as BotCollaborationHost & {
+      deliverMessage: NonNullable<BotCollaborationHost['deliverMessage']>
+      eventRoutineContext: NonNullable<BotCollaborationHost['eventRoutineContext']>
+    }
+    ordinaryErrorHost.deliverMessage = async () => { throw new Error('transaction failed') }
+    ordinaryErrorHost.eventRoutineContext = () => ({ chainId: 'fixture-chain', depth: 1 })
+    const ordinaryErrorClient = await ordinaryError.service.bind({ id: SessionId('bot-session-alpha') })
+    await expect(ordinaryErrorClient.send({ targetBotId: BotId('bot-beta'), text: 'transaction failure' }))
+      .rejects.toMatchObject({ code: 'durability-failed' })
+
+    const recordFailure = harness()
+    const recordFailureHost = recordFailure.host as BotCollaborationHost & {
+      deliverMessage: NonNullable<BotCollaborationHost['deliverMessage']>
+      recordDelivery: NonNullable<BotCollaborationHost['recordDelivery']>
+    }
+    recordFailureHost.deliverMessage = async () => 'accepted'
+    recordFailureHost.recordDelivery = async () => { throw new Error('record failed') }
+    const recordFailureClient = await recordFailure.service.bind({ id: SessionId('bot-session-alpha') })
+    await expect(recordFailureClient.send({ targetBotId: BotId('bot-beta'), text: 'record failure' }))
+      .rejects.toMatchObject({ code: 'durability-failed' })
+
+    const canceledAcknowledgment = harness()
+    const canceledAcknowledgmentHost = canceledAcknowledgment.host as BotCollaborationHost & {
+      deliverMessage: NonNullable<BotCollaborationHost['deliverMessage']>
+      recordDelivery: NonNullable<BotCollaborationHost['recordDelivery']>
+    }
+    canceledAcknowledgmentHost.deliverMessage = async () => 'accepted'
+    canceledAcknowledgmentHost.recordDelivery = async () => 'canceled'
+    const canceledClient = await canceledAcknowledgment.service.bind({ id: SessionId('bot-session-alpha') })
+    await expect(canceledClient.send({ targetBotId: BotId('bot-beta'), text: 'canceled before acknowledgment' }))
+      .rejects.toMatchObject({ code: 'durability-failed' })
+  })
+
+  it('serializes fallback deliveries and validates sender input', async () => {
+    const h = harness()
+    const client = await h.client
+    await expect(client.send({ targetBotId: BotId('bot-beta'), text: '   ' })).rejects.toMatchObject({ code: 'message-invalid' })
+    await expect(client.inspect(BotId('bot-missing'))).rejects.toMatchObject({ code: 'target-not-found' })
+    let releaseInspection: (() => void) | undefined
+    const inspectionGate = new Promise<void>((resolve) => { releaseInspection = resolve })
+    let firstInspection = true
+    const gatedHost = h.host as BotCollaborationHost & { inspectSession: BotCollaborationHost['inspectSession'] }
+    let inspectionStarted: () => void = () => undefined
+    const started = new Promise<void>((resolve) => { inspectionStarted = resolve })
+    gatedHost.inspectSession = async (sessionId) => {
+      if (String(sessionId) === 'bot-session-beta' && firstInspection) {
+        firstInspection = false
+        inspectionStarted()
+        await inspectionGate
+      }
+      return { events: h.events.get(String(sessionId)) ?? [] }
+    }
+    const first = client.send({ targetBotId: BotId('bot-beta'), text: 'first fallback', messageId: BotMessageId('fallback-first') })
+    await started
+    const second = client.send({ targetBotId: BotId('bot-beta'), text: 'second fallback', messageId: BotMessageId('fallback-second') })
+    releaseInspection?.()
+    await expect(Promise.all([first, second])).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({ status: 'accepted', messageId: BotMessageId('fallback-first') }),
+      expect.objectContaining({ status: 'accepted', messageId: BotMessageId('fallback-second') }),
+    ]))
   })
 })
 

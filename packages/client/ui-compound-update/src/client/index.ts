@@ -1,5 +1,6 @@
 /** Compound skills update indicator: sidebar badge and update steps panel. */
 import type { Context } from '@yharness/cordis'
+import type { ConnectionHandle } from '@yharness/client-connection/client'
 import type {} from '@yharness/client-locale/client'
 import type {} from '@yharness/client-ui-layout/client'
 import type {} from '@yharness/client-ui-renderer/client'
@@ -17,7 +18,7 @@ declare module '@yharness/client-ui-slots' {
 }
 
 /** Framework services used by the badge and its panel. */
-export const inject = ['slots', 'locale']
+export const inject = ['slots', 'locale', 'connection']
 
 /** Browser-side freshness cadence; the Host still owns upstream response caching. */
 const STATUS_REFRESH_INTERVAL_MS = 60 * 1000
@@ -28,7 +29,8 @@ const STATUS_REFRESH_INTERVAL_MS = 60 * 1000
  */
 export function apply(ctx: Context): void {
   ctx.effect(() => ctx.locale.register('compoundUpdate', { en }), 'ui-compound-update: dictionaries')
-  const controller = new CompoundUpdateController()
+  const connection = ctx.get('connection') as ConnectionHandle
+  const controller = new CompoundUpdateController(connection.fetch)
   // Read immediately and periodically while this plugin is active.
   ctx.effect(() => {
     void controller.refresh()

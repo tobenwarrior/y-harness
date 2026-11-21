@@ -239,7 +239,8 @@ function catalogLockKey(scope: string): string {
 }
 
 async function operationHash(value: string): Promise<string> {
-  const subtle = globalThis.crypto?.subtle
+  const browserGlobals: { readonly crypto?: Crypto } = globalThis
+  const subtle = browserGlobals.crypto?.subtle
   if (subtle !== undefined) {
     const digest = await subtle.digest('SHA-256', new TextEncoder().encode(value))
     return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('')
@@ -281,7 +282,8 @@ function messageView(record: PendingMessageRecord): SharedPendingGroupMessage {
 /**
  * Create a scoped, per-operation retry queue. The queue refuses to persist when
  * localStorage or Web Locks is unavailable, so callers never claim a retry is safe
- * without both durable storage and cross-tab coordination.
+ * without both durable storage and cross-tab coordination. Each locked operation
+ * receives the checked storage adapter after unavailable storage is rejected.
  * @param scope - Server-issued principal identifier used to partition local data.
  * @returns Shared-group retry queue for that principal.
  */
@@ -294,10 +296,11 @@ export function createSharedGroupPendingQueue(scope: string): SharedGroupPending
     key.startsWith(`${scopePrefix(scope, version)}.${kind === undefined ? '' : `${kind}.`}`)
   ))
 
-  const withLock = async <T>(name: string, work: () => Promise<T>): Promise<T> => {
+  const withLock = async <T>(name: string, work: (availableStorage: StorageLike) => Promise<T>): Promise<T> => {
     if (!healthy || storage === undefined || locks === undefined) throw new Error('Shared-group retry storage is unavailable')
+    const availableStorage = storage
     try {
-      return await locks.request(name, work)
+      return await locks.request(name, () => work(availableStorage))
     } catch (cause: unknown) {
       if (!(cause instanceof SharedGroupPendingQueueFullError)
         && !(cause instanceof SharedGroupPendingMessageConflictError)) healthy = false
@@ -308,14 +311,13 @@ export function createSharedGroupPendingQueue(scope: string): SharedGroupPending
   const withCatalogAndOperationLock = <T>(
     kind: PendingRecord['kind'],
     operationHashValue: string,
-    work: () => Promise<T>,
+    work: (availableStorage: StorageLike) => Promise<T>,
   ): Promise<T> => withLock(catalogLockKey(scope), () => (
     withLock(operationLockKey(scope, kind, operationHashValue), work)
   ))
 
-  const read = (key: string): PendingRecord | undefined => {
-    if (storage === undefined) throw new Error('Shared-group retry storage is unavailable')
-    const raw = storage.getItem(key)
+  const read = (availableStorage: StorageLike, key: string): PendingRecord | undefined => {
+    const raw = availableStorage.getItem(key)
     if (raw === null) return undefined
     try {
       const record = parseRecord(JSON.parse(raw))
@@ -325,82 +327,92 @@ export function createSharedGroupPendingQueue(scope: string): SharedGroupPending
     }
   }
 
-  const remove = (key: string): void => {
-    if (storage === undefined) throw new Error('Shared-group retry storage is unavailable')
-    storage.removeItem(key)
+  const remove = (availableStorage: StorageLike, key: string): void => {
+    availableStorage.removeItem(key)
   }
 
-  const write = (key: string, record: PendingRecord): void => {
-    if (storage === undefined) throw new Error('Shared-group retry storage is unavailable')
-    storage.setItem(key, JSON.stringify(record))
+  const write = (availableStorage: StorageLike, key: string, record: PendingRecord): void => {
+    availableStorage.setItem(key, JSON.stringify(record))
   }
 
-  const writeRecord = (record: PendingRecord): void => {
-    write(recordKey(scope, record.kind, record.operationHash, record.version), record)
+  const writeRecord = (availableStorage: StorageLike, record: PendingRecord): void => {
+    write(availableStorage, recordKey(scope, record.kind, record.operationHash, record.version), record)
   }
 
-  const ensureCapacity = (key: string): void => {
-    if (storage === undefined) throw new Error('Shared-group retry storage is unavailable')
+  const ensureCapacity = (availableStorage: StorageLike, key: string): void => {
     let count = 0
-    for (let index = 0; index < storage.length; index += 1) {
-      const candidate = storage.key(index)
+    for (let index = 0; index < availableStorage.length; index += 1) {
+      const candidate = availableStorage.key(index)
       if (candidate !== null && hasScopeKey(candidate)) count += 1
     }
-    if (count >= SHARED_GROUP_PENDING_QUEUE_MAX_RECORDS && storage.getItem(key) === null) {
+    if (count >= SHARED_GROUP_PENDING_QUEUE_MAX_RECORDS && availableStorage.getItem(key) === null) {
       throw new SharedGroupPendingQueueFullError()
     }
   }
 
-  const prune = (): Promise<void> => {
-    if (storage === undefined) throw new Error('Shared-group retry storage is unavailable')
+  const prune = (availableStorage: StorageLike): Promise<void> => {
     const now = Date.now()
     const keys: string[] = []
-    for (let index = 0; index < storage.length; index += 1) {
-      const key = storage.key(index)
+    for (let index = 0; index < availableStorage.length; index += 1) {
+      const key = availableStorage.key(index)
       if (key !== null && hasScopeKey(key)) keys.push(key)
     }
     for (const key of keys) {
-      const record = read(key)
+      const record = read(availableStorage, key)
       if (record === undefined) {
-        if (read(key) !== undefined) continue
+        if (read(availableStorage, key) !== undefined) continue
         if (key.startsWith(`${scopePrefix(scope, 2)}.`)) throw new Error('Shared-group targeted retry record is invalid')
         if (key.startsWith(`${scopePrefix(scope, 3)}.`)) throw new Error('Shared-group reply retry record is invalid')
-        remove(key)
+        remove(availableStorage, key)
       } else if (record.status === 'pending' && record.expiresAt <= now) {
-        if (JSON.stringify(read(key)) !== JSON.stringify(record)) continue
+        if (JSON.stringify(read(availableStorage, key)) !== JSON.stringify(record)) continue
         if (record.kind === 'creation') {
-          writeRecord({ ...record, status: 'expired' })
+          writeRecord(availableStorage, { ...record, status: 'expired' })
         } else {
           const { text: _text, ...tombstone } = record
-          writeRecord({ ...tombstone, status: 'expired' })
+          writeRecord(availableStorage, { ...tombstone, status: 'expired' })
         }
       }
     }
     return Promise.resolve()
   }
 
+  const removeCreationRecord = (hash: string, id: string): Promise<void> => withCatalogAndOperationLock('creation', hash, (availableStorage) => {
+    const key = recordKey(scope, 'creation', hash)
+    const current = read(availableStorage, key)
+    if (current?.kind === 'creation' && current.id === id) remove(availableStorage, key)
+    return Promise.resolve()
+  })
+
+  const removeMessageRecord = (hash: string, id: string): Promise<void> => withCatalogAndOperationLock('message', hash, (availableStorage) => {
+    for (const version of RECORD_VERSIONS) {
+      const key = recordKey(scope, 'message', hash, version)
+      const current = read(availableStorage, key)
+      if (current?.kind === 'message' && current.id === id) remove(availableStorage, key)
+    }
+    return Promise.resolve()
+  })
+
   return {
     get durable(): boolean { return healthy },
-    listCreations: () => withLock(catalogLockKey(scope), async () => {
-      await prune()
-      if (storage === undefined) throw new Error('Shared-group retry storage is unavailable')
+    listCreations: () => withLock(catalogLockKey(scope), async (availableStorage) => {
+      await prune(availableStorage)
       const records: SharedPendingGroupCreation[] = []
-      for (let index = 0; index < storage.length; index += 1) {
-        const key = storage.key(index)
+      for (let index = 0; index < availableStorage.length; index += 1) {
+        const key = availableStorage.key(index)
         if (key === null || !key.startsWith(`${scopePrefix(scope)}.creation.`)) continue
-        const record = read(key)
+        const record = read(availableStorage, key)
         if (record?.kind === 'creation') records.push(creationView(record))
       }
       return records.sort((left, right) => left.createdAt - right.createdAt)
     }),
-    listMessages: () => withLock(catalogLockKey(scope), async () => {
-      await prune()
-      if (storage === undefined) throw new Error('Shared-group retry storage is unavailable')
+    listMessages: () => withLock(catalogLockKey(scope), async (availableStorage) => {
+      await prune(availableStorage)
       const records: SharedPendingGroupMessage[] = []
-      for (let index = 0; index < storage.length; index += 1) {
-        const key = storage.key(index)
+      for (let index = 0; index < availableStorage.length; index += 1) {
+        const key = availableStorage.key(index)
         if (key === null || !hasScopeKey(key, 'message')) continue
-        const record = read(key)
+        const record = read(availableStorage, key)
         if (record?.kind === 'message') records.push(messageView(record))
       }
       return records.sort((left, right) => left.createdAt - right.createdAt)
@@ -408,17 +420,17 @@ export function createSharedGroupPendingQueue(scope: string): SharedGroupPending
     reserveCreation: async (operationKey, name, botIds) => {
       const hash = await operationHash(operationKey)
       const canonicalBotIds = [...botIds].sort()
-      return withCatalogAndOperationLock('creation', hash, async () => {
-        await prune()
+      return withCatalogAndOperationLock('creation', hash, async (availableStorage) => {
+        await prune(availableStorage)
         const key = recordKey(scope, 'creation', hash)
-        const current = read(key)
+        const current = read(availableStorage, key)
         const now = Date.now()
         if (current?.kind === 'creation'
           && current.name === name && current.botIds.length === canonicalBotIds.length
           && current.botIds.every((botId, index) => botId === canonicalBotIds[index])) {
           return { operationHash: hash, id: current.id, recovered: true, expired: current.status === 'expired' }
         }
-        ensureCapacity(key)
+        ensureCapacity(availableStorage, key)
         const record: PendingCreationRecord = {
           version: 1,
           kind: 'creation',
@@ -430,22 +442,12 @@ export function createSharedGroupPendingQueue(scope: string): SharedGroupPending
           createdAt: now,
           expiresAt: now + PENDING_TTL_MS,
         }
-        writeRecord(record)
+        writeRecord(availableStorage, record)
         return { operationHash: hash, id: record.id, recovered: false, expired: false }
       })
     },
-    removeCreation: (hash, id) => withCatalogAndOperationLock('creation', hash, () => {
-      const key = recordKey(scope, 'creation', hash)
-      const current = read(key)
-      if (current?.kind === 'creation' && current.id === id) remove(key)
-      return Promise.resolve()
-    }),
-    completeCreation: (hash, id) => withCatalogAndOperationLock('creation', hash, () => {
-      const key = recordKey(scope, 'creation', hash)
-      const current = read(key)
-      if (current?.kind === 'creation' && current.id === id) remove(key)
-      return Promise.resolve()
-    }),
+    removeCreation: removeCreationRecord,
+    completeCreation: removeCreationRecord,
     reserveMessage: async (operationKey, groupId, text, targetBotIds, replyToMessageId) => {
       const targeted = targetBotIds !== undefined && targetBotIds.length > 0
       const canonicalTargets = targeted ? [...new Set(targetBotIds)].sort() : undefined
@@ -454,11 +456,12 @@ export function createSharedGroupPendingQueue(scope: string): SharedGroupPending
       if (replyToMessageId !== undefined && !isMessageId(replyToMessageId)) throw new Error('Shared-group reply target is invalid')
       const version = replyToMessageId !== undefined ? 3 : targeted ? 2 : 1
       const hash = await operationHash(operationKey)
-      return withCatalogAndOperationLock('message', hash, async () => {
-        await prune()
+      return withCatalogAndOperationLock('message', hash, async (availableStorage) => {
+        await prune(availableStorage)
         const key = recordKey(scope, 'message', hash, version)
-        const current = read(key)
-        if (RECORD_VERSIONS.some(candidate => candidate !== version && read(recordKey(scope, 'message', hash, candidate)) !== undefined)) {
+        const current = read(availableStorage, key)
+        if (RECORD_VERSIONS.some(candidate => candidate !== version
+          && read(availableStorage, recordKey(scope, 'message', hash, candidate)) !== undefined)) {
           throw new SharedGroupPendingMessageConflictError()
         }
         const now = Date.now()
@@ -469,7 +472,7 @@ export function createSharedGroupPendingQueue(scope: string): SharedGroupPending
           return { operationHash: hash, id: current.id, recovered: true, expired: current.status === 'expired' }
         }
         if (version !== 1 && current !== undefined) throw new SharedGroupPendingMessageConflictError()
-        ensureCapacity(key)
+        ensureCapacity(availableStorage, key)
         const record: PendingMessageRecord = {
           version,
           kind: 'message',
@@ -483,25 +486,11 @@ export function createSharedGroupPendingQueue(scope: string): SharedGroupPending
           createdAt: now,
           expiresAt: now + PENDING_TTL_MS,
         }
-        writeRecord(record)
+        writeRecord(availableStorage, record)
         return { operationHash: hash, id: record.id, recovered: false, expired: false }
       })
     },
-    removeMessage: (hash, id) => withCatalogAndOperationLock('message', hash, () => {
-      for (const version of RECORD_VERSIONS) {
-        const key = recordKey(scope, 'message', hash, version)
-        const current = read(key)
-        if (current?.kind === 'message' && current.id === id) remove(key)
-      }
-      return Promise.resolve()
-    }),
-    completeMessage: (hash, id) => withCatalogAndOperationLock('message', hash, () => {
-      for (const version of RECORD_VERSIONS) {
-        const key = recordKey(scope, 'message', hash, version)
-        const current = read(key)
-        if (current?.kind === 'message' && current.id === id) remove(key)
-      }
-      return Promise.resolve()
-    }),
+    removeMessage: removeMessageRecord,
+    completeMessage: removeMessageRecord,
   }
 }

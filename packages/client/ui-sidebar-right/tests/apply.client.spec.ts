@@ -13,6 +13,7 @@ import { Context } from '@yharness/cordis'
 import { createSnapshotStore } from '@yharness/client-store'
 import type { SlotRegistry } from '@yharness/client-ui-renderer/client'
 import type { SessionId } from '@yharness/session/types'
+import type { MainPanelId } from '@yharness/client-ui-layout/client'
 import type { Shortcuts, ShortcutCommand } from '@yharness/client-shortcuts/client'
 import { apply, inject } from '../src/client/index.ts'
 import type { GuideInjected, SidebarRightInjected } from '../src/client/index.ts'
@@ -158,6 +159,27 @@ describe('ui-sidebar-right apply', () => {
     expect(ctx.sidebarRight.mounted.getSnapshot()).toBe(SESSION)
     current.set({ key: undefined })
     expect(ctx.sidebarRight.mounted.getSnapshot()).toBeUndefined()
+  })
+
+  it('shows the Session associated with the active panel and restores the Code selection', async () => {
+    const { ctx, layout, current } = await boot()
+    const bots = 'bots' as MainPanelId
+    const first = 'bot-first' as SessionId
+    const second = 'bot-second' as SessionId
+    current.set({ key: SESSION })
+    ctx.sidebarRight.selectPanelSession(bots, first)
+    expect(ctx.sidebarRight.mounted.getSnapshot()).toBe(SESSION)
+    layout.panelInfo.set({ activePanelId: bots })
+    expect(ctx.sidebarRight.mounted.getSnapshot()).toBe(first)
+    ctx.sidebarRight.selectPanelSession(bots, second)
+    expect(ctx.sidebarRight.mounted.getSnapshot()).toBe(second)
+    layout.panelInfo.set({ activePanelId: 'plugins' })
+    expect(ctx.sidebarRight.mounted.getSnapshot()).toBeUndefined()
+    layout.panelInfo.set({ activePanelId: bots })
+    ctx.sidebarRight.selectPanelSession(bots, undefined)
+    expect(ctx.sidebarRight.mounted.getSnapshot()).toBeUndefined()
+    layout.panelInfo.set({ activePanelId: null })
+    expect(ctx.sidebarRight.mounted.getSnapshot()).toBe(SESSION)
   })
 
   it('hands the panel seat the frame report, the room rule, the opens, the observable registry, and the Tab domain', async () => {

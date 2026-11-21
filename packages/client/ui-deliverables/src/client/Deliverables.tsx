@@ -11,7 +11,7 @@ import { ChangedFiles } from './ChangedFiles.tsx'
 import { changesForClosing, presentedForClosing, type ChangesTurnData, type PresentedPath } from './turn-deliverables.ts'
 import type { NS } from './locales.ts'
 import { changesSummaryUrl, type ChangesReviewCoordinates } from '../changes.ts'
-import { presentedFileUrl } from '../presented.ts'
+import { presentedDownloadUrl, presentedFileUrl } from '../presented.ts'
 import { PresentedFileCard } from './PresentedFileCard.tsx'
 import css from './Deliverables.module.css'
 
@@ -103,12 +103,12 @@ export function Deliverables({
         <span>{t('presented.hostError')}</span>
         <Button size="sm" onClick={() => { void reloadPresentedHost() }}>{t('presented.retry')}</Button>
       </div>}
-      {host !== null && host !== 'error' && !host.available && <span className={css.hostStatus}>{t('presented.unavailable')}</span>}
       <div className={css.presented} data-presented-files-row data-single={matched.presented.length === 1 ? true : undefined}>
         {presented.map(file => <PresentedFileCard key={`${file.seq}:${file.index}`} file={file} cwd={cwd}
           phase={states[presentedFileUrl(sessionId, file.seq, file.index)]}
           host={host === 'error' ? null : host} t={t}
           onPreview={() => { openFile(file.path) }}
+          downloadUrl={presentedDownloadUrl(sessionId, file.seq, file.index)}
           actions={renderSlot('deliverables.file.actions', {
             actionUrl: presentedFileUrl(sessionId, file.seq, file.index),
             available: host !== null && host !== 'error' && host.available,

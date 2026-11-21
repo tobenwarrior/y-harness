@@ -497,7 +497,7 @@
     },
     {
       "name": "vps_computer",
-      "description": "Observe or operate the private VPS desktop shown in the Computer panel. Observe before targeting visible controls. Input is paused while the user is in control.",
+      "description": "Observe or operate the private VPS desktop shown in the Computer panel. Observe before targeting visible controls. The tool pauses while the user is in control.",
       "parameters": {
         "type": "object",
         "properties": {

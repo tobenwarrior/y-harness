@@ -48,7 +48,10 @@ export function textDefinition(): SidebarRightTabDefinition {
     kind: TEXTPREVIEW_KIND,
     patterns: ['dsh-resource://file/**'],
     priority: 'fallback',
-    canOpen: address => parseFileAddress(address)?.scope === 'session',
+    canOpen: (address) => {
+      const file = parseFileAddress(address)
+      return file !== undefined && file.scope !== 'absolute'
+    },
     title: basenameOf,
   }
 }

@@ -91,3 +91,43 @@ export async function forwardWebRequest(request: Request, host: string, cookie: 
   if (PLUGIN_BUNDLE_PATH.test(source.pathname)) outgoing.set('cache-control', 'no-store')
   return new Response(response.body, { status: response.status, headers: outgoing })
 }
+
+/**
+ * Validate the loopback authority owned by a Desktop workspace connection.
+ * @param value - Expected origin with its assigned port.
+ * @returns The verified private HTTP origin.
+ */
+export function privateHostOrigin(value: string): string {
+  const url = new URL(value)
+  if (url.origin !== value || url.protocol !== 'http:' || url.hostname !== '127.0.0.1' || url.port === '') {
+    throw new Error('This operation requires a private local connection.')
+  }
+  return url.origin
+}
+
+/**
+ * Read a successful JSON response within the caller's byte budget.
+ * @param response - Response from an authenticated Host.
+ * @param maxBytes - Maximum decoded response bytes.
+ * @returns Parsed JSON, or undefined for an unsuccessful or oversized response.
+ */
+export async function readBoundedJson(response: Response, maxBytes: number): Promise<unknown> {
+  if (!response.ok || response.body === null) return undefined
+  const reader = response.body.getReader()
+  const chunks: Uint8Array[] = []
+  let remaining = maxBytes
+  try {
+    for (;;) {
+      const next = await reader.read()
+      if (next.done) return JSON.parse(Buffer.concat(chunks).toString('utf8'))
+      remaining -= next.value.byteLength
+      if (remaining < 0) {
+        await reader.cancel()
+        return undefined
+      }
+      chunks.push(next.value)
+    }
+  } finally {
+    reader.releaseLock()
+  }
+}

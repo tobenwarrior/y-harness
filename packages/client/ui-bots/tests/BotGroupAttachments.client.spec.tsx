@@ -1,10 +1,21 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { BotGroupAttachments } from '../src/client/BotGroupAttachments.tsx'
+import * as primitives from '@yharness/client-ui-primitives'
+import {
+  BotGroupAttachments,
+  botGroupAttachmentLabels,
+  createBotGroupAttachmentDraft,
+  releaseBotGroupAttachment,
+} from '../src/client/BotGroupAttachments.tsx'
+import { en } from '../src/client/locales.ts'
 import type { BotGroupAttachmentDraft } from '../src/client/types.ts'
 
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  vi.unstubAllGlobals()
+  vi.restoreAllMocks()
+})
 
 const labels = {
   picker: 'Attach files',
@@ -18,6 +29,12 @@ const labels = {
   uploading: 'Preparing attachment',
   lightbox: { dialog: 'Image preview', close: 'Close preview' },
 } as const
+const botDictionary = new Map(Object.entries(en))
+const translate = (key: string, params?: Record<string, unknown>): string => {
+  const template = botDictionary.get(key) ?? key
+  if (params === undefined) return template
+  return template.replace(/\{(\w+)\}/g, (match, name: string) => name in params ? String(params[name]) : match)
+}
 
 function draft(id: string, name: string, state: BotGroupAttachmentDraft['state'] = 'ready'): BotGroupAttachmentDraft {
   return {
@@ -29,6 +46,23 @@ function draft(id: string, name: string, state: BotGroupAttachmentDraft['state']
 }
 
 describe('BotGroupAttachments', () => {
+  it('builds the locale-owned picker and draft labels', () => {
+    const localized = botGroupAttachmentLabels(translate)
+
+    expect(localized).toMatchObject({
+      picker: 'Attach files',
+      input: 'Choose files',
+      attachments: 'Selected attachments',
+      file: 'File',
+      failed: 'Attachment preparation failed',
+      uploading: 'Preparing attachment',
+      lightbox: { dialog: 'Image preview', close: 'Close image preview' },
+    })
+    expect(localized.preview('plan.png')).toBe('Preview plan.png')
+    expect(localized.remove('plan.png')).toBe('Remove plan.png')
+    expect(localized.retry('plan.png')).toBe('Retry plan.png')
+  })
+
   it('picks files, renders an image preview, and removes a draft without exposing a path', () => {
     const onAddFiles = vi.fn()
     const onRemove = vi.fn()
@@ -85,5 +119,80 @@ describe('BotGroupAttachments', () => {
     expect((view.getByLabelText('Choose files') as HTMLInputElement).disabled).toBe(true)
     expect((view.getByRole('button', { name: 'Attach files' }) as HTMLButtonElement).disabled).toBe(true)
     expect(onAddFiles).not.toHaveBeenCalled()
+  })
+
+  it('adds dropped files, opens the picker, and clears a stale image preview', () => {
+    const onAddFiles = vi.fn()
+    const image = draft('image-1', 'plan.png')
+    const view = render(<BotGroupAttachments
+      attachments={[image]}
+      disabled={false}
+      labels={labels}
+      onAddFiles={onAddFiles}
+      onRemove={vi.fn()}
+    />)
+    const input = view.getByLabelText('Choose files') as HTMLInputElement
+    const click = vi.spyOn(input, 'click')
+    fireEvent.click(view.getByRole('button', { name: 'Attach files' }))
+    expect(click).toHaveBeenCalledOnce()
+    fireEvent.change(input, { target: { files: [] } })
+    fireEvent.change(input, { target: { files: null } })
+
+    const dropped = new File(['drop'], 'dropped.txt', { type: 'text/plain' })
+    const root = view.container.firstElementChild
+    if (root === null) throw new Error('Attachment root is unavailable')
+    fireEvent.dragOver(root)
+    fireEvent.drop(root, { dataTransfer: { files: [dropped] } })
+    expect(onAddFiles).toHaveBeenCalledWith([dropped])
+
+    fireEvent.click(view.getByRole('button', { name: 'Preview plan.png' }))
+    expect(screen.getByRole('dialog', { name: 'Image preview' })).toBeTruthy()
+    view.rerender(<BotGroupAttachments
+      attachments={[]}
+      disabled={false}
+      labels={labels}
+      onAddFiles={onAddFiles}
+      onRemove={vi.fn()}
+    />)
+    expect(screen.queryByRole('dialog', { name: 'Image preview' })).toBeNull()
+  })
+
+  it('uses safe fallback labels for empty files and failed drafts', () => {
+    const sizeText = vi.spyOn(primitives, 'fileSizeText').mockReturnValue('')
+    const view = render(<BotGroupAttachments
+      attachments={[
+        { id: 'empty', file: new File([], '', { type: 'text/plain' }), state: 'ready' },
+        { id: 'failed', file: new File([], 'failed.txt', { type: 'text/plain' }), state: 'error' },
+      ]}
+      disabled={false}
+      labels={labels}
+      onAddFiles={vi.fn()}
+      onRemove={vi.fn()}
+    />)
+    expect(view.getByText('File')).toBeTruthy()
+    expect(view.getByText('Preparing attachment')).toBeTruthy()
+    expect(view.getByText('Attachment failed')).toBeTruthy()
+    sizeText.mockRestore()
+  })
+
+  it('creates and releases image object URLs without retaining paths', () => {
+    const createObjectURL = vi.fn().mockReturnValue('blob:image-preview')
+    const revokeObjectURL = vi.fn()
+    vi.stubGlobal('URL', { createObjectURL, revokeObjectURL })
+    const image = createBotGroupAttachmentDraft(new File(['image'], 'portrait.png', { type: 'image/png' }))
+    const text = createBotGroupAttachmentDraft(new File(['text'], 'notes.txt', { type: 'text/plain' }))
+    expect(image.previewUrl).toBe('blob:image-preview')
+    expect(text.previewUrl).toBeUndefined()
+    releaseBotGroupAttachment(image)
+    releaseBotGroupAttachment(text)
+    expect(createObjectURL).toHaveBeenCalledOnce()
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:image-preview')
+  })
+
+  it('keeps image drafts usable when object URL APIs are unavailable', () => {
+    vi.stubGlobal('URL', {})
+    const image = createBotGroupAttachmentDraft(new File(['image'], 'portrait.png', { type: 'image/png' }))
+    releaseBotGroupAttachment({ ...image, previewUrl: 'blob:stale' })
+    expect(image.previewUrl).toBeUndefined()
   })
 })

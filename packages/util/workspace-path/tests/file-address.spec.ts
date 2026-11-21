@@ -2,6 +2,12 @@ import { describe, expect, it } from 'vitest'
 import { absoluteFileAddress, parseFileAddress, sessionFileAddress } from '../src/file-address.ts'
 
 describe('file addresses', () => {
+  it('keeps a private Computer address separate from the same Session path', () => {
+    const address = 'dsh-resource://file/computer/s%201/reports/a%20b%23c.txt'
+    expect(parseFileAddress(address)).toEqual({ scope: 'computer', sessionId: 's 1', path: 'reports/a b#c.txt' })
+    expect(parseFileAddress(sessionFileAddress('s 1', 'reports/a b#c.txt'))?.scope).toBe('session')
+  })
+
   it('round-trips a session-relative path with encoded segments', () => {
     const address = sessionFileAddress('s 1', 'w/a b#c?.txt')
     expect(address).toBe('dsh-resource://file/session/s%201/w/a%20b%23c%3F.txt')

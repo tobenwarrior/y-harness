@@ -103,6 +103,55 @@ describe('Session creation failures', () => {
     await failed.fiber.dispose()
   })
 
+  it('honors cancellation after Workspace attachment settles', async () => {
+    const ctx = await baseContext()
+    const abort = new AbortController()
+    const workspace: Workspace = {
+      id: 'workspace-1' as WorkspaceId,
+      path: '/workspace',
+      title: 'Fixture workspace',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+      sessionIds: [],
+      setTitle: async () => {},
+      attachSession: async () => {
+        abort.abort(new Error('workspace create cancelled'))
+      },
+      insertSessionBefore: async () => {},
+      detachSession: async () => {},
+      status: async () => 'ok',
+    }
+    ctx.provide('workspaceRegistry', {
+      get: () => workspace,
+      list: () => [workspace],
+    } as never)
+    const ensureSession = vi.fn((sessionId: SessionId, cwd: string) => {
+      const session = ctx.sessions.create(sessionId, { meta: { cwd } })
+      return Promise.resolve({ id: sessionId, session } as Agent)
+    })
+    const controller = new SessionCommandController(
+      ctx,
+      controllerAgents({ ensureSession }),
+      '/default',
+    )
+
+    try {
+      await expect(controller.create({
+        sessionId: SessionId('cancelled-workspace-session'),
+        workspaceId: workspace.id,
+      }, abort.signal)).rejects.toThrow('workspace create cancelled')
+      expect(ensureSession).toHaveBeenCalledWith(
+        SessionId('cancelled-workspace-session'),
+        '/workspace',
+        true,
+        undefined,
+        abort.signal,
+      )
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
   it.each([
     {
       error: new RemoteError(

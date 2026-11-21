@@ -33,6 +33,14 @@ import { computerRoutes } from './computer-api.ts'
 import * as ComputerTool from './computer-tool.ts'
 import { VpsComputer } from './computer.ts'
 import { MacComputerBridge } from './mac-computer.ts'
+import { mountVpsBots } from './vps-bots.ts'
+import type { VpsServiceAccess } from './vps-services.ts'
+import type { VpsJournalConfig } from './vps-journal.ts'
+import { mountVpsVaultRequests, submitAutomaticVpsLogin, VPS_VAULT_REQUEST_SOCKET, vpsVaultAccessRoute } from './vps-vault-requests.ts'
+import { mountProviderKeyCopy } from './provider-key-copy.ts'
+import type { VpsVaultRequestsConfig } from './vps-vault-requests.ts'
+import type { VpsIsolatedBrowserConfig } from './vps-isolated-browser.ts'
+import type { AutomaticVpsBrowserLogin } from './vps-browser-login.ts'
 
 /** Stable Cordis plugin name. */
 export const name = 'web-app'
@@ -71,6 +79,55 @@ export interface Config {
   publicUrl?: string
   /** Explicit `--trusted-host` authorities from this invocation. */
   trustedHosts: string[]
+  /** Rootless computers assigned to Bots by the private VPS installation. */
+  botComputers?: {
+    /** Owner-only runtime root for the installation. */
+    root: string
+    /** Locally built desktop image. */
+    image: string
+    /** Exact Bot ids assigned isolated VPS Computers. Omit or use null to assign every Bot. */
+    bots?: string[] | null
+    /** Exact selected Bot ids that receive only a private Computer, not a VPS workspace. */
+    desktopOnlyBots?: string[]
+    /** Give Bots outside an explicit allowlist a private desktop, terminal, and file panel while preserving their Session workspace. */
+    desktopForUnlistedBots?: boolean
+    /** Default shared workspace access. Omit to default off, or set null to disable sharing and owner changes. */
+    sharedWorkspace?: {
+      /** Exact default participants. Omit or use null for the Bots selected by botComputers.bots. */
+      bots?: string[] | null
+    } | null
+    /** Direct file transfer limits for Bot workspaces. */
+    uploads?: {
+      /** Largest allowed file in bytes. */
+      maxBytes?: number
+      /** Free destination space to retain in bytes. */
+      reserveBytes?: number
+      /** Maximum transfer lifetime in milliseconds. */
+      timeoutMs?: number
+    }
+    /** Exact private Computer Bots with outbound network access. Omit or use null to keep the Firefox defaults. */
+    network?: {
+      /** Private Computer Bot ids. An empty list keeps all private desktops and terminals offline. */
+      bots: string[]
+    } | null
+    /** Firefox for selected private Computer Bots. */
+    browser?: {
+      /** Exact Bot ids allowed to run the browser desktop. */
+      bots: string[]
+      /** Locally built browser desktop image. */
+      image: string
+      /** Absolute path to the prepared owner-only browser policy. */
+      seccompProfile: string
+    } | null
+    /** Cloud-managed browser broker for selected private Computer Bots. */
+    isolatedBrowser?: VpsIsolatedBrowserConfig | null
+  } | null
+  /** Exact Linux service grants, selected by the VPS owner. */
+  vpsServices?: VpsServiceAccess[]
+  /** Private read-only journal socket and its owner Bot allowlist. */
+  vpsJournal?: VpsJournalConfig | null
+  /** Vault request broker configuration. Linux with managed Bot computers uses the local Vault unless explicitly disabled. */
+  vpsVaultRequests?: VpsVaultRequestsConfig | null
   /** Opt in to the private Linux desktop using its X display and owner-only authority file. */
   computer?: {
     /** Local X11 display identifier for the private desktop. */
@@ -86,6 +143,68 @@ export const Config: z<Config> = z.object({
   surfaceContext: z.boolean().default(true),
   publicUrl: z.transform(z.string(), value => parsePublicUrl(value).href),
   trustedHosts: z.array(String).default([]),
+  botComputers: z.union([
+    z.object({
+      root: z.string().required(),
+      image: z.string().required(),
+      bots: z.union([z.array(String), z.const(null)]),
+      desktopOnlyBots: z.array(String),
+      desktopForUnlistedBots: z.boolean(),
+      sharedWorkspace: z.union([z.object({ bots: z.union([z.array(String), z.const(null)]) }), z.const(null)]),
+      network: z.union([z.object({ bots: z.array(String).required() }), z.const(null)]),
+      uploads: z.object({ maxBytes: z.number(), reserveBytes: z.number(), timeoutMs: z.number() }),
+      browser: z.union([
+        z.object({
+          bots: z.array(String).required(),
+          image: z.string().required(),
+          seccompProfile: z.string().required(),
+        }),
+        z.const(null),
+      ]),
+      isolatedBrowser: z.union([
+        z.object({
+          socketPath: z.string().required(),
+          bots: z.array(String).required(),
+          ownerRosterPath: z.string(),
+          sharedBots: z.array(String),
+          savedLogins: z.boolean(),
+        }),
+        z.const(null),
+      ]),
+    }),
+    z.const(null),
+  ]),
+  vpsServices: z.array(z.object({
+    unit: z.string().required(),
+    scope: z.union(['system', 'user'] as const).required(),
+    bots: z.array(String).required(),
+    restart: z.boolean(),
+  })),
+  vpsVaultRequests: z.union([
+    z.object({
+      socketPath: z.string().required(),
+      sharedRequests: z.boolean(),
+      grants: z.union([
+        z.array(z.object({
+          bot: z.string().required(),
+          unit: z.string().required(),
+          name: z.string().required(),
+        })),
+        z.const(null),
+      ]).default(null),
+    }),
+    z.const(null),
+  ]),
+  vpsJournal: z.union([
+    z.object({
+      socketPath: z.string().required(),
+      bots: z.array(String).required(),
+      timeoutMs: z.number(),
+      maxBytes: z.number(),
+      maxEntries: z.number(),
+    }),
+    z.const(null),
+  ]),
   computer: z.union([
     z.object({
       display: z.string().required(),
@@ -252,6 +371,11 @@ export const internals: {
   openBrowser: (url: string) => Promise<void>
 } = { resolveDistIndex, openBrowser }
 
+function canUseComputer(ctx: Context, agentContext: Context): boolean {
+  const preset = ctx.get('agentPresets')?.composedPreset(agentContext)
+  return preset !== undefined && COMPUTER_PRESETS.test(preset)
+}
+
 /**
  * Mount the Web runtime: dist serving, surface prompt, the bash runtime
  * variable, the URL line, and the default-browser handoff.
@@ -269,37 +393,52 @@ export function apply(ctx: Context, config: Config): void {
   // Release dependent rows only after bind-dependent trust has been sampled once.
   ctx.provide(WEB_RUNTIME_SERVICE, runtime)
   ctx.plugin(FrontendStatic, { distIndex: internals.resolveDistIndex() })
+  mountProviderKeyCopy(ctx)
   if (process.platform === 'darwin' && process.connected && process.env.YH_MAC_COMPUTER === '1'
     && ctx.get('profileContext')?.name === 'desktop') {
     const computer = new MacComputerBridge()
-    ctx.effect(() => () => computer.dispose(), 'mac-computer: local desktop')
+    ctx.effect(() => () => { computer.dispose() }, 'mac-computer: local desktop')
     ctx.on('agent/created', ({ agent }) => {
-      const canUseComputer = (): boolean => {
-        const preset = ctx.get('agentPresets')?.composedPreset(agent.ctx)
-        return preset !== undefined && COMPUTER_PRESETS.test(preset)
-      }
-      if (!canUseComputer()) return
+      if (!canUseComputer(ctx, agent.ctx)) return
       agent.ctx.inject(['tools', 'attachments', 'llm'], (scope) => {
         ComputerTool.applyMacComputer(scope, computer)
-        scope.effect(() => scope.tools.guard(exec => exec.name === 'mac_computer' && !canUseComputer()
+        scope.effect(() => scope.tools.guard(exec => exec.name === 'mac_computer' && !canUseComputer(ctx, agent.ctx)
           ? 'This Agent preset cannot access the Mac Computer.'
           : undefined))
       })
     })
   }
-  if (config.computer !== undefined && config.computer !== null) {
-    const computer = new VpsComputer(config.computer)
-    ctx.provide('vpsComputer', computer)
-    ctx.effect(() => () => computer.dispose(), 'vps-computer: private desktop')
+  const legacyComputer = config.computer === undefined || config.computer === null
+    ? undefined
+    : new VpsComputer(config.computer)
+  const vaultRequests = config.vpsVaultRequests === undefined && config.botComputers != null && process.platform === 'linux'
+    ? { socketPath: VPS_VAULT_REQUEST_SOCKET }
+    : config.vpsVaultRequests
+  if (vaultRequests != null) mountVpsVaultRequests(ctx, vaultRequests)
+  ctx.inject(['connection'], (scope) => {
+    scope.effect(() => scope.connection.fetch.register(vpsVaultAccessRoute(vaultRequests)), 'vps-vault: Bot access mode')
+  })
+  if (config.vpsJournal !== undefined && config.vpsJournal !== null && config.botComputers == null) {
+    throw new Error('VPS journal grants require managed Bot computers.')
+  }
+  if (legacyComputer !== undefined) {
+    ctx.provide('vpsComputer', legacyComputer)
+    ctx.effect(() => () => legacyComputer.dispose(), 'vps-computer: private desktop')
+  }
+  if (config.botComputers !== undefined && config.botComputers !== null) {
+    if (process.platform !== 'linux') throw new Error('Managed VPS Bot computers require Linux.')
+    const automaticLogin: AutomaticVpsBrowserLogin | undefined =
+      vaultRequests?.socketPath === VPS_VAULT_REQUEST_SOCKET && vaultRequests.grants == null
+        ? (bot, session, id, signal) => submitAutomaticVpsLogin(vaultRequests.socketPath, bot, session, id, signal)
+        : undefined
+    mountVpsBots(ctx, config.botComputers, config.vpsServices ?? [], legacyComputer, config.vpsJournal ?? undefined, automaticLogin)
+  } else if (legacyComputer !== undefined) {
+    const computer = legacyComputer
     ctx.on('agent/created', ({ agent }) => {
-      const canUseComputer = (): boolean => {
-        const preset = ctx.get('agentPresets')?.composedPreset(agent.ctx)
-        return preset !== undefined && COMPUTER_PRESETS.test(preset)
-      }
-      if (!canUseComputer()) return
+      if (!canUseComputer(ctx, agent.ctx)) return
       agent.ctx.inject(ComputerTool.inject, (scope) => {
         ComputerTool.apply(scope)
-        scope.effect(() => scope.tools.guard(exec => exec.name === 'vps_computer' && !canUseComputer()
+        scope.effect(() => scope.tools.guard(exec => exec.name === 'vps_computer' && !canUseComputer(ctx, agent.ctx)
           ? 'This Agent preset cannot access the private Computer.'
           : undefined))
       })

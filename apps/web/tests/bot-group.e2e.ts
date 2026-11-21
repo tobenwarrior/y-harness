@@ -378,7 +378,7 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
     secondCollaboratorPage = await secondCollaboratorContext.newPage()
     await secondCollaboratorPage.goto(scaffold.baseUrl, { waitUntil: 'load' })
     await secondCollaboratorPage.waitForSelector('[class*="frame"]', { timeout: 30_000 })
-    const secondCollaboratorDialog = await openSharedDialog(secondCollaboratorPage)
+    let secondCollaboratorDialog = await openSharedDialog(secondCollaboratorPage)
     await redeemInvite(collaboratorDialog, collaboratorChiefInvite.code)
     await collaboratorDialog.getByRole('button', { name: new RegExp(`^${firstBot.name}\\b`) }).waitFor({ state: 'visible', timeout: 30_000 })
     await redeemInvite(collaboratorDialog, collaboratorOrbitInvite.code)
@@ -397,9 +397,29 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
     const secondCollaboratorGroupRow = secondCollaboratorDialog.getByRole('button', { name: new RegExp(`^${SHARED_GROUP_NAME}`) })
     await secondCollaboratorGroupRow.waitFor({ state: 'visible', timeout: 30_000 })
     await secondCollaboratorGroupRow.click()
-    const secondCollaboratorGroupSection = secondCollaboratorDialog.locator(`section[aria-label="${SHARED_GROUP_NAME}"]`)
+    let secondCollaboratorGroupSection = secondCollaboratorDialog.locator(`section[aria-label="${SHARED_GROUP_NAME}"]`)
     await secondCollaboratorGroupSection.waitFor({ state: 'visible', timeout: 30_000 })
-    const secondCollaboratorComposer = secondCollaboratorGroupSection.getByRole('combobox', { name: 'Message Release room shared', exact: true })
+    let secondCollaboratorComposer = secondCollaboratorGroupSection.getByRole('combobox', { name: 'Message Release room shared', exact: true })
+
+    const reopenSecondCollaborator = async (): Promise<void> => {
+      if (secondCollaboratorContext === undefined) throw new Error('second collaborator context was not created')
+      await secondCollaboratorPage?.close()
+      secondCollaboratorPage = await secondCollaboratorContext.newPage()
+      await secondCollaboratorPage.goto(scaffold.baseUrl, { waitUntil: 'load' })
+      await secondCollaboratorPage.waitForSelector('[class*="frame"]', { timeout: 30_000 })
+      secondCollaboratorDialog = await openSharedDialog(secondCollaboratorPage)
+      const groupRow = secondCollaboratorDialog.getByRole('button', { name: new RegExp(`^${SHARED_GROUP_NAME}`) })
+      await groupRow.waitFor({ state: 'visible', timeout: 30_000 })
+      await groupRow.click()
+      secondCollaboratorGroupSection = secondCollaboratorDialog.locator(`section[aria-label="${SHARED_GROUP_NAME}"]`)
+      await secondCollaboratorGroupSection.waitFor({ state: 'visible', timeout: 30_000 })
+      secondCollaboratorComposer = secondCollaboratorGroupSection.getByRole('combobox', { name: 'Message Release room shared', exact: true })
+    }
+    // Keep the admitted second collaborator quiescent while the owner and
+    // primary collaborator settle transcript delivery against the bounded
+    // shared RPC capacity. Reopen it before its own approval assertions.
+    await secondCollaboratorPage?.close()
+    secondCollaboratorPage = undefined
     const waitForAdapterRequest = async (prompt: string): Promise<GenerateOptions> => {
       await expect.poll(
         () => adapter.requests.some(request => newestUserMessageText(request).includes(prompt)),
@@ -856,6 +876,7 @@ describe.skipIf(MODE === 'record')('web e2e: shared Bot group workspace', () => 
     await approvalRegion.getByRole('button', { name: new RegExp(`^Deny .*${SHARED_APP_OTHER_TOOL}$`) }).click()
     await expect.poll(() => pendingApprovalList.getByText(SHARED_APP_OTHER_TOOL, { exact: true }).count(), { timeout: 30_000 }).toBe(0)
 
+    await reopenSecondCollaborator()
     const secondCollaboratorApprovalRegion = secondCollaboratorGroupSection.getByRole(
       'region', { name: 'Pending approvals', exact: true },
     )

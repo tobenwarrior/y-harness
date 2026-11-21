@@ -39,12 +39,7 @@ class FakeAttachments extends AttachmentStore {
 }
 
 function response(body: object, status = 200): Response {
-  return {
-    ok: status >= 200 && status < 300,
-    status,
-    headers: new Headers(),
-    json: async () => body,
-  } as Response
+  return Response.json(body, { status })
 }
 
 function harness(fetch: typeof globalThis.fetch, configured = true, options: {
@@ -78,6 +73,7 @@ function streamingResponse(
   chunks: readonly Uint8Array[],
   onCancel?: () => void,
   close = true,
+  status = 200,
 ): Response {
   const body = new ReadableStream<Uint8Array>({
     start(controller) {
@@ -86,13 +82,7 @@ function streamingResponse(
     },
     ...(onCancel === undefined ? {} : { cancel: onCancel }),
   })
-  return {
-    ok: true,
-    status: 200,
-    headers: new Headers(),
-    body,
-    json: async () => ({ data: [] }),
-  } as Response
+  return new Response(body, { status })
 }
 
 describe('AvatarGenerationService', () => {
@@ -112,7 +102,8 @@ describe('AvatarGenerationService', () => {
 
   it('generates a validated transparent PNG preview without storing it', async () => {
     const fetch = vi.fn<typeof globalThis.fetch>(async (_input, init) => {
-      const body = JSON.parse(String(init?.body)) as { model?: string; prompt?: string; background?: string; output_format?: string }
+      if (typeof init?.body !== 'string') throw new Error('Expected an image request with a JSON body')
+      const body = JSON.parse(init.body) as { model?: string; prompt?: string; background?: string; output_format?: string }
       expect(body.model).toBe('gpt-image-2.5-flare')
       expect(body.prompt).toContain('A friendly mint fox with a tiny star')
       expect(body.background).toBe('transparent')
@@ -189,8 +180,7 @@ describe('AvatarGenerationService', () => {
   it('cancels a provider error body before returning the mapped error', async () => {
     let cancelled = false
     const fetch = vi.fn<typeof globalThis.fetch>(async () => {
-      const response = streamingResponse([new Uint8Array(1)], () => { cancelled = true }, false)
-      return { ...response, ok: false, status: 500 } as Response
+      return streamingResponse([new Uint8Array(1)], () => { cancelled = true }, false, 500)
     })
     const h = harness(fetch, true)
 
@@ -202,7 +192,7 @@ describe('AvatarGenerationService', () => {
   it('keeps the timeout active while a provider response body is still pending', async () => {
     const fetch = vi.fn<typeof globalThis.fetch>(async () => {
       const body = new ReadableStream<Uint8Array>({ start() {} })
-      return { ok: true, status: 200, headers: new Headers(), body, json: async () => ({}) } as Response
+      return new Response(body)
     })
     const h = harness(fetch, true, { timeoutMs: 1_000 })
 

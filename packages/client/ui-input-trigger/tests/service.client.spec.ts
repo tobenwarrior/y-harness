@@ -151,10 +151,12 @@ describe('registerSource', () => {
   it('HMR shape: dispose of the registering fiber removes the source', async () => {
     const { root, inputTriggers, mint } = await serviceBench()
     const controller = inputTriggers.sessionOf(mint('a').actx)
+    const source = readySource('/', 'command', [{ name: 'goal' }]).source
+    const referenceIcon = () => null
     const fiber = root.plugin({
       apply(pluginCtx: Context) {
         pluginCtx.effect(
-          () => inputTriggers.registerSource(readySource('/', 'command', [{ name: 'goal' }]).source),
+          () => inputTriggers.registerSource({ ...source, referenceIcon }),
           'test: slash source',
         )
       },
@@ -163,8 +165,10 @@ describe('registerSource', () => {
     controller.track('/g', 2, { tier: 'plain' }, 1)
     await tick()
     expect(controller.menu.getSnapshot().open).toBe(true)
+    expect(inputTriggers.referenceIcon('command')).toBe(referenceIcon)
 
     await fiber.dispose()
+    expect(inputTriggers.referenceIcon('command')).toBeUndefined()
     // Group dropped with the fiber; a fresh track finds no sources → closed.
     expect(controller.menu.getSnapshot().open).toBe(false)
     controller.track('/g', 2, { tier: 'plain' }, 1)
