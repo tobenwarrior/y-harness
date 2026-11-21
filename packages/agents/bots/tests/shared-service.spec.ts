@@ -6110,6 +6110,15 @@ describe('shared Bot service', () => {
       const owner = await principal(value, ownerEnrollment)
       const collaborator = await principal(value, collaboratorEnrollment)
       await value.service.setMemoryPolicy(BotId('bot-chief'), true)
+      const now = value.clock.value
+      value.clock.value = now + 0.5
+      await expect(value.service.handle('bots/share/write-memory', {
+        botId: 'bot-chief', text: 'invalid timestamp', consent: true,
+      }, new AbortController().signal, collaborator.peer)).resolves.toMatchObject({
+        ok: false, error: { code: 'gateway/unavailable', message: 'shared Bot learning limits were exceeded' },
+      })
+      value.clock.value = now
+      await expect(value.service.listLearning(BotId('bot-chief'))).resolves.toMatchObject({ pending: [] })
       await expect(value.service.handle('bots/share/write-memory', {
         botId: 'bot-chief', text: 'pending only', consent: true,
       }, new AbortController().signal, collaborator.peer)).resolves.toMatchObject({
