@@ -60,6 +60,7 @@
   display: inline-flex;
   padding: 1px;
   border-radius: 50%;
+  corner-shape: round;
   background: var(--yh-specific-sidebar-fill);
 }
 
