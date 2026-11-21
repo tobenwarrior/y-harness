@@ -8,6 +8,58 @@
   container-type: inline-size;
 }
 
+/* Direct Bot search is transient: it floats over the transcript instead of
+   adding another permanent toolbar control to the conversation header. */
+.findBar {
+  position: absolute;
+  z-index: 4;
+  top: 10px;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: min(560px, calc(100% - 32px));
+  transform: translateX(-50%);
+  padding: 5px;
+  border: 0.5px solid var(--yh-alias-border-l2);
+  border-radius: var(--yh-radius-lg);
+  background: color-mix(in srgb, var(--yh-alias-bg-layer-2) 94%, transparent);
+  box-shadow: var(--yh-elevation-panel);
+  backdrop-filter: blur(12px);
+}
+
+.findInput {
+  flex: 1 1 180px;
+  min-width: 120px;
+}
+
+.findStatus {
+  flex: none;
+  max-width: 24ch;
+  overflow: hidden;
+  color: var(--yh-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.findOlder {
+  flex: none;
+  white-space: nowrap;
+}
+
+:global([data-chat-find-match]) {
+  outline: 1px solid color-mix(in srgb, var(--yh-alias-state-business-primary) 44%, transparent);
+  outline-offset: 3px;
+  border-radius: var(--yh-radius-md);
+}
+
+:global([data-chat-find-active]) {
+  outline: 2px solid var(--yh-alias-state-business-primary);
+  outline-offset: 3px;
+}
+
 .root {
   position: relative;
   display: flex;

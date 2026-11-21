@@ -21,6 +21,7 @@ import { TurnNavigator } from './TurnNavigator.tsx'
 import { BotReplyPending, RunningStatus } from './RunningStatus.tsx'
 import { mergeTurnRailItems } from './turn-rail-items.ts'
 import { useChatScroll } from './use-chat-scroll.ts'
+import { FindInChat } from './FindInChat.tsx'
 import { fileMediaUrl, resolveWorkspacePath } from '@yharness/util-workspace-path'
 import css from './ChatView.module.css'
 
@@ -226,9 +227,25 @@ export function ChatView({
     submissionId: visibleSubmissions.at(-1)?.requestId ?? null,
     loadedTurns: turnNavigationItems,
   })
+  const contentRevision = [
+    hasMore ? 'more' : 'complete',
+    ...turnNavigationItems.map(item => `${item.turn}:${item.anchorKey}:${item.prompt}:${item.response}`),
+  ].join('\u0001')
 
   return (
     <div className={css.frame}>
+      {bot !== undefined && (
+        <FindInChat
+          key={String(sessionId)}
+          sessionId={String(sessionId)}
+          contentRevision={contentRevision}
+          scopeRef={scroll.columnRef}
+          hasMore={hasMore}
+          loadingOlder={loadingOlder}
+          loadOlder={scroll.loadEarlier}
+          t={t}
+        />
+      )}
       {bot === undefined && scroll.initialized && (
         <TurnNavigator
           items={railItems}

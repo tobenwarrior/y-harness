@@ -107,6 +107,7 @@ export const en = {
   memorySaveFailed: 'The memory could not be saved. Try again.',
   memoryRemoveFailed: 'The memory could not be removed. Try again.',
   manageRoutines: 'Manage routines',
+  findInChat: 'Find in this chat',
   routineManagerTitle: 'Bot routines',
   routineManagerDescription: 'Review this bot’s timed and message-triggered routines.',
   routinePrivateHint: 'Only routines owned by this bot are shown here.',
