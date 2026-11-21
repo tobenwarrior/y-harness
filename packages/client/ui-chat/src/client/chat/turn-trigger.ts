@@ -47,7 +47,8 @@ export function turnTriggerDetails(node: ContextMessageNode): {
     }
     case 'webhook': {
       const github = field(source, 'provider') === 'github'
-      title = github ? 'message.trigger.github' : 'message.trigger.webhook'
+      title = github ? 'message.trigger.github'
+        : source.provider === 'slack' ? 'message.trigger.slack' : 'message.trigger.webhook'
       icon = github ? 'github' : 'webhook'
       break
     }

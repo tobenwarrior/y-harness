@@ -1,0 +1,10 @@
+- text: Slack trigger
+- text: Runs when someone posts a message in Slack
+- term: Workspace
+- definition: TWORKBENCH
+- term: Channel
+- definition: CRELEASES
+- term: Text contains
+- definition: release ready
+- text: Slack · CRELEASES
+- text: The routine handled the new message.

@@ -416,6 +416,16 @@ For a file with several bots, add `--source-name` to choose one. Repeat the comm
 
 If a routine references Grok's `box-desktop` skill, copy the [VPS Computer compatibility skill](../../../apps/cli/config/examples/skills/box-desktop/SKILL.md) into `.agents/skills/box-desktop/SKILL.md` in the Bot's execution workspace. For a managed VPS Bot, use its Computer workspace or `podman cp` after identifying the container; for a desktop-only or ordinary Bot, use the Host directory at `~/.yharness-vps/bots/<bot-session-id>`. Select an image-capable model in that Bot’s chat. Test a desktop observation and review any routine that needs network access before resuming it.
 
+## Trigger a Bot routine from Slack
+
+Create and install a Slack app in the workspace you want to use. Invite the app to the channels whose activity can start routines. The example subscribes to public channel messages, app mentions, and reactions to messages the app can access. [Slack app manifest](../../../apps/cli/config/examples/slack-bot-routines/slack-app-manifest.yml)
+
+Under **Basic Information → App-Level Tokens**, generate a token with `connections:write` and store it as `DSH_SLACK_BOT_APP_TOKEN` in the private environment of your Y Harness service. Add the example configuration to your Web profile and replace the sample workspace and app IDs. Restart Y Harness while it is idle. The VPS connects to Slack over its outbound internet connection. [Web profile overlay](../../../apps/cli/config/examples/slack-bot-routines/cordis.yml) · [Slack Socket Mode](https://docs.slack.dev/apis/events-api/using-socket-mode/)
+
+Ask the Bot to create a Slack routine using source `primary-slack`, your workspace ID, and the task you want it to do. For example, “When someone posts a message containing ‘release ready’ in channel C0123456789, give me a checklist in this chat.” You can match a message, an app mention, or a reaction, and narrow the rule by channel or member. For reactions, provide an emoji name to watch a specific reaction. Approve the creation and open **Bot options → Manage routines** to see the filters and results.
+
+The routine handles matching events after its current activation. When Slack resends an event after reconnecting, the same routine uses its existing delivery. Replies appear in the Bot's chat.
+
 ## Trigger a Bot routine from another service
 
 Enable `bot-routine-webhooks` in the Web profile after giving callers an HTTPS endpoint. For a VPS that uses a private tunnel, expose only the webhook path through your HTTPS proxy. [Example overlay](../../../apps/cli/config/examples/bot-routine-webhooks/cordis.yml)

@@ -1,6 +1,6 @@
 /** Provider-independent Bot roster inspection and durable peer delivery. */
 
-import { routineFollowupId } from './github-routines.ts'
+import { routineFollowupId } from './event-routines.ts'
 import { randomUUID } from 'node:crypto'
 import type { Agent } from '@yharness/agent'
 import type { ImageAttachmentRef } from '@yharness/attachment'

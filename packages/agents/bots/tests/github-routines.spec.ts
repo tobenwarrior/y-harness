@@ -4,8 +4,9 @@ import { WebhookDeliveryId, WebhookSourceId, type VerifiedWebhookDelivery } from
 import { describe, expect, it } from 'vitest'
 import {
   githubRoutineFollowup, githubRoutineMessageId, matchesGitHubRoutine,
-  projectGitHubRoutineActivity, routineFollowupId, sameRoutineTrigger,
+  projectGitHubRoutineActivity,
 } from '../src/github-routines.ts'
+import { routineFollowupId, sameRoutineTrigger } from '../src/event-routines.ts'
 import type { BotEventRoutine } from '../src/types.ts'
 
 const repository = { full_name: 'Example/Workbench' }

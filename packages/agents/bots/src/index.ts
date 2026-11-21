@@ -302,10 +302,14 @@ import type {
 } from './template-storage.ts'
 
 import type { VerifiedWebhookDelivery, WebhookSourceId } from '@yharness/webhook'
+import { botEventTriggerSchema, routineFollowupId, sameRoutineTrigger } from './event-routines.ts'
 import {
-  botEventTriggerSchema, githubRoutineFollowup, githubRoutineMessageId, githubRoutineSourceSchema,
-  matchesGitHubRoutine, projectGitHubRoutineActivity, routineFollowupId, sameRoutineTrigger,
+  githubRoutineFollowup, githubRoutineMessageId, githubRoutineSourceSchema, matchesGitHubRoutine, projectGitHubRoutineActivity,
 } from './github-routines.ts'
+import {
+  matchesSlackRoutine, projectSlackRoutineActivity, slackRoutineFollowup, slackRoutineMessageId, slackRoutineSource,
+  type SlackRoutineSource,
+} from './slack-routines.ts'
 import {
   BOT_ROUTINE_WEBHOOK_PATH, createRoutineWebhookHandler, matchesRoutineWebhookKey, newRoutineWebhookVersion,
   routineWebhookFollowup, routineWebhookKey, routineWebhookMessageId, routineWebhookSetup,
@@ -2214,13 +2218,14 @@ function eventRoutineId(
 /** Project one durable event routine into the common native routine view. */
 function eventRoutineView(routine: BotEventRoutine): BotEventRoutineView {
   const {
-    deliveries, results, firstEligibleEventSeq, firstEligibleGitHubAt, firstEligibleWebhookAt, webhookKeyVersion,
+    deliveries, results, firstEligibleEventSeq, firstEligibleGitHubAt, firstEligibleSlackAt, firstEligibleWebhookAt, webhookKeyVersion,
     admissionWatermark, admissionTombstones, ...view
   } = routine
   void deliveries
   void results
   void firstEligibleEventSeq
   void firstEligibleGitHubAt
+  void firstEligibleSlackAt
   void firstEligibleWebhookAt
   void webhookKeyVersion
   void admissionWatermark
@@ -2230,7 +2235,12 @@ function eventRoutineView(routine: BotEventRoutine): BotEventRoutineView {
 
 /** Preserve receipt metadata while limiting payload access to the owning Bot chat. */
 function publicEventRoutineDelivery(delivery: BotEventRoutineDelivery): BotEventRoutineDelivery {
-  return delivery.webhook === undefined ? delivery : { ...delivery, webhook: {} }
+  if (delivery.webhook !== undefined) return { ...delivery, webhook: {} }
+  if (delivery.slack === undefined) return delivery
+  const { text, textTruncated, ...receipt } = delivery.slack
+  void text
+  void textTruncated
+  return { ...delivery, slack: receipt }
 }
 
 /** Project one retained timed routine into the Bot-scoped catalog view. */
@@ -2825,6 +2835,7 @@ export class BotService extends TypertRemoteService {
   }>()
   private readonly recordsBySession = new Map<string, BotStoredRecord>()
   private readonly githubRoutineSources = new Set<WebhookSourceId>()
+  private readonly slackRoutineSources = new Map<WebhookSourceId, SlackRoutineSource>()
   private routineWebhookPublicRoot: string | undefined
   private readonly memoriesBySession = new Map<string, Map<string, BotMemoryRecord>>()
   private readonly forgottenMemoryIdsBySession = new Map<string, Set<string>>()
@@ -5131,6 +5142,40 @@ export class BotService extends TypertRemoteService {
   }
 
   /**
+   * Register a Host-owned authenticated Slack Socket Mode source.
+   * @param config - Local source label and exact Slack installation ids.
+   * @returns An accept callback for socket payloads and a disposer that retires the source.
+   */
+  registerSlackRoutineSource(config: { source: string; workspaceId: string; appId: string }): {
+    accept(payload: unknown, receivedAt: number): Promise<void>
+    dispose(): void
+  } {
+    const source = slackRoutineSource(config)
+    if (this.slackRoutineSources.has(source.source)) throw new Error('Slack routine source is already registered')
+    this.slackRoutineSources.set(source.source, source)
+    return {
+      accept: async (payload, receivedAt) => {
+        const activity = projectSlackRoutineActivity(payload, source, receivedAt)
+        if (activity === undefined) return
+        await this.reserveExternalRoutineRuns(
+          () => this.slackRoutineSources.get(source.source) === source,
+          'Slack',
+          routine => matchesSlackRoutine(routine, activity),
+          (sessionId, routineId) => ({
+            messageId: slackRoutineMessageId(sessionId, routineId, activity.receipt),
+            slack: activity.receipt,
+            status: 'pending',
+            createdAt: new Date(activity.receivedAt).toISOString(),
+          }),
+        )
+      },
+      dispose: () => {
+        if (this.slackRoutineSources.get(source.source) === source) this.slackRoutineSources.delete(source.source)
+      },
+    }
+  }
+
+  /**
    * Mount the routine receiver for one Web instance with a durable credential store.
    * @param publicRoot - Advertised HTTPS application URL, including any proxy prefix.
    * @param maxBodyBytes - Maximum raw request body size.
@@ -5151,6 +5196,9 @@ export class BotService extends TypertRemoteService {
   private requireRoutineSource(trigger: BotEventTrigger): void {
     if (trigger.type === 'github' && !this.githubRoutineSources.has(trigger.source)) {
       throw new BotCollaborationError('message-invalid', 'That GitHub routine source is unavailable on this Host.')
+    }
+    if (trigger.type === 'slack' && this.slackRoutineSources.get(trigger.source)?.workspaceId !== trigger.workspaceId) {
+      throw new BotCollaborationError('message-invalid', 'That Slack source is unavailable for this workspace.')
     }
     if (trigger.type === 'webhook' && this.routineWebhookPublicRoot === undefined) {
       throw new BotCollaborationError('message-invalid', 'Webhook routines are unavailable on this Host.')
@@ -5208,29 +5256,45 @@ export class BotService extends TypertRemoteService {
   async admitGitHubRoutineDelivery(delivery: VerifiedWebhookDelivery): Promise<void> {
     const activity = projectGitHubRoutineActivity(delivery)
     if (activity === undefined) return
+    await this.reserveExternalRoutineRuns(
+      () => this.githubRoutineSources.has(activity.receipt.source),
+      'GitHub',
+      routine => matchesGitHubRoutine(routine, activity),
+      (sessionId, routineId) => ({
+        messageId: githubRoutineMessageId(sessionId, routineId, activity.receipt),
+        github: activity.receipt,
+        status: 'pending',
+        createdAt: new Date(activity.receivedAt).toISOString(),
+      }),
+    )
+  }
+
+  /** Durably admit each applicable owner rule before the ingress acknowledges the event. */
+  private async reserveExternalRoutineRuns(
+    sourceAvailable: () => boolean,
+    provider: string,
+    matches: (routine: BotEventRoutine) => boolean,
+    reserve: (sessionId: SessionId, routineId: string) => BotEventRoutineDelivery,
+  ): Promise<void> {
     await this.serialize(async () => {
-      if (this.stopping || !this.githubRoutineSources.has(activity.receipt.source)) {
-        throw new Error('GitHub routine source is unavailable')
-      }
+      if (this.stopping || !sourceAvailable()) throw new Error(provider + ' routine source is unavailable')
       const bots = (await this.getDomain()).table('bots')
       const roster = await this.withProfileRevisionState(bots, state => Array.from(
         bots.entries(), ([id, stored]) => applyProfileSnapshot(stored, state.profiles[String(id)]),
       ).filter(record => record.state === 'active' && record.ownerId === this.ownerId))
       for (let record of roster) {
         let eventRoutines = record.eventRoutines ?? []
-        const routines = eventRoutines.filter(routine => matchesGitHubRoutine(routine, activity))
+        const routines = eventRoutines.filter(matches)
         if (routines.length === 0) continue
         const { events } = await this.ctx.sessionController.inspect(record.sessionId)
         for (const routine of routines) {
-          const messageId = githubRoutineMessageId(record.sessionId, routine.id, activity.receipt)
+          const reservation = reserve(record.sessionId, routine.id)
+          const { messageId } = reservation
           if (routine.deliveries.some(item => item.messageId === messageId)
             || events.some(event => event.type === 'user/message' && event.data.id === messageId)
             || botInboxMessageState(events, messageId) !== undefined) continue
           if (routine.deliveries.length >= MAX_ROUTINE_DELIVERIES && routine.deliveries[0]?.status === 'pending') {
             throw new Error('The Bot routine has too many pending deliveries')
-          }
-          const reservation: BotEventRoutineDelivery = {
-            github: activity.receipt, messageId, status: 'pending', createdAt: new Date(activity.receivedAt).toISOString(),
           }
           const nextRoutine = {
             ...routine, ...retainEventRoutineDeliveries(routine, [...routine.deliveries, reservation]),
@@ -5303,8 +5367,9 @@ export class BotService extends TypertRemoteService {
     routine: BotEventRoutine,
     trigger: BotEventTrigger,
     signal?: AbortSignal,
-  ): Promise<Pick<BotEventRoutine, 'firstEligibleEventSeq' | 'firstEligibleGitHubAt' | 'firstEligibleWebhookAt'>> {
+  ): Promise<Pick<BotEventRoutine, 'firstEligibleEventSeq' | 'firstEligibleGitHubAt' | 'firstEligibleSlackAt' | 'firstEligibleWebhookAt'>> {
     if (trigger.type === 'github') return { firstEligibleGitHubAt: Math.max(routine.firstEligibleGitHubAt ?? 0, Date.now()) }
+    if (trigger.type === 'slack') return { firstEligibleSlackAt: Math.max(routine.firstEligibleSlackAt ?? 0, Date.now()) }
     if (trigger.type === 'webhook') return { firstEligibleWebhookAt: Math.max(routine.firstEligibleWebhookAt ?? 0, Date.now()) }
     const { events } = await this.ctx.sessionController.inspect(sessionId, signal)
     return { firstEligibleEventSeq: Math.max(routine.firstEligibleEventSeq ?? 0, sessionEventSequence(events) + 1) }
@@ -5812,6 +5877,8 @@ export class BotService extends TypertRemoteService {
         input = routineWebhookFollowup(currentRoutine, currentDelivery.messageId, currentDelivery.webhook.payload)
       } else if (currentDelivery.github !== undefined) {
         input = githubRoutineFollowup(currentRoutine, currentDelivery.github)
+      } else if (currentDelivery.slack !== undefined) {
+        input = slackRoutineFollowup(currentRoutine, currentDelivery.slack)
       } else {
         input = {
           content: [{ type: 'text', text: `[BOT EVENT ROUTINE]\n${currentRoutine.prompt}` }],

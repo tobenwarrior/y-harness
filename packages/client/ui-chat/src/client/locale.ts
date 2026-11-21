@@ -61,6 +61,7 @@ export const en = {
   'message.trigger.team': 'Team message received',
   'message.trigger.subagent': 'Subtask status updated',
   'message.trigger.github': 'GitHub event received',
+  'message.trigger.slack': 'Slack event received',
   'message.trigger.webhook': 'External event received',
   'message.trigger.schedule': 'Automation task',
   'message.trigger.routineTest': 'Routine test',

@@ -22,6 +22,10 @@
       "types": "./lib/types/startup.d.ts",
       "default": "./lib/startup.js"
     },
+    "./routine-slack": {
+      "types": "./lib/types/routine-slack.d.ts",
+      "default": "./lib/routine-slack.js"
+    },
     "./routine-webhooks": {
       "types": "./lib/types/routine-webhooks.d.ts",
       "default": "./lib/routine-webhooks.js"
@@ -34,13 +38,14 @@
   "files": [
     "lib/index.js",
     "lib/startup.js",
-    "lib/routine-webhooks.js",
     "cordis.patch.yml",
     "presets/standard.patch.yml",
     "presets/ptc.patch.yml",
     "presets/minimal.patch.yml",
     "presets/cordis.patch.yml",
     "presets/shared-bot.patch.yml",
+    "lib/routine-slack.js",
+    "lib/routine-webhooks.js",
     "lib/public-url-*.js",
     "lib/types/**/*.d.ts"
   ],
@@ -213,6 +218,7 @@
     "@yharness/schemastery": "workspace:~",
     "commander": "^15.0.0",
     "open": "^11.0.0",
+    "ws": "8.21.0",
     "zod": "^4.4.3"
   },
   "peerDependencies": {
@@ -222,6 +228,7 @@
     "@yharness/system-prompt": "workspace:*"
   },
   "devDependencies": {
+    "@types/ws": "8.18.1",
     "@yharness/agent": "workspace:*",
     "@yharness/agent-loop": "workspace:*",
     "@yharness/subprocess-local": "workspace:*",

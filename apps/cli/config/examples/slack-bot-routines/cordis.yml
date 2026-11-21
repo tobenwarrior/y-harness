@@ -1,0 +1,7 @@
+- id: bot-routine-slack
+  disabled: false
+  config:
+    source: primary-slack
+    workspaceId: TEXAMPLE01
+    appId: AEXAMPLE01
+    appTokenEnv: DSH_SLACK_BOT_APP_TOKEN

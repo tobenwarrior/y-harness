@@ -12,7 +12,9 @@ import { BOT_MEMORY_TEXT_LIMIT } from './memory.ts'
 import { BOT_SHARE_ROLES, BotPrincipalId } from './sharing.ts'
 import { BOT_SKILL_NAME_LIMIT, BOT_SKILL_NAME_MAX_LENGTH } from './skills.ts'
 import { imageAttachmentRefWithId } from './image-attachment-ref.ts'
-import { botEventTriggerSchema, githubRoutineReceiptSchema } from './github-routines.ts'
+import { botEventTriggerSchema } from './event-routines.ts'
+import { githubRoutineReceiptSchema } from './github-routines.ts'
+import { slackRoutineReceiptSchema } from './slack-routines.ts'
 
 /** Durable marker for a memory edit that was interrupted before its log write completed. */
 export type BotStoredRecord = BotRecord & {
@@ -65,6 +67,7 @@ const routineDeliverySchema = z.union([
     triggerMessageId: z.string().min(1).transform(MessageId).optional(),
   }).strict(),
   routineDeliveryFields.extend({ github: githubRoutineReceiptSchema }).strict(),
+  routineDeliveryFields.extend({ slack: slackRoutineReceiptSchema }).strict(),
   routineDeliveryFields.extend({
     webhook: z.object({ payload: z.string().max(65_536).optional() }).strict(),
   }).strict(),
@@ -82,6 +85,7 @@ export const botEventRoutineSchema = z.object({
   deliveries: z.array(routineDeliverySchema).max(200),
   firstEligibleEventSeq: z.number().int().nonnegative().optional(),
   firstEligibleGitHubAt: z.number().int().nonnegative().optional(),
+  firstEligibleSlackAt: z.number().int().nonnegative().optional(),
   firstEligibleWebhookAt: z.number().int().nonnegative().optional(),
   webhookKeyVersion: z.string().regex(/^[a-f0-9]{24}$/u).optional(),
   admissionWatermark: z.number().int().nonnegative().optional(),

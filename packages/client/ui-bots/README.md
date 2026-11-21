@@ -29,6 +29,8 @@ Open **Bot options** in the chat header for profile, sharing, memories, skills, 
 
 One-to-one conversations place the user's messages on the right, show a small waiting bubble while the Bot works, and identify the final reply by name and avatar. Scheduled replies carry an expandable origin label. Composer approvals and questions stay visible while they await a response. Open the usage icon for token details.
 
+The rule for a Slack routine shows its event and selected filters. Results identify the Slack channel for each delivery.
+
 The webhook routine details show where to send a request and let the owner copy the URL, key, or authorization header. The key is masked. Replacing the key requires confirmation and revokes the previous value.
 
 The memory and skill editors preserve unsaved values and focus during workspace refreshes. Memory confirmation dialogs stay open across those refreshes. Saving or deleting a memory preserves a draft for another entry. Selecting another Bot loads its data. Skill policy conflicts provide an explicit reload. Routine selections and delete confirmations persist across callback updates. The `routineRevision` prop triggers a fresh routine catalog.

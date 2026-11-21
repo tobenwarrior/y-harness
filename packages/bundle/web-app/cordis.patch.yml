@@ -183,6 +183,10 @@
     - id: web-startup
       name: '@yharness/web-app/startup'
 
+    - id: bot-routine-slack
+      name: '@yharness/web-app/routine-slack'
+      disabled: true
+
     - id: bot-routine-webhooks
       name: '@yharness/web-app/routine-webhooks'
       disabled: true
