@@ -70,6 +70,44 @@ describe('web e2e: Models settings page configures a dormant provider', () => {
     }
   })
 
+  it('gives provider inputs the full Settings width in a compact window', async () => {
+    const compact = await browser.newPage({ viewport: { width: 480, height: 900 }, locale: 'en' })
+    try {
+      await compact.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
+      await openSettings(compact, 'en')
+      const dialog = compact.getByRole('dialog', { name: 'Settings', exact: true })
+      const navigation = dialog.locator('[data-yh-part="settings-nav"]')
+      await navigation.getByRole('button', { name: 'Models', exact: true }).click()
+      const add = dialog.getByRole('button', { name: 'Add model provider', exact: true })
+      await expect.poll(() => add.isEnabled()).toBe(true)
+      await add.click()
+      await dialog.getByRole('tab', { name: 'Custom model API' }).click()
+      const form = dialog.getByRole('tabpanel', { name: 'Custom model API' })
+      const endpoint = form.getByLabel('Base URL', { exact: true })
+      await endpoint.fill('https://gateway.example.invalid/v1')
+      const nav = await navigation.boundingBox()
+      const field = await endpoint.boundingBox()
+      if (nav === null || field === null) throw new Error('Settings navigation or provider input is missing')
+      expect(field.y).toBeGreaterThan(nav.y + nav.height)
+      expect(field.width).toBeGreaterThan(340)
+
+      await compact.setViewportSize({ width: 360, height: 900 })
+      await form.getByRole('button', { name: 'Add model', exact: true }).click()
+      const modelId = await form.getByLabel('Model ID 1', { exact: true }).boundingBox()
+      const modelName = await form.getByLabel('Display name 1', { exact: true }).boundingBox()
+      if (modelId === null || modelName === null) throw new Error('Model identity fields are missing')
+      expect(modelName.y).toBeGreaterThanOrEqual(modelId.y + modelId.height)
+      expect(modelName.width).toBeGreaterThan(160)
+
+      await navigation.getByRole('button', { name: 'Appearance', exact: true }).click()
+      expect(await navigation.getByRole('button', { name: 'Appearance', exact: true }).getAttribute('aria-current')).toBe('true')
+      await compact.keyboard.press('Escape')
+      expect(await dialog.isVisible()).toBe(false)
+    } finally {
+      await compact.close()
+    }
+  }, 60_000)
+
   it('opens the add card over the dormant directory vocabulary', async () => {
     onTestFailed(() => saveFailureShot(page, 'web-e2e-models-empty'))
     await openSettings(page, 'en')
