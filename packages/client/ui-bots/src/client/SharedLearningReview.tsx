@@ -48,7 +48,9 @@ export function SharedLearningReview({ botId, list, decide, onPublished, showPub
     return () => { generation.current += 1 }
   }, [botId, list, open, retry])
 
-  async function resolve(suggestionId: BotShareLearningSuggestion['id'], decision: 'approve' | 'reject'): Promise<void> {
+  async function resolve(
+    currentValue: BotShareLearningValue, suggestionId: BotShareLearningSuggestion['id'], decision: 'approve' | 'reject',
+  ): Promise<void> {
     const request = generation.current
     setError(false)
     setReviewing(suggestionId)
@@ -61,10 +63,10 @@ export function SharedLearningReview({ botId, list, decide, onPublished, showPub
         return
       }
       const { entry } = result.value
-      setValue(previous => previous === null ? null : {
-        ...previous,
-        pending: previous.pending.filter(item => item.id !== suggestionId),
-        recentlyLearned: entry === undefined ? previous.recentlyLearned : [entry, ...previous.recentlyLearned],
+      setValue({
+        ...currentValue,
+        pending: currentValue.pending.filter(item => item.id !== suggestionId),
+        recentlyLearned: entry === undefined ? currentValue.recentlyLearned : [entry, ...currentValue.recentlyLearned],
       })
       if (entry !== undefined) onPublished?.(entry)
     } catch {
@@ -97,10 +99,10 @@ export function SharedLearningReview({ botId, list, decide, onPublished, showPub
                 <div className={css.sharedLearningItem} key={item.id}>
                   <p className={css.sharedMemoryEntry}>{item.text}</p>
                   <div className={css.sharedLearningActions}>
-                    <Button size="sm" variant="ghost" disabled={reviewing !== null} onClick={() => { void resolve(item.id, 'reject') }}>
+                    <Button size="sm" variant="ghost" disabled={reviewing !== null} onClick={() => { void resolve(current, item.id, 'reject') }}>
                       {t('rejectSharedLearning')}
                     </Button>
-                    <Button size="sm" variant="outline" disabled={reviewing !== null} onClick={() => { void resolve(item.id, 'approve') }}>
+                    <Button size="sm" variant="outline" disabled={reviewing !== null} onClick={() => { void resolve(current, item.id, 'approve') }}>
                       {t('approveSharedLearning')}
                     </Button>
                   </div>

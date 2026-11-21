@@ -3,15 +3,18 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { brandString } from '@yharness/brand'
 import { BotId, BotPrincipalId, BotShareLearningId, BotShareMemoryId } from '@yharness/bots/client'
-import type { BotGroupId, BotGroupMessageId, BotGroupMessageView, BotGroupView, BotSharedGroupDeliveryFenceView } from '@yharness/bots/client'
+import type {
+  BotGroupId, BotGroupMessageId, BotGroupMessageView, BotGroupView, BotShareLearningValue, BotSharedGroupDeliveryFenceView,
+} from '@yharness/bots/client'
 import type { ClientConnectionRpc } from '@yharness/client-connection/client'
 import { makeTranslate } from '@yharness/client-test-runtime'
 import { BotShareDialog, SharedBotsDialog } from '../src/client/BotSharing.tsx'
+import { SharedLearningReview } from '../src/client/SharedLearningReview.tsx'
 import { en } from '../src/client/locales.ts'
 import { createSharedGroupPendingQueue } from '../src/client/pending-group-queue.ts'
 import type { BotShareActions, SharedBotAppAccessValue } from '../src/client/controller.ts'
 import { createSharedBotsClient } from '../src/client/shared-client.ts'
-import type { SharedBotAuthChange, SharedBotAuthListener, SharedBotsClient } from '../src/client/shared-client.ts'
+import type { SharedBotAuthChange, SharedBotAuthListener, SharedBotClientResult, SharedBotsClient } from '../src/client/shared-client.ts'
 import type { BotSummary } from '../src/client/types.ts'
 
 afterEach(cleanup)
@@ -93,6 +96,89 @@ function sharedClient(overrides: Partial<SharedBotsClient> = {}): SharedBotsClie
 }
 
 describe('shared Bot collaboration surfaces', () => {
+  it('ignores learning data returned after changing the review to another Bot', async () => {
+    const oldReview = Promise.withResolvers<SharedBotClientResult<BotShareLearningValue>>()
+    const oldBot = BotId(bot.id)
+    const newBot = BotId(analystBot.id)
+    const list = vi.fn().mockReturnValueOnce(oldReview.promise).mockResolvedValue({
+      ok: true, value: { botId: newBot, pending: [], recentlyLearned: [] },
+    })
+    const decide = vi.fn()
+    const view = render(<SharedLearningReview botId={oldBot} list={list} decide={decide} t={t} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Review suggestions' }))
+    await waitFor(() => { expect(list).toHaveBeenCalledWith({ botId: oldBot }) })
+    view.rerender(<SharedLearningReview botId={newBot} list={list} decide={decide} t={t} />)
+    await screen.findByText('No suggestions to review.')
+    await act(async () => {
+      oldReview.resolve({ ok: true, value: {
+        botId: oldBot, recentlyLearned: [], pending: [{
+          id: BotShareLearningId('learning-old'), principalId: BotPrincipalId('principal-member'), text: 'Another Bot’s note', createdAt: 2,
+        }],
+      } })
+    })
+    expect(screen.queryByText('Another Bot’s note')).toBeNull()
+  })
+
+  it('clears pending notes when review access expires and keeps them on a temporary failure', async () => {
+    const botId = BotId(bot.id)
+    const suggestion = {
+      id: BotShareLearningId('learning-access'), principalId: BotPrincipalId('principal-member'), text: 'Pending check', createdAt: 1,
+    }
+    const list = vi.fn().mockResolvedValueOnce({ ok: false, error: { code: 'gateway/transport' } }).mockResolvedValue({
+      ok: true, value: { botId, pending: [suggestion], recentlyLearned: [] },
+    })
+    const decide = vi.fn()
+      .mockRejectedValueOnce(new Error('Server unavailable'))
+      .mockResolvedValueOnce({ ok: false, error: { code: 'gateway/transport' } })
+      .mockResolvedValueOnce({ ok: false, error: { code: 'gateway/forbidden' } })
+    render(<SharedLearningReview botId={botId} list={list} decide={decide} t={t} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Review suggestions' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Try again' }))
+    await screen.findByText('Pending check')
+    for (let attempt = 0; attempt < 2; attempt++) {
+      fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
+      await screen.findByRole('alert')
+      expect(screen.getByText('Pending check')).toBeTruthy()
+    }
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
+    await screen.findByRole('button', { name: 'Try again' })
+    expect(screen.queryByText('Pending check')).toBeNull()
+  })
+
+  it.each(['resolved', 'rejected'] as const)('discards a %s decision from a closed learning review', async (outcome) => {
+    const botId = BotId(bot.id)
+    const suggestion = {
+      id: BotShareLearningId('learning-close'), principalId: BotPrincipalId('principal-member'), text: 'Release note', createdAt: 1,
+    }
+    const listing = Promise.withResolvers<SharedBotClientResult<BotShareLearningValue>>()
+    const resolution = Promise.withResolvers<Awaited<ReturnType<NonNullable<SharedBotsClient['decideLearning']>>>>()
+    const list = vi.fn().mockReturnValueOnce(listing.promise).mockResolvedValue({
+      ok: true, value: { botId, pending: [suggestion], recentlyLearned: [] },
+    })
+    const decide = vi.fn().mockReturnValue(resolution.promise)
+    const onPublished = vi.fn()
+    render(<SharedLearningReview botId={botId} list={list} decide={decide} onPublished={onPublished} t={t} />)
+    const review = screen.getByRole('button', { name: 'Review suggestions' })
+    fireEvent.click(review)
+    fireEvent.click(review)
+    await act(async () => { listing.reject(new Error('Closed review request')) })
+    fireEvent.click(review)
+    await screen.findByText('Release note')
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
+    fireEvent.click(review)
+    await act(async () => {
+      if (outcome === 'rejected') resolution.reject(new Error('Closed decision request'))
+      else {
+        resolution.resolve({ ok: true, value: {
+          botId, suggestionId: suggestion.id, decision: 'approved', resolved: true,
+          entry: { ...suggestion, id: BotShareMemoryId('memory-close') },
+        } })
+      }
+    })
+    expect(onPublished).not.toHaveBeenCalled()
+    expect(screen.queryByText('Release note')).toBeNull()
+  })
+
   it('lets a collaborator suggest shared context and reserves review for managers', async () => {
     const suggestion = {
       id: BotShareLearningId('learning-one'), principalId: BotPrincipalId('principal-member'),
