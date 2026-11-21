@@ -2,8 +2,10 @@
 import type { Context as ClientContext } from '@yharness/cordis'
 import type { SubagentAddress } from '@yharness/subagent/client'
 import type { SessionId } from '@yharness/session/types'
+import type { ISessions, SessionEventLikeEntry } from '@yharness/api-session-controller/client'
 import type { ComposerChainProps } from '@yharness/client-ui-conversation/client'
 import { SubagentActivity, SubagentCatalogAction, SubagentHeaderLineage, type SubagentCatalogInjected } from './SubagentHeaderLineage.tsx'
+import { summarizeSubagentActivity, type SubagentActivityItem } from './activity.ts'
 import {
   SubagentReadOnlyComposer, type SubagentReadOnlyMatch,
 } from './SubagentReadOnlyComposer.tsx'
@@ -16,6 +18,13 @@ import type {} from '@yharness/client-ui-sidebar-right/client'
 import type {} from '@yharness/client-ui-workspace/client'
 import { en, NS, type SubagentKey } from './locales.ts'
 
+declare module '@yharness/api-session-controller/client' {
+  interface SessionReferenceSourceMap {
+    /** Short-lived read-only child-tail inspection owned by the roster menu. */
+    subagentActivityPreview: unknown
+  }
+}
+
 declare module '@yharness/client-ui-slots' {
   interface LocaleNamespaceMap {
     /** Subagent catalog and read-only composer copy. */
@@ -26,12 +35,35 @@ declare module '@yharness/client-ui-slots' {
 export type {
   SubagentCatalogActionProps, SubagentCatalogInjected, SubagentHeaderLineageProps,
 } from './SubagentHeaderLineage.tsx'
+export type { SubagentActivityItem } from './activity.ts'
 export type {
   SubagentReadOnlyComposerProps, SubagentReadOnlyMatch,
 } from './SubagentReadOnlyComposer.tsx'
 
 /** Required services for subagent presentation and navigation. */
 export const inject = ['sessions', 'uiWorkspace', 'slots', 'locale', 'sidebarRight']
+
+/**
+ * Read the latest child tool activity through the existing Session Controller
+ * history path without creating, resuming, or sending to the child Agent.
+ * @param sessions - Client Session service owning the read-only reference.
+ * @param address - Durable direct-parent address for the child.
+ * @returns A bounded, payload-free activity preview.
+ */
+export function readSubagentActivity(
+  sessions: ISessions,
+  address: SubagentAddress,
+): Promise<readonly SubagentActivityItem[]> {
+  return sessions.using(
+    address,
+    { source: 'subagentActivityPreview' },
+    async reference => {
+      const binding = await reference.ready
+      const entries: readonly SessionEventLikeEntry[] = binding.eventSource.getSnapshot().entries
+      return summarizeSubagentActivity(entries)
+    },
+  )
+}
 
 /** Claim the composer for one-shot history or an unavailable continuation owner. */
 function selectReadOnlySubagent(owner: ComposerChainProps): SubagentReadOnlyMatch | null {
@@ -69,6 +101,9 @@ export function apply(ctx: ClientContext): void {
     },
     refreshProjection(parentSessionId: SessionId) {
       void ctx.sessions.refreshProjections(parentSessionId)
+    },
+    readChildActivity(address: SubagentAddress) {
+      return readSubagentActivity(ctx.sessions, address)
     },
   })
   ctx.slots.inject(

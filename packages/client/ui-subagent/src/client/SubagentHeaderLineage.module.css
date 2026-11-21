@@ -348,6 +348,90 @@
   color: var(--yh-alias-label-primary);
 }
 
+.activityButton {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  margin: 4px 0;
+  padding: 6px;
+  border: 0;
+  border-radius: var(--yh-radius-sm);
+  background: transparent;
+  color: var(--yh-alias-label-tertiary);
+  cursor: pointer;
+}
+
+.activityButton:hover,
+.activityButton:focus-visible,
+.activityButtonOpen {
+  background: var(--yh-alias-interactive-bg-hover);
+  color: var(--yh-alias-label-primary);
+}
+
+.activityPreview {
+  margin: -2px 7px 5px 31px;
+  padding: 7px 9px;
+  border: 0.5px solid var(--yh-alias-border-l2);
+  border-radius: var(--yh-radius-md);
+  background: var(--yh-alias-interactive-bg-hover);
+}
+
+.activityHeading,
+.activityNotice,
+.activityItem {
+  font-size: 10px;
+  line-height: 15px;
+}
+
+.activityHeading {
+  color: var(--yh-alias-label-secondary);
+  font-weight: 500;
+}
+
+.activityNotice {
+  color: var(--yh-alias-label-tertiary);
+}
+
+.activityList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 3px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.activityItem {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--yh-alias-label-primary);
+}
+
+.activityStatus {
+  width: 5px;
+  height: 5px;
+  flex: none;
+  border-radius: 50%;
+  corner-shape: round;
+  background: var(--yh-alias-state-success-primary);
+}
+
+.activityStatusFailed {
+  background: var(--yh-alias-state-error-primary);
+}
+
+.activityItemText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .children {
   position: relative;
   margin-left: 16px;
