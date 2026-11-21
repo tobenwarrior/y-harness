@@ -98,3 +98,14 @@ if (workspacePath === undefined) return null
 The webhook runtime stores no delivery or execution state. Repeated delivery runs the rule and may create another Session. A crash loses rule calls that have not admitted their prompt. After prompt admission, the ordinary Session log, persistence, Workspace, and Agent lifecycle own the work.
 
 The webhook secret authenticates inbound GitHub data only. It grants neither rule code nor the created Agent outbound GitHub access; configure that authority separately when a rule or Agent needs it.
+
+## Run a GitHub routine in an existing Bot
+
+1. Add the [GitHub Bot routines overlay](../../../apps/cli/config/examples/github-bot-routines/cordis.yml) to the Web profile on the Host that owns the Bot. The overlay binds a separate loopback listener on port 3082. Set `DSH_GITHUB_BOT_WEBHOOK_PORT` if that port is in use.
+2. Store a webhook secret under `DSH_GITHUB_BOT_WEBHOOK_SECRET` in the Host's credentials. Route the HTTPS webhook endpoint to the listener's `/github` path.
+3. Add a repository webhook on GitHub with content type `application/json`, the same secret, and the Pull requests or Issues subscription.
+4. Ask the Bot to make a routine for newly opened pull requests or issues. Give it the repository in `owner/repo` form and source `bot-github`, then approve the routine.
+
+Open **Bot options → Manage routines** to see the rule, pause it, and inspect **Results**. Each eligible event runs in that Bot's ongoing chat. Later delivery of an issue or pull request that opened before the routine was activated or resumed is skipped. A GitHub event recorded in the same second as activation can also precede the saved cutoff because GitHub records opening times to the second.
+
+Configure outbound GitHub access separately if the Bot needs to read or update the linked item.

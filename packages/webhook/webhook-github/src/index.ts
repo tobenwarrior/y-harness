@@ -1,6 +1,7 @@
 /** Signed GitHub HTTP adapter for the provider-neutral webhook runtime. */
 
 import type { Context } from '@yharness/cordis'
+import type {} from '@yharness/bots'
 import { credentialRef } from '@yharness/credentials'
 import type {} from '@yharness/host-webserver'
 import z from '@yharness/schemastery'
@@ -23,6 +24,8 @@ export interface Config {
   readonly secretEnv: string
   /** Positive raw body ceiling in bytes. */
   readonly maxBodyBytes: number
+  /** Route verified deliveries to Bot routines bound to this source. */
+  readonly botRoutines?: boolean
 }
 
 export const Config: z<Config> = z.object({
@@ -30,6 +33,7 @@ export const Config: z<Config> = z.object({
   path: z.string().required(),
   secretEnv: z.string().role('credential-ref').required(),
   maxBodyBytes: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).required(),
+  botRoutines: z.boolean().default(false),
 })
 
 /** Validate route and source facts that Schemastery cannot express. */
@@ -46,6 +50,11 @@ function assertConfig(config: Config): void {
 /** Register one signed GitHub endpoint on the injected WebServer. */
 export function apply(ctx: Context, config: Config): void {
   assertConfig(config)
+  if (config.botRoutines === true) {
+    ctx.inject(['bots'], (child) => {
+      child.effect(() => child.bots.registerGitHubRoutineSource(config.source), 'webhook-github: Bot routine source')
+    })
+  }
   const route = {
     kind: 'exact' as const,
     path: config.path,
@@ -53,6 +62,7 @@ export function apply(ctx: Context, config: Config): void {
       source: config.source,
       secretEnv: credentialRef(config.secretEnv),
       maxBodyBytes: config.maxBodyBytes,
+      ...(config.botRoutines === true ? { botRoutines: true } : {}),
     }),
   }
   ctx.effect(

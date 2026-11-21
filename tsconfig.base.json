@@ -164,6 +164,7 @@
       "@yharness/llm-pi-ai/coding-session-source": ["./packages/llm/llm-pi-ai/src/coding-session-source.ts"],
       "@yharness/coding-session/claude-source": ["./packages/session/coding-session/src/claude-source.ts"],
       "@yharness/llm/brand": ["./packages/llm/llm/src/brand.ts"],
+      "@yharness/webhook/brand": ["./packages/webhook/webhook/src/brand.ts"],
       "@yharness/llm/assistant-stream": ["./packages/llm/llm/src/assistant-stream.ts"],
       "@yharness/deepseek-llm-api-extensions/types": ["./packages/llm/deepseek-llm-api-extensions/src/types.ts"],
       "@yharness/llm-retry/types": ["./packages/llm/llm-retry/src/types.ts"],

@@ -1,47 +1,48 @@
 import { createHmac } from 'node:crypto'
 import { createServer, request as httpRequest, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import type { Context } from '@yharness/cordis'
+import { Context } from '@yharness/cordis'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { credentialRef } from '@yharness/credentials'
 import { createGitHubWebhookHandler } from '../src/handler.ts'
 
 const servers: Server[] = []
+const contexts: Context[] = []
 
 afterEach(async () => {
   await Promise.all(servers.splice(0).map(server => new Promise<void>(resolve => server.close(() => { resolve() }))))
+  await Promise.all(contexts.splice(0).map(ctx => ctx.fiber.dispose()))
+  vi.restoreAllMocks()
 })
 
 /** One mutable fake for credential rotation and dispatch observation. */
-function fakeContext(secret = 'fixture-secret'): {
+function fakeContext(secret = 'fixture-secret', admit?: (delivery: unknown) => Promise<void>): {
   ctx: Context
   dispatch: ReturnType<typeof vi.fn>
   setSecret(value: string | undefined): void
   warnings: ReturnType<typeof vi.fn>
 } {
-  let current = secret as string | undefined
+  let current: string | undefined = secret
   const dispatch = vi.fn()
   const warnings = vi.fn()
-  return {
-    ctx: {
-      credentials: {
-        resolve: async () => current === undefined ? undefined : { value: current, source: 'environment' },
-      },
-      webhookRuntime: { dispatch },
-      logger: { warn: warnings },
-    } as unknown as Context,
-    dispatch,
-    setSecret(value) { current = value },
-    warnings,
-  }
+  const ctx = new Context()
+  contexts.push(ctx)
+  ctx.provide('credentials', {
+    resolve: async () => current === undefined ? undefined : { value: current, source: 'environment' },
+  } as never)
+  ctx.provide('webhookRuntime', { dispatch } as never)
+  if (admit !== undefined) ctx.provide('bots', { admitGitHubRoutineDelivery: admit } as never)
+  vi.spyOn(ctx.logger, 'warn').mockImplementation(warnings)
+  return { ctx, dispatch, setSecret(value) { current = value }, warnings }
 }
 
 /** Start a real Node server around the package-owned route handler. */
-async function serve(ctx: Context, maxBodyBytes = 1024): Promise<string> {
+async function serve(ctx: Context, maxBodyBytes = 1024, botRoutines = false): Promise<string> {
   const handler = createGitHubWebhookHandler(ctx, {
     source: 'primary',
     secretEnv: credentialRef('DSH_GITHUB_WEBHOOK_SECRET'),
     maxBodyBytes,
+    botRoutines,
   })
   const server = createServer((request, response) => { void handler(request, response) })
   servers.push(server)
@@ -129,6 +130,34 @@ describe('GitHub webhook HTTP handler', () => {
       event: { name: 'pull_request', payload: { action: 'ready_for_review', number: 1 } },
     })
     expect(typeof (dispatched as { receivedAt?: unknown }).receivedAt).toBe('number')
+  })
+
+  it('acknowledges a Bot delivery after admission and keeps generic rules out of that route', async () => {
+    const admit = vi.fn<(delivery: unknown) => Promise<void>>()
+      .mockRejectedValueOnce(new Error('fixture reservation failed'))
+      .mockRejectedValueOnce({ message: 'private diagnostic fixture' })
+      .mockResolvedValueOnce(undefined)
+    const fake = fakeContext('fixture-secret', admit)
+    const base = await serve(fake.ctx, 1024, true)
+    const body = JSON.stringify({ action: 'opened' })
+    expect((await post(base, body, { signature: 'sha256=wrong' })).status).toBe(401)
+    expect(admit).not.toHaveBeenCalled()
+    expect((await post(base, body)).status).toBe(503)
+    expect((await post(base, body)).status).toBe(503)
+    expect((await post(base, body)).status).toBe(202)
+    expect(admit).toHaveBeenCalledTimes(3)
+    expect(fake.dispatch).not.toHaveBeenCalled()
+    expect(fake.warnings.mock.calls).toEqual([
+      ['webhook-github: Bot routine admission is unavailable'],
+      ['webhook-github: Bot routine admission is unavailable'],
+    ])
+  })
+
+  it('returns 503 for Bot mode when the Bot service is unavailable', async () => {
+    const fake = fakeContext()
+    const base = await serve(fake.ctx, 1024, true)
+    expect((await post(base, '{}')).status).toBe(503)
+    expect(fake.dispatch).not.toHaveBeenCalled()
   })
 
   it('resolves the secret for each request so rotation takes effect immediately', async () => {

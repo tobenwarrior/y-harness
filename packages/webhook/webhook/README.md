@@ -27,6 +27,8 @@ kind: "package-reference"
 
 `VerifiedWebhookDelivery` carries provider kind, configured source id, provider delivery id, normalized lossless JSON, and receipt time. The runtime snapshots and freezes the complete value before sharing it. `deliveryId` records the provider's identifier only; repeated delivery runs the rules again.
 
+Client types can import source and delivery identifiers from `@yharness/webhook/brand`.
+
 Registration is an effect. Its awaitable disposer first hides the rule, then aborts and drains active callbacks. Callbacks must observe the supplied signal; same-process code that ignores cancellation cannot be forcibly stopped safely.
 
 <a id="session-request"></a>

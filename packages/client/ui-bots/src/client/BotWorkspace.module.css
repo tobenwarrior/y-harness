@@ -1016,6 +1016,22 @@
   opacity: 0.7;
 }
 
+.routineOwner {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 14px;
+  color: var(--yh-alias-label-secondary);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.routineOwner > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .routineFilters,
 .routineDetailTabs {
   display: flex;
@@ -1114,23 +1130,24 @@
   gap: 1px;
 }
 
-.routineRowCopy strong,
-.routineRowCopy span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .routineRowCopy strong {
+  display: -webkit-box;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   font-size: 12px;
   font-weight: 500;
   line-height: 17px;
 }
 
 .routineRowCopy span {
+  overflow: hidden;
   color: var(--yh-alias-label-tertiary);
   font-size: 11px;
   line-height: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .routineRowActions {
@@ -1232,6 +1249,10 @@
 
 .routineHistoryRow span {
   overflow-wrap: anywhere;
+}
+
+.routineHistoryStatus {
+  align-self: flex-start;
 }
 
 .routineHistoryEmpty {

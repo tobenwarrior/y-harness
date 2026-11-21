@@ -718,7 +718,7 @@
     },
     {
       "name": "schedule_event_create",
-      "description": "Create a Bot routine triggered by a message from a peer Bot or the user. This action requires approval.",
+      "description": "Create a Bot routine triggered by a message or verified GitHub event. This action requires approval.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -730,17 +730,28 @@
           },
           "event": {
             "type": "object",
+            "description": "Choose message with source bot or user, or github with the configured source, repository, and event name.",
             "additionalProperties": false,
             "properties": {
               "type": {
                 "type": "string",
-                "const": "message"
+                "enum": [
+                  "message",
+                  "github"
+                ]
               },
               "source": {
+                "type": "string"
+              },
+              "repository": {
+                "type": "string",
+                "description": "GitHub repository in owner/repo form."
+              },
+              "event": {
                 "type": "string",
                 "enum": [
-                  "bot",
-                  "user"
+                  "pull_request.opened",
+                  "issues.opened"
                 ]
               }
             },
@@ -845,17 +856,28 @@
           },
           "event": {
             "type": "object",
+            "description": "Choose message with source bot or user, or github with the configured source, repository, and event name.",
             "additionalProperties": false,
             "properties": {
               "type": {
                 "type": "string",
-                "const": "message"
+                "enum": [
+                  "message",
+                  "github"
+                ]
               },
               "source": {
+                "type": "string"
+              },
+              "repository": {
+                "type": "string",
+                "description": "GitHub repository in owner/repo form."
+              },
+              "event": {
                 "type": "string",
                 "enum": [
-                  "bot",
-                  "user"
+                  "pull_request.opened",
+                  "issues.opened"
                 ]
               }
             },

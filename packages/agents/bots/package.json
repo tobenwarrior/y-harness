@@ -51,6 +51,7 @@
   "dependencies": {
     "@yharness/brand": "workspace:*",
     "@yharness/schemastery": "workspace:~",
+    "@yharness/webhook": "workspace:*",
     "zod": "^4.4.3"
   },
   "peerDependencies": {

@@ -1,6 +1,7 @@
-/** GitHub HTTP authentication, parsing, and fire-and-forget dispatch. */
+/** Authenticate GitHub requests and route their verified deliveries. */
 
 import type { Context } from '@yharness/cordis'
+import type {} from '@yharness/bots'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { Webhooks } from '@octokit/webhooks'
 import type { CredentialRef } from '@yharness/credentials'
@@ -19,6 +20,7 @@ export interface GitHubWebhookHandlerConfig {
   readonly source: string
   readonly secretEnv: CredentialRef
   readonly maxBodyBytes: number
+  readonly botRoutines?: boolean
 }
 
 /** Require one unambiguous non-empty request header. */
@@ -72,8 +74,8 @@ function parsePayload(body: string): GitHubJsonObject {
 /**
  * Create one exact-route GitHub handler.
  * @param ctx - adapter context carrying credentials and webhook runtime.
- * @param config - validated source, credential reference, and body ceiling.
- * @returns an HTTP handler that answers after in-memory dispatch, never rule settlement.
+ * @param config - validated source, credential reference, body ceiling, and routing mode.
+ * @returns an HTTP handler that answers after dispatch or durable Bot admission.
  */
 export function createGitHubWebhookHandler(
   ctx: Context,
@@ -112,10 +114,17 @@ export function createGitHubWebhookHandler(
         receivedAt: Date.now(),
       }
       try {
-        ctx.webhookRuntime.dispatch(delivery)
+        if (config.botRoutines === true) {
+          const bots = ctx.get('bots')
+          if (bots === undefined) throw new Error('Bot routines are unavailable')
+          await bots.admitGitHubRoutineDelivery(delivery)
+        } else {
+          ctx.webhookRuntime.dispatch(delivery)
+        }
       } catch {
-        ctx.logger.warn('webhook-github: dispatch unavailable')
-        throw new WebhookHttpError(503, 'webhook runtime is unavailable')
+        const message = config.botRoutines === true ? 'Bot routine admission is unavailable' : 'webhook runtime is unavailable'
+        ctx.logger.warn('webhook-github: ' + message)
+        throw new WebhookHttpError(503, message)
       }
       respond(response, 202)
     } catch (error: unknown) {

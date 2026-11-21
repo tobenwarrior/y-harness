@@ -6,12 +6,13 @@ import type { AttachmentId } from '@yharness/attachment'
 import { MessageId } from '@yharness/llm/brand'
 import { defineDomain, domainTable } from '@yharness/storage-domain'
 import { z } from 'zod'
-import { BOT_ACCENTS, BOT_EVENT_SOURCES, BOT_IDENTITIES, BotId, BotShareMemoryId } from './types.ts'
+import { BOT_ACCENTS, BOT_IDENTITIES, BotId, BotShareMemoryId } from './types.ts'
 import type { BotRecord } from './types.ts'
 import { BOT_MEMORY_TEXT_LIMIT } from './memory.ts'
 import { BOT_SHARE_ROLES, BotPrincipalId } from './sharing.ts'
 import { BOT_SKILL_NAME_LIMIT, BOT_SKILL_NAME_MAX_LENGTH } from './skills.ts'
 import { imageAttachmentRefWithId } from './image-attachment-ref.ts'
+import { botEventTriggerSchema, githubRoutineReceiptSchema } from './github-routines.ts'
 
 /** Durable marker for a memory edit that was interrupted before its log write completed. */
 export type BotStoredRecord = BotRecord & {
@@ -48,30 +49,36 @@ const boundedText = (max: number) => z.string().min(1).max(max).refine(value => 
 
 const instant = z.iso.datetime({ precision: 3 })
 
-/** Durable message-trigger routine value validated inside each Bot row. */
+const routineDeliveryFields = z.object({
+  messageId: z.string().min(1).transform(MessageId),
+  chainId: z.string().min(1).optional(),
+  depth: z.number().int().nonnegative().optional(),
+  status: z.enum(['pending', 'delivered']),
+  dispatchStartedAt: instant.optional(),
+  createdAt: instant,
+  deliveredAt: instant.optional(),
+})
+
+const routineDeliverySchema = z.union([
+  routineDeliveryFields.extend({
+    triggerEventSeq: z.number().int().nonnegative(),
+    triggerMessageId: z.string().min(1).transform(MessageId).optional(),
+  }).strict(),
+  routineDeliveryFields.extend({ github: githubRoutineReceiptSchema }).strict(),
+])
+
+/** Durable event-trigger routine value validated inside each Bot row. */
 export const botEventRoutineSchema = z.object({
   id: z.string().regex(/^bot-event-routine-[A-Za-z0-9][A-Za-z0-9-]*$/),
   title: boundedText(120),
   prompt: boundedText(16_000),
-  trigger: z.object({
-    type: z.literal('message'),
-    source: z.enum(BOT_EVENT_SOURCES),
-  }).strict(),
+  trigger: botEventTriggerSchema,
   status: z.enum(['active', 'paused']),
   createdAt: z.number().int().nonnegative(),
   updatedAt: z.number().int().nonnegative(),
-  deliveries: z.array(z.object({
-    triggerEventSeq: z.number().int().nonnegative(),
-    triggerMessageId: z.string().min(1).transform(MessageId).optional(),
-    messageId: z.string().min(1).transform(MessageId),
-    chainId: z.string().min(1).optional(),
-    depth: z.number().int().nonnegative().optional(),
-    status: z.enum(['pending', 'delivered']),
-    dispatchStartedAt: instant.optional(),
-    createdAt: instant,
-    deliveredAt: instant.optional(),
-  }).strict()).max(200),
+  deliveries: z.array(routineDeliverySchema).max(200),
   firstEligibleEventSeq: z.number().int().nonnegative().optional(),
+  firstEligibleGitHubAt: z.number().int().nonnegative().optional(),
   admissionWatermark: z.number().int().nonnegative().optional(),
   admissionTombstones: z.array(z.object({
     triggerEventSeq: z.number().int().nonnegative(),

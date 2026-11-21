@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
-  Button, IconClockOutlineRegular, IconPauseOutlineRegular, IconPlayOutlineRegular, IconTrashOutlineRegular,
+  Button, IconBranchOutlineRegular, IconClockOutlineRegular, IconPauseOutlineRegular,
+  IconPlayOutlineRegular, IconQueueOutlineRegular, IconTrashOutlineRegular,
   Modal, StateDot, Tag,
 } from '@yharness/client-ui-primitives'
 import type { PropsLocale } from '@yharness/client-ui-slots'
@@ -138,9 +139,13 @@ function scheduleRule(routine: Extract<BotRoutineView, { kind: 'schedule' }>, t:
 }
 
 function routineRule(routine: BotRoutineView, t: Translate): string {
-  return routine.kind === 'schedule'
-    ? scheduleRule(routine, t)
-    : t('routineEventRule', { source: sourceLabel(routine.trigger.source, t) })
+  if (routine.kind === 'schedule') return scheduleRule(routine, t)
+  const trigger = routine.trigger
+  if (trigger.type === 'message') return t('routineEventRule', { source: sourceLabel(trigger.source, t) })
+  const values = { repository: trigger.repository }
+  return trigger.event === 'pull_request.opened'
+    ? t('routineGitHubPullRequest', values)
+    : t('routineGitHubIssue', values)
 }
 
 function formatDate(value: string | number): string {
@@ -210,6 +215,9 @@ function historyRows(history: BotRoutineHistory, t: Translate, options: HistoryR
                 <li key={`delivery:${String(delivery.messageId)}`} className={css.routineHistoryRow}>
                   <strong>{historyDate(delivery.deliveredAt ?? delivery.createdAt)}</strong>
                   <span>{delivery.status === 'delivered' ? t('routineDeliveryDelivered') : t('routineDeliveryPending')}</span>
+                  {delivery.github !== undefined && <span>{t('routineGitHubReceipt', {
+                    repository: delivery.github.repository, number: String(delivery.github.subject),
+                  })}</span>}
                 </li>
               ))}
             </ul>
@@ -225,7 +233,9 @@ function historyRows(history: BotRoutineHistory, t: Translate, options: HistoryR
                 <li key={`result:${String(result.messageId)}`} className={css.routineHistoryRow}>
                   <strong>{historyDate(result.completedAt)}</strong>
                   <span>{result.output ?? result.error ?? t('routineNoOutput')}</span>
-                  <Tag tone={result.status === 'completed' ? 'success' : 'warning'}>{resultStatusLabel(result.status, t)}</Tag>
+                  <Tag className={css.routineHistoryStatus} tone={result.status === 'completed' ? 'success' : 'warning'}>
+                    {resultStatusLabel(result.status, t)}
+                  </Tag>
                 </li>
               ))}
             </ul>
@@ -515,15 +525,13 @@ export function BotRoutineManager({ bot, actions, open, onClose, t, revision = 0
         open={open}
         onClose={closeManager}
         title={t('routineManagerTitle')}
-        description={t('routineManagerDescription')}
         closeLabel={t('close')}
         className={css.memoryModal as string}
         contentClassName={css.memoryModalContent as string}
-        footer={<Button variant="ghost" onClick={closeManager}>{t('close')}</Button>}
       >
-        <div className={css.memoryManagerHeading}>
+        <div className={css.routineOwner}>
           <BotAvatar name={bot.name} identity={bot.identity} accent={bot.accent} avatar={bot.avatar} botId={bot.id} loadAvatar={loadAvatar} size="small" />
-          <span><strong>{bot.name}</strong><span>{t('routinePrivateHint')}</span></span>
+          <span>{bot.name}</span>
         </div>
         <div className={css.routineFilters} role="tablist" aria-label={t('routineFiltersLabel')}>
           {(['all', 'active', 'paused'] as const).map(value => (
@@ -553,11 +561,15 @@ export function BotRoutineManager({ bot, actions, open, onClose, t, revision = 0
                 const id = String(routine.id)
                 const status = routineStatus(routine)
                 const busy = working === id
+                const timed = routine.kind === 'schedule'
+                const github = !timed && routine.trigger.type === 'github'
+                const Icon = timed ? IconClockOutlineRegular : github ? IconBranchOutlineRegular : IconQueueOutlineRegular
+                const typeLabel = t(timed ? 'routineTimed' : github ? 'routineGitHub' : 'routineEvent')
                 return (
                   <li key={id} className={id === selectedId ? css.routineRowSelected : css.routineRow}>
                     <button type="button" className={css.routineRowSelect} aria-pressed={id === selectedId} onClick={() => { selectRoutine(id) }}>
-                      <span className={css.routineRowIcon} aria-hidden="true"><IconClockOutlineRegular size={14} /></span>
-                      <span className={css.routineRowCopy}><strong>{routine.title}</strong><span>{routine.kind === 'schedule' ? t('routineTimed') : t('routineEvent')}</span></span>
+                      <span className={css.routineRowIcon} aria-hidden="true"><Icon size={14} /></span>
+                      <span className={css.routineRowCopy}><strong>{routine.title}</strong><span>{typeLabel}</span></span>
                       <Tag tone={statusTone(status)}>{statusLabel(status, t)}</Tag>
                     </button>
                     <div className={css.routineRowActions}>

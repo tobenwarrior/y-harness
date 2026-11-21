@@ -1,5 +1,6 @@
 /** Native Codex actions for live Bot Sessions. */
 
+import { BOT_GITHUB_ROUTINE_EVENTS } from './types.ts'
 import { createHash } from 'node:crypto'
 import type { GenerateOptions } from '@yharness/llm'
 import { canonicalizeCronExpression, parseAtInput } from '@yharness/schedule'
@@ -836,6 +837,19 @@ interface RoutineCreateReceipt {
   readonly result: BotNativeToolResult
 }
 
+const nativeEventSelector = {
+  type: 'object',
+  description: 'Select type message with source bot or user, or type github with the configured source, repository, and event name.',
+  properties: {
+    type: { type: 'string', enum: ['message', 'github'] },
+    source: { type: 'string' },
+    repository: { type: 'string', description: 'GitHub repository in owner/repo form.' },
+    event: { type: 'string', enum: [...BOT_GITHUB_ROUTINE_EVENTS] },
+  },
+  required: ['type', 'source'],
+  additionalProperties: false,
+}
+
 /** Build one native routine action over the Host Schedule adapter. */
 function routineTool(
   action: 'create' | 'list' | 'update' | 'delete' | 'pause' | 'resume' | 'history',
@@ -856,7 +870,7 @@ function routineTool(
     description: action === 'list'
       ? 'List the durable routines owned by this Bot Session.'
       : action === 'create'
-        ? 'Create a durable routine owned by this Bot Session. Supply one timing selector or event { type: "message", source: "bot" | "user" }. This action requires approval.'
+        ? 'Create a durable routine owned by this Bot Session. Supply one timing selector or a message or GitHub event. This action requires approval.'
         : action === 'update'
           ? 'Change a durable routine owned by this Bot Session. This action requires approval.'
           : action === 'pause'
@@ -872,22 +886,14 @@ function routineTool(
         ...(action === 'create' ? {
           prompt: { type: 'string', description: 'Instruction delivered when the routine runs.' },
           title: { type: 'string', description: 'Short name for the routine.' },
-          event: {
-            type: 'object', description: 'Message event trigger. Use { type: "message", source: "bot" | "user" }.',
-            properties: { type: { type: 'string', enum: ['message'] }, source: { type: 'string', enum: ['bot', 'user'] } },
-            required: ['type', 'source'], additionalProperties: false,
-          },
+          event: nativeEventSelector,
           after_seconds: { type: 'number' }, at: { oneOf: [{ type: 'string' }, { type: 'object' }] }, every_seconds: { type: 'number' },
           daily: { type: 'object' }, weekly: { type: 'object' }, cron: { type: 'object' },
         } : {}),
         ...(action === 'update' ? {
           id: { type: 'string', description: 'Routine id returned by schedule_list.' },
           prompt: { type: 'string' }, title: { type: 'string' },
-          event: {
-            type: 'object', description: 'Message event trigger. Use { type: "message", source: "bot" | "user" }.',
-            properties: { type: { type: 'string', enum: ['message'] }, source: { type: 'string', enum: ['bot', 'user'] } },
-            required: ['type', 'source'], additionalProperties: false,
-          },
+          event: nativeEventSelector,
           at: { oneOf: [{ type: 'string' }, { type: 'object' }] }, every_seconds: { type: 'number' },
           daily: { type: 'object' }, weekly: { type: 'object' }, cron: { type: 'object' },
         } : {}),
@@ -926,10 +932,9 @@ function routineTool(
           callArguments: Readonly<Record<string, unknown>>,
           result: BotNativeToolResult,
         ): Promise<void> => {
-          const settled = safeResult(result)
           await persist({
             phase: 'settled', name, callId: call.callId, threadId: call.threadId, turnId: call.turnId,
-            sessionId, arguments: safeArguments(callArguments), ...(settled === undefined ? {} : { result: settled }),
+            sessionId, arguments: safeArguments(callArguments), result: boundedResult(result),
           })
         }
         const recover = async (
@@ -973,37 +978,23 @@ function routineTool(
               if (resolution.status === 'committed') {
                 return await recover(resolution.record, candidate.call)
               }
-              if (resolution.status === 'unknown') {
+              if (resolution.status === 'unknown' && candidate.state === 'pending') {
                 const pendingKey = nativeCallKey(sessionId, { name, ...candidate.call })
-                // An in-flight approval is still authoritative in this Host.
-                // A replayed start with no live execution is an abandoned call;
-                // retire its audit record so a restart cannot block forever.
-                const liveApproval = candidate.state === 'pending'
-                  && (createFlights.has(pendingKey) || reserve === undefined || release === undefined)
-                if (liveApproval) {
+                if (createFlights.has(pendingKey) || reserve === undefined || release === undefined) {
                   return failure(
                     'uncertain-outcome',
                     'The earlier routine has not reached the Schedule service yet. Wait for its approval result before retrying.',
                   )
                 }
-                if (candidate.state === 'pending') {
-                  if (release !== undefined) {
-                    try {
-                      await release(candidate.call.arguments, {
-                        ...context,
-                        callId: candidate.call.callId,
-                        threadId: candidate.call.threadId,
-                        turnId: candidate.call.turnId,
-                      })
-                    } catch (error: unknown) {
-                      return signalIsAborted(context.signal) ? failure('cancelled', 'The Bot action was cancelled.') : collaborationFailure(error)
-                    }
-                  }
-                  await persistSettlement(candidate.call, candidate.call.arguments,
-                    failure('uncertain-outcome', 'The earlier routine creation was abandoned before approval completed.'))
-                }
-              }
-              else if (candidate.state === 'pending') {
+                await release(candidate.call.arguments, {
+                  ...context,
+                  callId: candidate.call.callId,
+                  threadId: candidate.call.threadId,
+                  turnId: candidate.call.turnId,
+                })
+                await persistSettlement(candidate.call, candidate.call.arguments,
+                  failure('uncertain-outcome', 'The earlier routine creation was abandoned before approval completed.'))
+              } else if (candidate.state === 'pending') {
                 // Schedule has durably proved that no task committed. Close the
                 // native lifecycle before permitting a new operation.
                 await persistSettlement(candidate.call, candidate.call.arguments,
@@ -1066,14 +1057,14 @@ function routineTool(
           ? inFlight.result
           : failure('uncertain-outcome', 'This native routine call identity is already running with different arguments.')
       }
-      const result = executeOnce()
+      const result = Promise.resolve().then(executeOnce)
       createFlights.set(key, { argumentsKey, result })
       try {
         const settled = await result
         if (settled.success) createReceipts.set(key, { argumentsKey, result: settled })
         return settled
       } finally {
-        if (createFlights.get(key)?.result === result) createFlights.delete(key)
+        createFlights.delete(key)
       }
     },
   }
