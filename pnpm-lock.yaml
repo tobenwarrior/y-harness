@@ -3584,6 +3584,9 @@ importers:
       '@yharness/client-test-runtime':
         specifier: workspace:*
         version: link:../../test-support/client-runtime
+      '@yharness/client-ui-approval':
+        specifier: workspace:*
+        version: link:../ui-approval
       '@yharness/client-ui-conversation':
         specifier: workspace:*
         version: link:../ui-conversation

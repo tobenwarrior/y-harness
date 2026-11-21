@@ -22,7 +22,8 @@ import type {
 } from '@yharness/client-ui-conversation/client'
 import type { WorkspaceSnapshot } from '@yharness/api-workspace-controller/client'
 import { SessionSeq, type SessionId } from '@yharness/session/types'
-import type { SessionPendingInteractionBase, SessionStatusSnapshot } from '@yharness/client-ui-session/client'
+import { PendingApproval } from '@yharness/client-ui-approval/src/client/contract/slots.ts'
+import type { SessionStatusSnapshot } from '@yharness/client-ui-session/client'
 import type { KeyedSnapshotSelectorHook, SnapshotSelectorHook } from '@yharness/client-ui-slots'
 import { bindSnapshotSelector, makeTranslate } from '@yharness/client-test-runtime'
 import { createSnapshotStore, type ObservableSnapshot } from '@yharness/client-store'
@@ -4189,9 +4190,7 @@ describe('ChatView', () => {
     const view = render(<h.ChatView {...h.props} bot={{ name: 'Build Bot' }} />)
     expect(view.getByRole('status').textContent).toBe('Waiting for reply')
 
-    const approval: SessionPendingInteractionBase = {
-      key: 'chat-approval', kind: 'approval', sessionId: SID,
-    }
+    const approval = new PendingApproval(SID, { toolName: 'lookup' })
     act(() => {
       h.setSessionStatus(new Map([[SID, {
         running: true, pendingInteraction: approval, completionUnread: false,

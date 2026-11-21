@@ -7,6 +7,7 @@ import type { SessionBinding, SessionListState, SessionReference } from '@yharne
 import { BotId, BotPrincipalId, type BotView } from '@yharness/bots/client'
 import { AttachmentId } from '@yharness/attachment'
 import type { GlobalStandardProps } from '@yharness/client-ui-slots'
+import { PendingApproval } from '@yharness/client-ui-approval/src/client/contract/slots.ts'
 import type { WorkspaceSnapshot } from '@yharness/api-workspace-controller/client'
 import { makeTranslate } from '@yharness/client-test-runtime'
 import { SessionId } from '@yharness/session/types'
@@ -19,7 +20,7 @@ import {
 import { createSharedBotsClient } from '../src/client/shared-client.ts'
 import type { BotWorkspaceState } from '../src/client/controller.ts'
 import type { ComputerClient, ComputerIdentity } from '../src/client/computer-client.ts'
-import type { SessionPendingInteractionBase, SessionStatusSnapshot } from '@yharness/client-ui-session/client'
+import type { SessionStatusSnapshot } from '@yharness/client-ui-session/client'
 
 afterEach(cleanup)
 
@@ -367,9 +368,7 @@ describe('Bots conversation slot wiring', () => {
     const idle = bot('roster-idle', 'Idle bot')
     const unknown = bot('roster-unknown', 'Unknown bot')
     const needs = bot('roster-needs', 'Needs bot')
-    const approval: SessionPendingInteractionBase = {
-      key: 'roster-approval', kind: 'approval', sessionId: needs.sessionId,
-    }
+    const approval = new PendingApproval(needs.sessionId, { toolName: 'lookup' })
     const state = workspaceState([working, preparing, idle, unknown, needs], working.id)
     const statuses: SessionStatusSnapshot = new Map([
       [working.sessionId, { running: true, pendingInteraction: undefined, completionUnread: false }],
