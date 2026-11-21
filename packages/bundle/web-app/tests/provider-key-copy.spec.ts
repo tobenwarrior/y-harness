@@ -37,7 +37,7 @@ function desktopFixture(connected: boolean) {
   const ipc = {
     connected,
     platform: 'darwin' as const,
-    send: vi.fn((_message: object, callback: () => void) => callback()),
+    send: vi.fn((_message: object, callback: () => void) => { callback() }),
     on: events.on.bind(events),
     off: events.off.bind(events),
   }
