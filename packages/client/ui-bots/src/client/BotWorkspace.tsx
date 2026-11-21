@@ -36,7 +36,8 @@ import { GrokHistoryDialog } from './GrokHistoryAction.tsx'
 import type { BotGrokHistoryView } from '@yharness/bots/client'
 import css from './BotWorkspace.module.css'
 import type {
-  BotAccent, BotConnectedAppAccess, BotGroupAttachmentDraft, BotGroupCreation, BotGroupDeliverySummary,
+  BotAccent, BotConnectedAppAccess, BotConnectedAppCatalogEntry, BotConnectedAppConnectionState,
+  BotGroupAttachmentDraft, BotGroupCreation, BotGroupDeliverySummary,
   BotGroupDetailData, BotGroupMessageSummary, BotGroupReactionSummary, BotGroupSummary,
   BotIdentity, BotMemoryManagerActions, BotOrganizationPatch, BotProfileUpdate, BotSkillManagerActions, BotRoutineManagerActions,
   BotStatus, BotSummary, BotWorkspaceProps,
@@ -63,6 +64,31 @@ function connectedAppMonogram(name: string): string {
 
 function connectedAppMark(app: BotConnectedAppAccess, name: string): ReactNode {
   return connectedAppGlyph({ appId: app.id, size: 16 }) ?? connectedAppMonogram(name)
+}
+
+function connectedAppCatalogMark(app: BotConnectedAppCatalogEntry, name: string): ReactNode {
+  return connectedAppGlyph({ appId: app.id, size: 16 }) ?? connectedAppMonogram(name)
+}
+
+function connectedAppConnectionLabel(
+  state: BotConnectedAppConnectionState,
+  t: BotWorkspaceViewProps['t'],
+): string {
+  switch (state) {
+    case 'available': return t('connectedAppStateAvailable')
+    case 'configured': return t('connectedAppStateConfigured')
+    case 'auth-needed': return t('connectedAppStateAuthNeeded')
+    case 'unavailable': return t('connectedAppStateUnavailable')
+  }
+}
+
+function fallbackConnectedAppCatalog(apps: readonly BotConnectedAppAccess[]): readonly BotConnectedAppCatalogEntry[] {
+  return apps.map(app => ({
+    id: app.id,
+    name: app.name,
+    ...(app.description === undefined ? {} : { description: app.description }),
+    connectionState: 'available' as const,
+  }))
 }
 
 /** Sidebar geometry passed to the roster when it occupies the shared app rail. */
@@ -1510,12 +1536,17 @@ function BotSectionDialog({ bot, onClose, onOrganize, t }: {
   )
 }
 
-function ConnectedAppsDialog({ bot, open, onClose, onLoad, onSet, t }: {
+function ConnectedAppsDialog({
+  bot, open, onClose, onLoad, onLoadConnectionCatalog, onConnect, onReconnect, onSet, t,
+}: {
   bot: BotSummary | undefined
   open: boolean
   onClose: () => void
-  onLoad: (botId: string) => Promise<readonly BotConnectedAppAccess[]>
-  onSet: (botId: string, appId: string, allowed: boolean) => Promise<void>
+  onLoad?: ((botId: string) => Promise<readonly BotConnectedAppAccess[]>) | undefined
+  onLoadConnectionCatalog?: ((botId: string) => Promise<readonly BotConnectedAppCatalogEntry[]>) | undefined
+  onConnect?: ((appId: string) => Promise<void>) | undefined
+  onReconnect?: ((appId: string) => Promise<void>) | undefined
+  onSet?: ((botId: string, appId: string, allowed: boolean) => Promise<void>) | undefined
   t: BotWorkspaceViewProps['t']
 }) {
   type ConnectedAppCatalog = {
@@ -1524,52 +1555,152 @@ function ConnectedAppsDialog({ bot, open, onClose, onLoad, onSet, t }: {
     readonly apps: readonly BotConnectedAppAccess[]
     readonly error: string | null
   }
+  type ConnectionCatalog = {
+    readonly botId: string
+    readonly requestId: number
+    readonly apps: readonly BotConnectedAppCatalogEntry[]
+    readonly error: string | null
+  }
   type ConnectedAppSave = {
     readonly botId: string
     readonly requestId: number
     readonly appId: string
   }
+  type ConnectionAction = {
+    readonly botId: string
+    readonly requestId: number
+    readonly appId: string
+    readonly kind: 'connect' | 'reconnect'
+  }
   const [catalog, setCatalog] = useState<ConnectedAppCatalog | undefined>()
+  const [connectionCatalog, setConnectionCatalog] = useState<ConnectionCatalog | undefined>()
   const [loading, setLoading] = useState(false)
+  const [loadingConnections, setLoadingConnections] = useState(false)
   const [saving, setSaving] = useState<ConnectedAppSave | null>(null)
+  const [connectionAction, setConnectionAction] = useState<ConnectionAction | null>(null)
   const requestSequence = useRef(0)
   const botId = bot?.id
   useEffect(() => {
     if (!open || botId === undefined) {
       setCatalog(undefined)
+      setConnectionCatalog(undefined)
       setLoading(false)
+      setLoadingConnections(false)
       setSaving(null)
+      setConnectionAction(null)
       return
     }
     const requestId = requestSequence.current + 1
     requestSequence.current = requestId
     let active = true
-    setCatalog({ botId, requestId, apps: [], error: null })
-    setLoading(true)
+    setCatalog(onLoad === undefined ? undefined : { botId, requestId, apps: [], error: null })
+    setConnectionCatalog(onLoadConnectionCatalog === undefined ? undefined : { botId, requestId, apps: [], error: null })
+    setLoading(onLoad !== undefined)
+    setLoadingConnections(onLoadConnectionCatalog !== undefined)
     setSaving(null)
-    void onLoad(botId).then((next) => {
-      if (active) setCatalog({ botId, requestId, apps: next, error: null })
-    }).catch((cause: unknown) => {
-      if (active) setCatalog({
-        botId,
-        requestId,
-        apps: [],
-        error: cause instanceof Error ? cause.message : t('connectedAppsLoadFailed'),
+    setConnectionAction(null)
+    if (onLoad !== undefined) {
+      void onLoad(botId).then((next) => {
+        if (!active) return
+        setCatalog({ botId, requestId, apps: next, error: null })
+        if (onLoadConnectionCatalog === undefined) {
+          setConnectionCatalog({ botId, requestId, apps: fallbackConnectedAppCatalog(next), error: null })
+        }
+      }).catch((cause: unknown) => {
+        if (active) setCatalog({
+          botId,
+          requestId,
+          apps: [],
+          error: cause instanceof Error ? cause.message : t('connectedAppsLoadFailed'),
+        })
+      }).finally(() => {
+        if (active) setLoading(false)
       })
-    }).finally(() => {
-      if (active) setLoading(false)
-    })
+    }
+    if (onLoadConnectionCatalog !== undefined) {
+      void onLoadConnectionCatalog(botId).then((next) => {
+        if (active) setConnectionCatalog({ botId, requestId, apps: next, error: null })
+      }).catch(() => {
+        if (active) setConnectionCatalog({
+          botId,
+          requestId,
+          apps: [],
+          error: t('connectedAppsConnectionLoadFailed'),
+        })
+      }).finally(() => {
+        if (active) setLoadingConnections(false)
+      })
+    }
     return () => { active = false }
   }, [botId, open])
   if (bot === undefined) return null
   const currentCatalog = catalog?.botId === bot.id ? catalog : undefined
-  const apps = currentCatalog?.apps ?? []
+  const currentConnectionCatalog = connectionCatalog?.botId === bot.id ? connectionCatalog : undefined
+  const appsById = new Map((currentCatalog?.apps ?? []).map(app => [app.id, app]))
+  for (const app of currentConnectionCatalog?.apps ?? []) {
+    if (!appsById.has(app.id)) {
+      appsById.set(app.id, {
+        id: app.id,
+        name: app.name,
+        ...(app.description === undefined ? {} : { description: app.description }),
+        allowed: false,
+      })
+    }
+  }
+  const apps = [...appsById.values()]
+  const connectionApps = currentConnectionCatalog?.apps ?? []
   const error = currentCatalog?.error ?? null
-  const loadingCurrentCatalog = loading || (open && currentCatalog === undefined)
+  const connectionError = currentConnectionCatalog?.error ?? null
+  const hasBotAccess = onLoad !== undefined && onSet !== undefined
+  const loadingCurrentCatalog = hasBotAccess && (loading || (open && currentCatalog === undefined))
+  const loadingCurrentConnections = loadingConnections
+    || (open && onLoadConnectionCatalog !== undefined && currentConnectionCatalog === undefined)
   const savingAppId = saving?.botId === bot.id ? saving.appId : null
+  const activeConnectionAppId = connectionAction?.botId === bot.id ? connectionAction.appId : null
+  const connectionActionFor = (app: BotConnectedAppCatalogEntry): { readonly kind: 'connect' | 'reconnect'; readonly label: string } | undefined => {
+    if (app.connectionState === 'configured' && app.canReconnect === true && onReconnect !== undefined) {
+      return { kind: 'reconnect', label: t('connectedAppReconnect', { name: app.name }) }
+    }
+    if ((app.connectionState === 'available' || app.connectionState === 'auth-needed') && app.canConnect === true && onConnect !== undefined) {
+      return { kind: 'connect', label: t('connectedAppConnect', { name: app.name }) }
+    }
+    return undefined
+  }
+  const runConnectionAction = async (app: BotConnectedAppCatalogEntry, kind: 'connect' | 'reconnect'): Promise<void> => {
+    if (activeConnectionAppId !== null) return
+    const handler = kind === 'connect' ? onConnect : onReconnect
+    /* v8 ignore next -- buttons are only rendered when their matching Host callback exists. */
+    if (handler === undefined || currentConnectionCatalog === undefined) return
+    const request = { botId: bot.id, requestId: currentConnectionCatalog.requestId, appId: app.id, kind }
+    setConnectionAction(request)
+    setConnectionCatalog(current => current?.botId === request.botId && current.requestId === request.requestId
+      ? { ...current, error: null }
+      : current)
+    try {
+      await handler(app.id)
+      setConnectionCatalog(current => current?.botId === request.botId && current.requestId === request.requestId
+        ? {
+          ...current,
+          apps: current.apps.map(candidate => candidate.id === request.appId
+            ? { ...candidate, connectionState: 'configured', canConnect: false }
+            : candidate),
+        }
+        : current)
+    } catch {
+      setConnectionCatalog(current => current?.botId === request.botId && current.requestId === request.requestId
+        ? { ...current, error: t('connectedAppsConnectionActionFailed') }
+        : current)
+    } finally {
+      setConnectionAction(current => current?.botId === request.botId
+        && current.requestId === request.requestId
+        && current.appId === request.appId
+        ? null
+        : current)
+    }
+  }
   const toggle = async (app: BotConnectedAppAccess): Promise<void> => {
     /* v8 ignore next -- access controls render only for a loaded catalog and disable while saving. */
-    if (savingAppId !== null || currentCatalog === undefined) return
+    if (savingAppId !== null || currentCatalog === undefined || onSet === undefined) return
     const allowed = !app.allowed
     const request = { botId: bot.id, requestId: currentCatalog.requestId, appId: app.id }
     setSaving(request)
@@ -1606,48 +1737,104 @@ function ConnectedAppsDialog({ bot, open, onClose, onLoad, onSet, t }: {
       closeLabel={t('cancel')}
       className={css.connectedAppsDialog as string}
       contentClassName={css.connectedAppsDialogContent as string}
-      footer={<Button variant="ghost" onClick={onClose} disabled={savingAppId !== null}>{t('done')}</Button>}
+      footer={<Button variant="ghost" onClick={onClose} disabled={savingAppId !== null || activeConnectionAppId !== null}>{t('done')}</Button>}
     >
       {error !== null && <div className={css.dialogNotice} role="alert">{error}</div>}
-      {loadingCurrentCatalog && (
-        <div className={css.connectedAppsLoading} role="status">
-          <StateDot state="ongoing" size={13} />
-          <span>{t('connectedAppsLoading')}</span>
-        </div>
+      {connectionError !== null && <div className={css.dialogNotice} role="alert">{connectionError}</div>}
+      {(onLoadConnectionCatalog !== undefined || connectionApps.length > 0) && (
+        <section className={css.connectedAppsSection} aria-labelledby="yharness-connected-apps-connections-title">
+          <div className={css.connectedAppsSectionHeading}>
+            <strong id="yharness-connected-apps-connections-title">{t('connectedAppsConnectionsTitle')}</strong>
+            <span>{t('connectedAppsConnectionsDescription')}</span>
+          </div>
+          {loadingCurrentConnections && (
+            <div className={css.connectedAppsLoading} role="status">
+              <StateDot state="ongoing" size={13} />
+              <span>{t('connectedAppsConnectionLoading')}</span>
+            </div>
+          )}
+          {!loadingCurrentConnections && connectionApps.length === 0 && (
+            <div className={css.connectedAppsEmpty} role="status">
+              <span className={css.connectedAppsEmptyIcon} aria-hidden="true"><IconLinkOutlineRegular size={18} /></span>
+              <strong>{t('connectedAppsConnectionEmptyTitle')}</strong>
+              <span className={css.connectedAppsEmptyDescription}>{t('connectedAppsConnectionEmpty')}</span>
+            </div>
+          )}
+          {!loadingCurrentConnections && connectionApps.length > 0 && (
+            <div className={css.connectedAppsStatusList} role="list" aria-label={t('connectedAppsConnectionsTitle')}>
+              {connectionApps.map((app) => {
+                const name = app.name.trim() === '' || app.name === '-' ? t('connectedAppFallbackName', { id: app.id }) : app.name
+                const action = connectionActionFor(app)
+                return (
+                  <div className={css.connectedAppStatusRow} key={app.id} role="listitem">
+                    <span className={css.connectedAppIcon} data-app-id={app.id} aria-hidden="true">{connectedAppCatalogMark(app, name)}</span>
+                    <span className={css.connectedAppCopy}>
+                      <strong>{name}</strong>
+                      {app.description !== undefined && <span>{app.description}</span>}
+                      <span className={clsx(
+                        css.connectedAppState,
+                        app.connectionState === 'configured' && css.connectedAppStateConfigured,
+                        app.connectionState === 'auth-needed' && css.connectedAppStateAuthNeeded,
+                        app.connectionState === 'unavailable' && css.connectedAppStateUnavailable,
+                      )}>{connectedAppConnectionLabel(app.connectionState, t)}</span>
+                    </span>
+                    {action !== undefined && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={activeConnectionAppId !== null}
+                        aria-label={action.label}
+                        onClick={() => { void runConnectionAction(app, action.kind) }}
+                      >
+                        {activeConnectionAppId === app.id ? t('connectedAppWorking') : action.kind === 'connect' ? t('connect') : t('reconnect')}
+                      </Button>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </section>
       )}
-      {!loadingCurrentCatalog && error === null && apps.length === 0 && (
+      {!loadingCurrentCatalog && hasBotAccess && error === null && apps.length === 0 && (
         <div className={css.connectedAppsEmpty} role="status">
           <span className={css.connectedAppsEmptyIcon} aria-hidden="true"><IconLinkOutlineRegular size={18} /></span>
           <strong>{t('connectedAppsEmptyTitle')}</strong>
           <span className={css.connectedAppsEmptyDescription}>{t('connectedAppsEmpty')}</span>
         </div>
       )}
-      {!loadingCurrentCatalog && apps.length > 0 && (
-        <div className={css.connectedAppsList} role="list" aria-label={t('connectedAppsTitle')}>
-          {apps.map((app) => {
-            const name = connectedAppName(app, t)
-            return (
-              <div className={css.connectedAppRow} key={app.id} role="listitem">
-                <span className={css.connectedAppIcon} data-app-id={app.id} aria-hidden="true">{connectedAppMark(app, name)}</span>
-                <span className={css.connectedAppCopy}>
-                  <strong>{name}</strong>
-                  {app.description !== undefined && <span>{app.description}</span>}
-                </span>
-                <Button
-                  variant={app.allowed ? 'ghost' : 'outline'}
-                  size="sm"
-                  disabled={savingAppId !== null}
-                  aria-pressed={app.allowed}
-                  aria-label={t(app.allowed ? 'revokeConnectedApp' : 'grantConnectedApp', { name })}
-                  icon={app.allowed ? <IconCheckOutlineRegular size={14} /> : undefined}
-                  onClick={() => { void toggle(app) }}
-                >
-                  {app.allowed ? t('allowed') : t('grant')}
-                </Button>
-              </div>
-            )
-          })}
-        </div>
+      {!loadingCurrentCatalog && hasBotAccess && apps.length > 0 && (
+        <section className={css.connectedAppsSection} aria-labelledby="yharness-connected-apps-access-title">
+          <div className={css.connectedAppsSectionHeading}>
+            <strong id="yharness-connected-apps-access-title">{t('connectedAppsAccessTitle')}</strong>
+            <span>{t('connectedAppsAccessDescription', { name: bot.name })}</span>
+          </div>
+          <div className={css.connectedAppsList} role="list" aria-label={t('connectedAppsAccessTitle')}>
+            {apps.map((app) => {
+              const name = connectedAppName(app, t)
+              return (
+                <div className={css.connectedAppRow} key={app.id} role="listitem">
+                  <span className={css.connectedAppIcon} data-app-id={app.id} aria-hidden="true">{connectedAppMark(app, name)}</span>
+                  <span className={css.connectedAppCopy}>
+                    <strong>{name}</strong>
+                    {app.description !== undefined && <span>{app.description}</span>}
+                  </span>
+                  <Button
+                    variant={app.allowed ? 'ghost' : 'outline'}
+                    size="sm"
+                    disabled={savingAppId !== null || activeConnectionAppId !== null}
+                    aria-pressed={app.allowed}
+                    aria-label={t(app.allowed ? 'revokeConnectedApp' : 'grantConnectedApp', { name })}
+                    icon={app.allowed ? <IconCheckOutlineRegular size={14} /> : undefined}
+                    onClick={() => { void toggle(app) }}
+                  >
+                    {app.allowed ? t('allowed') : t('grant')}
+                  </Button>
+                </div>
+              )
+            })}
+          </div>
+        </section>
       )}
     </Modal>
   )
@@ -1664,7 +1851,7 @@ function ConnectedAppsDialog({ bot, open, onClose, onLoad, onSet, t }: {
 export function BotRoster({
   bots, selectedBotId, onSelectBot, onCreateBot, onConnectApps, onOpenAvatarSettings,
   groups: localGroups = [], selectedGroupId = null, onSelectGroup, onCreateGroup, groupError = null,
-  onLoadConnectedApps, onSetConnectedAppAccess,
+  onLoadConnectedApps, onLoadConnectedAppCatalog, onConnectConnectedApp, onReconnectConnectedApp, onSetConnectedAppAccess,
   onOrganizeBot, templates, templateActions, onRetry, loadAvatar, avatarEditor, sharedClient,
   error = null, loading = false, wide = true, expandSidebar, t,
 }: BotWorkspaceViewProps & BotRosterLayoutProps): ReactNode {
@@ -1795,7 +1982,8 @@ export function BotRoster({
     setSharedBotsOpen(false)
   }
   const openConnectedApps = (bot: BotSummary): void => {
-    if (onLoadConnectedApps === undefined || onSetConnectedAppAccess === undefined) {
+    const hasBotAccess = onLoadConnectedApps !== undefined && onSetConnectedAppAccess !== undefined
+    if (!hasBotAccess && onLoadConnectedAppCatalog === undefined) {
       onConnectApps?.()
       return
     }
@@ -1807,6 +1995,7 @@ export function BotRoster({
     ? undefined
     : bots.find(bot => bot.id === connectedAppsBotId)
   const canOpenConnectedApps = (onLoadConnectedApps !== undefined && onSetConnectedAppAccess !== undefined)
+    || onLoadConnectedAppCatalog !== undefined
     || onConnectApps !== undefined
   const connectedAppsAction = canOpenConnectedApps
     ? openConnectedApps
@@ -2015,12 +2204,15 @@ export function BotRoster({
       {sharedClient !== undefined && (
         <SharedBotsDialog client={sharedClient} open={sharedBotsOpen} ownerMode={sharedOwnerMode} onClose={closeSharedBots} t={t} />
       )}
-      {onLoadConnectedApps !== undefined && onSetConnectedAppAccess !== undefined && (
+      {((onLoadConnectedApps !== undefined && onSetConnectedAppAccess !== undefined) || onLoadConnectedAppCatalog !== undefined) && (
         <ConnectedAppsDialog
           bot={connectedAppsBot}
           open={connectedAppsBot !== undefined}
           onClose={() => { setConnectedAppsBotId(null) }}
           onLoad={onLoadConnectedApps}
+          onLoadConnectionCatalog={onLoadConnectedAppCatalog}
+          onConnect={onConnectConnectedApp}
+          onReconnect={onReconnectConnectedApp}
           onSet={onSetConnectedAppAccess}
           t={t}
         />

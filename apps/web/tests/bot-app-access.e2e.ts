@@ -54,18 +54,21 @@ it('shows a new GitHub connector and saves access independently for each Bot', a
     await page.goto(web.authenticatedUrl, { waitUntil: 'load' })
     await page.locator('[data-yh-part="sidebar"]').getByRole('button', { name: 'Bots', exact: true }).click()
     const initial = await openAppAccess(page, scout.name)
-    expect(await initial.getByRole('listitem').count()).toBe(1)
+    expect(await initial.getByRole('list', { name: 'Connection status', exact: true }).getByRole('listitem').count()).toBe(1)
+    expect(await initial.getByRole('list', { name: 'Bot access', exact: true }).getByRole('listitem').count()).toBe(1)
+    expect(await initial.getByText('Available on this Host', { exact: true }).count()).toBe(1)
     const screenshots = process.env.YHARNESS_CONNECTOR_SCREENSHOTS
-    if (screenshots !== undefined) {
-      await page.screenshot({ path: join(screenshots, 'apps-existing.png'), animations: 'disabled' })
-    }
     await initial.getByRole('button', { name: 'Done', exact: true }).click()
 
     registerApp(web, 'github')
     const apps = await openAppAccess(page, scout.name)
     const grant = apps.getByRole('button', { name: 'Grant access to GitHub', exact: true })
     await grant.waitFor()
-    expect(await apps.locator('[data-app-id="github"] svg').count()).toBe(1)
+    expect(await apps.getByRole('list', { name: 'Bot access', exact: true }).locator('[data-app-id="github"] svg').count()).toBe(1)
+    expect(await apps.getByRole('list', { name: 'Connection status', exact: true }).locator('[data-app-id="github"] svg').count()).toBe(1)
+    expect(await apps.getByRole('list', { name: 'Connection status', exact: true }).getByRole('listitem').count()).toBe(2)
+    expect(await apps.getByText('Available on this Host', { exact: true }).count()).toBe(2)
+    expect(await apps.getByRole('button', { name: 'Connect GitHub', exact: true }).count()).toBe(0)
     await grant.click()
     await apps.getByRole('button', { name: 'Revoke access to GitHub', exact: true }).waitFor()
     const policy = await web.ctx.bots.listConnectedApps({ botId: scout.id })
@@ -74,7 +77,12 @@ it('shows a new GitHub connector and saves access independently for each Bot', a
     ])
     await compareOrRefreshGolden(expected, (await apps.ariaSnapshot()).trimEnd(), webSnapshotMode())
     if (screenshots !== undefined) {
-      await page.screenshot({ path: join(screenshots, 'apps-desktop.png'), animations: 'disabled' })
+      await page.screenshot({ path: join(screenshots, 'apps-desktop-dark.png'), animations: 'disabled' })
+      await page.emulateMedia({ colorScheme: 'light' })
+      await expect.poll(() => page.evaluate(() => document.body.hasAttribute('data-ds-dark-theme'))).toBe(false)
+      await page.screenshot({ path: join(screenshots, 'apps-desktop-light.png'), animations: 'disabled' })
+      await page.emulateMedia({ colorScheme: 'dark' })
+      await expect.poll(() => page.evaluate(() => document.body.hasAttribute('data-ds-dark-theme'))).toBe(true)
     }
 
     await apps.getByRole('button', { name: 'Done', exact: true }).click()
@@ -91,10 +99,10 @@ it('shows a new GitHub connector and saves access independently for each Bot', a
     expect(bounds.x).toBeGreaterThanOrEqual(0)
     expect(bounds.x + bounds.width).toBeLessThanOrEqual(720)
     if (screenshots !== undefined) {
-      await page.screenshot({ path: join(screenshots, 'apps-narrow.png'), animations: 'disabled' })
+      await page.screenshot({ path: join(screenshots, 'apps-narrow-dark.png'), animations: 'disabled' })
       await page.emulateMedia({ colorScheme: 'light' })
       await expect.poll(() => page.evaluate(() => document.body.hasAttribute('data-ds-dark-theme'))).toBe(false)
-      await page.screenshot({ path: join(screenshots, 'apps-light.png'), animations: 'disabled' })
+      await page.screenshot({ path: join(screenshots, 'apps-narrow-light.png'), animations: 'disabled' })
     }
     expect(tripwire.pageErrors).toEqual([])
   } finally {

@@ -2201,6 +2201,71 @@
   overflow: auto;
 }
 
+.connectedAppsSection {
+  min-width: 0;
+  margin-top: 16px;
+}
+
+.connectedAppsSection:first-child {
+  margin-top: 0;
+}
+
+.connectedAppsSectionHeading {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 8px;
+}
+
+.connectedAppsSectionHeading strong {
+  color: var(--yh-alias-label-primary);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 18px;
+}
+
+.connectedAppsSectionHeading span {
+  color: var(--yh-alias-label-secondary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.connectedAppsStatusList {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0;
+  padding-inline: 12px;
+  border: 0.5px solid var(--yh-alias-border-l2);
+  border-radius: var(--yh-radius-md);
+  background: var(--yh-alias-bg-layer-2);
+}
+
+.connectedAppStatusRow {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0;
+}
+
+.connectedAppStatusRow + .connectedAppStatusRow {
+  border-top: 0.5px solid var(--yh-alias-border-l2);
+}
+
+.connectedAppState {
+  color: var(--yh-alias-label-tertiary) !important;
+  font-size: 10px !important;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.connectedAppStateConfigured { color: var(--yh-alias-state-success-primary) !important; }
+.connectedAppStateAuthNeeded { color: var(--yh-alias-state-warn-primary) !important; }
+.connectedAppStateUnavailable { color: var(--yh-alias-state-error-primary) !important; }
+
 .connectedAppsLoading {
   display: flex;
   min-height: 112px;

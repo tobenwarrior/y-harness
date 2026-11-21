@@ -3004,9 +3004,10 @@ describe('Bot roster and detail', () => {
     const dialog = await screen.findByRole('dialog', { name: 'Connected apps' })
     await waitFor(() => { expect(onLoadConnectedApps).toHaveBeenCalledWith('release') })
     expect(dialog.querySelector('[data-app-id="github"]')).not.toBeNull()
-    expect(within(dialog).getByText('Tools from GitHub')).toBeTruthy()
+    expect(within(dialog).getAllByText('Tools from GitHub')).toHaveLength(2)
     const grant = within(dialog).getByRole('button', { name: 'Grant access to GitHub' })
     expect(grant.getAttribute('aria-pressed')).toBe('false')
+    expect(within(dialog).queryByRole('button', { name: 'Connect GitHub' })).toBeNull()
     fireEvent.click(grant)
     await waitFor(() => { expect(onSetConnectedAppAccess).toHaveBeenCalledWith('release', 'github', true) })
     expect(within(dialog).getByRole('button', { name: 'Revoke access to GitHub' }).getAttribute('aria-pressed')).toBe('true')
@@ -3040,12 +3041,56 @@ describe('Bot roster and detail', () => {
     const dialog = await screen.findByRole('dialog', { name: 'Connected apps' })
     await waitFor(() => { expect(onLoadConnectedApps).toHaveBeenCalledWith('research') })
 
-    expect(within(dialog).getByText('Connected app custom-alpha')).toBeTruthy()
-    expect(within(dialog).getByText('Connected app custom-beta')).toBeTruthy()
+    expect(within(dialog).getAllByText('Connected app custom-alpha')).toHaveLength(2)
+    expect(within(dialog).getAllByText('Connected app custom-beta')).toHaveLength(2)
     expect(within(dialog).getByRole('button', { name: 'Grant access to Connected app custom-alpha' })).toBeTruthy()
     expect(within(dialog).getByRole('button', { name: 'Grant access to Connected app custom-beta' })).toBeTruthy()
     expect(dialog.querySelector('[data-app-id="custom-alpha"]')?.textContent).not.toBe('')
     expect(dialog.querySelector('[data-app-id="custom-beta"]')?.textContent).not.toBe('')
+  })
+
+  it('keeps Host connection state separate from Bot access and only exposes real actions', async () => {
+    const onLoadConnectedApps = vi.fn().mockResolvedValue([
+      { id: 'github', name: 'GitHub', description: 'Tools from GitHub', allowed: false },
+    ])
+    const onLoadConnectedAppCatalog = vi.fn().mockResolvedValue([
+      { id: 'github', name: 'GitHub', description: 'Tools from GitHub', connectionState: 'configured' as const },
+      { id: 'notion', name: 'Notion', connectionState: 'auth-needed' as const, canConnect: true },
+    ])
+    const onConnectConnectedApp = vi.fn().mockResolvedValue(undefined)
+    renderSplitWorkspace({
+      onLoadConnectedApps,
+      onLoadConnectedAppCatalog,
+      onConnectConnectedApp,
+      onSetConnectedAppAccess: vi.fn().mockResolvedValue(undefined),
+    })
+
+    openConnectedAppsMenu()
+    const dialog = await screen.findByRole('dialog', { name: 'Connected apps' })
+    const statusList = within(dialog).getByRole('list', { name: 'Connection status' })
+    await waitFor(() => { expect(onLoadConnectedAppCatalog).toHaveBeenCalledWith('research') })
+    expect(within(statusList).getByText('Connected')).toBeTruthy()
+    expect(within(statusList).getByText('Authentication needed')).toBeTruthy()
+    expect(within(statusList).queryByRole('button', { name: 'Connect GitHub' })).toBeNull()
+    fireEvent.click(within(statusList).getByRole('button', { name: 'Connect Notion' }))
+    await waitFor(() => { expect(onConnectConnectedApp).toHaveBeenCalledWith('notion') })
+    const notionRow = within(statusList).getByText('Notion').closest('[role="listitem"]')
+    expect(notionRow?.textContent).toContain('Connected')
+    expect(within(dialog).getByRole('button', { name: 'Grant access to GitHub' })).toBeTruthy()
+  })
+
+  it('opens the Host connection catalog without requiring Bot grant callbacks', async () => {
+    const onLoadConnectedAppCatalog = vi.fn().mockResolvedValue([
+      { id: 'github', name: 'GitHub', connectionState: 'available' as const },
+    ])
+    renderSplitWorkspace({ onLoadConnectedAppCatalog })
+
+    openConnectedAppsMenu()
+    const dialog = await screen.findByRole('dialog', { name: 'Connected apps' })
+    await waitFor(() => { expect(onLoadConnectedAppCatalog).toHaveBeenCalledWith('research') })
+    expect(within(dialog).getByText('Available on this Host')).toBeTruthy()
+    expect(within(dialog).queryByText('Bot access')).toBeNull()
+    expect(within(dialog).queryByRole('button', { name: 'Connect GitHub' })).toBeNull()
   })
 
   it('clears the previous Bot catalog when a reload fails', async () => {

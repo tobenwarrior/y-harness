@@ -102,7 +102,8 @@ import type { SharedBotsClient } from './shared-client.ts'
 import { admitBotGroupAttachments, groupAttachmentsMatchDrafts, isBotGroupImageType, type BotAttachmentFetch } from './attachment-client.ts'
 import type { BotGroupAttachmentDraft } from './types.ts'
 import type {
-  BotAccent, BotAvatarEditorActions, BotConnectedAppAccess, BotCreation, BotGroupCreation, BotGroupDetailData,
+  BotAccent, BotAvatarEditorActions, BotConnectedAppAccess, BotConnectedAppCatalogEntry, BotCreation,
+  BotGroupCreation, BotGroupDetailData,
   BotGroupReactionRequest, BotGroupReactionValue, BotGroupUpdate, BotProfileUpdate,
   BotGroupSummary, BotIdentity, BotMemoryManagerActions, BotOrganizationPatch, BotRoutineManagerActions,
   BotSkillManagerActions, BotSkillPolicy, BotTemplateActions, BotTemplateState, BotTemplateSummary,
@@ -291,6 +292,12 @@ export interface BotWorkspaceFace {
   readonly templateActions?: BotTemplateActions
   readonly retryGroup: () => void
   readonly loadConnectedApps?: (botId: string) => Promise<readonly BotConnectedAppAccess[]>
+  /** Host-validated account-wide connection metadata, without credential values. */
+  readonly loadConnectedAppCatalog?: (botId: string) => Promise<readonly BotConnectedAppCatalogEntry[]>
+  /** Host-owned connect flow; absent when no real auth callback is configured. */
+  readonly connectConnectedApp?: (appId: string) => Promise<void>
+  /** Host-owned reconnect flow; absent when no real auth callback is configured. */
+  readonly reconnectConnectedApp?: (appId: string) => Promise<void>
   readonly setConnectedAppAccess?: (botId: string, appId: string, allowed: boolean) => Promise<void>
   readonly readGrokHistory?: (botId: string) => Promise<BotGrokHistoryView | null>
   readonly loadAvatar: (botId: string, avatar: BotAvatar) => Promise<string>

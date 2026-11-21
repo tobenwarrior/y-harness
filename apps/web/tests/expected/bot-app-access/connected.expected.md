@@ -1,12 +1,25 @@
 - dialog "Connected apps":
   - heading "Connected apps" [level=2]
   - button "Cancel"
-  - paragraph: Choose which connected apps Scout can use.
-  - list "Connected apps":
-    - listitem:
-      - strong: Cloudflare
-      - button "Revoke access to Cloudflare" [pressed]: Allowed
-    - listitem:
-      - strong: GitHub
-      - button "Revoke access to GitHub" [pressed]: Allowed
+  - paragraph: Check app connections, then choose which connected apps Scout can use.
+  - region "Connection status":
+    - strong: Connection status
+    - text: Host connection state only. Credential values never appear here.
+    - list "Connection status":
+      - listitem:
+        - strong: Cloudflare
+        - text: Available on this Host
+      - listitem:
+        - strong: GitHub
+        - text: Available on this Host
+  - region "Bot access":
+    - strong: Bot access
+    - text: Choose which connected apps Scout can use.
+    - list "Bot access":
+      - listitem:
+        - strong: Cloudflare
+        - button "Revoke access to Cloudflare" [pressed]: Allowed
+      - listitem:
+        - strong: GitHub
+        - button "Revoke access to GitHub" [pressed]: Allowed
   - button "Done"

@@ -32,6 +32,25 @@ export type BotIdentity = SharedBotIdentity
 /** Connected app and the selected Bot's durable access decision. */
 export type BotConnectedAppAccess = SharedBotConnectedAppAccess
 
+/** Host-reported connection state for one account-wide connected app. */
+export type BotConnectedAppConnectionState = 'available' | 'configured' | 'auth-needed' | 'unavailable'
+
+/** Safe connection metadata shown separately from a Bot's permission grant. */
+export interface BotConnectedAppCatalogEntry {
+  /** Stable connected-app id, never a credential or token. */
+  readonly id: string
+  /** Human-readable app name. */
+  readonly name: string
+  /** Optional safe description supplied by the Host. */
+  readonly description?: string | undefined
+  /** Current Host-side connection state. */
+  readonly connectionState: BotConnectedAppConnectionState
+  /** Whether the Host has a real connect callback for this app. */
+  readonly canConnect?: boolean
+  /** Whether the Host has a real reconnect callback for this app. */
+  readonly canReconnect?: boolean
+}
+
 /** Host-local skill metadata and the selected Bot's current grant. */
 export type BotSkillSummary = SharedBotSkillAccess
 
@@ -419,6 +438,12 @@ export interface BotWorkspaceProps {
   readonly onConnectApps?: (() => void) | undefined
   /** Loads the connected-app catalog and current access policy for one Bot. */
   readonly onLoadConnectedApps?: ((botId: string) => Promise<readonly BotConnectedAppAccess[]>) | undefined
+  /** Loads Host-validated connection metadata without exposing credential values. */
+  readonly onLoadConnectedAppCatalog?: ((botId: string) => Promise<readonly BotConnectedAppCatalogEntry[]>) | undefined
+  /** Starts a real Host-owned connection flow for one app when available. */
+  readonly onConnectConnectedApp?: ((appId: string) => Promise<void>) | undefined
+  /** Starts a real Host-owned reconnect flow for one app when available. */
+  readonly onReconnectConnectedApp?: ((appId: string) => Promise<void>) | undefined
   /** Persists one Bot's grant or revoke for a connected app. */
   readonly onSetConnectedAppAccess?: ((botId: string, appId: string, allowed: boolean) => Promise<void>) | undefined
   /** Optional settings deep-link for configuring the avatar provider. */
