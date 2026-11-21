@@ -18,6 +18,7 @@
     { "path": "../../llm/llm" },
     { "path": "../../mcp/mcp-resources" },
     { "path": "../../core/session" },
+    { "path": "../../session-query/session-query" },
     { "path": "../../schedule/schedule" },
     { "path": "../../core/system-prompt" },
     { "path": "../../core/tools" },

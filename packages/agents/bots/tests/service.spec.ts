@@ -13,6 +13,7 @@ import AgentLoop from '@yharness/agent-loop'
 import { bindScopeParent, createScope, scopeOf, scopeTarget } from '@yharness/scope'
 import LlmRuntime, { createAssistantMessage, createSystemMessage, createUserMessage, freezeMessage, markAgentLoopRequest, MessageId, ToolCallId } from '@yharness/llm'
 import SessionStore, { Session, SessionId, SessionSeq } from '@yharness/session'
+import { SessionSearchCursor, type SessionSearchHit, type SessionSearchRequest } from '@yharness/session-query'
 import JsonlSessionPersistence from '@yharness/session-persistence-jsonl'
 import SessionProjectionRegistry from '@yharness/session-projection'
 import type { SessionEvent } from '@yharness/session'
@@ -828,6 +829,125 @@ function provideResolvedTemplatePreset(ctx: Context): void {
 }
 
 describe('durable Bot roster', () => {
+  it('validates Bot message search input and reports an unavailable query provider', async () => {
+    const h = await harness()
+    try {
+      await expect(h.service.searchMessages(null as never)).rejects.toMatchObject({ code: 'gateway/bad-request' })
+      await expect(h.service.searchMessages({ query: 1 } as never)).rejects.toMatchObject({ code: 'gateway/bad-request' })
+      await expect(h.service.searchMessages({ query: '  ' })).rejects.toMatchObject({ code: 'gateway/bad-request' })
+      await expect(h.service.searchMessages({ query: 'x'.repeat(501) })).rejects.toMatchObject({ code: 'gateway/bad-request' })
+      await expect(h.service.searchMessages({ query: '\0' })).rejects.toMatchObject({ code: 'gateway/bad-request' })
+      await expect(h.service.searchMessages({ query: 'marker' })).resolves.toEqual({ items: [], hasMore: false })
+      await h.service.create({ id: BotId('bot-search-provider'), name: 'Search provider bot', cwd: '/tmp' })
+      await expect(h.service.searchMessages({ query: 'marker' })).rejects.toMatchObject({ code: 'gateway/internal' })
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('searches only owner Bot Sessions and preserves the exact matching sequence', async () => {
+    let ownerSessionId: SessionId | undefined
+    const searchSessions = vi.fn(async (_request: SessionSearchRequest) => {
+      const unrelatedSession = Session.create(SessionId('private-session'))
+      const botSession = Session.create(ownerSessionId ?? SessionId('bot-session-search'))
+      const unrelated: SessionSearchHit = {
+        header: unrelatedSession.header,
+        live: false,
+        persisted: true,
+        bestMatch: {
+          sessionId: unrelatedSession.id,
+          seq: SessionSeq(4),
+          type: 'user/message',
+          time: 4,
+          surface: 'current',
+          snippet: 'private marker',
+        },
+      }
+      const owned: SessionSearchHit = {
+        header: botSession.header,
+        live: true,
+        persisted: true,
+        bestMatch: {
+          sessionId: botSession.id,
+          seq: SessionSeq(17),
+          type: 'assistant/message',
+          time: 17,
+          surface: 'current',
+          snippet: 'owned marker',
+        },
+      }
+      const mismatched: SessionSearchHit = {
+        header: botSession.header,
+        live: true,
+        persisted: true,
+        bestMatch: {
+          sessionId: SessionId('private-session-mismatch'),
+          seq: SessionSeq(15),
+          type: 'assistant/message',
+          time: 15,
+          surface: 'current',
+          snippet: 'mismatched marker',
+        },
+      }
+      const toolResult: SessionSearchHit = {
+        header: botSession.header,
+        live: true,
+        persisted: true,
+        bestMatch: {
+          sessionId: botSession.id,
+          seq: SessionSeq(16),
+          type: 'tool/result',
+          time: 16,
+          surface: 'current',
+          snippet: 'tool marker',
+        },
+      }
+      const shadowed: SessionSearchHit = {
+        header: botSession.header,
+        live: true,
+        persisted: true,
+        bestMatch: {
+          sessionId: botSession.id,
+          seq: SessionSeq(18),
+          type: 'user/message',
+          time: 18,
+          surface: 'shadowed',
+          snippet: 'shadowed marker',
+        },
+      }
+      return { items: [unrelated, mismatched, toolResult, shadowed, owned], nextCursor: SessionSearchCursor('next-page') }
+    })
+    const h = await harness(undefined, undefined, undefined, [], new Map(), new Map(), true, 'native', false, {
+      beforeService: (ctx) => { ctx.provide('sessionQuery', { searchSessions } as never) },
+    })
+    try {
+      const created = await h.service.create({ id: BotId('bot-search'), name: 'Search bot', cwd: '/tmp' })
+      ownerSessionId = created.bot.sessionId
+      const result = await h.service.searchMessages({ query: '  marker  ' })
+      expect(result).toEqual({
+        items: [{
+          botId: created.bot.id,
+          sessionId: created.bot.sessionId,
+          seq: SessionSeq(17),
+          snippet: 'owned marker',
+        }],
+        hasMore: true,
+      })
+      expect(searchSessions).toHaveBeenCalledOnce()
+      expect(searchSessions).toHaveBeenCalledWith({
+        query: 'marker',
+        sessionFilters: [{ kind: 'id', values: [created.bot.sessionId] }],
+        eventFilters: [
+          { kind: 'type', values: ['user/message', 'assistant/message'] },
+          { kind: 'surface', values: ['current'] },
+        ],
+        limit: 20,
+      })
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
   it('orders equal-age Bots by stable id for roster display', async () => {
     const h = await harness()
     const clock = vi.spyOn(Date, 'now').mockReturnValue(1_234)

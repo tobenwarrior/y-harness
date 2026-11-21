@@ -1239,6 +1239,9 @@ importers:
       '@yharness/session':
         specifier: workspace:*
         version: link:../../core/session
+      '@yharness/session-query':
+        specifier: workspace:*
+        version: link:../../session-query/session-query
       '@yharness/skill':
         specifier: workspace:*
         version: link:../../skill/skill

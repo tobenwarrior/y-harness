@@ -69,6 +69,7 @@
     "@yharness/schedule": "workspace:*",
     "@yharness/skill": "workspace:*",
     "@yharness/scope": "workspace:*",
+    "@yharness/session-query": "workspace:*",
     "@yharness/subagent": "workspace:*",
     "@yharness/system-prompt": "workspace:*",
     "@yharness/tool-schedule": "workspace:*",
@@ -82,6 +83,9 @@
       "optional": true
     },
     "@yharness/mcp-resources": {
+      "optional": true
+    },
+    "@yharness/session-query": {
       "optional": true
     }
   },
@@ -109,6 +113,7 @@
     "@yharness/storage-domain": "workspace:*",
     "@yharness/storage-json": "workspace:*",
     "@yharness/storage-sqlite": "workspace:*",
+    "@yharness/session-query": "workspace:*",
     "@yharness/user-approval": "workspace:*",
     "@yharness/typert-protocol": "workspace:*",
     "@yharness/cordis-plugin-loader": "workspace:~"
