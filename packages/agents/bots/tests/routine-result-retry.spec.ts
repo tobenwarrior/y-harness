@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { SessionId } from '@yharness/session'
+import { freezeMessage, MessageId, type UserMessage } from '@yharness/llm'
 import { BotId } from '../src/types.ts'
 import { closeRoutineHarness, completedTurnEvent, invokeRoutine, rawBotRow, routineHarness } from './routine-test-harness.ts'
 
@@ -86,6 +87,51 @@ describe('event routine result recovery', () => {
       expect(row?.eventRoutines?.[0]?.results).toEqual(expect.arrayContaining([
         expect.objectContaining({ messageId: 'routine-message-long-retry', status: 'completed', output: 'completed output' }),
       ]))
+    } finally {
+      vi.useRealTimers()
+      await closeRoutineHarness(harness)
+    }
+  })
+
+  it('can recover a second transient inspection failure for the same Bot', async () => {
+    vi.useFakeTimers()
+    const harness = await routineHarness()
+    try {
+      const { bot } = await harness.service.create({ id: BotId('bot-routine-result-recovered'), name: 'Recovered routine', cwd: '/tmp' })
+      const routine = await invokeRoutine(harness.service, 'create', {
+        title: 'Review report', prompt: 'Read the report.', event: { type: 'message', source: 'user' },
+      }, bot.sessionId, 'create-result-recovery-rule')
+      if (typeof routine !== 'object' || routine === null || !('id' in routine) || typeof routine.id !== 'string') {
+        throw new Error('Routine creation did not return an id')
+      }
+      const { session } = harness.agent
+      session.append('turn/start', { turn: 1 })
+      session.append('user/message', freezeMessage<UserMessage>({
+        id: MessageId('recovered-result-message'),
+        role: 'user',
+        source: { kind: 'bot-event-routine', form: 'notice', summary: 'Review report', routineId: routine.id, triggerEventSeq: 1 },
+        content: [{ type: 'text', text: 'Read the report.' }],
+      }), { surfaceOp: 'append' })
+      completedTurnEvent(session)
+      const inspection = await harness.ctx.sessionController.inspect(bot.sessionId)
+      const inspect = vi.spyOn(harness.ctx.sessionController, 'inspect')
+        .mockRejectedValueOnce(new Error('fixture Session read interrupted'))
+        .mockResolvedValue({ ...inspection, events: session.snapshotEvents() })
+
+      const descriptor = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(harness.service), 'recoverEventRoutineResults')
+      if (descriptor === undefined || typeof descriptor.value !== 'function') throw new Error('Result recovery is unavailable')
+      const recover = descriptor.value as (this: typeof harness.service, sessionId: SessionId) => Promise<void>
+      await recover.call(harness.service, bot.sessionId)
+      await vi.runAllTimersAsync()
+      expect(rawBotRow(harness.pool, bot.id)?.eventRoutines?.[0]?.results).toMatchObject([
+        { messageId: 'recovered-result-message', status: 'completed' },
+      ])
+
+      inspect.mockRejectedValueOnce(new Error('fixture second Session read interrupted'))
+      await recover.call(harness.service, bot.sessionId)
+      await vi.runAllTimersAsync()
+      expect(inspect).toHaveBeenCalledTimes(4)
+      expect(rawBotRow(harness.pool, bot.id)?.eventRoutines?.[0]?.results).toHaveLength(1)
     } finally {
       vi.useRealTimers()
       await closeRoutineHarness(harness)
