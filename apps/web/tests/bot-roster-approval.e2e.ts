@@ -1,15 +1,15 @@
 /** Browser coverage for a Bot approval surfaced in the sidebar. */
 import { mkdir } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright'
 import type { Page } from 'playwright'
-import { expect, it, onTestFailed } from 'vitest'
+import { expect, it } from 'vitest'
 import type {} from '@yharness/bots'
 import { LlmAdapter, ToolCallId, type GenerateOptions, type StreamChunk } from '@yharness/llm'
 import { defineTool } from '@yharness/tools'
 import {
-  captureStableAria, compareOrRefreshGolden, launchWebScaffold, webSnapshotMode,
+  assertFixtureInventory, captureStableAria, compareOrRefreshGolden, launchWebScaffold, watchConsole, webSnapshotMode,
 } from './scaffold.ts'
 import { newEnglishPage, saveFailureShot, writeComposerDraft } from './support.ts'
 
@@ -61,6 +61,7 @@ async function captureMedia(page: Page, name: string): Promise<void> {
 }
 
 it('marks a Bot awaiting approval in its row, collapsed folder, and compact sidebar', async () => {
+  await assertFixtureInventory(dirname(FIXTURE), ['session.v3.jsonl'])
   const scaffold = await launchWebScaffold({
     replayFixture: FIXTURE,
     replayProvidersOnly: true,
@@ -97,9 +98,10 @@ it('marks a Bot awaiting approval in its row, collapsed folder, and compact side
     await scaffold.ctx.bots.updateOrganization({ botId: analyst.id, group: 'Research' })
 
     const browser = await chromium.launch()
+    let page: Page | undefined
     try {
-      const page = await newEnglishPage(browser, 900)
-      onTestFailed(() => saveFailureShot(page, 'web-e2e-bot-roster-approval'))
+      page = await newEnglishPage(browser, 900)
+      const tripwire = watchConsole(page)
       await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' })
       await page.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
       await page.getByRole('button', { name: 'Bots', exact: true }).click()
@@ -176,9 +178,14 @@ it('marks a Bot awaiting approval in its row, collapsed folder, and compact side
         await expect.poll(() => folder.getAttribute('aria-expanded')).toBe('false')
         expect(await roster.getByRole('img', { name: /^Needs you/ }).count()).toBe(0)
         expect(executions).toBe(0)
+        expect(tripwire.pageErrors).toEqual([])
+        expect(tripwire.warnings).toEqual([])
       } finally {
         await gate.dispose()
       }
+    } catch (error) {
+      if (page !== undefined) await saveFailureShot(page, 'web-e2e-bot-roster-approval')
+      throw error
     } finally {
       await browser.close()
     }
