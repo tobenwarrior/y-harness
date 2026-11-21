@@ -154,6 +154,7 @@ describe.skipIf(webSnapshotMode() === 'record').each([
     await expect.poll(() => rows.allTextContents()).toEqual(PROVIDERS[0]!.models.map(model => model.name))
     const viewport = page.getByRole('menu', { name: 'Model', exact: true })
     expect(await viewport.locator('[data-menu-group-heading]').count()).toBe(0)
+    await page.mouse.move(0, 0)
     await viewport.evaluate((node) => { node.style.maxHeight = '80px' })
     const ids = await rows.evaluateAll(nodes => nodes.map(node => node.id))
     await expect.poll(async () => {
@@ -164,7 +165,7 @@ describe.skipIf(webSnapshotMode() === 'record').each([
     expect(initial).toBeGreaterThanOrEqual(0)
     for (let step = 1; step <= ids.length + 1; step++) {
       await search.press('ArrowDown')
-      expect(await search.getAttribute('aria-activedescendant')).toBe(ids[(initial + step) % ids.length])
+      await expect.poll(() => search.getAttribute('aria-activedescendant')).toBe(ids[(initial + step) % ids.length])
       expect(await search.evaluate(node => node === node.ownerDocument.activeElement)).toBe(true)
       await assertNoRectReads(page)
     }

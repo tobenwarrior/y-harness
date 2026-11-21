@@ -25,6 +25,7 @@ export const en = {
   'hint.goal': 'describe the objective for a long-running task',
   'hint.goal.active': 'goal active — edit / pause / resume / clear',
   'placeholder.plan': PLAN_NEXT_ACTION_EN,
+  'placeholder.bot': 'Message {name}',
   'placeholder.default': 'Message or run a task, / commands, @ files or sessions',
   'placeholder.unavailable': 'Session unavailable',
   'placeholder.parentOffline': 'Parent session offline; sending is unavailable but you can still stop the run',

@@ -593,6 +593,10 @@ describe('ConversationRoot resident composer', () => {
       key: 'conversation.view', owner: expect.objectContaining({ bot: { name: 'Atlas' } }) as { bot: { name: string } },
     })
     expect(bot.seatOwners).toContainEqual({ key: 'conversation.composer.dock', owner: { botChat: true } })
+    expect(ordinary.view.container.querySelector('[data-composer-input]')?.getAttribute('aria-label'))
+      .toBe('Message or run a task, / commands, @ files or sessions')
+    expect(bot.view.container.querySelector('[data-composer-input]')?.getAttribute('aria-label'))
+      .toBe('Message Atlas')
   })
 
   it('sticky composer seat wraps the whole overlay chain, not only the fallback stack', () => {
