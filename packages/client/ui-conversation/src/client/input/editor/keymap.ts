@@ -16,8 +16,9 @@
  */
 import type { LexicalEditor } from 'lexical'
 import {
-  COMMAND_PRIORITY_CRITICAL, KEY_ARROW_DOWN_COMMAND, KEY_ARROW_UP_COMMAND, KEY_ENTER_COMMAND,
-  KEY_ESCAPE_COMMAND, KEY_SPACE_COMMAND, KEY_TAB_COMMAND, PASTE_COMMAND,
+  $getRoot, $getSelection, $isRangeSelection, COMMAND_PRIORITY_CRITICAL, KEY_ARROW_DOWN_COMMAND,
+  KEY_ARROW_UP_COMMAND, KEY_DOWN_COMMAND, KEY_ENTER_COMMAND, KEY_ESCAPE_COMMAND, KEY_SPACE_COMMAND,
+  KEY_TAB_COMMAND, PASTE_COMMAND,
 } from 'lexical'
 import { mergeRegister } from '@lexical/utils'
 import type { ArbitrateKey, ArbitrateOutcome } from '../../contract/draft-editor.ts'
@@ -89,7 +90,44 @@ export function registerComposerKeymap(editor: LexicalEditor, handlers: Composer
     return false
   }
 
+  /**
+   * Chromium treats Home/End as a document boundary when the editor is split
+   * into paragraph elements. The composer restores textarea navigation:
+   * Ctrl/Cmd moves across the whole draft, while an unmodified chord stays in
+   * the current paragraph. Shift keeps the original anchor while moving the
+   * active end of the selection.
+   */
+  const documentBoundary = editor.registerCommand(KEY_DOWN_COMMAND, (event) => {
+    if (isComposingEvent(event, recentlyComposing) || event.altKey) return false
+    const atStart = event.key === 'Home' && (event.ctrlKey || event.metaKey)
+    const atEnd = event.key === 'End' && (event.ctrlKey || event.metaKey)
+    const lineStart = event.key === 'Home' && !event.ctrlKey && !event.metaKey
+    const lineEnd = event.key === 'End' && !event.ctrlKey && !event.metaKey
+    if (!atStart && !atEnd && !lineStart && !lineEnd) return false
+    const selection = $getSelection()
+    if (!$isRangeSelection(selection)) return false
+    const anchor = event.shiftKey
+      ? { key: selection.anchor.key, offset: selection.anchor.offset, type: selection.anchor.type }
+      : null
+    const line = (lineStart || lineEnd) ? selection.focus.getNode().getTopLevelElement() : null
+    if ((lineStart || lineEnd) && line === null) return false
+    const edge = atStart
+      ? $getRoot().selectStart()
+      : atEnd
+        ? $getRoot().selectEnd()
+        : lineStart
+          ? line?.selectStart()
+          : line?.selectEnd()
+    if (edge === undefined) return false
+    if (anchor !== null && $isRangeSelection(edge)) {
+      edge.anchor.set(anchor.key, anchor.offset, anchor.type)
+    }
+    event.preventDefault()
+    return true
+  }, COMMAND_PRIORITY_CRITICAL)
+
   return mergeRegister(
+    documentBoundary,
     editor.registerRootListener((root, prevRoot) => {
       prevRoot?.removeEventListener('compositionstart', onCompositionStart)
       prevRoot?.removeEventListener('compositionend', onCompositionEnd)
