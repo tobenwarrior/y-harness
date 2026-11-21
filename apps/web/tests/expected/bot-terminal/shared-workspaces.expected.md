@@ -4,6 +4,7 @@
   - menuitem "Manage memories"
   - menuitem "Manage skills"
   - menuitem "Manage routines"
+  - menuitem "Find in this chat"
   - menuitem "Imported Grok chat"
   - menuitem "Terminal":
     - img

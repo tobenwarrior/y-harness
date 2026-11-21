@@ -3002,6 +3002,95 @@ describe('ChatView', () => {
     expect(view.getByRole('dialog', { name: 'Turn usage' }).textContent).toContain('100 tok')
   })
 
+  it('finds matches only in the loaded direct-Bot transcript and navigates them', () => {
+    const h = makeHarness({
+      nodes: [user(1, 'needle from the user'), assistant(2, 'needle from the Bot')],
+      turnTimings: new Map([[1, { startTime: 1_000, endTime: 5_000 }]]),
+      turnEnds: new Map([[1, 5]]),
+    }, { hasMore: true })
+    const view = render(<h.ChatView {...h.props} bot={{ name: 'Atlas' }} />)
+    fireEvent.keyDown(window, { key: 'f', ctrlKey: true })
+    const search = view.getByRole('search', { name: 'Find in this chat' })
+    const input = within(search).getByRole('textbox', { name: 'Find in this chat' })
+    fireEvent.change(input, { target: { value: 'needle' } })
+    expect(within(search).getByRole('status').textContent).toBe('1 of 2 loaded')
+    expect(view.container.querySelectorAll('[data-chat-find-match]')).toHaveLength(2)
+    expect(view.container.querySelectorAll('[data-chat-find-active]')).toHaveLength(1)
+    fireEvent.click(within(search).getByRole('button', { name: 'Search older' }))
+    expect(h.loadOlder).toHaveBeenCalledOnce()
+
+    fireEvent.click(within(search).getByRole('button', { name: 'Next match' }))
+    expect(within(search).getByRole('status').textContent).toBe('2 of 2 loaded')
+    fireEvent.keyDown(input, { key: 'Enter', shiftKey: true })
+    expect(within(search).getByRole('status').textContent).toBe('1 of 2 loaded')
+
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(view.queryByRole('search', { name: 'Find in this chat' })).toBeNull()
+
+    const focusAnchor = document.createElement('button')
+    document.body.append(focusAnchor)
+    focusAnchor.focus()
+    fireEvent.keyDown(window, { key: 'f', ctrlKey: true })
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(document.activeElement).toBe(focusAnchor)
+    focusAnchor.remove()
+
+    const dialog = document.createElement('div')
+    dialog.setAttribute('role', 'dialog')
+    document.body.append(dialog)
+    fireEvent.keyDown(dialog, { key: 'f', ctrlKey: true })
+    expect(view.queryByRole('search', { name: 'Find in this chat' })).toBeNull()
+    dialog.remove()
+
+    view.unmount()
+    const code = makeHarness({ nodes: [user(1, 'needle from Code')] })
+    const codeView = render(<code.ChatView {...code.props} />)
+    fireEvent.keyDown(window, { key: 'f', metaKey: true })
+    expect(codeView.queryByRole('search', { name: 'Find in this chat' })).toBeNull()
+  })
+
+  it('offers the existing older-history loader when a Bot match is outside the loaded window', () => {
+    const h = makeHarness({ nodes: [user(1, 'visible message')] }, { hasMore: true })
+    const view = render(<h.ChatView {...h.props} bot={{ name: 'Atlas' }} />)
+    fireEvent.keyDown(window, { key: 'f', metaKey: true })
+    const search = view.getByRole('search', { name: 'Find in this chat' })
+    const input = within(search).getByRole('textbox', { name: 'Find in this chat' })
+    fireEvent.change(input, { target: { value: 'older message' } })
+    expect(within(search).getByRole('status').textContent).toBe('No matches in loaded messages')
+    fireEvent.click(within(search).getByRole('button', { name: 'Search older' }))
+    expect(h.loadOlder).toHaveBeenCalledOnce()
+  })
+
+  it('keeps the active Bot match when the transcript grows', () => {
+    const h = makeHarness({
+      nodes: [user(1, 'needle from the user'), assistant(2, 'needle from the Bot')],
+      turnTimings: new Map([[1, { startTime: 1_000, endTime: 5_000 }]]),
+      turnEnds: new Map([[1, 5]]),
+    })
+    const view = render(<h.ChatView {...h.props} bot={{ name: 'Atlas' }} />)
+    fireEvent.keyDown(window, { key: 'f', ctrlKey: true })
+    const search = view.getByRole('search', { name: 'Find in this chat' })
+    const input = within(search).getByRole('textbox', { name: 'Find in this chat' })
+    fireEvent.change(input, { target: { value: 'needle' } })
+    fireEvent.click(within(search).getByRole('button', { name: 'Next match' }))
+    expect(within(search).getByRole('status').textContent).toBe('2 of 2')
+
+    act(() => {
+      h.setChat({
+        nodes: [
+          user(1, 'needle from the user'), assistant(2, 'needle from the Bot'),
+          userInTurn(3, 'new needle', 2), assistant(4, 'reply', 2),
+        ],
+        turnTimings: new Map([[1, { startTime: 1_000, endTime: 5_000 }], [2, { startTime: 3_000, endTime: 7_000 }]]),
+        turnEnds: new Map([[1, 5], [2, 7]]),
+      })
+    })
+
+    expect(within(search).getByRole('status').textContent).toBe('2 of 3')
+    expect(view.container.querySelector('[data-chat-find-active]')?.getAttribute('data-chat-flow-key'))
+      .toBe('fixture:assistant:2')
+  })
+
   it('the settled footer shows usage only in Detailed mode', () => {
     const first: AssistantMessageNode = {
       kind: 'assistant', seq: 2, time: 2_000, turn: 1, step: 1, blocks: [{ kind: 'text', text: 'mid' }],

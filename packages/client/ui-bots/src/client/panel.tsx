@@ -209,6 +209,7 @@ export function BotsPanel({
     <div className={css.computerLayout}>
       <BotDetail
         bot={selectedBot}
+        {...(selectedReference === undefined ? {} : { sessionId: selectedReference.sessionId })}
         children={conversation}
         readGrokHistory={readGrokHistory}
         workspaceActions={[

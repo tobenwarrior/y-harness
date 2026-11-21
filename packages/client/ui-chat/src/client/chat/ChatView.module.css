@@ -8,6 +8,54 @@
   container-type: inline-size;
 }
 
+/* Direct Bot search is transient: it reserves one compact row above the
+   transcript instead of adding another permanent toolbar control. */
+.findBar {
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: min(560px, calc(100% - 32px));
+  align-self: center;
+  margin: 8px auto 0;
+  padding: 5px;
+  border: 0.5px solid var(--yh-alias-border-l2);
+  border-radius: var(--yh-radius-lg);
+  background: var(--yh-alias-bg-layer-1);
+}
+
+.findInput {
+  flex: 1 1 180px;
+  min-width: 120px;
+}
+
+.findStatus {
+  flex: none;
+  max-width: 24ch;
+  overflow: hidden;
+  color: var(--yh-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.findOlder {
+  flex: none;
+  white-space: nowrap;
+}
+
+:global([data-chat-find-match]) {
+  background: color-mix(in srgb, var(--yh-alias-state-business-primary) 5%, transparent);
+  border-radius: var(--yh-radius-md);
+}
+
+:global([data-chat-find-active]) {
+  background: color-mix(in srgb, var(--yh-alias-state-business-primary) 9%, transparent);
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--yh-alias-state-business-primary) 52%, transparent);
+}
+
 .root {
   position: relative;
   display: flex;

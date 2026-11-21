@@ -80,6 +80,23 @@ function openHistory(): void {
   fireEvent.click(screen.getByRole('menuitem', { name: en.grokHistory }))
 }
 
+it('opens the active Bot chat search from Bot options without changing the session', () => {
+  const request = vi.fn<(event: Event) => void>()
+  globalThis.addEventListener('yharness:bot-find-chat', request)
+  try {
+    render(<BotDetail bot={{ id: 'bot-one', name: 'Grok', accent: 'blue', identity: 'round' }}
+      sessionId="session-one" loading={false} loadAvatar={undefined} children={null} t={t} />)
+    fireEvent.click(screen.getByRole('button', { name: en.botMenu }))
+    fireEvent.click(screen.getByRole('menuitem', { name: en.findInChat }))
+    expect(request).toHaveBeenCalledOnce()
+    const event = request.mock.calls[0]?.[0]
+    expect(event).toBeInstanceOf(CustomEvent)
+    expect((event as CustomEvent<{ sessionId: string }>).detail).toEqual({ sessionId: 'session-one' })
+  } finally {
+    globalThis.removeEventListener('yharness:bot-find-chat', request)
+  }
+})
+
 describe('Imported chat from Bot options', () => {
   it('loads and displays a valid version-one archive, then closes and reopens it', async () => {
     const read = vi.fn<(id: string) => Promise<BotGrokHistoryArchive>>().mockResolvedValue(versionOneArchive)

@@ -1176,10 +1176,12 @@ function NewBotDialog({ open, onClose, onCreate, error, t }: {
 }
 
 export function BotDetail({
-  bot, children, headerActions, t, loadAvatar, onEditAvatar, onRename, onUpdateProfile, share, memoryManager, routineManager,
+  bot, sessionId, children, headerActions, t, loadAvatar, onEditAvatar, onRename, onUpdateProfile, share, memoryManager, routineManager,
   skillManager, routineRevision = 0, loading, workspaceActions = [], readGrokHistory,
 }: {
   bot: BotSummary | undefined
+  /** Session selected by the Bots panel, used by session-scoped toolbar actions. */
+  sessionId?: string
   children: ReactNode
   headerActions?: ReactNode
   workspaceActions?: readonly BotToolbarItem[]
@@ -1283,6 +1285,16 @@ export function BotDetail({
     }]),
     ...(routineManager === undefined ? [] : [{
       id: 'routines', label: t('manageRoutines'), icon: <IconClockOutlineRegular size={16} />, run: () => { setRoutineOpen(true) },
+    }]),
+    ...(sessionId === undefined ? [] : [{
+      id: 'find-in-chat',
+      label: t('findInChat'),
+      icon: <IconSidebarSearchOutlineRegular size={16} />,
+      run: () => {
+        globalThis.dispatchEvent(new CustomEvent('yharness:bot-find-chat', {
+          detail: { sessionId },
+        }))
+      },
     }]),
     ...(readGrokHistory === undefined ? [] : [{
       id: 'history', label: t('grokHistory'), icon: <IconArchiveOffOutlineRegular size={16} />, run: () => { setHistoryTarget(bot.id) },
