@@ -2910,9 +2910,10 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
 
   const selected = bots.find(bot => String(bot.id) === selectedBotId)
   const selectedGroup = groups.find(group => String(group.id) === selectedGroupId)
+  const groupMembers = selectedGroup?.bots ?? []
   const mentionOptions: readonly SharedGroupMentionOption[] = groupMentionQuery === null ? [] : [
     ...(EVERYONE_MENTION.startsWith(groupMentionQuery.toLocaleLowerCase()) ? [{ kind: 'everyone' as const }] : []),
-    ...(selectedGroup?.bots ?? [])
+    ...groupMembers
       .filter(candidate => candidate.name.toLocaleLowerCase().includes(groupMentionQuery.toLocaleLowerCase()))
       .map(bot => ({ kind: 'bot' as const, bot })),
   ]
