@@ -6,7 +6,7 @@
  */
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { fireEvent } from '@testing-library/react'
-import { $createParagraphNode, $createTextNode, $getRoot, createEditor } from 'lexical'
+import { $createParagraphNode, $createTextNode, $getRoot, $getSelection, $isRangeSelection, createEditor, KEY_DOWN_COMMAND } from 'lexical'
 import { registerPlainText } from '@lexical/plain-text'
 import { registerComposerKeymap } from '../src/client/input/editor/keymap.ts'
 
@@ -65,6 +65,53 @@ describe('keymap keydown routing', () => {
     expect(submit).toHaveBeenCalledWith(false)
     fireEvent.keyDown(root, { key: 'Enter', metaKey: true })
     expect(submit).toHaveBeenCalledWith(true)
+  })
+
+  it('moves Ctrl/Cmd Home and End across the whole multiline draft', async () => {
+    const editor = createEditor({ namespace: 'document-boundaries', onError: (error) => { throw error } })
+    const root = document.createElement('div')
+    root.contentEditable = 'true'
+    document.body.appendChild(root)
+    onTestFinished(() => { editor.setRootElement(null); root.remove() })
+    editor.setRootElement(root)
+    onTestFinished(registerPlainText(editor))
+    onTestFinished(registerComposerKeymap(editor, {
+      arbitrate: () => 'pass', space: () => false, dismissPopup: () => {}, canSubmit: () => true,
+      submit: () => {}, intakeFiles: () => {}, pasteText: () => {},
+    }))
+
+    editor.update(() => {
+      const first = $createParagraphNode().append($createTextNode('first line'))
+      const second = $createParagraphNode().append($createTextNode('second line'))
+      $getRoot().append(first, second)
+      first.select(2, 2)
+    }, { discrete: true })
+    editor.dispatchCommand(KEY_DOWN_COMMAND, new KeyboardEvent('keydown', { key: 'End', ctrlKey: true, bubbles: true, cancelable: true }))
+    await Promise.resolve()
+    editor.getEditorState().read(() => {
+      const selection = $getSelection()
+      expect(selection && $isRangeSelection(selection) ? selection.anchor.getNode().getTextContent() : null).toBe('second line')
+      expect(selection && $isRangeSelection(selection) ? selection.anchor.offset : null).toBe('second line'.length)
+    })
+
+    editor.dispatchCommand(KEY_DOWN_COMMAND, new KeyboardEvent('keydown', { key: 'Home', ctrlKey: true, bubbles: true, cancelable: true }))
+    await Promise.resolve()
+    editor.getEditorState().read(() => {
+      const selection = $getSelection()
+      expect(selection && $isRangeSelection(selection) ? selection.anchor.getNode().getTextContent() : null).toBe('first line')
+      expect(selection && $isRangeSelection(selection) ? selection.anchor.offset : null).toBe(0)
+    })
+
+    editor.dispatchCommand(KEY_DOWN_COMMAND, new KeyboardEvent('keydown', { key: 'End', ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true }))
+    await Promise.resolve()
+    editor.getEditorState().read(() => {
+      const selection = $getSelection()
+      if (!selection || !$isRangeSelection(selection)) throw new Error('Expected a range selection')
+      expect(selection.anchor.getNode().getTextContent()).toBe('first line')
+      expect(selection.anchor.offset).toBe(0)
+      expect(selection.focus.getNode().getTextContent()).toBe('second line')
+      expect(selection.focus.offset).toBe('second line'.length)
+    })
   })
 
   it.each([
