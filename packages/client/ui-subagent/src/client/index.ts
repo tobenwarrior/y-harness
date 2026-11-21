@@ -57,7 +57,7 @@ export function readSubagentActivity(
   return sessions.using(
     address,
     { source: 'subagentActivityPreview' },
-    async reference => {
+    async (reference) => {
       const binding = await reference.ready
       const entries: readonly SessionEventLikeEntry[] = binding.eventSource.getSnapshot().entries
       return summarizeSubagentActivity(entries)

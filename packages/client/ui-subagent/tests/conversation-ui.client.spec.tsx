@@ -337,7 +337,7 @@ describe('SubagentHeaderLineage', () => {
 
   it('does not start a second activity read while the first one is pending', async () => {
     const input = props(catalog())
-    const deferred = Promise.withResolvers<readonly [{ kind: 'action', name: 'read', status: 'running' }]>()
+    const deferred = Promise.withResolvers<readonly [{ kind: 'action'; name: 'read'; status: 'running' }]>()
     const readChildActivity = vi.fn(() => deferred.promise)
     render(<SubagentActivity {...input} readChildActivity={readChildActivity} />)
     fireEvent.click(screen.getByRole('button', { name: 'Agents, 1 running, 2 total' }))

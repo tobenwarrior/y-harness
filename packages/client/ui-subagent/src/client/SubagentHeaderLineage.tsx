@@ -661,7 +661,7 @@ function CatalogDropdown({
       [address.childSessionId]: { state: 'loading', items: [] },
     }))
     void readChildActivity(address).then(
-      items => {
+      (items) => {
         setActivityBySession(current => ({
           ...current,
           [address.childSessionId]: { state: 'ready', items },
