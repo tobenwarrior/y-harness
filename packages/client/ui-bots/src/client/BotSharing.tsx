@@ -5,12 +5,14 @@ import { randomUUID } from '@yharness/util-crypto'
 import type { PropsLocale } from '@yharness/client-ui-slots'
 import {
   Button,
+  IconCloseOutlineRegular,
   IconCopyOutlineRegular,
   IconLinkOutlineRegular,
   IconSettingsOutlineRegular,
   IconShieldOutlineRegular,
   IconShareOutlineRegular,
   IconTrashOutlineRegular,
+  IconUsersOutlineRegular,
   Input,
   Modal,
   MenuSurface,
@@ -42,7 +44,10 @@ import type {
   BotSharedRosterFenceDiagnosticValue,
 } from '@yharness/bots/client'
 import { BotAvatar } from './BotAvatar.tsx'
-import { mentionQueryAt, resolveMentionTargets } from './bot-mentions.ts'
+import {
+  EVERYONE_MENTION, hasCompleteMention, mentionQueryAt, removeCompleteMention, resolveMentionTargets,
+  type BotMentionSelection,
+} from './bot-mentions.ts'
 import { compactGroupQuote, GROUP_REACTION_OPTIONS, readGroupReplyToMessageId } from './group-interactions.ts'
 import {
   BotGroupAttachments,
@@ -82,6 +87,10 @@ interface SharedDialogAuthContext {
   readonly authGeneration: number
   readonly scope: string
 }
+
+type SharedGroupMentionOption =
+  | { readonly kind: 'everyone' }
+  | { readonly kind: 'bot'; readonly bot: BotGroupView['bots'][number] }
 
 class SharedDialogAuthChangedError extends Error {
   constructor() {
@@ -1395,6 +1404,7 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
   const [groupReactionWorkingMessageId, setGroupReactionWorkingMessageId] = useState<string | null>(null)
   const [groupMentionQuery, setGroupMentionQuery] = useState<string | null>(null)
   const [groupMentionIndex, setGroupMentionIndex] = useState(0)
+  const [groupEveryoneMentionSelected, setGroupEveryoneMentionSelected] = useState(false)
   const [groupAttachments, setGroupAttachments] = useState<readonly BotGroupAttachmentDraft[]>([])
   const [groupAttachmentError, setGroupAttachmentError] = useState<string | null>(null)
   const [groupWorking, setGroupWorking] = useState<'load' | 'create' | 'send' | null>(null)
@@ -1443,7 +1453,7 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
   const groupOperationGenerationRef = useRef(0)
   const groupDraftRevisionRef = useRef(0)
   const groupInputRef = useRef<HTMLInputElement | null>(null)
-  const groupMentionSelectionsRef = useRef<readonly { readonly id: string; readonly name: string }[]>([])
+  const groupMentionSelectionsRef = useRef<readonly BotMentionSelection[]>([])
   const groupInviteGenerationRef = useRef(0)
   const groupSettingsGenerationRef = useRef(0)
   const groupAttachmentsRef = useRef<readonly BotGroupAttachmentDraft[]>([])
@@ -1609,6 +1619,7 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
       setGroupReactionWorkingMessageId(null)
       setGroupMentionQuery(null)
       setGroupMentionIndex(0)
+      setGroupEveryoneMentionSelected(false)
       groupMentionSelectionsRef.current = []
       setGroupWorking(null)
       setGroupInvite(null)
@@ -1665,6 +1676,7 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
     setGroupReactionWorkingMessageId(null)
     setGroupMentionQuery(null)
     setGroupMentionIndex(0)
+    setGroupEveryoneMentionSelected(false)
     groupMentionSelectionsRef.current = []
     if (preserveCodeRevision === undefined || codeRevisionRef.current <= preserveCodeRevision) {
       setCode('')
@@ -2829,6 +2841,7 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
         if (groupDraftRevisionRef.current === submittedRevision) {
           setGroupDraft('')
           setGroupReplyingTo(null)
+          setGroupEveryoneMentionSelected(false)
           groupMentionSelectionsRef.current = []
         }
         await readGroup(submittedGroupId)
@@ -2897,29 +2910,47 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
 
   const selected = bots.find(bot => String(bot.id) === selectedBotId)
   const selectedGroup = groups.find(group => String(group.id) === selectedGroupId)
-  const mentionOptions = groupMentionQuery === null ? [] : (selectedGroup?.bots ?? [])
-    .filter(candidate => candidate.name.toLocaleLowerCase().includes(groupMentionQuery.toLocaleLowerCase()))
+  const groupMembers = selectedGroup?.bots ?? []
+  const mentionOptions: readonly SharedGroupMentionOption[] = groupMentionQuery === null ? [] : [
+    ...(EVERYONE_MENTION.startsWith(groupMentionQuery.toLocaleLowerCase()) ? [{ kind: 'everyone' as const }] : []),
+    ...groupMembers
+      .filter(candidate => candidate.name.toLocaleLowerCase().includes(groupMentionQuery.toLocaleLowerCase()))
+      .map(bot => ({ kind: 'bot' as const, bot })),
+  ]
   const activeMention = mentionOptions[groupMentionIndex]
-  const selectGroupMention = (candidate: BotGroupView['bots'][number]): void => {
+  const selectGroupMention = (option: SharedGroupMentionOption): void => {
     const cursor = groupInputRef.current?.selectionStart ?? groupDraft.length
     const match = /(?:^|\s)@([^\s@]*)$/.exec(groupDraft.slice(0, cursor))
     const start = match === null ? cursor : cursor - (match[1]?.length ?? 0) - 1
-    const next = `${groupDraft.slice(0, start)}@${candidate.name} ${groupDraft.slice(cursor)}`
+    const name = option.kind === 'everyone' ? EVERYONE_MENTION : option.bot.name
+    const next = `${groupDraft.slice(0, start)}@${name} ${groupDraft.slice(cursor)}`
     groupDraftRevisionRef.current += 1
     groupAttachmentMessageIdRef.current = null
     groupAttachmentDraftTextRef.current = null
     groupAttachmentTargetsRef.current = undefined
-    groupMentionSelectionsRef.current = [
-      ...groupMentionSelectionsRef.current.filter(item => item.name.toLocaleLowerCase() !== candidate.name.toLocaleLowerCase()),
-      { id: String(candidate.id), name: candidate.name },
-    ]
+    groupMentionSelectionsRef.current = option.kind === 'everyone'
+      ? [...groupMentionSelectionsRef.current.filter(selection => !('kind' in selection)), { kind: 'everyone' }]
+      : [
+        ...groupMentionSelectionsRef.current.filter(selection => (
+          'kind' in selection || selection.name.toLocaleLowerCase() !== option.bot.name.toLocaleLowerCase()
+        )),
+        { id: String(option.bot.id), name: option.bot.name },
+      ]
     setGroupDraft(next)
+    setGroupEveryoneMentionSelected(option.kind === 'everyone' || groupEveryoneMentionSelected)
     setGroupMentionQuery(null)
     setGroupMentionIndex(0)
     requestAnimationFrame(() => {
       groupInputRef.current?.focus()
-      groupInputRef.current?.setSelectionRange(start + candidate.name.length + 2, start + candidate.name.length + 2)
+      groupInputRef.current?.setSelectionRange(start + name.length + 2, start + name.length + 2)
     })
+  }
+  const removeGroupEveryoneMention = (): void => {
+    setGroupDraft(current => removeCompleteMention(current, EVERYONE_MENTION))
+    groupMentionSelectionsRef.current = groupMentionSelectionsRef.current.filter(selection => !('kind' in selection))
+    setGroupEveryoneMentionSelected(false)
+    setGroupMentionQuery(null)
+    requestAnimationFrame(() => { groupInputRef.current?.focus() })
   }
   return (
     <>
@@ -3276,6 +3307,22 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
                       </Button>
                     </div>
                   )}
+                  {groupEveryoneMentionSelected && (
+                    <div className={css.groupMentionSelection} aria-label={t('groupMentionSelection')}>
+                      <span className={css.groupMentionChip}>
+                        <span className={css.groupMentionChipIcon} aria-hidden="true"><IconUsersOutlineRegular size={14} /></span>
+                        <span>{t('mentionEveryone')}</span>
+                        <button
+                          type="button"
+                          className={css.groupMentionChipRemove}
+                          aria-label={t('removeGroupMention', { name: t('mentionEveryone') })}
+                          onClick={removeGroupEveryoneMention}
+                        >
+                          <IconCloseOutlineRegular size={12} />
+                        </button>
+                      </span>
+                    </div>
+                  )}
                   <BotGroupAttachments
                     attachments={groupAttachments}
                     disabled={groupWorking === 'send'}
@@ -3293,18 +3340,20 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
                   )}
                   {groupMentionQuery !== null && mentionOptions.length > 0 && (
                     <MenuSurface className={css.mentionMenu} role="listbox" id={`${selectedGroup.id}-mentions`} aria-label={t('mentionBots')}>
-                      {mentionOptions.map((candidate, index) => (
-                        <button type="button" role="option" key={candidate.id}
-                          id={`${selectedGroup.id}-mention-${candidate.id}`}
+                      {mentionOptions.map((option, index) => (
+                        <button type="button" role="option" key={option.kind === 'everyone' ? EVERYONE_MENTION : option.bot.id}
+                          id={`${selectedGroup.id}-mention-${option.kind === 'everyone' ? EVERYONE_MENTION : option.bot.id}`}
                           aria-selected={index === groupMentionIndex}
                           className={clsx(css.mentionOption, index === groupMentionIndex && css.mentionOptionSelected)}
                           onMouseDown={(event) => { event.preventDefault() }}
-                          onClick={() => { selectGroupMention(candidate) }}>
-                          <BotAvatar name={candidate.name} identity={candidate.identity} accent={candidate.accent}
-                            botId={String(candidate.id)} loadAvatar={undefined} size="small" />
+                          onClick={() => { selectGroupMention(option) }}>
+                          {option.kind === 'everyone' ? <IconUsersOutlineRegular size={16} /> : (
+                            <BotAvatar name={option.bot.name} identity={option.bot.identity} accent={option.bot.accent}
+                              botId={String(option.bot.id)} loadAvatar={undefined} size="small" />
+                          )}
                           <span className={css.mentionOptionCopy}>
-                            <span className={css.mentionOptionName}>{candidate.name}</span>
-                            <span className={css.mentionOptionHint}>{t('mentionBotHint')}</span>
+                            <span className={css.mentionOptionName}>{option.kind === 'everyone' ? t('mentionEveryone') : option.bot.name}</span>
+                            <span className={css.mentionOptionHint}>{option.kind === 'everyone' ? t('mentionEveryoneHint') : t('mentionBotHint')}</span>
                           </span>
                         </button>
                       ))}
@@ -3318,7 +3367,7 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
                       aria-expanded={groupMentionQuery !== null && mentionOptions.length > 0}
                       aria-controls={groupMentionQuery !== null && mentionOptions.length > 0 ? `${selectedGroup.id}-mentions` : undefined}
                       aria-activedescendant={groupMentionQuery !== null && activeMention !== undefined
-                        ? `${selectedGroup.id}-mention-${activeMention.id}` : undefined}
+                        ? `${selectedGroup.id}-mention-${activeMention.kind === 'everyone' ? EVERYONE_MENTION : activeMention.bot.id}` : undefined}
                       value={groupDraft}
                       placeholder={t('sharedGroupMessagePlaceholder', { name: selectedGroup.name })}
                       aria-label={t('sharedGroupMessagePlaceholder', { name: selectedGroup.name })}
@@ -3338,6 +3387,10 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
                         }
                         setGroupAttachmentError(null)
                         setGroupDraft(event.currentTarget.value)
+                        if (groupEveryoneMentionSelected && !hasCompleteMention(event.currentTarget.value, EVERYONE_MENTION)) {
+                          setGroupEveryoneMentionSelected(false)
+                          groupMentionSelectionsRef.current = groupMentionSelectionsRef.current.filter(selection => !('kind' in selection))
+                        }
                         setGroupMentionQuery(mentionQueryAt(
                           event.currentTarget.value, event.currentTarget.selectionStart ?? event.currentTarget.value.length,
                         ))

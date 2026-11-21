@@ -1491,6 +1491,69 @@
 .groupReplyComposerCopy span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .groupReplyComposerCopy strong { color: var(--yh-alias-label-secondary); font-weight: 600; }
 
+.groupMentionSelection {
+  display: flex;
+  inline-size: 100%;
+  flex: 0 0 100%;
+  align-items: center;
+  gap: 6px;
+  order: -3;
+  min-width: 0;
+  padding: 1px 3px 0;
+}
+
+.groupMentionChip {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 24px;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 5px 2px 6px;
+  border: 0.5px solid var(--yh-alias-state-business-primary);
+  corner-shape: round;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--yh-alias-state-business-primary) 12%, var(--yh-alias-bg-layer-1));
+  color: var(--yh-alias-label-primary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.groupMentionChipIcon {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+}
+
+.groupMentionChip > span:nth-child(2) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.groupMentionChipRemove {
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  corner-shape: round;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--yh-alias-label-tertiary);
+  cursor: pointer;
+}
+
+.groupMentionChipRemove:hover,
+.groupMentionChipRemove:focus-visible {
+  background: var(--yh-alias-interactive-bg-hover);
+  color: var(--yh-alias-label-primary);
+}
+
 .groupDeliveryStatuses {
   display: flex;
   flex-direction: column;
@@ -2538,7 +2601,8 @@
 }
 
 .sharedComposer > .groupAttachments,
-.sharedComposer > .groupAttachmentNotice {
+.sharedComposer > .groupAttachmentNotice,
+.sharedComposer > .groupMentionSelection {
   flex: 0 0 100%;
 }
 .connectedAppCopy > span {

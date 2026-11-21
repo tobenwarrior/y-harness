@@ -2967,6 +2967,63 @@ describe('Bot roster and detail', () => {
     })
   })
 
+  it('offers Everyone and sends the current private-group Bot ids explicitly', async () => {
+    const onSend = vi.fn().mockResolvedValue(undefined)
+    render(<BotGroupDetail
+      group={groupDetail}
+      bots={bots}
+      loading={false}
+      error={null}
+      onRetry={vi.fn()}
+      onSend={onSend}
+      loadAvatar={undefined}
+      t={t}
+    />)
+
+    const composer = screen.getByRole('textbox', { name: 'Message Release room' }) as HTMLTextAreaElement
+    fireEvent.change(composer, { target: { value: '@e', selectionStart: 2 } })
+    fireEvent.click(screen.getByRole('option', { name: /Everyone/ }))
+    expect(screen.getByRole('button', { name: 'Remove Everyone mention' })).toBeTruthy()
+    fireEvent.change(composer, { target: { value: '@everyone @e', selectionStart: 12 } })
+    fireEvent.click(screen.getByRole('option', { name: /Everyone/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Everyone mention' }))
+    expect(screen.queryByRole('button', { name: 'Remove Everyone mention' })).toBeNull()
+    expect(composer.value).toBe('')
+    fireEvent.change(composer, { target: { value: '@e', selectionStart: 2 } })
+    fireEvent.click(screen.getByRole('option', { name: /Everyone/ }))
+    fireEvent.change(composer, { target: { value: 'please review', selectionStart: 13 } })
+    expect(screen.queryByRole('button', { name: 'Remove Everyone mention' })).toBeNull()
+    fireEvent.change(composer, { target: { value: '@e', selectionStart: 2 } })
+    fireEvent.click(screen.getByRole('option', { name: /Everyone/ }))
+    fireEvent.change(composer, { target: { value: '@everyone please review', selectionStart: 23 } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+
+    await waitFor(() => {
+      expect(onSend).toHaveBeenCalledWith('@everyone please review', undefined, ['research', 'release'])
+    })
+  })
+
+  it('does not broadcast an unselected Everyone token in a private group', async () => {
+    const onSend = vi.fn().mockResolvedValue(undefined)
+    render(<BotGroupDetail
+      group={groupDetail}
+      bots={bots}
+      loading={false}
+      error={null}
+      onRetry={vi.fn()}
+      onSend={onSend}
+      loadAvatar={undefined}
+      t={t}
+    />)
+
+    const composer = screen.getByRole('textbox', { name: 'Message Release room' })
+    fireEvent.change(composer, { target: { value: '@everyone please review', selectionStart: 23 } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+
+    await waitFor(() => { expect(screen.getByRole('alert').textContent).toContain('Choose a Bot or Everyone') })
+    expect(onSend).not.toHaveBeenCalled()
+  })
+
   it('renames a group from its header edit dialog', async () => {
     const onUpdate = vi.fn().mockResolvedValue(undefined)
     render(<BotGroupDetail

@@ -2065,6 +2065,111 @@ describe('shared Bot collaboration surfaces', () => {
     })
   })
 
+  it('offers Everyone and sends every current shared-group Bot id explicitly', async () => {
+    const member = { id: BotId(bot.id), name: bot.name, identity: bot.identity, accent: bot.accent, state: 'active' as const, availability: 'idle' as const }
+    const group = {
+      id: brandString<BotGroupId>('bot-group-everyone'), name: 'Everyone room',
+      botIds: [BotId(bot.id), BotId(analystBot.id)],
+      bots: [member, { ...member, id: BotId(analystBot.id), name: analystBot.name }], createdAt: 1, updatedAt: 1,
+    } satisfies BotGroupView
+    const sendGroupMessage = vi.fn().mockResolvedValue({
+      ok: true, value: { messageId: brandString<BotGroupMessageId>('bot-group-message-everyone'), status: 'accepted', deliveries: [] },
+    })
+    const client = sharedClient({
+      listGroups: vi.fn().mockResolvedValue({ ok: true, value: { groups: [group] } }),
+      inspectGroup: vi.fn().mockResolvedValue({ ok: true, value: { group, messages: [] } }),
+      sendGroupMessage,
+    })
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+    const input = await screen.findByPlaceholderText('Message Everyone room')
+    fireEvent.change(input, { target: { value: '@e' } })
+    fireEvent.click(await screen.findByRole('option', { name: /Everyone/ }))
+    expect(screen.getByRole('button', { name: 'Remove Everyone mention' })).toBeTruthy()
+    fireEvent.change(input, { target: { value: '@everyone @Ana', selectionStart: 14 } })
+    fireEvent.click(await screen.findByRole('option', { name: /Analyst/ }))
+    expect(screen.getByRole('button', { name: 'Remove Everyone mention' })).toBeTruthy()
+    fireEvent.change(input, { target: { value: '@everyone @e', selectionStart: 12 } })
+    fireEvent.click(await screen.findByRole('option', { name: /Everyone/ }))
+    fireEvent.change(input, { target: { value: 'please check' } })
+    expect(screen.queryByRole('button', { name: 'Remove Everyone mention' })).toBeNull()
+    fireEvent.change(input, { target: { value: '@e' } })
+    fireEvent.click(await screen.findByRole('option', { name: /Everyone/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Everyone mention' }))
+    expect(screen.queryByRole('button', { name: 'Remove Everyone mention' })).toBeNull()
+    expect((input as HTMLInputElement).value).toBe('')
+    fireEvent.change(input, { target: { value: '@e' } })
+    fireEvent.click(await screen.findByRole('option', { name: /Everyone/ }))
+    fireEvent.change(input, { target: { value: '@everyone please check' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send to group' }))
+
+    await waitFor(() => {
+      expect(sendGroupMessage).toHaveBeenCalledWith(expect.objectContaining({
+        groupId: group.id, text: '@everyone please check', targetBotIds: [BotId(bot.id), BotId(analystBot.id)],
+      }))
+    })
+  })
+
+  it('does not broadcast an unselected Everyone token in a shared group', async () => {
+    const member = { id: BotId(bot.id), name: bot.name, identity: bot.identity, accent: bot.accent, state: 'active' as const, availability: 'idle' as const }
+    const group = {
+      id: brandString<BotGroupId>('bot-group-everyone-unselected'), name: 'Everyone safety room',
+      botIds: [BotId(bot.id), BotId(analystBot.id)],
+      bots: [member, { ...member, id: BotId(analystBot.id), name: analystBot.name }], createdAt: 1, updatedAt: 1,
+    } satisfies BotGroupView
+    const sendGroupMessage = vi.fn()
+    const client = sharedClient({
+      listGroups: vi.fn().mockResolvedValue({ ok: true, value: { groups: [group] } }),
+      inspectGroup: vi.fn().mockResolvedValue({ ok: true, value: { group, messages: [] } }),
+      sendGroupMessage,
+    })
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+    const input = await screen.findByPlaceholderText('Message Everyone safety room')
+    fireEvent.change(input, { target: { value: '@everyone please check' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send to group' }))
+
+    await waitFor(() => { expect(screen.getByRole('alert').textContent).toContain('Choose the Bot or Everyone') })
+    expect(sendGroupMessage).not.toHaveBeenCalled()
+  })
+
+  it('keeps a Bot literally named Everyone distinct from the broadcast option', async () => {
+    const member = { id: BotId(bot.id), name: bot.name, identity: bot.identity, accent: bot.accent, state: 'active' as const, availability: 'idle' as const }
+    const group = {
+      id: brandString<BotGroupId>('bot-group-everyone-name'), name: 'Everyone name room',
+      botIds: [BotId(bot.id), BotId('bot-everyone')],
+      bots: [member, { ...member, id: BotId('bot-everyone'), name: 'Everyone' }], createdAt: 1, updatedAt: 1,
+    } satisfies BotGroupView
+    const sendGroupMessage = vi.fn().mockResolvedValue({
+      ok: true, value: { messageId: brandString<BotGroupMessageId>('bot-group-message-everyone-name'), status: 'accepted', deliveries: [] },
+    })
+    const client = sharedClient({
+      listGroups: vi.fn().mockResolvedValue({ ok: true, value: { groups: [group] } }),
+      inspectGroup: vi.fn().mockResolvedValue({ ok: true, value: { group, messages: [] } }),
+      sendGroupMessage,
+    })
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+    const input = await screen.findByPlaceholderText('Message Everyone name room')
+    fireEvent.change(input, { target: { value: '@e' } })
+    const options = await screen.findAllByRole('option', { name: /Everyone/ })
+    expect(options).toHaveLength(2)
+    const namedOption = options.find(option => option.textContent?.includes('Only this Bot'))
+    expect(namedOption).toBeDefined()
+    if (namedOption === undefined) return
+    fireEvent.click(namedOption)
+    expect(screen.queryByRole('button', { name: 'Remove Everyone mention' })).toBeNull()
+    fireEvent.change(input, { target: { value: '@Everyone @e', selectionStart: 12 } })
+    const repeated = await screen.findByRole('option', { name: /Everyone.*Only this Bot/ })
+    fireEvent.click(repeated)
+    expect(screen.queryByRole('button', { name: 'Remove Everyone mention' })).toBeNull()
+    fireEvent.change(input, { target: { value: '@Everyone please check' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send to group' }))
+
+    await waitFor(() => {
+      expect(sendGroupMessage).toHaveBeenCalledWith(expect.objectContaining({
+        groupId: group.id, text: '@Everyone please check', targetBotIds: [BotId('bot-everyone')],
+      }))
+    })
+  })
+
   it('selects a shared-group mention with the keyboard without sending early', async () => {
     const member = { id: BotId(bot.id), name: bot.name, identity: bot.identity, accent: bot.accent, state: 'active' as const, availability: 'idle' as const }
     const group = {
