@@ -81,6 +81,20 @@ Host service that owns the durable roster and its Session mappings.
 @Remote('setShareMemoryPolicy') async setShareMemoryPolicy(request: BotShareMemoryPolicyRequest): Promise<BotShareMemoryPolicyValue>
 
 /**
+ * List pending collaborator learning suggestions for one Bot.
+ * @param request - Bot id to inspect.
+ * @returns pending suggestions and the Bot's published shared notes.
+ */
+@Remote('listShareLearning') async listShareLearning(request: BotShareMembersRequest): Promise<BotShareLearningValue>
+
+/**
+ * Approve or reject one pending collaborator learning suggestion.
+ * @param request - Bot, suggestion, and review decision.
+ * @returns the committed decision and any newly published note.
+ */
+@Remote('decideShareLearning') async decideShareLearning(request: BotShareLearningDecisionRequest): Promise<BotShareLearningDecisionValue>
+
+/**
  * Revoke one non-owner member from one operator-owned Bot.
  * @param request - Bot id and the principal to remove.
  * @returns the scoped revocation result.

@@ -23,6 +23,9 @@ export type BotId = Branded<'BotId'>
 /** Opaque identity for one explicitly published shared-context note. */
 export type BotShareMemoryId = Branded<'BotShareMemoryId'>
 
+/** Opaque identity for one pending shared-context learning suggestion. */
+export type BotShareLearningId = Branded<'BotShareLearningId'>
+
 /** Apply the Bot identity brand to a value already admitted by the owner.
  * @param value - String value already validated as a Bot id.
  * @returns The branded Bot id.
@@ -37,6 +40,14 @@ export function BotId(value: string): BotId {
  */
 export function BotShareMemoryId(value: string): BotShareMemoryId {
   return brandString<BotShareMemoryId>(value)
+}
+
+/** Apply the learning-suggestion brand to a validated storage or wire value.
+ * @param value - String already validated as a learning-suggestion id.
+ * @returns The branded learning-suggestion id.
+ */
+export function BotShareLearningId(value: string): BotShareLearningId {
+  return brandString<BotShareLearningId>(value)
 }
 
 /** Existing semantic glyph families used by the Bot avatar. */
@@ -171,6 +182,8 @@ export interface BotShareMemoryEntry {
 export interface BotShareMemoryValue extends BotShareMemoryPolicyValue {
   /** Notes visible to every member while shared context is enabled. */
   readonly entries: readonly BotShareMemoryEntry[]
+  /** Marker that this Host supports owner-reviewed collaborator learning. */
+  readonly learningReview?: true
 }
 
 /** Shared-context write carrying a caller acknowledgement; membership and Bot policy authorize it independently. */
@@ -185,8 +198,58 @@ export interface BotShareMemoryWriteRequest {
 
 /** Shared-context write response. */
 export interface BotShareMemoryWriteValue {
-  /** Newly published note. */
-  readonly entry: BotShareMemoryEntry
+  /** Newly published note, present when the caller is an owner or manager. */
+  readonly entry?: BotShareMemoryEntry
+  /** Pending suggestion, present when a collaborator submitted a note for review. */
+  readonly suggestion?: BotShareLearningSuggestion
+  /** Whether the write is already visible in the shared Bot context. */
+  readonly published: boolean
+}
+
+/** One collaborator-submitted note awaiting owner or manager review. */
+export interface BotShareLearningSuggestion {
+  /** Stable suggestion id. */
+  readonly id: BotShareLearningId
+  /** Authenticated member who submitted the suggestion. */
+  readonly principalId: BotPrincipalId
+  /** Bounded suggestion text. */
+  readonly text: string
+  /** Suggestion creation timestamp. */
+  readonly createdAt: number
+}
+
+/** Owner or manager request to resolve one pending learning suggestion. */
+export interface BotShareLearningDecisionRequest {
+  /** Bot whose learning queue contains the suggestion. */
+  readonly botId: BotId
+  /** Suggestion to resolve. */
+  readonly suggestionId: BotShareLearningId
+  /** Whether the suggestion should become published context or be discarded. */
+  readonly decision: 'approve' | 'reject'
+}
+
+/** Owner or manager result after resolving one learning suggestion. */
+export interface BotShareLearningDecisionValue {
+  /** Bot whose learning queue was changed. */
+  readonly botId: BotId
+  /** Resolved suggestion id. */
+  readonly suggestionId: BotShareLearningId
+  /** Durable resolution recorded for the suggestion. */
+  readonly decision: 'approved' | 'rejected'
+  /** Whether this call performed the first resolution. */
+  readonly resolved: boolean
+  /** Published note created by an approval, when this call resolved it. */
+  readonly entry?: BotShareMemoryEntry
+}
+
+/** Owner or manager view of one Bot's pending and published learning state. */
+export interface BotShareLearningValue {
+  /** Bot whose learning state is returned. */
+  readonly botId: BotId
+  /** Suggestions awaiting review. */
+  readonly pending: readonly BotShareLearningSuggestion[]
+  /** Published notes currently retained for the Bot. */
+  readonly recentlyLearned: readonly BotShareMemoryEntry[]
 }
 
 /** Explicit owner assertion used to release one abandoned shared-roster fence. */

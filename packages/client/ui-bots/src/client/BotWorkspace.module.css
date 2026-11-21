@@ -2175,6 +2175,32 @@
   flex: 1;
 }
 
+.sharedLearning {
+  margin-top: 9px;
+}
+
+.sharedLearningContent,
+.sharedLearningItem {
+  display: grid;
+  gap: 6px;
+  margin-top: 6px;
+  min-width: 0;
+}
+
+.sharedLearningItem {
+  padding: 6px;
+  border: 0.5px solid var(--yh-alias-border-l2);
+  border-radius: var(--yh-radius-md);
+  overflow-wrap: anywhere;
+}
+
+.sharedLearningActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
 .sharedWorkspace {
   display: grid;
   min-width: 0;
@@ -2424,7 +2450,7 @@
   text-transform: uppercase;
 }
 
-.sharedBot span,
+.sharedBotCopy,
 .sharedConversationHeader div,
 .connectedAppCopy {
   display: flex;
@@ -2433,7 +2459,7 @@
   gap: 1px;
 }
 
-.sharedBot strong,
+.sharedBotCopy strong,
 .sharedConversationHeader strong {
   overflow: hidden;
   font-size: 12px;
@@ -2453,7 +2479,7 @@
   white-space: nowrap;
 }
 
-.sharedBot small,
+.sharedBotCopy small,
 .sharedConversationHeader small {
   overflow: hidden;
   color: var(--yh-alias-label-tertiary);
@@ -3029,6 +3055,9 @@
 }
 
 @media (max-width: 560px) {
+  .sharedWorkspace { grid-template-columns: minmax(0, 1fr); }
+  .sharedBotList { flex-direction: row; }
+  .sharedBot, .sharedBotSelected { flex: 0 0 clamp(135px, 42vw, 175px); }
   .avatarEditorLayout { grid-template-columns: minmax(0, 1fr); }
   .avatarEditorPreviewColumn { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: end; }
   .avatarEditorPreviewColumn > .avatarEditorLabel { grid-column: 1 / -1; }
