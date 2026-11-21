@@ -102,7 +102,7 @@ export function ChatView({
   useSession, useChat, useChatNode, useChatNodeProcess, useChatGroup, useConversation, useSessions, useStore, actions, renderSlot,
   sessionId, openFile, openSkill, botIcon, openExternalLink, loadOlder, loadThrough,
   loadImage, inspectCall, chatScroll, forkAt, fileMentions,
-  bot, usePresentation, useProjection, t,
+  bot, usePresentation, useProjection, useSessionStatus, t,
 }: ChatViewSlotProps) {
   const order = useChat(s => s.order)
   const groupedEntries = useConversation(snapshot => snapshot.views.grouped('chat')?.entries)
@@ -138,6 +138,7 @@ export function ChatView({
     },
   }), [cwd, t])
   const running = useSession(s => s.running)
+  const waitingForUser = useSessionStatus(statuses => bot !== undefined && statuses.get(sessionId)?.pendingInteraction !== undefined)
   const openState = useSession(s => s.openState)
   const openError = useSession(s => s.openError)
   const hasMore = useSession(s => s.hasMore)
@@ -280,10 +281,9 @@ export function ChatView({
                 t={t}
               />
             </MarkdownDelegateProvider>
-            {running && (bot === undefined ? <RunningStatus startTime={runningStartTime} t={t} /> : <BotReplyPending t={t} />)}
-            {/* No pending placeholders: questions (ui-user-questions) and approvals
-                (ApprovalPanel) both take over the composer, so a flow card would
-                double-render the same wait. */}
+            {running && !waitingForUser && (bot === undefined
+              ? <RunningStatus startTime={runningStartTime} t={t} />
+              : <BotReplyPending t={t} />)}
           </div>
         </div>
       </div>
