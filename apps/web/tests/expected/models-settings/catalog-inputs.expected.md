@@ -9,65 +9,41 @@
     - button "Agent presets"
   - button "Open configuration file"
   - button "Close"
-  - heading "Models" [level=2]
-  - paragraph: Connect a subscription or API provider to choose its models in Y Harness.
-  - text: ChatGPT subscription
-  - button "Edit ChatGPT subscription": Edit
-  - text: Nous Portal
-  - button "Edit Nous Portal": Edit
-  - text: Grok subscription
-  - button "Edit Grok subscription": Edit
-  - list:
-    - listitem:
-      - text: minimax-cn
-      - img "API key configured"
-      - button "Edit minimax-cn": Edit
-      - button "Delete minimax-cn": Delete
-    - listitem:
-      - text: openai
-      - button "Edit openai": Edit
-      - button "Delete openai": Delete
-      - text: openai API key
-      - textbox "API key":
-        - /placeholder: Enter an API key, or leave blank to use environment authentication
-      - group:
-        - text: Customized settings Base URL
-        - textbox "Base URL":
-          - /placeholder: Provider default
-        - region "Models":
-          - text: Models Customized model catalog
-          - button "Restore defaults"
-          - button "Fetch available models"
-          - textbox "Model ID 1":
-            - /placeholder: Model ID
-            - text: gpt-6-astra
-          - textbox "Display name 1":
-            - /placeholder: Display name
-            - text: GPT-6 Astra
-          - button "Model options 1" [expanded]
-          - button "Delete model 1"
-          - text: Context window
-          - textbox "Context window 1":
-            - /placeholder: 256K
-            - text: 272K
-          - text: Max output tokens
-          - textbox "Max output tokens 1":
-            - /placeholder: 32K
-            - text: 128K
-          - group "Input types 1":
-            - text: Input types
-            - checkbox "Text" [checked]
-            - text: Text
-            - checkbox "Image" [checked]
-            - text: Image
-          - button "Add model"
-      - button "Cancel"
-      - button "Apply"
-    - listitem:
-      - text: Acme Relay Custom
-      - button "Edit Acme Relay (acme-gateway)": Edit
-      - button "Delete Acme Relay (acme-gateway)": Delete
-  - button "Add model provider"
-  - group "Decision advice":
-    - heading "Decision advice" [level=3]
-    - text: Advanced ⌄
+  - button "Back to providers"
+  - heading "openai" [level=3]
+  - text: API key
+  - textbox "API key":
+    - /placeholder: Optional with environment auth
+  - group:
+    - text: Customized settings Base URL
+    - textbox "Base URL":
+      - /placeholder: Provider default
+    - region "Models":
+      - text: Models Customized model catalog
+      - button "Restore defaults"
+      - button "Fetch available models"
+      - textbox "Model ID 1":
+        - /placeholder: Model ID
+        - text: gpt-6-astra
+      - textbox "Display name 1":
+        - /placeholder: Display name
+        - text: GPT-6 Astra
+      - button "Model options 1" [expanded]
+      - button "Delete model 1"
+      - text: Context window
+      - textbox "Context window 1":
+        - /placeholder: 256K
+        - text: 272K
+      - text: Max output tokens
+      - textbox "Max output tokens 1":
+        - /placeholder: 32K
+        - text: 128K
+      - group "Input types 1":
+        - text: Input types
+        - checkbox "Text" [checked]
+        - text: Text
+        - checkbox "Image" [checked]
+        - text: Image
+      - button "Add model"
+  - button "Cancel"
+  - button "Apply"

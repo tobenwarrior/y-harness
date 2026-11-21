@@ -71,6 +71,17 @@
   gap: 8px;
 }
 
+.sectionHeader[hidden],
+.subscriptionRows[hidden],
+.addBlock[hidden],
+.overviewFooter[hidden] {
+  display: none;
+}
+
+.overviewFooter {
+  display: contents;
+}
+
 .detailView {
   display: flex;
   min-width: 0;

@@ -21,7 +21,7 @@
  * post-apply reload.
  */
 
-import { useId, useState } from 'react'
+import { useId, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
   Button,
@@ -290,7 +290,7 @@ function ProviderDetailHeader({
 }): ReactNode {
   return (
     <div className={styles['detailHeader']}>
-      <button type="button" className={`${styles['secondaryButton']} ${styles['detailBack']}`} onClick={onBack}>
+      <button type="button" className={`${styles['secondaryButton']} ${styles['detailBack']}`} autoFocus onClick={onBack}>
         <IconChevronLeftOutlineRegular size={14} />
         <span>{t('backToProviders')}</span>
       </button>
@@ -356,6 +356,7 @@ function Loaded({ injected, renderSlot }: { injected: ModelsSectionFace; renderS
   const state = { ...snapshot, rows: snapshot.rows.map(row => row.entry.provider === 'deepseek-account'
     ? { ...row, entry: { ...row.entry, displayName: t('deepSeekAccount') } } : row) }
   const [editing, setEditing] = useState<EditorTarget | undefined>(undefined)
+  const restoreEditFocus = useRef<string | undefined>()
   const [addOpen, setAddOpen] = useState(false)
   const [addMode, setAddMode] = useState<AddMode>('catalog')
   /** The modes shown since the add card opened; each keeps its panel mounted. */
@@ -395,6 +396,11 @@ function Loaded({ injected, renderSlot }: { injected: ModelsSectionFace; renderS
   const closeEditor = (changed: boolean, target: ProviderIdentity): void => {
     closeAdd()
     if (changed) announceSaved(target)
+  }
+
+  const closeDetail = (changed: boolean, target: ProviderIdentity): void => {
+    restoreEditFocus.current = target.provider
+    closeEditor(changed, target)
   }
 
   /**
@@ -528,10 +534,11 @@ function Loaded({ injected, renderSlot }: { injected: ModelsSectionFace; renderS
   const detailRow = detailTarget === undefined
     ? undefined
     : state.rows.find(row => row.entry.provider === detailTarget.provider)
+  const detailVisible = detailTarget !== undefined && detailNamespace !== undefined
 
   return (
     <div className={styles['section']}>
-      <div className={styles['sectionHeader']}>
+      <div className={styles['sectionHeader']} hidden={detailVisible}>
         <div className={styles['sectionHeading']}>
           <h2 className={styles['title']}>{t('title')}</h2>
           <p className={styles['intro']}>{t('intro')}</p>
@@ -545,7 +552,7 @@ function Loaded({ injected, renderSlot }: { injected: ModelsSectionFace; renderS
             {providerCopy(t('savedProvider'), savedIdentity)}
           </p>
         )}
-      <div className={styles['subscriptionRows']}>
+      <div className={styles['subscriptionRows']} hidden={detailVisible}>
         <SubscriptionRow title={t('codexTitle')} t={t}>
           <CodexBackendCard {...subscriptionProps} />
         </SubscriptionRow>
@@ -556,13 +563,13 @@ function Loaded({ injected, renderSlot }: { injected: ModelsSectionFace; renderS
           <XaiCard {...subscriptionProps} namespace={piAi} />
         </SubscriptionRow>
       </div>
-      {detailTarget !== undefined && detailNamespace !== undefined
+      {detailVisible
         ? (
           <div className={styles['detailView']} data-yh-part="provider-detail">
             <ProviderDetailHeader
               target={detailTarget}
               t={t}
-              onBack={() => { closeEditor(false, detailTarget) }}
+              onBack={() => { closeDetail(false, detailTarget) }}
             />
             {detailRow?.entry.error === undefined
               ? null
@@ -587,7 +594,7 @@ function Loaded({ injected, renderSlot }: { injected: ModelsSectionFace; renderS
                 t,
                 readOnly: !state.writable,
                 hideTitle: true,
-                onClose: (changed) => { closeEditor(changed, detailTarget) },
+                onClose: (changed) => { closeDetail(changed, detailTarget) },
               })}
             </div>
           </div>
@@ -673,6 +680,12 @@ function Loaded({ injected, renderSlot }: { injected: ModelsSectionFace; renderS
                         type="button"
                         className={styles['secondaryButton']}
                         aria-label={providerCopy(t('editProvider'), target)}
+                        ref={(button) => {
+                          if (button !== null && target.provider === restoreEditFocus.current) {
+                            restoreEditFocus.current = undefined
+                            button.focus()
+                          }
+                        }}
                         onClick={() => {
                           setSavedTarget(undefined)
                           // One card at a time: the add card closes with whatever
@@ -725,7 +738,7 @@ function Loaded({ injected, renderSlot }: { injected: ModelsSectionFace; renderS
             })}
           </ul>
         )}
-      <div className={styles['addBlock']}>
+      <div className={styles['addBlock']} hidden={detailVisible}>
         {addOpen
           ? (
             <div className={styles['addCard']}>
@@ -875,7 +888,9 @@ function Loaded({ injected, renderSlot }: { injected: ModelsSectionFace; renderS
             </>
           )}
       </div>
-      {renderSlot('settings.models.footer', {})}
+      <div className={styles['overviewFooter']} hidden={detailVisible}>
+        {renderSlot('settings.models.footer', {})}
+      </div>
       <Modal
         open={deleteTarget !== undefined}
         onClose={closeDelete}

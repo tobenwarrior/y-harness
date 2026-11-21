@@ -120,7 +120,7 @@ export const en = {
   retry: 'Retry',
   keyInput: 'API key',
   keyPlaceholder: 'Enter your API key',
-  keyPlaceholderNative: 'Enter an API key, or leave blank to use environment authentication',
+  keyPlaceholderNative: 'Optional with environment auth',
   keyStored: 'Configured — enter a new value to replace',
   keyEnvLocked: 'Provided by the launch environment (read-only)',
   customized: 'Customized settings',
