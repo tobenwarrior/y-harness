@@ -251,6 +251,30 @@ describe('shared Bot collaboration surfaces', () => {
     expect(screen.getByText('Existing playbook')).toBeTruthy()
   })
 
+  it('keeps a single copy when the active shared context already contains a reviewed note', async () => {
+    const botId = BotId(bot.id)
+    const suggestion = {
+      id: BotShareLearningId('learning-repeat'), principalId: BotPrincipalId('principal-member'), text: 'New context', createdAt: 2,
+    }
+    const entry = { ...suggestion, id: BotShareMemoryId('memory-repeat'), text: 'Published context' }
+    const client = sharedClient({
+      list: vi.fn().mockResolvedValue({ ok: true, value: { bots: [{ ...bot, role: 'manager' }] } }),
+      readMemory: vi.fn().mockResolvedValue({
+        ok: true, value: { botId, enabled: true, updatedAt: 2, entries: [entry], learningReview: true },
+      }),
+      listLearning: vi.fn().mockResolvedValue({ ok: true, value: { botId, pending: [suggestion], recentlyLearned: [] } }),
+      decideLearning: vi.fn().mockResolvedValue({
+        ok: true, value: { botId, suggestionId: suggestion.id, decision: 'approved', resolved: true, entry },
+      }),
+    })
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Review suggestions' }))
+    await screen.findByText('New context')
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
+    await screen.findByText('No suggestions to review.')
+    expect(screen.getAllByText('Published context')).toHaveLength(1)
+  })
+
   it('shows pending connected-app approvals with expandable call details and sends the decision', async () => {
     const listApprovals = vi.fn().mockResolvedValue({
       ok: true,
