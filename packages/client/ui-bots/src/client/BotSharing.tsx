@@ -42,6 +42,7 @@ import type {
   BotSharedRosterFenceDiagnosticValue,
 } from '@yharness/bots/client'
 import { BotAvatar } from './BotAvatar.tsx'
+import { SharedLearningReview } from './SharedLearningReview.tsx'
 import { mentionQueryAt, resolveMentionTargets } from './bot-mentions.ts'
 import { compactGroupQuote, GROUP_REACTION_OPTIONS, readGroupReplyToMessageId } from './group-interactions.ts'
 import {
@@ -924,6 +925,16 @@ export function BotShareDialog({ bot, actions, open, onClose, t }: {
                 onChange={(next) => { setMemoryTarget(next); setMemoryAcknowledged(false) }}
               />
             </div>
+            {memoryPolicy.enabled && actions.listLearning !== undefined && actions.decideLearning !== undefined && (
+              <SharedLearningReview
+                key={bot.id}
+                botId={brandString<BotIdType>(bot.id)}
+                list={actions.listLearning}
+                decide={actions.decideLearning}
+                showPublished
+                t={t}
+              />
+            )}
           </section>
         )}
         {stateMatchesBot && actions.listSharedAppAccess !== undefined && actions.setSharedAppAccess !== undefined && (
@@ -1382,10 +1393,12 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
   const [selectedBotId, setSelectedBotId] = useState<string | null>(null)
   const [recent, setRecent] = useState<readonly BotShareTranscriptEntry[]>([])
   const [memory, setMemory] = useState<BotShareMemoryValue | null>(null)
+  const [approvalReadyBotId, setApprovalReadyBotId] = useState<string | null>(null)
   const [messageDrafts, setMessageDrafts] = useState<Readonly<Record<string, string>>>({})
   const [memoryDrafts, setMemoryDrafts] = useState<Readonly<Record<string, string>>>({})
   const [memoryAcknowledged, setMemoryAcknowledged] = useState(false)
   const [memoryConfirmOpen, setMemoryConfirmOpen] = useState(false)
+  const [memorySuggestionSubmitted, setMemorySuggestionSubmitted] = useState(false)
   const [groups, setGroups] = useState<readonly BotGroupView[]>([])
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null)
   const [groupMessages, setGroupMessages] = useState<readonly BotGroupMessageView[]>([])
@@ -1676,6 +1689,8 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
     setMemory(null)
     setMemoryConfirmOpen(false)
     setMemoryAcknowledged(false)
+    setMemorySuggestionSubmitted(false)
+    setApprovalReadyBotId(null)
     setCreateGroupOpen(false)
     setCreateGroupError(null)
     setPendingCatalogReady(false)
@@ -2078,8 +2093,10 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
     selectedBotIdRef.current = botId
     setRecent([])
     setMemory(null)
+    setApprovalReadyBotId(null)
     setMemoryConfirmOpen(false)
     setMemoryAcknowledged(false)
+    setMemorySuggestionSubmitted(false)
     setError(null)
     try {
       if (!isCurrentAuth(auth)) return
@@ -2099,6 +2116,8 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
       else setError(privateResult.error.message)
       if (memoryResult.ok) setMemory(memoryResult.value)
       else setError(memoryResult.error.message)
+      // The shared connection admits two authentication lookups at once.
+      setApprovalReadyBotId(botId)
     } catch (cause: unknown) {
       if (isCurrentAuth(auth) && generation === readGenerationRef.current && selectedBotIdRef.current === botId) {
         setError(cause instanceof Error ? cause.message : t('sharedChatFailed'))
@@ -2368,6 +2387,7 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
     operationGenerationRef.current = operationGeneration
     setMemoryWorkingBotIds(current => updatePendingBotIds(current, botId, true))
     setError(null)
+    setMemorySuggestionSubmitted(false)
     try {
       if (!isCurrentAuth(auth)) return
       const result = await auth.client.writeMemory(botId, memoryDraft.trim())
@@ -2387,15 +2407,16 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
         if (!currentSelection) return
         setMemoryAcknowledged(false)
         setMemoryConfirmOpen(false)
-        await readBot(botId)
+        if (result.value.published === false) setMemorySuggestionSubmitted(true)
+        else await readBot(botId)
       } else if (currentSelection && result.error.code === 'gateway/forbidden') {
         requestRevalidation(true, result.error.message)
       } else if (currentSelection) {
-        setError(result.error.message || t('sharedMemoryWriteFailed'))
+        setError(result.error.message || t(suggestMemory ? 'sharedSuggestionFailed' : 'sharedMemoryWriteFailed'))
       }
     } catch (cause: unknown) {
       if (isCurrentAuth(auth) && isCurrentSelection(botId, selectionEpoch)) {
-        setError(cause instanceof Error ? cause.message : t('sharedMemoryWriteFailed'))
+        setError(cause instanceof Error ? cause.message : t(suggestMemory ? 'sharedSuggestionFailed' : 'sharedMemoryWriteFailed'))
       }
     } finally {
       if (hasCurrentAuth(auth) && memoryOperationTokensRef.current[botId] === memoryOperationToken) {
@@ -2896,6 +2917,9 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
   }
 
   const selected = bots.find(bot => String(bot.id) === selectedBotId)
+  const suggestMemory = memory?.learningReview === true && selected?.role === 'collaborator'
+  const reviewMemory = memory?.learningReview === true && selected !== undefined && selected.role !== 'collaborator'
+  const memoryActionLabel = t(suggestMemory ? 'suggestSharedContext' : 'publishSharedContext')
   const selectedGroup = groups.find(group => String(group.id) === selectedGroupId)
   const mentionOptions = groupMentionQuery === null ? [] : (selectedGroup?.bots ?? [])
     .filter(candidate => candidate.name.toLocaleLowerCase().includes(groupMentionQuery.toLocaleLowerCase()))
@@ -2927,7 +2951,7 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
         open={open}
         onClose={onClose}
         title={t('sharedBotsTitle')}
-        description={ownerMode ? t('sharedOwnerDescription') : t('sharedBotsDescription')}
+        {...(ownerMode && bots.length > 0 ? {} : { description: ownerMode ? t('sharedOwnerDescription') : t('sharedBotsDescription') })}
         closeLabel={t('cancel')}
         className={css.shareDialog as string}
         contentClassName={css.shareDialogContent as string}
@@ -2952,7 +2976,7 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
               {bots.map(bot => (
                 <button type="button" className={bot.id === selectedBotId ? css.sharedBotSelected : css.sharedBot} key={String(bot.id)} onClick={() => { const id = String(bot.id); setSelection(id); void readBot(id) }}>
                   <BotAvatar name={bot.name} identity={bot.identity} accent={bot.accent} size="small" />
-                  <span><strong>{bot.name}</strong><small>{shareRoleLabel(bot.role, t)}</small></span>
+                  <span className={css.sharedBotCopy}><strong>{bot.name}</strong><small>{shareRoleLabel(bot.role, t)}</small></span>
                 </button>
               ))}
             </div>
@@ -2962,7 +2986,7 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
                   <BotAvatar name={selected.name} identity={selected.identity} accent={selected.accent} />
                   <div><strong>{selected.name}</strong><small>{selected.description ?? shareRoleLabel(selected.role, t)}</small></div>
                 </header>
-                {(client.listApprovals !== undefined
+                {(approvalReadyBotId === selectedBotId && client.listApprovals !== undefined
                   && (client.decideApproval !== undefined || client.revokeApprovalGrant !== undefined)) && (
                   <SharedApprovalsCard
                     client={client}
@@ -2977,14 +3001,16 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
                   {recent.map((entry, index) => <p className={entry.role === 'user' ? css.sharedUserMessage : css.sharedBotMessage} key={`${entry.role}-${index}`}>{entry.text}</p>)}
                 </div>
                 <form className={css.sharedComposer} onSubmit={(event) => { event.preventDefault(); void send() }}>
-                  <Input value={message} placeholder={t('sharedChatPlaceholder')} aria-label={t('sharedChatPlaceholder')} onChange={(event) => {
-                    if (selectedBotId === null) return
-                    const revision = (messageDraftRevisionsRef.current[selectedBotId] ?? 0) + 1
-                    messageDraftRevisionsRef.current[selectedBotId] = revision
-                    const value = event.currentTarget.value
-                    setMessageDrafts(current => ({ ...current, [selectedBotId]: value }))
-                  }} />
-                  <Button variant="primary" type="submit" aria-label={t('sendMessage')} disabled={working !== null || currentChatWorking || currentMemoryWorking || message.trim() === ''} icon={<IconShareOutlineRegular size={14} />} />
+                  <div className={css.sharedComposerTextRow}>
+                    <Input value={message} placeholder={t('sharedChatPlaceholder')} aria-label={t('sharedChatPlaceholder')} onChange={(event) => {
+                      if (selectedBotId === null) return
+                      const revision = (messageDraftRevisionsRef.current[selectedBotId] ?? 0) + 1
+                      messageDraftRevisionsRef.current[selectedBotId] = revision
+                      const value = event.currentTarget.value
+                      setMessageDrafts(current => ({ ...current, [selectedBotId]: value }))
+                    }} />
+                    <Button variant="primary" type="submit" aria-label={t('sendMessage')} disabled={working !== null || currentChatWorking || currentMemoryWorking || message.trim() === ''} icon={<IconShareOutlineRegular size={14} />} />
+                  </div>
                 </form>
                 <section className={css.sharedContext} aria-labelledby="yharness-shared-context-heading">
                   <div className={css.sharedContextHeader}>
@@ -2992,7 +3018,6 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
                       <div className={css.sharedContextLabel} id="yharness-shared-context-heading">{t('sharedContextLabel')}</div>
                       <p className={css.sharedMemoryDescription}>{memory?.enabled === true ? t('sharedContextDescription') : t('sharedContextDisabled')}</p>
                     </div>
-                    {memory?.enabled === true && <Tag tone="info">{t('sharedContextTag')}</Tag>}
                   </div>
                   {memory?.enabled === true && (
                     <>
@@ -3009,6 +3034,7 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
                           aria-label={t('sharedContextPlaceholder')}
                           onChange={(event) => {
                             if (selectedBotId === null) return
+                            setMemorySuggestionSubmitted(false)
                             const revision = (memoryDraftRevisionsRef.current[selectedBotId] ?? 0) + 1
                             memoryDraftRevisionsRef.current[selectedBotId] = revision
                             const value = event.currentTarget.value
@@ -3019,11 +3045,26 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
                           variant="outline"
                           disabled={working !== null || currentChatWorking || currentMemoryWorking || memoryDraft.trim() === ''}
                           onClick={() => { setMemoryAcknowledged(false); setMemoryConfirmOpen(true) }}
-                          aria-label={t('publishSharedContext')}
+                          aria-label={memoryActionLabel}
                         >
-                          {t('publishSharedContext')}
+                          {memoryActionLabel}
                         </Button>
                       </div>
+                      {memorySuggestionSubmitted && <p className={css.sharedMemoryDescription} role="status">{t('sharedSuggestionSubmitted')}</p>}
+                      {reviewMemory && client.listLearning !== undefined && client.decideLearning !== undefined && (
+                        <SharedLearningReview
+                          key={String(selected.id)}
+                          botId={selected.id}
+                          list={client.listLearning}
+                          decide={client.decideLearning}
+                          onPublished={(entry) => {
+                            setMemory(value => value?.botId === selected.id && !value.entries.some(note => note.id === entry.id)
+                              ? { ...value, entries: [entry, ...value.entries] }
+                              : value)
+                          }}
+                          t={t}
+                        />
+                      )}
                     </>
                   )}
                 </section>
@@ -3412,12 +3453,12 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
       )}
       <RiskConfirmation
         open={open && memoryConfirmOpen && selected !== undefined}
-        title={t('publishSharedContextTitle')}
-        description={t('publishSharedContextDescription')}
-        acknowledgeLabel={t('publishSharedContextAcknowledge')}
+        title={t(suggestMemory ? 'suggestSharedContextTitle' : 'publishSharedContextTitle')}
+        description={t(suggestMemory ? 'suggestSharedContextDescription' : 'publishSharedContextDescription')}
+        acknowledgeLabel={t(suggestMemory ? 'suggestSharedContextAcknowledge' : 'publishSharedContextAcknowledge')}
         cancelLabel={t('cancel')}
         closeLabel={t('cancel')}
-        confirmLabel={t('publishSharedContext')}
+        confirmLabel={memoryActionLabel}
         acknowledged={memoryAcknowledged}
         disabled={working !== null || currentChatWorking || currentMemoryWorking}
         onAcknowledgedChange={setMemoryAcknowledged}

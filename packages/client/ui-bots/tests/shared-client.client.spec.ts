@@ -1,4 +1,5 @@
 import type { ClientConnectionRpc } from '@yharness/client-connection/client'
+import { BotId, BotShareLearningId } from '@yharness/bots/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { broadcastSharedAuthChanged, createSharedBotsClient } from '../src/client/shared-client.ts'
 
@@ -40,6 +41,57 @@ afterEach(() => {
 })
 
 describe('shared Bot client capabilities', () => {
+  it('reads reviewed learning and distinguishes suggestions from published notes', async () => {
+    const botId = BotId('bot-launch')
+    const suggestion = { id: BotShareLearningId('learning-one'), principalId: 'principal-member', text: 'Use the checklist', createdAt: 1 }
+    const entry = { ...suggestion, id: 'memory-one' }
+    const call = vi.fn<ClientConnectionRpc['call']>()
+      .mockResolvedValueOnce({ ok: true, value: { botId, enabled: true, updatedAt: 1, entries: [], learningReview: true } })
+      .mockResolvedValueOnce({ ok: true, value: { suggestion, published: false } })
+      .mockResolvedValueOnce({ ok: true, value: { botId, pending: [suggestion], recentlyLearned: [entry] } })
+      .mockResolvedValueOnce({ ok: true, value: { botId, suggestionId: suggestion.id, decision: 'approved', resolved: true, entry } })
+      .mockResolvedValueOnce({ ok: true, value: { entry, published: true } })
+      .mockResolvedValueOnce({ ok: true, value: { entry } })
+    const client = createSharedBotsClient({ call })
+    await expect(client.readMemory(botId)).resolves.toMatchObject({ ok: true, value: { learningReview: true } })
+    await expect(client.writeMemory(botId, suggestion.text)).resolves.toEqual({ ok: true, value: { suggestion, published: false } })
+    await expect(client.listLearning?.({ botId })).resolves.toEqual({
+      ok: true, value: { botId, pending: [suggestion], recentlyLearned: [entry] },
+    })
+    const request = { botId, suggestionId: suggestion.id, decision: 'approve' } as const
+    await expect(client.decideLearning?.(request)).resolves.toEqual({
+      ok: true, value: { botId, suggestionId: suggestion.id, decision: 'approved', resolved: true, entry },
+    })
+    expect(call).toHaveBeenCalledWith('/shared-bots', 'bots/share/write-memory', { botId, text: suggestion.text, consent: true })
+    expect(call).toHaveBeenCalledWith('/shared-bots', 'bots/share/list-learning', { botId })
+    expect(call).toHaveBeenCalledWith('/shared-bots', 'bots/share/decide-learning', request)
+    await expect(client.writeMemory(botId, entry.text)).resolves.toEqual({ ok: true, value: { entry, published: true } })
+    await expect(client.writeMemory(botId, entry.text)).resolves.toEqual({ ok: true, value: { entry } })
+  })
+
+  it('rejects malformed shared learning without passing it to the reviewer', async () => {
+    const botId = BotId('bot-launch')
+    const suggestionId = BotShareLearningId('learning-one')
+    const call = vi.fn<ClientConnectionRpc['call']>()
+      .mockResolvedValueOnce({ ok: true, value: { botId, pending: [], recentlyLearned: [{}] } })
+      .mockResolvedValueOnce({ ok: true, value: { botId, pending: [{ id: 'wrong-id' }], recentlyLearned: [] } })
+      .mockResolvedValueOnce({ ok: true, value: { published: false } })
+      .mockResolvedValueOnce({ ok: true, value: { published: 'true' } })
+      .mockResolvedValueOnce({ ok: true, value: { botId, suggestionId, decision: 'rejected', resolved: true, entry: {} } })
+      .mockResolvedValueOnce({ ok: true, value: { botId, suggestionId, decision: 'rejected', resolved: false } })
+    const client = createSharedBotsClient({ call })
+    const invalid = { ok: false, error: { code: 'gateway/invalid-response' } }
+    const request = { botId, suggestionId, decision: 'reject' } as const
+    await expect(client.listLearning?.({ botId })).resolves.toMatchObject(invalid)
+    await expect(client.listLearning?.({ botId })).resolves.toMatchObject(invalid)
+    await expect(client.writeMemory(botId, 'A note')).resolves.toMatchObject(invalid)
+    await expect(client.writeMemory(botId, 'A note')).resolves.toMatchObject(invalid)
+    await expect(client.decideLearning?.(request)).resolves.toMatchObject(invalid)
+    await expect(client.decideLearning?.(request)).resolves.toEqual({
+      ok: true, value: { botId, suggestionId, decision: 'rejected', resolved: false },
+    })
+  })
+
   it('advertises isolated shared-group operations when the server route is available', () => {
     const rpc = {
       call: vi.fn<ClientConnectionRpc['call']>(async () => ({ ok: true as const, value: {} })),

@@ -74,6 +74,9 @@ import type {
   BotView,
   BotShareInviteRequest,
   BotShareInviteValue,
+  BotShareLearningDecisionRequest,
+  BotShareLearningDecisionValue,
+  BotShareLearningValue,
   BotShareMemoryPolicyRequest,
   BotShareMemoryPolicyValue,
   BotShareMemberRevokeRequest,
@@ -156,6 +159,8 @@ export interface BotWorkspaceRemote {
   revokeShareMember?: (request: BotShareMemberRevokeRequest) => Promise<RemoteResult<BotShareMemberRevokeValue>>
   getShareMemoryPolicy?: (request: BotShareMembersRequest) => Promise<RemoteResult<BotShareMemoryPolicyValue>>
   setShareMemoryPolicy?: (request: BotShareMemoryPolicyRequest) => Promise<RemoteResult<BotShareMemoryPolicyValue>>
+  listShareLearning?: (request: BotShareMembersRequest) => Promise<RemoteResult<BotShareLearningValue>>
+  decideShareLearning?: (request: BotShareLearningDecisionRequest) => Promise<RemoteResult<BotShareLearningDecisionValue>>
   listSharedAppAccess?: (request: { readonly botId: BotIdType }) => Promise<RemoteResult<SharedBotAppAccessValue>>
   setSharedAppAccess?: (request: {
     readonly botId: BotIdType
@@ -198,6 +203,10 @@ export interface BotShareActions {
   readonly getMemoryPolicy?: (botId: string) => Promise<BotShareMemoryPolicyValue>
   /** Change the explicit shared-context policy for one owned Bot. */
   readonly setMemoryPolicy?: (botId: string, enabled: boolean) => Promise<BotShareMemoryPolicyValue>
+  /** Read suggestions and published notes for one owned Bot. */
+  readonly listLearning?: NonNullable<BotWorkspaceRemote['listShareLearning']>
+  /** Resolve a suggestion for one owned Bot. */
+  readonly decideLearning?: NonNullable<BotWorkspaceRemote['decideShareLearning']>
   /** List apps and their shared-session access for this Bot. */
   readonly listSharedAppAccess?: (botId: string) => Promise<SharedBotAppAccessValue>
   /** Change one app's shared-session grant against a known revision. */
@@ -1849,6 +1858,8 @@ export class BotWorkspaceController {
     const revokeMember = this.remote.revokeShareMember
     const getMemoryPolicy = this.remote.getShareMemoryPolicy
     const setMemoryPolicy = this.remote.setShareMemoryPolicy
+    const listShareLearning = this.remote.listShareLearning
+    const decideShareLearning = this.remote.decideShareLearning
     const listSharedAppAccess = this.remote.listSharedAppAccess
     const setSharedAppAccess = this.remote.setSharedAppAccess
     const inspectRosterFence = this.remote.inspectSharedRosterFence
@@ -1888,6 +1899,10 @@ export class BotWorkspaceController {
           if (!result.ok) throw new Error(result.error.message)
           return result.value
         },
+      }),
+      ...(listShareLearning === undefined || decideShareLearning === undefined ? {} : {
+        listLearning: listShareLearning,
+        decideLearning: decideShareLearning,
       }),
       ...(listSharedAppAccess === undefined || setSharedAppAccess === undefined ? {} : {
         listSharedAppAccess: async (botId: string) => {

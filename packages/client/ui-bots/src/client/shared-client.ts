@@ -6,9 +6,15 @@ import type {
   BotIdentity,
   BotId as BotIdType,
   BotPrincipalId as BotPrincipalIdType,
+  BotShareLearningId as BotShareLearningIdType,
   BotShareMemoryId as BotShareMemoryIdType,
   BotShareProfile,
   BotShareRosterEntry,
+  BotShareLearningDecisionRequest,
+  BotShareLearningDecisionValue,
+  BotShareLearningSuggestion,
+  BotShareLearningValue,
+  BotShareMembersRequest,
   BotShareMemoryEntry,
   BotShareMemoryValue,
   BotShareMemoryWriteValue,
@@ -159,8 +165,11 @@ export interface SharedBotPrivateChatValue {
 /** Explicit shared context returned for one shared Bot. */
 export type SharedBotMemoryValue = BotShareMemoryValue
 
-/** Shared-context write response after explicit publication consent. */
-export type SharedBotMemoryWriteValue = BotShareMemoryWriteValue
+/** Shared-context write response, including the legacy immediate-publication response. */
+export type SharedBotMemoryWriteValue = BotShareMemoryWriteValue | {
+  readonly entry: BotShareMemoryEntry
+  readonly published?: undefined
+}
 
 /** Chat response after the Host accepts one message. */
 export interface SharedBotChatValue {
@@ -346,8 +355,12 @@ export interface SharedBotsClient {
   readonly readMemory: (botId: string) => Promise<SharedBotClientResult<SharedBotMemoryValue>>
   /** Send one message to the current collaborator's private Bot Session. */
   readonly chat: (botId: string, text: string) => Promise<SharedBotClientResult<SharedBotChatValue>>
-  /** Publish one explicitly consented note to shared context. */
+  /** Submit a note for review or publish it when the membership role allows. */
   readonly writeMemory: (botId: string, text: string) => Promise<SharedBotClientResult<SharedBotMemoryWriteValue>>
+  /** Read pending suggestions for a Bot the current member can manage. */
+  readonly listLearning?: (request: BotShareMembersRequest) => Promise<SharedBotClientResult<BotShareLearningValue>>
+  /** Approve or reject an individual suggestion for a managed Bot. */
+  readonly decideLearning?: (request: BotShareLearningDecisionRequest) => Promise<SharedBotClientResult<BotShareLearningDecisionValue>>
   /** Create one invite when the current membership role permits it. */
   readonly createInvite: (botId: string, role: SharedBotInviteValue['role']) => Promise<SharedBotClientResult<SharedBotInviteValue>>
   /** Revoke one member from one Bot when the current membership role permits it. */
@@ -625,6 +638,8 @@ export function createSharedBotsClient(rpc: ClientConnectionRpc, options: Shared
     readMemory: botId => call('bots/share/read-memory', { botId }, parseMemoryValue),
     chat: (botId, text) => call('bots/share/chat', { botId, text }, parseChat),
     writeMemory: (botId, text) => call('bots/share/write-memory', { botId, text, consent: true }, parseMemoryWrite),
+    listLearning: request => call('bots/share/list-learning', request, parseLearning),
+    decideLearning: request => call('bots/share/decide-learning', request, parseLearningDecision),
     createInvite: (botId, role) => call('bots/share/manage-members', { botId, action: 'create-invite', role }, parseInvite),
     revokeMember: (botId, principalId) => call('bots/share/manage-members', { botId, action: 'revoke', principalId }, parseRevoke),
     listGroups: () => call('bots/share/list-groups', {}, parseGroupList),
@@ -720,6 +735,7 @@ function parseMemoryValue(value: unknown): SharedBotMemoryValue | undefined {
       enabled: value.enabled,
       updatedAt: value.updatedAt,
       entries: entries as readonly BotShareMemoryEntry[],
+      ...(value.learningReview === true ? { learningReview: true as const } : {}),
     }
 }
 
@@ -737,8 +753,58 @@ function parseMemoryEntry(value: unknown): BotShareMemoryEntry | undefined {
 
 function parseMemoryWrite(value: unknown): SharedBotMemoryWriteValue | undefined {
   if (!isRecord(value)) return undefined
+  if (value.published === false) {
+    const suggestion = parseLearningSuggestion(value.suggestion)
+    return suggestion === undefined || value.entry !== undefined ? undefined : { published: false, suggestion }
+  }
+  if ((value.published !== undefined && value.published !== true) || value.suggestion !== undefined) return undefined
   const entry = parseMemoryEntry(value.entry)
-  return entry === undefined ? undefined : { entry }
+  return entry === undefined ? undefined : value.published === true ? { published: true, entry } : { entry }
+}
+
+function parseLearningSuggestion(value: unknown): BotShareLearningSuggestion | undefined {
+  if (!isRecord(value) || typeof value.id !== 'string' || !/^learning-[A-Za-z0-9][A-Za-z0-9-]*$/.test(value.id)
+    || typeof value.principalId !== 'string' || !/^principal-[A-Za-z0-9-]+$/.test(value.principalId)
+    || typeof value.text !== 'string' || !isSafeInteger(value.createdAt)) return undefined
+  return {
+    id: brandString<BotShareLearningIdType>(value.id),
+    principalId: brandString<BotPrincipalIdType>(value.principalId),
+    text: value.text,
+    createdAt: value.createdAt,
+  }
+}
+
+function parseLearning(value: unknown): BotShareLearningValue | undefined {
+  if (!isRecord(value) || typeof value.botId !== 'string' || !/^bot-[A-Za-z0-9][A-Za-z0-9-]*$/.test(value.botId)
+    || !Array.isArray(value.pending) || !Array.isArray(value.recentlyLearned)) return undefined
+  const pending: BotShareLearningSuggestion[] = []
+  const recentlyLearned: BotShareMemoryEntry[] = []
+  for (const item of value.pending) {
+    const suggestion = parseLearningSuggestion(item)
+    if (suggestion === undefined) return undefined
+    pending.push(suggestion)
+  }
+  for (const item of value.recentlyLearned) {
+    const entry = parseMemoryEntry(item)
+    if (entry === undefined) return undefined
+    recentlyLearned.push(entry)
+  }
+  return { botId: brandString<BotIdType>(value.botId), pending, recentlyLearned }
+}
+
+function parseLearningDecision(value: unknown): BotShareLearningDecisionValue | undefined {
+  if (!isRecord(value) || typeof value.botId !== 'string' || !/^bot-[A-Za-z0-9][A-Za-z0-9-]*$/.test(value.botId)
+    || typeof value.suggestionId !== 'string' || !/^learning-[A-Za-z0-9][A-Za-z0-9-]*$/.test(value.suggestionId)
+    || (value.decision !== 'approved' && value.decision !== 'rejected') || typeof value.resolved !== 'boolean') return undefined
+  const entry = value.entry === undefined ? undefined : parseMemoryEntry(value.entry)
+  if (value.entry !== undefined && entry === undefined) return undefined
+  return {
+    botId: brandString<BotIdType>(value.botId),
+    suggestionId: brandString<BotShareLearningIdType>(value.suggestionId),
+    decision: value.decision,
+    resolved: value.resolved,
+    ...(entry === undefined ? {} : { entry }),
+  }
 }
 
 function parseTranscript(value: unknown): BotShareTranscriptEntry | undefined {
