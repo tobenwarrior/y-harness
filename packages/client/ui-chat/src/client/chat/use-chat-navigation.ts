@@ -22,9 +22,17 @@ interface TurnJump {
   repageHead: ChatNavigationInput['firstSeq']
 }
 
+interface SeqJump {
+  readonly seq: SessionSeq
+  phase: 'loading' | 'settled'
+  landing: 'pending' | 'landed' | 'interrupted'
+  repageHead: ChatNavigationInput['firstSeq']
+}
+
 /** Owns one replaceable turn jump and the anchor retained while history loads. */
 export class ChatNavigation {
   private jump: TurnJump | null = null
+  private seqJump: SeqJump | null = null
   private settleFrame: number | null = null
 
   constructor(
@@ -59,6 +67,7 @@ export class ChatNavigation {
   private clearTask(): void {
     this.cancelFrame()
     this.jump = null
+    this.seqJump = null
     this.viewport.stopPreserving()
   }
 
@@ -90,6 +99,32 @@ export class ChatNavigation {
     this.request(jump)
   }
 
+  /**
+   * Reveal an exact Session event, loading older history when necessary.
+   * @param seq - event sequence whose rendered message should be shown.
+   */
+  readonly navigateToSeq = (seq: SessionSeq): void => {
+    this.cancel()
+    const landing = this.viewport.scrollToSeq(seq)
+    if (landing !== null) {
+      this.reading.acceptNavigation(landing)
+      if (this.input.loadingOlder) this.viewport.beginPreserving(landing.position)
+      return
+    }
+    // A target inside the committed window can be absent when it is a
+    // non-rendered event. Do not page forever in that case.
+    if (this.input.firstSeq !== null && this.input.firstSeq <= seq) {
+      const fallback = this.viewport.scrollToSeqAtOrAfter(seq)
+      if (fallback !== null) this.reading.acceptNavigation(fallback)
+      return
+    }
+    this.viewport.beginPreserving()
+    this.reading.pauseFollowing()
+    const jump: SeqJump = { seq, phase: 'loading', landing: 'pending', repageHead: null }
+    this.seqJump = jump
+    this.request(jump)
+  }
+
   /** Request one older page while retaining the current semantic position. */
   readonly loadEarlier = (): void => {
     this.cancel()
@@ -104,6 +139,7 @@ export class ChatNavigation {
    */
   readerSampled(sample: ReadingSample): void {
     if (sample.movedByReader && this.jump?.landing === 'landed') this.jump.landing = 'interrupted'
+    if (sample.movedByReader && this.seqJump?.landing === 'landed') this.seqJump.landing = 'interrupted'
     if (sample.followingTail || sample.movedByReader) this.viewport.stopPreserving()
   }
 
@@ -113,6 +149,7 @@ export class ChatNavigation {
    */
   contentCommitted(): boolean {
     if (!this.viewport.preserving || this.reading.pending) return false
+    if (this.seqJump !== null && this.landSeq(false)) return true
     if (this.landJump(false)) return true
     const landing = this.viewport.preserve()
     if (landing === null) return false
@@ -129,6 +166,10 @@ export class ChatNavigation {
 
   /** Land, retry, or complete the current jump against the committed window. */
   reconcile(): void {
+    if (this.seqJump !== null) {
+      this.reconcileSeq()
+      return
+    }
     const jump = this.jump
     if (jump === null || this.reading.pending) return
     if (jump.phase === 'loading') {
@@ -145,6 +186,27 @@ export class ChatNavigation {
       return
     }
     const fallback = this.viewport.scrollToTurnAtOrAfter(jump.turn)
+    this.cancel()
+    if (fallback !== null) this.reading.acceptNavigation(fallback)
+  }
+
+  private reconcileSeq(): void {
+    const jump = this.seqJump
+    if (jump === null || this.reading.pending) return
+    if (jump.phase === 'loading') {
+      if (jump.landing === 'pending') this.landSeq(false)
+      return
+    }
+    if (this.input.loadingOlder) return
+    if (this.landSeq(true)) return
+    const uncovered = this.input.firstSeq === null || this.input.firstSeq > jump.seq
+    if (uncovered && this.input.hasMore && jump.repageHead !== this.input.firstSeq) {
+      jump.repageHead = this.input.firstSeq
+      this.viewport.beginPreserving()
+      this.request(jump)
+      return
+    }
+    const fallback = this.viewport.scrollToSeqAtOrAfter(jump.seq)
     this.cancel()
     if (fallback !== null) this.reading.acceptNavigation(fallback)
   }
@@ -167,16 +229,34 @@ export class ChatNavigation {
     return true
   }
 
-  private request(jump: TurnJump): void {
+  private landSeq(settle: boolean): boolean {
+    const jump = this.seqJump
+    if (jump === null) return false
+    if (jump.landing === 'interrupted') {
+      if (settle) { this.cancel(); return true }
+      return false
+    }
+    const landing = this.viewport.scrollToSeq(jump.seq)
+    if (landing === null) return false
+    this.reading.acceptNavigation(landing)
+    if (settle) this.cancel()
+    else {
+      this.viewport.beginPreserving(landing.position)
+      jump.landing = 'landed'
+    }
+    return true
+  }
+
+  private request(jump: TurnJump | SeqJump): void {
     jump.phase = 'loading'
     const settled = (): void => {
-      if (this.jump !== jump) return
+      if (this.jump !== jump && this.seqJump !== jump) return
       jump.phase = 'settled'
       this.cancelFrame()
       if (typeof requestAnimationFrame !== 'function') this.reconcile()
       else this.settleFrame = requestAnimationFrame(() => {
         this.settleFrame = null
-        if (this.jump === jump) this.reconcile()
+        if (this.jump === jump || this.seqJump === jump) this.reconcile()
       })
     }
     void this.input.loadThrough(jump.seq).then(settled, settled)

@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { expect, it, onTestFinished, vi } from 'vitest'
+import { SessionSeq } from '@yharness/session/types'
 import { ChatViewport } from '../src/client/chat/use-chat-viewport.ts'
 import { ScrollFollow, scrollMetrics } from '../src/client/chat/use-scroll-follow.ts'
 
@@ -280,6 +281,18 @@ it('navigates by Node identity while retaining a distinct visible part anchor', 
   expect(landing?.position?.anchorKey).toBe(response.dataset.chatAnchorKey)
   expect(h.viewport.restore({ anchorKey: response.dataset.chatAnchorKey!, anchorTop: 8, scrollTop: 0 })?.metrics.top)
     .toBe(192)
+})
+
+it('lands on an exact Session sequence before using an at-or-after fallback', () => {
+  const h = fixture()
+  const first = h.row(h.column, 'first', 50)
+  first.dataset.chatAnchorSeq = String(SessionSeq(4))
+  const later = h.row(h.column, 'later', 140)
+  later.dataset.chatAnchorSeq = String(SessionSeq(9))
+
+  expect(h.viewport.scrollToSeq(SessionSeq(9))?.position?.anchorKey).toBe('later')
+  expect(h.viewport.scrollToSeq(SessionSeq(7))).toBeNull()
+  expect(h.viewport.scrollToSeqAtOrAfter(SessionSeq(7))?.position?.anchorKey).toBe('later')
 })
 
 it('excludes empty rows, hidden ancestors, and transparent group shells from fallback sampling', () => {
