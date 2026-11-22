@@ -26,6 +26,7 @@ const UI_EXPECTED = fileURLToPath(new URL('./expected/bot-workspace/ui.expected.
 const MODE = webSnapshotMode()
 const CAPTURE_HISTORY = process.env.DSH_GROK_HISTORY_MEDIA === '1'
 const INLINE_VISUAL_DIR = process.env.DSH_GROK_INLINE_VISUAL_DIR
+const DUPLICATE_VISUAL_DIR = process.env.DSH_BOT_DUPLICATE_VISUAL_DIR
 
 describe('web e2e: Bot workspace retains one Conversation Session per Bot', () => {
   let scaffold: WebScaffold
@@ -39,7 +40,9 @@ describe('web e2e: Bot workspace retains one Conversation Session per Bot', () =
     // The scenario exercises the real Bot and Session services but never sends
     // a model request, so a header-only providers-only fixture is sufficient.
     scaffold = await launchWebScaffold({ replayFixture: FIXTURE, replayProvidersOnly: true })
-    if (CAPTURE_HISTORY) await scaffold.ctx.settings.update('ui-theme', { preference: 'system' })
+    if (CAPTURE_HISTORY || DUPLICATE_VISUAL_DIR !== undefined) {
+      await scaffold.ctx.settings.update('ui-theme', { preference: 'system' })
+    }
     firstBot = (await scaffold.ctx.bots.create({
       name: 'Scout', identity: 'browse', accent: 'teal', cwd: scaffold.workspaceCwd,
     })).bot
@@ -171,6 +174,15 @@ describe('web e2e: Bot workspace retains one Conversation Session per Bot', () =
       .toBe('Keeps the team informed')
     await expect.poll(() => firstDetail.locator('[data-conversation-session]').getAttribute('data-conversation-session'))
       .toBe(firstBot.sessionId)
+
+    await firstDetail.getByRole('button', { name: 'Bot options', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Duplicate bot', exact: true }).click()
+    const duplicateDialog = page.getByRole('dialog', { name: 'Duplicate bot', exact: true })
+    const duplicateDialogSnapshot = await captureStableAria(
+      page, '[role="dialog"][aria-label="Duplicate bot"]', scaffold.workspaceCwd,
+    )
+    await duplicateDialog.getByRole('button', { name: 'Cancel', exact: true }).last().click()
+    await duplicateDialog.waitFor({ state: 'hidden' })
 
     await roster.getByRole('button', { name: 'New bot', exact: true }).click()
     const createDialog = page.getByRole('dialog', { name: 'Create a bot', exact: true })
@@ -319,6 +331,7 @@ describe('web e2e: Bot workspace retains one Conversation Session per Bot', () =
         templateDialogSnapshot,
         memoryDialogSnapshot,
         profileDialogSnapshot,
+        duplicateDialogSnapshot,
         createDialogSnapshot,
         routineDialogSnapshot,
         historyDialogSnapshot,
@@ -451,6 +464,76 @@ describe('web e2e: Bot workspace retains one Conversation Session per Bot', () =
     await expect.poll(() => detail.locator('[data-conversation-session]').getAttribute('data-conversation-session'))
       .toBe(firstBot.sessionId)
     expect(scaffold.ctx.agents.get(child.id)).toBeUndefined()
+    expect(tripwire.pageErrors).toEqual([])
+    expect(tripwire.warnings).toEqual([])
+  })
+
+  it('duplicates a Bot into a fresh chat with its selected model and paused routines', async () => {
+    onTestFailed(() => saveFailureShot(page, 'web-e2e-bot-duplicate'))
+    const mode = page.getByRole('button', { name: 'Bots', exact: true })
+    if (await mode.getAttribute('aria-pressed') !== 'true') await mode.click()
+    const sourceModel = {
+      provider: 'deepseek-official', model: 'deepseek-v4-flash-vision-exp', reasoningEffort: 'low',
+    }
+    const fallbackModel = { provider: 'deepseek-official', model: 'deepseek-v4-flash' }
+    await scaffold.ctx.sessionController.selectModel({ sessionId: secondBot.sessionId, ...sourceModel })
+    await expect.poll(() => scaffold.ctx.agentDefaultModel.currentSelection()).toMatchObject(sourceModel)
+    await scaffold.ctx.sessionController.selectModel({ sessionId: firstBot.sessionId, ...fallbackModel })
+    await expect.poll(() => scaffold.ctx.agentDefaultModel.currentSelection()).toMatchObject(fallbackModel)
+    const sourceRoutine = await scaffold.ctx.schedule.create(secondBot.sessionId, {
+      title: 'Review releases', prompt: 'Check the release notes.', every_seconds: 86400,
+    })
+    await page.locator(`[data-bot-id="${secondBot.id}"]`).click()
+    const detail = page.getByRole('region', { name: secondBot.name, exact: true })
+    await detail.getByRole('button', { name: 'Bot options', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Duplicate bot', exact: true }).click()
+    const dialog = page.getByRole('dialog', { name: 'Duplicate bot', exact: true })
+    const name = dialog.getByLabel('Bot name')
+    await expect.poll(() => name.inputValue()).toBe('Orbit copy')
+    await name.fill('Release reviewer')
+
+    if (DUPLICATE_VISUAL_DIR !== undefined) {
+      await mkdir(DUPLICATE_VISUAL_DIR, { recursive: true })
+      for (const [width, theme, filename] of [
+        [1440, 'dark', 'desktop-dark.png'], [480, 'light', 'narrow-light.png'],
+      ] as const) {
+        await page.setViewportSize({ width, height: 900 })
+        await page.emulateMedia({ colorScheme: theme, reducedMotion: 'reduce' })
+        await page.locator('body[data-ds-dark-theme]').waitFor({ state: theme === 'dark' ? 'visible' : 'detached' })
+        await expect.poll(async () => {
+          const bounds = await dialog.boundingBox()
+          return bounds !== null && bounds.x >= 0 && bounds.x + bounds.width <= width
+        }).toBe(true)
+        await page.screenshot({ path: join(DUPLICATE_VISUAL_DIR, filename), animations: 'disabled' })
+      }
+    }
+
+    await dialog.getByRole('button', { name: 'Duplicate', exact: true }).click()
+    await dialog.waitFor({ state: 'hidden' })
+    const copyDetail = page.getByRole('region', { name: 'Release reviewer', exact: true })
+    const copyComposer = copyDetail.getByRole('textbox', { name: 'Message Release reviewer', exact: true })
+    await copyComposer.waitFor()
+    expect(await copyComposer.textContent()).toBe('')
+    const copies = (await scaffold.ctx.bots.list({})).bots.filter(bot => bot.name === 'Release reviewer')
+    expect(copies).toHaveLength(1)
+    const copy = copies[0]!
+    expect(copy.id).not.toBe(secondBot.id)
+    expect(copy.sessionId).not.toBe(secondBot.sessionId)
+    expect(copy.accent).toBe(secondBot.accent)
+    expect(copy.identity).toBe(secondBot.identity)
+    await expect.poll(() => copyDetail.locator('[data-conversation-session]').getAttribute('data-conversation-session'))
+      .toBe(copy.sessionId)
+    const copyModelPicker = copyDetail.getByRole('button', { name: /^Select model, current/u })
+    await expect.poll(() => copyModelPicker.textContent()).toContain('DeepSeek-V4-Flash-Vision-Exp')
+    expect(await scaffold.ctx.sessionController.snapshotModelSelection(copy.sessionId)).toMatchObject(sourceModel)
+    expect(scaffold.ctx.agentDefaultModel.currentSelection()).toMatchObject(fallbackModel)
+    expect(await scaffold.ctx.bots.readGrokHistory({ botId: copy.id })).toBeNull()
+    expect((await scaffold.ctx.bots.readGrokHistory({ botId: secondBot.id }))?.messages[0]?.text).toBe('Recovered question')
+    const catalog = await scaffold.ctx.schedule.catalog()
+    expect(catalog.find(entry => entry.id === sourceRoutine.id)?.status).toBe('active')
+    expect(catalog.filter(entry => entry.sessionId === copy.sessionId)).toMatchObject([
+      { title: 'Review releases', status: 'paused' },
+    ])
     expect(tripwire.pageErrors).toEqual([])
     expect(tripwire.warnings).toEqual([])
   })

@@ -192,7 +192,7 @@ export function BotsRoster({
 export function BotsPanel({
   useWorkspace, useSessionStatus, reference, retryGroup, updateGroup, sendGroupMessage,
   sendGroupMessageWithAttachments, reactGroupMessage, groupsAvailable, loadAvatar,
-  rename, updateProfile, memoryManager, readGrokHistory,
+  rename, duplicate, updateProfile, memoryManager, readGrokHistory,
   routineManager, skillManager, SessionProvider, renderSlot, t, share, computer, useComputerAvailability,
   setComputerTarget, useComputerTarget, useComputerIdentity, useComputerSignIn, openWorkspaceTab, useTerminalAvailable, useFilesAvailable,
   useSharedFilesAvailable, refreshComputerAvailability,
@@ -286,6 +286,7 @@ export function BotsPanel({
         t={t}
         loadAvatar={loadAvatar}
         onRename={rename}
+        onDuplicate={duplicate}
         onUpdateProfile={updateProfile}
         {...(share === undefined ? {} : { share })}
         memoryManager={memoryManager}

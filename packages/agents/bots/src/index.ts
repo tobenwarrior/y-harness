@@ -57,7 +57,7 @@ import type { UserMessage } from '@yharness/llm'
 import { SessionId } from '@yharness/session'
 import type { SessionEvent } from '@yharness/session'
 import type { TurnEndReason } from '@yharness/session'
-import { ApiSessionNotFound, type SessionCreateRequest } from '@yharness/api-session-controller'
+import { ApiSessionNotFound, type ModelSelection, type SessionCreateRequest } from '@yharness/api-session-controller'
 import type { SessionSearchHit } from '@yharness/session-query'
 import { defineDomain, domainTable, type Domain, type KvTable } from '@yharness/storage-domain'
 import { credentialKey, type CredentialProvider, type CredentialRecord } from '@yharness/credentials'
@@ -65,7 +65,7 @@ import { scopeOf, scopeParentOf } from '@yharness/scope'
 import z from '@yharness/schemastery'
 import { Remote, RemoteError, TypertRemoteService, remoteErrorOf } from '@yharness/typert-protocol'
 import { z as zod } from 'zod'
-import { BOT_ACCENTS, BOT_EVENT_SOURCES, BOT_IDENTITIES, BotId } from './types.ts'
+import { BOT_ACCENTS, BOT_EVENT_SOURCES, BOT_IDENTITIES, BotDuplicateOperationId, BotId } from './types.ts'
 import { botMessageWasDelivered, BotCollaborationError, BotCollaborationService, BotMessageId } from './collaboration.ts'
 import type { BotCollaborationClient, BotCollaborationDeliveryEvent, BotCollaborationHost, BotEventRelayContext } from './collaboration.ts'
 import {
@@ -140,6 +140,12 @@ import {
   type BotGrokHistoryPageResolvedRequest,
 } from './grok-history.ts'
 import { importGrokBotSkills } from './grok-import-skills.ts'
+import { botDuplicateDomain } from './duplicate-storage.ts'
+import type {
+  BotDuplicateModelSelection,
+  BotDuplicateScheduleRequest,
+  BotDuplicateStoredRecord,
+} from './duplicate-storage.ts'
 import type { BotConnectedAppToolHost, BotGrokHistoryToolHost, BotGroupToolHost } from './scoped-tools.ts'
 import {
   createBotSkillPolicyProvider,
@@ -175,6 +181,8 @@ import type {
   BotAvatarReadValue,
   BotCreateRequest,
   BotCreateValue,
+  BotDuplicateRequest,
+  BotDuplicateValue,
   BotIdentity,
   BotListRequest,
   BotListValue,
@@ -270,6 +278,7 @@ import type {
   BotTemplatePublishValue,
   BotTemplateRevokeRequest,
   BotTemplateRevokeValue,
+  BotTemplateProfile,
   BotTemplateView,
 } from './template-types.ts'
 import {
@@ -327,7 +336,14 @@ interface EventRoutineTriggerInput {
 }
 
 export type * from './types.ts'
-export { BOT_ACCENTS, BOT_EVENT_SOURCES, BOT_IDENTITIES, BotId, BotShareMemoryId } from './types.ts'
+export {
+  BOT_ACCENTS,
+  BOT_EVENT_SOURCES,
+  BOT_IDENTITIES,
+  BotDuplicateOperationId,
+  BotId,
+  BotShareMemoryId,
+} from './types.ts'
 export {
   BOT_MEMORY_ENTRY_LIMIT,
   BOT_MEMORY_TEXT_LIMIT,
@@ -520,6 +536,12 @@ export {
 } from './template-types.ts'
 export type * from './template-types.ts'
 export { botTemplateDomain, botTemplateRecordSchema } from './template-storage.ts'
+export { botDuplicateDomain, botDuplicateOperationSchema, botDuplicateScheduleRequestSchema } from './duplicate-storage.ts'
+export type {
+  BotDuplicateModelSelection,
+  BotDuplicateScheduleRequest,
+  BotDuplicateStoredRecord,
+} from './duplicate-storage.ts'
 
 interface BotWorkspaces {
   /** Compute the server-assigned directory for this Bot's Session. */
@@ -1483,6 +1505,7 @@ function isSyntheticGroupContext(message: UserMessage): boolean {
 }
 const BOT_TEMPLATE_ID_PATTERN = /^bot-template-[A-Za-z0-9][A-Za-z0-9-]*$/
 const BOT_TEMPLATE_IMPORT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
+const BOT_DUPLICATE_OPERATION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
 const BOT_MESSAGE_SEARCH_RESULT_LIMIT = 20
 const BOT_MESSAGE_SEARCH_QUERY_MAX_CHARS = 500
 const BOT_MESSAGE_SEARCH_TYPES = new Set(['user/message', 'assistant/message'])
@@ -1505,6 +1528,20 @@ function normalizeBotMessageSearchQuery(request: BotMessageSearchRequest): strin
 
 function textLength(value: string): number {
   return Array.from(value).length
+}
+
+function sessionModelSelection(selection: {
+  readonly provider: string
+  readonly model: string
+  readonly reasoningEffort?: string | undefined
+  readonly serviceTier?: string | undefined
+}): ModelSelection {
+  return {
+    provider: selection.provider,
+    model: selection.model,
+    ...(selection.reasoningEffort === undefined ? {} : { reasoningEffort: selection.reasoningEffort }),
+    ...(selection.serviceTier === undefined ? {} : { serviceTier: selection.serviceTier }),
+  }
 }
 
 function normalizeName(value: string): string {
@@ -1613,6 +1650,53 @@ function normalizeTemplateImportId(value: string | undefined): string | undefine
   return value
 }
 
+function normalizeDuplicateOperationId(value: BotDuplicateOperationId): BotDuplicateOperationId {
+  if (typeof value !== 'string' || !BOT_DUPLICATE_OPERATION_ID_PATTERN.test(value)) {
+    return badRequest('Bot duplicate operationId must be a non-empty URL-safe operation identity')
+  }
+  return BotDuplicateOperationId(value)
+}
+
+function duplicateDigest(sourceBotId: BotId, operationId: BotDuplicateOperationId): string {
+  return createHash('sha256').update(String(sourceBotId)).update('\0').update(String(operationId)).digest('hex')
+}
+
+function duplicateBotId(sourceBotId: BotId, operationId: BotDuplicateOperationId): BotId {
+  return BotId(`bot-duplicate-${duplicateDigest(sourceBotId, operationId).slice(0, 48)}`)
+}
+
+function duplicateOperationKey(sourceBotId: BotId, operationId: BotDuplicateOperationId): string {
+  return `bot-duplicate-operation-${duplicateDigest(sourceBotId, operationId)}`
+}
+
+function duplicateEventRoutineId(sourceBotId: BotId, operationId: BotDuplicateOperationId, routineId: string): string {
+  const digest = createHash('sha256')
+    .update('bot-duplicate-event\0')
+    .update(String(sourceBotId))
+    .update('\0')
+    .update(String(operationId))
+    .update('\0')
+    .update(routineId)
+    .digest('hex')
+  return `bot-event-routine-duplicate-${digest.slice(0, 48)}`
+}
+
+function duplicateScheduleIdempotencyKey(
+  sourceBotId: BotId,
+  operationId: BotDuplicateOperationId,
+  routineId: string,
+): string {
+  const digest = createHash('sha256')
+    .update('bot-duplicate-schedule\0')
+    .update(String(sourceBotId))
+    .update('\0')
+    .update(String(operationId))
+    .update('\0')
+    .update(routineId)
+    .digest('hex')
+  return `bot-duplicate-${digest}`
+}
+
 function templateImportDigest(ownerId: string, importId: string): string {
   return createHash('sha256').update(`${ownerId}\0${importId}`).digest('hex')
 }
@@ -1621,6 +1705,17 @@ function templateView(record: BotTemplateStoredRecord, approved = true): BotTemp
   const { ownerId: ignoredOwnerId, ...view } = record
   void ignoredOwnerId
   return { ...view, approved }
+}
+
+function displayProfileOf(
+  profile: BotTemplateProfile,
+): BotTemplateProfile {
+  return {
+    name: profile.name,
+    ...(profile.description === undefined ? {} : { description: profile.description }),
+    identity: profile.identity,
+    accent: profile.accent,
+  }
 }
 
 function signedTemplateView(
@@ -1636,10 +1731,7 @@ function signedTemplateView(
   return {
     id,
     shareCode,
-    name: payload.profile.name,
-    ...(payload.profile.description === undefined ? {} : { description: payload.profile.description }),
-    identity: payload.profile.identity,
-    accent: payload.profile.accent,
+    ...displayProfileOf(payload.profile),
     ...(payload.persona === undefined ? {} : { persona: payload.persona }),
     capabilities: payload.capabilities,
     profile: payload.profile,
@@ -2165,6 +2257,50 @@ function routineCatalogRecord(entry: ScheduleCatalogEntry): ScheduleRecord {
   void status
   void lastDelivery
   return record
+}
+
+/** Convert a retained timed routine into a fresh-creation request without history. */
+function duplicateScheduleRequest(record: ScheduleRecord): BotDuplicateScheduleRequest | undefined {
+  switch (record.kind) {
+    case 'after':
+      return { title: record.title, prompt: record.prompt, after_seconds: record.afterSeconds }
+    case 'at':
+      return Date.parse(record.scheduledAt) <= Date.now()
+        ? undefined
+        : { title: record.title, prompt: record.prompt, at: record.scheduledAt }
+    case 'every':
+      return { title: record.title, prompt: record.prompt, every_seconds: record.everySeconds }
+    case 'daily':
+      return {
+        title: record.title,
+        prompt: record.prompt,
+        daily: { time: record.time, time_zone: record.timeZone },
+      }
+    case 'weekly':
+      return {
+        title: record.title,
+        prompt: record.prompt,
+        weekly: { time: record.time, time_zone: record.timeZone, weekdays: [...record.weekdays] },
+      }
+    case 'cron':
+      return {
+        title: record.title,
+        prompt: record.prompt,
+        cron: { expression: record.expression, time_zone: record.timeZone },
+      }
+  }
+}
+
+/** Rehydrate a validated duplicate snapshot into the Schedule service request type. */
+function scheduleRequestFromDuplicate(request: BotDuplicateScheduleRequest): ScheduleCreateRequest {
+  const base = { title: request.title, prompt: request.prompt }
+  if (request.after_seconds !== undefined) return { ...base, after_seconds: request.after_seconds }
+  if (request.at !== undefined) return { ...base, at: request.at }
+  if (request.every_seconds !== undefined) return { ...base, every_seconds: request.every_seconds }
+  if (request.daily !== undefined) return { ...base, daily: request.daily }
+  if (request.weekly !== undefined) return { ...base, weekly: request.weekly }
+  if (request.cron !== undefined) return { ...base, cron: request.cron }
+  throw new Error('Bot duplicate timed routine snapshot has no selector')
 }
 
 /** Stable Host retry identity for one Bot Session's native routine operation. */
@@ -2804,6 +2940,7 @@ export class BotService extends TypertRemoteService {
   private readonly groupService: Promise<BotGroupService>
   private readonly attachmentDomain: Promise<Domain<typeof botAttachmentDomain>>
   private readonly templateDomain: Promise<Domain<typeof botTemplateDomain>>
+  private readonly duplicateDomain: Promise<Domain<typeof botDuplicateDomain>>
   private readonly templateApprovalPreviews = new Map<string, TemplateApprovalPreview>()
   private readonly ownerId: string
   private readonly initialized: PromiseLike<unknown>
@@ -3102,6 +3239,7 @@ export class BotService extends TypertRemoteService {
       }
     })
     this.templateDomain = ctx.storageDomain.open(botTemplateDomain)
+    this.duplicateDomain = ctx.storageDomain.open(botDuplicateDomain)
     ctx.on('session/event', (session, event) => {
       const sessionKey = String(session.id)
       if (this.sharedSessionIds.has(sessionKey)) {
@@ -3493,6 +3631,7 @@ export class BotService extends TypertRemoteService {
       let groupDomain: Domain<typeof botGroupDomain> | undefined
       let attachmentDomain: Domain<typeof botAttachmentDomain> | undefined
       let templateDomain: Domain<typeof botTemplateDomain> | undefined
+      let duplicateDomain: Domain<typeof botDuplicateDomain> | undefined
       let sharedCleanup: () => Promise<void> = async () => {}
       let attachmentCleanup: () => Promise<void> = async () => {}
       let cleanup: () => Promise<void>
@@ -3503,12 +3642,14 @@ export class BotService extends TypertRemoteService {
         groupDomain = await this.groupDomain
         attachmentDomain = await this.attachmentDomain
         templateDomain = await this.templateDomain
+        duplicateDomain = await this.duplicateDomain
         const openedDomain = domain
         const openedNoCredentialIntent = noCredentialIntent
         const openedGrokHistoryDomain = grokHistoryDomain
         const openedGroupDomain = groupDomain
         const openedAttachmentDomain = attachmentDomain
         const openedTemplateDomain = templateDomain
+        const openedDuplicateDomain = duplicateDomain
         if (config.grokHistoryAttachmentVault !== undefined) {
           this.grokHistoryAttachmentVault = await GrokHistoryAttachmentVault.load(config.grokHistoryAttachmentVault)
         }
@@ -3537,6 +3678,7 @@ export class BotService extends TypertRemoteService {
             openedGroupDomain.close(),
             openedAttachmentDomain.close(),
             openedTemplateDomain.close(),
+            openedDuplicateDomain.close(),
             openedNoCredentialIntent?.close() ?? Promise.resolve(),
           ])
         })
@@ -3552,6 +3694,7 @@ export class BotService extends TypertRemoteService {
           ...(groupDomain === undefined ? [] : [groupDomain.close()]),
           ...(attachmentDomain === undefined ? [] : [attachmentDomain.close()]),
           ...(templateDomain === undefined ? [] : [templateDomain.close()]),
+          ...(duplicateDomain === undefined ? [] : [duplicateDomain.close()]),
           noCredentialIntent?.close() ?? Promise.resolve(),
         ])
         throw error
@@ -5113,37 +5256,47 @@ export class BotService extends TypertRemoteService {
     request: BotEventRoutineCreateRequest,
     id: string,
     signal?: AbortSignal,
+    initialStatus: BotEventRoutine['status'] = 'active',
   ): Promise<BotEventRoutine> {
-    return this.serialize(async () => {
-      const domain = await this.getDomain()
-      const current = await this.refreshBotRecordFromProfile(domain, sessionId)
-        ?? this.currentBotRecord(domain, sessionId)
-      if (current === undefined || current.sessionId !== sessionId) {
-        throw new BotCollaborationError('sender-not-bot', 'Bot routines require a live Bot Session.')
+    return this.serialize(() => this.createEventRoutineImpl(sessionId, request, id, signal, initialStatus))
+  }
+
+  /** Create one event routine while the caller already owns the Bot queue. */
+  private async createEventRoutineImpl(
+    sessionId: SessionId,
+    request: BotEventRoutineCreateRequest,
+    id: string,
+    signal?: AbortSignal,
+    initialStatus: BotEventRoutine['status'] = 'active',
+  ): Promise<BotEventRoutine> {
+    const domain = await this.getDomain()
+    const current = await this.refreshBotRecordFromProfile(domain, sessionId)
+      ?? this.currentBotRecord(domain, sessionId)
+    if (current === undefined || current.sessionId !== sessionId) {
+      throw new BotCollaborationError('sender-not-bot', 'Bot routines require a live Bot Session.')
+    }
+    const existing = current.eventRoutines?.find(routine => routine.id === id)
+    if (existing !== undefined) {
+      if (existing.title !== request.title || existing.prompt !== request.prompt || existing.trigger.source !== request.event.source) {
+        throw new BotCollaborationError('message-invalid', 'This event routine operation identity was already used with different arguments.')
       }
-      const existing = current.eventRoutines?.find(routine => routine.id === id)
-      if (existing !== undefined) {
-        if (existing.title !== request.title || existing.prompt !== request.prompt || existing.trigger.source !== request.event.source) {
-          throw new BotCollaborationError('message-invalid', 'This event routine operation identity was already used with different arguments.')
-        }
-        return existing
-      }
-      const title = scheduleTitle(request.title)
-      const prompt = request.prompt.trim()
-      if (prompt.length === 0 || prompt.length > 16_000) {
-        throw new BotCollaborationError('message-invalid', 'A routine prompt must be non-empty and at most 16000 characters.')
-      }
-      signal?.throwIfAborted()
-      const now = Date.now()
-      const routine: BotEventRoutine = {
-        id, title, prompt, trigger: request.event, status: 'active', createdAt: now, updatedAt: now,
-        deliveries: [], results: [],
-      }
-      const next: BotRecord = { ...current, eventRoutines: [...current.eventRoutines ?? [], routine], updatedAt: now }
-      await this.commitEventRoutineRecord(current, next, signal)
-      this.emitChanged()
-      return routine
-    })
+      return existing
+    }
+    const title = scheduleTitle(request.title)
+    const prompt = request.prompt.trim()
+    if (prompt.length === 0 || prompt.length > 16_000) {
+      throw new BotCollaborationError('message-invalid', 'A routine prompt must be non-empty and at most 16000 characters.')
+    }
+    signal?.throwIfAborted()
+    const now = Date.now()
+    const routine: BotEventRoutine = {
+      id, title, prompt, trigger: request.event, status: initialStatus, createdAt: now, updatedAt: now,
+      deliveries: [], results: [],
+    }
+    const next: BotRecord = { ...current, eventRoutines: [...current.eventRoutines ?? [], routine], updatedAt: now }
+    await this.commitEventRoutineRecord(current, next, signal)
+    this.emitChanged()
+    return routine
   }
 
   /** List active and paused event routines owned by one Bot Session. */
@@ -7513,6 +7666,231 @@ export class BotService extends TypertRemoteService {
   }
 
   /**
+   * Duplicate one owner Bot's safe configuration into a fresh Bot and Session.
+   *
+   * The operation identity deterministically selects the target Bot, so a
+   * retry after a partial provisioning or routine copy resumes the same
+   * target instead of allocating another Bot. Conversations, memories,
+   * credentials, approvals, delivery history, and connected-app state are
+   * deliberately not copied. Every copied routine starts paused.
+   *
+   * @param request - Owner Bot, retry identity, and optional replacement name.
+   * @param signal - Optional cancellation between durable copy steps.
+   * @returns The fresh Bot and a safe copy summary.
+   */
+  @Remote('duplicate')
+  async duplicate(request: BotDuplicateRequest, signal?: AbortSignal): Promise<BotDuplicateValue> {
+    return this.serialize(async () => {
+      if (!isRequestObject(request)) return badRequest('Bot duplicate request must be an object')
+      const sourceBotId = normalizeBotId(request.sourceBotId)
+      if (sourceBotId === undefined) return badRequest('Source Bot id is required')
+      const operationId = normalizeDuplicateOperationId(request.operationId)
+      const requestedName = request.name === undefined ? null : normalizeName(request.name)
+      const duplicateOperations = (await this.duplicateDomain).table('operations')
+      if (!duplicateOperations.supportsDurableCoordination) {
+        throw new RemoteError('gateway/internal', 'Bot duplication requires durable storage coordination.', {})
+      }
+      const operationKey = duplicateOperationKey(sourceBotId, operationId)
+      const validateOperation = (candidate: BotDuplicateStoredRecord): BotDuplicateStoredRecord => {
+        if (candidate.ownerId !== this.ownerId
+          || String(candidate.sourceBotId) !== String(sourceBotId)
+          || candidate.operationId !== String(operationId)) {
+          return badRequest('This Bot duplicate operation belongs to another owner or source Bot')
+        }
+        if (candidate.requestedName !== requestedName) {
+          return badRequest('Bot duplicate operationId was already used with a different name')
+        }
+        return candidate
+      }
+      let operation = await duplicateOperations.getFresh(operationKey)
+      if (operation !== undefined) {
+        operation = validateOperation(operation)
+        if (operation.completedAt !== undefined) {
+          const target = await this.readOwnedBot(operation.targetBotId)
+          return this.duplicateValue(operation, target)
+        }
+      } else {
+        const source = await this.readOwnedBot(sourceBotId)
+        if (source.state !== 'active') return badRequest('Wait for the source Bot to finish setup.')
+        const modelSelection = await this.ctx.sessionController.snapshotModelSelection(source.sessionId, signal)
+        const targetId = duplicateBotId(source.id, operationId)
+        const bots = (await this.getDomain()).table('bots')
+        if (await bots.getFresh(targetId) !== undefined) {
+          return badRequest('The deterministic Bot duplicate target is already occupied')
+        }
+        const targetName = requestedName
+          ?? normalizeName(`${source.name.slice(0, 75).replace(/[\uD800-\uDBFF]$/u, '').trimEnd()} copy`)
+        const snapshot = await this.snapshotDuplicateOperation(
+          source,
+          sourceBotId,
+          operationId,
+          targetId,
+          requestedName,
+          targetName,
+          modelSelection,
+          signal,
+        )
+        if (await duplicateOperations.insert(operationKey, snapshot)) {
+          operation = snapshot
+        } else {
+          const winner = await duplicateOperations.getFresh(operationKey)
+          if (winner === undefined) throw new RemoteError('gateway/internal', 'Bot duplicate operation was lost during durable reservation.', {})
+          operation = validateOperation(winner)
+        }
+      }
+      const targetId = operation.targetBotId
+      const bots = (await this.getDomain()).table('bots')
+      const storedTarget = await bots.getFresh(targetId)
+      if (storedTarget !== undefined && storedTarget.ownerId !== this.ownerId) {
+        return badRequest('The Bot duplicate target belongs to another owner')
+      }
+      const existingTarget = storedTarget === undefined
+        ? undefined
+        : await this.freshBotRecord(bots, targetId, 'bot-duplicate')
+      let preparedAvatar: ImageAttachmentRef | undefined
+      if (operation.profile.avatar !== undefined && existingTarget?.avatar === undefined) {
+        const portableAvatar = await this.exportTemplateAvatar(operation.sourceBotId, operation.profile.avatar)
+        signal?.throwIfAborted()
+        preparedAvatar = await this.prepareImportedAvatar(targetId, portableAvatar)
+      }
+      const created = await this.createRecord({
+        id: targetId,
+        ...displayProfileOf({
+          name: operation.targetName,
+          ...(operation.profile.description === undefined ? {} : { description: operation.profile.description }),
+          identity: operation.profile.identity,
+          accent: operation.profile.accent,
+        }),
+        ...(operation.profile.agentPreset === undefined ? {} : { agentPreset: operation.profile.agentPreset }),
+        ...(operation.profile.persona === undefined ? {} : { persona: operation.profile.persona }),
+        ...(operation.profile.capabilities === undefined ? {} : { capabilities: operation.profile.capabilities }),
+        ...(operation.profile.skillPolicy === undefined ? {} : { skillPolicy: operation.profile.skillPolicy }),
+      }, signal, preparedAvatar, operation.profile.modelSelection)
+      await this.duplicateRoutineDefinitions(operation, created.bot, signal)
+      operation = await duplicateOperations.update(operationKey, (current) => {
+        if (current.completedAt !== undefined) return current
+        return { ...current, completedAt: Date.now() }
+      })
+      const target = await this.readOwnedBot(targetId)
+      return this.duplicateValue(operation, target)
+    }, signal)
+  }
+
+  /** Snapshot the safe source configuration before any target-side mutation. */
+  private async snapshotDuplicateOperation(
+    source: BotStoredRecord,
+    sourceBotId: BotId,
+    operationId: BotDuplicateOperationId,
+    targetBotId: BotId,
+    requestedName: string | null,
+    targetName: string,
+    modelSelection: BotDuplicateModelSelection | undefined,
+    signal?: AbortSignal,
+  ): Promise<BotDuplicateStoredRecord> {
+    const routines: BotDuplicateStoredRecord['routines'][number][] = []
+    const skippedRoutines: BotDuplicateStoredRecord['skippedRoutines'][number][] = []
+    const schedule = this.ctx.get('schedule')
+    if (schedule !== undefined) {
+      const entries = (await schedule.catalog()).filter(entry => entry.sessionId === source.sessionId)
+      for (const entry of entries) {
+        signal?.throwIfAborted()
+        if (entry.status === 'inactive') {
+          skippedRoutines.push({ id: String(entry.id), reason: 'inactive' })
+          continue
+        }
+        const request = duplicateScheduleRequest(routineCatalogRecord(entry))
+        if (request === undefined) {
+          skippedRoutines.push({ id: String(entry.id), reason: 'expired' })
+          continue
+        }
+        routines.push({ kind: 'schedule', sourceId: String(entry.id), request })
+      }
+    }
+    for (const routine of source.eventRoutines ?? []) {
+      signal?.throwIfAborted()
+      routines.push({
+        kind: 'event',
+        sourceId: routine.id,
+        title: routine.title,
+        prompt: routine.prompt,
+        event: routine.trigger,
+      })
+    }
+    return {
+      ownerId: this.ownerId,
+      sourceBotId,
+      operationId: String(operationId),
+      targetBotId,
+      requestedName,
+      targetName,
+      profile: {
+        ...(source.description === undefined ? {} : { description: source.description }),
+        identity: source.identity,
+        accent: source.accent,
+        ...(source.avatar === undefined ? {} : { avatar: source.avatar }),
+        ...(source.agentPreset === undefined ? {} : { agentPreset: source.agentPreset }),
+        ...(source.persona === undefined ? {} : { persona: source.persona }),
+        ...(source.capabilities === undefined ? {} : { capabilities: [...source.capabilities] }),
+        ...(source.skillPolicy === undefined ? {} : {
+          skillPolicy: {
+            mode: source.skillPolicy.mode,
+            enabled: [...source.skillPolicy.enabled],
+            disabled: [...source.skillPolicy.disabled],
+          },
+        }),
+        ...(modelSelection === undefined ? {} : { modelSelection }),
+      },
+      routines,
+      skippedRoutines,
+      createdAt: Date.now(),
+    }
+  }
+
+  /** Return a settled operation result without reading or copying mutable source state. */
+  private duplicateValue(operation: BotDuplicateStoredRecord, target: BotStoredRecord): BotDuplicateValue {
+    return {
+      bot: this.view(target),
+      avatarCopied: operation.profile.avatar !== undefined && target.avatar !== undefined,
+      routinesCopied: operation.routines.length,
+      skippedRoutines: operation.skippedRoutines,
+      skillPolicy: normalizeBotSkillPolicy(operation.profile.skillPolicy),
+    }
+  }
+
+  /** Copy eligible routine definitions without entering the Bot service queue again. */
+  private async duplicateRoutineDefinitions(
+    operation: BotDuplicateStoredRecord,
+    target: BotCreateValue['bot'],
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const schedule = this.ctx.get('schedule')
+    for (const routine of operation.routines) {
+      signal?.throwIfAborted()
+      if (routine.kind === 'schedule') {
+        if (schedule === undefined) throw new RemoteError('gateway/internal', 'Bot routines are unavailable on this Host.', {})
+        await schedule.create(target.sessionId, scheduleRequestFromDuplicate(routine.request), signal, {
+          initialStatus: 'paused',
+          idempotencyKey: duplicateScheduleIdempotencyKey(
+            operation.sourceBotId,
+            BotDuplicateOperationId(operation.operationId),
+            routine.sourceId,
+          ),
+        })
+      } else {
+        await this.createEventRoutineImpl(target.sessionId, {
+          title: routine.title,
+          prompt: routine.prompt,
+          event: routine.event,
+        }, duplicateEventRoutineId(
+          operation.sourceBotId,
+          BotDuplicateOperationId(operation.operationId),
+          routine.sourceId,
+        ), signal, 'paused')
+      }
+    }
+  }
+
+  /**
    * Resolve a server-owned Bot by its exact backing Session.
    * @param sessionId - Session identity from the live Agent or authenticated UI.
    * @returns The owner Bot, including provisioning state, or undefined for other Sessions.
@@ -7566,6 +7944,7 @@ export class BotService extends TypertRemoteService {
     request: BotCreateRequest,
     signal?: AbortSignal,
     avatar?: ImageAttachmentRef,
+    modelSelection?: BotDuplicateModelSelection,
   ): Promise<BotCreateValue> {
     let normalized = normalizeCreate(request)
     const workspaces = this.ctx.get('botWorkspaces')
@@ -7586,6 +7965,13 @@ export class BotService extends TypertRemoteService {
         normalized = { ...normalized, cwd: existing.cwd }
       }
       if (existing.state === 'active' && matchesMetadata(existing, normalized)) {
+        if (modelSelection !== undefined) {
+          await this.ctx.sessionController.seedModelSelection(
+            existing.sessionId,
+            sessionModelSelection(modelSelection),
+            signal,
+          )
+        }
         if (avatar === undefined || existing.avatar !== undefined) return { bot: this.view(existing) }
         const next = await this.commitBotMutation(id, current => ({
           ...current,
@@ -7613,7 +7999,7 @@ export class BotService extends TypertRemoteService {
         ? existing
         : await this.commitBotMutation(id, current => ({ ...current, avatar }), existing.updatedAt, signal)
       if (pendingRecord !== existing) this.recordsBySession.set(String(pendingRecord.sessionId), pendingRecord)
-      const active = await this.provision(pendingRecord, signal)
+      const active = await this.provision(pendingRecord, signal, modelSelection)
       return { bot: this.view(active) }
     }
 
@@ -7651,7 +8037,7 @@ export class BotService extends TypertRemoteService {
     await this.commitNewBot(record, signal)
     this.recordsBySession.set(String(record.sessionId), record)
     this.emitChanged()
-    const active = await this.provision(record, signal)
+    const active = await this.provision(record, signal, modelSelection)
     return { bot: this.view(active) }
   }
 
@@ -7968,6 +8354,7 @@ export class BotService extends TypertRemoteService {
   private async provision(
     record: BotRecord,
     signal?: AbortSignal,
+    modelSelection?: BotDuplicateModelSelection,
   ): Promise<BotRecord> {
     try {
       const workspaces = this.ctx.get('botWorkspaces')
@@ -7980,6 +8367,13 @@ export class BotService extends TypertRemoteService {
       )
       if (created.sessionId !== record.sessionId) {
         throw new Error(`Session controller returned "${created.sessionId}" for "${record.sessionId}"`)
+      }
+      if (modelSelection !== undefined) {
+        await this.ctx.sessionController.seedModelSelection(
+          record.sessionId,
+          sessionModelSelection(modelSelection),
+          signal,
+        )
       }
     } catch (error: unknown) {
       const detail = remoteErrorOf(error)

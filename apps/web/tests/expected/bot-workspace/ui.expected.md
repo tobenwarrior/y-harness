@@ -87,6 +87,14 @@
   - text: Labels only; they do not enable tools or app access.
   - button "Cancel"
   - button "Save profile"
+- dialog "Duplicate bot":
+  - heading "Duplicate bot" [level=2]
+  - button "Cancel"
+  - paragraph: Copied routines start paused.
+  - text: Bot name
+  - textbox "Bot name": Scout copy
+  - button "Cancel"
+  - button "Duplicate"
 - dialog "Create a bot":
   - heading "Create a bot" [level=2]
   - button "Cancel"

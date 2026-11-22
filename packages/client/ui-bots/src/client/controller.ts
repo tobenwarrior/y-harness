@@ -33,6 +33,9 @@ import type {
   BotGroupUpdateValue,
   BotGroupView,
   BotListRequest,
+  BotDuplicateOperationId,
+  BotDuplicateRequest,
+  BotDuplicateValue,
   BotOrganizationUpdateRequest,
   BotOrganizationUpdateValue,
   BotProfileUpdateRequest,
@@ -114,6 +117,7 @@ import { BotSkillPolicyConflictError } from './types.ts'
 export interface BotWorkspaceRemote {
   list(request: BotListRequest): Promise<RemoteResult<{ readonly bots: readonly BotView[] }>>
   create(request: BotCreateRequest): Promise<RemoteResult<{ readonly bot: BotView }>>
+  duplicate?: (request: BotDuplicateRequest) => Promise<RemoteResult<BotDuplicateValue>>
 
   rename(request: { readonly botId: BotIdType; readonly name: string }): Promise<RemoteResult<{ readonly bot: BotView }>>
   updateProfile?: (request: BotProfileUpdateRequest) => Promise<RemoteResult<BotProfileUpdateValue>>
@@ -266,6 +270,8 @@ export interface BotWorkspaceFace {
   readonly select: (id: string) => void
   readonly selectGroup: (id: string) => void
   readonly create: (creation: BotCreation) => Promise<void>
+  /** Create a fresh owner Bot, preserving the operation identity across retries. */
+  readonly duplicate?: (sourceBotId: string, name: string) => Promise<void>
   /** Whether the Host mounted the complete shared-group Remote surface. */
   readonly groupsAvailable: boolean
 
@@ -455,6 +461,7 @@ export class BotWorkspaceController {
   private skillManagerActions: BotSkillManagerActions | undefined
   private readonly avatarLoads = new Map<string, Promise<string>>()
   private readonly templateImportIds = new Map<string, string>()
+  private readonly duplicateOperationIds = new Map<string, BotDuplicateOperationId>()
   private templatePreviewGeneration = 0
   private templateActionGeneration = 0
   private templateActionKind: TemplateActionKind | undefined
@@ -509,6 +516,7 @@ export class BotWorkspaceController {
     this.selectedReference = undefined
     this.avatarLoads.clear()
     this.templateImportIds.clear()
+    this.duplicateOperationIds.clear()
     this.templatePreviewGeneration++
     this.templateActionGeneration++
     this.templateActionKind = undefined
@@ -578,6 +586,7 @@ export class BotWorkspaceController {
    */
   face(): BotWorkspaceFace {
     const readGrokHistory = this.remote.readGrokHistory
+    const duplicate = this.remote.duplicate
     const groupsAvailable = this.remote.listGroups !== undefined
       && this.remote.createGroup !== undefined
       && this.remote.updateGroup !== undefined
@@ -589,6 +598,9 @@ export class BotWorkspaceController {
       select: (id) => { this.select(id) },
       selectGroup: (id) => { this.selectGroup(id) },
       create: creation => this.create(creation),
+      ...(duplicate === undefined ? {} : {
+        duplicate: (sourceBotId: string, name: string) => this.duplicateBot(duplicate, sourceBotId, name),
+      }),
       groupsAvailable,
 
       rename: async (id, name) => {
@@ -2124,6 +2136,34 @@ export class BotWorkspaceController {
       ...(creation.capabilities === undefined ? {} : { capabilities: creation.capabilities }),
     }
     return this.retryPendingCreate()
+  }
+
+  private async duplicateBot(
+    duplicate: NonNullable<BotWorkspaceRemote['duplicate']>, sourceBotId: string, name: string,
+  ): Promise<void> {
+    if (this.disposed) return
+    const trimmedName = name.trim()
+    const key = JSON.stringify([sourceBotId, trimmedName])
+    const operationId = this.duplicateOperationIds.get(key) ?? brandString<BotDuplicateOperationId>(randomUUID())
+    this.duplicateOperationIds.set(key, operationId)
+    const selectionGeneration = this.selectionGeneration
+    const result = await duplicate({ sourceBotId: brandString<BotIdType>(sourceBotId), operationId, name: trimmedName })
+    if (this.duplicateOperationIds.get(key) !== operationId) return
+    if (!result.ok) throw new Error(result.error.message)
+    const bot = result.value.bot
+    const current = this.source.getSnapshot()
+    const source = current.bots.find(candidate => candidate.id === sourceBotId)
+    if (bot.id === sourceBotId || bot.sessionId === source?.sessionId || bot.name !== trimmedName || bot.state !== 'active') {
+      throw new Error(this.unexpectedResponse())
+    }
+    this.duplicateOperationIds.delete(key)
+    this.rosterRevision++
+    const existing = current.bots.find(candidate => candidate.id === bot.id)
+    const bots = existing === undefined ? [...current.bots, bot] : current.bots.map(candidate => (
+      candidate.id === bot.id && candidate.updatedAt <= bot.updatedAt ? bot : candidate
+    ))
+    this.source.set({ ...current, bots })
+    if (this.selectionGeneration === selectionGeneration) this.select(bot.id)
   }
 
   private async updateProfile(id: string, profile: BotProfileUpdate): Promise<void> {

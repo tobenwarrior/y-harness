@@ -11,9 +11,7 @@ import type {
 } from '@yharness/attachment'
 import type { FileUploadReceiptId } from '@yharness/client-file-upload/types'
 import type {} from '@yharness/client-file-upload'
-import {
-  ReasoningEffortId, ServiceTierId, assistantStreamChunks, createUserMessage, freezeMessage,
-} from '@yharness/llm'
+import { assistantStreamChunks, createUserMessage, freezeMessage } from '@yharness/llm'
 import type { MessageSource } from '@yharness/llm'
 import { buildForkSeed } from '@yharness/session/fork'
 import { SessionLogOffset, SessionSeq } from '@yharness/session'
@@ -30,6 +28,7 @@ import {
   ApiSessionNotFound,
   ApiSessionPresetConflict,
   ApiSessionSubagentOwnership,
+  agentModelSelection,
   apiSessionSubagentOwnershipError,
   hasApiSessionSubagentOwner,
   inspectApiSession,
@@ -47,6 +46,7 @@ import type {
   SessionPromptValue,
   SessionRenameRequest,
   SessionRenameValue,
+  ModelSelection,
   SessionSelectModelRequest,
   SessionSelectModelValue,
   SessionUpdateQueueRequest,
@@ -157,27 +157,7 @@ export class SessionCommandController {
     const agent = await this.resolveAgent(request.sessionId)
     return this.agents.serializeImageAdmission(agent, async () => {
       try {
-        await this.requireModel(request)
-        const resolved = await this.ctx.llm.resolveCallConfig({
-          provider: request.provider,
-          model: request.model,
-          ...(request.reasoningEffort === undefined
-            ? {}
-            : { reasoningEffort: ReasoningEffortId(request.reasoningEffort) }),
-          ...(request.serviceTier === undefined
-            ? {}
-            : { serviceTier: ServiceTierId(request.serviceTier) }),
-        })
-        const selected: AgentModelSelection = {
-          provider: resolved.provider,
-          model: resolved.model,
-          ...(resolved.reasoningEffort === undefined
-            ? {}
-            : { reasoningEffort: resolved.reasoningEffort }),
-          ...(resolved.serviceTier === undefined
-            ? {}
-            : { serviceTier: resolved.serviceTier }),
-        }
+        const selected = await this.resolveModelSelection(request)
         this.agents.selectForNextRequest(agent, selected)
         void this.ctx.agentDefaultModel.saveSelection(selected).catch((error: unknown) => {
           this.ctx.logger.warn(
@@ -191,6 +171,56 @@ export class SessionCommandController {
           'session/model-unavailable',
           error instanceof Error ? error.message : String(error),
           { provider: request.provider, model: request.model },
+        )
+      }
+    })
+  }
+
+  /**
+   * Read the durable next/last-used model choice for one Session without activating it.
+   * @param sessionId - source Session whose projected choice should be copied.
+   * @param signal - cancellation for the cold observation.
+   * @returns the persisted next/last-used choice, or undefined when no choice has been logged.
+   */
+  async snapshotModelSelection(sessionId: SessionId, signal?: AbortSignal): Promise<ModelSelection | undefined> {
+    using observation = await this.ctx.sessionQuery.observeSession(sessionId, {
+      projectionMode: 'all',
+      ...(signal === undefined ? {} : { signal }),
+    })
+    const projection = observation.projections?.values.modelSelection
+    if (projection === undefined) {
+      throw new Error('api-session: required modelSelection projection is not registered')
+    }
+    return projection.next === null ? undefined : { ...projection.next }
+  }
+
+  /**
+   * Install one already-persisted model choice on a fresh Session without changing the deployment default.
+   * A destination that already has a persisted next/last-used choice keeps that choice for retry safety.
+   * @param sessionId - destination Session that owns the local choice.
+   * @param selection - source Session's projected next choice.
+   * @param signal - cancellation while resolving or journaling the choice.
+   * @returns the provider-resolved destination choice, or the existing destination choice.
+   */
+  async seedModelSelection(
+    sessionId: SessionId,
+    selection: ModelSelection,
+    signal?: AbortSignal,
+  ): Promise<ModelSelection> {
+    const agent = await this.resolveAgent(sessionId, signal)
+    return this.agents.serializeImageAdmission(agent, async () => {
+      const current = await this.snapshotModelSelection(sessionId, signal)
+      if (current !== undefined) return { ...current }
+      try {
+        const selected = await this.resolveModelSelection(selection)
+        this.agents.selectForNextRequest(agent, selected)
+        return { ...selected }
+      } catch (error) {
+        if (remoteErrorOf(error) !== undefined) throw error
+        throw new RemoteError(
+          'session/model-unavailable',
+          error instanceof Error ? error.message : String(error),
+          { provider: selection.provider, model: selection.model },
         )
       }
     })
@@ -535,10 +565,16 @@ export class SessionCommandController {
     return { accepted: true }
   }
 
-  private async resolveAgent(sessionId: SessionId): Promise<Agent> {
-    const found = await this.agents.resolveAgent(sessionId)
+  private async resolveAgent(sessionId: SessionId, signal?: AbortSignal): Promise<Agent> {
+    const found = await this.agents.resolveAgent(sessionId, signal)
     if ('error' in found) throw found.error
     return found.agent
+  }
+
+  private async resolveModelSelection(selection: ModelSelection): Promise<AgentModelSelection> {
+    await this.requireModel(selection)
+    const resolved = await this.ctx.llm.resolveCallConfig(agentModelSelection(selection))
+    return agentModelSelection(resolved)
   }
 
   private rejectCreation(sessionId: SessionId, error: unknown): never {

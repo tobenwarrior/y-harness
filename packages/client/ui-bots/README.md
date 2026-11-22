@@ -27,6 +27,8 @@ Mount the Client export alongside the Bot Remote, Session UI, conversation UI, l
 
 Open **Bot options** in the chat header for profile, sharing, memories, skills, routines, and available workspace tools. The **Terminal** item shows whether the private VPS terminal has internet access configured. Use **Bot workspace options** beside **New bot** to edit the selected avatar, browse templates, and manage shared access.
 
+Choose **Duplicate bot** from the chat's **Bot options** to reuse a bot's profile in a fresh conversation. Give the copy a name and select **Duplicate**. Copied routines start paused.
+
 **Search Bot chats** in the workspace options searches visible messages across your direct Bot conversations. Select a result to open its Bot and reveal the message. The workspace search shortcut opens the same dialog while Bots is selected.
 
 One-to-one conversations place the user's messages on the right, show a small waiting bubble while the Bot works, and identify the final reply by name and avatar. Scheduled replies carry an expandable origin label. Composer approvals and questions stay visible while they await a response. Open the usage icon for token details.

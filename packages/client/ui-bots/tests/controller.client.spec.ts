@@ -156,6 +156,33 @@ function templateView(id: string, shareCode: string, patch: Partial<BotTemplateV
 const localPermissions = { status: 'resolved' as const, preset: 'research-preset', tools: ['chat', 'read_file'] }
 
 describe('BotWorkspaceController', () => {
+  it('keeps a duplicate operation identity on retry and selects its fresh Session', async () => {
+    const original = bot('bot-original', 'session-original')
+    const copy = bot('bot-copy', 'session-copy', { name: 'Release copy' })
+    const duplicate = vi.fn<NonNullable<BotWorkspaceRemote['duplicate']>>()
+      .mockRejectedValueOnce(new Error('connection interrupted'))
+      .mockResolvedValue({
+        ok: true, value: {
+          bot: copy, avatarCopied: false, routinesCopied: 0, skippedRoutines: [],
+          skillPolicy: { mode: 'all', enabled: [], disabled: [] },
+        },
+      })
+    const { sessions, retain } = sessionsFixture()
+    const controller = new BotWorkspaceController({ ...remoteFixture([original]), duplicate }, sessions, () => 'unexpected response')
+    await controller.load()
+    const face = controller.face()
+    await expect(face.duplicate?.(original.id, 'Release copy')).rejects.toThrow('connection interrupted')
+    expect(controller.source.getSnapshot().selectedBotId).toBe(original.id)
+    await face.duplicate?.(original.id, ' Release copy ')
+    expect(duplicate.mock.calls).toHaveLength(2)
+    const request = duplicate.mock.calls[0]?.[0]
+    expect(request).toMatchObject({ sourceBotId: original.id, name: 'Release copy' })
+    expect(request?.operationId).toBeTruthy()
+    expect(duplicate.mock.calls[1]?.[0]).toEqual(request)
+    expect(controller.source.getSnapshot().selectedBotId).toBe(copy.id)
+    expect(retain).toHaveBeenLastCalledWith(copy.sessionId, expect.anything())
+    controller.dispose()
+  })
   it('routes shared app grants through the owner remote with the current revision', async () => {
     const existing = bot('bot-shared-apps', 'session-shared-apps')
     const access = { botId: existing.id, revision: 3, apps: [{ id: 'github', name: 'GitHub', allowed: false }] }
