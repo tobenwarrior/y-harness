@@ -846,6 +846,34 @@ describe('durable Bot roster', () => {
     }
   })
 
+  it('keeps an explicit primary Bot with revisioned owner replacement and no roster fallback', async () => {
+    const h = await harness()
+    try {
+      const first = (await h.service.create({ id: BotId('bot-primary-first'), name: 'First', cwd: '/tmp' })).bot
+      const second = (await h.service.create({ id: BotId('bot-primary-second'), name: 'Second', cwd: '/tmp' })).bot
+      await expect(h.service.readPrimary({})).resolves.toEqual({ primaryBotId: null, revision: 0 })
+      await expect(h.service.setPrimary({ botId: first.id, expectedRevision: 0 })).resolves.toEqual({
+        primaryBotId: first.id,
+        revision: 1,
+      })
+      await expect(h.service.setPrimary({ botId: second.id, expectedRevision: 1 })).resolves.toEqual({
+        primaryBotId: second.id,
+        revision: 2,
+      })
+      await expect(h.service.setPrimary({ botId: first.id, expectedRevision: 1 })).rejects.toMatchObject({
+        code: 'bot/primary-conflict',
+        details: { expectedRevision: 1, actualRevision: 2 },
+      })
+      await expect(h.service.setPrimary({ botId: null, expectedRevision: 2 })).resolves.toEqual({
+        primaryBotId: null,
+        revision: 3,
+      })
+      await expect(h.service.readPrimary({})).resolves.toEqual({ primaryBotId: null, revision: 3 })
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
   it('searches only owner Bot Sessions and preserves the exact matching sequence', async () => {
     let ownerSessionId: SessionId | undefined
     const searchSessions = vi.fn(async (_request: SessionSearchRequest) => {
@@ -946,6 +974,105 @@ describe('durable Bot roster', () => {
       })
     } finally {
       await close(h.ctx)
+    }
+  })
+
+  it('rejects a primary Bot from another owner and repairs a deleted selection', async () => {
+    const pool = new MemoryMediaPool()
+    const owner = await harness(pool)
+    const other = await harness(pool, undefined, undefined, [], new Map(), new Map(), { ownerId: 'other-owner' })
+    try {
+      const created = (await owner.service.create({ id: BotId('bot-primary-owned'), name: 'Owned', cwd: '/tmp' })).bot
+      await expect(other.service.setPrimary({ botId: created.id, expectedRevision: 0 })).rejects.toMatchObject({
+        code: 'bot/not-found',
+        details: { botId: created.id },
+      })
+      await expect(owner.service.setPrimary({ botId: created.id, expectedRevision: 0 })).resolves.toEqual({
+        primaryBotId: created.id,
+        revision: 1,
+      })
+      const medium = owner.pool.media.get('agent_bots')
+      const rows = medium?.tables.get('bots')
+      if (rows === undefined) throw new Error('Bot fixture rows were not materialized')
+      rows.delete(String(created.id))
+      owner.ctx.emit('domain/changed', {
+        domain: 'agent_bots', table: 'bots', key: String(created.id), operation: 'deleted',
+      })
+      const primaryRows = owner.pool.media.get('agent_bot_primary')?.tables.get('preferences')
+      if (primaryRows === undefined) throw new Error('Primary preference rows were not materialized')
+      await vi.waitFor(() => {
+        expect(primaryRows.get('local-owner')).toMatchObject({ primaryBotId: null, revision: 2 })
+      })
+      await expect(owner.service.readPrimary({})).resolves.toEqual({ primaryBotId: null, revision: 2 })
+    } finally {
+      await close(other.ctx)
+      await close(owner.ctx)
+    }
+  })
+
+  it('repairs a deleted selection when a different Host reads the preference', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const second = await harness(pool)
+    try {
+      const created = (await first.service.create({ id: BotId('bot-primary-cross-host'), name: 'Cross Host', cwd: '/tmp' })).bot
+      await expect(first.service.setPrimary({ botId: created.id, expectedRevision: 0 })).resolves.toEqual({
+        primaryBotId: created.id,
+        revision: 1,
+      })
+      const medium = pool.media.get('agent_bots')
+      const rows = medium?.tables.get('bots')
+      if (rows === undefined) throw new Error('Bot fixture rows were not materialized')
+      rows.delete(String(created.id))
+      await expect(second.service.readPrimary({})).resolves.toEqual({ primaryBotId: null, revision: 2 })
+      await expect(first.service.readPrimary({})).resolves.toEqual({ primaryBotId: null, revision: 2 })
+    } finally {
+      await close(second.ctx)
+      await close(first.ctx)
+    }
+  })
+
+  it('allows an explicit primary choice while its Bot is still provisioning', async () => {
+    const create = vi.fn(async (_request: { readonly sessionId?: string }) => {
+      throw new Error('model unavailable')
+    })
+    const h = await harness(new MemoryMediaPool(), create)
+    try {
+      const id = BotId('bot-primary-provisioning')
+      await expect(h.service.create({ id, name: 'Provisioning', cwd: '/tmp' })).rejects.toMatchObject({
+        code: 'bot/provisioning-failed',
+      })
+      await expect(h.service.list({})).resolves.toMatchObject({ bots: [{ id, state: 'provisioning' }] })
+      await expect(h.service.setPrimary({ botId: id, expectedRevision: 0 })).resolves.toEqual({
+        primaryBotId: id,
+        revision: 1,
+      })
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('coordinates first primary selection across Hosts with one durable CAS winner', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const second = await harness(pool)
+    try {
+      const created = (await first.service.create({ id: BotId('bot-primary-race'), name: 'Race', cwd: '/tmp' })).bot
+      const outcomes = await Promise.allSettled([
+        first.service.setPrimary({ botId: created.id, expectedRevision: 0 }),
+        second.service.setPrimary({ botId: created.id, expectedRevision: 0 }),
+      ])
+      expect(outcomes.filter(outcome => outcome.status === 'fulfilled')).toHaveLength(1)
+      expect(outcomes.filter(outcome => outcome.status === 'rejected')).toHaveLength(1)
+      const rejected = outcomes.find(outcome => outcome.status === 'rejected')
+      expect(rejected).toMatchObject({
+        status: 'rejected',
+        reason: { code: 'bot/primary-conflict', details: { expectedRevision: 0, actualRevision: 1 } },
+      })
+      await expect(first.service.readPrimary({})).resolves.toEqual({ primaryBotId: created.id, revision: 1 })
+    } finally {
+      await close(second.ctx)
+      await close(first.ctx)
     }
   })
 

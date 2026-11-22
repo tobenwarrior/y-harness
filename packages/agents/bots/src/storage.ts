@@ -180,6 +180,27 @@ export const botDomain = defineDomain({
   },
 })
 
+/** Durable owner-scoped primary Bot preference. */
+export const botPrimaryRecordSchema = z.object({
+  ownerId: ownerIdSchema,
+  primaryBotId: botIdSchema.nullable(),
+  revision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  updatedAt: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+}).strict()
+
+/** Stored owner-scoped primary Bot preference. */
+export type BotPrimaryStoredRecord = z.infer<typeof botPrimaryRecordSchema>
+
+/** Separate domain for the owner’s primary Bot choice and its CAS revision. */
+export const botPrimaryDomain = defineDomain({
+  name: 'agent_bot_primary',
+  version: 1,
+  layout: 'per-record',
+  tables: {
+    preferences: domainTable<string, BotPrimaryStoredRecord>(botPrimaryRecordSchema),
+  },
+})
+
 const sharedBotIdSchema = botIdSchema
 const sharedPrincipalIdSchema = z.string()
   .regex(/^principal-[A-Za-z0-9-]+$/, 'Shared principal ids must begin with principal-')

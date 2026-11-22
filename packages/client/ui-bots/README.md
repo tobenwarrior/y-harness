@@ -29,6 +29,8 @@ Open **Bot options** in the chat header for profile, sharing, memories, skills, 
 
 Choose **Duplicate bot** from the chat's **Bot options** to reuse a bot's profile in a fresh conversation. Give the copy a name and select **Duplicate**. Copied routines start paused.
 
+Choose **Make primary bot** in **Bot options** to make that bot your main contact. The roster marks the primary bot, and opening Bots with no chat selected starts there. Use the same menu to replace the choice from another bot or remove it from the current primary bot.
+
 **Search Bot chats** in the workspace options searches visible messages across your direct Bot conversations. Select a result to open its Bot and reveal the message. The workspace search shortcut opens the same dialog while Bots is selected.
 
 One-to-one conversations place the user's messages on the right, show a small waiting bubble while the Bot works, and identify the final reply by name and avatar. Scheduled replies carry an expandable origin label. Composer approvals and questions stay visible while they await a response. Open the usage icon for token details.

@@ -690,6 +690,18 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'A bounded owner-scoped page of visible Bot message matches.',
       },
       {
+        signature: '@Remote(\'readPrimary\') async readPrimary(_request: BotPrimaryReadRequest): Promise<BotPrimaryValue>',
+        description: 'Read the explicit owner-scoped primary Bot without inferring one from the roster.',
+        parameters: [{ name: '_request', description: 'Empty request reserved for future selection filters.' }],
+        returns: 'The selected Bot id and its compare-and-swap revision.',
+      },
+      {
+        signature: '@Remote(\'setPrimary\') async setPrimary(request: BotPrimarySetRequest): Promise<BotPrimaryValue>',
+        description: 'Replace or clear the explicit owner-scoped primary Bot choice.',
+        parameters: [{ name: 'request', description: 'Existing owner Bot id (or null) and the observed preference revision.' }],
+        returns: 'The committed primary Bot id and its next compare-and-swap revision.',
+      },
+      {
         signature: '@Remote(\'listTemplates\') async listTemplates(_request: BotTemplateListRequest): Promise<BotTemplateListValue>',
         description: 'List published Bot configuration snapshots, including revoked rows.',
         parameters: [{ name: '_request', description: 'Empty list request reserved for future cursor paging.' }],
@@ -6175,6 +6187,18 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'BotOrganizationUpdateValue',
     declaration: 'export interface BotOrganizationUpdateValue {\n    readonly bot: BotView;\n}',
+  },
+  {
+    name: 'BotPrimaryReadRequest',
+    declaration: 'export interface BotPrimaryReadRequest {\n}',
+  },
+  {
+    name: 'BotPrimarySetRequest',
+    declaration: 'export interface BotPrimarySetRequest {\n    readonly botId: BotId | null;\n    readonly expectedRevision: number;\n}',
+  },
+  {
+    name: 'BotPrimaryValue',
+    declaration: 'export interface BotPrimaryValue {\n    readonly primaryBotId: BotId | null;\n    readonly revision: number;\n}',
   },
   {
     name: 'BotPrincipalId',

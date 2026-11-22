@@ -27,6 +27,7 @@ const MODE = webSnapshotMode()
 const CAPTURE_HISTORY = process.env.DSH_GROK_HISTORY_MEDIA === '1'
 const INLINE_VISUAL_DIR = process.env.DSH_GROK_INLINE_VISUAL_DIR
 const DUPLICATE_VISUAL_DIR = process.env.DSH_BOT_DUPLICATE_VISUAL_DIR
+const PRIMARY_VISUAL_DIR = process.env.DSH_PRIMARY_BOT_VISUAL_DIR
 
 describe('web e2e: Bot workspace retains one Conversation Session per Bot', () => {
   let scaffold: WebScaffold
@@ -40,7 +41,7 @@ describe('web e2e: Bot workspace retains one Conversation Session per Bot', () =
     // The scenario exercises the real Bot and Session services but never sends
     // a model request, so a header-only providers-only fixture is sufficient.
     scaffold = await launchWebScaffold({ replayFixture: FIXTURE, replayProvidersOnly: true })
-    if (CAPTURE_HISTORY || DUPLICATE_VISUAL_DIR !== undefined) {
+    if (CAPTURE_HISTORY || DUPLICATE_VISUAL_DIR !== undefined || PRIMARY_VISUAL_DIR !== undefined) {
       await scaffold.ctx.settings.update('ui-theme', { preference: 'system' })
     }
     firstBot = (await scaffold.ctx.bots.create({
@@ -183,6 +184,15 @@ describe('web e2e: Bot workspace retains one Conversation Session per Bot', () =
     )
     await duplicateDialog.getByRole('button', { name: 'Cancel', exact: true }).last().click()
     await duplicateDialog.waitFor({ state: 'hidden' })
+
+    await firstDetail.getByRole('button', { name: 'Bot options', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Make primary bot', exact: true }).click()
+    const primaryDialog = page.getByRole('dialog', { name: 'Make primary bot', exact: true })
+    const primaryDialogSnapshot = await captureStableAria(
+      page, '[role="dialog"][aria-label="Make primary bot"]', scaffold.workspaceCwd,
+    )
+    await primaryDialog.getByRole('button', { name: 'Cancel', exact: true }).last().click()
+    await primaryDialog.waitFor({ state: 'hidden' })
 
     await roster.getByRole('button', { name: 'New bot', exact: true }).click()
     const createDialog = page.getByRole('dialog', { name: 'Create a bot', exact: true })
@@ -332,6 +342,7 @@ describe('web e2e: Bot workspace retains one Conversation Session per Bot', () =
         memoryDialogSnapshot,
         profileDialogSnapshot,
         duplicateDialogSnapshot,
+        primaryDialogSnapshot,
         createDialogSnapshot,
         routineDialogSnapshot,
         historyDialogSnapshot,
@@ -522,6 +533,74 @@ describe('web e2e: Bot workspace retains one Conversation Session per Bot', () =
     expect(catalog.filter(entry => entry.sessionId === copy.sessionId)).toMatchObject([
       { title: 'Review releases', status: 'paused' },
     ])
+    expect(tripwire.pageErrors).toEqual([])
+    expect(tripwire.warnings).toEqual([])
+  })
+
+  it('retains a primary Bot across browser sessions and replaces it without disturbing the current chat', async () => {
+    onTestFailed(() => saveFailureShot(page, 'web-e2e-primary-bot'))
+    const mode = page.getByRole('button', { name: 'Bots', exact: true })
+    if (await mode.getAttribute('aria-pressed') !== 'true') await mode.click()
+    const firstRow = page.locator(`[data-bot-id="${firstBot.id}"]`)
+    const secondRow = page.locator(`[data-bot-id="${secondBot.id}"]`)
+    const confirmPrimary = async (name: string) => {
+      const detail = page.getByRole('region', { name, exact: true })
+      await detail.getByRole('button', { name: 'Bot options', exact: true }).click()
+      await page.getByRole('menuitem', { name: 'Make primary bot', exact: true }).click()
+      return page.getByRole('dialog', { name: 'Make primary bot', exact: true })
+    }
+    await firstRow.click()
+    const firstDialog = await confirmPrimary(firstBot.name)
+    await firstDialog.getByRole('button', { name: 'Confirm', exact: true }).click()
+    await firstDialog.waitFor({ state: 'hidden' })
+    await firstRow.getByText('Primary bot', { exact: true }).waitFor()
+    expect(await scaffold.ctx.bots.readPrimary({})).toEqual({ primaryBotId: firstBot.id, revision: 1 })
+
+    await secondRow.click()
+    const secondDetail = page.getByRole('region', { name: secondBot.name, exact: true })
+    const composer = secondDetail.getByRole('textbox', { name: 'Message ' + secondBot.name, exact: true })
+    await composer.fill('Keep this draft when I change the primary bot.')
+    const secondDialog = await confirmPrimary(secondBot.name)
+    if (PRIMARY_VISUAL_DIR !== undefined) {
+      await mkdir(PRIMARY_VISUAL_DIR, { recursive: true })
+      for (const [width, theme, filename] of [
+        [1440, 'dark', 'desktop-dark.png'], [480, 'light', 'narrow-light.png'],
+      ] as const) {
+        await page.setViewportSize({ width, height: 900 })
+        await page.emulateMedia({ colorScheme: theme, reducedMotion: 'reduce' })
+        await page.locator('body[data-ds-dark-theme]').waitFor({ state: theme === 'dark' ? 'visible' : 'detached' })
+        await expect.poll(async () => {
+          const bounds = await secondDialog.boundingBox()
+          return bounds !== null && bounds.x >= 0 && bounds.x + bounds.width <= width
+        }).toBe(true)
+        await page.screenshot({ path: join(PRIMARY_VISUAL_DIR, filename), animations: 'disabled' })
+      }
+    }
+    await secondDialog.getByRole('button', { name: 'Confirm', exact: true }).click()
+    await secondDialog.waitFor({ state: 'hidden' })
+    expect(await composer.textContent()).toContain('Keep this draft when I change the primary bot.')
+    expect(await scaffold.ctx.bots.readPrimary({})).toEqual({ primaryBotId: secondBot.id, revision: 2 })
+    await expect.poll(() => secondDetail.locator('[data-conversation-session]').getAttribute('data-conversation-session'))
+      .toBe(secondBot.sessionId)
+
+    const reopened = await newEnglishPage(browser)
+    try {
+      await reopened.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
+      await reopened.getByRole('button', { name: 'Bots', exact: true }).click()
+      const reopenedBot = reopened.getByRole('region', { name: secondBot.name, exact: true })
+      await reopenedBot.getByText('Primary bot', { exact: true }).waitFor()
+      await expect.poll(() => reopenedBot.locator('[data-conversation-session]').getAttribute('data-conversation-session'))
+        .toBe(secondBot.sessionId)
+    } finally {
+      await reopened.close()
+    }
+
+    await secondDetail.getByRole('button', { name: 'Bot options', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Remove as primary bot', exact: true }).click()
+    const removeDialog = page.getByRole('dialog', { name: 'Remove as primary bot', exact: true })
+    await removeDialog.getByRole('button', { name: 'Confirm', exact: true }).click()
+    await removeDialog.waitFor({ state: 'hidden' })
+    expect(await scaffold.ctx.bots.readPrimary({})).toEqual({ primaryBotId: null, revision: 3 })
     expect(tripwire.pageErrors).toEqual([])
     expect(tripwire.warnings).toEqual([])
   })

@@ -95,6 +95,12 @@
   - textbox "Bot name": Scout copy
   - button "Cancel"
   - button "Duplicate"
+- dialog "Make primary bot":
+  - heading "Make primary bot" [level=2]
+  - button "Cancel"
+  - paragraph: Use Scout as your main point of contact.
+  - button "Cancel"
+  - button "Confirm"
 - dialog "Create a bot":
   - heading "Create a bot" [level=2]
   - button "Cancel"

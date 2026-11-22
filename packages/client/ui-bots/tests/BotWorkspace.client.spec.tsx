@@ -315,6 +315,27 @@ describe('Bot roster and detail', () => {
     expect(screen.getByRole('textbox', { name: 'Instructions' })).toHaveProperty('value', 'Keep the draft.')
   })
 
+  it('asks for fresh confirmation if the primary Bot changes while its dialog is open', async () => {
+    const setPrimary = vi.fn<(id: string | null, revision: number) => Promise<void>>().mockResolvedValue(undefined)
+    const detail = (revision: number) => <BotDetail bot={bots[0]} loading={false} loadAvatar={undefined} t={t}
+      onSetPrimary={setPrimary} primaryRevision={revision}><span /></BotDetail>
+    const view = render(detail(0))
+    chooseBotOption('Make primary bot')
+    const dialog = screen.getByRole('dialog', { name: 'Make primary bot' })
+    const confirm = within(dialog).getByRole('button', { name: 'Confirm' })
+    view.rerender(detail(1))
+    expect(within(dialog).getByRole('alert').textContent).toContain('The primary bot changed')
+    expect(confirm).toHaveProperty('disabled', true)
+    fireEvent.click(confirm)
+    expect(setPrimary).not.toHaveBeenCalled()
+    fireEvent.click(within(dialog).getAllByRole('button', { name: 'Cancel' })[1]!)
+    expect(screen.queryByRole('dialog', { name: 'Make primary bot' })).toBeNull()
+    chooseBotOption('Make primary bot')
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Confirm' })) })
+    expect(setPrimary).toHaveBeenCalledExactlyOnceWith('research', 1)
+    expect(screen.queryByRole('dialog', { name: 'Make primary bot' })).toBeNull()
+  })
+
   it('retains a duplicate name for retry and stops repeated submission while waiting', async () => {
     let finish = () => {}
     const duplicate = vi.fn<(id: string, name: string) => Promise<void>>()

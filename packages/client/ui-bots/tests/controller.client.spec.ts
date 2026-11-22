@@ -156,6 +156,27 @@ function templateView(id: string, shareCode: string, patch: Partial<BotTemplateV
 const localPermissions = { status: 'resolved' as const, preset: 'research-preset', tools: ['chat', 'read_file'] }
 
 describe('BotWorkspaceController', () => {
+  it('opens the primary Bot on startup and keeps the current chat when the primary changes', async () => {
+    const scout = bot('bot-scout', 'session-scout')
+    const orbit = bot('bot-orbit', 'session-orbit')
+    const readPrimary = vi.fn<NonNullable<BotWorkspaceRemote['readPrimary']>>()
+      .mockResolvedValue({ ok: true, value: { primaryBotId: orbit.id, revision: 2 } })
+    const setPrimary = vi.fn<NonNullable<BotWorkspaceRemote['setPrimary']>>()
+      .mockResolvedValue({ ok: true, value: { primaryBotId: scout.id, revision: 3 } })
+    const controller = new BotWorkspaceController(
+      { ...remoteFixture([scout, orbit]), readPrimary, setPrimary }, sessionsFixture().sessions, () => 'unexpected response',
+    )
+    await controller.load()
+    expect(controller.source.getSnapshot().selectedBotId).toBe(orbit.id)
+    await controller.face().setPrimary?.(scout.id, 2)
+    expect(setPrimary).toHaveBeenCalledExactlyOnceWith({ botId: scout.id, expectedRevision: 2 })
+    await controller.load()
+    expect(controller.source.getSnapshot()).toMatchObject({
+      selectedBotId: orbit.id, primary: { primaryBotId: scout.id, revision: 3 },
+    })
+    controller.dispose()
+  })
+
   it('keeps a duplicate operation identity on retry and selects its fresh Session', async () => {
     const original = bot('bot-original', 'session-original')
     const copy = bot('bot-copy', 'session-copy', { name: 'Release copy' })

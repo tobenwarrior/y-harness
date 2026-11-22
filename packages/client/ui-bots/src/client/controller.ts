@@ -38,6 +38,9 @@ import type {
   BotDuplicateValue,
   BotOrganizationUpdateRequest,
   BotOrganizationUpdateValue,
+  BotPrimaryReadRequest,
+  BotPrimarySetRequest,
+  BotPrimaryValue,
   BotProfileUpdateRequest,
   BotProfileUpdateValue,
   BotTemplateImportRequest,
@@ -118,6 +121,8 @@ export interface BotWorkspaceRemote {
   list(request: BotListRequest): Promise<RemoteResult<{ readonly bots: readonly BotView[] }>>
   create(request: BotCreateRequest): Promise<RemoteResult<{ readonly bot: BotView }>>
   duplicate?: (request: BotDuplicateRequest) => Promise<RemoteResult<BotDuplicateValue>>
+  readPrimary?: (request: BotPrimaryReadRequest) => Promise<RemoteResult<BotPrimaryValue>>
+  setPrimary?: (request: BotPrimarySetRequest) => Promise<RemoteResult<BotPrimaryValue>>
 
   rename(request: { readonly botId: BotIdType; readonly name: string }): Promise<RemoteResult<{ readonly bot: BotView }>>
   updateProfile?: (request: BotProfileUpdateRequest) => Promise<RemoteResult<BotProfileUpdateValue>>
@@ -230,6 +235,8 @@ export interface BotWorkspaceState {
   readonly phase: 'idle' | 'loading' | 'ready' | 'error'
   readonly bots: readonly BotView[]
   readonly selectedBotId: BotIdType | null
+  /** Last confirmed owner preference, when supported by the Host. */
+  readonly primary?: BotPrimaryValue
   readonly groups: readonly BotGroupSummary[]
   readonly selectedGroupId: string | null
   readonly routineRevision: number
@@ -272,6 +279,8 @@ export interface BotWorkspaceFace {
   readonly create: (creation: BotCreation) => Promise<void>
   /** Create a fresh owner Bot, preserving the operation identity across retries. */
   readonly duplicate?: (sourceBotId: string, name: string) => Promise<void>
+  /** Change the main contact after the owner has seen the supplied revision. */
+  readonly setPrimary?: (botId: string | null, expectedRevision: number) => Promise<void>
   /** Whether the Host mounted the complete shared-group Remote surface. */
   readonly groupsAvailable: boolean
 
@@ -587,6 +596,7 @@ export class BotWorkspaceController {
   face(): BotWorkspaceFace {
     const readGrokHistory = this.remote.readGrokHistory
     const duplicate = this.remote.duplicate
+    const setPrimary = this.remote.setPrimary
     const groupsAvailable = this.remote.listGroups !== undefined
       && this.remote.createGroup !== undefined
       && this.remote.updateGroup !== undefined
@@ -600,6 +610,9 @@ export class BotWorkspaceController {
       create: creation => this.create(creation),
       ...(duplicate === undefined ? {} : {
         duplicate: (sourceBotId: string, name: string) => this.duplicateBot(duplicate, sourceBotId, name),
+      }),
+      ...(setPrimary === undefined || this.remote.readPrimary === undefined ? {} : {
+        setPrimary: (botId: string | null, revision: number) => this.setPrimary(setPrimary, botId, revision),
       }),
       groupsAvailable,
 
@@ -753,6 +766,37 @@ export class BotWorkspaceController {
     return !this.disposed
   }
 
+  private mergePrimary(value: BotPrimaryValue): void {
+    if (!this.canUpdate()) return
+    const current = this.source.getSnapshot()
+    if (current.primary !== undefined && value.revision <= current.primary.revision) return
+    this.source.set({ ...current, primary: value })
+  }
+
+  private async refreshPrimary(): Promise<void> {
+    const readPrimary = this.remote.readPrimary
+    if (readPrimary === undefined || this.remote.setPrimary === undefined) return
+    try {
+      const result = await readPrimary({})
+      if (result.ok) this.mergePrimary(result.value)
+    } catch (error: unknown) {
+      // The consultative preference read cannot prevent the chat roster from loading.
+      void error
+    }
+  }
+
+  private async setPrimary(
+    setPrimary: NonNullable<BotWorkspaceRemote['setPrimary']>, botId: string | null, expectedRevision: number,
+  ): Promise<void> {
+    if (this.disposed) return
+    const result = await setPrimary({ botId: botId === null ? null : brandString<BotIdType>(botId), expectedRevision })
+    if (!result.ok) {
+      await this.refreshPrimary()
+      throw new Error(result.error.message)
+    }
+    this.mergePrimary(result.value)
+  }
+
   private async read(): Promise<void> {
     const rosterRevision = this.rosterRevision
     let result: RemoteResult<{ readonly bots: readonly BotView[] }>
@@ -767,8 +811,9 @@ export class BotWorkspaceController {
       this.fail(result.error.message)
       return
     }
-    const groupsResult = await this.readGroups()
-    const templateCatalog = await this.readTemplates()
+    const [groupsResult, templateCatalog] = await Promise.all([
+      this.readGroups(), this.readTemplates(), this.refreshPrimary(),
+    ])
     if (!this.canUpdate()) return
     if (rosterRevision !== this.rosterRevision) {
       this.refreshAfterPending = true
@@ -829,7 +874,8 @@ export class BotWorkspaceController {
     }
     const selected = current.selectedBotId !== null && result.value.bots.some(bot => bot.id === current.selectedBotId)
       ? current.selectedBotId
-      : result.value.bots[0]?.id ?? null
+      : result.value.bots.find(bot => bot.id === current.primary?.primaryBotId && bot.state === 'active' && !bot.hidden)?.id
+        ?? result.value.bots[0]?.id ?? null
     if (selected !== current.selectedBotId) this.selectionGeneration++
     const selectionGeneration = this.selectionGeneration
     const currentBot = current.bots.find(bot => bot.id === selected)
@@ -852,6 +898,7 @@ export class BotWorkspaceController {
       return
     }
     this.source.set({
+      ...this.source.getSnapshot(),
       phase: 'ready',
       bots: result.value.bots,
       groups,
