@@ -578,7 +578,8 @@ describe('web e2e: Bot workspace retains one Conversation Session per Bot', () =
     }
     await secondDialog.getByRole('button', { name: 'Confirm', exact: true }).click()
     await secondDialog.waitFor({ state: 'hidden' })
-    expect(await composer.textContent()).toContain('Keep this draft when I change the primary bot.')
+    expect(await composer.getAttribute('contenteditable')).toBe('true')
+    expect(await composer.textContent()).toBe('Keep this draft when I change the primary bot.')
     expect(await scaffold.ctx.bots.readPrimary({})).toEqual({ primaryBotId: secondBot.id, revision: 2 })
     await expect.poll(() => secondDetail.locator('[data-conversation-session]').getAttribute('data-conversation-session'))
       .toBe(secondBot.sessionId)

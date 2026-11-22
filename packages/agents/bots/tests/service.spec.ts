@@ -55,6 +55,7 @@ import type { BotNativeToolEvent, BotNativeToolProvider } from '../src/native-to
 import { BotMemoryId, projectBotMemories } from '../src/memory.ts'
 import {
   botDomain,
+  botPrimaryDomain,
   SHARED_BOT_ENDPOINTS,
   SHARED_BOT_AGENT_PRESET,
   sharedBotDomain,
@@ -1027,6 +1028,43 @@ describe('durable Bot roster', () => {
       await expect(second.service.readPrimary({})).resolves.toEqual({ primaryBotId: null, revision: 2 })
       await expect(first.service.readPrimary({})).resolves.toEqual({ primaryBotId: null, revision: 2 })
     } finally {
+      await close(second.ctx)
+      await close(first.ctx)
+    }
+  })
+
+  it('does not keep a primary Bot deleted by another Host during the selection write', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const second = await harness(pool)
+    const releaseWrite = Promise.withResolvers<undefined>()
+    const target = (await first.service.create({ name: 'Departing Bot', cwd: '/tmp' })).bot
+    await first.service.readPrimary({})
+    const preferenceDomain = first.ctx.storageDomain.get(botPrimaryDomain.name) as Domain<typeof botPrimaryDomain> | undefined
+    if (preferenceDomain === undefined) throw new Error('Primary Bot domain was not mounted')
+    const preferences = preferenceDomain.table('preferences')
+    const insert = preferences.insert.bind(preferences)
+    const write = vi.spyOn(preferences, 'insert').mockImplementationOnce(async (key, record) => {
+      await releaseWrite.promise
+      return insert(key, record)
+    })
+    const pending = first.service.setPrimary({ botId: target.id, expectedRevision: 0 }).then(
+      value => ({ value }),
+      (error: unknown) => ({ error }),
+    )
+    try {
+      await vi.waitFor(() => { expect(write).toHaveBeenCalledOnce() })
+      const otherRoster = second.ctx.storageDomain.get(botDomain.name) as Domain<typeof botDomain> | undefined
+      if (otherRoster === undefined) throw new Error('Second Host roster was not mounted')
+      await otherRoster.refresh()
+      expect(await otherRoster.table('bots').delete(target.id)).toBe(true)
+      releaseWrite.resolve(undefined)
+      expect(await pending).toMatchObject({ error: { code: 'bot/primary-conflict' } })
+      expect(await preferences.getFresh('local-owner')).toMatchObject({ primaryBotId: null, revision: 2 })
+    } finally {
+      releaseWrite.resolve(undefined)
+      await pending
+      write.mockRestore()
       await close(second.ctx)
       await close(first.ctx)
     }

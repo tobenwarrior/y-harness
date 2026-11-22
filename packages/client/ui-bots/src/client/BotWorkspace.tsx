@@ -270,6 +270,11 @@ function BotActionsMenu({ bot, groups, onOrganize, onSetSection, onOpenConnected
   )
 }
 
+function botRowLabel(bot: BotSummary, t: BotWorkspaceViewProps['t']): string {
+  return [bot.name, bot.primary === true ? t('primaryBot') : undefined,
+    bot.status === undefined ? undefined : statusLabel(bot.status, t)].filter(text => text !== undefined).join(', ')
+}
+
 function BotRow({ bot, selected, onSelect, t, loadAvatar, groups, onOrganize, onSetSection, onOpenConnectedApps }: {
   bot: BotSummary
   selected: boolean
@@ -285,8 +290,6 @@ function BotRow({ bot, selected, onSelect, t, loadAvatar, groups, onOrganize, on
   const unreadCount = bot.unread ?? 0
   const summary = bot.preview ?? bot.description
   const status = bot.status
-  const rowLabel = [bot.name, bot.primary === true ? t('primaryBot') : undefined,
-    status === undefined ? undefined : statusLabel(status, t)].filter(text => text !== undefined).join(', ')
   return (
     <div className={clsx(css.botRow, selected && css.botRowSelected)}>
       <button
@@ -295,7 +298,7 @@ function BotRow({ bot, selected, onSelect, t, loadAvatar, groups, onOrganize, on
         data-bot-id={bot.id}
         data-accent={bot.accent ?? 'violet'}
         aria-current={selected ? 'page' : undefined}
-        aria-label={rowLabel}
+        aria-label={botRowLabel(bot, t)}
         onClick={onSelect}
       >
         <BotAvatar name={bot.name} identity={bot.identity} accent={bot.accent} avatar={bot.avatar}
@@ -2111,8 +2114,7 @@ export function BotRoster({
             </Tooltip>
             <BotToolbarMenu items={rosterActions} label={t('rosterMenu')} compact />
             {visibleBots.map((bot) => {
-              const status = bot.status
-              const label = status === undefined ? bot.name : `${bot.name}, ${statusLabel(status, t)}`
+              const label = botRowLabel(bot, t)
               return (
                 <Tooltip key={bot.id} label={label} side="right" delayMs={500}>
                   <button

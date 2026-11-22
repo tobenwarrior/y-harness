@@ -9655,8 +9655,7 @@ export class BotService extends TypertRemoteService {
         const actual = preferences.get(this.ownerId)?.revision ?? 0
         throw primaryRevisionConflict(expectedRevision, actual)
       }
-      this.emitChanged()
-      return this.primaryValue(next)
+      return this.finishPrimaryWrite(next)
     }
     this.assertPrimaryOwner(current)
     if (current.revision !== expectedRevision) throw primaryRevisionConflict(expectedRevision, current.revision)
@@ -9670,8 +9669,15 @@ export class BotService extends TypertRemoteService {
         updatedAt: nextPrimaryTimestamp(latest.updatedAt),
       }
     })
-    this.emitChanged()
-    return this.primaryValue(next)
+    return this.finishPrimaryWrite(next)
+  }
+
+  /** Settle a preference write against any roster deletion that raced the mutation. */
+  private async finishPrimaryWrite(written: BotPrimaryStoredRecord): Promise<BotPrimaryValue> {
+    const value = written.primaryBotId === null ? this.primaryValue(written) : await this.readPrimaryValue()
+    if (value.revision === written.revision) this.emitChanged()
+    if (value.primaryBotId !== written.primaryBotId) throw primaryRevisionConflict(written.revision, value.revision)
+    return value
   }
 
   /** Clear a deleted Bot's primary preference after its roster row commits. */

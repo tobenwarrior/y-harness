@@ -467,7 +467,7 @@ export type Config = LocalConfig
 ## `@yharness/bots`
 
 - `inject`: `agents` · `storageDomain` · `sessionController` · `sessions` · `attachments` · `systemPrompt` · `tools`
-- `source`: [`packages/agents/bots/src/index.ts:662`](../packages/agents/bots/src/index.ts)
+- `source`: [`packages/agents/bots/src/index.ts:679`](../packages/agents/bots/src/index.ts)
 
 ```ts config-catalog
 /** Bot service configuration. */

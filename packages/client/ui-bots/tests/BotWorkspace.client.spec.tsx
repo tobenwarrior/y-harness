@@ -1793,7 +1793,7 @@ describe('Bot roster and detail', () => {
     const onSelectBot = vi.fn()
     const expandSidebar = vi.fn()
     render(<BotRoster
-      bots={bots}
+      bots={bots.map(bot => ({ ...bot, primary: bot.id === 'release' }))}
       selectedBotId="research"
       onSelectBot={onSelectBot}
       onCreateBot={vi.fn()}
@@ -1803,7 +1803,7 @@ describe('Bot roster and detail', () => {
     />)
 
     expect(screen.queryByRole('textbox', { name: 'Search bots' })).toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: /Release captain, Idle/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Release captain, Primary bot, Idle' }))
     expect(onSelectBot).toHaveBeenCalledWith('release')
     fireEvent.click(screen.getByRole('button', { name: 'New bot' }))
     expect(expandSidebar).toHaveBeenCalledOnce()
