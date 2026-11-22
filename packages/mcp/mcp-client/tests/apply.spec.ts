@@ -120,6 +120,22 @@ describe('mcp-client plugin module exports', () => {
     expect(resolved.serverName).toBe('github-prod_1')
   })
 
+  it('Config schema preserves exact disabled raw names and rejects empty names', () => {
+    const resolved = ConfigSchema({
+      transport: 'stdio',
+      serverName: 'srv',
+      command: 'echo',
+      disabledTools: ['admin.reset', 'tools with spaces'],
+    } as never)
+    expect(resolved.disabledTools).toEqual(['admin.reset', 'tools with spaces'])
+    expect(() => ConfigSchema({
+      transport: 'stdio',
+      serverName: 'srv',
+      command: 'echo',
+      disabledTools: [''],
+    } as never)).toThrow()
+  })
+
   it('Config schema accepts the opt-in GitHub App authorization endpoint', () => {
     const resolved = ConfigSchema({
       transport: 'streamable-http',

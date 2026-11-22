@@ -18,7 +18,7 @@ import z from '@yharness/schemastery'
 import { scopeOf } from '@yharness/scope'
 import { MAX_TIMER_DELAY_MS } from '@yharness/timeout'
 import { GITHUB_MCP_URL } from '@yharness/github-app-auth'
-import { DEFAULT_MAX_INSTRUCTION_BYTES, RECONNECT_DEFAULTS, resolveReconnectPolicy, startConnection } from './connection.ts'
+import { DEFAULT_MAX_INSTRUCTION_BYTES, RECONNECT_DEFAULTS, resolveDisabledTools, resolveReconnectPolicy, startConnection } from './connection.ts'
 import type { ReconnectConfig } from './connection.ts'
 import { registerServerContext } from './server-context.ts'
 // Side-effect type import: declaration-merges `ctx.tools` onto Context.
@@ -73,6 +73,8 @@ export interface StdioConfig {
   failOnStartupError: boolean
   /** Maximum UTF-8 bytes of attributed server instructions (default 32768). */
   maxInstructionBytes?: number
+  /** Exact raw MCP tool names to omit from every published tool generation. */
+  disabledTools?: string[]
   /** Automatic reconnect policy after a lost connection; omission uses the defaults. */
   reconnect?: ReconnectConfig
 }
@@ -104,6 +106,8 @@ export interface StreamableHttpConfig {
   failOnStartupError: boolean
   /** Maximum UTF-8 bytes of attributed server instructions (default 32768). */
   maxInstructionBytes?: number
+  /** Exact raw MCP tool names to omit from every published tool generation. */
+  disabledTools?: string[]
   /** Automatic reconnect policy after a lost connection; omission uses the defaults. */
   reconnect?: ReconnectConfig
 }
@@ -124,20 +128,27 @@ const Reconnect: z<ReconnectConfig> = z.object({
   maxAttempts: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(RECONNECT_DEFAULTS.maxAttempts),
 })
 
+const CommonConfig = z.object({
+  toolCallTimeoutMs: z.number().default(DEFAULT_TOOL_CALL_TIMEOUT_MS),
+  failOnStartupError: z.boolean().default(false),
+  maxInstructionBytes: z.number().step(1).min(1).default(DEFAULT_MAX_INSTRUCTION_BYTES),
+  disabledTools: z.array(String).default([]),
+  reconnect: Reconnect,
+})
+
 /** Validate the mutually exclusive, endpoint-pinned GitHub App option. */
 const StreamableHttp = z.transform(
-  z.object({
-    transport: z.const('streamable-http'),
-    serverName: z.string().required().pattern(SERVER_NAME_PATTERN),
-    url: z.string().required(),
-    headers: z.dict(String).default({}),
-    bearerTokenRef: z.string(),
-    githubAppAuthorization: z.boolean(),
-    toolCallTimeoutMs: z.number().default(DEFAULT_TOOL_CALL_TIMEOUT_MS),
-    failOnStartupError: z.boolean().default(false),
-    maxInstructionBytes: z.number().step(1).min(1).default(DEFAULT_MAX_INSTRUCTION_BYTES),
-    reconnect: Reconnect,
-  }),
+  z.intersect([
+    z.object({
+      transport: z.const('streamable-http'),
+      serverName: z.string().required().pattern(SERVER_NAME_PATTERN),
+      url: z.string().required(),
+      headers: z.dict(String).default({}),
+      bearerTokenRef: z.string(),
+      githubAppAuthorization: z.boolean(),
+    }),
+    CommonConfig,
+  ]),
   (value) => {
     if (value.githubAppAuthorization === true
       && (value.bearerTokenRef !== undefined
@@ -152,21 +163,30 @@ const StreamableHttp = z.transform(
   true,
 )
 
-export const Config = z.union([
-  z.object({
-    transport: z.const('stdio'),
-    serverName: z.string().required().pattern(SERVER_NAME_PATTERN),
-    command: z.string().required(),
-    args: z.array(String).default([]),
-    env: z.dict(String).default({}),
-    cwd: z.string().default(''),
-    toolCallTimeoutMs: z.number().default(DEFAULT_TOOL_CALL_TIMEOUT_MS),
-    failOnStartupError: z.boolean().default(false),
-    maxInstructionBytes: z.number().step(1).min(1).default(DEFAULT_MAX_INSTRUCTION_BYTES),
-    reconnect: Reconnect,
-  }),
+const ConfigSchema = z.union([
+  z.intersect([
+    z.object({
+      transport: z.const('stdio'),
+      serverName: z.string().required().pattern(SERVER_NAME_PATTERN),
+      command: z.string().required(),
+      args: z.array(String).default([]),
+      env: z.dict(String).default({}),
+      cwd: z.string().default(''),
+    }),
+    CommonConfig,
+  ]),
   StreamableHttp,
-]) as z<ConfigInput, Config>
+])
+
+/** Validate list entries after transport-specific defaults have been applied. */
+export const Config = z.transform(
+  ConfigSchema,
+  (value) => {
+    value.disabledTools = resolveDisabledTools(value.disabledTools, `mcp-client(${value.serverName}).disabledTools`)
+    return value
+  },
+  true,
+) as z<ConfigInput, Config>
 
 // ---- Plugin apply ----
 

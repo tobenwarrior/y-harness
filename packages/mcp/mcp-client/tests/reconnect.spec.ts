@@ -62,7 +62,7 @@ vi.mock('@modelcontextprotocol/client/stdio', () => ({
 // vi.mock is hoisted above static imports, so the modules under test see the
 // mocked SDK even through a static import.
 import { apply } from '@yharness/mcp-client/src/index.ts'
-import { RECONNECT_DEFAULTS, resolveReconnectPolicy, startConnection } from '@yharness/mcp-client/src/connection.ts'
+import { RECONNECT_DEFAULTS, resolveDisabledTools, resolveReconnectPolicy, startConnection } from '@yharness/mcp-client/src/connection.ts'
 
 // ---- Helpers ----
 
@@ -165,6 +165,42 @@ describe('reconnect supervisor', () => {
     mockListTools.mockResolvedValue(listing('remote'))
     mockCallTool.mockResolvedValue({ content: [{ type: 'text', text: 'ok' }] })
     ctx = await mountRegistry()
+  })
+
+  it('applies disabled raw names on discovery and reconnect', async () => {
+    mockListTools.mockResolvedValueOnce(listing('remote', 'keep'))
+    mockListTools.mockResolvedValue(listing('remote', 'after-reconnect'))
+    const config = stdioConfig({ initialDelayMs: 1, maxDelayMs: 2, maxAttempts: 2 })
+    config.disabledTools = ['remote']
+    const handle = startConnection(ctx, config, resolveReconnectPolicy(config.reconnect, 'reconnect'))
+    try {
+      await handle.ready
+      expect(ctx.tools.get('mcp__srv__remote')).toBeUndefined()
+      expect(ctx.tools.get('mcp__srv__keep')).toBeDefined()
+
+      instances[0]!.onclose?.()
+      await vi.waitFor(() => { expect(ctx.tools.get('mcp__srv__after-reconnect')).toBeDefined() })
+      expect(ctx.tools.get('mcp__srv__remote')).toBeUndefined()
+    } finally {
+      await handle.dispose()
+    }
+  })
+
+  it('rejects an empty programmatic disabled raw name before connecting', () => {
+    const config = stdioConfig()
+    config.disabledTools = ['']
+    expect(() => startConnection(ctx, config, resolveReconnectPolicy(undefined, 'reconnect')))
+      .toThrow('disabledTools[0] must be a non-empty MCP tool name')
+    expect(mockConnect).not.toHaveBeenCalled()
+  })
+
+  it('rejects malformed disabled tool lists without restricting valid raw names', () => {
+    expect(resolveDisabledTools(['admin.reset', 'tools with spaces'], 'mcp-client(srv).disabledTools'))
+      .toEqual(['admin.reset', 'tools with spaces'])
+    expect(() => resolveDisabledTools({}, 'mcp-client(srv).disabledTools'))
+      .toThrow('must be an array of MCP tool names')
+    expect(() => resolveDisabledTools([1], 'mcp-client(srv).disabledTools'))
+      .toThrow('must be an array of MCP tool names')
   })
 
   it('keeps instructions withdrawn when disposal interrupts initial discovery', async () => {

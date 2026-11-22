@@ -194,6 +194,32 @@ describe('syncTools', () => {
     expect(ctx.tools.get('add')).toBeUndefined()
   })
 
+  it('filters exact raw names before registration and dispatch', async () => {
+    const client = createMockClient([
+      { name: 'keep', inputSchema: { type: 'object' } },
+      { name: 'admin.reset', inputSchema: { type: 'object' } },
+    ])
+
+    const disposers = await syncTools(client as never, ctx, {
+      ...defaultOpts,
+      disabledTools: new Set(['admin.reset']),
+    }, new Map())
+
+    expect(disposers.size).toBe(1)
+    expect(ctx.tools.get('mcp__srv__keep')).toBeDefined()
+    expect(ctx.tools.get(publicToolName('srv', 'admin.reset'))).toBeUndefined()
+    expect(client.callTool).not.toHaveBeenCalled()
+
+    const blocked = await ctx.tools.execute({
+      signal: testToolSignal,
+      callId: ToolCallId('blocked'),
+      name: publicToolName('srv', 'admin.reset'),
+      arguments: {},
+    })
+    expect(blocked.isError).toBe(true)
+    expect(client.callTool).not.toHaveBeenCalled()
+  })
+
   it('keeps the configured server source separate from names containing separators', async () => {
     const client = createMockClient([
       { name: 'look__up', inputSchema: { type: 'object' } },

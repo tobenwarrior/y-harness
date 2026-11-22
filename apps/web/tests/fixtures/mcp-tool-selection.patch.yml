@@ -1,0 +1,15 @@
+- insert:
+    - id: mcp-workspace-tool-selection
+      name: '@yharness/mcp-client'
+      config:
+        transport: streamable-http
+        serverName: workspace-fixture
+        url: https://tool-selection.example.test/mcp
+        disabledTools:
+          - inspect_record
+    - id: mcp-review-tool-selection
+      name: '@yharness/mcp-client'
+      config:
+        transport: streamable-http
+        serverName: review-fixture
+        url: https://tool-selection.example.test/mcp
