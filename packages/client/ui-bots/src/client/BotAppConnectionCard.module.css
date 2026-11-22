@@ -14,7 +14,7 @@
   gap: 10px;
   padding: 10px;
   border: 0.5px solid var(--yh-alias-border-l1);
-  border-radius: 14px;
+  border-radius: var(--yh-radius-md);
   background: var(--yh-static-neutral-50);
   color: var(--yh-alias-label-primary);
 }
@@ -30,7 +30,7 @@
   justify-content: center;
   width: 28px;
   height: 28px;
-  border-radius: 8px;
+  border-radius: var(--yh-radius-sm);
   background: var(--yh-alias-fill-l2);
   color: var(--yh-alias-label-primary);
 }

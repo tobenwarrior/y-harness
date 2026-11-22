@@ -78,10 +78,12 @@ async function harness({
     ? undefined
     : ctx.provide('githubAppAuth', { status: gitHubStatus } as never)
   if (gitHubAuth !== undefined) {
-    ctx.on('mcp/actions/catalog', accept => accept({
-      serverName: 'github', entryId: 'test:github', connected: false, actions: [],
-      ...(gitHubAuth === 'github-app' ? { authKind: gitHubAuth } : {}),
-    }))
+    ctx.on('mcp/actions/catalog', (accept) => {
+      accept({
+        serverName: 'github', entryId: 'test:github', connected: false, actions: [],
+        ...(gitHubAuth === 'github-app' ? { authKind: gitHubAuth } : {}),
+      })
+    })
   }
   if (withApproval) {
     await ctx.plugin(ApprovalService, { policy: 'ask' })
