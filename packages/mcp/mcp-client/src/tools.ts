@@ -107,6 +107,7 @@ export function publicToolName(serverName: string, rawName: string): string {
  * @param opts - Bridge options: server namespace and per-call timeout.
  * @param previous - Disposer map from the prior sync generation; disposed
  *   during the swap phase (only after the fetch phase succeeded).
+ * @param admitted - Generation check before registration and each remote call.
  * @returns A map of registered public tool names to their unregister
  *   disposers — the exact set of live registrations owned by this server.
  */
@@ -115,6 +116,7 @@ export async function syncTools(
   ctx: Context,
   opts: ToolBridgeOptions,
   previous: ToolDisposers,
+  admitted: () => boolean = () => true,
 ): Promise<ToolDisposers> {
   // Phase 1: fetch and build the next generation without touching the registry.
   const definitions = new Map<string, ToolDefinition>()
@@ -136,14 +138,18 @@ export async function syncTools(
       inputSchema: tool.inputSchema,
       outputSchema: tool.outputSchema,
       taskRequired: tool.execution?.taskSupport === 'required',
-      call: (args, execution) => client.callTool(
-        { name: tool.name, arguments: args },
-        { signal: execution.signal, timeout: opts.toolCallTimeoutMs, toolDefinition: tool },
-      ),
+      call: (args, execution) => {
+        if (!admitted()) throw new Error(`mcp-client(${opts.serverName}): server is disconnected`)
+        return client.callTool(
+          { name: tool.name, arguments: args },
+          { signal: execution.signal, timeout: opts.toolCallTimeoutMs, toolDefinition: tool },
+        )
+      },
     }))
   }
 
   // Phase 2: swap generations.
+  if (!admitted()) return previous
   for (const dispose of previous.values()) dispose()
   const disposers: ToolDisposers = new Map()
   try {

@@ -10,15 +10,20 @@ import SystemPrompt from '@yharness/system-prompt'
 import ToolRuntime from '@yharness/tools'
 import McpResources from '@yharness/mcp-resources'
 import { ToolCallId } from '@yharness/llm'
+import { credentialRef } from '@yharness/credentials'
 import type { Config } from '@yharness/mcp-client'
 
 // ---- Mock MCP SDK ----
 
 // vi.mock factories are hoisted above every import/const, so the mock fns and
 // class must be created inside vi.hoisted to exist when the factories run.
-const { mockConnect, mockClose, mockListTools, mockCallTool, mockSetNotificationHandler, MockClient, instances } = vi.hoisted(() => {
+const {
+  mockConnect, mockClose, mockListTools, mockCallTool, mockSetNotificationHandler,
+  mockStdioClose, MockClient, instances,
+} = vi.hoisted(() => {
   const mockConnect = vi.fn<() => Promise<void>>()
   const mockClose = vi.fn<() => Promise<void>>()
+  const mockStdioClose = vi.fn<() => Promise<void>>()
   const mockListTools = vi.fn<(_params?: Record<string, unknown>) => Promise<unknown>>()
   const mockCallTool = vi.fn<(
     _params?: Record<string, unknown>, _options?: unknown,
@@ -40,7 +45,7 @@ const { mockConnect, mockClose, mockListTools, mockCallTool, mockSetNotification
     }
   }
   const instances: MockClient[] = []
-  return { mockConnect, mockClose, mockListTools, mockCallTool, mockSetNotificationHandler, MockClient, instances }
+  return { mockConnect, mockClose, mockListTools, mockCallTool, mockSetNotificationHandler, mockStdioClose, MockClient, instances }
 })
 
 vi.mock('@modelcontextprotocol/client', async importOriginal => ({
@@ -50,7 +55,7 @@ vi.mock('@modelcontextprotocol/client', async importOriginal => ({
 }))
 
 vi.mock('@modelcontextprotocol/client/stdio', () => ({
-  StdioClientTransport: vi.fn(function () { return { close: () => Promise.resolve() } }),
+  StdioClientTransport: vi.fn(function () { return { close: mockStdioClose } }),
 }))
 
 // vi.mock is hoisted above static imports, so the modules under test see the
@@ -103,6 +108,19 @@ function stdioConfig(reconnect?: Config['reconnect']): Config {
   }
 }
 
+function bearerConfig(reconnect?: Config['reconnect']): Config {
+  return {
+    transport: 'streamable-http',
+    serverName: 'srv',
+    url: 'https://connector.example.test/mcp',
+    headers: {},
+    bearerTokenRef: 'MCP_TOKEN',
+    toolCallTimeoutMs: 60_000,
+    failOnStartupError: false,
+    ...reconnect === undefined ? {} : { reconnect },
+  }
+}
+
 /** The tool list the mock server advertises after a successful (re)connect. */
 function listing(...names: string[]): { tools: { name: string; inputSchema: { type: string } }[]; nextCursor: undefined } {
   return {
@@ -129,6 +147,7 @@ describe('reconnect supervisor', () => {
       this.onclose?.()
       return Promise.resolve()
     })
+    mockStdioClose.mockResolvedValue(undefined)
     mockListTools.mockResolvedValue(listing('remote'))
     mockCallTool.mockResolvedValue({ content: [{ type: 'text', text: 'ok' }] })
     ctx = await mountRegistry()
@@ -210,6 +229,397 @@ describe('reconnect supervisor', () => {
     expect(instances).toHaveLength(2)
   })
 
+  it('rotates a configured bearer credential without a plugin reload', async () => {
+    let token: string | undefined = 'first-token.fixture'
+    ctx.provide('credentials', {
+      resolve: async () => token === undefined ? undefined : { value: token, source: 'fixture' },
+      describe: async () => ({ configured: token !== undefined, writable: true }),
+    })
+    await apply(ctx, bearerConfig({ initialDelayMs: 2, maxDelayMs: 8, maxAttempts: 2 }))
+    await vi.waitFor(() => { expect(ctx.tools.get('mcp__srv__remote')).toBeDefined() })
+    expect(instances).toHaveLength(1)
+
+    // Only the exact configured reference triggers a replacement.
+    ctx.emit('credentials/reference-updated', credentialRef('OTHER_TOKEN'))
+    await sleep(10)
+    expect(instances).toHaveLength(1)
+
+    token = 'rotated-token.fixture'
+    ctx.emit('credentials/reference-updated', credentialRef('MCP_TOKEN'))
+
+    await vi.waitFor(() => {
+      expect(instances).toHaveLength(2)
+      expect(ctx.tools.get('mcp__srv__remote')).toBeDefined()
+    })
+    expect(mockConnect).toHaveBeenCalledTimes(2)
+    expect(mockListTools).toHaveBeenCalledTimes(2)
+    expect(mockClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not overlap a replacement when credentials change during connect setup', async () => {
+    const entered: PromiseWithResolvers<void> = Promise.withResolvers()
+    const release: PromiseWithResolvers<void> = Promise.withResolvers()
+    const ref = credentialRef('MCP_TOKEN')
+    let activeConnects = 0
+    let overlapped = false
+    ctx.provide('credentials', {
+      resolve: async () => ({ value: 'synthetic-token.fixture', source: 'fixture' }),
+      describe: async () => ({ configured: true, writable: true }),
+    })
+    mockConnect.mockImplementationOnce(async () => {
+      activeConnects += 1
+      overlapped ||= activeConnects > 1
+      entered.resolve()
+      ctx.emit('credentials/reference-updated', ref)
+      await release.promise
+      activeConnects -= 1
+    })
+    const handle = startConnection(ctx, bearerConfig(), resolveReconnectPolicy(undefined, 'reconnect'))
+    try {
+      await entered.promise
+      await sleep(20)
+      expect(mockConnect).toHaveBeenCalledTimes(1)
+      release.resolve()
+      await vi.waitFor(() => { expect(mockConnect).toHaveBeenCalledTimes(2) })
+      expect(overlapped).toBe(false)
+    } finally {
+      release.resolve()
+      await handle.dispose()
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('retires an in-flight discovery before publishing its late result', async () => {
+    let token: string | undefined = 'first-token.fixture'
+    ctx.provide('credentials', {
+      resolve: async () => token === undefined ? undefined : { value: token, source: 'fixture' },
+      describe: async () => ({ configured: token !== undefined, writable: true }),
+    })
+    const listingGate: PromiseWithResolvers<ReturnType<typeof listing>> = Promise.withResolvers()
+    mockListTools.mockImplementationOnce(() => listingGate.promise)
+    const applying = apply(ctx, bearerConfig({ initialDelayMs: 2, maxDelayMs: 8, maxAttempts: 2 }))
+    await vi.waitFor(() => { expect(mockListTools).toHaveBeenCalledTimes(1) })
+
+    token = 'rotated-token.fixture'
+    ctx.emit('credentials/reference-updated', credentialRef('MCP_TOKEN'))
+    listingGate.resolve(listing('late'))
+    await applying
+    await vi.waitFor(() => {
+      expect(instances).toHaveLength(2)
+      expect(ctx.tools.get('mcp__srv__remote')).toBeDefined()
+    })
+    expect(ctx.tools.get('mcp__srv__late')).toBeUndefined()
+    expect(mockListTools).toHaveBeenCalledTimes(2)
+  })
+
+  it('disposes a tool map that finishes registering after the generation retires', async () => {
+    mockListTools.mockResolvedValueOnce(listing('first', 'second'))
+    const originalRegister = ctx.tools.register.bind(ctx.tools)
+    let registrations = 0
+    let handle: ReturnType<typeof startConnection> | undefined
+    const registerSpy = vi.spyOn(ctx.tools, 'register').mockImplementation((definition) => {
+      const dispose = originalRegister(definition)
+      registrations++
+      if (registrations === 1) void handle?.dispose()
+      return dispose
+    })
+    try {
+      handle = startConnection(ctx, stdioConfig(), resolveReconnectPolicy(undefined, 'reconnect'))
+      await handle.ready
+      await handle.dispose()
+      expect(registrations).toBe(2)
+      expect(ctx.tools.get('mcp__srv__first')).toBeUndefined()
+      expect(ctx.tools.get('mcp__srv__second')).toBeUndefined()
+    } finally {
+      registerSpy.mockRestore()
+      await handle?.dispose()
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('revokes a bearer credential immediately and stays disconnected until it is re-added', async () => {
+    let token: string | undefined = 'first-token.fixture'
+    ctx.provide('credentials', {
+      resolve: async () => token === undefined ? undefined : { value: token, source: 'fixture' },
+      describe: async () => ({ configured: token !== undefined, writable: true }),
+    })
+    await apply(ctx, bearerConfig({ initialDelayMs: 2, maxDelayMs: 8, maxAttempts: 2 }))
+    await vi.waitFor(() => { expect(ctx.tools.get('mcp__srv__remote')).toBeDefined() })
+
+    token = undefined
+    ctx.emit('credentials/reference-updated', credentialRef('MCP_TOKEN'))
+    await vi.waitFor(() => { expect(ctx.tools.get('mcp__srv__remote')).toBeUndefined() })
+    await sleep(30)
+    expect(instances).toHaveLength(1)
+    expect(mockConnect).toHaveBeenCalledTimes(1)
+    expect(mockListTools).toHaveBeenCalledTimes(1)
+
+    token = 're-added-token.fixture'
+    ctx.emit('credentials/reference-updated', credentialRef('MCP_TOKEN'))
+    await vi.waitFor(() => {
+      expect(instances).toHaveLength(2)
+      expect(ctx.tools.get('mcp__srv__remote')).toBeDefined()
+    })
+    expect(mockConnect).toHaveBeenCalledTimes(2)
+  })
+
+  it('resets an exhausted retry budget when a bearer credential is re-added', async () => {
+    let token: string | undefined = 'first-token.fixture'
+    ctx.provide('credentials', {
+      resolve: async () => token === undefined ? undefined : { value: token, source: 'fixture' },
+      describe: async () => ({ configured: token !== undefined, writable: true }),
+    })
+    await apply(ctx, bearerConfig({ initialDelayMs: 2, maxDelayMs: 8, maxAttempts: 1 }))
+    await vi.waitFor(() => { expect(ctx.tools.get('mcp__srv__remote')).toBeDefined() })
+
+    mockConnect.mockRejectedValue(new Error('server gone'))
+    instances[0]!.onclose?.()
+    await vi.waitFor(() => { expect(ctx.tools.get('mcp__srv__remote')).toBeUndefined() })
+    expect(instances).toHaveLength(2)
+    expect(mockConnect).toHaveBeenCalledTimes(2)
+
+    mockConnect.mockResolvedValue(undefined)
+    token = 'recovered-token.fixture'
+    ctx.emit('credentials/reference-updated', credentialRef('MCP_TOKEN'))
+    await vi.waitFor(() => {
+      expect(instances).toHaveLength(3)
+      expect(ctx.tools.get('mcp__srv__remote')).toBeDefined()
+    })
+    expect(mockConnect).toHaveBeenCalledTimes(3)
+  })
+
+  it('closes the retired transport before reconnecting after back-to-back credential changes', async () => {
+    ctx.provide('credentials', {
+      resolve: async () => ({ value: 'synthetic-token.fixture', source: 'fixture' }),
+      describe: async () => ({ configured: true, writable: true }),
+    })
+    const handle = startConnection(ctx, bearerConfig(), resolveReconnectPolicy(undefined, 'reconnect'))
+    const release: PromiseWithResolvers<void> = Promise.withResolvers()
+    try {
+      await handle.ready
+      mockClose.mockImplementation(async function (this: { onclose?: () => void }) {
+        await release.promise
+        this.onclose?.()
+      })
+      const ref = credentialRef('MCP_TOKEN')
+      ctx.emit('credentials/reference-updated', ref)
+      ctx.emit('credentials/reference-updated', ref)
+      await vi.waitFor(() => { expect(mockClose).toHaveBeenCalledTimes(1) })
+      expect(instances).toHaveLength(1)
+      release.resolve()
+      await vi.waitFor(() => { expect(instances).toHaveLength(2) })
+    } finally {
+      release.resolve()
+      await handle.dispose()
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('discards a credential availability result that predates revocation', async () => {
+    const available: PromiseWithResolvers<boolean> = Promise.withResolvers()
+    const status = vi.fn<() => Promise<boolean>>().mockReturnValueOnce(available.promise).mockResolvedValue(false)
+    ctx.provide('credentials', {
+      resolve: async () => await status() ? { value: 'synthetic-token.fixture', source: 'fixture' } : undefined,
+      describe: async () => ({ configured: await status(), writable: true }),
+    })
+    const handle = startConnection(ctx, bearerConfig(), resolveReconnectPolicy(undefined, 'reconnect'))
+    try {
+      await handle.ready
+      const ref = credentialRef('MCP_TOKEN')
+      ctx.emit('credentials/reference-updated', ref)
+      await vi.waitFor(() => { expect(status).toHaveBeenCalledTimes(1) })
+      ctx.emit('credentials/reference-updated', ref)
+      available.resolve(true)
+      await vi.waitFor(() => { expect(status).toHaveBeenCalledTimes(2) })
+      expect(mockConnect).toHaveBeenCalledTimes(1)
+      expect(ctx.tools.get('mcp__srv__remote')).toBeUndefined()
+    } finally {
+      available.resolve(false)
+      await handle.dispose()
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('stays disconnected when the configured credential provider is unavailable', async () => {
+    await apply(ctx, bearerConfig({ initialDelayMs: 2, maxDelayMs: 8, maxAttempts: 1 }))
+    ctx.emit('credentials/reference-updated', credentialRef('MCP_TOKEN'))
+    await sleep(30)
+    expect(mockConnect).not.toHaveBeenCalled()
+    expect(ctx.tools.get('mcp__srv__remote')).toBeUndefined()
+  })
+
+  it('stays disconnected when resolving the changed credential fails', async () => {
+    const { warns } = captureLogs(ctx)
+    ctx.provide('credentials', {
+      resolve: async () => ({ value: 'synthetic-token.fixture', source: 'fixture' }),
+      describe: async () => { throw new Error('synthetic sensitive diagnostic') },
+    })
+    await apply(ctx, bearerConfig({ initialDelayMs: 2, maxDelayMs: 8, maxAttempts: 1 }))
+    ctx.emit('credentials/reference-updated', credentialRef('MCP_TOKEN'))
+    await vi.waitFor(() => {
+      expect(warns.some(line => line.includes('could not read the bearer credential status'))).toBe(true)
+    })
+    expect(mockConnect).toHaveBeenCalledTimes(1)
+    expect(ctx.tools.get('mcp__srv__remote')).toBeUndefined()
+    expect(warns.join(' ')).not.toContain('synthetic sensitive diagnostic')
+  })
+
+  it('silences a credential status failure after disposal begins', async () => {
+    const { warns } = captureLogs(ctx)
+    const entered = Promise.withResolvers<undefined>()
+    const status = Promise.withResolvers<{ configured: boolean; writable: boolean }>()
+    ctx.provide('credentials', {
+      resolve: async () => ({ value: 'synthetic-token.fixture', source: 'fixture' }),
+      describe: async () => {
+        entered.resolve(undefined)
+        return status.promise
+      },
+    })
+    const handle = startConnection(ctx, bearerConfig(), resolveReconnectPolicy(undefined, 'reconnect'))
+    try {
+      await handle.ready
+      ctx.emit('credentials/reference-updated', credentialRef('MCP_TOKEN'))
+      await entered.promise
+      const disposal = handle.dispose()
+      status.reject(new Error('credential provider stopped'))
+      await disposal
+      expect(mockConnect).toHaveBeenCalledTimes(1)
+      expect(warns).toEqual([])
+    } finally {
+      await handle.dispose()
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('bounds a hanging credential status lookup during disposal', async () => {
+    vi.useFakeTimers()
+    const entered: PromiseWithResolvers<void> = Promise.withResolvers()
+    const release: PromiseWithResolvers<{ configured: boolean; writable: boolean }> = Promise.withResolvers()
+    const handle = (() => {
+      ctx.provide('credentials', {
+        resolve: async () => ({ value: 'synthetic-token.fixture', source: 'fixture' }),
+        describe: async () => {
+          entered.resolve()
+          return release.promise
+        },
+      })
+      return startConnection(ctx, bearerConfig(), resolveReconnectPolicy(undefined, 'reconnect'))
+    })()
+    try {
+      await handle.ready
+      ctx.emit('credentials/reference-updated', credentialRef('MCP_TOKEN'))
+      await entered.promise
+      const disposing = handle.dispose()
+      await vi.advanceTimersByTimeAsync(5_000)
+      await disposing
+      expect(mockConnect).toHaveBeenCalledTimes(1)
+    } finally {
+      release.resolve({ configured: true, writable: true })
+      await handle.dispose()
+      await ctx.fiber.dispose()
+      vi.useRealTimers()
+    }
+  })
+
+  it('warns and stays disconnected when credential status never responds', async () => {
+    vi.useFakeTimers()
+    const { warns } = captureLogs(ctx)
+    const entered: PromiseWithResolvers<void> = Promise.withResolvers()
+    const release: PromiseWithResolvers<{ configured: boolean; writable: boolean }> = Promise.withResolvers()
+    ctx.provide('credentials', {
+      resolve: async () => ({ value: 'synthetic-token.fixture', source: 'fixture' }),
+      describe: async () => {
+        entered.resolve()
+        return release.promise
+      },
+    })
+    const handle = startConnection(ctx, bearerConfig(), resolveReconnectPolicy(undefined, 'reconnect'))
+    try {
+      await handle.ready
+      ctx.emit('credentials/reference-updated', credentialRef('MCP_TOKEN'))
+      await entered.promise
+      await vi.advanceTimersByTimeAsync(5_000)
+      expect(warns.some(line => line.includes('bearer credential status did not respond'))).toBe(true)
+      expect(mockConnect).toHaveBeenCalledTimes(1)
+    } finally {
+      release.resolve({ configured: true, writable: true })
+      await handle.dispose()
+      await ctx.fiber.dispose()
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not overlap a replacement when the retired transport never confirms close', async () => {
+    vi.useFakeTimers()
+    try {
+      const { errors } = captureLogs(ctx)
+      let token: string | undefined = 'first-token.fixture'
+      ctx.provide('credentials', {
+        resolve: async () => token === undefined ? undefined : { value: token, source: 'fixture' },
+        describe: async () => ({ configured: token !== undefined, writable: true }),
+      })
+      const handle = startConnection(ctx, bearerConfig(), resolveReconnectPolicy(undefined, 'reconnect'))
+      await vi.waitFor(() => { expect(ctx.tools.get('mcp__srv__remote')).toBeDefined() })
+      mockClose.mockResolvedValue(undefined)
+      token = 'rotated-token.fixture'
+      ctx.emit('credentials/reference-updated', credentialRef('MCP_TOKEN'))
+      await vi.advanceTimersByTimeAsync(5_000)
+      await vi.waitFor(() => {
+        expect(errors.some(line => line.includes('staying disconnected to avoid overlapping generations'))).toBe(true)
+      })
+      expect(mockConnect).toHaveBeenCalledTimes(1)
+      const disposing = handle.dispose()
+      await vi.advanceTimersByTimeAsync(5_000)
+      await disposing
+      expect(mockClose).toHaveBeenCalledTimes(2)
+    } finally {
+      await ctx.fiber.dispose()
+      vi.useRealTimers()
+    }
+  })
+
+  it('retries a close that becomes unconfirmed while disposal is already waiting', async () => {
+    vi.useFakeTimers()
+    try {
+      let token = 'first-token.fixture'
+      ctx.provide('credentials', {
+        resolve: async () => ({ value: token, source: 'fixture' }),
+        describe: async () => ({ configured: true, writable: true }),
+      })
+      const handle = startConnection(ctx, bearerConfig(), resolveReconnectPolicy(undefined, 'reconnect'))
+      await vi.waitFor(() => { expect(ctx.tools.get('mcp__srv__remote')).toBeDefined() })
+      mockClose.mockResolvedValue(undefined)
+      token = 'rotated-token.fixture'
+      ctx.emit('credentials/reference-updated', credentialRef('MCP_TOKEN'))
+      const disposing = handle.dispose()
+      await vi.advanceTimersByTimeAsync(5_000)
+      await vi.advanceTimersByTimeAsync(5_000)
+      await disposing
+      expect(mockConnect).toHaveBeenCalledTimes(1)
+      expect(mockClose).toHaveBeenCalledTimes(2)
+    } finally {
+      await ctx.fiber.dispose()
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not reconnect after the owning plugin unloads', async () => {
+    let token: string | undefined = 'first-token.fixture'
+    ctx.provide('credentials', {
+      resolve: async () => token === undefined ? undefined : { value: token, source: 'fixture' },
+      describe: async () => ({ configured: token !== undefined, writable: true }),
+    })
+    await apply(ctx, bearerConfig())
+    await vi.waitFor(() => { expect(ctx.tools.get('mcp__srv__remote')).toBeDefined() })
+    await ctx.fiber.dispose()
+    const connects = mockConnect.mock.calls.length
+    token = 'after-unload.fixture'
+    ctx.emit('credentials/reference-updated', credentialRef('MCP_TOKEN'))
+    await sleep(30)
+    expect(mockConnect).toHaveBeenCalledTimes(connects)
+    expect(mockListTools).toHaveBeenCalledTimes(1)
+  })
+
   it('stops at the failure cap, unregisters the tools, and reports final failure', async () => {
     const { warns, errors } = captureLogs(ctx)
     await apply(ctx, stdioConfig({ initialDelayMs: 2, maxDelayMs: 8, maxAttempts: 2 }))
@@ -286,12 +696,16 @@ describe('reconnect supervisor', () => {
       mockConnect.mockRejectedValue(new Error('initialize failed'))
       mockClose.mockResolvedValue(undefined)
 
-      const applying = apply(ctx, stdioConfig({ initialDelayMs: 2, maxDelayMs: 8, maxAttempts: 2 }))
+      const handle = startConnection(ctx, stdioConfig({ initialDelayMs: 2, maxDelayMs: 8, maxAttempts: 2 }), resolveReconnectPolicy(undefined, 'reconnect'))
       await vi.advanceTimersByTimeAsync(5_000)
-      await applying
+      await handle.ready
 
       expect(instances).toHaveLength(1)
       expect(errors.some(line => line.includes('reconnect stopped to avoid overlapping server processes'))).toBe(true)
+      const disposing = handle.dispose()
+      await vi.advanceTimersByTimeAsync(5_000)
+      await disposing
+      expect(mockClose).toHaveBeenCalledTimes(2)
     } finally {
       vi.useRealTimers()
     }
@@ -381,6 +795,15 @@ describe('reconnect supervisor', () => {
     await disposing
     expect(mockClose).toHaveBeenCalledTimes(1)
     expect(mockListTools).not.toHaveBeenCalled()
+  })
+
+  it('checks closure after an unattached transport close fails', async () => {
+    mockStdioClose.mockRejectedValueOnce(new Error('transport already closed'))
+    const handle = startConnection(ctx, stdioConfig(), resolveReconnectPolicy(undefined, 'reconnect'))
+    await handle.ready
+    instances[0]!.transport = undefined
+    await handle.dispose()
+    expect(mockStdioClose).toHaveBeenCalledTimes(1)
   })
 
   it('discards a queued tool refresh when disposal starts before it runs', async () => {

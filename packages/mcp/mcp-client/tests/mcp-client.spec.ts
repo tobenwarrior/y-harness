@@ -401,6 +401,41 @@ describe('tool execution', () => {
     )
   })
 
+  it('fails closed before calling a retired generation', async () => {
+    const client = createMockClient([{ name: 'echo', inputSchema: { type: 'object' } }])
+    let admitted = true
+    const admissionReached: PromiseWithResolvers<void> = Promise.withResolvers()
+    const releaseAdmission: PromiseWithResolvers<void> = Promise.withResolvers()
+    const removeAdmission = ctx.tools.beforeDispatchAdmission(async (_exec, start) => {
+      admissionReached.resolve()
+      await releaseAdmission.promise
+      return start()
+    })
+
+    try {
+      const disposers = await syncTools(client as never, ctx, defaultOpts, new Map(), () => admitted)
+      const pending = ctx.tools.execute({
+        signal: testToolSignal, callId: ToolCallId('retired'), name: 'mcp__srv__echo', arguments: {},
+      })
+      await admissionReached.promise
+
+      // The registry definition is retired while the already-dispatched
+      // execution still holds the generation's handler. It must fail closed
+      // before calling MCP rather than being looked up again as an unknown tool.
+      admitted = false
+      for (const dispose of disposers.values()) dispose()
+      releaseAdmission.resolve()
+      const result = await pending
+
+      expect(result.isError).toBe(true)
+      expect(result.error?.message).toContain('server is disconnected')
+      expect(client.callTool).not.toHaveBeenCalled()
+    } finally {
+      removeAdmission()
+      releaseAdmission.resolve()
+    }
+  })
+
   it('sends the raw name for normalized public names', async () => {
     const client = createMockClient(
       [{ name: 'admin.reset', inputSchema: { type: 'object' } }],

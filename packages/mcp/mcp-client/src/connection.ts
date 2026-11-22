@@ -10,7 +10,8 @@
  * the next disconnect starts a fresh budget while a crash-looping server —
  * even one whose connects briefly succeed — still exhausts the cap instead of
  * restarting forever. Exhaustion unregisters the server's tools and stops;
- * disposal (including HMR) is the only way back from that state.
+ * disposal (including HMR) is the general way back, while an exact configured
+ * bearer-token reference update also starts a fresh outage.
  *
  * @module
  */
@@ -20,6 +21,7 @@ import type { Context } from '@yharness/cordis'
 import { assertNever, type JsonValue } from '@yharness/util-values'
 import type { ServerContext } from './server-context.ts'
 import { MAX_TIMER_DELAY_MS } from '@yharness/timeout'
+import { credentialRef } from '@yharness/credentials'
 import { createTransport } from './transport.ts'
 import { syncTools } from './tools.ts'
 import type { ToolBridgeOptions, ToolDisposers } from './tools.ts'
@@ -155,9 +157,20 @@ export function startConnection(ctx: Context, config: Config, policy: ResolvedRe
   let connectedAt: number | undefined
   /** The real error from the first connection attempt, for startup-await diagnostics. */
   let firstAttemptError: unknown
+  /** Serializes credential-triggered retire/reconnect transitions. */
+  let credentialRefreshChain: Promise<void> = Promise.resolve()
+  /** The in-flight (or last settled) connection attempt; dispose awaits it for quiescence. */
+  let settling: Promise<void> = Promise.resolve()
+  /** Only reference-backed HTTPS transports react to credential rotations. */
+  const bearerTokenRef = config.transport === 'streamable-http' ? config.bearerTokenRef : undefined
+  let credentialRevision = 0
+  /** A replacement must never overlap a transport whose closure was unconfirmed. */
+  let transportCloseUnconfirmed = false
 
   /** A generation may act only while it is the current one on a live plugin. */
   const isCurrent = (generation: Client): boolean => !disposed && client === generation
+  /** Read disposal state without retaining a narrowing across an await. */
+  const isDisposed = (): boolean => disposed
 
   /**
    * Serializes every syncTools call — initial syncs and notification re-syncs
@@ -169,11 +182,36 @@ export function startConnection(ctx: Context, config: Config, policy: ResolvedRe
   function enqueueSync(generation: Client, syncOpts: ToolBridgeOptions = opts): Promise<void> {
     const run = syncChain.then(async () => {
       if (!isCurrent(generation)) return
-      disposers = await syncTools(generation, ctx, syncOpts, disposers)
+      const previous = disposers
+      const next = await syncTools(generation, ctx, syncOpts, previous, () => isCurrent(generation))
+      if (!isCurrent(generation)) {
+        if (next !== previous) for (const dispose of next.values()) dispose()
+        return
+      }
+      disposers = next
     })
     // The chain tail must survive a failed sync; the enqueuing caller owns reporting.
     syncChain = run.catch(() => {})
     return run
+  }
+
+  /** Retire a generation before a credential change is allowed to reconnect. */
+  function retireCurrentGeneration(): (() => Promise<boolean>) | undefined {
+    const close = closeClient
+    client = undefined
+    closeClient = undefined
+    connectedAt = undefined
+    serverInstructions = ''
+    for (const dispose of disposers.values()) dispose()
+    disposers = new Map()
+    return close
+  }
+
+  /** Take the current close operation across an async teardown step. */
+  function takeCloseClient(): (() => Promise<boolean>) | undefined {
+    const close = closeClient
+    closeClient = undefined
+    return close
   }
 
   /** One disconnect decision per generation: the isCurrent guard makes racing close/error signals idempotent. */
@@ -185,11 +223,16 @@ export function startConnection(ctx: Context, config: Config, policy: ResolvedRe
   }
 
   /** Decide retry ownership after a failed connection's close barrier settles. */
-  function settleFailedGeneration(generation: Client, quiesced: boolean): void {
+  function settleFailedGeneration(
+    generation: Client,
+    quiesced: boolean,
+    close: (() => Promise<boolean>) | undefined,
+  ): void {
     if (!isCurrent(generation)) return
     if (!quiesced) {
+      transportCloseUnconfirmed = true
       client = undefined
-      closeClient = undefined
+      closeClient = close
       ctx.logger.error(`${label}: failed generation could not confirm transport closure — reconnect stopped to avoid overlapping server processes; reload the plugin or restart the Host to retry`)
       return
     }
@@ -205,6 +248,81 @@ export function startConnection(ctx: Context, config: Config, policy: ResolvedRe
         clearTimeout(timeout)
         resolve(true)
       })
+    })
+  }
+
+  /** Read whether one bearer reference currently has a value. */
+  async function hasBearerCredential(refName: string): Promise<boolean> {
+    let timer: NodeJS.Timeout | undefined
+    try {
+      const credentials = ctx.get('credentials', false)
+      if (credentials === undefined) return false
+      const timeout = new Promise<undefined>((resolve) => {
+        timer = setTimeout(() => { resolve(undefined) }, GENERATION_CLOSE_TIMEOUT_MS)
+        timer.unref()
+      })
+      const result = await Promise.race([credentials.describe(credentialRef(refName)), timeout])
+      if (result === undefined) {
+        if (!isDisposed()) ctx.logger.warn(`${label}: bearer credential status did not respond before the reconnect deadline`)
+        return false
+      }
+      return result.configured
+    } catch (_error) {
+      if (!isDisposed()) ctx.logger.warn(`${label}: could not read the bearer credential status`)
+      return false
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
+  /** Retire the current generation synchronously when its credential changes. */
+  function prepareCredentialRefresh(): {
+    close: (() => Promise<boolean>) | undefined
+    previousAttempt: Promise<void>
+  } {
+    if (reconnectTimer !== undefined) {
+      clearTimeout(reconnectTimer)
+      reconnectTimer = undefined
+    }
+    failedAttempts = 0
+    const previousAttempt = settling
+    const close = retireCurrentGeneration()
+    return { close, previousAttempt }
+  }
+
+  /** Reconnect one exact bearer-reference generation after its predecessor quiesces. */
+  async function refreshForCredentialChange(
+    revision: number,
+    refName: string,
+    retired: { close: (() => Promise<boolean>) | undefined; previousAttempt: Promise<void> },
+  ): Promise<void> {
+    const { close, previousAttempt } = retired
+    if (close !== undefined && !await close()) {
+      transportCloseUnconfirmed = true
+      closeClient = close
+      if (!isDisposed()) {
+        ctx.logger.error(`${label}: credential changed but the previous transport did not close; staying disconnected to avoid overlapping generations`)
+      }
+      return
+    }
+    // A failed connect may still be unwinding after its transport close. Do not
+    // start a replacement until it has returned and all queued tool swaps have
+    // stopped using the retired client.
+    await previousAttempt
+    await syncChain
+    if (isDisposed() || transportCloseUnconfirmed || revision !== credentialRevision) return
+    const configured = await hasBearerCredential(refName)
+    if (isDisposed() || revision !== credentialRevision || !configured) return
+    settling = beginConnection(false)
+  }
+
+  if (bearerTokenRef !== undefined) {
+    const refName = bearerTokenRef
+    ctx.on('credentials/reference-updated', (ref) => {
+      if (disposed || ref !== refName) return
+      const revision = ++credentialRevision
+      const retired = prepareCredentialRefresh()
+      credentialRefreshChain = credentialRefreshChain.then(() => refreshForCredentialChange(revision, refName, retired))
     })
   }
 
@@ -238,7 +356,7 @@ export function startConnection(ctx: Context, config: Config, policy: ResolvedRe
     ctx.logger.warn(`${label}: ${action} in ${delayMs}ms (attempt ${failedAttempts}/${policy.maxAttempts})`)
     reconnectTimer = setTimeout(() => {
       reconnectTimer = undefined
-      settling = connectGeneration(false)
+      settling = beginConnection(false)
     }, delayMs)
     // An armed reconnect timer must never hold the process open on its own.
     reconnectTimer.unref()
@@ -326,9 +444,10 @@ export function startConnection(ctx: Context, config: Config, policy: ResolvedRe
       // Disposal clears current ownership before it closes the generation, so
       // only a live supervisor reports an attempt failure.
       if (isCurrent(generation)) ctx.logger.warn(`${label}: connection attempt failed: ${String(error)}`)
+      const close = closeClient
       const quiesced = await closeGeneration()
       attemptSettled = true
-      settleFailedGeneration(generation, quiesced)
+      settleFailedGeneration(generation, quiesced, close)
       return
     }
     attemptSettled = true
@@ -342,8 +461,17 @@ export function startConnection(ctx: Context, config: Config, policy: ResolvedRe
     if (failedAttempts > 0) ctx.logger.info(`${label}: reconnected and re-synced tools (attempt ${failedAttempts}/${policy.maxAttempts})`)
   }
 
-  /** The in-flight (or last settled) connection attempt; dispose awaits it for quiescence. */
-  let settling = connectGeneration(true)
+  /** Publish an attempt before running its synchronous setup side effects. */
+  function beginConnection(startup: boolean): Promise<void> {
+    const pending = Promise.withResolvers<void>()
+    settling = pending.promise
+    const attempt = connectGeneration(startup)
+    settling = attempt
+    void attempt.then(pending.resolve, pending.resolve)
+    return attempt
+  }
+
+  settling = beginConnection(true)
 
   // The ready promise settles when the first attempt finishes (regardless of
   // success). If the first attempt fails and reconnect is enabled, the
@@ -392,9 +520,8 @@ export function startConnection(ctx: Context, config: Config, policy: ResolvedRe
         clearTimeout(reconnectTimer)
         reconnectTimer = undefined
       }
-      const close = closeClient
+      const close = takeCloseClient()
       client = undefined
-      closeClient = undefined
       if (close !== undefined && !await close()) {
         ctx.logger.error(incompleteDisposalMessage)
       }
@@ -402,6 +529,14 @@ export function startConnection(ctx: Context, config: Config, policy: ResolvedRe
       // sync before settling, so awaiting both leaves `disposers` final.
       await settling
       await syncChain
+      await credentialRefreshChain
+      // A credential rotation may have finished its close timeout after this
+      // disposer captured the original handle. Retry that preserved handle so
+      // teardown still gets one chance to confirm the retired transport.
+      const retryClose = takeCloseClient()
+      if (retryClose !== undefined && !await retryClose()) {
+        ctx.logger.error(incompleteDisposalMessage)
+      }
       for (const dispose of disposers.values()) dispose()
       disposers = new Map()
     },
