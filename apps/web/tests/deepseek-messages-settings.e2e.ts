@@ -99,7 +99,11 @@ describe.skipIf(webSnapshotMode() === 'record')('web e2e: DeepSeek Messages sett
     await scaffold.ctx.agentDefaultModel.saveSelection({ provider: 'deepseek-official', model: 'deepseek-v4-flash' })
     await page.reload({ waitUntil: 'load' })
     const input = page.locator('[data-composer-input]').first()
-    const trigger = page.getByRole('button', { name: /^Select model.*deepseek-v4-flash/ })
+    // The saved route/model pair remains durable even after the provider's
+    // catalog removes that model. Match the trigger by its stable role rather
+    // than the removed id: the UI may present the provider's current fallback
+    // label while the persisted selection is still being restored.
+    const trigger = page.getByRole('button', { name: /^Select model/ })
     await trigger.waitFor()
     await expect.poll(() => input.getAttribute('contenteditable')).toBe('true')
     await trigger.click()

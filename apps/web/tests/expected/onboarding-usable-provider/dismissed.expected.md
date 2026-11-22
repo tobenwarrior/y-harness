@@ -72,7 +72,7 @@
       - option "zai-coding-cn"
     - text: API key
     - textbox "API key":
-      - /placeholder: Enter an API key, or leave blank to use environment authentication
+      - /placeholder: Optional with environment auth
     - group: Customized settings
     - button "Cancel"
     - button "Apply"
