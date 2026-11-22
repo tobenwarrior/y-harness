@@ -50,6 +50,7 @@ function mountShell({ collapsed = false, width = 300, shortcuts = [], bots = fal
   const toggleSidebar = vi.fn()
   const selectPanel = vi.fn()
   let regionOwner: SidebarSectionOwnerProps | undefined
+  let botRegionOwner: SidebarSectionOwnerProps | undefined
   let settingsOwner: SidebarSettingsOwnerProps | undefined
   let footerActionOwner: SidebarFooterActionOwnerProps | undefined
   const brandMark = <span data-testid="custom-brand-mark">M</span>
@@ -79,7 +80,10 @@ function mountShell({ collapsed = false, width = 300, shortcuts = [], bots = fal
           footerActionOwner = owner
           return <div data-testid="footer-action-seat" data-wide={owner.wide} />
         }
-        if (key === 'sidebar.bots') return <div data-testid="bots-region" data-wide={owner.wide} />
+        if (key === 'sidebar.bots') {
+          botRegionOwner = owner as SidebarSectionOwnerProps
+          return <div data-testid="bots-region" data-wide={owner.wide} />
+        }
         regionOwner = owner as SidebarSectionOwnerProps
         return <div data-testid="region" data-wide={owner.wide} />
       }) as SidebarRootComponentProps['renderSlot']}
@@ -93,6 +97,10 @@ function mountShell({ collapsed = false, width = 300, shortcuts = [], bots = fal
     regionOwner: () => {
       if (regionOwner === undefined) throw new Error('region owner not rendered')
       return regionOwner
+    },
+    botRegionOwner: () => {
+      if (botRegionOwner === undefined) throw new Error('bot region owner not rendered')
+      return botRegionOwner
     },
     settingsOwner: () => {
       if (settingsOwner === undefined) throw new Error('settings owner not rendered')
@@ -275,6 +283,18 @@ describe('SidebarRoot shell', () => {
 
     fireEvent.click(screen.getByRole('button', { name: en['mode.bots'] }))
     expect(b.selectPanel).toHaveBeenCalledWith('bots')
+  })
+
+  it('gives the collapsed bot roster an expand request without changing expanded state', () => {
+    const b = mountShell({ bots: true, botMode: true, collapsed: true, width: 56 })
+    expect(b.botRegionOwner().wide).toBe(false)
+    b.botRegionOwner().expandSidebar()
+    expect(b.toggleSidebar).toHaveBeenCalledOnce()
+
+    b.rerender({ collapsed: false, width: 300 })
+    expect(b.botRegionOwner().wide).toBe(true)
+    b.botRegionOwner().expandSidebar()
+    expect(b.toggleSidebar).toHaveBeenCalledOnce()
   })
 
   it('returns to the last code panel when leaving Bot mode', () => {
