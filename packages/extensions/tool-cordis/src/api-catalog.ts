@@ -7755,7 +7755,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'McpActionCatalog',
-    declaration: 'export interface McpActionCatalog {\n    readonly serverName: string;\n    readonly entryId: string;\n    readonly connected: boolean;\n    readonly actions: readonly {\n        readonly name: string;\n        readonly description?: string;\n        readonly enabled: boolean;\n    }[];\n}',
+    declaration: 'export interface McpActionCatalog {\n    readonly serverName: string;\n    readonly entryId: string;\n    readonly authKind?: \'github-app\';\n    readonly connected: boolean;\n    readonly actions: readonly {\n        readonly name: string;\n        readonly description?: string;\n        readonly enabled: boolean;\n    }[];\n}',
   },
   {
     name: 'McpResourceProvider',

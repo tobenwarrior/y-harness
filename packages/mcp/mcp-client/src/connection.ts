@@ -163,7 +163,10 @@ export function startConnection(ctx: Context, config: Config, policy: ResolvedRe
   const label = `mcp-client(${config.serverName})`
   const disabledTools = new Set(resolveDisabledTools(config.disabledTools, `${label}.disabledTools`))
   const entryId = loaderEntryId(ctx)
-  const actionCatalog = entryId === undefined ? undefined : createMcpActionCatalog(config.serverName, entryId)
+  const githubAppAuthorization = config.transport === 'streamable-http' && config.githubAppAuthorization === true
+  const actionCatalog = entryId === undefined
+    ? undefined
+    : createMcpActionCatalog(config.serverName, entryId, githubAppAuthorization ? 'github-app' : undefined)
   const incompleteDisposalMessage = `${label}: transport closure could not be confirmed during disposal — server shutdown may be incomplete`
   const opts: ToolBridgeOptions = {
     registrationFailure: 'contain',
@@ -203,7 +206,6 @@ export function startConnection(ctx: Context, config: Config, policy: ResolvedRe
   let settling: Promise<void> = Promise.resolve()
   /** Only configured HTTP authentication reacts to owner/credential changes. */
   const bearerTokenRef = config.transport === 'streamable-http' ? config.bearerTokenRef : undefined
-  const githubAppAuthorization = config.transport === 'streamable-http' && config.githubAppAuthorization === true
   let authRevision = 0
   /** A replacement must never overlap a transport whose closure was unconfirmed. */
   let transportCloseUnconfirmed = false

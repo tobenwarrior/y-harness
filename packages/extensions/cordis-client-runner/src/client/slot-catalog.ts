@@ -427,6 +427,7 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
     slotInject: '',
     declaredBy: 'an entry in \'conversation.chat.node\' (client-ui-chat), so it exists while that entry is mounted',
     occupants: [
+      'client-ui-bots BotAppConnectionCard id \'bot-app-connection\'',
       'client-ui-deliverables DeliverablesTail id \'@yharness/client-ui-deliverables\'',
       'client-ui-plan PlanCards',
       'client-ui-schedule ScheduleTurnCard id \'schedule-created\'',

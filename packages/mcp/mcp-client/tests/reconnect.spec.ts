@@ -432,6 +432,7 @@ describe('reconnect supervisor', () => {
 
   it('keeps an unauthenticated GitHub App connector idle without retry warnings', async () => {
     const { warns, errors } = captureLogs(ctx)
+    markLoaderEntry(ctx, 'profile:connectors/github')
     const status = vi.fn<() => Promise<'connected' | 'needs-auth'>>().mockResolvedValue('needs-auth')
     const tokenFor = vi.fn<(endpoint: URL) => Promise<string | undefined>>()
     ctx.provide('githubAppAuth', { status, tokenFor })
@@ -443,6 +444,13 @@ describe('reconnect supervisor', () => {
     expect(tokenFor).not.toHaveBeenCalled()
     expect(mockConnect).not.toHaveBeenCalled()
     expect(ctx.tools.get('mcp__github-app__remote')).toBeUndefined()
+    expect(catalogs(ctx)).toEqual([{
+      serverName: 'github-app',
+      entryId: 'profile:connectors/github',
+      authKind: 'github-app',
+      connected: false,
+      actions: [],
+    }])
     expect(warns).toEqual([])
     expect(errors).toEqual([])
   })

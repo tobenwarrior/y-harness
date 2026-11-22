@@ -1,0 +1,77 @@
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 4px 0;
+}
+
+.card {
+  display: flex;
+  width: 100%;
+  box-sizing: border-box;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px;
+  border: 0.5px solid var(--yh-alias-border-l1);
+  border-radius: 14px;
+  background: var(--yh-static-neutral-50);
+  color: var(--yh-alias-label-primary);
+}
+
+:global(body[data-ds-dark-theme]) .card {
+  background: var(--yh-static-neutral-850);
+}
+
+.icon {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: var(--yh-alias-fill-l2);
+  color: var(--yh-alias-label-primary);
+}
+
+.content {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.title {
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 500;
+}
+
+.description,
+.error {
+  color: var(--yh-alias-label-secondary);
+  font-size: 12px;
+  line-height: 17px;
+}
+
+.error {
+  color: var(--yh-alias-state-error-primary);
+}
+
+.actionRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--yh-alias-label-secondary);
+  font-size: 12px;
+  line-height: 17px;
+}

@@ -63,7 +63,9 @@
     "@yharness/attachment": "workspace:*",
     "@yharness/agent": "workspace:*",
     "@yharness/api-session-controller": "workspace:*",
+    "@yharness/github-app-auth": "workspace:*",
     "@yharness/llm": "workspace:*",
+    "@yharness/mcp-client": "workspace:*",
     "@yharness/mcp-resources": "workspace:*",
     "@yharness/session": "workspace:*",
     "@yharness/schedule": "workspace:*",
@@ -81,6 +83,12 @@
     "@yharness/agent-preset-registry": {
       "optional": true
     },
+    "@yharness/github-app-auth": {
+      "optional": true
+    },
+    "@yharness/mcp-client": {
+      "optional": true
+    },
     "@yharness/mcp-resources": {
       "optional": true
     }
@@ -95,7 +103,9 @@
     "@yharness/attachment": "workspace:*",
     "@yharness/agent": "workspace:*",
     "@yharness/api-session-controller": "workspace:*",
+    "@yharness/github-app-auth": "workspace:*",
     "@yharness/llm": "workspace:*",
+    "@yharness/mcp-client": "workspace:*",
     "@yharness/mcp-resources": "workspace:*",
     "@yharness/session": "workspace:*",
     "@yharness/schedule": "workspace:*",
