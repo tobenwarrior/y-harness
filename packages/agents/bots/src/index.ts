@@ -648,6 +648,26 @@ function explicitlyManagedBotWorkspace(workspaces: BotWorkspaces | undefined, bo
   return workspaces?.managed?.(botId) === true
 }
 
+function requireManagedSkillWorkspace(
+  workspaces: BotWorkspaces | undefined,
+  sourceBotId: string,
+  targetBotId: string,
+): BotWorkspaces {
+  if (workspaces?.readSkill === undefined) {
+    return badRequest('Selected managed skills require a managed Bot workspace provider.')
+  }
+  if (!explicitlyManagedBotWorkspace(workspaces, sourceBotId)
+    || !explicitlyManagedBotWorkspace(workspaces, targetBotId)) {
+    return badRequest('Selected managed skills require both Bots to be assigned managed Computers.')
+  }
+  return workspaces
+}
+
+interface ManagedSkillBody {
+  readonly name: string
+  readonly content: string
+}
+
 function botWorkspace(
   workspaces: BotWorkspaces | undefined,
   botId: string,
@@ -7682,11 +7702,14 @@ export class BotService extends TypertRemoteService {
    * Duplicate one owner Bot's safe configuration into a fresh Bot and Session.
    *
    * The operation identity deterministically selects the target Bot, so a
-   * retry after a partial provisioning or routine copy resumes the same
-   * target instead of allocating another Bot. Conversations, memories,
-   * credentials, approvals, delivery history, and connected-app state are
-   * deliberately not copied. Explicitly selected installed skill bodies are copied only between
-   * providers that identify both source and target as managed Computers. Every copied routine starts paused.
+   * retry after a partial provisioning, skill publication, or routine copy
+   * resumes the same target instead of allocating another Bot. Conversations,
+   * memories, credentials, approvals, delivery history, and connected-app
+   * state are deliberately not copied. Explicitly selected installed skill
+   * bodies are copied only between providers that identify both source and
+   * target as managed Computers. A missing provider or selected body rejects
+   * the operation before the new Bot becomes active. Every copied routine
+   * starts paused.
    *
    * @param request - Owner Bot, retry identity, and optional replacement name.
    * @param signal - Optional cancellation between durable copy steps.
@@ -7753,6 +7776,7 @@ export class BotService extends TypertRemoteService {
         }
       }
       const targetId = operation.targetBotId
+      const managedSkillBodies = await this.readManagedSkillBodies(operation, targetId, signal)
       const bots = (await this.getDomain()).table('bots')
       const storedTarget = await bots.getFresh(targetId)
       if (storedTarget !== undefined && storedTarget.ownerId !== this.ownerId) {
@@ -7780,7 +7804,7 @@ export class BotService extends TypertRemoteService {
         ...(operation.profile.capabilities === undefined ? {} : { capabilities: operation.profile.capabilities }),
         ...(operation.profile.skillPolicy === undefined ? {} : { skillPolicy: operation.profile.skillPolicy }),
       }, signal, preparedAvatar, operation.profile.modelSelection)
-      await this.duplicateManagedSkills(operation, created.bot, signal)
+      await this.duplicateManagedSkills(operation, created.bot, managedSkillBodies, signal)
       await this.duplicateRoutineDefinitions(operation, created.bot, signal)
       operation = await duplicateOperations.update(operationKey, (current) => {
         if (current.completedAt !== undefined) return current
@@ -7804,7 +7828,9 @@ export class BotService extends TypertRemoteService {
   ): Promise<BotDuplicateStoredRecord> {
     const routines: BotDuplicateStoredRecord['routines'][number][] = []
     const skippedRoutines: BotDuplicateStoredRecord['skippedRoutines'][number][] = []
+    const workspaces = this.ctx.get('botWorkspaces')
     const managedSkillNames = source.skillPolicy?.mode === 'selected'
+      && explicitlyManagedBotWorkspace(workspaces, String(source.id))
       ? source.skillPolicy.enabled.filter(name => !source.skillPolicy?.disabled.includes(name))
       : undefined
     const schedule = this.ctx.get('schedule')
@@ -7866,23 +7892,43 @@ export class BotService extends TypertRemoteService {
   }
 
   /** Copy only explicitly selected skill bodies between sibling managed Computers. */
+  private async readManagedSkillBodies(
+    operation: BotDuplicateStoredRecord,
+    targetBotId: BotId,
+    signal?: AbortSignal,
+  ): Promise<readonly ManagedSkillBody[]> {
+    const names = operation.managedSkillNames ?? []
+    if (names.length === 0) return []
+    const workspaces = requireManagedSkillWorkspace(
+      this.ctx.get('botWorkspaces'), String(operation.sourceBotId), String(targetBotId),
+    )
+    const readSkill = workspaces.readSkill
+    if (readSkill === undefined) return badRequest('Selected managed skills require a managed Bot workspace provider.')
+    const source = await this.readOwnedBot(operation.sourceBotId)
+    if (source.state !== 'active') return badRequest('Wait for the source Bot to finish setup.')
+    const bodies: ManagedSkillBody[] = []
+    for (const name of names) {
+      signal?.throwIfAborted()
+      const content = await readSkill(source.sessionId, source.id, name, signal)
+      if (content === undefined) return badRequest(`Selected managed skill '${name}' is missing from the source Computer.`)
+      bodies.push({ name, content })
+    }
+    return bodies
+  }
+
+  /** Publish the selected skill bodies using the destination Computer's idempotent installer. */
   private async duplicateManagedSkills(
     operation: BotDuplicateStoredRecord,
     target: BotCreateValue['bot'],
+    bodies: readonly ManagedSkillBody[],
     signal?: AbortSignal,
   ): Promise<void> {
-    const names = operation.managedSkillNames ?? []
-    if (names.length === 0) return
-    const workspaces = this.ctx.get('botWorkspaces')
-    if (workspaces?.readSkill === undefined
-      || !explicitlyManagedBotWorkspace(workspaces, String(operation.sourceBotId))
-      || !explicitlyManagedBotWorkspace(workspaces, String(target.id))) return
-    const source = await this.readOwnedBot(operation.sourceBotId)
-    if (source.state !== 'active') return badRequest('Wait for the source Bot to finish setup.')
-    for (const name of names) {
+    if (bodies.length === 0) return
+    const workspaces = requireManagedSkillWorkspace(
+      this.ctx.get('botWorkspaces'), String(operation.sourceBotId), String(target.id),
+    )
+    for (const { name, content } of bodies) {
       signal?.throwIfAborted()
-      const content = await workspaces.readSkill(source.sessionId, source.id, name, signal)
-      if (content === undefined) continue
       await workspaces.installSkill(target.sessionId, target.id, name, content, false, signal)
     }
   }

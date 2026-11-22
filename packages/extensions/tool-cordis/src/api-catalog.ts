@@ -865,7 +865,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       },
       {
         signature: '@Remote(\'duplicate\') async duplicate(request: BotDuplicateRequest, signal?: AbortSignal): Promise<BotDuplicateValue>',
-        description: 'Duplicate one owner Bot\'s safe configuration into a fresh Bot and Session.\n\nThe operation identity deterministically selects the target Bot, so a retry after a partial provisioning or routine copy resumes the same target instead of allocating another Bot. Conversations, memories, credentials, approvals, delivery history, and connected-app state are deliberately not copied. Every copied routine starts paused.',
+        description: 'Duplicate one owner Bot\'s safe configuration into a fresh Bot and Session.\n\nThe operation identity deterministically selects the target Bot, so a retry after a partial provisioning, skill publication, or routine copy resumes the same target instead of allocating another Bot. Conversations, memories, credentials, approvals, delivery history, and connected-app state are deliberately not copied. Explicitly selected installed skill bodies are copied only between providers that identify both source and target as managed Computers. A missing provider or selected body rejects the operation before the new Bot becomes active. Every copied routine starts paused.',
         parameters: [{ name: 'request', description: 'Owner Bot, retry identity, and optional replacement name.' }, { name: 'signal', description: 'Optional cancellation between durable copy steps.' }],
         returns: 'The fresh Bot and a safe copy summary.',
       },

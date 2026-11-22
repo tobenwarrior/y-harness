@@ -385,10 +385,13 @@ collaborationFor(agent: Pick<Agent, 'id'>): Promise<BotCollaborationClient>
  *
  * The operation identity deterministically selects the target Bot, so a
  * retry after a partial provisioning, skill publication, or routine copy
- * resumes the same target instead of allocating another Bot. Explicitly
- * selected installed skill bodies copy only between managed Computers.
- * Conversations, memories, credentials, approvals, delivery history, and
- * connected-app state are deliberately not copied. Every copied routine starts paused.
+ * resumes the same target instead of allocating another Bot. Conversations,
+ * memories, credentials, approvals, delivery history, and connected-app
+ * state are deliberately not copied. Explicitly selected installed skill
+ * bodies are copied only between providers that identify both source and
+ * target as managed Computers. A missing provider or selected body rejects
+ * the operation before the new Bot becomes active. Every copied routine
+ * starts paused.
  *
  * @param request - Owner Bot, retry identity, and optional replacement name.
  * @param signal - Optional cancellation between durable copy steps.

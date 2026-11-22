@@ -678,6 +678,7 @@ describe('managed VPS Bot composition', () => {
     const desktopOnly = BotId('bot-grok-desktop')
     const ensure = vi.spyOn(VpsRuntime.prototype, 'ensure').mockResolvedValue(undefined)
     const installSkill = vi.spyOn(VpsBotFileSystem.prototype, 'installSkill').mockResolvedValue(true)
+    const readSkill = vi.spyOn(VpsBotFileSystem.prototype, 'readSkill').mockResolvedValue('fixture-content')
     let disposeImported: (() => Promise<void>) | undefined
     const importedFibers: Fiber[] = []
     const stopObserving = ctx.on('internal/plugin', (fiber) => { importedFibers.push(fiber) }, { global: true })
@@ -702,6 +703,11 @@ describe('managed VPS Bot composition', () => {
       expect(installSkill).toHaveBeenNthCalledWith(2, 'fixture-skill', 'fixture-content', true, signal)
       expect(installSkill.mock.instances[0]).toBe(installSkill.mock.instances[1])
 
+      if (workspaces.readSkill === undefined) throw new Error('Managed skill readback was not registered')
+      await expect(workspaces.readSkill(BOT_SESSION, managed, 'fixture-skill', signal)).resolves.toBe('fixture-content')
+      expect(readSkill).toHaveBeenCalledExactlyOnceWith('fixture-skill', signal)
+      expect(readSkill.mock.instances[0]).toBe(installSkill.mock.instances[0])
+
       disposeImported = importedFibers.find(fiber => fiber.getEffects().some(effect => effect.label === 'ctx.provide("fs")'))?.dispose
       if (disposeImported === undefined) throw new Error('Managed import filesystem was not registered')
       const disposeFirst = disposeImported
@@ -719,6 +725,7 @@ describe('managed VPS Bot composition', () => {
       stopObserving()
       ensure.mockRestore()
       installSkill.mockRestore()
+      readSkill.mockRestore()
       await ctx.fiber.dispose()
     }
   })
