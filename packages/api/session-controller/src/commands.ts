@@ -11,9 +11,7 @@ import type {
 } from '@yharness/attachment'
 import type { FileUploadReceiptId } from '@yharness/client-file-upload/types'
 import type {} from '@yharness/client-file-upload'
-import {
-  ReasoningEffortId, ServiceTierId, assistantStreamChunks, createUserMessage, freezeMessage,
-} from '@yharness/llm'
+import { assistantStreamChunks, createUserMessage, freezeMessage } from '@yharness/llm'
 import type { MessageSource } from '@yharness/llm'
 import { buildForkSeed } from '@yharness/session/fork'
 import { SessionLogOffset, SessionSeq } from '@yharness/session'
@@ -30,6 +28,7 @@ import {
   ApiSessionNotFound,
   ApiSessionPresetConflict,
   ApiSessionSubagentOwnership,
+  agentModelSelection,
   apiSessionSubagentOwnershipError,
   hasApiSessionSubagentOwner,
   inspectApiSession,
@@ -574,26 +573,8 @@ export class SessionCommandController {
 
   private async resolveModelSelection(selection: ModelSelection): Promise<AgentModelSelection> {
     await this.requireModel(selection)
-    const resolved = await this.ctx.llm.resolveCallConfig({
-      provider: selection.provider,
-      model: selection.model,
-      ...(selection.reasoningEffort === undefined
-        ? {}
-        : { reasoningEffort: ReasoningEffortId(selection.reasoningEffort) }),
-      ...(selection.serviceTier === undefined
-        ? {}
-        : { serviceTier: ServiceTierId(selection.serviceTier) }),
-    })
-    return {
-      provider: resolved.provider,
-      model: resolved.model,
-      ...(resolved.reasoningEffort === undefined
-        ? {}
-        : { reasoningEffort: resolved.reasoningEffort }),
-      ...(resolved.serviceTier === undefined
-        ? {}
-        : { serviceTier: resolved.serviceTier }),
-    }
+    const resolved = await this.ctx.llm.resolveCallConfig(agentModelSelection(selection))
+    return agentModelSelection(resolved)
   }
 
   private rejectCreation(sessionId: SessionId, error: unknown): never {
