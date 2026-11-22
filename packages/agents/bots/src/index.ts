@@ -7776,12 +7776,12 @@ export class BotService extends TypertRemoteService {
         }
       }
       const targetId = operation.targetBotId
-      const managedSkillBodies = await this.readManagedSkillBodies(operation, targetId, signal)
       const bots = (await this.getDomain()).table('bots')
       const storedTarget = await bots.getFresh(targetId)
       if (storedTarget !== undefined && storedTarget.ownerId !== this.ownerId) {
         return badRequest('The Bot duplicate target belongs to another owner')
       }
+      const managedSkillBodies = await this.readManagedSkillBodies(operation, targetId, signal)
       const existingTarget = storedTarget === undefined
         ? undefined
         : await this.freshBotRecord(bots, targetId, 'bot-duplicate')
