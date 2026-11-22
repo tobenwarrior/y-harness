@@ -20,6 +20,21 @@ import { apply, inject } from '../src/client/apply.ts'
 import type { BotWorkspaceRemote } from '../src/client/controller.ts'
 import type { ComputerStatus } from '../src/client/computer-client.ts'
 import { en } from '../src/client/locales.ts'
+import type {
+  GitHubAppSignInActions, GitHubAppSignInAttemptId, GitHubAppSignInView,
+} from '../src/client/types.ts'
+
+type GitHubAppRemoteValue =
+  | GitHubAppSignInView
+  | { readonly ok: true; readonly value: GitHubAppSignInView }
+  | { readonly ok: false; readonly error: { readonly message: string } }
+
+type GitHubAppRemoteFixture = {
+  readonly getGitHubAppSignIn?: () => Promise<GitHubAppRemoteValue>
+  readonly startGitHubAppSignIn?: () => Promise<GitHubAppRemoteValue>
+  readonly cancelGitHubAppSignIn?: (attemptId: GitHubAppSignInAttemptId) => Promise<GitHubAppRemoteValue>
+  readonly disconnectGitHubApp?: () => Promise<GitHubAppRemoteValue>
+}
 
 type Registered = {
   readonly options: Record<string, unknown>
@@ -90,7 +105,7 @@ function connectionFixture() {
   }
 }
 
-async function boot() {
+async function boot(account?: GitHubAppRemoteFixture) {
   const ctx = new Context()
   const registered: Registered[] = []
   const slots = {
@@ -171,6 +186,7 @@ async function boot() {
   ctx.provide('sidebarRight', sidebarRight as never)
   ctx.provide('sidebarRightTabs', sidebarRightTabs as never)
   ctx.provide('inputTriggers', inputTriggers as never)
+  if (account !== undefined) ctx.provide('remote.account', account as never)
   const fiber = ctx.plugin({ inject: [...inject], apply })
   await fiber.await()
   await vi.waitFor(() => { expect(list).toHaveBeenCalledWith({ includeHidden: true }) })
@@ -205,6 +221,41 @@ describe('ui-bots composition', () => {
 
   it('keeps the node entry a loader-managed no-op', () => {
     expect(nodeApply).not.toThrow()
+  })
+
+  it('mounts all GitHub account actions and unwraps direct, successful, and failed replies', async () => {
+    const view: GitHubAppSignInView = { status: 'needs-auth', attempt: null }
+    const attemptId = brandString<GitHubAppSignInAttemptId>('apply-attempt')
+    const account: GitHubAppRemoteFixture = {
+      getGitHubAppSignIn: vi.fn(async () => view),
+      startGitHubAppSignIn: vi.fn(async () => ({ ok: true as const, value: view })),
+      cancelGitHubAppSignIn: vi.fn<(id: GitHubAppSignInAttemptId) => Promise<GitHubAppRemoteValue>>(async id => ({ ok: true as const, value: { ...view, attempt: { id, phase: 'cancelled' as const } } })),
+      disconnectGitHubApp: vi.fn(async () => ({ ok: false as const, error: { message: 'GitHub account is offline' } })),
+    }
+    const fixture = await boot(account)
+    const sidebar = fixture.registered.find(entry => entry.options.name === 'sidebar.bots')!
+    const actions = (sidebar.inject?.() as { readonly githubAppSignIn?: GitHubAppSignInActions }).githubAppSignIn
+    if (actions === undefined) throw new Error('GitHub account actions were not mounted')
+    await expect(actions.getGitHubAppSignIn()).resolves.toEqual(view)
+    await expect(actions.startGitHubAppSignIn()).resolves.toEqual(view)
+    await expect(actions.cancelGitHubAppSignIn(attemptId)).resolves.toEqual({
+      ...view, attempt: { id: attemptId, phase: 'cancelled' },
+    })
+    await expect(actions.disconnectGitHubApp()).rejects.toThrow('GitHub account is offline')
+    expect(account.getGitHubAppSignIn).toHaveBeenCalledTimes(1)
+    expect(account.startGitHubAppSignIn).toHaveBeenCalledTimes(1)
+    expect(account.cancelGitHubAppSignIn).toHaveBeenCalledWith(attemptId)
+    expect(account.disconnectGitHubApp).toHaveBeenCalledTimes(1)
+    await fixture.fiber.dispose()
+  })
+
+  it('does not mount incomplete GitHub account bindings', async () => {
+    const fixture = await boot({
+      getGitHubAppSignIn: vi.fn<() => Promise<GitHubAppSignInView>>().mockResolvedValue({ status: 'needs-auth', attempt: null }),
+    })
+    const sidebar = fixture.registered.find(entry => entry.options.name === 'sidebar.bots')!
+    expect((sidebar.inject?.() as { readonly githubAppSignIn?: GitHubAppSignInActions }).githubAppSignIn).toBeUndefined()
+    await fixture.fiber.dispose()
   })
 
   it('registers the roster, Conversation, request cards, mentions, and teardown effects', async () => {

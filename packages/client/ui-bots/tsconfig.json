@@ -9,6 +9,9 @@
   ],
   "references": [
     {
+      "path": "../../api/account-controller"
+    },
+    {
       "path": "../../util/brand"
     },
     {

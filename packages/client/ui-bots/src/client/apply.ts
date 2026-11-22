@@ -23,6 +23,9 @@ import { createBotReferenceSource } from './bot-reference-source.ts'
 import { BotVaultRequestCard } from './BotVaultRequestCard.tsx'
 import { BotWebsiteLoginRequestCard } from './BotWebsiteLoginRequestCard.tsx'
 import { ComputerSignInCard } from './ComputerSignInCard.tsx'
+import type {
+  GitHubAppSignInActions, GitHubAppSignInAttemptId, GitHubAppSignInView,
+} from './types.ts'
 
 /** Stable main-panel identity shared by the sidebar entry and main occupant. */
 export const PANEL_ID = 'bots' as MainPanelId
@@ -31,6 +34,39 @@ export const PANEL_ID = 'bots' as MainPanelId
 export const inject = [
   'slots', 'locale', 'remote', 'remote.bots', 'sessions', 'connection',
 ]
+
+type GitHubAppRemoteValue =
+  | GitHubAppSignInView
+  | { readonly ok: true; readonly value: GitHubAppSignInView }
+  | { readonly ok: false; readonly error: { readonly message: string } }
+
+interface GitHubAppSignInRemote {
+  readonly getGitHubAppSignIn?: () => Promise<GitHubAppRemoteValue>
+  readonly startGitHubAppSignIn?: () => Promise<GitHubAppRemoteValue>
+  readonly cancelGitHubAppSignIn?: (attemptId: GitHubAppSignInAttemptId) => Promise<GitHubAppRemoteValue>
+  readonly disconnectGitHubApp?: () => Promise<GitHubAppRemoteValue>
+}
+
+function unwrapGitHubAppView(result: GitHubAppRemoteValue): GitHubAppSignInView {
+  if (!('ok' in result)) return result
+  if (!result.ok) throw new Error(result.error.message)
+  return result.value
+}
+
+function githubAppSignInActions(account: GitHubAppSignInRemote | undefined): GitHubAppSignInActions | undefined {
+  if (account === undefined) return undefined
+  const get = account.getGitHubAppSignIn
+  const start = account.startGitHubAppSignIn
+  const cancel = account.cancelGitHubAppSignIn
+  const disconnect = account.disconnectGitHubApp
+  if (typeof get !== 'function' || typeof start !== 'function' || typeof cancel !== 'function' || typeof disconnect !== 'function') return undefined
+  return {
+    getGitHubAppSignIn: async () => unwrapGitHubAppView(await get()),
+    startGitHubAppSignIn: async () => unwrapGitHubAppView(await start()),
+    cancelGitHubAppSignIn: async attemptId => unwrapGitHubAppView(await cancel(attemptId)),
+    disconnectGitHubApp: async () => unwrapGitHubAppView(await disconnect()),
+  }
+}
 
 /** Register the Bot workspace, loading one durable roster and one Session per selection. */
 export function apply(ctx: Context): void {
@@ -49,6 +85,8 @@ export function apply(ctx: Context): void {
     key => ctx.locale.bind('bots')(key),
     sharedClient,
   )
+  const account = ctx.get('remote.account') as typeof ctx.remote.account | undefined
+  const githubAppSignIn = githubAppSignInActions(account)
   const computer = createComputerClient(connection.fetch)
   const computerAvailability = createComputerAvailability(computer)
   const computerTarget = createSnapshotStore<string | null>(null)
@@ -240,7 +278,10 @@ export function apply(ctx: Context): void {
     const disposeSidebar = ctx.slots.inject('sidebar.bots', () => ctx.slots.register({
       name: 'sidebar.bots',
       locale: 'bots',
-      inject: () => controller.face(),
+      inject: () => ({
+        ...controller.face(),
+        ...(githubAppSignIn === undefined ? {} : { githubAppSignIn }),
+      }),
     }, BotsRoster))
     const disposeChanged = ctx.remote.$on('bots/changed', () => {
       controller.bumpRoutineRevision()

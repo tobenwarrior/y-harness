@@ -7,7 +7,7 @@ import type { ConversationBot } from '@yharness/client-ui-conversation/client'
 import type { SessionStatusSnapshot } from '@yharness/client-ui-session/client'
 import type { BotWorkspaceFace, BotWorkspaceState } from './controller.ts'
 import { BotDetail, BotGroupDetail, BotRoster } from './BotWorkspace.tsx'
-import type { BotStatus, BotSummary } from './types.ts'
+import type { BotStatus, BotSummary, GitHubAppSignInActions } from './types.ts'
 import { ComputerAction } from './ComputerAction.tsx'
 import { BotAvatar } from './BotAvatar.tsx'
 import { ComputerPanel } from './ComputerPanel.tsx'
@@ -68,7 +68,9 @@ export type BotsConversationProps = PropsRuntime<'bots.conversation'> & PropsRen
 export type BotsRosterProps =
   PropsRuntime<'sidebar.bots'>
   & PropsLocale<'bots'>
-  & InjectFace<BotWorkspaceFace>
+  & InjectFace<BotWorkspaceFace & {
+    readonly githubAppSignIn?: GitHubAppSignInActions
+  }>
 
 function statusOf(bot: BotView, statuses: SessionStatusSnapshot): BotStatus | undefined {
   if (bot.state === 'provisioning') return 'preparing'
@@ -119,7 +121,7 @@ export function BotReplyAvatar({
 export function BotsRoster({
   wide, expandSidebar, useWorkspace, useSessionStatus, reference: _reference, select, selectGroup,
   create, createGroup, groupsAvailable, organize, templateActions, retry, loadAvatar, avatarEditor, share, sharedClient, t,
-  loadConnectedApps,
+  loadConnectedApps, githubAppSignIn,
   setConnectedAppAccess,
 }: BotsRosterProps): ReactNode {
   const state: BotWorkspaceState = useWorkspace(value => value)
@@ -142,6 +144,7 @@ export function BotsRoster({
       groupError={state.groupError}
       onLoadConnectedApps={loadConnectedApps}
       onSetConnectedAppAccess={setConnectedAppAccess}
+      githubAppSignIn={githubAppSignIn}
       onRetry={retry}
       loadAvatar={loadAvatar}
       avatarEditor={avatarEditor}

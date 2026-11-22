@@ -2278,6 +2278,132 @@
   border-top: 0.5px solid var(--yh-alias-border-l2);
 }
 
+.githubAccountSection {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 9px;
+  margin-bottom: 14px;
+  padding: 12px;
+  border: 0.5px solid var(--yh-alias-border-l2);
+  border-radius: var(--yh-radius-md);
+  background: var(--yh-alias-bg-layer-2);
+}
+
+.githubAccountHeader {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+}
+
+.githubAccountIcon {
+  display: inline-flex;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--yh-radius-md);
+  background: color-mix(in srgb, var(--yh-alias-state-business-primary) 16%, var(--yh-alias-bg-layer-2));
+  color: var(--yh-alias-label-primary);
+}
+
+.githubAccountCopy {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.githubAccountCopy strong {
+  overflow: hidden;
+  color: var(--yh-alias-label-primary);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.githubAccountCopy span,
+.githubAccountHelper,
+.githubAccountStatus {
+  color: var(--yh-alias-label-secondary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.githubAccountActions,
+.githubAccountFlowActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.githubAccountStatus {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding-top: 1px;
+}
+
+.githubAccountFlow {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 2px;
+}
+
+.githubAccountCodeRow {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.githubAccountCodeLabel {
+  color: var(--yh-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.githubAccountCodeRow code {
+  min-width: 0;
+  flex: 1;
+  padding: 5px 7px;
+  border: 0.5px solid var(--yh-alias-border-l1);
+  border-radius: var(--yh-radius-sm);
+  background: var(--yh-alias-bg-layer-1);
+  color: var(--yh-alias-label-primary);
+  font-family: var(--yh-font-family-mono);
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  line-height: 18px;
+  overflow-wrap: anywhere;
+}
+
+.githubAccountLink {
+  color: var(--yh-alias-state-business-primary);
+  font-size: 11px;
+  line-height: 16px;
+  text-decoration: none;
+}
+
+.githubAccountLink:hover {
+  text-decoration: underline;
+}
+
+.githubAccountError {
+  color: var(--yh-alias-state-error-primary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
 .sharedApprovalsList {
   display: flex;
   min-width: 0;

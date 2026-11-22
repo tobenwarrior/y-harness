@@ -22,6 +22,9 @@ import type {
   AvatarGenerationStatus,
   AvatarGenerationValue,
 } from '@yharness/avatar-generation/types'
+import type {
+  GitHubAppSignInAttempt, GitHubAppSignInAttemptId, GitHubAppSignInView,
+} from '@yharness/api-account-controller/types'
 
 /** Visual accent families persisted by the Bot service. */
 export type BotAccent = SharedBotAccent
@@ -385,6 +388,20 @@ export interface BotAvatarEditorActions {
   }) => Promise<void>
 }
 
+export type { GitHubAppSignInAttempt, GitHubAppSignInAttemptId, GitHubAppSignInView }
+
+/** Account operations mounted by the Host for the GitHub device-flow row. */
+export interface GitHubAppSignInActions {
+  /** Read the current redacted GitHub App state. */
+  readonly getGitHubAppSignIn: () => Promise<GitHubAppSignInView>
+  /** Start one GitHub App device authorization attempt. */
+  readonly startGitHubAppSignIn: () => Promise<GitHubAppSignInView>
+  /** Cancel one active GitHub App device authorization attempt. */
+  readonly cancelGitHubAppSignIn: (attemptId: GitHubAppSignInAttemptId) => Promise<GitHubAppSignInView>
+  /** Disconnect the current GitHub App grant. */
+  readonly disconnectGitHubApp: () => Promise<GitHubAppSignInView>
+}
+
 /** Props for the presentational Bot workspace. */
 export interface BotWorkspaceProps {
   /** Available bots in the owner's stable order. */
@@ -421,6 +438,8 @@ export interface BotWorkspaceProps {
   readonly onLoadConnectedApps?: ((botId: string) => Promise<readonly BotConnectedAppAccess[]>) | undefined
   /** Persists one Bot's grant or revoke for a connected app. */
   readonly onSetConnectedAppAccess?: ((botId: string, appId: string, allowed: boolean) => Promise<void>) | undefined
+  /** Optional owner GitHub account flow; kept separate from per-Bot app grants. */
+  readonly githubAppSignIn?: GitHubAppSignInActions | undefined
   /** Optional settings deep-link for configuring the avatar provider. */
   readonly onOpenAvatarSettings?: (() => void) | undefined
   /** Optional retry for an owner-provided loading failure. */

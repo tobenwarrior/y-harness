@@ -2,6 +2,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AttachmentId } from '@yharness/attachment'
+import { brandString } from '@yharness/brand'
 import { BotId, type BotView } from '@yharness/bots'
 import { ScheduleId } from '@yharness/schedule'
 import { SessionId } from '@yharness/session'
@@ -22,6 +23,7 @@ import { createSharedBotsClient, type SharedBotsClient } from '../src/client/sha
 import type {
   BotGroupDetailData, BotGroupSummary, BotMemoryManagerActions, BotMemorySummary, BotRoutineHistory, BotSummary,
   BotSkillManagerActions, BotSkillPolicy, BotSkillSummary, BotTemplateActions, BotTemplateState, BotWorkspaceProps,
+  GitHubAppSignInActions, GitHubAppSignInAttemptId, GitHubAppSignInView,
 } from '../src/client/types.ts'
 import { BotSkillPolicyConflictError } from '../src/client/types.ts'
 
@@ -3010,6 +3012,181 @@ describe('Bot roster and detail', () => {
     fireEvent.click(grant)
     await waitFor(() => { expect(onSetConnectedAppAccess).toHaveBeenCalledWith('release', 'github', true) })
     expect(within(dialog).getByRole('button', { name: 'Revoke access to GitHub' }).getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('keeps the GitHub account flow separate from Bot app grants', async () => {
+    const attemptId = brandString<GitHubAppSignInAttemptId>('github-attempt')
+    const start = vi.fn<GitHubAppSignInActions['startGitHubAppSignIn']>().mockResolvedValue({
+      status: 'needs-auth', attempt: { id: attemptId, phase: 'waiting', url: 'https://github.com/login/device', code: 'ABCD-EFGH' },
+    })
+    const cancel = vi.fn<GitHubAppSignInActions['cancelGitHubAppSignIn']>().mockResolvedValue({ status: 'needs-auth', attempt: null })
+    const actions: GitHubAppSignInActions = {
+      getGitHubAppSignIn: vi.fn().mockResolvedValue({ status: 'needs-auth', attempt: null }),
+      startGitHubAppSignIn: start,
+      cancelGitHubAppSignIn: cancel,
+      disconnectGitHubApp: vi.fn().mockResolvedValue({ status: 'needs-auth', attempt: null }),
+    }
+    renderSplitWorkspace({
+      githubAppSignIn: actions,
+      onLoadConnectedApps: vi.fn().mockResolvedValue([{ id: 'github', name: 'GitHub', allowed: false }]),
+      onSetConnectedAppAccess: vi.fn().mockResolvedValue(undefined),
+    })
+
+    openConnectedAppsMenu()
+    const dialog = await screen.findByRole('dialog', { name: 'Connected apps' })
+    await waitFor(() => { expect(within(dialog).getByRole('button', { name: 'Connect GitHub' })).toBeTruthy() })
+    expect(within(dialog).getByText('GitHub account')).toBeTruthy()
+    expect(within(dialog).getByRole('button', { name: 'Grant access to GitHub' })).toBeTruthy()
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Connect GitHub' }))
+    await waitFor(() => { expect(start).toHaveBeenCalledOnce() })
+    expect(within(dialog).getByText('ABCD-EFGH')).toBeTruthy()
+    expect(within(dialog).getByRole('link', { name: 'Open GitHub' }).getAttribute('href')).toBe('https://github.com/login/device')
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel sign-in' }))
+    await waitFor(() => { expect(cancel).toHaveBeenCalledWith(attemptId) })
+    await waitFor(() => { expect(within(dialog).getByRole('button', { name: 'Connect GitHub' })).toBeTruthy() })
+  })
+
+  it('hides the GitHub account row when the Host has no GitHub capability', async () => {
+    renderSplitWorkspace({
+      githubAppSignIn: {
+        getGitHubAppSignIn: vi.fn().mockResolvedValue({ status: 'unavailable', attempt: null }),
+        startGitHubAppSignIn: vi.fn(),
+        cancelGitHubAppSignIn: vi.fn(),
+        disconnectGitHubApp: vi.fn(),
+      },
+      onLoadConnectedApps: vi.fn().mockResolvedValue([]),
+      onSetConnectedAppAccess: vi.fn().mockResolvedValue(undefined),
+    })
+
+    openConnectedAppsMenu()
+    const dialog = await screen.findByRole('dialog', { name: 'Connected apps' })
+    await waitFor(() => { expect(within(dialog).queryByText('GitHub account')).toBeNull() })
+    expect(within(dialog).getByText('No connected apps yet')).toBeTruthy()
+  })
+
+  it('does not overlap GitHub state polls while a device attempt is active', async () => {
+    const attemptId = brandString<GitHubAppSignInAttemptId>('github-poll-attempt')
+    const waiting = { status: 'needs-auth' as const, attempt: { id: attemptId, phase: 'waiting' as const, url: 'https://github.com/login/device', code: 'POLL-TEST' } }
+    const pending = Promise.withResolvers<typeof waiting>()
+    const get = vi.fn().mockResolvedValue({ status: 'needs-auth' as const, attempt: null })
+    const actions: GitHubAppSignInActions = {
+      getGitHubAppSignIn: get,
+      startGitHubAppSignIn: vi.fn().mockResolvedValue(waiting),
+      cancelGitHubAppSignIn: vi.fn().mockResolvedValue({ status: 'needs-auth' as const, attempt: null }),
+      disconnectGitHubApp: vi.fn().mockResolvedValue({ status: 'needs-auth' as const, attempt: null }),
+    }
+    renderSplitWorkspace({
+      githubAppSignIn: actions,
+      onLoadConnectedApps: vi.fn().mockResolvedValue([]),
+      onSetConnectedAppAccess: vi.fn().mockResolvedValue(undefined),
+    })
+    openConnectedAppsMenu()
+    const dialog = await screen.findByRole('dialog', { name: 'Connected apps' })
+    await waitFor(() => { expect(get).toHaveBeenCalledOnce() })
+
+    vi.useFakeTimers()
+    try {
+      get.mockReturnValueOnce(pending.promise)
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Connect GitHub' }))
+      await act(async () => { await Promise.resolve(); await Promise.resolve() })
+      await act(async () => { vi.advanceTimersByTime(2000); await Promise.resolve() })
+      expect(get).toHaveBeenCalledTimes(2)
+      await act(async () => { vi.advanceTimersByTime(2000); await Promise.resolve() })
+      expect(get).toHaveBeenCalledTimes(2)
+      pending.resolve(waiting)
+      await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    } finally {
+      cleanup()
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not let an in-flight poll overwrite a newer cancel result', async () => {
+    const attemptId = brandString<GitHubAppSignInAttemptId>('github-race-attempt')
+    const waiting: GitHubAppSignInView = {
+      status: 'needs-auth',
+      attempt: { id: attemptId, phase: 'waiting', url: 'https://github.com/login/device', code: 'RACE-CODE' },
+    }
+    const pendingPoll = Promise.withResolvers<GitHubAppSignInView>()
+    const get = vi.fn<GitHubAppSignInActions['getGitHubAppSignIn']>()
+      .mockResolvedValueOnce(waiting)
+      .mockReturnValueOnce(pendingPoll.promise)
+    const cancel = vi.fn<GitHubAppSignInActions['cancelGitHubAppSignIn']>().mockResolvedValue({ status: 'needs-auth', attempt: null })
+    const actions: GitHubAppSignInActions = {
+      getGitHubAppSignIn: get,
+      startGitHubAppSignIn: vi.fn(),
+      cancelGitHubAppSignIn: cancel,
+      disconnectGitHubApp: vi.fn(),
+    }
+    vi.useFakeTimers()
+    try {
+      renderSplitWorkspace({
+        githubAppSignIn: actions,
+        onLoadConnectedApps: vi.fn().mockResolvedValue([]),
+        onSetConnectedAppAccess: vi.fn().mockResolvedValue(undefined),
+      })
+      openConnectedAppsMenu()
+      const dialog = screen.getByRole('dialog', { name: 'Connected apps' })
+      await act(async () => { await Promise.resolve(); await Promise.resolve() })
+      expect(get).toHaveBeenCalledOnce()
+      expect(within(dialog).getByText('RACE-CODE')).toBeTruthy()
+
+      await act(async () => { vi.advanceTimersByTime(2000); await Promise.resolve() })
+      expect(get).toHaveBeenCalledTimes(2)
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel sign-in' }))
+      await act(async () => { await Promise.resolve(); await Promise.resolve() })
+      expect(cancel).toHaveBeenCalledWith(attemptId)
+      expect(within(dialog).getByRole('button', { name: 'Connect GitHub' })).toBeTruthy()
+
+      pendingPoll.resolve(waiting)
+      await act(async () => { await Promise.resolve(); await Promise.resolve() })
+      expect(within(dialog).queryByText('RACE-CODE')).toBeNull()
+      expect(within(dialog).getByRole('button', { name: 'Connect GitHub' })).toBeTruthy()
+    } finally {
+      cleanup()
+      vi.useRealTimers()
+    }
+  })
+
+  it('reloads with replacement GitHub actions while an earlier poll is pending', async () => {
+    const oldPoll = Promise.withResolvers<GitHubAppSignInView>()
+    const oldActions: GitHubAppSignInActions = {
+      getGitHubAppSignIn: vi.fn().mockReturnValue(oldPoll.promise),
+      startGitHubAppSignIn: vi.fn(),
+      cancelGitHubAppSignIn: vi.fn(),
+      disconnectGitHubApp: vi.fn(),
+    }
+    const newView: GitHubAppSignInView = {
+      status: 'needs-auth',
+      attempt: { id: brandString<GitHubAppSignInAttemptId>('replacement-attempt'), phase: 'waiting', url: 'https://github.com/login/device', code: 'NEW-CODE' },
+    }
+    const newGet = vi.fn().mockResolvedValue(newView)
+    const newActions: GitHubAppSignInActions = { ...oldActions, getGitHubAppSignIn: newGet }
+    const view = renderSplitWorkspace({
+      githubAppSignIn: oldActions,
+      onLoadConnectedApps: vi.fn().mockResolvedValue([]),
+      onSetConnectedAppAccess: vi.fn().mockResolvedValue(undefined),
+    })
+    openConnectedAppsMenu()
+    const dialog = await screen.findByRole('dialog', { name: 'Connected apps' })
+    await waitFor(() => { expect(oldActions.getGitHubAppSignIn).toHaveBeenCalledOnce() })
+
+    view.rerender(<>
+      <BotRoster
+        bots={bots} selectedBotId="research" onSelectBot={vi.fn()} onCreateBot={vi.fn()}
+        githubAppSignIn={newActions} onLoadConnectedApps={vi.fn().mockResolvedValue([])}
+        onSetConnectedAppAccess={vi.fn().mockResolvedValue(undefined)} t={t}
+      />
+      <BotDetail bot={bots[0]} loadAvatar={undefined} loading={false} t={t}><p>Persistent session surface</p></BotDetail>
+    </>)
+    await waitFor(() => { expect(newGet).toHaveBeenCalledOnce() })
+    await waitFor(() => { expect(within(dialog).getByText('NEW-CODE')).toBeTruthy() })
+
+    oldPoll.resolve({ status: 'needs-auth', attempt: null })
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(within(dialog).getByText('NEW-CODE')).toBeTruthy()
   })
 
   it('centers an explicit empty state when a Bot has no connected apps', async () => {

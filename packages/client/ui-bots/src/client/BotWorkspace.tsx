@@ -3,12 +3,13 @@ import type { ReactNode } from 'react'
 import clsx from 'clsx'
 import {
   Button, IconArchiveOffOutlineRegular, IconCheckOutlineRegular,
-  IconEditOutlineRegular, IconEllipsisOutlineRegular,
+  IconCopyOutlineRegular, IconEditOutlineRegular, IconEllipsisOutlineRegular,
   IconFolderOpenOutlineRegular, IconLinkOutlineRegular, IconPaperPlaneOutlineRegular, IconPlusOutlineRegular,
   IconPinFillRegular, IconPinOutlineRegular, IconShareOutlineRegular, IconContextInjectionOutlineRegular, IconClockOutlineRegular,
   IconSidebarBotAddOutlineRegular, IconSidebarBotsOutlineRegular, IconSidebarSearchOutlineRegular,
   IconSidebarSkillsOutlineRegular,
   IconUnarchiveOutlineRegular, IconUsersOutlineRegular, Input, Menu, MenuSurface, Modal, StateDot, Tag, Tooltip, connectedAppGlyph,
+  writeClipboard,
   type MenuItem,
 } from '@yharness/client-ui-primitives'
 import type { PropsLocale } from '@yharness/client-ui-slots'
@@ -39,7 +40,7 @@ import type {
   BotAccent, BotConnectedAppAccess, BotGroupAttachmentDraft, BotGroupCreation, BotGroupDeliverySummary,
   BotGroupDetailData, BotGroupMessageSummary, BotGroupReactionSummary, BotGroupSummary,
   BotIdentity, BotMemoryManagerActions, BotOrganizationPatch, BotProfileUpdate, BotSkillManagerActions, BotRoutineManagerActions,
-  BotStatus, BotSummary, BotWorkspaceProps,
+  BotStatus, BotSummary, BotWorkspaceProps, GitHubAppSignInActions, GitHubAppSignInAttempt, GitHubAppSignInView,
 } from './types.ts'
 
 type BotWorkspaceViewProps = BotWorkspaceProps & PropsLocale<'bots'> & {
@@ -1510,12 +1511,199 @@ function BotSectionDialog({ bot, onClose, onOrganize, t }: {
   )
 }
 
-function ConnectedAppsDialog({ bot, open, onClose, onLoad, onSet, t }: {
+const GITHUB_APP_POLL_MS = 2000
+
+function isActiveGitHubAttempt(attempt: GitHubAppSignInAttempt | null | undefined): boolean {
+  return attempt?.phase === 'starting' || attempt?.phase === 'waiting'
+}
+
+function GitHubAppSignInSection({ actions, t }: {
+  actions: GitHubAppSignInActions
+  t: BotWorkspaceViewProps['t']
+}): ReactNode {
+  const [view, setView] = useState<GitHubAppSignInView | undefined>()
+  const [loading, setLoading] = useState(true)
+  const [busy, setBusy] = useState<'start' | 'cancel' | 'disconnect' | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [copied, setCopied] = useState(false)
+  const epochRef = useRef(0)
+  const timerRef = useRef<number | undefined>()
+  const copyTimerRef = useRef<number | undefined>()
+  const viewRef = useRef<GitHubAppSignInView | undefined>()
+  const pollRef = useRef<((epoch: number) => Promise<void>) | undefined>()
+
+  const schedulePoll = useMemo(() => (epoch: number) => {
+    if (epochRef.current !== epoch || !isActiveGitHubAttempt(viewRef.current?.attempt)) return
+    if (timerRef.current !== undefined) window.clearTimeout(timerRef.current)
+    timerRef.current = window.setTimeout(() => { void pollRef.current?.(epoch) }, GITHUB_APP_POLL_MS)
+  }, [])
+
+  const poll = useMemo(() => async (epoch: number): Promise<void> => {
+    if (epochRef.current !== epoch) return
+    try {
+      const next = await actions.getGitHubAppSignIn()
+      if (epochRef.current !== epoch) return
+      viewRef.current = next
+      setView(next)
+      setError(null)
+      setLoading(false)
+    } catch {
+      if (epochRef.current === epoch) {
+        setError(t('githubAccountError'))
+        setLoading(false)
+      }
+    } finally {
+      if (epochRef.current === epoch) schedulePoll(epoch)
+    }
+  }, [actions, schedulePoll, t])
+
+  pollRef.current = poll
+  useEffect(() => {
+    const epoch = ++epochRef.current
+    viewRef.current = undefined
+    setBusy(null)
+    setView(undefined)
+    setLoading(true)
+    setError(null)
+    setCopied(false)
+    void poll(epoch)
+    return () => {
+      epochRef.current += 1
+      if (timerRef.current !== undefined) window.clearTimeout(timerRef.current)
+      if (copyTimerRef.current !== undefined) window.clearTimeout(copyTimerRef.current)
+    }
+  }, [poll])
+
+  const apply = async (
+    kind: 'start' | 'cancel' | 'disconnect',
+    operation: () => Promise<GitHubAppSignInView>,
+  ): Promise<void> => {
+    const epoch = ++epochRef.current
+    setBusy(kind)
+    setError(null)
+    try {
+      const next = await operation()
+      if (epochRef.current !== epoch) return
+      viewRef.current = next
+      setView(next)
+      setCopied(false)
+    } catch {
+      if (epochRef.current === epoch) setError(t('githubAccountError'))
+    } finally {
+      if (epochRef.current === epoch) {
+        setBusy(null)
+        schedulePoll(epoch)
+      }
+    }
+  }
+
+  const attempt = view?.attempt ?? null
+  const waitingAttempt = attempt?.phase === 'waiting' ? attempt : undefined
+  const active = isActiveGitHubAttempt(attempt)
+  const connected = view?.status === 'connected'
+  if (view?.status === 'unavailable') return null
+
+  const copyCode = (): void => {
+    if (waitingAttempt === undefined || copied) return
+    const epoch = epochRef.current
+    void writeClipboard(waitingAttempt.code).then((success: boolean) => {
+      if (!success || epochRef.current !== epoch) return
+      setCopied(true)
+      if (copyTimerRef.current !== undefined) window.clearTimeout(copyTimerRef.current)
+      copyTimerRef.current = window.setTimeout(() => {
+        if (epochRef.current === epoch) setCopied(false)
+      }, 1000)
+    })
+  }
+
+  return (
+    <section className={css.githubAccountSection} aria-labelledby="yharness-github-account-title">
+      <div className={css.githubAccountHeader}>
+        <span className={css.githubAccountIcon} aria-hidden="true">
+          {connectedAppGlyph({ appId: 'github', size: 18 })}
+        </span>
+        <span className={css.githubAccountCopy}>
+          <strong id="yharness-github-account-title">{t('githubAccountLabel')}</strong>
+          <span>{connected ? t('githubAccountConnected') : t('githubAccountDescription')}</span>
+        </span>
+        <span className={css.githubAccountActions}>
+          {connected && (
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={busy !== null}
+              onClick={() => { void apply('disconnect', actions.disconnectGitHubApp) }}
+            >
+              {busy === 'disconnect' ? t('githubAccountDisconnecting') : t('githubAccountDisconnect')}
+            </Button>
+          )}
+          {!connected && !active && (view !== undefined || error !== null) && (
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={busy !== null || loading}
+              onClick={() => { void apply('start', actions.startGitHubAppSignIn) }}
+            >
+              {attempt?.phase === 'failed' ? t('githubAccountRetry') : t('githubAccountConnect')}
+            </Button>
+          )}
+        </span>
+      </div>
+      {loading && view === undefined && (
+        <div className={css.githubAccountStatus} role="status">
+          <StateDot state="ongoing" size={12} />
+          <span>{t('githubAccountChecking')}</span>
+        </div>
+      )}
+      {active && attempt?.phase === 'starting' && (
+        <div className={css.githubAccountStatus} role="status">
+          <StateDot state="ongoing" size={12} />
+          <span>{t('githubAccountStarting')}</span>
+        </div>
+      )}
+      {waitingAttempt !== undefined && (
+        <div className={css.githubAccountFlow}>
+          <span className={css.githubAccountHelper}>{t('githubAccountWaiting')}</span>
+          <div className={css.githubAccountCodeRow}>
+            <span className={css.githubAccountCodeLabel}>{t('githubAccountCodeLabel')}</span>
+            <code>{waitingAttempt.code}</code>
+            <Button
+              variant="ghost"
+              size="sm"
+              icon={copied ? <IconCheckOutlineRegular size={14} /> : <IconCopyOutlineRegular size={14} />}
+              onClick={copyCode}
+            >
+              {copied ? t('githubAccountCodeCopied') : t('githubAccountCopyCode')}
+            </Button>
+          </div>
+          <div className={css.githubAccountFlowActions}>
+            <a className={css.githubAccountLink} href={waitingAttempt.url} target="_blank" rel="noreferrer">
+              {t('githubAccountOpenGitHub')}
+            </a>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={busy !== null}
+              onClick={() => { void apply('cancel', () => actions.cancelGitHubAppSignIn(waitingAttempt.id)) }}
+            >
+              {busy === 'cancel' ? t('githubAccountCancelling') : t('githubAccountCancel')}
+            </Button>
+          </div>
+        </div>
+      )}
+      {attempt?.phase === 'failed' && <div className={css.githubAccountStatus}>{t('githubAccountFailed')}</div>}
+      {error !== null && <div className={css.githubAccountError} role="alert">{error}</div>}
+    </section>
+  )
+}
+
+function ConnectedAppsDialog({ bot, open, onClose, onLoad, onSet, githubAppSignIn, t }: {
   bot: BotSummary | undefined
   open: boolean
   onClose: () => void
-  onLoad: (botId: string) => Promise<readonly BotConnectedAppAccess[]>
-  onSet: (botId: string, appId: string, allowed: boolean) => Promise<void>
+  onLoad?: ((botId: string) => Promise<readonly BotConnectedAppAccess[]>) | undefined
+  onSet?: ((botId: string, appId: string, allowed: boolean) => Promise<void>) | undefined
+  githubAppSignIn?: GitHubAppSignInActions | undefined
   t: BotWorkspaceViewProps['t']
 }) {
   type ConnectedAppCatalog = {
@@ -1545,6 +1733,10 @@ function ConnectedAppsDialog({ bot, open, onClose, onLoad, onSet, t }: {
     requestSequence.current = requestId
     let active = true
     setCatalog({ botId, requestId, apps: [], error: null })
+    if (onLoad === undefined) {
+      setLoading(false)
+      return () => { active = false }
+    }
     setLoading(true)
     setSaving(null)
     void onLoad(botId).then((next) => {
@@ -1569,7 +1761,7 @@ function ConnectedAppsDialog({ bot, open, onClose, onLoad, onSet, t }: {
   const savingAppId = saving?.botId === bot.id ? saving.appId : null
   const toggle = async (app: BotConnectedAppAccess): Promise<void> => {
     /* v8 ignore next -- access controls render only for a loaded catalog and disable while saving. */
-    if (savingAppId !== null || currentCatalog === undefined) return
+    if (savingAppId !== null || currentCatalog === undefined || onSet === undefined) return
     const allowed = !app.allowed
     const request = { botId: bot.id, requestId: currentCatalog.requestId, appId: app.id }
     setSaving(request)
@@ -1608,6 +1800,7 @@ function ConnectedAppsDialog({ bot, open, onClose, onLoad, onSet, t }: {
       contentClassName={css.connectedAppsDialogContent as string}
       footer={<Button variant="ghost" onClick={onClose} disabled={savingAppId !== null}>{t('done')}</Button>}
     >
+      {githubAppSignIn !== undefined && <GitHubAppSignInSection actions={githubAppSignIn} t={t} />}
       {error !== null && <div className={css.dialogNotice} role="alert">{error}</div>}
       {loadingCurrentCatalog && (
         <div className={css.connectedAppsLoading} role="status">
@@ -1664,7 +1857,7 @@ function ConnectedAppsDialog({ bot, open, onClose, onLoad, onSet, t }: {
 export function BotRoster({
   bots, selectedBotId, onSelectBot, onCreateBot, onConnectApps, onOpenAvatarSettings,
   groups: localGroups = [], selectedGroupId = null, onSelectGroup, onCreateGroup, groupError = null,
-  onLoadConnectedApps, onSetConnectedAppAccess,
+  onLoadConnectedApps, onSetConnectedAppAccess, githubAppSignIn,
   onOrganizeBot, templates, templateActions, onRetry, loadAvatar, avatarEditor, sharedClient,
   error = null, loading = false, wide = true, expandSidebar, t,
 }: BotWorkspaceViewProps & BotRosterLayoutProps): ReactNode {
@@ -1795,7 +1988,7 @@ export function BotRoster({
     setSharedBotsOpen(false)
   }
   const openConnectedApps = (bot: BotSummary): void => {
-    if (onLoadConnectedApps === undefined || onSetConnectedAppAccess === undefined) {
+    if ((onLoadConnectedApps === undefined || onSetConnectedAppAccess === undefined) && githubAppSignIn === undefined) {
       onConnectApps?.()
       return
     }
@@ -1807,7 +2000,7 @@ export function BotRoster({
     ? undefined
     : bots.find(bot => bot.id === connectedAppsBotId)
   const canOpenConnectedApps = (onLoadConnectedApps !== undefined && onSetConnectedAppAccess !== undefined)
-    || onConnectApps !== undefined
+    || githubAppSignIn !== undefined || onConnectApps !== undefined
   const connectedAppsAction = canOpenConnectedApps
     ? openConnectedApps
     : undefined
@@ -2015,13 +2208,14 @@ export function BotRoster({
       {sharedClient !== undefined && (
         <SharedBotsDialog client={sharedClient} open={sharedBotsOpen} ownerMode={sharedOwnerMode} onClose={closeSharedBots} t={t} />
       )}
-      {onLoadConnectedApps !== undefined && onSetConnectedAppAccess !== undefined && (
+      {((onLoadConnectedApps !== undefined && onSetConnectedAppAccess !== undefined) || githubAppSignIn !== undefined) && (
         <ConnectedAppsDialog
           bot={connectedAppsBot}
           open={connectedAppsBot !== undefined}
           onClose={() => { setConnectedAppsBotId(null) }}
           onLoad={onLoadConnectedApps}
           onSet={onSetConnectedAppAccess}
+          githubAppSignIn={githubAppSignIn}
           t={t}
         />
       )}

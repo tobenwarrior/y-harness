@@ -51,6 +51,7 @@
     "@yharness/cordis": "workspace:~"
   },
   "devDependencies": {
+    "@yharness/api-account-controller": "workspace:*",
     "@yharness/cordis": "workspace:~",
     "@yharness/brand": "workspace:*",
     "@yharness/api-remotes": "workspace:*",

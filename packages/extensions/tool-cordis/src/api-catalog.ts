@@ -1752,6 +1752,31 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     ],
   },
   {
+    key: 'githubAppAuth',
+    summary: 'Host-only GitHub App device authorization provider.',
+    description: 'Host-only GitHub App device authorization provider.',
+    methods: [
+      {
+        signature: 'async status(): Promise<\'connected\' | \'needs-auth\'>',
+        description: 'Report whether a usable GitHub grant is stored without refreshing it.',
+        parameters: [],
+        returns: '`connected` when access or refresh credentials remain usable.',
+      },
+      {
+        signature: 'async tokenFor(endpoint: URL): Promise<string | undefined>',
+        description: 'Resolve a token only for the official GitHub MCP endpoint, refreshing an expired access token when possible.',
+        parameters: [{ name: 'endpoint', description: 'endpoint that will receive the bearer token.' }],
+        returns: 'the access token for the exact GitHub MCP URL, or `undefined` when signed out or unavailable.',
+      },
+      {
+        signature: 'async disconnect(): Promise<void>',
+        description: 'Cancel active authorization and refresh work, then remove the stored GitHub grant.',
+        parameters: [],
+        returns: 'after local removal and its connection event, if a grant existed.',
+      },
+    ],
+  },
+  {
     key: 'goals',
     summary: 'Goal service (`ctx.goals`) backed exclusively by the owning session log.',
     description: 'Goal service (`ctx.goals`) backed exclusively by the owning session log.',
@@ -5139,6 +5164,14 @@ export const EVENT_API: readonly EventApiEntry[] = [
     summary: 'Single-slot decision for the next FileSystem.writeText.',
     description: 'Single-slot decision for the next FileSystem.writeText. Calling `next()` yields the bare provider\'s unconditional write; the first listener that returns an intent owns the decision rather than composing with peers.',
     parameters: [{ name: 'target', description: 'the resolved target about to be written.' }, { name: 'actor', description: 'the opaque tool-execution context the decider keys off.' }],
+  },
+  {
+    name: 'github-app-auth/connection-changed',
+    mode: 'emit',
+    signature: '\'github-app-auth/connection-changed\'(): void',
+    summary: 'GitHub App sign-in, disconnect, or definitive grant invalidation completed.',
+    description: 'GitHub App sign-in, disconnect, or definitive grant invalidation completed. @mode emit',
+    parameters: [],
   },
   {
     name: 'goal/activation-changed',

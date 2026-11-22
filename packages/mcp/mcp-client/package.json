@@ -38,6 +38,7 @@
     "@yharness/system-prompt": "workspace:*"
   },
   "dependencies": {
+    "@yharness/github-app-auth": "workspace:*",
     "@yharness/credentials": "workspace:*",
     "@yharness/schemastery": "workspace:~",
     "@modelcontextprotocol/client": "2.3.0",

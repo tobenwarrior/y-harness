@@ -30,6 +30,9 @@
       "path": "../../credentials/credentials"
     },
     {
+      "path": "../../credentials/github-app-auth"
+    },
+    {
       "path": "../../subprocess/subprocess"
     },
     {

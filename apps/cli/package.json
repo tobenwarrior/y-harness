@@ -42,6 +42,7 @@
     "@yharness/experimental-agent-team-profile": "workspace:*",
     "@yharness/experimental-inspector-profile": "workspace:*",
     "@yharness/fs-local": "workspace:*",
+    "@yharness/github-app-auth": "workspace:*",
     "@yharness/goal": "workspace:*",
     "@yharness/goal-round-driver": "workspace:*",
     "@yharness/headless": "workspace:*",
