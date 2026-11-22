@@ -156,6 +156,26 @@ function templateView(id: string, shareCode: string, patch: Partial<BotTemplateV
 const localPermissions = { status: 'resolved' as const, preset: 'research-preset', tools: ['chat', 'read_file'] }
 
 describe('BotWorkspaceController', () => {
+  it('hands the previous Bot draft to Conversation before releasing its Session', async () => {
+    const scout = bot('bot-scout-draft', 'session-scout-draft')
+    const orbit = bot('bot-orbit-draft', 'session-orbit-draft')
+    const { sessions } = sessionsFixture()
+    const retention = {
+      detach: vi.fn(),
+      reacquire: vi.fn(),
+      forget: vi.fn(),
+    }
+    const controller = new BotWorkspaceController(remoteFixture([scout, orbit]), sessions, () => 'unexpected response')
+    controller.setDraftRetention(retention)
+    await controller.load()
+    controller.face().select(orbit.id)
+    expect(retention.detach).toHaveBeenCalledWith(`${String(scout.id)}:${String(scout.sessionId)}`, scout.sessionId)
+    await vi.waitFor(() => {
+      expect(retention.reacquire).toHaveBeenCalledWith(`${String(orbit.id)}:${String(orbit.sessionId)}`, orbit.sessionId)
+    })
+    controller.dispose()
+  })
+
   it('opens the primary Bot on startup and keeps the current chat when the primary changes', async () => {
     const scout = bot('bot-scout', 'session-scout')
     const orbit = bot('bot-orbit', 'session-orbit')

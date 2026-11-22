@@ -9,7 +9,7 @@ import { SessionId } from '@yharness/session/types'
 import { $nodesOfType } from 'lexical'
 import { expect, it, onTestFinished, vi } from 'vitest'
 import type { DraftSnapshot } from '../src/client/contract/draft-editor.ts'
-import type { InputTriggerController } from '../src/client/contract/input.ts'
+import type { DraftAttachmentId, InputTriggerController } from '../src/client/contract/input.ts'
 import { ReferenceChipNode } from '../src/client/input/editor/chip-node.tsx'
 import { TextRefNode } from '../src/client/input/editor/text-ref.ts'
 import { SessionInputShell } from '../src/client/input/facade.ts'
@@ -139,6 +139,33 @@ it('leaves trigger subscription to lifecycle activation rather than construction
   shell.refreshLexiconSubscription()
   expect(source.subscribers).toBe(1)
   expect(shell.draftSnapshot).toEqual(saved)
+})
+
+it('hands Bot draft attachments across a selection change without duplicating or releasing them', async () => {
+  const b = await fixture(undefined)
+  const attachmentId = 'bot-draft-1' as DraftAttachmentId
+  expect(b.shell.addAttachments([attachmentId])).toBe(true)
+  b.hub.botDrafts?.detach('bot-a:session-a', b.id)
+  expect(b.shell.snapshot.attachmentIds).toEqual([])
+  b.hub.botDrafts?.reacquire('bot-a:session-a', b.id)
+  expect(b.shell.snapshot.attachmentIds).toEqual([attachmentId])
+  b.hub.botDrafts?.reacquire('bot-a:session-a', b.id)
+  expect(b.shell.snapshot.attachmentIds).toEqual([attachmentId])
+})
+
+it('does not release a detached Bot draft during Session disposal until its owner is forgotten', async () => {
+  const b = await fixture(undefined)
+  const attachmentId = 'bot-draft-dispose' as DraftAttachmentId
+  const release = vi.fn()
+  b.ctx.provide('conversation', { releaseDraftAttachment: release })
+  expect(b.shell.addAttachments([attachmentId])).toBe(true)
+  b.hub.botDrafts?.detach('bot-b:session-b', b.id)
+  b.reference.release()
+  await b.sessions.disposeScopes()
+  expect(release).not.toHaveBeenCalled()
+  b.hub.botDrafts?.forget('bot-b:session-b')
+  expect(release).toHaveBeenCalledTimes(1)
+  expect(release).toHaveBeenCalledWith(attachmentId)
 })
 
 it('reuses one shell during synchronous catalog retention and restores its initial draft before returning', async () => {
