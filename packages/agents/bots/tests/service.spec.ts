@@ -1079,6 +1079,285 @@ describe('durable Bot roster', () => {
     }
   })
 
+  it('rejects a stale concurrent primary replacement after another Host wins the CAS', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const second = await harness(pool)
+    try {
+      const created = (await first.service.create({ id: BotId('bot-primary-replacement-race'), name: 'Replacement race', cwd: '/tmp' })).bot
+      await expect(first.service.setPrimary({ botId: created.id, expectedRevision: 0 })).resolves.toEqual({
+        primaryBotId: created.id,
+        revision: 1,
+      })
+      const outcomes = await Promise.allSettled([
+        first.service.setPrimary({ botId: null, expectedRevision: 1 }),
+        second.service.setPrimary({ botId: null, expectedRevision: 1 }),
+      ])
+      expect(outcomes.filter(outcome => outcome.status === 'fulfilled')).toHaveLength(1)
+      expect(outcomes.filter(outcome => outcome.status === 'rejected')).toHaveLength(1)
+      const rejected = outcomes.find(outcome => outcome.status === 'rejected')
+      expect(rejected).toMatchObject({
+        status: 'rejected',
+        reason: { code: 'bot/primary-conflict', details: { expectedRevision: 1, actualRevision: 2 } },
+      })
+      await expect(first.service.readPrimary({})).resolves.toEqual({ primaryBotId: null, revision: 2 })
+    } finally {
+      await close(second.ctx)
+      await close(first.ctx)
+    }
+  })
+
+  it('reports a missing row after a failed primary insert refresh', async () => {
+    const h = await harness()
+    try {
+      const domain = h.ctx.storageDomain.get('agent_bot_primary')
+      if (domain === undefined) throw new Error('Primary domain was not materialized')
+      vi.spyOn(domain.table('preferences'), 'insert').mockResolvedValue(false)
+      await expect(h.service.setPrimary({ botId: null, expectedRevision: 0 })).rejects.toMatchObject({
+        code: 'bot/primary-conflict',
+        details: { expectedRevision: 0, actualRevision: 0 },
+      })
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('fails closed when the primary medium cannot coordinate Hosts', async () => {
+    const h = await harness()
+    try {
+      const domain = h.ctx.storageDomain.get('agent_bot_primary')
+      if (domain === undefined) throw new Error('Primary domain was not materialized')
+      Object.defineProperty(domain.table('preferences'), 'supportsDurableCoordination', { value: false })
+      await expect(h.service.setPrimary({ botId: null, expectedRevision: 0 })).rejects.toMatchObject({
+        code: 'bot/profile-coordination-unavailable',
+        details: { operation: 'primary-set' },
+      })
+      const created = (await h.service.create({ id: BotId('bot-primary-no-coordination'), name: 'No coordination', cwd: '/tmp' })).bot
+      await expect(h.service.setPrimary({ botId: created.id, expectedRevision: 0 })).rejects.toMatchObject({
+        code: 'bot/profile-coordination-unavailable',
+        details: { operation: 'primary-set', botId: created.id },
+      })
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('reports the current revision when both Hosts reach a first selection before either insert', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const second = await harness(pool)
+    try {
+      const created = (await first.service.create({ id: BotId('bot-primary-insert-race'), name: 'Insert race', cwd: '/tmp' })).bot
+      const gate = Promise.withResolvers<undefined>()
+      let refreshes = 0
+      for (const host of [first, second]) {
+        const domain = host.ctx.storageDomain.get('agent_bot_primary')
+        if (domain === undefined) throw new Error('Primary domain was not materialized')
+        const refresh = domain.refresh.bind(domain)
+        vi.spyOn(domain, 'refresh').mockImplementation(async () => {
+          await refresh()
+          refreshes += 1
+          if (refreshes === 2) gate.resolve(undefined)
+          await gate.promise
+        })
+      }
+      const outcomesPromise = Promise.allSettled([
+        first.service.setPrimary({ botId: created.id, expectedRevision: 0 }),
+        second.service.setPrimary({ botId: created.id, expectedRevision: 0 }),
+      ])
+      await gate.promise
+      const outcomes = await outcomesPromise
+      expect(outcomes.filter(outcome => outcome.status === 'fulfilled')).toHaveLength(1)
+      const rejected = outcomes.find(outcome => outcome.status === 'rejected')
+      expect(rejected).toMatchObject({
+        status: 'rejected',
+        reason: { code: 'bot/primary-conflict', details: { expectedRevision: 0, actualRevision: 1 } },
+      })
+    } finally {
+      await close(second.ctx)
+      await close(first.ctx)
+    }
+  })
+
+  it('coalesces concurrent deletion notifications and ignores unrelated domain changes', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const second = await harness(pool)
+    try {
+      const created = (await first.service.create({ id: BotId('bot-primary-delete-race'), name: 'Delete race', cwd: '/tmp' })).bot
+      await expect(first.service.setPrimary({ botId: created.id, expectedRevision: 0 })).resolves.toEqual({
+        primaryBotId: created.id,
+        revision: 1,
+      })
+      const rows = pool.media.get('agent_bots')?.tables.get('bots')
+      const primaryRows = pool.media.get('agent_bot_primary')?.tables.get('preferences')
+      if (rows === undefined || primaryRows === undefined) throw new Error('Primary fixture rows were not materialized')
+      rows.delete(String(created.id))
+      const change = { domain: 'agent_bots', table: 'bots', key: String(created.id), operation: 'deleted' as const }
+      first.ctx.emit('domain/changed', change)
+      second.ctx.emit('domain/changed', change)
+      await vi.waitFor(() => {
+        expect(primaryRows.get('local-owner')).toMatchObject({ primaryBotId: null, revision: 2 })
+      })
+      first.ctx.emit('domain/changed', { ...change, key: 'not-a-bot' })
+      first.ctx.emit('domain/changed', change)
+      await new Promise(resolve => setTimeout(resolve, 0))
+      expect(primaryRows.get('local-owner')).toMatchObject({ primaryBotId: null, revision: 2 })
+    } finally {
+      await close(second.ctx)
+      await close(first.ctx)
+    }
+  })
+
+  it('does not announce a stale deletion repair after another Host replaces the selection', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const second = await harness(pool)
+    try {
+      const deleted = (await first.service.create({ id: BotId('bot-primary-delete-replaced'), name: 'Deleted', cwd: '/tmp' })).bot
+      const replacement = (await first.service.create({ id: BotId('bot-primary-delete-replacement'), name: 'Replacement', cwd: '/tmp' })).bot
+      await expect(first.service.setPrimary({ botId: deleted.id, expectedRevision: 0 })).resolves.toEqual({
+        primaryBotId: deleted.id,
+        revision: 1,
+      })
+      const rows = pool.media.get('agent_bots')?.tables.get('bots')
+      if (rows === undefined) throw new Error('Bot domain was not materialized')
+      rows.delete(String(deleted.id))
+      const domain = first.ctx.storageDomain.get('agent_bot_primary')
+      if (domain === undefined) throw new Error('Primary domain was not materialized')
+      const preferences = domain.table('preferences')
+      const entered = Promise.withResolvers<undefined>()
+      const release = Promise.withResolvers<undefined>()
+      const update = preferences.update.bind(preferences)
+      vi.spyOn(preferences, 'update').mockImplementation(async (key, transform) => {
+        entered.resolve(undefined)
+        await release.promise
+        return update(key, transform)
+      })
+      first.ctx.emit('domain/changed', {
+        domain: 'agent_bots', table: 'bots', key: String(deleted.id), operation: 'deleted',
+      })
+      await entered.promise
+      await expect(second.service.setPrimary({ botId: replacement.id, expectedRevision: 1 })).resolves.toEqual({
+        primaryBotId: replacement.id,
+        revision: 2,
+      })
+      release.resolve(undefined)
+      await new Promise(resolve => setTimeout(resolve, 0))
+      const primaryRows = pool.media.get('agent_bot_primary')?.tables.get('preferences')
+      expect(primaryRows?.get('local-owner')).toMatchObject({ primaryBotId: replacement.id, revision: 2 })
+    } finally {
+      await close(second.ctx)
+      await close(first.ctx)
+    }
+  })
+
+  it('keeps a newer primary replacement when a deleted-read repair finishes late', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const second = await harness(pool)
+    try {
+      const deleted = (await first.service.create({ id: BotId('bot-primary-read-replaced'), name: 'Read deleted', cwd: '/tmp' })).bot
+      const replacement = (await first.service.create({ id: BotId('bot-primary-read-replacement'), name: 'Read replacement', cwd: '/tmp' })).bot
+      await expect(first.service.setPrimary({ botId: deleted.id, expectedRevision: 0 })).resolves.toEqual({
+        primaryBotId: deleted.id,
+        revision: 1,
+      })
+      const rows = pool.media.get('agent_bots')?.tables.get('bots')
+      if (rows === undefined) throw new Error('Bot domain was not materialized')
+      rows.delete(String(deleted.id))
+      const domain = first.ctx.storageDomain.get('agent_bot_primary')
+      if (domain === undefined) throw new Error('Primary domain was not materialized')
+      const preferences = domain.table('preferences')
+      const entered = Promise.withResolvers<undefined>()
+      const release = Promise.withResolvers<undefined>()
+      const update = preferences.update.bind(preferences)
+      vi.spyOn(preferences, 'update').mockImplementation(async (key, transform) => {
+        entered.resolve(undefined)
+        await release.promise
+        return update(key, transform)
+      })
+      const pending = first.service.readPrimary({})
+      await entered.promise
+      await expect(second.service.setPrimary({ botId: replacement.id, expectedRevision: 1 })).resolves.toEqual({
+        primaryBotId: replacement.id,
+        revision: 2,
+      })
+      release.resolve(undefined)
+      await expect(pending).resolves.toEqual({ primaryBotId: replacement.id, revision: 2 })
+    } finally {
+      await close(second.ctx)
+      await close(first.ctx)
+    }
+  })
+
+  it('logs a failed deletion repair without losing the durable primary row', async () => {
+    const pool = new MemoryMediaPool()
+    const h = await harness(pool)
+    const warnings: string[] = []
+    h.ctx.logger.warn = ((message: unknown) => { warnings.push(String(message)) }) as typeof h.ctx.logger.warn
+    try {
+      const created = (await h.service.create({ id: BotId('bot-primary-delete-overflow'), name: 'Delete overflow', cwd: '/tmp' })).bot
+      await expect(h.service.setPrimary({ botId: created.id, expectedRevision: 0 })).resolves.toEqual({
+        primaryBotId: created.id,
+        revision: 1,
+      })
+      const medium = pool.media.get('agent_bot_primary')
+      const primaryRows = medium?.tables.get('preferences')
+      const rows = pool.media.get('agent_bots')?.tables.get('bots')
+      if (primaryRows === undefined || rows === undefined) throw new Error('Primary fixture rows were not materialized')
+      primaryRows.set('local-owner', {
+        ownerId: 'local-owner', primaryBotId: created.id, revision: Number.MAX_SAFE_INTEGER, updatedAt: 1,
+      })
+      rows.delete(String(created.id))
+      h.ctx.emit('domain/changed', {
+        domain: 'agent_bots', table: 'bots', key: String(created.id), operation: 'deleted',
+      })
+      await vi.waitFor(() => {
+        expect(warnings.some(message => message.includes('primary Bot cleanup failed'))).toBe(true)
+      })
+      expect(primaryRows.get('local-owner')).toMatchObject({
+        primaryBotId: created.id, revision: Number.MAX_SAFE_INTEGER,
+      })
+      const warningCount = warnings.length
+      Reflect.set(h.service, 'stopping', true)
+      h.ctx.emit('domain/changed', {
+        domain: 'agent_bots', table: 'bots', key: String(created.id), operation: 'deleted',
+      })
+      await new Promise(resolve => setTimeout(resolve, 0))
+      expect(warnings).toHaveLength(warningCount)
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('logs a non-Error primary deletion repair failure as text', async () => {
+    const pool = new MemoryMediaPool()
+    const h = await harness(pool)
+    const warnings: string[] = []
+    h.ctx.logger.warn = ((message: unknown) => { warnings.push(String(message)) }) as typeof h.ctx.logger.warn
+    try {
+      const created = (await h.service.create({ id: BotId('bot-primary-delete-string-error'), name: 'String error', cwd: '/tmp' })).bot
+      await expect(h.service.setPrimary({ botId: created.id, expectedRevision: 0 })).resolves.toEqual({
+        primaryBotId: created.id,
+        revision: 1,
+      })
+      const rows = pool.media.get('agent_bots')?.tables.get('bots')
+      const domain = h.ctx.storageDomain.get('agent_bot_primary')
+      if (rows === undefined || domain === undefined) throw new Error('Primary fixture was not materialized')
+      vi.spyOn(domain.table('preferences'), 'update').mockRejectedValue('backend rejected')
+      rows.delete(String(created.id))
+      h.ctx.emit('domain/changed', {
+        domain: 'agent_bots', table: 'bots', key: String(created.id), operation: 'deleted',
+      })
+      await vi.waitFor(() => {
+        expect(warnings.some(message => message.includes('backend rejected'))).toBe(true)
+      })
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
   it('allows an explicit primary choice while its Bot is still provisioning', async () => {
     const create = vi.fn(async (_request: { readonly sessionId?: string }) => {
       throw new Error('model unavailable')
@@ -1120,6 +1399,48 @@ describe('durable Bot roster', () => {
     } finally {
       await close(second.ctx)
       await close(first.ctx)
+    }
+  })
+
+  it('validates primary requests and rejects revision overflow before writing', async () => {
+    const h = await harness()
+    try {
+      await expect(h.service.setPrimary(null as never)).rejects.toMatchObject({ code: 'gateway/bad-request' })
+      await expect(h.service.setPrimary({ botId: 1, expectedRevision: 0 } as never)).rejects.toMatchObject({ code: 'gateway/bad-request' })
+      await expect(h.service.setPrimary({ botId: undefined, expectedRevision: 0 } as never)).rejects.toMatchObject({ code: 'gateway/bad-request' })
+      await expect(h.service.setPrimary({ botId: null, expectedRevision: 1 })).rejects.toMatchObject({
+        code: 'bot/primary-conflict',
+        details: { expectedRevision: 1, actualRevision: 0 },
+      })
+      await expect(h.service.setPrimary({ botId: null, expectedRevision: -1 })).rejects.toMatchObject({ code: 'gateway/bad-request' })
+      await expect(h.service.setPrimary({ botId: null, expectedRevision: Number.NaN })).rejects.toMatchObject({ code: 'gateway/bad-request' })
+      const domain = h.ctx.storageDomain.get('agent_bot_primary')
+      if (domain === undefined) throw new Error('Primary domain was not materialized')
+      const preferences = domain.table('preferences')
+      await preferences.put('local-owner', {
+        ownerId: 'local-owner', primaryBotId: null, revision: Number.MAX_SAFE_INTEGER, updatedAt: 1,
+      })
+      await expect(h.service.setPrimary({ botId: null, expectedRevision: Number.MAX_SAFE_INTEGER })).rejects.toMatchObject({
+        code: 'bot/primary-conflict',
+        details: { expectedRevision: Number.MAX_SAFE_INTEGER, actualRevision: Number.MAX_SAFE_INTEGER },
+      })
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('fails closed when a persisted primary preference belongs to another owner', async () => {
+    const h = await harness()
+    try {
+      const domain = h.ctx.storageDomain.get('agent_bot_primary')
+      if (domain === undefined) throw new Error('Primary domain was not materialized')
+      await domain.table('preferences').put('local-owner', {
+        ownerId: 'other-owner', primaryBotId: null, revision: 1, updatedAt: 1,
+      })
+      await expect(h.service.readPrimary({})).rejects.toMatchObject({ code: 'gateway/internal' })
+      await expect(h.service.setPrimary({ botId: null, expectedRevision: 1 })).rejects.toMatchObject({ code: 'gateway/internal' })
+    } finally {
+      await close(h.ctx)
     }
   })
 
