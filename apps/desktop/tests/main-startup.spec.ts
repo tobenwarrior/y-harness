@@ -321,7 +321,7 @@ vi.mock('electron', () => ({
     },
     removeHandler: (channel: string) => { harness.handlers.delete(channel) },
   },
-  Menu: { setApplicationMenu: harness.menu.setApplicationMenu, buildFromTemplate: harness.menu },
+  Menu: { setApplicationMenu: harness.menu.setApplicationMenu, buildFromTemplate: harness.menu, getApplicationMenu: () => null },
   session: { defaultSession: {
     setPermissionCheckHandler: vi.fn(), setPermissionRequestHandler: vi.fn(), webRequest: { onBeforeSendHeaders: harness.socketHeaders },
   } },
@@ -919,8 +919,11 @@ describe('desktop main startup', () => {
     if (platform === 'darwin') {
       const workspace = template.find(item => item.label === en.cloudWorkspace)
       expect(workspace?.submenu).toEqual([
-        expect.objectContaining({ label: en.cloudOpenMac }),
-        expect.objectContaining({ label: en.cloudOpen }),
+        expect.objectContaining({ label: en.cloudOpenMac, type: 'radio', accelerator: 'Command+Alt+1' }),
+        expect.objectContaining({ label: en.cloudOpen, type: 'radio', accelerator: 'Command+Alt+2' }),
+        expect.objectContaining({ type: 'separator' }),
+        expect.objectContaining({ label: en.cloudVault }),
+        expect.objectContaining({ label: en.cloudChangeServer }),
       ])
     }
     const application = template[0]!.submenu as MenuItemConstructorOptions[]
