@@ -1398,6 +1398,23 @@ export type Config = LocalConfig
 ```
 <!-- END GENERATED config-catalog:@yharness/fs-sandbox -->
 
+<!-- BEGIN GENERATED config-catalog:@yharness/github-app-auth -->
+<a id="yharnessgithub-app-auth"></a>
+
+## `@yharness/github-app-auth`
+
+- `inject`: `credentials` · `authorization`
+- `source`: [`packages/credentials/github-app-auth/src/index.ts:40`](../packages/credentials/github-app-auth/src/index.ts)
+
+```ts config-catalog
+/** Configuration for the Host-only GitHub App OAuth device flow. */
+export interface Config {
+  /** Public client ID of the GitHub App. */
+  clientId: string
+}
+```
+<!-- END GENERATED config-catalog:@yharness/github-app-auth -->
+
 <!-- BEGIN GENERATED config-catalog:@yharness/goal -->
 <a id="yharnessgoal"></a>
 
@@ -2150,7 +2167,7 @@ export interface LspLocalServerConfig {
 ## `@yharness/mcp-client`
 
 - `inject`: `tools`
-- `source`: [`packages/mcp/mcp-client/src/index.ts:106`](../packages/mcp/mcp-client/src/index.ts)
+- `source`: [`packages/mcp/mcp-client/src/index.ts:112`](../packages/mcp/mcp-client/src/index.ts)
 
 ```ts config-catalog
 /** Configuration for one stdio or Streamable HTTP MCP server. */
@@ -2200,6 +2217,11 @@ export interface StreamableHttpConfig {
   headers: Record<string, string>
   /** Host credential reference sent as a bearer token to this HTTPS endpoint. */
   bearerTokenRef?: string
+  /**
+   * Use the optional Host-owned GitHub App grant for the official GitHub MCP
+   * endpoint. This cannot be combined with bearerTokenRef or Authorization.
+   */
+  githubAppAuthorization?: boolean
   /** Timeout per tool call or resource request in milliseconds. */
   toolCallTimeoutMs: number
   /** Fail plugin activation when the initial connection or tool synchronization fails. */
@@ -4779,7 +4801,7 @@ These load from a `cordis.yml` entry with no `config:` block; they declare no co
 | --- | --- | --- |
 | `@yharness/acp-app` | `cmdlineArgs` | [`packages/bundle/acp-app/src/index.ts`](../packages/bundle/acp-app/src/index.ts) |
 | `@yharness/agent` | — | [`packages/core/agent/src/index.ts`](../packages/core/agent/src/index.ts) |
-| `@yharness/api-account-controller` | `deepseekAccount` · `agents` | [`packages/api/account-controller/src/index.ts`](../packages/api/account-controller/src/index.ts) |
+| `@yharness/api-account-controller` | `deepseekAccount` · `agents` · `authorization` | [`packages/api/account-controller/src/index.ts`](../packages/api/account-controller/src/index.ts) |
 | `@yharness/api-remotes` | `typertGateway` | [`packages/api/remotes/src/index.ts`](../packages/api/remotes/src/index.ts) |
 | `@yharness/authorization` | `credentials` | [`packages/credentials/authorization/src/index.ts`](../packages/credentials/authorization/src/index.ts) |
 | `@yharness/browser-use` | — | [`packages/browser-use/browser-use/src/index.ts`](../packages/browser-use/browser-use/src/index.ts) |

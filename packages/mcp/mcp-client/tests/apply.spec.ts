@@ -7,6 +7,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { Context } from '@yharness/cordis'
 import SystemPrompt, { renderPrompt } from '@yharness/system-prompt'
 import ToolRuntime from '@yharness/tools'
+import { GITHUB_MCP_URL } from '@yharness/github-app-auth'
 import { createScope } from '@yharness/scope'
 import type { Config } from '@yharness/mcp-client'
 
@@ -117,6 +118,30 @@ describe('mcp-client plugin module exports', () => {
       command: 'echo',
     } as never)
     expect(resolved.serverName).toBe('github-prod_1')
+  })
+
+  it('Config schema accepts the opt-in GitHub App authorization endpoint', () => {
+    const resolved = ConfigSchema({
+      transport: 'streamable-http',
+      serverName: 'github',
+      url: GITHUB_MCP_URL,
+      githubAppAuthorization: true,
+    } as never)
+    if (resolved.transport !== 'streamable-http') throw new Error('expected Streamable HTTP config')
+    expect(resolved.githubAppAuthorization).toBe(true)
+  })
+
+  it.each([
+    { url: 'https://api.githubcopilot.com/mcp' },
+    { url: GITHUB_MCP_URL, bearerTokenRef: 'GITHUB_MCP_TOKEN' },
+    { url: GITHUB_MCP_URL, headers: { authorization: 'Bearer fixture' } },
+  ])('Config schema rejects an unsafe GitHub App authorization combination', (changes) => {
+    expect(() => ConfigSchema({
+      transport: 'streamable-http',
+      serverName: 'github',
+      githubAppAuthorization: true,
+      ...changes,
+    } as never)).toThrow()
   })
 
   it('Config schema materializes reconnect defaults and merges partial overrides', () => {

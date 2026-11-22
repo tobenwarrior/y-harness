@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { FetchLike } from '@modelcontextprotocol/client'
 import { Context } from '@yharness/cordis'
 import type { CredentialProvider } from '@yharness/credentials'
+import { GITHUB_MCP_URL } from '@yharness/github-app-auth'
 import { ToolCallId } from '@yharness/llm'
 import SystemPrompt from '@yharness/system-prompt'
 import ToolRuntime from '@yharness/tools'
@@ -21,6 +22,16 @@ const config: StreamableHttpConfig = {
 }
 
 const ping = { jsonrpc: '2.0', id: 1, method: 'ping' } as const
+
+const githubAppConfig: StreamableHttpConfig = {
+  transport: 'streamable-http',
+  serverName: 'github-app',
+  url: GITHUB_MCP_URL,
+  headers: { 'X-MCP-Toolsets': 'repos,issues,pull_requests' },
+  githubAppAuthorization: true,
+  toolCallTimeoutMs: 1_000,
+  failOnStartupError: true,
+}
 
 afterEach(() => { vi.unstubAllGlobals() })
 
@@ -116,6 +127,80 @@ describe('credential-backed MCP transport', () => {
     try {
       await expect(transport.send(ping)).rejects.toThrow(message)
       await expect(transport.send(ping)).rejects.not.toThrow('private-looking.fixture')
+    } finally {
+      await transport.close()
+    }
+    expect(send).not.toHaveBeenCalled()
+  })
+})
+
+describe('GitHub App-authorized MCP transport', () => {
+  it('requests a current provider token for each request and refuses redirects', async () => {
+    const tokenFor = vi.fn<(endpoint: URL) => Promise<string | undefined>>()
+      .mockResolvedValueOnce('github-first.fixture')
+      .mockResolvedValueOnce('github-rotated.fixture')
+    const send = vi.fn<FetchLike>(async () => Response.json({ jsonrpc: '2.0', id: 1, result: {} }))
+    vi.stubGlobal('fetch', send)
+
+    const transport = createTransport(githubAppConfig, undefined, { tokenFor })
+    await transport.start()
+    try {
+      await transport.send(ping)
+      await transport.send(ping)
+    } finally {
+      await transport.close()
+    }
+
+    expect(tokenFor.mock.calls.map(([endpoint]) => endpoint.href)).toEqual([GITHUB_MCP_URL, GITHUB_MCP_URL])
+    const headers = send.mock.calls.map(([, options]) => new Headers(options?.headers))
+    expect(headers.map(request => request.get('Authorization')))
+      .toEqual(['Bearer github-first.fixture', 'Bearer github-rotated.fixture'])
+    expect(headers.map(request => request.get('X-MCP-Toolsets')))
+      .toEqual(['repos,issues,pull_requests', 'repos,issues,pull_requests'])
+    expect(send.mock.calls.map(([url, options]) => [String(url), options?.redirect])).toEqual([
+      [GITHUB_MCP_URL, 'error'], [GITHUB_MCP_URL, 'error'],
+    ])
+  })
+
+  it.each([
+    { url: 'https://api.githubcopilot.com/mcp', message: /exact official endpoint/ },
+    { url: 'https://api.githubcopilot.com/mcp/?fixture=1', message: /exact official endpoint/ },
+    { headers: { Authorization: 'Bearer fixture' }, message: /Authorization header/ },
+    { bearerTokenRef: 'GITHUB_MCP_TOKEN', message: /bearerTokenRef/ },
+  ])('rejects unsafe GitHub App configuration before a request', ({ message, ...changes }) => {
+    const tokenFor = vi.fn<(endpoint: URL) => Promise<string | undefined>>()
+    expect(() => createTransport({ ...githubAppConfig, ...changes }, undefined, { tokenFor })).toThrow(message)
+    expect(tokenFor).not.toHaveBeenCalled()
+  })
+
+  it('requires the optional provider service', () => {
+    expect(() => createTransport(githubAppConfig)).toThrow(/github-app-auth service/)
+  })
+
+  it('does not send a request when the provider has no usable grant', async () => {
+    const send = vi.fn<FetchLike>()
+    vi.stubGlobal('fetch', send)
+    const transport = createTransport(githubAppConfig, undefined, {
+      tokenFor: vi.fn<(endpoint: URL) => Promise<string | undefined>>().mockResolvedValue(undefined),
+    })
+    await transport.start()
+    try {
+      await expect(transport.send(ping)).rejects.toThrow(/needs authentication/)
+    } finally {
+      await transport.close()
+    }
+    expect(send).not.toHaveBeenCalled()
+  })
+
+  it('rejects a malformed provider token before sending it', async () => {
+    const send = vi.fn<FetchLike>()
+    vi.stubGlobal('fetch', send)
+    const transport = createTransport(githubAppConfig, undefined, {
+      tokenFor: vi.fn<(endpoint: URL) => Promise<string | undefined>>().mockResolvedValue('token.fixture\nleak'),
+    })
+    await transport.start()
+    try {
+      await expect(transport.send(ping)).rejects.toThrow(/Invalid GitHub App access token/)
     } finally {
       await transport.close()
     }

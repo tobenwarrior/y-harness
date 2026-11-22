@@ -57,6 +57,7 @@ Add one entry per server; nothing else is required. After the harness starts, th
 | `command` / `args` / `env` / `cwd` | — | stdio: executable, arguments, extra env merged over scrubbed ambient env, working directory |
 | `url` / `headers` | — | streamable-http: endpoint URL and extra request headers |
 | `bearerTokenRef` | — | streamable-http: host credential reference for an HTTPS bearer token |
+| `githubAppAuthorization` | — | streamable-http: opt-in Host-owned GitHub App authorization; requires the exact official endpoint `https://api.githubcopilot.com/mcp/` and cannot be combined with `bearerTokenRef` or `Authorization` |
 | `toolCallTimeoutMs` | `60,000` | Timeout per `tools/call` or resource request |
 | `maxInstructionBytes` | `32,768` | Maximum UTF-8 bytes of server instructions including attribution; an oversized value rejects the connection |
 | `failOnStartupError` | `false` | Reject plugin activation when the initial connection or tool synchronization fails |
@@ -74,6 +75,8 @@ After startup, the server's tools appear as `mcp__<serverName>__<tool>` — try 
 The GitHub read-only overlay enables repository, issue, and pull request tools. Store a GitHub token with access to the intended repositories in the Harness host credential provider as `GITHUB_MCP_TOKEN`. The overlay stores only the reference. Open **App access** from a Bot’s roster menu to check the connection’s permissions. [GitHub read-only overlay](../../../apps/cli/config/examples/mcp-connectors/github-readonly.cordis.yml) · [GitHub MCP setup](https://docs.github.com/en/copilot/how-tos/copilot-in-your-ide/customize-copilot/extend-copilot-with-tools-and-context/set-up-the-github-mcp-server)
 
 With `bearerTokenRef`, the SDK resolves the current token for each request. The endpoint must use HTTPS without URL credentials. This option rejects an additional `Authorization` header and refuses redirects. A missing credential fails the connection before sending a request. Saving a new value retires the previous connection and its tools, then reconnects after the old transport closes. Removing the value keeps the server disconnected until a new value is saved. A credential change resets an exhausted reconnect budget.
+
+With `githubAppAuthorization: true`, the optional `@yharness/github-app-auth` service supplies the current grant without exposing it in configuration or project status. The transport accepts only the exact official GitHub MCP URL, refuses redirects, and asks the provider for a token per request. A missing GitHub login is an idle `needs-auth` state: it does not spend reconnect attempts or emit repeated warnings. The provider's owner-change or invalidation event retires the old tools and retries after the grant reports `connected`; ordinary token refreshes do not reconnect the MCP session.
 
 Configure the final MCP endpoint URL when a server redirects to a different origin. The HTTP transport keeps connection requests on the configured origin.
 

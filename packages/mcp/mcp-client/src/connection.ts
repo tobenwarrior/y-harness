@@ -11,7 +11,9 @@
  * even one whose connects briefly succeed — still exhausts the cap instead of
  * restarting forever. Exhaustion unregisters the server's tools and stops;
  * disposal (including HMR) is the general way back, while an exact configured
- * bearer-token reference update also starts a fresh outage.
+ * bearer-token reference update or GitHub App owner-change event also starts a
+ * fresh authentication transition. A missing GitHub login stays idle instead
+ * of consuming the reconnect budget.
  *
  * @module
  */
@@ -23,9 +25,12 @@ import type { ServerContext } from './server-context.ts'
 import { MAX_TIMER_DELAY_MS } from '@yharness/timeout'
 import { credentialRef } from '@yharness/credentials'
 import { createTransport } from './transport.ts'
+import type GitHubAppAuth from '@yharness/github-app-auth'
 import { syncTools } from './tools.ts'
 import type { ToolBridgeOptions, ToolDisposers } from './tools.ts'
 import type { Config } from './index.ts'
+
+type GitHubAppAuthService = Pick<GitHubAppAuth, 'status' | 'tokenFor'>
 
 /** Automatic reconnect policy for one MCP server connection. */
 export interface ReconnectConfig {
@@ -157,13 +162,14 @@ export function startConnection(ctx: Context, config: Config, policy: ResolvedRe
   let connectedAt: number | undefined
   /** The real error from the first connection attempt, for startup-await diagnostics. */
   let firstAttemptError: unknown
-  /** Serializes credential-triggered retire/reconnect transitions. */
-  let credentialRefreshChain: Promise<void> = Promise.resolve()
+  /** Serializes provider-triggered retire/reconnect transitions. */
+  let authRefreshChain: Promise<void> = Promise.resolve()
   /** The in-flight (or last settled) connection attempt; dispose awaits it for quiescence. */
   let settling: Promise<void> = Promise.resolve()
-  /** Only reference-backed HTTPS transports react to credential rotations. */
+  /** Only configured HTTP authentication reacts to owner/credential changes. */
   const bearerTokenRef = config.transport === 'streamable-http' ? config.bearerTokenRef : undefined
-  let credentialRevision = 0
+  const githubAppAuthorization = config.transport === 'streamable-http' && config.githubAppAuthorization === true
+  let authRevision = 0
   /** A replacement must never overlap a transport whose closure was unconfirmed. */
   let transportCloseUnconfirmed = false
 
@@ -195,7 +201,7 @@ export function startConnection(ctx: Context, config: Config, policy: ResolvedRe
     return run
   }
 
-  /** Retire a generation before a credential change is allowed to reconnect. */
+  /** Retire a generation before an authentication change is allowed to reconnect. */
   function retireCurrentGeneration(): (() => Promise<boolean>) | undefined {
     const close = closeClient
     client = undefined
@@ -275,7 +281,7 @@ export function startConnection(ctx: Context, config: Config, policy: ResolvedRe
     }
   }
 
-  /** Retire the current generation synchronously when its credential changes. */
+  /** Retire the current generation synchronously when its authentication changes. */
   function prepareCredentialRefresh(): {
     close: (() => Promise<boolean>) | undefined
     previousAttempt: Promise<void>
@@ -290,10 +296,10 @@ export function startConnection(ctx: Context, config: Config, policy: ResolvedRe
     return { close, previousAttempt }
   }
 
-  /** Reconnect one exact bearer-reference generation after its predecessor quiesces. */
-  async function refreshForCredentialChange(
+  /** Reconnect one authentication generation after its predecessor quiesces. */
+  async function refreshAfterAuthChange(
     revision: number,
-    refName: string,
+    ready: () => Promise<boolean>,
     retired: { close: (() => Promise<boolean>) | undefined; previousAttempt: Promise<void> },
   ): Promise<void> {
     const { close, previousAttempt } = retired
@@ -301,7 +307,7 @@ export function startConnection(ctx: Context, config: Config, policy: ResolvedRe
       transportCloseUnconfirmed = true
       closeClient = close
       if (!isDisposed()) {
-        ctx.logger.error(`${label}: credential changed but the previous transport did not close; staying disconnected to avoid overlapping generations`)
+        ctx.logger.error(`${label}: authentication changed but the previous transport did not close; staying disconnected to avoid overlapping generations`)
       }
       return
     }
@@ -310,19 +316,43 @@ export function startConnection(ctx: Context, config: Config, policy: ResolvedRe
     // stopped using the retired client.
     await previousAttempt
     await syncChain
-    if (isDisposed() || transportCloseUnconfirmed || revision !== credentialRevision) return
-    const configured = await hasBearerCredential(refName)
-    if (isDisposed() || revision !== credentialRevision || !configured) return
+    if (isDisposed() || transportCloseUnconfirmed || revision !== authRevision) return
+    if (!await ready()) return
+    if (isDisposed() || revision !== authRevision) return
     settling = beginConnection(false)
   }
 
+  /** Read the optional provider without making it a required plugin dependency. */
+  function githubAppAuthService(): GitHubAppAuthService | undefined {
+    return ctx.get('githubAppAuth')
+  }
+
+  /** Read GitHub App availability without exposing or resolving an access token. */
+  async function hasGithubAppAuthorization(auth: GitHubAppAuthService): Promise<boolean> {
+    try {
+      return await auth.status() === 'connected'
+    } catch (_error) {
+      if (!isDisposed()) ctx.logger.warn(`${label}: could not read GitHub App authorization status`)
+      return false
+    }
+  }
+
+  function scheduleAuthRefresh(ready: () => Promise<boolean>): void {
+    const revision = ++authRevision
+    const retired = prepareCredentialRefresh()
+    authRefreshChain = authRefreshChain.then(() => refreshAfterAuthChange(revision, ready, retired))
+  }
+
   if (bearerTokenRef !== undefined) {
-    const refName = bearerTokenRef
     ctx.on('credentials/reference-updated', (ref) => {
-      if (disposed || ref !== refName) return
-      const revision = ++credentialRevision
-      const retired = prepareCredentialRefresh()
-      credentialRefreshChain = credentialRefreshChain.then(() => refreshForCredentialChange(revision, refName, retired))
+      if (disposed || ref !== bearerTokenRef) return
+      scheduleAuthRefresh(() => hasBearerCredential(bearerTokenRef))
+    })
+  } else if (githubAppAuthorization) {
+    ctx.on('github-app-auth/connection-changed', () => {
+      const auth = githubAppAuthService()
+      if (disposed || auth === undefined) return
+      scheduleAuthRefresh(() => hasGithubAppAuthorization(auth))
     })
   }
 
@@ -373,6 +403,23 @@ export function startConnection(ctx: Context, config: Config, policy: ResolvedRe
    * @param startup - Whether this is the plugin's activation attempt.
    */
   async function connectGeneration(startup: boolean): Promise<void> {
+    const githubAuth = githubAppAuthorization ? githubAppAuthService() : undefined
+    if (githubAppAuthorization) {
+      try {
+        if (githubAuth === undefined) throw new Error(`${label}: githubAppAuthorization requires the host github-app-auth service`)
+        if (await githubAuth.status() === 'needs-auth') {
+          // A missing login is an intentional idle state, not a failed attempt:
+          // do not spend reconnect budget or emit a warning until the provider's
+          // owner-change event says that authorization may be retried.
+          return
+        }
+      } catch (error) {
+        if (firstAttemptError === undefined) firstAttemptError = error
+        if (!isDisposed()) ctx.logger.warn(`${label}: connection attempt failed: ${String(error)}`)
+        scheduleReconnect()
+        return
+      }
+    }
     const generation = new Client(
       { name: 'dsh-mcp-client', version: '0.0.1' },
       {
@@ -422,7 +469,7 @@ export function startConnection(ctx: Context, config: Config, policy: ResolvedRe
     }
     let instructions: string
     try {
-      transport = createTransport(config, ctx.get('credentials'))
+      transport = createTransport(config, ctx.get('credentials'), githubAuth)
       await generation.connect(transport)
       if (hasClosed()) {
         attemptSettled = true
@@ -483,7 +530,7 @@ export function startConnection(ctx: Context, config: Config, policy: ResolvedRe
     // Note: settling.then() is a microtask; stdio onclose is a macrotask — so
     // a server that crashes AFTER a successful initial sync cannot flip client
     // to undefined before this continuation runs.
-    if (client !== undefined) return {}
+    if (client !== undefined || (githubAppAuthorization && firstAttemptError === undefined)) return {}
     /* v8 ignore next -- defensive: firstAttemptError is always set when connect/sync fails */
     return { error: firstAttemptError ?? new Error(`${label}: initial connection failed`) }
   })
@@ -529,10 +576,10 @@ export function startConnection(ctx: Context, config: Config, policy: ResolvedRe
       // sync before settling, so awaiting both leaves `disposers` final.
       await settling
       await syncChain
-      await credentialRefreshChain
-      // A credential rotation may have finished its close timeout after this
-      // disposer captured the original handle. Retry that preserved handle so
-      // teardown still gets one chance to confirm the retired transport.
+      await authRefreshChain
+      // An authentication rotation may have finished its close timeout after
+      // this disposer captured the original handle. Retry that preserved handle
+      // so teardown still gets one chance to confirm the retired transport.
       const retryClose = takeCloseClient()
       if (retryClose !== undefined && !await retryClose()) {
         ctx.logger.error(incompleteDisposalMessage)

@@ -38,6 +38,7 @@
       "@yharness/api-gateway/stream-protocol": ["./packages/api/gateway/src/stream-protocol.ts"],
       "@yharness/api-account-controller": ["./packages/api/account-controller/src/index.ts"],
       "@yharness/api-account-controller/types": ["./packages/api/account-controller/src/types.ts"],
+      "@yharness/github-app-auth": ["./packages/credentials/github-app-auth/src/index.ts"],
       "@yharness/deepseek-account-platform": ["./packages/credentials/deepseek-account-platform/src/index.ts"],
       "@yharness/deepseek-account-platform/types": ["./packages/credentials/deepseek-account-platform/src/types.ts"],
       "@yharness/deepseek-account": ["./packages/credentials/deepseek-account/src/index.ts"],

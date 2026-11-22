@@ -49,6 +49,7 @@
     "apps/web/tests/plan-control-row.e2e.ts",
     "apps/web/tests/bot-workspace.e2e.ts",
     "apps/web/tests/bot-app-access.e2e.ts",
+    "apps/web/tests/bot-github-sign-in.e2e.ts",
     "apps/web/tests/grok-history-attachments.e2e.ts",
     "apps/web/tests/bot-group.e2e.ts",
     "apps/web/tests/bot-conversation.e2e.ts",
@@ -261,6 +262,7 @@
     { "path": "./packages/document/office-to-pdf" },
 
     { "path": "./packages/api/account-controller" },
+    { "path": "./packages/credentials/github-app-auth" },
     { "path": "./packages/credentials/deepseek-account-platform" },
     { "path": "./packages/credentials/deepseek-account" },
     { "path": "./packages/client/ui-deliverables/tsconfig.host.json" },

@@ -301,6 +301,9 @@ importers:
       '@yharness/fs-local':
         specifier: workspace:*
         version: link:../../packages/fs/fs-local
+      '@yharness/github-app-auth':
+        specifier: workspace:*
+        version: link:../../packages/credentials/github-app-auth
       '@yharness/goal':
         specifier: workspace:*
         version: link:../../packages/goal/goal
@@ -1275,6 +1278,9 @@ importers:
 
   packages/api/account-controller:
     dependencies:
+      '@yharness/brand':
+        specifier: workspace:*
+        version: link:../../util/brand
       zod:
         specifier: ^4.4.3
         version: 4.4.3
@@ -1282,12 +1288,18 @@ importers:
       '@yharness/agent':
         specifier: workspace:*
         version: link:../../core/agent
+      '@yharness/authorization':
+        specifier: workspace:*
+        version: link:../../credentials/authorization
       '@yharness/cordis':
         specifier: workspace:~
         version: link:../../../vendor/cordis
       '@yharness/deepseek-account':
         specifier: workspace:*
         version: link:../../credentials/deepseek-account
+      '@yharness/github-app-auth':
+        specifier: workspace:*
+        version: link:../../credentials/github-app-auth
       '@yharness/typert-protocol':
         specifier: workspace:*
         version: link:../../typert/protocol
@@ -3557,6 +3569,9 @@ importers:
       '@types/react':
         specifier: ~18.3.1
         version: 18.3.31
+      '@yharness/api-account-controller':
+        specifier: workspace:*
+        version: link:../../api/account-controller
       '@yharness/api-remotes':
         specifier: workspace:*
         version: link:../../api/remotes
@@ -7743,6 +7758,22 @@ importers:
         specifier: workspace:*
         version: link:../../host/webserver
 
+  packages/credentials/github-app-auth:
+    dependencies:
+      '@yharness/schemastery':
+        specifier: link:../../../vendor/schemastery
+        version: link:../../../vendor/schemastery
+    devDependencies:
+      '@yharness/authorization':
+        specifier: workspace:*
+        version: link:../authorization
+      '@yharness/cordis':
+        specifier: workspace:~
+        version: link:../../../vendor/cordis
+      '@yharness/credentials':
+        specifier: workspace:*
+        version: link:../credentials
+
   packages/deliverables/tool-present:
     dependencies:
       '@yharness/schemastery':
@@ -10965,6 +10996,9 @@ importers:
       '@yharness/credentials':
         specifier: workspace:*
         version: link:../../credentials/credentials
+      '@yharness/github-app-auth':
+        specifier: workspace:*
+        version: link:../../credentials/github-app-auth
       '@yharness/schemastery':
         specifier: link:../../../vendor/schemastery
         version: link:../../../vendor/schemastery

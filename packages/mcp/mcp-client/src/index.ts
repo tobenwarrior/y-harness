@@ -17,6 +17,7 @@ import type { Context } from '@yharness/cordis'
 import z from '@yharness/schemastery'
 import { scopeOf } from '@yharness/scope'
 import { MAX_TIMER_DELAY_MS } from '@yharness/timeout'
+import { GITHUB_MCP_URL } from '@yharness/github-app-auth'
 import { DEFAULT_MAX_INSTRUCTION_BYTES, RECONNECT_DEFAULTS, resolveReconnectPolicy, startConnection } from './connection.ts'
 import type { ReconnectConfig } from './connection.ts'
 import { registerServerContext } from './server-context.ts'
@@ -92,6 +93,11 @@ export interface StreamableHttpConfig {
   headers: Record<string, string>
   /** Host credential reference sent as a bearer token to this HTTPS endpoint. */
   bearerTokenRef?: string
+  /**
+   * Use the optional Host-owned GitHub App grant for the official GitHub MCP
+   * endpoint. This cannot be combined with bearerTokenRef or Authorization.
+   */
+  githubAppAuthorization?: boolean
   /** Timeout per tool call or resource request in milliseconds. */
   toolCallTimeoutMs: number
   /** Fail plugin activation when the initial connection or tool synchronization fails. */
@@ -118,6 +124,34 @@ const Reconnect: z<ReconnectConfig> = z.object({
   maxAttempts: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(RECONNECT_DEFAULTS.maxAttempts),
 })
 
+/** Validate the mutually exclusive, endpoint-pinned GitHub App option. */
+const StreamableHttp = z.transform(
+  z.object({
+    transport: z.const('streamable-http'),
+    serverName: z.string().required().pattern(SERVER_NAME_PATTERN),
+    url: z.string().required(),
+    headers: z.dict(String).default({}),
+    bearerTokenRef: z.string(),
+    githubAppAuthorization: z.boolean(),
+    toolCallTimeoutMs: z.number().default(DEFAULT_TOOL_CALL_TIMEOUT_MS),
+    failOnStartupError: z.boolean().default(false),
+    maxInstructionBytes: z.number().step(1).min(1).default(DEFAULT_MAX_INSTRUCTION_BYTES),
+    reconnect: Reconnect,
+  }),
+  (value) => {
+    if (value.githubAppAuthorization === true
+      && (value.bearerTokenRef !== undefined
+        || new Headers(value.headers ?? {}).has('Authorization')
+        || value.url !== GITHUB_MCP_URL)) {
+      throw new Error(
+        `githubAppAuthorization requires the exact endpoint ${GITHUB_MCP_URL} and cannot be combined with bearerTokenRef or an Authorization header`,
+      )
+    }
+    return value
+  },
+  true,
+)
+
 export const Config = z.union([
   z.object({
     transport: z.const('stdio'),
@@ -131,17 +165,7 @@ export const Config = z.union([
     maxInstructionBytes: z.number().step(1).min(1).default(DEFAULT_MAX_INSTRUCTION_BYTES),
     reconnect: Reconnect,
   }),
-  z.object({
-    transport: z.const('streamable-http'),
-    serverName: z.string().required().pattern(SERVER_NAME_PATTERN),
-    url: z.string().required(),
-    headers: z.dict(String).default({}),
-    bearerTokenRef: z.string(),
-    toolCallTimeoutMs: z.number().default(DEFAULT_TOOL_CALL_TIMEOUT_MS),
-    failOnStartupError: z.boolean().default(false),
-    maxInstructionBytes: z.number().step(1).min(1).default(DEFAULT_MAX_INSTRUCTION_BYTES),
-    reconnect: Reconnect,
-  }),
+  StreamableHttp,
 ]) as z<ConfigInput, Config>
 
 // ---- Plugin apply ----

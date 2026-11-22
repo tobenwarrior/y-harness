@@ -11,6 +11,7 @@ import ToolRuntime from '@yharness/tools'
 import McpResources from '@yharness/mcp-resources'
 import { ToolCallId } from '@yharness/llm'
 import { credentialRef } from '@yharness/credentials'
+import { GITHUB_MCP_URL } from '@yharness/github-app-auth'
 import type { Config } from '@yharness/mcp-client'
 
 // ---- Mock MCP SDK ----
@@ -115,6 +116,19 @@ function bearerConfig(reconnect?: Config['reconnect']): Config {
     url: 'https://connector.example.test/mcp',
     headers: {},
     bearerTokenRef: 'MCP_TOKEN',
+    toolCallTimeoutMs: 60_000,
+    failOnStartupError: false,
+    ...reconnect === undefined ? {} : { reconnect },
+  }
+}
+
+function githubAppConfig(reconnect?: Config['reconnect']): Config {
+  return {
+    transport: 'streamable-http',
+    serverName: 'github-app',
+    url: GITHUB_MCP_URL,
+    headers: {},
+    githubAppAuthorization: true,
     toolCallTimeoutMs: 60_000,
     failOnStartupError: false,
     ...reconnect === undefined ? {} : { reconnect },
@@ -254,6 +268,117 @@ describe('reconnect supervisor', () => {
     expect(mockConnect).toHaveBeenCalledTimes(2)
     expect(mockListTools).toHaveBeenCalledTimes(2)
     expect(mockClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps an unauthenticated GitHub App connector idle without retry warnings', async () => {
+    const { warns, errors } = captureLogs(ctx)
+    const status = vi.fn<() => Promise<'connected' | 'needs-auth'>>().mockResolvedValue('needs-auth')
+    const tokenFor = vi.fn<(endpoint: URL) => Promise<string | undefined>>()
+    ctx.provide('githubAppAuth', { status, tokenFor })
+
+    await apply(ctx, githubAppConfig({ initialDelayMs: 2, maxDelayMs: 8, maxAttempts: 1 }))
+    await sleep(30)
+
+    expect(status).toHaveBeenCalledTimes(1)
+    expect(tokenFor).not.toHaveBeenCalled()
+    expect(mockConnect).not.toHaveBeenCalled()
+    expect(ctx.tools.get('mcp__github-app__remote')).toBeUndefined()
+    expect(warns).toEqual([])
+    expect(errors).toEqual([])
+  })
+
+  it('reconnects an idle GitHub App connector only after the provider event reports authorization', async () => {
+    const status = vi.fn<() => Promise<'connected' | 'needs-auth'>>().mockResolvedValueOnce('needs-auth').mockResolvedValue('connected')
+    const tokenFor = vi.fn<(endpoint: URL) => Promise<string | undefined>>().mockResolvedValue('github-token.fixture')
+    ctx.provide('githubAppAuth', { status, tokenFor })
+
+    await apply(ctx, githubAppConfig({ initialDelayMs: 2, maxDelayMs: 8, maxAttempts: 1 }))
+    expect(mockConnect).not.toHaveBeenCalled()
+
+    ctx.emit('github-app-auth/connection-changed')
+    await vi.waitFor(() => { expect(ctx.tools.get('mcp__github-app__remote')).toBeDefined() })
+
+    expect(mockConnect).toHaveBeenCalledTimes(1)
+    expect(status).toHaveBeenCalledTimes(3)
+    expect(tokenFor).not.toHaveBeenCalled()
+  })
+
+  it('reports a missing GitHub App service as a configuration failure', async () => {
+    const { warns } = captureLogs(ctx)
+    const handle = startConnection(ctx, githubAppConfig({ enabled: false }), resolveReconnectPolicy({ enabled: false }, 'reconnect'))
+    try {
+      const outcome = await handle.ready
+      expect(outcome.error).toBeInstanceOf(Error)
+      expect(warns.some(line => line.includes('githubAppAuthorization requires the host github-app-auth service'))).toBe(true)
+      expect(mockConnect).not.toHaveBeenCalled()
+      ctx.emit('github-app-auth/connection-changed')
+      await sleep(5)
+    } finally {
+      await handle.dispose()
+    }
+  })
+
+  it('keeps the connector idle when the provider status lookup fails during an auth event', async () => {
+    const { warns } = captureLogs(ctx)
+    const status = vi.fn<() => Promise<'connected' | 'needs-auth'>>().mockResolvedValueOnce('connected').mockRejectedValueOnce(new Error('fixture status failure'))
+    const tokenFor = vi.fn<(endpoint: URL) => Promise<string | undefined>>().mockResolvedValue('github-token.fixture')
+    ctx.provide('githubAppAuth', { status, tokenFor })
+
+    await apply(ctx, githubAppConfig({ enabled: false }))
+    ctx.emit('github-app-auth/connection-changed')
+    await vi.waitFor(() => { expect(warns.some(line => line.includes('could not read GitHub App authorization status'))).toBe(true) })
+
+    expect(mockConnect).toHaveBeenCalledTimes(1)
+    expect(tokenFor).not.toHaveBeenCalled()
+  })
+
+  it('does not warn when a provider status lookup fails after disposal', async () => {
+    const { warns } = captureLogs(ctx)
+    const statusGate: PromiseWithResolvers<'connected' | 'needs-auth'> = Promise.withResolvers()
+    const status = vi.fn<() => Promise<'connected' | 'needs-auth'>>()
+      .mockResolvedValueOnce('connected')
+      .mockReturnValueOnce(statusGate.promise)
+    const tokenFor = vi.fn<(endpoint: URL) => Promise<string | undefined>>().mockResolvedValue('github-token.fixture')
+    ctx.provide('githubAppAuth', { status, tokenFor })
+
+    const handle = startConnection(ctx, githubAppConfig({ enabled: false }), resolveReconnectPolicy({ enabled: false }, 'reconnect'))
+    await handle.ready
+    ctx.emit('github-app-auth/connection-changed')
+    await vi.waitFor(() => { expect(status).toHaveBeenCalledTimes(2) })
+    const disposing = handle.dispose()
+    statusGate.reject(new Error('late status failure'))
+    await disposing
+    expect(warns.some(line => line.includes('could not read GitHub App authorization status'))).toBe(false)
+    await ctx.fiber.dispose()
+  })
+
+  it('does not warn when the initial provider failure arrives after disposal', async () => {
+    const { warns } = captureLogs(ctx)
+    const statusGate: PromiseWithResolvers<'connected' | 'needs-auth'> = Promise.withResolvers()
+    const status = vi.fn<() => Promise<'connected' | 'needs-auth'>>().mockReturnValue(statusGate.promise)
+    const tokenFor = vi.fn<(endpoint: URL) => Promise<string | undefined>>()
+    ctx.provide('githubAppAuth', { status, tokenFor })
+
+    const handle = startConnection(ctx, githubAppConfig({ enabled: false }), resolveReconnectPolicy({ enabled: false }, 'reconnect'))
+    const ready = handle.ready
+    const disposing = handle.dispose()
+    statusGate.reject(new Error('late provider failure'))
+    expect((await ready).error).toBeInstanceOf(Error)
+    await disposing
+    expect(warns.some(line => line.includes('connection attempt failed'))).toBe(false)
+    await ctx.fiber.dispose()
+  })
+
+  it('retains the first provider failure while later retries fail independently', async () => {
+    const status = vi.fn<() => Promise<'connected' | 'needs-auth'>>().mockRejectedValue(new Error('provider unavailable'))
+    const tokenFor = vi.fn<(endpoint: URL) => Promise<string | undefined>>()
+    ctx.provide('githubAppAuth', { status, tokenFor })
+
+    const handle = startConnection(ctx, githubAppConfig({ initialDelayMs: 2, maxDelayMs: 8, maxAttempts: 1 }), resolveReconnectPolicy({ initialDelayMs: 2, maxDelayMs: 8, maxAttempts: 1 }, 'reconnect'))
+    await handle.ready
+    await vi.waitFor(() => { expect(status).toHaveBeenCalledTimes(2) })
+    await handle.dispose()
+    await ctx.fiber.dispose()
   })
 
   it('does not overlap a replacement when credentials change during connect setup', async () => {

@@ -119,7 +119,7 @@ export function BotReplyAvatar({
 export function BotsRoster({
   wide, expandSidebar, useWorkspace, useSessionStatus, reference: _reference, select, selectGroup,
   create, createGroup, groupsAvailable, organize, templateActions, retry, loadAvatar, avatarEditor, share, sharedClient, t,
-  loadConnectedApps,
+  loadConnectedApps, githubAppSignIn,
   setConnectedAppAccess,
 }: BotsRosterProps): ReactNode {
   const state: BotWorkspaceState = useWorkspace(value => value)
@@ -142,6 +142,7 @@ export function BotsRoster({
       groupError={state.groupError}
       onLoadConnectedApps={loadConnectedApps}
       onSetConnectedAppAccess={setConnectedAppAccess}
+      githubAppSignIn={githubAppSignIn}
       onRetry={retry}
       loadAvatar={loadAvatar}
       avatarEditor={avatarEditor}

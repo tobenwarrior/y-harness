@@ -105,7 +105,7 @@ import type {
   BotAccent, BotAvatarEditorActions, BotConnectedAppAccess, BotCreation, BotGroupCreation, BotGroupDetailData,
   BotGroupReactionRequest, BotGroupReactionValue, BotGroupUpdate, BotProfileUpdate,
   BotGroupSummary, BotIdentity, BotMemoryManagerActions, BotOrganizationPatch, BotRoutineManagerActions,
-  BotSkillManagerActions, BotSkillPolicy, BotTemplateActions, BotTemplateState, BotTemplateSummary,
+  BotSkillManagerActions, BotSkillPolicy, BotTemplateActions, BotTemplateState, BotTemplateSummary, GitHubAppSignInActions,
 } from './types.ts'
 import { readGroupReplyToMessageId } from './group-interactions.ts'
 import { BotSkillPolicyConflictError } from './types.ts'
@@ -292,6 +292,8 @@ export interface BotWorkspaceFace {
   readonly retryGroup: () => void
   readonly loadConnectedApps?: (botId: string) => Promise<readonly BotConnectedAppAccess[]>
   readonly setConnectedAppAccess?: (botId: string, appId: string, allowed: boolean) => Promise<void>
+  /** Optional owner GitHub account device-flow actions for the Connected apps dialog. */
+  readonly githubAppSignIn?: GitHubAppSignInActions
   readonly readGrokHistory?: (botId: string) => Promise<BotGrokHistoryView | null>
   readonly loadAvatar: (botId: string, avatar: BotAvatar) => Promise<string>
   readonly avatarEditor?: BotAvatarEditorActions
