@@ -1,28 +1,8 @@
 .badge {
-  display: inline-grid;
-  grid-template-columns: 14px;
-  align-items: center;
-  justify-content: center;
   flex: none;
   width: 28px;
-  height: 28px;
-  box-sizing: border-box;
-  padding: 0;
-  border: none;
-  border-radius: 50%;
-  corner-shape: round;
-  color: var(--yh-static-neutral-bluish-00);
-  background: var(--yh-static-blue-500);
-  cursor: pointer;
-  font-family: inherit;
-}
-
-.badge:hover {
-  background: var(--yh-static-blue-600);
-}
-
-.badge:active {
-  background: color-mix(in srgb, var(--yh-static-blue-600), var(--yh-static-blue-500) 20%);
+  padding-inline: 0;
+  color: var(--yh-alias-state-business-primary);
 }
 
 .badge:focus-visible {
@@ -30,20 +10,8 @@
   outline-offset: 2px;
 }
 
-.available {
-  background: var(--yh-static-blue-500);
-}
-
 .error {
-  background: var(--yh-alias-state-warn-primary);
-}
-
-.error:hover {
-  background: color-mix(in srgb, var(--yh-alias-state-warn-primary), var(--yh-alias-label-primary) 10%);
-}
-
-.error:active {
-  background: color-mix(in srgb, var(--yh-alias-state-warn-primary), var(--yh-alias-label-primary) 18%);
+  color: var(--yh-alias-state-warn-label);
 }
 
 .icon {
@@ -51,8 +19,4 @@
   place-items: center;
   width: 14px;
   height: 14px;
-}
-
-.icon > svg {
-  color: inherit;
 }

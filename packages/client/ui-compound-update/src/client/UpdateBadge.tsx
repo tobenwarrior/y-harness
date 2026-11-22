@@ -1,7 +1,7 @@
 /** Sidebar-foot status control for a pending or failed Compound skills check. */
 import type { ReactNode } from 'react'
 import {
-  IconDownloadOutlineRegular, IconWarningTriangleOutlineRegular, Tooltip,
+  Button, IconDownloadOutlineRegular, IconWarningTriangleOutlineRegular, Tooltip,
 } from '@yharness/client-ui-primitives'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@yharness/client-ui-slots'
 import type {} from '@yharness/client-ui-sidebar/client'
@@ -23,9 +23,9 @@ export function UpdateBadge({ wide, t, useUpdate, show }: PropsRuntime<'sidebar.
   const failed = status.error !== null
   const title = failed ? t('badgeError') : t('badge')
   return <Tooltip label={title} side={wide ? 'top' : 'right'} delayMs={500}>
-    <button
-      type="button"
-      className={`${css.badge} ${failed ? css.error : css.available}`}
+    <Button
+      size="sm"
+      className={failed ? `${css.badge} ${css.error}` : css.badge}
       onClick={show}
       aria-label={title}
     >
@@ -34,6 +34,6 @@ export function UpdateBadge({ wide, t, useUpdate, show }: PropsRuntime<'sidebar.
           ? <IconWarningTriangleOutlineRegular size={14} />
           : <IconDownloadOutlineRegular size={14} />}
       </span>
-    </button>
+    </Button>
   </Tooltip>
 }
