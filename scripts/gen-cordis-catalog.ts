@@ -964,6 +964,8 @@ export const TYPE_LINK_EXEMPTIONS: Readonly<Record<string, string>> = {
   BotSharedGroupDeliveryFenceDiagnosticValue: 'Shared-group delivery diagnostics are owned by packages/agents/bots/README.md and src/group-chat.ts',
   BotListRequest: 'Bot roster list input is owned by packages/agents/bots/README.md and src/types.ts',
   BotListValue: 'Bot roster list result is owned by packages/agents/bots/README.md and src/types.ts',
+  BotDuplicateRequest: 'Bot duplicate input is owned by packages/agents/bots/README.md and src/types.ts',
+  BotDuplicateValue: 'Bot duplicate result is owned by packages/agents/bots/README.md and src/types.ts',
   BotMessageSearchRequest: 'Bot message search input is owned by packages/agents/bots/README.md and src/types.ts',
   BotMessageSearchValue: 'Bot message search result is owned by packages/agents/bots/README.md and src/types.ts',
   BotGroupListRequest: 'Bot group list input is owned by packages/agents/bots/README.md and src/group-chat.ts',

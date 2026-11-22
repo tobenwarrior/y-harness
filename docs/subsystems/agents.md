@@ -381,6 +381,21 @@ collaborationFor(agent: Pick<Agent, 'id'>): Promise<BotCollaborationClient>
 @Remote('create') async create(request: BotCreateRequest): Promise<BotCreateValue>
 
 /**
+ * Duplicate one owner Bot's safe configuration into a fresh Bot and Session.
+ *
+ * The operation identity deterministically selects the target Bot, so a
+ * retry after a partial provisioning or routine copy resumes the same
+ * target instead of allocating another Bot. Conversations, memories,
+ * credentials, approvals, delivery history, and connected-app state are
+ * deliberately not copied. Every copied routine starts paused.
+ *
+ * @param request - Owner Bot, retry identity, and optional replacement name.
+ * @param signal - Optional cancellation between durable copy steps.
+ * @returns The fresh Bot and a safe copy summary.
+ */
+@Remote('duplicate') async duplicate(request: BotDuplicateRequest, signal?: AbortSignal): Promise<BotDuplicateValue>
+
+/**
  * Resolve a server-owned Bot by its exact backing Session.
  * @param sessionId - Session identity from the live Agent or authenticated UI.
  * @returns The owner Bot, including provisioning state, or undefined for other Sessions.

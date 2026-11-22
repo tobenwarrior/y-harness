@@ -864,6 +864,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'the active row or a retryable provisioning row.',
       },
       {
+        signature: '@Remote(\'duplicate\') async duplicate(request: BotDuplicateRequest, signal?: AbortSignal): Promise<BotDuplicateValue>',
+        description: 'Duplicate one owner Bot\'s safe configuration into a fresh Bot and Session.\n\nThe operation identity deterministically selects the target Bot, so a retry after a partial provisioning or routine copy resumes the same target instead of allocating another Bot. Conversations, memories, credentials, approvals, delivery history, and connected-app state are deliberately not copied. Every copied routine starts paused.',
+        parameters: [{ name: 'request', description: 'Owner Bot, retry identity, and optional replacement name.' }, { name: 'signal', description: 'Optional cancellation between durable copy steps.' }],
+        returns: 'The fresh Bot and a safe copy summary.',
+      },
+      {
         signature: 'async ownerBotForSession(sessionId: string): Promise<{ readonly id: BotId readonly sessionId: SessionId readonly state: \'active\' | \'provisioning\' } | undefined>',
         description: 'Resolve a server-owned Bot by its exact backing Session.',
         parameters: [{ name: 'sessionId', description: 'Session identity from the live Agent or authenticated UI.' }],
@@ -5881,6 +5887,26 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'BotCreateValue',
     declaration: 'export interface BotCreateValue {\n    readonly bot: BotView;\n}',
+  },
+  {
+    name: 'BotDuplicateOperationId',
+    declaration: 'export type BotDuplicateOperationId = Branded<\'BotDuplicateOperationId\'>;',
+  },
+  {
+    name: 'BotDuplicateRequest',
+    declaration: 'export interface BotDuplicateRequest {\n    readonly sourceBotId: BotId;\n    readonly operationId: BotDuplicateOperationId;\n    readonly name?: string;\n}',
+  },
+  {
+    name: 'BotDuplicateRoutineSkip',
+    declaration: 'export interface BotDuplicateRoutineSkip {\n    readonly id: string;\n    readonly reason: BotDuplicateRoutineSkipReason;\n}',
+  },
+  {
+    name: 'BotDuplicateRoutineSkipReason',
+    declaration: 'export type BotDuplicateRoutineSkipReason = \'inactive\' | \'expired\' | \'schedule-unavailable\';',
+  },
+  {
+    name: 'BotDuplicateValue',
+    declaration: 'export interface BotDuplicateValue {\n    readonly bot: BotView;\n    readonly avatarCopied: boolean;\n    readonly routinesCopied: number;\n    readonly skippedRoutines: readonly BotDuplicateRoutineSkip[];\n    readonly skillPolicy: BotSkillPolicy;\n}',
   },
   {
     name: 'BotEventRoutine',
