@@ -25,6 +25,15 @@ describe('desktop Bot prompt links', () => {
       .toBe('dsh-app://app/#/bots/prompt?text=Check%20the%20queue')
   })
 
+  it('routes a Bot chat link from the OS without admitting composer text', () => {
+    const link = 'dsh://bots/open?id=bot-scout'
+    expect(desktopOpenUrlFromArgs(['desktop', link])).toBe(link)
+    expect(routeDesktopBotPrompt(link)).toBe('dsh-app://app/#/bots/open?id=bot-scout')
+    expect(routeDesktopBotPrompt(link + '&text=hello')).toBeUndefined()
+    expect(routeDesktopBotPrompt(link + '&id=bot-other')).toBeUndefined()
+    expect(routeDesktopBotPrompt('dsh://bots/open?id=')).toBeUndefined()
+  })
+
   it.each([
     'dsh://open?text=hello',
     'dsh://bots/other?text=hello',

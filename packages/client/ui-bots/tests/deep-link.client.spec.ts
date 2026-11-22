@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   BOT_PROMPT_MAX_CODE_POINTS,
   BOT_PROMPT_FRAGMENT,
+  botChatLink,
+  parseBotChatUrl,
   parseBotPromptUrl,
 } from '../src/client/deep-link.ts'
 
@@ -56,5 +58,35 @@ describe('Bot prompt deep links', () => {
     const limit = '😀'.repeat(BOT_PROMPT_MAX_CODE_POINTS)
     expect(parseBotPromptUrl(promptUrl(`text=${encodeURIComponent(limit)}`), ORIGIN)?.text).toBe(limit)
     expect(parseBotPromptUrl(promptUrl(`text=${encodeURIComponent(`${limit}😀`)}`), ORIGIN)).toBeUndefined()
+  })
+})
+
+describe('Bot chat links', () => {
+  it('copies a same-origin chat address without the current query, credentials, or draft', () => {
+    const active = new URL('https://user:password@harness.test/workspace/?token=private#/bots/prompt?text=secret')
+    const copied = botChatLink(active, 'bot-scout-1', '')
+    expect(copied).toBe('https://harness.test/workspace/#/bots/open?id=bot-scout-1')
+    expect(parseBotChatUrl(new URL(copied), ORIGIN)).toEqual({ kind: 'id', id: 'bot-scout-1' })
+    const mounted = new URL('https://harness.test//workspace.test/')
+    expect(new URL(botChatLink(mounted, 'bot-scout', '')).origin).toBe(ORIGIN)
+  })
+
+  it('copies a native chat address from Mac and Cloud', () => {
+    const native = 'dsh://bots/open?id=bot-scout'
+    expect(botChatLink(new URL('dsh-app://app/'), 'bot-scout', '')).toBe(native)
+    const cloud = new URL('http://127.0.0.1:12345/?token=private')
+    expect(botChatLink(cloud, 'bot-scout', 'Chrome YHarnessCloudDesktop/1')).toBe(native)
+  })
+
+  it.each([
+    '', 'id=wrong', 'id=bot-scout&text=hello', 'id=bot-scout&id=bot-other',
+    'id=bot-scout#unknown', 'id=bot-scout&token=private',
+  ])('ignores incomplete or ambiguous chat links: %s', (parameters) => {
+    expect(parseBotChatUrl(new URL(`${ORIGIN}/#/bots/open?${parameters}`), ORIGIN)).toBeUndefined()
+  })
+
+  it('rejects a chat link from a different origin and a prompt fragment', () => {
+    expect(parseBotChatUrl(new URL(`${ORIGIN}/#/bots/open?id=bot-scout`), 'https://other.test')).toBeUndefined()
+    expect(parseBotChatUrl(promptUrl('id=bot-scout&text=hello'), ORIGIN)).toBeUndefined()
   })
 })

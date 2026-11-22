@@ -6,7 +6,7 @@ import { DESKTOP_IPC } from './ipc.ts'
 export function installBotPromptNavigation(): void {
   if (!process.isMainFrame) return
   ipcRenderer.on(DESKTOP_IPC.botPromptNavigation, (_event, fragment: unknown) => {
-    if (typeof fragment !== 'string' || !fragment.startsWith('#/bots/prompt?')) return
+    if (typeof fragment !== 'string' || !/^#\/bots\/(?:prompt|open)\?/u.test(fragment)) return
     const oldURL = location.href
     const next = new URL(oldURL)
     next.hash = fragment

@@ -29,6 +29,7 @@ const INLINE_VISUAL_DIR = process.env.DSH_GROK_INLINE_VISUAL_DIR
 const DUPLICATE_VISUAL_DIR = process.env.DSH_BOT_DUPLICATE_VISUAL_DIR
 const PRIMARY_VISUAL_DIR = process.env.DSH_PRIMARY_BOT_VISUAL_DIR
 const PROMPT_VISUAL_DIR = process.env.DSH_BOT_PROMPT_LINK_VISUAL_DIR
+const CHAT_LINK_VISUAL_DIR = process.env.DSH_BOT_CHAT_LINK_VISUAL_DIR
 
 describe('web e2e: Bot workspace retains one Conversation Session per Bot', () => {
   let scaffold: WebScaffold
@@ -42,7 +43,8 @@ describe('web e2e: Bot workspace retains one Conversation Session per Bot', () =
     // The scenario exercises the real Bot and Session services but never sends
     // a model request, so a header-only providers-only fixture is sufficient.
     scaffold = await launchWebScaffold({ replayFixture: FIXTURE, replayProvidersOnly: true })
-    if (CAPTURE_HISTORY || DUPLICATE_VISUAL_DIR !== undefined || PRIMARY_VISUAL_DIR !== undefined || PROMPT_VISUAL_DIR !== undefined) {
+    if (CAPTURE_HISTORY || DUPLICATE_VISUAL_DIR !== undefined || PRIMARY_VISUAL_DIR !== undefined
+      || PROMPT_VISUAL_DIR !== undefined || CHAT_LINK_VISUAL_DIR !== undefined) {
       await scaffold.ctx.settings.update('ui-theme', { preference: 'system' })
     }
     firstBot = (await scaffold.ctx.bots.create({
@@ -682,6 +684,63 @@ describe('web e2e: Bot workspace retains one Conversation Session per Bot', () =
     expect(await detail.getByTitle('notes.txt').count()).toBe(1)
 
     using observed = await scaffold.ctx.sessionQuery.observeSession(relay.sessionId)
+    expect(observed.events.some(event => event.type === 'user/message')).toBe(false)
+    expect(tripwire.pageErrors).toEqual([])
+    expect(tripwire.warnings).toEqual([])
+  })
+
+  it('copies a Bot chat link and reopens the same chat without writing to the composer', async () => {
+    onTestFailed(() => saveFailureShot(page, 'web-e2e-bot-chat-link'))
+    const bot = (await scaffold.ctx.bots.create({
+      name: 'Sage', identity: 'browse', accent: 'teal', cwd: scaffold.workspaceCwd,
+    })).bot
+    const address = new URL(scaffold.baseUrl)
+    const parameters = new URLSearchParams({ id: bot.id })
+    address.hash = `/bots/open?${parameters.toString()}`
+    await page.context().grantPermissions(['clipboard-read', 'clipboard-write'], { origin: address.origin })
+    await page.goto('about:blank')
+    await page.goto(address.href, { waitUntil: 'load' })
+    const detail = page.getByRole('region', { name: bot.name, exact: true })
+    const composer = detail.locator('[data-composer-input][contenteditable="true"]')
+    await composer.waitFor()
+    expect(new URL(page.url()).hash).toBe('')
+    expect(await composer.textContent()).toBe('')
+    await composer.fill('Keep the existing unsent draft')
+
+    const options = detail.getByRole('button', { name: 'Bot options', exact: true })
+    const copy = page.getByRole('menuitem', { name: 'Copy chat link', exact: true })
+    if (CHAT_LINK_VISUAL_DIR !== undefined) {
+      await mkdir(CHAT_LINK_VISUAL_DIR, { recursive: true })
+      for (const [width, theme, filename] of [
+        [1440, 'dark', 'desktop-dark.png'], [480, 'light', 'narrow-light.png'],
+      ] as const) {
+        await page.setViewportSize({ width, height: 900 })
+        await page.emulateMedia({ colorScheme: theme, reducedMotion: 'reduce' })
+        await page.locator('body[data-ds-dark-theme]').waitFor({ state: theme === 'dark' ? 'visible' : 'detached' })
+        await options.click()
+        await copy.waitFor()
+        const bounds = await copy.boundingBox()
+        expect(bounds).not.toBeNull()
+        expect(bounds!.x).toBeGreaterThanOrEqual(0)
+        expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(width)
+        await page.screenshot({ path: join(CHAT_LINK_VISUAL_DIR, filename), animations: 'disabled' })
+        await page.keyboard.press('Escape')
+        await copy.waitFor({ state: 'hidden' })
+      }
+      await page.setViewportSize({ width: 1440, height: 900 })
+    }
+    await options.click()
+    await copy.click()
+    await page.getByText('Chat link copied.', { exact: true }).waitFor()
+    const copied = await page.evaluate(() => navigator.clipboard.readText())
+    expect(copied).toBe(address.href)
+
+    await page.getByRole('button', { name: 'Code', exact: true }).click()
+    await composer.waitFor({ state: 'hidden' })
+    await page.evaluate((fragment) => { window.location.hash = fragment }, new URL(copied).hash)
+    await composer.waitFor()
+    expect(await composer.textContent()).toBe('Keep the existing unsent draft')
+    using observed = await scaffold.ctx.sessionQuery.observeSession(bot.sessionId)
     expect(observed.events.some(event => event.type === 'user/message')).toBe(false)
     expect(tripwire.pageErrors).toEqual([])
     expect(tripwire.warnings).toEqual([])

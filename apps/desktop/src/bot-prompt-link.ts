@@ -1,4 +1,4 @@
-/** Desktop transport admission for the Bot prompt deep link. */
+/** Desktop transport admission for Bot links. */
 
 /** Protocol route used by other applications to address a Bot prompt. */
 export const DESKTOP_BOT_PROMPT_PROTOCOL = 'dsh:'
@@ -18,7 +18,7 @@ export function desktopOpenUrlFromArgs(argv: readonly string[]): string | undefi
 }
 
 /**
- * Convert one external Bot prompt link into the private application URL consumed by the renderer.
+ * Convert one external Bot link into the private application URL consumed by the renderer.
  *
  * The desktop shell admits only the transport route and the two renderer-owned
  * query keys. The renderer remains the semantic authority for Bot ids, primary
@@ -36,26 +36,23 @@ export function routeDesktopBotPrompt(value: string): string | undefined {
     return undefined
   }
   if (source.protocol !== DESKTOP_BOT_PROMPT_PROTOCOL || source.hostname !== 'bots'
-    || source.port !== '' || source.pathname !== '/prompt'
+    || source.port !== '' || (source.pathname !== '/prompt' && source.pathname !== '/open')
     || source.username !== '' || source.password !== '' || source.hash !== '') return undefined
   if (source.search.length > DESKTOP_BOT_PROMPT_QUERY_LIMIT) return undefined
 
   const keys = new Set<string>()
-  let hasText = false
+  const prompt = source.pathname === '/prompt'
   for (const [key, value] of source.searchParams) {
-    if (key !== 'id' && key !== 'text') return undefined
+    if (key !== 'id' && !(prompt && key === 'text')) return undefined
     if (keys.has(key)) return undefined
     keys.add(key)
-    if (key === 'text') {
-      if (value.length === 0) return undefined
-      hasText = true
-    }
+    if (key === (prompt ? 'text' : 'id') && value.length === 0) return undefined
   }
-  if (!hasText) return undefined
+  if (!keys.has(prompt ? 'text' : 'id')) return undefined
 
   const target = new URL('dsh-app://app/')
   // Fragments stay out of Host requests and access logs; the renderer consumes
   // this route once it has booted and removes it from the visible URL.
-  target.hash = `/bots/prompt${source.search}`
+  target.hash = `/bots${source.pathname}${source.search}`
   return target.href
 }
