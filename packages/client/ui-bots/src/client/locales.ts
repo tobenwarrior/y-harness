@@ -647,6 +647,8 @@ export const en = {
   computerScopeWorkspaceMeta: 'Display and input are shared by this Cloud workspace',
   botMentionSection: 'Bots',
   botMentionLabel: 'Bot',
+  botGroupMentionSection: 'Groups',
+  botGroupMentionLabel: 'Group',
   macComputerTitle: 'This Mac',
   macComputerSetupTitle: 'Let this bot use your Mac',
   macComputerSetupDescription: 'Set up two macOS permissions to share your primary display and let this bot click, scroll, and type.',

@@ -20,6 +20,7 @@ import { createComputerAvailability } from './computer-availability.ts'
 import { createComputerClient } from './computer-client.ts'
 import { ComputerGlyph } from './ComputerAction.tsx'
 import { createBotReferenceSource } from './bot-reference-source.ts'
+import { createBotGroupReferenceSource } from './bot-group-reference-source.ts'
 import { BotVaultRequestCard } from './BotVaultRequestCard.tsx'
 import { BotWebsiteLoginRequestCard } from './BotWebsiteLoginRequestCard.tsx'
 import { ComputerSignInCard } from './ComputerSignInCard.tsx'
@@ -130,6 +131,13 @@ export function apply(ctx: Context): void {
       ready: rosterReady,
     })
     scope.effect(() => scope.inputTriggers.registerSource(botSource), 'ui-bots: Bot mention')
+    const botGroupSource = createBotGroupReferenceSource({
+      workspace,
+      section: () => scope.locale.bind('bots')('botGroupMentionSection'),
+      groupLabel: () => scope.locale.bind('bots')('botGroupMentionLabel'),
+      ready: rosterReady,
+    })
+    scope.effect(() => scope.inputTriggers.registerSource(botGroupSource), 'ui-bots: Bot group mention')
 
     const availableFor = (sessionId: string): boolean => {
       const availability = computerAvailability.source.getSnapshot()

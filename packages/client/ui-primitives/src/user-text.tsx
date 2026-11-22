@@ -18,7 +18,7 @@
 import type { ComponentType, ReactNode } from 'react'
 import clsx from 'clsx'
 import { ReferenceIconRegular, type InlineReferenceIconProps } from './ReferenceIcon.tsx'
-import { botMentionsIn } from './bot-mention.ts'
+import { botGroupMentionsIn, botMentionsIn } from './bot-mention.ts'
 import css from './user-text.module.css'
 import markdownCss from './markdown/MarkdownText.module.css'
 
@@ -33,7 +33,7 @@ interface DecorationRange {
   readonly end: number
   /** Matched source text (hover title). */
   readonly label: string
-  readonly kind: 'bot' | 'session' | 'plain'
+  readonly kind: 'bot' | 'bot-group' | 'session' | 'plain'
   /** Pre-resolved display text (wire folds); derived from label when absent. */
   readonly display?: string
 }
@@ -73,6 +73,15 @@ export function projectUserText(
       end: mention.index + mention.text.length,
       label: mention.text,
       kind: 'bot',
+      display: mention.label,
+    })
+  }
+  for (const mention of botGroupMentionsIn(text)) {
+    ranges.push({
+      start: mention.index,
+      end: mention.index + mention.text.length,
+      label: mention.text,
+      kind: 'bot-group',
       display: mention.label,
     })
   }
@@ -149,7 +158,7 @@ export function projectUserText(
         : undefined
     const className = clsx(css.refChip, referenceKind === undefined && css.slashChip)
     parts.push(open === undefined
-      ? <span key={tokenStart} className={className} data-ref-chip={referenceKind ?? slashKind} title={kind === 'bot' ? displayLabel : label}>
+      ? <span key={tokenStart} className={className} data-ref-chip={referenceKind ?? slashKind} title={kind === 'bot' || kind === 'bot-group' ? displayLabel : label}>
         {contents}
       </span>
       : <button

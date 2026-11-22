@@ -2,9 +2,12 @@
 // carries its stable identity through send, and renders the inline avatar in
 // the resulting transcript while a read-only inspection leaves the target log
 // untouched.
+import { mkdir } from 'node:fs/promises'
+import { join } from 'node:path'
 import type { GenerateOptions, StreamChunk } from '@yharness/llm'
 import { LlmAdapter, ToolCallId, createAssistantMessage, createUserMessage } from '@yharness/llm'
 import { SessionId } from '@yharness/session'
+import type { BotGroupId } from '@yharness/bots'
 import type { Browser, Page } from 'playwright'
 import { chromium } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it, onTestFailed } from 'vitest'
@@ -21,6 +24,17 @@ const PROVIDER = 'bot-mention-browser-test'
 const MODEL = 'reply'
 const PROMPT = 'Read the Atlas status.'
 const REPLY = 'Atlas inspection completed from the read-only fixture.'
+const GROUP_NAME = 'Release planning'
+const OTHER_GROUP_NAME = 'External release room'
+const GROUP_PROMPT = 'Read this release plan.'
+const GROUP_REPLY = 'Release planning inspected.'
+const PREVIEWS = process.env.YH_GROUP_MENTION_SCREENSHOTS
+
+async function capture(page: Page, filename: string): Promise<void> {
+  if (PREVIEWS === undefined) return
+  await mkdir(PREVIEWS, { recursive: true })
+  await page.screenshot({ path: join(PREVIEWS, filename), animations: 'disabled' })
+}
 
 function userTexts(options: GenerateOptions): string[] {
   return options.messages
@@ -28,12 +42,12 @@ function userTexts(options: GenerateOptions): string[] {
     .map(message => message.content.filter(block => block.type === 'text').map(block => block.text).join('\n'))
 }
 
-/** Deterministic model round that reads one Bot through the existing tool. */
+/** Deterministic inspection calls for a Bot or a group. */
 class InspectionAdapter extends LlmAdapter {
   readonly requests: GenerateOptions[] = []
-  private inspected = false
+  private readonly inspected = new Set<string>()
 
-  constructor(private readonly targetBotId: string) {
+  constructor(private readonly targetBotId: string, private readonly targetGroupId: string) {
     super()
   }
 
@@ -43,20 +57,25 @@ class InspectionAdapter extends LlmAdapter {
 
   override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     this.requests.push(options)
-    const userText = userTexts(options).find(text => text.includes(PROMPT)) ?? ''
-    const mentionId = /dsh-bot:(bot-[A-Za-z0-9][A-Za-z0-9-]*)/u.exec(userText)?.[1]
-    if (!this.inspected && userText.includes(PROMPT) && mentionId === this.targetBotId) {
-      this.inspected = true
-      const callId = ToolCallId('bot-mention-inspection')
-      const argumentsText = JSON.stringify({ botId: mentionId })
+    const userText = userTexts(options).findLast(text => text.includes(PROMPT) || text.includes(GROUP_PROMPT)) ?? ''
+    const groupMention = userText.includes(GROUP_PROMPT)
+    const tool = groupMention ? 'inspect_bot_group' : 'inspect_bot'
+    const mentionedId = groupMention
+      ? /dsh-bot-group:(bot-group-[A-Za-z0-9][A-Za-z0-9-]*)/u.exec(userText)?.[1]
+      : /dsh-bot:(bot-[A-Za-z0-9][A-Za-z0-9-]*)/u.exec(userText)?.[1]
+    const expected = groupMention ? this.targetGroupId : this.targetBotId
+    if (!this.inspected.has(tool) && mentionedId === expected) {
+      this.inspected.add(tool)
+      const callId = ToolCallId(`bot-mention-${tool}`)
+      const argumentsText = JSON.stringify(groupMention ? { groupId: mentionedId } : { botId: mentionedId })
       yield { type: 'block-start', index: 0, blockType: 'tool-call' }
-      yield { type: 'tool-call-delta', index: 0, id: callId, name: 'inspect_bot', argumentsDelta: argumentsText }
-      yield { type: 'block-end', index: 0, block: { type: 'tool-call', id: callId, name: 'inspect_bot', arguments: argumentsText } }
+      yield { type: 'tool-call-delta', index: 0, id: callId, name: tool, argumentsDelta: argumentsText }
+      yield { type: 'block-end', index: 0, block: { type: 'tool-call', id: callId, name: tool, arguments: argumentsText } }
       yield { type: 'finish', reason: { kind: 'tool-calls' } }
       return
     }
     yield { type: 'block-start', index: 0, blockType: 'text' }
-    yield { type: 'block-end', index: 0, block: { type: 'text', text: REPLY } }
+    yield { type: 'block-end', index: 0, block: { type: 'text', text: groupMention ? GROUP_REPLY : REPLY } }
     yield { type: 'finish', reason: { kind: 'stop' } }
   }
 }
@@ -70,6 +89,7 @@ describe.skipIf(MODE === 'record')('web e2e: Bot mentions in the shared Bot comp
   let targetBotId: string
   let orbitSessionId: string
   let targetSessionId: string
+  let targetGroupId: BotGroupId
   let adapter: InspectionAdapter
 
   beforeAll(async () => {
@@ -81,6 +101,12 @@ describe.skipIf(MODE === 'record')('web e2e: Bot mentions in the shared Bot comp
       name: 'Atlas', identity: 'sparkle', accent: 'violet',
       description: 'Read-only browser fixture Bot', cwd: scaffold.workspaceCwd,
     })).bot
+    const scout = (await scaffold.ctx.bots.create({
+      name: 'Scout', identity: 'browse', accent: 'amber', cwd: scaffold.workspaceCwd,
+    })).bot
+    const targetGroup = (await scaffold.ctx.bots.createGroup({ name: GROUP_NAME, botIds: [orbit.id, atlas.id] })).group
+    await scaffold.ctx.bots.createGroup({ name: OTHER_GROUP_NAME, botIds: [atlas.id, scout.id] })
+    targetGroupId = targetGroup.id
     orbitBotId = String(orbit.id)
     targetBotId = String(atlas.id)
     orbitSessionId = String(orbit.sessionId)
@@ -102,7 +128,7 @@ describe.skipIf(MODE === 'record')('web e2e: Bot mentions in the shared Bot comp
     targetSession.append('step/end', { turn: 1, step: 1 })
     targetSession.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
     await scaffold.ctx.sessions.flush(targetSession)
-    adapter = new InspectionAdapter(targetBotId)
+    adapter = new InspectionAdapter(targetBotId, targetGroupId)
     scaffold.ctx.effect(
       () => scaffold.ctx.llm.registerAdapter([PROVIDER], adapter),
       'Bot mention browser fixture adapter',
@@ -167,6 +193,55 @@ describe.skipIf(MODE === 'record')('web e2e: Bot mentions in the shared Bot comp
     const atlasSession = scaffold.ctx.sessions.get(SessionId(targetSessionId))
     if (atlasSession === undefined) throw new Error('Atlas Bot Session disappeared')
     expect(atlasSession.snapshotEvents().filter(event => event.type === 'user/message')).toHaveLength(1)
+    expect(tripwire.pageErrors).toEqual([])
+    expect(tripwire.warnings).toEqual([])
+  }, 120_000)
+
+  it('attaches a visible group and reads its transcript through the exact group id', async () => {
+    onTestFailed(() => saveFailureShot(page, 'web-e2e-bot-group-mention'))
+    const sidebar = page.locator('[data-yh-part="sidebar"]')
+    const roster = sidebar.locator('aside[aria-label="Bot workspace"]')
+    if (!await roster.isVisible()) await sidebar.getByRole('button', { name: 'Bots', exact: true }).click()
+    await roster.locator(`[data-bot-id="${orbitBotId}"]`).click()
+    const detail = page.locator('section[aria-label="Orbit"]')
+    const input = detail.locator('[data-composer-input]').first()
+    await page.setViewportSize({ width: 1440, height: 960 })
+    await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' })
+    await expect.poll(() => page.locator('body').getAttribute('data-ds-dark-theme')).toBe('')
+    const before = adapter.requests.length
+    await writeComposerDraft(page, input, '@release')
+    const menu = page.getByRole('listbox', { name: 'Trigger suggestions' })
+    const option = menu.getByRole('option', { name: /Release planning.*Group/u })
+    await option.waitFor({ state: 'visible', timeout: 15_000 })
+    await menu.locator('[class*="skeletonRow"]').first().waitFor({ state: 'hidden' })
+    await expect.poll(() => menu.getByRole('option', { name: /External release room/u }).count()).toBe(0)
+    await capture(page, 'desktop-group-picker-dark.png')
+    await option.click()
+    const chip = input.locator('[data-composer-chip="bot-group"]')
+    await expect.poll(() => chip.textContent()).toBe(GROUP_NAME)
+    expect(adapter.requests).toHaveLength(before)
+    await page.setViewportSize({ width: 480, height: 900 })
+    await page.getByRole('button', { name: 'Open sidebar', exact: true }).waitFor()
+    await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' })
+    await expect.poll(() => page.locator('body').getAttribute('data-ds-dark-theme')).toBeNull()
+    await capture(page, 'narrow-group-chip-light.png')
+    await input.click()
+    await page.keyboard.press('End')
+    await page.keyboard.type(` ${GROUP_PROMPT}`)
+    await detail.getByRole('button', { name: 'Send message', exact: true }).click()
+    await detail.getByText(GROUP_REPLY, { exact: true }).waitFor({ state: 'visible', timeout: 30_000 })
+    const firstRequest = adapter.requests.at(before)
+    if (firstRequest === undefined) throw new Error('Group mention request was not captured')
+    expect(userTexts(firstRequest).at(-1)).toContain(`dsh-bot-group:${targetGroupId}`)
+    const groupChip = detail.locator('[data-chat-flow-kind="user"] [data-ref-chip="bot-group"]')
+    await expect.poll(() => groupChip.textContent()).toBe(GROUP_NAME)
+    const orbitSession = scaffold.ctx.sessions.get(SessionId(orbitSessionId))
+    if (orbitSession === undefined) throw new Error('Orbit Bot Session disappeared')
+    const toolCalls = orbitSession.snapshotEvents().filter(event => event.type === 'tool/call').map(event => event.data.name)
+    expect(toolCalls.filter(name => name === 'inspect_bot_group')).toHaveLength(1)
+    expect(toolCalls.some(name => name.startsWith('send_bot'))).toBe(false)
+    expect(JSON.stringify(orbitSession.snapshotEvents().filter(event => event.type === 'tool/result'))).toContain(GROUP_NAME)
+    expect((await scaffold.ctx.bots.inspectGroup({ groupId: targetGroupId })).messages).toEqual([])
     expect(tripwire.pageErrors).toEqual([])
     expect(tripwire.warnings).toEqual([])
   }, 120_000)

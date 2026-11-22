@@ -1,6 +1,6 @@
 import { useSyncExternalStore, type ComponentType, type ReactNode } from 'react'
 import type { ObservableSnapshot } from '@yharness/client-store'
-import { ICON_MEDIUM_STROKE, ICON_REGULAR_STROKE } from './icons/index.tsx'
+import { ICON_MEDIUM_STROKE, ICON_REGULAR_STROKE, IconUsersOutlineMedium, IconUsersOutlineRegular } from './icons/index.tsx'
 import type { IconProps } from './icons/props.ts'
 import {
   BrowseOutlineArtwork, ChatLinesOutlineArtwork, FolderCloseArtwork,
@@ -8,7 +8,7 @@ import {
 import { IconSidebarBotsOutlineMedium, IconSidebarBotsOutlineRegular } from './icons/sidebar-artwork.tsx'
 
 /** Reference domains with distinct composer and transcript glyphs. */
-export type ReferenceIconKind = 'session' | 'file' | 'folder' | 'bot'
+export type ReferenceIconKind = 'session' | 'file' | 'folder' | 'bot' | 'bot-group'
 
 /** Display inputs for a source-owned inline reference icon. */
 export interface InlineReferenceIconProps {
@@ -58,6 +58,9 @@ function ReferenceIconArtwork({ kind, size = 16, className, strokeWidth }: Weigh
     case 'bot': return strokeWidth === ICON_REGULAR_STROKE
       ? <IconSidebarBotsOutlineRegular size={size} className={className} />
       : <IconSidebarBotsOutlineMedium size={size} className={className} />
+    case 'bot-group': return strokeWidth === ICON_REGULAR_STROKE
+      ? <IconUsersOutlineRegular size={size} className={className} />
+      : <IconUsersOutlineMedium size={size} className={className} />
   }
 }
 
