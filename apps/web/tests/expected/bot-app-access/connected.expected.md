@@ -1,7 +1,7 @@
 - dialog "Connected apps":
   - heading "Connected apps" [level=2]
   - button "Done"
-  - paragraph: Manage Scout’s Host connections and Bot access. Credentials stay on this Host.
+  - paragraph: Manage Scout’s app access; credentials stay on this Host.
   - list "Connected apps":
     - listitem:
       - strong: Cloudflare
