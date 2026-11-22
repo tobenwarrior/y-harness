@@ -11662,10 +11662,7 @@ describe('durable Bot roster', () => {
       expect(preview.changedAppIds).toEqual([])
       expect(preview).not.toHaveProperty('bot')
       await expect(h.service.listConnectedApps({ botId: created.bot.id })).resolves.toMatchObject({
-        apps: [
-          { id: 'github', allowed: false },
-          { id: 'offline', allowed: false },
-        ],
+        apps: [{ id: 'github', allowed: false }],
       })
 
       await expect(h.service.importGrokConnectedApps({
@@ -11673,10 +11670,7 @@ describe('durable Bot roster', () => {
         expectedUpdatedAt: preview.updatedAt,
       })).rejects.toMatchObject({ code: 'gateway/bad-request' })
       await expect(h.service.listConnectedApps({ botId: created.bot.id })).resolves.toMatchObject({
-        apps: [
-          { id: 'github', allowed: false },
-          { id: 'offline', allowed: false },
-        ],
+        apps: [{ id: 'github', allowed: false }],
       })
 
       const validMappings = mappings.slice(0, 2)
@@ -11686,6 +11680,10 @@ describe('durable Bot roster', () => {
       })
       expect(applied.changedAppIds).toEqual(['github', 'offline'])
       expect(applied.updatedAt).toBeGreaterThan(preview.updatedAt)
+      expect(applied.mappings.slice(0, 2)).toMatchObject([
+        { sourceIndex: 0, resolution: 'connected', allowed: true },
+        { sourceIndex: 1, resolution: 'unconnected', allowed: true },
+      ])
       await expect(h.service.listConnectedApps({ botId: created.bot.id })).resolves.toMatchObject({
         apps: [
           { id: 'github', allowed: true },

@@ -4498,9 +4498,6 @@ export class BotService extends TypertRemoteService {
     for (const id of resources?.servers(agent) ?? []) {
       if (!names.has(id)) names.set(id, connectedAppName(id))
     }
-    for (const catalog of this.mcpActionCatalogs()) {
-      if (!names.has(catalog.serverName)) names.set(catalog.serverName, connectedAppName(catalog.serverName))
-    }
     for (const id of record.connectedAppIds ?? []) {
       if (!names.has(id)) names.set(id, connectedAppName(id))
     }
@@ -4541,13 +4538,12 @@ export class BotService extends TypertRemoteService {
       if (mappingByIndex.has(mapping.sourceIndex)) duplicateIndexes.add(mapping.sourceIndex)
       else mappingByIndex.set(mapping.sourceIndex, mapping)
     }
-    const catalogsByServer = new Map<string, McpActionCatalog[]>()
+    const catalogsByServer = new Map<string, McpActionCatalog>()
+    const duplicateServers = new Set<string>()
     for (const catalog of catalogs) {
-      const entries = catalogsByServer.get(catalog.serverName)
-      if (entries === undefined) catalogsByServer.set(catalog.serverName, [catalog])
-      else entries.push(catalog)
+      if (catalogsByServer.has(catalog.serverName)) duplicateServers.add(catalog.serverName)
+      else catalogsByServer.set(catalog.serverName, catalog)
     }
-    const appsById = new Map(this.connectedAppsFor(record).map(app => [app.id, app]))
     const eligibleIds = new Set<string>()
     let unresolved = false
     const rows = sourceApps.map((sourceLabel, sourceIndex): BotGrokConnectedAppMappingView => {
@@ -4557,30 +4553,14 @@ export class BotService extends TypertRemoteService {
         unresolved = true
         return { sourceIndex, sourceLabel, resolution: 'ambiguous', targetServerName: mapping.targetServerName }
       }
-      const matches = catalogsByServer.get(mapping.targetServerName)
-      if (matches === undefined) {
-        unresolved = true
-        return { sourceIndex, sourceLabel, resolution: catalogs.length === 0 ? 'unavailable' : 'missing', targetServerName: mapping.targetServerName }
-      }
-      if (matches.length !== 1) {
+      if (duplicateServers.has(mapping.targetServerName)) {
         unresolved = true
         return { sourceIndex, sourceLabel, resolution: 'ambiguous', targetServerName: mapping.targetServerName }
       }
-      const [match] = matches
+      const match = catalogsByServer.get(mapping.targetServerName)
       if (match === undefined) {
         unresolved = true
-        return { sourceIndex, sourceLabel, resolution: 'ambiguous', targetServerName: mapping.targetServerName }
-      }
-      const app = appsById.get(mapping.targetServerName)
-      if (app === undefined) {
-        unresolved = true
-        return {
-          sourceIndex,
-          sourceLabel,
-          resolution: 'ambiguous',
-          targetServerName: mapping.targetServerName,
-          entryId: match.entryId,
-        }
+        return { sourceIndex, sourceLabel, resolution: catalogs.length === 0 ? 'unavailable' : 'missing', targetServerName: mapping.targetServerName }
       }
       const resolution: BotGrokConnectedAppResolution = match.connected ? 'connected' : 'unconnected'
       eligibleIds.add(mapping.targetServerName)
@@ -4590,12 +4570,11 @@ export class BotService extends TypertRemoteService {
         resolution,
         targetServerName: mapping.targetServerName,
         entryId: match.entryId,
-        allowed: app.allowed,
+        allowed: record.connectedAppIds === undefined
+          ? !(record.connectedAppDenyIds ?? []).includes(mapping.targetServerName)
+          : record.connectedAppIds.includes(mapping.targetServerName),
       }
     })
-    for (const mapping of mappings) {
-      if (mapping.sourceIndex >= sourceApps.length) unresolved = true
-    }
     return { rows, eligibleIds: [...eligibleIds], catalogAvailable: catalogs.length > 0, unresolved }
   }
 
@@ -7574,9 +7553,19 @@ export class BotService extends TypertRemoteService {
       this.recordsBySession.set(String(next.sessionId), next)
       this.refreshSharedRecords(next)
       this.emitChanged()
+      const mappingsAfterApply = review.rows.map((row) => {
+        const targetServerName = row.targetServerName
+        if (targetServerName === undefined || !targetIds.includes(targetServerName)) return row
+        return {
+          ...row,
+          allowed: next.connectedAppIds === undefined
+            ? !(next.connectedAppDenyIds ?? []).includes(targetServerName)
+            : next.connectedAppIds.includes(targetServerName),
+        }
+      })
       return {
         updatedAt: next.updatedAt,
-        mappings: review.rows,
+        mappings: mappingsAfterApply,
         changedAppIds,
         catalogAvailable: review.catalogAvailable,
       }
