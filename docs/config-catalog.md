@@ -224,7 +224,7 @@ export interface Config {
 ## `@yharness/api-session-controller`
 
 - `inject`: `agentDefaultModel` · `agents` · `attachments` · `fileUploads` · `fs` · `llm` · `sessions` · `sessionProjections` · `sessionQuery` · `typert` · `workspaceRegistry`
-- `source`: [`packages/api/session-controller/src/index.ts:79`](../packages/api/session-controller/src/index.ts)
+- `source`: [`packages/api/session-controller/src/index.ts:80`](../packages/api/session-controller/src/index.ts)
 
 ```ts config-catalog
 /** Session Controller deployment policy. */
@@ -467,7 +467,7 @@ export type Config = LocalConfig
 ## `@yharness/bots`
 
 - `inject`: `agents` · `storageDomain` · `sessionController` · `sessions` · `attachments` · `systemPrompt` · `tools`
-- `source`: [`packages/agents/bots/src/index.ts:679`](../packages/agents/bots/src/index.ts)
+- `source`: [`packages/agents/bots/src/index.ts:687`](../packages/agents/bots/src/index.ts)
 
 ```ts config-catalog
 /** Bot service configuration. */

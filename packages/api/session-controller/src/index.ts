@@ -52,6 +52,7 @@ import type {
   SessionPromptValue,
   SessionRenameRequest,
   SessionRenameValue,
+  ModelSelection,
   SessionSearchRequest,
   SessionSearchValue,
   SessionSelectModelRequest,
@@ -292,6 +293,28 @@ export class SessionController extends TypertRemoteService {
   @Remote('selectModel')
   selectModel(request: SessionSelectModelRequest): Promise<SessionSelectModelValue> {
     return this.commands.selectModel(request)
+  }
+
+  /**
+   * Read the persisted next/last-used model choice for one Session without activating it.
+   * @param sessionId - Session identity whose choice is copied.
+   * @param signal - optional cancellation for the persistence read.
+   * @returns the persisted next/last-used choice or undefined when no choice has been logged.
+   */
+  snapshotModelSelection(sessionId: SessionId, signal?: AbortSignal): Promise<ModelSelection | undefined> {
+    return this.commands.snapshotModelSelection(sessionId, signal)
+  }
+
+  /**
+   * Install a persisted model choice on one Session without changing the deployment default.
+   * A destination that already has a persisted next/last-used choice keeps that choice for retry safety.
+   * @param sessionId - destination Session identity.
+   * @param selection - provider, model, and optional adapter selection to install.
+   * @param signal - optional cancellation for validation and persistence.
+   * @returns the provider-resolved choice installed on the Session, or the existing destination choice.
+   */
+  seedModelSelection(sessionId: SessionId, selection: ModelSelection, signal?: AbortSignal): Promise<ModelSelection> {
+    return this.commands.seedModelSelection(sessionId, selection, signal)
   }
 
   /**

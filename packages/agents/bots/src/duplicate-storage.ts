@@ -11,6 +11,21 @@ const botIdSchema = z.string().regex(/^bot-[A-Za-z0-9][A-Za-z0-9-]*$/).transform
 const boundedText = (max: number) => z.string().min(1).max(max).refine(value => value.trim() === value)
 const optionalText = (max: number) => z.string().max(max).refine(value => value.trim() === value).optional()
 
+const modelSelectionSchema = z.object({
+  provider: boundedText(160),
+  model: boundedText(256),
+  reasoningEffort: optionalText(128),
+  serviceTier: optionalText(128),
+}).strict()
+
+/** Session-local model choice retained by a duplicate operation snapshot. */
+export interface BotDuplicateModelSelection {
+  readonly provider: string
+  readonly model: string
+  readonly reasoningEffort?: string | undefined
+  readonly serviceTier?: string | undefined
+}
+
 const dailySchema = z.object({
   time: boundedText(32),
   time_zone: boundedText(128),
@@ -42,6 +57,7 @@ export const botDuplicateScheduleRequestSchema = z.object({
     .filter(value => value !== undefined).length
   if (selectorCount !== 1) context.addIssue({ code: 'custom', message: 'A duplicate timed routine must retain exactly one selector' })
 })
+/** Validated timed routine definition retained by a duplicate operation. */
 export type BotDuplicateScheduleRequest = z.infer<typeof botDuplicateScheduleRequestSchema>
 
 const eventTriggerSchema = z.object({
@@ -58,6 +74,7 @@ const profileSchema = z.object({
   persona: optionalText(4_000),
   capabilities: z.array(z.string().regex(/^[a-z][a-z0-9._-]{0,63}$/)).max(32).optional(),
   skillPolicy: botSkillPolicySchema.optional(),
+  modelSelection: modelSelectionSchema.optional(),
 }).strict()
 
 const scheduleRoutineSchema = z.object({
@@ -97,6 +114,7 @@ export const botDuplicateOperationSchema = z.object({
   message: 'Duplicate operation completion cannot predate its snapshot',
 })
 
+/** Validated durable snapshot and progress state for a duplicate operation. */
 export type BotDuplicateStoredRecord = z.infer<typeof botDuplicateOperationSchema>
 
 /** Host-local durable state for duplicate operation snapshots and receipts. */

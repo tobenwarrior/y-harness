@@ -573,6 +573,15 @@ async function createHarness({
     }
     return agent === undefined ? { error: new Error('session not found') } : { agent }
   })
+  const snapshotModelSelection = vi.fn(async (sessionId: SessionId) => {
+    const session = agents.find(candidate => candidate.id === sessionId)?.session
+    const event = session?.snapshotEvents().findLast(candidate => candidate.type === 'model/selection')
+    return event?.type === 'model/selection' ? { ...event.data } : undefined
+  })
+  const seedModelSelection = vi.fn(async (
+    _sessionId: SessionId,
+    selection: { readonly provider: string; readonly model: string; reasoningEffort?: string; serviceTier?: string },
+  ) => ({ ...selection }))
   const flush = vi.fn(async (session: Session) => {
     const agent = agents.find(candidate => candidate.session === session)
     if (agent !== undefined) {
@@ -591,7 +600,7 @@ async function createHarness({
     flush,
   }
   if (!options.realAgent) ctx.provide('sessions', sessions as never)
-  ctx.provide('sessionController', { create, inspect, resolveAgent } as never)
+  ctx.provide('sessionController', { create, inspect, resolveAgent, snapshotModelSelection, seedModelSelection } as never)
   if (!options.realAgent) ctx.provide('sessionPersistence', {} as never)
   options.beforeService?.(ctx)
   if (options.connection !== undefined) ctx.provide('connection', options.connection as never)
@@ -608,7 +617,7 @@ async function createHarness({
   }
   return {
     ctx, service, pool, records, credentials: (credentials ?? ctx.get('credentials'))!, create, readImage, saveImages, saveImage, adapter,
-    agents, inspect, resolveAgent, flush, followups,
+    agents, inspect, resolveAgent, snapshotModelSelection, seedModelSelection, flush, followups,
   }
 }
 
@@ -1142,6 +1151,10 @@ describe('durable Bot roster', () => {
         capabilities: ['research'],
         skillPolicy: { mode: 'selected', enabled: ['web-search'], disabled: ['box-desktop'] },
       })).bot
+      const sourceSelection = {
+        provider: 'fixture-provider', model: 'fixture-model', reasoningEffort: 'high', serviceTier: 'priority',
+      }
+      h.snapshotModelSelection.mockResolvedValueOnce(sourceSelection)
       const originalSchedule = await h.ctx.schedule.create(source.sessionId, {
         title: 'Original hourly check', prompt: 'Read the fixture report.', every_seconds: 60,
       })
@@ -1184,6 +1197,8 @@ describe('durable Bot roster', () => {
         agentPreset: 'fixture-preset',
       })
       expect(duplicated.skillPolicy).toEqual({ mode: 'selected', enabled: ['web-search'], disabled: ['box-desktop'] })
+      expect(h.seedModelSelection).toHaveBeenCalledWith(duplicated.bot.sessionId, sourceSelection, undefined)
+      expect(h.seedModelSelection).toHaveBeenCalledTimes(2)
       expect(duplicated.routinesCopied).toBe(2)
       expect(duplicated.skippedRoutines).toEqual([])
       expect(duplicated.bot.sessionId).not.toBe(source.sessionId)
@@ -1201,6 +1216,35 @@ describe('durable Bot roster', () => {
       expect(retrySchedule).not.toHaveBeenCalled()
       retrySchedule.mockRestore()
       await expect(h.service.duplicate({ ...request, name: 'Different copy' })).rejects.toThrow('different name')
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('keeps a duplicate provisioning until its copied model is seeded', async () => {
+    const h = await routineHarness(undefined, undefined, undefined, [], true)
+    try {
+      const source = (await h.service.create({ name: 'Model source' })).bot
+      const sourceSelection = { provider: 'fixture-provider', model: 'fixture-model' }
+      h.snapshotModelSelection.mockResolvedValueOnce(sourceSelection)
+      h.seedModelSelection.mockRejectedValueOnce(new Error('copied model unavailable'))
+      const request = {
+        sourceBotId: source.id,
+        operationId: BotDuplicateOperationId('model-seed-retry'),
+      }
+
+      await expect(h.service.duplicate(request)).rejects.toMatchObject({ code: 'bot/provisioning-failed' })
+      await expect(h.service.list({})).resolves.toMatchObject({
+        bots: [
+          { id: source.id, state: 'active' },
+          { state: 'provisioning' },
+        ],
+      })
+      expect(h.seedModelSelection).toHaveBeenCalledTimes(1)
+
+      h.seedModelSelection.mockImplementation(async (_sessionId, selection) => ({ ...selection }))
+      await expect(h.service.duplicate(request)).resolves.toMatchObject({ bot: { state: 'active' } })
+      expect(h.seedModelSelection).toHaveBeenCalledTimes(2)
     } finally {
       await close(h.ctx)
     }
