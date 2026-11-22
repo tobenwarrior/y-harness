@@ -75,6 +75,8 @@ The GitHub read-only overlay enables repository, issue, and pull request tools. 
 
 With `bearerTokenRef`, the SDK resolves the current token for each request. The endpoint must use HTTPS without URL credentials. This option rejects an additional `Authorization` header and refuses redirects. A missing credential fails the connection before sending a request.
 
+Configure the final MCP endpoint URL when a server redirects to a different origin. The HTTP transport keeps connection requests on the configured origin.
+
 ### Tool naming and coexistence
 
 The model sees each tool under a stable server-qualified name: `mcp__<serverName>__<rawName>`, for example `mcp__github__create_issue` — the same naming shape Claude Code and Codex use. Names stay stable while the server keeps the same tool name, so session history and permission rules survive restarts and reloads. The name is an identifier for model calls, not an ownership encoding: server and raw names may contain `__`, and Host policy uses the retained source metadata. Two servers can both offer a tool named `search` and coexist as `mcp__github__search` and `mcp__web__search`.

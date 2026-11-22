@@ -40,7 +40,7 @@
   "dependencies": {
     "@yharness/credentials": "workspace:*",
     "@yharness/schemastery": "workspace:~",
-    "@modelcontextprotocol/client": "2.0.0",
+    "@modelcontextprotocol/client": "2.3.0",
     "@yharness/util-values": "workspace:*"
   },
   "devDependencies": {
@@ -55,7 +55,7 @@
     "@modelcontextprotocol/server-filesystem": "^2026.7.4",
     "@yharness/cordis": "workspace:~",
     "@yharness/http-proxy": "workspace:*",
-    "@modelcontextprotocol/server": "2.0.0",
+    "@modelcontextprotocol/server": "2.3.0",
     "@modelcontextprotocol/node": "2.0.0",
     "zod": "^4.4.3",
     "@yharness/mcp-resources": "workspace:*",
