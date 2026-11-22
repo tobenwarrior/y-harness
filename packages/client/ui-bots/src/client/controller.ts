@@ -107,6 +107,7 @@ import { randomUUID } from '@yharness/util-crypto'
 import type { SharedBotsClient } from './shared-client.ts'
 import { admitBotGroupAttachments, groupAttachmentsMatchDrafts, isBotGroupImageType, type BotAttachmentFetch } from './attachment-client.ts'
 import type { BotGroupAttachmentDraft } from './types.ts'
+import type { BotPromptTarget } from './deep-link.ts'
 import type {
   BotAccent, BotAvatarEditorActions, BotConnectedAppAccess, BotCreation, BotGroupCreation, BotGroupDetailData,
   BotGroupReactionRequest, BotGroupReactionValue, BotGroupUpdate, BotProfileUpdate,
@@ -762,6 +763,40 @@ export class BotWorkspaceController {
     }
   }
 
+  /**
+   * Refresh the owner roster, select the requested Bot, and await its ready Session.
+   *
+   * @param target - exact Bot id or the owner's primary Bot preference.
+   * @param signal - invalidated when another navigation takes priority.
+   * @returns the retained Session reference while the active owner Bot remains the selected target.
+   */
+  async openPromptTarget(target: BotPromptTarget, signal: AbortSignal): Promise<SessionReference | undefined> {
+    const canNavigate = (): boolean => this.canUpdate() && !signal.aborted
+    await (this.pending ?? this.load())
+    if (!canNavigate() || this.source.getSnapshot().phase !== 'ready') return undefined
+    const id = target.kind === 'id' ? target.id : (await this.refreshPrimary())?.primaryBotId
+    if (id === undefined || id === null || !canNavigate()) return undefined
+    const current = this.source.getSnapshot()
+    const bot = current.bots.find(candidate => candidate.id === id)
+    if (bot === undefined || bot.state !== 'active' || bot.hidden) return undefined
+    this.select(id)
+    const selectionGeneration = this.selectionGeneration
+    const reference = this.selectedReference
+    if (reference === undefined) return undefined
+    try {
+      await reference.ready
+    } catch (error: unknown) {
+      void error
+      return undefined
+    }
+    const latest = this.source.getSnapshot()
+    const selected = latest.bots.find(candidate => candidate.id === id)
+    if (!canNavigate() || this.selectionGeneration !== selectionGeneration
+      || latest.selectedBotId !== id || this.selectedReference !== reference
+      || selected === undefined || selected.hidden || selected.state !== 'active') return undefined
+    return reference
+  }
+
   private canUpdate(): boolean {
     return !this.disposed
   }
@@ -773,16 +808,20 @@ export class BotWorkspaceController {
     this.source.set({ ...current, primary: value })
   }
 
-  private async refreshPrimary(): Promise<void> {
+  private async refreshPrimary(): Promise<BotPrimaryValue | undefined> {
     const readPrimary = this.remote.readPrimary
     if (readPrimary === undefined || this.remote.setPrimary === undefined) return
     try {
       const result = await readPrimary({})
-      if (result.ok) this.mergePrimary(result.value)
+      if (result.ok) {
+        this.mergePrimary(result.value)
+        return this.source.getSnapshot().primary
+      }
     } catch (error: unknown) {
       // The consultative preference read cannot prevent the chat roster from loading.
       void error
     }
+    return undefined
   }
 
   private async setPrimary(

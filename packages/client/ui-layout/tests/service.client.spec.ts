@@ -89,6 +89,8 @@ describe('LayoutController', () => {
   it('supersedes asynchronous navigation on another request, any valid selection, and disposal', () => {
     const service = new LayoutController(fakePanels(), () => true, createSnapshotStore({ activePanelId: null }))
     const first = service.beginNavigation()
+    expect(service.beginNavigation('background')).toBe(first)
+    expect(first.aborted).toBe(false)
     const second = service.beginNavigation()
     expect(first.aborted).toBe(true)
     expect(second.aborted).toBe(false)

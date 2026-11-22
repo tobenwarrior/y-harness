@@ -31,6 +31,8 @@ Choose **Duplicate bot** from the chat's **Bot options** to reuse a bot's profil
 
 Choose **Make primary bot** in **Bot options** to make that bot your main contact. The roster marks the primary bot, and opening Bots with no chat selected starts there. Use the same menu to replace the choice from another bot or remove it from the current primary bot.
 
+In the Web app, append `#/bots/prompt?id=bot-id&text=Your%20message` to the workspace URL. Omit `id` to open the primary bot. The link opens an active bot from your own roster and fills an empty composer with up to 1,000 Unicode code points. Existing draft text and attachments are preserved. Send the message yourself when you’re ready. The browser clears the link fragment after reading it.
+
 **Search Bot chats** in the workspace options searches visible messages across your direct Bot conversations. Select a result to open its Bot and reveal the message. The workspace search shortcut opens the same dialog while Bots is selected.
 
 One-to-one conversations place the user's messages on the right, show a small waiting bubble while the Bot works, and identify the final reply by name and avatar. Scheduled replies carry an expandable origin label. Composer approvals and questions stay visible while they await a response. Open the usage icon for token details.

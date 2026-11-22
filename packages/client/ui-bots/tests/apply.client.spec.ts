@@ -93,7 +93,7 @@ function connectionFixture() {
   }
 }
 
-async function boot(withSearch = false) {
+async function boot(withSearch = false, deferConversation = false) {
   const ctx = new Context()
   const registered: Registered[] = []
   const slots = {
@@ -181,8 +181,15 @@ async function boot(withSearch = false) {
   ctx.provide('inputTriggers', inputTriggers as never)
   const chatNavigation = { request: vi.fn(), cancel: vi.fn() }
   const panelInfo = createSnapshotStore<PanelInfo>({ activePanelId: PANEL_ID })
+  const conversation = {
+    input: { requestDraftInitialization: vi.fn(() => 'applied' as const) },
+  }
+  const selectPanel = vi.fn()
+  const beginNavigation = (): AbortSignal => new AbortController().signal
+  ctx.provide('layout', { panelInfo, selectPanel, beginNavigation } as never)
+  const provideConversation = (): void => { ctx.provide('conversation', conversation as never) }
+  if (!deferConversation) provideConversation()
   if (withSearch) {
-    ctx.provide('layout', { panelInfo })
     ctx.provide('chatNavigation', chatNavigation)
   }
   const fiber = ctx.plugin({ inject: [...inject], apply })
@@ -191,7 +198,7 @@ async function boot(withSearch = false) {
   return {
     ctx, fiber, registered, inputSources, remote, remoteBots, sessions, connection, sidebarRight, sidebarRightTabs,
     currentBot, reference, release: session.release,
-    chatNavigation, hit, list, searchMessages, panelInfo,
+    chatNavigation, hit, list, searchMessages, panelInfo, conversation, selectPanel, provideConversation,
     setExpanded: (value: boolean) => { expanded = value },
     setCommandTarget: (value: { readonly id: string } | undefined) => { commandTarget = value },
     setTabs: (value: readonly { readonly id: string; readonly kind: string }[]) => { tabs = value },
@@ -483,5 +490,32 @@ describe('ui-bots composition', () => {
     await expect(mainFace.createGroup({ name: 'Retry copy', botIds: [String(fixture.currentBot.id), String(second.id)] }))
       .rejects.toThrow(en.groupCreateRetryUnavailable)
     await fixture.fiber.dispose()
+  })
+
+  it('keeps a startup link until the conversation is available and consumes it once', async () => {
+    const originalUrl = window.location.href
+    const originalHistory: unknown = window.history.state
+    window.history.replaceState({ retained: true }, '', '/#/bots/prompt?id=bot-apply&text=First%20note')
+    const fixture = await boot(false, true)
+    try {
+      const initializeDraft = fixture.conversation.input.requestDraftInitialization
+      expect(window.location.hash).toContain('First%20note')
+      expect(initializeDraft).not.toHaveBeenCalled()
+      fixture.provideConversation()
+      await vi.waitFor(() => {
+        expect(initializeDraft).toHaveBeenCalledWith(fixture.reference.binding, { prompt: 'First note' })
+      })
+      expect(fixture.selectPanel).toHaveBeenCalledWith(PANEL_ID)
+      expect(window.location.hash).toBe('')
+      expect(window.history.state).toEqual({ retained: true })
+
+      window.history.replaceState(window.history.state, '', '/#/bots/prompt?text=Invalid&send=true')
+      window.dispatchEvent(new HashChangeEvent('hashchange'))
+      expect(window.location.hash).toBe('')
+      expect(initializeDraft).toHaveBeenCalledTimes(1)
+    } finally {
+      await fixture.fiber.dispose()
+      window.history.replaceState(originalHistory, '', originalUrl)
+    }
   })
 })

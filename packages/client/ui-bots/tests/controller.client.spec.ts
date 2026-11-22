@@ -177,6 +177,47 @@ describe('BotWorkspaceController', () => {
     controller.dispose()
   })
 
+  it('requires a refreshed owner roster and an active visible target for prompt links', async () => {
+    const active = bot('bot-active', 'session-active')
+    const hidden = bot('bot-hidden', 'session-hidden', { hidden: true })
+    const pending = bot('bot-pending', 'session-pending', { state: 'provisioning' })
+    const remote = remoteFixture([active, hidden, pending])
+    const controller = new BotWorkspaceController(remote, sessionsFixture().sessions, () => 'unexpected response')
+    const signal = new AbortController().signal
+    try {
+      await controller.load()
+      await expect(controller.openPromptTarget({ kind: 'id', id: active.id }, signal))
+        .resolves.toMatchObject({ sessionId: active.sessionId })
+      await expect(controller.openPromptTarget({ kind: 'primary' }, signal)).resolves.toBeUndefined()
+      for (const id of [hidden.id, pending.id, BotId('bot-absent')]) {
+        await expect(controller.openPromptTarget({ kind: 'id', id }, signal)).resolves.toBeUndefined()
+      }
+      remote.list.mockRejectedValueOnce(new Error('Roster unavailable'))
+      await expect(controller.openPromptTarget({ kind: 'id', id: active.id }, signal)).resolves.toBeUndefined()
+    } finally {
+      controller.dispose()
+    }
+  })
+
+  it('ignores a link superseded while its Bot Session becomes ready', async () => {
+    const target = bot('bot-target', 'session-target')
+    const ready = Promise.withResolvers<SessionBinding>()
+    const session = reference(target.sessionId, ready.promise)
+    const { retain, sessions } = sessionsFixture()
+    retain.mockReturnValue(session)
+    const controller = new BotWorkspaceController(remoteFixture([target]), sessions, () => 'unexpected response')
+    const cancel = new AbortController()
+    try {
+      const opening = controller.openPromptTarget({ kind: 'id', id: target.id }, cancel.signal)
+      await vi.waitFor(() => { expect(retain).toHaveBeenCalledWith(target.sessionId, { source: 'botWorkspace' }) })
+      cancel.abort()
+      ready.resolve(session.binding)
+      await expect(opening).resolves.toBeUndefined()
+    } finally {
+      controller.dispose()
+    }
+  })
+
   it('keeps a duplicate operation identity on retry and selects its fresh Session', async () => {
     const original = bot('bot-original', 'session-original')
     const copy = bot('bot-copy', 'session-copy', { name: 'Release copy' })
