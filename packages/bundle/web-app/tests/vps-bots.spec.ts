@@ -679,6 +679,7 @@ describe('managed VPS Bot composition', () => {
     const ensure = vi.spyOn(VpsRuntime.prototype, 'ensure').mockResolvedValue(undefined)
     const installSkill = vi.spyOn(VpsBotFileSystem.prototype, 'installSkill').mockResolvedValue(true)
     const readSkill = vi.spyOn(VpsBotFileSystem.prototype, 'readSkill').mockResolvedValue('fixture-content')
+    const skillExists = vi.spyOn(VpsBotFileSystem.prototype, 'skillExists').mockResolvedValue(true)
     let disposeImported: (() => Promise<void>) | undefined
     const importedFibers: Fiber[] = []
     const stopObserving = ctx.on('internal/plugin', (fiber) => { importedFibers.push(fiber) }, { global: true })
@@ -707,6 +708,10 @@ describe('managed VPS Bot composition', () => {
       await expect(workspaces.readSkill(BOT_SESSION, managed, 'fixture-skill', signal)).resolves.toBe('fixture-content')
       expect(readSkill).toHaveBeenCalledExactlyOnceWith('fixture-skill', signal)
       expect(readSkill.mock.instances[0]).toBe(installSkill.mock.instances[0])
+      if (workspaces.skillExists === undefined) throw new Error('Managed skill existence check was not registered')
+      await expect(workspaces.skillExists(BOT_SESSION, managed, 'fixture-skill', signal)).resolves.toBe(true)
+      expect(skillExists).toHaveBeenCalledExactlyOnceWith('fixture-skill', signal)
+      expect(skillExists.mock.instances[0]).toBe(installSkill.mock.instances[0])
 
       disposeImported = importedFibers.find(fiber => fiber.getEffects().some(effect => effect.label === 'ctx.provide("fs")'))?.dispose
       if (disposeImported === undefined) throw new Error('Managed import filesystem was not registered')
@@ -726,6 +731,7 @@ describe('managed VPS Bot composition', () => {
       ensure.mockRestore()
       installSkill.mockRestore()
       readSkill.mockRestore()
+      skillExists.mockRestore()
       await ctx.fiber.dispose()
     }
   })

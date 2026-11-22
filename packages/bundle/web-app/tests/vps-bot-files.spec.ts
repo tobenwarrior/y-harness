@@ -363,7 +363,9 @@ describe('VPS Bot file provider', () => {
     try {
       const fs = new VpsBotFileSystem(ctx, runtime, SESSION_ID)
       await expect(fs.installSkill('readback', content, false)).resolves.toBe(true)
+      await expect(fs.skillExists('readback')).resolves.toBe(true)
       await expect(fs.readSkill('readback')).resolves.toBe(content)
+      await expect(fs.skillExists('missing')).resolves.toBe(false)
       await expect(fs.readSkill('missing')).resolves.toBeUndefined()
       await writeFile(join(root, '.agents', 'skills', 'readback', 'SKILL.md'), 'tampered')
       await expect(fs.installSkill('readback', content, false)).rejects.toThrow(/already exists with different content/)

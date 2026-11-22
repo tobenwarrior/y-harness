@@ -20,6 +20,7 @@ const entry = z.object({ type: z.enum(['file', 'directory', 'other', 'symlink'])
 const outcome = z.object({ entry, before: z.string().nullable(), created: z.boolean() })
 const skillOutcome = z.object({ created: z.boolean() })
 const skillReadOutcome = z.object({ content: z.string().nullable() })
+const skillExistsOutcome = z.object({ exists: z.boolean() })
 const workerFailure = z.object({ error: z.enum(FS_ERROR_CODES), message: z.string() })
 const chunkSize = 256 * 1024
 
@@ -195,6 +196,17 @@ export class VpsBotFileSystem extends FileSystem {
     return (await this.call('read-skill', filePath, {}, skillReadOutcome, signal)).content ?? undefined
   }
 
+  /**
+   * Check whether one canonical Bot-owned skill is installed without loading its body.
+   * @param name - canonical workspace skill name.
+   * @param signal - operation cancellation.
+   * @returns whether the skill file exists as a regular file.
+   */
+  async skillExists(name: string, signal?: AbortSignal): Promise<boolean> {
+    const filePath = posix.join('.agents', 'skills', name, 'SKILL.md')
+    return (await this.call('skill-exists', filePath, {}, skillExistsOutcome, signal)).exists
+  }
+
   /** @inheritdoc */
   override editText(
     target: FsTarget, edit: FsEditRequest, expected?: { version: Version },
@@ -291,7 +303,7 @@ export class VpsBotFileSystem extends FileSystem {
       }
       await this.runtime.ensure(this.sessionId, operationSignal)
       operationSignal.throwIfAborted()
-      const worker = this.workspace === 'shared' || operation === 'install-skill' || operation === 'read-skill'
+      const worker = this.workspace === 'shared' || operation === 'install-skill' || operation === 'read-skill' || operation === 'skill-exists'
         ? ['-c', vpsProjectWorker] : ['/usr/local/lib/yharness/files.py']
       const command = ['/usr/bin/python3', '-I', ...worker, this.root]
       const [program, ...argv] = this.runtime.execArgv(this.sessionId, command, { stdin: true })

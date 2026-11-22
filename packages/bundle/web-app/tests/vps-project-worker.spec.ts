@@ -81,6 +81,12 @@ describe.skipIf(process.platform === 'win32')('VPS project file worker', () => {
       await expect(request(root, '.agents/skills/missing/SKILL.md', {
         operation: 'read-skill',
       })).resolves.toEqual({ value: { content: null } })
+      await expect(request(root, '.agents/skills/research/SKILL.md', {
+        operation: 'skill-exists',
+      })).resolves.toEqual({ value: { exists: true } })
+      await expect(request(root, '.agents/skills/missing/SKILL.md', {
+        operation: 'skill-exists',
+      })).resolves.toEqual({ value: { exists: false } })
       await expect(request(root, join(root, 'other.txt'), { operation: 'read-skill' }))
         .resolves.toMatchObject({ error: 'FS_SANDBOX_DENIED' })
     } finally {

@@ -1104,6 +1104,7 @@ describe('durable Bot roster', () => {
       if (!prepare.mock.calls.some(([prepared]) => prepared === sessionId)) throw new Error('Source Computer was not prepared')
       return '---\nname: research\ndescription: "Fixture"\n---\n\nRead the source Computer.\n'
     })
+    const skillExists = vi.fn(async (_sessionId: SessionId, _botId: BotId, name: string) => name === 'research')
     const installSkill = vi.fn(async () => true)
     const h = await harness(undefined, undefined, undefined, [], new Map(), new Map(), true, 'native', false, {
       beforeService: (ctx) => {
@@ -1112,6 +1113,7 @@ describe('durable Bot roster', () => {
           prepare,
           installSkill,
           readSkill,
+          skillExists,
           managed: () => true,
         })
       },
@@ -1197,6 +1199,40 @@ describe('durable Bot roster', () => {
     }
   })
 
+  it('keeps selected references to built-in skills without requiring a managed file body', async () => {
+    const readSkill = vi.fn(async () => 'content')
+    const installSkill = vi.fn(async () => true)
+    const skillExists = vi.fn(async () => false)
+    const h = await harness(undefined, undefined, undefined, [], new Map(), new Map(), true, 'native', false, {
+      beforeService: (ctx) => {
+        ctx.provide('botWorkspaces', {
+          workspace: sessionId => String(sessionId),
+          prepare: async () => {},
+          installSkill,
+          readSkill,
+          skillExists,
+          managed: () => true,
+        })
+      },
+    })
+    try {
+      const source = (await h.service.create({
+        name: 'Built-in source',
+        skillPolicy: { mode: 'selected', enabled: ['web-search'], disabled: [] },
+      })).bot
+      const copy = await h.service.duplicate({
+        sourceBotId: source.id,
+        operationId: BotDuplicateOperationId('duplicate-built-in-skill'),
+      })
+      expect(copy.skillPolicy).toEqual({ mode: 'selected', enabled: ['web-search'], disabled: [] })
+      expect(skillExists).toHaveBeenCalledExactlyOnceWith(source.sessionId, source.id, 'web-search', undefined)
+      expect(readSkill).not.toHaveBeenCalled()
+      expect(installSkill).not.toHaveBeenCalled()
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
   it('rejects a selected managed skill when the destination Computer is not allowlisted', async () => {
     const managedBotIds = new Set<string>()
     const readSkill = vi.fn(async () => 'content')
@@ -1208,6 +1244,7 @@ describe('durable Bot roster', () => {
           prepare: async () => {},
           installSkill,
           readSkill,
+          skillExists: async () => true,
           managed: (botId: string) => managedBotIds.has(botId),
         })
       },
@@ -1234,6 +1271,7 @@ describe('durable Bot roster', () => {
 
   it('rejects a selected managed skill when its source body is missing', async () => {
     const readSkill = vi.fn(async () => undefined)
+    const skillExists = vi.fn(async () => true)
     const installSkill = vi.fn(async () => true)
     const h = await harness(undefined, undefined, undefined, [], new Map(), new Map(), true, 'native', false, {
       beforeService: (ctx) => {
@@ -1242,6 +1280,7 @@ describe('durable Bot roster', () => {
           prepare: async () => {},
           installSkill,
           readSkill,
+          skillExists,
           managed: () => true,
         })
       },
@@ -1258,7 +1297,7 @@ describe('durable Bot roster', () => {
       expect(readSkill).toHaveBeenCalledExactlyOnceWith(source.sessionId, source.id, 'research', undefined)
       expect(installSkill).not.toHaveBeenCalled()
       await expect(h.service.list({ includeHidden: true })).resolves.toMatchObject({
-        bots: [{ id: source.id }],
+        bots: [{ id: source.id }, { state: 'provisioning' }],
       })
     } finally {
       await close(h.ctx)
@@ -1273,6 +1312,7 @@ describe('durable Bot roster', () => {
     })
     const content = '---\nname: research\ndescription: "Fixture"\n---\n\nRetry this skill.\n'
     const readSkill = vi.fn(async () => content)
+    const skillExists = vi.fn(async () => true)
     type InstallSkill = (
       sessionId: SessionId, botId: BotId, name: string, value: string, preview: boolean, signal?: AbortSignal,
     ) => Promise<boolean>
@@ -1286,6 +1326,7 @@ describe('durable Bot roster', () => {
           prepare,
           installSkill,
           readSkill,
+          skillExists,
           managed: () => true,
         })
       },
@@ -1299,11 +1340,13 @@ describe('durable Bot roster', () => {
       await expect(h.service.duplicate(request)).rejects.toThrow('fixture skill interruption')
       const firstTarget = (await h.service.list({ includeHidden: true })).bots.find(bot => bot.name === 'Retry source copy')
       if (firstTarget === undefined) throw new Error('The partial target Bot was not retained')
+      expect(firstTarget.state).toBe('provisioning')
       const recovered = await h.service.duplicate(request)
       expect(recovered.bot.id).toBe(firstTarget.id)
-      expect(h.create).toHaveBeenCalledTimes(2)
+      expect(h.create).toHaveBeenCalledTimes(3)
       expect(readSkill).toHaveBeenCalledTimes(2)
       expect(installSkill).toHaveBeenCalledTimes(2)
+      expect(recovered.bot.state).toBe('active')
     } finally {
       await close(h.ctx)
       await rm(root, { recursive: true, force: true })
