@@ -338,7 +338,7 @@ describe('BotAppConnectionCard', () => {
     fireEvent.click(button)
     fireEvent.click(button)
     expect(screen.getByRole('status').textContent).toContain(en.appConnectionRequestStarting)
-    expect((screen.getByRole('button', { name: en.appConnectionRequestStarting }) as HTMLButtonElement).disabled).toBe(true)
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: en.appConnectionRequestStarting }).disabled).toBe(true)
     resolve?.({ status: 'needs-auth', attempt: null })
     await act(async () => {})
   })
