@@ -3,7 +3,7 @@
 import type { ReactNode } from 'react'
 import type { BotView } from '@yharness/bots/client'
 import type { HostObservable, PropsLocale, PropsRenderFactories, PropsRenderSlots, PropsRuntime, InjectFace } from '@yharness/client-ui-slots'
-import type { ConversationBot } from '@yharness/client-ui-conversation/client'
+import type { ConversationBot, ConversationViewsProps } from '@yharness/client-ui-conversation/client'
 import type { SessionStatusSnapshot } from '@yharness/client-ui-session/client'
 import type { BotWorkspaceFace, BotWorkspaceState } from './controller.ts'
 import { BotDetail, BotGroupDetail, BotRoster } from './BotWorkspace.tsx'
@@ -16,6 +16,7 @@ import { MacComputerPanel } from './MacComputerPanel.tsx'
 import type { AvailabilityState } from './computer-availability.ts'
 import type { ComputerClient, ComputerIdentity } from './computer-client.ts'
 import { IconFolderOpenOutlineRegular, PluginArtworkTerminal } from '@yharness/client-ui-primitives'
+import { GrokHistoryInline } from './GrokHistoryInline.tsx'
 import css from './BotWorkspace.module.css'
 
 /** Selected sign-in request and its Computer panel. */
@@ -29,6 +30,12 @@ export interface ComputerSignInTarget {
 
 type WorkspaceTabKind = 'terminal' | 'computer-files' | 'computer-shared-files'
 
+interface BotsConversationBot extends ConversationBot {
+  readonly id?: string
+  readonly readGrokHistory?: BotWorkspaceFace['readGrokHistory']
+  readonly t?: PropsLocale<'bots'>['t']
+}
+
 /** Main panel child slot that owns the selected Bot's Session binding. */
 declare module '@yharness/client-ui-slots' {
   interface SlotMap {
@@ -36,7 +43,7 @@ declare module '@yharness/client-ui-slots' {
     'bots.conversation': {
       kind: 'single'
       scope: 'session-maybe'
-      owner: { bot: ConversationBot }
+      owner: { bot: BotsConversationBot }
     }
   }
 }
@@ -64,6 +71,17 @@ export type BotsPanelProps =
 
 /** Props for the Session-bound embedded Conversation occurrence. */
 export type BotsConversationProps = PropsRuntime<'bots.conversation'> & PropsRenderFactories
+
+function BotsConversationViews({ ownerBot, ...props }: ConversationViewsProps & { readonly ownerBot: BotsConversationBot }): ReactNode {
+  const live = props.renderSlot('conversation.session', props.bot === undefined ? {} : { bot: props.bot })
+  if (ownerBot.id === undefined || ownerBot.readGrokHistory === undefined || ownerBot.t === undefined) return live
+  return (
+    <>
+      <GrokHistoryInline key={ownerBot.id} botId={ownerBot.id} botName={ownerBot.name} read={ownerBot.readGrokHistory} t={ownerBot.t} />
+      {live}
+    </>
+  )
+}
 
 /** Props for the Bot roster occupying the shared application sidebar. */
 export type BotsRosterProps =
@@ -103,7 +121,9 @@ function summaryOf(bot: BotView, statuses: SessionStatusSnapshot): BotSummary {
 
 /** Render the selected Bot's real Conversation under its retained Session. */
 export function BotsConversation({ renderFactorySlot, bot }: BotsConversationProps): ReactNode {
-  return renderFactorySlot('conversation.content', { variant: 'embedded', phase: 'active', hero: false, bot })
+  return renderFactorySlot('conversation.content', { variant: 'embedded', phase: 'active', hero: false, bot }, {
+    slots: { views: props => <BotsConversationViews {...props} ownerBot={bot} /> },
+  })
 }
 
 /** Injected roster and image loader for each Bot reply avatar. */
@@ -197,7 +217,11 @@ export function BotsPanel({
     ? undefined
     : (
       <SessionProvider session={selectedReference}>
-        {renderSlot('bots.conversation', { bot: { name: selectedBot.name } })}
+        {renderSlot('bots.conversation', {
+          bot: readGrokHistory === undefined
+            ? { name: selectedBot.name }
+            : { name: selectedBot.name, id: selectedBot.id, readGrokHistory, t },
+        })}
       </SessionProvider>
     )
   if (groupsAvailable && state.selectedGroupId !== null) {

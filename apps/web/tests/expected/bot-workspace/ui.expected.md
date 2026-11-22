@@ -27,6 +27,10 @@
   - img "Scout"
   - text: Scout Keeps the team informed
   - button "Bot options"
+  - region "Imported Grok chat":
+    - strong: Imported Grok chat
+    - text: Read-only recovery from Grok Bot
+    - button "Show history"
   - textbox "Message Scout"
   - button "Add files or run commands"
   - 'button "Access mode, current: Approve for me"': Approve for me
