@@ -5,7 +5,7 @@ import type { ChatNode } from '../contract/chat-nodes.ts'
 import type { ChatViewSlotProps } from '../contract/slots.ts'
 import type { TurnRailItem } from './turn-rail-items.ts'
 import type { ChatReading, ReadingSample } from './use-chat-reading.ts'
-import type { ChatViewport } from './use-chat-viewport.ts'
+import type { ChatViewport, ViewportLanding } from './use-chat-viewport.ts'
 
 /** History availability and loading operations for the committed Chat window. */
 export interface ChatNavigationInput extends Pick<ChatViewSlotProps, 'loadOlder' | 'loadThrough'> {
@@ -176,18 +176,7 @@ export class ChatNavigation {
       if (jump.landing === 'pending') this.landJump(false)
       return
     }
-    if (this.input.loadingOlder) return
-    if (this.landJump(true)) return
-    const uncovered = this.input.firstSeq === null || this.input.firstSeq > jump.seq
-    if (uncovered && this.input.hasMore && jump.repageHead !== this.input.firstSeq) {
-      jump.repageHead = this.input.firstSeq
-      this.viewport.beginPreserving()
-      this.request(jump)
-      return
-    }
-    const fallback = this.viewport.scrollToTurnAtOrAfter(jump.turn)
-    this.cancel()
-    if (fallback !== null) this.reading.acceptNavigation(fallback)
+    this.reconcileSettledJump(jump, () => this.landJump(true), () => this.viewport.scrollToTurnAtOrAfter(jump.turn))
   }
 
   private reconcileSeq(): void {
@@ -197,8 +186,16 @@ export class ChatNavigation {
       if (jump.landing === 'pending') this.landSeq(false)
       return
     }
+    this.reconcileSettledJump(jump, () => this.landSeq(true), () => this.viewport.scrollToSeqAtOrAfter(jump.seq))
+  }
+
+  private reconcileSettledJump(
+    jump: TurnJump | SeqJump,
+    land: () => boolean,
+    fallback: () => ViewportLanding | null,
+  ): void {
     if (this.input.loadingOlder) return
-    if (this.landSeq(true)) return
+    if (land()) return
     const uncovered = this.input.firstSeq === null || this.input.firstSeq > jump.seq
     if (uncovered && this.input.hasMore && jump.repageHead !== this.input.firstSeq) {
       jump.repageHead = this.input.firstSeq
@@ -206,9 +203,9 @@ export class ChatNavigation {
       this.request(jump)
       return
     }
-    const fallback = this.viewport.scrollToSeqAtOrAfter(jump.seq)
+    const landing = fallback()
     this.cancel()
-    if (fallback !== null) this.reading.acceptNavigation(fallback)
+    if (landing !== null) this.reading.acceptNavigation(landing)
   }
 
   private landJump(settle: boolean): boolean {
