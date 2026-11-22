@@ -128,21 +128,27 @@ const Reconnect: z<ReconnectConfig> = z.object({
   maxAttempts: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(RECONNECT_DEFAULTS.maxAttempts),
 })
 
+const CommonConfig = z.object({
+  toolCallTimeoutMs: z.number().default(DEFAULT_TOOL_CALL_TIMEOUT_MS),
+  failOnStartupError: z.boolean().default(false),
+  maxInstructionBytes: z.number().step(1).min(1).default(DEFAULT_MAX_INSTRUCTION_BYTES),
+  disabledTools: z.array(String).default([]),
+  reconnect: Reconnect,
+})
+
 /** Validate the mutually exclusive, endpoint-pinned GitHub App option. */
 const StreamableHttp = z.transform(
-  z.object({
-    transport: z.const('streamable-http'),
-    serverName: z.string().required().pattern(SERVER_NAME_PATTERN),
-    url: z.string().required(),
-    headers: z.dict(String).default({}),
-    bearerTokenRef: z.string(),
-    githubAppAuthorization: z.boolean(),
-    toolCallTimeoutMs: z.number().default(DEFAULT_TOOL_CALL_TIMEOUT_MS),
-    failOnStartupError: z.boolean().default(false),
-    maxInstructionBytes: z.number().step(1).min(1).default(DEFAULT_MAX_INSTRUCTION_BYTES),
-    disabledTools: z.array(String).default([]),
-    reconnect: Reconnect,
-  }),
+  z.intersect([
+    z.object({
+      transport: z.const('streamable-http'),
+      serverName: z.string().required().pattern(SERVER_NAME_PATTERN),
+      url: z.string().required(),
+      headers: z.dict(String).default({}),
+      bearerTokenRef: z.string(),
+      githubAppAuthorization: z.boolean(),
+    }),
+    CommonConfig,
+  ]),
   (value) => {
     if (value.githubAppAuthorization === true
       && (value.bearerTokenRef !== undefined
@@ -158,19 +164,17 @@ const StreamableHttp = z.transform(
 )
 
 const ConfigSchema = z.union([
-  z.object({
-    transport: z.const('stdio'),
-    serverName: z.string().required().pattern(SERVER_NAME_PATTERN),
-    command: z.string().required(),
-    args: z.array(String).default([]),
-    env: z.dict(String).default({}),
-    cwd: z.string().default(''),
-    toolCallTimeoutMs: z.number().default(DEFAULT_TOOL_CALL_TIMEOUT_MS),
-    failOnStartupError: z.boolean().default(false),
-    maxInstructionBytes: z.number().step(1).min(1).default(DEFAULT_MAX_INSTRUCTION_BYTES),
-    disabledTools: z.array(String).default([]),
-    reconnect: Reconnect,
-  }),
+  z.intersect([
+    z.object({
+      transport: z.const('stdio'),
+      serverName: z.string().required().pattern(SERVER_NAME_PATTERN),
+      command: z.string().required(),
+      args: z.array(String).default([]),
+      env: z.dict(String).default({}),
+      cwd: z.string().default(''),
+    }),
+    CommonConfig,
+  ]),
   StreamableHttp,
 ])
 
