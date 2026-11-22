@@ -2661,6 +2661,18 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'the normalized selection installed for the Session, without waiting for default persistence.',
       },
       {
+        signature: 'snapshotModelSelection(sessionId: SessionId, signal?: AbortSignal): Promise<ModelSelection | undefined>',
+        description: 'Read the persisted next/last-used model choice for one Session without activating it.',
+        parameters: [{ name: 'sessionId', description: 'Session identity whose choice is copied.' }, { name: 'signal', description: 'optional cancellation for the persistence read.' }],
+        returns: 'the persisted next/last-used choice or undefined when no choice has been logged.',
+      },
+      {
+        signature: 'seedModelSelection(sessionId: SessionId, selection: ModelSelection, signal?: AbortSignal): Promise<ModelSelection>',
+        description: 'Install a persisted model choice on one Session without changing the deployment default. A destination that already has a persisted next/last-used choice keeps that choice for retry safety.',
+        parameters: [{ name: 'sessionId', description: 'destination Session identity.' }, { name: 'selection', description: 'provider, model, and optional adapter selection to install.' }, { name: 'signal', description: 'optional cancellation for validation and persistence.' }],
+        returns: 'the provider-resolved choice installed on the Session, or the existing destination choice.',
+      },
+      {
         signature: '@Remote async initializeDefaultModel(): Promise<void>',
         description: 'Select the first available account model after login when no provider API key is configured.',
         parameters: [],

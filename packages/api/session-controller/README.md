@@ -83,6 +83,8 @@ GUI model selection requires the exact provider/model pair in the available cata
 
 A successful `selectModel` response acknowledges the Session-local selection without waiting for the default profile setting to save. Default saves run in the background in submission order; a failure logs a warning and leaves the Session selection intact. New Sessions read the last successfully saved default.
 
+Owner-only Bot duplication uses Host-internal `snapshotModelSelection` and `seedModelSelection` methods to copy the persisted next/last-used route without changing the deployment default. Seeding validates a fresh destination before roster activation and preserves an existing destination choice on retry, so a later user selection cannot be overwritten.
+
 -----
 
 <a id="configuration"></a>

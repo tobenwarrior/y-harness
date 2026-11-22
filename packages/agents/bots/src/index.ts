@@ -57,7 +57,7 @@ import type { UserMessage } from '@yharness/llm'
 import { SessionId } from '@yharness/session'
 import type { SessionEvent } from '@yharness/session'
 import type { TurnEndReason } from '@yharness/session'
-import { ApiSessionNotFound, type SessionCreateRequest } from '@yharness/api-session-controller'
+import { ApiSessionNotFound, type ModelSelection, type SessionCreateRequest } from '@yharness/api-session-controller'
 import type { SessionSearchHit } from '@yharness/session-query'
 import { defineDomain, domainTable, type Domain, type KvTable } from '@yharness/storage-domain'
 import { credentialKey, type CredentialProvider, type CredentialRecord } from '@yharness/credentials'
@@ -141,7 +141,11 @@ import {
 } from './grok-history.ts'
 import { importGrokBotSkills } from './grok-import-skills.ts'
 import { botDuplicateDomain } from './duplicate-storage.ts'
-import type { BotDuplicateScheduleRequest, BotDuplicateStoredRecord } from './duplicate-storage.ts'
+import type {
+  BotDuplicateModelSelection,
+  BotDuplicateScheduleRequest,
+  BotDuplicateStoredRecord,
+} from './duplicate-storage.ts'
 import type { BotConnectedAppToolHost, BotGrokHistoryToolHost, BotGroupToolHost } from './scoped-tools.ts'
 import {
   createBotSkillPolicyProvider,
@@ -532,7 +536,11 @@ export {
 export type * from './template-types.ts'
 export { botTemplateDomain, botTemplateRecordSchema } from './template-storage.ts'
 export { botDuplicateDomain, botDuplicateOperationSchema, botDuplicateScheduleRequestSchema } from './duplicate-storage.ts'
-export type { BotDuplicateScheduleRequest, BotDuplicateStoredRecord } from './duplicate-storage.ts'
+export type {
+  BotDuplicateModelSelection,
+  BotDuplicateScheduleRequest,
+  BotDuplicateStoredRecord,
+} from './duplicate-storage.ts'
 
 interface BotWorkspaces {
   /** Compute the server-assigned directory for this Bot's Session. */
@@ -1519,6 +1527,20 @@ function normalizeBotMessageSearchQuery(request: BotMessageSearchRequest): strin
 
 function textLength(value: string): number {
   return Array.from(value).length
+}
+
+function sessionModelSelection(selection: {
+  readonly provider: string
+  readonly model: string
+  readonly reasoningEffort?: string | undefined
+  readonly serviceTier?: string | undefined
+}): ModelSelection {
+  return {
+    provider: selection.provider,
+    model: selection.model,
+    ...(selection.reasoningEffort === undefined ? {} : { reasoningEffort: selection.reasoningEffort }),
+    ...(selection.serviceTier === undefined ? {} : { serviceTier: selection.serviceTier }),
+  }
 }
 
 function normalizeName(value: string): string {
@@ -7681,6 +7703,7 @@ export class BotService extends TypertRemoteService {
       } else {
         const source = await this.readOwnedBot(sourceBotId)
         if (source.state !== 'active') return badRequest('Wait for the source Bot to finish setup.')
+        const modelSelection = await this.ctx.sessionController.snapshotModelSelection(source.sessionId, signal)
         const targetId = duplicateBotId(source.id, operationId)
         const bots = (await this.getDomain()).table('bots')
         if (await bots.getFresh(targetId) !== undefined) {
@@ -7695,6 +7718,7 @@ export class BotService extends TypertRemoteService {
           targetId,
           requestedName,
           targetName,
+          modelSelection,
           signal,
         )
         if (await duplicateOperations.insert(operationKey, snapshot)) {
@@ -7730,7 +7754,7 @@ export class BotService extends TypertRemoteService {
         ...(operation.profile.persona === undefined ? {} : { persona: operation.profile.persona }),
         ...(operation.profile.capabilities === undefined ? {} : { capabilities: operation.profile.capabilities }),
         ...(operation.profile.skillPolicy === undefined ? {} : { skillPolicy: operation.profile.skillPolicy }),
-      }, signal, preparedAvatar)
+      }, signal, preparedAvatar, operation.profile.modelSelection)
       await this.duplicateRoutineDefinitions(operation, created.bot, signal)
       operation = await duplicateOperations.update(operationKey, (current) => {
         if (current.completedAt !== undefined) return current
@@ -7749,6 +7773,7 @@ export class BotService extends TypertRemoteService {
     targetBotId: BotId,
     requestedName: string | null,
     targetName: string,
+    modelSelection: BotDuplicateModelSelection | undefined,
     signal?: AbortSignal,
   ): Promise<BotDuplicateStoredRecord> {
     const routines: BotDuplicateStoredRecord['routines'][number][] = []
@@ -7802,6 +7827,7 @@ export class BotService extends TypertRemoteService {
             disabled: [...source.skillPolicy.disabled],
           },
         }),
+        ...(modelSelection === undefined ? {} : { modelSelection }),
       },
       routines,
       skippedRoutines,
@@ -7907,6 +7933,7 @@ export class BotService extends TypertRemoteService {
     request: BotCreateRequest,
     signal?: AbortSignal,
     avatar?: ImageAttachmentRef,
+    modelSelection?: BotDuplicateModelSelection,
   ): Promise<BotCreateValue> {
     let normalized = normalizeCreate(request)
     const workspaces = this.ctx.get('botWorkspaces')
@@ -7927,6 +7954,13 @@ export class BotService extends TypertRemoteService {
         normalized = { ...normalized, cwd: existing.cwd }
       }
       if (existing.state === 'active' && matchesMetadata(existing, normalized)) {
+        if (modelSelection !== undefined) {
+          await this.ctx.sessionController.seedModelSelection(
+            existing.sessionId,
+            sessionModelSelection(modelSelection),
+            signal,
+          )
+        }
         if (avatar === undefined || existing.avatar !== undefined) return { bot: this.view(existing) }
         const next = await this.commitBotMutation(id, current => ({
           ...current,
@@ -7954,7 +7988,7 @@ export class BotService extends TypertRemoteService {
         ? existing
         : await this.commitBotMutation(id, current => ({ ...current, avatar }), existing.updatedAt, signal)
       if (pendingRecord !== existing) this.recordsBySession.set(String(pendingRecord.sessionId), pendingRecord)
-      const active = await this.provision(pendingRecord, signal)
+      const active = await this.provision(pendingRecord, signal, modelSelection)
       return { bot: this.view(active) }
     }
 
@@ -7992,7 +8026,7 @@ export class BotService extends TypertRemoteService {
     await this.commitNewBot(record, signal)
     this.recordsBySession.set(String(record.sessionId), record)
     this.emitChanged()
-    const active = await this.provision(record, signal)
+    const active = await this.provision(record, signal, modelSelection)
     return { bot: this.view(active) }
   }
 
@@ -8309,6 +8343,7 @@ export class BotService extends TypertRemoteService {
   private async provision(
     record: BotRecord,
     signal?: AbortSignal,
+    modelSelection?: BotDuplicateModelSelection,
   ): Promise<BotRecord> {
     try {
       const workspaces = this.ctx.get('botWorkspaces')
@@ -8321,6 +8356,13 @@ export class BotService extends TypertRemoteService {
       )
       if (created.sessionId !== record.sessionId) {
         throw new Error(`Session controller returned "${created.sessionId}" for "${record.sessionId}"`)
+      }
+      if (modelSelection !== undefined) {
+        await this.ctx.sessionController.seedModelSelection(
+          record.sessionId,
+          sessionModelSelection(modelSelection),
+          signal,
+        )
       }
     } catch (error: unknown) {
       const detail = remoteErrorOf(error)

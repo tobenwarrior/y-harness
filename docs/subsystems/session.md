@@ -1226,6 +1226,24 @@ inspect( sessionId: SessionId, signal?: AbortSignal, ): Promise<SessionInspectio
 @Remote('selectModel') selectModel(request: SessionSelectModelRequest): Promise<SessionSelectModelValue>
 
 /**
+ * Read the persisted next/last-used model choice for one Session without activating it.
+ * @param sessionId - Session identity whose choice is copied.
+ * @param signal - optional cancellation for the persistence read.
+ * @returns the persisted next/last-used choice or undefined when no choice has been logged.
+ */
+snapshotModelSelection(sessionId: SessionId, signal?: AbortSignal): Promise<ModelSelection | undefined>
+
+/**
+ * Install a persisted model choice on one Session without changing the deployment default.
+ * A destination that already has a persisted next/last-used choice keeps that choice for retry safety.
+ * @param sessionId - destination Session identity.
+ * @param selection - provider, model, and optional adapter selection to install.
+ * @param signal - optional cancellation for validation and persistence.
+ * @returns the provider-resolved choice installed on the Session, or the existing destination choice.
+ */
+seedModelSelection(sessionId: SessionId, selection: ModelSelection, signal?: AbortSignal): Promise<ModelSelection>
+
+/**
  * Select the first available account model after login when no provider API key is configured.
  * @returns after saving the first available model or retaining the existing default.
  */
@@ -1345,7 +1363,7 @@ workspaceDesktop(): { name: string; available: boolean; fileManager: 'finder' | 
 @Remote({ mode: 'stream' }) control(signal: AbortSignal): AsyncIterable<SessionControlFrame>
 ```
 
-Types: [SessionId](core.md) · [SessionInspection](persistence.md) · [SessionSearchRequest](session-query.md)
+Types: [ModelSelection](core.md) · [SessionId](core.md) · [SessionInspection](persistence.md) · [SessionSearchRequest](session-query.md)
 
 Source: [`packages/api/session-controller/src/index.ts`](../../packages/api/session-controller/src/index.ts)
 

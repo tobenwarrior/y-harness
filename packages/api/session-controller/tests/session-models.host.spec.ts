@@ -17,9 +17,10 @@ import type {
   UserMessage,
 } from '@yharness/llm'
 import SessionStore from '@yharness/session'
-import type { SessionId } from '@yharness/session'
+import { SessionId } from '@yharness/session'
 import type { SessionPromptRequest, SessionRequestId } from '../src/types.ts'
 import { ApiSessionAgentController } from '../src/agent.ts'
+import { SessionCommandController } from '../src/commands.ts'
 import { buildModelCatalog, hasProviderApiKey } from '../src/catalog.ts'
 import SystemPrompt from '@yharness/system-prompt'
 import { RemoteError } from '@yharness/typert-protocol'
@@ -628,6 +629,116 @@ describe('Web session model selection', () => {
         message: 'provider "tiered" model "model" does not support service tier "invented"',
       },
     })
+    await ctx.fiber.dispose()
+  })
+
+  it('snapshots a persisted choice and seeds it idempotently without changing the default', async () => {
+    const { ctx, agent, sessionId } = await harness()
+    registerTiered(ctx)
+    const target = ctx.sessions.create()
+    await ctx.agents.register({ id: target.id, session: target, status: 'idle', ctx } as Agent)
+    agent.session.append('model/selection', {
+      provider: 'tiered', model: 'model', serviceTier: ServiceTierId('priority'),
+    })
+    const defaultBefore = { provider: 'deepseek-official', model: 'deepseek-chat' }
+    const controller = createSessionTestController(ctx, {
+      defaultModelSelection: () => defaultBefore,
+      cwd: '/tmp',
+    })
+
+    await expect(controller.snapshotModelSelection(sessionId, new AbortController().signal)).resolves.toEqual({
+      provider: 'tiered', model: 'model', serviceTier: 'priority',
+    })
+    const selection = { provider: 'tiered', model: 'model', serviceTier: 'priority' }
+    await expect(controller.seedModelSelection(target.id, selection)).resolves.toEqual(selection)
+    expect(target.snapshotEvents().filter(event => event.type === 'model/selection')).toHaveLength(1)
+    expect(ctx.agentDefaultModel.currentSelection()).toEqual(defaultBefore)
+
+    await expect(controller.seedModelSelection(target.id, selection)).resolves.toEqual(selection)
+    expect(target.snapshotEvents().filter(event => event.type === 'model/selection')).toHaveLength(1)
+    expect(ctx.agentDefaultModel.currentSelection()).toEqual(defaultBefore)
+    await ctx.fiber.dispose()
+  })
+
+  it('preserves a later destination choice across duplicate retries', async () => {
+    const { ctx } = await harness()
+    registerTiered(ctx)
+    const target = ctx.sessions.create()
+    await ctx.agents.register({ id: target.id, session: target, status: 'idle', ctx } as Agent)
+    target.append('model/selection', {
+      provider: 'deepseek-official', model: 'deepseek-chat', reasoningEffort: ReasoningEffortId('high'),
+    })
+    const controller = createSessionTestController(ctx, {
+      defaultModelSelection: () => ({ provider: 'deepseek-official', model: 'deepseek-chat' }),
+      cwd: '/tmp',
+    })
+
+    await expect(controller.seedModelSelection(target.id, {
+      provider: 'tiered', model: 'model', serviceTier: 'priority',
+    })).resolves.toEqual({
+      provider: 'deepseek-official', model: 'deepseek-chat', reasoningEffort: 'high',
+    })
+    await expect(controller.seedModelSelection(target.id, {
+      provider: 'missing', model: 'gone',
+    })).resolves.toEqual({
+      provider: 'deepseek-official', model: 'deepseek-chat', reasoningEffort: 'high',
+    })
+    expect(target.snapshotEvents().filter(event => event.type === 'model/selection')).toHaveLength(1)
+    await ctx.fiber.dispose()
+  })
+
+  it('reports a missing model-selection projection instead of silently using a default', async () => {
+    const controller = new SessionCommandController({
+      sessionQuery: {
+        observeSession: async () => ({
+          projections: undefined,
+          [Symbol.dispose]: () => {},
+        }),
+      },
+    } as never, {} as never, '/tmp')
+
+    await expect(controller.snapshotModelSelection(SessionId('missing-projection'))).rejects.toThrow(
+      'required modelSelection projection is not registered',
+    )
+  })
+
+  it('does not seed an unavailable copied choice or mutate the default', async () => {
+    const { ctx, agent, sessionId } = await harness()
+    const target = ctx.sessions.create()
+    await ctx.agents.register({ id: target.id, session: target, status: 'idle', ctx } as Agent)
+    agent.session.append('model/selection', { provider: 'missing', model: 'gone' })
+    const defaultBefore = { provider: 'deepseek-official', model: 'deepseek-chat' }
+    const controller = createSessionTestController(ctx, {
+      defaultModelSelection: () => defaultBefore,
+      cwd: '/tmp',
+    })
+    const selection = await controller.snapshotModelSelection(sessionId)
+    if (selection === undefined) throw new Error('expected the source model choice')
+
+    await expect(controller.seedModelSelection(target.id, selection)).rejects.toMatchObject({
+      code: 'session/model-unavailable',
+      details: { provider: 'missing', model: 'gone' },
+    })
+
+    ctx.llm.registerAdapter(['resolve-failure'], new class extends CatalogAdapter {
+      override resolveModel(): Promise<LlmResolvedModelInfo> {
+        return Promise.reject(new Error('resolve failed'))
+      }
+    }('Resolve Failure', [{ provider: 'resolve-failure', id: 'plain', name: 'Plain' }]))
+    await expect(controller.seedModelSelection(target.id, {
+      provider: 'resolve-failure', model: 'plain',
+    })).rejects.toMatchObject({ code: 'session/model-unavailable', message: 'resolve failed' })
+    ctx.llm.registerAdapter(['string-resolve-failure'], new class extends CatalogAdapter {
+      override resolveModel(): Promise<LlmResolvedModelInfo> {
+        // oxlint-disable-next-line typescript/prefer-promise-reject-errors -- non-Error provider normalization is the scenario.
+        return Promise.reject('string resolve failed')
+      }
+    }('String Resolve Failure', [{ provider: 'string-resolve-failure', id: 'plain', name: 'Plain' }]))
+    await expect(controller.seedModelSelection(target.id, {
+      provider: 'string-resolve-failure', model: 'plain',
+    })).rejects.toMatchObject({ code: 'session/model-unavailable', message: 'string resolve failed' })
+    expect(target.snapshotEvents().some(event => event.type === 'model/selection')).toBe(false)
+    expect(ctx.agentDefaultModel.currentSelection()).toEqual(defaultBefore)
     await ctx.fiber.dispose()
   })
 
