@@ -27,6 +27,26 @@ it('reads only native login API-key presence through the onboarding bridge', asy
   expect(electron.ipcRenderer.invoke).toHaveBeenCalledWith(DESKTOP_IPC.onboardingApiKey)
 })
 
+it('updates the application hash in place for a later native Bot prompt', async () => {
+  const current = new URL('dsh-app://app/')
+  const state = { draft: 'Keep my draft' }
+  const replaceState = vi.fn((_state: unknown, _title: string, url: string) => { current.href = url })
+  const dispatchEvent = vi.spyOn(window, 'dispatchEvent')
+  vi.stubGlobal('location', current)
+  vi.stubGlobal('history', { state, replaceState })
+  await import('../src/preload-app.ts')
+  const handler = electron.ipcRenderer.on.mock.calls.find(([channel]) => channel === DESKTOP_IPC.botPromptNavigation)?.[1] as
+    (event: unknown, fragment: unknown) => void
+  expect(handler).toBeTypeOf('function')
+  const fragment = '#/bots/prompt?id=bot-scout&text=Keep%20my%20draft'
+  handler({}, fragment)
+  handler({}, fragment)
+  handler({}, 'https://example.test/#/bots/prompt?text=unsafe')
+  expect(location.href).toBe(`dsh-app://app/${fragment}`)
+  expect(replaceState.mock.calls).toEqual([[state, '', location.href], [state, '', location.href]])
+  expect(dispatchEvent.mock.calls.map(([event]) => event.type)).toEqual(['hashchange', 'hashchange'])
+})
+
 it('exposes onboarding size activation to the application document', async () => {
   vi.stubGlobal('location', new URL('dsh-app://app/'))
   await import('../src/preload-app.ts')
@@ -168,6 +188,7 @@ it('withholds the product API from same-origin child frames', async () => {
   vi.stubGlobal('process', { ...process, isMainFrame: false })
   await import('../src/preload-app.ts')
   expect(electron.contextBridge.exposeInMainWorld).toHaveBeenCalledWith('dshDesktop', { protocolVersion: 1 })
+  expect(electron.ipcRenderer.on.mock.calls.some(([name]) => name === DESKTOP_IPC.botPromptNavigation)).toBe(false)
 })
 
 it('forwards only the focused product iframe and releases native input subscriptions', async () => {

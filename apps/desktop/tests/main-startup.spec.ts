@@ -101,8 +101,12 @@ const harness = await vi.hoisted(async () => {
       setIgnoreMenuShortcuts: vi.fn(),
       focus: vi.fn(),
       sendInputEvent: vi.fn(),
-      send: vi.fn((channel: string, state: { policy?: { blocking: boolean } }) => {
-        if (channel === 'dsh-desktop:mandatory-state' && state.policy?.blocking) policyBlocked.resolve()
+      send: vi.fn((channel: string, ...args: readonly unknown[]) => {
+        const state = args[0]
+        if (channel !== 'dsh-desktop:mandatory-state' || typeof state !== 'object' || state === null
+          || !('policy' in state) || typeof state.policy !== 'object' || state.policy === null
+          || !('blocking' in state.policy) || state.policy.blocking !== true) return
+        policyBlocked.resolve()
       }),
     })
     readonly shown = deferred()
@@ -1336,7 +1340,7 @@ describe('desktop main startup', () => {
       expect(window.show.mock.invocationCallOrder[0]).toBeLessThan(window.moveTop.mock.invocationCallOrder[0]!)
     }
     window.destroy()
-    harness.app.emit('second-instance')
+    harness.app.emit('second-instance', {}, [])
     const replacement = harness.windows[1]!
     await replacement.shown.promise
     expect(replacement.show).toHaveBeenCalledOnce()
@@ -1377,7 +1381,7 @@ describe('desktop main startup', () => {
     expect(harness.dialog.showMessageBox).not.toHaveBeenCalled()
     expect(window.hide).toHaveBeenCalledOnce()
     await host.stopping.promise
-    harness.app.emit('second-instance')
+    harness.app.emit('second-instance', {}, [])
     expect(window.show).not.toHaveBeenCalled()
     expect(window.focus).not.toHaveBeenCalled()
     host.exited.resolve()
@@ -1401,7 +1405,7 @@ describe('desktop main startup', () => {
     harness.trays[0]!.emit('click')
     expect(window.show).toHaveBeenCalledOnce()
     expect(window.focus).toHaveBeenCalled()
-    harness.app.emit('second-instance')
+    harness.app.emit('second-instance', {}, [])
     expect(window.show).toHaveBeenCalledTimes(2)
     // Legacy locale changes resolve to the same English shell and do not relabel the tray.
     const relabels = harness.trays[0]!.setContextMenu.mock.calls.length
@@ -1420,6 +1424,53 @@ describe('desktop main startup', () => {
     window.destroy()
     hide()
     expect(window.hide).not.toHaveBeenCalled()
+  })
+
+  it('routes a trusted native Bot prompt through the renderer bridge without sending it', async () => {
+    await readyWorkspace()
+    const window = harness.windows[0]!
+    const event = { preventDefault: vi.fn() }
+    harness.app.emit('open-url', event, 'dsh://bots/prompt?id=bot-scout&text=Review%20the%20queue')
+    await vi.waitFor(() => {
+      expect(window.webContents.send).toHaveBeenCalledWith(
+        DESKTOP_IPC.botPromptNavigation, '#/bots/prompt?id=bot-scout&text=Review%20the%20queue',
+      )
+    })
+    expect(event.preventDefault).toHaveBeenCalledOnce()
+    expect(window.urls).toEqual(['dsh-app://app/'])
+
+    const beforeInvalid = window.urls.length
+    harness.app.emit('open-url', { preventDefault: vi.fn() }, 'dsh://bots/prompt?text=hello&unknown=value')
+    await Promise.resolve()
+    expect(window.urls).toHaveLength(beforeInvalid)
+  })
+
+  it.each(['win32', 'linux'] as const)('routes startup and second-instance Bot links on %s', async (platform) => {
+    const first = 'dsh://bots/prompt?id=bot-scout&text=First'
+    const second = 'dsh://bots/prompt?text=Second'
+    vi.stubGlobal('process', { ...process, platform, argv: ['desktop', first] })
+    await readyWorkspace()
+    const window = harness.windows[0]!
+    expect(window.webContents.send).toHaveBeenCalledWith(DESKTOP_IPC.botPromptNavigation, '#/bots/prompt?id=bot-scout&text=First')
+    harness.app.emit('second-instance', {}, ['desktop', '--original-process-start-time=123', second])
+    expect(window.webContents.send).toHaveBeenCalledWith(DESKTOP_IPC.botPromptNavigation, '#/bots/prompt?text=Second')
+    expect(window.urls).toEqual(['dsh-app://app/'])
+  })
+
+  it('delivers native prompts to the selected Cloud workspace without switching to Mac', async () => {
+    vi.stubGlobal('process', { ...process, platform: 'darwin', argv: ['desktop', 'dsh://bots/prompt?text=First'] })
+    const cloud = await import('../src/cloud-workspace.ts')
+    const showMac = vi.spyOn(cloud.DesktopCloudWorkspace.prototype, 'showMac')
+    const openBotPrompt = vi.spyOn(cloud.DesktopCloudWorkspace.prototype, 'openBotPrompt').mockImplementation(() => {})
+    vi.spyOn(cloud.DesktopCloudWorkspace.prototype, 'isCloudSelected').mockReturnValue(true)
+    await readyWorkspace()
+    const window = harness.windows[0]!
+    expect(openBotPrompt).toHaveBeenCalledWith('#/bots/prompt?text=First')
+    harness.app.emit('open-url', { preventDefault: vi.fn() }, 'dsh://bots/prompt?id=bot-scout&text=Second')
+    expect(openBotPrompt).toHaveBeenCalledWith('#/bots/prompt?id=bot-scout&text=Second')
+    expect(showMac).not.toHaveBeenCalled()
+    expect(window.webContents.send).not.toHaveBeenCalledWith(DESKTOP_IPC.botPromptNavigation, expect.any(String))
+    expect(window.urls).toEqual(['dsh-app://app/'])
   })
 
   it('focuses an existing shell dialog instead of replacing it with a close confirmation', async () => {

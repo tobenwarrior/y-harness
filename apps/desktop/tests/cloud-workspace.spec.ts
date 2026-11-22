@@ -4,6 +4,7 @@ import { BrowserWindow } from 'electron'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { DesktopCloudWorkspace } from '../src/cloud-workspace.ts'
 import type { DesktopCloudVault } from '../src/cloud-vault-window.ts'
+import { DESKTOP_IPC } from '../src/ipc.ts'
 import { en } from '../src/locale.ts'
 
 type RequestHandler = (request: { url: string }, reply: (result: { cancel: boolean }) => void) => void
@@ -36,6 +37,7 @@ vi.mock('electron', () => ({
     readonly getContentBounds = () => ({ width: 900, height: 700 })
   },
   WebContentsView: class {
+    private url = ''
     readonly setBounds = vi.fn()
     readonly setVisible = vi.fn()
     readonly webContents = Object.assign(new EventEmitter(), {
@@ -43,11 +45,14 @@ vi.mock('electron', () => ({
       close: vi.fn(),
       focus: vi.fn(),
       send: vi.fn(),
+      getURL: vi.fn(() => this.url),
+      isLoadingMainFrame: vi.fn(() => false),
       getUserAgent: vi.fn(() => 'Cloud workspace fixture'),
       setUserAgent: vi.fn(),
       setWindowOpenHandler: vi.fn(),
       session: { webRequest: { onBeforeRequest: vi.fn() } },
       loadURL: vi.fn(async (url: string) => {
+        this.url = url
         if (url.startsWith('http://')) this.webContents.emit('did-navigate', {}, url, 200)
       }),
     })
@@ -81,6 +86,8 @@ const forward = (origin = ORIGIN) => {
 type FakeView = {
   readonly webContents: EventEmitter & {
     close: ReturnType<typeof vi.fn>
+    getURL: ReturnType<typeof vi.fn<() => string>>
+    isLoadingMainFrame: ReturnType<typeof vi.fn<() => boolean>>
     loadURL: ReturnType<typeof vi.fn<(url: string) => Promise<void>>>
     send: ReturnType<typeof vi.fn>
   }
@@ -114,6 +121,48 @@ afterEach(async () => {
   vi.resetAllMocks()
   vi.unstubAllGlobals()
   vi.useRealTimers()
+})
+
+it('queues a Bot link until Cloud signs in and delivers later links in the same document', async () => {
+  const signedIn = Promise.withResolvers<undefined>()
+  fixture.installCookie.mockReturnValueOnce(signedIn.promise)
+  fixture.open.mockResolvedValueOnce(connection().value)
+  workspace.attach(new BrowserWindow())
+  const first = '#/bots/prompt?id=bot-scout&text=First'
+  workspace.openBotPrompt(first)
+  await vi.advanceTimersByTimeAsync(0)
+  expect(fixture.views).toHaveLength(1)
+  signedIn.resolve(undefined)
+  await vi.advanceTimersByTimeAsync(0)
+  const chat = view(1).webContents
+  expect(chat.send).toHaveBeenCalledWith(DESKTOP_IPC.botPromptNavigation, first)
+
+  const second = '#/bots/prompt?text=Second'
+  chat.isLoadingMainFrame.mockReturnValueOnce(true)
+  workspace.openBotPrompt(second)
+  expect(chat.send).not.toHaveBeenCalledWith(DESKTOP_IPC.botPromptNavigation, second)
+  chat.emit('did-finish-load')
+  expect(chat.send).toHaveBeenCalledWith(DESKTOP_IPC.botPromptNavigation, second)
+  chat.emit('did-finish-load')
+  expect(chat.send.mock.calls.filter(([channel]) => channel === DESKTOP_IPC.botPromptNavigation))
+    .toEqual([[DESKTOP_IPC.botPromptNavigation, first], [DESKTOP_IPC.botPromptNavigation, second]])
+  expect(chat.loadURL).toHaveBeenCalledExactlyOnceWith(ORIGIN + '/')
+})
+
+it('keeps a Bot link in its selected workspace and clears it when leaving Cloud', async () => {
+  fixture.open.mockResolvedValueOnce(connection().value)
+  workspace.attach(new BrowserWindow())
+  await vi.advanceTimersByTimeAsync(0)
+  const chat = view(1).webContents
+  const prompt = '#/bots/prompt?text=Private%20draft'
+  chat.getURL.mockReturnValueOnce(`${ORIGIN}/__yharness/download`)
+  workspace.openBotPrompt(prompt)
+  expect(chat.send).not.toHaveBeenCalledWith(DESKTOP_IPC.botPromptNavigation, prompt)
+  workspace.showMac()
+  workspace.openBotPrompt(prompt)
+  workspace.showCloud()
+  chat.emit('did-finish-load')
+  expect(chat.send).not.toHaveBeenCalledWith(DESKTOP_IPC.botPromptNavigation, prompt)
 })
 
 it('keeps the loaded Cloud chat across a failed reconnect and reauthenticates at the same origin', async () => {
@@ -231,6 +280,9 @@ it('cancels the old retry and closes the old chat when the owner changes servers
   const chat = view(1)
   first.ended.resolve(undefined)
   await vi.advanceTimersByTimeAsync(0)
+  const unsent = '#/bots/prompt?text=Old%20workspace%20draft'
+  workspace.openBotPrompt(unsent)
+  expect(chat.webContents.send).not.toHaveBeenCalledWith(DESKTOP_IPC.botPromptNavigation, unsent)
 
   function choose(url: string) {
     view(0).webContents.emit('will-navigate', { preventDefault: vi.fn() }, url)
@@ -246,4 +298,5 @@ it('cancels the old retry and closes the old chat when the owner changes servers
   expect(fixture.open).toHaveBeenNthCalledWith(2, 'another-cloud', expect.any(AbortSignal),
     expect.objectContaining({ forward: nextForward }))
   expect(view(2).webContents.loadURL).toHaveBeenCalledExactlyOnceWith(newOrigin + '/')
+  expect(view(2).webContents.send).not.toHaveBeenCalledWith(DESKTOP_IPC.botPromptNavigation, unsent)
 })

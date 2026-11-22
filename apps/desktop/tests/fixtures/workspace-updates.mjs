@@ -212,6 +212,26 @@ async function qualify() {
     }
     const cases = ['real-workspace-preload-and-host']
 
+    await mainWindow.webContents.executeJavaScript(`(() => {
+      window.__dshBotPromptProbe = { rendererId: crypto.randomUUID(), draft: 'existing draft', hashes: [] };
+      window.addEventListener('hashchange', event => window.__dshBotPromptProbe.hashes.push(new URL(event.newURL).hash));
+      return window.__dshBotPromptProbe.rendererId;
+    })()`)
+    app.emit('open-url', { preventDefault() {} }, 'dsh://bots/prompt?id=bot-scout&text=Keep%20the%20draft')
+    await waitFor(async () => await mainWindow.webContents.executeJavaScript(
+      `window.__dshBotPromptProbe?.hashes.includes('#/bots/prompt?id=bot-scout&text=Keep%20the%20draft') === true`,
+    ), 'native Bot prompt handoff')
+    const promptProbe = await mainWindow.webContents.executeJavaScript(`({
+      rendererId: window.__dshBotPromptProbe?.rendererId,
+      draft: window.__dshBotPromptProbe?.draft,
+      hash: window.__dshBotPromptProbe?.hashes.at(-1),
+    })`)
+    assert.equal(promptProbe.rendererId !== undefined, true, 'native prompt must keep the renderer alive')
+    assert.equal(promptProbe.draft, 'existing draft', 'native prompt must keep the existing draft')
+    assert.equal(promptProbe.hash, '#/bots/prompt?id=bot-scout&text=Keep%20the%20draft')
+    cases.push('real-packaged-renderer-native-bot-prompt-preserves-draft')
+    console.log('workspace qualification: native Bot prompt kept the packaged renderer and draft')
+
     server.select('hold-check', '0.1.5-rc.1')
     checkMenu.click()
     await server.arrived()
