@@ -29,6 +29,8 @@ import type GitHubAppAuth from '@yharness/github-app-auth'
 import { syncTools } from './tools.ts'
 import type { ToolBridgeOptions, ToolDisposers } from './tools.ts'
 import type { Config } from './index.ts'
+import { createMcpActionCatalog, loaderEntryId } from './action-catalog.ts'
+import type { McpActionCatalog, McpActionCatalogAction } from './action-catalog.ts'
 
 type GitHubAppAuthService = Pick<GitHubAppAuth, 'status' | 'tokenFor'>
 
@@ -144,6 +146,8 @@ export interface ConnectionHandle extends ServerContext {
    * unregister every tool this server still owns.
    */
   dispose(): Promise<void>
+  /** Read this connection's Host action catalog, when it is loader-owned and unscoped. */
+  actionCatalog(): McpActionCatalog | undefined
 }
 
 /**
@@ -158,12 +162,17 @@ export interface ConnectionHandle extends ServerContext {
 export function startConnection(ctx: Context, config: Config, policy: ResolvedReconnectPolicy): ConnectionHandle {
   const label = `mcp-client(${config.serverName})`
   const disabledTools = new Set(resolveDisabledTools(config.disabledTools, `${label}.disabledTools`))
+  const entryId = loaderEntryId(ctx)
+  const actionCatalog = entryId === undefined ? undefined : createMcpActionCatalog(config.serverName, entryId)
   const incompleteDisposalMessage = `${label}: transport closure could not be confirmed during disposal — server shutdown may be incomplete`
   const opts: ToolBridgeOptions = {
     registrationFailure: 'contain',
     serverName: config.serverName,
     toolCallTimeoutMs: config.toolCallTimeoutMs,
     disabledTools,
+    ...(actionCatalog === undefined
+      ? {}
+      : { onToolsDiscovered: (actions: readonly McpActionCatalogAction[]) => { actionCatalog.discovered(actions) } }),
   }
   // The initial sync uses 'throw' when failOnStartupError is configured, so
   // a registration conflict propagates to the startup-await path. Re-syncs
@@ -234,6 +243,7 @@ export function startConnection(ctx: Context, config: Config, policy: ResolvedRe
     closeClient = undefined
     connectedAt = undefined
     serverInstructions = ''
+    actionCatalog?.setConnected(false)
     for (const dispose of disposers.values()) dispose()
     disposers = new Map()
     return close
@@ -251,6 +261,7 @@ export function startConnection(ctx: Context, config: Config, policy: ResolvedRe
     if (!isCurrent(generation)) return
     client = undefined
     closeClient = undefined
+    actionCatalog?.setConnected(false)
     scheduleReconnect()
   }
 
@@ -265,6 +276,7 @@ export function startConnection(ctx: Context, config: Config, policy: ResolvedRe
       transportCloseUnconfirmed = true
       client = undefined
       closeClient = close
+      actionCatalog?.setConnected(false)
       ctx.logger.error(`${label}: failed generation could not confirm transport closure — reconnect stopped to avoid overlapping server processes; reload the plugin or restart the Host to retry`)
       return
     }
@@ -530,6 +542,7 @@ export function startConnection(ctx: Context, config: Config, policy: ResolvedRe
     }
     if (!isCurrent(generation)) return
     serverInstructions = instructions
+    actionCatalog?.setConnected(true)
     connectedAt = Date.now()
     if (failedAttempts > 0) ctx.logger.info(`${label}: reconnected and re-synced tools (attempt ${failedAttempts}/${policy.maxAttempts})`)
   }
@@ -564,6 +577,7 @@ export function startConnection(ctx: Context, config: Config, policy: ResolvedRe
   return {
     ready,
     instructions: () => serverInstructions,
+    actionCatalog: () => actionCatalog?.snapshot(),
     resources: {
       async request(request, exec): Promise<JsonValue> {
         const generation = client
@@ -589,6 +603,7 @@ export function startConnection(ctx: Context, config: Config, policy: ResolvedRe
     async dispose(): Promise<void> {
       disposed = true
       serverInstructions = ''
+      actionCatalog?.setConnected(false)
       if (reconnectTimer !== undefined) {
         clearTimeout(reconnectTimer)
         reconnectTimer = undefined

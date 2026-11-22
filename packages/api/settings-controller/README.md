@@ -29,6 +29,8 @@ Mount this package as a Loader entry in a profile that serves browser configurat
 
 `settings.openSettingsDocument()` prepares the provider-owned document and opens it with the native text editor; it accepts no browser-supplied filesystem target.
 
+`settings.listMcpActions()` lists discovered connector actions with their enabled state. `settings.setMcpActionEnabled()` edits one discovered action on a profile-owned connection through the configuration editor. Both calls return connector and action names and descriptions without exposing raw connection configuration.
+
 -----
 
 <a id="configuration"></a>

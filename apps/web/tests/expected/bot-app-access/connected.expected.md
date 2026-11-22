@@ -2,6 +2,7 @@
   - heading "Connected apps" [level=2]
   - button "Cancel"
   - paragraph: Choose which connected apps Scout can use.
+  - button "Manage actions"
   - list "Connected apps":
     - listitem:
       - strong: Cloudflare

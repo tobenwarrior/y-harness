@@ -21,12 +21,14 @@ import { GITHUB_MCP_URL } from '@yharness/github-app-auth'
 import { DEFAULT_MAX_INSTRUCTION_BYTES, RECONNECT_DEFAULTS, resolveDisabledTools, resolveReconnectPolicy, startConnection } from './connection.ts'
 import type { ReconnectConfig } from './connection.ts'
 import { registerServerContext } from './server-context.ts'
+import { loaderEntryId, registerMcpActionCatalogReader } from './action-catalog.ts'
 // Side-effect type import: declaration-merges `ctx.tools` onto Context.
 import type {} from '@yharness/tools'
 
 export { createMcpToolDefinition } from './tools.ts'
 export type { McpResult, McpToolDefinitionOptions } from './tools.ts'
 export type { ReconnectConfig, ResolvedReconnectPolicy } from './connection.ts'
+export type { McpActionCatalog } from './action-catalog.ts'
 
 /** Cordis plugin name used by loader diagnostics. */
 export const name = 'mcp-client'
@@ -227,6 +229,9 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   // quiesces in-flight work, and unregisters the current generation.
   const connection = startConnection(ctx, config, reconnect)
   registerServerContext(ctx, config.serverName, connection)
+  if (loaderEntryId(ctx) !== undefined) {
+    registerMcpActionCatalogReader(ctx, () => connection.actionCatalog())
+  }
   let stopping: Promise<void> | undefined
   const dispose = (): Promise<void> => stopping ??= connection.dispose()
   // Cordis announces unload before awaiting an unfinished apply(). Closing

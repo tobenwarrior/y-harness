@@ -23,7 +23,7 @@ import { createSharedBotsClient, type SharedBotsClient } from '../src/client/sha
 import type {
   BotGroupDetailData, BotGroupSummary, BotMemoryManagerActions, BotMemorySummary, BotRoutineHistory, BotSummary,
   BotSkillManagerActions, BotSkillPolicy, BotSkillSummary, BotTemplateActions, BotTemplateState, BotWorkspaceProps,
-  GitHubAppSignInActions, GitHubAppSignInAttemptId, GitHubAppSignInView,
+  GitHubAppSignInActions, GitHubAppSignInAttemptId, GitHubAppSignInView, McpActionServerView,
 } from '../src/client/types.ts'
 import { BotSkillPolicyConflictError } from '../src/client/types.ts'
 
@@ -3012,6 +3012,320 @@ describe('Bot roster and detail', () => {
     fireEvent.click(grant)
     await waitFor(() => { expect(onSetConnectedAppAccess).toHaveBeenCalledWith('release', 'github', true) })
     expect(within(dialog).getByRole('button', { name: 'Revoke access to GitHub' }).getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('opens workspace-wide connector actions even when the selected Bot has no app grants', async () => {
+    const initial: McpActionServerView = {
+      serverName: 'Workspace Fixture', connected: true, editable: true,
+      actions: [
+        { name: 'inspect_record', description: 'Read one record.', enabled: false },
+        { name: 'publish_record', enabled: true },
+      ],
+    }
+    const updated: McpActionServerView = {
+      ...initial,
+      actions: initial.actions.map(action => action.name === 'inspect_record' ? { ...action, enabled: true } : action),
+    }
+    const loadMcpActions = vi.fn().mockResolvedValue([initial])
+    const setMcpActionEnabled = vi.fn().mockResolvedValue([updated])
+    const onSetConnectedAppAccess = vi.fn().mockResolvedValue(undefined)
+    renderSplitWorkspace({
+      onLoadConnectedApps: vi.fn().mockResolvedValue([]),
+      onSetConnectedAppAccess,
+      onLoadMcpActions: loadMcpActions,
+      onSetMcpActionEnabled: setMcpActionEnabled,
+    })
+
+    openConnectedAppsMenu()
+    const dialog = await screen.findByRole('dialog', { name: 'Connected apps' })
+    await waitFor(() => { expect(within(dialog).getByRole('button', { name: 'Manage actions' })).toBeTruthy() })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Manage actions' }))
+    const group = await within(dialog).findByRole('group', { name: 'Workspace Fixture' })
+    const inspect = within(group).getByRole('switch', { name: 'inspect_record' })
+    expect(inspect.getAttribute('aria-checked')).toBe('false')
+    expect(within(dialog).getByText('Choose which connector actions are available in this workspace.')).toBeTruthy()
+
+    fireEvent.click(inspect)
+    await waitFor(() => {
+      expect(setMcpActionEnabled).toHaveBeenCalledWith('Workspace Fixture', 'inspect_record', true)
+      expect(within(group).getByRole('switch', { name: 'inspect_record' }).getAttribute('aria-checked')).toBe('true')
+    })
+    expect(loadMcpActions).toHaveBeenCalledOnce()
+    expect(onSetConnectedAppAccess).not.toHaveBeenCalled()
+  })
+
+  it('ignores a connector action load failure from a closed dialog', async () => {
+    const firstLoad = Promise.withResolvers<readonly McpActionServerView[]>()
+    const currentLoad = Promise.withResolvers<readonly McpActionServerView[]>()
+    const loadMcpActions = vi.fn()
+      .mockReturnValueOnce(firstLoad.promise)
+      .mockReturnValueOnce(currentLoad.promise)
+    renderSplitWorkspace({
+      onLoadConnectedApps: vi.fn().mockResolvedValue([]),
+      onSetConnectedAppAccess: vi.fn().mockResolvedValue(undefined),
+      onLoadMcpActions: loadMcpActions,
+      onSetMcpActionEnabled: vi.fn().mockResolvedValue([]),
+    })
+
+    openConnectedAppsMenu()
+    let dialog = await screen.findByRole('dialog', { name: 'Connected apps' })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Manage actions' }))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Done' }))
+    await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Connected apps' })).toBeNull() })
+
+    openConnectedAppsMenu()
+    dialog = await screen.findByRole('dialog', { name: 'Connected apps' })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Manage actions' }))
+    currentLoad.resolve([])
+    await within(dialog).findByText('No connector actions available')
+    firstLoad.reject(new Error('late action load'))
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(within(dialog).queryByRole('alert')).toBeNull()
+  })
+
+  it('retains connector actions on save failure and fences a stale action load', async () => {
+    const firstLoad = Promise.withResolvers<readonly McpActionServerView[]>()
+    const staleReload = Promise.withResolvers<readonly McpActionServerView[]>()
+    const currentLoad = Promise.withResolvers<readonly McpActionServerView[]>()
+    const stale: McpActionServerView = {
+      serverName: 'Workspace Fixture', connected: true, editable: true,
+      actions: [{ name: 'stale_action', enabled: false }],
+    }
+    const current: McpActionServerView = {
+      serverName: 'Workspace Fixture', connected: true, editable: true,
+      actions: [{ name: 'current_action', enabled: false }],
+    }
+    const loadMcpActions = vi.fn()
+      .mockReturnValueOnce(firstLoad.promise)
+      .mockReturnValueOnce(staleReload.promise)
+      .mockReturnValueOnce(currentLoad.promise)
+    const setMcpActionEnabled = vi.fn().mockRejectedValue(new Error('action unavailable'))
+    renderSplitWorkspace({
+      onLoadConnectedApps: vi.fn().mockResolvedValue([]),
+      onSetConnectedAppAccess: vi.fn().mockResolvedValue(undefined),
+      onLoadMcpActions: loadMcpActions,
+      onSetMcpActionEnabled: setMcpActionEnabled,
+    })
+
+    openConnectedAppsMenu()
+    const dialog = await screen.findByRole('dialog', { name: 'Connected apps' })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Manage actions' }))
+    firstLoad.resolve([stale])
+    const staleGroup = await within(dialog).findByRole('group', { name: 'Workspace Fixture' })
+    fireEvent.click(within(staleGroup).getByRole('switch', { name: 'stale_action' }))
+    expect((await within(dialog).findByRole('alert')).textContent).toContain('action unavailable')
+    expect(within(staleGroup).getByRole('switch', { name: 'stale_action' }).getAttribute('aria-checked')).toBe('false')
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Done' }))
+    await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Connected apps' })).toBeNull() })
+    openConnectedAppsMenu()
+    const pendingDialog = await screen.findByRole('dialog', { name: 'Connected apps' })
+    fireEvent.click(within(pendingDialog).getByRole('button', { name: 'Manage actions' }))
+    fireEvent.click(within(pendingDialog).getByRole('button', { name: 'Done' }))
+    await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Connected apps' })).toBeNull() })
+
+    openConnectedAppsMenu()
+    const reopened = await screen.findByRole('dialog', { name: 'Connected apps' })
+    fireEvent.click(within(reopened).getByRole('button', { name: 'Manage actions' }))
+    currentLoad.resolve([current])
+    await within(reopened).findByRole('switch', { name: 'current_action' })
+    staleReload.resolve([stale])
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(within(reopened).queryByRole('switch', { name: 'stale_action' })).toBeNull()
+  })
+
+  it('shows connector action loading, empty, retry, and locked states', async () => {
+    const empty: readonly McpActionServerView[] = []
+    const catalog: readonly McpActionServerView[] = [
+      {
+        serverName: ' ', connected: false, editable: true,
+        actions: [{ name: '', description: 'Offline detail', enabled: false }],
+      },
+      {
+        serverName: 'Connected but locked', connected: true, editable: false,
+        actions: [{ name: 'locked_action', enabled: true }],
+      },
+      { serverName: 'Empty connector', connected: true, editable: true, actions: [] },
+      {
+        serverName: 'Editable connector', connected: true, editable: true,
+        actions: [{ name: 'save_me', enabled: false }],
+      },
+    ]
+    const updated = catalog.map(server => server.serverName === 'Editable connector'
+      ? { ...server, actions: server.actions.map(action => ({ ...action, enabled: true })) }
+      : server)
+    const pendingSave = Promise.withResolvers<readonly McpActionServerView[]>()
+    const loadMcpActions = vi.fn()
+      .mockRejectedValueOnce(new Error('connector unavailable'))
+      .mockRejectedValueOnce('offline')
+      .mockResolvedValueOnce(empty)
+      .mockResolvedValueOnce(catalog)
+    const setMcpActionEnabled = vi.fn()
+      .mockReturnValueOnce(pendingSave.promise)
+      .mockRejectedValueOnce('save offline')
+    renderSplitWorkspace({
+      onLoadConnectedApps: vi.fn().mockResolvedValue([]),
+      onSetConnectedAppAccess: vi.fn().mockResolvedValue(undefined),
+      onLoadMcpActions: loadMcpActions,
+      onSetMcpActionEnabled: setMcpActionEnabled,
+    })
+
+    openConnectedAppsMenu()
+    const dialog = await screen.findByRole('dialog', { name: 'Connected apps' })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Manage actions' }))
+    expect((await within(dialog).findByRole('alert')).textContent).toContain('connector unavailable')
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Try again' }))
+    expect((await within(dialog).findByRole('alert')).textContent).toContain('Connector actions could not be loaded')
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Try again' }))
+    expect(await within(dialog).findByText('No connector actions available')).toBeTruthy()
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Back to connected apps' }))
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Manage actions' }))
+    const offline = await within(dialog).findByRole('group', { name: 'Unnamed connector' })
+    const offlineAction = within(offline).getByRole('switch', { name: 'Unnamed action' })
+    expect(offlineAction.getAttribute('disabled')).toBe('')
+    expect(offlineAction.getAttribute('title')).toBe('Unavailable while the connector is offline')
+    expect(within(offline).getByText('Offline detail')).toBeTruthy()
+    fireEvent.click(offlineAction)
+    expect(within(dialog).getByRole('group', { name: 'Connected but locked' })).toBeTruthy()
+    const locked = within(dialog).getByRole('switch', { name: 'locked_action' })
+    expect(locked.getAttribute('disabled')).toBe('')
+    expect(locked.getAttribute('title')).toBe('Managed by the Host')
+    fireEvent.click(locked)
+    expect(within(dialog).getByText('No actions discovered yet.')).toBeTruthy()
+    const editable = within(dialog).getByRole('switch', { name: 'save_me' })
+
+    fireEvent.click(editable)
+    expect(editable.getAttribute('disabled')).toBe('')
+    pendingSave.resolve(updated)
+    await waitFor(() => { expect(within(dialog).getByRole('switch', { name: 'save_me' }).getAttribute('aria-checked')).toBe('true') })
+
+    fireEvent.click(within(dialog).getByRole('switch', { name: 'save_me' }))
+    expect((await within(dialog).findByRole('alert')).textContent).toContain('That action change could not be saved')
+    expect(within(dialog).queryByRole('button', { name: 'Try again' })).toBeNull()
+  })
+
+  it('opens connector actions when no per-Bot app grant callbacks are present', async () => {
+    const loadMcpActions = vi.fn().mockResolvedValue([])
+    const setMcpActionEnabled = vi.fn().mockResolvedValue([])
+    renderSplitWorkspace({ onLoadMcpActions: loadMcpActions, onSetMcpActionEnabled: setMcpActionEnabled })
+
+    openConnectedAppsMenu()
+    const dialog = await screen.findByRole('dialog', { name: 'Connected apps' })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Manage actions' }))
+    expect(await within(dialog).findByText('No connector actions available')).toBeTruthy()
+    expect(loadMcpActions).toHaveBeenCalledOnce()
+  })
+
+  it('fences connector action saves after the dialog closes', async () => {
+    const firstSave = Promise.withResolvers<readonly McpActionServerView[]>()
+    const secondSave = Promise.withResolvers<readonly McpActionServerView[]>()
+    const server: McpActionServerView = {
+      serverName: 'Workspace Fixture', connected: true, editable: true,
+      actions: [{ name: 'inspect_record', enabled: false }],
+    }
+    const loadMcpActions = vi.fn().mockResolvedValue([server])
+    const setMcpActionEnabled = vi.fn()
+      .mockReturnValueOnce(firstSave.promise)
+      .mockReturnValueOnce(secondSave.promise)
+    renderSplitWorkspace({
+      onLoadConnectedApps: vi.fn().mockResolvedValue([]),
+      onSetConnectedAppAccess: vi.fn().mockResolvedValue(undefined),
+      onLoadMcpActions: loadMcpActions,
+      onSetMcpActionEnabled: setMcpActionEnabled,
+    })
+
+    openConnectedAppsMenu()
+    let dialog = await screen.findByRole('dialog', { name: 'Connected apps' })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Manage actions' }))
+    fireEvent.click(await within(dialog).findByRole('switch', { name: 'inspect_record' }))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+    await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Connected apps' })).toBeNull() })
+    firstSave.resolve([server])
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+
+    openConnectedAppsMenu()
+    dialog = await screen.findByRole('dialog', { name: 'Connected apps' })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Manage actions' }))
+    fireEvent.click(await within(dialog).findByRole('switch', { name: 'inspect_record' }))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+    await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Connected apps' })).toBeNull() })
+    secondSave.reject(new Error('late failure'))
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(setMcpActionEnabled).toHaveBeenCalledTimes(2)
+  })
+
+  it('ignores an action retry after its callbacks are removed', async () => {
+    const onLoadConnectedApps = vi.fn().mockResolvedValue([])
+    const onSetConnectedAppAccess = vi.fn().mockResolvedValue(undefined)
+    const loadMcpActions = vi.fn().mockRejectedValue(new Error('connector unavailable'))
+    const setMcpActionEnabled = vi.fn().mockResolvedValue([])
+    const view = renderSplitWorkspace({
+      onLoadConnectedApps,
+      onSetConnectedAppAccess,
+      onLoadMcpActions: loadMcpActions,
+      onSetMcpActionEnabled: setMcpActionEnabled,
+    })
+
+    openConnectedAppsMenu()
+    const dialog = await screen.findByRole('dialog', { name: 'Connected apps' })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Manage actions' }))
+    await within(dialog).findByRole('alert')
+    view.rerender(<>
+      <BotRoster
+        bots={bots}
+        selectedBotId="research"
+        onSelectBot={vi.fn()}
+        onCreateBot={vi.fn()}
+        onLoadConnectedApps={onLoadConnectedApps}
+        onSetConnectedAppAccess={onSetConnectedAppAccess}
+        t={t}
+      />
+      <BotDetail bot={bots[0]} loading={false} loadAvatar={undefined} t={t}>
+        <p>Persistent session surface</p>
+      </BotDetail>
+    </>)
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Try again' }))
+    expect(loadMcpActions).toHaveBeenCalledOnce()
+  })
+
+  it('ignores an action toggle after its save callback is removed', async () => {
+    const onLoadConnectedApps = vi.fn().mockResolvedValue([])
+    const onSetConnectedAppAccess = vi.fn().mockResolvedValue(undefined)
+    const loadMcpActions = vi.fn().mockResolvedValue([{
+      serverName: 'Workspace Fixture', connected: true, editable: true,
+      actions: [{ name: 'inspect_record', enabled: false }],
+    } satisfies McpActionServerView])
+    const setMcpActionEnabled = vi.fn().mockResolvedValue([])
+    const view = renderSplitWorkspace({
+      onLoadConnectedApps,
+      onSetConnectedAppAccess,
+      onLoadMcpActions: loadMcpActions,
+      onSetMcpActionEnabled: setMcpActionEnabled,
+    })
+
+    openConnectedAppsMenu()
+    const dialog = await screen.findByRole('dialog', { name: 'Connected apps' })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Manage actions' }))
+    const action = await within(dialog).findByRole('switch', { name: 'inspect_record' })
+    view.rerender(<>
+      <BotRoster
+        bots={bots}
+        selectedBotId="research"
+        onSelectBot={vi.fn()}
+        onCreateBot={vi.fn()}
+        onLoadConnectedApps={onLoadConnectedApps}
+        onSetConnectedAppAccess={onSetConnectedAppAccess}
+        onLoadMcpActions={loadMcpActions}
+        t={t}
+      />
+      <BotDetail bot={bots[0]} loading={false} loadAvatar={undefined} t={t}>
+        <p>Persistent session surface</p>
+      </BotDetail>
+    </>)
+    fireEvent.click(action)
+    expect(action.getAttribute('aria-checked')).toBe('false')
+    expect(setMcpActionEnabled).not.toHaveBeenCalled()
   })
 
   it('keeps the GitHub account flow separate from Bot app grants', async () => {

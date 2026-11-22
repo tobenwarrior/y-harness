@@ -92,6 +92,12 @@ The model sees each tool under a stable server-qualified name: `mcp__<serverName
 - An update that conflicts with an already-registered tool name is rejected entirely — you never get a partial tool set from that server.
 - `disabledTools` applies to both stdio and Streamable HTTP. The filter runs before registration on startup, list-change rediscovery, and reconnect, so a disabled action is never published or dispatched. Omit it to preserve the complete remote tool set. Names are exact raw MCP names, including punctuation or separators.
 
+### Host action catalog
+
+The Host can synchronously read the event `mcp/actions/catalog` to show the last successful action discovery for each loader-owned, unscoped connector. Each catalog includes the configured server name, the full loader entry id, connection state, exact raw MCP action names, bounded descriptions, and whether local `disabledTools` currently allows each action.
+
+Scoped or manually mounted MCP clients do not publish a Host catalog. A disconnect marks the last catalog stale while retaining its names. A failed or rejected discovery never replaces the last successful catalog. The event only reports discovery and does not change connector configuration or dispatch permissions.
+
 ### Calling tools and reading results
 
 When the model calls an MCP tool, the call runs against the remote server with a per-call timeout (default 60 seconds) and can be cancelled like any other tool call. The result comes back as ordinary text in block order; resource links appear as text with their name and URI. If the server reports an error, the call fails visibly — the model does not see a fake success.
@@ -128,6 +134,7 @@ This section explains the design decisions behind the bridge and points at the c
 |---|---|
 | [`src/index.ts`](src/index.ts) | Plugin entry: `Config` schema, `serverName` reservation, activation await |
 | [`src/connection.ts`](src/connection.ts) | Connection supervisor: client generations, reconnect policy, attempt budget, disposal |
+| [`src/action-catalog.ts`](src/action-catalog.ts) | Host-only raw action discovery catalog and connection state |
 | [`src/server-context.ts`](src/server-context.ts) | Resource-provider registration and literal server instructions |
 | [`src/tools.ts`](src/tools.ts) | Tool bridge: discovery, naming, registration swap, execution, image projection |
 | [`src/transport.ts`](src/transport.ts) | Transport factory: stdio spawn with scrubbed env, Streamable HTTP |

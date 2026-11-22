@@ -53,6 +53,8 @@ The [native Cua Driver provider](../../packages/experimental/computer-use-cua-dr
 
 Both stdio and Streamable HTTP use the official SDK's negotiation, discovery, protocol validation, and cancellation. Tool-list changes trigger discovery through legacy notifications or a modern subscription. A failed refresh retains the previous tool generation; connection recovery follows the [client lifecycle](../../packages/mcp/mcp-client/README.md#use-this-package).
 
+The Host action catalog reports exact server names, plain-text descriptions, and configured action access. It includes disabled actions so owners can restore them. Scoped Agent connections are excluded from the workspace catalog.
+
 The result adapter retains canonical MCP JSON for programmatic callers and prepares ordinary tool content. Supported images use the attachment system; unsupported rich content produces explicit text diagnostics. The tool registry remains authoritative for policy failures and replaced results. The [tool contracts](tools.md) own recording and final presentation; the [client result reference](../../packages/mcp/mcp-client/README.md#use-this-package) owns MCP-specific projection details.
 
 -----
@@ -145,4 +147,25 @@ servers(scope?: ScopeKey): readonly string[]
 Types: [ScopeKey](scope.md)
 
 Source: [`packages/mcp/mcp-resources/src/index.ts`](../../packages/mcp/mcp-resources/src/index.ts)
+
+<a id="mcp-events"></a>
+
+### `mcp/*` events
+
+<a id="mcpactionscatalog--emit"></a>
+
+#### `mcp/actions/catalog` — emit
+
+Synchronously read action catalogs from eligible loader-owned MCP plugins.
+
+```ts cordis-catalog
+/**
+ * Synchronously read action catalogs from eligible loader-owned MCP plugins.
+ * @param accept - callback receiving one server's current action catalog.
+ * @mode emit
+ */
+'mcp/actions/catalog'(accept: (catalog: McpActionCatalog) => void): void
+```
+
+Source: [`packages/mcp/mcp-client/src/action-catalog.ts`](../../packages/mcp/mcp-client/src/action-catalog.ts)
 <!-- END GENERATED cordis-surface -->

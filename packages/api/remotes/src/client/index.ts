@@ -149,6 +149,7 @@ export type {
 } from '@yharness/cordis-host-runner/types'
 // Credential state vocabulary for the credentials namespace (values never ride it).
 export type { CredentialInfo } from '@yharness/credentials/types'
+export type { McpActionServerView } from '@yharness/api-settings-controller/types'
 // Redacted namespace vocabulary for the settings namespace (secrets never ride
 // it). It travels with its seam, whose `./types` the Client face already reads.
 export type {

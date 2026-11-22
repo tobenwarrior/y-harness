@@ -7,7 +7,7 @@ import type { ConversationBot } from '@yharness/client-ui-conversation/client'
 import type { SessionStatusSnapshot } from '@yharness/client-ui-session/client'
 import type { BotWorkspaceFace, BotWorkspaceState } from './controller.ts'
 import { BotDetail, BotGroupDetail, BotRoster } from './BotWorkspace.tsx'
-import type { BotStatus, BotSummary, GitHubAppSignInActions } from './types.ts'
+import type { BotStatus, BotSummary, GitHubAppSignInActions, McpActionServerView } from './types.ts'
 import { ComputerAction } from './ComputerAction.tsx'
 import { BotAvatar } from './BotAvatar.tsx'
 import { ComputerPanel } from './ComputerPanel.tsx'
@@ -65,10 +65,17 @@ export type BotsPanelProps =
 export type BotsConversationProps = PropsRuntime<'bots.conversation'> & PropsRenderFactories
 
 /** Props for the Bot roster occupying the shared application sidebar. */
+type BotMcpActionFace = {
+  /** Read workspace-wide connector actions, including disabled actions. */
+  readonly loadMcpActions?: () => Promise<readonly McpActionServerView[]>
+  /** Change one workspace-wide connector action and return the reconciled catalog. */
+  readonly setMcpActionEnabled?: (serverName: string, actionName: string, enabled: boolean) => Promise<readonly McpActionServerView[]>
+}
+
 export type BotsRosterProps =
   PropsRuntime<'sidebar.bots'>
   & PropsLocale<'bots'>
-  & InjectFace<BotWorkspaceFace & {
+  & InjectFace<BotWorkspaceFace & BotMcpActionFace & {
     readonly githubAppSignIn?: GitHubAppSignInActions
   }>
 
@@ -121,8 +128,8 @@ export function BotReplyAvatar({
 export function BotsRoster({
   wide, expandSidebar, useWorkspace, useSessionStatus, reference: _reference, select, selectGroup,
   create, createGroup, groupsAvailable, organize, templateActions, retry, loadAvatar, avatarEditor, share, sharedClient, t,
-  loadConnectedApps, githubAppSignIn,
-  setConnectedAppAccess,
+  loadConnectedApps, loadMcpActions, githubAppSignIn,
+  setConnectedAppAccess, setMcpActionEnabled,
 }: BotsRosterProps): ReactNode {
   const state: BotWorkspaceState = useWorkspace(value => value)
   const statuses = useSessionStatus(value => value)
@@ -144,6 +151,8 @@ export function BotsRoster({
       groupError={state.groupError}
       onLoadConnectedApps={loadConnectedApps}
       onSetConnectedAppAccess={setConnectedAppAccess}
+      onLoadMcpActions={loadMcpActions}
+      onSetMcpActionEnabled={setMcpActionEnabled}
       githubAppSignIn={githubAppSignIn}
       onRetry={retry}
       loadAvatar={loadAvatar}

@@ -18,7 +18,13 @@
       "path": "../../preset/agent-preset-registry"
     },
     {
+      "path": "../../boot/config-editor"
+    },
+    {
       "path": "../../credentials/credentials"
+    },
+    {
+      "path": "../../mcp/mcp-client"
     },
     {
       "path": "../../core/session"

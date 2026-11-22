@@ -2278,6 +2278,119 @@
   border-top: 0.5px solid var(--yh-alias-border-l2);
 }
 
+.connectedAppsFooter {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.connectedAppsTools {
+  display: flex;
+  justify-content: flex-end;
+  margin: 4px 0 10px;
+}
+
+.mcpActionsList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.mcpActionGroup {
+  overflow: hidden;
+  border: 0.5px solid var(--yh-alias-border-l2);
+  border-radius: var(--yh-radius-md);
+  background: var(--yh-alias-bg-layer-2);
+}
+
+.mcpActionGroupHeader {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px 8px;
+  border-bottom: 0.5px solid var(--yh-alias-border-l2);
+}
+
+.mcpActionGroupHeader strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--yh-alias-label-primary);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mcpActionGroupHeader span,
+.mcpActionUnavailable {
+  color: var(--yh-alias-label-secondary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.mcpActionRows {
+  display: flex;
+  flex-direction: column;
+}
+
+.mcpActionRow {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+}
+
+.mcpActionRow + .mcpActionRow {
+  border-top: 0.5px solid var(--yh-alias-border-l2);
+}
+
+.mcpActionCopy {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.mcpActionCopy strong {
+  overflow: hidden;
+  color: var(--yh-alias-label-primary);
+  font-family: var(--yh-font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mcpActionCopy span,
+.mcpActionCopy small {
+  overflow: hidden;
+  color: var(--yh-alias-label-secondary);
+  font-size: 11px;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mcpActionCopy small {
+  color: var(--yh-alias-state-warning-primary, var(--yh-alias-label-secondary));
+}
+
+.mcpActionUnavailable {
+  padding: 10px 12px;
+}
+
+.mcpActionSwitchSaving {
+  opacity: 0.65;
+}
+
 .githubAccountSection {
   display: flex;
   min-width: 0;

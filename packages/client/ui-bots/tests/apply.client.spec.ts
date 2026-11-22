@@ -21,7 +21,7 @@ import type { BotWorkspaceRemote } from '../src/client/controller.ts'
 import type { ComputerStatus } from '../src/client/computer-client.ts'
 import { en } from '../src/client/locales.ts'
 import type {
-  GitHubAppSignInActions, GitHubAppSignInAttemptId, GitHubAppSignInView,
+  GitHubAppSignInActions, GitHubAppSignInAttemptId, GitHubAppSignInView, McpActionServerView,
 } from '../src/client/types.ts'
 
 type GitHubAppRemoteValue =
@@ -34,6 +34,15 @@ type GitHubAppRemoteFixture = {
   readonly startGitHubAppSignIn?: () => Promise<GitHubAppRemoteValue>
   readonly cancelGitHubAppSignIn?: (attemptId: GitHubAppSignInAttemptId) => Promise<GitHubAppRemoteValue>
   readonly disconnectGitHubApp?: () => Promise<GitHubAppRemoteValue>
+}
+
+type McpActionRemoteValue =
+  | { readonly ok: true; readonly value: readonly McpActionServerView[] }
+  | { readonly ok: false; readonly error: { readonly message: string } }
+
+type McpActionRemoteFixture = {
+  readonly listMcpActions?: () => Promise<McpActionRemoteValue>
+  readonly setMcpActionEnabled?: (serverName: string, actionName: string, enabled: boolean) => Promise<McpActionRemoteValue>
 }
 
 type Registered = {
@@ -105,7 +114,7 @@ function connectionFixture() {
   }
 }
 
-async function boot(account?: GitHubAppRemoteFixture) {
+async function boot(account?: GitHubAppRemoteFixture, settings?: McpActionRemoteFixture) {
   const ctx = new Context()
   const registered: Registered[] = []
   const slots = {
@@ -187,6 +196,7 @@ async function boot(account?: GitHubAppRemoteFixture) {
   ctx.provide('sidebarRightTabs', sidebarRightTabs as never)
   ctx.provide('inputTriggers', inputTriggers as never)
   if (account !== undefined) ctx.provide('remote.account', account as never)
+  if (settings !== undefined) ctx.provide('remote.settings', settings as never)
   const fiber = ctx.plugin({ inject: [...inject], apply })
   await fiber.await()
   await vi.waitFor(() => { expect(list).toHaveBeenCalledWith({ includeHidden: true }) })
@@ -255,6 +265,32 @@ describe('ui-bots composition', () => {
     })
     const sidebar = fixture.registered.find(entry => entry.options.name === 'sidebar.bots')!
     expect((sidebar.inject?.() as { readonly githubAppSignIn?: GitHubAppSignInActions }).githubAppSignIn).toBeUndefined()
+    await fixture.fiber.dispose()
+  })
+
+  it('mounts complete workspace connector action bindings and unwraps replies', async () => {
+    const actions: McpActionServerView[] = [{
+      serverName: 'Workspace Fixture', connected: true, editable: true,
+      actions: [{ name: 'inspect_record', enabled: false }],
+    }]
+    const listMcpActions = vi.fn().mockResolvedValue({ ok: true as const, value: actions })
+    const setMcpActionEnabled = vi.fn().mockResolvedValue({ ok: true as const, value: actions })
+    const settings = { listMcpActions, setMcpActionEnabled } satisfies McpActionRemoteFixture
+    const fixture = await boot(undefined, settings)
+    const sidebar = fixture.registered.find(entry => entry.options.name === 'sidebar.bots')!
+    const face = sidebar.inject?.() as {
+      readonly loadMcpActions?: () => Promise<readonly McpActionServerView[]>
+      readonly setMcpActionEnabled?: (serverName: string, actionName: string, enabled: boolean) => Promise<readonly McpActionServerView[]>
+    }
+    if (face.loadMcpActions === undefined || face.setMcpActionEnabled === undefined) throw new Error('MCP action bindings were not mounted')
+    await expect(face.loadMcpActions()).resolves.toEqual(actions)
+    await expect(face.setMcpActionEnabled('Workspace Fixture', 'inspect_record', true)).resolves.toEqual(actions)
+    expect(listMcpActions).toHaveBeenCalledOnce()
+    expect(setMcpActionEnabled).toHaveBeenCalledWith('Workspace Fixture', 'inspect_record', true)
+    listMcpActions.mockResolvedValueOnce({ ok: false as const, error: { message: 'action catalog unavailable' } })
+    setMcpActionEnabled.mockResolvedValueOnce({ ok: false as const, error: { message: 'action update unavailable' } })
+    await expect(face.loadMcpActions()).rejects.toThrow('action catalog unavailable')
+    await expect(face.setMcpActionEnabled('Workspace Fixture', 'inspect_record', true)).rejects.toThrow('action update unavailable')
     await fixture.fiber.dispose()
   })
 

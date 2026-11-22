@@ -3264,7 +3264,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
   {
     key: 'settingsController',
     summary: 'Host service backing the generated `ctx.remote.settings` namespace.',
-    description: 'Host service backing the generated `ctx.remote.settings` namespace. Every remote read uses `redactSecrets: true`, so a `role(\'secret\')` field cannot ride a response. Writes expose the settings service\'s merge, replacement, and path-addressed operations, and classify every provider refusal as `settings/conflict` or `settings/rejected` with the service\'s message.',
+    description: 'Host service backing the generated `ctx.remote.settings` namespace. Configuration reads redact secret fields. Connector reads return discovery metadata. Form writes classify stale revisions and provider refusals separately.',
     methods: [
       {
         signature: '@Remote describe(): SettingsDescribeValue',
@@ -3272,6 +3272,18 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         parameters: [],
         returns: 'provider writability, local-document presence, and one view per namespace.',
         throws: ['RemoteError when no settings provider is mounted.'],
+      },
+      {
+        signature: '@Remote listMcpActions(): McpActionServerView[]',
+        description: 'List discovered actions for the workspace\'s configured MCP connectors.',
+        parameters: [],
+        returns: 'Redacted connector and action metadata for the owner UI.',
+      },
+      {
+        signature: '@Remote setMcpActionEnabled(serverName: string, actionName: string, enabled: boolean, signal: AbortSignal): Promise<McpActionServerView[]>',
+        description: 'Set whether a discovered connector action is available in this workspace.',
+        parameters: [{ name: 'serverName', description: 'Configured connector name.' }, { name: 'actionName', description: 'Exact raw name from the connector\'s action list.' }, { name: 'enabled', description: 'Desired action availability.' }, { name: 'signal', description: 'Caller cancellation for the profile edit.' }],
+        returns: 'Connector action metadata after configuration reconciliation.',
       },
       {
         signature: '@Remote update( ns: string, patch: Record<string, JsonValue>, expectedRevision: number | undefined, ): Promise<SettingsNamespaceView>',
@@ -5220,6 +5232,14 @@ export const EVENT_API: readonly EventApiEntry[] = [
     summary: 'Waterfall around every streaming model call (retry, replay, routing).',
     description: 'Waterfall around every streaming model call (retry, replay, routing). Bound to the LlmRuntime; call `next()` to reach the resolved adapter\'s stream, or yield your own chunks to short-circuit.',
     parameters: [{ name: 'options', description: 'the full request. A LOOP-built request carries the process-local {@link markAgentLoopRequest} identity and arrives deep-frozen (mutation throws): its content is a pure function of the session log (the reconstructability Agent Note), so listeners read it, never rewrite it. Hand-built calls do not carry that marker; callers own their request inputs and must keep them unchanged until the stream settles.' }],
+  },
+  {
+    name: 'mcp/actions/catalog',
+    mode: 'emit',
+    signature: '\'mcp/actions/catalog\'(accept: (catalog: McpActionCatalog) => void): void',
+    summary: 'Synchronously read action catalogs from eligible loader-owned MCP plugins.',
+    description: 'Synchronously read action catalogs from eligible loader-owned MCP plugins.',
+    parameters: [{ name: 'accept', description: 'callback receiving one server\'s current action catalog.' }],
   },
   {
     name: 'permission-presets/catalog-changed',
@@ -7732,6 +7752,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'MatcherValue',
     declaration: 'export type MatcherValue = string | number | boolean | null | RegExp | readonly (string | number | boolean | null)[];',
+  },
+  {
+    name: 'McpActionCatalog',
+    declaration: 'export interface McpActionCatalog {\n    readonly serverName: string;\n    readonly entryId: string;\n    readonly connected: boolean;\n    readonly actions: readonly {\n        readonly name: string;\n        readonly description?: string;\n        readonly enabled: boolean;\n    }[];\n}',
   },
   {
     name: 'McpResourceProvider',

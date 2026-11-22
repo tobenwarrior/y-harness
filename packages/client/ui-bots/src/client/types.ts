@@ -25,6 +25,7 @@ import type {
 import type {
   GitHubAppSignInAttempt, GitHubAppSignInAttemptId, GitHubAppSignInView,
 } from '@yharness/api-account-controller/types'
+import type { McpActionServerView as ApiMcpActionServerView } from '@yharness/api-remotes/client'
 
 /** Visual accent families persisted by the Bot service. */
 export type BotAccent = SharedBotAccent
@@ -34,6 +35,17 @@ export type BotIdentity = SharedBotIdentity
 
 /** Connected app and the selected Bot's durable access decision. */
 export type BotConnectedAppAccess = SharedBotConnectedAppAccess
+
+/** One workspace connector and its owner-controlled action access. */
+export type McpActionServerView = ApiMcpActionServerView
+
+/** Workspace-wide MCP action management mounted by the Host. */
+export interface BotMcpActionActions {
+  /** Read connector actions, including disabled actions. */
+  readonly list: () => Promise<readonly McpActionServerView[]>
+  /** Change one connector action and return the reconciled catalog. */
+  readonly set: (serverName: string, actionName: string, enabled: boolean) => Promise<readonly McpActionServerView[]>
+}
 
 /** Host-local skill metadata and the selected Bot's current grant. */
 export type BotSkillSummary = SharedBotSkillAccess
@@ -438,6 +450,12 @@ export interface BotWorkspaceProps {
   readonly onLoadConnectedApps?: ((botId: string) => Promise<readonly BotConnectedAppAccess[]>) | undefined
   /** Persists one Bot's grant or revoke for a connected app. */
   readonly onSetConnectedAppAccess?: ((botId: string, appId: string, allowed: boolean) => Promise<void>) | undefined
+  /** Loads workspace-wide connector actions, including actions currently disabled. */
+  readonly onLoadMcpActions?: (() => Promise<readonly McpActionServerView[]>) | undefined
+  /** Persists one workspace-wide connector action decision. */
+  readonly onSetMcpActionEnabled?: (
+    (serverName: string, actionName: string, enabled: boolean) => Promise<readonly McpActionServerView[]>
+  ) | undefined
   /** Optional owner GitHub account flow; kept separate from per-Bot app grants. */
   readonly githubAppSignIn?: GitHubAppSignInActions | undefined
   /** Optional settings deep-link for configuring the avatar provider. */
