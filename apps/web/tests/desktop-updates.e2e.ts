@@ -73,6 +73,8 @@ describe('web e2e: Desktop update workspace chrome', () => {
         try {
           await page.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
           await page.waitForSelector('[class*="frame"]')
+          await page.locator('[data-yh-part="sidebar"]').getByRole('button', { name: 'Bots', exact: true }).click()
+          await page.getByRole('complementary', { name: 'Bot workspace', exact: true }).waitFor()
           await expect.poll(() => page.evaluate(() => (window as FixtureWindow).updateFixture.listeners.size)).toBe(1)
           // The current Web bundle has English-only update copy, so unsupported
           // browser locales use the English fallback for every update control.
@@ -95,12 +97,17 @@ describe('web e2e: Desktop update workspace chrome', () => {
           const warning = page.getByRole('button', { name: warningName, exact: true })
           await warning.waitFor()
           await expect.poll(() => alignment('y', [settings, update, warning])).toBeLessThan(2)
+          await expect.poll(async () => {
+            const launchBox = await settings.boundingBox()
+            const updateBox = await update.boundingBox()
+            return launchBox !== null && updateBox !== null && updateBox.x >= launchBox.x + launchBox.width
+          }).toBe(true)
           const footer = page.locator('[data-yh-part="sidebar-footer"]')
           await expect.poll(() => footer.getByRole('button').count()).toBe(3)
           for (const control of [update, warning]) {
             expect(await control.evaluate(element => getComputedStyle(element).backgroundColor)).toBe('rgba(0, 0, 0, 0)')
           }
-          if (locale === 'en-US') await captureFooter(page, 'desktop')
+          if (locale === 'en-US') await captureFooter(page, 'bots-desktop')
           expect(await opens()).toBe(0)
           const geometry = await update.boundingBox()
           expect(geometry).not.toBeNull()

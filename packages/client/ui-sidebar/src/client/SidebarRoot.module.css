@@ -614,28 +614,24 @@
 .footArea {
   flex: none;
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
 }
 
 .settingsArea {
-  flex: 1 1 150px;
+  flex: 1;
   min-width: 0;
 }
 
 .footerActions {
   flex: none;
   display: flex;
-  max-width: 100%;
-  flex-wrap: wrap;
   gap: 4px;
   margin-inline-start: auto;
 }
 
 .collapsed .footArea {
   flex-direction: column;
-  flex-wrap: nowrap;
   gap: 0;
 }
 
