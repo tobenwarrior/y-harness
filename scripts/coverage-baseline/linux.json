@@ -2,6 +2,7 @@
   "version": 1,
   "platform": "linux",
   "job": 135571628499,
+  "sourceTree": "63fae73cd00546762bad22777e01c941ac4a2225",
   "files": {
     "packages/agents/avatar-generation/src/index.ts": {
       "sha256": "54872b73e0544bf6e212d50ade967e61bc83104325e01f8c751a7ebff70d0493",

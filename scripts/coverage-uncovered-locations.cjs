@@ -4,8 +4,8 @@
  * Istanbul coverage reporter printing one clickable `path:line:col` record per
  * uncovered statement, branch path, and function. Vitest's per-file threshold
  * failures name only the file; this reporter supplies the exact locations.
- * In GitHub's baseline mode it rejects each unrecorded location and requires
- * the original source for every file that still uses an allowance.
+ * The GitHub baseline admits existing gaps only in declarations identical
+ * to the measured source.
  *
  * CommonJS by requirement: istanbul-reports loads custom reporters with a bare
  * require() outside the tsx/ESM pipeline (istanbul-reports index.js create()),
@@ -15,6 +15,7 @@
  */
 
 const path = require('node:path');
+const { execFileSync } = require('node:child_process');
 const { createHash } = require('node:crypto');
 const { readFileSync, statSync } = require('node:fs');
 const { ReportBase } = require('istanbul-lib-report');
@@ -31,8 +32,8 @@ const END_OF_LINE_COLUMN = Number.MAX_SAFE_INTEGER;
  * Editor-convention `line:column` of an istanbul location start (istanbul
  * columns are 0-based; editors and terminal link handlers expect 1-based).
  */
-function pos(loc) {
-  return `${loc.start.line}:${loc.start.column + 1}`;
+function pos(loc, offset = 0) {
+  return `${loc.start.line + offset}:${loc.start.column + 1}`;
 }
 
 /** Whether a location carries a usable 1-based start line. */
@@ -50,14 +51,24 @@ function atLineEnd(column) {
  * start. v8-remapped whole-line statements end at their line end; those
  * degrade to a line-only suffix, or to nothing on a single line.
  */
-function endSuffix(loc) {
+function endSuffix(loc, offset) {
   const end = loc?.end;
   if (!loc?.start || !end || !Number.isFinite(end.line) || end.line < 1) return '';
   if (atLineEnd(end.column)) {
-    return end.line === loc.start.line ? '' : ` (to ${end.line})`;
+    return end.line === loc.start.line ? '' : ` (to ${end.line + offset})`;
   }
   if (end.line === loc.start.line && end.column === loc.start.column) return '';
-  return ` (to ${end.line}:${end.column + 1})`;
+  return ` (to ${end.line + offset}:${end.column + 1})`;
+}
+
+function recordText({ loc, detail }, offset = 0) {
+  const suffix = detail === 'statement' ? endSuffix(loc, offset) : '';
+  return `${pos(loc, offset)} uncovered ${detail}${suffix}`;
+}
+
+/** Anonymous ordinals depend on other declarations in the instrumented file. */
+function stableFunctionName(text) {
+  return text.replace(/ uncovered function \(anonymous_\d+\)$/, ' uncovered function (anonymous)');
 }
 
 function isObject(value) {
@@ -67,7 +78,9 @@ function isObject(value) {
 function readBaseline(file) {
   const baseline = JSON.parse(readFileSync(file, 'utf8'));
   if (!isObject(baseline) || baseline.version !== 1 || baseline.platform !== process.platform
-    || !Number.isSafeInteger(baseline.job) || baseline.job <= 0 || !isObject(baseline.files)) {
+    || !Number.isSafeInteger(baseline.job) || baseline.job <= 0 || !isObject(baseline.files)
+    || (baseline.sourceTree !== undefined
+      && (typeof baseline.sourceTree !== 'string' || !/^[a-f0-9]{40}$/.test(baseline.sourceTree)))) {
     throw new Error('Invalid coverage baseline for this platform.');
   }
   for (const [name, entry] of Object.entries(baseline.files)) {
@@ -82,9 +95,28 @@ function readBaseline(file) {
   return baseline;
 }
 
-function sourceDigest(file) {
-  // Coverage coordinates are independent of the checkout's line endings.
-  return createHash('sha256').update(readFileSync(file, 'utf8').replace(/\r\n/g, '\n')).digest('hex');
+function sourceDigest(text) {
+  return createHash('sha256').update(text).digest('hex');
+}
+
+/** Read the measured source by Git tree id and repository-relative path. */
+function readMeasuredSource(root, tree, file) {
+  try {
+    return execFileSync('git', ['show', `${tree}:${file}`], {
+      cwd: root, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, env: { ...process.env, GIT_NO_LAZY_FETCH: '1' },
+    }).replace(/\r\n/g, '\n');
+  } catch (error) {
+    throw new Error(`${file}: measured coverage source is unavailable in tree ${tree}`, { cause: error });
+  }
+}
+
+/** Return the carried offset only if the coverage span fits inside the unchanged declaration. */
+function retainedOffset(anchors, { loc, span }) {
+  const anchor = anchors.get(loc.start.line);
+  if (anchor === undefined || !usable(span) || !Number.isFinite(span.end?.line)) return undefined;
+  const end = span.end;
+  const last = end.column === 0 && end.line > span.start.line ? end.line - 1 : end.line;
+  return span.start.line >= anchor.first && last <= anchor.last ? anchor.offset : undefined;
 }
 
 class UncoveredLocationsReport extends ReportBase {
@@ -108,27 +140,32 @@ class UncoveredLocationsReport extends ReportBase {
     const fc = node.getFileCoverage();
     const rel = path.relative(this.projectRoot, fc.path).split(path.sep).join('/');
     const items = [];
+    const functionsAtPosition = new Map();
     let unmapped = 0;
-    const add = (loc, detail) => {
+    const add = (loc, detail, span = loc) => {
       if (!usable(loc)) {
         unmapped += 1;
         return;
       }
-      items.push({ line: loc.start.line, column: loc.start.column, text: `${pos(loc)} uncovered ${detail}` });
+      items.push({ loc, detail, span });
     };
 
     for (const id of Object.keys(fc.statementMap)) {
       if (fc.s[id] !== 0) continue;
       const loc = fc.statementMap[id];
-      add(loc, `statement${endSuffix(loc)}`);
+      add(loc, 'statement');
     }
 
     for (const id of Object.keys(fc.fnMap)) {
-      if (fc.f[id] !== 0) continue;
       const fn = fc.fnMap[id];
       const loc = usable(fn.decl) ? fn.decl : fn.loc;
+      if (this.baseline?.sourceTree !== undefined && usable(loc)) {
+        const key = pos(loc);
+        functionsAtPosition.set(key, (functionsAtPosition.get(key) ?? 0) + 1);
+      }
+      if (fc.f[id] !== 0) continue;
       const name = fn.name ? ` ${fn.name}` : '';
-      add(loc, `function${name}`);
+      add(loc, `function${name}`, fn.loc);
     }
 
     for (const id of Object.keys(fc.branchMap)) {
@@ -139,37 +176,56 @@ class UncoveredLocationsReport extends ReportBase {
         // Implicit arms (e.g. a missing else) may carry an empty location;
         // fall back to the branch's own span so the record stays clickable.
         const loc = usable(branch.locations && branch.locations[i]) ? branch.locations[i] : branch.loc;
-        add(loc, `branch (${branch.type}, path ${i + 1}/${counts.length})`);
+        add(loc, `branch (${branch.type}, path ${i + 1}/${counts.length})`, branch.loc);
       }
     }
 
-    items.sort((a, b) => a.line - b.line || a.column - b.column);
+    items.sort((a, b) => a.loc.start.line - b.loc.start.line || a.loc.start.column - b.loc.start.column);
     if (this.baseline !== undefined) {
-      this.checkFile(rel, fc.path, items, unmapped);
+      this.checkFile(rel, fc.path, items, unmapped, functionsAtPosition);
       return;
     }
-    for (const item of items) this.records.push(`${rel}:${item.text}`);
+    for (const item of items) this.records.push(`${rel}:${recordText(item)}`);
   }
 
-  checkFile(rel, file, items, unmapped) {
+  checkFile(rel, file, items, unmapped, functionsAtPosition) {
     this.measured.add(rel);
     if (unmapped > 0) this.failures.push(`${rel}: ${unmapped} uncovered locations could not be identified`);
     if (items.length === 0) return;
 
     const entry = this.baseline.files[rel];
-    if (entry !== undefined && sourceDigest(file) !== entry.sha256) {
-      this.failures.push(`${rel}: changed source still has ${items.length} uncovered locations`);
-      return;
+    let anchors;
+    if (entry !== undefined) {
+      const current = readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
+      if (sourceDigest(current) !== entry.sha256) {
+        if (this.baseline.sourceTree === undefined) {
+          this.failures.push(`${rel}: changed source still has ${items.length} uncovered locations`);
+          return;
+        }
+        const measured = readMeasuredSource(this.projectRoot, this.baseline.sourceTree, rel);
+        if (sourceDigest(measured) !== entry.sha256) {
+          this.failures.push(`${rel}: measured source does not match the recorded digest`);
+          return;
+        }
+        const { coverageSourceAnchors } = require('./coverage-source-anchors.cjs');
+        anchors = coverageSourceAnchors(rel, measured, current);
+      }
     }
     const remaining = new Map();
     for (const location of entry?.uncovered ?? []) {
-      remaining.set(location, (remaining.get(location) ?? 0) + 1);
+      const key = anchors === undefined ? location : stableFunctionName(location);
+      remaining.set(key, (remaining.get(key) ?? 0) + 1);
     }
-    for (const { text } of items) {
-      const count = remaining.get(text) ?? 0;
-      if (count === 0) this.failures.push(`${rel}:${text}`);
+    for (const item of items) {
+      const offset = anchors === undefined ? 0 : retainedOffset(anchors, item);
+      let original = offset === undefined ? undefined : recordText(item, offset);
+      if (anchors !== undefined && original !== undefined && functionsAtPosition.get(pos(item.loc)) === 1) {
+        original = stableFunctionName(original);
+      }
+      const count = remaining.get(original) ?? 0;
+      if (count === 0) this.failures.push(`${rel}:${recordText(item)}`);
       else {
-        remaining.set(text, count - 1);
+        remaining.set(original, count - 1);
         this.allowedCount += 1;
       }
     }
