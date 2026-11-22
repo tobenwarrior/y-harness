@@ -278,6 +278,7 @@ import type {
   BotTemplatePublishValue,
   BotTemplateRevokeRequest,
   BotTemplateRevokeValue,
+  BotTemplateProfile,
   BotTemplateView,
 } from './template-types.ts'
 import {
@@ -1706,6 +1707,17 @@ function templateView(record: BotTemplateStoredRecord, approved = true): BotTemp
   return { ...view, approved }
 }
 
+function displayProfileOf(
+  profile: BotTemplateProfile,
+): BotTemplateProfile {
+  return {
+    name: profile.name,
+    ...(profile.description === undefined ? {} : { description: profile.description }),
+    identity: profile.identity,
+    accent: profile.accent,
+  }
+}
+
 function signedTemplateView(
   payload: BotTemplateArtifactPayload,
   shareCode: BotTemplateShareCode,
@@ -1719,10 +1731,7 @@ function signedTemplateView(
   return {
     id,
     shareCode,
-    name: payload.profile.name,
-    ...(payload.profile.description === undefined ? {} : { description: payload.profile.description }),
-    identity: payload.profile.identity,
-    accent: payload.profile.accent,
+    ...displayProfileOf(payload.profile),
     ...(payload.persona === undefined ? {} : { persona: payload.persona }),
     capabilities: payload.capabilities,
     profile: payload.profile,
@@ -7746,10 +7755,12 @@ export class BotService extends TypertRemoteService {
       }
       const created = await this.createRecord({
         id: targetId,
-        name: operation.targetName,
-        ...(operation.profile.description === undefined ? {} : { description: operation.profile.description }),
-        identity: operation.profile.identity,
-        accent: operation.profile.accent,
+        ...displayProfileOf({
+          name: operation.targetName,
+          ...(operation.profile.description === undefined ? {} : { description: operation.profile.description }),
+          identity: operation.profile.identity,
+          accent: operation.profile.accent,
+        }),
         ...(operation.profile.agentPreset === undefined ? {} : { agentPreset: operation.profile.agentPreset }),
         ...(operation.profile.persona === undefined ? {} : { persona: operation.profile.persona }),
         ...(operation.profile.capabilities === undefined ? {} : { capabilities: operation.profile.capabilities }),
