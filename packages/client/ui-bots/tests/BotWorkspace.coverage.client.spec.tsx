@@ -572,7 +572,7 @@ describe('BotWorkspace supported lifecycle coverage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Bot actions for Research partner' }))
     fireEvent.click(screen.getByRole('menuitem', { name: 'App access' }))
     const apps = await screen.findByRole('dialog', { name: 'Connected apps' })
-    await waitFor(() => { expect(within(apps).getAllByText('Acme Tools')).toHaveLength(2) })
+    await waitFor(() => { expect(within(apps).getAllByText('Acme Tools')).toHaveLength(1) })
     expect(apps.querySelector('[data-app-id="acme"]')?.textContent).toContain('AT')
     expect(apps.querySelector('[data-app-id="single"]')?.textContent).toContain('A')
     fireEvent.click(within(apps).getByRole('button', { name: 'Grant access to Acme Tools' }))

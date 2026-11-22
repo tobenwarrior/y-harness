@@ -51,11 +51,6 @@ type BotWorkspaceViewProps = BotWorkspaceProps & PropsLocale<'bots'> & {
 
 const MAX_SHARED_OWNER_CAPABILITY_FOCUS_RETRIES = 3
 
-function connectedAppName(app: BotConnectedAppAccess, t: BotWorkspaceViewProps['t']): string {
-  const name = app.name.trim()
-  return name !== '' && name !== '-' ? name : t('connectedAppFallbackName', { id: app.id })
-}
-
 function connectedAppMonogram(name: string): string {
   const words = name.trim().split(/\s+/u).filter(Boolean)
   if (words.length > 1) return words.slice(0, 2).map(word => word.slice(0, 1)).join('').toLocaleUpperCase()
@@ -1636,25 +1631,35 @@ function ConnectedAppsDialog({
   if (bot === undefined) return null
   const currentCatalog = catalog?.botId === bot.id ? catalog : undefined
   const currentConnectionCatalog = connectionCatalog?.botId === bot.id ? connectionCatalog : undefined
-  const appsById = new Map((currentCatalog?.apps ?? []).map(app => [app.id, app]))
+  const error = currentCatalog?.error ?? null
+  const connectionError = currentConnectionCatalog?.error ?? null
+  const hasBotAccess = onLoad !== undefined && onSet !== undefined
+  type ConnectedAppRow = {
+    readonly access?: BotConnectedAppAccess
+    readonly connection?: BotConnectedAppCatalogEntry
+  }
+  const rowsById = new Map<string, ConnectedAppRow>()
+  for (const app of currentCatalog?.apps ?? []) rowsById.set(app.id, { access: app })
   for (const app of currentConnectionCatalog?.apps ?? []) {
-    if (!appsById.has(app.id)) {
-      appsById.set(app.id, {
+    const current = rowsById.get(app.id)
+    const access = current?.access ?? (hasBotAccess
+      ? {
         id: app.id,
         name: app.name,
         ...(app.description === undefined ? {} : { description: app.description }),
         allowed: false,
-      })
-    }
+      }
+      : undefined)
+    rowsById.set(app.id, {
+      connection: app,
+      ...(access === undefined ? {} : { access }),
+    })
   }
-  const apps = [...appsById.values()]
-  const connectionApps = currentConnectionCatalog?.apps ?? []
-  const error = currentCatalog?.error ?? null
-  const connectionError = currentConnectionCatalog?.error ?? null
-  const hasBotAccess = onLoad !== undefined && onSet !== undefined
+  const appRows = [...rowsById.values()]
   const loadingCurrentCatalog = hasBotAccess && (loading || (open && currentCatalog === undefined))
   const loadingCurrentConnections = loadingConnections
     || (open && onLoadConnectionCatalog !== undefined && currentConnectionCatalog === undefined)
+  const loadingCurrentApps = loadingCurrentCatalog || loadingCurrentConnections
   const savingAppId = saving?.botId === bot.id ? saving.appId : null
   const activeConnectionAppId = connectionAction?.botId === bot.id ? connectionAction.appId : null
   const connectionActionFor = (app: BotConnectedAppCatalogEntry): { readonly kind: 'connect' | 'reconnect'; readonly label: string } | undefined => {
@@ -1734,107 +1739,99 @@ function ConnectedAppsDialog({
       onClose={onClose}
       title={t('connectedAppsTitle')}
       description={t('connectedAppsDescription', { name: bot.name })}
-      closeLabel={t('cancel')}
+      closeLabel={t('done')}
       className={css.connectedAppsDialog as string}
       contentClassName={css.connectedAppsDialogContent as string}
-      footer={<Button variant="ghost" onClick={onClose} disabled={savingAppId !== null || activeConnectionAppId !== null}>{t('done')}</Button>}
     >
       {error !== null && <div className={css.dialogNotice} role="alert">{error}</div>}
       {connectionError !== null && <div className={css.dialogNotice} role="alert">{connectionError}</div>}
-      {(onLoadConnectionCatalog !== undefined || connectionApps.length > 0) && (
-        <section className={css.connectedAppsSection} aria-labelledby="yharness-connected-apps-connections-title">
-          <div className={css.connectedAppsSectionHeading}>
-            <strong id="yharness-connected-apps-connections-title">{t('connectedAppsConnectionsTitle')}</strong>
-            <span>{t('connectedAppsConnectionsDescription')}</span>
+      {loadingCurrentApps && (
+        <div className={css.connectedAppsLoading} role="status">
+          <StateDot state="ongoing" size={13} />
+          <span>{t('connectedAppsLoading')}</span>
+        </div>
+      )}
+      {!loadingCurrentApps && error === null && connectionError === null && appRows.length === 0 && (
+        <div className={css.connectedAppsEmpty} role="status">
+          <span className={css.connectedAppsEmptyIcon} aria-hidden="true"><IconLinkOutlineRegular size={18} /></span>
+          <strong>{onLoadConnectionCatalog !== undefined ? t('connectedAppsConnectionEmptyTitle') : t('connectedAppsEmptyTitle')}</strong>
+          <span className={css.connectedAppsEmptyDescription}>{onLoadConnectionCatalog !== undefined ? t('connectedAppsConnectionEmpty') : t('connectedAppsEmpty')}</span>
+        </div>
+      )}
+      {!loadingCurrentApps && appRows.length > 0 && (
+        <>
+          <div className={css.connectedAppsColumnLabels} aria-hidden="true">
+            <span>{t('connectedAppsConnectionsTitle')}</span>
+            {hasBotAccess && <span>{t('connectedAppsAccessTitle')}</span>}
           </div>
-          {loadingCurrentConnections && (
-            <div className={css.connectedAppsLoading} role="status">
-              <StateDot state="ongoing" size={13} />
-              <span>{t('connectedAppsConnectionLoading')}</span>
-            </div>
-          )}
-          {!loadingCurrentConnections && connectionApps.length === 0 && (
-            <div className={css.connectedAppsEmpty} role="status">
-              <span className={css.connectedAppsEmptyIcon} aria-hidden="true"><IconLinkOutlineRegular size={18} /></span>
-              <strong>{t('connectedAppsConnectionEmptyTitle')}</strong>
-              <span className={css.connectedAppsEmptyDescription}>{t('connectedAppsConnectionEmpty')}</span>
-            </div>
-          )}
-          {!loadingCurrentConnections && connectionApps.length > 0 && (
-            <div className={css.connectedAppsStatusList} role="list" aria-label={t('connectedAppsConnectionsTitle')}>
-              {connectionApps.map((app) => {
-                const name = app.name.trim() === '' || app.name === '-' ? t('connectedAppFallbackName', { id: app.id }) : app.name
-                const action = connectionActionFor(app)
-                return (
-                  <div className={css.connectedAppStatusRow} key={app.id} role="listitem">
-                    <span className={css.connectedAppIcon} data-app-id={app.id} aria-hidden="true">{connectedAppCatalogMark(app, name)}</span>
-                    <span className={css.connectedAppCopy}>
-                      <strong>{name}</strong>
-                      {app.description !== undefined && <span>{app.description}</span>}
+          <div className={css.connectedAppsList} role="list" aria-label={t('connectedAppsTitle')}>
+            {appRows.map((row) => {
+              const connection = row.connection
+              const access = row.access
+              const nameValue = connection?.name ?? access?.name ?? ''
+              const name = nameValue.trim() === '' || nameValue === '-'
+                ? t('connectedAppFallbackName', { id: connection?.id ?? access?.id ?? 'unknown' })
+                : nameValue
+              const status = connection === undefined && onLoadConnectionCatalog === undefined
+                ? { connectionState: 'available' as const }
+                : connection
+              const statusLabel = connectedAppConnectionLabel(status?.connectionState ?? 'unavailable', t)
+              const action = connection === undefined ? undefined : connectionActionFor(connection)
+              return (
+                <div className={css.connectedAppRow} key={connection?.id ?? access?.id} role="listitem">
+                  <span className={css.connectedAppIcon} data-app-id={connection?.id ?? access?.id} aria-hidden="true">
+                    {connection === undefined
+                      ? access === undefined ? connectedAppMonogram(name) : connectedAppMark(access, name)
+                      : connectedAppCatalogMark(connection, name)}
+                  </span>
+                  <span className={css.connectedAppCopy}>
+                    <strong>{name}</strong>
+                    {(connection?.description ?? access?.description) !== undefined && (
+                      <span className={css.connectedAppDescription}>{connection?.description ?? access?.description}</span>
+                    )}
+                    <span
+                      className={css.connectedAppHostStatus}
+                      aria-label={`${t('connectedAppsConnectionsTitle')}: ${statusLabel}`}
+                    >
                       <span className={clsx(
                         css.connectedAppState,
-                        app.connectionState === 'configured' && css.connectedAppStateConfigured,
-                        app.connectionState === 'auth-needed' && css.connectedAppStateAuthNeeded,
-                        app.connectionState === 'unavailable' && css.connectedAppStateUnavailable,
-                      )}>{connectedAppConnectionLabel(app.connectionState, t)}</span>
+                        status?.connectionState === 'configured' && css.connectedAppStateConfigured,
+                        status?.connectionState === 'auth-needed' && css.connectedAppStateAuthNeeded,
+                        status?.connectionState === 'unavailable' && css.connectedAppStateUnavailable,
+                      )}>{statusLabel}</span>
                     </span>
-                    {action !== undefined && (
+                  </span>
+                  <span className={css.connectedAppActions}>
+                    {action !== undefined && connection !== undefined && (
                       <Button
                         variant="outline"
                         size="sm"
                         disabled={activeConnectionAppId !== null}
                         aria-label={action.label}
-                        onClick={() => { void runConnectionAction(app, action.kind) }}
+                        onClick={() => { void runConnectionAction(connection, action.kind) }}
                       >
-                        {activeConnectionAppId === app.id ? t('connectedAppWorking') : action.kind === 'connect' ? t('connect') : t('reconnect')}
+                        {activeConnectionAppId === connection.id ? t('connectedAppWorking') : action.kind === 'connect' ? t('connect') : t('reconnect')}
                       </Button>
                     )}
-                  </div>
-                )
-              })}
-            </div>
-          )}
-        </section>
-      )}
-      {!loadingCurrentCatalog && hasBotAccess && error === null && apps.length === 0 && (
-        <div className={css.connectedAppsEmpty} role="status">
-          <span className={css.connectedAppsEmptyIcon} aria-hidden="true"><IconLinkOutlineRegular size={18} /></span>
-          <strong>{t('connectedAppsEmptyTitle')}</strong>
-          <span className={css.connectedAppsEmptyDescription}>{t('connectedAppsEmpty')}</span>
-        </div>
-      )}
-      {!loadingCurrentCatalog && hasBotAccess && apps.length > 0 && (
-        <section className={css.connectedAppsSection} aria-labelledby="yharness-connected-apps-access-title">
-          <div className={css.connectedAppsSectionHeading}>
-            <strong id="yharness-connected-apps-access-title">{t('connectedAppsAccessTitle')}</strong>
-            <span>{t('connectedAppsAccessDescription', { name: bot.name })}</span>
-          </div>
-          <div className={css.connectedAppsList} role="list" aria-label={t('connectedAppsAccessTitle')}>
-            {apps.map((app) => {
-              const name = connectedAppName(app, t)
-              return (
-                <div className={css.connectedAppRow} key={app.id} role="listitem">
-                  <span className={css.connectedAppIcon} data-app-id={app.id} aria-hidden="true">{connectedAppMark(app, name)}</span>
-                  <span className={css.connectedAppCopy}>
-                    <strong>{name}</strong>
-                    {app.description !== undefined && <span>{app.description}</span>}
+                    {hasBotAccess && access !== undefined && (
+                      <Button
+                        variant={access.allowed ? 'ghost' : 'outline'}
+                        size="sm"
+                        disabled={savingAppId !== null || activeConnectionAppId !== null}
+                        aria-pressed={access.allowed}
+                        aria-label={t(access.allowed ? 'revokeConnectedApp' : 'grantConnectedApp', { name })}
+                        icon={access.allowed ? <IconCheckOutlineRegular size={14} /> : undefined}
+                        onClick={() => { void toggle(access) }}
+                      >
+                        {access.allowed ? t('allowed') : t('grant')}
+                      </Button>
+                    )}
                   </span>
-                  <Button
-                    variant={app.allowed ? 'ghost' : 'outline'}
-                    size="sm"
-                    disabled={savingAppId !== null || activeConnectionAppId !== null}
-                    aria-pressed={app.allowed}
-                    aria-label={t(app.allowed ? 'revokeConnectedApp' : 'grantConnectedApp', { name })}
-                    icon={app.allowed ? <IconCheckOutlineRegular size={14} /> : undefined}
-                    onClick={() => { void toggle(app) }}
-                  >
-                    {app.allowed ? t('allowed') : t('grant')}
-                  </Button>
                 </div>
               )
             })}
           </div>
-        </section>
+        </>
       )}
     </Modal>
   )
