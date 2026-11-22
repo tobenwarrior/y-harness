@@ -12379,7 +12379,15 @@ describe('durable Bot roster', () => {
       const { events } = await first.ctx.sessionController.inspect(sessionId)
       const request = { botId, document }
       await expect(first.service.readGrokHistory({ botId })).resolves.toBeNull()
+      expect((await first.service.list({})).bots.find(bot => bot.id === botId)?.grokHistoryAvailable).toBeUndefined()
+      const changes: number[] = []
+      first.ctx.on('bots/changed', () => { changes.push(changes.length + 1) })
       await expect(first.service.importGrokHistory(request)).resolves.toEqual({ messages: 2 })
+      expect((await first.service.list({})).bots.find(bot => bot.id === botId)).toMatchObject({ grokHistoryAvailable: true })
+      expect(changes).toEqual([1])
+      await expect(first.service.updateProfile({ botId, name: 'History Bot updated' })).resolves.toMatchObject({
+        bot: { id: botId, name: 'History Bot updated', grokHistoryAvailable: true },
+      })
       await expect(first.service.importGrokHistory(request)).resolves.toEqual({ messages: 2 })
       await expect(first.service.importGrokHistory({ botId, document: JSON.stringify({
         source: 'grok-bot', version: 1, firstCachedSequence: 4, messages: messages.slice(1),
@@ -12392,7 +12400,10 @@ describe('durable Bot roster', () => {
     const reopened = await harness(pool, undefined, undefined, [String(sessionId)])
     try {
       await expect(reopened.service.readGrokHistory({ botId })).resolves.toEqual(JSON.parse(document))
-      expect((await reopened.service.list({})).bots.find(bot => bot.id === botId)?.sessionId).toBe(sessionId)
+      expect((await reopened.service.list({})).bots.find(bot => bot.id === botId)).toMatchObject({
+        sessionId,
+        grokHistoryAvailable: true,
+      })
       const owner = reopened.agents.find(agent => agent.id === sessionId)
       if (owner === undefined) throw new Error('reopened History Bot Agent was not created')
       owner.session.append('turn/start', { turn: 1 })

@@ -70,7 +70,9 @@ describe('web e2e: owner-only Grok history attachments', () => {
   let sourceRoot: string
   let vaultRoot: string
   let filePath: string
+  let firstBot!: BotView
   let secondBot!: BotView
+  let archiveDocument: string
 
   beforeAll(async () => {
     workspaceRoot = await mkdtemp(join(tmpdir(), 'dsh-web-grok-history-attachments-'))
@@ -120,13 +122,13 @@ describe('web e2e: owner-only Grok history attachments', () => {
       workspaceCwd: workspaceRoot,
       extraOverlayPath: overlay,
     })
-    const { bot: firstBot } = await scaffold.ctx.bots.create({
+    firstBot = (await scaffold.ctx.bots.create({
       id: BotId('bot-grok-scout'), name: 'Scout', identity: 'browse', accent: 'teal', cwd: scaffold.workspaceCwd,
-    })
+    })).bot
     secondBot = (await scaffold.ctx.bots.create({
       id: BotId('bot-grok-downloads'), name: 'Grok', identity: 'goal', accent: 'amber', cwd: scaffold.workspaceCwd,
     })).bot
-    const document = JSON.stringify({
+    archiveDocument = JSON.stringify({
       source: 'grok-bot', version: 2, firstCachedSequence: 0, messages: [
         { sourceSequence: 0, role: 'user', text: 'Recovered question', timestampMs: null },
         { sourceSequence: 1, role: 'assistant', text: 'Recovered answer', timestampMs: 2_000 },
@@ -139,7 +141,7 @@ describe('web e2e: owner-only Grok history attachments', () => {
         },
       ],
     })
-    for (const bot of [firstBot, secondBot]) await scaffold.ctx.bots.importGrokHistory({ botId: bot.id, document })
+    await scaffold.ctx.bots.importGrokHistory({ botId: secondBot.id, document: archiveDocument })
     browser = await chromium.launch()
     page = await newEnglishPage(browser)
     tripwire = watchConsole(page)
@@ -155,24 +157,33 @@ describe('web e2e: owner-only Grok history attachments', () => {
 
   it('downloads only the exact verified attachment and recovers after a vault reload', async () => {
     onTestFailed(() => saveFailureShot(page, 'web-e2e-grok-history-attachments'))
-    const openBot = async () => {
+    const openBot = async (bot: BotView) => {
       const sidebar = page.locator('[data-yh-part="sidebar"]')
       const botsMode = sidebar.getByRole('button', { name: 'Bots', exact: true })
       await botsMode.waitFor({ state: 'visible' })
       if (await botsMode.getAttribute('aria-pressed') !== 'true') await botsMode.click()
       const roster = sidebar.locator('aside[aria-label="Bot workspace"]')
-      const row = roster.locator(`[data-bot-id="${secondBot.id}"]`)
+      const row = roster.locator(`[data-bot-id="${bot.id}"]`)
       await row.click()
-      return page.locator(`section[aria-label="${secondBot.name}"]`)
+      return page.locator(`section[aria-label="${bot.name}"]`)
     }
     const openHistory = async () => {
-      const detail = await openBot()
+      const detail = await openBot(secondBot)
       await detail.getByRole('button', { name: 'Bot options', exact: true }).click()
       await page.getByRole('menuitem', { name: 'Imported Grok chat', exact: true }).click()
       return page.getByRole('dialog', { name: 'Imported Grok chat' })
     }
+    const ordinaryDetail = await openBot(firstBot)
+    await ordinaryDetail.getByRole('button', { name: 'Bot options', exact: true }).click()
+    const ordinaryHistory = ordinaryDetail.getByRole('region', { name: 'Imported Grok chat', exact: true })
+    expect(await ordinaryHistory.count()).toBe(0)
+    expect(await page.getByRole('menuitem', { name: 'Imported Grok chat', exact: true }).count()).toBe(0)
+    await page.keyboard.press('Escape')
+    await scaffold.ctx.bots.importGrokHistory({ botId: firstBot.id, document: archiveDocument })
+    await ordinaryHistory.getByRole('button', { name: 'Show history', exact: true }).waitFor()
+
     const downloadName = `Download ${ATTACHMENT_NAME}`
-    const detail = await openBot()
+    const detail = await openBot(secondBot)
     const inline = detail.getByRole('region', { name: 'Imported Grok chat', exact: true })
     await inline.getByRole('button', { name: 'Show history', exact: true }).click()
     const inlineLink = inline.getByRole('link', { name: downloadName, exact: true })

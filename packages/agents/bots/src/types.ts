@@ -544,6 +544,8 @@ export type BotView = Omit<BotRecord, 'ownerId' | 'eventRoutines' | 'skillPolicy
   readonly pinned: boolean
   /** Whether the Bot is excluded from the default visible roster. */
   readonly hidden: boolean
+  /** Whether a private imported Grok archive exists for this Bot. */
+  readonly grokHistoryAvailable?: boolean
 }
 
 /** New Bot metadata and optional stable id for retrying provisioning. */

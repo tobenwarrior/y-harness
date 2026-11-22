@@ -75,6 +75,8 @@ export interface BotSummary {
   readonly identity?: BotIdentity
   /** Optional persisted generated image reference; the semantic avatar remains the fallback while it loads. */
   readonly avatar?: SharedBotAvatar
+  /** Whether a private imported Grok archive exists for this Bot. */
+  readonly grokHistoryAvailable?: boolean
 }
 
 

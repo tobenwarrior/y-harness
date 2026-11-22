@@ -202,10 +202,11 @@ describe('Bots conversation slot wiring', () => {
     }])
   })
 
-  it('wraps the embedded Conversation with the imported history entry when available', () => {
+  it.each([true, false])('shows the embedded history entry only when archive availability is %s', (available) => {
     const owner = {
       name: 'Research partner',
       id: 'bot-history',
+      grokHistoryAvailable: available,
       readGrokHistory: vi.fn(async () => null),
       t,
     }
@@ -219,7 +220,7 @@ describe('Bots conversation slot wiring', () => {
     }
     render(<BotsConversation {...conversationProps(owner, renderFactorySlot)} />)
 
-    expect(screen.getByRole('region', { name: en.grokHistory })).toBeTruthy()
+    expect(screen.queryByRole('region', { name: en.grokHistory }) !== null).toBe(available)
     expect(screen.getByTestId('conversation-live')).toBeTruthy()
   })
 
@@ -236,6 +237,31 @@ describe('Bots conversation slot wiring', () => {
 
     expect(screen.queryByRole('region', { name: en.grokHistory })).toBeNull()
     expect(screen.getByTestId('conversation-live')).toBeTruthy()
+  })
+
+  it('passes the lazy archive reader only for a selected Bot with imported history', () => {
+    const selected = bot('history-owner', 'History owner', { grokHistoryAvailable: true })
+    const reference = sessionReference(selected.sessionId)
+    const calls: Array<{ key: string; props: object }> = []
+    const renderSlot: BotsPanelProps['renderSlot'] = (key, props) => {
+      if (key === 'bots.conversation') calls.push({ key, props })
+      return null
+    }
+    const readGrokHistory = vi.fn(async () => null)
+    render(<BotsPanel {...panelProps(workspaceState([selected], selected.id), reference, renderSlot)} readGrokHistory={readGrokHistory} />)
+
+    expect(calls[0]?.props).toMatchObject({ bot: {
+      name: selected.name, id: selected.id, grokHistoryAvailable: true, readGrokHistory, t,
+    } })
+
+    cleanup()
+    const withoutHistory = { ...selected, grokHistoryAvailable: false }
+    calls.length = 0
+    render(<BotsPanel
+      {...panelProps(workspaceState([withoutHistory], withoutHistory.id), reference, renderSlot)}
+      readGrokHistory={readGrokHistory}
+    />)
+    expect(calls[0]?.props).toEqual({ bot: { name: withoutHistory.name } })
   })
 
   it('keeps the selected Bot visible without rendering a Conversation until its Session is retained', () => {
