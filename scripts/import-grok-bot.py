@@ -24,6 +24,7 @@ except ImportError:  # pragma: no cover - the importer is supported on Unix VPS 
 MAX_DOCUMENT_BYTES = 512 * 1024
 MAX_MANIFEST_BYTES = 2 * 1024 * 1024
 MAX_ATTACHMENT_BYTES = 24 * 1024 * 1024
+MAX_MEMORY_TEXT = 2_000
 MAX_SAFE_INTEGER = 9_007_199_254_740_991
 BOT_ID_PATTERN = re.compile(r'^bot-[A-Za-z0-9][A-Za-z0-9-]*$')
 SHA256_PATTERN = re.compile(r'^[0-9a-f]{64}$')
@@ -34,6 +35,17 @@ JS_LINE_TERMINATORS = {'\u000a', '\u000d', '\u2028', '\u2029'}
 
 class ImportErrorDetail(Exception):
     """Error safe to print without printing the export or sign-in link."""
+
+
+class RemoteRequestError(ImportErrorDetail):
+    """One structured Host Remote failure with its stable error code."""
+
+    def __init__(self, endpoint: str, code: str, message: str):
+        self.endpoint = endpoint
+        self.code = code
+        self.remote_message = message
+        display = message if code == 'gateway/bad-request' and message else f'{endpoint} failed with {code}.'
+        super().__init__(display)
 
 
 def _invalid_manifest(source: bool = False):
@@ -293,6 +305,93 @@ def _same_entry(left: dict, right: dict) -> bool:
     return left == right
 
 
+def _read_memory_source(path: Path) -> tuple[str, dict]:
+    """Build a memory-only import document from a reviewed supplemental export."""
+    if not path.is_absolute():
+        raise ImportErrorDetail('The memory source must use an absolute file path.')
+    info = _lstat(path)
+    if info is None or not stat.S_ISREG(info.st_mode) or stat.S_ISLNK(info.st_mode):
+        raise ImportErrorDetail('The memory source must be a regular file.')
+    flags = os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_NONBLOCK', 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError:
+        raise ImportErrorDetail('Could not read the supplemental memory source.')
+    try:
+        opened = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(opened.st_mode) or opened.st_dev != info.st_dev or opened.st_ino != info.st_ino
+            or opened.st_size > MAX_DOCUMENT_BYTES
+        ):
+            raise ImportErrorDetail('The supplemental memory source is too large or changed.')
+        raw = b''
+        while len(raw) <= MAX_DOCUMENT_BYTES:
+            chunk = os.read(descriptor, MAX_DOCUMENT_BYTES + 1 - len(raw))
+            if not chunk:
+                break
+            raw += chunk
+        current = os.fstat(descriptor)
+        if (
+            current.st_size != opened.st_size or current.st_mtime_ns != opened.st_mtime_ns
+            or current.st_ctime_ns != opened.st_ctime_ns or len(raw) > MAX_DOCUMENT_BYTES
+        ):
+            raise ImportErrorDetail('The supplemental memory source changed while it was being read.')
+    except OSError as error:
+        raise ImportErrorDetail('Could not read the supplemental memory source.') from error
+    finally:
+        os.close(descriptor)
+    try:
+        document = json.loads(raw.decode('utf-8-sig'), parse_constant=_reject_json_constant)
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
+        raise ImportErrorDetail('The supplemental memory source must be valid JSON.') from error
+    version = document.get('version') if isinstance(document, dict) else None
+    if (
+        not isinstance(document, dict) or isinstance(version, bool) or not isinstance(version, int)
+        or version != 1 or not isinstance(document.get('memories'), list)
+        or not isinstance(document.get('user_facts'), list)
+    ):
+        raise ImportErrorDetail('The supplemental memory source has an unsupported format.')
+    source_records = 0
+    skipped_truncated = 0
+    eligible: list[str] = []
+    for collection in ('memories', 'user_facts'):
+        for item in document[collection]:
+            source_records += 1
+            if not isinstance(item, dict) or 'text' not in item:
+                raise ImportErrorDetail('The supplemental memory source contains invalid memory text.')
+            truncated = item.get('truncated')
+            if 'truncated' in item and not isinstance(truncated, bool):
+                raise ImportErrorDetail('The supplemental memory source contains an invalid truncated flag.')
+            if truncated is True:
+                skipped_truncated += 1
+                continue
+            if not isinstance(item['text'], str):
+                raise ImportErrorDetail('The supplemental memory source contains invalid memory text.')
+            text = item['text'].strip()
+            if not text or len(text) > MAX_MEMORY_TEXT:
+                raise ImportErrorDetail('The supplemental memory source contains memory text outside the supported limit.')
+            eligible.append(text)
+    unique = list(dict.fromkeys(eligible))
+    result = {
+        'sourceRecords': source_records,
+        'usableRecords': len(unique),
+        'duplicateRecords': len(eligible) - len(unique),
+        'skippedTruncated': skipped_truncated,
+    }
+    export = {
+        'format': 'grok-bot-export',
+        'version': 1,
+        'bots': [{
+            'name': 'supplemental memory',
+            'memories': unique,
+            'user_facts': [],
+            'skills': [],
+            'routines': [],
+        }],
+    }
+    return json.dumps(export, ensure_ascii=False, separators=(',', ':')), result
+
+
 def _manifest_bytes(entries: list[dict]) -> bytes:
     """Serialize a manifest and enforce the Host's byte limit before staging."""
     raw = (json.dumps({'version': 1, 'entries': entries}, separators=(',', ':')) + '\n').encode('utf-8')
@@ -489,9 +588,46 @@ def invoke(connection, cookie, endpoint, **args):
     result = decoded['result']
     if result['ok'] is not True:
         error = result['error']
-        message = error.get('message') if error.get('code') == 'gateway/bad-request' else None
-        raise ImportErrorDetail(message or f"{endpoint} failed with {error.get('code', 'unknown error')}.")
+        code = error.get('code', 'unknown error') if isinstance(error, dict) else 'unknown error'
+        message = error.get('message', '') if isinstance(error, dict) else ''
+        if not isinstance(code, str):
+            code = 'unknown error'
+        if not isinstance(message, str):
+            message = ''
+        raise RemoteRequestError(endpoint, code, message)
     return result['value']
+
+
+MEMORY_CAPACITY_ERROR = 'The destination Bot has insufficient memory capacity for this export.'
+MEMORY_CAPACITY_WIRE_ERROR = 'The Host returned malformed memory capacity.'
+
+
+def _memory_capacity(value):
+    """Return the Host's complete memory-only capacity record when present."""
+    if not isinstance(value, dict):
+        return None
+    if 'memoryCapacity' not in value:
+        return None
+    capacity = value.get('memoryCapacity')
+    if not isinstance(capacity, dict):
+        raise ImportErrorDetail(MEMORY_CAPACITY_WIRE_ERROR)
+    fields = ('existingRecords', 'newRecords', 'limit')
+    if any(isinstance(capacity.get(field), bool) or not isinstance(capacity.get(field), int) or capacity.get(field) < 0 for field in fields):
+        raise ImportErrorDetail(MEMORY_CAPACITY_WIRE_ERROR)
+    return {field: capacity[field] for field in fields}
+
+
+def _memory_preview_output(result, source_stats):
+    """Build a memory preview while preserving only Host-provided capacity counts."""
+    output = {
+        'mode': 'memory-preview',
+        **result,
+        'memorySource': dict(source_stats),
+    }
+    capacity = _memory_capacity(result)
+    if capacity is not None:
+        output['memorySource']['memoryCapacity'] = capacity
+    return output
 
 
 def main():
@@ -508,14 +644,21 @@ def main():
         '--attachments-only', action='store_true',
         help='Validate or stage attachments without importing a Bot export or contacting Y Harness',
     )
+    parser.add_argument(
+        '--memory-source', type=Path,
+        help='Reviewed supplemental memory JSON to preview or add without importing skills or routines',
+    )
     parser.add_argument('--apply', action='store_true', help='Write entries. By default, preview only.')
     options = parser.parse_args()
     try:
         if options.attachments_only:
             if options.attachments is None:
                 raise ImportErrorDetail('--attachments-only requires --attachments.')
-            if options.export is not None or options.bot is not None or options.source_name is not None:
-                raise ImportErrorDetail('--attachments-only cannot be combined with an export, --bot, or --source-name.')
+            if (
+                options.export is not None or options.bot is not None or options.source_name is not None
+                or options.memory_source is not None
+            ):
+                raise ImportErrorDetail('--attachments-only cannot be combined with an export, --bot, --source-name, or --memory-source.')
             if not options.attachments.is_absolute() or not options.attachments.is_dir():
                 raise ImportErrorDetail('The attachment source must be an existing absolute directory.')
             destination = os.environ.get('DSH_GROK_HISTORY_ATTACHMENT_VAULT')
@@ -524,8 +667,21 @@ def main():
             attachments = stage_attachments(options.attachments, Path(destination), dry_run=not options.apply)
             print(json.dumps({'mode': 'attachments-only', 'attachments': attachments}, ensure_ascii=False))
             return
-        if options.export is None or options.bot is None:
-            raise ImportErrorDetail('An export and --bot are required unless --attachments-only is used.')
+        memory_source_stats = None
+        if options.memory_source is not None:
+            if options.export is not None or options.source_name is not None or options.attachments is not None:
+                raise ImportErrorDetail('--memory-source cannot be combined with an export, --source-name, or --attachments.')
+            if options.bot is None:
+                raise ImportErrorDetail('--bot is required with --memory-source.')
+            document, memory_source_stats = _read_memory_source(options.memory_source)
+        else:
+            if options.export is None or options.bot is None:
+                raise ImportErrorDetail('An export and --bot are required unless --attachments-only or --memory-source is used.')
+            with options.export.open('rb') as file:
+                raw = file.read(MAX_DOCUMENT_BYTES + 1)
+            if len(raw) > MAX_DOCUMENT_BYTES:
+                raise ImportErrorDetail('Choose a Grok Bot export of at most 512 KiB.')
+            document = raw.decode('utf-8-sig')
         if options.attachments is not None:
             if not options.attachments.is_absolute() or not options.attachments.is_dir():
                 raise ImportErrorDetail('The attachment source must be an existing absolute directory.')
@@ -534,17 +690,59 @@ def main():
                 raise ImportErrorDetail('Set DSH_GROK_HISTORY_ATTACHMENT_VAULT before staging attachments.')
         else:
             destination = None
-        with options.export.open('rb') as file:
-            raw = file.read(MAX_DOCUMENT_BYTES + 1)
-        if len(raw) > MAX_DOCUMENT_BYTES:
-            raise ImportErrorDetail('Choose a Grok Bot export of at most 512 KiB.')
-        document = raw.decode('utf-8-sig')
         connection, cookie = connect()
         try:
             bots = invoke(connection, cookie, 'bots/list', request={'includeHidden': True})['bots']
             matches = [bot for bot in bots if options.bot in (bot['id'], bot['name'])]
             if len(matches) != 1:
                 raise ImportErrorDetail('Choose exactly one existing destination Bot by name or id.')
+            if memory_source_stats is not None:
+                request = {
+                    'botId': matches[0]['id'], 'document': document,
+                    'preview': True, 'memoryOnly': True,
+                }
+                try:
+                    preview = invoke(connection, cookie, 'bots/importGrokBot', request=request)
+                except RemoteRequestError as error:
+                    # Older Hosts rejected an over-capacity preview before the
+                    # memory-only capacity result existed. Preserve that known
+                    # result without fabricating current-record counts.
+                    if error.code != 'gateway/bad-request' or error.remote_message != MEMORY_CAPACITY_ERROR:
+                        raise
+                    if options.apply:
+                        raise ImportErrorDetail(error.remote_message)
+                    print(json.dumps({
+                        'mode': 'memory-preview',
+                        'memorySource': dict(memory_source_stats),
+                        'blocked': 'memory-capacity',
+                    }, ensure_ascii=False))
+                    return
+                capacity = _memory_capacity(preview)
+                over_capacity = capacity is not None and capacity['existingRecords'] + capacity['newRecords'] > capacity['limit']
+                if over_capacity:
+                    if options.apply:
+                        raise ImportErrorDetail(MEMORY_CAPACITY_ERROR)
+                    output = _memory_preview_output(preview, memory_source_stats)
+                    output['blocked'] = 'memory-capacity'
+                    print(json.dumps(output, ensure_ascii=False))
+                    return
+                if not options.apply:
+                    print(json.dumps(_memory_preview_output(preview, memory_source_stats), ensure_ascii=False))
+                    return
+                result = invoke(connection, cookie, 'bots/importGrokBot', request={
+                    'botId': matches[0]['id'], 'document': document,
+                    'preview': False, 'memoryOnly': True,
+                })
+                output = {
+                    'mode': 'memory-import',
+                    **result,
+                    'memorySource': dict(memory_source_stats),
+                }
+                result_capacity = _memory_capacity(result)
+                if result_capacity is not None:
+                    output['memorySource']['memoryCapacity'] = result_capacity
+                print(json.dumps(output, ensure_ascii=False))
+                return
             attachment_preview = None
             if options.attachments is not None and destination is not None:
                 attachment_preview = stage_attachments(
