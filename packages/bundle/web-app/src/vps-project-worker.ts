@@ -199,6 +199,22 @@ def install_skill(root_fd, path, content, preview):
         fcntl.flock(root_fd, fcntl.LOCK_UN)
 
 
+def read_skill(root_fd, path):
+    parts = skill_parts(path)
+    try:
+        with private_folder(root_fd, parts[:-1], create=False) as fd:
+            current = at(fd, parts[-1])
+            if current is None:
+                return {'content': None}
+            if current['type'] == 'symlink':
+                raise Failure('FS_SANDBOX_DENIED', 'Grok skill read refuses a symbolic link file.')
+            if current['type'] != 'file':
+                raise Failure('FS_NOT_REGULAR_FILE', 'Expected a regular skill file.')
+            return {'content': read_text(fd, parts[-1])}
+    except FileNotFoundError:
+        return {'content': None}
+
+
 def guard(current, expected):
     if current is not None and current['type'] != 'file':
         raise Failure('FS_NOT_REGULAR_FILE', 'Expected a regular project file.')
@@ -246,6 +262,8 @@ def handle(root_fd, root, request):
     operation = request['operation']
     if operation == 'install-skill':
         return install_skill(root_fd, path, request['content'], request['preview'])
+    if operation == 'read-skill':
+        return read_skill(root_fd, path)
     parts = parts_of(root, path)
     if operation == 'resolve':
         return path
