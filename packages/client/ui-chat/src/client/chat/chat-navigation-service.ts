@@ -94,8 +94,8 @@ export class ChatNavigationService {
         this.queued.delete(sessionId)
         this.pending.set(sessionId, queued.seq)
       }
-      listeners?.delete(registration)
-      if (listeners?.size === 0) this.listeners.delete(sessionId)
+      listeners.delete(registration)
+      if (listeners.size === 0) this.listeners.delete(sessionId)
     }
   }
 

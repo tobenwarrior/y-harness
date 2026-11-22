@@ -1141,7 +1141,9 @@ describe('ChatView', () => {
     expect(h.registerChatNavigation).not.toHaveBeenCalled()
 
     h.setSession({ openState: 'open' })
-    await waitFor(() => expect(h.registerChatNavigation).toHaveBeenCalledOnce())
+    await waitFor(() => {
+      expect(h.registerChatNavigation).toHaveBeenCalledOnce()
+    })
     expect(h.loadThrough).not.toHaveBeenCalled()
   })
 
