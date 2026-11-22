@@ -298,6 +298,36 @@ export interface BotGroupInspectValue {
   readonly deliveries?: readonly BotGroupDeliveryStatusView[]
 }
 
+/** Shared-group transcript search request. */
+export interface BotGroupMessageSearchRequest {
+  /** Literal message text to search for. */
+  readonly query: string
+  /** Optional room restriction; omitted searches every accessible shared room. */
+  readonly groupId?: BotGroupId
+  /** Last hit from the previous page of the same query and room scope. */
+  readonly before?: { readonly groupId: BotGroupId; readonly messageId: BotGroupMessageId }
+}
+
+/** One accessible shared-group transcript search hit. */
+export interface BotGroupMessageSearchItem {
+  /** Shared room containing the matching message. */
+  readonly groupId: BotGroupId
+  /** Current display name of the shared room. */
+  readonly groupName: string
+  /** Stable durable message identity. */
+  readonly messageId: BotGroupMessageId
+  /** Bounded excerpt of the matching message text. */
+  readonly snippet: string
+}
+
+/** Bounded page of accessible shared-group transcript search hits. */
+export interface BotGroupMessageSearchValue {
+  /** Matching visible group messages, newest first. */
+  readonly items: readonly BotGroupMessageSearchItem[]
+  /** Whether another bounded page is available. */
+  readonly hasMore: boolean
+}
+
 /** Browser-safe per-recipient state for one persisted group delivery. */
 export interface BotGroupDeliveryStatusView {
   /** Source group message identity. */

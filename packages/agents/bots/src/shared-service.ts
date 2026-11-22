@@ -61,6 +61,7 @@ import type {
   BotGroupCreateRequest,
   BotGroupDeliveryRecoveryRequest,
   BotGroupDeliveryRecoveryValue,
+  BotGroupMessageSearchRequest,
   BotGroupReactionRequest,
   BotGroupReactionValue,
   BotGroupSendRemoteRequest,
@@ -111,6 +112,7 @@ export const SHARED_BOT_ENDPOINTS = [
   'bots/share/create-group',
   'bots/share/update-group',
   'bots/share/inspect-group',
+  'bots/share/search-group-messages',
   'bots/share/group-settings',
   'bots/share/send-group-message',
   'bots/share/react-group-message',
@@ -469,6 +471,13 @@ const manageMemoryPayload = botIdPayload.extend({
 const groupIdPayload = z.object({
   groupId: z.string().regex(/^bot-group-[A-Za-z0-9][A-Za-z0-9-]*$/).transform(BotGroupId),
 }).strict()
+const groupMessageSearchPayload = z.object({
+  query: z.string().min(1).max(500).refine(value => value.trim() === value),
+  groupId: groupIdPayload.shape.groupId.optional(),
+  before: groupIdPayload.extend({
+    messageId: z.string().regex(/^bot-group-message-[A-Za-z0-9][A-Za-z0-9-]*$/).transform(BotGroupMessageId),
+  }).strict().optional(),
+}).strict()
 const groupBotIds = z.array(botIdPayload.shape.botId).min(2).max(6).refine(
   botIds => new Set(botIds.map(String)).size === botIds.length,
   'group Bot members must be unique',
@@ -550,6 +559,7 @@ type GroupIdPayload = z.infer<typeof groupIdPayload>
 type GroupCreatePayload = z.infer<typeof groupCreatePayload>
 type GroupUpdatePayload = z.infer<typeof groupUpdatePayload>
 type GroupSettingsPayload = z.infer<typeof groupSettingsPayload>
+type GroupMessageSearchPayload = z.infer<typeof groupMessageSearchPayload>
 type GroupSendPayload = z.infer<typeof groupSendPayload>
 type GroupReactionPayload = z.infer<typeof groupReactionPayload>
 type ManageGroupMembersPayload = z.infer<typeof manageGroupMembersPayload>
@@ -2608,6 +2618,8 @@ export class SharedBotService {
         return this.updateGroup(parsePayload(groupUpdatePayload, payload), signal, principalId)
       case 'bots/share/inspect-group':
         return this.inspectGroup(parsePayload(groupIdPayload, payload), signal, principalId)
+      case 'bots/share/search-group-messages':
+        return this.searchGroupMessages(parsePayload(groupMessageSearchPayload, payload), signal, principalId)
       case 'bots/share/group-settings':
         return this.groupSettings(parsePayload(groupSettingsPayload, payload), signal, principalId)
       case 'bots/share/send-group-message':
@@ -2913,6 +2925,20 @@ export class SharedBotService {
     principalId: ReturnType<typeof BotPrincipalId>,
   ): Promise<ConnectionRpcHandlerResult> {
     const result = await this.groups.inspect(payload.groupId, principalId, signal)
+    return { ok: true, value: result }
+  }
+
+  private async searchGroupMessages(
+    payload: GroupMessageSearchPayload,
+    signal: AbortSignal,
+    principalId: ReturnType<typeof BotPrincipalId>,
+  ): Promise<ConnectionRpcHandlerResult> {
+    const request: BotGroupMessageSearchRequest = {
+      query: payload.query,
+      ...(payload.groupId === undefined ? {} : { groupId: payload.groupId }),
+      ...(payload.before === undefined ? {} : { before: payload.before }),
+    }
+    const result = await this.groups.searchMessages(request, principalId, signal)
     return { ok: true, value: result }
   }
 

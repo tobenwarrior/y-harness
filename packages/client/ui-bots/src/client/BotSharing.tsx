@@ -8,6 +8,7 @@ import {
   IconCopyOutlineRegular,
   IconLinkOutlineRegular,
   IconSettingsOutlineRegular,
+  IconSidebarSearchOutlineRegular,
   IconShieldOutlineRegular,
   IconShareOutlineRegular,
   IconTrashOutlineRegular,
@@ -27,6 +28,9 @@ import type {
   BotId as BotIdType,
   BotGroupCreateRequest,
   BotGroupMessageId as BotGroupMessageIdType,
+  BotGroupMessageSearchItem,
+  BotGroupMessageSearchRequest,
+  BotGroupMessageSearchValue,
   BotGroupMessageSenderView,
   BotGroupMessageView,
   BotGroupView,
@@ -42,6 +46,7 @@ import type {
   BotSharedRosterFenceDiagnosticValue,
 } from '@yharness/bots/client'
 import { BotAvatar } from './BotAvatar.tsx'
+import { SharedGroupSearch } from './SharedGroupSearch.tsx'
 import { mentionQueryAt, resolveMentionTargets } from './bot-mentions.ts'
 import { compactGroupQuote, GROUP_REACTION_OPTIONS, readGroupReplyToMessageId } from './group-interactions.ts'
 import {
@@ -1389,6 +1394,8 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
   const [groups, setGroups] = useState<readonly BotGroupView[]>([])
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null)
   const [groupMessages, setGroupMessages] = useState<readonly BotGroupMessageView[]>([])
+  const [groupSearchOpen, setGroupSearchOpen] = useState(false)
+  const [groupSearchTarget, setGroupSearchTarget] = useState<string | null>(null)
   const [groupDraft, setGroupDraft] = useState('')
   const [groupReplyingTo, setGroupReplyingTo] = useState<BotGroupMessageView | null>(null)
   const [groupReactionMenuMessageId, setGroupReactionMenuMessageId] = useState<string | null>(null)
@@ -1599,6 +1606,7 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
 
   const setGroupSelection = (groupId: string | null): void => {
     if (selectedGroupIdRef.current !== groupId) {
+      setGroupSearchTarget(null)
       clearGroupAttachments()
       groupOperationGenerationRef.current += 1
       groupDraftRevisionRef.current += 1
@@ -1655,6 +1663,8 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
     setSelection(null)
     setGroups([])
     setGroupSelection(null)
+    setGroupSearchOpen(false)
+    setGroupSearchTarget(null)
     clearGroupAttachments()
     setGroupMessages([])
     setMessageDrafts({})
@@ -1793,7 +1803,7 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
     }
   }
 
-  const readGroup = async (groupId: string): Promise<void> => {
+  const readGroup = async (groupId: string, reveal?: string): Promise<void> => {
     const auth = syncAuthContext()
     const inspect = auth?.client.inspectGroup
     if (auth === undefined || inspect === undefined) return
@@ -1809,6 +1819,12 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
       if (result.ok) {
         setGroupMessages(result.value.messages)
         mergeGroupName(groupId, result.value.group.name, result.value.group.updatedAt)
+        if (reveal !== undefined) {
+          setGroups(current => current.some(group => group.id === result.value.group.id)
+            ? current : [...current, result.value.group])
+          if (result.value.messages.some(message => String(message.id) === reveal)) setGroupSearchTarget(reveal)
+          else setError(t('sharedGroupSearchMissing'))
+        }
       }
       else if (result.error.code === 'gateway/forbidden') requestRevalidation(true, result.error.message)
       else setError(result.error.message || t('sharedGroupLoadFailed'))
@@ -1819,6 +1835,35 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
       }
     }
   }
+
+  const searchSharedGroups = async (request: BotGroupMessageSearchRequest): Promise<BotGroupMessageSearchValue> => {
+    const auth = requireCurrentAuth()
+    const search = auth.client.searchGroupMessages
+    if (search === undefined) throw new Error(t('sharedGroupSearchError'))
+    const result = await search(request)
+    if (!openRef.current || !isCurrentAuth(auth)) throw new SharedDialogAuthChangedError()
+    if (result.ok) return result.value
+    if (result.error.code === 'gateway/forbidden') requestRevalidation(true, result.error.message)
+    throw new Error(t('sharedGroupSearchError'))
+  }
+
+  const openGroupSearchResult = (hit: BotGroupMessageSearchItem): void => {
+    const generation = authGenerationRef.current
+    if (syncAuthContext() === undefined || authGenerationRef.current !== generation) return
+    const id = String(hit.groupId)
+    setGroupSearchOpen(false)
+    setError(null)
+    setGroupSelection(id)
+    void readGroup(id, String(hit.messageId))
+  }
+
+  useEffect(() => {
+    if (groupSearchTarget === null) return
+    const element = document.getElementById(`yharness-shared-group-message-${groupSearchTarget}`)
+    element?.scrollIntoView({ block: 'center' })
+    element?.focus({ preventScroll: true })
+    setGroupSearchTarget(null)
+  }, [groupSearchTarget])
 
   const openGroupSettings = (): void => {
     const groupId = selectedGroupIdRef.current
@@ -3039,6 +3084,13 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
                 <p className={css.sharedMemoryDescription}>{t('sharedGroupsDescription')}</p>
               </div>
               {groupWorking === 'load' && <span role="status" aria-label={t('sharedGroupLoading')}><StateDot state="ongoing" size={12} /></span>}
+              {client.searchGroupMessages !== undefined && groups.length > 0 && (
+                <Tooltip label={t('sharedGroupSearch')} side="bottom" portal>
+                  <Button size="sm" className={css.sharedGroupSearchButton} aria-label={t('sharedGroupSearch')}
+                    aria-expanded={groupSearchOpen} icon={<IconSidebarSearchOutlineRegular size={16} />}
+                    onClick={() => { setGroupSearchOpen(current => !current) }} />
+                </Tooltip>
+              )}
               {client.createGroup !== undefined && (
                 <Button
                   variant="outline"
@@ -3050,6 +3102,7 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
                 </Button>
               )}
             </div>
+            {groupSearchOpen && <SharedGroupSearch search={searchSharedGroups} onSelect={openGroupSearchResult} t={t} />}
             {pendingMessages.length > 0 && (
               <div className={css.dialogNotice} role="status">
                 <strong>{t('sharedGroupPendingMessagesTitle')}</strong>
@@ -3174,6 +3227,8 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
                     return (
                       <article
                         id={`yharness-shared-group-message-${String(messageRow.id)}`}
+                        data-shared-group-message-id={String(messageRow.id)}
+                        tabIndex={-1}
                         className={messageRow.sender.kind === 'user' ? css.sharedUserMessage : css.sharedBotMessage}
                         key={String(messageRow.id)}
                       >

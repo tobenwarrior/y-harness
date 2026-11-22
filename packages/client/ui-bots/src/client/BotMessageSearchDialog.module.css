@@ -78,3 +78,19 @@
   margin: 0;
   padding: 2px 0;
 }
+
+.inline {
+  margin: 8px 0;
+}
+
+.roomIcon {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  color: var(--yh-alias-label-secondary);
+}
+
+.older {
+  justify-self: start;
+}

@@ -1,3 +1,4 @@
+import type { BotGroupId } from '@yharness/bots/client'
 import type { ClientConnectionRpc } from '@yharness/client-connection/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { broadcastSharedAuthChanged, createSharedBotsClient } from '../src/client/shared-client.ts'
@@ -50,6 +51,7 @@ describe('shared Bot client capabilities', () => {
     expect(client.createGroup).toEqual(expect.any(Function))
     expect(client.updateGroup).toEqual(expect.any(Function))
     expect(client.inspectGroup).toEqual(expect.any(Function))
+    expect(client.searchGroupMessages).toEqual(expect.any(Function))
     expect(client.sendGroupMessage).toEqual(expect.any(Function))
     expect(client.sendGroupMessageWithAttachments).toEqual(expect.any(Function))
     expect(client.readGroupSettings).toEqual(expect.any(Function))
@@ -109,6 +111,78 @@ describe('shared Bot client capabilities', () => {
     const client = createSharedBotsClient(rpc)
     if (client.readGroupSettings === undefined) throw new Error('group settings transport unavailable')
     await expect(client.readGroupSettings('bot-group-release')).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'gateway/invalid-response' },
+    })
+  })
+
+  it('searches shared-group messages through the authenticated route', async () => {
+    const rpc: ClientConnectionRpc = {
+      call: vi.fn(async (channel, endpoint, payload) => {
+        expect(channel).toBe('/shared-bots')
+        expect(endpoint).toBe('bots/share/search-group-messages')
+        expect(payload).toEqual({ query: 'orbit', groupId: 'bot-group-release' })
+        return {
+          ok: true as const,
+          value: {
+            hasMore: true,
+            items: [{
+              groupId: 'bot-group-release', groupName: 'Release room', messageId: 'bot-group-message-orbit',
+              snippet: 'Orbit is ready',
+            }],
+          },
+        }
+      }),
+    }
+    const client = createSharedBotsClient(rpc)
+    if (client.searchGroupMessages === undefined) throw new Error('shared group search transport unavailable')
+
+    await expect(client.searchGroupMessages({ query: 'orbit', groupId: 'bot-group-release' as BotGroupId })).resolves.toEqual({
+      ok: true,
+      value: {
+        hasMore: true,
+        items: [{
+          groupId: 'bot-group-release', groupName: 'Release room', messageId: 'bot-group-message-orbit',
+          snippet: 'Orbit is ready',
+        }],
+      },
+    })
+  })
+
+  it.each([
+    ['malformed page object', { hasMore: true, items: null }],
+    ['hasMore with an empty page', { hasMore: true, items: [] }],
+    ['more than twenty hits', {
+      hasMore: false,
+      items: Array.from({ length: 21 }, (_, index) => ({
+        groupId: 'bot-group-release', groupName: 'Release room',
+        messageId: `bot-group-message-${String(index + 1)}`, snippet: 'Orbit is ready',
+      })),
+    }],
+    ['invalid group id', {
+      hasMore: false,
+      items: [{ groupId: 'invalid-group', groupName: 'Release room', messageId: 'bot-group-message-orbit', snippet: 'Orbit is ready' }],
+    }],
+    ['invalid message id', {
+      hasMore: false,
+      items: [{ groupId: 'bot-group-release', groupName: 'Release room', messageId: 'invalid-id', snippet: 'Orbit is ready' }],
+    }],
+    ['group name over eighty characters', {
+      hasMore: false,
+      items: [{ groupId: 'bot-group-release', groupName: 'x'.repeat(81), messageId: 'bot-group-message-orbit', snippet: 'Orbit is ready' }],
+    }],
+    ['snippet over four hundred eighty characters', {
+      hasMore: false,
+      items: [{ groupId: 'bot-group-release', groupName: 'Release room', messageId: 'bot-group-message-orbit', snippet: 'x'.repeat(481) }],
+    }],
+  ] as const)('fails closed for a %s', async (_name, value) => {
+    const rpc: ClientConnectionRpc = {
+      call: vi.fn(async () => ({ ok: true as const, value })),
+    }
+    const client = createSharedBotsClient(rpc)
+    if (client.searchGroupMessages === undefined) throw new Error('shared group search transport unavailable')
+
+    await expect(client.searchGroupMessages({ query: 'orbit' })).resolves.toMatchObject({
       ok: false,
       error: { code: 'gateway/invalid-response' },
     })

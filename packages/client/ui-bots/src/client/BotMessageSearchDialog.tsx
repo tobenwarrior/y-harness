@@ -6,6 +6,7 @@ import { IconSidebarSearchOutlineRegular, Input, Modal } from '@yharness/client-
 import type { PropsLocale } from '@yharness/client-ui-slots'
 import { BotAvatar } from './BotAvatar.tsx'
 import type { BotWorkspaceFace } from './controller.ts'
+import { searchResultKey } from './search-result-key.ts'
 import css from './BotMessageSearchDialog.module.css'
 
 const SEARCH_DELAY_MS = 160
@@ -77,16 +78,7 @@ export function BotMessageSearchDialog({
           placeholder={t('searchChatsPlaceholder')}
           icon={<IconSidebarSearchOutlineRegular size={16} />}
           onChange={(event) => { setText(event.currentTarget.value) }}
-          onKeyDown={(event) => {
-            if (event.nativeEvent.isComposing || firstResult.current === null) return
-            if (event.key === 'ArrowDown') {
-              event.preventDefault()
-              firstResult.current.focus()
-            } else if (event.key === 'Enter') {
-              event.preventDefault()
-              firstResult.current.click()
-            }
-          }}
+          onKeyDown={(event) => { searchResultKey(event, firstResult.current) }}
         />
         {query !== '' && current === undefined && <p className={css.status} role="status">{t('searchChatsLoading')}</p>}
         {current?.value === null && <p className={css.status} role="alert">{t('searchChatsError')}</p>}
