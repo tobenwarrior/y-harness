@@ -315,6 +315,41 @@ describe('Bot roster and detail', () => {
     expect(screen.getByRole('textbox', { name: 'Instructions' })).toHaveProperty('value', 'Keep the draft.')
   })
 
+  it('retains a duplicate name for retry and stops repeated submission while waiting', async () => {
+    let finish = () => {}
+    const duplicate = vi.fn<(id: string, name: string) => Promise<void>>()
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve }))
+    render(
+      <BotDetail bot={bots[0]} loading={false} loadAvatar={undefined} t={t} onDuplicate={duplicate}
+        readGrokHistory={vi.fn().mockRejectedValue(new Error('unused test operation'))}>
+        <span />
+      </BotDetail>,
+    )
+
+    chooseBotOption('Duplicate bot')
+    const dialog = screen.getByRole('dialog', { name: 'Duplicate bot' })
+    expect(within(dialog).getByText('Copied routines start paused.')).toBeTruthy()
+    const name = within(dialog).getByRole('textbox', { name: 'Bot name' })
+    expect(name).toHaveProperty('value', 'Research partner copy')
+    fireEvent.change(name, { target: { value: '  ' } })
+    fireEvent.keyDown(name, { key: 'Enter' })
+    expect(duplicate).not.toHaveBeenCalled()
+    fireEvent.change(name, { target: { value: '  Release scout  ' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Duplicate' }))
+    expect((await within(dialog).findByRole('alert')).textContent).toContain('Try again')
+    expect(name).toHaveProperty('value', '  Release scout  ')
+
+    fireEvent.keyDown(name, { key: 'Enter', isComposing: true })
+    expect(duplicate).toHaveBeenCalledTimes(1)
+    fireEvent.keyDown(name, { key: 'Enter' })
+    fireEvent.keyDown(name, { key: 'Enter' })
+    expect(duplicate.mock.calls).toEqual([['research', 'Release scout'], ['research', 'Release scout']])
+    expect(within(dialog).getByRole('button', { name: 'Duplicating…' })).toHaveProperty('disabled', true)
+    await act(async () => { finish() })
+    expect(screen.queryByRole('dialog', { name: 'Duplicate bot' })).toBeNull()
+  })
+
   it('explains a stale profile conflict without discarding the draft', async () => {
     const updateProfile = vi.fn(async () => {
       const error = new Error('stale profile')

@@ -31,6 +31,18 @@ export function BotId(value: string): BotId {
   return brandString<BotId>(value)
 }
 
+/** Stable retry identity for one owner-requested Bot duplication. */
+export type BotDuplicateOperationId = Branded<'BotDuplicateOperationId'>
+
+/**
+ * Apply the Bot-duplication operation brand after the Host validates the value.
+ * @param value - Validated non-empty operation identity.
+ * @returns Branded Bot-duplication operation identity.
+ */
+export function BotDuplicateOperationId(value: string): BotDuplicateOperationId {
+  return brandString<BotDuplicateOperationId>(value)
+}
+
 /** Apply the shared-note identity brand to a validated storage or wire value.
  * @param value - String already validated as a shared-note id.
  * @returns The branded shared-note id.
@@ -574,6 +586,41 @@ export interface BotCreateRequest {
 export interface BotCreateValue {
   /** The newly active or still-provisioning durable Bot row. */
   readonly bot: BotView
+}
+
+/** Owner request to create a fresh Bot from another Bot's safe configuration. */
+export interface BotDuplicateRequest {
+  /** Existing owner Bot whose configuration should be copied. */
+  readonly sourceBotId: BotId
+  /** Stable caller identity reused when a duplicate operation is retried. */
+  readonly operationId: BotDuplicateOperationId
+  /** Optional replacement name; defaults to the source name followed by "copy". */
+  readonly name?: string
+}
+
+/** Reason one source routine was deliberately not copied. */
+export type BotDuplicateRoutineSkipReason = 'inactive' | 'expired' | 'schedule-unavailable'
+
+/** One source routine omitted from a duplicate. */
+export interface BotDuplicateRoutineSkip {
+  /** Source routine identity. */
+  readonly id: string
+  /** Safe reason the routine was not recreated. */
+  readonly reason: BotDuplicateRoutineSkipReason
+}
+
+/** Result of an owner-scoped Bot duplication. */
+export interface BotDuplicateValue {
+  /** Fresh Bot with a fresh one-Session binding. */
+  readonly bot: BotView
+  /** Whether a generated avatar was copied to the new Bot. */
+  readonly avatarCopied: boolean
+  /** Number of eligible routine definitions recreated on the new Bot. */
+  readonly routinesCopied: number
+  /** Routines intentionally omitted from the fresh Bot. */
+  readonly skippedRoutines: readonly BotDuplicateRoutineSkip[]
+  /** Canonical host-local skill policy copied to the new Bot. */
+  readonly skillPolicy: BotSkillPolicy
 }
 
 /** Bot catalog request; cursor is reserved for a future bounded roster. */

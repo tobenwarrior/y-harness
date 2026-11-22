@@ -76,7 +76,8 @@ import { generateSessionTitleWithLlm } from '../../../session/session-title-llm/
 import { SessionTitleProviderId } from '../../../session/session-title/src/index.ts'
 import { sharedGroupSnapshotSchema, type SharedGroupSessionBinding } from '../src/shared-group.ts'
 import { sharedMembershipSnapshotSchema } from '../src/storage.ts'
-import { BotId } from '../src/types.ts'
+import { botDuplicateScheduleRequestSchema } from '../src/duplicate-storage.ts'
+import { BotDuplicateOperationId, BotId } from '../src/types.ts'
 import type { BotEventRoutine, BotListRequest, BotListValue, BotRecord, BotView } from '../src/types.ts'
 import { sessionFormatCatalog } from '@yharness/session-format-catalog'
 import z from 'zod'
@@ -961,6 +962,91 @@ describe('durable Bot roster', () => {
       clock.mockRestore()
       await close(h.ctx)
     }
+  })
+
+  it('duplicates a safe Bot snapshot once, pauses routines, and resumes a partial retry', async () => {
+    const h = await routineHarness(undefined, undefined, undefined, [], true)
+    try {
+      const source = (await h.service.create({
+        name: 'Research source',
+        description: 'Original routing description',
+        identity: 'cloud',
+        accent: 'teal',
+        agentPreset: 'fixture-preset',
+        persona: 'Original persona',
+        capabilities: ['research'],
+        skillPolicy: { mode: 'selected', enabled: ['web-search'], disabled: ['box-desktop'] },
+      })).bot
+      const originalSchedule = await h.ctx.schedule.create(source.sessionId, {
+        title: 'Original hourly check', prompt: 'Read the fixture report.', every_seconds: 60,
+      })
+      const domain = h.ctx.storageDomain.get(botDomain.name) as Domain<typeof botDomain> | undefined
+      if (domain === undefined) throw new Error('Bot domain was not mounted')
+      const stored = domain.table('bots').get(source.id)
+      if (stored === undefined) throw new Error('Source Bot row was not stored')
+      const sourceEvent: BotEventRoutine = {
+        id: 'bot-event-routine-source-copy',
+        title: 'Original event check',
+        prompt: 'Inspect the incoming fixture event.',
+        trigger: { type: 'message', source: 'user' },
+        status: 'active',
+        createdAt: 1,
+        updatedAt: 1,
+        deliveries: [],
+        results: [],
+      }
+      await domain.table('bots').put(source.id, { ...stored, eventRoutines: [sourceEvent] })
+
+      const operationId = BotDuplicateOperationId('duplicate-snapshot-test')
+      const request = { sourceBotId: source.id, operationId, name: 'Research copy' }
+      const createSchedule = vi.spyOn(h.ctx.schedule, 'create').mockRejectedValueOnce(new Error('fixture schedule interruption'))
+      await expect(h.service.duplicate(request)).rejects.toThrow('fixture schedule interruption')
+      createSchedule.mockRestore()
+
+      await h.service.updateProfile({ botId: source.id, name: 'Changed after snapshot', persona: 'Changed persona' })
+      await h.ctx.schedule.create(source.sessionId, {
+        title: 'Added after snapshot', prompt: 'This must not be copied.', every_seconds: 60,
+      })
+
+      const duplicated = await h.service.duplicate(request)
+      expect(duplicated.bot).toMatchObject({
+        name: 'Research copy',
+        description: 'Original routing description',
+        identity: 'cloud',
+        accent: 'teal',
+        persona: 'Original persona',
+        capabilities: ['research'],
+        agentPreset: 'fixture-preset',
+      })
+      expect(duplicated.skillPolicy).toEqual({ mode: 'selected', enabled: ['web-search'], disabled: ['box-desktop'] })
+      expect(duplicated.routinesCopied).toBe(2)
+      expect(duplicated.skippedRoutines).toEqual([])
+      expect(duplicated.bot.sessionId).not.toBe(source.sessionId)
+
+      const copiedRoutines = await h.service.listRoutines({ botId: duplicated.bot.id })
+      expect(copiedRoutines.routines).toHaveLength(2)
+      expect(copiedRoutines.routines.every(routine => routine.status === 'paused')).toBe(true)
+      expect(copiedRoutines.routines.some(routine => routine.title === 'Added after snapshot')).toBe(false)
+      expect(copiedRoutines.routines.some(routine => routine.title === originalSchedule.title)).toBe(true)
+
+      const retrySchedule = vi.spyOn(h.ctx.schedule, 'create')
+      const settled = await h.service.duplicate(request)
+      expect(settled.bot.id).toBe(duplicated.bot.id)
+      expect(settled.bot.sessionId).toBe(duplicated.bot.sessionId)
+      expect(retrySchedule).not.toHaveBeenCalled()
+      retrySchedule.mockRestore()
+      await expect(h.service.duplicate({ ...request, name: 'Different copy' })).rejects.toThrow('different name')
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('rejects a duplicate timed routine snapshot without one selector', () => {
+    const parsed = botDuplicateScheduleRequestSchema.safeParse({
+      title: 'Missing selector',
+      prompt: 'This snapshot is intentionally invalid.',
+    })
+    expect(parsed.success).toBe(false)
   })
 
   it('provisions one managed workspace per Bot and retains it across a failed setup retry', async () => {

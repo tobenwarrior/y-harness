@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import clsx from 'clsx'
 import {
-  Button, IconArchiveOffOutlineRegular, IconCheckOutlineRegular,
+  Button, IconArchiveOffOutlineRegular, IconCheckOutlineRegular, IconCopyOutlineRegular,
   IconEditOutlineRegular, IconEllipsisOutlineRegular,
   IconFolderOpenOutlineRegular, IconLinkOutlineRegular, IconPaperPlaneOutlineRegular, IconPlusOutlineRegular,
   IconPinFillRegular, IconPinOutlineRegular, IconShareOutlineRegular, IconContextInjectionOutlineRegular, IconClockOutlineRegular,
@@ -1176,9 +1176,68 @@ function NewBotDialog({ open, onClose, onCreate, error, t }: {
   )
 }
 
+function DuplicateBotDialog({ bot, onDuplicate, onClose, t }: {
+  bot: BotSummary
+  onDuplicate: (botId: string, name: string) => Promise<void>
+  onClose: () => void
+  t: BotWorkspaceViewProps['t']
+}) {
+  const fieldId = useId()
+  const suggestedName = t('duplicateBotName', { name: bot.name })
+  const [name, setName] = useState(suggestedName.length <= 80 ? suggestedName : '')
+  const [pending, setPending] = useState(false)
+  const [failed, setFailed] = useState(false)
+  const inFlight = useRef(false)
+
+  const submit = async () => {
+    const next = name.trim()
+    if (next === '' || inFlight.current) return
+    inFlight.current = true
+    setPending(true)
+    setFailed(false)
+    try {
+      await onDuplicate(bot.id, next)
+      onClose()
+    } catch {
+      setFailed(true)
+    } finally {
+      inFlight.current = false
+      setPending(false)
+    }
+  }
+  const close = () => { if (!inFlight.current) onClose() }
+  return (
+    <Modal
+      open
+      onClose={close}
+      title={t('duplicateBot')}
+      description={t('duplicateBotRoutineNotice')}
+      closeLabel={t('cancel')}
+      footer={<>
+        <Button variant="ghost" disabled={pending} onClick={close}>{t('cancel')}</Button>
+        <Button variant="primary" disabled={pending || name.trim() === ''} onClick={() => { void submit() }}>
+          {t(pending ? 'duplicatingBot' : 'confirmDuplicateBot')}
+        </Button>
+      </>}
+    >
+      {failed && <div className={css.dialogNotice} role="alert">{t('duplicateBotFailed')}</div>}
+      <div className={css.dialogField} aria-busy={pending}>
+        <label className={css.dialogLabel} htmlFor={fieldId}>{t('newBotName')}</label>
+        <Input id={fieldId} data-modal-autofocus value={name} maxLength={80} disabled={pending}
+          onChange={(event) => { setName(event.currentTarget.value) }}
+          onKeyDown={(event) => {
+            if (event.key !== 'Enter' || event.nativeEvent.isComposing) return
+            event.preventDefault()
+            void submit()
+          }} />
+      </div>
+    </Modal>
+  )
+}
+
 export function BotDetail({
-  bot, sessionId, children, headerActions, t, loadAvatar, onEditAvatar, onRename, onUpdateProfile, share, memoryManager, routineManager,
-  skillManager, routineRevision = 0, loading, workspaceActions = [], readGrokHistory,
+  bot, sessionId, children, headerActions, t, loadAvatar, onEditAvatar, onRename, onDuplicate, onUpdateProfile, share, memoryManager,
+  routineManager, skillManager, routineRevision = 0, loading, workspaceActions = [], readGrokHistory,
 }: {
   bot: BotSummary | undefined
   /** Session selected by the Bots panel, used by session-scoped toolbar actions. */
@@ -1191,6 +1250,7 @@ export function BotDetail({
   loadAvatar: BotWorkspaceViewProps['loadAvatar']
   onEditAvatar?: (() => void) | undefined
   onRename?: ((id: string, name: string) => Promise<void>) | undefined
+  onDuplicate?: ((id: string, name: string) => Promise<void>) | undefined
   onUpdateProfile?: ((id: string, profile: BotProfileUpdate) => Promise<void>) | undefined
   share?: BotShareActions | undefined
   memoryManager?: BotMemoryManagerActions | undefined
@@ -1234,6 +1294,8 @@ export function BotDetail({
   const [routineOpen, setRoutineOpen] = useState(false)
   const [shareTarget, setShareTarget] = useState<string | null>(null)
   const [historyTarget, setHistoryTarget] = useState<string | null>(null)
+  const [duplicateTarget, setDuplicateTarget] = useState<string | null>(null)
+  useEffect(() => { setDuplicateTarget(null) }, [bot?.id])
   if (bot === undefined) {
     if (loading) {
       return (
@@ -1274,6 +1336,10 @@ export function BotDetail({
     }]),
     ...(onEditAvatar === undefined ? [] : [{
       id: 'edit-avatar', label: t('editAvatar'), icon: <IconEditOutlineRegular size={16} />, run: onEditAvatar,
+    }]),
+    ...(onDuplicate === undefined ? [] : [{
+      id: 'duplicate', label: t('duplicateBot'), icon: <IconCopyOutlineRegular size={16} />,
+      run: () => { setDuplicateTarget(bot.id) },
     }]),
     ...(share === undefined ? [] : [{
       id: 'share', label: t('shareBot'), icon: <IconShareOutlineRegular size={16} />, run: () => { setShareTarget(bot.id) },
@@ -1326,11 +1392,15 @@ export function BotDetail({
         </span>
       </header>
       {share !== undefined && (
-        <BotShareDialog key={bot.id} bot={bot} actions={share} open={shareTarget === bot.id}
+        <BotShareDialog key={`share:${bot.id}`} bot={bot} actions={share} open={shareTarget === bot.id}
           onClose={() => { setShareTarget(null) }} t={t} />
       )}
+      {onDuplicate !== undefined && duplicateTarget === bot.id && (
+        <DuplicateBotDialog key={`duplicate:${bot.id}`} bot={bot}
+          onDuplicate={onDuplicate} onClose={() => { setDuplicateTarget(null) }} t={t} />
+      )}
       {readGrokHistory !== undefined && (
-        <GrokHistoryDialog key={bot.id} botId={bot.id} botName={bot.name} read={readGrokHistory}
+        <GrokHistoryDialog key={`history:${bot.id}`} botId={bot.id} botName={bot.name} read={readGrokHistory}
           open={historyTarget === bot.id} onClose={() => { setHistoryTarget(null) }} t={t} />
       )}
       {bot.status === 'working' && (bot.preview !== undefined || bot.activity !== undefined) && (
