@@ -46,6 +46,10 @@ const MODE = webSnapshotMode()
 
 const PROMPT = 'Reply with the single word LIGHTHOUSE and stop.'
 const REPLAY_PACE_MS = 100
+const CURRENT_COMPOUND_STATUS = {
+  vendored: '0.11.0', upstream: '0.11.0', updateAvailable: false, repository: 'example/skills',
+  checkedAt: 1, error: null,
+}
 
 describe('web e2e: lifecycle & chrome (workspace flow / reload / dark mode)', () => {
   let scaffold: WebScaffold
@@ -62,6 +66,7 @@ describe('web e2e: lifecycle & chrome (workspace flow / reload / dark mode)', ()
     scaffold.ctx.on('session/event', (_session, event: SessionEvent) => { sessionEvents.push(event) })
     browser = await chromium.launch()
     page = await newEnglishPage(browser)
+    await page.route('**/api/skill-compound.update', route => route.fulfill({ json: CURRENT_COMPOUND_STATUS }))
     tripwire = watchConsole(page)
     await page.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
     await page.waitForSelector('[class*="frame"]', { timeout: 30_000 })
@@ -489,6 +494,7 @@ describe('web e2e: lifecycle & chrome (workspace flow / reload / dark mode)', ()
     const sockets: WebSocketRoute[] = []
     let rejectConnections = false
     let holdConnections = false
+    await recoveryPage.route('**/api/skill-compound.update', route => route.fulfill({ json: CURRENT_COMPOUND_STATUS }))
     await recoveryPage.routeWebSocket('**/api/remote.mux', (route) => {
       sockets.push(route)
       if (rejectConnections || holdConnections) return
