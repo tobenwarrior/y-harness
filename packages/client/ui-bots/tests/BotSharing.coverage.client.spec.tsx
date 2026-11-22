@@ -227,6 +227,43 @@ describe('BotSharing defensive UI paths', () => {
     expect(screen.queryByText('forbidden result')).toBeNull()
   })
 
+  it.each(['unavailable', 'removed'] as const)('shows a search error when group search is %s', async (failure) => {
+    const group = groupFixture('bot-group-search-unavailable', 'Research room')
+    const client = sharedClient({
+      listGroups: vi.fn().mockResolvedValue({ ok: true, value: { groups: [group] } }),
+      inspectGroup: vi.fn().mockResolvedValue({ ok: true, value: { group, messages: [] } }),
+      searchGroupMessages: vi.fn().mockResolvedValue({ ok: false, error: { code: 'gateway/unavailable', message: 'search unavailable' } }),
+    })
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+    fireEvent.click(await screen.findByRole('button', { name: en.sharedGroupSearch }))
+    const field = screen.getByRole('searchbox', { name: en.sharedGroupSearch })
+    if (failure === 'removed') Object.defineProperty(client, 'searchGroupMessages', { value: undefined, configurable: true })
+    fireEvent.change(field, { target: { value: 'research' } })
+    expect(await screen.findByText(en.sharedGroupSearchError)).toBeTruthy()
+  })
+
+  it('refuses to open a stale search result after the authenticated room context changes', async () => {
+    const group = groupFixture('bot-group-search-stale-selection', 'Previous room')
+    const inspectGroup = vi.fn().mockResolvedValue({ ok: true, value: { group, messages: [] } })
+    const client = sharedClient({
+      listGroups: vi.fn().mockResolvedValue({ ok: true, value: { groups: [group] } }),
+      inspectGroup,
+      searchGroupMessages: vi.fn().mockResolvedValue({ ok: true, value: { items: [{
+        groupId: group.id, groupName: group.name, messageId: brandString<BotGroupMessageId>('bot-group-message-prior'),
+        snippet: 'previous account note',
+      }], hasMore: false } }),
+    })
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+    fireEvent.click(await screen.findByRole('button', { name: en.sharedGroupSearch }))
+    fireEvent.change(screen.getByRole('searchbox', { name: en.sharedGroupSearch }), { target: { value: 'previous' } })
+    const result = await screen.findByRole('button', { name: /Previous room.*previous account note/ })
+    inspectGroup.mockClear()
+    Object.defineProperty(client, 'authGeneration', { value: 1, configurable: true })
+    fireEvent.click(result)
+    expect(inspectGroup).not.toHaveBeenCalled()
+    expect(screen.queryByText('previous account note')).toBeNull()
+  })
+
   it('renders every approval decision and argument disclosure variant', async () => {
     const decideApproval = vi.fn()
       .mockResolvedValueOnce({ ok: true, value: { resolved: true, accepted: false } })

@@ -139,3 +139,14 @@ it('keeps the current matches available after an older page fails', async () => 
   expect(await screen.findByText(olderHit.snippet)).toBeTruthy()
   expect(screen.queryByRole('alert')).toBeNull()
 })
+
+it('preserves visible matches when no older entries remain', async () => {
+  const search = vi.fn().mockResolvedValueOnce({ items: [hit], hasMore: true })
+    .mockResolvedValueOnce({ items: [], hasMore: false })
+  const { field } = setup(search)
+  fireEvent.change(field, { target: { value: 'source' } })
+  await screen.findByText(hit.snippet)
+  fireEvent.click(screen.getByRole('button', { name: en.sharedGroupSearchOlder }))
+  await vi.waitFor(() => { expect(screen.queryByRole('button', { name: en.sharedGroupSearchOlder })).toBeNull() })
+  expect(screen.getByText(hit.snippet)).toBeTruthy()
+})
