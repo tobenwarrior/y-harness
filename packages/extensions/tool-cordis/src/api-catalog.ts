@@ -684,6 +684,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'visible rows by default, with pinned rows first and creation time as the stable tie-breaker.',
       },
       {
+        signature: '@Remote(\'searchMessages\') async searchMessages(request: BotMessageSearchRequest): Promise<BotMessageSearchValue>',
+        description: 'Search visible messages across the owner\'s direct Bot Sessions.\n\nThe Bot roster is the authorization source: the Session query provider never receives an unrestricted corpus request. The returned sequence is the provider\'s exact matching event sequence so the Client can open the matching Bot transcript without guessing from snippets.',
+        parameters: [{ name: 'request', description: 'Literal message query.' }],
+        returns: 'A bounded owner-scoped page of visible Bot message matches.',
+      },
+      {
         signature: '@Remote(\'listTemplates\') async listTemplates(_request: BotTemplateListRequest): Promise<BotTemplateListValue>',
         description: 'List published Bot configuration snapshots, including revoked rows.',
         parameters: [{ name: '_request', description: 'Empty list request reserved for future cursor paging.' }],
@@ -6123,6 +6129,18 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'BotMessageId',
     declaration: 'export type BotMessageId = MessageId;',
+  },
+  {
+    name: 'BotMessageSearchItem',
+    declaration: 'export interface BotMessageSearchItem {\n    readonly botId: BotId;\n    readonly sessionId: SessionId;\n    readonly seq: SessionSeq;\n    readonly snippet: string;\n}',
+  },
+  {
+    name: 'BotMessageSearchRequest',
+    declaration: 'export interface BotMessageSearchRequest {\n    readonly query: string;\n}',
+  },
+  {
+    name: 'BotMessageSearchValue',
+    declaration: 'export interface BotMessageSearchValue {\n    readonly items: readonly BotMessageSearchItem[];\n    readonly hasMore: boolean;\n}',
   },
   {
     name: 'BotOrganizationUpdateRequest',

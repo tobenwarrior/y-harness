@@ -3,7 +3,7 @@
 import { brandString, type Branded } from '@yharness/brand'
 import type { ImageAttachmentRef } from '@yharness/attachment'
 import type { MessageId } from '@yharness/llm/brand'
-import type { SessionId } from '@yharness/session/types'
+import type { SessionId, SessionSeq } from '@yharness/session/types'
 import type { BotPrincipalId, BotShareRole } from './sharing.ts'
 import type {
   ScheduleCatalogEntry,
@@ -588,6 +588,32 @@ export interface BotListRequest {
 export interface BotListValue {
   /** Durable roster ordered by creation time, then id. */
   readonly bots: readonly BotView[]
+}
+
+/** Owner request to search visible messages across the owner's direct Bot chats. */
+export interface BotMessageSearchRequest {
+  /** Literal message text to search for. */
+  readonly query: string
+}
+
+/** One owner-scoped direct Bot message search hit. */
+export interface BotMessageSearchItem {
+  /** Bot whose persistent Session contains the match. */
+  readonly botId: BotId
+  /** Persistent Session containing the match. */
+  readonly sessionId: SessionId
+  /** Exact sequence of the matched visible user or assistant event. */
+  readonly seq: SessionSeq
+  /** Bounded excerpt selected by the canonical Session query provider. */
+  readonly snippet: string
+}
+
+/** Bounded page of owner-scoped direct Bot message search hits. */
+export interface BotMessageSearchValue {
+  /** Matching visible messages, ranked by the canonical Session query provider. */
+  readonly items: readonly BotMessageSearchItem[]
+  /** Whether the canonical provider has another page. */
+  readonly hasMore: boolean
 }
 
 /** Rename one Bot without changing its Session binding. */

@@ -6,20 +6,23 @@ import { Context } from '@yharness/cordis'
 import type { ConnectionGeneration } from '@yharness/client-connection/client'
 import { LocaleRuntime } from '@yharness/client-locale/client'
 import type { ISessions, SessionBinding, SessionListState, SessionReference } from '@yharness/api-session-controller/client'
-import type { BotGroupId, BotGroupInspectValue, BotGroupMessageId, BotGroupView, BotView } from '@yharness/bots/client'
+import type { RemoteResult } from '@yharness/api-remotes/client'
+import type { BotGroupId, BotGroupInspectValue, BotGroupMessageId, BotGroupView, BotMessageSearchRequest, BotMessageSearchValue, BotView } from '@yharness/bots/client'
 import { BotId } from '@yharness/bots/client'
 import { AttachmentId } from '@yharness/attachment'
 import { brandString } from '@yharness/brand'
-import { TestRemote } from '@yharness/client-test-runtime'
+import { RemoteError, TestRemote } from '@yharness/client-test-runtime'
 import type { InputTriggerPick, InputTriggerSource } from '@yharness/client-ui-input-trigger/client'
-import { SessionId } from '@yharness/session/types'
+import { SessionId, SessionSeq } from '@yharness/session/types'
+import type { PanelInfo } from '@yharness/client-ui-layout/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { apply as nodeApply } from '../src/index.ts'
-import { apply, inject } from '../src/client/apply.ts'
+import { apply, inject, PANEL_ID } from '../src/client/apply.ts'
 import type { BotWorkspaceRemote } from '../src/client/controller.ts'
 import type { ComputerStatus } from '../src/client/computer-client.ts'
 import { en } from '../src/client/locales.ts'
+import type { BotMessageSearchActions } from '../src/client/BotMessageSearchDialog.tsx'
 
 type Registered = {
   readonly options: Record<string, unknown>
@@ -90,7 +93,7 @@ function connectionFixture() {
   }
 }
 
-async function boot() {
+async function boot(withSearch = false) {
   const ctx = new Context()
   const registered: Registered[] = []
   const slots = {
@@ -106,11 +109,16 @@ async function boot() {
   }
   const locale = new LocaleRuntime(ctx)
   const currentBot = bot()
+  const hit = { botId: currentBot.id, sessionId: currentBot.sessionId, seq: SessionSeq(42), snippet: 'Example message' }
+  const searchMessages = vi.fn<(request: BotMessageSearchRequest) => Promise<RemoteResult<BotMessageSearchValue>>>(async () => ({
+    ok: true as const, value: { items: [hit], hasMore: false },
+  }))
   const list = vi.fn<BotWorkspaceRemote['list']>(async () => ({ ok: true, value: { bots: [currentBot] } }))
-  const remoteBots: BotWorkspaceRemote = {
+  const remoteBots: BotWorkspaceRemote & { searchMessages?: typeof searchMessages } = {
     list,
     create: vi.fn(async () => ({ ok: true as const, value: { bot: currentBot } })),
     rename: vi.fn(async () => ({ ok: true as const, value: { bot: currentBot } })),
+    ...(withSearch ? { searchMessages } : {}),
   }
   const remote = new TestRemote(ctx, { bots: remoteBots })
   const session = sessionReference(currentBot.sessionId)
@@ -171,12 +179,19 @@ async function boot() {
   ctx.provide('sidebarRight', sidebarRight as never)
   ctx.provide('sidebarRightTabs', sidebarRightTabs as never)
   ctx.provide('inputTriggers', inputTriggers as never)
+  const chatNavigation = { request: vi.fn(), cancel: vi.fn() }
+  const panelInfo = createSnapshotStore<PanelInfo>({ activePanelId: PANEL_ID })
+  if (withSearch) {
+    ctx.provide('layout', { panelInfo })
+    ctx.provide('chatNavigation', chatNavigation)
+  }
   const fiber = ctx.plugin({ inject: [...inject], apply })
   await fiber.await()
   await vi.waitFor(() => { expect(list).toHaveBeenCalledWith({ includeHidden: true }) })
   return {
     ctx, fiber, registered, inputSources, remote, remoteBots, sessions, connection, sidebarRight, sidebarRightTabs,
     currentBot, reference, release: session.release,
+    chatNavigation, hit, list, searchMessages, panelInfo,
     setExpanded: (value: boolean) => { expanded = value },
     setCommandTarget: (value: { readonly id: string } | undefined) => { commandTarget = value },
     setTabs: (value: readonly { readonly id: string; readonly kind: string }[]) => { tabs = value },
@@ -205,6 +220,47 @@ describe('ui-bots composition', () => {
 
   it('keeps the node entry a loader-managed no-op', () => {
     expect(nodeApply).not.toThrow()
+  })
+
+  it('routes Bot search to the matched chat and discards a pending match when leaving Bots', async () => {
+    const fixture = await boot(true)
+    try {
+      const sidebar = fixture.registered.find(entry => entry.options.name === 'sidebar.bots')!
+      const face = sidebar.inject?.() as {
+        readonly messageSearch: BotMessageSearchActions
+        readonly hooks: { readonly messageSearchOpen: { getSnapshot: () => boolean } }
+      }
+      expect(fixture.ctx.bail('layout/search-active-panel', 'plugins' as typeof PANEL_ID)).toBeUndefined()
+      expect(fixture.ctx.bail('layout/search-active-panel', PANEL_ID)).toBe(true)
+      expect(face.hooks.messageSearchOpen.getSnapshot()).toBe(true)
+      await expect(face.messageSearch.search('example')).resolves.toEqual({ items: [fixture.hit], hasMore: false })
+      expect(fixture.searchMessages).toHaveBeenCalledWith({ query: 'example' })
+      fixture.searchMessages.mockResolvedValueOnce({
+        ok: false, error: new RemoteError('gateway/internal', 'Synthetic search unavailable', {}),
+      })
+      await expect(face.messageSearch.search('fail')).rejects.toThrow('Synthetic search unavailable')
+      face.messageSearch.openResult({ ...fixture.hit, sessionId: SessionId('unrelated') })
+      expect(fixture.chatNavigation.request).not.toHaveBeenCalled()
+      face.messageSearch.openResult(fixture.hit)
+      expect(face.hooks.messageSearchOpen.getSnapshot()).toBe(false)
+      expect(fixture.chatNavigation.request).toHaveBeenCalledWith({ sessionId: fixture.hit.sessionId, seq: fixture.hit.seq })
+      fixture.panelInfo.set({ activePanelId: null })
+      expect(fixture.chatNavigation.cancel).toHaveBeenCalledWith(fixture.hit.sessionId)
+      fixture.panelInfo.set({ activePanelId: PANEL_ID })
+      face.messageSearch.setOpen(true)
+      expect(face.hooks.messageSearchOpen.getSnapshot()).toBe(true)
+      fixture.ctx.emit('connection/reset')
+      expect(face.hooks.messageSearchOpen.getSnapshot()).toBe(false)
+      fixture.chatNavigation.cancel.mockClear()
+      face.messageSearch.openResult(fixture.hit)
+      fixture.list.mockResolvedValueOnce({ ok: true, value: { bots: [] } })
+      fixture.remote.emit('bots/changed', [])
+      await vi.waitFor(() => {
+        expect(fixture.chatNavigation.cancel).toHaveBeenCalledWith(fixture.hit.sessionId)
+      })
+    } finally {
+      await fixture.fiber.dispose()
+    }
   })
 
   it('registers the roster, Conversation, request cards, mentions, and teardown effects', async () => {

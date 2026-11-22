@@ -24,6 +24,7 @@ interface ChatScrollState extends ChatReadingState {
   readonly columnRef: RefObject<HTMLDivElement>
   readonly busyTurn: number | null
   readonly navigateToTurn: ChatNavigation['navigateToTurn']
+  readonly navigateToSeq: ChatNavigation['navigateToSeq']
   readonly loadEarlier: ChatNavigation['loadEarlier']
   readonly returnToBottom: () => void
 }
@@ -132,6 +133,7 @@ export function useChatScroll(input: ChatScrollInput): ChatScrollState {
   return {
     listRef, columnRef, ...state, busyTurn,
     navigateToTurn: navigation.navigateToTurn,
+    navigateToSeq: navigation.navigateToSeq,
     loadEarlier: navigation.loadEarlier,
     returnToBottom,
   }

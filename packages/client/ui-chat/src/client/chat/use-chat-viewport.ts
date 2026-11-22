@@ -1,5 +1,6 @@
 /** Turn-aware DOM scrolling and geometry, without history-loading or follow policy. */
 import { useLayoutEffect, useRef, useState, type RefObject } from 'react'
+import type { SessionSeq } from '@yharness/session/types'
 import type { ChatScrollPosition } from '../contract/slots.ts'
 import type { ChatSnapshot } from '../contract/snapshot.ts'
 import { scrollMetrics, ScrollFollow, type ViewportMetrics } from './use-scroll-follow.ts'
@@ -159,6 +160,18 @@ export class ChatViewport {
     return nodePart
   }
 
+  private sequence(seq: SessionSeq, atOrAfter: boolean): HTMLElement | null {
+    const elements = this.elements
+    if (elements === null) return null
+    for (const row of elements.list.querySelectorAll<HTMLElement>(
+      '[data-chat-anchor-seq]:not([hidden]):not([hidden] *)',
+    )) {
+      const candidate = Number(row.dataset.chatAnchorSeq)
+      if (candidate === seq || (atOrAfter && candidate >= seq)) return row
+    }
+    return null
+  }
+
   /**
    * Capture visible transcript content, excluding Turn controls that relocate when history expands.
    * @returns a visible semantic anchor, or null when no anchor can be resolved.
@@ -264,6 +277,26 @@ export class ChatViewport {
       if (Number.isSafeInteger(candidate) && candidate >= turn) return this.align(row, 24, candidate)
     }
     return null
+  }
+
+  /**
+   * Align an exact loaded Session event anchor below the scrollport's top edge.
+   * @param seq - event sequence to reveal.
+   * @returns the actual landing, or null when the event is not rendered.
+   */
+  scrollToSeq(seq: SessionSeq): ViewportLanding | null {
+    const row = this.sequence(seq, false)
+    return row === null ? null : this.align(row, 24, null)
+  }
+
+  /**
+   * Align the first loaded event at or after a requested sequence.
+   * @param seq - lower bound for a fallback landing.
+   * @returns the actual landing, or null when no eligible row is rendered.
+   */
+  scrollToSeqAtOrAfter(seq: SessionSeq): ViewportLanding | null {
+    const row = this.sequence(seq, true)
+    return row === null ? null : this.align(row, 24, null)
   }
 
   /**

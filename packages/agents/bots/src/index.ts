@@ -58,6 +58,7 @@ import { SessionId } from '@yharness/session'
 import type { SessionEvent } from '@yharness/session'
 import type { TurnEndReason } from '@yharness/session'
 import { ApiSessionNotFound, type SessionCreateRequest } from '@yharness/api-session-controller'
+import type { SessionSearchHit } from '@yharness/session-query'
 import { defineDomain, domainTable, type Domain, type KvTable } from '@yharness/storage-domain'
 import { credentialKey, type CredentialProvider, type CredentialRecord } from '@yharness/credentials'
 import { scopeOf, scopeParentOf } from '@yharness/scope'
@@ -177,6 +178,8 @@ import type {
   BotIdentity,
   BotListRequest,
   BotListValue,
+  BotMessageSearchRequest,
+  BotMessageSearchValue,
   BotOrganizationUpdateRequest,
   BotOrganizationUpdateValue,
   BotProfileUpdateRequest,
@@ -1480,9 +1483,24 @@ function isSyntheticGroupContext(message: UserMessage): boolean {
 }
 const BOT_TEMPLATE_ID_PATTERN = /^bot-template-[A-Za-z0-9][A-Za-z0-9-]*$/
 const BOT_TEMPLATE_IMPORT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
+const BOT_MESSAGE_SEARCH_RESULT_LIMIT = 20
+const BOT_MESSAGE_SEARCH_QUERY_MAX_CHARS = 500
+const BOT_MESSAGE_SEARCH_TYPES = new Set(['user/message', 'assistant/message'])
 
 function badRequest(message: string): never {
   throw new RemoteError('gateway/bad-request', message, {})
+}
+
+function normalizeBotMessageSearchQuery(request: BotMessageSearchRequest): string {
+  if (!isRequestObject(request)) return badRequest('Bot message search request must be an object')
+  if (typeof request.query !== 'string') return badRequest('Bot message search query must be a string')
+  const query = request.query.trim()
+  if (query.length === 0) return badRequest('Bot message search query must not be empty')
+  if (query.length > BOT_MESSAGE_SEARCH_QUERY_MAX_CHARS) {
+    return badRequest(`Bot message search query must contain at most ${String(BOT_MESSAGE_SEARCH_QUERY_MAX_CHARS)} UTF-16 code units`)
+  }
+  if (query.includes('\0')) return badRequest('Bot message search query must not contain NUL')
+  return query
 }
 
 function textLength(value: string): number {
@@ -6541,6 +6559,59 @@ export class BotService extends TypertRemoteService {
   @Remote('list')
   async list(request: BotListRequest): Promise<BotListValue> {
     return this.listFromDomain(request, await this.getDomain())
+  }
+
+  /**
+   * Search visible messages across the owner's direct Bot Sessions.
+   *
+   * The Bot roster is the authorization source: the Session query provider
+   * never receives an unrestricted corpus request. The returned sequence is
+   * the provider's exact matching event sequence so the Client can open the
+   * matching Bot transcript without guessing from snippets.
+   *
+   * @param request - Literal message query.
+   * @returns A bounded owner-scoped page of visible Bot message matches.
+   */
+  @Remote('searchMessages')
+  async searchMessages(request: BotMessageSearchRequest): Promise<BotMessageSearchValue> {
+    const query = normalizeBotMessageSearchQuery(request)
+    const bots = (await this.list({ includeHidden: true })).bots
+    const botBySession = new Map(bots.map(bot => [String(bot.sessionId), bot.id]))
+    if (botBySession.size === 0) return { items: [], hasMore: false }
+    const sessionQuery = this.ctx.get('sessionQuery')
+    if (sessionQuery === undefined) {
+      throw new RemoteError(
+        'gateway/internal',
+        'Bot message search is unavailable: this deployment does not mount @yharness/session-query',
+        {},
+      )
+    }
+    const page = await sessionQuery.searchSessions({
+      query,
+      sessionFilters: [{
+        kind: 'id',
+        values: bots.map(bot => bot.sessionId),
+      }],
+      eventFilters: [
+        { kind: 'type', values: ['user/message', 'assistant/message'] },
+        { kind: 'surface', values: ['current'] },
+      ],
+      limit: BOT_MESSAGE_SEARCH_RESULT_LIMIT,
+    })
+    const items = page.items.flatMap((hit: SessionSearchHit) => {
+      const botId = botBySession.get(String(hit.header.id))
+      if (botId === undefined
+        || hit.bestMatch.sessionId !== hit.header.id
+        || !BOT_MESSAGE_SEARCH_TYPES.has(hit.bestMatch.type)
+        || hit.bestMatch.surface !== 'current') return []
+      return [{
+        botId,
+        sessionId: hit.header.id,
+        seq: hit.bestMatch.seq,
+        snippet: hit.bestMatch.snippet,
+      }]
+    }).slice(0, BOT_MESSAGE_SEARCH_RESULT_LIMIT)
+    return { items, hasMore: page.nextCursor !== undefined }
   }
 
   private async listFromDomain(

@@ -88,7 +88,11 @@ export function installWorkspaceShortcuts(
   register('session.new', () => t('session.new'), ['new session', 'new chat'], 'KeyN', ['primary'], ['primary', 'alt'],
     () => ({ status: 'handled', run: () => { navigation.startSession() } }))
   register('session.search', () => t('search.sessions.aria'), ['search sessions'], 'KeyK', ['primary'], ['primary', 'alt'],
-    () => ({ status: 'handled', run: controls.search }))
+    () => ({ status: 'handled', run: () => {
+      const panelId = ctx.layout.panelInfo.getSnapshot().activePanelId
+      if (panelId !== null && ctx.bail('layout/search-active-panel', panelId) === true) return
+      controls.search()
+    } }))
   register('workspace.add', () => t('workspace.add'), ['add workspace', 'open folder'], 'KeyO', ['primary'], ['primary', 'alt'],
     () => {
       const reason = addReason()
