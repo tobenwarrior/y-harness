@@ -1,0 +1,12 @@
+- group "workspace-fixture":
+  - strong: workspace-fixture
+  - text: Connected
+  - list:
+    - listitem:
+      - strong: ping
+      - text: Replies pong.
+      - switch "ping" [checked]
+    - listitem:
+      - strong: inspect_record
+      - text: Replies pong.
+      - switch "inspect_record"

@@ -23,6 +23,7 @@ import type { ToolDefinition, ToolExecution, ToolExecutionResult } from '@yharne
 import { assertSupportedJsonSchema } from '@yharness/tools'
 import type { JsonSchemaNode } from '@yharness/tools'
 import type { JsonValue } from '@yharness/util-values'
+import type { McpActionCatalogAction } from './action-catalog.ts'
 
 /** Resolved options relevant to tool bridging. */
 export interface ToolBridgeOptions {
@@ -32,6 +33,8 @@ export interface ToolBridgeOptions {
   toolCallTimeoutMs: number
   /** Exact raw MCP names excluded before they can be registered or called. */
   disabledTools?: ReadonlySet<string>
+  /** Receives the exact raw discovery after a generation registers successfully. */
+  onToolsDiscovered?: (actions: readonly McpActionCatalogAction[]) => void
 }
 
 /** State for one sync generation: the current set of disposers keyed by public name. */
@@ -168,6 +171,11 @@ export async function syncTools(
     if (opts.registrationFailure === 'throw') throw error
     return new Map()
   }
+  opts.onToolsDiscovered?.(response.tools.map(tool => ({
+    name: tool.name,
+    ...(tool.description === undefined ? {} : { description: tool.description }),
+    enabled: opts.disabledTools?.has(tool.name) !== true,
+  })))
   return disposers
 }
 

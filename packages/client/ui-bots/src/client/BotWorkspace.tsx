@@ -8,7 +8,7 @@ import {
   IconPinFillRegular, IconPinOutlineRegular, IconShareOutlineRegular, IconContextInjectionOutlineRegular, IconClockOutlineRegular,
   IconSidebarBotAddOutlineRegular, IconSidebarBotsOutlineRegular, IconSidebarSearchOutlineRegular,
   IconSidebarSkillsOutlineRegular,
-  IconUnarchiveOutlineRegular, IconUsersOutlineRegular, Input, Menu, MenuSurface, Modal, StateDot, Tag, Tooltip, connectedAppGlyph,
+  IconUnarchiveOutlineRegular, IconUsersOutlineRegular, Input, Menu, MenuSurface, Modal, StateDot, Switch, Tag, Tooltip, connectedAppGlyph,
   writeClipboard,
   type MenuItem,
 } from '@yharness/client-ui-primitives'
@@ -41,6 +41,7 @@ import type {
   BotGroupDetailData, BotGroupMessageSummary, BotGroupReactionSummary, BotGroupSummary,
   BotIdentity, BotMemoryManagerActions, BotOrganizationPatch, BotProfileUpdate, BotSkillManagerActions, BotRoutineManagerActions,
   BotStatus, BotSummary, BotWorkspaceProps, GitHubAppSignInActions, GitHubAppSignInAttempt, GitHubAppSignInView,
+  McpActionServerView,
 } from './types.ts'
 
 type BotWorkspaceViewProps = BotWorkspaceProps & PropsLocale<'bots'> & {
@@ -1697,12 +1698,18 @@ function GitHubAppSignInSection({ actions, t }: {
   )
 }
 
-function ConnectedAppsDialog({ bot, open, onClose, onLoad, onSet, githubAppSignIn, t }: {
+function ConnectedAppsDialog({
+  bot, open, onClose, onLoad, onSet, onLoadMcpActions, onSetMcpActionEnabled, githubAppSignIn, t,
+}: {
   bot: BotSummary | undefined
   open: boolean
   onClose: () => void
   onLoad?: ((botId: string) => Promise<readonly BotConnectedAppAccess[]>) | undefined
   onSet?: ((botId: string, appId: string, allowed: boolean) => Promise<void>) | undefined
+  onLoadMcpActions?: (() => Promise<readonly McpActionServerView[]>) | undefined
+  onSetMcpActionEnabled?: (
+    (serverName: string, actionName: string, enabled: boolean) => Promise<readonly McpActionServerView[]>
+  ) | undefined
   githubAppSignIn?: GitHubAppSignInActions | undefined
   t: BotWorkspaceViewProps['t']
 }) {
@@ -1717,16 +1724,33 @@ function ConnectedAppsDialog({ bot, open, onClose, onLoad, onSet, githubAppSignI
     readonly requestId: number
     readonly appId: string
   }
+  type McpActionSave = {
+    readonly requestId: number
+    readonly serverName: string
+    readonly actionName: string
+  }
   const [catalog, setCatalog] = useState<ConnectedAppCatalog | undefined>()
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState<ConnectedAppSave | null>(null)
+  const [actionMode, setActionMode] = useState(false)
+  const [actionCatalog, setActionCatalog] = useState<readonly McpActionServerView[] | undefined>()
+  const [actionLoading, setActionLoading] = useState(false)
+  const [actionError, setActionError] = useState<string | null>(null)
+  const [actionSaving, setActionSaving] = useState<McpActionSave | null>(null)
   const requestSequence = useRef(0)
+  const actionRequestSequence = useRef(0)
   const botId = bot?.id
   useEffect(() => {
     if (!open || botId === undefined) {
       setCatalog(undefined)
       setLoading(false)
       setSaving(null)
+      actionRequestSequence.current += 1
+      setActionMode(false)
+      setActionCatalog(undefined)
+      setActionLoading(false)
+      setActionError(null)
+      setActionSaving(null)
       return
     }
     const requestId = requestSequence.current + 1
@@ -1759,6 +1783,52 @@ function ConnectedAppsDialog({ bot, open, onClose, onLoad, onSet, githubAppSignI
   const error = currentCatalog?.error ?? null
   const loadingCurrentCatalog = loading || (open && currentCatalog === undefined)
   const savingAppId = saving?.botId === bot.id ? saving.appId : null
+  const loadActions = onLoadMcpActions
+  const setActionEnabled = onSetMcpActionEnabled
+  const actionManagementAvailable = loadActions !== undefined && setActionEnabled !== undefined
+  const openActions = (): void => {
+    if (loadActions === undefined || setActionEnabled === undefined) return
+    const requestId = actionRequestSequence.current + 1
+    actionRequestSequence.current = requestId
+    setActionMode(true)
+    setActionCatalog(undefined)
+    setActionError(null)
+    setActionLoading(true)
+    setActionSaving(null)
+    void loadActions().then((next) => {
+      if (actionRequestSequence.current === requestId) setActionCatalog(next)
+    }).catch((cause: unknown) => {
+      if (actionRequestSequence.current === requestId) {
+        setActionError(cause instanceof Error ? cause.message : t('mcpActionsLoadFailed'))
+      }
+    }).finally(() => {
+      if (actionRequestSequence.current === requestId) setActionLoading(false)
+    })
+  }
+  const closeActions = (): void => {
+    actionRequestSequence.current += 1
+    setActionMode(false)
+    setActionCatalog(undefined)
+    setActionLoading(false)
+    setActionError(null)
+    setActionSaving(null)
+  }
+  const toggleAction = (server: McpActionServerView, action: McpActionServerView['actions'][number]): void => {
+    if (actionSaving !== null || !server.connected || !server.editable || setActionEnabled === undefined) return
+    const requestId = actionRequestSequence.current
+    const request = { requestId, serverName: server.serverName, actionName: action.name }
+    setActionSaving(request)
+    setActionError(null)
+    void setActionEnabled(request.serverName, request.actionName, !action.enabled).then((next) => {
+      if (actionRequestSequence.current === requestId && actionMode) setActionCatalog(next)
+    }).catch((cause: unknown) => {
+      if (actionRequestSequence.current === requestId && actionMode) {
+        setActionError(cause instanceof Error ? cause.message : t('mcpActionsSaveFailed'))
+      }
+    }).finally(() => {
+      if (actionRequestSequence.current === requestId) setActionSaving(null)
+    })
+  }
   const toggle = async (app: BotConnectedAppAccess): Promise<void> => {
     /* v8 ignore next -- access controls render only for a loaded catalog and disable while saving. */
     if (savingAppId !== null || currentCatalog === undefined || onSet === undefined) return
@@ -1794,53 +1864,131 @@ function ConnectedAppsDialog({ bot, open, onClose, onLoad, onSet, githubAppSignI
       open={open}
       onClose={onClose}
       title={t('connectedAppsTitle')}
-      description={t('connectedAppsDescription', { name: bot.name })}
+      description={actionMode ? t('mcpActionsDescription') : t('connectedAppsDescription', { name: bot.name })}
       closeLabel={t('cancel')}
       className={css.connectedAppsDialog as string}
       contentClassName={css.connectedAppsDialogContent as string}
-      footer={<Button variant="ghost" onClick={onClose} disabled={savingAppId !== null}>{t('done')}</Button>}
+      footer={(
+        <div className={css.connectedAppsFooter}>
+          {actionMode && <Button variant="ghost" onClick={closeActions} disabled={actionSaving !== null}>{t('mcpActionsBack')}</Button>}
+          <Button variant="ghost" onClick={onClose} disabled={savingAppId !== null || actionSaving !== null}>{t('done')}</Button>
+        </div>
+      )}
     >
-      {githubAppSignIn !== undefined && <GitHubAppSignInSection actions={githubAppSignIn} t={t} />}
-      {error !== null && <div className={css.dialogNotice} role="alert">{error}</div>}
-      {loadingCurrentCatalog && (
-        <div className={css.connectedAppsLoading} role="status">
-          <StateDot state="ongoing" size={13} />
-          <span>{t('connectedAppsLoading')}</span>
-        </div>
-      )}
-      {!loadingCurrentCatalog && error === null && apps.length === 0 && (
-        <div className={css.connectedAppsEmpty} role="status">
-          <span className={css.connectedAppsEmptyIcon} aria-hidden="true"><IconLinkOutlineRegular size={18} /></span>
-          <strong>{t('connectedAppsEmptyTitle')}</strong>
-          <span className={css.connectedAppsEmptyDescription}>{t('connectedAppsEmpty')}</span>
-        </div>
-      )}
-      {!loadingCurrentCatalog && apps.length > 0 && (
-        <div className={css.connectedAppsList} role="list" aria-label={t('connectedAppsTitle')}>
-          {apps.map((app) => {
-            const name = connectedAppName(app, t)
-            return (
-              <div className={css.connectedAppRow} key={app.id} role="listitem">
-                <span className={css.connectedAppIcon} data-app-id={app.id} aria-hidden="true">{connectedAppMark(app, name)}</span>
-                <span className={css.connectedAppCopy}>
-                  <strong>{name}</strong>
-                  {app.description !== undefined && <span>{app.description}</span>}
-                </span>
-                <Button
-                  variant={app.allowed ? 'ghost' : 'outline'}
-                  size="sm"
-                  disabled={savingAppId !== null}
-                  aria-pressed={app.allowed}
-                  aria-label={t(app.allowed ? 'revokeConnectedApp' : 'grantConnectedApp', { name })}
-                  icon={app.allowed ? <IconCheckOutlineRegular size={14} /> : undefined}
-                  onClick={() => { void toggle(app) }}
-                >
-                  {app.allowed ? t('allowed') : t('grant')}
-                </Button>
-              </div>
-            )
-          })}
-        </div>
+      {actionMode ? (
+        <>
+          {actionError !== null && (
+            <div className={css.dialogNotice} role="alert">
+              <span>{actionError}</span>
+              {actionCatalog === undefined && <Button variant="ghost" size="sm" onClick={openActions}>{t('retry')}</Button>}
+            </div>
+          )}
+          {actionLoading && (
+            <div className={css.connectedAppsLoading} role="status">
+              <StateDot state="ongoing" size={13} />
+              <span>{t('mcpActionsLoading')}</span>
+            </div>
+          )}
+          {!actionLoading && actionCatalog !== undefined && actionError === null && actionCatalog.length === 0 && (
+            <div className={css.connectedAppsEmpty} role="status">
+              <span className={css.connectedAppsEmptyIcon} aria-hidden="true"><IconLinkOutlineRegular size={18} /></span>
+              <strong>{t('mcpActionsEmptyTitle')}</strong>
+              <span className={css.connectedAppsEmptyDescription}>{t('mcpActionsEmpty')}</span>
+            </div>
+          )}
+          {!actionLoading && actionCatalog !== undefined && actionCatalog.length > 0 && (
+            <div className={css.mcpActionsList} aria-label={t('mcpActionsTitle')}>
+              {actionCatalog.map((server, serverIndex) => {
+                const serverLabel = server.serverName.trim() || t('mcpActionsUnknownConnector')
+                return (
+                  <section className={css.mcpActionGroup} key={`${server.serverName}-${serverIndex}`} role="group" aria-label={serverLabel}>
+                    <div className={css.mcpActionGroupHeader}>
+                      <strong>{serverLabel}</strong>
+                      <span>{server.connected ? t('mcpActionsConnected') : t('mcpActionsDisconnected')}</span>
+                    </div>
+                    {server.actions.length === 0
+                      ? <div className={css.mcpActionUnavailable}>{t('mcpActionsNoActions')}</div>
+                      : <div className={css.mcpActionRows} role="list">
+                        {server.actions.map((action, actionIndex) => {
+                          const actionLabel = action.name || t('mcpActionsUnknownAction')
+                          const locked = !server.connected || !server.editable
+                          const saveMatches = actionSaving?.requestId === actionRequestSequence.current
+                            && actionSaving.serverName === server.serverName && actionSaving.actionName === action.name
+                          return (
+                            <div className={css.mcpActionRow} key={`${action.name}-${actionIndex}`} role="listitem">
+                              <span className={css.mcpActionCopy}>
+                                <strong>{actionLabel}</strong>
+                                {action.description !== undefined && <span>{action.description}</span>}
+                                {locked && <small>{server.connected ? t('mcpActionsLocked') : t('mcpActionsUnavailable')}</small>}
+                              </span>
+                              <Switch
+                                checked={action.enabled}
+                                disabled={locked || actionSaving !== null}
+                                label={actionLabel}
+                                title={locked ? (server.connected ? t('mcpActionsLocked') : t('mcpActionsUnavailable')) : undefined}
+                                className={saveMatches ? css.mcpActionSwitchSaving : undefined}
+                                onChange={() => { toggleAction(server, action) }}
+                              />
+                            </div>
+                          )
+                        })}
+                      </div>}
+                  </section>
+                )
+              })}
+            </div>
+          )}
+        </>
+      ) : (
+        <>
+          {githubAppSignIn !== undefined && <GitHubAppSignInSection actions={githubAppSignIn} t={t} />}
+          {actionManagementAvailable && (
+            <div className={css.connectedAppsTools}>
+              <Button variant="outline" size="sm" onClick={openActions}>{t('manageActions')}</Button>
+            </div>
+          )}
+          {error !== null && <div className={css.dialogNotice} role="alert">{error}</div>}
+          {loadingCurrentCatalog && (
+            <div className={css.connectedAppsLoading} role="status">
+              <StateDot state="ongoing" size={13} />
+              <span>{t('connectedAppsLoading')}</span>
+            </div>
+          )}
+          {!loadingCurrentCatalog && error === null && apps.length === 0 && (
+            <div className={css.connectedAppsEmpty} role="status">
+              <span className={css.connectedAppsEmptyIcon} aria-hidden="true"><IconLinkOutlineRegular size={18} /></span>
+              <strong>{t('connectedAppsEmptyTitle')}</strong>
+              <span className={css.connectedAppsEmptyDescription}>{t('connectedAppsEmpty')}</span>
+            </div>
+          )}
+          {!loadingCurrentCatalog && apps.length > 0 && (
+            <div className={css.connectedAppsList} role="list" aria-label={t('connectedAppsTitle')}>
+              {apps.map((app) => {
+                const name = connectedAppName(app, t)
+                return (
+                  <div className={css.connectedAppRow} key={app.id} role="listitem">
+                    <span className={css.connectedAppIcon} data-app-id={app.id} aria-hidden="true">{connectedAppMark(app, name)}</span>
+                    <span className={css.connectedAppCopy}>
+                      <strong>{name}</strong>
+                      {app.description !== undefined && <span>{app.description}</span>}
+                    </span>
+                    <Button
+                      variant={app.allowed ? 'ghost' : 'outline'}
+                      size="sm"
+                      disabled={savingAppId !== null}
+                      aria-pressed={app.allowed}
+                      aria-label={t(app.allowed ? 'revokeConnectedApp' : 'grantConnectedApp', { name })}
+                      icon={app.allowed ? <IconCheckOutlineRegular size={14} /> : undefined}
+                      onClick={() => { void toggle(app) }}
+                    >
+                      {app.allowed ? t('allowed') : t('grant')}
+                    </Button>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </>
       )}
     </Modal>
   )
@@ -1857,7 +2005,7 @@ function ConnectedAppsDialog({ bot, open, onClose, onLoad, onSet, githubAppSignI
 export function BotRoster({
   bots, selectedBotId, onSelectBot, onCreateBot, onConnectApps, onOpenAvatarSettings,
   groups: localGroups = [], selectedGroupId = null, onSelectGroup, onCreateGroup, groupError = null,
-  onLoadConnectedApps, onSetConnectedAppAccess, githubAppSignIn,
+  onLoadConnectedApps, onSetConnectedAppAccess, onLoadMcpActions, onSetMcpActionEnabled, githubAppSignIn,
   onOrganizeBot, templates, templateActions, onRetry, loadAvatar, avatarEditor, sharedClient,
   error = null, loading = false, wide = true, expandSidebar, t,
 }: BotWorkspaceViewProps & BotRosterLayoutProps): ReactNode {
@@ -1987,8 +2135,11 @@ export function BotRoster({
     setSharedOwnerMode(false)
     setSharedBotsOpen(false)
   }
+  const hasConnectedAppsDialog = (onLoadConnectedApps !== undefined && onSetConnectedAppAccess !== undefined)
+    || (onLoadMcpActions !== undefined && onSetMcpActionEnabled !== undefined)
+    || githubAppSignIn !== undefined
   const openConnectedApps = (bot: BotSummary): void => {
-    if ((onLoadConnectedApps === undefined || onSetConnectedAppAccess === undefined) && githubAppSignIn === undefined) {
+    if (!hasConnectedAppsDialog) {
       onConnectApps?.()
       return
     }
@@ -1999,8 +2150,7 @@ export function BotRoster({
   const connectedAppsBot = connectedAppsBotId === null
     ? undefined
     : bots.find(bot => bot.id === connectedAppsBotId)
-  const canOpenConnectedApps = (onLoadConnectedApps !== undefined && onSetConnectedAppAccess !== undefined)
-    || githubAppSignIn !== undefined || onConnectApps !== undefined
+  const canOpenConnectedApps = hasConnectedAppsDialog || onConnectApps !== undefined
   const connectedAppsAction = canOpenConnectedApps
     ? openConnectedApps
     : undefined
@@ -2208,13 +2358,15 @@ export function BotRoster({
       {sharedClient !== undefined && (
         <SharedBotsDialog client={sharedClient} open={sharedBotsOpen} ownerMode={sharedOwnerMode} onClose={closeSharedBots} t={t} />
       )}
-      {((onLoadConnectedApps !== undefined && onSetConnectedAppAccess !== undefined) || githubAppSignIn !== undefined) && (
+      {hasConnectedAppsDialog && (
         <ConnectedAppsDialog
           bot={connectedAppsBot}
           open={connectedAppsBot !== undefined}
           onClose={() => { setConnectedAppsBotId(null) }}
           onLoad={onLoadConnectedApps}
           onSet={onSetConnectedAppAccess}
+          onLoadMcpActions={onLoadMcpActions}
+          onSetMcpActionEnabled={onSetMcpActionEnabled}
           githubAppSignIn={githubAppSignIn}
           t={t}
         />

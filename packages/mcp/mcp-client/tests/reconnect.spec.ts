@@ -13,6 +13,7 @@ import { ToolCallId } from '@yharness/llm'
 import { credentialRef } from '@yharness/credentials'
 import { GITHUB_MCP_URL } from '@yharness/github-app-auth'
 import type { Config } from '@yharness/mcp-client'
+import type { McpActionCatalog } from '@yharness/mcp-client/src/action-catalog.ts'
 
 // ---- Mock MCP SDK ----
 
@@ -148,6 +149,16 @@ function nextCallId(): ToolCallId {
   return ToolCallId(`reconnect-${++callSeq}`)
 }
 
+function markLoaderEntry(ctx: Context, id: string): void {
+  Object.defineProperty(ctx.fiber, 'entry', { configurable: true, value: { id } })
+}
+
+function catalogs(ctx: Context): McpActionCatalog[] {
+  const result: McpActionCatalog[] = []
+  ctx.emit('mcp/actions/catalog', (catalog) => { result.push(catalog) })
+  return result
+}
+
 // ---- Tests ----
 
 describe('reconnect supervisor', () => {
@@ -183,6 +194,119 @@ describe('reconnect supervisor', () => {
       expect(ctx.tools.get('mcp__srv__remote')).toBeUndefined()
     } finally {
       await handle.dispose()
+    }
+  })
+
+  it('publishes exact discovered actions for an unscoped loader entry', async () => {
+    markLoaderEntry(ctx, 'profile:connectors/mcp-srv')
+    mockListTools.mockResolvedValueOnce({
+      tools: [
+        { name: 'records.read:recent', description: 'Read recent records', inputSchema: { type: 'object' } },
+        { name: 'tools with spaces', inputSchema: { type: 'object' } },
+        { name: 'admin.reset', description: 'Reset records', inputSchema: { type: 'object' } },
+      ],
+      nextCursor: undefined,
+    })
+    const config = stdioConfig({ initialDelayMs: 2, maxDelayMs: 8, maxAttempts: 2 })
+    config.disabledTools = ['admin.reset']
+    await apply(ctx, config)
+    try {
+      expect(catalogs(ctx)).toEqual([{
+        serverName: 'srv',
+        entryId: 'profile:connectors/mcp-srv',
+        connected: true,
+        actions: [
+          { name: 'records.read:recent', description: 'Read recent records', enabled: true },
+          { name: 'tools with spaces', enabled: true },
+          { name: 'admin.reset', description: 'Reset records', enabled: false },
+        ],
+      }])
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('marks a catalog stale during reconnect and replaces it after admitted discovery', async () => {
+    markLoaderEntry(ctx, 'profile:connectors/mcp-srv')
+    mockListTools.mockResolvedValueOnce(listing('before-reconnect'))
+    mockListTools.mockResolvedValue(listing('after-reconnect'))
+    const config = stdioConfig({ initialDelayMs: 2, maxDelayMs: 8, maxAttempts: 2 })
+    await apply(ctx, config)
+    try {
+      expect(catalogs(ctx)[0]).toMatchObject({ connected: true, actions: [{ name: 'before-reconnect', enabled: true }] })
+
+      instances[0]!.onclose?.()
+      expect(catalogs(ctx)[0]).toMatchObject({ connected: false, actions: [{ name: 'before-reconnect', enabled: true }] })
+      await vi.waitFor(() => {
+        expect(catalogs(ctx)[0]).toMatchObject({ connected: true, actions: [{ name: 'after-reconnect', enabled: true }] })
+      })
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('marks a catalog disconnected when disposal cancels the connection', async () => {
+    markLoaderEntry(ctx, 'profile:connectors/mcp-srv')
+    const handle = startConnection(ctx, stdioConfig(), resolveReconnectPolicy(undefined, 'reconnect'))
+    try {
+      await handle.ready
+      expect(handle.actionCatalog()).toMatchObject({ connected: true, actions: [{ name: 'remote', enabled: true }] })
+      await handle.dispose()
+      expect(handle.actionCatalog()).toMatchObject({ connected: false, actions: [{ name: 'remote', enabled: true }] })
+    } finally {
+      await handle.dispose()
+    }
+  })
+
+  it('does not replace a good catalog when registration of a new generation collides', async () => {
+    markLoaderEntry(ctx, 'profile:connectors/mcp-srv')
+    mockListTools.mockResolvedValueOnce(listing('remote'))
+    mockListTools.mockResolvedValue(listing('remote', 'squatter'))
+    const foreignDispose = ctx.tools.register({
+      name: 'mcp__srv__squatter',
+      description: 'Foreign squatter',
+      parameters: { type: 'object' },
+      output: {
+        schema: { type: 'string' },
+        render: (_args, value) => [{ type: 'text', text: value as string }],
+      },
+      execute: async () => 'foreign',
+    })
+    await apply(ctx, stdioConfig())
+    try {
+      expect(catalogs(ctx)[0]).toMatchObject({ connected: true, actions: [{ name: 'remote', enabled: true }] })
+
+      const handler = mockSetNotificationHandler.mock.calls[0]![1] as () => void
+      handler()
+      await vi.waitFor(() => { expect(ctx.tools.get('mcp__srv__squatter')?.description).toBe('Foreign squatter') })
+      expect(catalogs(ctx)[0]).toMatchObject({
+        connected: true,
+        actions: [{ name: 'remote', enabled: true }],
+      })
+    } finally {
+      foreignDispose()
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('keeps all-disabled discovery visible without registering a dispatchable tool', async () => {
+    markLoaderEntry(ctx, 'profile:connectors/mcp-srv')
+    mockListTools.mockResolvedValueOnce(listing('remote', 'admin.reset'))
+    const config = stdioConfig()
+    config.disabledTools = ['remote', 'admin.reset']
+    await apply(ctx, config)
+    try {
+      expect(ctx.tools.get('mcp__srv__remote')).toBeUndefined()
+      expect(ctx.tools.get('mcp__srv__admin_reset')).toBeUndefined()
+      expect(catalogs(ctx)[0]).toMatchObject({
+        connected: true,
+        actions: [
+          { name: 'remote', enabled: false },
+          { name: 'admin.reset', enabled: false },
+        ],
+      })
+    } finally {
+      await ctx.fiber.dispose()
     }
   })
 

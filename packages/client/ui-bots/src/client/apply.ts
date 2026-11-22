@@ -24,7 +24,7 @@ import { BotVaultRequestCard } from './BotVaultRequestCard.tsx'
 import { BotWebsiteLoginRequestCard } from './BotWebsiteLoginRequestCard.tsx'
 import { ComputerSignInCard } from './ComputerSignInCard.tsx'
 import type {
-  GitHubAppSignInActions, GitHubAppSignInAttemptId, GitHubAppSignInView,
+  BotMcpActionActions, GitHubAppSignInActions, GitHubAppSignInAttemptId, GitHubAppSignInView, McpActionServerView,
 } from './types.ts'
 
 /** Stable main-panel identity shared by the sidebar entry and main occupant. */
@@ -45,6 +45,15 @@ interface GitHubAppSignInRemote {
   readonly startGitHubAppSignIn?: () => Promise<GitHubAppRemoteValue>
   readonly cancelGitHubAppSignIn?: (attemptId: GitHubAppSignInAttemptId) => Promise<GitHubAppRemoteValue>
   readonly disconnectGitHubApp?: () => Promise<GitHubAppRemoteValue>
+}
+
+type McpActionRemoteValue =
+  | { readonly ok: true; readonly value: readonly McpActionServerView[] }
+  | { readonly ok: false; readonly error: { readonly message: string } }
+
+interface McpActionSettingsRemote {
+  readonly listMcpActions?: () => Promise<McpActionRemoteValue>
+  readonly setMcpActionEnabled?: (serverName: string, actionName: string, enabled: boolean) => Promise<McpActionRemoteValue>
 }
 
 function unwrapGitHubAppView(result: GitHubAppRemoteValue): GitHubAppSignInView {
@@ -68,6 +77,21 @@ function githubAppSignInActions(account: GitHubAppSignInRemote | undefined): Git
   }
 }
 
+function unwrapMcpActionCatalog(result: McpActionRemoteValue): readonly McpActionServerView[] {
+  if (result.ok) return result.value
+  throw new Error(result.error.message)
+}
+
+function mcpActionActions(settings: McpActionSettingsRemote | undefined): BotMcpActionActions | undefined {
+  if (settings === undefined || typeof settings.listMcpActions !== 'function' || typeof settings.setMcpActionEnabled !== 'function') return undefined
+  const list = settings.listMcpActions
+  const set = settings.setMcpActionEnabled
+  return {
+    list: async () => unwrapMcpActionCatalog(await list()),
+    set: async (serverName, actionName, enabled) => unwrapMcpActionCatalog(await set(serverName, actionName, enabled)),
+  }
+}
+
 /** Register the Bot workspace, loading one durable roster and one Session per selection. */
 export function apply(ctx: Context): void {
   ctx.effect(() => ctx.locale.register('bots', { en, zh }), 'ui-bots: dictionaries')
@@ -75,6 +99,8 @@ export function apply(ctx: Context): void {
   const sharedClient = createSharedBotsClient(connection.rpc, {
     subscribeConnectionGeneration: listener => connection.generation.subscribe(listener),
   })
+  const settings = ctx.get('remote.settings') as McpActionSettingsRemote | undefined
+  const mcpActions = mcpActionActions(settings)
   const controller = new BotWorkspaceController(
     ctx.remote.bots,
     ctx.sessions,
@@ -280,6 +306,10 @@ export function apply(ctx: Context): void {
       locale: 'bots',
       inject: () => ({
         ...controller.face(),
+        ...(mcpActions === undefined ? {} : {
+          loadMcpActions: mcpActions.list,
+          setMcpActionEnabled: mcpActions.set,
+        }),
         ...(githubAppSignIn === undefined ? {} : { githubAppSignIn }),
       }),
     }, BotsRoster))

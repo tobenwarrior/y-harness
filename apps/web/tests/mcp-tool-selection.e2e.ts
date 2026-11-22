@@ -8,14 +8,15 @@ import type {} from '@yharness/bots'
 import { chromium, type Browser, type Page } from 'playwright'
 import { expect, it, vi } from 'vitest'
 import { startHttpMcpFixture } from '../../../packages/mcp/mcp-client/tests/http-fixture.ts'
-import { launchWebScaffold, watchConsole, webSnapshotMode, type WebScaffold } from './scaffold.ts'
+import { compareOrRefreshGolden, launchWebScaffold, watchConsole, webSnapshotMode, type WebScaffold } from './scaffold.ts'
 import { newEnglishPage, saveFailureShot } from './support.ts'
 
-const overlay = fileURLToPath(new URL('./fixtures/mcp-tool-selection.patch.yml', import.meta.url))
+const bundle = fileURLToPath(new URL('./fixtures/plugins/fixture-mcp-actions', import.meta.url))
+const expected = fileURLToPath(new URL('./expected/mcp-tool-selection/actions.expected.md', import.meta.url))
 const replayFixture = fileURLToPath(new URL('../../../snapshots/web/bot-workspace/session.v3.jsonl', import.meta.url))
 const endpoint = 'https://tool-selection.example.test/mcp'
 
-it.skipIf(webSnapshotMode() === 'record')('keeps a configured MCP action unavailable after a Bot receives access to its app', async () => {
+it.skipIf(webSnapshotMode() === 'record')('manages individual MCP actions without changing a Bot’s app grant', async () => {
   const mcp = await startHttpMcpFixture(['ping', 'inspect_record'])
   const fetchLocal = globalThis.fetch
   const fetchFixture = vi.spyOn(globalThis, 'fetch').mockImplementation((target, init) => {
@@ -26,7 +27,11 @@ it.skipIf(webSnapshotMode() === 'record')('keeps a configured MCP action unavail
   let browser: Browser | undefined
   let failurePage: Page | undefined
   try {
-    web = await launchWebScaffold({ extraOverlayPath: overlay, replayFixture, replayProvidersOnly: true })
+    web = await launchWebScaffold({
+      profile: { packages: [{ dir: bundle, enabled: true }] },
+      replayFixture,
+      replayProvidersOnly: true,
+    })
     const host = web.ctx
     const scout = (await host.bots.create({ name: 'Scout', identity: 'browse', accent: 'teal', cwd: web.workspaceCwd })).bot
     const owner = await host.sessionController.resolveAgent(scout.sessionId)
@@ -67,14 +72,35 @@ it.skipIf(webSnapshotMode() === 'record')('keeps a configured MCP action unavail
     await expect(run(independent)).resolves.toMatchObject({ isError: false })
     expect(mcp.calls).toEqual(['ping', 'inspect_record'])
 
+    await dialog.getByRole('button', { name: 'Manage actions', exact: true }).click()
+    const actions = page.getByRole('dialog')
+    const workspace = actions.getByRole('group', { name: /^(Workspace Fixture|workspace-fixture)$/u })
+    const inspect = workspace.getByRole('switch', { name: 'inspect_record', exact: true })
+    const ping = workspace.getByRole('switch', { name: 'ping', exact: true })
+    await expect.poll(() => inspect.getAttribute('aria-checked')).toBe('false')
+    await inspect.click()
+    await expect.poll(() => inspect.getAttribute('aria-checked')).toBe('true')
+    await expect(run(blocked)).resolves.toMatchObject({ isError: false })
+    await inspect.click()
+    await expect.poll(() => inspect.getAttribute('aria-checked')).toBe('false')
+    await ping.click()
+    await expect.poll(() => ping.getAttribute('aria-checked')).toBe('false')
+    await expect(run(retained)).resolves.toMatchObject({ isError: true })
+    await expect(run(blocked)).resolves.toMatchObject({ isError: true })
+    await ping.click()
+    await expect.poll(() => ping.getAttribute('aria-checked')).toBe('true')
+    await expect(run(retained)).resolves.toMatchObject({ isError: false })
+    expect(mcp.calls).toEqual(['ping', 'inspect_record', 'inspect_record', 'ping'])
+    await compareOrRefreshGolden(expected, (await workspace.ariaSnapshot()).trimEnd(), webSnapshotMode())
+
     const output = process.env.YHARNESS_MCP_TOOL_SELECTION_SCREENSHOTS
     if (output !== undefined) {
       await mkdir(output, { recursive: true })
-      await page.screenshot({ path: join(output, 'bots-app-access-desktop-dark.png'), animations: 'disabled' })
+      await page.screenshot({ path: join(output, 'bots-app-actions-desktop-dark.png'), animations: 'disabled' })
       await page.setViewportSize({ width: 480, height: 900 })
       await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' })
       await expect.poll(() => page.evaluate(() => document.body.hasAttribute('data-ds-dark-theme'))).toBe(false)
-      await page.screenshot({ path: join(output, 'bots-app-access-narrow-light.png'), animations: 'disabled' })
+      await page.screenshot({ path: join(output, 'bots-app-actions-narrow-light.png'), animations: 'disabled' })
     }
     expect(tripwire.pageErrors).toEqual([])
   } catch (error) {
