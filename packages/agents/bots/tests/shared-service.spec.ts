@@ -2578,6 +2578,7 @@ describe('shared Bot service', () => {
         'bots/share/create-group',
         'bots/share/update-group',
         'bots/share/inspect-group',
+        'bots/share/search-group-messages',
         'bots/share/send-group-message',
       ]))
       await value.service.enroll(
@@ -3136,6 +3137,170 @@ describe('shared Bot service', () => {
         },
       })
     } finally {
+      await value.close()
+    }
+  })
+
+  it('searches only accessible shared-group messages with bounded stable results', async () => {
+    const value = await fixture(10, true)
+    let originalListBots: SharedBotHost['listBots'] | undefined
+    try {
+      const ownerEnrollment = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'owner')).code,
+        enrollmentRequest(),
+      )
+      await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-second'), 'owner')).code,
+        request(cookie(ownerEnrollment)),
+      )
+      const owner = await principal(value, ownerEnrollment)
+      const outsiderChief = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-chief'), 'collaborator')).code,
+        enrollmentRequest(),
+      )
+      const outsiderSecond = await value.service.enroll(
+        (await value.service.createInvite(BotId('bot-second'), 'collaborator')).code,
+        request(cookie(outsiderChief)),
+      )
+      const outsider = await principal(value, outsiderSecond)
+      const created = await value.service.handle('bots/share/create-group', {
+        id: BotGroupId('bot-group-message-search'),
+        name: 'Searchable room',
+        botIds: [BotId('bot-chief'), BotId('bot-second')],
+      }, new AbortController().signal, owner.peer)
+      const groupId = groupIdFromResult(created)
+
+      await expect(value.service.handle('bots/share/chat', {
+        botId: BotId('bot-chief'),
+        text: 'private group-search-token must stay private',
+      }, new AbortController().signal, owner.peer)).resolves.toMatchObject({ ok: true })
+
+      for (let index = 1; index <= 21; index++) {
+        if (index === 21) value.clock.value += 1
+        const messageId = BotGroupMessageId(`bot-group-message-search-${String(index).padStart(2, '0')}`)
+        await expect(value.service.handle('bots/share/send-group-message', {
+          groupId,
+          messageId,
+          text: index === 1 ? `${'Prefix '.repeat(95)}Shared group-search-token result ${index}`
+            : `Shared group-search-token result ${index}`,
+        }, new AbortController().signal, owner.peer)).resolves.toMatchObject({ ok: true, value: { status: 'accepted' } })
+      }
+
+      const search = await value.service.handle('bots/share/search-group-messages', {
+        query: 'GROUP-SEARCH-TOKEN',
+        groupId,
+      }, new AbortController().signal, owner.peer)
+      expect(search).toMatchObject({ ok: true, value: { hasMore: true } })
+      if (!search.ok) throw new Error('shared group search failed')
+      const searchValueSchema = z.object({
+        hasMore: z.boolean(),
+        items: z.array(z.object({
+          groupId: z.string(),
+          groupName: z.string(),
+          messageId: z.string(),
+          snippet: z.string(),
+        })),
+      })
+      const searchValue = searchValueSchema.parse(search.value)
+      expect(searchValue.items).toHaveLength(20)
+      expect(searchValue.items[0]).toEqual({
+        groupId,
+        groupName: 'Searchable room',
+        messageId: BotGroupMessageId('bot-group-message-search-21'),
+        snippet: 'Shared group-search-token result 21',
+      })
+      expect(searchValue.items.map(item => item.messageId)).toEqual([
+        ...Array.from({ length: 20 }, (_, index) => `bot-group-message-search-${String(21 - index).padStart(2, '0')}`),
+      ])
+      expect(JSON.stringify(search)).not.toContain('private group-search-token')
+
+      const older = await value.service.handle('bots/share/search-group-messages', {
+        query: 'group-search-token',
+        before: { groupId, messageId: searchValue.items.at(-1)?.messageId },
+      }, new AbortController().signal, owner.peer)
+      if (!older.ok) throw new Error('older shared group search failed')
+      const olderValue = searchValueSchema.parse(older.value)
+      expect(olderValue.hasMore).toBe(false)
+      expect(olderValue.items).toMatchObject([{ groupId, messageId: 'bot-group-message-search-01' }])
+      expect(olderValue.items[0]?.snippet).toMatch(/^….+Shared group-search-token result 1$/u)
+      await expect(value.service.handle('bots/share/search-group-messages', {
+        query: 'group-search-token.*',
+      }, new AbortController().signal, owner.peer)).resolves.toMatchObject({
+        ok: true, value: { hasMore: false, items: [] },
+      })
+      await expect(value.service.handle('bots/share/search-group-messages', {
+        query: 'group-search-token.*',
+        before: { groupId, messageId: searchValue.items.at(-1)?.messageId },
+      }, new AbortController().signal, owner.peer)).resolves.toMatchObject({
+        ok: false, error: { code: 'gateway/conflict' },
+      })
+
+      await expect(value.service.handle('bots/share/search-group-messages', {
+        query: 'group-search-token',
+        groupId,
+      }, new AbortController().signal, outsider.peer)).resolves.toMatchObject({
+        ok: false,
+        error: { code: 'gateway/forbidden' },
+      })
+
+      await expect(value.service.handle('bots/share/search-group-messages', {
+        query: 'group-search-token',
+      }, new AbortController().signal, outsider.peer)).resolves.toMatchObject({
+        ok: true, value: { hasMore: false, items: [] },
+      })
+
+      const groupInvite = await value.service.handle('bots/share/manage-group-members', {
+        groupId,
+        action: 'create-invite',
+      }, new AbortController().signal, owner.peer)
+      const groupEnrollment = await value.service.enroll(
+        groupInviteCodeFromResult(groupInvite),
+        request(cookie(outsiderSecond)),
+      )
+      const groupMember = await principal(value, groupEnrollment)
+      await expect(value.service.handle('bots/share/search-group-messages', {
+        query: 'group-search-token',
+        groupId,
+      }, new AbortController().signal, groupMember.peer)).resolves.toMatchObject({ ok: true })
+      await expect(value.service.handle('bots/share/manage-group-members', {
+        groupId,
+        action: 'revoke',
+        principalId: groupMember.botPrincipalId,
+      }, new AbortController().signal, owner.peer)).resolves.toMatchObject({ ok: true, value: { revoked: true } })
+      await expect(value.service.handle('bots/share/search-group-messages', {
+        query: 'group-search-token',
+        groupId,
+      }, new AbortController().signal, groupMember.peer)).resolves.toMatchObject({
+        ok: false,
+        error: { code: 'gateway/forbidden' },
+      })
+
+      await expect(value.service.handle('bots/share/search-group-messages', {
+        query: 'group-search-token',
+        before: { groupId, messageId: searchValue.items.at(-1)?.messageId },
+      }, new AbortController().signal, groupMember.peer)).resolves.toMatchObject({
+        ok: false, error: { code: 'gateway/conflict' },
+      })
+
+      originalListBots = value.host.listBots
+      value.host.listBots = async (signal) => {
+        signal?.throwIfAborted()
+        return originalListBots === undefined ? [] : (await originalListBots(signal)).filter(bot => bot.id === BotId('bot-chief'))
+      }
+      await expect(value.service.handle('bots/share/search-group-messages', {
+        query: 'group-search-token',
+        groupId,
+      }, new AbortController().signal, owner.peer)).resolves.toMatchObject({
+        ok: false,
+        error: { code: 'gateway/not-found' },
+      })
+      await expect(value.service.handle('bots/share/search-group-messages', {
+        query: 'group-search-token',
+      }, new AbortController().signal, owner.peer)).resolves.toMatchObject({
+        ok: true, value: { hasMore: false, items: [] },
+      })
+    } finally {
+      if (originalListBots !== undefined) value.host.listBots = originalListBots
       await value.close()
     }
   })

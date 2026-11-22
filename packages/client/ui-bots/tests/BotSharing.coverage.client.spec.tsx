@@ -21,6 +21,7 @@ afterEach(() => {
 })
 
 const originalLocksDescriptor = Object.getOwnPropertyDescriptor(navigator, 'locks')
+const originalScrollIntoViewDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollIntoView')
 const lockRequest = <T,>(_name: string, callback: () => Promise<T>): Promise<T> => callback()
 
 beforeAll(() => {
@@ -28,10 +29,13 @@ beforeAll(() => {
     configurable: true,
     value: { request: lockRequest },
   })
+  Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: vi.fn() })
 })
 afterAll(() => {
   if (originalLocksDescriptor === undefined) Reflect.deleteProperty(navigator, 'locks')
   else Object.defineProperty(navigator, 'locks', originalLocksDescriptor)
+  if (originalScrollIntoViewDescriptor === undefined) Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView')
+  else Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', originalScrollIntoViewDescriptor)
 })
 
 const t = makeTranslate(en)
@@ -93,6 +97,173 @@ function sharedClient(overrides: Partial<SharedBotsClient> = {}): SharedBotsClie
 }
 
 describe('BotSharing defensive UI paths', () => {
+  it('opens a newly accessible room at the exact search hit', async () => {
+    const current = groupFixture('bot-group-general', 'General')
+    const target = groupFixture('bot-group-search-target', 'Search target')
+    const message = {
+      id: brandString<BotGroupMessageId>('bot-group-message-target'),
+      groupId: target.id,
+      sender: { kind: 'user', principalId: BotPrincipalId('principal-member') },
+      text: 'The full target message.', createdAt: 1, reactions: [],
+    } as const
+    const inspectGroup = vi.fn(async (id: string) => id === String(target.id)
+      ? { ok: true as const, value: { group: target, messages: [message] } }
+      : { ok: true as const, value: { group: current, messages: [] } })
+    const searchGroupMessages = vi.fn().mockResolvedValue({ ok: true, value: { items: [{
+      groupId: target.id, groupName: target.name, messageId: message.id, snippet: 'target message',
+    }], hasMore: false } })
+    const client = sharedClient({
+      listGroups: vi.fn().mockResolvedValue({ ok: true, value: { groups: [current] } }),
+      inspectGroup, searchGroupMessages,
+    })
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+    fireEvent.click(await screen.findByRole('button', { name: en.sharedGroupSearch }))
+    const field = screen.getByRole('searchbox', { name: en.sharedGroupSearch })
+    fireEvent.change(field, { target: { value: 'target' } })
+    fireEvent.click(await screen.findByRole('button', { name: /Search target.*target message/ }))
+    const row = (await screen.findByText(message.text)).closest('article')
+    expect(inspectGroup).toHaveBeenCalledWith(target.id)
+    expect(row?.getAttribute('data-shared-group-message-id')).toBe(message.id)
+    await waitFor(() => { expect(document.activeElement).toBe(row) })
+    expect(screen.queryByRole('searchbox', { name: en.sharedGroupSearch })).toBeNull()
+  })
+
+  it('jumps to a search hit in an existing room', async () => {
+    const target = groupFixture('bot-group-search-existing', 'Existing room')
+    const message = {
+      id: brandString<BotGroupMessageId>('bot-group-message-existing'),
+      groupId: target.id,
+      sender: { kind: 'user', principalId: BotPrincipalId('principal-member') },
+      text: 'Message in the existing room.', createdAt: 2, reactions: [],
+    } as const
+    const inspectGroup = vi.fn()
+      .mockResolvedValueOnce({ ok: true, value: { group: target, messages: [] } })
+      .mockResolvedValue({ ok: true, value: { group: target, messages: [message] } })
+    const client = sharedClient({
+      listGroups: vi.fn().mockResolvedValue({ ok: true, value: { groups: [target] } }),
+      inspectGroup,
+      searchGroupMessages: vi.fn().mockResolvedValue({ ok: true, value: { items: [{
+        groupId: target.id, groupName: target.name, messageId: message.id, snippet: 'existing room message',
+      }], hasMore: false } }),
+    })
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+    fireEvent.click(await screen.findByRole('button', { name: en.sharedGroupSearch }))
+    fireEvent.change(screen.getByRole('searchbox', { name: en.sharedGroupSearch }), { target: { value: 'existing' } })
+    fireEvent.click(await screen.findByRole('button', { name: /Existing room.*existing room message/ }))
+
+    expect(inspectGroup).toHaveBeenCalledWith(target.id)
+    expect(await screen.findByText(message.text)).toBeTruthy()
+    expect(screen.queryByRole('searchbox', { name: en.sharedGroupSearch })).toBeNull()
+    expect(screen.getAllByRole('button', { name: /Existing room/ })).toHaveLength(1)
+  })
+
+  it('reports when a selected search message disappeared', async () => {
+    const target = groupFixture('bot-group-search-missing', 'Missing message room')
+    const messageId = brandString<BotGroupMessageId>('bot-group-message-missing')
+    const inspectGroup = vi.fn().mockResolvedValue({ ok: true, value: { group: target, messages: [] } })
+    const client = sharedClient({
+      listGroups: vi.fn().mockResolvedValue({ ok: true, value: { groups: [target] } }),
+      inspectGroup,
+      searchGroupMessages: vi.fn().mockResolvedValue({ ok: true, value: { items: [{
+        groupId: target.id, groupName: target.name, messageId, snippet: 'vanished message',
+      }], hasMore: false } }),
+    })
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+    fireEvent.click(await screen.findByRole('button', { name: en.sharedGroupSearch }))
+    fireEvent.change(screen.getByRole('searchbox', { name: en.sharedGroupSearch }), { target: { value: 'vanished' } })
+    fireEvent.click(await screen.findByRole('button', { name: /Missing message room.*vanished message/ }))
+
+    expect(await screen.findByText(en.sharedGroupSearchMissing)).toBeTruthy()
+    expect(screen.queryByText('vanished message')).toBeNull()
+  })
+
+  it('drops a delayed search result when the shared auth context changes', async () => {
+    const group = groupFixture('bot-group-search-auth', 'Auth change room')
+    const pending = Promise.withResolvers<Awaited<ReturnType<NonNullable<SharedBotsClient['searchGroupMessages']>>>>()
+    let authGeneration = 0
+    type Subscribe = NonNullable<SharedBotsClient['subscribeAuth']>
+    let notifyAuth: Parameters<Subscribe>[0] | undefined
+    const subscribeAuth: Subscribe = (listener) => {
+      notifyAuth = listener
+      return () => {}
+    }
+    const client = sharedClient({
+      listGroups: vi.fn().mockResolvedValue({ ok: true, value: { groups: [group] } }),
+      inspectGroup: vi.fn().mockResolvedValue({ ok: true, value: { group, messages: [] } }),
+      searchGroupMessages: vi.fn().mockReturnValue(pending.promise),
+      subscribeAuth,
+    })
+    Object.defineProperty(client, 'authGeneration', { configurable: true, get: () => authGeneration })
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+    fireEvent.click(await screen.findByRole('button', { name: en.sharedGroupSearch }))
+    const field = screen.getByRole('searchbox', { name: en.sharedGroupSearch })
+    fireEvent.change(field, { target: { value: 'stale' } })
+    await waitFor(() => { expect(client.searchGroupMessages).toHaveBeenCalledWith({ query: 'stale' }) })
+
+    authGeneration = 1
+    notifyAuth?.({ source: 'local', reason: 'invalidated' })
+    await act(async () => {
+      pending.resolve({ ok: true, value: { items: [{
+        groupId: group.id, groupName: group.name, messageId: brandString<BotGroupMessageId>('bot-group-message-stale'),
+        snippet: 'stale result',
+      }], hasMore: false } })
+      await Promise.resolve()
+    })
+    expect(screen.queryByText('stale result')).toBeNull()
+  })
+
+  it('revalidates instead of showing a forbidden search result', async () => {
+    const group = groupFixture('bot-group-search-forbidden', 'Forbidden room')
+    const client = sharedClient({
+      listGroups: vi.fn().mockResolvedValue({ ok: true, value: { groups: [group] } }),
+      inspectGroup: vi.fn().mockResolvedValue({ ok: true, value: { group, messages: [] } }),
+      searchGroupMessages: vi.fn().mockResolvedValue({ ok: false, error: { code: 'gateway/forbidden', message: 'search forbidden', details: {} } }),
+    })
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+    fireEvent.click(await screen.findByRole('button', { name: en.sharedGroupSearch }))
+    fireEvent.change(screen.getByRole('searchbox', { name: en.sharedGroupSearch }), { target: { value: 'forbidden' } })
+    await waitFor(() => { expect(client.searchGroupMessages).toHaveBeenCalledWith({ query: 'forbidden' }) })
+    await waitFor(() => { expect(client.restoreRetryScope).toHaveBeenCalledTimes(2) })
+    expect(screen.queryByText('forbidden result')).toBeNull()
+  })
+
+  it.each(['unavailable', 'removed'] as const)('shows a search error when group search is %s', async (failure) => {
+    const group = groupFixture('bot-group-search-unavailable', 'Research room')
+    const client = sharedClient({
+      listGroups: vi.fn().mockResolvedValue({ ok: true, value: { groups: [group] } }),
+      inspectGroup: vi.fn().mockResolvedValue({ ok: true, value: { group, messages: [] } }),
+      searchGroupMessages: vi.fn().mockResolvedValue({ ok: false, error: { code: 'gateway/unavailable', message: 'search unavailable' } }),
+    })
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+    fireEvent.click(await screen.findByRole('button', { name: en.sharedGroupSearch }))
+    const field = screen.getByRole('searchbox', { name: en.sharedGroupSearch })
+    if (failure === 'removed') Object.defineProperty(client, 'searchGroupMessages', { value: undefined, configurable: true })
+    fireEvent.change(field, { target: { value: 'research' } })
+    expect(await screen.findByText(en.sharedGroupSearchError)).toBeTruthy()
+  })
+
+  it('refuses to open a stale search result after the authenticated room context changes', async () => {
+    const group = groupFixture('bot-group-search-stale-selection', 'Previous room')
+    const inspectGroup = vi.fn().mockResolvedValue({ ok: true, value: { group, messages: [] } })
+    const client = sharedClient({
+      listGroups: vi.fn().mockResolvedValue({ ok: true, value: { groups: [group] } }),
+      inspectGroup,
+      searchGroupMessages: vi.fn().mockResolvedValue({ ok: true, value: { items: [{
+        groupId: group.id, groupName: group.name, messageId: brandString<BotGroupMessageId>('bot-group-message-prior'),
+        snippet: 'previous account note',
+      }], hasMore: false } }),
+    })
+    render(<SharedBotsDialog client={client} open onClose={vi.fn()} t={t} />)
+    fireEvent.click(await screen.findByRole('button', { name: en.sharedGroupSearch }))
+    fireEvent.change(screen.getByRole('searchbox', { name: en.sharedGroupSearch }), { target: { value: 'previous' } })
+    const result = await screen.findByRole('button', { name: /Previous room.*previous account note/ })
+    inspectGroup.mockClear()
+    Object.defineProperty(client, 'authGeneration', { value: 1, configurable: true })
+    fireEvent.click(result)
+    expect(inspectGroup).not.toHaveBeenCalled()
+    expect(screen.queryByText('previous account note')).toBeNull()
+  })
+
   it('renders every approval decision and argument disclosure variant', async () => {
     const decideApproval = vi.fn()
       .mockResolvedValueOnce({ ok: true, value: { resolved: true, accepted: false } })

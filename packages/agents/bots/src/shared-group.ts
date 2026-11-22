@@ -39,6 +39,9 @@ import type {
   BotGroupDeliveryView,
   BotGroupInspectValue,
   BotGroupListValue,
+  BotGroupMessageSearchItem,
+  BotGroupMessageSearchRequest,
+  BotGroupMessageSearchValue,
   BotGroupMessageRecord,
   BotGroupMessageReplyView,
   BotGroupMessageView,
@@ -82,6 +85,8 @@ const MAX_SHARED_GROUP_INVITES = 1_024
 const MAX_GROUP_MEMBERS = 6
 const MAX_GROUP_NAME = 80
 const MAX_MESSAGE_TEXT = 16_000
+const MAX_GROUP_MESSAGE_SEARCH_QUERY = 500
+const MAX_GROUP_MESSAGE_SEARCH_RESULTS = 20
 const SHARED_GROUP_DELIVERY_LEASE_MS = 30_000
 const MAX_SHARED_GROUP_RECOVERY_BATCH = 64
 const SHARED_GROUP_RECOVERY_CONCURRENCY = 4
@@ -1110,6 +1115,72 @@ export class SharedBotGroupService {
       return { snapshot, value: { group: groupView(group, bots), messages, deliveries } }
     }))
     return result.value
+  }
+
+  /**
+   * Search durable messages in shared rooms visible to one authenticated
+   * principal, without reading owner-local or private Bot transcripts.
+   *
+   * An explicit room is checked with the same full roster and membership
+   * requirements as transcript inspection. An unscoped search omits rooms the
+   * principal cannot currently read. Both paths use the roster fence and the
+   * shared authority lock so access and returned rows observe one snapshot.
+   * @param request - Literal search text and optional shared-room restriction.
+   * @param principalId - Authenticated shared principal requesting the search.
+   * @param signal - Cancellation for roster and authority operations.
+   * @returns A bounded page of safe shared-group message excerpts.
+   */
+  async searchMessages(
+    request: BotGroupMessageSearchRequest,
+    principalId: ReturnType<typeof BotPrincipalId>,
+    signal: AbortSignal,
+  ): Promise<BotGroupMessageSearchValue> {
+    this.requireIsolatedHost()
+    const query = normalizeText(request.query, 'shared Bot group message search query', MAX_GROUP_MESSAGE_SEARCH_QUERY)
+    const matcher = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'iu')
+    const groupId = request.groupId === undefined ? undefined : normalizeGroupId(request.groupId)
+    const availableBots = await this.stableBotRoster(signal)
+    return this.withRosterFence(availableBots, signal, () => this.readLocked(principalId, signal, (snapshot, memberships) => {
+      const eligibleGroups = new Map<BotGroupId, SharedGroupRecord>()
+      if (groupId !== undefined) {
+        const group = findGroup(snapshot, groupId)
+        requireGroupAccess(group, memberships, principalId, 'read-group')
+        this.activeBotsFromList(group.botIds, availableBots)
+        eligibleGroups.set(group.id, group)
+      } else {
+        const activeBotIds = new Set(availableBots.filter(bot => bot.state === 'active').map(bot => bot.id))
+        for (const group of snapshot.groups) {
+          if (group.botIds.every(id => activeBotIds.has(id))
+            && hasGroupAccess(group, memberships, principalId, 'read-group')) eligibleGroups.set(group.id, group)
+        }
+      }
+      const hits = snapshot.messages.flatMap((message) => {
+        const room = eligibleGroups.get(message.groupId)
+        if (room === undefined) return []
+        const match = matcher.exec(message.text)
+        return match === null ? [] : [{ message, room, index: match.index }]
+      }).sort(({ message: left }, { message: right }) => right.createdAt - left.createdAt
+        || String(right.id).localeCompare(String(left.id)))
+      const before = request.before
+      const cursor = before === undefined ? -1
+        : hits.findIndex(({ message }) => message.groupId === before.groupId && message.id === before.messageId)
+      if (before !== undefined && cursor === -1) {
+        throw new SharedGroupError('gateway/conflict', 'shared Bot group search results changed; search again')
+      }
+      const end = cursor + 1 + MAX_GROUP_MESSAGE_SEARCH_RESULTS
+      const items = hits.slice(cursor + 1, end).map(({ message, room, index }): BotGroupMessageSearchItem => {
+        const preceding = Array.from(message.text.slice(0, index))
+        const excerpt = preceding.length <= 64 ? message.text
+          : `…${preceding.slice(-64).join('')}${message.text.slice(index)}`
+        return {
+          groupId: room.id,
+          groupName: room.name,
+          messageId: message.id,
+          snippet: boundedGroupReplyText(excerpt),
+        }
+      })
+      return { items, hasMore: hits.length > end }
+    }))
   }
 
   /**

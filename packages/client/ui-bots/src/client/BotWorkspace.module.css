@@ -2088,6 +2088,12 @@
   flex: 1;
 }
 
+.sharedGroupSearchButton {
+  width: 28px;
+  flex: none;
+  padding-inline: 0;
+}
+
 .sharedMemoryIcon {
   display: flex;
   width: 25px;
@@ -2150,10 +2156,13 @@
 .sharedWorkspace {
   display: grid;
   min-width: 0;
-  min-height: 250px;
-  grid-template-columns: minmax(140px, 0.68fr) minmax(0, 1.32fr);
   gap: 10px;
   margin-top: 16px;
+}
+
+.sharedWorkspace:has(.sharedConversation) {
+  min-height: 250px;
+  grid-template-columns: minmax(140px, 0.68fr) minmax(0, 1.32fr);
 }
 
 .sharedBotList {
@@ -2396,7 +2405,7 @@
   text-transform: uppercase;
 }
 
-.sharedBot span,
+:is(.sharedBot, .sharedBotSelected) span,
 .sharedConversationHeader div,
 .connectedAppCopy {
   display: flex;
@@ -2405,7 +2414,7 @@
   gap: 1px;
 }
 
-.sharedBot strong,
+:is(.sharedBot, .sharedBotSelected) strong,
 .sharedConversationHeader strong {
   overflow: hidden;
   font-size: 12px;
@@ -2425,7 +2434,7 @@
   white-space: nowrap;
 }
 
-.sharedBot small,
+:is(.sharedBot, .sharedBotSelected) small,
 .sharedConversationHeader small {
   overflow: hidden;
   color: var(--yh-alias-label-tertiary);
@@ -2474,6 +2483,11 @@
   font-size: 11px;
   line-height: 16px;
   white-space: pre-wrap;
+}
+
+.sharedTranscript > article:focus {
+  outline: var(--yh-focus-ring-width) solid var(--yh-focus-ring-color, var(--yh-alias-state-business-primary));
+  outline-offset: -1px;
 }
 
 .sharedMessageText { white-space: pre-wrap; overflow-wrap: anywhere; }

@@ -59,6 +59,7 @@
     "tests/bot-conversation.e2e.ts",
     "tests/bot-find-in-chat.e2e.ts",
     "tests/bot-message-search.e2e.ts",
+    "tests/bot-shared-group-search.e2e.ts",
     "tests/bot-vault-request.e2e.ts",
     "tests/bot-computer-sign-in.e2e.ts",
     "tests/bot-terminal.e2e.ts",

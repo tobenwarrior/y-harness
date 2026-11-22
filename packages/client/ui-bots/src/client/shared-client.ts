@@ -19,6 +19,8 @@ import type {
   BotGroupDeliveryView,
   BotGroupInspectValue,
   BotGroupListValue,
+  BotGroupMessageSearchRequest,
+  BotGroupMessageSearchValue,
   BotGroupSendRemoteRequest,
   BotGroupSendValue,
   BotGroupUpdateRequest,
@@ -360,6 +362,8 @@ export interface SharedBotsClient {
   readonly updateGroup?: (request: BotGroupUpdateRequest) => Promise<SharedBotClientResult<BotGroupUpdateValue>>
   /** Read a shared group transcript without private Session events. */
   readonly inspectGroup?: (groupId: string) => Promise<SharedBotClientResult<SharedBotGroupInspectValue>>
+  /** Search visible durable messages in shared rooms without reading private Chats. */
+  readonly searchGroupMessages?: (request: BotGroupMessageSearchRequest) => Promise<SharedBotClientResult<BotGroupMessageSearchValue>>
   /** Send an idempotent shared group message attributed by the server. */
   readonly sendGroupMessage?: (
     request: BotGroupSendRemoteRequest & { readonly replyToMessageId?: string },
@@ -631,6 +635,7 @@ export function createSharedBotsClient(rpc: ClientConnectionRpc, options: Shared
     createGroup: request => call('bots/share/create-group', request, parseGroupResult),
     updateGroup: request => call('bots/share/update-group', request, parseGroupResult),
     inspectGroup: groupId => call('bots/share/inspect-group', { groupId }, parseGroupInspect),
+    searchGroupMessages: request => call('bots/share/search-group-messages', request, parseGroupMessageSearch),
     sendGroupMessage: request => call('bots/share/send-group-message', request, parseGroupSend),
     sendGroupMessageWithAttachments,
     reactGroupMessage: request => call('bots/share/react-group-message', request, parseGroupReaction),
@@ -773,6 +778,33 @@ function parseGroupResult(value: unknown): { readonly group: BotGroupView } | un
   if (!isRecord(value)) return undefined
   const group = parseGroup(value.group)
   return group === undefined ? undefined : { group }
+}
+
+function parseGroupMessageSearch(value: unknown): BotGroupMessageSearchValue | undefined {
+  if (!isRecord(value) || typeof value.hasMore !== 'boolean' || !Array.isArray(value.items) || value.items.length > 20) return undefined
+  if (value.hasMore && value.items.length === 0) return undefined
+  const items: BotGroupMessageSearchValue['items'][number][] = []
+  for (const input of value.items) {
+    const item = parseGroupMessageSearchItem(input)
+    if (item === undefined) return undefined
+    items.push(item)
+  }
+  return { hasMore: value.hasMore, items }
+}
+
+function parseGroupMessageSearchItem(value: unknown): BotGroupMessageSearchValue['items'][number] | undefined {
+  if (!isRecord(value) || typeof value.groupId !== 'string'
+    || !/^bot-group-[A-Za-z0-9][A-Za-z0-9-]*$/.test(value.groupId)
+    || !boundedString(value.groupName, 80) || value.groupName.trim() !== value.groupName
+    || typeof value.messageId !== 'string'
+    || !/^bot-group-message-[A-Za-z0-9][A-Za-z0-9-]*$/.test(value.messageId)
+    || typeof value.snippet !== 'string' || value.snippet.length === 0 || Array.from(value.snippet).length > 480) return undefined
+  return {
+    groupId: brandString<BotGroupIdType>(value.groupId),
+    groupName: value.groupName,
+    messageId: brandString<BotGroupMessageIdType>(value.messageId),
+    snippet: value.snippet,
+  }
 }
 
 function parseGroupInspect(value: unknown): SharedBotGroupInspectValue | undefined {
