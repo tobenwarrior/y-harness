@@ -108,6 +108,17 @@ describe('web e2e: Desktop update workspace chrome', () => {
             expect(await control.evaluate(element => getComputedStyle(element).backgroundColor)).toBe('rgba(0, 0, 0, 0)')
           }
           if (locale === 'en-US') await captureFooter(page, 'bots-desktop')
+          const collapse = 'Collapse sidebar'
+          const expand = 'Open sidebar'
+          const toggle = page.getByRole('button', { name: expand, exact: true })
+          await page.setViewportSize({ width: 480, height: 800 })
+          await toggle.waitFor()
+          await expect.poll(() => alignment('x', [settings, update, warning])).toBeLessThan(2)
+          if (locale === 'en-US') await captureFooter(page, 'narrow')
+          await toggle.click()
+          await expect.poll(() => alignment('y', [settings, update, warning])).toBeLessThan(2)
+          if (locale === 'en-US') await captureFooter(page, 'narrow-expanded')
+          await page.setViewportSize({ width: 1280, height: 800 })
           expect(await opens()).toBe(0)
           const geometry = await update.boundingBox()
           expect(geometry).not.toBeNull()
@@ -146,19 +157,13 @@ describe('web e2e: Desktop update workspace chrome', () => {
           expect(await opens()).toBe(1)
           await page.screenshot({ path: join(evidence, 'downloading.png') })
 
-          const collapse = 'Collapse sidebar'
-          const expand = 'Open sidebar'
           await page.getByRole('button', { name: collapse, exact: true }).click()
-          const toggle = page.getByRole('button', { name: expand, exact: true })
           const badge = page.getByRole('button', { name: '58%', exact: true })
           await badge.waitFor()
           await expect.poll(() => wideDownloading.count()).toBe(0)
           expect(await page.getByRole('button', { name: '58%', exact: true }).count()).toBe(1)
           const updateBackground = await badge.evaluate(element => getComputedStyle(element).backgroundColor)
-          await page.setViewportSize({ width: 480, height: 800 })
           await expect.poll(() => alignment('x', [settings, badge, warning])).toBeLessThan(2)
-          if (locale === 'en-US') await captureFooter(page, 'narrow')
-          await page.setViewportSize({ width: 1280, height: 800 })
           await page.screenshot({ path: join(evidence, 'collapsed.png') })
 
           const error = presentDesktopUpdate({ phase: 'error', version, failedOperation: 'download', message: 'HTTP 503' }, en)
