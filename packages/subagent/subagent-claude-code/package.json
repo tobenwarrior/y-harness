@@ -51,7 +51,7 @@
     "@anthropic-ai/sdk": "0.93.0",
     "@yharness/brand": "workspace:*",
     "@yharness/schemastery": "workspace:~",
-    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@modelcontextprotocol/sdk": "^1.32.0",
     "zod": "^4.4.3",
     "@yharness/util-values": "workspace:*"
   },
