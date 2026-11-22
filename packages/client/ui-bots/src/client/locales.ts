@@ -560,7 +560,7 @@ export const en = {
   groupMemberNames: '{count} Bots',
   you: 'You',
   connectedAppsTitle: 'Connected apps',
-  connectedAppsDescription: 'Manage {name}’s app access; credentials stay on this Host.',
+  connectedAppsDescription: 'Choose which apps {name} can use.',
   connectedAppsConnectionsTitle: 'Host connection',
   connectedAppsConnectionLoadFailed: 'Connection status could not be loaded. Try again.',
   connectedAppsConnectionActionFailed: 'That connection action could not be completed. Try again.',
