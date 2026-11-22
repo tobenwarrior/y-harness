@@ -72,4 +72,40 @@ describe('Inline imported Bot chat', () => {
     expect(await screen.findByText('Recovered answer')).toBeTruthy()
     expect(screen.queryByText('Stale answer')).toBeNull()
   })
+
+  it('ignores a rejected read after the selected Bot changes', async () => {
+    const first = Promise.withResolvers<BotGrokHistoryView | null>()
+    const second = Promise.withResolvers<BotGrokHistoryView | null>()
+    const read = vi.fn<GrokHistoryInlineProps['read']>(botId => botId === 'bot-one' ? first.promise : second.promise)
+    const view = renderInline('bot-one', read)
+    fireEvent.click(screen.getByRole('button', { name: en.grokHistoryInlineShow }))
+
+    view.rerender(<GrokHistoryInline botId="bot-two" botName="Gammagod" read={read} t={t} />)
+    first.reject(new Error('stale archive'))
+    second.resolve(archive)
+
+    expect(await screen.findByText('Recovered answer')).toBeTruthy()
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('shows the empty state when the selected Bot has no imported chat', async () => {
+    const read = vi.fn<GrokHistoryInlineProps['read']>().mockResolvedValue(null)
+    renderInline('bot-empty', read)
+
+    fireEvent.click(screen.getByRole('button', { name: en.grokHistoryInlineShow }))
+    expect(await screen.findByText(en.grokHistoryEmpty)).toBeTruthy()
+  })
+
+  it('offers a retry after a failed read and renders the recovered result', async () => {
+    const read = vi.fn<GrokHistoryInlineProps['read']>()
+      .mockRejectedValueOnce(new Error('archive unavailable'))
+      .mockResolvedValueOnce(archive)
+    renderInline('bot-retry', read)
+
+    fireEvent.click(screen.getByRole('button', { name: en.grokHistoryInlineShow }))
+    expect(await screen.findByRole('alert')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: en.retry }))
+    expect(await screen.findByText('Recovered answer')).toBeTruthy()
+    expect(read).toHaveBeenCalledTimes(2)
+  })
 })

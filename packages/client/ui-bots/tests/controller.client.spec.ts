@@ -2333,6 +2333,9 @@ describe('BotWorkspaceController', () => {
     await controller.load()
     const face = controller.face()
     await expect(face.readGrokHistory?.(original.id)).resolves.toBeNull()
+    const readSignal = new AbortController().signal
+    await expect(face.readGrokHistory?.(original.id, readSignal)).resolves.toBeNull()
+    expect(readGrokHistory).toHaveBeenLastCalledWith({ botId: original.id }, readSignal)
     const editor = face.avatarEditor
     if (editor?.status === undefined || editor.generate === undefined || editor.commit === undefined || editor.update === undefined
       || editor.upload === undefined || editor.updateAppearance === undefined) throw new Error('avatar actions are not mounted')
