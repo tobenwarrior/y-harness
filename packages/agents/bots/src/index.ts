@@ -7687,7 +7687,7 @@ export class BotService extends TypertRemoteService {
           return badRequest('The deterministic Bot duplicate target is already occupied')
         }
         const targetName = requestedName
-          ?? normalizeName(`${Array.from(source.name).slice(0, 75).join('').trimEnd()} copy`)
+          ?? normalizeName(`${source.name.slice(0, 75).replace(/[\uD800-\uDBFF]$/u, '').trimEnd()} copy`)
         const snapshot = await this.snapshotDuplicateOperation(
           source,
           sourceBotId,

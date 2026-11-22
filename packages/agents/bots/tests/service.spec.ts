@@ -1049,6 +1049,19 @@ describe('durable Bot roster', () => {
     expect(parsed.success).toBe(false)
   })
 
+  it('keeps a suggested duplicate name valid when the source uses supplementary characters', async () => {
+    const h = await routineHarness(undefined, undefined, undefined, [], true)
+    try {
+      const source = (await h.service.create({ name: '🦉'.repeat(40) })).bot
+      const copy = await h.service.duplicate({
+        sourceBotId: source.id, operationId: BotDuplicateOperationId('duplicate-supplementary-name'),
+      })
+      expect(copy.bot.name).toBe(`${'🦉'.repeat(37)} copy`)
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
   it('provisions one managed workspace per Bot and retains it across a failed setup retry', async () => {
     const root = await mkdtemp(join(tmpdir(), 'yh-managed-bot-'))
     const workspace = (sessionId: SessionId) => join(root, sessionId)
