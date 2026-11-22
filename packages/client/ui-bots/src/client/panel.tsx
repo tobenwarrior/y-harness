@@ -7,7 +7,7 @@ import type { ConversationBot } from '@yharness/client-ui-conversation/client'
 import type { SessionStatusSnapshot } from '@yharness/client-ui-session/client'
 import type { BotWorkspaceFace, BotWorkspaceState } from './controller.ts'
 import { BotDetail, BotGroupDetail, BotRoster } from './BotWorkspace.tsx'
-import type { BotStatus, BotSummary, McpActionServerView } from './types.ts'
+import type { BotStatus, BotSummary, GitHubAppSignInActions, McpActionServerView } from './types.ts'
 import { ComputerAction } from './ComputerAction.tsx'
 import { BotAvatar } from './BotAvatar.tsx'
 import { ComputerPanel } from './ComputerPanel.tsx'
@@ -75,7 +75,9 @@ type BotMcpActionFace = {
 export type BotsRosterProps =
   PropsRuntime<'sidebar.bots'>
   & PropsLocale<'bots'>
-  & InjectFace<BotWorkspaceFace & BotMcpActionFace>
+  & InjectFace<BotWorkspaceFace & BotMcpActionFace & {
+    readonly githubAppSignIn?: GitHubAppSignInActions
+  }>
 
 function statusOf(bot: BotView, statuses: SessionStatusSnapshot): BotStatus | undefined {
   if (bot.state === 'provisioning') return 'preparing'
