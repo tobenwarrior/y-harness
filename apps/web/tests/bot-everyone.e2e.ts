@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url'
 import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import type { Browser, Page } from 'playwright'
+import type { Browser, Locator, Page } from 'playwright'
 import { chromium } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it, onTestFailed } from 'vitest'
 import type { GenerateOptions, StreamChunk } from '@yharness/llm'
@@ -29,6 +29,51 @@ async function capture(page: Page, name: string): Promise<void> {
   if (directory === undefined) return
   await mkdir(directory, { recursive: true })
   await page.screenshot({ path: join(directory, name + '.png'), animations: 'disabled' })
+}
+
+/** Assert that the compact picker and send action share the message row. */
+async function expectInlineComposerActions(scope: Locator, input: Locator, sendLabel: string, options?: {
+  readonly singleLine?: boolean
+  readonly viewport?: Locator
+}): Promise<void> {
+  const [pickerBox, inputBox, sendBox] = await Promise.all([
+    scope.getByRole('button', { name: 'Attach files', exact: true }).boundingBox(),
+    input.boundingBox(),
+    scope.getByRole('button', { name: sendLabel, exact: true }).boundingBox(),
+  ])
+  if (pickerBox === null || inputBox === null || sendBox === null) {
+    throw new Error('compact composer controls did not render')
+  }
+  expect(pickerBox.x + pickerBox.width).toBeLessThan(inputBox.x + 4)
+  expect(sendBox.x).toBeGreaterThan(inputBox.x + inputBox.width - 4)
+  expect(Math.abs((pickerBox.y + pickerBox.height / 2) - (sendBox.y + sendBox.height / 2))).toBeLessThan(28)
+  if (options?.singleLine === true) expect(inputBox.height).toBeLessThan(32)
+  if (options?.viewport !== undefined) {
+    const viewportBox = await options.viewport.boundingBox()
+    if (viewportBox === null) throw new Error('composer scroll viewport did not render')
+    expect(sendBox.y).toBeGreaterThanOrEqual(viewportBox.y - 1)
+    expect(sendBox.y + sendBox.height).toBeLessThanOrEqual(viewportBox.y + viewportBox.height + 1)
+  }
+}
+
+async function captureDarkTheme(page: Page, name: string): Promise<void> {
+  await page.emulateMedia({ colorScheme: 'dark' })
+  await expect.poll(() => page.locator('body').getAttribute('data-ds-dark-theme')).toBe('')
+  await capture(page, `${name}-dark`)
+  await page.emulateMedia({ colorScheme: 'light' })
+  await expect.poll(() => page.locator('body').getAttribute('data-ds-dark-theme')).toBeNull()
+}
+
+async function settleRosterNotice(roster: Locator, force = false): Promise<void> {
+  const notice = roster.getByRole('alert')
+  for (let attempt = 0; attempt < 4; attempt++) {
+    if (await notice.count() === 0) return
+    const retry = notice.getByRole('button', { name: 'Try again', exact: true })
+    if (await retry.count() === 0) throw new Error('owner roster notice did not expose a retry action')
+    await retry.click(force ? { force: true } : {})
+    await expect.poll(() => roster.getByRole('alert').count(), { timeout: 30_000 }).toBe(0)
+  }
+  throw new Error('owner roster notice did not settle after retry')
 }
 
 function newestUserText(options: GenerateOptions): string {
@@ -155,9 +200,14 @@ describe.skipIf(MODE === 'record')('web e2e: explicit Everyone group recipients'
     await capture(page, 'private-desktop-everyone-menu')
     await privateEveryoneOption.click()
     await expect.poll(() => privateDetail.getByRole('button', { name: 'Remove Everyone mention', exact: true }).count()).toBe(1)
+    await expectInlineComposerActions(privateDetail, privateComposer, 'Send message', { singleLine: true })
     await capture(page, 'private-desktop-everyone-selected')
+    await captureDarkTheme(page, 'private-desktop-everyone-selected')
     await privateDetail.getByRole('button', { name: 'Remove Everyone mention', exact: true }).click()
     await expect.poll(() => privateDetail.getByRole('button', { name: 'Remove Everyone mention', exact: true }).count()).toBe(0)
+    await privateComposer.fill('line one\nline two\nline three')
+    await expect.poll(async () => (await privateComposer.boundingBox())?.height ?? 0).toBeGreaterThan(40)
+    await privateComposer.fill('')
     await privateComposer.fill('@e')
     await privateDetail.getByRole('option', { name: /Everyone.*Every Bot in this group/u }).click()
     await privateComposer.fill(PRIVATE_MESSAGE)
@@ -178,7 +228,9 @@ describe.skipIf(MODE === 'record')('web e2e: explicit Everyone group recipients'
     await capture(page, 'private-narrow-everyone-menu')
     await privateDetail.getByRole('option', { name: /Everyone.*Every Bot in this group/u }).click()
     await expect.poll(() => privateDetail.getByRole('button', { name: 'Remove Everyone mention', exact: true }).count()).toBe(1)
+    await expectInlineComposerActions(privateDetail, privateComposer, 'Send message', { singleLine: true })
     await capture(page, 'private-narrow-everyone-selected')
+    await captureDarkTheme(page, 'private-narrow-everyone-selected')
 
     await page.setViewportSize({ width: 1440, height: 900 })
     await sidebar.getByRole('button', { name: 'Bot workspace options', exact: true }).click()
@@ -195,20 +247,52 @@ describe.skipIf(MODE === 'record')('web e2e: explicit Everyone group recipients'
     await sharedCreateDialog.getByRole('checkbox', { name: secondBot.name, exact: true }).check()
     await sharedCreateDialog.getByRole('button', { name: 'Create shared group', exact: true }).click()
     await sharedCreateDialog.waitFor({ state: 'hidden' })
-    const sharedRow = sharedDialog.getByRole('button', { name: new RegExp(`^${SHARED_GROUP_NAME}`) })
+
+    // Shared admission briefly fences the owner roster while the two Bot rows
+    // are committed. Settle that owner-side retry before capturing the shared
+    // composer so the screenshot shows the finished workspace, not the
+    // synthetic admission race.
+    await sharedDialog.getByLabel('Cancel', { exact: true }).click()
+    await sharedDialog.waitFor({ state: 'hidden' })
+    await settleRosterNotice(roster)
+    await roster.getByRole('button', { name: 'Scout', exact: true }).waitFor({ state: 'visible', timeout: 30_000 })
+    await roster.getByRole('button', { name: 'Scout', exact: true }).click()
+    await expect.poll(() => roster.getByRole('alert').count(), { timeout: 30_000 }).toBe(0)
+
+    await sidebar.getByRole('button', { name: 'Bot workspace options', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Create a shared group', exact: true }).click()
+    const settledSharedDialog = page.getByRole('dialog', { name: 'Shared with you', exact: true })
+    await settledSharedDialog.getByRole('button', { name: new RegExp(`^${firstBot.name}\\b`) }).waitFor({ timeout: 30_000 })
+    await settledSharedDialog.getByRole('button', { name: new RegExp(`^${secondBot.name}\\b`) }).waitFor({ timeout: 30_000 })
+    await settleRosterNotice(roster, true)
+    const sharedRow = settledSharedDialog.getByRole('button', { name: new RegExp(`^${SHARED_GROUP_NAME}`) })
     await sharedRow.waitFor({ timeout: 30_000 })
+    const [sharedGroupNameBox, sharedGroupMembersBox] = await Promise.all([
+      sharedRow.locator('strong').boundingBox(),
+      sharedRow.locator('small').boundingBox(),
+    ])
+    if (sharedGroupNameBox === null || sharedGroupMembersBox === null) throw new Error('shared group row captions did not render')
+    expect(sharedGroupMembersBox.y).toBeGreaterThan(sharedGroupNameBox.y)
     await sharedRow.click()
-    const sharedSection = sharedDialog.locator(`section[aria-label="${SHARED_GROUP_NAME}"]`)
+    const sharedSection = settledSharedDialog.locator(`section[aria-label="${SHARED_GROUP_NAME}"]`)
     await sharedSection.waitFor({ timeout: 30_000 })
     const sharedComposer = sharedSection.getByRole('combobox', { name: `Message ${SHARED_GROUP_NAME}`, exact: true })
+    const sharedScrollViewport = settledSharedDialog.locator('[class*="shareDialogContent"]')
     await sharedComposer.fill('@e')
     const sharedEveryoneOption = sharedSection.getByRole('option', { name: /Everyone.*Every Bot in this group/u })
     await expect.poll(() => sharedEveryoneOption.count(), { timeout: 15_000 }).toBe(1)
     await sharedEveryoneOption.click()
     await expect.poll(() => sharedSection.getByRole('button', { name: 'Remove Everyone mention', exact: true }).count()).toBe(1)
+    await expectInlineComposerActions(sharedSection, sharedComposer, 'Send to group', { viewport: sharedScrollViewport })
     await capture(page, 'shared-desktop-everyone-selected')
+    await captureDarkTheme(page, 'shared-desktop-everyone-selected')
+    await page.setViewportSize({ width: 480, height: 900 })
+    await expectInlineComposerActions(sharedSection, sharedComposer, 'Send to group', { viewport: sharedScrollViewport })
+    await capture(page, 'shared-narrow-everyone-selected')
+    await captureDarkTheme(page, 'shared-narrow-everyone-selected')
+    await page.setViewportSize({ width: 1440, height: 900 })
     await sharedComposer.fill(SHARED_MESSAGE)
-    await sharedDialog.getByRole('button', { name: 'Send to group', exact: true }).click()
+    await settledSharedDialog.getByRole('button', { name: 'Send to group', exact: true }).click()
     await expect.poll(() => sharedSection.getByText(SHARED_MESSAGE, { exact: true }).count(), { timeout: 30_000 }).toBe(1)
 
     const sharedList = await sharedRpc(page, 'bots/share/list-groups', {})

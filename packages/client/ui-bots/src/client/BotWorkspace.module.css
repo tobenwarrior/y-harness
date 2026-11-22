@@ -1624,6 +1624,8 @@
   width: 100%;
   min-height: 24px;
   max-height: 140px;
+  field-sizing: content;
+  overflow-y: auto;
   resize: none;
   border: none;
   outline: none;
@@ -1632,6 +1634,12 @@
   font: inherit;
   font-size: 14px;
   line-height: 21px;
+}
+
+.groupComposerWrap > .groupComposer {
+  width: auto;
+  min-width: 0;
+  flex: 1 1 160px;
 }
 
 .groupComposer::placeholder {
@@ -1655,6 +1663,23 @@
   min-width: 0;
   align-items: center;
   gap: 8px;
+  padding-top: 2px;
+}
+
+/* Keep the picker in the message row while retaining a full-width preview rail. */
+.groupComposerWrap > .groupAttachmentsCompact,
+.sharedComposer > .groupAttachmentsCompact {
+  width: auto;
+  flex: 0 0 auto;
+  order: 0;
+  padding-top: 0;
+}
+
+.groupComposerWrap > .groupAttachmentsCompact.groupAttachmentsWithFiles,
+.sharedComposer > .groupAttachmentsCompact.groupAttachmentsWithFiles {
+  width: 100%;
+  flex: 0 0 100%;
+  order: -2;
   padding-top: 2px;
 }
 
@@ -1848,6 +1873,12 @@
   .groupAttachments {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .groupComposerWrap > .groupAttachmentsCompact:not(.groupAttachmentsWithFiles),
+  .sharedComposer > .groupAttachmentsCompact:not(.groupAttachmentsWithFiles) {
+    align-items: center;
+    flex-direction: row;
   }
 
   .groupAttachmentRail {
@@ -2241,7 +2272,7 @@
 .sharedWorkspace {
   display: grid;
   min-width: 0;
-  min-height: 250px;
+  min-height: 0;
   grid-template-columns: minmax(140px, 0.68fr) minmax(0, 1.32fr);
   gap: 10px;
   margin-top: 16px;
@@ -2250,6 +2281,7 @@
 .sharedBotList {
   display: flex;
   min-width: 0;
+  max-height: min(250px, 32vh);
   flex-direction: column;
   gap: 3px;
   overflow: auto;
@@ -2278,6 +2310,18 @@
 
 .sharedBotSelected {
   box-shadow: inset 2px 0 var(--yh-alias-state-business-primary);
+}
+
+.sharedGroupRow > :last-child {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sharedGroupRow strong,
+.sharedGroupRow small {
+  display: block;
 }
 
 .connectedAppsDialog {
@@ -2600,7 +2644,7 @@
   flex: 1;
 }
 
-.sharedComposer > .groupAttachments,
+.sharedComposer > .groupAttachments:not(.groupAttachmentsCompact),
 .sharedComposer > .groupAttachmentNotice,
 .sharedComposer > .groupMentionSelection {
   flex: 0 0 100%;

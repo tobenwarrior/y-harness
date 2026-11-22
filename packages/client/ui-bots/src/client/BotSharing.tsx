@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import type { DragEvent } from 'react'
 import clsx from 'clsx'
 import { brandString } from '@yharness/brand'
 import { randomUUID } from '@yharness/util-crypto'
@@ -3118,7 +3119,10 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
                 {groups.map(group => (
                   <button
                     type="button"
-                    className={String(group.id) === selectedGroupId ? css.sharedBotSelected : css.sharedBot}
+                    className={clsx(
+                      String(group.id) === selectedGroupId ? css.sharedBotSelected : css.sharedBot,
+                      css.sharedGroupRow,
+                    )}
                     key={String(group.id)}
                     onClick={() => { setGroupSelection(String(group.id)); void readGroup(String(group.id)) }}
                   >
@@ -3295,7 +3299,15 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
                     )
                   })}
                 </div>
-                <form className={css.sharedComposer} onSubmit={(event) => { event.preventDefault(); void sendGroup() }}>
+                <form
+                  className={css.sharedComposer}
+                  onDragOver={(event) => { event.preventDefault() }}
+                  onDrop={(event: DragEvent<HTMLFormElement>) => {
+                    event.preventDefault()
+                    addGroupAttachments(Array.from(event.dataTransfer.files))
+                  }}
+                  onSubmit={(event) => { event.preventDefault(); void sendGroup() }}
+                >
                   {groupReplyingTo !== null && (
                     <div className={css.groupReplyComposerPreview} role="status">
                       <span className={css.groupReplyComposerCopy}>
@@ -3325,6 +3337,7 @@ export function SharedBotsDialog({ client, open, onClose, ownerMode = false, t }
                   )}
                   <BotGroupAttachments
                     attachments={groupAttachments}
+                    compact
                     disabled={groupWorking === 'send'}
                     labels={botGroupAttachmentLabels(t)}
                     onAddFiles={addGroupAttachments}
