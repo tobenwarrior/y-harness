@@ -1634,10 +1634,15 @@ function ConnectedAppsDialog({
   const error = currentCatalog?.error ?? null
   const connectionError = currentConnectionCatalog?.error ?? null
   const hasBotAccess = onLoad !== undefined && onSet !== undefined
-  type ConnectedAppRow = {
-    readonly access?: BotConnectedAppAccess
-    readonly connection?: BotConnectedAppCatalogEntry
-  }
+  type ConnectedAppRow =
+    | {
+      readonly access: BotConnectedAppAccess
+      readonly connection?: undefined
+    }
+    | {
+      readonly connection: BotConnectedAppCatalogEntry
+      readonly access?: BotConnectedAppAccess
+    }
   const rowsById = new Map<string, ConnectedAppRow>()
   for (const app of currentCatalog?.apps ?? []) rowsById.set(app.id, { access: app })
   for (const app of currentConnectionCatalog?.apps ?? []) {
@@ -1650,10 +1655,8 @@ function ConnectedAppsDialog({
         allowed: false,
       }
       : undefined)
-    rowsById.set(app.id, {
-      connection: app,
-      ...(access === undefined ? {} : { access }),
-    })
+    if (access === undefined) rowsById.set(app.id, { connection: app })
+    else rowsById.set(app.id, { connection: app, access })
   }
   const appRows = [...rowsById.values()]
   const loadingCurrentCatalog = hasBotAccess && (loading || (open && currentCatalog === undefined))
@@ -1672,12 +1675,14 @@ function ConnectedAppsDialog({
     return undefined
   }
   const runConnectionAction = async (app: BotConnectedAppCatalogEntry, kind: 'connect' | 'reconnect'): Promise<void> => {
+    /* v8 ignore next -- the matching action button is disabled as soon as this request starts. */
     if (activeConnectionAppId !== null) return
     const handler = kind === 'connect' ? onConnect : onReconnect
     /* v8 ignore next -- buttons are only rendered when their matching Host callback exists. */
     if (handler === undefined || currentConnectionCatalog === undefined) return
     const request = { botId: bot.id, requestId: currentConnectionCatalog.requestId, appId: app.id, kind }
     setConnectionAction(request)
+    /* v8 ignore next -- this admission update is queued for the catalog that rendered the action; later updates keep the identity fence. */
     setConnectionCatalog(current => current?.botId === request.botId && current.requestId === request.requestId
       ? { ...current, error: null }
       : current)
@@ -1768,21 +1773,24 @@ function ConnectedAppsDialog({
             {appRows.map((row) => {
               const connection = row.connection
               const access = row.access
-              const nameValue = connection?.name ?? access?.name ?? ''
+              const source = row.connection ?? row.access
+              const nameValue = source.name
+              const appIdForFallback = source.id
               const name = nameValue.trim() === '' || nameValue === '-'
-                ? t('connectedAppFallbackName', { id: connection?.id ?? access?.id ?? 'unknown' })
+                ? t('connectedAppFallbackName', { id: appIdForFallback })
                 : nameValue
               const status = connection === undefined && onLoadConnectionCatalog === undefined
                 ? { connectionState: 'available' as const }
                 : connection
               const statusLabel = connectedAppConnectionLabel(status?.connectionState ?? 'unavailable', t)
               const action = connection === undefined ? undefined : connectionActionFor(connection)
+              const appIcon = row.connection === undefined
+                ? connectedAppMark(row.access, name)
+                : connectedAppCatalogMark(row.connection, name)
               return (
                 <div className={css.connectedAppRow} key={connection?.id ?? access?.id} role="listitem">
                   <span className={css.connectedAppIcon} data-app-id={connection?.id ?? access?.id} aria-hidden="true">
-                    {connection === undefined
-                      ? access === undefined ? connectedAppMonogram(name) : connectedAppMark(access, name)
-                      : connectedAppCatalogMark(connection, name)}
+                    {appIcon}
                   </span>
                   <span className={css.connectedAppCopy}>
                     <strong>{name}</strong>
