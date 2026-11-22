@@ -2339,6 +2339,18 @@
 }
 
 @media (max-width: 480px) {
+  .connectedAppsDialogContent .connectedAppsColumnLabels {
+    grid-template-columns: 32px minmax(0, 1fr);
+    align-items: start;
+    gap: 2px 10px;
+    margin-inline: 12px;
+  }
+
+  .connectedAppsDialogContent .connectedAppsColumnLabels span {
+    grid-column: 2;
+    text-align: left;
+  }
+
   .connectedAppsDialogContent .connectedAppRow {
     grid-template-columns: 32px minmax(0, 1fr);
     align-items: start;
