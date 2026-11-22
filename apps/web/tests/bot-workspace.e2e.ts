@@ -468,10 +468,18 @@ describe('web e2e: Bot workspace retains one Conversation Session per Bot', () =
     expect(tripwire.warnings).toEqual([])
   })
 
-  it('duplicates a Bot into a fresh chat and leaves every copied routine paused', async () => {
+  it('duplicates a Bot into a fresh chat with its selected model and paused routines', async () => {
     onTestFailed(() => saveFailureShot(page, 'web-e2e-bot-duplicate'))
     const mode = page.getByRole('button', { name: 'Bots', exact: true })
     if (await mode.getAttribute('aria-pressed') !== 'true') await mode.click()
+    const sourceModel = {
+      provider: 'deepseek-official', model: 'deepseek-v4-flash-vision-exp', reasoningEffort: 'low',
+    }
+    const fallbackModel = { provider: 'deepseek-official', model: 'deepseek-v4-flash' }
+    await scaffold.ctx.sessionController.selectModel({ sessionId: secondBot.sessionId, ...sourceModel })
+    await expect.poll(() => scaffold.ctx.agentDefaultModel.currentSelection()).toMatchObject(sourceModel)
+    await scaffold.ctx.sessionController.selectModel({ sessionId: firstBot.sessionId, ...fallbackModel })
+    await expect.poll(() => scaffold.ctx.agentDefaultModel.currentSelection()).toMatchObject(fallbackModel)
     const sourceRoutine = await scaffold.ctx.schedule.create(secondBot.sessionId, {
       title: 'Review releases', prompt: 'Check the release notes.', every_seconds: 86400,
     })
@@ -515,6 +523,10 @@ describe('web e2e: Bot workspace retains one Conversation Session per Bot', () =
     expect(copy.identity).toBe(secondBot.identity)
     await expect.poll(() => copyDetail.locator('[data-conversation-session]').getAttribute('data-conversation-session'))
       .toBe(copy.sessionId)
+    const copyModelPicker = copyDetail.getByRole('button', { name: /^Select model, current/u })
+    await expect.poll(() => copyModelPicker.textContent()).toContain('DeepSeek-V4-Flash-Vision-Exp')
+    expect(await scaffold.ctx.sessionController.snapshotModelSelection(copy.sessionId)).toMatchObject(sourceModel)
+    expect(scaffold.ctx.agentDefaultModel.currentSelection()).toMatchObject(fallbackModel)
     expect(await scaffold.ctx.bots.readGrokHistory({ botId: copy.id })).toBeNull()
     expect((await scaffold.ctx.bots.readGrokHistory({ botId: secondBot.id }))?.messages[0]?.text).toBe('Recovered question')
     const catalog = await scaffold.ctx.schedule.catalog()
