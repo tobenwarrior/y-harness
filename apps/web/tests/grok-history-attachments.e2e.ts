@@ -1,11 +1,13 @@
 // Keyless assembled-browser coverage for owner-only Grok attachment downloads.
 // The vault and archive are generated inside a temporary scaffold workspace.
+import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { promisify } from 'node:util'
 import type { Browser, Download, Page } from 'playwright'
 import { chromium } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it, onTestFailed } from 'vitest'
@@ -24,8 +26,10 @@ import { newEnglishPage, saveFailureShot } from './support.ts'
 
 const SNAPSHOT_DIR = fileURLToPath(new URL('./expected/grok-history-attachments', import.meta.url))
 const FIXTURE = fileURLToPath(new URL('../../../snapshots/web/bot-workspace/session.v3.jsonl', import.meta.url))
+const IMPORTER = fileURLToPath(new URL('../../../scripts/import-grok-bot.py', import.meta.url))
 const UI_EXPECTED = join(SNAPSHOT_DIR, 'ui.expected.md')
 const MODE = webSnapshotMode()
+const runFile = promisify(execFile)
 const SOURCE_ID = 'primary'
 const SOURCE_SEQUENCE = 2
 const ATTACHMENT_NAME = 'research-notes.txt'
@@ -36,6 +40,13 @@ const ATTACHMENT_DIGEST = createHash('sha256').update(ATTACHMENT_BYTES).digest('
 const OVERSIZED_ATTACHMENT_NAME = 'oversized-synthetic.bin'
 const OVERSIZED_ATTACHMENT_TIMESTAMP = 4_000
 const OVERSIZED_ATTACHMENT_SIZE_BYTES = ATTACHMENT_SIZE_BYTES + 1
+
+async function stageReviewedFiles(sourceRoot: string, vaultRoot: string): Promise<void> {
+  await runFile('python3', ['-I', IMPORTER, '--attachments-only', '--attachments', sourceRoot, '--apply'], {
+    env: { PATH: process.env.PATH, DSH_GROK_HISTORY_ATTACHMENT_VAULT: vaultRoot },
+    timeout: 60_000,
+  })
+}
 
 async function summarizeDownload(download: Download): Promise<{ readonly size: number; readonly sha256: string }> {
   const path = await download.path()
@@ -56,6 +67,7 @@ describe('web e2e: owner-only Grok history attachments', () => {
   let page: Page
   let tripwire: ReturnType<typeof watchConsole>
   let workspaceRoot: string
+  let sourceRoot: string
   let vaultRoot: string
   let filePath: string
   let secondBot!: BotView
@@ -63,22 +75,30 @@ describe('web e2e: owner-only Grok history attachments', () => {
   beforeAll(async () => {
     workspaceRoot = await mkdtemp(join(tmpdir(), 'dsh-web-grok-history-attachments-'))
     vaultRoot = join(workspaceRoot, 'attachment-vault')
-    await mkdir(vaultRoot)
     filePath = join(vaultRoot, ATTACHMENT_DIGEST)
-    await writeFile(filePath, ATTACHMENT_BYTES)
+    sourceRoot = join(workspaceRoot, 'reviewed-attachments')
+    const reviewedEntry = {
+      botId: 'bot-grok-downloads',
+      sourceId: SOURCE_ID,
+      sourceSequence: SOURCE_SEQUENCE,
+      filename: ATTACHMENT_NAME,
+      timestampMs: ATTACHMENT_TIMESTAMP,
+      sha256: ATTACHMENT_DIGEST,
+    }
+    await mkdir(sourceRoot, { mode: 0o700 })
+    await writeFile(join(sourceRoot, ATTACHMENT_DIGEST), ATTACHMENT_BYTES)
+    await writeFile(join(sourceRoot, 'manifest.json'), JSON.stringify({ version: 1, entries: [reviewedEntry] }))
+    await stageReviewedFiles(sourceRoot, vaultRoot)
+    const manifestPath = join(vaultRoot, 'manifest.json')
+    expect(JSON.parse(await readFile(manifestPath, 'utf8'))).toEqual({ version: 1, entries: [reviewedEntry] })
+
+    // A hand-staged entry still passes through the Host's own size check.
     const oversizedBytes = Buffer.alloc(OVERSIZED_ATTACHMENT_SIZE_BYTES, 0x4f)
     const oversizedDigest = createHash('sha256').update(oversizedBytes).digest('hex')
     await writeFile(join(vaultRoot, oversizedDigest), oversizedBytes)
-    await writeFile(join(vaultRoot, 'manifest.json'), JSON.stringify({
+    await writeFile(manifestPath, JSON.stringify({
       version: 1,
-      entries: [{
-        botId: 'bot-grok-downloads',
-        sourceId: SOURCE_ID,
-        sourceSequence: SOURCE_SEQUENCE,
-        filename: ATTACHMENT_NAME,
-        timestampMs: ATTACHMENT_TIMESTAMP,
-        sha256: ATTACHMENT_DIGEST,
-      }, {
+      entries: [reviewedEntry, {
         botId: 'bot-grok-downloads',
         sourceId: SOURCE_ID,
         sourceSequence: SOURCE_SEQUENCE + 1,
@@ -135,7 +155,7 @@ describe('web e2e: owner-only Grok history attachments', () => {
 
   it('downloads only the exact verified attachment and recovers after a vault reload', async () => {
     onTestFailed(() => saveFailureShot(page, 'web-e2e-grok-history-attachments'))
-    const openHistory = async () => {
+    const openBot = async () => {
       const sidebar = page.locator('[data-yh-part="sidebar"]')
       const botsMode = sidebar.getByRole('button', { name: 'Bots', exact: true })
       await botsMode.waitFor({ state: 'visible' })
@@ -143,16 +163,26 @@ describe('web e2e: owner-only Grok history attachments', () => {
       const roster = sidebar.locator('aside[aria-label="Bot workspace"]')
       const row = roster.locator(`[data-bot-id="${secondBot.id}"]`)
       await row.click()
-      const detail = page.locator(`section[aria-label="${secondBot.name}"]`)
+      return page.locator(`section[aria-label="${secondBot.name}"]`)
+    }
+    const openHistory = async () => {
+      const detail = await openBot()
       await detail.getByRole('button', { name: 'Bot options', exact: true }).click()
       await page.getByRole('menuitem', { name: 'Imported Grok chat', exact: true }).click()
       return page.getByRole('dialog', { name: 'Imported Grok chat' })
     }
     const downloadName = `Download ${ATTACHMENT_NAME}`
+    const detail = await openBot()
+    const inline = detail.getByRole('region', { name: 'Imported Grok chat', exact: true })
+    await inline.getByRole('button', { name: 'Show history', exact: true }).click()
+    const inlineLink = inline.getByRole('link', { name: downloadName, exact: true })
+    await inlineLink.waitFor()
+    const inlineHref = await inlineLink.getAttribute('href')
     const dialog = await openHistory()
     const link = dialog.getByRole('link', { name: downloadName, exact: true })
     const href = await link.getAttribute('href')
     if (href === null) throw new Error('attachment download link has no href')
+    expect(inlineHref).toBe(href)
     const downloadUrl = new URL(href, scaffold.baseUrl)
     expect(downloadUrl.origin).toBe(new URL(scaffold.baseUrl).origin)
     expect(downloadUrl.pathname).toBe('/api/bots/grokHistory/downloadAttachment')
@@ -195,7 +225,7 @@ describe('web e2e: owner-only Grok history attachments', () => {
     await unavailableDialog.getByText(OVERSIZED_ATTACHMENT_NAME, { exact: true }).waitFor()
     expect(await unavailableDialog.getByRole('link', { name: `Download ${OVERSIZED_ATTACHMENT_NAME}`, exact: true }).count()).toBe(0)
 
-    await writeFile(filePath, ATTACHMENT_BYTES)
+    await stageReviewedFiles(sourceRoot, vaultRoot)
     await page.reload({ waitUntil: 'load' })
     const reloadedDialog = await openHistory()
     const reloadedLink = reloadedDialog.getByRole('link', { name: downloadName, exact: true })
