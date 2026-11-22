@@ -834,6 +834,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'Counts for the selected source Bot and names of missing routine skill definitions.',
       },
       {
+        signature: '@Remote(\'importGrokConnectedApps\') async importGrokConnectedApps( request: BotGrokConnectedAppImportRequest, signal?: AbortSignal, ): Promise<BotGrokConnectedAppImportValue>',
+        description: 'Preview or apply exact owner-reviewed connected-app mappings from a Grok export.',
+        parameters: [{ name: 'request', description: 'Destination Bot, export labels, reviewed mappings, and optional revision.' }, { name: 'signal', description: 'Optional cancellation signal for the serialized apply.' }],
+        returns: 'Per-source classifications, the reviewed Bot revision, and grant changes made by an apply.',
+      },
+      {
         signature: '@Remote(\'listMemory\') async listMemory(request: BotMemoryListRequest): Promise<BotMemoryListValue>',
         description: 'List active memories for a Bot without accepting a model-supplied Session id.',
         parameters: [{ name: 'request', description: 'Durable Bot id whose private projection should be read.' }],
@@ -5964,6 +5970,26 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'BotEventTrigger',
     declaration: 'export interface BotEventTrigger {\n    readonly type: \'message\';\n    readonly source: BotEventSource;\n}',
+  },
+  {
+    name: 'BotGrokConnectedAppImportRequest',
+    declaration: 'export interface BotGrokConnectedAppImportRequest {\n    readonly botId: BotId;\n    readonly document: string;\n    readonly sourceName?: string;\n    readonly mappings: readonly BotGrokConnectedAppMapping[];\n    readonly expectedUpdatedAt?: number;\n    readonly preview?: boolean;\n}',
+  },
+  {
+    name: 'BotGrokConnectedAppImportValue',
+    declaration: 'export interface BotGrokConnectedAppImportValue {\n    readonly updatedAt: number;\n    readonly mappings: readonly BotGrokConnectedAppMappingView[];\n    readonly changedAppIds: readonly string[];\n    readonly catalogAvailable: boolean;\n}',
+  },
+  {
+    name: 'BotGrokConnectedAppMapping',
+    declaration: 'export interface BotGrokConnectedAppMapping {\n    readonly sourceIndex: number;\n    readonly sourceLabel: string;\n    readonly targetServerName: string;\n}',
+  },
+  {
+    name: 'BotGrokConnectedAppMappingView',
+    declaration: 'export interface BotGrokConnectedAppMappingView {\n    readonly sourceIndex: number;\n    readonly sourceLabel: string;\n    readonly resolution: BotGrokConnectedAppResolution;\n    readonly targetServerName?: string;\n    readonly entryId?: string;\n    readonly allowed?: boolean;\n}',
+  },
+  {
+    name: 'BotGrokConnectedAppResolution',
+    declaration: 'export type BotGrokConnectedAppResolution = \'connected\' | \'unconnected\' | \'missing\' | \'ambiguous\' | \'unavailable\' | \'unmapped\';',
   },
   {
     name: 'BotGrokHistoryArchive',

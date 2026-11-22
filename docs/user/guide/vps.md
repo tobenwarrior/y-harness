@@ -416,6 +416,17 @@ For a file with several bots, add `--source-name` to choose one. Repeat the comm
 
 If a routine references Grok's `box-desktop` skill, copy the [VPS Computer compatibility skill](../../../apps/cli/config/examples/skills/box-desktop/SKILL.md) into `.agents/skills/box-desktop/SKILL.md` in the Bot's execution workspace. For a managed VPS Bot, use its Computer workspace or `podman cp` after identifying the container; for a desktop-only or ordinary Bot, use the Host directory at `~/.yharness-vps/bots/<bot-session-id>`. Select an image-capable model in that Bot’s chat. Test a desktop observation and review any routine that needs network access before resuming it.
 
+App labels in a Grok export are display labels, not connector identities. To review connector grants separately, create a private JSON map containing only exact `sourceIndex`, `sourceLabel`, and configured MCP `targetServerName` values, then preview it without changing the Bot:
+
+```sh
+python3 ~/.yharness-vps/source/scripts/import-grok-bot.py ./grok-bot-export.json \
+  --bot "Research Bot" --source-name "Research Bot" --connected-app-map ./reviewed-app-map.json
+```
+
+The map is owner-reviewed and additive-only. The Host reports connected, unconnected, missing, ambiguous, or unavailable entries, never infers a connector from a label, and never imports credentials or shared-app grants. Add `--apply` only after reviewing the result; the apply is revision-guarded and rejects unresolved entries without a partial write, while configured but disconnected connectors remain eligible for a later reconnect.
+
+The preview prints the `updatedAt` revision used for the review. Apply only with that captured revision, for example `python3 ~/.yharness-vps/source/scripts/import-grok-bot.py ./grok-bot-export.json --bot "Research Bot" --source-name "Research Bot" --connected-app-map ./reviewed-app-map.json --apply --expected-updated-at 1234567890`. If the Bot changed after preview, the apply fails closed and must be previewed again.
+
 ## Check the service
 
 On the VPS, run `python3 ~/.local/bin/yharness-vps status`. Setup keeps the source checkout, the working directory, and Y Harness state in separate locations under `~/.yharness-vps`. Provider settings and logs stay in that private directory. Keep the host log private because it contains the sign-in link.

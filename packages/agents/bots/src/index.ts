@@ -48,6 +48,7 @@ import type {
 } from '@yharness/schedule'
 import type {} from '@yharness/agent-preset-registry'
 import type {} from '@yharness/mcp-resources'
+import type { McpActionCatalog } from '@yharness/mcp-client'
 // Type-only: shared Sessions force the optional approval seam to ask so their
 // collaborator-owned connected-app approvals reach the shared mailbox.
 import { setApprovalPolicy } from '@yharness/user-approval'
@@ -127,7 +128,7 @@ import { installBotCollaborationTools } from './scoped-tools.ts'
 import { installBotRoutineTools } from './routine-tools.ts'
 import type { BotEventRoutineToolHost } from './routine-tools.ts'
 import { botInboxMessageState } from './inbox.ts'
-import { parseGrokImport } from './grok-import.ts'
+import { parseGrokConnectedAppImport, parseGrokImport } from './grok-import.ts'
 import { GrokHistoryAttachmentVault } from './grok-history-attachments.ts'
 import {
   botGrokHistoryDomain,
@@ -191,6 +192,11 @@ import type {
   BotGrokHistoryImportRequest,
   BotGrokHistoryRequest,
   BotGrokHistoryView,
+  BotGrokConnectedAppImportRequest,
+  BotGrokConnectedAppImportValue,
+  BotGrokConnectedAppMapping,
+  BotGrokConnectedAppMappingView,
+  BotGrokConnectedAppResolution,
   BotGrokImportRequest,
   BotGrokImportValue,
   BotMemoryView,
@@ -1519,6 +1525,34 @@ function normalizeOptionalBoolean(label: string, value: boolean | undefined): bo
 function normalizeConnectedAppId(value: unknown): string {
   if (typeof value !== 'string') return badRequest('Connected-app id must be a string')
   return value
+}
+
+function isUnknownRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function normalizeGrokConnectedAppMappings(value: unknown): readonly BotGrokConnectedAppMapping[] {
+  if (!Array.isArray(value)) return badRequest('Grok connected-app mappings must be an array')
+  return value.map((candidate, index) => {
+    if (!isUnknownRecord(candidate)) return badRequest(`Grok connected-app mapping ${String(index)} is invalid`)
+    if (Object.keys(candidate).some(key => !['sourceIndex', 'sourceLabel', 'targetServerName'].includes(key))) {
+      return badRequest(`Grok connected-app mapping ${String(index)} has invalid fields`)
+    }
+    const sourceIndex = candidate.sourceIndex
+    const sourceLabel = candidate.sourceLabel
+    const targetServerName = candidate.targetServerName
+    if (typeof sourceIndex !== 'number' || !Number.isSafeInteger(sourceIndex) || sourceIndex < 0) {
+      return badRequest(`Grok connected-app mapping ${String(index)} has an invalid source index`)
+    }
+    if (typeof sourceLabel !== 'string' || sourceLabel.length === 0 || sourceLabel.trim() !== sourceLabel || textLength(sourceLabel) > 160) {
+      return badRequest(`Grok connected-app mapping ${String(index)} has an invalid source label`)
+    }
+    if (typeof targetServerName !== 'string' || targetServerName.length === 0
+      || targetServerName.trim() !== targetServerName || textLength(targetServerName) > 128) {
+      return badRequest(`Grok connected-app mapping ${String(index)} has an invalid target server name`)
+    }
+    return { sourceIndex, sourceLabel, targetServerName }
+  })
 }
 
 function connectedAppName(id: string): string {
@@ -4464,6 +4498,9 @@ export class BotService extends TypertRemoteService {
     for (const id of resources?.servers(agent) ?? []) {
       if (!names.has(id)) names.set(id, connectedAppName(id))
     }
+    for (const catalog of this.mcpActionCatalogs()) {
+      if (!names.has(catalog.serverName)) names.set(catalog.serverName, connectedAppName(catalog.serverName))
+    }
     for (const id of record.connectedAppIds ?? []) {
       if (!names.has(id)) names.set(id, connectedAppName(id))
     }
@@ -4477,6 +4514,89 @@ export class BotService extends TypertRemoteService {
       name,
       allowed: allowed === undefined ? !denied.includes(id) : allowed.includes(id),
     }))
+  }
+
+  /** Read exact action catalogs from eligible loader-owned MCP connectors. */
+  private mcpActionCatalogs(): readonly McpActionCatalog[] {
+    const catalogs: McpActionCatalog[] = []
+    this.ctx.emit('mcp/actions/catalog', (catalog) => { catalogs.push(catalog) })
+    return catalogs
+  }
+
+  /** Classify an owner-reviewed Grok app map without inferring connector identities. */
+  private classifyGrokConnectedApps(
+    sourceApps: readonly string[],
+    mappings: readonly BotGrokConnectedAppMapping[],
+    record: BotRecord,
+    catalogs: readonly McpActionCatalog[],
+  ): {
+    readonly rows: readonly BotGrokConnectedAppMappingView[]
+    readonly eligibleIds: readonly string[]
+    readonly catalogAvailable: boolean
+    readonly unresolved: boolean
+  } {
+    const mappingByIndex = new Map<number, BotGrokConnectedAppMapping>()
+    const duplicateIndexes = new Set<number>()
+    for (const mapping of mappings) {
+      if (mappingByIndex.has(mapping.sourceIndex)) duplicateIndexes.add(mapping.sourceIndex)
+      else mappingByIndex.set(mapping.sourceIndex, mapping)
+    }
+    const catalogsByServer = new Map<string, McpActionCatalog[]>()
+    for (const catalog of catalogs) {
+      const entries = catalogsByServer.get(catalog.serverName)
+      if (entries === undefined) catalogsByServer.set(catalog.serverName, [catalog])
+      else entries.push(catalog)
+    }
+    const appsById = new Map(this.connectedAppsFor(record).map(app => [app.id, app]))
+    const eligibleIds = new Set<string>()
+    let unresolved = false
+    const rows = sourceApps.map((sourceLabel, sourceIndex): BotGrokConnectedAppMappingView => {
+      const mapping = mappingByIndex.get(sourceIndex)
+      if (mapping === undefined) return { sourceIndex, sourceLabel, resolution: 'unmapped' }
+      if (duplicateIndexes.has(sourceIndex) || mapping.sourceLabel !== sourceLabel) {
+        unresolved = true
+        return { sourceIndex, sourceLabel, resolution: 'ambiguous', targetServerName: mapping.targetServerName }
+      }
+      const matches = catalogsByServer.get(mapping.targetServerName)
+      if (matches === undefined) {
+        unresolved = true
+        return { sourceIndex, sourceLabel, resolution: catalogs.length === 0 ? 'unavailable' : 'missing', targetServerName: mapping.targetServerName }
+      }
+      if (matches.length !== 1) {
+        unresolved = true
+        return { sourceIndex, sourceLabel, resolution: 'ambiguous', targetServerName: mapping.targetServerName }
+      }
+      const [match] = matches
+      if (match === undefined) {
+        unresolved = true
+        return { sourceIndex, sourceLabel, resolution: 'ambiguous', targetServerName: mapping.targetServerName }
+      }
+      const app = appsById.get(mapping.targetServerName)
+      if (app === undefined) {
+        unresolved = true
+        return {
+          sourceIndex,
+          sourceLabel,
+          resolution: 'ambiguous',
+          targetServerName: mapping.targetServerName,
+          entryId: match.entryId,
+        }
+      }
+      const resolution: BotGrokConnectedAppResolution = match.connected ? 'connected' : 'unconnected'
+      eligibleIds.add(mapping.targetServerName)
+      return {
+        sourceIndex,
+        sourceLabel,
+        resolution,
+        targetServerName: mapping.targetServerName,
+        entryId: match.entryId,
+        allowed: app.allowed,
+      }
+    })
+    for (const mapping of mappings) {
+      if (mapping.sourceIndex >= sourceApps.length) unresolved = true
+    }
+    return { rows, eligibleIds: [...eligibleIds], catalogAvailable: catalogs.length > 0, unresolved }
   }
 
   /** Build a structured denial for one Bot's external MCP tool call. */
@@ -7373,6 +7493,92 @@ export class BotService extends TypertRemoteService {
         sourceName: plan.name, memories: plan.memories.length, skills: plan.skills.length,
         skillNames: [...new Set(skillNames.values())],
         routines: plan.routines.length, missingRoutineSkills,
+      }
+    }, signal)
+  }
+
+  /**
+   * Preview or apply exact owner-reviewed connected-app mappings from a Grok export.
+   * @param request - Destination Bot, export labels, reviewed mappings, and optional revision.
+   * @param signal - Optional cancellation signal for the serialized apply.
+   * @returns Per-source classifications, the reviewed Bot revision, and grant changes made by an apply.
+   */
+  @Remote('importGrokConnectedApps')
+  async importGrokConnectedApps(
+    request: BotGrokConnectedAppImportRequest,
+    signal?: AbortSignal,
+  ): Promise<BotGrokConnectedAppImportValue> {
+    const botId = normalizeBotId(request.botId)
+    if (botId === undefined) return badRequest('Bot id is required')
+    if (request.preview !== undefined && typeof request.preview !== 'boolean') {
+      return badRequest('Grok connected-app preview must be a boolean')
+    }
+    const expectedUpdatedAt = request.expectedUpdatedAt
+    if (expectedUpdatedAt !== undefined && (!Number.isSafeInteger(expectedUpdatedAt) || expectedUpdatedAt < 0)) {
+      return badRequest('Bot expectedUpdatedAt must be a non-negative integer')
+    }
+    if (request.preview !== true && expectedUpdatedAt === undefined) {
+      return badRequest('Bot expectedUpdatedAt is required when applying connected-app mappings')
+    }
+    const mappings = normalizeGrokConnectedAppMappings(request.mappings)
+    const plan = parseGrokConnectedAppImport(request.document, request.sourceName)
+    for (const mapping of mappings) {
+      if (mapping.sourceIndex >= plan.apps.length) {
+        return badRequest('A Grok connected-app mapping refers to a source app that is not present')
+      }
+    }
+    return this.serialize(async () => {
+      const bot = await this.readOwnedBot(botId)
+      if (bot.state !== 'active') return badRequest('Wait for the destination Bot to finish setup.')
+      const catalogs = this.mcpActionCatalogs()
+      const review = this.classifyGrokConnectedApps(plan.apps, mappings, bot, catalogs)
+      if (request.preview === true) {
+        return {
+          updatedAt: bot.updatedAt,
+          mappings: review.rows,
+          changedAppIds: [],
+          catalogAvailable: review.catalogAvailable,
+        }
+      }
+      if (review.unresolved) {
+        return badRequest('Review every connected-app mapping that is not connected or unconnected before applying')
+      }
+      if (expectedUpdatedAt !== bot.updatedAt) {
+        throw new RemoteError('gateway/conflict', 'Bot profile changed during connected-app import', { botId })
+      }
+      const targetIds = review.eligibleIds
+      const currentAllowed = bot.connectedAppIds
+      const currentDenied = bot.connectedAppDenyIds ?? []
+      const changedAppIds = targetIds.filter(appId => currentAllowed === undefined
+        ? currentDenied.includes(appId)
+        : !currentAllowed.includes(appId))
+      if (changedAppIds.length === 0) {
+        return {
+          updatedAt: bot.updatedAt,
+          mappings: review.rows,
+          changedAppIds,
+          catalogAvailable: review.catalogAvailable,
+        }
+      }
+      const next = await this.commitBotMutation(botId, current => current.connectedAppIds === undefined
+        ? {
+          ...current,
+          connectedAppDenyIds: (current.connectedAppDenyIds ?? []).filter(appId => !targetIds.includes(appId)),
+          updatedAt: Math.max(Date.now(), current.updatedAt + 1),
+        }
+        : {
+          ...current,
+          connectedAppIds: [...new Set([...current.connectedAppIds, ...targetIds])],
+          updatedAt: Math.max(Date.now(), current.updatedAt + 1),
+        }, expectedUpdatedAt, signal)
+      this.recordsBySession.set(String(next.sessionId), next)
+      this.refreshSharedRecords(next)
+      this.emitChanged()
+      return {
+        updatedAt: next.updatedAt,
+        mappings: review.rows,
+        changedAppIds,
+        catalogAvailable: review.catalogAvailable,
       }
     }, signal)
   }

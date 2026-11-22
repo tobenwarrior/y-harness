@@ -744,6 +744,69 @@ export interface BotConnectedAppAccessValue {
   readonly app: BotConnectedAppAccess
 }
 
+/** Outcome for one explicitly reviewed Grok connected-app mapping. */
+export type BotGrokConnectedAppResolution =
+  | 'connected'
+  | 'unconnected'
+  | 'missing'
+  | 'ambiguous'
+  | 'unavailable'
+  | 'unmapped'
+
+/** Exact owner-reviewed mapping from one exported app label to one MCP server namespace. */
+export interface BotGrokConnectedAppMapping {
+  /** Zero-based position in the selected Grok export's app list. */
+  readonly sourceIndex: number
+  /** Exact label at sourceIndex, retained to prevent stale-map reuse. */
+  readonly sourceLabel: string
+  /** Exact configured MCP server namespace. Display labels never infer this value. */
+  readonly targetServerName: string
+}
+
+/** Owner request to preview or apply reviewed Grok connected-app mappings. */
+export interface BotGrokConnectedAppImportRequest {
+  /** Destination Bot whose owner policy may receive additive grants. */
+  readonly botId: BotId
+  /** Version-one Grok Bot export JSON containing the source app labels. */
+  readonly document: string
+  /** Source Bot name required when the document contains several Bots. */
+  readonly sourceName?: string
+  /** Exact mappings reviewed by the owner. Omitted source apps remain unmapped. */
+  readonly mappings: readonly BotGrokConnectedAppMapping[]
+  /** Destination Bot revision returned by the preview that the owner reviewed. */
+  readonly expectedUpdatedAt?: number
+  /** Validate and return classifications without changing the Bot. */
+  readonly preview?: boolean
+}
+
+/** Owner-facing classification of one source app mapping. */
+export interface BotGrokConnectedAppMappingView {
+  /** Zero-based position in the selected Grok export's app list. */
+  readonly sourceIndex: number
+  /** Exact source label from the selected export. */
+  readonly sourceLabel: string
+  /** Current Host classification for this source entry. */
+  readonly resolution: BotGrokConnectedAppResolution
+  /** Exact reviewed target, when one was supplied. */
+  readonly targetServerName?: string
+  /** Full loader entry identity when the target is configured. */
+  readonly entryId?: string
+  /** Current Bot grant decision for a configured target. */
+  readonly allowed?: boolean
+}
+
+/** Result of previewing or applying reviewed Grok connected-app mappings. */
+export interface BotGrokConnectedAppImportValue {
+  /** Destination Bot profile revision returned by preview or committed by apply. */
+  readonly updatedAt: number
+  /** Classifications for every source app in stable source order. */
+  readonly mappings: readonly BotGrokConnectedAppMappingView[]
+  /** Exact server namespaces newly added to the Bot's allow policy. */
+  readonly changedAppIds: readonly string[]
+  /** Whether the Host exposed an eligible MCP action catalog for review. */
+  readonly catalogAvailable: boolean
+}
+
 /** Request the independent connected-app grants used by shared Bot Sessions. */
 export interface BotSharedAppAccessRequest {
   /** Bot whose shared-session policy should be returned. */

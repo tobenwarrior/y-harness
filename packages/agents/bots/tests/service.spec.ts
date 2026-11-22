@@ -46,6 +46,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { MemoryMediaPool, MemoryStorageBackend } from '../../../storage/storage-domain/tests/helpers/memory-backend.ts'
 import { MockAdapter, textResponse } from '../../../core/agent-loop/tests/mock-adapter.ts'
 import { registerServerContext } from '../../../mcp/mcp-client/src/server-context.ts'
+import type { McpActionCatalog } from '../../../mcp/mcp-client/src/action-catalog.ts'
 import ScheduleService from '../../../schedule/schedule/src/index.ts'
 import { registerScheduleTools } from '../../../schedule/tool-schedule/src/index.ts'
 import BotService from '../src/index.ts'
@@ -11622,6 +11623,115 @@ describe('durable Bot roster', () => {
       }
     } finally {
       if (!closed) await close(h.ctx)
+    }
+  })
+
+  it('previews and applies only exact reviewed Grok connector mappings', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const created = await first.service.create({ name: 'Reviewed app importer', cwd: '/tmp' })
+    await close(first.ctx)
+
+    const h = await harness(pool, undefined, undefined, [String(created.bot.sessionId)])
+    try {
+      h.ctx.tools.register(mcpFixtureTool('mcp__github__list_issues', 'github', async () => 'called'))
+      const catalogs: readonly McpActionCatalog[] = [
+        { serverName: 'github', entryId: 'fixture:github', connected: true, actions: [] },
+        { serverName: 'offline', entryId: 'fixture:offline', connected: false, actions: [] },
+      ]
+      h.ctx.on('mcp/actions/catalog', (accept) => { for (const catalog of catalogs) accept(catalog) })
+      const document = JSON.stringify({
+        format: 'grok-bot-export', version: 1, bots: [{
+          name: 'Source', apps: ['GitHub workspace', 'Offline source', 'Missing source'],
+        }],
+      })
+      const mappings = [
+        { sourceIndex: 0, sourceLabel: 'GitHub workspace', targetServerName: 'github' },
+        { sourceIndex: 1, sourceLabel: 'Offline source', targetServerName: 'offline' },
+        { sourceIndex: 2, sourceLabel: 'Missing source', targetServerName: 'not-configured' },
+      ] as const
+      const preview = await h.service.importGrokConnectedApps({
+        botId: created.bot.id, document, sourceName: 'Source', mappings, preview: true,
+      })
+      expect(preview.mappings).toMatchObject([
+        { sourceIndex: 0, resolution: 'connected', entryId: 'fixture:github' },
+        { sourceIndex: 1, resolution: 'unconnected', entryId: 'fixture:offline' },
+        { sourceIndex: 2, resolution: 'missing', targetServerName: 'not-configured' },
+      ])
+      expect(preview.catalogAvailable).toBe(true)
+      expect(preview.changedAppIds).toEqual([])
+      expect(preview).not.toHaveProperty('bot')
+      await expect(h.service.listConnectedApps({ botId: created.bot.id })).resolves.toMatchObject({
+        apps: [
+          { id: 'github', allowed: false },
+          { id: 'offline', allowed: false },
+        ],
+      })
+
+      await expect(h.service.importGrokConnectedApps({
+        botId: created.bot.id, document, sourceName: 'Source', mappings,
+        expectedUpdatedAt: preview.updatedAt,
+      })).rejects.toMatchObject({ code: 'gateway/bad-request' })
+      await expect(h.service.listConnectedApps({ botId: created.bot.id })).resolves.toMatchObject({
+        apps: [
+          { id: 'github', allowed: false },
+          { id: 'offline', allowed: false },
+        ],
+      })
+
+      const validMappings = mappings.slice(0, 2)
+      const applied = await h.service.importGrokConnectedApps({
+        botId: created.bot.id, document, sourceName: 'Source', mappings: validMappings,
+        expectedUpdatedAt: preview.updatedAt,
+      })
+      expect(applied.changedAppIds).toEqual(['github', 'offline'])
+      expect(applied.updatedAt).toBeGreaterThan(preview.updatedAt)
+      await expect(h.service.listConnectedApps({ botId: created.bot.id })).resolves.toMatchObject({
+        apps: [
+          { id: 'github', allowed: true },
+          { id: 'offline', allowed: true },
+        ],
+      })
+
+      const stale = await h.service.importGrokConnectedApps({
+        botId: created.bot.id, document, sourceName: 'Source', mappings: validMappings, preview: true,
+      })
+      await h.service.setConnectedAppAccess({ botId: created.bot.id, appId: 'github', allowed: false })
+      await expect(h.service.importGrokConnectedApps({
+        botId: created.bot.id, document, sourceName: 'Source', mappings: validMappings,
+        expectedUpdatedAt: stale.updatedAt,
+      })).rejects.toMatchObject({ code: 'gateway/conflict' })
+    } finally {
+      await close(h.ctx)
+    }
+  })
+
+  it('keeps connector mapping unavailable without an action catalog', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const created = await first.service.create({ name: 'Unavailable app importer', cwd: '/tmp' })
+    await close(first.ctx)
+    const h = await harness(pool, undefined, undefined, [String(created.bot.sessionId)])
+    try {
+      h.ctx.tools.register(mcpFixtureTool('mcp__github__list_issues', 'github', async () => 'called'))
+      const preview = await h.service.importGrokConnectedApps({
+        botId: created.bot.id,
+        document: JSON.stringify({ format: 'grok-bot-export', version: 1, bots: [{ name: 'Source', apps: ['GitHub'] }] }),
+        mappings: [{ sourceIndex: 0, sourceLabel: 'GitHub', targetServerName: 'github' }],
+        preview: true,
+      })
+      expect(preview.mappings).toEqual([{
+        sourceIndex: 0, sourceLabel: 'GitHub', resolution: 'unavailable', targetServerName: 'github',
+      }])
+      expect(preview.catalogAvailable).toBe(false)
+      await expect(h.service.importGrokConnectedApps({
+        botId: created.bot.id,
+        document: JSON.stringify({ format: 'grok-bot-export', version: 1, bots: [{ name: 'Source', apps: ['GitHub'] }] }),
+        mappings: [{ sourceIndex: 0, sourceLabel: 'GitHub', targetServerName: 'github' }],
+        expectedUpdatedAt: preview.updatedAt,
+      })).rejects.toMatchObject({ code: 'gateway/bad-request' })
+    } finally {
+      await close(h.ctx)
     }
   })
 
