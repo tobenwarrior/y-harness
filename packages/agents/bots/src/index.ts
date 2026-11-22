@@ -2799,6 +2799,7 @@ export class BotService extends TypertRemoteService {
 
   private readonly ready: Promise<Domain<typeof botDomain>>
   private readonly grokHistoryDomain: Promise<Domain<typeof botGrokHistoryDomain>>
+  private readonly grokHistoryBotIds = new Set<string>()
   private grokHistoryAttachmentVault: GrokHistoryAttachmentVault | undefined
   private readonly groupDomain: Promise<Domain<typeof botGroupDomain>>
   private readonly groupService: Promise<BotGroupService>
@@ -3509,6 +3510,8 @@ export class BotService extends TypertRemoteService {
         const openedGroupDomain = groupDomain
         const openedAttachmentDomain = attachmentDomain
         const openedTemplateDomain = templateDomain
+        this.grokHistoryBotIds.clear()
+        for (const id of openedGrokHistoryDomain.table('archives').keys()) this.grokHistoryBotIds.add(String(id))
         if (config.grokHistoryAttachmentVault !== undefined) {
           this.grokHistoryAttachmentVault = await GrokHistoryAttachmentVault.load(config.grokHistoryAttachmentVault)
         }
@@ -7377,7 +7380,11 @@ export class BotService extends TypertRemoteService {
           throw error
         }
       }
-      if (current === undefined || JSON.stringify(current) !== JSON.stringify(merged)) await archives.put(id, merged)
+      if (current === undefined || JSON.stringify(current) !== JSON.stringify(merged)) {
+        await archives.put(id, merged)
+        this.grokHistoryBotIds.add(String(id))
+        this.emitChanged()
+      }
       return { messages: grokHistoryMessageCount(merged) }
     })
   }
@@ -9071,6 +9078,7 @@ export class BotService extends TypertRemoteService {
       pinned: record.pinned ?? false,
       hidden: record.hidden ?? false,
       availability,
+      ...(this.grokHistoryBotIds.has(String(record.id)) ? { grokHistoryAvailable: true } : {}),
     }
   }
 

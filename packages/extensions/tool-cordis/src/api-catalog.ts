@@ -6400,7 +6400,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'BotView',
-    declaration: 'export type BotView = Omit<BotRecord, \'ownerId\' | \'eventRoutines\' | \'skillPolicyRevision\'> & {\n    readonly availability: BotAvailability;\n    readonly pinned: boolean;\n    readonly hidden: boolean;\n};',
+    declaration: 'export type BotView = Omit<BotRecord, \'ownerId\' | \'eventRoutines\' | \'skillPolicyRevision\'> & {\n    readonly availability: BotAvailability;\n    readonly pinned: boolean;\n    readonly hidden: boolean;\n    readonly grokHistoryAvailable?: boolean;\n};',
   },
   {
     name: 'BoxProps',

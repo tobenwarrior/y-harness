@@ -41,6 +41,7 @@ describe('Inline imported Bot chat', () => {
     expect(read).toHaveBeenCalledWith('bot-one', expect.any(AbortSignal))
     expect(await screen.findByText('Recovered question')).toBeTruthy()
     expect(screen.getByText(en.grokHistoryRecovered)).toBeTruthy()
+    expect(screen.queryByText(en.grokHistoryInlineDescription)).toBeNull()
 
     fireEvent.change(screen.getByRole('combobox', { name: en.grokHistorySource }), { target: { value: 'partial' } })
     expect(screen.getByText('Partial question')).toBeTruthy()

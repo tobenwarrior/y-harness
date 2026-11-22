@@ -32,6 +32,7 @@ type WorkspaceTabKind = 'terminal' | 'computer-files' | 'computer-shared-files'
 
 interface BotsConversationBot extends ConversationBot {
   readonly id?: string
+  readonly grokHistoryAvailable?: boolean
   readonly readGrokHistory?: BotWorkspaceFace['readGrokHistory']
   readonly t?: PropsLocale<'bots'>['t']
 }
@@ -74,7 +75,8 @@ export type BotsConversationProps = PropsRuntime<'bots.conversation'> & PropsRen
 
 function BotsConversationViews({ ownerBot, ...props }: ConversationViewsProps & { readonly ownerBot: BotsConversationBot }): ReactNode {
   const live = props.renderSlot('conversation.session', props.bot === undefined ? {} : { bot: props.bot })
-  if (ownerBot.id === undefined || ownerBot.readGrokHistory === undefined || ownerBot.t === undefined) return live
+  if (ownerBot.id === undefined || ownerBot.grokHistoryAvailable !== true
+    || ownerBot.readGrokHistory === undefined || ownerBot.t === undefined) return live
   return (
     <>
       <GrokHistoryInline key={ownerBot.id} botId={ownerBot.id} botName={ownerBot.name} read={ownerBot.readGrokHistory} t={ownerBot.t} />
@@ -116,6 +118,7 @@ function summaryOf(bot: BotView, statuses: SessionStatusSnapshot): BotSummary {
     accent: bot.accent,
     identity: bot.identity,
     ...(bot.avatar === undefined ? {} : { avatar: bot.avatar }),
+    ...(bot.grokHistoryAvailable === true ? { grokHistoryAvailable: true } : {}),
   }
 }
 
@@ -209,6 +212,9 @@ export function BotsPanel({
   const showFilesAction = useFilesAvailable(value => value)
   const showSharedFilesAction = useSharedFilesAvailable(value => value)
   const selectedBot = bots.find(bot => bot.id === state.selectedBotId)
+  const selectedBotHistory = selectedBot?.grokHistoryAvailable === true && readGrokHistory !== undefined
+    ? readGrokHistory
+    : undefined
   const selectedReference = reference()
   const canShowComputer = (availability === 'available' || availability === 'mac') && selectedReference !== undefined
   const showComputer = canShowComputer && computerTarget === selectedReference.sessionId
@@ -218,9 +224,9 @@ export function BotsPanel({
     : (
       <SessionProvider session={selectedReference}>
         {renderSlot('bots.conversation', {
-          bot: readGrokHistory === undefined
+          bot: selectedBotHistory === undefined
             ? { name: selectedBot.name }
-            : { name: selectedBot.name, id: selectedBot.id, readGrokHistory, t },
+            : { name: selectedBot.name, id: selectedBot.id, grokHistoryAvailable: true, readGrokHistory: selectedBotHistory, t },
         })}
       </SessionProvider>
     )
@@ -247,7 +253,7 @@ export function BotsPanel({
         bot={selectedBot}
         {...(selectedReference === undefined ? {} : { sessionId: selectedReference.sessionId })}
         children={conversation}
-        readGrokHistory={readGrokHistory}
+        {...(selectedBotHistory === undefined ? {} : { readGrokHistory: selectedBotHistory })}
         workspaceActions={[
           ...(showTerminalAction ? [{
             id: 'terminal',

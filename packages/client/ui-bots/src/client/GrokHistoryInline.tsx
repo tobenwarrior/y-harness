@@ -67,6 +67,7 @@ export function GrokHistoryInline({ botId, botName, read, t }: GrokHistoryInline
   const history = state.kind === 'loaded' ? state.history : undefined
   const sources = history?.sources ?? []
   const selectedSource = sources.find(source => source.id === sourceId) ?? history
+  const showSourceDescription = !(expanded && state.kind === 'loaded' && history !== null)
   const showLabel = expanded ? t('grokHistoryInlineHide') : t('grokHistoryInlineShow')
 
   return (
@@ -76,7 +77,7 @@ export function GrokHistoryInline({ botId, botName, read, t }: GrokHistoryInline
           <IconArchiveOffOutlineRegular size={16} />
           <div>
             <strong>{t('grokHistory')}</strong>
-            <span>{t('grokHistoryInlineDescription')}</span>
+            {showSourceDescription && <span>{t('grokHistoryInlineDescription')}</span>}
           </div>
         </div>
         <Button
