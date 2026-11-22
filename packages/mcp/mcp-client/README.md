@@ -60,6 +60,7 @@ Add one entry per server; nothing else is required. After the harness starts, th
 | `githubAppAuthorization` | — | streamable-http: opt-in Host-owned GitHub App authorization; requires the exact official endpoint `https://api.githubcopilot.com/mcp/` and cannot be combined with `bearerTokenRef` or `Authorization` |
 | `toolCallTimeoutMs` | `60,000` | Timeout per `tools/call` or resource request |
 | `maxInstructionBytes` | `32,768` | Maximum UTF-8 bytes of server instructions including attribution; an oversized value rejects the connection |
+| `disabledTools` | `[]` | Optional exact raw MCP tool names to withhold from every discovery generation; names are matched before public-name normalization |
 | `failOnStartupError` | `false` | Reject plugin activation when the initial connection or tool synchronization fails |
 | `reconnect.enabled` | `true` | Reconnect automatically after a lost connection |
 | `reconnect.initialDelayMs` | `500` | First reconnect delay; doubles per consecutive failed attempt |
@@ -89,6 +90,7 @@ The model sees each tool under a stable server-qualified name: `mcp__<serverName
 - A server that lists the same tool twice gets its tool list rejected as invalid, and the previous tool set stays active.
 - The SDK owns discovery pagination and its page limit. A discovery failure preserves the previous tools; malformed cursor chains follow the SDK's behavior.
 - An update that conflicts with an already-registered tool name is rejected entirely — you never get a partial tool set from that server.
+- `disabledTools` applies to both stdio and Streamable HTTP. The filter runs before registration on startup, list-change rediscovery, and reconnect, so a disabled action is never published or dispatched. Omit it to preserve the complete remote tool set. Names are exact raw MCP names, including punctuation or separators.
 
 ### Calling tools and reading results
 

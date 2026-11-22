@@ -100,6 +100,30 @@ export function resolveReconnectPolicy(config: ReconnectConfig | undefined, path
   return Object.freeze({ enabled, initialDelayMs, maxDelayMs, maxAttempts })
 }
 
+/**
+ * Resolve the optional list of exact remote MCP tool names to suppress.
+ *
+ * The names are compared before public-name normalization, so punctuation,
+ * separators, and other names accepted by an MCP server remain usable here.
+ * Only an empty name is rejected because it cannot identify a remote action.
+ *
+ * @param disabledTools - Raw names advertised by the remote MCP server.
+ * @param path - Diagnostic prefix naming the config location.
+ * @returns A copied list safe for the connection generation to retain.
+ */
+export function resolveDisabledTools(disabledTools: unknown, path: string): string[] {
+  if (disabledTools == null) return []
+  if (!Array.isArray(disabledTools) || !disabledTools.every(name => typeof name === 'string')) {
+    throw new Error(`${path} must be an array of MCP tool names`)
+  }
+  for (const [index, name] of disabledTools.entries()) {
+    if (name.length === 0) {
+      throw new Error(`${path}[${index}] must be a non-empty MCP tool name`)
+    }
+  }
+  return disabledTools.slice()
+}
+
 /** Result from the initial connection attempt, for startup-await semantics. */
 export interface ConnectionOutcome {
   /** If the initial connection or tool sync failed, the error; otherwise absent. */
@@ -133,11 +157,13 @@ export interface ConnectionHandle extends ServerContext {
  */
 export function startConnection(ctx: Context, config: Config, policy: ResolvedReconnectPolicy): ConnectionHandle {
   const label = `mcp-client(${config.serverName})`
+  const disabledTools = new Set(resolveDisabledTools(config.disabledTools, `${label}.disabledTools`))
   const incompleteDisposalMessage = `${label}: transport closure could not be confirmed during disposal — server shutdown may be incomplete`
   const opts: ToolBridgeOptions = {
     registrationFailure: 'contain',
     serverName: config.serverName,
     toolCallTimeoutMs: config.toolCallTimeoutMs,
+    disabledTools,
   }
   // The initial sync uses 'throw' when failOnStartupError is configured, so
   // a registration conflict propagates to the startup-await path. Re-syncs

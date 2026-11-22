@@ -1,9 +1,9 @@
-import { z } from 'zod'
 /** Keyless stateless Streamable HTTP MCP fixture for integration tests. */
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { createMcpHandler, McpServer, type CallToolResult } from '@modelcontextprotocol/server'
 import { toNodeHandler, type NodeIncomingMessageLike } from '@modelcontextprotocol/node'
+import { z } from 'zod'
 
 /** Running HTTP fixture and the request headers it observed. */
 export interface HttpMcpFixture {
@@ -13,8 +13,12 @@ export interface HttpMcpFixture {
   close: () => Promise<void>
 }
 
-/** Start a local stateless MCP endpoint exposing one `ping` tool. */
-export async function startHttpMcpFixture(): Promise<HttpMcpFixture> {
+/**
+ * Start a local stateless MCP endpoint.
+ * @param toolNames - Names to advertise, each returning the same fixture response.
+ * @returns The fixture URL, observed requests, and teardown.
+ */
+export async function startHttpMcpFixture(toolNames: readonly string[] = ['ping']): Promise<HttpMcpFixture> {
   const calls: string[] = []
   const authorization: Array<string | undefined> = []
   const handler = createMcpHandler(() => {
@@ -22,10 +26,12 @@ export async function startHttpMcpFixture(): Promise<HttpMcpFixture> {
       { name: 'http-fixture', version: '1.0.0' },
       { capabilities: { tools: {} } },
     )
-    mcp.registerTool('ping', { description: 'Replies pong.', inputSchema: z.object({}) }, async (): Promise<CallToolResult> => {
-      calls.push('ping')
-      return { content: [{ type: 'text', text: 'pong' }] }
-    })
+    for (const name of toolNames) {
+      mcp.registerTool(name, { description: 'Replies pong.', inputSchema: z.object({}) }, async (): Promise<CallToolResult> => {
+        calls.push(name)
+        return { content: [{ type: 'text', text: 'pong' }] }
+      })
+    }
     return mcp
   })
   const handle = toNodeHandler(handler)

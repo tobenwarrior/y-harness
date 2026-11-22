@@ -50,6 +50,7 @@
     "apps/web/tests/bot-workspace.e2e.ts",
     "apps/web/tests/bot-app-access.e2e.ts",
     "apps/web/tests/bot-github-sign-in.e2e.ts",
+    "apps/web/tests/mcp-tool-selection.e2e.ts",
     "apps/web/tests/grok-history-attachments.e2e.ts",
     "apps/web/tests/bot-group.e2e.ts",
     "apps/web/tests/bot-conversation.e2e.ts",

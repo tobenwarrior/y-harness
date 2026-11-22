@@ -30,6 +30,8 @@ export interface ToolBridgeOptions {
   registrationFailure: 'contain' | 'throw'
   serverName: string
   toolCallTimeoutMs: number
+  /** Exact raw MCP names excluded before they can be registered or called. */
+  disabledTools?: ReadonlySet<string>
 }
 
 /** State for one sync generation: the current set of disposers keyed by public name. */
@@ -124,6 +126,7 @@ export async function syncTools(
     ? { tools: [] }
     : await client.listTools(undefined, { cacheMode: 'refresh' })
   for (const tool of response.tools) {
+    if (opts.disabledTools?.has(tool.name) === true) continue
     const publicName = publicToolName(opts.serverName, tool.name)
     if (definitions.has(publicName)) {
       throw new Error(
