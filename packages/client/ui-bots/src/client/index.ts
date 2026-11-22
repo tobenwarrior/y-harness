@@ -11,7 +11,8 @@ export type {
   SharedBotsClient,
 } from './shared-client.ts'
 export type {
-  BotAccent, BotAvatarEditorActions, BotConnectedAppAccess, BotCreation, BotIdentity, BotOrganizationPatch,
+  BotAccent, BotAvatarEditorActions, BotConnectedAppAccess, BotConnectedAppCatalogEntry,
+  BotConnectedAppConnectionState, BotCreation, BotIdentity, BotOrganizationPatch,
   BotProfileUpdate, BotStatus, BotSummary,
   BotMemoryManagerActions, BotMemorySummary, BotRoutineHistory, BotRoutineManagerActions, BotTemplateActions,
   BotTemplateState, BotTemplateSummary, BotWorkspaceProps,

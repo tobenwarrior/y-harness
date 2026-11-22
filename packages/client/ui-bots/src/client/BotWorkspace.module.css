@@ -2201,6 +2201,49 @@
   overflow: auto;
 }
 
+.connectedAppState {
+  color: var(--yh-alias-label-tertiary) !important;
+  font-size: 10px !important;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.connectedAppStateConfigured { color: var(--yh-alias-state-success-primary) !important; }
+.connectedAppStateAuthNeeded { color: var(--yh-alias-state-warn-primary) !important; }
+.connectedAppStateUnavailable { color: var(--yh-alias-state-error-primary) !important; }
+
+.connectedAppHostStatus {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  overflow: hidden;
+}
+
+.connectedAppHostStatus .connectedAppState {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.connectedAppDescription {
+  overflow: hidden;
+  color: var(--yh-alias-label-secondary) !important;
+  font-size: 11px !important;
+  line-height: 16px !important;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.connectedAppActions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 .connectedAppsLoading {
   display: flex;
   min-height: 112px;
@@ -2258,6 +2301,23 @@
   margin-top: 16px;
 }
 
+.connectedAppsColumnLabels {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  margin: 14px 4px 6px;
+  color: var(--yh-alias-label-tertiary);
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  line-height: 14px;
+  text-transform: uppercase;
+}
+
+.connectedAppsColumnLabels span:last-child {
+  text-align: right;
+}
+
 .connectedAppsDialogContent .connectedAppsList {
   gap: 0;
   margin-top: 8px;
@@ -2276,6 +2336,22 @@
 
 .connectedAppsDialogContent .connectedAppRow + .connectedAppRow {
   border-top: 0.5px solid var(--yh-alias-border-l2);
+}
+
+@media (max-width: 480px) {
+  .connectedAppsDialogContent .connectedAppsColumnLabels {
+    display: none;
+  }
+
+  .connectedAppsDialogContent .connectedAppRow {
+    grid-template-columns: 32px minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .connectedAppsDialogContent .connectedAppActions {
+    grid-column: 2;
+    justify-content: flex-start;
+  }
 }
 
 .sharedApprovalsList {
@@ -2540,6 +2616,15 @@
   line-height: 16px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.connectedAppCopy > .connectedAppHostStatus {
+  flex-direction: row;
+  gap: 4px;
+}
+
+.connectedAppCopy > .connectedAppDescription {
+  display: block;
 }
 
 .connectedAppCopy .connectedAppAllowed,

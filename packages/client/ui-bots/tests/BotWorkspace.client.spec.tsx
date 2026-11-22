@@ -3004,9 +3004,10 @@ describe('Bot roster and detail', () => {
     const dialog = await screen.findByRole('dialog', { name: 'Connected apps' })
     await waitFor(() => { expect(onLoadConnectedApps).toHaveBeenCalledWith('release') })
     expect(dialog.querySelector('[data-app-id="github"]')).not.toBeNull()
-    expect(within(dialog).getByText('Tools from GitHub')).toBeTruthy()
+    expect(within(dialog).getAllByText('Tools from GitHub')).toHaveLength(1)
     const grant = within(dialog).getByRole('button', { name: 'Grant access to GitHub' })
     expect(grant.getAttribute('aria-pressed')).toBe('false')
+    expect(within(dialog).queryByRole('button', { name: 'Connect GitHub' })).toBeNull()
     fireEvent.click(grant)
     await waitFor(() => { expect(onSetConnectedAppAccess).toHaveBeenCalledWith('release', 'github', true) })
     expect(within(dialog).getByRole('button', { name: 'Revoke access to GitHub' }).getAttribute('aria-pressed')).toBe('true')
@@ -3040,12 +3041,202 @@ describe('Bot roster and detail', () => {
     const dialog = await screen.findByRole('dialog', { name: 'Connected apps' })
     await waitFor(() => { expect(onLoadConnectedApps).toHaveBeenCalledWith('research') })
 
-    expect(within(dialog).getByText('Connected app custom-alpha')).toBeTruthy()
-    expect(within(dialog).getByText('Connected app custom-beta')).toBeTruthy()
+    expect(within(dialog).getAllByText('Connected app custom-alpha')).toHaveLength(1)
+    expect(within(dialog).getAllByText('Connected app custom-beta')).toHaveLength(1)
     expect(within(dialog).getByRole('button', { name: 'Grant access to Connected app custom-alpha' })).toBeTruthy()
     expect(within(dialog).getByRole('button', { name: 'Grant access to Connected app custom-beta' })).toBeTruthy()
     expect(dialog.querySelector('[data-app-id="custom-alpha"]')?.textContent).not.toBe('')
     expect(dialog.querySelector('[data-app-id="custom-beta"]')?.textContent).not.toBe('')
+  })
+
+  it('keeps Host connection state separate from Bot access and only exposes real actions', async () => {
+    const onLoadConnectedApps = vi.fn().mockResolvedValue([
+      { id: 'github', name: 'GitHub', description: 'Tools from GitHub', allowed: false },
+    ])
+    const onLoadConnectedAppCatalog = vi.fn().mockResolvedValue([
+      { id: 'github', name: 'GitHub', description: 'Tools from GitHub', connectionState: 'configured' as const },
+      { id: 'notion', name: 'Notion', connectionState: 'auth-needed' as const, canConnect: true },
+    ])
+    const onConnectConnectedApp = vi.fn().mockResolvedValue(undefined)
+    renderSplitWorkspace({
+      onLoadConnectedApps,
+      onLoadConnectedAppCatalog,
+      onConnectConnectedApp,
+      onSetConnectedAppAccess: vi.fn().mockResolvedValue(undefined),
+    })
+
+    openConnectedAppsMenu()
+    const dialog = await screen.findByRole('dialog', { name: 'Connected apps' })
+    const appList = within(dialog).getByRole('list', { name: 'Connected apps' })
+    await waitFor(() => { expect(onLoadConnectedAppCatalog).toHaveBeenCalledWith('research') })
+    expect(within(appList).getByText('Connected')).toBeTruthy()
+    expect(within(appList).getByText('Authentication needed')).toBeTruthy()
+    expect(within(appList).queryByRole('button', { name: 'Connect GitHub' })).toBeNull()
+    fireEvent.click(within(appList).getByRole('button', { name: 'Connect Notion' }))
+    await waitFor(() => { expect(onConnectConnectedApp).toHaveBeenCalledWith('notion') })
+    const notionRow = within(appList).getByText('Notion').closest('[role="listitem"]')
+    expect(notionRow?.textContent).toContain('Connected')
+    expect(within(dialog).getByRole('button', { name: 'Grant access to GitHub' })).toBeTruthy()
+  })
+
+  it('opens the Host connection catalog without requiring Bot grant callbacks', async () => {
+    const onLoadConnectedAppCatalog = vi.fn().mockResolvedValue([
+      { id: 'github', name: 'GitHub', connectionState: 'available' as const },
+    ])
+    renderSplitWorkspace({ onLoadConnectedAppCatalog })
+
+    openConnectedAppsMenu()
+    const dialog = await screen.findByRole('dialog', { name: 'Connected apps' })
+    await waitFor(() => { expect(onLoadConnectedAppCatalog).toHaveBeenCalledWith('research') })
+    expect(within(dialog).getByText('Available on this Host')).toBeTruthy()
+    expect(within(dialog).queryByText('Bot access')).toBeNull()
+    expect(within(dialog).queryByRole('button', { name: 'Connect GitHub' })).toBeNull()
+  })
+
+  it('renders Host states, reconnects configured apps, and keeps access-only rows visible', async () => {
+    const onLoadConnectedApps = vi.fn().mockResolvedValue([
+      { id: 'legacy', name: 'Legacy Tools', description: 'Legacy access', allowed: false },
+      { id: 'nameless', name: '', allowed: false },
+    ])
+    const onLoadConnectedAppCatalog = vi.fn().mockResolvedValue([
+      { id: 'configured', name: 'Configured App', description: 'Configured host tools', connectionState: 'configured' as const, canReconnect: true },
+      { id: 'auth', name: 'Auth App', connectionState: 'auth-needed' as const, canConnect: true },
+      { id: 'offline', name: 'Offline App', connectionState: 'unavailable' as const },
+      { id: 'empty', name: '', connectionState: 'available' as const },
+    ])
+    const reconnect = Promise.withResolvers<undefined>()
+    const onReconnectConnectedApp = vi.fn().mockReturnValue(reconnect.promise)
+    const onConnectConnectedApp = vi.fn().mockRejectedValue(new Error('auth unavailable'))
+    renderSplitWorkspace({
+      onLoadConnectedApps,
+      onLoadConnectedAppCatalog,
+      onReconnectConnectedApp,
+      onConnectConnectedApp,
+      onSetConnectedAppAccess: vi.fn().mockResolvedValue(undefined),
+    })
+
+    openConnectedAppsMenu()
+    const dialog = await screen.findByRole('dialog', { name: 'Connected apps' })
+    const appList = within(dialog).getByRole('list', { name: 'Connected apps' })
+    await waitFor(() => { expect(onLoadConnectedAppCatalog).toHaveBeenCalledWith('research') })
+    expect(within(appList).getByText('Connected')).toBeTruthy()
+    expect(within(appList).getByText('Authentication needed')).toBeTruthy()
+    expect(within(appList).getAllByText('Unavailable')).toHaveLength(3)
+    expect(within(appList).getByText('Connected app empty')).toBeTruthy()
+    expect(within(appList).getByText('Legacy Tools')).toBeTruthy()
+    expect(within(appList).getByText('Legacy access')).toBeTruthy()
+    expect(within(appList).getByText('Connected app nameless')).toBeTruthy()
+
+    const reconnectButton = within(appList).getByRole('button', { name: 'Reconnect Configured App' })
+    fireEvent.click(reconnectButton)
+    await waitFor(() => { expect(onReconnectConnectedApp).toHaveBeenCalledWith('configured') })
+    expect(reconnectButton.textContent).toContain('Working')
+    const connectButton = within(appList).getByRole('button', { name: 'Connect Auth App' })
+    fireEvent.click(connectButton)
+    expect(onConnectConnectedApp).not.toHaveBeenCalled()
+    reconnect.resolve(undefined)
+    await waitFor(() => { expect(reconnectButton.textContent).toContain('Reconnect') })
+
+    fireEvent.click(connectButton)
+    await waitFor(() => { expect(onConnectConnectedApp).toHaveBeenCalledWith('auth') })
+    expect((await within(dialog).findByRole('alert')).textContent).toContain('connection action could not be completed')
+  })
+
+  it('shows the Host-only empty state and connection loading failures', async () => {
+    const onLoadConnectedAppCatalog = vi.fn().mockResolvedValue([])
+    renderSplitWorkspace({ onLoadConnectedAppCatalog })
+
+    openConnectedAppsMenu()
+    const emptyDialog = await screen.findByRole('dialog', { name: 'Connected apps' })
+    await waitFor(() => { expect(within(emptyDialog).getByText('No apps connected')).toBeTruthy() })
+    expect(within(emptyDialog).getByText('Connect an app on this Host to make it available.')).toBeTruthy()
+    fireEvent.click(within(emptyDialog).getByRole('button', { name: 'Done' }))
+    await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Connected apps' })).toBeNull() })
+
+    cleanup()
+    const failedCatalog = vi.fn().mockRejectedValue(new Error('Host connection unavailable'))
+    renderSplitWorkspace({ onLoadConnectedAppCatalog: failedCatalog })
+    openConnectedAppsMenu()
+    const failedDialog = await screen.findByRole('dialog', { name: 'Connected apps' })
+    expect((await within(failedDialog).findByRole('alert')).textContent).toContain('Connection status could not be loaded')
+  })
+
+  it('keeps Bot access rows available when the Host catalog is removed after a failure', async () => {
+    const onLoadConnectedApps = vi.fn().mockResolvedValue([
+      { id: 'legacy', name: 'Legacy Tools', allowed: false },
+    ])
+    const failedCatalog = vi.fn().mockRejectedValue(new Error('Host connection unavailable'))
+    const props: BotWorkspaceProps = {
+      bots,
+      selectedBotId: 'research',
+      onSelectBot: vi.fn(),
+      onCreateBot: vi.fn(),
+      onLoadConnectedApps,
+      onLoadConnectedAppCatalog: failedCatalog,
+      onSetConnectedAppAccess: vi.fn().mockResolvedValue(undefined),
+    }
+    const view = render(<BotRoster {...props} t={t} />)
+
+    openConnectedAppsMenu()
+    const dialog = await screen.findByRole('dialog', { name: 'Connected apps' })
+    await waitFor(() => { expect(within(dialog).getByText('Legacy Tools')).toBeTruthy() })
+    expect((await within(dialog).findByRole('alert')).textContent).toContain('Connection status could not be loaded')
+    view.rerender(<BotRoster {...props} onLoadConnectedAppCatalog={undefined} t={t} />)
+    await waitFor(() => { expect(within(dialog).getByText('Available on this Host')).toBeTruthy() })
+  })
+
+  it('ignores a Host catalog that resolves after its dialog closes', async () => {
+    const load = Promise.withResolvers<readonly []>()
+    const onLoadConnectedAppCatalog = vi.fn().mockReturnValue(load.promise)
+    renderSplitWorkspace({ onLoadConnectedAppCatalog })
+
+    openConnectedAppsMenu()
+    const dialog = await screen.findByRole('dialog', { name: 'Connected apps' })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Done' }))
+    load.resolve([])
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(screen.queryByRole('dialog', { name: 'Connected apps' })).toBeNull()
+
+    cleanup()
+    const lateFailure = Promise.withResolvers<readonly []>()
+    const loadFailure = vi.fn().mockReturnValue(lateFailure.promise)
+    renderSplitWorkspace({ onLoadConnectedAppCatalog: loadFailure })
+    openConnectedAppsMenu()
+    const failedDialog = await screen.findByRole('dialog', { name: 'Connected apps' })
+    fireEvent.click(within(failedDialog).getByRole('button', { name: 'Done' }))
+    lateFailure.reject(new Error('late Host failure'))
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(screen.queryByRole('dialog', { name: 'Connected apps' })).toBeNull()
+  })
+
+  it('ignores reconnect completion after the access dialog is closed', async () => {
+    const first = Promise.withResolvers<undefined>()
+    const second = Promise.withResolvers<undefined>()
+    const onLoadConnectedAppCatalog = vi.fn().mockResolvedValue([
+      { id: 'configured', name: 'Configured App', connectionState: 'configured' as const, canReconnect: true },
+    ])
+    const onReconnectConnectedApp = vi.fn()
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise)
+    renderSplitWorkspace({ onLoadConnectedAppCatalog, onReconnectConnectedApp })
+
+    openConnectedAppsMenu()
+    let dialog = await screen.findByRole('dialog', { name: 'Connected apps' })
+    const reconnect = await within(dialog).findByRole('button', { name: 'Reconnect Configured App' })
+    fireEvent.click(reconnect)
+    await waitFor(() => { expect(onReconnectConnectedApp).toHaveBeenCalledTimes(1) })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Done' }))
+    first.resolve(undefined)
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+
+    openConnectedAppsMenu()
+    dialog = await screen.findByRole('dialog', { name: 'Connected apps' })
+    fireEvent.click(await within(dialog).findByRole('button', { name: 'Reconnect Configured App' }))
+    await waitFor(() => { expect(onReconnectConnectedApp).toHaveBeenCalledTimes(2) })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Done' }))
+    second.reject(new Error('late reconnect failure'))
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(screen.queryByRole('dialog', { name: 'Connected apps' })).toBeNull()
   })
 
   it('clears the previous Bot catalog when a reload fails', async () => {

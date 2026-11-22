@@ -54,18 +54,23 @@ it('shows a new GitHub connector and saves access independently for each Bot', a
     await page.goto(web.authenticatedUrl, { waitUntil: 'load' })
     await page.locator('[data-yh-part="sidebar"]').getByRole('button', { name: 'Bots', exact: true }).click()
     const initial = await openAppAccess(page, scout.name)
-    expect(await initial.getByRole('listitem').count()).toBe(1)
+    const initialApps = initial.getByRole('list', { name: 'Connected apps', exact: true })
+    expect(await initialApps.getByRole('listitem').count()).toBe(1)
+    expect(await initial.getByText('Available on this Host', { exact: true }).count()).toBe(1)
     const screenshots = process.env.YHARNESS_CONNECTOR_SCREENSHOTS
-    if (screenshots !== undefined) {
-      await page.screenshot({ path: join(screenshots, 'apps-existing.png'), animations: 'disabled' })
-    }
     await initial.getByRole('button', { name: 'Done', exact: true }).click()
 
     registerApp(web, 'github')
     const apps = await openAppAccess(page, scout.name)
     const grant = apps.getByRole('button', { name: 'Grant access to GitHub', exact: true })
     await grant.waitFor()
-    expect(await apps.locator('[data-app-id="github"] svg').count()).toBe(1)
+    const appList = apps.getByRole('list', { name: 'Connected apps', exact: true })
+    expect(await appList.locator('[data-app-id="github"] svg').count()).toBe(1)
+    expect(await appList.getByRole('listitem').count()).toBe(2)
+    expect(await apps.getByText('Available on this Host', { exact: true }).count()).toBe(2)
+    expect(await apps.getByRole('button', { name: 'Connect GitHub', exact: true }).count()).toBe(0)
+    expect(await apps.getByText('Host connection', { exact: true }).count()).toBe(1)
+    expect(await apps.getByText('Bot access', { exact: true }).count()).toBe(1)
     await grant.click()
     await apps.getByRole('button', { name: 'Revoke access to GitHub', exact: true }).waitFor()
     const policy = await web.ctx.bots.listConnectedApps({ botId: scout.id })
@@ -74,7 +79,12 @@ it('shows a new GitHub connector and saves access independently for each Bot', a
     ])
     await compareOrRefreshGolden(expected, (await apps.ariaSnapshot()).trimEnd(), webSnapshotMode())
     if (screenshots !== undefined) {
-      await page.screenshot({ path: join(screenshots, 'apps-desktop.png'), animations: 'disabled' })
+      await page.screenshot({ path: join(screenshots, 'apps-desktop-dark.png'), animations: 'disabled' })
+      await page.emulateMedia({ colorScheme: 'light' })
+      await expect.poll(() => page.evaluate(() => document.body.hasAttribute('data-ds-dark-theme'))).toBe(false)
+      await page.screenshot({ path: join(screenshots, 'apps-desktop-light.png'), animations: 'disabled' })
+      await page.emulateMedia({ colorScheme: 'dark' })
+      await expect.poll(() => page.evaluate(() => document.body.hasAttribute('data-ds-dark-theme'))).toBe(true)
     }
 
     await apps.getByRole('button', { name: 'Done', exact: true }).click()
@@ -84,17 +94,23 @@ it('shows a new GitHub connector and saves access independently for each Bot', a
 
     const reopened = await openAppAccess(page, scout.name)
     await reopened.getByRole('button', { name: 'Revoke access to GitHub', exact: true }).waitFor()
-    await page.setViewportSize({ width: 720, height: 900 })
+    await page.setViewportSize({ width: 480, height: 900 })
     const bounds = await reopened.boundingBox()
     expect(bounds).not.toBeNull()
     if (bounds === null) throw new Error('Bot app access dialog is not visible')
     expect(bounds.x).toBeGreaterThanOrEqual(0)
-    expect(bounds.x + bounds.width).toBeLessThanOrEqual(720)
+    expect(bounds.x + bounds.width).toBeLessThanOrEqual(480)
+    expect(await reopened.locator('[class*="connectedAppsColumnLabels"]').isVisible()).toBe(false)
+    const accessButton = reopened.getByRole('button', { name: 'Revoke access to GitHub', exact: true })
+    const accessButtonBox = await accessButton.boundingBox()
+    expect(accessButtonBox).not.toBeNull()
+    if (accessButtonBox === null) throw new Error('Bot access controls are not visible')
+    expect(await accessButton.getAttribute('aria-label')).toBe('Revoke access to GitHub')
     if (screenshots !== undefined) {
-      await page.screenshot({ path: join(screenshots, 'apps-narrow.png'), animations: 'disabled' })
+      await page.screenshot({ path: join(screenshots, 'apps-480-dark.png'), animations: 'disabled' })
       await page.emulateMedia({ colorScheme: 'light' })
       await expect.poll(() => page.evaluate(() => document.body.hasAttribute('data-ds-dark-theme'))).toBe(false)
-      await page.screenshot({ path: join(screenshots, 'apps-light.png'), animations: 'disabled' })
+      await page.screenshot({ path: join(screenshots, 'apps-480-light.png'), animations: 'disabled' })
     }
     expect(tripwire.pageErrors).toEqual([])
   } finally {

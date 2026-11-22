@@ -1,12 +1,13 @@
 - dialog "Connected apps":
   - heading "Connected apps" [level=2]
-  - button "Cancel"
-  - paragraph: Choose which connected apps Scout can use.
+  - button "Done"
+  - paragraph: Choose which apps Scout can use.
   - list "Connected apps":
     - listitem:
       - strong: Cloudflare
+      - text: Available on this Host
       - button "Revoke access to Cloudflare" [pressed]: Allowed
     - listitem:
       - strong: GitHub
+      - text: Available on this Host
       - button "Revoke access to GitHub" [pressed]: Allowed
-  - button "Done"
