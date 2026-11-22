@@ -100,6 +100,7 @@ import type {
   AvatarGenerationValue,
 } from '@yharness/avatar-generation/types'
 import type { ISessions, SessionReference } from '@yharness/api-session-controller/client'
+import type { SessionId } from '@yharness/session/types'
 import type { BotDraftRetention } from '@yharness/client-ui-conversation/client'
 import { createSnapshotStore, type SnapshotStore } from '@yharness/client-store'
 import type { HostObservable } from '@yharness/client-ui-slots'
@@ -890,6 +891,7 @@ export class BotWorkspaceController {
     if (selectedGroupId !== null) {
       this.selectedReference?.release()
       this.selectedReference = undefined
+      this.forgetStaleBotDrafts(current.bots, result.value.bots)
       const selectionGeneration = this.selectionGeneration
       this.source.set({
         ...current,
@@ -959,6 +961,7 @@ export class BotWorkspaceController {
       this.refreshAfterPending = true
       return
     }
+    this.forgetStaleBotDrafts(current.bots, result.value.bots)
     this.source.set({
       ...this.source.getSnapshot(),
       phase: 'ready',
@@ -1304,6 +1307,7 @@ export class BotWorkspaceController {
     const current = this.source.getSnapshot()
     if (!current.groups.some(group => group.id === id) || current.selectedGroupId === id) return
     const selectionGeneration = ++this.selectionGeneration
+    this.detachSelectedBotDraft()
     this.selectedReference?.release()
     this.selectedReference = undefined
     this.source.set({
@@ -1825,7 +1829,45 @@ export class BotWorkspaceController {
   }
 
   private draftOwnerKey(bot: BotView): string {
-    return `${String(bot.id)}:${String(bot.sessionId)}`
+    return this.draftOwnerKeyForSession(bot.id, bot.sessionId)
+  }
+
+  private draftOwnerKeyForSession(botId: BotIdType, sessionId: SessionId): string {
+    return `${String(botId)}:${String(sessionId)}`
+  }
+
+  private previousDraftOwner(
+    previous: SessionReference,
+    previousBot: BotView | undefined,
+  ): { readonly ownerKey: string; readonly sessionId: SessionId } | undefined {
+    const selectedBotId = previousBot?.id ?? this.source.getSnapshot().selectedBotId
+    if (selectedBotId === null) return undefined
+    return {
+      ownerKey: this.draftOwnerKeyForSession(selectedBotId, previous.sessionId),
+      sessionId: previous.sessionId,
+    }
+  }
+
+  private detachSelectedBotDraft(): void {
+    const previous = this.selectedReference
+    if (previous === undefined) return
+    const current = this.source.getSnapshot()
+    const selectedBotId = current.bots.find(bot => bot.id === current.selectedBotId)?.id ?? current.selectedBotId
+    if (selectedBotId === null) return
+    this.draftRetention?.detach(
+      this.draftOwnerKeyForSession(selectedBotId, previous.sessionId), previous.sessionId,
+    )
+  }
+
+  private forgetStaleBotDrafts(previousBots: readonly BotView[], nextBots: readonly BotView[]): void {
+    if (this.draftRetention === undefined) return
+    const nextSessions = new Map(nextBots.map(bot => [String(bot.id), bot.sessionId]))
+    for (const previousBot of previousBots) {
+      const nextSessionId = nextSessions.get(String(previousBot.id))
+      if (nextSessionId === undefined || nextSessionId !== previousBot.sessionId) {
+        this.draftRetention.forget(this.draftOwnerKey(previousBot))
+      }
+    }
   }
 
   private retainSelected(id: BotIdType | null, bots: readonly BotView[]): string | undefined {
@@ -1834,13 +1876,16 @@ export class BotWorkspaceController {
       ? undefined
       : bots.find(bot => bot.id === this.source.getSnapshot().selectedBotId)
         ?? bots.find(bot => bot.sessionId === previous.sessionId)
+    const previousOwner = previous === undefined ? undefined : this.previousDraftOwner(previous, previousBot)
     if (id === null) {
+      if (previousOwner !== undefined) this.draftRetention?.detach(previousOwner.ownerKey, previousOwner.sessionId)
       previous?.release()
       this.selectedReference = undefined
       return undefined
     }
     const bot = bots.find(candidate => candidate.id === id)
     if (bot === undefined || bot.state !== 'active') {
+      if (previousOwner !== undefined) this.draftRetention?.detach(previousOwner.ownerKey, previousOwner.sessionId)
       previous?.release()
       this.selectedReference = undefined
       return undefined
@@ -1849,18 +1894,18 @@ export class BotWorkspaceController {
     try {
       reference = this.sessions.retain(bot.sessionId, { source: 'botWorkspace' })
     } catch (error: unknown) {
+      if (previousOwner !== undefined) this.draftRetention?.detach(previousOwner.ownerKey, previousOwner.sessionId)
       previous?.release()
       this.selectedReference = undefined
       return error instanceof Error ? error.message : String(error)
     }
     if (previous !== undefined && previous !== reference) {
-      if (previousBot !== undefined) {
-        const previousOwner = this.draftOwnerKey(previousBot)
-        if (previousBot.id === bot.id) {
-          if (previousBot.sessionId !== bot.sessionId) this.draftRetention?.forget(previousOwner)
-          else this.draftRetention?.detach(previousOwner, previousBot.sessionId)
+      if (previousOwner !== undefined) {
+        if (previousBot !== undefined && previousBot.id === bot.id) {
+          if (previousBot.sessionId !== bot.sessionId) this.draftRetention?.forget(previousOwner.ownerKey)
+          else this.draftRetention?.detach(previousOwner.ownerKey, previousOwner.sessionId)
         } else {
-          this.draftRetention?.detach(previousOwner, previousBot.sessionId)
+          this.draftRetention?.detach(previousOwner.ownerKey, previousOwner.sessionId)
         }
       }
       previous.release()
