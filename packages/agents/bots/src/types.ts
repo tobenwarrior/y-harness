@@ -930,6 +930,18 @@ export interface BotGrokImportRequest {
   readonly sourceName?: string
   /** Validate the selection and count entries without importing. */
   readonly preview?: boolean
+  /** Restrict this import to durable memories and user facts; skills and routines are rejected. */
+  readonly memoryOnly?: boolean
+}
+
+/** Capacity accounting for a memory-only Grok import. */
+export interface BotGrokMemoryCapacity {
+  /** Active records already owned by the destination Bot. */
+  readonly existingRecords: number
+  /** Distinct records selected by the import after id, tombstone, and text deduplication. */
+  readonly newRecords: number
+  /** Maximum active records retained by the destination Bot. */
+  readonly limit: number
 }
 
 /** Count of selected Grok Bot entries after validation and memory deduplication. */
@@ -946,6 +958,8 @@ export interface BotGrokImportValue {
   readonly routines: number
   /** Skills referenced by routines without a matching definition in this export. */
   readonly missingRoutineSkills: readonly string[]
+  /** Capacity accounting returned only when the request selects memory-only mode. */
+  readonly memoryCapacity?: BotGrokMemoryCapacity
 }
 
 /** Browser-safe view of one active memory owned by a Bot. */
@@ -968,6 +982,26 @@ export interface BotMemoryListRequest {
 export interface BotMemoryListValue {
   /** Active memories in creation order. */
   readonly memories: readonly BotMemoryView[]
+}
+
+/** Owner request for one bounded search page over a Bot's private memories. */
+export interface BotMemorySearchRemoteRequest {
+  /** Bot whose memory projection should be searched. */
+  readonly botId: BotId
+  /** Optional case-insensitive text fragment. */
+  readonly query?: string
+  /** Continue with records older than this result id. */
+  readonly before?: string
+  /** Maximum records to return. */
+  readonly limit?: number
+}
+
+/** Owner response for one bounded private-memory search page. */
+export interface BotMemorySearchRemoteValue {
+  /** Matching active memories in newest-first order. */
+  readonly memories: readonly BotMemoryView[]
+  /** Cursor for an older page when more matches remain. */
+  readonly nextBefore?: string
 }
 
 /** Request to replace one private memory while retaining its stable id. */

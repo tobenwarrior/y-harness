@@ -5294,7 +5294,7 @@ describe('durable Bot roster', () => {
       const tools = await provider!.resolve({ sessionId: created.bot.sessionId })
       expect(tools.map(tool => tool.name)).toEqual([
         'list_bots', 'inspect_bot', 'read_own_grok_history', 'send_bot_message',
-        'list_bot_memory', 'remember_bot_memory', 'forget_bot_memory',
+        'list_bot_memory', 'search_bot_memory', 'remember_bot_memory', 'forget_bot_memory',
         'create_bot', 'edit_bot_profile',
         'list_bot_groups', 'inspect_bot_group', 'create_bot_group', 'update_bot_group', 'send_bot_group_message',
       ])
@@ -12569,6 +12569,73 @@ describe('durable Bot roster', () => {
       await close(h.ctx)
     }
   })
+
+  it('keeps memory-only imports within the larger durable cap and searches overflow pages', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    const { bot } = await first.service.create({ name: 'Memory capacity Bot', cwd: '/tmp' })
+    await close(first.ctx)
+    const seededMemories = Array.from({ length: 180 }, (_, index) => `Research entry ${String(index + 1)}`)
+    const seedEvents: readonly SessionEvent[] = seededMemories.map((text, index) => ({
+      type: 'bot/memory', seq: SessionSeq(index), time: index + 1,
+      data: { botId: bot.id, memoryId: BotMemoryId(`memory-seed-${String(index + 1)}`), operation: 'remember', text },
+    }))
+    const h = await harness(
+      pool, undefined, undefined, [String(bot.sessionId)], new Map([[String(bot.sessionId), seedEvents]]),
+    )
+    try {
+      const memories = ['Fresh imported entry']
+      const request = {
+        botId: bot.id,
+        document: JSON.stringify({
+          format: 'grok-bot-export', version: 1, bots: [{ name: 'Source Bot', memories }],
+        }),
+        memoryOnly: true,
+      }
+      await expect(h.service.importGrokBot({ ...request, preview: true })).resolves.toMatchObject({
+        memories: 1, skills: 0, routines: 0,
+        memoryCapacity: { existingRecords: 180, newRecords: 1, limit: 256 },
+      })
+      await expect(h.service.importGrokBot(request)).resolves.toMatchObject({
+        memories: 1, memoryCapacity: { existingRecords: 180, newRecords: 1, limit: 256 },
+      })
+      const listed = await h.service.listMemory({ botId: bot.id })
+      expect(listed.memories).toHaveLength(181)
+      const first = await h.service.searchMemory({ botId: bot.id })
+      expect(first.memories).toHaveLength(20)
+      expect(first.memories[0]?.text).toBe('Fresh imported entry')
+      expect(first.nextBefore).toBe(first.memories.at(-1)?.id)
+      const match = await h.service.searchMemory({ botId: bot.id, query: 'entry 42', limit: 5 })
+      expect(match.memories.map(memory => memory.text)).toEqual(['Research entry 42'])
+
+      const overflowRequest = {
+        ...request,
+        document: JSON.stringify({
+          format: 'grok-bot-export', version: 1, bots: [{
+            name: 'Source Bot', memories: Array.from({ length: 76 }, (_, index) => `Overflow entry ${String(index + 1)}`),
+          }],
+        }),
+      }
+      await expect(h.service.importGrokBot({ ...overflowRequest, preview: true })).resolves.toMatchObject({
+        memoryCapacity: { existingRecords: 181, newRecords: 76, limit: 256 },
+      })
+      await expect(h.service.importGrokBot(overflowRequest)).rejects.toThrow('insufficient memory capacity')
+      await expect(h.service.listMemory({ botId: bot.id })).resolves.toEqual(listed)
+
+      const invalidMemoryOnly = {
+        ...request,
+        document: JSON.stringify({
+          format: 'grok-bot-export', version: 1, bots: [{
+            name: 'Source Bot', memories: ['No skill import'], skills: [{ name: 'Forbidden', instructions: 'Never install.' }],
+          }],
+        }),
+      }
+      await expect(h.service.importGrokBot({ ...invalidMemoryOnly, preview: true })).rejects.toThrow('Memory-only imports cannot include')
+      await expect(h.service.listMemory({ botId: bot.id })).resolves.toEqual(listed)
+    } finally {
+      await close(h.ctx)
+    }
+  }, 20_000)
 
   it('imports managed Grok skills through the Computer workspace after a Host migration', async () => {
     const pool = new MemoryMediaPool()

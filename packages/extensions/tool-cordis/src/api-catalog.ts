@@ -846,6 +846,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'active memory rows owned by that Bot.',
       },
       {
+        signature: '@Remote(\'searchMemory\') async searchMemory(request: BotMemorySearchRemoteRequest): Promise<BotMemorySearchRemoteValue>',
+        description: 'Search private memory text for an owner without returning an unbounded projection.',
+        parameters: [{ name: 'request', description: 'Bot id, optional text query, cursor, and page size.' }],
+        returns: 'A bounded newest-first page of active memory records.',
+      },
+      {
         signature: '@Remote(\'updateMemory\') async updateMemory(request: BotMemoryUpdateRequest): Promise<BotMemoryUpdateValue>',
         description: 'Replace one active memory for a Bot while preserving its stable id.',
         parameters: [{ name: 'request', description: 'Bot id, memory id, and replacement text.' }],
@@ -5948,11 +5954,15 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'BotGrokImportRequest',
-    declaration: 'export interface BotGrokImportRequest {\n    readonly botId: BotId;\n    readonly document: string;\n    readonly sourceName?: string;\n    readonly preview?: boolean;\n}',
+    declaration: 'export interface BotGrokImportRequest {\n    readonly botId: BotId;\n    readonly document: string;\n    readonly sourceName?: string;\n    readonly preview?: boolean;\n    readonly memoryOnly?: boolean;\n}',
   },
   {
     name: 'BotGrokImportValue',
-    declaration: 'export interface BotGrokImportValue {\n    readonly sourceName: string;\n    readonly memories: number;\n    readonly skills: number;\n    readonly skillNames: readonly string[];\n    readonly routines: number;\n    readonly missingRoutineSkills: readonly string[];\n}',
+    declaration: 'export interface BotGrokImportValue {\n    readonly sourceName: string;\n    readonly memories: number;\n    readonly skills: number;\n    readonly skillNames: readonly string[];\n    readonly routines: number;\n    readonly missingRoutineSkills: readonly string[];\n    readonly memoryCapacity?: BotGrokMemoryCapacity;\n}',
+  },
+  {
+    name: 'BotGrokMemoryCapacity',
+    declaration: 'export interface BotGrokMemoryCapacity {\n    readonly existingRecords: number;\n    readonly newRecords: number;\n    readonly limit: number;\n}',
   },
   {
     name: 'BotGroupCreateRequest',
@@ -6080,7 +6090,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'BotMemoryClient',
-    declaration: 'export interface BotMemoryClient {\n    readonly remember: (request: BotMemoryRememberRequest) => Promise<BotMemoryRecord>;\n    readonly list: (signal?: AbortSignal) => Promise<readonly BotMemoryRecord[]>;\n    readonly forget: (request: BotMemoryForgetRequest) => Promise<void>;\n}',
+    declaration: 'export interface BotMemoryClient {\n    readonly remember: (request: BotMemoryRememberRequest) => Promise<BotMemoryRecord>;\n    readonly list: (signal?: AbortSignal) => Promise<readonly BotMemoryRecord[]>;\n    readonly search: (request: BotMemorySearchRequest) => Promise<BotMemorySearchValue>;\n    readonly forget: (request: BotMemoryForgetRequest) => Promise<void>;\n}',
   },
   {
     name: 'BotMemoryForgetRemoteRequest',
@@ -6113,6 +6123,22 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'BotMemoryRememberRequest',
     declaration: 'export interface BotMemoryRememberRequest {\n    readonly text: string;\n    readonly memoryId?: BotMemoryId;\n    readonly signal?: AbortSignal;\n}',
+  },
+  {
+    name: 'BotMemorySearchRemoteRequest',
+    declaration: 'export interface BotMemorySearchRemoteRequest {\n    readonly botId: BotId;\n    readonly query?: string;\n    readonly before?: string;\n    readonly limit?: number;\n}',
+  },
+  {
+    name: 'BotMemorySearchRemoteValue',
+    declaration: 'export interface BotMemorySearchRemoteValue {\n    readonly memories: readonly BotMemoryView[];\n    readonly nextBefore?: string;\n}',
+  },
+  {
+    name: 'BotMemorySearchRequest',
+    declaration: 'export interface BotMemorySearchRequest {\n    readonly query?: string;\n    readonly before?: BotMemoryId;\n    readonly limit?: number;\n    readonly signal?: AbortSignal;\n}',
+  },
+  {
+    name: 'BotMemorySearchValue',
+    declaration: 'export interface BotMemorySearchValue {\n    readonly memories: readonly BotMemoryRecord[];\n    readonly nextBefore?: BotMemoryId;\n}',
   },
   {
     name: 'BotMemoryUpdateRequest',

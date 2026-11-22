@@ -28,6 +28,7 @@ function client(): BotCollaborationClient {
     })),
     memory: {
       list: vi.fn<BotMemoryClient['list']>(async () => [{ id: BotMemoryId('memory-one'), text: 'Use dark mode.', createdAt: 1 }]),
+      search: vi.fn<BotMemoryClient['search']>(async () => ({ memories: [{ id: BotMemoryId('memory-one'), text: 'Use dark mode.', createdAt: 1 }] })),
       remember: vi.fn<BotMemoryClient['remember']>(async request => ({
         id: request.memoryId ?? BotMemoryId('memory-created'), text: request.text, createdAt: 2,
       })),
@@ -981,13 +982,18 @@ describe('native Bot actions', () => {
     const provider = createBotNativeToolProvider({ bind: async () => bound, persist: async () => {}, replay: async () => [] })
     const tools = await provider.resolve({ sessionId: SessionId('bot-session-alpha') })
     const list = tools.find(tool => tool.name === 'list_bot_memory')
+    const search = tools.find(tool => tool.name === 'search_bot_memory')
     const remember = tools.find(tool => tool.name === 'remember_bot_memory')
     const forget = tools.find(tool => tool.name === 'forget_bot_memory')
-    if (list === undefined || remember === undefined || forget === undefined) throw new Error('memory tools missing')
+    if (list === undefined || search === undefined || remember === undefined || forget === undefined) throw new Error('memory tools missing')
 
     const listed = await list.execute({}, context())
     expect(listed.success).toBe(true)
     expect(listed.contentItems[0]?.text).not.toContain('Use dark mode.')
+    const searched = await search.execute({ query: 'dark', limit: 1 }, context())
+    expect(searched.success).toBe(true)
+    expect(searched.contentItems[0]?.text).toContain('Use dark mode.')
+    expect(vi.mocked(bound.memory!.search).mock.calls[0]?.[0]).toMatchObject({ query: 'dark', limit: 1 })
     const remembered = await remember.execute({ text: 'Keep reviews concise.', memoryId: 'memory-review' }, context())
     expect(remembered.success).toBe(true)
     expect(remembered.contentItems[0]?.text).not.toContain('Keep reviews concise.')
@@ -1610,7 +1616,7 @@ describe('native Bot actions', () => {
     const tools = await provider.resolve({ sessionId: SessionId('bot-session-alpha') })
     expect(tools.map(tool => tool.name)).toEqual([
       'list_bots', 'inspect_bot', 'send_bot_message',
-      'list_bot_memory', 'remember_bot_memory', 'forget_bot_memory',
+      'list_bot_memory', 'search_bot_memory', 'remember_bot_memory', 'forget_bot_memory',
       'create_bot', 'edit_bot_profile',
     ])
     expect(tools.find(tool => tool.name === 'inspect_bot')?.description).toContain('dsh-bot:<bot-id>')

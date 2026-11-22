@@ -355,6 +355,13 @@ collaborationFor(agent: Pick<Agent, 'id'>): Promise<BotCollaborationClient>
 @Remote('listMemory') async listMemory(request: BotMemoryListRequest): Promise<BotMemoryListValue>
 
 /**
+ * Search private memory text for an owner without returning an unbounded projection.
+ * @param request - Bot id, optional text query, cursor, and page size.
+ * @returns A bounded newest-first page of active memory records.
+ */
+@Remote('searchMemory') async searchMemory(request: BotMemorySearchRemoteRequest): Promise<BotMemorySearchRemoteValue>
+
+/**
  * Replace one active memory for a Bot while preserving its stable id.
  * @param request - Bot id, memory id, and replacement text.
  * @returns the updated memory row.

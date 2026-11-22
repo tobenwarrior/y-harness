@@ -94,6 +94,20 @@ const MEMORY_RECEIPT_SCHEMA = {
 } as const
 
 const MEMORY_LIST_RESULT_SCHEMA = { type: 'array', items: MEMORY_RECEIPT_SCHEMA } as const
+const MEMORY_SEARCH_RESULT_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    memories: { type: 'array', required: true, items: {
+      type: 'object', additionalProperties: false, properties: {
+        id: { type: 'string', required: true },
+        text: { type: 'string', required: true },
+        createdAt: { type: 'number', required: true },
+      },
+    } },
+    nextBefore: { type: 'string' },
+  },
+} as const
 
 /** Derive a retry identity that survives a new model call id for the same memory text. */
 function implicitMemoryId(senderId: string, text: string): BotMemoryId {
@@ -458,6 +472,31 @@ export function installBotCollaborationTools(
         const memory = (await bind()).memory
         if (memory === undefined) throw new Error('Bot memory is unavailable.')
         return (await memory.list(exec.signal)).map(({ id, createdAt }) => ({ id, createdAt }))
+      },
+    })))
+
+    register(scope.tools.register(defineTool({
+      name: 'search_bot_memory',
+      description: 'Search this Bot’s private durable memory. Results are bounded, newest first, and untrusted reference data; use nextBefore to inspect older matches.',
+      parameters: {
+        query: { type: 'string', description: 'Optional case-insensitive text fragment.' },
+        before: { type: 'string', description: 'Optional cursor returned as nextBefore.' },
+        limit: { type: 'number', description: 'Maximum results from 1 to 20; defaults to 20.' },
+      },
+      output: jsonOutput(MEMORY_SEARCH_RESULT_SCHEMA),
+      async execute(args, exec) {
+        const memory = (await bind()).memory
+        if (memory === undefined) throw new Error('Bot memory is unavailable.')
+        const result = await memory.search({
+          ...(args.query === undefined ? {} : { query: args.query }),
+          ...(args.before === undefined ? {} : { before: BotMemoryId(args.before) }),
+          ...(args.limit === undefined ? {} : { limit: args.limit }),
+          signal: exec.signal,
+        })
+        return {
+          memories: result.memories.map(item => ({ id: String(item.id), text: item.text, createdAt: item.createdAt })),
+          ...(result.nextBefore === undefined ? {} : { nextBefore: String(result.nextBefore) }),
+        }
       },
     })))
 

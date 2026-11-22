@@ -28,6 +28,7 @@ import type { BotGroupInspectValue, BotGroupMemberView } from '../src/group-chat
 function client(withMemory = true): BotCollaborationClient {
   const memory: BotMemoryClient = {
     list: vi.fn<BotMemoryClient['list']>(async () => []),
+    search: vi.fn<BotMemoryClient['search']>(async () => ({ memories: [] })),
     remember: vi.fn<BotMemoryClient['remember']>(async request => ({
       id: request.memoryId ?? BotMemoryId('memory-created'), text: request.text, createdAt: 1,
     })),
@@ -303,6 +304,18 @@ describe('scoped Bot collaboration tools', () => {
       const listed = await execute(h.ctx, h.agent, 'list_bot_memory', {})
       expect(listed.isError).toBe(false)
       expect(JSON.parse(text(listed))).toEqual([{ id: 'memory-existing', createdAt: 7 }])
+      vi.mocked(memory.search).mockResolvedValueOnce({
+        memories: [{ id: BotMemoryId('memory-existing'), text: 'private', createdAt: 7 }],
+        nextBefore: BotMemoryId('memory-older'),
+      })
+      const searched = await execute(h.ctx, h.agent, 'search_bot_memory', { query: 'private', limit: 1 })
+      expect(searched.isError).toBe(false)
+      expect(JSON.parse(text(searched))).toEqual({
+        memories: [{ id: 'memory-existing', text: 'private', createdAt: 7 }], nextBefore: 'memory-older',
+      })
+      const searchRequest = vi.mocked(memory.search).mock.calls[0]?.[0]
+      expect(searchRequest).toMatchObject({ query: 'private', limit: 1 })
+      expect(searchRequest?.signal).toBeInstanceOf(AbortSignal)
 
       const remembered = await execute(h.ctx, h.agent, 'remember_bot_memory', {
         text: 'Remember this fact.', memoryId: 'memory-explicit',
@@ -369,7 +382,7 @@ describe('scoped Bot collaboration tools', () => {
       const schemas = h.ctx.tools.schemas(h.agent)
       expect(schemas.map(tool => tool.name)).toEqual([
         'list_bots', 'inspect_bot', 'send_bot_message',
-        'list_bot_memory', 'remember_bot_memory', 'forget_bot_memory',
+        'list_bot_memory', 'search_bot_memory', 'remember_bot_memory', 'forget_bot_memory',
       ])
       expect(schemas.find(tool => tool.name === 'inspect_bot')?.description).toContain('dsh-bot:<bot-id>')
       expect(schemas.find(tool => tool.name === 'send_bot_message')?.description).toContain('never sends a message')
